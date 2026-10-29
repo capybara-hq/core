@@ -38,6 +38,18 @@ export interface KernelEventMap {
   "question.answered": { id: string; orgId: string; conversationId: string; runId: string };
 }
 
+/** The payload's id for the failure log (`approvalId` / `questionId`, as the old hooks logged). */
+function idFields<K extends keyof KernelEventMap>(
+  event: K,
+  payload: KernelEventMap[K],
+): Record<string, string> {
+  const id = (payload as { id?: unknown }).id;
+  if (typeof id !== "string") return {};
+  if (event === "approval.decided") return { approvalId: id };
+  if (event === "question.answered") return { questionId: id };
+  return { id };
+}
+
 type Handler<K extends keyof KernelEventMap> = (payload: KernelEventMap[K]) => Promise<void> | void;
 
 /** Typed in-process event emitter; handlers run in order, a failing one is logged and skipped. */
@@ -64,7 +76,7 @@ export class KernelEvents {
       try {
         await (h as Handler<K>)(payload);
       } catch (err) {
-        this.log.warn("kernel event handler failed", { event, err });
+        this.log.warn("kernel event handler failed", { event, ...idFields(event, payload), err });
       }
     }
   }

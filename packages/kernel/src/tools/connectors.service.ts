@@ -335,12 +335,6 @@ export class ConnectorsService {
     return this.kdb.db;
   }
 
-  /** Runs `fn` in one transaction (the caller's when there is one); `this.db` is its handle. */
-  @Transactional()
-  private async inTransaction<T>(fn: () => Promise<T>): Promise<T> {
-    return fn();
-  }
-
   /**
    * 校验连接器存在、端点按其 schema 合法、不含凭据样式的头 / query 参数 / URL 用户信息（端点对成员可见，
    * 凭据须走认证设置）；返回解析后的端点。
@@ -608,74 +602,104 @@ export class ConnectorsService {
       ({ rows, issues } = snapshot(slug, listed.specs, listed.resources));
     }
 
-    return this.inTransaction(async () => {
-      const t = this.db;
-      await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
-      if (input.template) {
-        await assertItemInstallable(
-          t,
-          orgId,
-          input.template.itemId,
-          input.template.approvedBy ?? input.template.itemId,
-        );
-      } else await assertCustomAllowed(t, "customConnectors");
-      if (await this.slugTaken(t, orgId, slug)) {
-        throw new ApiError("connector.slug_taken", "Connector slug is already taken");
-      }
-      await t
-        .insertInto("connectors")
-        .values({
-          id,
-          org_id: orgId,
-          slug,
-          name: input.name,
-          connector: input.connector,
-          endpoint: JSON.stringify(endpoint),
-          auth: JSON.stringify(auth),
-          created_by: actorAccountId,
-          catalog_item_id: input.template?.itemId ?? null,
-          catalog_version: input.template?.version ?? null,
-          // 授权码连接器安装时没有快照：模板的默认策略留到首个快照时应用
-          template_tool_policies: input.template?.defaultToolPolicies
-            ? JSON.stringify(input.template.defaultToolPolicies)
-            : null,
-          // 授权码连接器安装时不拍快照（A16）：留空，首个快照按安装处理
-          ...(auth.type !== "oauth_code" && { tools_synced_at: sql<Date>`now()` }),
-        })
-        .execute();
-      await this.insertTools(id, rows, input.template?.defaultToolPolicies);
-      if (secret && owner) await this.credentials.setStatic(orgId, id, auth, owner, secret);
-      if (oauth) {
-        await this.credentials.setOAuthClient(orgId, id, oauth.client);
-        if (oauth.tokens) {
-          await this.credentials.setOAuthTokens(orgId, id, { kind: "org" }, oauth.tokens);
-        }
-      }
-      await audit(t, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "connector.created",
-        target: id,
-        detail: {
-          slug,
-          connector: input.connector,
-          auth: { type: auth.type, ...(auth.type !== "none" && { ownership: auth.ownership }) },
-          tools: rows.length,
-          credentialProvided: secret !== undefined || oauth !== undefined,
-          ...(input.template && {
-            catalog: {
-              itemId: input.template.itemId,
-              version: input.template.version,
-              ...(input.template.templateId !== undefined && {
-                templateId: input.template.templateId,
-              }),
-            },
-          }),
-        },
-      });
-      return { connector: await this.detail(t, orgId, id, actorAccountId), issues };
+    return this.createIn(orgId, actorAccountId, input, actorTokenId, {
+      id,
+      slug,
+      endpoint,
+      owner,
+      secret,
+      oauth,
+      rows,
+      issues,
     });
+  }
+
+  /** The org-locked, re-checked insert of {@link create} (the outbound checks ran before). */
+  @Transactional()
+  private async createIn(
+    orgId: string,
+    actorAccountId: string,
+    input: CreateConnectorInput,
+    actorTokenId: string | undefined,
+    c: {
+      id: string;
+      slug: string;
+      endpoint: unknown;
+      owner: CredentialOwner | undefined;
+      secret: StaticSecret | undefined;
+      oauth: OAuthSetup | undefined;
+      rows: SnapshotRow[];
+      issues: ToolIssue[];
+    },
+  ): Promise<{ connector: ConnectorDetail; issues: ToolIssue[] }> {
+    const { id, slug, endpoint, owner, secret, oauth, rows, issues } = c;
+    const auth = input.auth;
+    const t = this.db;
+    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
+    if (input.template) {
+      await assertItemInstallable(
+        t,
+        orgId,
+        input.template.itemId,
+        input.template.approvedBy ?? input.template.itemId,
+      );
+    } else await assertCustomAllowed(t, "customConnectors");
+    if (await this.slugTaken(t, orgId, slug)) {
+      throw new ApiError("connector.slug_taken", "Connector slug is already taken");
+    }
+    await t
+      .insertInto("connectors")
+      .values({
+        id,
+        org_id: orgId,
+        slug,
+        name: input.name,
+        connector: input.connector,
+        endpoint: JSON.stringify(endpoint),
+        auth: JSON.stringify(auth),
+        created_by: actorAccountId,
+        catalog_item_id: input.template?.itemId ?? null,
+        catalog_version: input.template?.version ?? null,
+        // 授权码连接器安装时没有快照：模板的默认策略留到首个快照时应用
+        template_tool_policies: input.template?.defaultToolPolicies
+          ? JSON.stringify(input.template.defaultToolPolicies)
+          : null,
+        // 授权码连接器安装时不拍快照（A16）：留空，首个快照按安装处理
+        ...(auth.type !== "oauth_code" && { tools_synced_at: sql<Date>`now()` }),
+      })
+      .execute();
+    await this.insertTools(id, rows, input.template?.defaultToolPolicies);
+    if (secret && owner) await this.credentials.setStatic(orgId, id, auth, owner, secret);
+    if (oauth) {
+      await this.credentials.setOAuthClient(orgId, id, oauth.client);
+      if (oauth.tokens) {
+        await this.credentials.setOAuthTokens(orgId, id, { kind: "org" }, oauth.tokens);
+      }
+    }
+    await audit(t, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "connector.created",
+      target: id,
+      detail: {
+        slug,
+        connector: input.connector,
+        auth: { type: auth.type, ...(auth.type !== "none" && { ownership: auth.ownership }) },
+        tools: rows.length,
+        credentialProvided: secret !== undefined || oauth !== undefined,
+        ...(input.template && {
+          catalog: {
+            itemId: input.template.itemId,
+            version: input.template.version,
+            ...(input.template.templateId !== undefined && {
+              templateId: input.template.templateId,
+            }),
+          },
+        }),
+      },
+    });
+    return { connector: await this.detail(t, orgId, id, actorAccountId), issues };
   }
 
   /**
@@ -1059,6 +1083,7 @@ export class ConnectorsService {
   }
 
   /** 改名、启停连接器、工具启停与默认策略、批量把无注解工具改为 allow（`connectors.manage`）。 */
+  @Transactional()
   async update(
     orgId: string,
     connectorId: string,
@@ -1066,138 +1091,135 @@ export class ConnectorsService {
     patch: UpdateConnectorInput,
     actorTokenId?: string,
   ): Promise<ConnectorDetail> {
-    return this.inTransaction(async () => {
-      const t = this.db;
-      await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
-      const app = await this.row(t, orgId, connectorId, true);
-      const current = await t
-        .selectFrom("connector_tools")
-        .select([
-          "name",
-          "spec",
-          "status",
-          "default_policy",
-          "missing_since",
-          "pending_spec_hash",
-          "reviewed_at",
-        ])
-        .where("connector_id", "=", connectorId)
-        .forUpdate()
-        .execute();
-      const byName = new Map(current.map((c) => [c.name, c]));
-      const toolChanges = Object.entries(patch.tools ?? {});
-      const problems: { path: string; message: string }[] = [];
-      for (const [name, change] of toolChanges) {
-        const c = byName.get(name);
-        if (!c) {
-          problems.push({ path: `tools.${name}`, message: "No such tool in this connector" });
+    const t = this.db;
+    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
+    const app = await this.row(t, orgId, connectorId, true);
+    const current = await t
+      .selectFrom("connector_tools")
+      .select([
+        "name",
+        "spec",
+        "status",
+        "default_policy",
+        "missing_since",
+        "pending_spec_hash",
+        "reviewed_at",
+      ])
+      .where("connector_id", "=", connectorId)
+      .forUpdate()
+      .execute();
+    const byName = new Map(current.map((c) => [c.name, c]));
+    const toolChanges = Object.entries(patch.tools ?? {});
+    const problems: { path: string; message: string }[] = [];
+    for (const [name, change] of toolChanges) {
+      const c = byName.get(name);
+      if (!c) {
+        problems.push({ path: `tools.${name}`, message: "No such tool in this connector" });
+        continue;
+      }
+      if (change.status === "enabled") {
+        const path = `tools.${name}.status`;
+        // 待复核（新增或定义变了）的工具只能经复核接口启用：这里启用会绕过复核、或把旧定义暴露给模型
+        if (c.status === "pending_review" || c.pending_spec_hash !== null) {
+          problems.push({
+            path,
+            message: `Tool is pending review; approve it with POST /connectors/${connectorId}/tools/${name}/review`,
+          });
           continue;
         }
-        if (change.status === "enabled") {
-          const path = `tools.${name}.status`;
-          // 待复核（新增或定义变了）的工具只能经复核接口启用：这里启用会绕过复核、或把旧定义暴露给模型
-          if (c.status === "pending_review" || c.pending_spec_hash !== null) {
-            problems.push({
-              path,
-              message: `Tool is pending review; approve it with POST /connectors/${connectorId}/tools/${name}/review`,
-            });
-            continue;
-          }
-          if (c.missing_since !== null) {
-            problems.push({ path, message: "The connector no longer provides this tool" });
-            continue;
-          }
-          // 从未复核过的工具（如被拒绝的新工具）：启用等于跳过复核，只能经复核接口批准
-          if (c.reviewed_at === null) {
-            problems.push({
-              path,
-              message: `Tool has never been reviewed; approve it with POST /connectors/${connectorId}/tools/${name}/review`,
-            });
-            continue;
-          }
-          const issue = toolIssue(app.slug, c.spec as ToolSpec);
-          if (issue) problems.push({ path, message: issue });
+        if (c.missing_since !== null) {
+          problems.push({ path, message: "The connector no longer provides this tool" });
+          continue;
         }
+        // 从未复核过的工具（如被拒绝的新工具）：启用等于跳过复核，只能经复核接口批准
+        if (c.reviewed_at === null) {
+          problems.push({
+            path,
+            message: `Tool has never been reviewed; approve it with POST /connectors/${connectorId}/tools/${name}/review`,
+          });
+          continue;
+        }
+        const issue = toolIssue(app.slug, c.spec as ToolSpec);
+        if (issue) problems.push({ path, message: issue });
       }
-      if (problems.length > 0) {
-        throw new ApiError("validation_failed", "Request validation failed", problems);
-      }
+    }
+    if (problems.length > 0) {
+      throw new ApiError("validation_failed", "Request validation failed", problems);
+    }
 
-      if (patch.name !== undefined || patch.status !== undefined) {
-        await t
-          .updateTable("connectors")
-          .set({
-            ...(patch.name !== undefined && { name: patch.name }),
-            ...(patch.status !== undefined && { status: patch.status }),
-            updated_at: sql`now()`,
-          })
-          .where("id", "=", connectorId)
-          .execute();
-      }
-      const allowed: string[] = [];
-      if (patch.allowUnannotated) {
-        for (const c of current) {
-          const explicit = patch.tools?.[c.name]?.defaultPolicy !== undefined;
-          if (
-            !explicit &&
-            c.default_policy === "ask" &&
-            unannotated((c.spec as ToolSpec).annotations)
-          ) {
-            allowed.push(c.name);
-          }
-        }
-        if (allowed.length > 0) {
-          await t
-            .updateTable("connector_tools")
-            .set({ default_policy: "allow", policy_source: "admin" })
-            .where("connector_id", "=", connectorId)
-            .where("name", "in", allowed)
-            .execute();
+    if (patch.name !== undefined || patch.status !== undefined) {
+      await t
+        .updateTable("connectors")
+        .set({
+          ...(patch.name !== undefined && { name: patch.name }),
+          ...(patch.status !== undefined && { status: patch.status }),
+          updated_at: sql`now()`,
+        })
+        .where("id", "=", connectorId)
+        .execute();
+    }
+    const allowed: string[] = [];
+    if (patch.allowUnannotated) {
+      for (const c of current) {
+        const explicit = patch.tools?.[c.name]?.defaultPolicy !== undefined;
+        if (
+          !explicit &&
+          c.default_policy === "ask" &&
+          unannotated((c.spec as ToolSpec).annotations)
+        ) {
+          allowed.push(c.name);
         }
       }
-      for (const [name, change] of toolChanges) {
-        if (change.status === undefined && change.defaultPolicy === undefined) continue;
+      if (allowed.length > 0) {
         await t
           .updateTable("connector_tools")
-          .set({
-            ...(change.status !== undefined && { status: change.status }),
-            ...(change.defaultPolicy !== undefined && {
-              default_policy: change.defaultPolicy,
-              policy_source: "admin" as const,
-            }),
-          })
+          .set({ default_policy: "allow", policy_source: "admin" })
           .where("connector_id", "=", connectorId)
-          .where("name", "=", name)
+          .where("name", "in", allowed)
           .execute();
       }
-      await audit(t, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "connector.updated",
-        target: connectorId,
-        detail: {
-          ...(patch.name !== undefined && { name: { from: app.name, to: patch.name } }),
-          ...(patch.status !== undefined && { status: { from: app.status, to: patch.status } }),
-          ...(toolChanges.length > 0 && { tools: Object.fromEntries(toolChanges) }),
-          ...(allowed.length > 0 && { allowedUnannotated: allowed }),
-        },
-      });
-      return this.detail(t, orgId, connectorId, actorAccountId);
+    }
+    for (const [name, change] of toolChanges) {
+      if (change.status === undefined && change.defaultPolicy === undefined) continue;
+      await t
+        .updateTable("connector_tools")
+        .set({
+          ...(change.status !== undefined && { status: change.status }),
+          ...(change.defaultPolicy !== undefined && {
+            default_policy: change.defaultPolicy,
+            policy_source: "admin" as const,
+          }),
+        })
+        .where("connector_id", "=", connectorId)
+        .where("name", "=", name)
+        .execute();
+    }
+    await audit(t, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "connector.updated",
+      target: connectorId,
+      detail: {
+        ...(patch.name !== undefined && { name: { from: app.name, to: patch.name } }),
+        ...(patch.status !== undefined && { status: { from: app.status, to: patch.status } }),
+        ...(toolChanges.length > 0 && { tools: Object.fromEntries(toolChanges) }),
+        ...(allowed.length > 0 && { allowedUnannotated: allowed }),
+      },
     });
+    return this.detail(t, orgId, connectorId, actorAccountId);
   }
 
   /** 软删除，并删除该连接器的全部凭据（`connectors.manage`）。 */
+  @Transactional()
   async remove(
     orgId: string,
     connectorId: string,
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<void> {
-    await this.inTransaction(async () => {
-      await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
-      await this.removeIn(orgId, connectorId, actorAccountId, actorTokenId);
-    });
+    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
+    await this.removeIn(orgId, connectorId, actorAccountId, actorTokenId);
   }
 
   /**
@@ -1261,42 +1283,54 @@ export class ConnectorsService {
     );
     const { rows, issues } = snapshot(app.slug, specs, resources);
 
-    return this.inTransaction(async () => {
-      const t = this.db;
-      await this.orgLock.lockAndAuthorize(
-        orgId,
-        actorAccountId,
-        opts.trigger === "first_connect" ? "connectors.use" : "connectors.manage",
-      );
-      const locked = await this.row(t, orgId, connectorId, true);
-      const changes = await this.drift.apply(locked, rows);
-      // 首个快照（授权码连接器首个成员连接后）：按目录模板的 defaultToolPolicies 设默认策略（policy_source 'template'）
-      const templatePolicies = locked.template_tool_policies;
-      if (locked.tools_synced_at === null && templatePolicies) {
-        for (const [name, policy] of Object.entries(templatePolicies)) {
-          await t
-            .updateTable("connector_tools")
-            .set({ default_policy: policy, policy_source: "template" })
-            .where("connector_id", "=", connectorId)
-            .where("name", "=", name)
-            .where("policy_source", "=", "derived")
-            .execute();
-        }
+    return this.refreshIn(orgId, connectorId, actorAccountId, actorTokenId, opts, rows, issues);
+  }
+
+  /** The org-locked compare-and-write of {@link refresh} (the tool list was fetched before). */
+  @Transactional()
+  private async refreshIn(
+    orgId: string,
+    connectorId: string,
+    actorAccountId: string,
+    actorTokenId: string | undefined,
+    opts: { trigger?: "first_connect" },
+    rows: SnapshotRow[],
+    issues: ToolIssue[],
+  ): Promise<{ connector: ConnectorDetail; issues: ToolIssue[]; changes: DriftChanges }> {
+    const t = this.db;
+    await this.orgLock.lockAndAuthorize(
+      orgId,
+      actorAccountId,
+      opts.trigger === "first_connect" ? "connectors.use" : "connectors.manage",
+    );
+    const locked = await this.row(t, orgId, connectorId, true);
+    const changes = await this.drift.apply(locked, rows);
+    // 首个快照（授权码连接器首个成员连接后）：按目录模板的 defaultToolPolicies 设默认策略（policy_source 'template'）
+    const templatePolicies = locked.template_tool_policies;
+    if (locked.tools_synced_at === null && templatePolicies) {
+      for (const [name, policy] of Object.entries(templatePolicies)) {
+        await t
+          .updateTable("connector_tools")
+          .set({ default_policy: policy, policy_source: "template" })
+          .where("connector_id", "=", connectorId)
+          .where("name", "=", name)
+          .where("policy_source", "=", "derived")
+          .execute();
       }
-      await audit(t, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "connector.tools_refreshed",
-        target: connectorId,
-        detail: { ...changes, ...(opts.trigger && { trigger: opts.trigger }) },
-      });
-      return {
-        connector: await this.detail(t, orgId, connectorId, actorAccountId),
-        issues,
-        changes,
-      };
+    }
+    await audit(t, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "connector.tools_refreshed",
+      target: connectorId,
+      detail: { ...changes, ...(opts.trigger && { trigger: opts.trigger }) },
     });
+    return {
+      connector: await this.detail(t, orgId, connectorId, actorAccountId),
+      issues,
+      changes,
+    };
   }
 
   /**
@@ -1306,6 +1340,7 @@ export class ConnectorsService {
    * 工具不存在 → 404 `connector.tool_not_found`；不可复核（已复核且无待复核定义，或已消失）→ 409 `connector.tool_not_pending`；新定义不合规（如 key 不合法）不能通过 → `validation_failed`。
    * 采用新定义即换了指纹：旧的「以后都允许」/「本会话都允许」授权按指纹比对自然失效（D8）。审计 `connector.tool_reviewed`。
    */
+  @Transactional()
   async reviewTool(
     orgId: string,
     connectorId: string,
@@ -1314,81 +1349,79 @@ export class ConnectorsService {
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<ConnectorDetail> {
-    return this.inTransaction(async () => {
-      const t = this.db;
-      await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
-      const app = await this.row(t, orgId, connectorId, true);
-      const tool = await t
-        .selectFrom("connector_tools")
-        .select([
-          "status",
-          "source",
-          "spec",
-          "policy_source",
-          "pending_spec",
-          "pending_spec_hash",
-          "pending_source",
-          "reviewed_at",
-          "missing_since",
-        ])
-        .where("connector_id", "=", connectorId)
-        .where("name", "=", name)
-        .forUpdate()
-        .executeTakeFirst();
-      if (!tool) throw new ApiError("connector.tool_not_found", "Tool not found in this connector");
-      // 可复核：待复核、有待复核的新定义，或从未复核过（如被拒绝的新工具，仍可再批准）；已消失的不可复核
-      const reviewable =
-        tool.status === "pending_review" ||
-        tool.pending_spec_hash !== null ||
-        tool.reviewed_at === null;
-      if (!reviewable || tool.missing_since !== null) {
-        throw new ApiError("connector.tool_not_pending", "Tool is not pending review");
-      }
-      const next = (tool.pending_spec ?? tool.spec) as ToolSpec;
-      const nextSource = tool.pending_source ?? tool.source;
-      if (action === "approve") {
-        const issue = toolIssue(app.slug, next);
-        if (issue) throw fail("action", issue);
-      }
-      const rederive = tool.policy_source === "derived" || nextSource !== tool.source;
-      await t
-        .updateTable("connector_tools")
-        .set({
-          ...(action === "approve"
-            ? {
-                status: "enabled" as const,
-                ...(tool.pending_spec_hash !== null && {
-                  spec: JSON.stringify(next),
-                  spec_hash: tool.pending_spec_hash,
-                  source: nextSource,
-                }),
-                ...(rederive && {
-                  default_policy: policyFromAnnotations(next.annotations),
-                  policy_source: "derived" as const,
-                }),
-              }
-            : { status: "disabled" as const }),
-          pending_spec: null,
-          pending_spec_hash: null,
-          pending_source: null,
-          // 拒绝从未复核过的工具不算「复核通过过」：reviewed_at 保持为空（之后不能经 PATCH 启用）
-          ...((action === "approve" || tool.reviewed_at !== null) && {
-            reviewed_at: sql<Date>`now()`,
-          }),
-        })
-        .where("connector_id", "=", connectorId)
-        .where("name", "=", name)
-        .execute();
-      await audit(t, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "connector.tool_reviewed",
-        target: connectorId,
-        detail: { tool: name, action },
-      });
-      return this.detail(t, orgId, connectorId, actorAccountId);
+    const t = this.db;
+    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
+    const app = await this.row(t, orgId, connectorId, true);
+    const tool = await t
+      .selectFrom("connector_tools")
+      .select([
+        "status",
+        "source",
+        "spec",
+        "policy_source",
+        "pending_spec",
+        "pending_spec_hash",
+        "pending_source",
+        "reviewed_at",
+        "missing_since",
+      ])
+      .where("connector_id", "=", connectorId)
+      .where("name", "=", name)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!tool) throw new ApiError("connector.tool_not_found", "Tool not found in this connector");
+    // 可复核：待复核、有待复核的新定义，或从未复核过（如被拒绝的新工具，仍可再批准）；已消失的不可复核
+    const reviewable =
+      tool.status === "pending_review" ||
+      tool.pending_spec_hash !== null ||
+      tool.reviewed_at === null;
+    if (!reviewable || tool.missing_since !== null) {
+      throw new ApiError("connector.tool_not_pending", "Tool is not pending review");
+    }
+    const next = (tool.pending_spec ?? tool.spec) as ToolSpec;
+    const nextSource = tool.pending_source ?? tool.source;
+    if (action === "approve") {
+      const issue = toolIssue(app.slug, next);
+      if (issue) throw fail("action", issue);
+    }
+    const rederive = tool.policy_source === "derived" || nextSource !== tool.source;
+    await t
+      .updateTable("connector_tools")
+      .set({
+        ...(action === "approve"
+          ? {
+              status: "enabled" as const,
+              ...(tool.pending_spec_hash !== null && {
+                spec: JSON.stringify(next),
+                spec_hash: tool.pending_spec_hash,
+                source: nextSource,
+              }),
+              ...(rederive && {
+                default_policy: policyFromAnnotations(next.annotations),
+                policy_source: "derived" as const,
+              }),
+            }
+          : { status: "disabled" as const }),
+        pending_spec: null,
+        pending_spec_hash: null,
+        pending_source: null,
+        // 拒绝从未复核过的工具不算「复核通过过」：reviewed_at 保持为空（之后不能经 PATCH 启用）
+        ...((action === "approve" || tool.reviewed_at !== null) && {
+          reviewed_at: sql<Date>`now()`,
+        }),
+      })
+      .where("connector_id", "=", connectorId)
+      .where("name", "=", name)
+      .execute();
+    await audit(t, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "connector.tool_reviewed",
+      target: connectorId,
+      detail: { tool: name, action },
     });
+    return this.detail(t, orgId, connectorId, actorAccountId);
   }
 
   /**
@@ -1411,27 +1444,38 @@ export class ConnectorsService {
         return;
       }
     }
-    await this.inTransaction(async () => {
-      const t = this.db;
-      await this.orgLock.lockAndAuthorize(
-        orgId,
-        actorAccountId,
-        ownership === "org" ? "connectors.manage" : "connectors.use",
-      );
-      const app = await this.row(t, orgId, connectorId);
-      const auth = app.auth as unknown as ConnectorAuth;
-      const owner: CredentialOwner =
-        ownership === "org" ? { kind: "org" } : { kind: "user", accountId: actorAccountId };
-      this.credentials.validate(auth, owner, value);
-      await this.credentials.setStatic(orgId, connectorId, auth, owner, value);
-      await audit(t, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "connector.credential.set",
-        target: connectorId,
-        detail: { type: auth.type, ownership },
-      });
+    await this.setCredentialIn(orgId, connectorId, actorAccountId, ownership, value, actorTokenId);
+  }
+
+  /** The org-locked static credential write of {@link setCredential}. */
+  @Transactional()
+  private async setCredentialIn(
+    orgId: string,
+    connectorId: string,
+    actorAccountId: string,
+    ownership: "org" | "personal",
+    value: unknown,
+    actorTokenId: string | undefined,
+  ): Promise<void> {
+    const t = this.db;
+    await this.orgLock.lockAndAuthorize(
+      orgId,
+      actorAccountId,
+      ownership === "org" ? "connectors.manage" : "connectors.use",
+    );
+    const app = await this.row(t, orgId, connectorId);
+    const auth = app.auth as unknown as ConnectorAuth;
+    const owner: CredentialOwner =
+      ownership === "org" ? { kind: "org" } : { kind: "user", accountId: actorAccountId };
+    this.credentials.validate(auth, owner, value);
+    await this.credentials.setStatic(orgId, connectorId, auth, owner, value);
+    await audit(t, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "connector.credential.set",
+      target: connectorId,
+      detail: { type: auth.type, ownership },
     });
   }
 
@@ -1485,44 +1529,62 @@ export class ConnectorsService {
         throw connectFailed(e);
       }
     }
-    await this.inTransaction(async () => {
-      const t = this.db;
-      await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
-      await this.row(t, orgId, connectorId, true);
-      await this.credentials.setOAuthClient(orgId, connectorId, client);
-      if (tokens)
-        await this.credentials.setOAuthTokens(orgId, connectorId, { kind: "org" }, tokens);
-      await audit(t, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "connector.credential.set",
-        target: connectorId,
-        detail: { type: auth.type, ownership: "org" },
-      });
+    await this.storeOAuthClient(
+      orgId,
+      connectorId,
+      actorAccountId,
+      auth,
+      client,
+      tokens,
+      actorTokenId,
+    );
+  }
+
+  /** The org-locked client (and token) write of {@link rotateOAuthClient}. */
+  @Transactional()
+  private async storeOAuthClient(
+    orgId: string,
+    connectorId: string,
+    actorAccountId: string,
+    auth: OAuthAuth,
+    client: OAuthClientRecord,
+    tokens: OAuthTokenRecord | undefined,
+    actorTokenId: string | undefined,
+  ): Promise<void> {
+    const t = this.db;
+    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
+    await this.row(t, orgId, connectorId, true);
+    await this.credentials.setOAuthClient(orgId, connectorId, client);
+    if (tokens) await this.credentials.setOAuthTokens(orgId, connectorId, { kind: "org" }, tokens);
+    await audit(t, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "connector.credential.set",
+      target: connectorId,
+      detail: { type: auth.type, ownership: "org" },
     });
   }
 
   /** 删除发起人自己的个人凭据（`connectors.use`）；本来就没有也成功。 */
+  @Transactional()
   async clearMyCredential(
     orgId: string,
     connectorId: string,
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<void> {
-    await this.inTransaction(async () => {
-      const t = this.db;
-      await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.use");
-      const app = await this.row(t, orgId, connectorId);
-      await this.credentials.clear(orgId, connectorId, { kind: "user", accountId: actorAccountId });
-      await audit(t, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "connector.credential.cleared",
-        target: connectorId,
-        detail: { type: (app.auth as unknown as ConnectorAuth).type, ownership: "personal" },
-      });
+    const t = this.db;
+    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.use");
+    const app = await this.row(t, orgId, connectorId);
+    await this.credentials.clear(orgId, connectorId, { kind: "user", accountId: actorAccountId });
+    await audit(t, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "connector.credential.cleared",
+      target: connectorId,
+      detail: { type: (app.auth as unknown as ConnectorAuth).type, ownership: "personal" },
     });
   }
 }

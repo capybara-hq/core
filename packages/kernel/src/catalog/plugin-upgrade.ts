@@ -419,23 +419,7 @@ export class PluginUpgrader {
       unjournaled = undefined;
     };
     // Records a component in the ledger and the journal, in the transaction of the context
-    const record = async (c: LedgerRecord) => {
-      const inserted = await this.db
-        .insertInto("plugin_install_components")
-        .values({
-          install_id: installId,
-          kind: c.kind,
-          ref: c.ref,
-          created: c.created,
-          skill_version: c.skillVersion,
-          template_id: c.templateId ?? null,
-        })
-        .onConflict((oc) => oc.columns(["install_id", "kind", "ref"]).doNothing())
-        .returning("ref")
-        .executeTakeFirst();
-      if (c.created) await journal({ op: "created", kind: c.kind, ref: c.ref });
-      else if (inserted) await journal({ op: "recorded", kind: c.kind, ref: c.ref });
-    };
+    const record = (c: LedgerRecord) => this.recordIn(installId, journal, c);
 
     let step: UpgradeStepName = "dependencies";
     const disabled: string[] = [];
@@ -530,7 +514,7 @@ export class PluginUpgrader {
       step = "connectors";
       for (const [templateId, ci] of diff.creates) {
         const r = await this.connectors.create(orgId, actor, ci, opts.actorTokenId);
-        await this.recordStep(record, {
+        await this.recordStep(installId, journal, {
           kind: "connector",
           ref: r.connector.id,
           created: true,
@@ -754,10 +738,34 @@ export class PluginUpgrader {
   /** One ledger record (and its journal row) in a transaction of its own. */
   @Transactional({ propagation: "requires_new" })
   private async recordStep(
-    record: (c: LedgerRecord) => Promise<void>,
+    installId: string,
+    journal: (s: UpgradeStep) => Promise<void>,
     c: LedgerRecord,
   ): Promise<void> {
-    await record(c);
+    await this.recordIn(installId, journal, c);
+  }
+
+  /** A component's ledger row and its journal step, in the transaction of the context. */
+  private async recordIn(
+    installId: string,
+    journal: (s: UpgradeStep) => Promise<void>,
+    c: LedgerRecord,
+  ): Promise<void> {
+    const inserted = await this.db
+      .insertInto("plugin_install_components")
+      .values({
+        install_id: installId,
+        kind: c.kind,
+        ref: c.ref,
+        created: c.created,
+        skill_version: c.skillVersion,
+        template_id: c.templateId ?? null,
+      })
+      .onConflict((oc) => oc.columns(["install_id", "kind", "ref"]).doNothing())
+      .returning("ref")
+      .executeTakeFirst();
+    if (c.created) await journal({ op: "created", kind: c.kind, ref: c.ref });
+    else if (inserted) await journal({ op: "recorded", kind: c.kind, ref: c.ref });
   }
 
   /**

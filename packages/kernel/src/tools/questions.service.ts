@@ -232,7 +232,9 @@ export class QuestionsService {
     return record;
   }
 
-  @Transactional()
+  // its own transaction (as the legacy one was): `question.answered` is emitted only after the
+  // answer committed, even when a caller has a transaction open
+  @Transactional({ propagation: "requires_new" })
   private async answerIn(
     questionId: string,
     accountId: string,

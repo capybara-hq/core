@@ -325,7 +325,9 @@ export class ApprovalsService {
     return record;
   }
 
-  @Transactional()
+  // its own transaction (as the legacy one was): `approval.decided` is emitted only after the
+  // decision committed, even when a caller has a transaction open
+  @Transactional({ propagation: "requires_new" })
   private async decideIn(
     orgId: string,
     id: string,

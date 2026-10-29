@@ -41,6 +41,9 @@ export function LockedCron(expression: string, options: LockedCronOptions) {
     const lockKey = options.lockKey ?? `cron:${options.name}`;
     // The scheduler's arguments (the cron library passes its onComplete) are not the job's
     const wrapped = async function (this: LockedJobHost) {
+      // Not caught on purpose: a class without `lockService` / `log` is a programming error with
+      // no logger to report through; the call rejects (Nest's scheduler wrapper logs it, and the
+      // schedule tests rely on the rejection). Everything after it is caught below.
       assertLockedJobHost(this, "cron");
       // runLockedTick logs instead of throwing; this catch keeps the scheduler free of rejections
       await runLockedTick(this, {

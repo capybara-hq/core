@@ -1044,6 +1044,9 @@ function scanFile(f: FileInfo, known: Known, hits: Hit[]): void {
  *   (`this.m()`) or of an injected one (`this.field.m()`, the field's class read from its
  *   constructor parameter type); (C) it takes a lock directly (`this.lockService.acquire / run`).
  *   Like octok v0, calls are followed one level only.
+ * - kc-transaction (callback wrapper): the method's body is one call of a function parameter
+ *   (`return fn()` / `await fn()`): `db.transaction().execute(fn)` under another name; write a
+ *   named `@Transactional` method with the work in its body instead;
  * - kc-side-effect-in-tx: the method enqueues (`<…queue…>.add / addBulk`), publishes on the bus
  *   (`<…bus…>.publish`) or calls Redis (`<…redis…>.*`) outside an `afterCommit(() => …)`
  *   callback: a rollback cannot take those back, and a consumer may run before COMMIT.
@@ -1076,6 +1079,28 @@ function checkTransactionalMethods(f: FileInfo, known: Known, hits: Hit[]): void
           message,
           within: [className, methodName],
         });
+      // A callback transaction: the body is one call of a function parameter
+      const params = new Set(
+        (((m.value as Node).params as Node[]) ?? [])
+          .map((p) => nameOf(paramBinding(p)))
+          .filter((n): n is string => n !== undefined),
+      );
+      const stmts = (((m.value as Node).body as Node | undefined)?.body as Node[]) ?? [];
+      if (stmts.length === 1) {
+        const only = stmts[0] as Node;
+        let call = (only.type === "ReturnStatement" ? only.argument : only.expression) as
+          | Node
+          | undefined;
+        if (call?.type === "AwaitExpression") call = call.argument as Node;
+        const callee = call?.type === "CallExpression" ? nameOf(call.callee) : undefined;
+        if (call && callee && (call.callee as Node).type === "Identifier" && params.has(callee)) {
+          push(
+            "kc-transaction",
+            call,
+            `@Transactional ${className}.${methodName} only calls its parameter ${callee}: a callback transaction (db.transaction().execute(fn) under another name); write a named @Transactional method with the work in its body`,
+          );
+        }
+      }
       const lockIdx = decs.findIndex((d) => LOCK_DECORATORS.has(decoratorName(d) ?? ""));
       if (lockIdx > txIdx) {
         push(
