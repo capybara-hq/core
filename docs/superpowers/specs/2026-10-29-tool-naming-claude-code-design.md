@@ -31,6 +31,12 @@
    a key-argument preview for connector and extension tools.
 6. **Cost is not a constraint**: nothing is released, so old names are replaced, not aliased
    **(decided)**. What must still work is data written by release candidates (§8, §9).
+7. **`Skill` takes `args`, as in Claude Code** **(decided)** (§4.4): the skill body is rendered
+   with the arguments by phase D's renderer, the same way a person's `/name args` is.
+8. **`Write` and `Edit` require the file to have been read first, as in Claude Code**
+   **(decided)** (§4.5), and refuse a file changed since it was read.
+9. **The brackets show the tool's local name; a declared `title` is the tooltip** **(decided)**
+   (§7.1).
 
 ## 0. Summary
 
@@ -91,8 +97,10 @@ Goals:
 
 Non-goals:
 
-- Claude Code's behavioural rules beyond the parameters, such as "Write and Edit refuse a file
-  not read first". Possible later; listed in Open questions.
+- Claude Code's behavioural rules beyond the parameters, except the read-before-write rule
+  (§4.5), which is in scope.
+- A model's `Skill` call on a `context: fork` skill: it loads inline as today; only a person's
+  invocation forks (phase D).
 - `run_in_background` for Bash, Read's `pages`, Grep's `type` and `multiline`: not accepted, and
   the descriptions do not mention them (§4.2).
 - ripgrep in sandboxes. Grep keeps POSIX extended regular expressions and says so in its
@@ -184,7 +192,7 @@ validation error the model can read.
 | Glob | `pattern`, `path` | unchanged | — |
 | Grep | `pattern`, `path`, `glob`, `ignoreCase`; prints matching lines (≤ 500) | `pattern`, `path`, `glob`, `-i`, `output_mode` (default `files_with_matches`), `-n` (default true in `content` mode), `-A`, `-B`, `-C`, `head_limit` (default 250, 0 = no limit up to the 500-line cap), `offset` | `type`, `multiline` |
 | Deliver | `path`, `name` | `file_path`, `name` | n/a |
-| Skill | `name` | `skill` | `args` (Open question 1) |
+| Skill | `name` | `skill`, `args` (§4.4) | — |
 | SkillWrite | `name`, `description`, `files` | unchanged | n/a |
 | AskUserQuestion | already Claude Code's shape | unchanged | `preview` |
 | ReadToolOutput | `id`, `offset`, `limit`, `charOffset` | unchanged | n/a |
@@ -210,6 +218,55 @@ The unknown-tool error gains one sentence when the called key is a pre-rename ke
 `Tool "sandbox_bash" no longer exists; it is now "Bash" (parameters: …).` It names the new
 parameters where they changed **(designer's call)**. This is the only place the legacy map is
 model-visible, and it is written into the log as the tool result, like any error.
+
+### 4.4 `Skill` with `args` **(decided, 2026-10-29; details designer's call)**
+
+- `args` is an optional string, at most 10 000 characters (phase D's argument limit).
+- The returned instructions are the SKILL.md body rendered by the SDK's `renderSkillInvocation`,
+  the function a person's `/name args` uses: `$ARGUMENTS`, `$ARGUMENTS[N]`, `$N`, `$name`
+  substituted, nothing executed, and the arguments appended as `ARGUMENTS: …` when no placeholder
+  received them; the rendered result is limited to 200 000 characters, as in phase D. Without
+  `args`, the body is rendered with an empty argument string, as Claude Code does, so a
+  placeholder never reaches the model literally.
+- The rest of the result is unchanged: the file list, and the files copied read-only to
+  `/skills/<name>/`.
+- Replay: the rendered text is the tool result, already in the log; no new DriftReason.
+- `skill_load` loaded the version pinned for the conversation (or the recorded version after a
+  person's invocation); `Skill` does the same.
+
+### 4.5 Read before `Write` and `Edit` **(decided, 2026-10-29; details designer's call)**
+
+Rule, as in Claude Code:
+
+- `Edit` on a file, and `Write` on a file that already exists, fail unless this conversation has
+  read the file with `Read` (any range) or written it with `Write` / `Edit`, and the file has not
+  changed since.
+- Errors (model-visible, English):
+  - `File has not been read yet. Read it first before writing to it.`
+  - `File has been modified since it was read, either by the user or by another command. Read it
+    again before writing to it.`
+- `Write` to a path that does not exist needs no read.
+
+How it is decided, from the log only (so any replica can decide it, and nothing lives in process
+memory):
+
+- `Read`, `Write` and `Edit` results record the file's state in their display-only
+  `tool_result.view` (never sent to the model): `{ path, size, sha256 }` of the content the tool
+  read or wrote. For a file larger than `Read`'s byte limit, the digest is of the bytes read and
+  `size` is the file's full size.
+- Before writing, `Write` and `Edit` find the latest `Read` / `Write` / `Edit` result for the same
+  normalized path in this conversation's log and compare its `size` and `sha256` with the content
+  they read anyway (`Edit` reads the whole file today; `Write` reads the previous content for its
+  diff). No match recorded: "not read yet". Mismatch: "modified since".
+- Changes made by `Bash`, the person, another conversation's agent or a sub-agent sharing the
+  sandbox are therefore caught by the digest.
+- A sub-agent's child conversation has its own log, so a child must read a file itself before
+  writing it, as a Claude Code sub-agent must.
+- Compaction does not change the log, so the rule survives it. A rebuilt sandbox changes the
+  files, so the digest catches that too.
+- Results recorded before this change carry no digest: a file read only before the upgrade counts
+  as not read (one extra `Read`) **(designer's call)**.
+- Full-run replay never executes tools, so the rule does not apply there.
 
 ## 5. Connector and extension tools
 
@@ -261,7 +318,7 @@ connector slug is not known at import) **(designer's call)**.
 
 - The tool name of a builtin is shown as is, untranslated, as a proper noun **(designer's call)**.
 - `[<tool>]` shows the local tool name, not the declared `title`; the `title` becomes the row's
-  tooltip **(designer's call; Open question 3)**.
+  tooltip **(decided, 2026-10-29)**.
 - Edit keeps its diff and `+added −removed` summary, Read its line range, Bash its exit code and
   timed-out mark (`tool_result.view`): these are what Claude Code shows too, under `OUT`.
 - `Agent` calls stay sub-agent rows (`timeline.ts`).
@@ -405,6 +462,8 @@ Saving a definition writes new keys only; validation rejects an old key on write
    every key split and build moved onto them (kernel, SDK export).
 2. Builtins: renames, parameter changes (§4.2), Grep modes, descriptions and errors; tool design
    check.
+3a. `Skill` `args` (§4.4) and the read-before-write rule with file digests in `tool_result.view`
+   (§4.5).
 3. Legacy map, unknown-tool hint, in-flight resolution (§8.1, §4.3, §9).
 4. Migration of mutable state and read normalizers (§8.2, §8.3).
 5. Claude Code maps (§6).
@@ -419,6 +478,11 @@ Saving a definition writes new keys only; validation rejects an old key on write
 
 - A fresh deployment: every builtin is called by its new name with Claude Code's parameters
   (model-fake scripts), including each Grep `output_mode`.
+- `Skill` with and without `args` returns the rendered body; the same skill invoked by a person
+  with the same arguments renders the same text.
+- `Edit` without a prior `Read` fails with "not read yet"; after `Read`, a `Bash` change to the
+  file makes `Edit` fail with "modified since"; after a second `Read` it succeeds; `Write` to a new
+  path succeeds without a read. The same on two replicas (the dual-replica harness).
 - A release-candidate database (a dump taken from the current rc with conversations, grants,
   agent versions using `toolPolicies`, an inline sub-agent template, an eval set): after upgrade,
   grants apply, agents run, an old conversation continues, a call waiting for approval across the
@@ -445,12 +509,4 @@ Saving a definition writes new keys only; validation rejects an old key on write
 
 ## Open questions for the maintainer
 
-1. **Skill `args`.** Claude Code's Skill takes `args`. Phase D's renderer
-   (`renderSkillInvocation`) could render `$ARGUMENTS` for a model invocation too. Accept `args`
-   now (the model then gets a rendered skill, like a person's `/name args`), or leave it out of
-   this rename? Recommendation: leave it out; a separate small change.
-2. **Read-before-write.** Claude Code's Write and Edit refuse a file not read in the
-   conversation. Adopt it (derivable from the log, so multi-replica safe), or keep it a non-goal?
-   Recommendation: non-goal here, revisit with the builder agent of the co-build spec.
-3. **Brackets show the local name or the declared `title`?** Claude Code shows the name.
-   Recommendation: the name, with `title` as the tooltip (§7.1).
+None open. The three questions of the first draft were answered on 2026-10-29 (decisions 7–9).
