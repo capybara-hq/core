@@ -5,6 +5,8 @@ import { configuredProcessor } from "../infra/queue/configured-processor.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { removeRetiredSchedulers } from "../infra/queue/retired-schedulers.js";
 import { runJob } from "../infra/queue/run-job.js";
+import { KernelScheduleModule } from "../infra/schedule/schedule.module.js";
+import { ScheduledRuns } from "../infra/schedule/scheduled-runs.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { DIRECTORY_SYNC_JOB, DirectorySync, type SyncJobData } from "../orgs/directory-sync.js";
@@ -28,8 +30,12 @@ export const MAINTENANCE_CONCURRENCY = 5;
 /**
  * The one consumer of `cap-kernel-maintenance` (ruling R11): dispatches each one-off job by name
  * to its domain (`wait-timeout` → {@link Waits}, `sandbox-destroy-for` → {@link SandboxService},
- * `drift-connector` → {@link ToolDrift}, `directory-sync` → {@link DirectorySync}); an unknown
- * name is warned and completes. The producers are the domains' own (same names, ids and options).
+ * `drift-connector` → {@link ToolDrift}, `directory-sync` → {@link DirectorySync}). The name of a
+ * periodic job (a `@LockedCron` / `@LockedInterval` job, such as `sandbox-suspend-idle`) runs that
+ * job's body once ({@link ScheduledRuns.runNow}), as the maintenance handlers did when those jobs
+ * were schedulers on this queue: an operator's or a test's one-off run, not a second schedule. Any
+ * other name is warned and completes. The producers are the domains' own (same names, ids and
+ * options).
  */
 @Injectable()
 export class MaintenanceProcessor extends WorkerHost<Worker> {
@@ -38,6 +44,7 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "destroyFor">,
     @Inject(ToolDrift) private readonly drift: Pick<ToolDrift, "check">,
     @Inject(DirectorySync) private readonly directory: Pick<DirectorySync, "runSyncJob">,
+    @Inject(ScheduledRuns) private readonly scheduled: Pick<ScheduledRuns, "runNow">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "error" | "warn">,
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME))
     private readonly queue: Pick<Queue, "removeJobScheduler">,
@@ -80,6 +87,7 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
         await this.directory.runSyncJob(job.data as SyncJobData);
         return;
       default:
+        if (await this.scheduled.runNow(job.name)) return;
         this.log.warn("unknown maintenance job", { name: job.name, jobId: job.id });
     }
   }
@@ -103,6 +111,8 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
  */
 @Module({
   imports: [
+    // the periodic jobs' bodies (a periodic job's name enqueued here runs it once)
+    KernelScheduleModule,
     RuntimeModule,
     SandboxModule,
     ToolsModule,

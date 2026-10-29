@@ -12,10 +12,13 @@ import { LockService } from "../../src/infra/lock/lock.service.js";
 import { removeRetiredSchedulers } from "../../src/infra/queue/retired-schedulers.js";
 import { KernelModule } from "../../src/kernel.module.js";
 import { createLogger } from "../../src/log.js";
+import { logContext } from "../../src/log-context.js";
 import { WorkerModule } from "../../src/roles/worker.module.js";
 import { MaintenanceModule, MaintenanceProcessor } from "../../src/runtime/maintenance.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
+import { SANDBOX_SUSPEND_JOB } from "../../src/sandbox/jobs.js";
+import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import {
   DRIFT_SCHEDULER_ID,
   OUTPUT_CLEANUP_JOB,
@@ -24,6 +27,7 @@ import {
 import { ToolJobs } from "../../src/tools/jobs.js";
 import { deleteExpiredOutputs } from "../../src/tools/outputs.js";
 import { truncateTables } from "../helpers/db.js";
+import { runConfig, startKernel, waitFor } from "../helpers/runs.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 import { configFrom, kernelDbFor } from "../helpers/tools.js";
 
@@ -152,7 +156,7 @@ describe("output-cleanup", () => {
 });
 
 describe("MaintenanceProcessor (the one consumer, nest kernel 3.9)", () => {
-  it("dispatches each one-off job by name to its domain; an unknown name is only warned", async () => {
+  it("dispatches each one-off job by name to its domain, a periodic job's name to its body; an unknown name is only warned", async () => {
     const calls: unknown[][] = [];
     const warned: unknown[][] = [];
     const processor = new MaintenanceProcessor(
@@ -165,6 +169,13 @@ describe("MaintenanceProcessor (the one consumer, nest kernel 3.9)", () => {
         },
       },
       { runSyncJob: async (d) => void calls.push(["directory", d]) },
+      {
+        runNow: async (name) => {
+          if (name !== "sandbox-suspend-idle") return false;
+          calls.push(["periodic", name]);
+          return true;
+        },
+      },
       { error: () => {}, warn: (...a: unknown[]) => void warned.push(a) },
       { removeJobScheduler: async () => true },
     );
@@ -175,15 +186,45 @@ describe("MaintenanceProcessor (the one consumer, nest kernel 3.9)", () => {
       job("drift-connector", { orgId: "o", connectorId: "k", trigger: "schedule" }),
     );
     await processor.process(job("directory-sync", { orgId: "o" }));
+    await processor.process(job("sandbox-suspend-idle", {}));
     await processor.process(job("no-such-job", {}));
     expect(calls).toEqual([
       ["wait", { waitId: "w" }, "tok"],
       ["sandbox", "c1"],
       ["drift", "o", "k", "schedule"],
       ["directory", { orgId: "o" }],
+      ["periodic", "sandbox-suspend-idle"],
     ]);
     expect(warned).toEqual([
       ["unknown maintenance job", { name: "no-such-job", jobId: "no-such-job-1" }],
     ]);
   });
+});
+
+describe("a periodic job's name on the maintenance queue", () => {
+  it("runs that job's body once (sandbox-suspend-idle runs the suspend sweep)", async () => {
+    const k = await startKernel(
+      runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] }),
+    );
+    try {
+      // every suspend sweep, with the maintenance job it ran in (the cron's own ticks have none)
+      const sweeps: (string | undefined)[] = [];
+      const sandbox = k.app.get(SandboxService) as unknown as {
+        suspendIdle: (now: Date) => Promise<number>;
+      };
+      sandbox.suspendIdle = async () => {
+        sweeps.push(logContext()?.jobId);
+        return 0;
+      };
+      const job = await probe.add(SANDBOX_SUSPEND_JOB, {}, { jobId: "suspend-now" });
+      await waitFor(
+        async () => (await probe.getJobState(job.id as string)) === "completed",
+        10_000,
+        "maintenance job completed",
+      );
+      expect(sweeps).toContain("suspend-now");
+    } finally {
+      await k.close();
+    }
+  }, 60_000);
 });

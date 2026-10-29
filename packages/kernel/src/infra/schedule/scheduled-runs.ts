@@ -7,10 +7,17 @@ import {
 import { DiscoveryService, MetadataScanner } from "@nestjs/core";
 import { SchedulerRegistry } from "@nestjs/schedule";
 import type { KernelLogger } from "../../log.js";
+import { runOutsideTransaction } from "../database/transaction-host.js";
 import { GracefulShutdown } from "../lifecycle/graceful-shutdown.service.js";
 import { KERNEL_LOGGER } from "../tokens.js";
 import { LockedIntervalScheduler } from "./locked-interval.js";
-import { LOCKED_JOB, SCHEDULED_RUNS, type ScheduledRunScope } from "./locked-tick.js";
+import {
+  LOCKED_JOB,
+  LOCKED_JOB_BODY,
+  type LockedJobBody,
+  SCHEDULED_RUNS,
+  type ScheduledRunScope,
+} from "./locked-tick.js";
 
 /**
  * The runs of the `@LockedCron` / `@LockedInterval` jobs (ticks and `runOnStart` runs), their
@@ -32,6 +39,8 @@ export class ScheduledRuns
   private readonly inFlight = new Set<Promise<unknown>>();
   private stopping: Promise<void> | undefined;
   private gateOpen = false;
+  /** Each locked job's body by job name, bound to its instance (for {@link runNow}). */
+  private readonly bodies = new Map<string, (signal?: AbortSignal) => unknown>();
 
   constructor(
     @Inject(DiscoveryService) private readonly discovery: DiscoveryService,
@@ -48,14 +57,32 @@ export class ScheduledRuns
       if (!instance || typeof instance !== "object" || !wrapper.isDependencyTreeStatic()) continue;
       const proto = Object.getPrototypeOf(instance) as object | null;
       if (!proto) continue;
-      const hasJob = this.scanner.getAllMethodNames(proto).some((m) => {
+      let hasJob = false;
+      for (const m of this.scanner.getAllMethodNames(proto)) {
         const fn = instance[m];
-        return typeof fn === "function" && Reflect.getMetadata(LOCKED_JOB, fn) === true;
-      });
+        if (typeof fn !== "function" || Reflect.getMetadata(LOCKED_JOB, fn) !== true) continue;
+        hasJob = true;
+        const job = Reflect.getMetadata(LOCKED_JOB_BODY, fn) as LockedJobBody | undefined;
+        if (job) this.bodies.set(job.name, (signal) => job.body.call(instance, signal));
+      }
       if (hasJob) {
         Object.defineProperty(instance, SCHEDULED_RUNS, { value: this, configurable: true });
       }
     }
+  }
+
+  /**
+   * Runs the body of the locked job named `name` once, now, outside its schedule: no tick marker
+   * and no run lock, in a fresh async context (no transaction), with the stop signal. A job's name
+   * enqueued on the maintenance queue runs this way, as the maintenance handlers of the periodic
+   * jobs did before they became locked jobs. Resolves false when no job has that name; the body's
+   * error is thrown.
+   */
+  async runNow(name: string): Promise<boolean> {
+    const body = this.bodies.get(name);
+    if (!body) return false;
+    await runOutsideTransaction(() => Promise.resolve(body(this.abort.signal)));
+    return true;
   }
 
   /** The start gate is open: ticks and start runs may run (R21). */

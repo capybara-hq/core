@@ -8,6 +8,18 @@ import type { LockService } from "../lock/lock.service.js";
 /** Marks a method wrapped by `@LockedCron` / `@LockedInterval` (read by `ScheduledRuns`). */
 export const LOCKED_JOB = Symbol("LOCKED_JOB");
 
+/**
+ * The job's name and its undecorated body, on the wrapped method: `ScheduledRuns.runNow` runs the
+ * body once outside the schedule.
+ */
+export const LOCKED_JOB_BODY = Symbol("LOCKED_JOB_BODY");
+
+/** What {@link LOCKED_JOB_BODY} holds. */
+export interface LockedJobBody {
+  name: string;
+  body: (signal?: AbortSignal) => unknown;
+}
+
 /** The property `ScheduledRuns` attaches itself under on every instance with a locked job. */
 export const SCHEDULED_RUNS = Symbol("SCHEDULED_RUNS");
 

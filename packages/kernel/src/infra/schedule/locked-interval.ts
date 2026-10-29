@@ -12,6 +12,8 @@ import { KERNEL_LOGGER } from "../tokens.js";
 import {
   assertLockedJobHost,
   LOCKED_JOB,
+  LOCKED_JOB_BODY,
+  type LockedJobBody,
   type LockedJobHost,
   runLockedTick,
   startMarkerTtl,
@@ -109,6 +111,11 @@ export function LockedInterval(
       });
     };
     Reflect.defineMetadata(LOCKED_JOB, true, wrapped);
+    Reflect.defineMetadata(
+      LOCKED_JOB_BODY,
+      { name, body: original } satisfies LockedJobBody,
+      wrapped,
+    );
     Reflect.defineMetadata(
       LOCKED_INTERVAL,
       { name, period, ...(options.runOnStart === true && { start }) } satisfies IntervalMeta,

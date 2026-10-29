@@ -5,6 +5,8 @@ import { scheduledTick } from "./cron-tick.js";
 import {
   assertLockedJobHost,
   LOCKED_JOB,
+  LOCKED_JOB_BODY,
+  type LockedJobBody,
   type LockedJobHost,
   runLockedTick,
 } from "./locked-tick.js";
@@ -56,6 +58,11 @@ export function LockedCron(expression: string, options: LockedCronOptions) {
       }).catch((err: unknown) => this.log?.error("cron job failed", { cron: options.name, err }));
     };
     Reflect.defineMetadata(LOCKED_JOB, true, wrapped);
+    Reflect.defineMetadata(
+      LOCKED_JOB_BODY,
+      { name: options.name, body: original } satisfies LockedJobBody,
+      wrapped,
+    );
     descriptor.value = wrapped;
     // The scheduler reads the metadata from the final method, so register after wrapping.
     Cron(expression, {
