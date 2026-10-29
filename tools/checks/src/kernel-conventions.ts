@@ -1194,6 +1194,7 @@ const NON_VALUE_PARENTS = new Set([
   "ImportDefaultSpecifier",
   "ImportNamespaceSpecifier",
   "ExportSpecifier",
+  "ExportAllDeclaration",
   "TSTypeReference",
   "TSQualifiedName",
   "TSTypeQuery",
@@ -1206,6 +1207,17 @@ interface ModuleDef {
   object: Node;
   name: string;
 }
+
+/** How a file names things it imports: `local → imported` aliases and namespace imports. */
+interface FileNames {
+  alias: Map<string, string>;
+  /** Namespace import locals (`import * as ns`) → whether the source is the kernel's own code. */
+  namespaces: Map<string, boolean>;
+}
+
+/** The kernel's own code: a relative path or the kernel package (not a third-party namespace). */
+const isKernelSource = (src: unknown) =>
+  typeof src === "string" && (src.startsWith(".") || src.startsWith("@capybara-hq/kernel"));
 
 /**
  * kc-worker-only (nest kernel 4.1, spec §2: crons and queue consumers run on the worker role only).
@@ -1220,37 +1232,140 @@ interface ModuleDef {
  * `exports` is neutral; any other reference, e.g. a CLI context's module list or `app.ts`, makes it
  * a module of every role). The set is the greatest fixpoint, so a cycle reached only from
  * `WorkerModule` is worker-only. References are read in the kernel source, the CLI and
- * `@capybara-hq/testing` (not in tests). A sound approximation: a module that some code path never
- * imports outside the worker role may still be reported, never the other way round.
+ * `@capybara-hq/testing` (not in tests).
+ *
+ * Names are resolved, not matched as text: an aliased import (`import { X as Y }`, also of the
+ * decorators `Module`, `Processor`, `LockedCron`, `LockedInterval` and of `configuredProcessor`),
+ * a namespace member (`ns.X` of `import * as ns`), and a re-export alias
+ * (`export { X as Y }`, resolved by name across the scanned files) all count as references to
+ * `X`. What cannot be resolved is reported as unconfirmable: a namespace import of kernel code
+ * used other than as `ns.X`, `export * as ns` of kernel code, and a default export of a module or
+ * a worker-only class (it can be imported under any name). Dynamic `import()` is out of reach of a
+ * static scan. Within these limits the approximation errs one way only: a module some code path
+ * never imports outside the worker role may still be reported, a module imported elsewhere is not
+ * missed.
  */
 function checkWorkerOnly(files: FileInfo[], hits: Hit[]): void {
+  const unconfirmed = (rel: string, line: number, what: string) =>
+    hits.push({
+      rule: "kc-worker-only",
+      rel,
+      line,
+      message: `${what}: which modules it reaches cannot be confirmed statically, so kc-worker-only cannot check it; import worker-only modules and classes by their own names`,
+      within: [],
+    });
+
+  // Pass 1: per-file import names, and re-export aliases across files.
+  const names = new Map<FileInfo, FileNames>();
+  /** `export { X as Y }` anywhere: Y → X (as the exporting file names X). */
+  const reexports = new Map<string, string>();
+  for (const f of files) {
+    const fn: FileNames = { alias: new Map(), namespaces: new Map() };
+    names.set(f, fn);
+    for (const s of f.parsed.program.body as Node[]) {
+      if (s.type !== "ImportDeclaration") continue;
+      const kernel = isKernelSource((s.source as Node).value);
+      for (const sp of (s.specifiers as Node[]) ?? []) {
+        const local = nameOf(sp.local);
+        if (!local) continue;
+        if (sp.type === "ImportSpecifier") {
+          const imported = nameOf(sp.imported) ?? ((sp.imported as Node).value as string);
+          if (imported !== local) fn.alias.set(local, imported);
+        } else if (sp.type === "ImportNamespaceSpecifier") {
+          fn.namespaces.set(local, kernel);
+        }
+      }
+    }
+  }
+  const local = (f: FileInfo, name: string) => names.get(f)?.alias.get(name) ?? name;
+  for (const f of files) {
+    for (const s of f.parsed.program.body as Node[]) {
+      if (
+        s.type === "ExportAllDeclaration" &&
+        s.exported &&
+        isKernelSource((s.source as Node).value)
+      ) {
+        unconfirmed(
+          f.rel,
+          f.parsed.lineOf(s.start),
+          `\`export * as ${nameOf(s.exported) ?? "…"}\``,
+        );
+      }
+      if (s.type !== "ExportNamedDeclaration") continue;
+      for (const sp of (s.specifiers as Node[]) ?? []) {
+        const from = nameOf(sp.local);
+        const as = nameOf(sp.exported);
+        if (!from || !as || from === as) continue;
+        // a re-export from another file names it as that file does; a local export as this one
+        const x = s.source ? from : local(f, from);
+        reexports.set(as, x);
+      }
+    }
+  }
+  /** The declared name a file's identifier refers to (import aliases, then re-export aliases). */
+  const canon = (f: FileInfo, name: string): string => {
+    let n = local(f, name);
+    for (let i = 0; i < 10 && reexports.has(n); i++) n = reexports.get(n) as string;
+    return n;
+  };
+  const decoratorOf = (f: FileInfo, d: Node) => {
+    const n = decoratorName(d);
+    // `@ns.X(…)`: the member name is the decorator's own
+    const e =
+      (d.expression as Node).type === "CallExpression"
+        ? ((d.expression as Node).callee as Node)
+        : (d.expression as Node);
+    return n === undefined ? undefined : e.type === "MemberExpression" ? n : canon(f, n);
+  };
+  const calleeOf = (f: FileInfo, call: Node) => {
+    const c = call.callee as Node;
+    if (c.type === "Identifier") return canon(f, c.name as string);
+    if (c.type === "MemberExpression" && !c.computed) return nameOf(c.property);
+    return undefined;
+  };
+
+  // Pass 2: worker-only classes and modules.
   const jobs = new Set<string>();
-  for (const f of files.filter((x) => x.k !== undefined)) {
+  const modules = new Set<string>();
+  const defaults: { rel: string; line: number; name: string }[] = [];
+  for (const f of files) {
+    const inKernel = f.k !== undefined;
     for (const cls of classes(f.parsed.program)) {
       const name = nameOf(cls.id);
-      if (!name) continue;
+      if (!name || !inKernel) continue;
+      const decs = decoratorsOf(cls).map((d) => decoratorOf(f, d));
+      if (decs.includes("Module")) modules.add(name);
       const scheduled = ((cls.body as Node).body as Node[]).some(
         (m) =>
           m.type === "MethodDefinition" &&
-          decoratorsOf(m).some((d) => SCHEDULED_DECORATORS.has(decoratorName(d) ?? "")),
+          decoratorsOf(m).some((d) => SCHEDULED_DECORATORS.has(decoratorOf(f, d) ?? "")),
       );
-      if (scheduled || decoratorsOf(cls).some((d) => decoratorName(d) === "Processor")) {
-        jobs.add(name);
-      }
+      if (scheduled || decs.includes("Processor")) jobs.add(name);
     }
     visit(f.parsed.program, (n) => {
-      if (n.type !== "CallExpression" || nameOf(n.callee) !== "configuredProcessor") return;
-      const base = nameOf((n.arguments as Node[])[0]);
-      if (base) jobs.add(base);
+      if (n.type === "ExportDefaultDeclaration") {
+        const d = n.declaration as Node;
+        const name = d.type === "Identifier" ? canon(f, d.name as string) : nameOf(d.id);
+        if (name) defaults.push({ rel: f.rel, line: f.parsed.lineOf(n.start), name });
+      }
+      if (!inKernel || n.type !== "CallExpression" || calleeOf(f, n) !== "configuredProcessor")
+        return;
+      const base = (n.arguments as Node[])[0];
+      const b = base?.type === "Identifier" ? canon(f, base.name as string) : undefined;
+      if (b) jobs.add(b);
     });
+  }
+  const watched = (n: string) => jobs.has(n) || modules.has(n);
+  for (const d of defaults) {
+    if (watched(d.name)) unconfirmed(d.rel, d.line, `the default export of ${d.name}`);
   }
   if (jobs.size === 0) return;
 
   /** The module definition an object is, if any. */
-  const defOf = (n: Node, anc: readonly Node[]): ModuleDef | undefined => {
+  const defOf = (f: FileInfo, n: Node, anc: readonly Node[]): ModuleDef | undefined => {
     if (n.type !== "ObjectExpression") return undefined;
     const parent = anc[anc.length - 1];
-    if (parent?.type === "CallExpression" && nameOf(parent.callee) === "Module") {
+    if (parent?.type === "CallExpression" && calleeOf(f, parent) === "Module") {
       const cls = [...anc].reverse().find((a) => a.type === "ClassDeclaration");
       const name = cls ? nameOf(cls.id) : undefined;
       return name ? { object: n, name } : undefined;
@@ -1258,15 +1373,17 @@ function checkWorkerOnly(files: FileInfo[], hits: Hit[]): void {
     const mod = (n.properties as Node[]).find(
       (p) => p.type === "Property" && !p.computed && nameOf(p.key) === "module",
     );
-    const name = mod ? nameOf(mod.value) : undefined;
+    const v = mod?.value as Node | undefined;
+    const name = v?.type === "Identifier" ? canon(f, v.name as string) : undefined;
     return name ? { object: n, name } : undefined;
   };
   /** The innermost module definition around a node and the property of it the node is under. */
   const enclosing = (
+    f: FileInfo,
     anc: readonly Node[],
   ): { def: ModuleDef; key: string | undefined } | undefined => {
     for (let i = anc.length - 1; i >= 0; i--) {
-      const def = defOf(anc[i] as Node, anc.slice(0, i));
+      const def = defOf(f, anc[i] as Node, anc.slice(0, i));
       if (!def) continue;
       const prop = anc[i + 1];
       return { def, key: prop?.type === "Property" ? nameOf(prop.key) : undefined };
@@ -1274,18 +1391,20 @@ function checkWorkerOnly(files: FileInfo[], hits: Hit[]): void {
     return undefined;
   };
 
-  // Every module name, and every value reference to an identifier with its place.
-  const modules = new Set<string>();
-  const refs: { name: string; node: Node; anc: Node[]; parent: Node; rel: string; line: number }[] =
-    [];
+  // Pass 3: every value reference, by the declared name it resolves to, with its place.
+  const refs: {
+    name: string;
+    node: Node;
+    parent: Node;
+    at: { def: ModuleDef; key: string | undefined } | undefined;
+    file: FileInfo;
+    rel: string;
+    line: number;
+  }[] = [];
   for (const f of files) {
+    const fn = names.get(f) as FileNames;
     visit(f.parsed.program, (n, anc) => {
       const parent = anc[anc.length - 1];
-      if (n.type === "ClassDeclaration" && f.k !== undefined) {
-        const name = nameOf(n.id);
-        if (name && decoratorsOf(n).some((d) => decoratorName(d) === "Module")) modules.add(name);
-        return;
-      }
       if (n.type !== "Identifier" || !parent) return;
       if (NON_VALUE_PARENTS.has(parent.type)) return;
       if (
@@ -1296,13 +1415,34 @@ function checkWorkerOnly(files: FileInfo[], hits: Hit[]): void {
       if (parent.type === "MemberExpression" && parent.property === n && !parent.computed) return;
       if (parent.type === "Property" && parent.key === n && !parent.computed) return;
       if (parent.type === "MethodDefinition" || parent.type === "PropertyDefinition") return;
+      const line = f.parsed.lineOf(n.start);
+      const ns = fn.namespaces.get(n.name as string);
+      if (ns !== undefined) {
+        // `ns.X`: a reference to X, placed where the member expression is
+        if (parent.type === "MemberExpression" && parent.object === n && !parent.computed) {
+          const outer = anc.slice(0, -1);
+          refs.push({
+            name: canon(f, nameOf(parent.property) as string),
+            node: parent,
+            parent: outer[outer.length - 1] as Node,
+            at: enclosing(f, outer),
+            file: f,
+            rel: f.rel,
+            line,
+          });
+        } else if (ns) {
+          unconfirmed(f.rel, line, `the namespace import ${n.name as string} used as a value`);
+        }
+        return;
+      }
       refs.push({
-        name: n.name as string,
+        name: canon(f, n.name as string),
         node: n,
-        anc: [...anc],
         parent,
+        at: enclosing(f, anc),
+        file: f,
         rel: f.rel,
-        line: f.parsed.lineOf(n.start),
+        line,
       });
     });
   }
@@ -1311,7 +1451,7 @@ function checkWorkerOnly(files: FileInfo[], hits: Hit[]): void {
   const importers = new Map<string, Set<string>>();
   for (const r of refs) {
     if (!modules.has(r.name)) continue;
-    const at = enclosing(r.anc);
+    const at = r.at;
     if (at && at.def.name === r.name && at.key === "module") continue; // its own definition
     if (at?.key === "exports") continue;
     const set = importers.get(r.name) ?? new Set<string>();
@@ -1338,10 +1478,10 @@ function checkWorkerOnly(files: FileInfo[], hits: Hit[]): void {
       p.type === "ArrayExpression" ||
       (p.type === "Property" && nameOf(p.key) === "useClass") ||
       (p.type === "CallExpression" &&
-        nameOf(p.callee) === "configuredProcessor" &&
-        (p.arguments as Node[])[0] === r.node);
+        (p.arguments as Node[])[0] === r.node &&
+        calleeOf(r.file, p) === "configuredProcessor");
     if (!provided) continue;
-    const at = enclosing(r.anc);
+    const at = r.at;
     if (at && workerOnly.has(at.def.name)) continue;
     const outside = at
       ? [...(importers.get(at.def.name) ?? [])]
