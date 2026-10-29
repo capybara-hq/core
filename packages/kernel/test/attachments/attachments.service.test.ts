@@ -7,7 +7,7 @@ import {
   normalizeContentType,
   sniffMatches,
 } from "../../src/conversations/attachments.service.js";
-import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/maintenance.js";
+import { RETIRED_SCHEDULER_IDS } from "../../src/infra/queue/retired-schedulers.js";
 import { PrefixedStorage } from "../../src/storage/storage.service.js";
 import { attachmentsFor } from "../helpers/conversations.js";
 

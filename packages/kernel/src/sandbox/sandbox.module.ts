@@ -10,8 +10,7 @@ import { SandboxService } from "./sandbox.service.js";
 /**
  * Sandboxes: the one {@link SandboxService} (a conversation's sandbox over the `sandbox@1`
  * provider, with the shared / exclusive leases of {@link SandboxLeases}), the sweeps (crons) and
- * the producer of the one-off `sandbox-destroy-for` jobs (the maintenance worker consumes them
- * until Task 3.9, R11).
+ * the producer of the one-off `sandbox-destroy-for` jobs (`MaintenanceProcessor` consumes them).
  */
 @Module({
   imports: [ExtensionRegistryModule, QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME)],

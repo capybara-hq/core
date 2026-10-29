@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { EvalBudgetModule } from "../evals/budget.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { ProvidersModule } from "../runtime/providers.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
@@ -22,6 +23,8 @@ import { AgentTemplatesService } from "./templates.js";
     ToolsModule,
     // the producer of sandbox-destroy-for jobs after a delete
     SandboxModule,
+    // cancels the deleted agent's eval runs
+    EvalBudgetModule,
   ],
   providers: [AgentsService, AgentTemplatesService],
   exports: [AgentLookupModule, AgentsService, AgentTemplatesService],

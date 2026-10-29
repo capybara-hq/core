@@ -11,7 +11,7 @@ import type { ConversationEvent, EventPayload } from "../../../src/conversations
 import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import type { Kernel } from "../../../src/kernel.js";
-import { MAINTENANCE_QUEUE_NAME } from "../../../src/runtime/maintenance.js";
+import { MAINTENANCE_QUEUE_NAME } from "../../../src/runtime/maintenance-queue.js";
 import { RUN_QUOTA_PREFIX } from "../../../src/runtime/quota.js";
 import { RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME } from "../../../src/runtime/run-queue.js";
 import { resumeJobId, waitTimeoutJobId } from "../../../src/runtime/waits.js";

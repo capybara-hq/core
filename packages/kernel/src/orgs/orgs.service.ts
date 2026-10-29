@@ -4,7 +4,7 @@ import { type Selectable, sql } from "kysely";
 import { cancelPendingRequests } from "../catalog/requests.service.js";
 import type { OrgsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { cancelEvalRuns } from "../evals/budget.js";
+import { EvalBudget } from "../evals/budget.js";
 import type { Account } from "../identity/accounts.js";
 import { ApiTokenService } from "../identity/api-tokens.js";
 import { audit } from "../identity/audit.js";
@@ -86,6 +86,8 @@ export class OrgsService {
     @Inject(ApiTokenService) private readonly apiTokens: ApiTokenService,
     @Inject(OrgLock) private readonly orgLock: OrgLock,
     @Inject(KernelEvents) private readonly events: KernelEvents,
+    /** Cancels the deleted org's running eval runs (in the delete's transaction). */
+    @Inject(EvalBudget) private readonly evalBudget: Pick<EvalBudget, "cancelRuns">,
   ) {}
 
   /**
@@ -252,8 +254,7 @@ export class OrgsService {
       .execute();
     await this.apiTokens.revokeAllForOrg(orgId);
     // eval runs of a deleted org stop spending: cancelled explicitly (audited with the reason)
-    await cancelEvalRuns(
-      this.db.db,
+    await this.evalBudget.cancelRuns(
       { orgId },
       { accountId: actor.id, ...(actorTokenId !== undefined && { tokenId: actorTokenId }) },
       "org_deleted",

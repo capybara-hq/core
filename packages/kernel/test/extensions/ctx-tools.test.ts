@@ -12,6 +12,7 @@ import type { ExtensionHost } from "../../src/extensions/host.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
+import { EmbedTokens } from "../../src/ui/embed-token.js";
 import { testHost } from "../helpers/extensions.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
@@ -41,6 +42,7 @@ beforeAll(async () => {
     busSubscriber: sub,
     redisUrl: rd.url,
     keyring: createKeyring(Buffer.alloc(32, 1), []),
+    embedTokens: new EmbedTokens(createKeyring(Buffer.alloc(32, 1), [])),
     runWorkers: false,
     log: quiet,
   };

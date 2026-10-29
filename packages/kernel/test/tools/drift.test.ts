@@ -13,7 +13,7 @@ import { LockedIntervalScheduler } from "../../src/infra/schedule/locked-interva
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
-import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
+import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import {
   DRIFT_CONNECTOR_JOB,
   DRIFT_SCAN_JOB,

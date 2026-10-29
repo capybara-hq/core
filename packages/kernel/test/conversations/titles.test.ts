@@ -27,7 +27,7 @@ import type { HookRunner } from "../../src/runtime/hook-calls.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
-import { accountsFor } from "../helpers/identity.js";
+import { accountsFor, handlesFor } from "../helpers/identity.js";
 import {
   createAgent,
   createConv,
@@ -326,7 +326,9 @@ describe("runTitleJob (direct)", { timeout: 60_000 }, () => {
     const rowLocked = new Promise<void>((r) => {
       locked = r;
     });
-    const writer = db.transaction().execute(async (t) => {
+    // the writer's transaction in the async context, which appendIn joins
+    const writer = handlesFor(db).txHost.run(async () => {
+      const t = handlesFor(db).db.db;
       await sql`SELECT 1 FROM capybara.conversations WHERE id = ${id} FOR KEY SHARE`.execute(t);
       locked();
       await released;

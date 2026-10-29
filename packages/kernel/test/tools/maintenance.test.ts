@@ -3,17 +3,18 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
-import { createLogger } from "../../src/log.js";
 import {
-  MAINTENANCE_QUEUE_NAME,
-  Maintenance,
   RETIRED_SCHEDULER_IDS,
-} from "../../src/runtime/maintenance.js";
+  removeRetiredSchedulers,
+} from "../../src/infra/queue/retired-schedulers.js";
+import { createLogger } from "../../src/log.js";
+import { MaintenanceModule, MaintenanceProcessor } from "../../src/runtime/maintenance.js";
+import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import {
   DRIFT_SCHEDULER_ID,
   OUTPUT_CLEANUP_JOB,
@@ -36,7 +37,6 @@ let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let probe: Queue;
 let seed: Awaited<ReturnType<typeof seedConversation>>;
-const instances: Maintenance[] = [];
 const log = createLogger("error", { write: () => {} });
 
 beforeAll(async () => {
@@ -59,15 +59,6 @@ beforeEach(async () => {
   await probe.obliterate({ force: true });
   seed = await seedConversation(raw);
 });
-afterEach(async () => {
-  for (const m of instances.splice(0)) await m.close();
-});
-
-const maintenance = () => {
-  const m = new Maintenance({ db, redisUrl: rd.url, log });
-  instances.push(m);
-  return m;
-};
 
 /** 插入 n 条输出存档，到期时间为 now() + offsetSeconds。 */
 async function insertOutputs(n: number, offsetSeconds: number, prefix: string): Promise<void> {
@@ -107,7 +98,8 @@ describe("output-cleanup", () => {
       { every: 3_600_000 },
       { name: OUTPUT_CLEANUP_JOB, data: {} },
     );
-    await Promise.all([maintenance().ensureSchedules(), maintenance().ensureSchedules()]);
+    // two worker replicas starting together (nest kernel 3.9: the list lives in infra/queue)
+    await Promise.all([removeRetiredSchedulers(probe), removeRetiredSchedulers(probe)]);
     expect(await probe.getJobSchedulers()).toHaveLength(0);
   });
 
@@ -132,9 +124,52 @@ describe("output-cleanup", () => {
   });
 
   it("未启动 worker 的实例（非 worker 角色）不处理维护任务", async () => {
-    maintenance();
+    // nest kernel 3.9: only the worker role gets the maintenance processor
+    expect(MaintenanceModule.forRoot({ roles: ["api", "gateway"] }).providers).toEqual([]);
+    expect(
+      (MaintenanceModule.forRoot({ roles: ["worker"] }).providers ?? []).map(
+        (p) => (p as { provide: unknown }).provide,
+      ),
+    ).toEqual([MaintenanceProcessor]);
     await probe.add("some-job", {}, { jobId: "cleanup-probe" });
     await new Promise((r) => setTimeout(r, 500));
     expect(await (await probe.getJob("cleanup-probe"))?.getState()).toBe("waiting");
+  });
+});
+
+describe("MaintenanceProcessor (the one consumer, nest kernel 3.9)", () => {
+  it("dispatches each one-off job by name to its domain; an unknown name is only warned", async () => {
+    const calls: unknown[][] = [];
+    const warned: unknown[][] = [];
+    const processor = new MaintenanceProcessor(
+      { processTimeout: async (job, token) => void calls.push(["wait", job.data, token]) },
+      { destroyFor: async (id) => void calls.push(["sandbox", id]) },
+      {
+        check: async (...a) => {
+          calls.push(["drift", ...a]);
+          return undefined as never;
+        },
+      },
+      { runSyncJob: async (d) => void calls.push(["directory", d]) },
+      { error: () => {}, warn: (...a: unknown[]) => void warned.push(a) },
+      { removeJobScheduler: async () => true },
+    );
+    const job = (name: string, data: unknown) => ({ name, data, id: `${name}-1` }) as never;
+    await processor.process(job("wait-timeout", { waitId: "w" }), "tok");
+    await processor.process(job("sandbox-destroy-for", { conversationIds: ["c1"] }));
+    await processor.process(
+      job("drift-connector", { orgId: "o", connectorId: "k", trigger: "schedule" }),
+    );
+    await processor.process(job("directory-sync", { orgId: "o" }));
+    await processor.process(job("no-such-job", {}));
+    expect(calls).toEqual([
+      ["wait", { waitId: "w" }, "tok"],
+      ["sandbox", "c1"],
+      ["drift", "o", "k", "schedule"],
+      ["directory", { orgId: "o" }],
+    ]);
+    expect(warned).toEqual([
+      ["unknown maintenance job", { name: "no-such-job", jobId: "no-such-job-1" }],
+    ]);
   });
 });

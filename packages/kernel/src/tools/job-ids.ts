@@ -6,8 +6,8 @@ export const DRIFT_SCAN_JOB = "drift-scan";
 /** The BullMQ repeatable scheduler the scan had before it became `@LockedInterval` (retired). */
 export const DRIFT_SCHEDULER_ID = "drift-scan-interval";
 /**
- * 单个连接器的漂移检查任务名（维护队列上的一次性任务：生产方是 `ToolDrift`，消费方是维护 worker，直到
- * Task 3.9 的 `@Processor`，R11）。
+ * 单个连接器的漂移检查任务名（维护队列上的一次性任务：生产方是 `ToolDrift`，消费方是
+ * `MaintenanceProcessor`）。
  */
 export const DRIFT_CONNECTOR_JOB = "drift-connector";
 

@@ -27,7 +27,7 @@ import { StepLog } from "./step-log.js";
 import { ConversationStreams } from "./stream.js";
 import { SubagentsModule } from "./subagents/subagents.service.js";
 import { UsageReportModule } from "./usage-report.js";
-import { WaitSweepJob, Waits } from "./waits.js";
+import { DecisionResumer, WaitSweepJob, Waits } from "./waits.js";
 
 /**
  * The run runtime: the conversation run lock, this process's event streams, the run queue and its
@@ -50,7 +50,7 @@ import { WaitSweepJob, Waits } from "./waits.js";
     SubagentsModule,
     UsageReportModule,
     TitlesModule,
-    // the producer side of `wait-timeout` jobs (the maintenance worker consumes until Task 3.9, R11)
+    // the producer side of `wait-timeout` jobs (`MaintenanceProcessor` consumes them)
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
   providers: [
@@ -62,6 +62,7 @@ import { WaitSweepJob, Waits } from "./waits.js";
     StepLog,
     RunQueue,
     Waits,
+    DecisionResumer,
     WaitSweepJob,
     RunControl,
     AgentLoops,

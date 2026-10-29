@@ -9,7 +9,8 @@ import { getQueueToken } from "@nestjs/bullmq";
 import type { Kysely } from "kysely";
 import { SetupService } from "../../src/admin/setup.service.js";
 import type { Keyring } from "../../src/ctx/secrets.js";
-import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { EvalBudget } from "../../src/evals/budget.js";
 import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { AccountsService } from "../../src/identity/accounts.js";
@@ -37,7 +38,7 @@ import { Offboarding, type OffboardingRunControl } from "../../src/orgs/offboard
 import { OrgLock } from "../../src/orgs/org-lock.js";
 import { OrgsService } from "../../src/orgs/orgs.service.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
-import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
+import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import type { SandboxJobs } from "../../src/sandbox/jobs.js";
 import type { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { type Credentials, clearAccountCredentials } from "../../src/tools/credentials.js";
@@ -57,14 +58,16 @@ export function handlesFor(db: Kysely<any>): StandaloneDatabase {
 }
 
 /**
- * The `capybara` view of `db` for classes not converted yet (R8; the run worker, model calls,
- * titles, evals): its transactions run through `db`'s handles, so the converted providers built for
- * `db` (the locks, the event log; or for the view itself: it maps to the same handles) join them.
+ * The `capybara` view of `db` (the kernel-schema Kysely the tests query with). It maps to `db`'s
+ * handles, so the providers built for the view share their `TransactionHost` with those built for
+ * `db`. Its `transaction()` is a plain Kysely transaction: code that must join it runs inside
+ * `handlesFor(db).txHost.run(...)` instead.
  */
 export function legacyDbFor(db: Kysely<any>): KernelSchemaDb {
   const h = handlesFor(db);
-  handles.set(h.schemaDb, h);
-  return h.schemaDb;
+  const view = kernelDb(db);
+  handles.set(view, h);
+  return view;
 }
 
 /** A config holder for providers that read a few config values. */
@@ -106,7 +109,15 @@ export function orgsFor(
   events: KernelEvents = new KernelEvents(quiet),
 ): OrgsService {
   const h = handlesFor(db);
-  return new OrgsService(h.db, h.txHost, settings, tokens, orgLockFor(db), events);
+  return new OrgsService(
+    h.db,
+    h.txHost,
+    settings,
+    tokens,
+    orgLockFor(db),
+    events,
+    new EvalBudget(h.db, h.txHost),
+  );
 }
 
 export function setupFor(

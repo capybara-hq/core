@@ -1,11 +1,9 @@
 // biome-ignore-all lint/suspicious/noExplicitAny: the pool carries no schema types
 import type { Kysely } from "kysely";
 import { SetupLock } from "../../admin/setup-lock.js";
-import type { KernelSchemaDb } from "../../db/kernel-schema.js";
 import { EnterpriseAdminLock } from "../../identity/enterprise-admin.js";
 import type { KernelLogger } from "../../log.js";
 import { KernelDb } from "./kernel-db.js";
-import { legacyKernelView } from "./legacy-view.js";
 import { TransactionHost } from "./transaction-host.js";
 import { XactLock } from "./xact-lock.js";
 
@@ -14,11 +12,6 @@ export interface StandaloneDatabase {
   db: KernelDb;
   txHost: TransactionHost;
   xactLock: XactLock;
-  /**
-   * The `capybara` view for classes not converted yet (R8): its `transaction()` runs through
-   * `txHost`, so the converted providers they call (the locks) join it.
-   */
-  schemaDb: KernelSchemaDb;
   /** The lock providers over these handles (the same classes the application provides). */
   adminLock: EnterpriseAdminLock;
   setupLock: SetupLock;
@@ -38,7 +31,6 @@ export function standaloneDatabase(pool: Kysely<any>, log: KernelLogger): Standa
     db,
     txHost,
     xactLock,
-    schemaDb: legacyKernelView(db, txHost),
     adminLock: new EnterpriseAdminLock(db, xactLock, txHost),
     setupLock: new SetupLock(xactLock, txHost),
   };

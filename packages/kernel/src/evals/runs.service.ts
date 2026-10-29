@@ -1,14 +1,11 @@
-import type { Logger } from "@capybara-hq/plugin-sdk";
-import { Queue } from "bullmq";
-import type { Redis } from "ioredis";
-import { type Selectable, sql, type Transaction } from "kysely";
+import { Inject, Injectable } from "@nestjs/common";
+import { type Selectable, sql } from "kysely";
 import {
   type AgentDefinition,
   type ModelRef,
   normalizeStoredDefinition,
   paramIssues,
 } from "../agents/definition.js";
-import type { KernelConfig } from "../config/schema.js";
 import {
   effectiveDefinition,
   NO_SELECTION,
@@ -20,37 +17,29 @@ import type {
   EvalResultsTable,
   EvalRunStatus,
   JudgeStatus,
-  KernelDatabase,
   KernelSchemaDb,
 } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import type { SettingsService } from "../identity/settings.js";
-import { costOf, type ModelPrice, type PricesService, priceKey } from "../models/prices.js";
-import type { ModelPurposesService } from "../models/purposes.js";
-import type { OrgLock } from "../orgs/org-lock.js";
-import { bullConnection } from "../runtime/bull-connection.js";
-import { ProviderListError, type ProviderRegistry } from "../runtime/providers.js";
-import { ACTIVE_EVAL_STATUSES, recountCases, skipPendingJudges, usageTokens } from "./budget.js";
+import { SettingsService } from "../identity/settings.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { LockService } from "../infra/lock/lock.service.js";
+import { costOf, type ModelPrice, PricesService, priceKey } from "../models/prices.js";
+import { ModelPurposesService } from "../models/purposes.js";
+import { OrgLock } from "../orgs/org-lock.js";
+import { ProviderListError, ProviderRegistry } from "../runtime/providers.js";
+import { ACTIVE_EVAL_STATUSES, EvalBudget, usageTokens } from "./budget.js";
+import { EvalJobs } from "./jobs.js";
 import { judgeOverheadTokens } from "./judge.js";
 import type { CasePlan } from "./plan.js";
 import type { CaseSnapshot } from "./snapshot.js";
 import { candidateModel, type EvalCandidate, type SubagentSource } from "./step-replay.js";
 
+export { EVAL_QUEUE_NAME, type EvalJobData, evalJobId } from "./jobs.js";
 export type { EvalCandidate, EvalResultStatus, EvalRunStatus };
-
-/** 评测队列的 BullMQ 队列名（不含 `:`，C7）。 */
-export const EVAL_QUEUE_NAME = "cap-kernel-evals";
-
-/** 每个用例一个任务（C7；不含 `:`）。 */
-export const evalJobId = (runId: string, caseId: string): string => `eval-${runId}-${caseId}`;
-
-/** 评测任务的数据。 */
-export interface EvalJobData {
-  runId: string;
-  caseId: string;
-  orgId: string;
-}
 
 /** 运行前的估算（D5：运行前显示预计请求数）。 */
 export interface EvalEstimate {
@@ -158,52 +147,6 @@ export interface EvalResultView {
   labelNote: string | null;
   labeledBy: string | null;
   labeledAt: string | null;
-}
-
-/** 评测队列（生产方）：懒建连接；`close()` 关闭。 */
-export class EvalQueue {
-  private queue: Queue<EvalJobData> | undefined;
-  private conn: Redis | undefined;
-  private closed = false;
-
-  constructor(
-    private readonly redisUrl: string,
-    private readonly log: Pick<Logger, "error">,
-  ) {}
-
-  private get(): Queue<EvalJobData> {
-    if (this.closed) throw new Error("eval queue is closed");
-    if (!this.queue) {
-      this.conn = bullConnection(this.redisUrl, this.log);
-      this.queue = new Queue<EvalJobData>(EVAL_QUEUE_NAME, { connection: this.conn });
-      this.queue.on("error", (err) => this.log.error("eval queue error", { err }));
-    }
-    return this.queue;
-  }
-
-  async enqueue(jobs: EvalJobData[]): Promise<void> {
-    await this.get().addBulk(
-      jobs.map((data) => ({
-        name: "case",
-        data,
-        opts: {
-          jobId: evalJobId(data.runId, data.caseId),
-          // 处理函数外的暂时故障（PG / Redis）：指数退避重试，不让整个用例一次失败。
-          // 结果按认领号写入，重做不会重复写结果
-          attempts: 3,
-          backoff: { type: "exponential" as const, delay: 1000 },
-          removeOnComplete: true,
-          removeOnFail: 1000,
-        },
-      })),
-    );
-  }
-
-  async close(): Promise<void> {
-    this.closed = true;
-    await this.queue?.close().catch(() => {});
-    this.conn?.disconnect();
-  }
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -378,17 +321,19 @@ interface CaseProblem {
   details?: { path: string; message: string }[];
 }
 
-export interface EvalRunsDeps {
+interface EvalRunsDeps {
   /** The org row lock (orgs/org-lock.ts; R12): joins the caller's transaction. */
-  orgLock: Pick<OrgLock, "lock" | "tryLock" | "lockAndAuthorize">;
-  db: KernelSchemaDb;
-  /** 查看结果审计的去重（`SET NX EX`）；不给时每次查看都写审计。 */
-  redis?: Pick<Redis, "set">;
-  config: () => KernelConfig;
+  orgLock: Pick<OrgLock, "lockAndAuthorize">;
+  /** The context-aware handle (the `@Transactional` method's transaction, else the pool). */
+  readonly db: KernelSchemaDb;
+  /** 查看结果审计的去重标记（`SET NX`，键 `capk:eval-results-viewed:…`）。 */
+  locks: Pick<LockService, "lease">;
+  config: Pick<KernelConfigService, "get">;
   registry: Pick<ProviderRegistry, "resolve">;
   prices: Pick<PricesService, "table">;
   settings: Pick<SettingsService, "get">;
-  queue: Pick<EvalQueue, "enqueue">;
+  queue: Pick<EvalJobs, "enqueue">;
+  budget: Pick<EvalBudget, "recountCases" | "skipRun">;
   /** 模型用途映射：开评委时 `eval` 用途必须已映射（否则 `model.unconfigured`）；估算按它给评委定价。 */
   purposes: Pick<ModelPurposesService, "resolve">;
 }
@@ -406,8 +351,38 @@ interface JudgePricing {
  * 评测运行（D5、C7）：估算、启动（校验候选、预建结果、每个用例入队一个任务）、查看、结果分页、取消。
  * 执行在 `evals/worker.ts`。写操作在事务里锁组织行并复核角色（`evals.manage`）。
  */
+@Injectable()
 export class EvalRunsService {
-  constructor(private readonly d: EvalRunsDeps) {}
+  private readonly d: EvalRunsDeps;
+
+  constructor(
+    @Inject(KernelDb) kdb: KernelDb,
+    @Inject(OrgLock) orgLock: OrgLock,
+    @Inject(LockService) locks: LockService,
+    @Inject(KernelConfigService) config: KernelConfigService,
+    @Inject(ProviderRegistry) registry: ProviderRegistry,
+    @Inject(PricesService) prices: PricesService,
+    @Inject(SettingsService) settings: SettingsService,
+    @Inject(EvalJobs) queue: EvalJobs,
+    @Inject(EvalBudget) budget: EvalBudget,
+    @Inject(ModelPurposesService) purposes: ModelPurposesService,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {
+    this.d = {
+      orgLock,
+      get db(): KernelSchemaDb {
+        return kdb.db;
+      },
+      locks,
+      config,
+      registry,
+      prices,
+      settings,
+      queue,
+      budget,
+      purposes,
+    };
+  }
 
   private async liveSet(
     orgId: string,
@@ -569,7 +544,7 @@ export class EvalRunsService {
     judge: boolean,
   ): Promise<JudgePricing | null> {
     if (!judge) return null;
-    const configured = this.d.config().evals.judgeMaxOutputTokens;
+    const configured = this.d.config.get().evals.judgeMaxOutputTokens;
     let target: Awaited<ReturnType<ModelPurposesService["resolve"]>>;
     try {
       target = await this.d.purposes.resolve(orgId, "eval");
@@ -635,16 +610,13 @@ export class EvalRunsService {
    * 集合的 agent 已删除 → `agent.not_found`（删除 agent 会取消它的运行；之后再估算 / 启动只会建出全部跳过的运行）。
    * 在事务里调用时 FOR SHARE，与删除 agent 互斥。
    */
-  private async assertAgentLive(
-    db: KernelSchemaDb | Transaction<KernelDatabase>,
-    agentId: string,
-  ): Promise<void> {
-    let q = db
+  private async assertAgentLive(agentId: string, forShare = false): Promise<void> {
+    let q = this.d.db
       .selectFrom("agents")
       .select("id")
       .where("id", "=", agentId)
       .where("deleted_at", "is", null);
-    if (db !== this.d.db) q = q.forShare();
+    if (forShare) q = q.forShare();
     if (!(await q.executeTakeFirst())) {
       throw new ApiError("agent.not_found", "The agent of this eval set was deleted");
     }
@@ -656,7 +628,7 @@ export class EvalRunsService {
     input: { mode: "step" | "run"; candidate: EvalCandidate; judge: boolean; tokenCap?: number },
   ): Promise<{ estimate: EvalEstimate } & EvalTokenCaps> {
     const set = await this.liveSet(orgId, setId);
-    await this.assertAgentLive(this.d.db, set.agent_id);
+    await this.assertAgentLive(set.agent_id);
     const caps = this.tokenCaps(input.tokenCap);
     const versionDef = await this.checkCandidate(set.agent_id, input.candidate);
     const plans = await this.plan(setId, input.mode, input.candidate, versionDef);
@@ -666,7 +638,7 @@ export class EvalRunsService {
 
   /** token 上限：给了就校验 [1, `evals.maxTokenCap`]，缺省 `evals.defaultTokenCap`（D5）。 */
   private tokenCaps(tokenCap: number | undefined): EvalTokenCaps {
-    const { defaultTokenCap, maxTokenCap } = this.d.config().evals;
+    const { defaultTokenCap, maxTokenCap } = this.d.config.get().evals;
     const effectiveTokenCap = tokenCap ?? defaultTokenCap;
     if (
       !Number.isInteger(effectiveTokenCap) ||
@@ -691,7 +663,7 @@ export class EvalRunsService {
     actorTokenId?: string,
   ): Promise<EvalRunView> {
     const set = await this.liveSet(orgId, setId);
-    await this.assertAgentLive(this.d.db, set.agent_id);
+    await this.assertAgentLive(set.agent_id);
     const tokenCap = this.tokenCaps(input.tokenCap).effectiveTokenCap;
     const versionDef = await this.checkCandidate(set.agent_id, input.candidate);
     if (input.judge) await this.d.purposes.resolve(orgId, "eval");
@@ -706,105 +678,135 @@ export class EvalRunsService {
       throw candidateInvalid(firstProblem.message, firstProblem.details ?? []);
     }
 
-    const { runId, plans } = await this.d.db.transaction().execute(async (trx) => {
-      await this.d.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
-      // 与删除用例（锁集合行 FOR UPDATE）互斥：之后读到的用例在提交前不会被删
-      const locked = await trx
-        .selectFrom("eval_sets")
-        .select("id")
-        .where("id", "=", setId)
-        .where("org_id", "=", orgId)
-        .where("deleted_at", "is", null)
-        .forShare()
-        .executeTakeFirst();
-      if (!locked) throw setNotFound();
-      await this.assertAgentLive(trx, set.agent_id);
-      const alive = new Set(
-        (
-          await trx
-            .selectFrom("eval_cases")
-            .select("id")
-            .where("set_id", "=", setId)
-            .where(
-              "id",
-              "in",
-              planned.map((p) => p.caseId),
-            )
-            .execute()
-        ).map((r) => r.id),
-      );
-      const plans = planned.filter((p) => alive.has(p.caseId));
-      if (plans.length === 0) {
-        throw new ApiError("eval.nothing_to_replay", "The eval set has nothing to replay");
-      }
-      const estimate = await this.summarize(plans, judge);
-      const run = await trx
-        .insertInto("eval_runs")
-        .values({
-          org_id: orgId,
-          set_id: setId,
-          mode: input.mode,
-          candidate: JSON.stringify(input.candidate),
-          judge: input.judge,
-          token_cap: String(tokenCap),
-          cases_total: plans.length,
-          estimate: JSON.stringify(estimate),
-          created_by: actor,
-        })
-        .returning("id")
-        .executeTakeFirstOrThrow();
-      // 候选不合法的用例：结果直接记错误（计入进度，不入队）
-      const rows = plans.flatMap((p) =>
-        p.results.map((r) => ({
-          run_id: run.id,
-          case_id: p.caseId,
-          org_id: orgId,
-          step: r.step,
-          model_call_seq: r.modelCallSeq,
-          ...(p.problem !== null && {
-            status: "error" as const,
-            error: JSON.stringify(p.problem),
-          }),
-        })),
-      );
-      for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
-        await trx
-          .insertInto("eval_results")
-          .values(rows.slice(i, i + INSERT_CHUNK))
-          .execute();
-      }
-      await audit(trx, {
-        actorAccountId: actor,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "eval.run_started",
-        target: run.id,
-        detail: { setId, mode: input.mode, judge: input.judge, tokenCap, cases: plans.length },
-      });
-      await recountCases(trx, run.id);
-      return { runId: run.id, plans: plans.filter((p) => p.problem === null) };
-    });
+    const { runId, plans } = await this.startIn(
+      orgId,
+      actor,
+      setId,
+      set.agent_id,
+      input,
+      tokenCap,
+      planned,
+      judge,
+      actorTokenId,
+    );
 
     try {
       await this.d.queue.enqueue(plans.map((p) => ({ runId, caseId: p.caseId, orgId })));
     } catch (e) {
-      await this.d.db.transaction().execute(async (trx) => {
-        await trx
-          .updateTable("eval_runs")
-          .set({ status: "failed", finished_at: sql`now()` })
-          .where("id", "=", runId)
-          .execute();
-        await trx
-          .updateTable("eval_results")
-          .set({ status: "skipped", updated_at: sql`now()` })
-          .where("run_id", "=", runId)
-          .where("status", "=", "pending")
-          .execute();
-        await recountCases(trx, runId);
-      });
+      await this.failStartIn(runId);
       throw e;
     }
     return this.get(orgId, runId);
+  }
+
+  /** The run row and its pending results, in a transaction of their own (enqueued after the commit). */
+  @Transactional({ propagation: "requires_new" })
+  private async startIn(
+    orgId: string,
+    actor: string,
+    setId: string,
+    agentId: string,
+    input: { mode: "step" | "run"; candidate: EvalCandidate; judge: boolean },
+    tokenCap: number,
+    planned: PlannedCase[],
+    judge: JudgePricing | null,
+    actorTokenId: string | undefined,
+  ): Promise<{ runId: string; plans: PlannedCase[] }> {
+    const db = this.d.db;
+    await this.d.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
+    // 与删除用例（锁集合行 FOR UPDATE）互斥：之后读到的用例在提交前不会被删
+    const locked = await db
+      .selectFrom("eval_sets")
+      .select("id")
+      .where("id", "=", setId)
+      .where("org_id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .forShare()
+      .executeTakeFirst();
+    if (!locked) throw setNotFound();
+    await this.assertAgentLive(agentId, true);
+    const alive = new Set(
+      (
+        await db
+          .selectFrom("eval_cases")
+          .select("id")
+          .where("set_id", "=", setId)
+          .where(
+            "id",
+            "in",
+            planned.map((p) => p.caseId),
+          )
+          .execute()
+      ).map((r) => r.id),
+    );
+    const plans = planned.filter((p) => alive.has(p.caseId));
+    if (plans.length === 0) {
+      throw new ApiError("eval.nothing_to_replay", "The eval set has nothing to replay");
+    }
+    const estimate = await this.summarize(plans, judge);
+    const run = await db
+      .insertInto("eval_runs")
+      .values({
+        org_id: orgId,
+        set_id: setId,
+        mode: input.mode,
+        candidate: JSON.stringify(input.candidate),
+        judge: input.judge,
+        token_cap: String(tokenCap),
+        cases_total: plans.length,
+        estimate: JSON.stringify(estimate),
+        created_by: actor,
+      })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+    // 候选不合法的用例：结果直接记错误（计入进度，不入队）
+    const rows = plans.flatMap((p) =>
+      p.results.map((r) => ({
+        run_id: run.id,
+        case_id: p.caseId,
+        org_id: orgId,
+        step: r.step,
+        model_call_seq: r.modelCallSeq,
+        ...(p.problem !== null && {
+          status: "error" as const,
+          error: JSON.stringify(p.problem),
+        }),
+      })),
+    );
+    for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
+      await db
+        .insertInto("eval_results")
+        .values(rows.slice(i, i + INSERT_CHUNK))
+        .execute();
+    }
+    await audit(db, {
+      actorAccountId: actor,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "eval.run_started",
+      target: run.id,
+      detail: { setId, mode: input.mode, judge: input.judge, tokenCap, cases: plans.length },
+    });
+    await this.d.budget.recountCases(run.id);
+    return { runId: run.id, plans: plans.filter((p) => p.problem === null) };
+  }
+
+  /** The enqueue failed: the run is `failed`, its pending results `skipped`. */
+  @Transactional({ propagation: "requires_new" })
+  private async failStartIn(runId: string): Promise<void> {
+    const db = this.d.db;
+    await db
+      .updateTable("eval_runs")
+      .set({ status: "failed", finished_at: sql`now()` })
+      .where("id", "=", runId)
+      .execute();
+    await db
+      .updateTable("eval_results")
+      .set({ status: "skipped", updated_at: sql`now()` })
+      .where("run_id", "=", runId)
+      .where("status", "=", "pending")
+      .execute();
+    await this.d.budget.recountCases(runId);
   }
 
   /** 各运行的汇总（只算已结束的）。 */
@@ -914,22 +916,17 @@ export class EvalRunsService {
     actor: string,
     actorTokenId: string | undefined,
   ): Promise<void> {
-    if (this.d.redis) {
-      let first = true;
-      try {
-        const r = await this.d.redis.set(
-          resultsViewedKey(runId, actor),
-          "1",
-          "EX",
-          RESULTS_VIEWED_TTL_SECONDS,
-          "NX",
-        );
-        first = r === "OK";
-      } catch {
-        first = true;
-      }
-      if (!first) return;
+    let first = true;
+    try {
+      first = await this.d.locks.lease(
+        resultsViewedKey(runId, actor),
+        "1",
+        RESULTS_VIEWED_TTL_SECONDS * 1000,
+      );
+    } catch {
+      first = true;
     }
+    if (!first) return;
     await audit(this.d.db, {
       actorAccountId: actor,
       ...(actorTokenId !== undefined && { actorTokenId }),
@@ -1059,35 +1056,7 @@ export class EvalRunsService {
   ): Promise<EvalRunView> {
     if (!UUID.test(runId)) throw runNotFound();
     await this.get(orgId, runId);
-    await this.d.db.transaction().execute(async (trx) => {
-      await this.d.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
-      const r = await trx
-        .updateTable("eval_runs")
-        .set({ status: "cancelled", finished_at: sql`now()` })
-        .where("id", "=", runId)
-        .where("org_id", "=", orgId)
-        .where("status", "in", [...ACTIVE_EVAL_STATUSES])
-        .executeTakeFirst();
-      if (Number(r.numUpdatedRows) === 0) {
-        throw new ApiError("eval.run_finished", "The eval run has already finished");
-      }
-      await trx
-        .updateTable("eval_results")
-        .set({ status: "skipped", updated_at: sql`now()` })
-        .where("run_id", "=", runId)
-        .where("status", "=", "pending")
-        .execute();
-      await skipPendingJudges(trx, runId);
-      // 尚未开始的用例此刻已全部结束：进度立即反映（在途的用例做完后由 worker 再重算）
-      await recountCases(trx, runId);
-      await audit(trx, {
-        actorAccountId: actor,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "eval.run_cancelled",
-        target: runId,
-      });
-    });
+    await this.cancelIn(orgId, actor, runId, actorTokenId);
     return this.get(orgId, runId);
   }
 
@@ -1103,52 +1072,89 @@ export class EvalRunsService {
     actorTokenId?: string,
   ): Promise<EvalResultView> {
     if (!UUID.test(resultId)) throw resultNotFound();
-    const row = await this.d.db.transaction().execute(async (trx) => {
-      await this.d.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
-      // 先锁住这条结果、读出原标注（写进审计）
-      const before = await trx
-        .selectFrom("eval_results")
-        .select("label")
-        .where("id", "=", resultId)
-        .where("org_id", "=", orgId)
-        .forUpdate()
-        .executeTakeFirst();
-      if (!before) throw resultNotFound();
-      const cleared = input.label === null;
-      const r = await trx
-        .updateTable("eval_results")
-        .set({
-          label: input.label,
-          label_note: cleared ? null : (input.note ?? null),
-          labeled_by: cleared ? null : actor,
-          labeled_at: cleared ? null : sql`now()`,
-          updated_at: sql`now()`,
-        })
-        .where("id", "=", resultId)
-        .where("org_id", "=", orgId)
-        .where((eb) =>
-          eb.exists(
-            eb
-              .selectFrom("eval_runs as er")
-              .innerJoin("eval_sets as es", "es.id", "er.set_id")
-              .select("er.id")
-              .whereRef("er.id", "=", "eval_results.run_id")
-              .where("es.deleted_at", "is", null),
-          ),
-        )
-        .returningAll()
-        .executeTakeFirst();
-      if (!r) throw resultNotFound();
-      await audit(trx, {
-        actorAccountId: actor,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "eval.result_labeled",
-        target: resultId,
-        detail: { runId: r.run_id, label: input.label, previousLabel: before.label },
-      });
-      return r;
-    });
+    const row = await this.labelIn(orgId, actor, resultId, input, actorTokenId);
     return resultView(row);
+  }
+  @Transactional({ propagation: "requires_new" })
+  private async cancelIn(
+    orgId: string,
+    actor: string,
+    runId: string,
+    actorTokenId: string | undefined,
+  ): Promise<void> {
+    await this.d.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
+    const r = await this.d.db
+      .updateTable("eval_runs")
+      .set({ status: "cancelled", finished_at: sql`now()` })
+      .where("id", "=", runId)
+      .where("org_id", "=", orgId)
+      .where("status", "in", [...ACTIVE_EVAL_STATUSES])
+      .executeTakeFirst();
+    if (Number(r.numUpdatedRows) === 0) {
+      throw new ApiError("eval.run_finished", "The eval run has already finished");
+    }
+    // 尚未开始的用例此刻已全部结束：进度立即反映（在途的用例做完后由 worker 再重算）
+    await this.d.budget.skipRun(runId);
+    await audit(this.d.db, {
+      actorAccountId: actor,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "eval.run_cancelled",
+      target: runId,
+    });
+  }
+
+  @Transactional({ propagation: "requires_new" })
+  private async labelIn(
+    orgId: string,
+    actor: string,
+    resultId: string,
+    input: { label: "pass" | "fail" | null; note?: string },
+    actorTokenId: string | undefined,
+  ): Promise<ResultRow> {
+    await this.d.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
+    // 先锁住这条结果、读出原标注（写进审计）
+    const before = await this.d.db
+      .selectFrom("eval_results")
+      .select("label")
+      .where("id", "=", resultId)
+      .where("org_id", "=", orgId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!before) throw resultNotFound();
+    const cleared = input.label === null;
+    const r = await this.d.db
+      .updateTable("eval_results")
+      .set({
+        label: input.label,
+        label_note: cleared ? null : (input.note ?? null),
+        labeled_by: cleared ? null : actor,
+        labeled_at: cleared ? null : sql`now()`,
+        updated_at: sql`now()`,
+      })
+      .where("id", "=", resultId)
+      .where("org_id", "=", orgId)
+      .where((eb) =>
+        eb.exists(
+          eb
+            .selectFrom("eval_runs as er")
+            .innerJoin("eval_sets as es", "es.id", "er.set_id")
+            .select("er.id")
+            .whereRef("er.id", "=", "eval_results.run_id")
+            .where("es.deleted_at", "is", null),
+        ),
+      )
+      .returningAll()
+      .executeTakeFirst();
+    if (!r) throw resultNotFound();
+    await audit(this.d.db, {
+      actorAccountId: actor,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "eval.result_labeled",
+      target: resultId,
+      detail: { runId: r.run_id, label: input.label, previousLabel: before.label },
+    });
+    return r;
   }
 }

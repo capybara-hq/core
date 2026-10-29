@@ -182,7 +182,7 @@ type Eligible =
  * - 审计 `org.directory.synced`（计数、是否不完整）。任务执行时再核对插件与配置：已停用的插件的陈旧任务什么都不做。
  *
  * The hourly scan is a `@LockedCron`; one-off syncs are jobs on the maintenance queue (same name and
- * job ids as before), consumed by the maintenance worker until Task 3.9 builds its `@Processor`.
+ * job ids as before), consumed by `MaintenanceProcessor`.
  */
 @Injectable()
 export class DirectorySync {
@@ -208,7 +208,7 @@ export class DirectorySync {
     if (targets.length > 0) this.log.info("directory syncs enqueued", { count: targets.length });
   }
 
-  /** A `directory-sync` job (the maintenance worker's handler until Task 3.9). */
+  /** A `directory-sync` job (dispatched by `MaintenanceProcessor`). */
   async runSyncJob(data: SyncJobData): Promise<void> {
     const r = await this.sync(data.orgId, data.plugin, data);
     // 通讯录未配置（Ruling A28）静默跳过

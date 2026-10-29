@@ -17,6 +17,7 @@ import { deploymentConfigHash, ExtensionHost } from "../../src/extensions/host.j
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
+import { EmbedTokens } from "../../src/ui/embed-token.js";
 import { testHost } from "../helpers/extensions.js";
 
 // closefail 插件的 ctx.close() 失败（先真正关闭，避免泄漏连接），验证宿主记 warn
@@ -83,6 +84,7 @@ beforeAll(async () => {
     busSubscriber: sub,
     redisUrl: rd.url,
     keyring: createKeyring(Buffer.alloc(32, 1), []),
+    embedTokens: new EmbedTokens(createKeyring(Buffer.alloc(32, 1), [])),
     runWorkers: false,
     log,
   };

@@ -10,6 +10,8 @@ const config = () =>
   ({ runtime: { sseHeartbeatMs: 60_000, sseRecheckMs: 20 } }) as unknown as KernelConfig;
 const bus = { subscribe: async () => async () => {} };
 const quiet = { warn() {} };
+const streamsFor = (memberRole: () => Promise<OrgRole | undefined>) =>
+  new OrgUiStreams(bus, { role: memberRole }, { get: config }, quiet);
 
 function output() {
   const chunks: string[] = [];
@@ -37,7 +39,7 @@ const params = { orgId: "o1", viewerAccountId: "a1", credential: async () => nul
 describe("OrgUiStreams 角色", () => {
   it("guest → ui.not_found；非成员 → org.not_found；member 可以连上", async () => {
     let role: OrgRole | undefined = "guest";
-    const streams = new OrgUiStreams({ bus, memberRole: async () => role, config, log: quiet });
+    const streams = streamsFor(async () => role);
     await expect(streams.open(params, output().out)).rejects.toMatchObject({
       code: "ui.not_found",
     });
@@ -53,7 +55,7 @@ describe("OrgUiStreams 角色", () => {
 
   it("连接中被降为 guest：复核时发 event: error（ui.not_found）并关闭", async () => {
     let role: OrgRole | undefined = "admin";
-    const streams = new OrgUiStreams({ bus, memberRole: async () => role, config, log: quiet });
+    const streams = streamsFor(async () => role);
     const o = output();
     const h = await streams.open(params, o.out);
     h.begin();
@@ -66,12 +68,7 @@ describe("OrgUiStreams 角色", () => {
 
 describe("OrgUiStreams shutdown", () => {
   it("after closeAll a new stream ends right after its headers", async () => {
-    const streams = new OrgUiStreams({
-      bus,
-      memberRole: async () => "member",
-      config,
-      log: quiet,
-    });
+    const streams = streamsFor(async () => "member");
     const o = output();
     const first = await streams.open(params, o.out);
     first.begin();

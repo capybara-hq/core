@@ -7,15 +7,20 @@ import {
   type UiView,
   validateUiView,
 } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
-import type { ConversationFiles } from "../conversations/files.js";
+import { ConversationFiles } from "../conversations/files.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import type { ExtensionHost } from "../extensions/host.js";
+import { ExtensionHost } from "../extensions/host.js";
 import type { InflightTracker } from "../extensions/inflight.js";
 import { audit } from "../identity/audit.js";
-import type { StorageService } from "../storage/storage.service.js";
-import { callExtension } from "../ui/views.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import { StorageService } from "../storage/storage.service.js";
+import { callExtension } from "../ui/call-extension.js";
 
 /** Time limit of a previewer's render (UI refresh spec §5.3: 10 s on the conversation page). */
 export const FILE_PREVIEW_TIMEOUT_MS = 10_000;
@@ -38,16 +43,15 @@ export interface OrgPreviewerItem extends PreviewerItem {
   disabled: boolean;
 }
 
-export interface PreviewerRegistryDeps {
-  db: KernelSchemaDb;
+interface PreviewerRegistryDeps {
+  /** The context-aware handle (the `@Transactional` method's transaction, else the pool). */
+  readonly db: KernelSchemaDb;
   host: Pick<ExtensionHost, "list">;
   /** Extensions enabled in the org (queried every time). */
   enabledPlugins(orgId: string): Promise<Set<string>>;
   files: Pick<ConversationFiles, "file">;
   storage: Pick<StorageService, "kernel">;
   log: Pick<Logger, "warn">;
-  /** Default {@link FILE_PREVIEW_TIMEOUT_MS}. */
-  timeoutMs?: number;
 }
 
 interface Loaded {
@@ -97,13 +101,32 @@ async function readAtMost(body: ReadableStream<Uint8Array>, max: number): Promis
  * dropped; only extensions enabled in the org), and rendering a view previewer through a read grant
  * for that one file (valid only during the call, capped at the previewer's `maxBytes`; the extension
  * never gets a storage key or URL). Providers are validated when they are provided (`ctx.provide`).
- * Not Nest-dependent; no state across requests.
+ * No state across requests.
  */
+@Injectable()
 export class PreviewerRegistry {
-  private readonly timeoutMs: number;
+  /** Default {@link FILE_PREVIEW_TIMEOUT_MS} (tests set less). */
+  timeoutMs = FILE_PREVIEW_TIMEOUT_MS;
+  private readonly d: PreviewerRegistryDeps;
 
-  constructor(private readonly d: PreviewerRegistryDeps) {
-    this.timeoutMs = d.timeoutMs ?? FILE_PREVIEW_TIMEOUT_MS;
+  constructor(
+    @Inject(KernelDb) kdb: Pick<KernelDb, "db">,
+    @Inject(ExtensionHost) host: Pick<ExtensionHost, "list" | "enabledPlugins">,
+    @Inject(ConversationFiles) files: Pick<ConversationFiles, "file">,
+    @Inject(StorageService) storage: Pick<StorageService, "kernel">,
+    @Inject(KERNEL_LOGGER) log: Pick<Logger, "warn">,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {
+    this.d = {
+      get db(): KernelSchemaDb {
+        return kdb.db;
+      },
+      host,
+      enabledPlugins: (orgId) => host.enabledPlugins(orgId),
+      files,
+      storage,
+      log,
+    };
   }
 
   /** Every previewer loaded on this replica, in provider order (load order, then list order). */
@@ -178,37 +201,46 @@ export class PreviewerRegistry {
       }
       seen.add(k);
     }
-    await this.d.db.transaction().execute(async (trx) => {
-      if (known.size > 0) {
-        await trx
-          .deleteFrom("file_previewers")
-          .where("org_id", "=", orgId)
-          .where(sql<string>`plugin || '/' || previewer_id`, "in", [...known])
-          .execute();
-      }
-      if (items.length > 0) {
-        await trx
-          .insertInto("file_previewers")
-          .values(
-            items.map((i, position) => ({
-              org_id: orgId,
-              plugin: i.plugin,
-              previewer_id: i.id,
-              position,
-              disabled: i.disabled,
-            })),
-          )
-          .execute();
-      }
-      await audit(trx, {
-        ...(actor.accountId !== undefined && { actorAccountId: actor.accountId }),
-        ...(actor.tokenId !== undefined && { actorTokenId: actor.tokenId }),
-        orgId,
-        action: "org.file_previewers.updated",
-        detail: { items },
-      });
-    });
+    await this.putIn(orgId, items, known, actor);
     return this.list(orgId);
+  }
+
+  /** Replaces the org's rows of the previewers this replica knows, in one transaction. */
+  @Transactional({ propagation: "requires_new" })
+  private async putIn(
+    orgId: string,
+    items: { plugin: string; id: string; disabled: boolean }[],
+    known: Set<string>,
+    actor: { accountId?: string; tokenId?: string },
+  ): Promise<void> {
+    if (known.size > 0) {
+      await this.d.db
+        .deleteFrom("file_previewers")
+        .where("org_id", "=", orgId)
+        .where(sql<string>`plugin || '/' || previewer_id`, "in", [...known])
+        .execute();
+    }
+    if (items.length > 0) {
+      await this.d.db
+        .insertInto("file_previewers")
+        .values(
+          items.map((i, position) => ({
+            org_id: orgId,
+            plugin: i.plugin,
+            previewer_id: i.id,
+            position,
+            disabled: i.disabled,
+          })),
+        )
+        .execute();
+    }
+    await audit(this.d.db, {
+      ...(actor.accountId !== undefined && { actorAccountId: actor.accountId }),
+      ...(actor.tokenId !== undefined && { actorTokenId: actor.tokenId }),
+      orgId,
+      action: "org.file_previewers.updated",
+      detail: { items },
+    });
   }
 
   /** Previewers that take this file (viewer must read the conversation), in the org's order. */

@@ -9,13 +9,17 @@ import {
   type ModelUsage,
   type StopReason,
 } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
-import { normalizeStoredDefinition } from "../agents/definition.js";
-import type { KernelConfig } from "../config/schema.js";
-import type { EventLog } from "../conversations/event-log.js";
+import { type ModelRef, normalizeStoredDefinition } from "../agents/definition.js";
+import { EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import type { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
 import type { KyselyCheckpointSaver } from "../runtime/checkpointer.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import type { LoopDeps } from "../runtime/langgraph-loop.js";
@@ -78,11 +82,14 @@ export interface EvalReplayHooks {
 }
 
 export interface RunReplayDeps {
-  db: KernelSchemaDb;
+  /** The context-aware handle (reads, the eval conversation's cleanup). */
+  readonly db: KernelSchemaDb;
   eventLog: EventLog;
+  /** Writes the seed (the eval conversation, its events, the run) in a transaction of its own. */
+  seeder: Pick<EvalReplaySeeder, "seed">;
   /** Writes the replayed run's terminal state. */
   runFinish: Pick<RunFinish, "finish">;
-  config: () => KernelConfig;
+  config: Pick<KernelConfigService, "get">;
   log: Logger;
   registry: Pick<ProviderRegistry, "resolve">;
   media?: MediaSourceDeps;
@@ -94,9 +101,10 @@ export interface RunReplayDeps {
   /** 本次执行是否仍持有结果的认领（失去认领 → 不再发请求）；不给 = 不检查。 */
   stillClaimed?: () => Promise<boolean>;
   /**
-   * 种子事务内调用：把评测对话记到结果上（以认领为条件）。返回 false = 已失去认领，种子回滚、抛 {@link ReplayClaimLost}。
+   * 种子事务内调用（its queries join the seed's transaction through the context-aware handle）：把评测对话记到结果上
+   * （以认领为条件）。返回 false = 已失去认领，种子回滚、抛 {@link ReplayClaimLost}。
    */
-  onSeeded?: (trx: KernelSchemaDb, conversationId: string) => Promise<boolean>;
+  onSeeded?: (conversationId: string) => Promise<boolean>;
   hooks?: EvalReplayHooks;
 }
 
@@ -105,6 +113,126 @@ export class ReplayClaimLost extends Error {
   constructor() {
     super("the eval result is no longer claimed by this execution");
     this.name = "ReplayClaimLost";
+  }
+}
+
+/** What {@link EvalReplaySeeder.seed} writes. */
+export interface ReplaySeed {
+  evalRunId: string;
+  orgId: string;
+  agentId: string;
+  accountId: string;
+  conversationId: string;
+  runId: string;
+  /** The original run's `run_started` seq: the seeds are the events before it. */
+  runStartedSeq: number;
+  /** The conversation's `consumed_seq` when the original run started. */
+  consumed: number;
+  seeds: SnapshotEvent[];
+  /** The run's trigger seq (the last user message before it). */
+  trigger: number;
+  agentVersion: number;
+  model: ModelRef;
+  /** The original run's `skills_catalog` event, its payload copied as is. */
+  catalog: { payload: unknown } | undefined;
+}
+
+/**
+ * The seed of a full-run replay (C6): the `kind = 'eval'` conversation with the events before the
+ * original run at their original seqs, the run row and its `run_started` (and the original
+ * `skills_catalog`), in one transaction of its own.
+ */
+@Injectable()
+export class EvalReplaySeeder {
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(EventLog) private readonly eventLog: Pick<EventLog, "appendIn">,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {}
+
+  /**
+   * Writes the seed; `onSeeded` runs inside the same transaction (false = the claim is lost: the
+   * seed rolls back and {@link ReplayClaimLost} is thrown).
+   */
+  @Transactional({ propagation: "requires_new" })
+  async seed(
+    p: ReplaySeed,
+    onSeeded?: (conversationId: string) => Promise<boolean>,
+  ): Promise<void> {
+    const { conversationId, runId, evalRunId } = p;
+    // 运行行加共享锁并复核仍在执行：与取消 / 删除评测集（UPDATE 持行锁）互斥，删除之后不会再长出评测对话
+    const live = await this.db
+      .selectFrom("eval_runs")
+      .select("id")
+      .where("id", "=", evalRunId)
+      .where("status", "in", [...ACTIVE_EVAL_STATUSES])
+      .forShare()
+      .executeTakeFirst();
+    if (!live) throw new ReplayClaimLost();
+    await this.db
+      .insertInto("conversations")
+      .values({
+        id: conversationId,
+        org_id: p.orgId,
+        agent_id: p.agentId,
+        account_id: p.accountId,
+        last_seq: p.runStartedSeq - 1,
+        consumed_seq: p.consumed,
+        kind: "eval",
+        eval_run_id: evalRunId,
+      })
+      .execute();
+    for (let i = 0; i < p.seeds.length; i += SEED_BATCH) {
+      await this.db
+        .insertInto("conversation_events")
+        .values(
+          p.seeds.slice(i, i + SEED_BATCH).map((e: SnapshotEvent) => ({
+            conversation_id: conversationId,
+            seq: e.seq,
+            type: e.type,
+            run_id: e.runId,
+            idem_key: null,
+            payload: JSON.stringify(e.payload),
+            created_at: new Date(e.createdAt),
+          })),
+        )
+        .execute();
+    }
+    await this.db
+      .insertInto("runs")
+      .values({
+        id: runId,
+        conversation_id: conversationId,
+        status: "running",
+        agent_version: p.agentVersion,
+        trigger_account_id: p.accountId,
+        trigger_seq: p.trigger,
+        started_at: new Date(),
+      })
+      .execute();
+    await this.eventLog.appendIn(conversationId, [
+      {
+        type: "run_started",
+        runId,
+        idemKey: `run_started:${runId}`,
+        payload: {
+          agentVersion: p.agentVersion,
+          model: p.model,
+          triggerAccountId: p.accountId,
+        },
+      },
+      ...(p.catalog
+        ? [
+            {
+              type: "skills_catalog" as const,
+              runId,
+              idemKey: skillsCatalogIdemKey(runId),
+              payload: p.catalog.payload,
+            },
+          ]
+        : []),
+    ]);
+    if (onSeeded && !(await onSeeded(conversationId))) throw new ReplayClaimLost();
   }
 }
 
@@ -299,81 +427,24 @@ export async function replayRun(
 
   const conversationId = randomUUID();
   const runId = randomUUID();
-  await db.transaction().execute(async (t) => {
-    // 运行行加共享锁并复核仍在执行：与取消 / 删除评测集（UPDATE 持行锁）互斥，删除之后不会再长出评测对话
-    const live = await t
-      .selectFrom("eval_runs")
-      .select("id")
-      .where("id", "=", evalRunId)
-      .where("status", "in", [...ACTIVE_EVAL_STATUSES])
-      .forShare()
-      .executeTakeFirst();
-    if (!live) throw new ReplayClaimLost();
-    await t
-      .insertInto("conversations")
-      .values({
-        id: conversationId,
-        org_id: s.orgId,
-        agent_id: s.agentId,
-        account_id: accountId,
-        last_seq: R - 1,
-        consumed_seq: consumed,
-        kind: "eval",
-        eval_run_id: evalRunId,
-      })
-      .execute();
-    for (let i = 0; i < seeds.length; i += SEED_BATCH) {
-      await t
-        .insertInto("conversation_events")
-        .values(
-          seeds.slice(i, i + SEED_BATCH).map((e: SnapshotEvent) => ({
-            conversation_id: conversationId,
-            seq: e.seq,
-            type: e.type,
-            run_id: e.runId,
-            idem_key: null,
-            payload: JSON.stringify(e.payload),
-            created_at: new Date(e.createdAt),
-          })),
-        )
-        .execute();
-    }
-    await t
-      .insertInto("runs")
-      .values({
-        id: runId,
-        conversation_id: conversationId,
-        status: "running",
-        agent_version: candidate.agentVersion,
-        trigger_account_id: accountId,
-        trigger_seq: trigger,
-        started_at: new Date(),
-      })
-      .execute();
-    await eventLog.appendIn(conversationId, [
-      {
-        type: "run_started",
-        runId,
-        idemKey: `run_started:${runId}`,
-        payload: {
-          agentVersion: candidate.agentVersion,
-          model: agent.model,
-          triggerAccountId: accountId,
-        },
-      },
-      ...(catalog
-        ? [
-            {
-              type: "skills_catalog" as const,
-              runId,
-              idemKey: skillsCatalogIdemKey(runId),
-              payload: catalog.payload,
-            },
-          ]
-        : []),
-    ]);
-    if (d.onSeeded && !(await d.onSeeded(t, conversationId))) throw new ReplayClaimLost();
-  });
+  await d.seeder.seed(
+    {
+      evalRunId,
+      orgId: s.orgId,
+      agentId: s.agentId,
+      accountId,
+      conversationId,
+      runId,
+      runStartedSeq: R,
+      consumed,
+      seeds,
+      trigger,
+      agentVersion: candidate.agentVersion,
+      model: agent.model,
+      catalog,
+    },
+    d.onSeeded,
+  );
   await d.hooks?.afterRunSeeded?.(evalRunId, conversationId);
 
   // 停止：取消 / 越限 / 熔断 / 失去认领 / 截止时间 → 中止 loop（进行中的请求立即停下，loop 以 aborted 返回）
@@ -523,7 +594,7 @@ export async function replayRun(
     return out;
   };
 
-  const runtime = d.config().runtime;
+  const runtime = d.config.get().runtime;
   const deadline = Date.now() + runtime.maxRunSeconds * 1000;
   let deadlineHit = false;
   const timer = setTimeout(

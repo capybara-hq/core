@@ -19,6 +19,7 @@ import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
 import type { Org, OrgsService } from "../../src/orgs/orgs.service.js";
+import { EmbedTokens } from "../../src/ui/embed-token.js";
 import { truncateTables } from "../helpers/db.js";
 import { orgConfigsFor, testHost } from "../helpers/extensions.js";
 import { accountsFor, orgsFor } from "../helpers/identity.js";
@@ -68,6 +69,7 @@ beforeAll(async () => {
     busSubscriber: sub,
     redisUrl: rd.url,
     keyring,
+    embedTokens: new EmbedTokens(keyring),
     runWorkers: false,
     log: silent,
   };

@@ -20,6 +20,7 @@ import type { KernelConfigService } from "../../src/infra/config/kernel-config.s
 import { KernelEvents } from "../../src/infra/events/kernel-events.js";
 import type { KernelLogger } from "../../src/log.js";
 import type { StorageService } from "../../src/storage/storage.service.js";
+import { EmbedTokens } from "../../src/ui/embed-token.js";
 import { handlesFor, orgLockFor } from "./identity.js";
 
 /** The hand-wired host's options, mapped onto the config the provider reads. */
@@ -111,6 +112,7 @@ export function testHost(
     deps.redis,
     deps.busSubscriber,
     deps.keyring,
+    new EmbedTokens(deps.keyring),
     deps.locks as never,
     loggerOf(deps.log, opts.onSecrets),
     opts.resolveFrom !== undefined ? { resolveFrom: opts.resolveFrom } : {},

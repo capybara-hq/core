@@ -259,3 +259,27 @@ the shared lease.
 jobs (once per tick across replicas, on every role until Task 4.1); their old maintenance
 schedulers are removed when a worker starts. `sandbox-destroy-for` jobs are unchanged (name, data,
 retries, BullMQ's own ids).
+
+The last domains are Nest modules (Task 3.9) and the legacy service graph is gone. Evals
+(`EvalsModule`: `EvalSetsService`, `EvalRunsService`, the new `EvalJobs` producer of
+`cap-kernel-evals`, `EvalBudget`; `EvalWorkersModule`: `EvalWorker`, `EvalReplaySeeder` and the
+`EvalsProcessor` on the worker role), extension UI (`UiModule`: `UiViews`, `OrgUiStreams`,
+`OrgMembership`; `EmbedTokensModule`: `EmbedTokens`), file previewers (`FilesModule`:
+`PreviewerRegistry`), the inbox (`InboxModule`: `InboxService`) and `ConversationToolInfo`
+(`ToolsModule`) are injectable providers; `ApiModule` is a static module (no `register` /
+`registerFrom`, no `ApiDeps` / `API_DEPS`). The maintenance queue has one `@Processor`,
+`MaintenanceProcessor` (`MaintenanceModule`, worker role, concurrency 5), which dispatches
+`wait-timeout`, `sandbox-destroy-for`, `drift-connector` and `directory-sync` by name (names, data,
+ids and options unchanged); `RETIRED_SCHEDULER_IDS` moved to `infra/queue/retired-schedulers.ts`
+and a starting worker role still removes them once. Export changes: `Maintenance`, `EvalQueue`,
+`cancelEvalRuns` / `recountCases` (now `EvalBudget.cancelRuns` / `recountCases`),
+`legacyKernelView` / `legacyCurrentTrx`, `StandaloneDatabase.schemaDb`, `KernelRuns.maintenance`,
+`KernelTestHooks` and `KernelOptions.evalHooks` are removed (`KernelOptions` is
+`KernelAppOptions`; the eval replay hooks are the `EVAL_REPLAY_HOOKS` provider override);
+`KernelDeps` gains `embedTokens` (the one `EmbedTokens` provider, which `ctx` verifies with);
+`EmbedTokens` takes only the keyring (its clock is the `now` field); `orgMembership(db)` became
+the `OrgMembership` provider; `MAINTENANCE_QUEUE_NAME` is exported from
+`runtime/maintenance-queue.ts`; the eval replay deps take `KernelConfigService` instead of a config
+getter, and the full-run replay seed is written by `EvalReplaySeeder`. The eval quota slot is held
+through `OrgQuota.enter` (renewed by the lock service, one `lock lost` line instead of `eval quota
+renew failed`), and the results-viewed audit dedupe is a `LockService` lease on the same key.

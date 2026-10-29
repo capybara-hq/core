@@ -1,4 +1,8 @@
-import { SANDBOX_EXTENSION_POINT, type SandboxProvider } from "@capybara-hq/plugin-sdk";
+import {
+  type ExtensionContext,
+  SANDBOX_EXTENSION_POINT,
+  type SandboxProvider,
+} from "@capybara-hq/plugin-sdk";
 import {
   type BeforeApplicationShutdown,
   Inject,
@@ -21,7 +25,8 @@ import { ChannelWebhooks } from "../channels/webhook.js";
 import type { KernelConfig } from "../config/schema.js";
 import { TitleQueue } from "../conversations/titles.js";
 import { migrate } from "../db/migrator.js";
-import type { EvalWorker } from "../evals/worker.js";
+import { EvalsProcessor } from "../evals/evals.module.js";
+import { EvalWorker } from "../evals/worker.js";
 import { ExtensionBlobs } from "../extensions/blobs.js";
 import {
   type BootstrapEntryResult,
@@ -41,12 +46,14 @@ import type { KernelHttpApp } from "../http/app.js";
 import type { GatewayRoutes } from "../http/gateway.module.js";
 import { AccountsService } from "../identity/accounts.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
 import { GracefulShutdown } from "../infra/lifecycle/graceful-shutdown.service.js";
 import { LockedIntervalScheduler } from "../infra/schedule/locked-interval.js";
 import { ScheduledRuns } from "../infra/schedule/scheduled-runs.js";
 import { KERNEL_BUS, KERNEL_LOGGER, KERNEL_POOL, REDIS } from "../infra/tokens.js";
-import { KERNEL_MIGRATIONS_DIR, KERNEL_SCHEMA, type LegacyGraph } from "../kernel.js";
+import { KERNEL_MIGRATIONS_DIR, KERNEL_SCHEMA } from "../kernel.js";
 import type { KernelLogger } from "../log.js";
+import { MaintenanceProcessor } from "../runtime/maintenance.js";
 import {
   RunsProcessor,
   SubagentRunsProcessor,
@@ -56,7 +63,7 @@ import {
 import { RunWorker } from "../runtime/run-worker.js";
 import { UsageReporter } from "../runtime/usage-report.js";
 import { sandboxConfigWarnings } from "../sandbox/sandbox.service.js";
-import { KERNEL_APP_OPTIONS, LEGACY_GRAPH } from "./tokens.js";
+import { KERNEL_APP_OPTIONS } from "./tokens.js";
 
 /**
  * The stop phase budgets. Each phase waits `min(its budget, what is left of the total)`, where the
@@ -122,14 +129,14 @@ export class KernelLifecycle
   private unsubscribeWebhooks: (() => Promise<void>) | undefined;
   /** The run worker was started (worker role): the runs phase drains it. */
   private runsStarted = false;
-  private evalWorker: EvalWorker | undefined;
+  /** The eval worker was started (worker role): the runs phase drains it. */
+  private evalsStarted = false;
   /** The channel supervisor was started (gateway role): the runs phase stops it. */
   private supervisorStarted = false;
   /** What the first bootstrap pass did, carried into the second one. */
   private bootstrapCarry: BootstrapEntryResult[] | undefined;
 
   constructor(
-    @Inject(LEGACY_GRAPH) private readonly graph: LegacyGraph,
     @Inject(AccountsService) private readonly accounts: AccountsService,
     @Inject(KernelConfigService) private readonly configService: KernelConfigService,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
@@ -137,6 +144,7 @@ export class KernelLifecycle
     // biome-ignore lint/suspicious/noExplicitAny: the pool carries no schema types
     @Inject(KERNEL_POOL) private readonly pool: Kysely<any>,
     @Inject(REDIS) private readonly redis: Redis,
+    @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(GracefulShutdown) private readonly shutdown: GracefulShutdown,
     @Inject(ExtensionHost) private readonly host: ExtensionHost,
     @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
@@ -150,12 +158,13 @@ export class KernelLifecycle
     @Inject(LockedIntervalScheduler) private readonly intervals: LockedIntervalScheduler,
     @Inject(ScheduledRuns) private readonly scheduledRuns: ScheduledRuns,
     @Inject(KERNEL_BUS)
-    private readonly bus: { publish(topic: string, payload: unknown): Promise<void> },
+    private readonly bus: Pick<ExtensionContext["bus"], "publish" | "subscribe">,
     @Inject(RunWorker) private readonly runWorker: RunWorker,
     @Inject(UsageReporter) private readonly usageReport: UsageReporter,
     @Inject(TitleQueue) private readonly titles: TitleQueue,
     @Inject(ChannelJobs) private readonly channelJobs: ChannelJobs,
     @Inject(ChannelOutbound) private readonly channelOutbound: ChannelOutbound,
+    @Inject(EvalWorker) private readonly evalWorker: EvalWorker,
     // the consumers exist on the worker role only (`RuntimeWorkersModule`)
     @Optional() @Inject(RunsProcessor) private readonly runsProcessor?: RunsProcessor,
     @Optional()
@@ -166,6 +175,10 @@ export class KernelLifecycle
     private readonly usageProcessor?: UsageReportProcessor,
     @Optional() @Inject(TitleProcessor) private readonly titleProcessor?: TitleProcessor,
     @Optional() @Inject(ChannelsProcessor) private readonly channelsProcessor?: ChannelsProcessor,
+    @Optional() @Inject(EvalsProcessor) private readonly evalsProcessor?: EvalsProcessor,
+    @Optional()
+    @Inject(MaintenanceProcessor)
+    private readonly maintenanceProcessor?: MaintenanceProcessor,
     // the gateway role's parts (`ChannelRolesModule`)
     @Optional()
     @Inject(ChannelSupervisor)
@@ -210,7 +223,7 @@ export class KernelLifecycle
 
   async onApplicationBootstrap(): Promise<void> {
     if (this.shutdown.isShuttingDown()) throw new Error("kernel is stopped");
-    const { graph: g, config, options: opts } = this;
+    const { config, options: opts } = this;
     const cfg = () => this.configService.get();
     await this.redis.connect();
     this.checkpoint();
@@ -254,7 +267,7 @@ export class KernelLifecycle
             ? "migrated"
             : ensureMigrated(
                 {
-                  db: g.kdb,
+                  db: this.kdb.db,
                   dbUrl: config.db.url,
                   connectTimeoutMs: config.db.connectTimeoutMs,
                   bus: this.bus,
@@ -284,30 +297,32 @@ export class KernelLifecycle
     }
     if (config.roles.includes("worker")) {
       const { runsProcessor, subagentRunsProcessor, usageProcessor, titleProcessor } = this;
-      const { channelsProcessor } = this;
+      const { channelsProcessor, evalsProcessor, maintenanceProcessor } = this;
       if (
         !runsProcessor ||
         !subagentRunsProcessor ||
         !usageProcessor ||
         !titleProcessor ||
-        !channelsProcessor
+        !channelsProcessor ||
+        !evalsProcessor ||
+        !maintenanceProcessor
       ) {
         throw new Error("the worker role's queue processors are missing");
       }
       // both run queues' @Processor workers (built with the run config, never autorun)
       this.runWorker.start([runsProcessor.worker, subagentRunsProcessor.worker]);
       this.runsStarted = true;
-      this.evalWorker = g.createEvalWorker();
-      this.evalWorker.start();
-      // 维护队列：周期任务的 scheduler（幂等，多副本重复登记无害）与唯一的 Worker。
-      // 登记失败只记日志、不阻止启动（与 Worker 的连接错误同样处理）：任一 worker 副本下次启动时会再登记。
+      this.evalWorker.start(evalsProcessor.worker);
+      this.evalsStarted = true;
+      // 维护队列：移除已退役的周期任务 scheduler（幂等，多副本重复移除无害）与唯一的消费方。
+      // 失败只记日志、不阻止启动（与 Worker 的连接错误同样处理）：任一 worker 副本下次启动时会再移除。
       try {
-        await g.maintenance.ensureSchedules();
+        await maintenanceProcessor.removeRetiredSchedulers();
       } catch (err) {
         this.log.error("cannot register maintenance job schedulers", { err });
       }
       this.checkpoint();
-      g.maintenance.startWorker();
+      maintenanceProcessor.start();
       this.channelOutbound.startWorker(channelsProcessor.worker);
       this.usageReport.startWorker(usageProcessor.worker);
       this.titles.startWorker(titleProcessor.worker);
@@ -331,7 +346,7 @@ export class KernelLifecycle
     if (webhooks) {
       // The webhook runtime cache is read-through only: drop entries on every connection change
       // and whenever a plugin instance changes
-      this.unsubscribeWebhooks = await g.bus.subscribe(CHANNEL_CHANGED_TOPIC, (payload) => {
+      this.unsubscribeWebhooks = await this.bus.subscribe(CHANNEL_CHANGED_TOPIC, (payload) => {
         const id = (payload as { connectionId?: unknown } | null)?.connectionId;
         if (typeof id === "string") webhooks.invalidate(id);
       });
@@ -456,7 +471,6 @@ export class KernelLifecycle
 
   private async runStopPhases(): Promise<void> {
     const log = this.log;
-    const g = this.graph;
     const shutdown = this.shutdown;
     /** Waits for p within `min(budgetMs, what is left of the total)`; a timeout warns and returns false. */
     const within = async (
@@ -521,7 +535,7 @@ export class KernelLifecycle
       const budget = Math.min(STOP_BUDGET_MS.runs, shutdown.remainingMs()) - RUNS_FORCE_CLOSE_MS;
       await within("runs", this.runWorker.close(Math.max(0, budget)), STOP_BUDGET_MS.runs);
     }
-    if (this.evalWorker) {
+    if (this.evalsStarted) {
       await within(
         "evals",
         this.evalWorker.close(Math.max(0, runsDeadline - Date.now() - RUNS_FORCE_CLOSE_MS)),
@@ -537,7 +551,11 @@ export class KernelLifecycle
       );
     }
     await within("scheduled-jobs", scheduledStopped, Math.max(0, runsDeadline - Date.now()));
-    await within("maintenance", g.maintenance.close(), Math.max(0, runsDeadline - Date.now()));
+    await within(
+      "maintenance",
+      this.maintenanceProcessor?.worker.close() ?? Promise.resolve(),
+      Math.max(0, runsDeadline - Date.now()),
+    );
     // titles before usage.report: a finishing title call enqueues its usage report
     await within("titles", this.titles.stop(), Math.max(0, runsDeadline - Date.now()));
     // usage.report: in-flight deliveries are aborted and retried by any replica; before the plugins close
@@ -549,7 +567,6 @@ export class KernelLifecycle
       this.channelOutbound.close(),
       Math.max(CHANNELS_STOP_MIN_MS, runsDeadline - Date.now()),
     );
-    await within("eval-queue", g.evalQueue.close(), Math.max(0, runsDeadline - Date.now()));
     await within("plugins", this.host.close(), STOP_BUDGET_MS.plugins);
     // 删掉本副本的加载状态行（尽力而为；崩溃副本心跳过期的行由 reconcile 清理）
     await within("plugin-status", this.replicaStatus.removeAll(), 1_000);

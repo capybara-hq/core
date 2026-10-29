@@ -3,7 +3,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { cancelEvalRuns } from "../evals/budget.js";
+import { EvalBudget } from "../evals/budget.js";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -260,6 +260,8 @@ export class AgentsService {
     @Inject(SandboxJobs) private readonly sandboxJobs: Pick<SandboxJobs, "destroy">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** Cancels the deleted agent's running eval runs (in the delete's transaction). */
+    @Inject(EvalBudget) private readonly evalBudget: Pick<EvalBudget, "cancelRuns">,
   ) {}
 
   /**
@@ -600,8 +602,7 @@ export class AgentsService {
       target: agentId,
     });
     // 评测集的 agent 删除后其评测运行不再花钱：显式取消（审计带原因）
-    await cancelEvalRuns(
-      t,
+    await this.evalBudget.cancelRuns(
       { orgId, agentId },
       { accountId: actorAccountId, ...(actorTokenId !== undefined && { tokenId: actorTokenId }) },
       "agent_deleted",

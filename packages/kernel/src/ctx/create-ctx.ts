@@ -36,7 +36,7 @@ import { audit } from "../identity/audit.js";
 import type { LockService } from "../infra/lock/lock.service.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { PrefixedStorage } from "../storage/storage.service.js";
-import { EmbedTokens } from "../ui/embed-token.js";
+import type { EmbedTokens } from "../ui/embed-token.js";
 import {
   canUsePlace,
   orgUiTopic,
@@ -64,6 +64,8 @@ export interface KernelDeps {
   busSubscriber: BusSubscriber;
   redisUrl: string;
   keyring: Keyring;
+  /** Verifies embed tokens (`ctx.ui` embed requests; the one `EmbedTokens` provider). */
+  embedTokens: Pick<EmbedTokens, "verify">;
   runWorkers: boolean;
   /** 内核 logger（`debug` 可选：插件 Logger 没有它，测试可不给）。 */
   log: Logger & { debug?(msg: string, fields?: Record<string, unknown>): void };
@@ -361,7 +363,7 @@ export function createExtensionContext(
   ]);
 
   const uiReg = new PluginUiRegistration(manifest, deny);
-  const embedTokens = new EmbedTokens(deps.keyring);
+  const embedTokens = deps.embedTokens;
   const uiPlaces = new Map((manifest.ui ?? []).map((c) => [c.id, c.place]));
 
   type Entry = { plugin: string; impl: unknown };

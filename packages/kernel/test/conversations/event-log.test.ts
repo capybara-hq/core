@@ -12,6 +12,7 @@ import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
+import { handlesFor } from "../helpers/identity.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -174,7 +175,8 @@ describe("EventLog", () => {
     });
     try {
       await expect(
-        dbA.transaction().execute(async () => {
+        // the caller's transaction in the async context, which appendIn joins
+        handlesFor(dbA).txHost.run(async () => {
           const out = await logA.appendIn(conversationId, [userMsg("a")]);
           expect(out[0]?.seq).toBe(1);
           throw new Error("rollback");

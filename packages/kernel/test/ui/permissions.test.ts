@@ -25,6 +25,7 @@ import {
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
+import { EmbedTokens } from "../../src/ui/embed-token.js";
 import { approvalsFor, testHost } from "../helpers/extensions.js";
 
 /**
@@ -295,6 +296,7 @@ describe("ExtensionHost.load: an extension upgrade adds a view / embed (review f
       busSubscriber: sub,
       redisUrl: rd.url,
       keyring: createKeyring(Buffer.alloc(32, 1), []),
+      embedTokens: new EmbedTokens(createKeyring(Buffer.alloc(32, 1), [])),
       runWorkers: false,
       log: { info: at("info"), warn: at("warn"), error: at("error") },
     };

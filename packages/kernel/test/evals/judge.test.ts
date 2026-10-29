@@ -14,9 +14,11 @@ import {
   parseVerdict,
   textTokens,
 } from "../../src/evals/judge.js";
+import type { EvalReplayHooks } from "../../src/evals/run-replay.js";
 import type { EvalEstimate, EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import type { EvalSetView } from "../../src/evals/sets.service.js";
 import type { CaseSnapshot } from "../../src/evals/snapshot.js";
+import { EVAL_REPLAY_HOOKS } from "../../src/evals/worker.js";
 import { ExtensionUnloadedError } from "../../src/extensions/inflight.js";
 import type { Kernel } from "../../src/kernel.js";
 import { PurposeAttemptError } from "../../src/models/purposes.js";
@@ -265,15 +267,21 @@ beforeAll(async () => {
       },
     ),
     {
-      evalHooks: {
-        async beforeJudge(evalRunId: string) {
-          await beforeJudgeHook?.(evalRunId);
-          if (!judgeCrashOnce) return;
-          judgeCrashOnce = false;
-          judgeCrashes++;
-          throw new Error("simulated crash before the judge request");
+      // the replay and judge test hooks are a provider override (R2)
+      overrides: [
+        {
+          provide: EVAL_REPLAY_HOOKS,
+          useValue: {
+            async beforeJudge(evalRunId: string) {
+              await beforeJudgeHook?.(evalRunId);
+              if (!judgeCrashOnce) return;
+              judgeCrashOnce = false;
+              judgeCrashes++;
+              throw new Error("simulated crash before the judge request");
+            },
+          } satisfies EvalReplayHooks,
         },
-      },
+      ],
     },
   );
 }, 120_000);

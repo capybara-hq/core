@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { EnterpriseAdminLockModule } from "../identity/enterprise-admin.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { StorageModule } from "../storage/storage.module.js";
+import { EmbedTokensModule } from "../ui/embed-token.js";
 import { ExtensionAdminOps } from "./admin-ops.js";
 import { ExtensionAdmin } from "./admin-view.js";
 import { ExtensionApprovals } from "./approvals.js";
@@ -23,7 +24,14 @@ import { ReplicaStatusStore } from "./sources.js";
  * deployment and org configs, the bootstrap step, and the shared {@link ExtensionRegistry} (R6).
  */
 @Module({
-  imports: [ExtensionRegistryModule, EnterpriseAdminLockModule, OrgLockModule, StorageModule],
+  imports: [
+    ExtensionRegistryModule,
+    EnterpriseAdminLockModule,
+    OrgLockModule,
+    StorageModule,
+    // ctx.ui verifies embed tokens with the one provider the UI routes issue them with
+    EmbedTokensModule,
+  ],
   providers: [
     PluginInstallLock,
     PluginApproveLock,

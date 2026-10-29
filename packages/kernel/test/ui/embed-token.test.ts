@@ -24,8 +24,11 @@ const CLAIMS = {
   role: "member" as const,
 };
 
-const tokens = (now: number, ring = createKeyring(K1, [])) =>
-  new EmbedTokens(ring, { now: () => now });
+const tokens = (now: number, ring = createKeyring(K1, [])) => {
+  const t = new EmbedTokens(ring);
+  t.now = () => now;
+  return t;
+};
 
 const b64 = (s: string | Buffer) => Buffer.from(s).toString("base64url");
 

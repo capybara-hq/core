@@ -13,7 +13,7 @@ import type { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
-import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
+import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { SANDBOX_DESTROY_FOR_JOB } from "../../src/sandbox/jobs.js";
 import { anonymousGuestsFor } from "../helpers/channels.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";

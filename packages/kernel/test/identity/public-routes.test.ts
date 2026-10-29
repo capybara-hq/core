@@ -11,8 +11,6 @@ import type { FastifyRequest } from "fastify";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
-import { createKeyring } from "../../src/ctx/secrets.js";
-import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiModule } from "../../src/http/api.module.js";
 import { createHttpApp, type KernelHttpApp } from "../../src/http/app.js";
@@ -160,15 +158,7 @@ beforeAll(async () => {
     },
     apiModule: {
       module: ProbeModule,
-      imports: [
-        ApiModule.register({
-          db: kernelDb(raw),
-          keyring: createKeyring(Buffer.from(masterKey, "base64"), []),
-          config: () => k.config,
-          log,
-          evalQueue: { enqueue: async () => {} },
-        }),
-      ],
+      imports: [ApiModule],
       providers: [{ provide: APP_INTERCEPTOR, useValue: probe }],
     },
   });

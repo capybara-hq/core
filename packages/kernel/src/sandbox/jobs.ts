@@ -19,8 +19,8 @@ export const SANDBOX_DESTROY_FOR_JOB = "sandbox-destroy-for";
 
 /**
  * The producer of {@link SANDBOX_DESTROY_FOR_JOB} on the maintenance queue (BullMQ's own job ids, as
- * before: every enqueue is a new job, also after a batch failed all its attempts) (the maintenance worker
- * consumes it until Task 3.9 builds its `@Processor`, R11).
+ * before: every enqueue is a new job, also after a batch failed all its attempts); `MaintenanceProcessor`
+ * consumes it.
  */
 @Injectable()
 export class SandboxJobs {

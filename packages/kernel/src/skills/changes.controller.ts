@@ -1,14 +1,13 @@
 import { Controller, Delete, Get, HttpCode, Inject, Param, Post } from "@nestjs/common";
 import { z } from "zod";
 import { AgentsService } from "../agents/agents.service.js";
-import { INBOX } from "../http/tokens.js";
 import {
   CurrentPrincipal,
   type Principal,
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
-import type { InboxService, InboxView } from "../inbox/inbox.service.js";
+import { InboxService, type InboxView } from "../inbox/inbox.service.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
@@ -113,7 +112,7 @@ export class AgentSkillsController {
  */
 @Controller("api/v1/orgs/:orgId/inbox")
 export class InboxController {
-  constructor(@Inject(INBOX) private readonly inbox: InboxService) {}
+  constructor(@Inject(InboxService) private readonly inbox: InboxService) {}
 
   @Get()
   @OrgAction("approvals.decide")

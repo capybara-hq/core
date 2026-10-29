@@ -84,7 +84,7 @@ beforeEach(() => resetEvalModel());
 
 const deps = (media?: MediaSourceDeps): StepReplayDeps => ({
   registry: k.runs.registry,
-  config: () => k.config,
+  config: { get: () => k.config },
   ...(media !== undefined && { media }),
 });
 

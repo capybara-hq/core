@@ -21,6 +21,7 @@ import { type PermissionSet, permissionKeys } from "../../src/extensions/permiss
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
+import { EmbedTokens } from "../../src/ui/embed-token.js";
 import { testHost } from "../helpers/extensions.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -258,6 +259,7 @@ describe("M4 第三段验收（双副本）", () => {
       busSubscriber: sub,
       redisUrl: rdc.url,
       keyring: createKeyring(Buffer.alloc(32, 9), []),
+      embedTokens: new EmbedTokens(createKeyring(Buffer.alloc(32, 9), [])),
       runWorkers: false,
       log: { info: () => {}, warn: () => {}, error: () => {} },
     };

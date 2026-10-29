@@ -26,7 +26,7 @@ import {
   minuteBucket,
 } from "../../src/orgs/directory-sync.js";
 import type { Offboarding, OffboardResult } from "../../src/orgs/offboarding.js";
-import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
+import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { anonymousGuestsFor } from "../helpers/channels.js";
 import { accountsFor, apiTokensFor, directorySyncFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";

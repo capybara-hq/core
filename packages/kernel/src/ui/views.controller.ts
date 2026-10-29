@@ -1,33 +1,24 @@
 import { UI_LIMITS, type UiActionResult, type UiView } from "@capybara-hq/plugin-sdk";
-import {
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  Inject,
-  Param,
-  Post,
-  Query,
-  Req,
-  Res,
-} from "@nestjs/common";
+import { Controller, Get, HttpCode, Inject, Post, Req, Res } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { EMBED_TOKENS, ORG_UI_STREAMS, UI_VIEWS } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
 import { ApiTokenService } from "../identity/api-tokens.js";
 import { credentialCheck } from "../identity/credential-check.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { SessionService } from "../identity/sessions.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import { EMBED_TOKEN_TTL_SECONDS, type EmbedTokens } from "./embed-token.js";
-import type { OrgUiStreams } from "./ui-stream.js";
-import type { UiContributionItem, UiViews } from "./views.js";
+import { EMBED_TOKEN_TTL_SECONDS, EmbedTokens } from "./embed-token.js";
+import { OrgUiStreams } from "./ui-stream.js";
+import { type UiContributionItem, UiViews } from "./views.js";
 
 const BEARER_RE = /^Bearer\s+(\S+)$/i;
 
 const Locale = z.enum(["zh", "en"]).default("en");
 const Id = z.string().min(1).max(100);
+/** The contribution named in a view / action / embed path (`:plugin/:id`). */
+const ContributionParams = z.object({ plugin: Id, id: Id });
 
 const ViewQuery = z
   .object({
@@ -85,6 +76,11 @@ const EmbedTokenBody = z
 const embedSrc = (plugin: string, path: string) =>
   `/plugin-ui/${plugin}/${path.replace(/^\/ui\//, "")}`;
 
+class UiContributionParamsDto extends createZodDto(ContributionParams, "UiContributionParams") {}
+class UiViewQueryDto extends createZodDto(ViewQuery, "UiViewQuery") {}
+class UiActionBodyDto extends createZodDto(ActionBody, "UiActionBody") {}
+class UiEmbedTokenBodyDto extends createZodDto(EmbedTokenBody, "UiEmbedTokenBody") {}
+
 /**
  * 插件界面（第一档：渲染 schema；第二档：嵌入应用），会话鉴权、`ui.use`（只给人用，服务令牌 403）：
  * - `GET  /api/v1/orgs/:orgId/ui/contributions` → `{ items: { plugin, id, title, place, legacyPlace?, kind, path?, icon }[] }`
@@ -108,11 +104,11 @@ const embedSrc = (plugin: string, path: string) =>
 @Controller("api/v1/orgs/:orgId/ui")
 export class UiController {
   constructor(
-    @Inject(UI_VIEWS) private readonly views: UiViews,
-    @Inject(ORG_UI_STREAMS) private readonly streams: OrgUiStreams,
+    @Inject(UiViews) private readonly views: UiViews,
+    @Inject(OrgUiStreams) private readonly streams: OrgUiStreams,
     @Inject(SessionService) private readonly sessions: SessionService,
     @Inject(ApiTokenService) private readonly tokens: ApiTokenService,
-    @Inject(EMBED_TOKENS) private readonly embeds: EmbedTokens,
+    @Inject(EmbedTokens) private readonly embeds: EmbedTokens,
   ) {}
 
   @Get("contributions")
@@ -130,9 +126,8 @@ export class UiController {
   async view(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Param("plugin", new ZodPipe(Id)) plugin: string,
-    @Param("id", new ZodPipe(Id)) id: string,
-    @Query(new ZodPipe(ViewQuery)) q: z.infer<typeof ViewQuery>,
+    @ZParam(UiContributionParamsDto) { plugin, id }: z.infer<typeof ContributionParams>,
+    @ZQuery(UiViewQueryDto) q: z.infer<typeof ViewQuery>,
   ): Promise<{ view: UiView }> {
     const p = requireUser(principal);
     const view = await this.views.render({
@@ -157,9 +152,8 @@ export class UiController {
   async action(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Param("plugin", new ZodPipe(Id)) plugin: string,
-    @Param("id", new ZodPipe(Id)) id: string,
-    @Body(new ZodPipe(ActionBody)) body: z.infer<typeof ActionBody>,
+    @ZParam(UiContributionParamsDto) { plugin, id }: z.infer<typeof ContributionParams>,
+    @ZBody(UiActionBodyDto) body: z.infer<typeof ActionBody>,
   ): Promise<UiActionResult> {
     const p = requireUser(principal);
     return this.views.act(
@@ -186,9 +180,8 @@ export class UiController {
   async embedToken(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Param("plugin", new ZodPipe(Id)) plugin: string,
-    @Param("id", new ZodPipe(Id)) id: string,
-    @Body(new ZodPipe(EmbedTokenBody)) body: z.infer<typeof EmbedTokenBody>,
+    @ZParam(UiContributionParamsDto) { plugin, id }: z.infer<typeof ContributionParams>,
+    @ZBody(UiEmbedTokenBodyDto) body: z.infer<typeof EmbedTokenBody>,
   ): Promise<{ token: string; src: string; expiresAt: string; expiresIn: number }> {
     const p = requireUser(principal);
     const target = await this.views.embed({

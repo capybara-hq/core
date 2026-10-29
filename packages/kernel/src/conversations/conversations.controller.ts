@@ -13,7 +13,6 @@ import {
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import { ModelRef } from "../agents/definition.js";
-import { CONVERSATION_TOOLS } from "../http/tokens.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
@@ -21,7 +20,7 @@ import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { CONTROL_OR_HIDDEN_RE } from "../text.js";
 import { MAX_ATTACHMENTS } from "../tools/connector-content.js";
 import {
-  type ConversationToolInfo,
+  ConversationToolInfo,
   TOOL_INFO_KEY_MAX,
   TOOL_INFO_MAX_KEYS,
   type ToolInfo,
@@ -252,7 +251,7 @@ export class ConversationsController {
     @Inject(ConversationOutputs) private readonly outputs: ConversationOutputs,
     @Inject(ConversationArtifacts) private readonly artifacts: ConversationArtifacts,
     @Inject(ConversationSandboxStatus) private readonly sandboxStatus: ConversationSandboxStatus,
-    @Inject(CONVERSATION_TOOLS) private readonly toolInfo: ConversationToolInfo,
+    @Inject(ConversationToolInfo) private readonly toolInfo: ConversationToolInfo,
     @Inject(ConversationQueue) private readonly queue: ConversationQueue,
     @Inject(ConversationFiles) private readonly files: ConversationFiles,
   ) {}

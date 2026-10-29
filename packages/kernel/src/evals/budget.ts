@@ -1,7 +1,11 @@
 import type { ModelUsage } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable, Module } from "@nestjs/common";
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
 
 /**
  * 评测运行的 token 预算（C7）：`eval_runs.tokens_used` 在 PG 里原子累加，达到 `token_cap` 的同一条语句把
@@ -105,42 +109,6 @@ export async function skipPendingJudges(
 }
 
 /**
- * 重算 `cases_done` = 结果全部结束、且没有等评委的结果的用例数（幂等：任务重做不会重复计数），达到 `cases_total` 且运行仍在执行 →
- * `completed`。先锁运行行再数（READ COMMITTED 下新语句看得到其他任务已提交的结果），并发完成的任务不会互相覆盖。
- * worker 每做完一个用例、取消、入队失败时都调用。在事务里调用时锁随事务释放。
- */
-export async function recountCases(db: KernelSchemaDb, runId: string): Promise<void> {
-  const run = async (trx: KernelSchemaDb) => {
-    const row = await trx
-      .selectFrom("eval_runs")
-      .select(["cases_total", "status"])
-      .where("id", "=", runId)
-      .forUpdate()
-      .executeTakeFirst();
-    if (!row) return;
-    const r = await sql<{ n: string }>`
-      SELECT count(*) AS n FROM (
-        SELECT case_id FROM capybara.eval_results WHERE run_id = ${runId}
-        GROUP BY case_id
-        HAVING bool_and(status IN ('done', 'error', 'skipped') AND judge_status <> 'pending')
-      ) finished`.execute(trx);
-    const done = Number(r.rows[0]?.n ?? 0);
-    const complete =
-      done >= row.cases_total && (ACTIVE_EVAL_STATUSES as readonly string[]).includes(row.status);
-    await trx
-      .updateTable("eval_runs")
-      .set({
-        cases_done: done,
-        ...(complete && { status: "completed" as const, finished_at: sql`now()` }),
-      })
-      .where("id", "=", runId)
-      .execute();
-  };
-  if (db.isTransaction) await run(db);
-  else await db.transaction().execute((trx) => run(trx));
-}
-
-/**
  * 运行仍在执行（queued / running），且所属组织与评测集的 agent 都没有删除：取消、达到上限、已结束、运行行已删除、
  * 组织或 agent 已删除都为 false（删除组织 / agent 时会显式取消运行，这里再兜一次底，挡住删除与请求之间的竞争）。
  */
@@ -160,48 +128,110 @@ export async function runActive(db: KernelSchemaDb, runId: string): Promise<bool
 }
 
 /**
- * 删除组织或 agent 时（调用方的事务内）取消其在执行的评测运行：运行置 `cancelled`，未开始的结果 `skipped`、
- * 等评委的记 `skipped`，重算进度，每个运行写审计 `eval.run_cancelled`（detail 带原因）。在途请求做完后写不进新的请求
- * （worker 每次请求前查 {@link runActive}）。运行创建者离开组织不取消（Ruling S1-b：管理员的评测运行是组织的工作）。
+ * The eval run bookkeeping that needs a transaction: the progress recount (it locks the run row)
+ * and the cancellation of an org's or agent's runs when it is deleted. One provider, shared by the
+ * evals, the agents and the orgs.
  */
-export async function cancelEvalRuns(
-  trx: KernelSchemaDb,
-  scope: { orgId: string; agentId?: string },
-  actor: { accountId: string; tokenId?: string },
-  reason: "org_deleted" | "agent_deleted",
-): Promise<string[]> {
-  let q = trx
-    .updateTable("eval_runs")
-    .set({ status: "cancelled", finished_at: sql`now()` })
-    .where("org_id", "=", scope.orgId)
-    .where("status", "in", [...ACTIVE_EVAL_STATUSES]);
-  if (scope.agentId !== undefined) {
-    const agentId = scope.agentId;
-    q = q.where("set_id", "in", (eb) =>
-      eb.selectFrom("eval_sets").select("id").where("agent_id", "=", agentId),
-    );
+@Injectable()
+export class EvalBudget {
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {}
+
+  /**
+   * 重算 `cases_done` = 结果全部结束、且没有等评委的结果的用例数（幂等：任务重做不会重复计数），达到 `cases_total` 且运行仍在执行 →
+   * `completed`。先锁运行行再数（READ COMMITTED 下新语句看得到其他任务已提交的结果），并发完成的任务不会互相覆盖。
+   * worker 每做完一个用例、取消、入队失败时都调用。Joins the caller's transaction (the lock is released with it),
+   * else runs in its own.
+   */
+  @Transactional()
+  async recountCases(runId: string): Promise<void> {
+    const db = this.db.db;
+    const row = await db
+      .selectFrom("eval_runs")
+      .select(["cases_total", "status"])
+      .where("id", "=", runId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row) return;
+    const r = await sql<{ n: string }>`
+      SELECT count(*) AS n FROM (
+        SELECT case_id FROM capybara.eval_results WHERE run_id = ${runId}
+        GROUP BY case_id
+        HAVING bool_and(status IN ('done', 'error', 'skipped') AND judge_status <> 'pending')
+      ) finished`.execute(db);
+    const done = Number(r.rows[0]?.n ?? 0);
+    const complete =
+      done >= row.cases_total && (ACTIVE_EVAL_STATUSES as readonly string[]).includes(row.status);
+    await db
+      .updateTable("eval_runs")
+      .set({
+        cases_done: done,
+        ...(complete && { status: "completed" as const, finished_at: sql`now()` }),
+      })
+      .where("id", "=", runId)
+      .execute();
   }
-  const runs = await q.returning("id").execute();
-  for (const r of runs) {
-    await trx
+
+  /**
+   * 删除组织或 agent 时（调用方的事务内）取消其在执行的评测运行：运行置 `cancelled`，未开始的结果 `skipped`、
+   * 等评委的记 `skipped`，重算进度，每个运行写审计 `eval.run_cancelled`（detail 带原因）。在途请求做完后写不进新的请求
+   * （worker 每次请求前查 {@link runActive}）。运行创建者离开组织不取消（Ruling S1-b：管理员的评测运行是组织的工作）。
+   */
+  @Transactional({ propagation: "mandatory" })
+  async cancelRuns(
+    scope: { orgId: string; agentId?: string },
+    actor: { accountId: string; tokenId?: string },
+    reason: "org_deleted" | "agent_deleted",
+  ): Promise<string[]> {
+    const db = this.db.db;
+    let q = db
+      .updateTable("eval_runs")
+      .set({ status: "cancelled", finished_at: sql`now()` })
+      .where("org_id", "=", scope.orgId)
+      .where("status", "in", [...ACTIVE_EVAL_STATUSES]);
+    if (scope.agentId !== undefined) {
+      const agentId = scope.agentId;
+      q = q.where("set_id", "in", (eb) =>
+        eb.selectFrom("eval_sets").select("id").where("agent_id", "=", agentId),
+      );
+    }
+    const runs = await q.returning("id").execute();
+    for (const r of runs) {
+      await this.skipRun(r.id);
+      await audit(db, {
+        actorAccountId: actor.accountId,
+        ...(actor.tokenId !== undefined && { actorTokenId: actor.tokenId }),
+        orgId: scope.orgId,
+        action: "eval.run_cancelled",
+        target: r.id,
+        detail: { reason },
+      });
+    }
+    return runs.map((r) => r.id);
+  }
+
+  /**
+   * A run that stopped (cancelled, its set deleted): its results not started yet are `skipped`,
+   * the pending judges too, and the progress is recounted, in the caller's transaction.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async skipRun(runId: string): Promise<void> {
+    await this.db
       .updateTable("eval_results")
       .set({ status: "skipped", updated_at: sql`now()` })
-      .where("run_id", "=", r.id)
+      .where("run_id", "=", runId)
       .where("status", "=", "pending")
       .execute();
-    await skipPendingJudges(trx, r.id);
-    await recountCases(trx, r.id);
-    await audit(trx, {
-      actorAccountId: actor.accountId,
-      ...(actor.tokenId !== undefined && { actorTokenId: actor.tokenId }),
-      orgId: scope.orgId,
-      action: "eval.run_cancelled",
-      target: r.id,
-      detail: { reason },
-    });
+    await skipPendingJudges(this.db.db, runId);
+    await this.recountCases(runId);
   }
-  return runs.map((r) => r.id);
 }
+
+/** {@link EvalBudget} on its own: the agents and the orgs import it without the evals. */
+@Module({ providers: [EvalBudget], exports: [EvalBudget] })
+export class EvalBudgetModule {}
 
 export const addUsage = (a: ModelUsage, b: ModelUsage): ModelUsage => ({
   inputTokens: a.inputTokens + b.inputTokens,

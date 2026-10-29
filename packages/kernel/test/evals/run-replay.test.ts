@@ -9,10 +9,11 @@ import type { ConversationEvent, EventPayload } from "../../src/conversations/ev
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { REPLAY_NO_RECORDING } from "../../src/evals/recorded-tools.js";
-import type { RunReplayResult } from "../../src/evals/run-replay.js";
+import type { EvalReplayHooks, RunReplayResult } from "../../src/evals/run-replay.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import type { EvalSetView } from "../../src/evals/sets.service.js";
 import type { TrajectoryDetail, TrajectoryListItem } from "../../src/evals/trajectory.service.js";
+import { EVAL_REPLAY_HOOKS } from "../../src/evals/worker.js";
 import type { Kernel } from "../../src/kernel.js";
 import { readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
 import { toolsCountState } from "../fixtures/plugins/tools-count/index.js";
@@ -92,39 +93,45 @@ beforeAll(async () => {
       },
     ),
     {
-      evalHooks: {
-        async afterRunSeeded(evalRunId) {
-          if (cancelThenCrash) {
-            cancelThenCrash = false;
-            await db
-              .updateTable("eval_runs")
-              .set({ status: "cancelled", finished_at: new Date() })
-              .where("id", "=", evalRunId)
-              .execute();
-            throw new Error("simulated crash after seeding (run cancelled meanwhile)");
-          }
-          if (!crashOnce) return;
-          crashOnce = false;
-          crashes++;
-          throw new Error("simulated crash after seeding");
+      // the replay and judge test hooks are a provider override (R2)
+      overrides: [
+        {
+          provide: EVAL_REPLAY_HOOKS,
+          useValue: {
+            async afterRunSeeded(evalRunId) {
+              if (cancelThenCrash) {
+                cancelThenCrash = false;
+                await db
+                  .updateTable("eval_runs")
+                  .set({ status: "cancelled", finished_at: new Date() })
+                  .where("id", "=", evalRunId)
+                  .execute();
+                throw new Error("simulated crash after seeding (run cancelled meanwhile)");
+              }
+              if (!crashOnce) return;
+              crashOnce = false;
+              crashes++;
+              throw new Error("simulated crash after seeding");
+            },
+            async beforeCheck() {
+              if (checkFailures === 0) return;
+              if (checkFailures > 0) checkFailures--;
+              checkFailed++;
+              throw new Error("simulated PG error in the request check");
+            },
+            async beforeDeleteConversation() {
+              if (deleteFails)
+                throw new Error("simulated PG error while deleting the eval conversation");
+            },
+            async beforeCharge() {
+              if (chargeFailures === 0) return;
+              if (chargeFailures > 0) chargeFailures--;
+              chargeFailed++;
+              throw new Error("simulated PG error while charging");
+            },
+          } satisfies EvalReplayHooks,
         },
-        async beforeCheck() {
-          if (checkFailures === 0) return;
-          if (checkFailures > 0) checkFailures--;
-          checkFailed++;
-          throw new Error("simulated PG error in the request check");
-        },
-        async beforeDeleteConversation() {
-          if (deleteFails)
-            throw new Error("simulated PG error while deleting the eval conversation");
-        },
-        async beforeCharge() {
-          if (chargeFailures === 0) return;
-          if (chargeFailures > 0) chargeFailures--;
-          chargeFailed++;
-          throw new Error("simulated PG error while charging");
-        },
-      },
+      ],
     },
   );
   const accounts = accountsFor(db);

@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { EventLogModule } from "../conversations/event-log.js";
+import { EvalBudgetModule } from "../evals/budget.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { IdentityModule } from "../identity/identity.module.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
@@ -32,7 +33,9 @@ import { OrgSettingsService } from "./settings.service.js";
     RuntimeModule,
     // offboarding enqueues the destruction of the member's sandboxes
     SandboxModule,
-    // the producer side of directory-sync jobs (the maintenance worker consumes until Task 3.9)
+    // cancels the deleted org's eval runs
+    EvalBudgetModule,
+    // the producer side of directory-sync jobs (the maintenance processor consumes them)
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
   providers: [

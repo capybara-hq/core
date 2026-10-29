@@ -1,7 +1,6 @@
 import { fileURLToPath } from "node:url";
 import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
 import type { INestApplication } from "@nestjs/common";
-import type { Job } from "bullmq";
 import { buildKernelApp, closeKernelApp, type KernelAppOptions } from "./app.js";
 import { CatalogService } from "./catalog/catalog.service.js";
 import { MarketplacesService } from "./catalog/marketplaces.service.js";
@@ -11,14 +10,8 @@ import { ChannelInbound } from "./channels/inbound.js";
 import { ChannelOutbound } from "./channels/outbound.js";
 import type { KernelConfig } from "./config/schema.js";
 import { AttachmentsService } from "./conversations/attachments.service.js";
-import type { ConversationsService } from "./conversations/conversations.service.js";
 import { EventLog } from "./conversations/event-log.js";
-import { createKeyring } from "./ctx/secrets.js";
-import type { KernelSchemaDb } from "./db/kernel-schema.js";
 import { migrate } from "./db/migrator.js";
-import type { EvalReplayHooks } from "./evals/run-replay.js";
-import { EvalQueue } from "./evals/runs.service.js";
-import { EvalWorker } from "./evals/worker.js";
 import { ExtensionAdminOps } from "./extensions/admin-ops.js";
 import { ExtensionAdmin } from "./extensions/admin-view.js";
 import type { PendingExtension } from "./extensions/approvals.js";
@@ -29,52 +22,37 @@ import { ExtensionHost } from "./extensions/host.js";
 import { ExtensionInstalls } from "./extensions/installs.js";
 import { ExtensionLifecycle } from "./extensions/lifecycle.js";
 import { OrgExtensionConfigs } from "./extensions/org-config.js";
-import type { ExtensionRegistry } from "./extensions/registry.js";
 import { ReplicaStatusStore } from "./extensions/sources.js";
-import type { ApiDeps } from "./http/api.module.js";
 import type { KernelHttp } from "./http/app.js";
 import { IdentityBinding } from "./identity/binding.js";
 import { ExternalIdentities } from "./identity/external.js";
-import type { SettingsService } from "./identity/settings.js";
 import { SsoFlow } from "./identity/sso.js";
 import { KernelConfigService } from "./infra/config/kernel-config.service.js";
-import type { KernelDb } from "./infra/database/kernel-db.js";
-import { legacyKernelView } from "./infra/database/legacy-view.js";
-import type { TransactionHost } from "./infra/database/transaction-host.js";
-import type { KernelEvents } from "./infra/events/kernel-events.js";
 import { GracefulShutdown } from "./infra/lifecycle/graceful-shutdown.service.js";
+import { KERNEL_BUS, KERNEL_LOGGER } from "./infra/tokens.js";
 import { KernelLifecycle } from "./lifecycle/kernel-lifecycle.js";
-import { KERNEL_TEST_HOOKS, LEGACY_GRAPH } from "./lifecycle/tokens.js";
 import type { KernelLogger } from "./log.js";
 import { PricesService } from "./models/prices.js";
 import { ModelPurposesService } from "./models/purposes.js";
-import { DIRECTORY_SYNC_JOB, DirectorySync, type SyncJobData } from "./orgs/directory-sync.js";
+import { DirectorySync } from "./orgs/directory-sync.js";
 import { Offboarding } from "./orgs/offboarding.js";
-import type { OrgLock } from "./orgs/org-lock.js";
 import { RunAbort } from "./runtime/abort.js";
-import type { KyselyCheckpointSaver } from "./runtime/checkpointer.js";
 import { ConversationLock } from "./runtime/conversation-lock.js";
 import type { LoopDeps } from "./runtime/langgraph-loop.js";
-import { Maintenance } from "./runtime/maintenance.js";
 import { ProviderRegistry } from "./runtime/providers.js";
 import { type OrgQuota, RUN_QUOTA } from "./runtime/quota.js";
-import type { RunFinish } from "./runtime/run-finish.js";
 import { RunQueue } from "./runtime/run-queue.js";
-import { type AgentLoops, RunSteps } from "./runtime/run-steps.js";
+import { RunSteps } from "./runtime/run-steps.js";
 import { UsageReporter } from "./runtime/usage-report.js";
-import { WAIT_TIMEOUT_JOB, Waits, type WaitTimeoutData } from "./runtime/waits.js";
-import { runSandboxDestroyFor, SANDBOX_DESTROY_FOR_JOB } from "./sandbox/jobs.js";
+import { Waits } from "./runtime/waits.js";
 import { SandboxService } from "./sandbox/sandbox.service.js";
-import type { SkillsCatalogService } from "./skills/catalog.js";
 import { SkillChangesService } from "./skills/changes.service.js";
-import type { SkillInvoker } from "./skills/invoke.js";
 import { SkillsService } from "./skills/skills.service.js";
 import { StorageService } from "./storage/storage.service.js";
 import { ApprovalsService } from "./tools/approvals.service.js";
 import { ConnectorContent } from "./tools/connector-content.js";
 import { Credentials } from "./tools/credentials.js";
-import { type DriftConnectorJobData, ToolDrift } from "./tools/drift.js";
-import { DRIFT_CONNECTOR_JOB } from "./tools/job-ids.js";
+import { ToolDrift } from "./tools/drift.js";
 import { ToolOutputs } from "./tools/outputs.js";
 import { ToolPipeline } from "./tools/pipeline.js";
 import { QuestionsService } from "./tools/questions.service.js";
@@ -101,8 +79,6 @@ export interface KernelRuns {
   readonly stepDeps: LoopDeps;
   /** 运行等待人处理：续跑、超时、等待中中止。 */
   readonly waits: Waits;
-  /** 内核维护队列（等待超时、输出存档清理等）。 */
-  readonly maintenance: Maintenance;
 }
 
 /** 工具相关的内核服务。 */
@@ -227,20 +203,10 @@ export interface Kernel {
 }
 
 /**
- * The test hooks of the legacy graph (ruling R2: provided as `KERNEL_TEST_HOOKS` until Task 3.9
- * converts the evals). The run loop and the run worker's hooks are provider overrides
- * (`AGENT_LOOP_FACTORY`, `RUN_HOOKS` in `overrides`).
- */
-export interface KernelTestHooks {
-  /** 评测整轮回放的测试钩子。 */
-  evalHooks?: EvalReplayHooks;
-}
-
-/**
  * createKernel 的可选项：{@link KernelAppOptions}（含 `overrides`：测试替换的 provider，如
- * `AGENT_LOOP_FACTORY` / `RUN_HOOKS`）加上评测的测试钩子（临时 facade，见 `createKernel`）。
+ * `AGENT_LOOP_FACTORY` / `RUN_HOOKS` / `EVAL_REPLAY_HOOKS`；临时 facade，见 `createKernel`）。
  */
-export interface KernelOptions extends KernelAppOptions, KernelTestHooks {}
+export type KernelOptions = KernelAppOptions;
 
 /**
  * 运行内核迁移与所有已配置插件的迁移（不调用插件 setup，不连接 Redis）。
@@ -270,241 +236,6 @@ export async function migrateAll(
 }
 
 /**
- * The legacy service graph: today's hand-wired kernel services, built by one factory provider
- * (`LEGACY_GRAPH`). Phase 3 of the nest kernel plan moves the domains out of it one directory at a
- * time (each becomes a module of injectable providers); `KernelLifecycle` drives what is left here.
- */
-export interface LegacyGraph
-  extends Omit<
-    Kernel,
-    | "app"
-    | "http"
-    | "port"
-    | "start"
-    | "stop"
-    | "config"
-    // converted to providers (Task 3.1); the facade reads them with app.get
-    | "storage"
-    | "skills"
-    | "skillChanges"
-    | "prices"
-    | "purposes"
-    // Task 3.2
-    | "identity"
-    // Task 3.3
-    | "host"
-    | "replicaId"
-    | "extensionInstalls"
-    | "extensionAdmin"
-    | "extensionAdminOps"
-    | "extensionLifecycle"
-    | "extensionBlobs"
-    | "bootstrap"
-    | "extensionDeploymentConfigs"
-    | "orgExtensionConfigs"
-    // Task 3.4
-    | "catalog"
-    | "pluginImport"
-    | "marketplaces"
-    // Task 3.5
-    | "tools"
-    // Task 3.6a
-    | "attachments"
-    // Task 3.6b
-    | "usageReport"
-    | "runs"
-    // Task 3.7
-    | "channels"
-    // Task 3.8
-    | "sandbox"
-  > {
-  /** The kernel-schema view of the pool. */
-  readonly kdb: KernelSchemaDb;
-  readonly evalQueue: EvalQueue;
-  /** The maintenance queue (its one worker until Task 3.9). */
-  readonly maintenance: Maintenance;
-  /** What the API module is built from (`ApiModule.registerFrom`). */
-  readonly apiDeps: ApiDeps;
-  /** The eval worker (worker role). */
-  createEvalWorker(): EvalWorker;
-}
-
-/**
- * The converted providers the legacy graph consumes (Phase 3: each task adds its own and removes
- * their construction from the graph), plus the bridges of rulings R6 and R8.
- */
-export interface ConvertedProviders {
-  txHost: TransactionHost;
-  /** R6: the host writes it; converted providers read extension points from it. */
-  extensionRegistry: ExtensionRegistry;
-  storage: StorageService;
-  prices: PricesService;
-  purposes: ModelPurposesService;
-  skills: SkillsService;
-  skillChanges: SkillChangesService;
-  skillsCatalog: SkillsCatalogService;
-  skillInvoker: SkillInvoker;
-  // Task 3.2
-  settings: SettingsService;
-  external: ExternalIdentities;
-  binding: IdentityBinding;
-  directory: DirectorySync;
-  orgLock: OrgLock;
-  /** In-process domain events: a decided approval / answered question resumes its run. */
-  events: KernelEvents;
-  // Task 3.3
-  host: ExtensionHost;
-  replicaStatus: ReplicaStatusStore;
-  orgExtensionConfigs: OrgExtensionConfigs;
-  // Task 3.5
-  toolRegistry: ToolRegistry;
-  approvals: ApprovalsService;
-  questions: QuestionsService;
-  toolDrift: ToolDrift;
-  toolPipeline: ToolPipeline;
-  // Task 3.6a
-  eventLog: EventLog;
-  conversationLock: ConversationLock;
-  attachments: AttachmentsService;
-  /** The one conversations service (ChannelInbound posts IM messages and skill invocations). */
-  conversations: ConversationsService;
-  // Task 3.6b
-  registry: ProviderRegistry;
-  waits: Waits;
-  runFinish: RunFinish;
-  checkpoints: KyselyCheckpointSaver;
-  steps: RunSteps;
-  loops: AgentLoops;
-  evalQuota: OrgQuota;
-  // Task 3.8
-  sandbox: SandboxService;
-}
-
-/**
- * Builds the legacy service graph from the infra providers (one pool, one set of Redis clients:
- * those of `DatabaseModule` / `RedisModule`). Connects to nothing: the start sequence is
- * `KernelLifecycle`'s.
- */
-export function createLegacyGraph(
-  configService: KernelConfigService,
-  log: KernelLogger,
-  kernelDbHandle: KernelDb,
-  bus: ExtensionContext["bus"],
-  hooks: KernelTestHooks,
-  converted: ConvertedProviders,
-): LegacyGraph {
-  const { purposes, registry, waits, checkpoints, steps, loops } = converted;
-  const config = configService.get();
-  /** The current config (hot fields applied). */
-  const cfg = (): KernelConfig => configService.get();
-  const keyring = createKeyring(
-    Buffer.from(config.masterKey, "base64"),
-    config.masterKeyPrevious.map((k) => Buffer.from(k, "base64")),
-  );
-  const kdb = legacyKernelView(kernelDbHandle, converted.txHost);
-  const { eventLog } = converted;
-  const { toolDrift } = converted;
-  // A decided approval / answered question resumes the waiting run on this replica (domain events,
-  // spec §3b; the wait sweep resumes a run whose resume was lost). Its IM delivery follows the same
-  // events (ChannelJobs).
-  converted.events.on("approval.decided", async (a) => {
-    await waits.resume(a.runId, a.id);
-  });
-  converted.events.on("question.answered", async (q) => {
-    await waits.resume(q.runId, q.id);
-  });
-  const maintenance = new Maintenance({ db: kdb, redisUrl: config.redis.url, log });
-  // wait-timeout jobs (Waits is their producer) stay on the maintenance worker until Task 3.9
-  // builds its @Processor (R11)
-  maintenance.handle(WAIT_TIMEOUT_JOB, (job, token) =>
-    waits.processTimeout(job as Job<WaitTimeoutData>, token),
-  );
-  // sandbox-destroy-for jobs (SandboxJobs is their producer) stay on the maintenance worker until
-  // Task 3.9 builds its @Processor (R11)
-  maintenance.handle(SANDBOX_DESTROY_FOR_JOB, (job) =>
-    runSandboxDestroyFor(converted.sandbox, log, job),
-  );
-  // drift-connector jobs (ToolDrift is their producer) stay on the maintenance worker until Task
-  // 3.9 builds its @Processor (R11)
-  maintenance.handle(DRIFT_CONNECTOR_JOB, async (job) => {
-    const { orgId, connectorId, trigger } = job.data as DriftConnectorJobData;
-    await toolDrift.check(orgId, connectorId, trigger);
-  });
-  // directory-sync jobs stay on the maintenance worker until Task 3.9 builds its @Processor (R11)
-  maintenance.handle(DIRECTORY_SYNC_JOB, async (job) => {
-    await converted.directory.runSyncJob(job.data as SyncJobData);
-  });
-  const stepDeps: LoopDeps = steps.deps;
-  /** 评测队列（生产方：API 启动运行时入队）与 worker（含 worker 角色时启动）。 */
-  const evalQueue = new EvalQueue(config.redis.url, log);
-  const createEvalWorker = (): EvalWorker =>
-    new EvalWorker({
-      db: kdb,
-      redisUrl: config.redis.url,
-      quota: converted.evalQuota,
-      config: cfg,
-      log,
-      purposes,
-      // 媒体按快照自己的组织与对话、经组织范围的附件接口取（C3）
-      replay: {
-        registry,
-        config: cfg,
-        ...(stepDeps.media !== undefined && { media: stepDeps.media }),
-      },
-      // 整轮回放（C6）：同一个 loop 工厂（同一 LangGraphLoop），只换工具管线（RecordedToolPipeline，
-      // 从不执行工具）、计费的模型注册表与按原对话取附件的来源
-      runReplay: {
-        db: kdb,
-        eventLog,
-        runFinish: converted.runFinish,
-        config: cfg,
-        log,
-        registry,
-        ...(stepDeps.media !== undefined && { media: stepDeps.media }),
-        checkpoints,
-        // explicitly without plugin hooks: eval replays never fire them (P-18); nor do they
-        // publish sub-agent progress on a live conversation's stream
-        loop: (d) => {
-          // nor dispatch fork invocations: run-replay passes the recorded reports instead
-          const {
-            db: _snapshot,
-            hooks: _noHooks,
-            subagentProgress: _noProgress,
-            skillForks: _noForks,
-            ...replayDeps
-          } = stepDeps;
-          // the object rest above copied `db` as a value: read it through the step deps' getter
-          // instead, so the loop always resolves the context-aware handle
-          return loops.create({
-            ...replayDeps,
-            get db() {
-              return stepDeps.db;
-            },
-            ...d,
-          });
-        },
-        ...(hooks.evalHooks !== undefined && { hooks: hooks.evalHooks }),
-      },
-    });
-  const apiDeps: ApiDeps = {
-    db: kdb,
-    keyring,
-    config: cfg,
-    log,
-    evalQueue,
-  };
-  return {
-    kdb,
-    evalQueue,
-    maintenance,
-    apiDeps,
-    createEvalWorker,
-    bus,
-    log,
-  };
-}
-
-/**
  * The temporary facade over {@link createKernelApp} (deleted in Phase 5 of the nest kernel plan):
  * builds the kernel application without starting it and returns today's {@link Kernel} fields.
  * `start()` initializes the application (the start sequence of `KernelLifecycle`) and listens;
@@ -515,13 +246,8 @@ export async function createKernel(
   config: KernelConfig,
   opts: KernelOptions = {},
 ): Promise<Kernel> {
-  const { evalHooks, overrides, ...appOptions } = opts;
-  const hooks: KernelTestHooks = { ...(evalHooks !== undefined && { evalHooks }) };
-  const app = await buildKernelApp(config, {
-    ...appOptions,
-    overrides: [...(overrides ?? []), { provide: KERNEL_TEST_HOOKS, useValue: hooks }],
-  });
-  const g = app.get<LegacyGraph>(LEGACY_GRAPH);
+  const app = await buildKernelApp(config, opts);
+  const log = app.get<KernelLogger>(KERNEL_LOGGER);
   const lifecycle = app.get(KernelLifecycle);
   const shutdown = app.get(GracefulShutdown);
   const configService = app.get(KernelConfigService);
@@ -544,7 +270,7 @@ export async function createKernel(
     marketplaces: app.get(MarketplacesService),
     extensionDeploymentConfigs: app.get(ExtensionDeploymentConfigService),
     orgExtensionConfigs: app.get(OrgExtensionConfigs),
-    bus: g.bus,
+    bus: app.get<ExtensionContext["bus"]>(KERNEL_BUS),
     runs: {
       eventLog: app.get(EventLog),
       registry: app.get(ProviderRegistry),
@@ -554,7 +280,6 @@ export async function createKernel(
       abort: app.get(RunAbort),
       stepDeps: app.get(RunSteps).deps,
       waits: app.get(Waits),
-      maintenance: g.maintenance,
     },
     tools: {
       registry: app.get(ToolRegistry),
@@ -585,7 +310,7 @@ export async function createKernel(
     prices: app.get(PricesService),
     purposes: app.get(ModelPurposesService),
     sandbox: app.get(SandboxService),
-    log: g.log,
+    log,
     get config() {
       return configService.get();
     },
@@ -601,7 +326,7 @@ export async function createKernel(
         await lifecycle.listen(config.http.port);
       } catch (e) {
         if (!shutdown.isShuttingDown()) {
-          g.log.error("kernel start failed", { err: e });
+          log.error("kernel start failed", { err: e });
           await kernel.stop();
         }
         throw e;

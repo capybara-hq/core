@@ -56,20 +56,21 @@ function setup(render: NonNullable<FilePreviewer["render"]>, timeoutMs = 50) {
       },
     ],
   };
-  const reg = new PreviewerRegistry({
-    db,
-    host: {
+  const reg = new PreviewerRegistry(
+    { db },
+    {
       list: () =>
         [
           { plugin: "late", capability: FILE_PREVIEW_EXTENSION_POINT, impl: provider, inflight },
         ] as never,
+      enabledPlugins: async () => new Set(["late"]),
     },
-    enabledPlugins: async () => new Set(["late"]),
-    files: { file: async () => FILE } as never,
-    storage: ignoringStore as never,
-    log: { warn: () => {} },
-    timeoutMs,
-  });
+    { file: async () => FILE } as never,
+    ignoringStore as never,
+    { warn: () => {} },
+    undefined as never,
+  );
+  reg.timeoutMs = timeoutMs;
   const call = () =>
     reg.render({
       orgId: "o",

@@ -273,7 +273,7 @@ export {
 } from "./packages/npm.js";
 export { UNKNOWN_RESULT_TEXT } from "./runtime/context/pairing.js";
 export type { AgentLoop, LoopContext, LoopOutcome } from "./runtime/loop.js";
-export { MAINTENANCE_QUEUE_NAME } from "./runtime/maintenance.js";
+export { MAINTENANCE_QUEUE_NAME } from "./runtime/maintenance-queue.js";
 export { runJobId } from "./runtime/run-queue.js";
 export {
   SANDBOX_DESTROY_JOB,

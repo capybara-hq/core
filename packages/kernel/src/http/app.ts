@@ -2,7 +2,7 @@ import "reflect-metadata";
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import fastifyCookie from "@fastify/cookie";
 import { type DynamicModule, Module } from "@nestjs/common";
-import { APP_FILTER, NestFactory } from "@nestjs/core";
+import { NestFactory } from "@nestjs/core";
 import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import type { FastifyInstance, FastifyReply, InjectOptions, LightMyRequestResponse } from "fastify";
 import type { Route } from "../ctx/create-ctx.js";
@@ -22,7 +22,8 @@ import { SHUTDOWN_STATE } from "../infra/health/shutdown-state.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { withLogContext } from "../log-context.js";
 import { createKernelAdapter } from "./adapter.js";
-import { ErrorFilter, redactPath } from "./error.filter.js";
+import { redactPath } from "./error.filter.js";
+import { ErrorFilterModule } from "./error-filter.module.js";
 import { type GatewayRoutes, registerGatewayRoutes } from "./gateway.module.js";
 import { NestLogAdapter } from "./nest-logger.js";
 import {
@@ -148,15 +149,21 @@ function rootModule(opts: CreateHttpAppOptions): DynamicModule {
   class RootModule {}
   return {
     module: RootModule,
-    imports: [HealthModule, ...(opts.serveApi && opts.apiModule ? [opts.apiModule] : [])],
+    // global: the error filter's module reads the logger from here
+    global: true,
+    imports: [
+      HealthModule,
+      ErrorFilterModule,
+      ...(opts.serveApi && opts.apiModule ? [opts.apiModule] : []),
+    ],
     controllers: [HealthController],
     providers: [
       { provide: KERNEL_LOGGER, useValue: opts.log },
       { provide: HEALTH_CHECKS, useValue: opts.health.checks },
       { provide: HEALTH_TIMEOUT_MS, useValue: opts.health.timeoutMs ?? CHECK_TIMEOUT_MS },
       { provide: SHUTDOWN_STATE, useValue: { isShuttingDown: opts.health.isStopping } },
-      { provide: APP_FILTER, useClass: ErrorFilter },
     ],
+    exports: [KERNEL_LOGGER],
   };
 }
 

@@ -48,8 +48,9 @@ export interface KernelAppOptions {
    */
   extensionConfigSources?: Record<string, Record<string, ConfigSourceKind>>;
   /**
-   * Providers that replace the application's own (tests). They are registered in the legacy graph's
-   * module, so they replace what the legacy graph and the modules built on it resolve.
+   * Providers that replace the application's own (tests): registered in a global module, so the
+   * domain modules that resolve these tokens (`AGENT_LOOP_FACTORY`, `RUN_HOOKS`,
+   * `EVAL_REPLAY_HOOKS`) get them.
    */
   overrides?: { provide: unknown; useValue: unknown }[];
 }

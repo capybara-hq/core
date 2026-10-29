@@ -263,58 +263,27 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
  * (`kc-stale-pending`).
  */
 export const KC_PENDING: KcPending = {
-  "kc-transaction": [
-    { path: "packages/kernel/src/evals/", max: 19 },
-    { path: "packages/kernel/src/files/", max: 1 },
-  ],
-  "kc-lock": [{ path: "packages/kernel/src/evals/", max: 2 }],
-  "kc-queue": [
-    { path: "packages/kernel/src/evals/", max: 2 },
-    // R11: the maintenance queue keeps its one hand-made consumer until Task 3.9 builds its
-    // @Processor (the rest of runtime/ was converted in Task 3.6b)
-    { path: "packages/kernel/src/runtime/maintenance.ts", max: 2 },
-  ],
   "kc-wiring": [
+    // R10: the CLI's admin commands build AccountsService by hand until Task 5.2 runs them on the
+    // Nest application context
     { path: "apps/capybara/src/commands/admin-create.ts", max: 1 },
     { path: "apps/capybara/src/commands/admin-grant.ts", max: 1 },
-    { path: "packages/kernel/src/http/", max: 15 },
-    { path: "packages/kernel/src/kernel.module.ts", max: 5 },
+    // the application's `overrides` (test seams) as `useValue` providers until Task 5.3
+    { path: "packages/kernel/src/kernel.module.ts", max: 1 },
+    // R10: createLocalAccount builds AccountsService by hand until Task 5.2
     { path: "packages/testing/src/kernel-helpers.ts", max: 1 },
   ],
-  "kc-zod-pipe": [
-    { path: "packages/kernel/src/evals/", max: 8 },
-    { path: "packages/kernel/src/files/", max: 4 },
-    { path: "packages/kernel/src/ui/", max: 9 },
-  ],
+  // the createKernel facade and its Kernel type: Task 5.1 converts the tests, 5.3 deletes it
   "kc-facade": [
     { path: "apps/capybara/src/commands/start.ts", max: 3 },
     { path: "apps/capybara/test/", max: 6 },
     { path: "packages/kernel/src/index.ts", max: 2 },
-    { path: "packages/kernel/src/kernel.ts", max: 5 },
+    { path: "packages/kernel/src/kernel.ts", max: 4 },
     { path: "packages/kernel/test/", max: 348 },
     { path: "packages/testing/src/index.ts", max: 1 },
     { path: "packages/testing/src/kernel-helpers.ts", max: 6 },
     { path: "packages/testing/src/replica-runner.ts", max: 3 },
     { path: "packages/testing/test/", max: 7 },
-  ],
-  "kc-legacy": [
-    { path: "packages/kernel/src/http/", max: 27 },
-    // R10: the standalone handles' legacy view, for the CLI until Task 5.2
-    { path: "packages/kernel/src/infra/database/standalone.ts", max: 2 },
-    // The counts below include the Phase 3 bridges (ConvertedProviders, R8 legacyCurrentTrx; R7
-    // LegacyPorts was deleted in Task 3.8), added to kc-legacy by Task 3.1: they shrink as their
-    // owners convert
-    { path: "packages/kernel/src/infra/database/legacy-view.ts", max: 3 },
-    { path: "packages/kernel/src/kernel.module.ts", max: 17 },
-    { path: "packages/kernel/src/kernel.ts", max: 17 },
-    { path: "packages/kernel/src/lifecycle/", max: 5 },
-    // the R8 bridge's own test, deleted with legacy-view.ts
-    { path: "packages/kernel/test/infra/legacy-transaction.test.ts", max: 4 },
-  ],
-  "kc-config": [
-    { path: "packages/kernel/src/evals/", max: 5 },
-    { path: "packages/kernel/src/http/", max: 4 },
-    { path: "packages/kernel/src/ui/", max: 1 },
   ],
 };
 

@@ -1,6 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { EmbedClaims } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable, Module } from "@nestjs/common";
 import type { Keyring } from "../ctx/secrets.js";
+import { KEYRING } from "../infra/tokens.js";
 import { ORG_ROLES } from "../orgs/roles.js";
 
 /** 嵌入令牌的有效期（秒）。网页在过期前 60 秒续期。 */
@@ -68,19 +70,21 @@ function parseClaims(v: unknown): EmbedClaims | null {
  * - 格式固定、没有头（没有 alg 可混淆）；密钥由主密钥环经 HKDF 派生，轮换后上一把主密钥签的令牌仍可校验到过期；
  * - 校验：严格 base64url、常量时间比较签名、逐字段核对声明、`exp` 容许 {@link EMBED_TOKEN_SKEW_SECONDS} 秒偏差、
  *   `exp` 不得超过「现在 + 有效期 + 偏差」、`plugin` 必须是调用方插件；任何一项不过都返回 null（不说明原因）。
- * 无状态（不落库、不进 Redis）：各副本用同一主密钥即可校验，不需要共享状态。
+ * 无状态（不落库、不进 Redis）：各副本用同一主密钥即可校验，不需要共享状态。One provider: the UI
+ * routes issue tokens with it and every extension's `ctx` verifies them with it.
  */
+@Injectable()
 export class EmbedTokens {
   private readonly current: Buffer;
   private readonly keys: Buffer[];
-  private readonly now: () => number;
+  /** The clock (tests set it). */
+  now: () => number = Date.now;
 
-  constructor(keyring: Keyring, opts: { now?: () => number } = {}) {
+  constructor(@Inject(KEYRING) keyring: Keyring) {
     const derived = keyring.deriveKey(EMBED_KEY_INFO);
     const ids = [derived.currentId, ...keyring.toJSON().previousIds];
     this.current = derived.current;
     this.keys = ids.map((id) => derived.byId(id)).filter((k): k is Buffer => k !== undefined);
-    this.now = opts.now ?? Date.now;
   }
 
   /** 签发：`exp` = 现在 + {@link EMBED_TOKEN_TTL_SECONDS}。 */
@@ -124,3 +128,7 @@ export class EmbedTokens {
 function mac(key: Buffer, payload: string): Buffer {
   return createHmac("sha256", key).update(`${EMBED_KEY_INFO}.${payload}`).digest();
 }
+
+/** {@link EmbedTokens} on its own: the extension host (`ctx`) and the UI routes import it. */
+@Module({ providers: [EmbedTokens], exports: [EmbedTokens] })
+export class EmbedTokensModule {}

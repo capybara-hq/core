@@ -1,13 +1,17 @@
+import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
-import type { KernelConfig } from "../config/schema.js";
 import { typedInvocation } from "../conversations/events.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import type { SettingsService } from "../identity/settings.js";
-import type { PricesService } from "../models/prices.js";
-import type { OrgLock } from "../orgs/org-lock.js";
-import { recountCases, skipPendingJudges } from "./budget.js";
+import { SettingsService } from "../identity/settings.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { PricesService } from "../models/prices.js";
+import { OrgLock } from "../orgs/org-lock.js";
+import { EvalBudget } from "./budget.js";
 import { casePlans } from "./plan.js";
 import { caseBase } from "./runs.service.js";
 import {
@@ -157,15 +161,23 @@ function toCaseView(r: CaseRow): EvalCaseView {
  * （`takeSnapshot`，≤ `evals.maxCaseBytes`），之后与原对话无关。写操作在事务里锁组织行并复核角色
  * （`evals.manage`），再锁集合行，串行化同一集合的容量判定。查看用例内容写审计 `trajectory.viewed`。
  */
+@Injectable()
 export class EvalSetsService {
   constructor(
-    private readonly db: KernelSchemaDb,
-    private readonly config: () => KernelConfig,
-    private readonly prices: PricesService,
-    private readonly settings: SettingsService,
+    @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Inject(PricesService) private readonly prices: Pick<PricesService, "table">,
+    @Inject(SettingsService) private readonly settings: Pick<SettingsService, "get">,
     /** The org row lock (orgs/org-lock.ts; R12): joins the caller's transaction. */
-    private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
+    @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
+    @Inject(EvalBudget) private readonly budget: Pick<EvalBudget, "skipRun">,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
+
+  /** The context-aware handle (the `@Transactional` method's transaction, else the pool). */
+  private get db(): KernelSchemaDb {
+    return this.kdb.db;
+  }
 
   private views(orgId: string) {
     return this.db
@@ -220,38 +232,7 @@ export class EvalSetsService {
     input: { agentId: string; name: string; description?: string; rubric?: string },
     actorTokenId?: string,
   ): Promise<EvalSetView> {
-    const id = await this.db.transaction().execute(async (trx) => {
-      await this.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
-      const agent = await trx
-        .selectFrom("agents")
-        .select("id")
-        .where("id", "=", input.agentId)
-        .where("org_id", "=", orgId)
-        .where("deleted_at", "is", null)
-        .executeTakeFirst();
-      if (!agent) throw new ApiError("agent.not_found", "Agent not found");
-      const row = await trx
-        .insertInto("eval_sets")
-        .values({
-          org_id: orgId,
-          agent_id: input.agentId,
-          name: input.name,
-          description: input.description ?? "",
-          rubric: input.rubric ?? null,
-          created_by: actor,
-        })
-        .returning("id")
-        .executeTakeFirstOrThrow();
-      await audit(trx, {
-        actorAccountId: actor,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "eval.set_created",
-        target: row.id,
-        detail: { agentId: input.agentId, name: input.name },
-      });
-      return row.id;
-    });
+    const id = await this.createIn(orgId, actor, input, actorTokenId);
     return this.view(orgId, id);
   }
 
@@ -284,35 +265,7 @@ export class EvalSetsService {
     actorTokenId?: string,
   ): Promise<EvalSetView> {
     if (!UUID.test(setId)) throw setNotFound();
-    await this.db.transaction().execute(async (trx) => {
-      await this.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
-      const r = await trx
-        .updateTable("eval_sets")
-        .set({
-          ...(patch.name !== undefined && { name: patch.name }),
-          ...(patch.description !== undefined && { description: patch.description }),
-          ...(patch.rubric !== undefined && { rubric: patch.rubric }),
-          updated_at: sql`now()`,
-        })
-        .where("id", "=", setId)
-        .where("org_id", "=", orgId)
-        .where("deleted_at", "is", null)
-        .executeTakeFirst();
-      if (Number(r.numUpdatedRows) === 0) throw setNotFound();
-      await audit(trx, {
-        actorAccountId: actor,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "eval.set_updated",
-        target: setId,
-        // 只记改了哪些字段（评分标准可能很长，不进审计）
-        detail: {
-          fields: (["name", "description", "rubric"] as const).filter(
-            (f) => patch[f] !== undefined,
-          ),
-        },
-      });
-    });
+    await this.updateIn(orgId, actor, setId, patch, actorTokenId);
     return this.view(orgId, setId);
   }
 
@@ -322,24 +275,209 @@ export class EvalSetsService {
    */
   async remove(orgId: string, actor: string, setId: string, actorTokenId?: string): Promise<void> {
     if (!UUID.test(setId)) throw setNotFound();
-    await this.db.transaction().execute(async (trx) => {
-      await this.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
-      const r = await trx
-        .updateTable("eval_sets")
-        .set({ deleted_at: sql`now()`, updated_at: sql`now()` })
-        .where("id", "=", setId)
-        .where("org_id", "=", orgId)
-        .where("deleted_at", "is", null)
-        .executeTakeFirst();
-      if (Number(r.numUpdatedRows) === 0) throw setNotFound();
-      await stopAndPurgeRuns(trx, setId);
-      await audit(trx, {
-        actorAccountId: actor,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "eval.set_deleted",
-        target: setId,
-      });
+    await this.removeIn(orgId, actor, setId, actorTokenId);
+  }
+
+  @Transactional({ propagation: "requires_new" })
+  private async createIn(
+    orgId: string,
+    actor: string,
+    input: { agentId: string; name: string; description?: string; rubric?: string },
+    actorTokenId: string | undefined,
+  ): Promise<string> {
+    await this.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
+    const agent = await this.db
+      .selectFrom("agents")
+      .select("id")
+      .where("id", "=", input.agentId)
+      .where("org_id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!agent) throw new ApiError("agent.not_found", "Agent not found");
+    const row = await this.db
+      .insertInto("eval_sets")
+      .values({
+        org_id: orgId,
+        agent_id: input.agentId,
+        name: input.name,
+        description: input.description ?? "",
+        rubric: input.rubric ?? null,
+        created_by: actor,
+      })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+    await audit(this.db, {
+      actorAccountId: actor,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "eval.set_created",
+      target: row.id,
+      detail: { agentId: input.agentId, name: input.name },
+    });
+    return row.id;
+  }
+
+  @Transactional({ propagation: "requires_new" })
+  private async updateIn(
+    orgId: string,
+    actor: string,
+    setId: string,
+    patch: { name?: string; description?: string; rubric?: string | null },
+    actorTokenId: string | undefined,
+  ): Promise<void> {
+    await this.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
+    const r = await this.db
+      .updateTable("eval_sets")
+      .set({
+        ...(patch.name !== undefined && { name: patch.name }),
+        ...(patch.description !== undefined && { description: patch.description }),
+        ...(patch.rubric !== undefined && { rubric: patch.rubric }),
+        updated_at: sql`now()`,
+      })
+      .where("id", "=", setId)
+      .where("org_id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (Number(r.numUpdatedRows) === 0) throw setNotFound();
+    await audit(this.db, {
+      actorAccountId: actor,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "eval.set_updated",
+      target: setId,
+      // 只记改了哪些字段（评分标准可能很长，不进审计）
+      detail: {
+        fields: (["name", "description", "rubric"] as const).filter((f) => patch[f] !== undefined),
+      },
+    });
+  }
+
+  @Transactional({ propagation: "requires_new" })
+  private async removeIn(
+    orgId: string,
+    actor: string,
+    setId: string,
+    actorTokenId: string | undefined,
+  ): Promise<void> {
+    await this.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
+    const r = await this.db
+      .updateTable("eval_sets")
+      .set({ deleted_at: sql`now()`, updated_at: sql`now()` })
+      .where("id", "=", setId)
+      .where("org_id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (Number(r.numUpdatedRows) === 0) throw setNotFound();
+    await stopAndPurgeRuns(this.db, this.budget, setId);
+    await audit(this.db, {
+      actorAccountId: actor,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "eval.set_deleted",
+      target: setId,
+    });
+  }
+
+  @Transactional({ propagation: "requires_new" })
+  private async insertCaseIn(
+    orgId: string,
+    actor: string,
+    setId: string,
+    snapshot: CaseSnapshot,
+    extra: { sampled: boolean; actorTokenId?: string },
+    prepared: {
+      max: number;
+      json: string;
+      plans: ReturnType<typeof casePlans>;
+      base: Awaited<ReturnType<typeof caseBase>>;
+    },
+  ): Promise<EvalCaseView | "exists" | "full"> {
+    const { max, json, plans, base } = prepared;
+    await this.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
+    const set = await this.db
+      .selectFrom("eval_sets")
+      .select("id")
+      .where("id", "=", setId)
+      .where("org_id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!set) throw setNotFound();
+    if ((await this.caseCount(this.db, setId)) >= max) return "full";
+    const row = await this.db
+      .insertInto("eval_cases")
+      .values({
+        set_id: setId,
+        org_id: orgId,
+        source_conversation_id: snapshot.conversationId,
+        source_run_id: snapshot.runId,
+        agent_version: snapshot.agentVersion,
+        title: caseTitle(snapshot),
+        snapshot: json,
+        snapshot_bytes: Buffer.byteLength(json),
+        replayable_steps: replayableCalls(snapshot).length,
+        plan_step: JSON.stringify(plans.step),
+        plan_run: JSON.stringify(plans.run),
+        base_model: base ? JSON.stringify(base.definition.model) : null,
+        added_by: actor,
+      })
+      .onConflict((oc) => oc.columns(["set_id", "source_run_id"]).doNothing())
+      .returning(CASE_COLUMNS)
+      .executeTakeFirst();
+    if (!row) return "exists";
+    await audit(this.db, {
+      actorAccountId: actor,
+      ...(extra.actorTokenId !== undefined && { actorTokenId: extra.actorTokenId }),
+      orgId,
+      action: "eval.case_added",
+      target: setId,
+      detail: {
+        caseId: row.id,
+        conversationId: snapshot.conversationId,
+        runId: snapshot.runId,
+        ...(extra.sampled && { sampled: true }),
+      },
+    });
+    return toCaseView(row);
+  }
+
+  @Transactional({ propagation: "requires_new" })
+  private async removeCaseIn(
+    orgId: string,
+    actor: string,
+    setId: string,
+    caseId: string,
+    actorTokenId: string | undefined,
+  ): Promise<void> {
+    await this.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
+    const set = await this.db
+      .selectFrom("eval_sets")
+      .select("id")
+      .where("id", "=", setId)
+      .where("org_id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!set) throw setNotFound();
+    const r = await this.db
+      .deleteFrom("eval_cases")
+      .where("id", "=", caseId)
+      .where("set_id", "=", setId)
+      .where("org_id", "=", orgId)
+      .returning(["source_conversation_id", "source_run_id"])
+      .executeTakeFirst();
+    if (!r) throw caseNotFound();
+    await audit(this.db, {
+      actorAccountId: actor,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "eval.case_removed",
+      target: setId,
+      detail: {
+        caseId,
+        conversationId: r.source_conversation_id,
+        runId: r.source_run_id,
+      },
     });
   }
 
@@ -377,7 +515,7 @@ export class EvalSetsService {
     snapshot: CaseSnapshot,
     extra: { sampled: boolean; actorTokenId?: string },
   ): Promise<EvalCaseView | "exists" | "full"> {
-    const max = this.config().evals.maxCasesPerSet;
+    const max = this.config.get().evals.maxCasesPerSet;
     const json = JSON.stringify(snapshot);
     // 估算与启动只读这些列（不读快照）：两种模式的计划与用例原版本的模型
     const plans = casePlans(snapshot);
@@ -387,54 +525,7 @@ export class EvalSetsService {
       plans.step.switchedModel = switched;
       plans.run.switchedModel = switched;
     }
-    return this.db.transaction().execute(async (trx) => {
-      await this.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
-      const set = await trx
-        .selectFrom("eval_sets")
-        .select("id")
-        .where("id", "=", setId)
-        .where("org_id", "=", orgId)
-        .where("deleted_at", "is", null)
-        .forUpdate()
-        .executeTakeFirst();
-      if (!set) throw setNotFound();
-      if ((await this.caseCount(trx, setId)) >= max) return "full";
-      const row = await trx
-        .insertInto("eval_cases")
-        .values({
-          set_id: setId,
-          org_id: orgId,
-          source_conversation_id: snapshot.conversationId,
-          source_run_id: snapshot.runId,
-          agent_version: snapshot.agentVersion,
-          title: caseTitle(snapshot),
-          snapshot: json,
-          snapshot_bytes: Buffer.byteLength(json),
-          replayable_steps: replayableCalls(snapshot).length,
-          plan_step: JSON.stringify(plans.step),
-          plan_run: JSON.stringify(plans.run),
-          base_model: base ? JSON.stringify(base.definition.model) : null,
-          added_by: actor,
-        })
-        .onConflict((oc) => oc.columns(["set_id", "source_run_id"]).doNothing())
-        .returning(CASE_COLUMNS)
-        .executeTakeFirst();
-      if (!row) return "exists";
-      await audit(trx, {
-        actorAccountId: actor,
-        ...(extra.actorTokenId !== undefined && { actorTokenId: extra.actorTokenId }),
-        orgId,
-        action: "eval.case_added",
-        target: setId,
-        detail: {
-          caseId: row.id,
-          conversationId: snapshot.conversationId,
-          runId: snapshot.runId,
-          ...(extra.sampled && { sampled: true }),
-        },
-      });
-      return toCaseView(row);
-    });
+    return this.insertCaseIn(orgId, actor, setId, snapshot, extra, { max, json, plans, base });
   }
 
   /**
@@ -471,7 +562,7 @@ export class EvalSetsService {
       .where("source_run_id", "=", input.runId)
       .executeTakeFirst();
     if (exists) throw caseExists();
-    const { maxCasesPerSet, maxCaseBytes } = this.config().evals;
+    const { maxCasesPerSet, maxCaseBytes } = this.config.get().evals;
     // 先判容量再取快照（快照可能很大）；写入时在锁内再判一次
     if ((await this.caseCount(this.db, setId)) >= maxCasesPerSet) throw tooMany(maxCasesPerSet);
     const snapshot = await takeSnapshot(
@@ -503,7 +594,7 @@ export class EvalSetsService {
     actorTokenId?: string,
   ): Promise<{ added: number; skipped: number }> {
     const set = await this.liveSet(orgId, setId);
-    const { maxCasesPerSet, maxCaseBytes } = this.config().evals;
+    const { maxCasesPerSet, maxCaseBytes } = this.config.get().evals;
     const room = maxCasesPerSet - (await this.caseCount(this.db, setId));
     if (room <= 0) throw tooMany(maxCasesPerSet);
 
@@ -575,38 +666,7 @@ export class EvalSetsService {
   ): Promise<void> {
     if (!UUID.test(setId)) throw setNotFound();
     if (!UUID.test(caseId)) throw caseNotFound();
-    await this.db.transaction().execute(async (trx) => {
-      await this.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
-      const set = await trx
-        .selectFrom("eval_sets")
-        .select("id")
-        .where("id", "=", setId)
-        .where("org_id", "=", orgId)
-        .where("deleted_at", "is", null)
-        .forUpdate()
-        .executeTakeFirst();
-      if (!set) throw setNotFound();
-      const r = await trx
-        .deleteFrom("eval_cases")
-        .where("id", "=", caseId)
-        .where("set_id", "=", setId)
-        .where("org_id", "=", orgId)
-        .returning(["source_conversation_id", "source_run_id"])
-        .executeTakeFirst();
-      if (!r) throw caseNotFound();
-      await audit(trx, {
-        actorAccountId: actor,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "eval.case_removed",
-        target: setId,
-        detail: {
-          caseId,
-          conversationId: r.source_conversation_id,
-          runId: r.source_run_id,
-        },
-      });
-    });
+    await this.removeCaseIn(orgId, actor, setId, caseId, actorTokenId);
   }
 
   /**
@@ -658,8 +718,12 @@ export class EvalSetsService {
  * 与回放写种子互斥：种子事务对运行行加共享锁并复核仍在执行（见 `replayRun`），这里的 UPDATE 持行锁，
  * 先提交的一方胜出，不会在删除之后再长出新的评测对话。
  */
-async function stopAndPurgeRuns(trx: KernelSchemaDb, setId: string): Promise<void> {
-  const runs = await trx
+async function stopAndPurgeRuns(
+  db: KernelSchemaDb,
+  budget: Pick<EvalBudget, "skipRun">,
+  setId: string,
+): Promise<void> {
+  const runs = await db
     .updateTable("eval_runs")
     .set({ status: "cancelled", finished_at: sql`now()` })
     .where("set_id", "=", setId)
@@ -667,29 +731,22 @@ async function stopAndPurgeRuns(trx: KernelSchemaDb, setId: string): Promise<voi
     .returning("id")
     .execute();
   for (const r of runs) {
-    await trx
-      .updateTable("eval_results")
-      .set({ status: "skipped", updated_at: sql`now()` })
-      .where("run_id", "=", r.id)
-      .where("status", "=", "pending")
-      .execute();
-    await skipPendingJudges(trx, r.id);
-    await recountCases(trx, r.id);
+    await budget.skipRun(r.id);
   }
-  const all = trx.selectFrom("eval_runs").select("id").where("set_id", "=", setId);
-  const convs = trx
+  const all = db.selectFrom("eval_runs").select("id").where("set_id", "=", setId);
+  const convs = db
     .selectFrom("conversations")
     .select("id")
     .where("kind", "=", "eval")
     .where("eval_run_id", "in", all);
-  const threads = trx.selectFrom("runs").select("id").where("conversation_id", "in", convs);
-  await trx.deleteFrom("lg_checkpoint_writes").where("thread_id", "in", threads).execute();
-  await trx.deleteFrom("lg_checkpoints").where("thread_id", "in", threads).execute();
-  await trx
+  const threads = db.selectFrom("runs").select("id").where("conversation_id", "in", convs);
+  await db.deleteFrom("lg_checkpoint_writes").where("thread_id", "in", threads).execute();
+  await db.deleteFrom("lg_checkpoints").where("thread_id", "in", threads).execute();
+  await db
     .deleteFrom("conversations")
     .where("kind", "=", "eval")
     .where("eval_run_id", "in", all)
     .execute();
   // 用例快照是复制来的对话内容：硬删（结果随之级联删除），与单个移除用例一致
-  await trx.deleteFrom("eval_cases").where("set_id", "=", setId).execute();
+  await db.deleteFrom("eval_cases").where("set_id", "=", setId).execute();
 }

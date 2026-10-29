@@ -47,6 +47,7 @@ import { KERNEL_LOGGER, KEYRING, REDIS, REDIS_SUBSCRIBER } from "../infra/tokens
 import { KERNEL_APP_OPTIONS } from "../lifecycle/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { packagePath } from "../packages/tgz.js";
+import { EmbedTokens } from "../ui/embed-token.js";
 import type { UiActionHandler, UiRender } from "../ui/registry.js";
 import {
   type ApprovalDecision,
@@ -637,6 +638,7 @@ export class ExtensionHost {
     @Inject(REDIS) redis: Redis,
     @Inject(REDIS_SUBSCRIBER) busSubscriber: BusSubscriber,
     @Inject(KEYRING) keyring: Keyring,
+    @Inject(EmbedTokens) embedTokens: EmbedTokens,
     @Inject(LockService) locks: LockService,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(KERNEL_APP_OPTIONS) options: Pick<KernelAppOptions, "resolveFrom">,
@@ -650,6 +652,7 @@ export class ExtensionHost {
       busSubscriber,
       redisUrl: c.redis.url,
       keyring,
+      embedTokens,
       locks,
       runWorkers: c.roles.includes("worker"),
       log,

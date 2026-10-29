@@ -123,7 +123,7 @@ export class Waits implements OnModuleDestroy {
      * `waiting` is set. Children are stopped through `request`.
      */
     @Inject(RunAbort) private readonly abort: Pick<RunAbort, "requested" | "request">,
-    /** The maintenance queue: wait timeout jobs (its one worker consumes them until Task 3.9, R11). */
+    /** The maintenance queue: wait timeout jobs (`MaintenanceProcessor` consumes them). */
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly timeouts: Pick<Queue, "add">,
     @Inject(KernelEvents) events: KernelEvents,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "error" | "warn">,
@@ -952,7 +952,7 @@ export class Waits implements OnModuleDestroy {
   }
 
   /**
-   * A `wait-timeout` job (the maintenance worker's handler until Task 3.9, R11): expires the wait,
+   * A `wait-timeout` job (dispatched by `MaintenanceProcessor`): expires the wait,
    * or delays the job again until the wait's expiry when it ran early.
    */
   async processTimeout(job: Job<WaitTimeoutData>, token: string | undefined): Promise<void> {
@@ -1197,6 +1197,34 @@ export function unreportedForkRuns(
       .limit(WAIT_SWEEP_BATCH)
       .execute()
   );
+}
+
+/**
+ * A decided approval / answered question resumes the waiting run on this replica (domain events,
+ * spec §3b; the wait sweep resumes a run whose resume was lost). Its IM delivery follows the same
+ * events (`ChannelJobs`).
+ */
+@Injectable()
+export class DecisionResumer implements OnModuleDestroy {
+  private readonly unsubscribe: (() => void)[];
+
+  constructor(
+    @Inject(Waits) waits: Pick<Waits, "resume">,
+    @Inject(KernelEvents) events: Pick<KernelEvents, "on">,
+  ) {
+    this.unsubscribe = [
+      events.on("approval.decided", async (a) => {
+        await waits.resume(a.runId, a.id);
+      }),
+      events.on("question.answered", async (q) => {
+        await waits.resume(q.runId, q.id);
+      }),
+    ];
+  }
+
+  onModuleDestroy(): void {
+    for (const off of this.unsubscribe) off();
+  }
 }
 
 /**
