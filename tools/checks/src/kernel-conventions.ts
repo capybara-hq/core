@@ -276,7 +276,9 @@ export const KC_PENDING: KcPending = {
   // the createKernel facade and its Kernel type: Task 5.1 converts the tests, 5.3 deletes it
   "kc-facade": [
     { path: "apps/capybara/src/commands/start.ts", max: 3 },
-    { path: "apps/capybara/test/", max: 6 },
+    // start.test / start-bootstrap.test mock the `createKernel` export `capybara start` still
+    // uses; they move with start.ts in Task 5.2
+    { path: "apps/capybara/test/", max: 2 },
     { path: "packages/kernel/src/index.ts", max: 2 },
     { path: "packages/kernel/src/kernel.ts", max: 4 },
     { path: "packages/kernel/test/", max: 3 },
