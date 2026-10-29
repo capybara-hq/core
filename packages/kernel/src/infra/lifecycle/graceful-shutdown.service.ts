@@ -6,6 +6,7 @@ import {
   type OnApplicationShutdown,
 } from "@nestjs/common";
 import type { KernelLogger } from "../../log.js";
+import { waitWithin } from "../close-within.js";
 import type { ShutdownState } from "../health/shutdown-state.js";
 import { KERNEL_LOGGER } from "../tokens.js";
 
@@ -100,21 +101,10 @@ export class GracefulShutdown
   async drain(budgetMs: number): Promise<boolean> {
     if (this.inFlight.size === 0) return true;
     const waitMs = Math.max(0, Math.min(budgetMs, this.remainingMs()));
-    let timedOut = false;
-    let timer: NodeJS.Timeout | undefined;
-    const deadline = new Promise<void>((resolve) => {
-      timer = setTimeout(() => {
-        timedOut = true;
-        resolve();
-      }, waitMs);
-      timer.unref();
-    });
-    try {
-      while (this.inFlight.size > 0 && !timedOut) {
-        await Promise.race([Promise.allSettled([...this.inFlight]), deadline]);
-      }
-    } finally {
-      clearTimeout(timer);
+    const end = Date.now() + waitMs;
+    while (this.inFlight.size > 0) {
+      const left = Math.max(0, end - Date.now());
+      if (!(await waitWithin(Promise.allSettled([...this.inFlight]), left))) break;
     }
     if (this.inFlight.size > 0) {
       this.log.warn("shutdown: in-flight work did not finish in time; abandoned", {

@@ -7,6 +7,7 @@ import {
 import { DiscoveryService, MetadataScanner } from "@nestjs/core";
 import { SchedulerRegistry } from "@nestjs/schedule";
 import type { KernelLogger } from "../../log.js";
+import { waitWithin } from "../close-within.js";
 import { runOutsideTransaction } from "../database/transaction-host.js";
 import { GracefulShutdown } from "../lifecycle/graceful-shutdown.service.js";
 import { KERNEL_LOGGER } from "../tokens.js";
@@ -145,24 +146,11 @@ export class ScheduledRuns implements ScheduledRunScope, OnModuleInit, BeforeApp
     this.abort.abort(new Error("the scheduler is stopping"));
     if (this.inFlight.size === 0) return;
     const waitMs = Math.max(0, Math.min(budgetMs, this.shutdown.remainingMs()));
-    let timer: NodeJS.Timeout | undefined;
-    const deadline = new Promise<"timeout">((resolve) => {
-      timer = setTimeout(() => resolve("timeout"), waitMs);
-      timer.unref();
-    });
-    try {
-      const r = await Promise.race([
-        Promise.allSettled([...this.inFlight]).then(() => "done" as const),
-        deadline,
-      ]);
-      if (r === "timeout") {
-        this.log.warn("shutdown: scheduled jobs did not stop in time; abandoned", {
-          inFlight: this.inFlight.size,
-          budgetMs: waitMs,
-        });
-      }
-    } finally {
-      clearTimeout(timer);
+    if (!(await waitWithin(Promise.allSettled([...this.inFlight]), waitMs))) {
+      this.log.warn("shutdown: scheduled jobs did not stop in time; abandoned", {
+        inFlight: this.inFlight.size,
+        budgetMs: waitMs,
+      });
     }
   }
 }

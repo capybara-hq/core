@@ -39,6 +39,7 @@ import { syncPackage } from "../extensions/sync.js";
 import type { KernelHttpApp } from "../http/app.js";
 import type { GatewayRoutes } from "../http/gateway-routes.js";
 import { AccountsService } from "../identity/accounts.js";
+import { waitWithin } from "../infra/close-within.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { GracefulShutdown } from "../infra/lifecycle/graceful-shutdown.service.js";
@@ -385,21 +386,13 @@ export class KernelLifecycle
       p: Promise<unknown>,
       budgetMs = Number.POSITIVE_INFINITY,
     ): Promise<boolean> => {
-      let timer: NodeJS.Timeout | undefined;
-      const waitMs = Math.max(0, Math.min(budgetMs, shutdown.remainingMs()));
-      const timeout = new Promise<"timeout">((resolve) => {
-        timer = setTimeout(() => resolve("timeout"), waitMs);
-        timer.unref();
-      });
       try {
-        const r = await Promise.race([p.then(() => "done" as const), timeout]);
-        if (r === "timeout") log.warn("shutdown step timed out", { step: label });
-        return r === "done";
+        const done = await waitWithin(p, Math.min(budgetMs, shutdown.remainingMs()));
+        if (!done) log.warn("shutdown step timed out", { step: label });
+        return done;
       } catch (e) {
         log.error("shutdown step failed", { step: label, err: e });
         return false;
-      } finally {
-        clearTimeout(timer);
       }
     };
 

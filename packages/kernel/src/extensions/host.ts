@@ -40,6 +40,7 @@ import { kernelDb } from "../db/kernel-schema.js";
 import { migrate } from "../db/migrator.js";
 import { createDb } from "../db/pool.js";
 import type { PluginRouteTable } from "../http/plugin-dispatch.js";
+import { waitWithin } from "../infra/close-within.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { LockService } from "../infra/lock/lock.service.js";
@@ -2427,24 +2428,12 @@ export class ExtensionHost {
     this.closed = true;
     this.abort.abort();
     await this.migrating?.catch(() => {});
-    let timer: NodeJS.Timeout | undefined;
-    await Promise.race([
-      this.lifecycle.catch(() => {}),
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, opts.lifecycleWaitMs ?? CLOSE_LIFECYCLE_WAIT_MS);
-      }),
-    ]);
-    clearTimeout(timer);
+    const lifecycleWaitMs = opts.lifecycleWaitMs ?? CLOSE_LIFECYCLE_WAIT_MS;
+    await waitWithin(this.lifecycle.catch(() => {}), lifecycleWaitMs);
     // 升级时被替换、后台排空中的旧实例：同样最多等 lifecycleWaitMs，之后强制撤销（中止在途调用、不再排空），
     // 赶在共用资源（Redis / PG）关闭之前
     if (this.retiring.size > 0) {
-      await Promise.race([
-        Promise.allSettled([...this.retiring.values()]),
-        new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, opts.lifecycleWaitMs ?? CLOSE_LIFECYCLE_WAIT_MS);
-        }),
-      ]);
-      clearTimeout(timer);
+      await waitWithin(Promise.allSettled([...this.retiring.values()]), lifecycleWaitMs);
       await Promise.allSettled(
         [...this.retiring.keys()].map((old) =>
           old.hurry().catch((err: unknown) => {

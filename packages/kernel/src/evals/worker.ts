@@ -9,6 +9,7 @@ import { EventLog } from "../conversations/event-log.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionUnloadedError } from "../extensions/inflight.js";
+import { waitWithin } from "../infra/close-within.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -347,15 +348,7 @@ export class EvalWorker {
     this.closing = true;
     await worker.pause(true).catch(() => {});
     for (const ac of this.active) ac.abort();
-    let timer: NodeJS.Timeout | undefined;
-    const done = await Promise.race([
-      worker.close().then(() => true),
-      new Promise<false>((resolve) => {
-        timer = setTimeout(() => resolve(false), Math.max(0, budgetMs));
-        timer.unref();
-      }),
-    ]);
-    clearTimeout(timer);
+    const done = await waitWithin(worker.close(), budgetMs);
     if (!done) await worker.close(true).catch(() => {});
   }
 

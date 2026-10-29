@@ -21,6 +21,7 @@ import { TitleQueue } from "../conversations/titles.js";
 import type { ConversationKind, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { SettingsService } from "../identity/settings.js";
+import { waitWithin } from "../infra/close-within.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -386,15 +387,7 @@ export class RunWorker {
     );
     for (const a of this.active.values()) a.shutdown.abort();
     const all = Promise.all([...this.active.values()].map((a) => a.done));
-    let timer: NodeJS.Timeout | undefined;
-    const finished = await Promise.race([
-      all.then(() => true),
-      new Promise<false>((resolve) => {
-        timer = setTimeout(() => resolve(false), Math.max(0, budgetMs));
-        timer.unref();
-      }),
-    ]);
-    clearTimeout(timer);
+    const finished = await waitWithin(all, budgetMs);
     if (!finished) {
       for (const [runId, a] of this.active) {
         a.abandoned = true;
@@ -413,15 +406,10 @@ export class RunWorker {
     // 关闭期间完成 / 失败的任务登记的后续处理（ensureRun 等）要在调用方关闭运行队列之前做完，
     // 否则投递半途被打断，待处理的消息无人处理。以剩余预算为限（至少留一点时间）。
     if (this.followUps.size > 0) {
-      let t: NodeJS.Timeout | undefined;
-      await Promise.race([
+      await waitWithin(
         Promise.allSettled([...this.followUps]),
-        new Promise<void>((resolve) => {
-          t = setTimeout(resolve, Math.max(FOLLOW_UP_MIN_WAIT_MS, deadline - Date.now()));
-          t.unref();
-        }),
-      ]);
-      clearTimeout(t);
+        Math.max(FOLLOW_UP_MIN_WAIT_MS, deadline - Date.now()),
+      );
     }
   }
 
