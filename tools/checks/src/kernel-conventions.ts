@@ -62,7 +62,9 @@ import {
  *   `handleShutdownSignals`) outside `infra/lifecycle`: `createKernelApp` installs none;
  * - kc-ported-header: a file that names octok-platform starts with the canonical header
  *   `// Ported from octok-platform <path> (owner-approved, 2026-10-28).`;
- * - kc-lock-in-tx / kc-side-effect-in-tx: see {@link checkTransactionalMethods} (ported from octok).
+ * - kc-lock-in-tx / kc-side-effect-in-tx: see {@link checkTransactionalMethods} (ported from octok);
+ * - kc-worker-only: a `@LockedCron` / `@LockedInterval` / `@Processor` provider is provided only by
+ *   modules that only `WorkerModule` imports, transitively (see {@link checkWorkerOnly}).
  *
  * Exceptions ({@link KC_EXCEPTIONS}) are permanent and carry their reason; pending entries
  * ({@link KC_PENDING}) are the directories and files not converted yet, each with the number of
@@ -91,6 +93,7 @@ export const KC_RULES = [
   "kc-ported-header",
   "kc-lock-in-tx",
   "kc-side-effect-in-tx",
+  "kc-worker-only",
 ] as const;
 export type KcRule = (typeof KC_RULES)[number];
 
@@ -317,6 +320,8 @@ const MESSAGES: Record<KcRule, string> = {
     "a file ported from octok-platform starts with `// Ported from octok-platform <path> (owner-approved, 2026-10-28).`",
   "kc-lock-in-tx": "",
   "kc-side-effect-in-tx": "",
+  "kc-worker-only":
+    "a cron, interval or queue-consumer provider must be provided only by modules that only WorkerModule imports (transitively)",
 };
 
 const DECORATOR_HOSTS: Record<string, readonly string[]> = {
@@ -544,6 +549,10 @@ export function checkKernelConventions(root: string, opts: KcOptions = {}): Find
   }
   for (const f of kernelFiles) checkTransactionalMethods(f, known, hits);
   checkDuplicateProviders(kernelFiles, hits);
+  checkWorkerOnly(
+    files.filter((f) => f.k !== undefined || f.wiring),
+    hits,
+  );
 
   // De-duplicate (rule, file, line), then apply exceptions and pending entries.
   const seen = new Set<string>();
@@ -1173,5 +1182,180 @@ function checkDuplicateProviders(files: FileInfo[], hits: Hit[]): void {
         within: [],
       });
     }
+  }
+}
+
+/** The worker role's module: the root of the modules a cron or a queue consumer may live in. */
+const WORKER_MODULE = "WorkerModule";
+const SCHEDULED_DECORATORS = new Set(["LockedCron", "LockedInterval"]);
+/** Parents under which an identifier is not a reference to a value (a type, a name, a key). */
+const NON_VALUE_PARENTS = new Set([
+  "ImportSpecifier",
+  "ImportDefaultSpecifier",
+  "ImportNamespaceSpecifier",
+  "ExportSpecifier",
+  "TSTypeReference",
+  "TSQualifiedName",
+  "TSTypeQuery",
+  "TSInterfaceHeritage",
+  "TSClassImplements",
+]);
+
+/** A module definition: an `@Module({ … })` argument or a dynamic module object `{ module: X, … }`. */
+interface ModuleDef {
+  object: Node;
+  name: string;
+}
+
+/**
+ * kc-worker-only (nest kernel 4.1, spec §2: crons and queue consumers run on the worker role only).
+ * The worker-only classes are those with a `@LockedCron` / `@LockedInterval` method, those decorated
+ * `@Processor`, and the first argument of every `configuredProcessor(…)` call. Each place such a
+ * class is provided (an array element, a `useClass` value, a `configuredProcessor` argument) must lie
+ * in the definition of a worker-only module, else it is reported (also when it lies in no module
+ * definition at all: what module the list ends up in is not visible statically).
+ *
+ * A module is worker-only when it is `WorkerModule`, or when it is referenced at least once and
+ * every reference to it is in the `imports` of a worker-only module (a reference in a module's
+ * `exports` is neutral; any other reference, e.g. a CLI context's module list or `app.ts`, makes it
+ * a module of every role). The set is the greatest fixpoint, so a cycle reached only from
+ * `WorkerModule` is worker-only. References are read in the kernel source, the CLI and
+ * `@capybara-hq/testing` (not in tests). A sound approximation: a module that some code path never
+ * imports outside the worker role may still be reported, never the other way round.
+ */
+function checkWorkerOnly(files: FileInfo[], hits: Hit[]): void {
+  const jobs = new Set<string>();
+  for (const f of files.filter((x) => x.k !== undefined)) {
+    for (const cls of classes(f.parsed.program)) {
+      const name = nameOf(cls.id);
+      if (!name) continue;
+      const scheduled = ((cls.body as Node).body as Node[]).some(
+        (m) =>
+          m.type === "MethodDefinition" &&
+          decoratorsOf(m).some((d) => SCHEDULED_DECORATORS.has(decoratorName(d) ?? "")),
+      );
+      if (scheduled || decoratorsOf(cls).some((d) => decoratorName(d) === "Processor")) {
+        jobs.add(name);
+      }
+    }
+    visit(f.parsed.program, (n) => {
+      if (n.type !== "CallExpression" || nameOf(n.callee) !== "configuredProcessor") return;
+      const base = nameOf((n.arguments as Node[])[0]);
+      if (base) jobs.add(base);
+    });
+  }
+  if (jobs.size === 0) return;
+
+  /** The module definition an object is, if any. */
+  const defOf = (n: Node, anc: readonly Node[]): ModuleDef | undefined => {
+    if (n.type !== "ObjectExpression") return undefined;
+    const parent = anc[anc.length - 1];
+    if (parent?.type === "CallExpression" && nameOf(parent.callee) === "Module") {
+      const cls = [...anc].reverse().find((a) => a.type === "ClassDeclaration");
+      const name = cls ? nameOf(cls.id) : undefined;
+      return name ? { object: n, name } : undefined;
+    }
+    const mod = (n.properties as Node[]).find(
+      (p) => p.type === "Property" && !p.computed && nameOf(p.key) === "module",
+    );
+    const name = mod ? nameOf(mod.value) : undefined;
+    return name ? { object: n, name } : undefined;
+  };
+  /** The innermost module definition around a node and the property of it the node is under. */
+  const enclosing = (
+    anc: readonly Node[],
+  ): { def: ModuleDef; key: string | undefined } | undefined => {
+    for (let i = anc.length - 1; i >= 0; i--) {
+      const def = defOf(anc[i] as Node, anc.slice(0, i));
+      if (!def) continue;
+      const prop = anc[i + 1];
+      return { def, key: prop?.type === "Property" ? nameOf(prop.key) : undefined };
+    }
+    return undefined;
+  };
+
+  // Every module name, and every value reference to an identifier with its place.
+  const modules = new Set<string>();
+  const refs: { name: string; node: Node; anc: Node[]; parent: Node; rel: string; line: number }[] =
+    [];
+  for (const f of files) {
+    visit(f.parsed.program, (n, anc) => {
+      const parent = anc[anc.length - 1];
+      if (n.type === "ClassDeclaration" && f.k !== undefined) {
+        const name = nameOf(n.id);
+        if (name && decoratorsOf(n).some((d) => decoratorName(d) === "Module")) modules.add(name);
+        return;
+      }
+      if (n.type !== "Identifier" || !parent) return;
+      if (NON_VALUE_PARENTS.has(parent.type)) return;
+      if (
+        (parent.type === "ClassDeclaration" || parent.type === "ClassExpression") &&
+        parent.id === n
+      )
+        return;
+      if (parent.type === "MemberExpression" && parent.property === n && !parent.computed) return;
+      if (parent.type === "Property" && parent.key === n && !parent.computed) return;
+      if (parent.type === "MethodDefinition" || parent.type === "PropertyDefinition") return;
+      refs.push({
+        name: n.name as string,
+        node: n,
+        anc: [...anc],
+        parent,
+        rel: f.rel,
+        line: f.parsed.lineOf(n.start),
+      });
+    });
+  }
+
+  // Importers of each module: module names, or "?" for a reference outside a module's imports.
+  const importers = new Map<string, Set<string>>();
+  for (const r of refs) {
+    if (!modules.has(r.name)) continue;
+    const at = enclosing(r.anc);
+    if (at && at.def.name === r.name && at.key === "module") continue; // its own definition
+    if (at?.key === "exports") continue;
+    const set = importers.get(r.name) ?? new Set<string>();
+    set.add(at?.key === "imports" ? at.def.name : "?");
+    importers.set(r.name, set);
+  }
+  const workerOnly = new Set(
+    [...modules].filter((m) => m === WORKER_MODULE || (importers.get(m)?.size ?? 0) > 0),
+  );
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const m of workerOnly) {
+      if (m === WORKER_MODULE) continue;
+      if ([...(importers.get(m) ?? [])].every((i) => workerOnly.has(i))) continue;
+      workerOnly.delete(m);
+      changed = true;
+    }
+  }
+
+  for (const r of refs) {
+    if (!jobs.has(r.name)) continue;
+    const p = r.parent;
+    const provided =
+      p.type === "ArrayExpression" ||
+      (p.type === "Property" && nameOf(p.key) === "useClass") ||
+      (p.type === "CallExpression" &&
+        nameOf(p.callee) === "configuredProcessor" &&
+        (p.arguments as Node[])[0] === r.node);
+    if (!provided) continue;
+    const at = enclosing(r.anc);
+    if (at && workerOnly.has(at.def.name)) continue;
+    const outside = at
+      ? [...(importers.get(at.def.name) ?? [])]
+          .map((i) => (i === "?" ? "a reference outside a module's imports" : i))
+          .join(", ") || "nothing"
+      : undefined;
+    hits.push({
+      rule: "kc-worker-only",
+      rel: r.rel,
+      line: r.line,
+      message: at
+        ? `${r.name} runs on the worker role only (a cron, interval or queue consumer), but ${at.def.name} is imported outside WorkerModule (by ${outside}): provide it in a module only WorkerModule imports`
+        : `${r.name} runs on the worker role only (a cron, interval or queue consumer), but this list is in no module definition, so its module cannot be confirmed statically: list it in the providers of a module only WorkerModule imports`,
+      within: [],
+    });
   }
 }
