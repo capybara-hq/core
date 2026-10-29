@@ -1,5 +1,7 @@
 import { fileURLToPath } from "node:url";
+import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import { expect } from "vitest";
+import type { KernelAppOptions } from "../../src/app.js";
 import {
   type KernelConfig,
   KernelConfigSchema,
@@ -7,7 +9,8 @@ import {
 } from "../../src/config/schema.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
-import { createKernel, type Kernel, type KernelOptions } from "../../src/kernel.js";
+import type { KernelHttp } from "../../src/http/app.js";
+import { createKernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { runJobId } from "../../src/runtime/run-queue.js";
 import { asUser, cookieJar } from "./http.js";
@@ -91,15 +94,37 @@ export function runConfig(
 
 const silent = () => createLogger("error", { write: () => {} });
 
-/** 创建并启动内核（日志静默）。 */
-export async function startKernel(
-  config: KernelConfig,
-  opts: Omit<KernelOptions, "env" | "logger"> & {
-    /** Only for a test about the real default: allow the official marketplace at its real URL. */
-    allowOfficialMarketplace?: boolean;
-  } = {},
-): Promise<Kernel> {
-  const { allowOfficialMarketplace, ...kernelOpts } = opts;
+/** The kernel's Nest application. */
+export type KernelApp = NestFastifyApplication;
+
+/** A kernel a test started ({@link startKernel}); reach its services with `app.get(Class)`. */
+export interface TestKernel {
+  /** The kernel's Nest application. */
+  readonly app: KernelApp;
+  /** In-process HTTP: `inject` requests, list the routes. */
+  readonly http: KernelHttp;
+  /** The port listened on; undefined before the start finished and after the stop. */
+  readonly port: number | undefined;
+  /** Stops the kernel (the stop phases within their budgets, then Redis and the pool); idempotent. */
+  close(): Promise<void>;
+}
+
+/** Transitional (nest kernel Task 5.1): the facade, until every test directory is converted. */
+type Facade = Awaited<ReturnType<typeof createKernel>>;
+
+/** A kernel built but not started ({@link buildKernel}). */
+export interface BuiltKernel extends TestKernel {
+  /** Runs the start sequence and listens on `config.http.port`; a failure closes the kernel. */
+  start(): Promise<void>;
+}
+
+/** What the kernel test helpers take: the application options; `env` / `logger` have defaults. */
+export type TestKernelOptions = KernelAppOptions & {
+  /** Only for a test about the real default: allow the official marketplace at its real URL. */
+  allowOfficialMarketplace?: boolean;
+};
+
+function assertOffline(config: KernelConfig, allowOfficialMarketplace: boolean | undefined): void {
   const o = config.marketplaces.official;
   if (
     allowOfficialMarketplace !== true &&
@@ -112,14 +137,35 @@ export async function startKernel(
         "(runConfig does the first)",
     );
   }
-  const k = await createKernel(config, { env: {}, logger: silent(), ...kernelOpts });
+}
+
+/**
+ * Builds a kernel without starting it (logs discarded unless `logger` is given): for tests that
+ * reach the application before its start sequence, or that expect the start to fail.
+ */
+export async function buildKernel(
+  config: KernelConfig,
+  opts: TestKernelOptions = {},
+): Promise<Facade & BuiltKernel> {
+  const { allowOfficialMarketplace, ...appOpts } = opts;
+  assertOffline(config, allowOfficialMarketplace);
+  const k = await createKernel(config, { env: {}, logger: silent(), ...appOpts });
+  return Object.assign(k as Facade & { app: KernelApp }, { close: () => k.stop() });
+}
+
+/** Creates and starts a kernel (logs discarded unless `logger` is given). */
+export async function startKernel(
+  config: KernelConfig,
+  opts: TestKernelOptions = {},
+): Promise<Facade & TestKernel> {
+  const k = await buildKernel(config, opts);
   await k.start();
   return k;
 }
 
 export type Req = ReturnType<typeof asUser>;
 
-export async function session(k: Kernel, login: string): Promise<Req> {
+export async function session(k: Pick<TestKernel, "http">, login: string): Promise<Req> {
   const req = asUser(k.http, cookieJar());
   const res = await req({
     method: "POST",

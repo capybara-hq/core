@@ -12,7 +12,6 @@ import {
   createLogger,
   ExtensionHost,
   KernelConfigSchema,
-  KernelLifecycle,
   readExtensionPackage,
   readPluginPackage,
   StorageService,
