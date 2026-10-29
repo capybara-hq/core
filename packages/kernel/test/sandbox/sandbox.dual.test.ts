@@ -12,7 +12,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
-import type { Kernel } from "../../src/kernel.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
 import {
@@ -20,11 +19,12 @@ import {
   SANDBOX_SUSPEND_SCHEDULER_ID,
 } from "../../src/sandbox/job-ids.js";
 import { SANDBOX_DESTROY_JOB, SANDBOX_SUSPEND_JOB } from "../../src/sandbox/jobs.js";
+import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import {
   readFakeSandboxOps,
   setFakeSandboxDelays,
 } from "../fixtures/plugins/sandbox-fake/index.js";
-import { startKernel } from "../helpers/runs.js";
+import { startKernel, type TestKernel } from "../helpers/runs.js";
 
 /**
  * 两个内核副本（同一进程里的两个独立 Kernel：各自的 PG 池、Redis 连接、插件实例；共享 PG / Redis 与
@@ -41,7 +41,7 @@ const SANDBOX_FAKE = fileURLToPath(
 let pgc: TestContainer;
 let rdc: TestContainer;
 let root: string;
-const kernels: Kernel[] = [];
+const kernels: TestKernel[] = [];
 let raw: ReturnType<typeof createDb>;
 
 const cfg = (plugins: string[], roles: string[] = ["api"]) =>
@@ -64,7 +64,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  for (const k of kernels) await k.stop();
+  for (const k of kernels) await k.close();
   await raw?.destroy();
   await rm(root, { recursive: true, force: true });
   await Promise.all([pgc?.stop(), rdc?.stop()]);
@@ -94,13 +94,15 @@ describe("沙箱（两个副本）", () => {
       startKernel(cfg([SANDBOX_FAKE])),
     ]);
     kernels.push(k1, k2);
-    expect(k1.sandbox.available).toBe(true);
-    expect(k2.sandbox.available).toBe(true);
+    expect(k1.app.get(SandboxService).available).toBe(true);
+    expect(k2.app.get(SandboxService).available).toBe(true);
     const ctx = await seedConversation();
     await setFakeSandboxDelays(root, { create: 300 });
 
-    const use = (k: Kernel) =>
-      k.sandbox.withSandbox(ctx, async (h, _p, info) => ({ h, info }), AbortSignal.timeout(30_000));
+    const use = (k: TestKernel) =>
+      k.app
+        .get(SandboxService)
+        .withSandbox(ctx, async (h, _p, info) => ({ h, info }), AbortSignal.timeout(30_000));
     const [a, b] = await Promise.all([use(k1), use(k2)]);
     expect(a.h).toEqual(b.h);
     expect([a.info.fresh, b.info.fresh].sort()).toEqual([false, true]);
@@ -143,9 +145,10 @@ describe("沙箱（两个副本）", () => {
   it("没有装沙箱插件的内核：available 为 false，使用时 503 sandbox.unavailable", async () => {
     const k = await startKernel(cfg([]));
     kernels.push(k);
-    expect(k.sandbox.available).toBe(false);
+    expect(k.app.get(SandboxService).available).toBe(false);
     const ctx = await seedConversation();
-    const err = await k.sandbox
+    const err = await k.app
+      .get(SandboxService)
       .withSandbox(ctx, async () => 1, AbortSignal.timeout(5000))
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);

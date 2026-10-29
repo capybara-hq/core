@@ -9,7 +9,6 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
 import type { OrgsService } from "../../src/orgs/orgs.service.js";
@@ -17,12 +16,13 @@ import { truncateTables } from "../helpers/db.js";
 import { accountsFor, orgsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
+import { startKernel, type TestKernel } from "../helpers/runs.js";
 
 /** Saving an agent definition's `subagents` block (phase C, spec §5.2). */
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
@@ -35,7 +35,7 @@ const PW = "correct horse battery";
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  k = await createKernel(
+  k = await startKernel(
     KernelConfigSchema.parse({
       db: { url: pgc.url, poolMax: 5 },
       redis: { url: rd.url },
@@ -46,7 +46,6 @@ beforeAll(async () => {
     }),
     { env: {}, logger: createLogger("error", { write: () => {} }) },
   );
-  await k.start();
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
@@ -59,7 +58,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);

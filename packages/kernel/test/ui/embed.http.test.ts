@@ -9,7 +9,6 @@ import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
@@ -22,6 +21,8 @@ import {
   type Req,
   runConfig,
   session,
+  startKernel,
+  type TestKernel,
 } from "../helpers/runs.js";
 
 /**
@@ -42,7 +43,7 @@ let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
-let k: Kernel;
+let k: TestKernel;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -50,14 +51,13 @@ beforeAll(async () => {
   db = kernelDb(raw);
   redis = new Redis(rd.url);
   const base = runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] });
-  k = await createKernel(
+  k = await startKernel(
     { ...base, extensions: [...base.extensions, UI_PROBE, EMBED] },
     { env: {}, logger: createLogger("error", { write: () => {} }) },
   );
-  await k.start();
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);

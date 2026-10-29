@@ -4,9 +4,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import type { ApiTokenService } from "../../src/identity/api-tokens.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
 import { truncateTables } from "../helpers/db.js";
@@ -14,10 +14,11 @@ import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { fakeBCalls, MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
+import { startKernel, type TestKernel } from "../helpers/runs.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
@@ -30,7 +31,7 @@ const PW = "correct horse battery";
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  k = await createKernel(
+  k = await startKernel(
     KernelConfigSchema.parse({
       db: { url: pgc.url, poolMax: 5 },
       redis: { url: rd.url },
@@ -41,7 +42,6 @@ beforeAll(async () => {
     }),
     { env: {}, logger: createLogger("error", { write: () => {} }) },
   );
-  await k.start();
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
@@ -50,7 +50,7 @@ beforeAll(async () => {
   tokens = apiTokensFor(db);
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -369,7 +369,7 @@ describe("Agent HTTP", () => {
   it("GET /models 列出供应商；第二次调用不再访问供应商", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);
-    const before = fakeBCalls(k.host);
+    const before = fakeBCalls(k.app.get(ExtensionHost));
     const first = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/models` });
     expect(first.statusCode).toBe(200);
     const providers = (
@@ -382,6 +382,6 @@ describe("Agent HTTP", () => {
     const second = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/models` });
     expect(second.statusCode).toBe(200);
     expect(second.json()).toEqual(first.json());
-    expect(fakeBCalls(k.host) - before).toBe(1);
+    expect(fakeBCalls(k.app.get(ExtensionHost)) - before).toBe(1);
   });
 });

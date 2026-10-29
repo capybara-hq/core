@@ -10,21 +10,24 @@ import {
   DEFAULT_AGENT_TOOLS,
 } from "../../src/agents/definition.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import {
   runModelStep,
   TOOLS_AVAILABLE_AGAIN,
   TOOLS_UNAVAILABLE_PREFIX,
 } from "../../src/runtime/model-call.js";
+import { RunSteps } from "../../src/runtime/run-steps.js";
+import { ToolRegistry } from "../../src/tools/registry.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
+import { startKernel, type TestKernel } from "../helpers/runs.js";
 
 const MEM_CONNECTOR = fileURLToPath(
   new URL("../fixtures/plugins/mem-connector/index.ts", import.meta.url),
@@ -35,7 +38,7 @@ const TOOLS_PROBE = fileURLToPath(
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
@@ -48,7 +51,7 @@ const MODEL = { provider: "model-fake", model: "fake-1" };
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  k = await createKernel(
+  k = await startKernel(
     KernelConfigSchema.parse({
       db: { url: pgc.url, poolMax: 5 },
       redis: { url: rd.url },
@@ -61,13 +64,12 @@ beforeAll(async () => {
     }),
     { env: {}, logger: createLogger("error", { write: () => {} }) },
   );
-  await k.start();
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -283,7 +285,7 @@ describe("运行时：工具带入请求，不可用工具写提醒（Review Foc
     const id = randomUUID();
     await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
       VALUES (${id}, ${orgId}, ${agentId}, ${ownerId})`.execute(raw);
-    await k.runs.eventLog.append(id, [
+    await k.app.get(EventLog).append(id, [
       {
         type: "user_message",
         payload: { content: [{ type: "text", text }], authorAccountId: ownerId },
@@ -293,7 +295,7 @@ describe("运行时：工具带入请求，不可用工具写提醒（Review Foc
   }
 
   const step = (agent: AgentDefinition, conversationId: string, runId: string, n: number) =>
-    runModelStep(k.runs.stepDeps, {
+    runModelStep(k.app.get(RunSteps).deps, {
       orgId,
       conversationId,
       runId,
@@ -306,7 +308,7 @@ describe("运行时：工具带入请求，不可用工具写提醒（Review Foc
     });
 
   const ofType = async <T extends ConversationEvent["type"]>(id: string, type: T) =>
-    (await k.runs.eventLog.readAfter(id, 0, 1000)).filter(
+    (await k.app.get(EventLog).readAfter(id, 0, 1000)).filter(
       (e) => e.type === type,
     ) as (ConversationEvent & {
       payload: EventPayload<T>;
@@ -322,7 +324,7 @@ describe("运行时：工具带入请求，不可用工具写提醒（Review Foc
     const r = await step(agent.definition, convId, randomUUID(), 1);
     expect(r.aborted).toBe(false);
     const [call] = await ofType(convId, "model_call");
-    const { tools } = await k.tools.registry.forAgent(orgId, agent.definition);
+    const { tools } = await k.app.get(ToolRegistry).forAgent(orgId, agent.definition);
     const hash = (key: string) => tools.find((t) => t.key === key)?.specHash;
     expect(call?.payload.request.tools).toEqual([
       { key: "docs__read", specHash: hash("docs__read") },

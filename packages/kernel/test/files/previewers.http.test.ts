@@ -9,9 +9,10 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { EventLog } from "../../src/conversations/event-log.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import type { Kernel } from "../../src/kernel.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import type { PreviewProbeState } from "../fixtures/plugins/preview-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -26,6 +27,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
 } from "../helpers/runs.js";
 
 /**
@@ -51,7 +53,7 @@ let rd: TestContainer;
 let s3: TestS3;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
-let k: Kernel;
+let k: TestKernel;
 
 beforeAll(async () => {
   [pgc, rd, s3] = await Promise.all([startTestPostgres(), startTestRedis(), startTestS3()]);
@@ -78,7 +80,7 @@ beforeAll(async () => {
   );
 }, 180_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
 });
@@ -115,12 +117,15 @@ async function deliver(
 ): Promise<string> {
   const artifactId = randomUUID();
   const objectKey = `artifacts/${conv}/${artifactId}`;
-  await k.storage.kernel(orgId).put(objectKey, bytes, {
-    contentType,
-    size: bytes.byteLength,
-    signal: AbortSignal.timeout(10_000),
-  });
-  await k.runs.eventLog.append(conv, [
+  await k.app
+    .get(StorageService)
+    .kernel(orgId)
+    .put(objectKey, bytes, {
+      contentType,
+      size: bytes.byteLength,
+      signal: AbortSignal.timeout(10_000),
+    });
+  await k.app.get(EventLog).append(conv, [
     {
       type: "artifact_created",
       payload: {

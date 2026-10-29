@@ -8,17 +8,18 @@ import { createDb } from "../../src/db/pool.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import type { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { SessionService } from "../../src/identity/sessions.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { createLogger } from "../../src/log.js";
 import type { OrgsService } from "../../src/orgs/orgs.service.js";
 import { OrgQuota, orgRunLimit } from "../../src/runtime/quota.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar, setCookies } from "../helpers/http.js";
 import { accountsFor, apiTokensFor, orgsFor, settingsFor } from "../helpers/identity.js";
+import { startKernel, type TestKernel } from "../helpers/runs.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
@@ -41,11 +42,10 @@ const config = (over: Record<string, unknown> = {}): KernelConfig =>
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  k = await createKernel(config({ auth: { setupToken: SETUP_TOKEN } }), {
+  k = await startKernel(config({ auth: { setupToken: SETUP_TOKEN } }), {
     env: {},
     logger: createLogger("error", { write: () => {} }),
   });
-  await k.start();
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
@@ -54,7 +54,7 @@ beforeAll(async () => {
   orgs = orgsFor(db, settingsFor(db), tokens);
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -215,11 +215,10 @@ describe("初始化向导（配置了 auth.setupToken）", () => {
   });
 
   it("连接池只有 2 个连接时并发 POST /setup（带 orgName）：一个 201、其余 409，不会耗尽连接池卡死", async () => {
-    const k2 = await createKernel(config({ db: { url: pgc.url, poolMax: 2 } }), {
+    const k2 = await startKernel(config({ db: { url: pgc.url, poolMax: 2 } }), {
       env: {},
       logger: createLogger("error", { write: () => {} }),
     });
-    await k2.start();
     try {
       const run = Promise.all(
         [0, 1, 2, 3].map((i) =>
@@ -240,7 +239,7 @@ describe("初始化向导（配置了 auth.setupToken）", () => {
       const codes = results.map((r) => r.statusCode).sort();
       expect(codes).toEqual([201, 409, 409, 409]);
     } finally {
-      await k2.stop();
+      await k2.close();
     }
   }, 20_000);
 });
@@ -559,9 +558,10 @@ describe("企业管理员端点", () => {
 
     // 配额读取部署设置：orgA 上限 1，第二个运行进不去；未覆盖的组织用 runtime.orgConcurrency
     const settings = settingsFor(db);
-    const limit = (org: string) => orgRunLimit(settings, { get: () => k.config }, org);
+    const limit = (org: string) =>
+      orgRunLimit(settings, { get: () => k.app.get(KernelConfigService).get() }, org);
     expect(await limit("orgA")).toBe(1);
-    expect(await limit("orgC")).toBe(k.config.runtime.orgConcurrency);
+    expect(await limit("orgC")).toBe(k.app.get(KernelConfigService).get().runtime.orgConcurrency);
     const quota = new OrgQuota(redis);
     expect(await quota.tryEnter("orgA", "r1", await limit("orgA"))).toBe(true);
     expect(await quota.tryEnter("orgA", "r2", await limit("orgA"))).toBe(false);
@@ -578,7 +578,7 @@ describe("企业管理员端点", () => {
       customConnectors: "allow",
       customSkills: "allow",
     });
-    expect(await limit("orgA")).toBe(k.config.runtime.orgConcurrency);
+    expect(await limit("orgA")).toBe(k.app.get(KernelConfigService).get().runtime.orgConcurrency);
     expect(await quota.tryEnter("orgA", "r2", await limit("orgA"))).toBe(true);
 
     // 校验：非正整数 / 未知键 / 空 body → 400
@@ -693,11 +693,10 @@ describe("启动提示", () => {
   it("未初始化时启动日志含 warn（deployment is not set up）；初始化后再启动不出现；未配置 setupToken 时无需 token", async () => {
     const start = async () => {
       const lines: { level: string; msg: string }[] = [];
-      const kk = await createKernel(config(), {
+      const kk = await startKernel(config(), {
         env: {},
         logger: createLogger("info", { write: (l) => lines.push(JSON.parse(l)) }),
       });
-      await kk.start();
       return { kk, lines };
     };
     const notice = (lines: { level: string; msg: string }[]) =>
@@ -716,14 +715,14 @@ describe("启动提示", () => {
       });
       expect(res.statusCode).toBe(201);
     } finally {
-      await first.kk.stop();
+      await first.kk.close();
     }
 
     const second = await start();
     try {
       expect(notice(second.lines)).toEqual([]);
     } finally {
-      await second.kk.stop();
+      await second.kk.close();
     }
   });
 });
