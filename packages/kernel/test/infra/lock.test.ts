@@ -3,6 +3,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../src/errors.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { generateKey } from "../../src/infra/lock/key-template.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { DOWNGRADE_SHARED_LEASE, RENEW_SHARED_LEASE } from "../../src/infra/lock/shared-lease.js";
@@ -562,6 +563,33 @@ describe("LockService shared leases (Task 3.8)", () => {
     expect(s?.lost.aborted).toBe(false);
     expect(await a.sharedCount(keys)).toBe(1);
     await s?.release();
+  });
+});
+
+describe("LockService inside a transaction", () => {
+  it("refuses to take a lock or lease while a transaction is open (it would outlive or precede the COMMIT)", async () => {
+    const pool = {
+      transaction: () => ({ execute: (fn: (t: unknown) => Promise<unknown>) => fn({}) }),
+    };
+    const host = new TransactionHost(pool as never, createLogger("error", { write: () => {} }));
+    const a = new LockService(r1, log);
+    const keys = { lock: `${k("tx")}:lock`, users: `${k("tx")}:users`, intent: `${k("tx")}:i` };
+    const calls: [string, () => Promise<unknown>][] = [
+      ["acquire", () => a.acquire(k("tx"), { ttlMs: 1000 })],
+      ["run", () => a.run(k("tx"), { ttlMs: 1000 }, async () => {})],
+      ["hold", () => a.hold(k("tx"), "h", 1000)],
+      ["lease", () => a.lease(k("tx"), "h", 1000)],
+      ["tryShared", () => a.tryShared(keys, "t", 2, 1000)],
+      ["tryExclusive", () => a.tryExclusive(keys, "t", 1000)],
+    ];
+    for (const [name, call] of calls) {
+      await expect(host.run(call), name).rejects.toThrow(/inside a transaction/);
+    }
+    expect(await r1.exists(keys.lock)).toBe(0);
+    // outside one it works
+    const h = await a.acquire(k("tx"), { ttlMs: 1000 });
+    expect(h).toBeDefined();
+    await h?.release();
   });
 });
 

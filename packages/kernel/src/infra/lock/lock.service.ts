@@ -6,6 +6,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { ApiError } from "../../errors.js";
 import type { KernelLogger } from "../../log.js";
+import { currentStore } from "../database/transaction-host.js";
 import { KERNEL_LOGGER, REDIS } from "../tokens.js";
 import {
   ACQUIRE_EXCLUSIVE,
@@ -96,6 +97,19 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
+/**
+ * Locks and leases are never taken inside a transaction: a lock released before the COMMIT lets
+ * the next holder read rows not yet committed, and one held across it holds a connection while
+ * waiting. Take the lock first, then open the transaction.
+ */
+function assertNoTransaction(op: string): void {
+  if (currentStore()) {
+    throw new Error(
+      `LockService.${op}() must not run inside a transaction: take the lock first, then open it.`,
+    );
+  }
+}
+
 export const prefixed = (key: string) => (key.startsWith("lock:") ? key : `lock:${key}`);
 
 /**
@@ -116,6 +130,7 @@ export class LockService {
    * `waitMs` ran out. An aborted `signal` throws its reason instead.
    */
   async acquire(key: string, opts: AcquireOptions): Promise<LockHandle | undefined> {
+    assertNoTransaction("acquire");
     const lockKey = prefixed(key);
     const token = randomUUID();
     const deadline = Date.now() + (opts.waitMs ?? 0);
@@ -154,6 +169,7 @@ export class LockService {
 
   /** Sets `key` to `holder` for `ttlMs` unless it exists (no `lock:` prefix, no renewal timer). */
   async lease(key: string, holder: string, ttlMs: number): Promise<boolean> {
+    assertNoTransaction("lease");
     return (await this.redis.set(key, holder, "PX", Math.ceil(ttlMs), "NX")) === "OK";
   }
 
@@ -179,6 +195,7 @@ export class LockService {
    * once. For leases whose holder other replicas read (the conversation run lock: the run id).
    */
   async hold(key: string, holder: string, ttlMs: number): Promise<LeaseHandle | undefined> {
+    assertNoTransaction("hold");
     const sentAt = Date.now();
     if (!(await this.lease(key, holder, ttlMs))) return undefined;
     return this.watch(key, holder, ttlMs, sentAt);
@@ -195,6 +212,7 @@ export class LockService {
     cap: number,
     ttlMs: number,
   ): Promise<SharedLeaseHandle | undefined> {
+    assertNoTransaction("tryShared");
     const sentAt = Date.now();
     const ok = await this.redis.eval(
       ACQUIRE_SHARED,
@@ -220,6 +238,7 @@ export class LockService {
     ttlMs: number,
     intentTtlMs?: number,
   ): Promise<SharedLeaseHandle | undefined> {
+    assertNoTransaction("tryExclusive");
     const sentAt = Date.now();
     const ok = await this.redis.eval(
       ACQUIRE_EXCLUSIVE,

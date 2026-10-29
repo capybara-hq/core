@@ -4,6 +4,7 @@ import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { CacheService } from "../../src/infra/cache/cache.service.js";
 import { Cacheable, CacheEvict } from "../../src/infra/cache/cacheable.decorator.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { generateKey } from "../../src/infra/lock/key-template.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
 
@@ -68,6 +69,49 @@ class Repo {
     return { id: `${input.name}-id` };
   }
 }
+
+/** A transaction host on a stub pool: `run` opens a transaction context without a database. */
+function stubTxHost(): TransactionHost {
+  const pool = {
+    transaction: () => ({ execute: (fn: (t: unknown) => Promise<unknown>) => fn({}) }),
+  };
+  return new TransactionHost(pool as never, createLogger("error", { write: () => {} }));
+}
+
+describe("cache decorators inside a transaction", () => {
+  it("@Cacheable neither reads nor writes the cache inside a transaction", async () => {
+    const repo = new Repo(new CacheService(redis, makeLog().log));
+    const k = id();
+    await redis.set(`cache:repo:get:${k}`, JSON.stringify({ key: "stale" }));
+    // the transaction may have written what the method reads: no cached value, nothing stored
+    expect(await stubTxHost().run(() => repo.get(k))).toEqual({ key: k });
+    expect(repo.calls).toBe(1);
+    await redis.del(`cache:repo:get:${k}`);
+    await stubTxHost().run(() => repo.get(k));
+    expect(await redis.exists(`cache:repo:get:${k}`)).toBe(0);
+    expect(repo.calls).toBe(2);
+  });
+
+  it("@CacheEvict inside a transaction evicts after the commit, not on rollback", async () => {
+    const repo = new Repo(new CacheService(redis, makeLog().log));
+    const k = id();
+    await redis.set(`cache:repo:get:${k}`, "{}");
+    await stubTxHost().run(async () => {
+      await repo.update(k);
+      // not before COMMIT: a reader could cache the old row again before it commits
+      expect(await redis.exists(`cache:repo:get:${k}`)).toBe(1);
+    });
+    expect(await redis.exists(`cache:repo:get:${k}`)).toBe(0);
+    await redis.set(`cache:repo:get:${k}`, "{}");
+    await expect(
+      stubTxHost().run(async () => {
+        await repo.update(k);
+        throw new Error("rolled back");
+      }),
+    ).rejects.toThrow("rolled back");
+    expect(await redis.exists(`cache:repo:get:${k}`)).toBe(1);
+  });
+});
 
 describe("generateKey with a result", () => {
   it("expands #{result} and #{result.path} only when a result is given", () => {
