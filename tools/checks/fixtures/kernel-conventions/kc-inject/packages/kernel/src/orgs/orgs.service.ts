@@ -1,4 +1,5 @@
 import { type CanActivate, Controller, Inject, Injectable } from "@nestjs/common";
+import { Inject as In, Injectable as Inj } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 
 @Injectable()
@@ -29,4 +30,19 @@ export class PlainHelper {
 @Module({})
 export class OrgsModule {
   constructor(private readonly orgs: OrgsService) {} // expect: kc-inject
+}
+
+@Inj()
+export class AliasedService {
+  constructor(
+    @In(Db) private readonly db: Db,
+    private readonly log: Logger, // expect: kc-inject
+  ) {}
+}
+
+const Service = Injectable();
+
+@Service
+export class HeldService {
+  constructor(private readonly log: Logger) {} // expect: kc-inject
 }

@@ -21,15 +21,19 @@ function filesUnder(dir: string): string[] {
   });
 }
 
-/** The `// expect: <rule>` markers of a fixture, as sorted `rule path:line` strings. */
+/**
+ * The `// expect: <rule>[, <rule>…]` markers of a fixture, as sorted `rule path:line` strings.
+ */
 function expected(root: string): string[] {
   const out: string[] = [];
   for (const file of filesUnder(root)) {
     readFileSync(file, "utf8")
       .split("\n")
       .forEach((text, i) => {
-        const m = /\/\/ expect: (kc-[a-z-]+)/.exec(text);
-        if (m) out.push(`${m[1]} ${relative(root, file)}:${i + 1}`);
+        const m = /\/\/ expect: (kc-[a-z-]+(?:, kc-[a-z-]+)*)/.exec(text);
+        for (const rule of m?.[1]?.split(", ") ?? []) {
+          out.push(`${rule} ${relative(root, file)}:${i + 1}`);
+        }
       });
   }
   return out.sort();

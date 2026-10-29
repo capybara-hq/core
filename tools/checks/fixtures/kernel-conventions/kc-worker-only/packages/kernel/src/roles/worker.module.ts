@@ -14,6 +14,7 @@ import { CycleA } from "../cycle/cycle.module.js";
 import { NsModule } from "../ns/ns.module.js";
 import { LooseModule } from "../loose/loose.module.js";
 import { SharedModule } from "../shared/shared.module.js";
+import { WorkerUnconfModule } from "../unconf/unconf.module.js";
 
 @Module({})
 export class WorkerModule {
@@ -33,6 +34,7 @@ export class WorkerModule {
         BbModule,
         YyModule,
         DefModule,
+        WorkerUnconfModule,
       ],
       providers: [ScheduledJob],
     };

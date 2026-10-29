@@ -1,4 +1,4 @@
-import { Module } from "@nestjs/common";
+import { type DynamicModule, Module, type Provider } from "@nestjs/common";
 import { AgentsService } from "./agents/agents.service.js";
 import { EVAL_QUOTA, HEALTH_CHECKS } from "./tokens.js";
 
@@ -14,3 +14,12 @@ import { EVAL_QUOTA, HEALTH_CHECKS } from "./tokens.js";
   ],
 })
 export class KernelModule {}
+
+// the application's own seam values: a KC_EXCEPTIONS entry (kc-wiring, within this class)
+@Module({})
+class KernelAppOptionsModule {
+  static forRoot(options: { overrides?: Provider[] }): DynamicModule {
+    const overrides = options.overrides ?? [];
+    return { module: KernelAppOptionsModule, providers: [...overrides] };
+  }
+}

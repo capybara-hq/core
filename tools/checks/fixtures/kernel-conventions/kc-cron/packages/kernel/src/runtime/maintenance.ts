@@ -1,5 +1,8 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { Cron, Interval, Timeout } from "@nestjs/schedule";
+import { Cron as C } from "@nestjs/schedule";
+
+const nightly = Cron("0 0 * * *"); // expect: kc-cron
 
 @Injectable()
 export class Maintenance {
@@ -17,6 +20,12 @@ export class Maintenance {
 
   @Timeout(1000) // expect: kc-cron
   once() {}
+
+  @C("30 * * * *") // expect: kc-cron
+  aliased() {}
+
+  @nightly // expect: kc-cron
+  held() {}
 
   @LockedCron("0 * * * *", { key: "sweep", ttlMs: 60_000 })
   sweep() {}
