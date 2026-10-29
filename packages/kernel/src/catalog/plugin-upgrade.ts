@@ -460,22 +460,17 @@ export class PluginUpgrader {
 
       step = "extension";
       if (diff.extension?.change === "added") {
-        const name = diff.extension.name;
-        await this.orgConfigs.put(
+        await this.installer.enableExtension(
           orgId,
-          name,
+          diff.extension.name,
           {
             enabled: true,
             ...(input.extensionConfig !== undefined && { config: input.extensionConfig }),
           },
           actor,
           opts.actorTokenId,
-          {
-            viaItem: itemId,
-            ifDisabled: { skipped: false },
-            inTransaction: (skipped) =>
-              record({ kind: "extension", ref: name, created: !skipped, skillVersion: null }),
-          },
+          { viaItem: itemId },
+          record,
         );
       }
 

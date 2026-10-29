@@ -22,7 +22,11 @@ import {
 import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { isExtensionEnabled } from "../extensions/enabled.js";
-import { OrgExtensionConfigs } from "../extensions/org-config.js";
+import {
+  OrgExtensionConfigs,
+  type OrgExtensionInput,
+  type OrgExtensionPutOptions,
+} from "../extensions/org-config.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -841,25 +845,17 @@ export class PluginInstaller {
       }
       step = "extension";
       if (plan.extension !== null) {
-        const p = plan.extension;
-        // "Enabled before" is decided under the org row lock (already enabled: put writes nothing,
-        // the config is untouched); the component is recorded in the same transaction
-        await this.orgConfigs.put(
+        await this.enableExtension(
           orgId,
-          p,
+          plan.extension,
           {
             enabled: true,
             ...(plan.extensionConfig !== undefined && { config: plan.extensionConfig }),
           },
           actor,
           opts.actorTokenId,
-          {
-            viaItem: itemId,
-            ...(nested && { approvedBy }),
-            ifDisabled: { skipped: false },
-            inTransaction: (skipped) =>
-              record({ kind: "extension", ref: p, created: !skipped, skillVersion: null }),
-          },
+          { viaItem: itemId, ...(nested && { approvedBy }) },
+          record,
         );
       }
       step = "connectors";
@@ -937,6 +933,33 @@ export class PluginInstaller {
    * The install row (role and item policy re-checked under the lock; one live install per org and
    * item). A step of the install: committed on its own.
    */
+  /**
+   * Enables a plugin's extension for the org and records it as a component of the install, in one
+   * transaction (`put` joins it): "enabled before" is decided under the org row lock (already
+   * enabled: `put` writes nothing, the config is untouched, the component is recorded as not
+   * created), and the ledger row is written before the COMMIT, so no concurrent uninstall fits
+   * between enabling and recording. Used by the install and the upgrade.
+   */
+  @Transactional()
+  async enableExtension(
+    orgId: string,
+    name: string,
+    input: OrgExtensionInput,
+    actor: string,
+    actorTokenId: string | undefined,
+    opts: Pick<OrgExtensionPutOptions, "viaItem" | "approvedBy">,
+    record: (c: Component) => Promise<void>,
+  ): Promise<void> {
+    const ifDisabled = { skipped: false };
+    await this.orgConfigs.put(orgId, name, input, actor, actorTokenId, { ...opts, ifDisabled });
+    await record({
+      kind: "extension",
+      ref: name,
+      created: !ifDisabled.skipped,
+      skillVersion: null,
+    });
+  }
+
   @Transactional({ propagation: "requires_new" })
   private async createInstallRow(
     orgId: string,

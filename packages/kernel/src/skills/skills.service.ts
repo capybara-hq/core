@@ -363,6 +363,26 @@ const summaryQuery = (db: KernelSchemaDb) =>
  * 技能库（M5 T13）：组织技能的上传（新技能或新版本）、列表、详情与软删除。
  * 字节在对象存储 `kernel/<orgId>/skills/<uploadId>/<path>`，元数据在 PG；无进程内状态，可多副本共用。
  */
+/** A validated skill package: its name, description, files and invocation. */
+interface SkillPackageInput {
+  name: string;
+  description: string;
+  files: SkillPackageFile[];
+  /** Phase D: stored in the manifest when it is not the default. */
+  invocation?: SkillInvocation;
+}
+
+/** The stored manifest of a skill package (the invocation only when it is not the default). */
+function skillManifest(pkg: SkillPackageInput): SkillManifest {
+  const invocation = pkg.invocation && storedInvocation(pkg.invocation);
+  return {
+    name: pkg.name,
+    description: pkg.description,
+    files: pkg.files.map(({ path, size, sha256 }) => ({ path, size, sha256 })),
+    ...(invocation !== undefined && { invocation }),
+  };
+}
+
 @Injectable()
 export class SkillsService {
   constructor(
@@ -426,20 +446,38 @@ export class SkillsService {
     await assertCustomAllowed(this.db.db, "customSkills");
     const zip = await this.attachments.readSkillPackage(orgId, actorAccountId, uploadId);
     const pkg = await readSkillPackage(zip);
-    return this.createVersionFromFiles(orgId, actorAccountId, pkg, {
+    await this.putFiles(orgId, prefix, pkg.files);
+    return this.createUploadedVersionIn(orgId, actorAccountId, uploadId, pkg, prefix, actorTokenId);
+  }
+
+  /**
+   * The transaction of {@link upload}: under the org row lock (re-checking `skills.manage`), the
+   * custom-skill policy is re-checked and the upload consumed (of concurrent requests for the same
+   * upload only one succeeds), then the version is written in the same transaction
+   * ({@link createVersionIn} joins it).
+   */
+  @Transactional()
+  private async createUploadedVersionIn(
+    orgId: string,
+    actorAccountId: string,
+    uploadId: string,
+    pkg: SkillPackageInput,
+    prefix: string,
+    actorTokenId: string | undefined,
+  ): Promise<UploadedSkill> {
+    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "skills.manage");
+    await assertCustomAllowed(this.db.db, "customSkills");
+    await this.attachments.consumeSkillPackage(orgId, actorAccountId, uploadId);
+    return this.createVersionIn(orgId, actorAccountId, pkg, skillManifest(pkg), prefix, {
       prefix,
       ...(actorTokenId !== undefined && { actorTokenId }),
-      inTransaction: async () => {
-        await assertCustomAllowed(this.db.db, "customSkills");
-        await this.attachments.consumeSkillPackage(orgId, actorAccountId, uploadId);
-      },
     });
   }
 
   /**
    * 用一组已校验的技能文件创建组织技能或给同名技能新增版本（上传与企业目录安装共用）：
    * 1. 把文件写到 `kernel/<orgId>/<prefix>`（缺省 `skills/<新 id>/`）；
-   * 2. 一个事务里：锁组织行并复核 `skills.manage`，执行 `inTransaction`（上传：标记上传已用；目录：按条目策略复核），
+   * 2. 一个事务里：锁组织行并复核 `skills.manage`（目录安装：按条目策略复核），
    *    同名未删除的组织技能存在则 `current_version + 1`，否则新建；技能与版本都记下 `directory` 来源（没有则清空：
    *    自定义上传盖在目录技能上就不再算目录安装），写版本与审计
    *    （`skill.created` / `skill.version_created`，目录安装时 detail 带 directory）。
@@ -447,18 +485,10 @@ export class SkillsService {
   async createVersionFromFiles(
     orgId: string,
     actorAccountId: string,
-    pkg: {
-      name: string;
-      description: string;
-      files: SkillPackageFile[];
-      /** Phase D: stored in the manifest when it is not the default. */
-      invocation?: SkillInvocation;
-    },
+    pkg: SkillPackageInput,
     opts: {
       prefix?: string;
       actorTokenId?: string;
-      /** Runs first inside the transaction (after the org lock). */
-      inTransaction?: () => Promise<void>;
       /** Catalog provenance; `approvedBy` is the item whose policy approves it (default `itemId`). */
       catalog?: {
         itemId: string;
@@ -473,8 +503,14 @@ export class SkillsService {
   ): Promise<UploadedSkill> {
     this.storage.assertAvailable();
     const prefix = opts.prefix ?? skillFilesPrefix(randomUUID());
+    await this.putFiles(orgId, prefix, pkg.files);
+    return this.createVersionIn(orgId, actorAccountId, pkg, skillManifest(pkg), prefix, opts);
+  }
+
+  /** Writes a skill package's files to `kernel/<orgId>/<prefix>` (a few at a time). */
+  private async putFiles(orgId: string, prefix: string, files: SkillPackageFile[]): Promise<void> {
     const store = this.storage.kernel(orgId);
-    const queue = [...pkg.files];
+    const queue = [...files];
     await Promise.all(
       Array.from({ length: Math.min(PUT_CONCURRENCY, queue.length) }, async () => {
         for (let f = queue.shift(); f; f = queue.shift()) {
@@ -485,14 +521,6 @@ export class SkillsService {
         }
       }),
     );
-    const invocation = pkg.invocation && storedInvocation(pkg.invocation);
-    const manifest: SkillManifest = {
-      name: pkg.name,
-      description: pkg.description,
-      files: pkg.files.map(({ path, size, sha256 }) => ({ path, size, sha256 })),
-      ...(invocation !== undefined && { invocation }),
-    };
-    return this.createVersionIn(orgId, actorAccountId, pkg, manifest, prefix, opts);
   }
 
   /** The transaction of {@link createVersionFromFiles}. */
@@ -510,7 +538,6 @@ export class SkillsService {
       const c = opts.catalog;
       await assertItemInstallable(this.db.db, orgId, c.itemId, c.approvedBy ?? c.itemId);
     }
-    await opts.inTransaction?.();
     const existing = await this.db
       .selectFrom("skills")
       .select(["id", "current_version", "catalog_item_id"])

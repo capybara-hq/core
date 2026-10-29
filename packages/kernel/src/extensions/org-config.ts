@@ -99,15 +99,13 @@ export interface OrgExtensionPutOptions {
    */
   approvedBy?: string;
   /**
-   * 应用安装用：在组织行锁内读到该插件已启用时什么都不写（不改配置、不审计），并把 `skipped` 置为 true——
-   * 「之前就启用」与「本次启用」在锁内判定，不会与并发的启用竞争。
+   * For a plugin install: when the extension is already enabled under the org row lock, nothing is
+   * written (no config change, no audit) and `skipped` is set to true. "Enabled before" and
+   * "enabled now" are decided under the lock, so a concurrent enable cannot race it. A caller that
+   * records the extension in the same transaction (the catalog install, `put` joins its
+   * transaction) reads `skipped` after `put` returns: no concurrent uninstall fits in between.
    */
   ifDisabled?: { skipped: boolean };
-  /**
-   * 在同一个事务（组织行锁内）里最后执行，`skipped` 同 {@link ifDisabled}：应用安装在这里记组件，启用与记录之间
-   * 插不进并发的卸载。Runs in that transaction's async context (it reads the transaction there).
-   */
-  inTransaction?: (skipped: boolean) => Promise<void>;
 }
 
 type Obj = Record<string, unknown>;
@@ -306,7 +304,6 @@ export class OrgExtensionConfigs {
     if (required && input.enabled === false) throw requiredError(plugin);
     if (opts.ifDisabled && (row?.enabled === true || required)) {
       opts.ifDisabled.skipped = true;
-      await opts.inTransaction?.(true);
       return this.view(manifest, row, await this.setSecretKeys(t, orgId), required);
     }
     // A required plugin is enabled whatever the row said (it may predate `required`)
@@ -409,7 +406,6 @@ export class OrgExtensionConfigs {
         ...(opts.viaItem !== undefined && { catalogItemId: opts.viaItem }),
       },
     });
-    await opts.inTransaction?.(false);
     // 在同一事务里读回，返回值就是刚提交的状态
     const saved = await t
       .selectFrom("extension_org_configs")
