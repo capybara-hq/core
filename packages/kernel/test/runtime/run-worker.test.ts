@@ -122,7 +122,7 @@ async function worker(
     // the run loop and the worker's hooks are provider overrides (R2)
     overrides: [
       { provide: AGENT_LOOP_FACTORY, useValue: opts.loop ?? defaultLoop },
-      ...(opts.hooks ? [{ provide: RUN_HOOKS, useValue: opts.hooks }] : []),
+      ...(opts.hooks ? [{ provide: RUN_HOOKS, useValue: opts.hooks } as const] : []),
     ],
   });
   extra.push(k);

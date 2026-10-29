@@ -16,6 +16,7 @@ import {
 } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { KernelAppOptions } from "../../src/app.js";
 import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
@@ -25,7 +26,7 @@ import { ExtensionHost } from "../../src/extensions/host.js";
 import { ExtensionLifecycle } from "../../src/extensions/lifecycle.js";
 import { permissionSetOfPackage, readExtensionPackage } from "../../src/extensions/package.js";
 import { ReplicaStatusStore } from "../../src/extensions/sources.js";
-import { KERNEL_MIGRATIONS_DIR, type KernelOptions } from "../../src/kernel.js";
+import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
@@ -85,7 +86,7 @@ const capture = () =>
 const kernels: TestKernel[] = [];
 async function boot(
   overrides: Record<string, unknown>,
-  opts: Omit<KernelOptions, "env" | "logger"> = {},
+  opts: Omit<KernelAppOptions, "env" | "logger"> = {},
 ): Promise<TestKernel> {
   const config: KernelConfig = runConfig(
     { pg: pgc.url, redis: rd.url },

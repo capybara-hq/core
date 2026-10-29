@@ -228,11 +228,14 @@ export {
   type DeploymentSettings,
   SettingsService,
 } from "./identity/settings.js";
+export { Cacheable, CacheEvict } from "./infra/cache/cacheable.decorator.js";
 export {
   type KernelCliOptions,
   openKernelCli,
   openKernelCliOverPool,
 } from "./infra/cli/kernel-cli.module.js";
+export { afterCommit } from "./infra/database/after-commit.js";
+export { Transactional } from "./infra/database/transactional.decorator.js";
 export {
   GUARD_CIRCUIT_LIMIT,
   GUARD_CIRCUIT_WINDOW_MS,
@@ -244,15 +247,14 @@ export {
   type ShutdownSignalHandle,
   type ShutdownSignalOptions,
 } from "./infra/lifecycle/shutdown-signals.js";
-export {
-  createKernel,
-  KERNEL_MIGRATIONS_DIR,
-  KERNEL_SCHEMA,
-  type Kernel,
-  type KernelOptions,
-  type KernelRuns,
-  migrateAll,
-} from "./kernel.js";
+export { WithLock } from "./infra/lock/with-lock.decorator.js";
+export { LockedCron } from "./infra/schedule/locked-cron.decorator.js";
+export { LockedInterval } from "./infra/schedule/locked-interval.js";
+export { Throttled } from "./infra/throttler/throttler.guard.js";
+export { createZodDto } from "./infra/validation/create-zod-dto.js";
+export { ZBody, ZParam, ZQuery } from "./infra/validation/zod-params.js";
+export { KERNEL_MIGRATIONS_DIR, KERNEL_SCHEMA, migrateAll } from "./kernel.js";
+export { KernelModule } from "./kernel.module.js";
 export {
   createLogger,
   type KernelLogger,
@@ -275,6 +277,7 @@ export {
   withLogContext,
 } from "./log-context.js";
 export { type Org, OrgsService } from "./orgs/orgs.service.js";
+export type { KernelOverride } from "./overrides.js";
 export {
   fetchNpmPackage,
   IntegrityMismatchError,

@@ -339,3 +339,15 @@ changes: `standaloneDatabase` / `StandaloneDatabase` are removed; new exports `A
 context; `redis: false` leaves Redis and `LockService` out) and `openKernelCliOverPool(pool, opts)`
 (a context over a pool the caller owns and keeps open). `@capybara-hq/testing`'s
 `createLocalAccount` keeps its signature and runs on `openKernelCliOverPool`.
+
+The facade is gone (nest kernel Task 5.3). Breaking removals from `@capybara-hq/kernel`:
+`createKernel`, the `Kernel` facade type, `KernelOptions` and `KernelRuns`. Migration: build the
+kernel with `createKernelApp(config, options)` (started, not listening) or
+`startKernelApp(config, options)` (started and listening, with signal handling), stop it with
+`closeKernelApp(app)`, reach its HTTP side with `kernelAppHttp(app)` / `kernelAppPort(app)` and a
+service with `app.get(Class)`; tests use `@capybara-hq/testing`'s `startTestKernel`.
+`KernelOptions` is `KernelAppOptions`. `KernelAppOptions.overrides` takes only the named test seams
+(`KernelOverride`: `AGENT_LOOP_FACTORY`, `RUN_HOOKS`, `EVAL_REPLAY_HOOKS`, `APP_INTERCEPTOR`); any
+other token is refused when the application is built. New exports: `KernelModule`, `KernelOverride`
+and the infra decorators `Transactional`, `afterCommit`, `WithLock`, `Cacheable`, `CacheEvict`,
+`LockedCron`, `LockedInterval`, `Throttled`, `createZodDto`, `ZBody`, `ZQuery`, `ZParam`.

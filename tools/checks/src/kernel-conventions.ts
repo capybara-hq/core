@@ -179,8 +179,8 @@ export const KC_ALLOWED_FACTORY_TOKENS: readonly KcFactoryAllowance[] = [
     token: "KERNEL_APP_OPTIONS",
     path: "packages/kernel/src/kernel.module.ts",
     reason:
-      "the options the application was created with (logger, env, overrides): a value from the " +
-      "caller, not a domain class",
+      "the options the application was created with (logger, env, the named test seams): a value " +
+      "from the caller, not a domain class",
   },
   {
     token: "RUN_QUOTA",
@@ -256,23 +256,12 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
 ];
 
 /**
- * Not converted yet, computed from the tree at the start of the Nest refactor (Task 2.9): Phase 3
- * removes each domain directory as it becomes a Nest module, Phase 5 empties the map. Directories
- * end with `/`; `max` is the number of violations the entry may still hide (lower it as they go).
- * Never add an entry or raise a max: more violations than `max` fail, and so do fewer
- * (`kc-stale-pending`).
+ * Not converted yet: a directory (ending with `/`) or file with the number of violations it may
+ * still hide. The Nest refactor converted everything, so the map is empty and must stay empty:
+ * the map and its stale check remain so a regression cannot be parked here quietly. Never add an
+ * entry: more violations than `max` fail, and so do fewer (`kc-stale-pending`).
  */
-export const KC_PENDING: KcPending = {
-  "kc-wiring": [
-    // the application's `overrides` (test seams) as `useValue` providers until Task 5.3
-    { path: "packages/kernel/src/kernel.module.ts", max: 1 },
-  ],
-  // the createKernel facade and its Kernel type: Task 5.3 deletes it
-  "kc-facade": [
-    { path: "packages/kernel/src/index.ts", max: 2 },
-    { path: "packages/kernel/src/kernel.ts", max: 4 },
-  ],
-};
+export const KC_PENDING: KcPending = {};
 
 // ---------------------------------------------------------------------------------------------
 // Implementation
@@ -309,7 +298,7 @@ const MESSAGES: Record<KcRule, string> = {
   "kc-zod-pipe":
     "per-parameter validation: use a createZodDto class with @ZBody / @ZQuery / @ZParam",
   "kc-facade":
-    "the createKernel facade and its Kernel type are going away: build the application with createKernelApp",
+    "the createKernel facade and its Kernel type are gone: build the application with createKernelApp / startKernelApp",
   "kc-late-binding":
     "late binding: inject the provider with @Inject(Class) (forwardRef / ModuleRef only for a listed cycle)",
   "kc-cron":

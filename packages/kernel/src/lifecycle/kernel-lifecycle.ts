@@ -366,8 +366,8 @@ export class KernelLifecycle
   /**
    * Runs the stop phases once (idempotent): the shutdown begins at once (`GracefulShutdown.begin`:
    * readiness answers 503, the start is aborted, the SSE streams close). Closing the application
-   * calls this from `beforeApplicationShutdown`; `closeKernelApp` (the `createKernel` facade, the
-   * signal handlers of `startKernelApp`) calls it directly next to `app.close()`, so the shutdown
+   * calls this from `beforeApplicationShutdown`; `closeKernelApp` (the tests, the signal handlers
+   * of `startKernelApp`) calls it directly next to `app.close()`, so the shutdown
    * begins before any module's `onModuleDestroy` runs (Nest runs those first).
    */
   stop(): Promise<void> {

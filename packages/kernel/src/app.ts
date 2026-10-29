@@ -19,6 +19,7 @@ import { KernelModule } from "./kernel.module.js";
 import { KernelLifecycle } from "./lifecycle/kernel-lifecycle.js";
 import type { KernelLogger } from "./log.js";
 import { createConfiguredLogger } from "./log-config.js";
+import type { KernelOverride } from "./overrides.js";
 
 /** What {@link createKernelApp} takes besides the config. */
 export interface KernelAppOptions {
@@ -49,19 +50,19 @@ export interface KernelAppOptions {
    */
   extensionConfigSources?: Record<string, Record<string, ConfigSourceKind>>;
   /**
-   * Providers that replace the application's own (tests): registered in a global module, so the
-   * domain modules that resolve these tokens (`AGENT_LOOP_FACTORY`, `RUN_HOOKS`,
-   * `EVAL_REPLAY_HOOKS`) get them.
+   * Test seams: values for the named seam tokens ({@link KernelOverride}: `AGENT_LOOP_FACTORY`,
+   * `RUN_HOOKS`, `EVAL_REPLAY_HOOKS`, `APP_INTERCEPTOR`), registered in a global module so the
+   * domain modules that resolve these optional tokens get them. Any other token is refused.
    */
-  overrides?: { provide: unknown; useValue: unknown }[];
+  overrides?: readonly KernelOverride[];
 }
 
 /**
  * Builds the kernel application (one Nest application, root module {@link KernelModule}) and sets
  * up its HTTP side, without initializing it: nothing connects and nothing starts. A failure
- * releases what was created (Redis connections, the pool) before it is thrown. Internal: the
- * temporary `createKernel` facade and the kernel's own tests that need the application before its
- * start; everything else uses {@link createKernelApp}.
+ * releases what was created (Redis connections, the pool) before it is thrown. Internal (not
+ * exported from the package): {@link startKernelApp} and the kernel's own tests that need the
+ * application before its start; everything else uses {@link createKernelApp}.
  */
 export async function buildKernelApp(
   config: KernelConfig,

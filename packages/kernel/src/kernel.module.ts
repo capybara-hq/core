@@ -1,5 +1,5 @@
 import { type DynamicModule, Global, Module } from "@nestjs/common";
-import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from "@nestjs/core";
+import { APP_INTERCEPTOR } from "@nestjs/core";
 import type { Redis } from "ioredis";
 import type { Kysely } from "kysely";
 import type { KernelAppOptions } from "./app.js";
@@ -29,43 +29,39 @@ import { ValidationModule } from "./infra/validation/validation.module.js";
 import { KernelLifecycle } from "./lifecycle/kernel-lifecycle.js";
 import { KERNEL_APP_OPTIONS } from "./lifecycle/tokens.js";
 import { createConfiguredLogger } from "./log-config.js";
+import { KERNEL_OVERRIDE_TOKENS } from "./overrides.js";
 import { GatewayModule } from "./roles/gateway.module.js";
 import { WorkerModule } from "./roles/worker.module.js";
 import { UsageReportModule } from "./runtime/usage-report.js";
 
-const APP_ENHANCERS: ReadonlySet<unknown> = new Set([
-  APP_FILTER,
-  APP_GUARD,
-  APP_INTERCEPTOR,
-  APP_PIPE,
-]);
-
 /**
- * Global: the options the application was built with (`KERNEL_APP_OPTIONS`) and the application's
- * `overrides` (test seams such as `AGENT_LOOP_FACTORY`, `RUN_HOOKS`, `EVAL_REPLAY_HOOKS`, which the
- * domain modules resolve as optional providers; Task 5.3 replaces them with Nest's testing
- * overrides).
+ * Global: the options the application was built with (`KERNEL_APP_OPTIONS`) and its `overrides`,
+ * the test seams (`KernelOverride`: values for the named seam tokens the domain modules
+ * resolve as optional providers). A token outside {@link KERNEL_OVERRIDE_TOKENS} is refused, so no
+ * domain class can be replaced this way.
  */
 @Global()
 @Module({})
 class KernelAppOptionsModule {
   static forRoot(options: KernelAppOptions): DynamicModule {
-    // an application enhancer (`APP_INTERCEPTOR`, …) applies globally from any module and is never
-    // exported (Nest gives it a unique token)
-    const overridden = (options.overrides ?? [])
-      .map((o) => o.provide as symbol)
-      .filter((t) => !APP_ENHANCERS.has(t));
+    const overrides = options.overrides ?? [];
+    for (const o of overrides) {
+      if (!KERNEL_OVERRIDE_TOKENS.has(o.provide)) {
+        const token: unknown = o.provide;
+        const name = typeof token === "function" ? token.name : String(token);
+        throw new Error(`overrides: ${name} is not a kernel test seam`);
+      }
+    }
     return {
       module: KernelAppOptionsModule,
       global: true,
-      providers: [
-        { provide: KERNEL_APP_OPTIONS, useValue: options },
-        ...(options.overrides ?? []).map((o) => ({
-          provide: o.provide as symbol,
-          useValue: o.useValue,
-        })),
+      providers: [{ provide: KERNEL_APP_OPTIONS, useValue: options }, ...overrides],
+      // an application enhancer (`APP_INTERCEPTOR`) applies globally from any module and is never
+      // exported (Nest gives it a unique token)
+      exports: [
+        KERNEL_APP_OPTIONS,
+        ...overrides.map((o) => o.provide).filter((t) => t !== APP_INTERCEPTOR),
       ],
-      exports: [KERNEL_APP_OPTIONS, ...overridden],
     };
   }
 }
