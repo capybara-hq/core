@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { InboundEvent, Logger } from "@capybara-hq/plugin-sdk";
 import { getQueueToken } from "@nestjs/bullmq";
-import { Inject, Injectable, type OnModuleDestroy } from "@nestjs/common";
+import { Inject, Injectable, type OnApplicationShutdown } from "@nestjs/common";
 import type { Queue } from "bullmq";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
@@ -73,7 +73,7 @@ export const inboundJobId = (connectionId: string, messageId: string) =>
  * lost-tolerant: the next append enqueues again, and a finished delivery job re-checks the log.
  */
 @Injectable()
-export class ChannelJobs implements OnModuleDestroy {
+export class ChannelJobs implements OnApplicationShutdown {
   /** Stopped (the stop's channel-outbound phase): enqueues do nothing, inbound enqueues throw. */
   private closed = false;
   private readonly unsubscribe: (() => void)[];
@@ -96,7 +96,8 @@ export class ChannelJobs implements OnModuleDestroy {
     ];
   }
 
-  onModuleDestroy(): void {
+  /** Unsubscribes after the stop phases: events emitted while they drain are still handled. */
+  onApplicationShutdown(): void {
     for (const off of this.unsubscribe) off();
   }
 

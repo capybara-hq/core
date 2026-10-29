@@ -6,7 +6,7 @@ import {
   type ExtensionContext,
   type OutboundMessage,
 } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable, type OnModuleDestroy } from "@nestjs/common";
+import { Inject, Injectable, type OnApplicationShutdown } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
 import type { z } from "zod";
@@ -184,7 +184,7 @@ const COLUMNS = [
  * 改动提交后经内核 bus 广播 `channel.changed`，持有该连接的副本据此断开（下一轮扫描按新配置重连）。
  */
 @Injectable()
-export class ChannelConnections implements OnModuleDestroy {
+export class ChannelConnections implements OnApplicationShutdown {
   private readonly unsubscribe: (() => void)[];
 
   constructor(
@@ -215,7 +215,8 @@ export class ChannelConnections implements OnModuleDestroy {
     ];
   }
 
-  onModuleDestroy(): void {
+  /** Unsubscribes after the stop phases: events emitted while they drain are still handled. */
+  onApplicationShutdown(): void {
     for (const off of this.unsubscribe) off();
   }
 

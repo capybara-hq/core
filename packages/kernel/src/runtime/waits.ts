@@ -1,6 +1,6 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { getQueueToken } from "@nestjs/bullmq";
-import { Inject, Injectable, type OnModuleDestroy } from "@nestjs/common";
+import { Inject, Injectable, type OnApplicationShutdown } from "@nestjs/common";
 import { DelayedError, type Job, type Queue } from "bullmq";
 import { sql } from "kysely";
 import { type AppendEvent, EventLog } from "../conversations/event-log.js";
@@ -95,7 +95,7 @@ const TIMEOUT_JOB_BACKOFF_MS = 5_000;
  * 暂停后的复查都可能调用它，谁先谁后都只有一次续跑。
  */
 @Injectable()
-export class Waits implements OnModuleDestroy {
+export class Waits implements OnApplicationShutdown {
   /** Drops the `run.orphaned` subscription (the events may outlive this instance). */
   private readonly unsubscribe: () => void;
 
@@ -140,7 +140,8 @@ export class Waits implements OnModuleDestroy {
     );
   }
 
-  onModuleDestroy(): void {
+  /** Unsubscribes after the stop phases: events emitted while they drain are still handled. */
+  onApplicationShutdown(): void {
     this.unsubscribe();
   }
 
@@ -1205,7 +1206,7 @@ export function unreportedForkRuns(
  * events (`ChannelJobs`).
  */
 @Injectable()
-export class DecisionResumer implements OnModuleDestroy {
+export class DecisionResumer implements OnApplicationShutdown {
   private readonly unsubscribe: (() => void)[];
 
   constructor(
@@ -1222,7 +1223,8 @@ export class DecisionResumer implements OnModuleDestroy {
     ];
   }
 
-  onModuleDestroy(): void {
+  /** Unsubscribes after the stop phases: events emitted while they drain are still handled. */
+  onApplicationShutdown(): void {
     for (const off of this.unsubscribe) off();
   }
 }

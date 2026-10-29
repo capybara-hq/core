@@ -7,11 +7,16 @@ import { Kysely, PostgresDialect } from "kysely";
 import pg from "pg";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { closeKernelApp, createKernelApp, startKernelApp } from "../../src/app.js";
+import { ChannelConnections } from "../../src/channels/connections.service.js";
+import { ChannelJobs } from "../../src/channels/jobs.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
+import { KernelEvents } from "../../src/infra/events/kernel-events.js";
 import { GracefulShutdown } from "../../src/infra/lifecycle/graceful-shutdown.service.js";
 import { KernelLifecycle } from "../../src/lifecycle/kernel-lifecycle.js";
 import { createLogger } from "../../src/log.js";
 import { GatewayRole } from "../../src/roles/gateway-role.js";
+import { WorkerRole } from "../../src/roles/worker-role.js";
+import { Waits } from "../../src/runtime/waits.js";
 import { SLOW_GATES_KEY, type SlowGates } from "../fixtures/plugins/slow/index.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -253,6 +258,56 @@ describe("startKernelApp signal handling", () => {
     expect(ui.status).toBe(200);
     expect(await ui.text()).toBe("");
     expect(Date.now() - t0).toBeLessThan(2_000);
+  }, 60_000);
+
+  it("in-process event subscriptions still receive events emitted while the runs phase drains", async () => {
+    const app = await createKernelApp(
+      runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker", "gateway"] }),
+      { env: {}, logger: silent() },
+    );
+    apps.push(app);
+    const events = app.get(KernelEvents);
+    const seen: string[] = [];
+    const jobs = app.get(ChannelJobs) as unknown as { enqueue: (id: string) => Promise<void> };
+    jobs.enqueue = async (id) => {
+      seen.push(`delivery:${id}`);
+    };
+    const waits = app.get(Waits) as unknown as {
+      resume: (runId: string, id: string) => Promise<void>;
+      stopChildren: (runId: string, by: null) => Promise<unknown>;
+    };
+    waits.resume = async (runId, id) => {
+      seen.push(`resume:${runId}:${id}`);
+    };
+    waits.stopChildren = async (runId) => {
+      seen.push(`orphaned:${runId}`);
+      return [];
+    };
+    const connections = app.get(ChannelConnections) as unknown as {
+      notifyOrgChanged: (orgId: string) => Promise<void>;
+    };
+    connections.notifyOrgChanged = async (orgId) => {
+      seen.push(`org:${orgId}`);
+    };
+    // The runs phase drains: the run finishing now appends its last events and decides its wait
+    const worker = app.get(WorkerRole);
+    worker.drainRuns = () =>
+      (async () => {
+        await events.emit("conversation.event-appended", { conversationId: "c1", toSeq: 1 });
+        await events.emit("approval.decided", {
+          id: "a1",
+          orgId: "o1",
+          conversationId: "c1",
+          runId: "r1",
+          status: "approved",
+        });
+        await events.emit("run.orphaned", { runId: "r2" });
+        await events.emit("org.deleted", { orgId: "o2" });
+      })();
+    await closeKernelApp(app);
+    expect(seen).toEqual(
+      expect.arrayContaining(["delivery:c1", "resume:r1:a1", "orphaned:r2", "org:o2"]),
+    );
   }, 60_000);
 
   it("listen() after the shutdown began rejects and opens no port", async () => {
