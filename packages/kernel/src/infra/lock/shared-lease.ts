@@ -23,24 +23,39 @@ export interface SharedLeaseKeys {
 
 export type SharedLeaseKind = "shared" | "exclusive";
 
+/** Sets `now` (ms, the Redis server clock, the same on every replica). */
+const NOW = `local t = redis.call('TIME'); local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)`;
+
 /**
- * Lua fragments for scripts that read a shared lease atomically with other keys (KEYS[1] the lock
- * key, KEYS[2] the users set): `now` sets `now` (ms, Redis server clock), `purge` (after `now`)
- * drops expired shared leases and a `shared` value no live lease backs, and sets `cur` to the lock
- * key's value (false when absent).
+ * After {@link NOW} (KEYS[1] the lock key, KEYS[2] the users set): drops expired shared leases and
+ * a `shared` value no live lease backs, and sets `cur` to the lock key's value (false when absent).
  */
-export const SHARED_LEASE_LUA = {
-  now: `local t = redis.call('TIME'); local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)`,
-  purge: `
+const PURGE = `
 redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', now)
 local cur = redis.call('GET', KEYS[1])
 if cur == 'shared' and redis.call('ZCARD', KEYS[2]) == 0 then
   redis.call('DEL', KEYS[1])
   cur = false
-end`,
-} as const;
+end`;
 
-const { now: NOW, purge: PURGE } = SHARED_LEASE_LUA;
+/** A Lua script whose `body` sees `now` (ms, the Redis server clock). */
+export function redisClockScript(body: string): string {
+  return `${NOW}
+${body}`;
+}
+
+/**
+ * A Lua script that reads a shared lease atomically with other keys (a domain's own records next
+ * to the lease, e.g. the sandbox holder records): KEYS[1] is the lease's lock key and KEYS[2] its
+ * users set (as {@link SharedLeaseKeys}); `body` sees `now` (ms, the Redis server clock) and `cur`,
+ * the lock key's value once expired shared leases are dropped (`'shared'`, an exclusive holder's
+ * token, or false). The lease layout stays in this module.
+ */
+export function sharedLeaseReadScript(body: string): string {
+  return `${NOW}
+${PURGE}
+${body}`;
+}
 
 /**
  * Keeps the users set and the `shared` lock value alive for at least `ttl` without shortening a

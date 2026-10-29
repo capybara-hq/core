@@ -283,3 +283,5 @@ the `OrgMembership` provider; `MAINTENANCE_QUEUE_NAME` is exported from
 getter, and the full-run replay seed is written by `EvalReplaySeeder`. The eval quota slot is held
 through `OrgQuota.enter` (renewed by the lock service, one `lock lost` line instead of `eval quota
 renew failed`), and the results-viewed audit dedupe is a `LockService` lease on the same key.
+The shared-lease Lua fragments are no longer exported: domain scripts that read a lease next to
+their own keys use `sharedLeaseReadScript(body)` / `redisClockScript(body)` (same scripts).

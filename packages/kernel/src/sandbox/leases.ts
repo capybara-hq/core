@@ -7,7 +7,11 @@ import {
   LockService,
   type SharedLeaseHandle,
 } from "../infra/lock/lock.service.js";
-import { SHARED_LEASE_LUA, type SharedLeaseKeys } from "../infra/lock/shared-lease.js";
+import {
+  redisClockScript,
+  type SharedLeaseKeys,
+  sharedLeaseReadScript,
+} from "../infra/lock/shared-lease.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 
@@ -110,21 +114,18 @@ export interface SandboxLease {
   downgrade(): Promise<SandboxLease>;
 }
 
-const { now: NOW, purge: PURGE } = SHARED_LEASE_LUA;
-
 /**
  * KEYS holders, busy; ARGV token, ttl. Also writes the busy marker as v2 (kept for at least `ttl`)
  * unless an older kernel's holder owns it.
  */
-const REGISTER = `${NOW}
-local ttl = tonumber(ARGV[2])
+const REGISTER = redisClockScript(`local ttl = tonumber(ARGV[2])
 redis.call('HSET', KEYS[1], ARGV[1], now + ttl)
 if redis.call('PTTL', KEYS[1]) < ttl then redis.call('PEXPIRE', KEYS[1], ttl) end
 local b = redis.call('GET', KEYS[2])
 if (not b) or (b == '${BUSY_V2}' and redis.call('PTTL', KEYS[2]) < ttl) then
   redis.call('SET', KEYS[2], '${BUSY_V2}', 'PX', ttl)
 end
-return 1`;
+return 1`);
 
 /** Deletes the v2 busy marker (key `busy`) once no holder record (hash `holders`) is left. */
 const dropV2 = (holders: string, busy: string) => `
@@ -146,9 +147,7 @@ return 1`;
  * everything cannot hit a live sibling). The v2 marker is never claimed; it goes with the last
  * record. Returns { legacy, tag… }.
  */
-const CLAIM = `${NOW}
-${PURGE}
-local out = {0}
+const CLAIM = sharedLeaseReadScript(`local out = {0}
 local f = redis.call('HGETALL', KEYS[3])
 for i = 1, #f, 2 do
   local tok = f[i]
@@ -165,7 +164,7 @@ if ARGV[1] ~= '' and cur == ARGV[1] and b and b ~= '${BUSY_V2}' then
   redis.call('DEL', KEYS[4])
   out[1] = 1
 end
-return out`;
+return out`);
 
 const abortReason = (signal: AbortSignal): unknown =>
   signal.reason ?? new DOMException("This operation was aborted", "AbortError");
