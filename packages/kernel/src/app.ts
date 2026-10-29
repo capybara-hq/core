@@ -59,7 +59,8 @@ export interface KernelAppOptions {
  * Builds the kernel application (one Nest application, root module {@link KernelModule}) and sets
  * up its HTTP side, without initializing it: nothing connects and nothing starts. A failure
  * releases what was created (Redis connections, the pool) before it is thrown. Internal: the
- * temporary `createKernel` facade starts it later; everything else uses {@link createKernelApp}.
+ * temporary `createKernel` facade and the kernel's own tests that need the application before its
+ * start; everything else uses {@link createKernelApp}.
  */
 export async function buildKernelApp(
   config: KernelConfig,
@@ -108,7 +109,9 @@ const closing = new WeakMap<NestFastifyApplication, Promise<void>>();
  * Closes a kernel application once (later calls get the same promise): the stop phases begin at
  * once (`KernelLifecycle.stop`: readiness 503, the start aborted at its next checkpoint), next to
  * `app.close()`, which runs the shutdown hooks (the stop phases are the same promise, then Redis
- * and the pool). Internal: the facade and {@link startKernelApp}.
+ * and the pool). Use it to stop an application from {@link createKernelApp} /
+ * {@link startKernelApp} (tests, `@capybara-hq/testing`), so the stop begins before Nest's
+ * `onModuleDestroy` hooks run.
  */
 export function closeKernelApp(app: NestFastifyApplication): Promise<void> {
   let p = closing.get(app);

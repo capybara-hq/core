@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -6,14 +7,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   AccountsService,
+  closeKernelApp,
   createDb,
-  createKernel,
   createLogger,
-  type Kernel,
+  ExtensionHost,
   KernelConfigSchema,
+  KernelLifecycle,
   readExtensionPackage,
   readPluginPackage,
+  StorageService,
   standaloneDatabase,
+  startKernelApp,
 } from "@capybara-hq/kernel";
 import {
   type BootstrapEntry,
@@ -38,12 +42,15 @@ import {
   FakeMcpRpcError,
   type FakeMcpTool,
   fakeExtensionEntry,
+  type KernelApp,
   packFixture,
   startFakeMcpServer,
+  startTestKernel,
   startTestPostgres,
   startTestRedis,
   startTestS3,
   type TestContainer,
+  type TestKernel,
   type TestS3,
 } from "../src/index.js";
 
@@ -177,7 +184,7 @@ type Req = (o: {
 }) => Promise<{ statusCode: number; body: string; json(): unknown }>;
 
 /** Logs in through the kernel HTTP API; the returned request function carries the session cookie. */
-async function login(k: Kernel, name: string): Promise<Req> {
+async function login(k: Pick<TestKernel, "http">, name: string): Promise<Req> {
   const res = await k.http.inject({
     method: "POST",
     url: "/api/v1/auth/login",
@@ -211,7 +218,7 @@ describe("loaded by path in a kernel", () => {
   let pgc: TestContainer;
   let rd: TestContainer;
   let s3: TestS3;
-  let k: Kernel;
+  let k: TestKernel;
   let dir: string;
   let destroyDb: (() => Promise<void>) | undefined;
   let root: Req;
@@ -243,8 +250,7 @@ describe("loaded by path in a kernel", () => {
         },
       },
     });
-    k = await createKernel(config, { env: {}, logger: silent() });
-    await k.start();
+    k = await startTestKernel(config);
     const raw = createDb(pgc.url, 2);
     destroyDb = () => raw.destroy();
     const h = standaloneDatabase(raw, silent());
@@ -261,14 +267,17 @@ describe("loaded by path in a kernel", () => {
   }, 300_000);
 
   afterAll(async () => {
-    await k?.stop();
+    await k?.close();
     await destroyDb?.();
     if (dir) await rm(dir, { recursive: true, force: true });
     await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
   });
 
   const provider = <T>(point: string, plugin: string): T => {
-    const e = k.host.list(point).find((x) => x.plugin === plugin);
+    const e = k.app
+      .get(ExtensionHost)
+      .list(point)
+      .find((x) => x.plugin === plugin);
     expect(e, `${plugin} provides ${point}`).toBeDefined();
     return e?.impl as T;
   };
@@ -616,7 +625,7 @@ describe("loaded by path in a kernel", () => {
     const store = () => provider<ObjectStore>("object-store", "fake-object-store");
 
     it("is the kernel's storage: put / get / range / list / delete", async () => {
-      expect(k.storage.available).toBe(true);
+      expect(k.app.get(StorageService).available).toBe(true);
       const s = store();
       const key = `t/${randomUUID()}/a.txt`;
       await s.put(key, new TextEncoder().encode("hello world"), { contentType: "text/plain" });
@@ -655,7 +664,10 @@ describe("loaded by path in a kernel", () => {
 
   describe("fake-tools-ui", () => {
     it("registers its tool and the tasks view; write feeds the view", async () => {
-      const tools = k.host.tools().filter((t) => t.plugin === "fake-tools-ui");
+      const tools = k.app
+        .get(ExtensionHost)
+        .tools()
+        .filter((t) => t.plugin === "fake-tools-ui");
       expect(tools.map((t) => t.spec.name)).toEqual(["write"]);
       const write = tools.find((t) => t.spec.name === "write");
       const orgId = randomUUID();
@@ -671,7 +683,10 @@ describe("loaded by path in a kernel", () => {
       expect(r).toMatchObject({
         content: [{ type: "text", text: expect.stringContaining("2 items") }],
       });
-      const view = k.host.uiContributions().find((c) => c.plugin === "fake-tools-ui");
+      const view = k.app
+        .get(ExtensionHost)
+        .uiContributions()
+        .find((c) => c.plugin === "fake-tools-ui");
       expect(view?.contribution).toMatchObject({
         id: "tasks",
         place: "conversation",
@@ -696,7 +711,10 @@ describe("loaded by path in a kernel", () => {
   describe("fake-storage-user", () => {
     it("note / read_note go through ctx.storage under the extension's prefix", async () => {
       const tool = (name: string) =>
-        k.host.tools().find((t) => t.plugin === "fake-storage-user" && t.spec.name === name);
+        k.app
+          .get(ExtensionHost)
+          .tools()
+          .find((t) => t.plugin === "fake-storage-user" && t.spec.name === name);
       const orgId = randomUUID();
       const read = tool("read_note");
       expect(await read?.handler({}, toolCtx(orgId, "c2"))).toEqual({
@@ -714,7 +732,8 @@ describe("loaded by path in a kernel", () => {
 
   describe("fake-embed", () => {
     it("declares both embeds; pages are public, data routes need a token", async () => {
-      const embeds = k.host
+      const embeds = k.app
+        .get(ExtensionHost)
         .uiContributions()
         .filter((c) => c.plugin === "fake-embed")
         .map((c) => [c.contribution.id, c.contribution.place, c.contribution.kind]);
@@ -807,7 +826,7 @@ describe("loaded by path in a kernel", () => {
       expect(provider<{ ping(): string }>("counter", "fake-dep-provider").ping()).toBe(
         "pong from fake-dep-provider",
       );
-      expect(k.host.current("fake-dep-requirer")).toBeDefined();
+      expect(k.app.get(ExtensionHost).current("fake-dep-requirer")).toBeDefined();
       const r = await k.http.inject({ method: "GET", url: "/plugins/fake-dep-requirer/ping" });
       expect(r.statusCode, r.body).toBe(200);
       expect(r.body).toBe("pong from fake-dep-provider");
@@ -818,7 +837,7 @@ describe("loaded by path in a kernel", () => {
 describe("packed, as bootstrap packages", () => {
   let pgc: TestContainer;
   let rd: TestContainer;
-  let k: Kernel;
+  let app: KernelApp;
   let dir: string;
   let bootDir: string;
 
@@ -847,26 +866,31 @@ describe("packed, as bootstrap packages", () => {
       // Only the object store is configured: the model provider stays pending configuration
       extensionConfig: { "fake-bootstrap-b": { bucket: "b1", secretKey: "s" } },
     });
-    k = await createKernel(config, {
-      env: {},
-      logger: silent(),
-      bootstrap: { dir: bootDir },
-      bootstrapManifest: { schemaVersion: 1, plugins },
-    });
-    await k.start();
+    app = await startKernelApp(
+      config,
+      {
+        env: {},
+        logger: silent(),
+        bootstrap: { dir: bootDir },
+        bootstrapManifest: { schemaVersion: 1, plugins },
+      },
+      { signals: new EventEmitter() },
+    );
   }, 300_000);
 
   afterAll(async () => {
-    await k?.stop();
+    if (app) await closeKernelApp(app);
     for (const d of [dir, bootDir]) if (d) await rm(d, { recursive: true, force: true });
     await Promise.all([pgc?.stop(), rd?.stop()]);
   });
 
   it("fake-bootstrap-b loads from its package and serves as the kernel's storage", async () => {
-    expect(k.host.sourceOf("fake-bootstrap-b")).toBe("install");
-    expect(k.storage.available).toBe(true);
-    const store = k.host.list("object-store").find((e) => e.plugin === "fake-bootstrap-b")
-      ?.impl as ObjectStore;
+    expect(app.get(ExtensionHost).sourceOf("fake-bootstrap-b")).toBe("install");
+    expect(app.get(StorageService).available).toBe(true);
+    const store = app
+      .get(ExtensionHost)
+      .list("object-store")
+      .find((e) => e.plugin === "fake-bootstrap-b")?.impl as ObjectStore;
     await store.put("a/1", new TextEncoder().encode("one"), { contentType: "text/plain" });
     await store.put("a/2", new TextEncoder().encode("two"), { contentType: "text/plain" });
     const page = await store.list("a/", { limit: 1 });
@@ -901,7 +925,12 @@ describe("packed, as bootstrap packages", () => {
     } finally {
       await client.end();
     }
-    expect(k.host.list("model-provider").some((e) => e.plugin === "fake-bootstrap-a")).toBe(false);
+    expect(
+      app
+        .get(ExtensionHost)
+        .list("model-provider")
+        .some((e) => e.plugin === "fake-bootstrap-a"),
+    ).toBe(false);
   });
 
   it("fake-bootstrap-a's provider answers once loaded (in-process check of the bundle)", async () => {

@@ -1,19 +1,21 @@
 import { execFile } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { readdir, readFile, readlink } from "node:fs/promises";
 import { promisify } from "node:util";
 import {
   AccountsService,
   type ConversationEvent,
-  createKernel,
+  closeKernelApp,
   createLogger,
-  type Kernel,
   type KernelConfig,
   KernelConfigSchema,
   type KernelHttp,
+  KernelLifecycle,
   type KernelSchemaDb,
   type LogLevel,
   MARKETPLACE_OFFICIAL_URL_DEFAULT,
   standaloneDatabase,
+  startKernelApp,
 } from "@capybara-hq/kernel";
 import { type Kysely, sql } from "kysely";
 
@@ -90,11 +92,27 @@ export function assertOfflineOfficialMarketplace(config: KernelConfig, allow = f
   );
 }
 
+/** The kernel's Nest application (what `createKernelApp` / `startKernelApp` return). */
+export type KernelApp = Awaited<ReturnType<typeof startKernelApp>>;
+
+/** A running in-process kernel ({@link startTestKernel}). */
+export interface TestKernel {
+  /** The kernel's Nest application: reach a kernel service with `app.get(Class)`. */
+  readonly app: KernelApp;
+  /** In-process HTTP: `inject` requests, list the routes. */
+  readonly http: KernelHttp;
+  /** The port the kernel listens on (an ephemeral one with `http.port: 0`). */
+  readonly port: number;
+  /** Stops the kernel (the stop phases within their budgets, then Redis and the pool); idempotent. */
+  close(): Promise<void>;
+}
+
 /**
- * Creates and starts an in-process kernel. Logs are discarded unless `log` is given (JSON lines at
- * `log.level` and above go to `log.write`, e.g. to assert a secret never reaches the log).
- * Extensions named by package resolve from `resolveFrom` (default `process.cwd()`). Stop it with
- * `stop()`.
+ * Creates and starts an in-process kernel (`startKernelApp`; it listens on `config.http.port`).
+ * The kernel gets no process-wide signal handlers: a test stops it with `close()`. Logs are
+ * discarded unless `log` is given (JSON lines at `log.level` and above go to `log.write`, e.g. to
+ * assert a secret never reaches the log). Extensions named by package resolve from `resolveFrom`
+ * (default `process.cwd()`).
  */
 export async function startTestKernel(
   config: KernelConfig,
@@ -104,15 +122,27 @@ export async function startTestKernel(
     /** Only for a test about the real default: allow the official marketplace at its real URL. */
     allowOfficialMarketplace?: boolean;
   } = {},
-): Promise<Kernel> {
+): Promise<TestKernel> {
   assertOfflineOfficialMarketplace(config, opts.allowOfficialMarketplace);
-  const k = await createKernel(config, {
-    env: {},
-    logger: createLogger(opts.log?.level ?? "error", { write: opts.log?.write ?? (() => {}) }),
-    ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
-  });
-  await k.start();
-  return k;
+  const app = await startKernelApp(
+    config,
+    {
+      env: {},
+      logger: createLogger(opts.log?.level ?? "error", { write: opts.log?.write ?? (() => {}) }),
+      ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
+    },
+    // A signal source of its own: a test kernel never handles the process's SIGTERM / SIGINT
+    { signals: new EventEmitter() },
+  );
+  return testKernelOf(app);
+}
+
+/** The {@link TestKernel} view of a started kernel application. */
+function testKernelOf(app: KernelApp): TestKernel {
+  const lifecycle = app.get(KernelLifecycle);
+  const port = lifecycle.port;
+  if (port === undefined) throw new Error("testKernelOf: the kernel application is not listening");
+  return { app, http: lifecycle.http, port, close: () => closeKernelApp(app) };
 }
 
 /** Options of a {@link KernelRequest} call (`http.inject` options; `csrf: false` drops the header). */
@@ -177,7 +207,7 @@ export async function createLocalAccount(
 
 /** Signs in over HTTP and returns the user's request function. */
 export async function login(
-  k: Pick<Kernel, "http">,
+  k: Pick<TestKernel, "http">,
   name: string,
   password = TEST_PASSWORD,
 ): Promise<KernelRequest> {
@@ -203,7 +233,7 @@ export async function createOrg(req: KernelRequest, name = "Acme"): Promise<stri
  * and {@link TEST_PASSWORD}); returns the account id and its signed-in request function.
  */
 export async function joinOrg(
-  k: Pick<Kernel, "http">,
+  k: Pick<TestKernel, "http">,
   owner: KernelRequest,
   orgId: string,
   name: string,

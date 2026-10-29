@@ -316,3 +316,15 @@ supervisor and the webhooks are `GatewayModule`'s); `MaintenanceModule` is a sta
 `KernelAppOptions.overrides` may name an application enhancer (`APP_INTERCEPTOR`, …). A lease
 abandoned while one of its renewals was in flight no longer logs `lock lost` when that renewal
 comes back refused.
+
+Tests and `@capybara-hq/testing` (nest kernel Task 5.1): `startTestKernel` now starts the kernel
+with `startKernelApp` (no process-wide signal handlers) and returns a `TestKernel`
+`{ app, http, port, close() }` instead of the `Kernel` facade; the dual-replica harness's replicas
+start with `startKernelApp` too (the harness's stop raises SIGTERM on the replica's own signal
+source, so a replica stops through the same shutdown path as `capybara start`). `@capybara-hq/testing` no longer re-exports `Kernel`; it exports
+`TestKernel` and `KernelApp` (the Nest application type). `@capybara-hq/kernel` now exports
+`closeKernelApp` and `KernelLifecycle`. Migration for extension tests: type the kernel as
+`TestKernel` instead of `Kernel`, replace `k.stop()` with `k.close()`, and reach a kernel service
+with `k.app.get(Class)` instead of a facade field (e.g. `k.host` → `k.app.get(ExtensionHost)`,
+`k.storage` → `k.app.get(StorageService)`); `k.http` and `k.port` stay, and `login(k, …)` /
+`joinOrg(k, …)` take any `{ http }`.

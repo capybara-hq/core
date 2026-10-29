@@ -1,4 +1,5 @@
-import { createKernel, type Kernel, KernelConfigSchema } from "@capybara-hq/kernel";
+import { EventEmitter } from "node:events";
+import { KernelConfigSchema, KernelLifecycle, startKernelApp } from "@capybara-hq/kernel";
 import type { BootstrapManifest } from "@capybara-hq/plugin-sdk";
 
 /** 由 dual-replica 通过 IPC 发来的启动配置（含密钥，所以不走 argv / env）。 */
@@ -21,7 +22,11 @@ interface RunnerConfig {
 
 type Incoming = { type: "start"; config: RunnerConfig } | { type: "stop" };
 
-let kernel: Kernel | undefined;
+/**
+ * The replica's signal source: the stop message (or the parent going away) raises SIGTERM on it, so
+ * the kernel stops through the same shutdown path as `capybara start` — also while it is starting.
+ */
+const signals = new EventEmitter();
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -56,23 +61,28 @@ async function startKernel(c: RunnerConfig): Promise<void> {
     log: { level: "error" },
   };
   const config = KernelConfigSchema.parse(deepMerge(base, c.overrides));
-  kernel = await createKernel(config, {
-    resolveFrom: c.resolveFrom,
-    ...(c.bootstrap !== undefined && { bootstrap: c.bootstrap }),
-    ...(c.bootstrapManifest !== undefined && { bootstrapManifest: c.bootstrapManifest }),
-  });
-  await kernel.start();
-  process.send?.({ type: "ready", port: kernel.port });
+  const app = await startKernelApp(
+    config,
+    {
+      resolveFrom: c.resolveFrom,
+      ...(c.bootstrap !== undefined && { bootstrap: c.bootstrap }),
+      ...(c.bootstrapManifest !== undefined && { bootstrapManifest: c.bootstrapManifest }),
+    },
+    { signals, exit: (code) => process.exit(code) },
+  );
+  process.send?.({ type: "ready", port: app.get(KernelLifecycle).port });
 }
 
 let exiting = false;
 
-/** 停内核后退出；内核停机卡住时 10 秒后强制退出。 */
+/** Stops the kernel, then exits; a stop stuck for 10 s exits with 1. */
 function shutdown(): void {
   if (exiting) return;
   exiting = true;
   setTimeout(() => process.exit(1), 10_000).unref();
-  (kernel?.stop() ?? Promise.resolve()).finally(() => process.exit(0));
+  // No kernel handlers yet (still building) or any more (the start failed): nothing to stop
+  if (signals.listenerCount("SIGTERM") === 0) process.exit(0);
+  else signals.emit("SIGTERM", "SIGTERM");
 }
 
 // 父进程（含被 SIGKILL）消失后 IPC 通道断开，副本自行退出，不留孤儿

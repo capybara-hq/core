@@ -1,5 +1,10 @@
 export { SetupService } from "./admin/setup.service.js";
-export { createKernelApp, type KernelAppOptions, startKernelApp } from "./app.js";
+export {
+  closeKernelApp,
+  createKernelApp,
+  type KernelAppOptions,
+  startKernelApp,
+} from "./app.js";
 export { type CatalogCli, openCatalogCli } from "./catalog/cli.js";
 // The git reader marketplaces use; core's check:bootstrap reads the official marketplace with it.
 export {
@@ -242,6 +247,7 @@ export {
   type KernelRuns,
   migrateAll,
 } from "./kernel.js";
+export { KernelLifecycle } from "./lifecycle/kernel-lifecycle.js";
 export {
   createLogger,
   type KernelLogger,
