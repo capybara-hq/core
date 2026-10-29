@@ -18,6 +18,13 @@ export const tickMarkerTtl = (periodMs: number): number =>
   Math.min(Math.max(periodMs * 2, 10_000), 24 * 3600_000);
 
 /**
+ * The start marker's lifetime: replicas that start within this window (one period, at most a
+ * minute) run a `runOnStart` job once; a replica restarted after it runs it again, like the first
+ * run of a newly created repeatable scheduler.
+ */
+export const startMarkerTtl = (periodMs: number): number => Math.min(periodMs, 60_000);
+
+/**
  * Runs one scheduled tick of a job exactly once across replicas, in two layers:
  * 1. one winner per tick: the replica that sets the per-tick marker `cron:<name>:<tick>` (never
  *    released, so a fast job on the winner does not let a slower replica run the same tick);
@@ -34,6 +41,11 @@ export async function runLockedTick(
     ttl: number;
     /** The tick (epoch ms) and the period it belongs to; thrown errors are logged as marker failures. */
     tick: () => { tick: number; periodMs: number };
+    /**
+     * A start run (`@LockedInterval({ runOnStart })`) instead of a tick: the first layer is the
+     * start marker `cron:<name>:start` for `ttlMs` (see {@link startMarkerTtl}).
+     */
+    start?: { ttlMs: number };
     run: () => Promise<unknown>;
   },
 ): Promise<void> {
@@ -47,18 +59,26 @@ export async function runLockedTick(
   }
   await runOutsideTransaction(() =>
     withLogContext({ cron: o.name }, async () => {
-      let tick: number;
+      let tick: number | "start";
       try {
-        const t = o.tick();
-        tick = t.tick;
-        if (
-          !(await lockService.lease(`cron:${o.name}:${tick}`, "tick", tickMarkerTtl(t.periodMs)))
-        ) {
-          log.info("cron skipped: tick already taken by another replica", {
-            cron: o.name,
-            tick,
-          });
-          return;
+        if (o.start) {
+          tick = "start";
+          if (!(await lockService.lease(`cron:${o.name}:start`, "start", o.start.ttlMs))) {
+            log.info("cron skipped: start run already taken by another replica", { cron: o.name });
+            return;
+          }
+        } else {
+          const t = o.tick();
+          tick = t.tick;
+          if (
+            !(await lockService.lease(`cron:${o.name}:${tick}`, "tick", tickMarkerTtl(t.periodMs)))
+          ) {
+            log.info("cron skipped: tick already taken by another replica", {
+              cron: o.name,
+              tick,
+            });
+            return;
+          }
         }
       } catch (err) {
         log.error("cron tick marker failed", { cron: o.name, err });

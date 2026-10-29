@@ -36,6 +36,7 @@ import type { GatewayRoutes } from "../http/gateway.module.js";
 import { AccountsService } from "../identity/accounts.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { GracefulShutdown } from "../infra/lifecycle/graceful-shutdown.service.js";
+import { LockedIntervalScheduler } from "../infra/schedule/locked-interval.js";
 import { KERNEL_BUS, KERNEL_LOGGER, KERNEL_POOL, REDIS } from "../infra/tokens.js";
 import { KERNEL_MIGRATIONS_DIR, KERNEL_SCHEMA, type LegacyGraph } from "../kernel.js";
 import type { KernelLogger } from "../log.js";
@@ -130,6 +131,7 @@ export class KernelLifecycle
     @Inject(BootstrapService) private readonly bootstrap: BootstrapService,
     @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
+    @Inject(LockedIntervalScheduler) private readonly intervals: LockedIntervalScheduler,
     @Inject(KERNEL_BUS)
     private readonly bus: { publish(topic: string, payload: unknown): Promise<void> },
   ) {
@@ -304,6 +306,9 @@ export class KernelLifecycle
         (err) => this.log.error("config watch error", { error: err.message }),
       );
     }
+    // The start sequence is done: the `@LockedInterval({ runOnStart })` jobs run once now, in the
+    // background (once across replicas starting together)
+    this.intervals.runStartJobs();
   }
 
   /**

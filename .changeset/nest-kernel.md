@@ -114,8 +114,14 @@ installs, upgrades and their rollbacks keep one transaction per step (each commi
 the undo on failure relies on it). The catalog's advisory locks are lock providers
 (`CatalogSourceLock`, `CatalogItemLock`; the extensions' `PluginInstallLock` /
 `PluginApproveLock`), same keys. `catalogs-refresh` is a `@LockedInterval` (every
-`marketplaces.refreshIntervalMinutes`; a fresh deployment's first refresh now waits for the first
-tick instead of running when the scheduler is created) and `app-staging-cleanup` an hourly
-`@LockedCron`; their old maintenance schedulers are removed when a worker starts. The CLI's
+`marketplaces.refreshIntervalMinutes`) with the new `runOnStart` option: as the old scheduler's
+first run did, it also runs once right after the start (once across replicas starting within a
+minute of each other; a later restart runs it again). `app-staging-cleanup` is an hourly
+`@LockedCron`; its first run moved from the scheduler's creation to the next top of the hour
+(harmless: staging lives 24 hours). Their old maintenance schedulers are removed when a worker
+starts. `LockedIntervalScheduler.periodOf(name)` returns a job's scheduled period. The
+notifications after an org extension config write and after an extension install / state change
+/ uninstall (and an org plugin uninstall's `afterDisable`) run as `afterCommit` hooks: a failing
+hook is logged and no longer turns the committed request into a 500. The CLI's
 Redis connection keeps reconnecting (a `capybara bootstrap` holding `lock:bootstrap` survives a
 Redis blip), and a lost `LockService` lock aborts with `lock lost: <key>`.

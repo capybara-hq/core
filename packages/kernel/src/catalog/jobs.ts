@@ -11,7 +11,8 @@ import { PluginImport } from "./plugin-import.js";
 
 /**
  * The catalog's periodic jobs, each run once per tick across replicas: the marketplace refresh
- * (`catalogs-refresh`, every `marketplaces.refreshIntervalMinutes`: `@LockedInterval`, R15) and the
+ * (`catalogs-refresh`, every `marketplaces.refreshIntervalMinutes` and once after the start:
+ * `@LockedInterval`, R15 / R16) and the
  * hourly cleanup of expired plugin import staging (`app-staging-cleanup`: `@LockedCron`).
  */
 @Injectable()
@@ -25,7 +26,12 @@ export class CatalogJobs {
   ) {}
 
   /** Refreshes every enabled marketplace in turn (overall deadline {@link MARKETPLACES_REFRESH_DEADLINE_MS}). */
-  @LockedInterval(MARKETPLACES_REFRESH_JOB, (c) => c.marketplaces.refreshIntervalMinutes * 60_000)
+  @LockedInterval(
+    MARKETPLACES_REFRESH_JOB,
+    (c) => c.marketplaces.refreshIntervalMinutes * 60_000,
+    // a fresh deployment's marketplaces are refreshed right after the start (R16)
+    { runOnStart: true },
+  )
   async refreshMarketplaces(): Promise<void> {
     await this.marketplaces.refreshAll(AbortSignal.timeout(MARKETPLACES_REFRESH_DEADLINE_MS));
   }

@@ -48,6 +48,7 @@ const shared = {
   inflight: 0,
   maxActive: 0,
   runs: 0,
+  startRuns: 0,
   tx: [] as boolean[],
   perSecond: new Map<number, number>(),
 };
@@ -89,6 +90,18 @@ class Jobs {
     const sec = Math.floor(Date.now() / 1000);
     shared.perSecond.set(sec, (shared.perSecond.get(sec) ?? 0) + 1);
     shared.runs++;
+  }
+
+  /** Hourly interval job that also runs once at start (never ticks during a test). */
+  @LockedInterval("test-start", () => 3_600_000, {
+    lockKey: "test-start-lock",
+    ttl: 5000,
+    runOnStart: true,
+  })
+  async startJob() {
+    shared.startRuns++;
+    shared.tx.push(currentStore() !== undefined);
+    await sleep(200);
   }
 
   /** Fast job, every second: runs per tick are counted. */
@@ -423,6 +436,41 @@ describe("@LockedInterval", () => {
     await sleep(1300);
     expect(shared.runs).toBe(after);
   }, 30_000);
+
+  it("periodOf is the period read from the config", async () => {
+    const r = await boot(["test-interval"]);
+    try {
+      expect(r.intervals.periodOf("test-interval")).toBe(1000);
+      expect(r.intervals.periodOf("nope")).toBeUndefined();
+    } finally {
+      await shutDown(r);
+    }
+  });
+
+  it("runOnStart: two replicas starting together run the start job once, the other logs INFO", async () => {
+    Object.assign(shared, { startRuns: 0, tx: [] });
+    const a = await boot();
+    const b = await boot();
+    try {
+      await redisOf(a).del("cron:test-start:start");
+      // a job without runOnStart has no start run
+      await Promise.all([...a.intervals.runStartJobs(), ...b.intervals.runStartJobs()]);
+      expect(shared.startRuns).toBe(1);
+      expect(shared.tx).toEqual([false]);
+      expect(
+        [a, b].some((x) =>
+          x.info.mock.calls.some((c) => String(c[0]).includes("start run already taken")),
+        ),
+      ).toBe(true);
+      expect(a.error).not.toHaveBeenCalled();
+      expect(b.error).not.toHaveBeenCalled();
+      // started once: a second call starts nothing
+      expect(a.intervals.runStartJobs()).toEqual([]);
+    } finally {
+      await redisOf(a).del("cron:test-start:start");
+      await shutDown(a, b);
+    }
+  });
 
   it("fails loudly without lockService / log / config", async () => {
     class Bad {

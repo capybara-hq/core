@@ -11,13 +11,13 @@ import {
   startTestRedis,
   type TestContainer,
 } from "@capybara-hq/testing";
+import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MARKETPLACES_REFRESH_JOB,
   MARKETPLACES_REFRESH_SCHEDULER_ID,
 } from "../../src/catalog/job-ids.js";
-import { CatalogJobs } from "../../src/catalog/jobs.js";
 import { MARKETPLACE_ENTRIES_MAX } from "../../src/catalog/marketplaces.service.js";
 import { resolveConfig } from "../../src/config/load.js";
 import { type KernelConfig, MARKETPLACE_OFFICIAL_URL_DEFAULT } from "../../src/config/schema.js";
@@ -907,7 +907,7 @@ describe("从清单引入", () => {
 });
 
 describe("定期刷新（@LockedInterval catalogs-refresh）", () => {
-  it("the job is scheduled under its name (period refreshIntervalMinutes), its old repeatable scheduler is retired, and a run refreshes the effective marketplaces", async () => {
+  it("the job is scheduled under its name (period refreshIntervalMinutes), its old repeatable scheduler is retired, and the first refresh runs right after the start", async () => {
     await resetAll();
     await db
       .updateTable("marketplaces")
@@ -915,6 +915,11 @@ describe("定期刷新（@LockedInterval catalogs-refresh）", () => {
       .where("id", "=", "official")
       .execute();
     const before = official.requests.length;
+    // the start run's marker (replicas starting together run it once): another kernel of this
+    // file may have started within its window
+    const probe = new Redis(rd.url);
+    await probe.del(`cron:${MARKETPLACES_REFRESH_JOB}:start`);
+    probe.disconnect();
     const worker = await createKernel(
       runConfig(
         { pg: pgc.url, redis: rd.url },
@@ -936,9 +941,11 @@ describe("定期刷新（@LockedInterval catalogs-refresh）", () => {
       expect(MARKETPLACES_REFRESH_JOB).toBe("catalogs-refresh");
       expect(MARKETPLACES_REFRESH_SCHEDULER_ID).not.toContain(":");
       expect(RETIRED_SCHEDULER_IDS).toContain(MARKETPLACES_REFRESH_SCHEDULER_ID);
-      expect(worker.app.get(LockedIntervalScheduler).names()).toContain(MARKETPLACES_REFRESH_JOB);
-      // a tick (every 30 minutes, epoch-aligned): run once across replicas
-      await worker.app.get(CatalogJobs).refreshMarketplaces();
+      const intervals = worker.app.get(LockedIntervalScheduler);
+      expect(intervals.names()).toContain(MARKETPLACES_REFRESH_JOB);
+      expect(intervals.periodOf(MARKETPLACES_REFRESH_JOB)).toBe(30 * 60_000);
+      // Once across replicas (per tick and at start) is the infra's, tested by the @LockedInterval
+      // tests in test/infra/schedule.test.ts. No tick is waited for: the start run refreshes.
       await expect
         .poll(async () => (await k.marketplaces.get("official")).lastStatus, { timeout: 15_000 })
         .toBe("ok");

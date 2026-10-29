@@ -9,7 +9,7 @@ import type { KernelConfig } from "../../config/schema.js";
 import type { KernelLogger } from "../../log.js";
 import { KernelConfigService } from "../config/kernel-config.service.js";
 import { KERNEL_LOGGER } from "../tokens.js";
-import { type LockedJobHost, runLockedTick } from "./locked-tick.js";
+import { type LockedJobHost, runLockedTick, startMarkerTtl } from "./locked-tick.js";
 
 /** The period of a `@LockedInterval` job, read from the config (once, when it is scheduled). */
 export type IntervalPeriod = (config: KernelConfig) => number;
@@ -19,11 +19,19 @@ export interface LockedIntervalOptions {
   lockKey?: string;
   /** Lock lifetime without renewal, ms (default 30000); a longer run keeps it by renewal. */
   ttl?: number;
+  /**
+   * Also run once when the application has started (after the start sequence, without blocking
+   * it), once across replicas starting together (see `startMarkerTtl`), as a new repeatable
+   * scheduler's first run did.
+   */
+  runOnStart?: boolean;
 }
 
 interface IntervalMeta {
   name: string;
   period: IntervalPeriod;
+  /** The start run of `runOnStart` jobs (called with the instance as `this`). */
+  start?: (this: IntervalHost) => Promise<void>;
 }
 
 const LOCKED_INTERVAL = Symbol("LOCKED_INTERVAL");
@@ -77,7 +85,25 @@ export function LockedInterval(
         run: () => Promise.resolve(original.apply(this, args)),
       });
     };
-    Reflect.defineMetadata(LOCKED_INTERVAL, { name, period } satisfies IntervalMeta, wrapped);
+    const start = async function (this: IntervalHost) {
+      const config = this.config;
+      await runLockedTick(this, {
+        kind: "interval",
+        name,
+        lockKey,
+        ttl: options.ttl ?? 30_000,
+        tick: () => {
+          throw new Error("a start run has no tick");
+        },
+        start: { ttlMs: startMarkerTtl(config ? period(config.get()) : 60_000) },
+        run: () => Promise.resolve(original.apply(this, [])),
+      });
+    };
+    Reflect.defineMetadata(
+      LOCKED_INTERVAL,
+      { name, period, ...(options.runOnStart === true && { start }) } satisfies IntervalMeta,
+      wrapped,
+    );
     descriptor.value = wrapped;
     return descriptor;
   };
@@ -91,6 +117,8 @@ export function LockedInterval(
 @Injectable()
 export class LockedIntervalScheduler implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly timers = new Map<string, { timer: NodeJS.Timeout | undefined }>();
+  private readonly periods = new Map<string, number>();
+  private readonly startRuns: { name: string; run: () => Promise<void> }[] = [];
   private stopped = false;
 
   constructor(
@@ -118,7 +146,15 @@ export class LockedIntervalScheduler implements OnApplicationBootstrap, OnModule
         if (!Number.isFinite(periodMs) || periodMs < 100) {
           throw new Error(`@LockedInterval job ${meta.name}: period ${periodMs} ms is too short`);
         }
+        this.periods.set(meta.name, periodMs);
         this.arm(meta.name, periodMs, () => (fn as () => Promise<void>).call(instance));
+        const start = meta.start;
+        if (start) {
+          this.startRuns.push({
+            name: meta.name,
+            run: () => start.call(instance as IntervalHost),
+          });
+        }
       }
     }
   }
@@ -126,6 +162,25 @@ export class LockedIntervalScheduler implements OnApplicationBootstrap, OnModule
   /** The scheduled job names. */
   names(): string[] {
     return [...this.timers.keys()];
+  }
+
+  /** A scheduled job's period in ms (read from the config at bootstrap), undefined when unknown. */
+  periodOf(name: string): number | undefined {
+    return this.periods.get(name);
+  }
+
+  /**
+   * Starts the start runs of the `runOnStart` jobs in the background (each once across replicas
+   * starting together) and returns their promises. The kernel lifecycle calls it once its start
+   * sequence is done; later calls start nothing.
+   */
+  runStartJobs(): Promise<void>[] {
+    const runs = this.stopped ? [] : this.startRuns.splice(0);
+    return runs.map(({ name, run }) =>
+      run().catch((err: unknown) =>
+        this.log.error("interval start run failed", { job: name, err }),
+      ),
+    );
   }
 
   /** Stops one job's timer (a run in progress finishes). */
