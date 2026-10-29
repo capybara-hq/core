@@ -13,8 +13,8 @@ import { LockedIntervalScheduler } from "./locked-interval.js";
 import { LOCKED_JOB, SCHEDULED_RUNS, type ScheduledRunScope } from "./locked-tick.js";
 
 /**
- * The runs of the `@LockedCron` / `@LockedInterval` jobs (ticks and `runOnStart` runs) and their
- * stop. At application bootstrap it attaches itself to every provider instance with a locked job
+ * The runs of the `@LockedCron` / `@LockedInterval` jobs (ticks and `runOnStart` runs), their
+ * start gate ({@link open}, R21) and their stop. At application bootstrap it attaches itself to every provider instance with a locked job
  * (`SCHEDULED_RUNS`), so each run is tracked and gets {@link signal}. {@link stop} (idempotent)
  * stops the cron and interval timers, aborts the signal, refuses new runs and waits for the runs in
  * progress within its budget, capped by what is left of the shared stop deadline
@@ -31,6 +31,7 @@ export class ScheduledRuns
   private readonly abort = new AbortController();
   private readonly inFlight = new Set<Promise<unknown>>();
   private stopping: Promise<void> | undefined;
+  private gateOpen = false;
 
   constructor(
     @Inject(DiscoveryService) private readonly discovery: DiscoveryService,
@@ -55,6 +56,21 @@ export class ScheduledRuns
         Object.defineProperty(instance, SCHEDULED_RUNS, { value: this, configurable: true });
       }
     }
+  }
+
+  /** The start gate is open: ticks and start runs may run (R21). */
+  get opened(): boolean {
+    return this.gateOpen && this.stopping === undefined;
+  }
+
+  /**
+   * Opens the start gate (R21). Until this is called every tick and start run skips at INFO: the
+   * cron and interval timers are armed at application bootstrap, which runs before the kernel's
+   * start sequence (migrations, bootstrap, extension load). The kernel's worker role opens it once
+   * its queue consumers started (then starts the `runOnStart` runs); a stop closes it again.
+   */
+  open(): void {
+    if (this.stopping === undefined) this.gateOpen = true;
   }
 
   get stopped(): boolean {
@@ -93,6 +109,7 @@ export class ScheduledRuns
   }
 
   private async runStop(budgetMs: number): Promise<void> {
+    this.gateOpen = false;
     for (const job of this.crons.getCronJobs().values()) void job.stop();
     this.intervals.stopAll();
     this.abort.abort(new Error("the scheduler is stopping"));

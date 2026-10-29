@@ -58,9 +58,10 @@ export class WorkerRole {
   }
 
   /**
-   * Starts the queue consumers (after the extension load). `checkpoint` throws when a stop began
-   * meanwhile. The cron and interval timers were armed by the schedulers at application bootstrap;
-   * the `runOnStart` runs start at {@link afterStart}.
+   * Starts the queue consumers (after the extension load), then opens the schedules' start gate
+   * (R21): the cron and interval timers were armed at application bootstrap, but every tick before
+   * this point skipped; the `@LockedInterval({ runOnStart })` jobs run now, in the background (once
+   * across replicas starting together). `checkpoint` throws when a stop began meanwhile.
    */
   async start(checkpoint: () => void): Promise<void> {
     // both run queues' @Processor workers (built with the run config, never autorun)
@@ -87,19 +88,14 @@ export class WorkerRole {
         { roles: this.config.roles },
       );
     }
-  }
-
-  /**
-   * The start sequence is done: the `@LockedInterval({ runOnStart })` jobs run once now, in the
-   * background (once across replicas starting together).
-   */
-  afterStart(): void {
+    // R21: from here on ticks run; the runOnStart jobs run once now, in the background
+    this.scheduledRuns.open();
     this.intervals.runStartJobs();
   }
 
   /**
-   * Stops the schedulers (no new tick; the runs in progress get the stop signal) and returns the
-   * wait for those runs, at most `budgetMs`.
+   * Closes the start gate and stops the schedulers (no new tick; the runs in progress get the stop
+   * signal) and returns the wait for those runs, at most `budgetMs`.
    */
   stopSchedules(budgetMs: number): Promise<void> {
     return this.scheduledRuns.stop(budgetMs);

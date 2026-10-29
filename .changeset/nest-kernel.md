@@ -298,14 +298,16 @@ parameter instead of `""`; the code and status are unchanged.
 Roles (nest kernel Task 4.1): `roles` now selects three Nest role modules. `ApiModule` serves the
 controllers; `WorkerModule` holds the cron scheduler, every fixed-period job and every queue
 consumer; `GatewayModule` holds the channel long-connection supervisor and the webhook inbound.
-Operationally, only processes with the `worker` role run the fixed-period jobs again, as before
-the refactor's Phase 3 (where they briefly ticked on every role, still once per tick across
-replicas): `wait-sweep`, `usage-report-sweep`, `attachment-cleanup`, `storage-org-purge`,
-`sandbox-suspend-idle`, `sandbox-destroy-inactive`, `drift-scan` and `catalogs-refresh` (each
-with its run right after the start), `output-cleanup`, `app-staging-cleanup`,
-`directory-scan`, `offboard-sweep`, `plugins-reconcile` and `channel-gateway-check`. A deployment
-therefore needs at least one process with the `worker` role for them, as it already did for the
-queue consumers. An `api`-only or `gateway`-only process builds no BullMQ worker and no scheduler.
+The role behaviour is unchanged from the last release: the fixed-period jobs (`wait-sweep`,
+`usage-report-sweep`, `attachment-cleanup`, `storage-org-purge`, `sandbox-suspend-idle`,
+`sandbox-destroy-inactive`, `drift-scan`, `catalogs-refresh`, `output-cleanup`,
+`app-staging-cleanup`, `directory-scan`, `offboard-sweep`, `plugins-reconcile`,
+`channel-gateway-check`) and the queue consumers run only on processes with the `worker` role; an
+`api`-only or `gateway`-only process builds no BullMQ worker and no scheduler. Start gate (R21): a
+worker process runs no fixed-period job before its start sequence (migrations, the bootstrap step,
+the extension load) has started the queue consumers; a tick that fires earlier is skipped with an
+INFO line (`cron skipped: the scheduler is not started`), and the `drift-scan` / `catalogs-refresh`
+runs right after the start happen at that point; the stop closes the gate again.
 Export changes: `ExtensionLifecycle` no longer takes a `LockService` and its periodic reconcile
 publish is the worker-role job `PluginsReconcileJob`; `DirectorySync.scanJob` and
 `Offboarding.sweepJob` became the jobs `DirectoryScanJob` and `OffboardSweepJob` (and `Offboarding`

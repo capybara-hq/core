@@ -1,11 +1,13 @@
+import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { WorkerHost } from "@nestjs/bullmq";
 import { ModulesContainer } from "@nestjs/core";
 import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import { SchedulerRegistry } from "@nestjs/schedule";
 import { Queue } from "bullmq";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { closeKernelApp, createKernelApp } from "../../src/app.js";
+import { Redis } from "ioredis";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { buildKernelApp, closeKernelApp, createKernelApp } from "../../src/app.js";
 import { GATEWAY_CHECK_JOB } from "../../src/channels/job-ids.js";
 import { CHANNEL_QUEUE_NAME } from "../../src/channels/jobs.js";
 import { ChannelSupervisor } from "../../src/channels/supervisor.js";
@@ -22,7 +24,12 @@ import { WorkerRole } from "../../src/roles/worker-role.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME } from "../../src/runtime/run-jobs.js";
 import { USAGE_REPORT_QUEUE } from "../../src/runtime/usage-report.js";
-import { WAIT_SWEEP_JOB } from "../../src/runtime/waits.js";
+import { WAIT_SWEEP_JOB, WaitSweepJob, Waits } from "../../src/runtime/waits.js";
+import { ToolDrift } from "../../src/tools/drift.js";
+import { ToolJobs } from "../../src/tools/jobs.js";
+import { SLOW_GATES_KEY, type SlowGates } from "../fixtures/plugins/slow/index.js";
+
+const SLOW = fileURLToPath(new URL("../fixtures/plugins/slow/index.ts", import.meta.url));
 
 /**
  * The role modules (nest kernel Task 4.1): `roles` selects ApiModule (controllers), WorkerModule
@@ -44,8 +51,15 @@ let pgc: TestContainer;
 let rd: TestContainer;
 let queues: Queue[];
 let app: NestFastifyApplication | undefined;
+/** The worker-only process's schedules (cron job names, interval names), for the all-roles case. */
+let workerSchedules: { crons: string[]; intervals: string[] } | undefined;
 
-const cfg = (roles: string[]): KernelConfig =>
+const schedulesOf = (a: NestFastifyApplication) => ({
+  crons: [...a.get(SchedulerRegistry).getCronJobs().keys()].sort(),
+  intervals: a.get(LockedIntervalScheduler).names().sort(),
+});
+
+const cfg = (roles: string[], over: Record<string, unknown> = {}): KernelConfig =>
   KernelConfigSchema.parse({
     db: { url: pgc.url, poolMax: 3 },
     redis: { url: rd.url },
@@ -53,6 +67,7 @@ const cfg = (roles: string[]): KernelConfig =>
     marketplaces: { official: { enabled: false } },
     http: { port: 0 },
     roles,
+    ...over,
   });
 
 async function start(roles: string[]): Promise<NestFastifyApplication> {
@@ -161,6 +176,7 @@ describe("role modules", () => {
     expect([...crons.keys()]).toEqual(expect.arrayContaining([WAIT_SWEEP_JOB, GATEWAY_CHECK_JOB]));
     for (const [name, job] of crons) expect(job.isActive, name).toBe(true);
     expect(a.get(LockedIntervalScheduler).names()).toContain(PLUGINS_RECONCILE_JOB);
+    workerSchedules = schedulesOf(a);
     const { jobHosts, processors } = scan(a);
     expect(jobHosts).toEqual([
       "AttachmentCleanupJob",
@@ -183,9 +199,77 @@ describe("role modules", () => {
     const a = await start(["api", "worker", "gateway"]);
     const { jobHosts, processors } = scan(a);
     expect(jobHosts).toHaveLength(11);
+    // the same cron jobs and intervals as the worker-only process, each registered once
+    expect(workerSchedules).toBeDefined();
+    expect(schedulesOf(a)).toEqual(workerSchedules);
+    expect(a.get(SchedulerRegistry).getCronJobs().size).toBe(workerSchedules?.crons.length);
     expect(processors).toHaveLength(KERNEL_QUEUES.length);
     for (const q of queues) expect(await q.getWorkersCount(), q.name).toBe(1);
     expect(routes(a)).toContain("GET /api/v1/setup");
     expect(routes(a)).toContain("POST /channels/webhook/:connectionId");
+  }, 60_000);
+
+  it("R21: no cron or interval tick runs before the worker role started (after the extension load)", async () => {
+    const r = new Redis(rd.url);
+    try {
+      const stale = await r.keys("cron:*");
+      if (stale.length > 0) await r.del(...stale);
+    } finally {
+      r.disconnect();
+    }
+    let release!: () => void;
+    let entered!: () => void;
+    const enteredP = new Promise<void>((res) => {
+      entered = res;
+    });
+    const slow: SlowGates = {
+      entered: { resolve: () => entered() },
+      gate: { promise: new Promise<void>((res) => (release = res)) },
+    };
+    const key = `roles-r21-${Date.now()}`;
+    const g = globalThis as { [SLOW_GATES_KEY]?: Map<string, SlowGates> };
+    g[SLOW_GATES_KEY] ??= new Map();
+    g[SLOW_GATES_KEY].set(key, slow);
+    const lines: { level: string; msg: string }[] = [];
+    try {
+      const built = await buildKernelApp(
+        cfg(["worker"], {
+          extensions: [SLOW],
+          extensionConfig: { slow: { key } },
+          extensionPermissions: { autoApprove: true },
+        }),
+        {
+          env: {},
+          logger: createLogger("info", { write: (l) => lines.push(JSON.parse(l)) }),
+        },
+      );
+      app = built;
+      // the job bodies: the wait sweep (a @LockedCron) and the drift scan (a @LockedInterval)
+      const sweep = vi.fn(async () => 0);
+      const scan = vi.fn(async () => 0);
+      built.get(Waits).sweep = sweep as never;
+      built.get(ToolDrift).scan = scan;
+      const init = built.init();
+      init.catch(() => {});
+      await enteredP;
+      // The start is waiting in the extension load: the schedulers are armed already, but a tick
+      // (the cron's own trigger, the decorated methods the timers call) runs nothing
+      await built.get(SchedulerRegistry).getCronJob(WAIT_SWEEP_JOB).fireOnTick();
+      await built.get(WaitSweepJob).run();
+      await built.get(ToolJobs).scanDrift();
+      expect(sweep).not.toHaveBeenCalled();
+      expect(scan).not.toHaveBeenCalled();
+      expect(lines.some((l) => l.msg === "cron skipped: the scheduler is not started")).toBe(true);
+      release();
+      await init;
+      // the worker role opened the gate: the runOnStart drift scan and a forced tick run
+      await vi.waitFor(() => expect(scan).toHaveBeenCalled(), { timeout: 10_000 });
+      await built.get(WaitSweepJob).run();
+      expect(sweep).toHaveBeenCalledTimes(1);
+      expect(lines.filter((l) => l.level === "error")).toEqual([]);
+    } finally {
+      release?.();
+      g[SLOW_GATES_KEY]?.delete(key);
+    }
   }, 60_000);
 });

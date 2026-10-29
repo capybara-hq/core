@@ -257,8 +257,10 @@ export class KernelLifecycle
         this.log[w.level](w.message);
       }
     }
-    // The role parts (nest kernel spec §4): the worker role's queue consumers, the gateway role's
-    // supervisor and webhook inbound; the schedules (worker role) were armed at bootstrap
+    // The role parts (nest kernel spec §4): the worker role's queue consumers and schedules (R21:
+    // their timers are armed at application bootstrap, but no tick runs before the worker role
+    // opens the start gate here; the runOnStart jobs run then), the gateway role's supervisor and
+    // webhook inbound
     if (worker) await worker.start(() => this.checkpoint());
     if (gateway) await gateway.start(() => this.checkpoint());
     // Routes stay mounted and are resolved live: 503 extension.unavailable after an extension is revoked, back after it reloads (C17)
@@ -279,9 +281,6 @@ export class KernelLifecycle
         (err) => this.log.error("config watch error", { error: err.message }),
       );
     }
-    // The start sequence is done: the worker role's `@LockedInterval({ runOnStart })` jobs run once
-    // now, in the background (once across replicas starting together)
-    worker?.afterStart();
   }
 
   /**

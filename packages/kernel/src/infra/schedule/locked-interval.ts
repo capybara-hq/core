@@ -182,8 +182,8 @@ export class LockedIntervalScheduler implements OnApplicationBootstrap, OnModule
 
   /**
    * Starts the start runs of the `runOnStart` jobs in the background (each once across replicas
-   * starting together) and returns their promises. The kernel lifecycle calls it once its start
-   * sequence is done; later calls start nothing.
+   * starting together) and returns their promises. The kernel's worker role calls it right after it
+   * opened the start gate (`ScheduledRuns.open()`, R21); later calls start nothing.
    */
   runStartJobs(): Promise<void>[] {
     const runs = this.stopped ? [] : this.startRuns.splice(0);

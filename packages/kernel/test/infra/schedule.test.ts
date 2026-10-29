@@ -214,6 +214,8 @@ async function boot(keep: string[] = []) {
     { logger: false, abortOnError: false },
   );
   await app.init();
+  // the start gate (R21): the kernel's worker role opens it after its start sequence
+  app.get(ScheduledRuns).open();
   const reg = app.get(SchedulerRegistry);
   for (const name of [...reg.getCronJobs().keys()])
     if (!keep.includes(name)) reg.deleteCronJob(name);
