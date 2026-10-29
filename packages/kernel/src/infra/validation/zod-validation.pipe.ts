@@ -7,7 +7,7 @@ import { parseWithZod } from "./parse-with-zod.js";
  * Global pipe (`APP_PIPE`): validates the arguments declared with `@ZBody(Dto)` / `@ZQuery(Dto)` /
  * `@ZParam(Dto)` (the DTO arrives as `metadata.data`; a parameter whose metatype is a DTO, where
  * the build emits decorator metadata, is validated too) and returns the parse output (transforms
- * and defaults applied). Failures are the same `validation_failed` error `ZodPipe` throws. Any
+ * and defaults applied). Failures are `validation_failed` ({@link parseWithZod}). Any
  * other argument (primitives, the raw request, other custom decorators) passes untouched.
  */
 @Injectable()

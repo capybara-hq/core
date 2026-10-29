@@ -6,12 +6,11 @@ import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fa
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { KernelConfigSchema } from "../../src/config/schema.js";
-import type { ApiError } from "../../src/errors.js";
 import { ErrorFilter } from "../../src/http/error.filter.js";
-import { ZodPipe } from "../../src/http/zod.pipe.js";
 import { dtoRef, setupSwagger } from "../../src/infra/swagger/swagger.js";
 import { KERNEL_LOGGER } from "../../src/infra/tokens.js";
 import { createZodDto } from "../../src/infra/validation/create-zod-dto.js";
+import { parseWithZod } from "../../src/infra/validation/parse-with-zod.js";
 import { ValidationModule } from "../../src/infra/validation/validation.module.js";
 import { ZBody, ZParam, ZQuery } from "../../src/infra/validation/zod-params.js";
 import { createLogger } from "../../src/log.js";
@@ -99,7 +98,7 @@ describe("zod DTOs and the global validation pipe", () => {
     }
   });
 
-  it("the error body equals today's ZodPipe error", async () => {
+  it("the error body is validation_failed with each issue's path and message", async () => {
     const a = await app();
     try {
       const res = await a.inject({
@@ -108,16 +107,17 @@ describe("zod DTOs and the global validation pipe", () => {
         payload: { name: "a", tags: [1] },
       });
       expect(res.statusCode).toBe(400);
-      let expected: ApiError | undefined;
-      try {
-        new ZodPipe(BodySchema).transform({ name: "a", tags: [1] });
-      } catch (e) {
-        expected = e as ApiError;
-      }
+      const expected = (() => {
+        try {
+          parseWithZod(BodySchema, { name: "a", tags: [1] });
+        } catch (e) {
+          return (e as { details?: unknown }).details;
+        }
+      })();
       const body = res.json() as { error: { code: string; message: string; details: unknown } };
       expect(body.error.code).toBe("validation_failed");
       expect(body.error.message).toBe("Request validation failed");
-      expect(body.error.details).toEqual(expected?.details);
+      expect(body.error.details).toEqual(expected);
       expect(body.error.details).toEqual([
         { path: "name", message: expect.any(String) },
         { path: "tags.0", message: expect.any(String) },

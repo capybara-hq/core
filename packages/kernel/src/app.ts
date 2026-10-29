@@ -75,19 +75,14 @@ export async function buildKernelApp(
     { logger: new NestLogAdapter(logger), abortOnError: false },
   );
   const lifecycle = app.get(KernelLifecycle);
-  const shutdown = app.get(GracefulShutdown);
   const gateway = lifecycle.gatewayRoutes();
   try {
     lifecycle.attachHttp(
       await createHttpApp(
         {
           log: logger,
-          // The health endpoints and the API are KernelModule's; only the Fastify side is set up here
-          health: { isStopping: () => shutdown.isShuttingDown(), log: logger, checks: {} },
-          serveApi: config.roles.includes("api"),
           servePlugins: config.roles.includes("api") || config.roles.includes("gateway"),
           ...(gateway !== undefined && { gateway }),
-          trustProxy: config.http.trustProxy,
           replicaId:
             config.http.replicaId === undefined ? undefined : String(config.http.replicaId),
           packageMaxBytes: config.packages.maxBytes,

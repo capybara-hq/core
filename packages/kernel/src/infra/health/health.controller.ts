@@ -1,5 +1,5 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
-import { Controller, Get, Inject, Optional, Res } from "@nestjs/common";
+import { Controller, Get, Inject, Res } from "@nestjs/common";
 import {
   HealthCheckService,
   type HealthIndicatorFunction,
@@ -8,7 +8,7 @@ import {
 import type { FastifyReply } from "fastify";
 import { Public } from "../../identity/principal.js";
 import { KERNEL_LOGGER } from "../tokens.js";
-import { HEALTH_CHECKS, HEALTH_TIMEOUT_MS, type ReadinessCheck } from "./health.options.js";
+import { HEALTH_CHECKS, type ReadinessCheck } from "./health.options.js";
 import { SHUTDOWN_STATE, type ShutdownState } from "./shutdown-state.js";
 
 /** A dependency that hangs (Redis reconnecting, commands in the offline queue) must still give 503 fast. */
@@ -30,7 +30,6 @@ export class HealthController {
     @Inject(HEALTH_CHECKS) private readonly checks: Record<string, ReadinessCheck>,
     @Inject(SHUTDOWN_STATE) private readonly shutdown: ShutdownState,
     @Inject(KERNEL_LOGGER) private readonly log: Logger,
-    @Optional() @Inject(HEALTH_TIMEOUT_MS) private readonly timeoutMs: number = CHECK_TIMEOUT_MS,
   ) {}
 
   @Get("healthz")
@@ -60,7 +59,7 @@ export class HealthController {
               throw err;
             }
           })
-          .withTimeout(this.timeoutMs),
+          .withTimeout(CHECK_TIMEOUT_MS),
     );
     // `check` throws a 503 exception carrying the same `details` when any indicator is down
     const details = await this.health.check(fns).then(

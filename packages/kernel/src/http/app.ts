@@ -1,8 +1,6 @@
 import "reflect-metadata";
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import fastifyCookie from "@fastify/cookie";
-import { type DynamicModule, Module } from "@nestjs/common";
-import { NestFactory } from "@nestjs/core";
 import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import type { FastifyInstance, FastifyReply, InjectOptions, LightMyRequestResponse } from "fastify";
 import type { Route } from "../ctx/create-ctx.js";
@@ -11,29 +9,15 @@ import { AccountsService } from "../identity/accounts.js";
 import { ApiTokenService } from "../identity/api-tokens.js";
 import { type AuthServices, authorizeEnterpriseAdmin } from "../identity/auth.guard.js";
 import { SessionService } from "../identity/sessions.js";
-import { CHECK_TIMEOUT_MS, HealthController } from "../infra/health/health.controller.js";
-import { HealthModule } from "../infra/health/health.module.js";
-import {
-  HEALTH_CHECKS,
-  HEALTH_TIMEOUT_MS,
-  type HealthOptions,
-} from "../infra/health/health.options.js";
-import { SHUTDOWN_STATE } from "../infra/health/shutdown-state.js";
-import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { withLogContext } from "../log-context.js";
-import { createKernelAdapter } from "./adapter.js";
 import { redactPath } from "./error.filter.js";
-import { ErrorFilterModule } from "./error-filter.module.js";
 import { type GatewayRoutes, registerGatewayRoutes } from "./gateway-routes.js";
-import { NestLogAdapter } from "./nest-logger.js";
 import {
   createPluginRouter,
   type PluginRouteTable,
   registerPluginDispatch,
   staticRouteTable,
 } from "./plugin-dispatch.js";
-
-export type { HealthOptions } from "../infra/health/health.options.js";
 
 /** 内核 HTTP 的只读视图：进程内注入请求与列出路由（测试与元测试用）。 */
 export interface KernelHttp {
@@ -63,19 +47,13 @@ export interface KernelHttpApp extends KernelHttp {
 
 export interface CreateHttpAppOptions {
   log: Logger;
-  health: HealthOptions;
-  /** 是否提供内核 API（`apiModule`）。 */
-  serveApi: boolean;
-  /** 是否转发 `/plugins/*` 到插件路由。 */
+  /** Whether `/plugins/*` is dispatched to extension routes. */
   servePlugins: boolean;
   /**
    * Gateway-role routes (the channel webhook), registered only when given: the kernel passes them
    * when `roles` includes `gateway` (`serveGateway`).
    */
   gateway?: GatewayRoutes;
-  apiModule?: DynamicModule;
-  /** 信任哪些代理跳：false、跳数，或受信代理 IP / CIDR 列表（见 `http.trustProxy` 配置）。 */
-  trustProxy?: boolean | number | string[];
   /** 副本标识（`http.replicaId`）：设置时每个响应带 `x-capybara-replica` 头。 */
   replicaId?: string | undefined;
   /**
@@ -143,54 +121,19 @@ const LARGE_BODY_ROUTES = new Set([
 ]);
 const LARGE_BODY_LIMIT = 6 * 1024 * 1024;
 
-/** Root module: always has the health endpoints; imports `apiModule` when `serveApi`; the global error filter. */
-function rootModule(opts: CreateHttpAppOptions): DynamicModule {
-  @Module({})
-  class RootModule {}
-  return {
-    module: RootModule,
-    // global: the error filter's module reads the logger from here
-    global: true,
-    imports: [
-      HealthModule,
-      ErrorFilterModule,
-      ...(opts.serveApi && opts.apiModule ? [opts.apiModule] : []),
-    ],
-    controllers: [HealthController],
-    providers: [
-      { provide: KERNEL_LOGGER, useValue: opts.log },
-      { provide: HEALTH_CHECKS, useValue: opts.health.checks },
-      { provide: HEALTH_TIMEOUT_MS, useValue: opts.health.timeoutMs ?? CHECK_TIMEOUT_MS },
-      { provide: SHUTDOWN_STATE, useValue: { isShuttingDown: opts.health.isStopping } },
-    ],
-    exports: [KERNEL_LOGGER],
-  };
-}
-
 /**
- * Sets up the kernel HTTP application (NestJS + Fastify) without connecting to anything.
+ * Sets up the Fastify side of the kernel's Nest application (built by `buildKernelApp` from
+ * `KernelModule`, which provides the health endpoints and the API) without connecting to anything,
+ * and returns it uninitialized: `init()` is the caller's (it runs the start sequence), `close()`
+ * closes only the HTTP server (the rest of the application is closed by the caller's shutdown).
  * Extension routes do not go through Nest: `/plugins/*` is dispatched in its own Fastify scope
  * (see plugin-dispatch.ts) and answers 404 until extensions are loaded. Unmatched kernel routes
  * answer the 404 error envelope as well.
- *
- * With `existing` (the kernel's single Nest application, built by `createKernelApp` from `KernelModule`)
- * the Fastify side of that application is configured and returned uninitialized: `init()` is the
- * caller's (it runs the start sequence), `close()` closes only the HTTP server (the rest of the
- * application is closed by the caller's shutdown). Without it, a standalone application is
- * created from `opts` (health checks, `apiModule` when `serveApi`) and initialized; `close()` closes
- * it.
  */
 export async function createHttpApp(
   opts: CreateHttpAppOptions,
-  existing?: NestFastifyApplication,
+  app: NestFastifyApplication,
 ): Promise<KernelHttpApp> {
-  const app =
-    existing ??
-    (await NestFactory.create<NestFastifyApplication>(
-      rootModule(opts),
-      createKernelAdapter(opts.trustProxy ?? false),
-      { logger: new NestLogAdapter(opts.log), abortOnError: false },
-    ));
   // Cookie 解析（会话 Cookie）；必须在 init 之前注册
   await app.register(fastifyCookie);
   const fastify = app.getHttpAdapter().getInstance();
@@ -269,7 +212,6 @@ export async function createHttpApp(
     ? await registerPluginDispatch(fastify, () => table, opts.log)
     : undefined;
   if (opts.gateway) await registerGatewayRoutes(fastify, opts.gateway, opts.log);
-  if (!existing) await app.init();
 
   return {
     inject: (o) => fastify.inject(o),
@@ -295,7 +237,7 @@ export async function createHttpApp(
     close: () => {
       unwatch?.();
       dispatch?.abortAll();
-      return existing ? fastify.close() : app.close();
+      return fastify.close();
     },
     abortPluginRequests: () => dispatch?.abortAll(),
     closeAllConnections: () => fastify.server.closeAllConnections(),

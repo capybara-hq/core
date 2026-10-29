@@ -3,8 +3,8 @@ import { ApiError } from "../../errors.js";
 
 /**
  * Parses `value` with a zod schema and returns the output (transforms and defaults applied); a
- * failure throws `validation_failed` whose details list each issue's path and message. The one
- * implementation behind both `ZodPipe` and the global `ZodValidationPipe`.
+ * failure throws `validation_failed` whose details list each issue's path and message. The
+ * implementation behind the global `ZodValidationPipe`.
  */
 export function parseWithZod<S extends z.ZodType>(schema: S, value: unknown): z.infer<S> {
   const r = schema.safeParse(value);

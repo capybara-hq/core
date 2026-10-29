@@ -226,7 +226,7 @@ describe("Agent HTTP", () => {
       payload: { definition: { ...definition, model: { provider: "model-fake", model: "x" } } },
     });
     expect(bad.statusCode).toBe(400);
-    // visibility 缺失先被 ZodPipe 拦下
+    // a missing visibility is refused by the DTO validation first
     expect(errCode(bad)).toBe("validation_failed");
     const missing = await req({
       method: "POST",

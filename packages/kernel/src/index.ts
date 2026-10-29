@@ -206,13 +206,7 @@ export {
   ReplicaStatusStore,
 } from "./extensions/sources.js";
 export { syncPackage } from "./extensions/sync.js";
-export {
-  type CreateHttpAppOptions,
-  createHttpApp,
-  type HealthOptions,
-  type KernelHttp,
-  type KernelHttpApp,
-} from "./http/app.js";
+export type { KernelHttp, KernelHttpApp } from "./http/app.js";
 export { type Account, AccountsModule, AccountsService } from "./identity/accounts.js";
 export { type ApiTokenRecord, ApiTokenService } from "./identity/api-tokens.js";
 export { audit } from "./identity/audit.js";
