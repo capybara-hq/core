@@ -4,19 +4,16 @@ import { APP_FILTER } from "@nestjs/core";
 import type { Redis } from "ioredis";
 import type { Kysely } from "kysely";
 import type { KernelAppOptions } from "./app.js";
+import { CatalogModule } from "./catalog/catalog.module.js";
 import type { KernelConfig } from "./config/schema.js";
-import { ExtensionAdminOps } from "./extensions/admin-ops.js";
-import { ExtensionBlobs } from "./extensions/blobs.js";
 import { ExtensionsModule } from "./extensions/extensions.module.js";
 import { ExtensionHost } from "./extensions/host.js";
-import { ExtensionInstalls } from "./extensions/installs.js";
 import { OrgExtensionConfigs } from "./extensions/org-config.js";
 import { ExtensionRegistry } from "./extensions/registry.js";
 import { ReplicaStatusStore } from "./extensions/sources.js";
 import { API_DEPS, ApiModule } from "./http/api.module.js";
 import { ErrorFilter } from "./http/error.filter.js";
 import { IdentityBinding } from "./identity/binding.js";
-import { EnterpriseAdminLock } from "./identity/enterprise-admin.js";
 import { ExternalIdentities } from "./identity/external.js";
 import { IdentityModule } from "./identity/identity.module.js";
 import { SettingsService } from "./identity/settings.js";
@@ -108,13 +105,9 @@ class LegacyGraphModule {
             IdentityBinding,
             DirectorySync,
             OrgLock,
-            EnterpriseAdminLock,
             KernelEvents,
             ExtensionHost,
             ReplicaStatusStore,
-            ExtensionBlobs,
-            ExtensionInstalls,
-            ExtensionAdminOps,
             OrgExtensionConfigs,
           ],
           useFactory: (
@@ -139,13 +132,9 @@ class LegacyGraphModule {
             binding: IdentityBinding,
             directory: DirectorySync,
             orgLock: OrgLock,
-            adminLock: EnterpriseAdminLock,
             events: KernelEvents,
             host: ExtensionHost,
             replicaStatus: ReplicaStatusStore,
-            extensionBlobs: ExtensionBlobs,
-            extensionInstalls: ExtensionInstalls,
-            extensionAdminOps: ExtensionAdminOps,
             orgExtensionConfigs: OrgExtensionConfigs,
           ): LegacyGraph =>
             createLegacyGraph(config, log, kdb, redis, bus, hooks, {
@@ -164,13 +153,9 @@ class LegacyGraphModule {
               binding,
               directory,
               orgLock,
-              adminLock,
               events,
               host,
               replicaStatus,
-              extensionBlobs,
-              extensionInstalls,
-              extensionAdminOps,
               orgExtensionConfigs,
             }),
         },
@@ -215,9 +200,10 @@ export class KernelModule {
         HealthModule,
         ValidationModule,
         LegacyGraphModule.forRoot({ ...options, logger }),
-        // KernelLifecycle's setup check and the extension host it drives
+        // KernelLifecycle's setup check, the extension host it drives and the catalog it syncs
         IdentityModule,
         ExtensionsModule,
+        CatalogModule,
         ...(config.roles.includes("api")
           ? [
               ApiModule.registerFrom({

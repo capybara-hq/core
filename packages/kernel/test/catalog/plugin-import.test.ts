@@ -15,16 +15,16 @@ import {
 } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  PLUGIN_STAGING_CLEANUP_JOB,
+  PLUGIN_STAGING_CLEANUP_SCHEDULER_ID,
+} from "../../src/catalog/job-ids.js";
 import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
-import {
-  PLUGIN_STAGING_CLEANUP_JOB,
-  PLUGIN_STAGING_CLEANUP_SCHEDULER_ID,
-} from "../../src/runtime/maintenance.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";

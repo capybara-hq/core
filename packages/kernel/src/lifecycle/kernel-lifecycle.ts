@@ -9,6 +9,8 @@ import {
 import type { Redis } from "ioredis";
 import { type Kysely, sql } from "kysely";
 import type { KernelAppOptions } from "../app.js";
+import { MarketplacesService } from "../catalog/marketplaces.service.js";
+import { PluginImport } from "../catalog/plugin-import.js";
 import { CHANNEL_CHANGED_TOPIC } from "../channels/connections.service.js";
 import type { ChannelSupervisor } from "../channels/supervisor.js";
 import type { KernelConfig } from "../config/schema.js";
@@ -126,6 +128,8 @@ export class KernelLifecycle
     @Inject(ExtensionLifecycle) private readonly extensionLifecycle: ExtensionLifecycle,
     @Inject(ReplicaStatusStore) private readonly replicaStatus: ReplicaStatusStore,
     @Inject(BootstrapService) private readonly bootstrap: BootstrapService,
+    @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
+    @Inject(PluginImport) private readonly pluginImport: PluginImport,
     @Inject(KERNEL_BUS)
     private readonly bus: { publish(topic: string, payload: unknown): Promise<void> },
   ) {
@@ -183,7 +187,7 @@ export class KernelLifecycle
     );
     this.checkpoint();
     // official 清单来源按配置同步（幂等；每个副本启动时都做）
-    await g.marketplaces.syncOfficialFromConfig();
+    await this.marketplaces.syncOfficialFromConfig();
     // The bootstrap plugins (spec §7), once per manifest across replicas (the Redis lock
     // `lock:bootstrap`, R5); a bootstrap entry named like a config-declared extension is kept
     if (opts.bootstrap !== undefined) {
@@ -334,7 +338,7 @@ export class KernelLifecycle
       // The second pass records what the first one did (not `kept` for what it installed)
       await bootstrap.run({
         manifest,
-        imports: this.graph.pluginImport,
+        imports: this.pluginImport,
         ...(dir !== undefined && { dir }),
         signal: this.shutdown.signal,
         ...(this.bootstrapCarry !== undefined && { carry: this.bootstrapCarry }),

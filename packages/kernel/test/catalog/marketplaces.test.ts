@@ -11,10 +11,13 @@ import {
   startTestRedis,
   type TestContainer,
 } from "@capybara-hq/testing";
-import { Queue } from "bullmq";
-import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  MARKETPLACES_REFRESH_JOB,
+  MARKETPLACES_REFRESH_SCHEDULER_ID,
+} from "../../src/catalog/job-ids.js";
+import { CatalogJobs } from "../../src/catalog/jobs.js";
 import { MARKETPLACE_ENTRIES_MAX } from "../../src/catalog/marketplaces.service.js";
 import { resolveConfig } from "../../src/config/load.js";
 import { type KernelConfig, MARKETPLACE_OFFICIAL_URL_DEFAULT } from "../../src/config/schema.js";
@@ -22,13 +25,10 @@ import { ConfigError } from "../../src/config/types.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
+import { LockedIntervalScheduler } from "../../src/infra/schedule/locked-interval.js";
 import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
-import {
-  MAINTENANCE_QUEUE_NAME,
-  MARKETPLACES_REFRESH_JOB,
-  MARKETPLACES_REFRESH_SCHEDULER_ID,
-} from "../../src/runtime/maintenance.js";
+import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/maintenance.js";
 import { KERNEL_VERSION } from "../../src/version.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -906,8 +906,8 @@ describe("从清单引入", () => {
   });
 });
 
-describe("定期刷新（维护任务 catalogs-refresh）", () => {
-  it("worker 副本登记一个 scheduler（id / 任务名不含冒号，周期 refreshIntervalMinutes），首轮立即刷新生效的来源", async () => {
+describe("定期刷新（@LockedInterval catalogs-refresh）", () => {
+  it("the job is scheduled under its name (period refreshIntervalMinutes), its old repeatable scheduler is retired, and a run refreshes the effective marketplaces", async () => {
     await resetAll();
     await db
       .updateTable("marketplaces")
@@ -932,22 +932,18 @@ describe("定期刷新（维护任务 catalogs-refresh）", () => {
       { env: {} },
     );
     await worker.start();
-    const maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: new Redis(rd.url) });
     try {
       expect(MARKETPLACES_REFRESH_JOB).toBe("catalogs-refresh");
       expect(MARKETPLACES_REFRESH_SCHEDULER_ID).not.toContain(":");
-      const s = (await maint.getJobSchedulers()).filter(
-        (x) => x.key === MARKETPLACES_REFRESH_SCHEDULER_ID,
-      );
-      expect(s).toHaveLength(1);
-      expect(s[0]).toMatchObject({ name: MARKETPLACES_REFRESH_JOB, every: 30 * 60_000 });
+      expect(RETIRED_SCHEDULER_IDS).toContain(MARKETPLACES_REFRESH_SCHEDULER_ID);
+      expect(worker.app.get(LockedIntervalScheduler).names()).toContain(MARKETPLACES_REFRESH_JOB);
+      // a tick (every 30 minutes, epoch-aligned): run once across replicas
+      await worker.app.get(CatalogJobs).refreshMarketplaces();
       await expect
         .poll(async () => (await k.marketplaces.get("official")).lastStatus, { timeout: 15_000 })
         .toBe("ok");
       expect(official.requests.length).toBeGreaterThan(before);
-      await maint.removeJobScheduler(MARKETPLACES_REFRESH_SCHEDULER_ID);
     } finally {
-      await maint.close();
       await worker.stop();
     }
   }, 60_000);

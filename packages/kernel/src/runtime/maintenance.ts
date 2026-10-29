@@ -2,6 +2,10 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import { type Job, type JobsOptions, Queue, Worker } from "bullmq";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
+import {
+  MARKETPLACES_REFRESH_SCHEDULER_ID,
+  PLUGIN_STAGING_CLEANUP_SCHEDULER_ID,
+} from "../catalog/job-ids.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { PLUGINS_RECONCILE_SCHEDULER_ID } from "../extensions/lifecycle-topics.js";
 import { withJobContext } from "../log-context.js";
@@ -18,25 +22,6 @@ export const OUTPUT_CLEANUP_JOB = "output-cleanup";
 export const OUTPUT_CLEANUP_SCHEDULER_ID = "output-cleanup-hourly";
 export const OUTPUT_CLEANUP_EVERY_MS = 3_600_000;
 export const OUTPUT_CLEANUP_BATCH = 1000;
-
-/**
- * Periodic marketplace refresh (C26): job name and job scheduler id (no `:`), every
- * `marketplaces.refreshIntervalMinutes`. One scheduler for all replicas; the handler refreshes each
- * enabled marketplace in turn (see catalog/marketplaces.service.ts). The values keep their old
- * names: the scheduler id is stored in Redis, and renaming it would leave the old scheduler behind.
- */
-export const MARKETPLACES_REFRESH_JOB = "catalogs-refresh";
-export const MARKETPLACES_REFRESH_SCHEDULER_ID = "catalogs-refresh-every";
-
-/**
- * Cleanup of plugin (app bundle) import staging (T25, F-AE): job name and job scheduler id (no
- * `:`), hourly; deletes expired (24-hour) staging rows and their object storage prefixes (see
- * catalog/plugin-import.ts `PluginImport.cleanupExpired`). The values keep their old names: the
- * scheduler id is stored in Redis, so renaming it would leave the old scheduler behind.
- */
-export const PLUGIN_STAGING_CLEANUP_JOB = "app-staging-cleanup";
-export const PLUGIN_STAGING_CLEANUP_SCHEDULER_ID = "app-staging-cleanup-hourly";
-export const PLUGIN_STAGING_CLEANUP_EVERY_MS = 3_600_000;
 
 /** 维护任务的处理函数（`token` 供 `moveToDelayed` 等使用）。 */
 export type MaintenanceHandler = (job: Job, token: string | undefined) => Promise<void>;
@@ -97,6 +82,9 @@ export const RETIRED_SCHEDULER_IDS: readonly string[] = [
   OFFBOARD_SWEEP_SCHEDULER_ID,
   // Task 3.3
   PLUGINS_RECONCILE_SCHEDULER_ID,
+  // Task 3.4
+  MARKETPLACES_REFRESH_SCHEDULER_ID,
+  PLUGIN_STAGING_CLEANUP_SCHEDULER_ID,
 ];
 
 /**

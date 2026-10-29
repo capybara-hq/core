@@ -14,13 +14,10 @@ import { assertSecretsReachable } from "../extensions/host.js";
 import { importExtensionModule, matchesSection } from "../extensions/instance.js";
 import type { PermissionSet } from "../extensions/permission-set.js";
 import { packageRootOf, syncPackage } from "../extensions/sync.js";
-import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
-import { KernelDb } from "../infra/database/kernel-db.js";
-import { legacyKernelView } from "../infra/database/legacy-view.js";
-import { TransactionHost } from "../infra/database/transaction-host.js";
 import type { KernelLogger } from "../log.js";
 import { packagePath } from "../packages/tgz.js";
 import { PrefixedStorage } from "../storage/storage.service.js";
+import { CatalogImportModule } from "./catalog.module.js";
 import { CatalogService } from "./catalog.service.js";
 import { PluginImport } from "./plugin-import.js";
 
@@ -202,8 +199,9 @@ class CliStorage extends PrefixedStorage {
 }
 
 /**
- * The CLI's plugin catalog context (`capybara plugins *`): {@link openExtensionCli} plus
- * {@link PluginImport} and {@link CatalogService}. Imports run with actor `null` (the operator of the
+ * The CLI's plugin catalog context (`capybara plugins *`; R13): {@link openExtensionCli} with the
+ * catalog's {@link CatalogImportModule}, so {@link PluginImport} and {@link CatalogService} are the
+ * kernel's providers. Imports run with actor `null` (the operator of the
  * deployment, like `capybara extensions install`: no enterprise-admin re-check, audits without an
  * actor, permission snapshots written with source `cli`). Files of the plugin (skills, connector
  * templates, icons) go to the deployment's object store, set up in-process from the declared or
@@ -216,7 +214,7 @@ export async function openCatalogCli(
   log: KernelLogger,
   opts: { resolveFrom?: string } = {},
 ): Promise<CatalogCli> {
-  const cli = await openExtensionCli(config, log, opts);
+  const cli = await openExtensionCli(config, log, { ...opts, modules: [CatalogImportModule] });
   let syncDir: string | undefined;
   const removeSyncDir = async () => {
     if (syncDir !== undefined) await rm(syncDir, { recursive: true, force: true }).catch(() => {});
@@ -231,41 +229,12 @@ export async function openCatalogCli(
       },
       "reason" in rest ? rest.reason : undefined,
     );
-    const declared = new Map(cli.inspected.map((p) => [p.manifest.name, p.source] as const));
-    // R8: the catalog classes (Task 3.4) transact through the context's TransactionHost, so the
-    // converted providers they call (the locks, the extension operations) join their transactions
-    const db = legacyKernelView(cli.app.get(KernelDb), cli.app.get(TransactionHost));
-    const adminLock = cli.app.get(EnterpriseAdminLock);
-    const imports = new PluginImport({
-      db,
-      adminLock,
-      config: () => config,
-      storage,
-      installs: cli.installs,
-      ops: cli.ops,
-      blobs: { get: (sha256) => cli.readPackage(sha256) },
-      declared: () => declared,
-      // The CLI loads no connectors: templates get static checks only (the org install re-checks)
-      findConnector: () => undefined,
-      connectorsLoaded: false,
-      log,
-    });
-    const catalog = new CatalogService({
-      db,
-      adminLock,
-      config: () => config,
-      installs: cli.installs,
-      ops: cli.ops,
-      pluginImport: imports,
-      // Unreachable from the CLI: only marketplace imports (CatalogService.importFromMarketplace)
-      // download archives, and the CLI offers file, npm and direct git imports only.
-      fetchArchive: () =>
-        Promise.reject(
-          new ApiError("internal", "marketplace imports are not available in the CLI"),
-        ),
-      // Only marketplace imports send a marketplace token; a direct git import has none
-      marketplaceToken: async () => undefined,
-    });
+    // Plugin files go to that store; connector templates get static checks only (the CLI loads
+    // no connector; the org install re-checks them). Config-declared names come from the
+    // inspection (the registry), marketplace imports are not offered by the CLI.
+    const imports = cli.app.get(PluginImport);
+    imports.useCliStorage(storage);
+    const catalog = cli.app.get(CatalogService);
     return {
       ...cli,
       catalog,

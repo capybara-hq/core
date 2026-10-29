@@ -901,7 +901,7 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
       this: PluginInstaller,
       ...a: Parameters<PluginInstaller["decideRemovalIn"]>
     ) {
-      if (a[3].kind === "extension") return "used_by_connectors";
+      if (a[2].kind === "extension") return "used_by_connectors";
       return real.apply(this, a);
     });
     const back = await previewOk(installId, "0.0.1");

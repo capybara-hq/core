@@ -86,16 +86,3 @@ export const EVAL_SETS = Symbol("EVAL_SETS");
 
 /** `EvalRunsService`（评测运行）的注入令牌。 */
 export const EVAL_RUNS = Symbol("EVAL_RUNS");
-
-/** The enterprise catalog (`CatalogService`). */
-export const CATALOG = Symbol("CATALOG");
-/** Plugin (app bundle) import: prepare / confirm and staging cleanup (`PluginImport`). */
-export const PLUGIN_IMPORT = Symbol("PLUGIN_IMPORT");
-/** Marketplaces (`MarketplacesService`). */
-export const MARKETPLACES = Symbol("MARKETPLACES");
-/** Organizations browse and install from the enterprise catalog (`OrgCatalogService`). */
-export const ORG_CATALOG = Symbol("ORG_CATALOG");
-/** Catalog requests and approvals (`CatalogRequestsService`). */
-export const CATALOG_REQUESTS = Symbol("CATALOG_REQUESTS");
-/** Org install and uninstall of plugins (app bundles) (`PluginInstaller`). */
-export const PLUGIN_INSTALLER = Symbol("PLUGIN_INSTALLER");

@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PluginInstaller } from "../../src/catalog/plugin-install.js";
+import { runOutsideTransaction } from "../../src/infra/database/transaction-host.js";
 import { SKILL_MD } from "../skills/zip.js";
 import {
   auditActions,
@@ -1025,11 +1026,14 @@ describe("org plugin install: dependency races", { timeout: 60_000 }, () => {
     ) {
       const found = await original.apply(this, args);
       if (args[3] === true && del === undefined) {
-        // Inside the record transaction (org row locked): the uninstall starts and must wait
-        del = env.boss({
-          method: "DELETE",
-          url: `/api/v1/orgs/${env.orgId}/plugin-installs/${depId}`,
-        });
+        // Inside the record transaction (org row locked): the uninstall starts and must wait (a
+        // request of its own: outside this transaction's context, as a real concurrent request)
+        del = runOutsideTransaction(() =>
+          env.boss({
+            method: "DELETE",
+            url: `/api/v1/orgs/${env.orgId}/plugin-installs/${depId}`,
+          }),
+        );
         await new Promise((r) => setTimeout(r, 300));
       }
       return found;

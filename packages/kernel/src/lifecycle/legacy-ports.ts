@@ -5,6 +5,7 @@ import type { EventLog } from "../conversations/event-log.js";
 import type { OffboardingRunControl } from "../orgs/offboarding.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
 import type { ApprovalsService } from "../tools/approvals.service.js";
+import type { ConnectorsService } from "../tools/connectors.service.js";
 import type { Credentials } from "../tools/credentials.js";
 import type { QuestionsService } from "../tools/questions.service.js";
 
@@ -28,6 +29,8 @@ export interface LegacyPortValues {
   offboardRuns: OffboardingRunControl;
   /** Sandbox destruction after offboarding (sandbox/lifecycle.ts, Task 3.8). */
   sandboxDestroy: { destroy(conversationIds: string[]): Promise<void> };
+  /** tools/connectors.service.ts (Task 3.5): org plugin installs create, update and remove connectors. */
+  connectors: ConnectorsService;
 }
 
 /**
@@ -91,6 +94,10 @@ export class LegacyPorts {
 
   get sandboxDestroy(): LegacyPortValues["sandboxDestroy"] {
     return this.get("sandboxDestroy");
+  }
+
+  get connectors(): ConnectorsService {
+    return this.get("connectors");
   }
 }
 

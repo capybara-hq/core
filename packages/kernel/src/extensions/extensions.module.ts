@@ -42,6 +42,8 @@ import { ReplicaStatusStore } from "./sources.js";
   ],
   exports: [
     ExtensionRegistryModule,
+    PluginInstallLock,
+    PluginApproveLock,
     ExtensionApprovals,
     ExtensionBlobs,
     ExtensionInstalls,

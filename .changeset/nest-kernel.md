@@ -101,3 +101,21 @@ every `extensionHost.reconcileIntervalSeconds`, once per tick across replicas); 
 scheduler is removed when a worker starts. `LockService.acquire` accepts `signal` and an unbounded
 `waitMs`. `ctx.lock` and the permission-denial / hook warn-once markers use the `LockService`
 primitives (same keys).
+
+The catalog is a Nest module (`CatalogModule`, with `CatalogImportModule` for the CLI):
+`CatalogRequestsService`, `MarketplacesService`, `PluginImport`, `CatalogService`,
+`PluginInstaller`, `PluginUpgrader` and `OrgCatalogService` are injectable providers. Export
+changes: their constructors take the kernel's providers (`CatalogServiceDeps`,
+`MarketplacesServiceDeps`, `PluginImportDeps`, `PluginInstallerDeps` and `OrgCatalogDeps` are
+removed); `CatalogRequestsService.requestDeployment` / `resolveByInstall` and the installer's
+`*In` methods join the caller's transaction (no `trx` argument); the item and version helpers moved
+to `catalog/catalog-items.ts` and the version content readers to `catalog/catalog-content.ts`. Org
+installs, upgrades and their rollbacks keep one transaction per step (each committed on its own,
+the undo on failure relies on it). The catalog's advisory locks are lock providers
+(`CatalogSourceLock`, `CatalogItemLock`; the extensions' `PluginInstallLock` /
+`PluginApproveLock`), same keys. `catalogs-refresh` is a `@LockedInterval` (every
+`marketplaces.refreshIntervalMinutes`; a fresh deployment's first refresh now waits for the first
+tick instead of running when the scheduler is created) and `app-staging-cleanup` an hourly
+`@LockedCron`; their old maintenance schedulers are removed when a worker starts. The CLI's
+Redis connection keeps reconnecting (a `capybara bootstrap` holding `lock:bootstrap` survives a
+Redis blip), and a lost `LockService` lock aborts with `lock lost: <key>`.

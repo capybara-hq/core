@@ -397,7 +397,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Minutes between periodic refreshes of every enabled marketplace (one maintenance job for all replicas)",
+              "Minutes between periodic refreshes of every enabled marketplace (one run per period across all replicas)",
           }),
         ),
       maxIndexBytes: z

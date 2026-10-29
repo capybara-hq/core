@@ -1,10 +1,10 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { Controller, Get, HttpCode, Inject, Param, Patch, Post, Put } from "@nestjs/common";
 import { z } from "zod";
-import type { CatalogRequestsService } from "../catalog/requests.service.js";
+import { CatalogRequestsService } from "../catalog/requests.service.js";
 import { ExtensionAdmin } from "../extensions/admin-view.js";
 import { extensionNeedsAction } from "../extensions/permission-view.js";
-import { CATALOG_REQUESTS, PROVIDER_REGISTRY } from "../http/tokens.js";
+import { PROVIDER_REGISTRY } from "../http/tokens.js";
 import { type Account, AccountsService } from "../identity/accounts.js";
 import { MAX_PASSWORD_LENGTH } from "../identity/login.js";
 import {
@@ -99,7 +99,7 @@ export class AdminController {
     @Inject(ModelPurposesService) private readonly purposes: ModelPurposesService,
     @Inject(ExtensionAdmin) private readonly plugins: ExtensionAdmin,
     @Inject(PROVIDER_REGISTRY) private readonly registry: ProviderRegistry,
-    @Inject(CATALOG_REQUESTS) private readonly catalogRequests: CatalogRequestsService,
+    @Inject(CatalogRequestsService) private readonly catalogRequests: CatalogRequestsService,
   ) {}
 
   /** 后台概览的四个数字（只读计数，不含任何对话内容）。 */

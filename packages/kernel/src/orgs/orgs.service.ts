@@ -11,7 +11,6 @@ import { audit } from "../identity/audit.js";
 import { SettingsService } from "../identity/settings.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { legacyCurrentTrx } from "../infra/database/legacy-view.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
@@ -261,7 +260,7 @@ export class OrgsService {
     );
     // pending catalog requests (including those passed to enterprise admins) are cancelled too
     await cancelPendingRequests(
-      legacyCurrentTrx(),
+      this.db.db,
       { orgId },
       actor.id,
       "org_deleted",

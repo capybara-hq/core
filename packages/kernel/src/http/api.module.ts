@@ -1,4 +1,4 @@
-import type { Connector, Logger } from "@capybara-hq/plugin-sdk";
+import type { Logger } from "@capybara-hq/plugin-sdk";
 import { type DynamicModule, Module, type Provider, type Type } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import type { Redis } from "ioredis";
@@ -12,17 +12,12 @@ import { ModelsController } from "../agents/models.controller.js";
 import { AgentTemplatesController } from "../agents/templates.controller.js";
 import { AgentTemplatesService } from "../agents/templates.js";
 import { AdminCatalogController } from "../catalog/admin-catalog.controller.js";
-import type { CatalogService } from "../catalog/catalog.service.js";
+import { CatalogModule } from "../catalog/catalog.module.js";
 import { MarketplacesController } from "../catalog/marketplaces.controller.js";
-import type { MarketplacesService } from "../catalog/marketplaces.service.js";
 import {
   AdminCatalogRequestsController,
   OrgCatalogController,
 } from "../catalog/org-catalog.controller.js";
-import { OrgCatalogService } from "../catalog/org-catalog.service.js";
-import type { PluginImport } from "../catalog/plugin-import.js";
-import { PluginInstaller } from "../catalog/plugin-install.js";
-import { PluginUpgrader } from "../catalog/plugin-upgrade.js";
 import { CatalogRequestsService } from "../catalog/requests.service.js";
 import { ChannelConnectionsController } from "../channels/connections.controller.js";
 import type { ChannelConnections } from "../channels/connections.service.js";
@@ -48,12 +43,10 @@ import { TrajectoryService } from "../evals/trajectory.service.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { ExtensionHost } from "../extensions/host.js";
 import { OrgExtensionConfigsController } from "../extensions/org-config.controller.js";
-import { OrgExtensionConfigs } from "../extensions/org-config.js";
 import { FilePreviewersController } from "../files/previewers.controller.js";
 import { PreviewerRegistry } from "../files/previewers.js";
 import { AuthController } from "../identity/auth.controller.js";
 import { AuthGuard } from "../identity/auth.guard.js";
-import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
 import { IdentityModule } from "../identity/identity.module.js";
 import { MeController } from "../identity/me.controller.js";
 import { SettingsService } from "../identity/settings.js";
@@ -89,7 +82,6 @@ import { InvocableSkillsController } from "../skills/invocable.controller.js";
 import { SkillInvoker } from "../skills/invoke.js";
 import { SkillsController } from "../skills/skills.controller.js";
 import { SkillsModule } from "../skills/skills.module.js";
-import { SkillsService } from "../skills/skills.service.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { StorageService } from "../storage/storage.service.js";
 import { ApprovalsController, ToolGrantsController } from "../tools/approvals.controller.js";
@@ -97,7 +89,7 @@ import type { ApprovalsService } from "../tools/approvals.service.js";
 import { ConnectorContentController } from "../tools/connector-content.controller.js";
 import type { ConnectorContent } from "../tools/connector-content.js";
 import { ConnectorsController } from "../tools/connectors.controller.js";
-import { ConnectorsService } from "../tools/connectors.service.js";
+import type { ConnectorsService } from "../tools/connectors.service.js";
 import type { Credentials } from "../tools/credentials.js";
 import type { ToolDrift } from "../tools/drift.js";
 import { ConversationToolInfo } from "../tools/info.js";
@@ -119,8 +111,6 @@ import {
   AGENTS,
   APPROVALS,
   ATTACHMENTS,
-  CATALOG,
-  CATALOG_REQUESTS,
   CHANNEL_CONNECTIONS,
   CONNECTOR_CONTENT,
   CONNECTORS,
@@ -141,12 +131,8 @@ import {
   INBOX,
   KERNEL_CONFIG,
   KERNEL_DB,
-  MARKETPLACES,
   OAUTH_FLOW,
-  ORG_CATALOG,
   ORG_UI_STREAMS,
-  PLUGIN_IMPORT,
-  PLUGIN_INSTALLER,
   PROVIDER_REGISTRY,
   QUESTIONS,
   TOOL_REGISTRY,
@@ -191,27 +177,13 @@ export interface ApiDeps {
   attachments: AttachmentsService;
   /** 按对话的沙箱（与 `Kernel.sandbox` 同一实例；上下文标签读状态）。 */
   sandbox: SandboxService;
-  /** The enterprise catalog (the same instance as `Kernel.catalog`). */
-  catalog: CatalogService;
-  /** Plugin (app bundle) import (the same instance as `Kernel.pluginImport`). */
-  pluginImport: PluginImport;
-  /** Marketplaces (the same instance as `Kernel.marketplaces`). */
-  marketplaces: MarketplacesService;
+  /** Org connectors (the legacy graph's instance, also the catalog's R7 port; Task 3.5). */
+  connectors: ConnectorsService;
   /** 评测队列的生产方（与 worker 同一队列名）。 */
   evalQueue: Pick<EvalQueue, "enqueue">;
   /** 删除 agent 后投递销毁它各对话的沙箱（一次性维护任务）；不给时留给不活跃销毁扫描。 */
   sandboxDestroy?: { destroy(conversationIds: string[]): Promise<void> };
 }
-
-/** 本副本已加载的连接器：插件 `plugin` 提供的 `Connector.kind === kind`。 */
-const findConnectorOf =
-  (host: Pick<ExtensionHost, "list">) =>
-  (plugin: string, kind: string): Connector | undefined =>
-    host
-      .list("connector")
-      .find((e) => e.plugin === plugin && (e.impl as Connector | undefined)?.kind === kind)?.impl as
-      | Connector
-      | undefined;
 
 /** 内核 API 的全部 controller；后续任务往这里追加。 */
 const CONTROLLERS: Type[] = [
@@ -313,13 +285,6 @@ function serviceProviders(): Provider[] {
         ),
       inject: [KERNEL_DB, PROVIDER_REGISTRY, TOOL_REGISTRY, SkillChangesService, OrgLock, API_DEPS],
     },
-    { provide: CATALOG, useFactory: (deps: ApiDeps) => deps.catalog, inject: [API_DEPS] },
-    {
-      provide: PLUGIN_IMPORT,
-      useFactory: (deps: ApiDeps) => deps.pluginImport,
-      inject: [API_DEPS],
-    },
-    { provide: MARKETPLACES, useFactory: (deps: ApiDeps) => deps.marketplaces, inject: [API_DEPS] },
     {
       provide: TRAJECTORIES,
       useFactory: (
@@ -385,12 +350,6 @@ function serviceProviders(): Provider[] {
     },
     { provide: ATTACHMENTS, useFactory: (deps: ApiDeps) => deps.attachments, inject: [API_DEPS] },
     {
-      provide: CATALOG_REQUESTS,
-      useFactory: (db: KernelSchemaDb, orgLock: OrgLock, adminLock: EnterpriseAdminLock) =>
-        new CatalogRequestsService(db, orgLock, adminLock),
-      inject: [KERNEL_DB, OrgLock, EnterpriseAdminLock],
-    },
-    {
       provide: INBOX,
       useFactory: (
         requests: CatalogRequestsService,
@@ -402,77 +361,7 @@ function serviceProviders(): Provider[] {
           skillChanges,
           catalogRequests: requests,
         }),
-      inject: [CATALOG_REQUESTS, SkillChangesService, API_DEPS],
-    },
-    {
-      provide: PLUGIN_INSTALLER,
-      useFactory: (
-        db: KernelSchemaDb,
-        connectors: ConnectorsService,
-        requests: CatalogRequestsService,
-        storage: StorageService,
-        skills: SkillsService,
-        orgLock: OrgLock,
-        host: ExtensionHost,
-        orgConfigs: OrgExtensionConfigs,
-        deps: ApiDeps,
-      ) =>
-        new PluginInstaller({
-          db,
-          orgLock,
-          storage,
-          host,
-          findConnector: findConnectorOf(host),
-          connectors,
-          skills,
-          orgConfigs,
-          requests,
-          log: deps.log,
-          staleInstallMinutes: () => deps.config().catalog.staleInstallMinutes,
-        }),
-      inject: [
-        KERNEL_DB,
-        CONNECTORS,
-        CATALOG_REQUESTS,
-        StorageService,
-        SkillsService,
-        OrgLock,
-        ExtensionHost,
-        OrgExtensionConfigs,
-        API_DEPS,
-      ],
-    },
-    {
-      provide: ORG_CATALOG,
-      useFactory: (
-        db: KernelSchemaDb,
-        requests: CatalogRequestsService,
-        pluginInstaller: PluginInstaller,
-        storage: StorageService,
-        orgLock: OrgLock,
-        host: ExtensionHost,
-        deps: ApiDeps,
-      ) =>
-        new OrgCatalogService({
-          db,
-          orgLock,
-          storage,
-          host,
-          findConnector: findConnectorOf(host),
-          requests,
-          pluginInstaller,
-          pluginUpgrader: new PluginUpgrader(pluginInstaller),
-          log: deps.log,
-        }),
-      inject: [
-        KERNEL_DB,
-        CATALOG_REQUESTS,
-        PLUGIN_INSTALLER,
-        StorageService,
-        OrgLock,
-        ExtensionHost,
-        API_DEPS,
-      ],
+      inject: [CatalogRequestsService, SkillChangesService, API_DEPS],
     },
     {
       provide: CONVERSATIONS,
@@ -685,27 +574,7 @@ function serviceProviders(): Provider[] {
     },
     { provide: APPROVALS, useFactory: (deps: ApiDeps) => deps.approvals, inject: [API_DEPS] },
     { provide: QUESTIONS, useFactory: (deps: ApiDeps) => deps.questions, inject: [API_DEPS] },
-    {
-      provide: CONNECTORS,
-      useFactory: (
-        db: KernelSchemaDb,
-        registry: ToolRegistry,
-        credentials: Credentials,
-        config: () => KernelConfig,
-        orgLock: OrgLock,
-        host: ExtensionHost,
-        deps: ApiDeps,
-      ) => new ConnectorsService(db, registry, host, credentials, config, deps.drift, orgLock),
-      inject: [
-        KERNEL_DB,
-        TOOL_REGISTRY,
-        CREDENTIALS,
-        KERNEL_CONFIG,
-        OrgLock,
-        ExtensionHost,
-        API_DEPS,
-      ],
-    },
+    { provide: CONNECTORS, useFactory: (deps: ApiDeps) => deps.connectors, inject: [API_DEPS] },
     {
       provide: OAUTH_FLOW,
       useFactory: (
@@ -764,6 +633,7 @@ export class ApiModule {
         OrgsModule,
         AdminModule,
         ExtensionsModule,
+        CatalogModule,
       ],
       controllers: CONTROLLERS,
       providers: [deps, ...serviceProviders(), { provide: APP_GUARD, useClass: AuthGuard }],

@@ -1,5 +1,5 @@
 import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
-import type { INestApplicationContext } from "@nestjs/common";
+import type { DynamicModule, INestApplicationContext, Type } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import type { z } from "zod";
 import type { KernelConfig } from "../config/schema.js";
@@ -87,7 +87,11 @@ export interface ExtensionCli {
 export async function openExtensionCli(
   config: KernelConfig,
   log: KernelLogger,
-  opts: { resolveFrom?: string } = {},
+  opts: {
+    resolveFrom?: string;
+    /** More domain modules for the context (the catalog CLI adds its import module). */
+    modules?: (Type | DynamicModule)[];
+  } = {},
 ): Promise<ExtensionCli> {
   const inspected = await ExtensionHost.inspect(config.extensions, {
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
@@ -96,7 +100,7 @@ export async function openExtensionCli(
     KernelCliModule.forRoot(config, {
       logger: log,
       ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
-      modules: [ExtensionsModule],
+      modules: [ExtensionsModule, ...(opts.modules ?? [])],
     }),
     { logger: false, abortOnError: false },
   );

@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
   CATALOG_ITEM_NAME_RE,
-  type Logger,
   type MarketplaceEntry,
   type MarketplaceManifest,
   type MarketplaceSource,
@@ -12,16 +11,23 @@ import {
   SDK_VERSION,
   SEMVER_VERSION_RE,
 } from "@capybara-hq/plugin-sdk";
-import { sql, type Transaction } from "kysely";
+import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
 import semver from "semver";
 import { type KernelConfig, MARKETPLACE_MAX_MIRRORS } from "../config/schema.js";
 import { ConfigError } from "../config/types.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
-import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { DEPLOYMENT_SECRETS_ORG } from "../extensions/deployment-config.js";
+import { DEPLOYMENT_SECRETS_ORG } from "../extensions/deployment-config-store.js";
 import { audit } from "../identity/audit.js";
-import type { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_LOGGER, KEYRING } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 import { KERNEL_VERSION } from "../version.js";
 import { CLAUDE_PLUGIN_FILE, type ClaudeEntryOverlay } from "./claude/manifest.js";
 import {
@@ -40,6 +46,7 @@ import {
   readGitTreeAndOids,
   resolveGitCommit,
 } from "./git-source.js";
+import { CatalogSourceLock } from "./locks.js";
 import {
   fetchMarketplaceManifest,
   MarketplaceFetchError,
@@ -49,8 +56,6 @@ import {
   marketplaceUrlProblem,
 } from "./marketplace-fetch.js";
 import { compareVersions, newestFirst, sameRelease } from "./versions.js";
-
-type Trx = Transaction<KernelDatabase>;
 
 /** 官方清单来源的 id。 */
 export const OFFICIAL_MARKETPLACE_ID = "official";
@@ -150,16 +155,18 @@ export interface MarketplaceEntryView {
   contentChanged: boolean;
 }
 
-export interface MarketplacesServiceDeps {
-  /** The enterprise admin lock (identity/enterprise-admin.ts; R12): joins the caller's transaction. */
-  adminLock: Pick<EnterpriseAdminLock, "lock" | "lockAndAuthorize">;
-  db: KernelSchemaDb;
-  config: () => KernelConfig;
-  keyring: Keyring;
-  log: Pick<Logger, "info" | "warn" | "error">;
-  /** 测试可调短。 */
-  fetchTimeoutMs?: number;
-}
+/** What a refresh fetched: a manifest (with a git marketplace's trees and overlays) or 304. */
+type RefreshOutcome =
+  | {
+      manifest: MarketplaceManifest;
+      etag: string | null;
+      commit?: string;
+      trees?: Map<string, string>;
+      overlays?: Map<string, ClaudeEntryOverlay>;
+      skipped?: { name: string; reason: MarketplaceSkipReason }[];
+    }
+  | "not_modified"
+  | undefined;
 
 export interface ActorOpts {
   actorTokenId?: string;
@@ -584,8 +591,26 @@ export async function loadMarketplaceEntry(
  * status `error`. A status change audits `marketplace.refreshed` and logs once. Stateless, shared
  * by every replica.
  */
+@Injectable()
 export class MarketplacesService {
-  constructor(private readonly d: MarketplacesServiceDeps) {}
+  /** The timeout of one manifest fetch (tests may shorten it). */
+  fetchTimeoutMs = MARKETPLACE_FETCH_TIMEOUT_MS;
+
+  constructor(
+    @Inject(KernelDb) private readonly kdb: KernelDb,
+    /** The enterprise admin lock (identity/enterprise-admin.ts; R12): joins the caller's transaction. */
+    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    @Inject(CatalogSourceLock) private readonly sourceLock: CatalogSourceLock,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    @Inject(KEYRING) private readonly keyring: Keyring,
+    @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {}
+
+  /** The kernel-schema handle of the current context (the transaction, else the pool). */
+  private get db(): KernelSchemaDb {
+    return this.kdb.db;
+  }
 
   /**
    * Creates / updates the official marketplace from config (name, URL, its form per
@@ -596,7 +621,7 @@ export class MarketplacesService {
    * without the schema).
    */
   async syncOfficialFromConfig(): Promise<void> {
-    const o = this.d.config().marketplaces.official;
+    const o = this.config.get().marketplaces.official;
     const { form, url } = marketplaceForm(o.url);
     if (form === "git" && o.mirrors.length > 0) {
       throw new ConfigError(
@@ -605,7 +630,7 @@ export class MarketplacesService {
     }
     const mirrors = JSON.stringify(o.mirrors);
     const same = sql<boolean>`marketplaces.url = excluded.url AND marketplaces.form = excluded.form`;
-    await this.d.db
+    await this.db
       .insertInto("marketplaces")
       .values({
         id: OFFICIAL_MARKETPLACE_ID,
@@ -636,7 +661,7 @@ export class MarketplacesService {
 
   /** 全部来源（official 在前，其余按创建时间）。 */
   async list(): Promise<MarketplaceView[]> {
-    const rows = (await this.d.db
+    const rows = (await this.db
       .selectFrom("marketplaces")
       .selectAll()
       .orderBy("builtin", "desc")
@@ -647,7 +672,7 @@ export class MarketplacesService {
   }
 
   async get(id: string): Promise<MarketplaceView> {
-    const row = (await this.d.db
+    const row = (await this.db
       .selectFrom("marketplaces")
       .selectAll()
       .where("id", "=", id)
@@ -679,41 +704,58 @@ export class MarketplacesService {
     this.checkGitFields(form, input.ref ?? null, input.mirrors ?? []);
     if (input.token !== undefined) this.checkToken(input.token);
     const id = randomUUID();
-    await this.d.db.transaction().execute(async (trx) => {
-      await this.d.adminLock.lockAndAuthorize(actor);
-      await trx
-        .insertInto("marketplaces")
-        .values({
-          id,
-          name,
-          url,
-          form,
-          ref: input.ref ?? null,
-          mirrors: JSON.stringify(input.mirrors ?? []),
-          builtin: false,
-          enabled: true,
-          created_by: actor,
-        })
-        .execute();
-      if (input.token !== undefined) {
-        await this.secrets(trx).set(DEPLOYMENT_SECRETS_ORG, tokenKey(id), input.token);
-      }
-      await audit(trx, {
-        actorAccountId: actor,
-        ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-        action: "marketplace.added",
-        target: id,
-        detail: {
-          name,
-          url,
-          form,
-          ...(input.ref !== undefined && { ref: input.ref }),
-          mirrors: input.mirrors ?? [],
-          hasToken: input.token !== undefined,
-        },
-      });
-    });
+    await this.writeAdd(actor, id, { ...input, name, form, url }, opts);
     return this.get(id);
+  }
+
+  @Transactional()
+  private async writeAdd(
+    actor: string,
+    id: string,
+    input: {
+      name: string;
+      url: string;
+      form: MarketplaceForm;
+      ref?: string;
+      mirrors?: string[];
+      token?: string;
+    },
+    opts: ActorOpts,
+  ): Promise<void> {
+    const { name, url, form } = input;
+    const t = this.db;
+    await this.adminLock.lockAndAuthorize(actor);
+    await t
+      .insertInto("marketplaces")
+      .values({
+        id,
+        name,
+        url,
+        form,
+        ref: input.ref ?? null,
+        mirrors: JSON.stringify(input.mirrors ?? []),
+        builtin: false,
+        enabled: true,
+        created_by: actor,
+      })
+      .execute();
+    if (input.token !== undefined) {
+      await this.secrets().set(DEPLOYMENT_SECRETS_ORG, tokenKey(id), input.token);
+    }
+    await audit(t, {
+      actorAccountId: actor,
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      action: "marketplace.added",
+      target: id,
+      detail: {
+        name,
+        url,
+        form,
+        ...(input.ref !== undefined && { ref: input.ref }),
+        mirrors: input.mirrors ?? [],
+        hasToken: input.token !== undefined,
+      },
+    });
   }
 
   /**
@@ -740,101 +782,118 @@ export class MarketplacesService {
     opts: ActorOpts = {},
   ): Promise<MarketplaceView> {
     const name = patch.name !== undefined ? this.checkName(patch.name) : undefined;
-    await this.d.db.transaction().execute(async (trx) => {
-      await this.d.adminLock.lockAndAuthorize(actor);
-      const row = (await trx
-        .selectFrom("marketplaces")
-        .selectAll()
-        .where("id", "=", id)
-        .forUpdate()
-        .executeTakeFirst()) as unknown as SourceRow | undefined;
-      if (!row) throw notFound();
-      if (
-        row.builtin &&
-        (name !== undefined ||
-          patch.url !== undefined ||
-          patch.form !== undefined ||
-          patch.ref !== undefined ||
-          patch.mirrors !== undefined ||
-          patch.token !== undefined)
-      ) {
-        throw builtinErr("changed");
-      }
-      const target =
-        patch.url !== undefined || patch.form !== undefined
-          ? marketplaceForm(patch.url ?? row.url, patch.form)
-          : { form: row.form, url: row.url };
-      // Switching form clears the other form's fields unless the patch sets them: the ref when
-      // becoming http, the mirrors when becoming git
-      const switched = target.form !== row.form;
-      const ref =
-        patch.ref !== undefined ? patch.ref : switched && target.form === "http" ? null : row.ref;
-      const mirrors = patch.mirrors ?? (switched && target.form === "git" ? [] : row.mirrors);
-      this.checkUrls(target.url, mirrors);
-      this.checkGitFields(target.form, ref, mirrors);
-      if (typeof patch.token === "string") this.checkToken(patch.token);
-      const changed: string[] = [];
-      const set: Record<string, unknown> = {};
-      if (name !== undefined && name !== row.name) {
-        set.name = name;
-        changed.push("name");
-      }
-      if (target.url !== row.url) {
-        set.url = target.url;
-        changed.push("url");
-      }
-      if (target.form !== row.form) {
-        set.form = target.form;
-        changed.push("form");
-      }
-      if (ref !== row.ref) {
-        set.ref = ref;
-        changed.push("ref");
-      }
-      if (set.url !== undefined || set.form !== undefined || set.ref !== undefined) {
-        set.etag = null;
-        set.last_commit = null;
-      }
-      if (JSON.stringify(mirrors) !== JSON.stringify(row.mirrors)) {
-        set.mirrors = JSON.stringify(mirrors);
-        changed.push("mirrors");
-      }
-      if (patch.enabled !== undefined && patch.enabled !== row.enabled) {
-        set.enabled = patch.enabled;
-        changed.push("enabled");
-      }
-      if (Object.keys(set).length > 0) {
-        await trx.updateTable("marketplaces").set(set).where("id", "=", id).execute();
-      }
-      if (patch.token !== undefined) {
-        const secrets = this.secrets(trx);
-        const had = (await secrets.get(DEPLOYMENT_SECRETS_ORG, tokenKey(id))) !== null;
-        if (patch.token === null) {
-          if (had) {
-            await secrets.delete(DEPLOYMENT_SECRETS_ORG, tokenKey(id));
-            changed.push("token");
-          }
-        } else {
-          await secrets.set(DEPLOYMENT_SECRETS_ORG, tokenKey(id), patch.token);
+    await this.writeUpdate(actor, id, name, patch, opts);
+    return this.get(id);
+  }
+
+  @Transactional()
+  private async writeUpdate(
+    actor: string,
+    id: string,
+    name: string | undefined,
+    patch: {
+      url?: string;
+      form?: MarketplaceForm;
+      ref?: string | null;
+      mirrors?: string[];
+      enabled?: boolean;
+      token?: string | null;
+    },
+    opts: ActorOpts,
+  ): Promise<void> {
+    const t = this.db;
+    await this.adminLock.lockAndAuthorize(actor);
+    const row = (await t
+      .selectFrom("marketplaces")
+      .selectAll()
+      .where("id", "=", id)
+      .forUpdate()
+      .executeTakeFirst()) as unknown as SourceRow | undefined;
+    if (!row) throw notFound();
+    if (
+      row.builtin &&
+      (name !== undefined ||
+        patch.url !== undefined ||
+        patch.form !== undefined ||
+        patch.ref !== undefined ||
+        patch.mirrors !== undefined ||
+        patch.token !== undefined)
+    ) {
+      throw builtinErr("changed");
+    }
+    const target =
+      patch.url !== undefined || patch.form !== undefined
+        ? marketplaceForm(patch.url ?? row.url, patch.form)
+        : { form: row.form, url: row.url };
+    // Switching form clears the other form's fields unless the patch sets them: the ref when
+    // becoming http, the mirrors when becoming git
+    const switched = target.form !== row.form;
+    const ref =
+      patch.ref !== undefined ? patch.ref : switched && target.form === "http" ? null : row.ref;
+    const mirrors = patch.mirrors ?? (switched && target.form === "git" ? [] : row.mirrors);
+    this.checkUrls(target.url, mirrors);
+    this.checkGitFields(target.form, ref, mirrors);
+    if (typeof patch.token === "string") this.checkToken(patch.token);
+    const changed: string[] = [];
+    const set: Record<string, unknown> = {};
+    if (name !== undefined && name !== row.name) {
+      set.name = name;
+      changed.push("name");
+    }
+    if (target.url !== row.url) {
+      set.url = target.url;
+      changed.push("url");
+    }
+    if (target.form !== row.form) {
+      set.form = target.form;
+      changed.push("form");
+    }
+    if (ref !== row.ref) {
+      set.ref = ref;
+      changed.push("ref");
+    }
+    if (set.url !== undefined || set.form !== undefined || set.ref !== undefined) {
+      set.etag = null;
+      set.last_commit = null;
+    }
+    if (JSON.stringify(mirrors) !== JSON.stringify(row.mirrors)) {
+      set.mirrors = JSON.stringify(mirrors);
+      changed.push("mirrors");
+    }
+    if (patch.enabled !== undefined && patch.enabled !== row.enabled) {
+      set.enabled = patch.enabled;
+      changed.push("enabled");
+    }
+    if (Object.keys(set).length > 0) {
+      await t.updateTable("marketplaces").set(set).where("id", "=", id).execute();
+    }
+    if (patch.token !== undefined) {
+      const secrets = this.secrets();
+      const had = (await secrets.get(DEPLOYMENT_SECRETS_ORG, tokenKey(id))) !== null;
+      if (patch.token === null) {
+        if (had) {
+          await secrets.delete(DEPLOYMENT_SECRETS_ORG, tokenKey(id));
           changed.push("token");
         }
+      } else {
+        await secrets.set(DEPLOYMENT_SECRETS_ORG, tokenKey(id), patch.token);
+        changed.push("token");
       }
-      if (changed.length === 0) return;
-      await audit(trx, {
-        actorAccountId: actor,
-        ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-        action: "marketplace.updated",
-        target: id,
-        detail: {
-          changed,
-          ...(set.enabled !== undefined && { enabled: set.enabled }),
-          ...(set.url !== undefined && { url: set.url }),
-          ...(set.form !== undefined && { form: set.form }),
-          ...(set.ref !== undefined && { ref: set.ref }),
-        },
-      });
+    }
+    if (changed.length === 0) return;
+    await audit(t, {
+      actorAccountId: actor,
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      action: "marketplace.updated",
+      target: id,
+      detail: {
+        changed,
+        ...(set.enabled !== undefined && { enabled: set.enabled }),
+        ...(set.url !== undefined && { url: set.url }),
+        ...(set.form !== undefined && { form: set.form }),
+        ...(set.ref !== undefined && { ref: set.ref }),
+      },
     });
-    return this.get(id);
   }
 
   /**
@@ -842,26 +901,26 @@ export class MarketplacesService {
    * are deleted; imported catalog items are kept (their marketplace becomes null). Official can
    * only be disabled -> `marketplace.builtin`.
    */
+  @Transactional()
   async remove(actor: string, id: string, opts: ActorOpts = {}): Promise<void> {
-    await this.d.db.transaction().execute(async (trx) => {
-      await this.d.adminLock.lockAndAuthorize(actor);
-      const row = await trx
-        .selectFrom("marketplaces")
-        .select(["builtin", "name", "url"])
-        .where("id", "=", id)
-        .forUpdate()
-        .executeTakeFirst();
-      if (!row) throw notFound();
-      if (row.builtin) throw builtinErr("deleted");
-      await trx.deleteFrom("marketplaces").where("id", "=", id).execute();
-      await this.secrets(trx).delete(DEPLOYMENT_SECRETS_ORG, tokenKey(id));
-      await audit(trx, {
-        actorAccountId: actor,
-        ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-        action: "marketplace.removed",
-        target: id,
-        detail: { name: row.name, url: row.url },
-      });
+    const t = this.db;
+    await this.adminLock.lockAndAuthorize(actor);
+    const row = await t
+      .selectFrom("marketplaces")
+      .select(["builtin", "name", "url"])
+      .where("id", "=", id)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row) throw notFound();
+    if (row.builtin) throw builtinErr("deleted");
+    await t.deleteFrom("marketplaces").where("id", "=", id).execute();
+    await this.secrets().delete(DEPLOYMENT_SECRETS_ORG, tokenKey(id));
+    await audit(t, {
+      actorAccountId: actor,
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      action: "marketplace.removed",
+      target: id,
+      detail: { name: row.name, url: row.url },
     });
   }
 
@@ -882,8 +941,8 @@ export class MarketplacesService {
     actor?: string,
     opts: ActorOpts & { throwOnError?: boolean } = {},
   ): Promise<MarketplaceView> {
-    const config = this.d.config();
-    const row = (await this.d.db
+    const config = this.config.get();
+    const row = (await this.db
       .selectFrom("marketplaces")
       .selectAll()
       .where("id", "=", id)
@@ -899,7 +958,7 @@ export class MarketplacesService {
     }
     const token = row.builtin
       ? undefined
-      : ((await this.secrets(this.d.db).get(DEPLOYMENT_SECRETS_ORG, tokenKey(id))) ?? undefined);
+      : ((await this.secrets().get(DEPLOYMENT_SECRETS_ORG, tokenKey(id))) ?? undefined);
     const tokenOrigin = new URL(row.url).origin;
     const errors: string[] = [];
     // the API code of each failed URL (undefined: an ordinary fetch failure)
@@ -907,17 +966,7 @@ export class MarketplacesService {
     let sawInvalid = false;
     // what the last refused URL names (host, repo, ref), for the error's details
     let lastDetail: Record<string, string> | undefined;
-    let outcome:
-      | {
-          manifest: MarketplaceManifest;
-          etag: string | null;
-          commit?: string;
-          trees?: Map<string, string>;
-          overlays?: Map<string, ClaudeEntryOverlay>;
-          skipped?: { name: string; reason: MarketplaceSkipReason }[];
-        }
-      | "not_modified"
-      | undefined;
+    let outcome: RefreshOutcome;
     if (row.form === "git") {
       try {
         outcome = await this.fetchGit(row, token, signal);
@@ -941,7 +990,7 @@ export class MarketplacesService {
           etag: row.etag,
           ...(token !== undefined && { token, tokenOrigin }),
           maxBytes: config.marketplaces.maxIndexBytes,
-          timeoutMs: this.d.fetchTimeoutMs ?? MARKETPLACE_FETCH_TIMEOUT_MS,
+          timeoutMs: this.fetchTimeoutMs,
           net: marketplaceNetPolicy(config),
           signal,
         });
@@ -971,97 +1020,16 @@ export class MarketplacesService {
           );
     const lastError = status === "error" ? errors.join("\n").slice(0, MAX_ERROR_CHARS) : null;
 
-    const from = await this.d.db.transaction().execute(async (trx) => {
-      await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.catalog-source:${id}`}))`.execute(
-        trx,
-      );
-      const cur = await trx
-        .selectFrom("marketplaces")
-        .select(["last_status", "url", "mirrors", "form", "ref", "last_commit"])
-        .where("id", "=", id)
-        .forUpdate()
-        .executeTakeFirst();
-      if (!cur) throw notFound();
-      // The admin changed the URL / mirrors during the fetch: what we fetched is the old address's
-      // content, so write no entries, ETag or status (the next refresh uses the new address)
-      if (
-        cur.url !== row.url ||
-        cur.form !== row.form ||
-        cur.ref !== row.ref ||
-        // another refresh wrote a commit meanwhile: ours may be older, never move it back
-        cur.last_commit !== row.last_commit ||
-        JSON.stringify(cur.mirrors) !== JSON.stringify(row.mirrors)
-      ) {
-        return "stale" as const;
-      }
-      if (outcome !== undefined && outcome !== "not_modified") {
-        await this.replaceEntries(
-          trx,
-          id,
-          outcome.manifest.plugins,
-          outcome.trees,
-          outcome.overlays,
-        );
-      }
-      if (outcome !== undefined) {
-        // heads not resolved this time are unknown again (never a stale head)
-        await trx
-          .updateTable("marketplace_entries")
-          .set({ head_commit: null, tree_oid: null })
-          .where("source_id", "=", id)
-          .where("head_commit", "is not", null)
-          .execute();
-      }
-      for (const [key, head] of heads) {
-        const [name, version] = key.split("\0") as [string, string];
-        await trx
-          .updateTable("marketplace_entries")
-          .set({ head_commit: head.commit, tree_oid: head.tree })
-          .where("source_id", "=", id)
-          .where("name", "=", name)
-          .where("version", "=", version)
-          .execute();
-      }
-      await trx
-        .updateTable("marketplaces")
-        .set({
-          last_status: status,
-          last_error: lastError,
-          last_refreshed_at: sql<Date>`now()` as unknown as Date,
-          ...(outcome !== undefined &&
-            outcome !== "not_modified" && {
-              etag: outcome.etag,
-              last_commit: outcome.commit ?? null,
-              owner_name: outcome.manifest.owner?.name ?? null,
-              skipped: JSON.stringify(outcome.skipped ?? []),
-            }),
-        })
-        .where("id", "=", id)
-        .execute();
-      if (cur.last_status !== status) {
-        await audit(trx, {
-          ...(actor !== undefined && { actorAccountId: actor }),
-          ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-          action: "marketplace.refreshed",
-          target: id,
-          detail: {
-            from: cur.last_status,
-            to: status,
-            ...(lastError !== null && { error: lastError }),
-          },
-        });
-      }
-      return cur.last_status;
-    });
+    const from = await this.recordRefresh(row, { outcome, heads, status, lastError }, actor, opts);
     if (from === "stale") {
-      this.d.log.info("marketplace changed during refresh; result discarded", { marketplace: id });
+      this.log.info("marketplace changed during refresh; result discarded", { marketplace: id });
       return this.get(id);
     }
     if (from !== status) {
       if (status === "error") {
-        this.d.log.warn("marketplace refresh failed", { marketplace: id, error: lastError });
+        this.log.warn("marketplace refresh failed", { marketplace: id, error: lastError });
       } else {
-        this.d.log.info("marketplace refreshed", { marketplace: id });
+        this.log.info("marketplace refreshed", { marketplace: id });
       }
     }
     if (status === "error" && opts.throwOnError) {
@@ -1104,7 +1072,7 @@ export class MarketplacesService {
       }
     | "not_modified"
   > {
-    const config = this.d.config();
+    const config = this.config.get();
     const options: GitOptions = {
       net: marketplaceNetPolicy(config),
       maxBytes: config.packages.maxBytes,
@@ -1252,11 +1220,11 @@ export class MarketplacesService {
     m: { url: string; token: string | undefined },
     signal: AbortSignal,
   ): Promise<Map<string, { commit: string; tree: string | null }>> {
-    const config = this.d.config();
+    const config = this.config.get();
     const listed =
       fresh ??
       (
-        await this.d.db
+        await this.db
           .selectFrom("marketplace_entries")
           .select("entry")
           .where("source_id", "=", id)
@@ -1265,7 +1233,7 @@ export class MarketplacesService {
     const out = new Map<string, { commit: string; tree: string | null }>();
     const names = [...new Set(listed.filter((e) => "git" in e.source).map((e) => e.name))];
     if (names.length === 0) return out;
-    const imported = await this.d.db
+    const imported = await this.db
       .selectFrom("catalog_items as i")
       .innerJoin("catalog_item_versions as v", "v.item_id", "i.id")
       .select(["i.name", "v.version", "v.source", "v.source_ref", "v.integrity", "v.source_detail"])
@@ -1273,7 +1241,7 @@ export class MarketplacesService {
       .where("i.name", "in", names)
       .execute();
     const todo = headsToResolve(listed, imported, config, MARKETPLACE_HEADS_MAX);
-    const timeoutMs = this.d.fetchTimeoutMs ?? MARKETPLACE_FETCH_TIMEOUT_MS;
+    const timeoutMs = this.fetchTimeoutMs;
     const queue = [...todo];
     await Promise.all(
       Array.from({ length: Math.min(HEADS_CONCURRENCY, queue.length) }, async () => {
@@ -1306,7 +1274,7 @@ export class MarketplacesService {
             out.set(`${e.name}\0${marketplaceEntryVersion(e) ?? ""}`, { commit, tree });
           } catch (err) {
             // a head lookup never fails the refresh: that entry stays unknown
-            this.d.log.warn("cannot resolve the branch head of a marketplace entry", {
+            this.log.warn("cannot resolve the branch head of a marketplace entry", {
               marketplace: id,
               entry: e.name,
               error: err instanceof Error ? err.message : String(err),
@@ -1320,13 +1288,13 @@ export class MarketplacesService {
 
   /** The token of an enterprise marketplace (undefined without one; official never has one). */
   async token(id: string): Promise<string | undefined> {
-    return (await this.secrets(this.d.db).get(DEPLOYMENT_SECRETS_ORG, tokenKey(id))) ?? undefined;
+    return (await this.secrets().get(DEPLOYMENT_SECRETS_ORG, tokenKey(id))) ?? undefined;
   }
 
   /** Refreshes every effective marketplace (maintenance job `catalogs-refresh`), one failing not stopping the rest. */
   async refreshAll(signal: AbortSignal): Promise<void> {
-    const config = this.d.config();
-    const rows = await this.d.db
+    const config = this.config.get();
+    const rows = await this.db
       .selectFrom("marketplaces")
       .select(["id", "builtin", "enabled"])
       .orderBy("id")
@@ -1337,7 +1305,7 @@ export class MarketplacesService {
       try {
         await this.refresh(r.id, signal);
       } catch (err) {
-        this.d.log.error("marketplace refresh crashed", { marketplace: r.id, err });
+        this.log.error("marketplace refresh crashed", { marketplace: r.id, err });
       }
     }
   }
@@ -1351,8 +1319,8 @@ export class MarketplacesService {
   async entries(
     q: { marketplaceId?: string; q?: string } = {},
   ): Promise<{ items: MarketplaceEntryView[]; truncated: boolean }> {
-    const config = this.d.config();
-    let query = this.d.db
+    const config = this.config.get();
+    let query = this.db
       .selectFrom("marketplace_entries as e")
       .innerJoin("marketplaces as s", "s.id", "e.source_id")
       .select([
@@ -1395,7 +1363,7 @@ export class MarketplacesService {
         a.source_id.localeCompare(b.source_id),
     );
     if (rows.length === 0) return { items: [], truncated: false };
-    const items = await this.d.db
+    const items = await this.db
       .selectFrom("catalog_items as i")
       .leftJoin("catalog_item_versions as v", "v.item_id", "i.id")
       .select([
@@ -1477,19 +1445,113 @@ export class MarketplacesService {
   }
 
   /**
+   * Writes a refresh's result under the marketplace's lock (entries, heads, status, the status
+   * change audit); `stale` when the marketplace changed during the fetch (nothing is written).
+   */
+  @Transactional()
+  private async recordRefresh(
+    row: SourceRow,
+    r: {
+      outcome: RefreshOutcome;
+      heads: Map<string, { commit: string; tree: string | null }>;
+      status: "ok" | "error";
+      lastError: string | null;
+    },
+    actor: string | undefined,
+    opts: ActorOpts,
+  ): Promise<"stale" | SourceRow["last_status"]> {
+    const { id } = row;
+    const { outcome, heads, status, lastError } = r;
+    await this.sourceLock.lock(id);
+    const t = this.db;
+    const cur = await t
+      .selectFrom("marketplaces")
+      .select(["last_status", "url", "mirrors", "form", "ref", "last_commit"])
+      .where("id", "=", id)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!cur) throw notFound();
+    // The admin changed the URL / mirrors during the fetch: what we fetched is the old address's
+    // content, so write no entries, ETag or status (the next refresh uses the new address)
+    if (
+      cur.url !== row.url ||
+      cur.form !== row.form ||
+      cur.ref !== row.ref ||
+      // another refresh wrote a commit meanwhile: ours may be older, never move it back
+      cur.last_commit !== row.last_commit ||
+      JSON.stringify(cur.mirrors) !== JSON.stringify(row.mirrors)
+    ) {
+      return "stale" as const;
+    }
+    if (outcome !== undefined && outcome !== "not_modified") {
+      await this.replaceEntries(id, outcome.manifest.plugins, outcome.trees, outcome.overlays);
+    }
+    if (outcome !== undefined) {
+      // heads not resolved this time are unknown again (never a stale head)
+      await t
+        .updateTable("marketplace_entries")
+        .set({ head_commit: null, tree_oid: null })
+        .where("source_id", "=", id)
+        .where("head_commit", "is not", null)
+        .execute();
+    }
+    for (const [key, head] of heads) {
+      const [name, version] = key.split("\0") as [string, string];
+      await t
+        .updateTable("marketplace_entries")
+        .set({ head_commit: head.commit, tree_oid: head.tree })
+        .where("source_id", "=", id)
+        .where("name", "=", name)
+        .where("version", "=", version)
+        .execute();
+    }
+    await t
+      .updateTable("marketplaces")
+      .set({
+        last_status: status,
+        last_error: lastError,
+        last_refreshed_at: sql<Date>`now()` as unknown as Date,
+        ...(outcome !== undefined &&
+          outcome !== "not_modified" && {
+            etag: outcome.etag,
+            last_commit: outcome.commit ?? null,
+            owner_name: outcome.manifest.owner?.name ?? null,
+            skipped: JSON.stringify(outcome.skipped ?? []),
+          }),
+      })
+      .where("id", "=", id)
+      .execute();
+    if (cur.last_status !== status) {
+      await audit(t, {
+        ...(actor !== undefined && { actorAccountId: actor }),
+        ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+        action: "marketplace.refreshed",
+        target: id,
+        detail: {
+          from: cur.last_status,
+          to: status,
+          ...(lastError !== null && { error: lastError }),
+        },
+      });
+    }
+    return cur.last_status;
+  }
+
+  /**
    * Replaces the entries of a marketplace; `trees` (a git marketplace) gives each path entry the
    * tree oid of its directory.
    */
+  @Transactional({ propagation: "mandatory" })
   private async replaceEntries(
-    trx: Trx,
     id: string,
     entries: MarketplaceEntry[],
     trees?: Map<string, string>,
     overlays?: Map<string, ClaudeEntryOverlay>,
   ): Promise<void> {
-    await trx.deleteFrom("marketplace_entries").where("source_id", "=", id).execute();
+    const t = this.db;
+    await t.deleteFrom("marketplace_entries").where("source_id", "=", id).execute();
     for (let i = 0; i < entries.length; i += INSERT_BATCH) {
-      await trx
+      await t
         .insertInto("marketplace_entries")
         .values(
           entries.slice(i, i + INSERT_BATCH).map((e) => ({
@@ -1509,15 +1571,15 @@ export class MarketplacesService {
 
   private async views(rows: SourceRow[]): Promise<MarketplaceView[]> {
     if (rows.length === 0) return [];
-    const config = this.d.config();
+    const config = this.config.get();
     const ids = rows.map((r) => r.id);
-    const counts = await this.d.db
+    const counts = await this.db
       .selectFrom("marketplace_entries")
       .select(["source_id", (eb) => eb.fn.countAll<string>().as("n")])
       .where("source_id", "in", ids)
       .groupBy("source_id")
       .execute();
-    const tokens = await this.d.db
+    const tokens = await this.db
       .selectFrom("secrets")
       .select("key")
       .where("namespace", "=", SECRETS_NAMESPACE)
@@ -1552,8 +1614,9 @@ export class MarketplacesService {
     }));
   }
 
-  private secrets(db: KernelSchemaDb | Trx) {
-    return createSecrets(db, this.d.keyring, SECRETS_NAMESPACE);
+  /** The deployment secrets on the current context's handle (the transaction, else the pool). */
+  private secrets() {
+    return createSecrets(this.db, this.keyring, SECRETS_NAMESPACE);
   }
 
   private checkName(name: string): string {
@@ -1565,7 +1628,7 @@ export class MarketplacesService {
   }
 
   private checkUrls(url: string, mirrors: string[]): void {
-    const allow = this.d.config().marketplaces.allowInsecureLoopback;
+    const allow = this.config.get().marketplaces.allowInsecureLoopback;
     if (mirrors.length > MARKETPLACE_MAX_MIRRORS) {
       throw new ApiError("validation_failed", `at most ${MARKETPLACE_MAX_MIRRORS} mirrors`);
     }

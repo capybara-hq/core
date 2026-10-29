@@ -1,7 +1,6 @@
 import { fileURLToPath } from "node:url";
 import {
   CHANNEL_EXTENSION_POINT,
-  type Connector,
   type ExtensionContext,
   SANDBOX_EXTENSION_POINT,
   type SandboxProvider,
@@ -11,11 +10,7 @@ import type { Redis } from "ioredis";
 import { AgentsService } from "./agents/agents.service.js";
 import { buildKernelApp, closeKernelApp, type KernelAppOptions } from "./app.js";
 import { CatalogService } from "./catalog/catalog.service.js";
-import { fetchMarketplaceArchive, marketplaceNetPolicy } from "./catalog/marketplace-fetch.js";
-import {
-  MARKETPLACES_REFRESH_DEADLINE_MS,
-  MarketplacesService,
-} from "./catalog/marketplaces.service.js";
+import { MarketplacesService } from "./catalog/marketplaces.service.js";
 import { PluginImport } from "./catalog/plugin-import.js";
 import { ChannelConnections } from "./channels/connections.service.js";
 import { ChannelInbound } from "./channels/inbound.js";
@@ -64,7 +59,6 @@ import { ReplicaStatusStore } from "./extensions/sources.js";
 import type { ApiDeps } from "./http/api.module.js";
 import type { KernelHttp } from "./http/app.js";
 import { IdentityBinding } from "./identity/binding.js";
-import type { EnterpriseAdminLock } from "./identity/enterprise-admin.js";
 import { ExternalIdentities } from "./identity/external.js";
 import type { SettingsService } from "./identity/settings.js";
 import { SsoFlow } from "./identity/sso.js";
@@ -88,14 +82,7 @@ import { KyselyCheckpointSaver } from "./runtime/checkpointer.js";
 import { ConversationLock } from "./runtime/conversation-lock.js";
 import { LangGraphLoop, type LoopDeps } from "./runtime/langgraph-loop.js";
 import type { AgentLoop } from "./runtime/loop.js";
-import {
-  MARKETPLACES_REFRESH_JOB,
-  MARKETPLACES_REFRESH_SCHEDULER_ID,
-  Maintenance,
-  PLUGIN_STAGING_CLEANUP_EVERY_MS,
-  PLUGIN_STAGING_CLEANUP_JOB,
-  PLUGIN_STAGING_CLEANUP_SCHEDULER_ID,
-} from "./runtime/maintenance.js";
+import { Maintenance } from "./runtime/maintenance.js";
 import type { StreamSink } from "./runtime/model-call.js";
 import { ProviderRegistry } from "./runtime/providers.js";
 import { EVAL_QUOTA_PREFIX, OrgQuota } from "./runtime/quota.js";
@@ -131,6 +118,7 @@ import { skillLoadTool } from "./tools/builtins/skill-load.js";
 import { skillWriteTool } from "./tools/builtins/skill-write.js";
 import { toolSearchTool } from "./tools/builtins/tool-search.js";
 import { ConnectorContent } from "./tools/connector-content.js";
+import { ConnectorsService } from "./tools/connectors.service.js";
 import { Credentials } from "./tools/credentials.js";
 import { ToolDrift } from "./tools/drift.js";
 import { ToolOutputs } from "./tools/outputs.js";
@@ -360,6 +348,10 @@ export interface LegacyGraph
     | "bootstrap"
     | "extensionDeploymentConfigs"
     | "orgExtensionConfigs"
+    // Task 3.4
+    | "catalog"
+    | "pluginImport"
+    | "marketplaces"
   > {
   /** The kernel-schema view of the pool. */
   readonly kdb: KernelSchemaDb;
@@ -400,15 +392,11 @@ export interface ConvertedProviders {
   binding: IdentityBinding;
   directory: DirectorySync;
   orgLock: OrgLock;
-  adminLock: EnterpriseAdminLock;
   /** In-process domain events: channel connections follow `org.deleted`. */
   events: KernelEvents;
   // Task 3.3
   host: ExtensionHost;
   replicaStatus: ReplicaStatusStore;
-  extensionBlobs: ExtensionBlobs;
-  extensionInstalls: ExtensionInstalls;
-  extensionAdminOps: ExtensionAdminOps;
   orgExtensionConfigs: OrgExtensionConfigs;
 }
 
@@ -436,15 +424,7 @@ export function createLegacyGraph(
     config.masterKeyPrevious.map((k) => Buffer.from(k, "base64")),
   );
   const kdb = legacyKernelView(kernelDbHandle, converted.txHost);
-  const {
-    host,
-    replicaStatus,
-    extensionBlobs,
-    extensionInstalls,
-    extensionAdminOps,
-    orgLock,
-    adminLock,
-  } = converted;
+  const { host, replicaStatus, orgLock } = converted;
   // 每次日志推进后给有 IM 投递目标的会话排出站任务（任务追上后空闲即结束，之后的事件靠这里续上）
   const eventLog = new EventLog(kdb, bus, log, (conversationId) => enqueueOutbound(conversationId));
   const registry = new ProviderRegistry(host, redis, log);
@@ -489,71 +469,6 @@ export function createLegacyGraph(
     },
   });
   const maintenance = new Maintenance({ db: kdb, redisUrl: config.redis.url, log });
-  const findConnector = (plugin: string, kind: string) =>
-    host
-      .list("connector")
-      .find((e) => e.plugin === plugin && (e.impl as Connector | undefined)?.kind === kind)?.impl as
-      | Connector
-      | undefined;
-  // Plugin import (spec §4.3): one review for every plugin; staged for 24 hours, the maintenance
-  // job app-staging-cleanup removes expired staging every hour
-  const pluginImport = new PluginImport({
-    db: kdb,
-    adminLock,
-    config: cfg,
-    storage,
-    installs: extensionInstalls,
-    ops: extensionAdminOps,
-    blobs: extensionBlobs,
-    declared: () => host.declared(),
-    findConnector,
-    pluginVersion: (name) => host.manifests().find((m) => m.name === name)?.version,
-    log,
-  });
-  maintenance.handle(PLUGIN_STAGING_CLEANUP_JOB, async () => {
-    const n = await pluginImport.cleanupExpired();
-    if (n > 0) log.info("expired plugin imports cleaned up", { count: n });
-  });
-  maintenance.schedule({
-    id: PLUGIN_STAGING_CLEANUP_SCHEDULER_ID,
-    name: PLUGIN_STAGING_CLEANUP_JOB,
-    everyMs: () => PLUGIN_STAGING_CLEANUP_EVERY_MS,
-  });
-  // Marketplaces (D16 / C26): official is synced from config at startup; the maintenance job
-  // catalogs-refresh periodically refreshes every enabled marketplace
-  const marketplaces = new MarketplacesService({
-    db: kdb,
-    adminLock,
-    config: cfg,
-    keyring,
-    log,
-  });
-  // Enterprise catalog (D9 / C21): every item is a plugin, imported through pluginImport;
-  // extensionAdminOps installs an item's extension on the deployment
-  const catalog = new CatalogService({
-    db: kdb,
-    adminLock,
-    config: cfg,
-    installs: extensionInstalls,
-    ops: extensionAdminOps,
-    pluginImport,
-    fetchArchive: (archive, signal) =>
-      fetchMarketplaceArchive(archive, {
-        maxBytes: cfg().packages.maxBytes,
-        timeoutMs: 120_000,
-        net: marketplaceNetPolicy(cfg()),
-        ...(signal !== undefined && { signal }),
-      }),
-    marketplaceToken: (id) => marketplaces.token(id),
-  });
-  maintenance.handle(MARKETPLACES_REFRESH_JOB, async () => {
-    await marketplaces.refreshAll(AbortSignal.timeout(MARKETPLACES_REFRESH_DEADLINE_MS));
-  });
-  maintenance.schedule({
-    id: MARKETPLACES_REFRESH_SCHEDULER_ID,
-    name: MARKETPLACES_REFRESH_JOB,
-    everyMs: () => cfg().marketplaces.refreshIntervalMinutes * 60_000,
-  });
   // 对话附件：下载权限同会话流（只用 isAccessible，一条查询）；未绑定的过期附件由维护任务每小时清理
   const agents = new AgentsService(kdb, registry, toolRegistry, skillChanges, orgLock);
   const conversationAccess = new ConversationsService(kdb, eventLog, agents);
@@ -608,6 +523,16 @@ export function createLegacyGraph(
     log,
     maintenance,
   });
+  // Org connectors (Task 3.5 makes it a provider): the API and the catalog's org installs (R7 port)
+  const connectors = new ConnectorsService(
+    kdb,
+    toolRegistry,
+    host,
+    credentials,
+    cfg,
+    toolDrift,
+    orgLock,
+  );
   const breaker = new Breaker(redis, cfg);
   // 用户直接使用连接器内容（斜杠命令 / @ 资源引用）
   const connectorContent = new ConnectorContent({
@@ -784,6 +709,7 @@ export function createLegacyGraph(
   };
   // R7: the legacy instances converted providers read at call time
   converted.ports.bind({
+    connectors,
     eventLog,
     attachments,
     providers: registry,
@@ -1043,9 +969,7 @@ export function createLegacyGraph(
     runs: runControl,
     attachments,
     sandbox,
-    catalog,
-    pluginImport,
-    marketplaces,
+    connectors,
     evalQueue,
     sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
   };
@@ -1059,9 +983,6 @@ export function createLegacyGraph(
     createEvalWorker,
     createChannelSupervisor,
     usageReport: usageReporter,
-    catalog,
-    pluginImport,
-    marketplaces,
     bus,
     runs,
     tools,
@@ -1110,10 +1031,10 @@ export async function createKernel(
     extensionAdminOps: app.get(ExtensionAdminOps),
     extensionLifecycle: app.get(ExtensionLifecycle),
     extensionBlobs: app.get(ExtensionBlobs),
-    catalog: g.catalog,
-    pluginImport: g.pluginImport,
+    catalog: app.get(CatalogService),
+    pluginImport: app.get(PluginImport),
     bootstrap: app.get(BootstrapService),
-    marketplaces: g.marketplaces,
+    marketplaces: app.get(MarketplacesService),
     extensionDeploymentConfigs: app.get(ExtensionDeploymentConfigService),
     orgExtensionConfigs: app.get(OrgExtensionConfigs),
     bus: g.bus,

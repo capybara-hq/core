@@ -1,7 +1,7 @@
 import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import semver from "semver";
 import { describe, expect, it } from "vitest";
-import { recordedVersion } from "../../src/catalog/catalog.service.js";
+import { recordedVersion } from "../../src/catalog/catalog-items.js";
 import {
   archiveFallbackVersion,
   contentDigest,

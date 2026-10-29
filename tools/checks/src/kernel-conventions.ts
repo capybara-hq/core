@@ -239,8 +239,7 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
  */
 export const KC_PENDING: KcPending = {
   "kc-transaction": [
-    { path: "packages/kernel/src/agents/", max: 6 },
-    { path: "packages/kernel/src/catalog/", max: 44 },
+    { path: "packages/kernel/src/agents/", max: 5 },
     { path: "packages/kernel/src/channels/", max: 5 },
     { path: "packages/kernel/src/conversations/", max: 19 },
     { path: "packages/kernel/src/evals/", max: 19 },
@@ -250,7 +249,6 @@ export const KC_PENDING: KcPending = {
     { path: "packages/kernel/src/tools/", max: 34 },
   ],
   "kc-lock": [
-    { path: "packages/kernel/src/catalog/", max: 5 },
     { path: "packages/kernel/src/channels/", max: 4 },
     { path: "packages/kernel/src/evals/", max: 2 },
     { path: "packages/kernel/src/runtime/", max: 4 },
@@ -266,15 +264,13 @@ export const KC_PENDING: KcPending = {
   "kc-wiring": [
     { path: "apps/capybara/src/commands/admin-create.ts", max: 1 },
     { path: "apps/capybara/src/commands/admin-grant.ts", max: 1 },
-    { path: "packages/kernel/src/catalog/", max: 1 },
-    { path: "packages/kernel/src/http/", max: 48 },
+    { path: "packages/kernel/src/http/", max: 39 },
     { path: "packages/kernel/src/kernel.module.ts", max: 5 },
-    { path: "packages/kernel/src/kernel.ts", max: 10 },
+    { path: "packages/kernel/src/kernel.ts", max: 9 },
     { path: "packages/testing/src/kernel-helpers.ts", max: 1 },
   ],
   "kc-zod-pipe": [
     { path: "packages/kernel/src/agents/", max: 3 },
-    { path: "packages/kernel/src/catalog/", max: 17 },
     { path: "packages/kernel/src/channels/", max: 2 },
     { path: "packages/kernel/src/conversations/", max: 15 },
     { path: "packages/kernel/src/evals/", max: 10 },
@@ -295,16 +291,15 @@ export const KC_PENDING: KcPending = {
     { path: "packages/testing/test/", max: 7 },
   ],
   "kc-legacy": [
-    // KERNEL_CONFIG (2); R8 bridges added by Task 3.3 until Task 3.4 converts the catalog: the
-    // CLI's legacy view over the command context's TransactionHost (legacyKernelView ×2, R13) and
-    // the trx handed to the catalog's component record from OrgExtensionConfigs' transaction
-    // (legacyCurrentTrx ×4)
+    // Until Task 3.5 converts tools/: the R7 `connectors` port (LegacyPorts ×4) org installs and
+    // upgrades create / update / remove connectors through, and the R8 trx handed to its
+    // trx-taking removeIn / applyTemplateIn (legacyCurrentTrx ×4), in plugin-install / -upgrade
     { path: "packages/kernel/src/catalog/", max: 8 },
-    { path: "packages/kernel/src/http/", max: 78 },
+    { path: "packages/kernel/src/http/", max: 64 },
     // R7 ports read by orgs (Credentials, approvals, questions: 3.5; event log and run control:
     // 3.6; sandbox: 3.8) and R8 legacyCurrentTrx for the trx-taking APIs those owners still have
     // (Task 3.2)
-    { path: "packages/kernel/src/orgs/", max: 8 },
+    { path: "packages/kernel/src/orgs/", max: 6 },
     // R10: the standalone handles' legacy view, for the CLI until Task 5.2
     { path: "packages/kernel/src/infra/database/standalone.ts", max: 2 },
     // The counts below include the Phase 3 bridges (R7 LegacyPorts / ConvertedProviders, R8
@@ -318,19 +313,19 @@ export const KC_PENDING: KcPending = {
     { path: "packages/kernel/src/models/", max: 2 },
     { path: "packages/kernel/src/skills/", max: 15 },
     { path: "packages/kernel/src/tools/", max: 2 },
-    // the probe app re-provides LegacyPorts (R7) until Task 4.1 rebuilds it on createKernelApp
-    { path: "packages/kernel/test/identity/public-routes.test.ts", max: 2 },
+    // the probe app re-provides LegacyPorts (R7) and takes the legacy graph's connectors from it
+    // (ApiDeps.connectors, Task 3.4) until Task 4.1 rebuilds it on createKernelApp
+    { path: "packages/kernel/test/identity/public-routes.test.ts", max: 3 },
     // the R8 bridge's own test, deleted with legacy-view.ts
     { path: "packages/kernel/test/infra/legacy-transaction.test.ts", max: 4 },
     // R10: the identity / orgs providers over a test's own Kysely bind stub ports (until Task 5.1)
     { path: "packages/kernel/test/helpers/identity.ts", max: 6 },
   ],
   "kc-config": [
-    { path: "packages/kernel/src/catalog/", max: 4 },
     { path: "packages/kernel/src/channels/", max: 1 },
     { path: "packages/kernel/src/conversations/", max: 2 },
     { path: "packages/kernel/src/evals/", max: 5 },
-    { path: "packages/kernel/src/http/", max: 7 },
+    { path: "packages/kernel/src/http/", max: 6 },
     { path: "packages/kernel/src/runtime/", max: 7 },
     { path: "packages/kernel/src/tools/", max: 15 },
     { path: "packages/kernel/src/ui/", max: 1 },

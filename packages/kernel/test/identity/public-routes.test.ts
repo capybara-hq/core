@@ -178,9 +178,7 @@ beforeAll(async () => {
           connectorContent: k.tools.connectorContent,
           channels: k.channels.connections,
           attachments: k.attachments,
-          catalog: k.catalog,
-          pluginImport: k.pluginImport,
-          marketplaces: k.marketplaces,
+          connectors: k.app.get(LegacyPorts).connectors,
           evalQueue: { enqueue: async () => {} },
           sandbox: k.sandbox,
           runs: {
