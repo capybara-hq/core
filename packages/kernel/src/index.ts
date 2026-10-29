@@ -213,7 +213,7 @@ export {
   type KernelHttp,
   type KernelHttpApp,
 } from "./http/app.js";
-export { type Account, AccountsService } from "./identity/accounts.js";
+export { type Account, AccountsModule, AccountsService } from "./identity/accounts.js";
 export { type ApiTokenRecord, ApiTokenService } from "./identity/api-tokens.js";
 export { audit } from "./identity/audit.js";
 export { normalizeLogin, validatePassword } from "./identity/login.js";
@@ -228,7 +228,11 @@ export {
   type DeploymentSettings,
   SettingsService,
 } from "./identity/settings.js";
-export { type StandaloneDatabase, standaloneDatabase } from "./infra/database/standalone.js";
+export {
+  type KernelCliOptions,
+  openKernelCli,
+  openKernelCliOverPool,
+} from "./infra/cli/kernel-cli.module.js";
 export {
   GUARD_CIRCUIT_LIMIT,
   GUARD_CIRCUIT_WINDOW_MS,

@@ -329,3 +329,13 @@ extension tests: type the kernel as `TestKernel` instead of `Kernel`, replace `k
 `k.close()`, and reach a kernel service with `k.app.get(Class)` instead of a facade field (e.g.
 `k.host` → `k.app.get(ExtensionHost)`, `k.storage` → `k.app.get(StorageService)`); `k.http` and
 `k.port` stay, and `login(k, …)` / `joinOrg(k, …)` take any `{ http }`.
+
+CLI (nest kernel Task 5.2): `capybara start` runs `startKernelApp` (same start order, signal
+handling and exit codes; a kernel whose application cannot even be built now logs `kernel start
+failed`, where it logged `cannot load configuration` before). `capybara admin create` /
+`admin grant` run on a CLI application context without Redis (still PostgreSQL only). Export
+changes: `standaloneDatabase` / `StandaloneDatabase` are removed; new exports `AccountsModule`
+(`AccountsService` with its locks), `openKernelCli(config, opts)` (a CLI command's application
+context; `redis: false` leaves Redis and `LockService` out) and `openKernelCliOverPool(pool, opts)`
+(a context over a pool the caller owns and keeps open). `@capybara-hq/testing`'s
+`createLocalAccount` keeps its signature and runs on `openKernelCliOverPool`.

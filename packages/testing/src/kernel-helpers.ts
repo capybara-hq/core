@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { readdir, readFile, readlink } from "node:fs/promises";
 import { promisify } from "node:util";
 import {
+  AccountsModule,
   AccountsService,
   type ConversationEvent,
   closeKernelApp,
@@ -15,7 +16,7 @@ import {
   kernelAppPort,
   type LogLevel,
   MARKETPLACE_OFFICIAL_URL_DEFAULT,
-  standaloneDatabase,
+  openKernelCliOverPool,
   startKernelApp,
 } from "@capybara-hq/kernel";
 import { type Kysely, sql } from "kysely";
@@ -202,15 +203,22 @@ export async function createLocalAccount(
   login: string,
   displayName = login,
 ): Promise<string> {
-  // the kernel's database handles over the caller's Kysely (R10)
-  const h = standaloneDatabase(db, createLogger("error"));
-  return (
-    await new AccountsService(h.db, h.txHost, h.adminLock, h.setupLock).createLocal({
-      login,
-      password: TEST_PASSWORD,
-      displayName,
-    })
-  ).id;
+  // the accounts module over the caller's Kysely; closing the context leaves it open
+  const app = await openKernelCliOverPool(db, {
+    logger: createLogger("error"),
+    modules: [AccountsModule],
+  });
+  try {
+    return (
+      await app.get(AccountsService).createLocal({
+        login,
+        password: TEST_PASSWORD,
+        displayName,
+      })
+    ).id;
+  } finally {
+    await app.close();
+  }
 }
 
 /** Signs in over HTTP and returns the user's request function. */

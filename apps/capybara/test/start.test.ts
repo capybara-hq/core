@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({ stopDone: false, stopRequested: false }));
 
-// 只替换 createKernel / 配置加载：模拟「启动进行中收到 SIGTERM」——start 在下一个检查点抛错，stop 需要一段时间才完成。
+// Only startKernelApp and the config loading are replaced: a SIGTERM during the start. The fake
+// installs the signal handlers the way startKernelApp does; the start fails at its next
+// checkpoint once the stop began, and the stop takes a while to finish.
 vi.mock("@capybara-hq/kernel", async (importOriginal) => {
   const real = await importOriginal<typeof import("@capybara-hq/kernel")>();
   return {
@@ -12,23 +14,28 @@ vi.mock("@capybara-hq/kernel", async (importOriginal) => {
     selectConfigSource: () => ({ load: async () => ({}) }),
     resolveConfig: () => ({ bootstrap: { dir: "bootstrap" } }),
     createConfiguredLogger: () => real.createLogger("error", { write: () => {} }),
-    createKernel: async () => {
+    startKernelApp: async (
+      _config: unknown,
+      _options: unknown,
+      signalOptions: import("@capybara-hq/kernel").ShutdownSignalOptions,
+    ) => {
       let release: () => void = () => {};
       const stopped = new Promise<void>((r) => {
         release = r;
       });
-      return {
-        async start() {
-          await stopped;
-          throw new Error("kernel stopped during start");
-        },
-        async stop() {
+      const signals = real.handleShutdownSignals(
+        async () => {
           state.stopRequested = true;
           release();
           await new Promise((r) => setTimeout(r, 200));
           state.stopDone = true;
         },
-      };
+        real.createLogger("error", { write: () => {} }),
+        signalOptions,
+      );
+      await stopped;
+      await signals.exiting();
+      throw new Error("kernel stopped during start");
     },
   };
 });

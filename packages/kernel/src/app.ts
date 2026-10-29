@@ -162,14 +162,23 @@ export async function createKernelApp(
  * nothing is served before the start sequence finished. The handlers are installed before the
  * start, so a signal during it aborts the start at its next checkpoint and closes the application
  * cleanly; this function then rejects once the signal path has exited (with 0). A second signal
- * exits with 1 at once.
+ * exits with 1 at once. A failed build or start is logged (`kernel start failed`) before it is
+ * thrown.
  */
 export async function startKernelApp(
   config: KernelConfig,
   options: KernelAppOptions = {},
   signalOptions: ShutdownSignalOptions = {},
 ): Promise<NestFastifyApplication> {
-  const app = await buildKernelApp(config, options);
+  const logger = options.logger ?? createConfiguredLogger(config);
+  let app: NestFastifyApplication;
+  try {
+    app = await buildKernelApp(config, { ...options, logger });
+  } catch (e) {
+    // Nothing to stop (the build released what it created); the process entry only sees the error
+    logger.error("kernel start failed", { err: e });
+    throw e;
+  }
   await startBuiltKernelApp(app, config, signalOptions);
   return app;
 }

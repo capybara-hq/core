@@ -1,4 +1,12 @@
-import { Global, Inject, Injectable, Module, type OnApplicationShutdown } from "@nestjs/common";
+import {
+  type DynamicModule,
+  Global,
+  Inject,
+  Injectable,
+  Module,
+  type OnApplicationShutdown,
+  type Provider,
+} from "@nestjs/common";
 import type { Kysely } from "kysely";
 import { createDb } from "../../db/pool.js";
 import type { KernelLogger } from "../../log.js";
@@ -29,27 +37,57 @@ export class PoolLifecycle implements OnApplicationShutdown {
   }
 }
 
+/** The handles over the pool, the same for both pool sources. */
+function databaseModule(
+  pool: Provider[],
+  imports: NonNullable<DynamicModule["imports"]>,
+): DynamicModule {
+  return {
+    module: DatabaseModule,
+    global: true,
+    imports,
+    providers: [...pool, TransactionHost, KernelDb, XactLock],
+    exports: [KERNEL_POOL, TransactionHost, KernelDb, XactLock],
+  };
+}
+
 /** Global: the Kysely pool, `TransactionHost`, the context-aware `KernelDb` and `XactLock`. */
 @Global()
-@Module({
-  imports: [GracefulShutdownModule],
-  providers: [
-    {
-      provide: KERNEL_POOL,
-      inject: [KernelConfigService, KERNEL_LOGGER],
-      useFactory: (config: KernelConfigService, log: KernelLogger) => {
-        const { db } = config.get();
-        return createDb(db.url, db.poolMax, (err) => log.error("pg idle client error", { err }), {
-          connectTimeoutMs: db.connectTimeoutMs,
-          onClientError: (err) => log.warn("pg client error", { err }),
-        });
-      },
-    },
-    TransactionHost,
-    KernelDb,
-    XactLock,
-    PoolLifecycle,
-  ],
-  exports: [KERNEL_POOL, TransactionHost, KernelDb, XactLock],
-})
-export class DatabaseModule {}
+@Module({})
+// biome-ignore lint/complexity/noStaticOnlyClass: a Nest dynamic module
+export class DatabaseModule {
+  /** The pool `db.*` of the config describes, closed at shutdown ({@link PoolLifecycle}). */
+  static forRoot(): DynamicModule {
+    return databaseModule(
+      [
+        {
+          provide: KERNEL_POOL,
+          inject: [KernelConfigService, KERNEL_LOGGER],
+          useFactory: (config: KernelConfigService, log: KernelLogger) => {
+            const { db } = config.get();
+            return createDb(
+              db.url,
+              db.poolMax,
+              (err) => log.error("pg idle client error", { err }),
+              {
+                connectTimeoutMs: db.connectTimeoutMs,
+                onClientError: (err) => log.warn("pg client error", { err }),
+              },
+            );
+          },
+        },
+        PoolLifecycle,
+      ],
+      [GracefulShutdownModule],
+    );
+  }
+
+  /**
+   * The handles over a pool the caller owns and closes (`@capybara-hq/testing`'s
+   * `createLocalAccount`, which has a pool and no config): the context never closes it.
+   */
+  // biome-ignore lint/suspicious/noExplicitAny: the pool carries no schema types
+  static borrowing(pool: Kysely<any>): DynamicModule {
+    return databaseModule([{ provide: KERNEL_POOL, useValue: pool }], []);
+  }
+}

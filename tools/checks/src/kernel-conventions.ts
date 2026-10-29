@@ -264,21 +264,11 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
  */
 export const KC_PENDING: KcPending = {
   "kc-wiring": [
-    // R10: the CLI's admin commands build AccountsService by hand until Task 5.2 runs them on the
-    // Nest application context
-    { path: "apps/capybara/src/commands/admin-create.ts", max: 1 },
-    { path: "apps/capybara/src/commands/admin-grant.ts", max: 1 },
     // the application's `overrides` (test seams) as `useValue` providers until Task 5.3
     { path: "packages/kernel/src/kernel.module.ts", max: 1 },
-    // R10: createLocalAccount builds AccountsService by hand until Task 5.2
-    { path: "packages/testing/src/kernel-helpers.ts", max: 1 },
   ],
-  // the createKernel facade and its Kernel type: Task 5.2 moves `capybara start`, 5.3 deletes it
+  // the createKernel facade and its Kernel type: Task 5.3 deletes it
   "kc-facade": [
-    { path: "apps/capybara/src/commands/start.ts", max: 3 },
-    // start.test / start-bootstrap.test mock the `createKernel` export `capybara start` still
-    // uses; they move with start.ts in Task 5.2
-    { path: "apps/capybara/test/", max: 2 },
     { path: "packages/kernel/src/index.ts", max: 2 },
     { path: "packages/kernel/src/kernel.ts", max: 4 },
   ],

@@ -8,9 +8,9 @@ import { ChannelSupervisor } from "../../src/channels/supervisor.js";
 import { AnonymousGuestLock, AnonymousGuests } from "../../src/channels/threads.js";
 import { ChannelWebhooks } from "../../src/channels/webhook.js";
 import type { KernelConfig } from "../../src/config/schema.js";
-import { standaloneDatabase } from "../../src/infra/database/standalone.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
+import { databaseHandles } from "./database.js";
 
 const quiet = createLogger("error", { write: () => {} });
 
@@ -73,7 +73,7 @@ export function channelSupervisorFor(d: {
   /** The lease source; default a `LockService` on `redis`. */
   locks?: Pick<LockService, "hold">;
 }): ChannelSupervisor {
-  const { db } = standaloneDatabase(d.pool, quiet);
+  const { db } = databaseHandles(d.pool, quiet);
   const sup = new ChannelSupervisor(
     db,
     d.redis,
@@ -92,9 +92,9 @@ export function channelSupervisorFor(d: {
   return sup;
 }
 
-/** The org's anonymous guest accounts over a test's own pool (R10: the standalone handles). */
+/** The org's anonymous guest accounts over a test's own pool (the test database handles). */
 // biome-ignore lint/suspicious/noExplicitAny: the pool carries no schema types
 export function anonymousGuestsFor(pool: Kysely<any>): AnonymousGuests {
-  const { db, txHost, xactLock } = standaloneDatabase(pool, quiet);
+  const { db, txHost, xactLock } = databaseHandles(pool, quiet);
   return new AnonymousGuests(db, new AnonymousGuestLock(xactLock, txHost), txHost);
 }

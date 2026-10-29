@@ -37,7 +37,7 @@ describe("DatabaseModule", () => {
         imports: [
           LoggingModule.forRoot(config, { logger: createLogger("error") }),
           ConfigModule.forRoot(config),
-          DatabaseModule,
+          DatabaseModule.forRoot(),
         ],
       },
       { logger: false },
@@ -74,7 +74,7 @@ describe("DatabaseModule client errors", () => {
         imports: [
           LoggingModule.forRoot(config, { logger: log }),
           ConfigModule.forRoot(config),
-          DatabaseModule,
+          DatabaseModule.forRoot(),
         ],
       },
       { logger: false },

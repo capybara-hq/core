@@ -188,7 +188,7 @@ export function createSecrets(db: AnyDb, keyring: Keyring, namespace: string): K
 
 /**
  * 把非当前主密钥包装的数据密钥改用当前主密钥重新包装，返回处理条数。One transaction over the given
- * handles (`KernelDb` + its `TransactionHost`; `standaloneDatabase` outside the application).
+ * handles (`KernelDb` + its `TransactionHost`, as `DatabaseModule` provides them).
  */
 export async function rewrapDataKeys(
   handles: { db: Pick<KernelDb, "db">; txHost: Pick<TransactionHost, "run"> },

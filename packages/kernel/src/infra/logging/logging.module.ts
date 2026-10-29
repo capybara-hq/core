@@ -18,7 +18,11 @@ export interface LoggingModuleOptions {
 // biome-ignore lint/complexity/noStaticOnlyClass: a Nest dynamic module
 export class LoggingModule {
   static forRoot(config: KernelConfig, opts: LoggingModuleOptions = {}): DynamicModule {
-    const logger = opts.logger ?? createConfiguredLogger(config);
+    return LoggingModule.forLogger(opts.logger ?? createConfiguredLogger(config));
+  }
+
+  /** Provides `logger` (a context without a config: `KernelCliModule.overPool`). */
+  static forLogger(logger: KernelLogger): DynamicModule {
     return {
       module: LoggingModule,
       global: true,

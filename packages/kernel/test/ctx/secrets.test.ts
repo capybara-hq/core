@@ -6,8 +6,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createKeyring, createSecrets, rewrapDataKeys } from "../../src/ctx/secrets.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { standaloneDatabase } from "../../src/infra/database/standalone.js";
 import { createLogger } from "../../src/log.js";
+import { databaseHandles } from "../helpers/database.js";
 
 let box: Awaited<ReturnType<typeof startTestPostgres>>;
 // biome-ignore lint/suspicious/noExplicitAny: 测试库无表结构类型
@@ -40,7 +40,7 @@ const rowOf = (ns: string, org: string, key: string) =>
     .executeTakeFirstOrThrow();
 
 // biome-ignore lint/suspicious/noExplicitAny: the pool carries no schema types
-const handlesOf = (pool: Kysely<any>) => standaloneDatabase(pool, createLogger("error"));
+const handlesOf = (pool: Kysely<any>) => databaseHandles(pool, createLogger("error"));
 
 describe("createKeyring", () => {
   it("非 32 字节密钥抛 TypeError；id 为 sha256 前 8 字节 hex；不泄露原始密钥", () => {

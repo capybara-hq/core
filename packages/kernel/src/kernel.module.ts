@@ -92,7 +92,7 @@ export class KernelModule {
         LoggingModule.forRoot(config, { logger }),
         ConfigModule.forRoot(config, options.env !== undefined ? { env: options.env } : {}),
         GracefulShutdownModule,
-        DatabaseModule,
+        DatabaseModule.forRoot(),
         RedisModule,
         LockModule,
         CacheModule,

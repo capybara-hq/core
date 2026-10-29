@@ -5,15 +5,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const seen = vi.hoisted(() => ({ opts: [] as Record<string, unknown>[] }));
 
-// Only createKernel and the config source are replaced: the real resolveConfig reads the env
+// Only startKernelApp and the config source are replaced: the real resolveConfig reads the env
 vi.mock("@capybara-hq/kernel", async (importOriginal) => {
   const real = await importOriginal<typeof import("@capybara-hq/kernel")>();
   return {
     ...real,
     selectConfigSource: () => ({ load: async () => ({}) }),
-    createKernel: async (_config: unknown, opts: Record<string, unknown>) => {
+    startKernelApp: async (_config: unknown, opts: Record<string, unknown>) => {
       seen.opts.push(opts);
-      return { start: async () => {}, stop: async () => {} };
+      return {};
     },
   };
 });

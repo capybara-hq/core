@@ -1,14 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Module } from "@nestjs/common";
 import { type Selectable, sql, type Updateable } from "kysely";
-import { SetupLock } from "../admin/setup-lock.js";
+import { SetupLock, SetupLockModule } from "../admin/setup-lock.js";
 import type { AccountsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { audit } from "./audit.js";
-import { EnterpriseAdminLock } from "./enterprise-admin.js";
+import { EnterpriseAdminLock, EnterpriseAdminLockModule } from "./enterprise-admin.js";
 import { MAX_PASSWORD_LENGTH, normalizeLogin, validatePassword } from "./login.js";
 import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from "./passwords.js";
 
@@ -543,3 +543,15 @@ export interface EnterpriseAdminInput {
   displayName: string;
   email?: string | undefined;
 }
+
+/**
+ * {@link AccountsService} with the locks it takes; needs only the database. Part of
+ * `IdentityModule`; the CLI's `admin create` / `admin grant` contexts and `@capybara-hq/testing`'s
+ * `createLocalAccount` import it alone.
+ */
+@Module({
+  imports: [SetupLockModule, EnterpriseAdminLockModule],
+  providers: [AccountsService],
+  exports: [AccountsService],
+})
+export class AccountsModule {}

@@ -1,10 +1,9 @@
 import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import type { DynamicModule, INestApplicationContext, Type } from "@nestjs/common";
-import { NestFactory } from "@nestjs/core";
 import type { z } from "zod";
 import type { KernelConfig } from "../config/schema.js";
 import type { Keyring } from "../ctx/secrets.js";
-import { KernelCliModule } from "../infra/cli/kernel-cli.module.js";
+import { openKernelCli } from "../infra/cli/kernel-cli.module.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_BUS, KEYRING } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
@@ -96,14 +95,11 @@ export async function openExtensionCli(
   const inspected = await ExtensionHost.inspect(config.extensions, {
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
   });
-  const app = await NestFactory.createApplicationContext(
-    KernelCliModule.forRoot(config, {
-      logger: log,
-      ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
-      modules: [ExtensionsModule, ...(opts.modules ?? [])],
-    }),
-    { logger: false, abortOnError: false },
-  );
+  const app = await openKernelCli(config, {
+    logger: log,
+    ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
+    modules: [ExtensionsModule, ...(opts.modules ?? [])],
+  });
   const close = () => app.close().catch(() => {});
   const db = app.get(KernelDb);
   const keyring = app.get<Keyring>(KEYRING);

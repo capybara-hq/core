@@ -8,14 +8,12 @@ import { join } from "node:path";
 import {
   AccountsService,
   closeKernelApp,
-  createDb,
   createLogger,
   ExtensionHost,
   KernelConfigSchema,
   readExtensionPackage,
   readPluginPackage,
   StorageService,
-  standaloneDatabase,
   startKernelApp,
 } from "@capybara-hq/kernel";
 import {
@@ -219,7 +217,6 @@ describe("loaded by path in a kernel", () => {
   let s3: TestS3;
   let k: TestKernel;
   let dir: string;
-  let destroyDb: (() => Promise<void>) | undefined;
   let root: Req;
   let orgId: string;
 
@@ -250,10 +247,7 @@ describe("loaded by path in a kernel", () => {
       },
     });
     k = await startTestKernel(config);
-    const raw = createDb(pgc.url, 2);
-    destroyDb = () => raw.destroy();
-    const h = standaloneDatabase(raw, silent());
-    await new AccountsService(h.db, h.txHost, h.adminLock, h.setupLock).createLocal({
+    await k.app.get(AccountsService).createLocal({
       login: "root",
       password: PW,
       displayName: "Root",
@@ -267,7 +261,6 @@ describe("loaded by path in a kernel", () => {
 
   afterAll(async () => {
     await k?.close();
-    await destroyDb?.();
     if (dir) await rm(dir, { recursive: true, force: true });
     await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
   });

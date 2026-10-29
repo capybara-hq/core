@@ -2,17 +2,17 @@ import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { type Readable, Writable } from "node:stream";
 import {
+  AccountsModule,
   AccountsService,
   ApiError,
-  createDb,
   KERNEL_MIGRATIONS_DIR,
   KERNEL_SCHEMA,
   KernelConfigSchema,
   type KernelLogger,
   loadConfig,
   migrate,
+  openKernelCli,
   secretValues,
-  standaloneDatabase,
 } from "@capybara-hq/kernel";
 
 /** 从输入流读第一行（去掉行尾 `\r`）；流在任何内容之前结束则为 undefined。 */
@@ -151,7 +151,7 @@ export async function runAdminCreate(
     if (err !== undefined) return fail(err);
   }
 
-  let raw: ReturnType<typeof createDb> | undefined;
+  let app: Awaited<ReturnType<typeof openKernelCli>> | undefined;
   try {
     const config = await loadConfig(env);
     log.addSecrets(secretValues(KernelConfigSchema, config));
@@ -162,12 +162,9 @@ export async function runAdminCreate(
       { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR },
       { connectTimeoutMs },
     );
-    raw = createDb(config.db.url, 2, (err) => log.error("pg idle client error", { err }), {
-      connectTimeoutMs,
-    });
-    // Until Task 5.2 runs the CLI on a Nest application context (R10)
-    const { db, txHost, adminLock, setupLock } = standaloneDatabase(raw, log);
-    const accounts = new AccountsService(db, txHost, adminLock, setupLock);
+    // PostgreSQL only: the context has no Redis
+    app = await openKernelCli(config, { logger: log, modules: [AccountsModule], redis: false });
+    const accounts = app.get(AccountsService);
     const skipped = (msg: string): number => {
       (io.stdout ?? process.stdout).write(`${msg}; skipped\n`);
       return 0;
@@ -215,6 +212,6 @@ export async function runAdminCreate(
     if (e instanceof ApiError) return fail(`${e.code}: ${e.message}`);
     return fail(e instanceof Error ? e.message : String(e));
   } finally {
-    await raw?.destroy().catch(() => {});
+    await app?.close().catch(() => {});
   }
 }

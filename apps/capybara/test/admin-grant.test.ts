@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
+  AccountsModule,
   AccountsService,
   createDb,
   createLogger,
@@ -8,7 +9,7 @@ import {
   KERNEL_SCHEMA,
   kernelDb,
   migrate,
-  standaloneDatabase,
+  openKernelCliOverPool,
 } from "@capybara-hq/kernel";
 import { startTestPostgres, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -18,14 +19,18 @@ const PW = "correct horse battery";
 
 let pg: TestContainer;
 let raw: ReturnType<typeof createDb>;
+let context: Awaited<ReturnType<typeof openKernelCliOverPool>>;
 let accounts: AccountsService;
 
 beforeAll(async () => {
   pg = await startTestPostgres();
   await migrate(pg.url, { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR });
   raw = createDb(pg.url, 2);
-  const h = standaloneDatabase(raw, createLogger("error"));
-  accounts = new AccountsService(h.db, h.txHost, h.adminLock, h.setupLock);
+  context = await openKernelCliOverPool(raw, {
+    logger: createLogger("error"),
+    modules: [AccountsModule],
+  });
+  accounts = context.get(AccountsService);
   await accounts.createLocal({
     login: "root",
     password: PW,
@@ -35,6 +40,7 @@ beforeAll(async () => {
   await accounts.createLocal({ login: "alice", password: PW, displayName: "Alice" });
 }, 120_000);
 afterAll(async () => {
+  await context?.close();
   await raw?.destroy();
   await pg?.stop();
 });

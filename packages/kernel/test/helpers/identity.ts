@@ -22,10 +22,6 @@ import { SessionService } from "../../src/identity/sessions.js";
 import { SettingsService } from "../../src/identity/settings.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
-import {
-  type StandaloneDatabase,
-  standaloneDatabase,
-} from "../../src/infra/database/standalone.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { KernelEvents } from "../../src/infra/events/kernel-events.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
@@ -44,14 +40,16 @@ import type { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { type Credentials, clearAccountCredentials } from "../../src/tools/credentials.js";
 import type { QuestionsService } from "../../src/tools/questions.service.js";
 
+import { type DatabaseHandles, databaseHandles } from "./database.js";
+
 const quiet = createLogger("error", { write: () => {} });
-const handles = new WeakMap<object, StandaloneDatabase>();
+const handles = new WeakMap<object, DatabaseHandles>();
 
 /** The database handles of `db` (one set per Kysely object). */
-export function handlesFor(db: Kysely<any>): StandaloneDatabase {
+export function handlesFor(db: Kysely<any>): DatabaseHandles {
   let h = handles.get(db);
   if (!h) {
-    h = standaloneDatabase(db, quiet);
+    h = databaseHandles(db, quiet);
     handles.set(db, h);
   }
   return h;
