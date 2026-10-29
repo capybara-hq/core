@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 const destroyed = vi.hoisted(() => ({ db: 0, redisDisconnect: 0, busClose: 0 }));
 
-// createHttpApp 构建失败：createKernel 应先释放已创建的 PG 池等连接对象再抛出
+// createHttpApp fails while the application is built: createKernelApp releases the PG pool and
+// the other connection objects it created before it throws
 vi.mock("../src/http/app.js", () => ({
   createHttpApp: async () => {
     throw new Error("http init failed");
@@ -51,10 +52,10 @@ vi.mock("../src/ctx/bus.js", async (importOriginal) => {
 });
 
 const { KernelConfigSchema } = await import("../src/config/schema.js");
-const { createKernel } = await import("../src/kernel.js");
+const { createKernelApp } = await import("../src/app.js");
 const { createLogger } = await import("../src/log.js");
 
-describe("createKernel 构建失败", () => {
+describe("createKernelApp build failure", () => {
   it("createHttpApp 抛错时断开 Redis、关闭总线订阅、销毁 PG 池后再抛出", async () => {
     const config = KernelConfigSchema.parse({
       // 不会真正连接：池与 Redis 都是惰性的
@@ -64,7 +65,7 @@ describe("createKernel 构建失败", () => {
       marketplaces: { official: { enabled: false } },
     });
     await expect(
-      createKernel(config, { env: {}, logger: createLogger("error", { write: () => {} }) }),
+      createKernelApp(config, { env: {}, logger: createLogger("error", { write: () => {} }) }),
     ).rejects.toThrow("http init failed");
     expect(destroyed.db).toBe(1);
     expect(destroyed.redisDisconnect).toBeGreaterThanOrEqual(1);
