@@ -14,9 +14,8 @@ import { TOOL_PIPELINE_HOOKS, type ToolPipelineHooks } from "./tools/pipeline.js
 import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
 
 /**
- * A test seam of the kernel application (`KernelAppOptions.overrides`): a value for one of the
- * named seam tokens, each an optional provider the kernel itself never provides (its consumer
- * falls back to the production default). Domain classes cannot be replaced this way.
+ * The value each seam token takes. Every token is an optional provider the kernel itself never
+ * provides (its consumer falls back to the production default):
  *
  * - `AGENT_LOOP_FACTORY`: the agent loop runs execute (default the LangGraph loop);
  * - `RUN_HOOKS`: the run worker's hooks;
@@ -27,22 +26,32 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  * - `EMBED_TOKEN_CLOCK`: the clock embed tokens are issued and checked with;
  * - `APP_INTERCEPTOR`: one more global interceptor (a probe of the matched routes).
  */
-export type KernelOverride =
-  | { provide: typeof AGENT_LOOP_FACTORY; useValue: AgentLoopFactory }
-  | { provide: typeof RUN_HOOKS; useValue: RunHooks }
-  | { provide: typeof EVAL_REPLAY_HOOKS; useValue: EvalReplayHooks }
-  | { provide: typeof TOOL_PIPELINE_HOOKS; useValue: ToolPipelineHooks }
-  | { provide: typeof BOOTSTRAP_LOCK_TTL; useValue: number }
-  | { provide: typeof FILE_PREVIEW_TIMEOUT; useValue: number }
-  | { provide: typeof LIST_MODELS_TIMEOUT; useValue: number }
-  | { provide: typeof USAGE_REPORT_RETRY; useValue: UsageReportRetry }
-  | { provide: typeof SANDBOX_LEASE_TIMINGS; useValue: Partial<SandboxLeaseTimings> }
-  | { provide: typeof CHANNEL_WEBHOOK_TIMINGS; useValue: Partial<ChannelWebhookTimings> }
-  | { provide: typeof EMBED_TOKEN_CLOCK; useValue: () => number }
-  | { provide: typeof APP_INTERCEPTOR; useValue: NestInterceptor };
+interface KernelSeams {
+  [AGENT_LOOP_FACTORY]: AgentLoopFactory;
+  [RUN_HOOKS]: RunHooks;
+  [EVAL_REPLAY_HOOKS]: EvalReplayHooks;
+  [TOOL_PIPELINE_HOOKS]: ToolPipelineHooks;
+  [BOOTSTRAP_LOCK_TTL]: number;
+  [FILE_PREVIEW_TIMEOUT]: number;
+  [LIST_MODELS_TIMEOUT]: number;
+  [USAGE_REPORT_RETRY]: UsageReportRetry;
+  [SANDBOX_LEASE_TIMINGS]: Partial<SandboxLeaseTimings>;
+  [CHANNEL_WEBHOOK_TIMINGS]: Partial<ChannelWebhookTimings>;
+  [EMBED_TOKEN_CLOCK]: () => number;
+  [APP_INTERCEPTOR]: NestInterceptor;
+}
 
-/** The tokens {@link KernelOverride} may name; any other token is refused when the application is built. */
-export const KERNEL_OVERRIDE_TOKENS: ReadonlySet<unknown> = new Set<unknown>([
+/**
+ * A seam of the kernel's own tests (`KernelAppOptions.overrides`): a value for one of the named
+ * seam tokens of {@link KernelSeams}. Domain classes cannot be replaced this way. The tokens are
+ * not exported from the package, and `@capybara-hq/testing`'s `startTestKernel` takes no
+ * overrides (ruling R22).
+ */
+export type KernelOverride = {
+  [K in keyof KernelSeams]: { provide: K; useValue: KernelSeams[K] };
+}[keyof KernelSeams];
+
+const SEAM_TOKENS = [
   AGENT_LOOP_FACTORY,
   RUN_HOOKS,
   EVAL_REPLAY_HOOKS,
@@ -55,4 +64,12 @@ export const KERNEL_OVERRIDE_TOKENS: ReadonlySet<unknown> = new Set<unknown>([
   CHANNEL_WEBHOOK_TIMINGS,
   EMBED_TOKEN_CLOCK,
   APP_INTERCEPTOR,
-]);
+] as const satisfies readonly (keyof KernelSeams)[];
+
+/** Compiles only while {@link SEAM_TOKENS} lists every key of {@link KernelSeams}. */
+type MissingSeams = Exclude<keyof KernelSeams, (typeof SEAM_TOKENS)[number]>;
+const allSeamsListed: [MissingSeams] extends [never] ? true : MissingSeams = true;
+void allSeamsListed;
+
+/** The tokens {@link KernelOverride} may name; any other token is refused when the application is built. */
+export const KERNEL_OVERRIDE_TOKENS: ReadonlySet<unknown> = new Set<unknown>(SEAM_TOKENS);

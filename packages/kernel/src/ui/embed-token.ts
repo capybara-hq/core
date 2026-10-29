@@ -65,6 +65,9 @@ function parseClaims(v: unknown): EmbedClaims | null {
   };
 }
 
+/** Optional provider: the clock {@link EmbedTokens} issues and checks with (default `Date.now`; tests). */
+export const EMBED_TOKEN_CLOCK = Symbol("EMBED_TOKEN_CLOCK");
+
 /**
  * 嵌入令牌：`base64url(JSON 声明).base64url(HMAC-SHA256(key, "capybara-embed/1." + 第一段))`。
  * - 格式固定、没有头（没有 alg 可混淆）；密钥由主密钥环经 HKDF 派生，轮换后上一把主密钥签的令牌仍可校验到过期；
@@ -73,9 +76,6 @@ function parseClaims(v: unknown): EmbedClaims | null {
  * 无状态（不落库、不进 Redis）：各副本用同一主密钥即可校验，不需要共享状态。One provider: the UI
  * routes issue tokens with it and every extension's `ctx` verifies them with it.
  */
-/** Optional provider: the clock {@link EmbedTokens} issues and checks with (default `Date.now`; tests). */
-export const EMBED_TOKEN_CLOCK = Symbol("EMBED_TOKEN_CLOCK");
-
 @Injectable()
 export class EmbedTokens {
   private readonly current: Buffer;

@@ -346,16 +346,18 @@ kernel with `createKernelApp(config, options)` (started, not listening) or
 `startKernelApp(config, options)` (started and listening, with signal handling), stop it with
 `closeKernelApp(app)`, reach its HTTP side with `kernelAppHttp(app)` / `kernelAppPort(app)` and a
 service with `app.get(Class)`; tests use `@capybara-hq/testing`'s `startTestKernel`.
-`KernelOptions` is `KernelAppOptions`. `KernelAppOptions.overrides` takes only the named test seams
-(`KernelOverride`: `AGENT_LOOP_FACTORY`, `RUN_HOOKS`, `EVAL_REPLAY_HOOKS`, `TOOL_PIPELINE_HOOKS`,
-`APP_INTERCEPTOR` and the timing tokens below); any other token is refused when the application is
-built. New exports: `KernelModule`, `KernelOverride`
-and the infra decorators `Transactional`, `afterCommit`, `WithLock`, `Cacheable`, `CacheEvict`,
-`LockedCron`, `LockedInterval`, `Throttled`, `createZodDto`, `ZBody`, `ZQuery`, `ZParam`.
+`KernelOptions` is `KernelAppOptions`. `KernelAppOptions.overrides` is for the kernel's own tests
+only: it takes the named seam tokens of `KernelOverride` and refuses any other token when the
+application is built. The seam tokens are not exported from the package, and
+`@capybara-hq/testing`'s `startTestKernel` takes no overrides. New exports: `KernelModule`, the
+type `KernelOverride` and the infra decorators `Transactional`, `afterCommit`, `WithLock`,
+`Cacheable`, `CacheEvict`, `LockedCron`, `LockedInterval`, `Throttled`, `createZodDto`, `ZBody`,
+`ZQuery`, `ZParam`.
 
 Test seams (nest kernel Task 5.3): no provider has a mutable public test knob any more. Each
-timing or clock tests shorten is an optional seam token the kernel never provides, set through
-`KernelAppOptions.overrides` (or the constructor in a unit test): `BOOTSTRAP_LOCK_TTL` (was
+timing or clock the kernel's tests shorten is an optional seam token the kernel never provides,
+set by those tests through `KernelAppOptions.overrides` or a constructor argument (internal, not
+exported): `BOOTSTRAP_LOCK_TTL` (was
 `BootstrapService.lockTtlMs`), `FILE_PREVIEW_TIMEOUT` (`PreviewerRegistry.timeoutMs`),
 `LIST_MODELS_TIMEOUT` (`ProviderRegistry.listTimeoutMs`), `USAGE_REPORT_RETRY`
 (`UsageReporter.retry`), `SANDBOX_LEASE_TIMINGS` (`SandboxLeases.ttlMs` / `pollMs` / `pathTtlMs`,

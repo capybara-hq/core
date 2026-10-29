@@ -50,9 +50,9 @@ export interface KernelAppOptions {
    */
   extensionConfigSources?: Record<string, Record<string, ConfigSourceKind>>;
   /**
-   * Test seams: values for the named seam tokens ({@link KernelOverride}: `AGENT_LOOP_FACTORY`,
-   * `RUN_HOOKS`, `EVAL_REPLAY_HOOKS`, `APP_INTERCEPTOR`), registered in a global module so the
-   * domain modules that resolve these optional tokens get them. Any other token is refused.
+   * The kernel's own tests' seams: values for the named seam tokens ({@link KernelOverride} lists
+   * every one), registered in a global module so the domain modules that resolve these optional
+   * tokens get them. Any other token is refused when the application is built.
    */
   overrides?: readonly KernelOverride[];
 }
