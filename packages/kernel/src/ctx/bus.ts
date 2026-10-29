@@ -1,5 +1,7 @@
 import type { ExtensionContext, Logger } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
+import { runOutsideTransaction } from "../infra/database/transaction-host.js";
+import { withoutLogContext } from "../log-context.js";
 import { assertNamespace } from "./namespace.js";
 
 type RawHandler = (message: string) => void;
@@ -44,9 +46,15 @@ export function createBusSubscriber(
     if (conn) return conn;
     const c = subFactory();
     c.on("message", (channel: string, message: string) => {
-      for (const h of [...(channels.get(channel)?.handlers ?? [])]) {
-        invokeIsolated(log, channel, () => h(message));
-      }
+      // the connection's callbacks carry the async context of the first subscribe (a request's
+      // log fields, possibly an open transaction): every handler starts from an empty one
+      runOutsideTransaction(() =>
+        withoutLogContext(() => {
+          for (const h of [...(channels.get(channel)?.handlers ?? [])]) {
+            invokeIsolated(log, channel, () => h(message));
+          }
+        }),
+      );
     });
     c.on("error", (err: Error) => log.error("bus subscriber connection error", { err }));
     conn = c;
