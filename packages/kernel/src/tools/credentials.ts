@@ -1,11 +1,15 @@
 import type { AuthInjection } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
-import { sql, type Transaction } from "kysely";
+import { sql } from "kysely";
 import { z } from "zod";
-import type { KernelConfig } from "../config/schema.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
-import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { LockService } from "../infra/lock/lock.service.js";
+import { KERNEL_LOGGER, KEYRING, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { oauthHttpOptions } from "./oauth/discovery.js";
 import {
@@ -121,7 +125,7 @@ const secretSchemas = {
  * 成员离职时在其事务内调用（不解密，不需要密钥环）。返回删除条数。
  */
 export async function clearAccountCredentials(
-  db: KernelSchemaDb | Transaction<KernelDatabase>,
+  db: KernelSchemaDb,
   orgId: string,
   accountId: string,
 ): Promise<number> {
@@ -138,44 +142,35 @@ export async function clearAccountCredentials(
   return Number(r.numDeletedRows);
 }
 
-/** OAuth 刷新所需的依赖（锁在 Redis，往返限时与本机 http 放行取自配置）。 */
-export interface CredentialsOAuthDeps {
-  redis: Redis;
-  config: () => KernelConfig;
-}
-
 /**
  * 连接器凭据：信封加密存入 capybara.secrets，解密后只在构造注入头时出现。OAuth 连接器的 token 也存在这里
- * （个人 / 组织键，同静态凭据），OAuth 客户端存组织级的 `:client` 键；刷新见 oauth/tokens.ts。
+ * （个人 / 组织键，同静态凭据），OAuth 客户端存组织级的 `:client` 键；刷新见 oauth/tokens.ts（锁在 Redis，
+ * 往返限时与本机 http 放行取自配置）。Writes and deletes run on the context's handle (`KernelDb`): inside a
+ * caller's `@Transactional` they join its transaction (they live and die with the connector row and audit).
  */
+@Injectable()
 export class Credentials {
-  private readonly tokens: OAuthTokens | undefined;
+  private readonly tokens: OAuthTokens;
 
   constructor(
-    private readonly db: KernelSchemaDb,
-    private readonly keyring: Keyring,
-    private readonly log: KernelLogger,
-    oauth?: CredentialsOAuthDeps,
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(KEYRING) private readonly keyring: Keyring,
+    @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+    @Inject(KernelConfigService) config: Pick<KernelConfigService, "get">,
+    @Inject(LockService) locks: Pick<LockService, "lease" | "releaseIf" | "renew">,
+    @Inject(REDIS) redis: Pick<Redis, "exists">,
   ) {
-    if (oauth) {
-      const store: OAuthStore = {
-        readClient: (orgId, connectorId) => this.oauthClient(orgId, connectorId),
-        readTokens: (orgId, connectorId, owner) => this.oauthTokens(orgId, connectorId, owner),
-        writeTokens: (orgId, connectorId, owner, rec) =>
-          this.setOAuthTokens(orgId, connectorId, owner, rec),
-        deleteTokens: (orgId, connectorId, owner) => this.clear(orgId, connectorId, owner),
-      };
-      this.tokens = new OAuthTokens(
-        store,
-        oauth.redis,
-        () => oauthHttpOptions(oauth.config()),
-        log,
-      );
-    }
+    const store: OAuthStore = {
+      readClient: (orgId, connectorId) => this.oauthClient(orgId, connectorId),
+      readTokens: (orgId, connectorId, owner) => this.oauthTokens(orgId, connectorId, owner),
+      writeTokens: (orgId, connectorId, owner, rec) =>
+        this.setOAuthTokens(orgId, connectorId, owner, rec),
+      deleteTokens: (orgId, connectorId, owner) => this.clear(orgId, connectorId, owner),
+    };
+    this.tokens = new OAuthTokens(store, locks, redis, () => oauthHttpOptions(config.get()), log);
   }
 
   private oauth(): OAuthTokens {
-    if (!this.tokens) throw new Error("credentials: OAuth is not configured");
     return this.tokens;
   }
 
@@ -211,10 +206,9 @@ export class Credentials {
     orgId: string,
     connectorId: string,
     client: OAuthClientRecord,
-    trx?: Transaction<KernelDatabase>,
   ): Promise<void> {
     this.registerSecrets([client.clientSecret, client.registration?.accessToken]);
-    await this.secrets(trx).set(orgId, clientKey(connectorId), JSON.stringify(client));
+    await this.secrets().set(orgId, clientKey(connectorId), JSON.stringify(client));
   }
 
   async oauthTokens(
@@ -237,14 +231,14 @@ export class Credentials {
     connectorId: string,
     owner: CredentialOwner,
     rec: OAuthTokenRecord,
-    trx?: Transaction<KernelDatabase>,
   ): Promise<void> {
     this.registerSecrets([rec.access_token, rec.refresh_token]);
-    await this.secrets(trx).set(orgId, keyOf(connectorId, owner), JSON.stringify(rec));
+    await this.secrets().set(orgId, keyOf(connectorId, owner), JSON.stringify(rec));
   }
 
-  private secrets(db: KernelSchemaDb | Transaction<KernelDatabase> = this.db) {
-    return createSecrets(db, this.keyring, NAMESPACE);
+  /** The secrets store on the context's handle (the caller's transaction, else the pool). */
+  private secrets() {
+    return createSecrets(this.db.db, this.keyring, NAMESPACE);
   }
 
   /**
@@ -310,30 +304,19 @@ export class Credentials {
     auth: ConnectorAuth,
     owner: CredentialOwner,
     value: StaticSecret,
-    /** 传入时在调用方事务内写入（与连接器行 / 审计同生共死）。 */
-    trx?: Transaction<KernelDatabase>,
   ): Promise<void> {
     this.validate(auth, owner, value);
-    await this.secrets(trx).set(orgId, keyOf(connectorId, owner), JSON.stringify(value));
+    await this.secrets().set(orgId, keyOf(connectorId, owner), JSON.stringify(value));
   }
 
-  async clear(
-    orgId: string,
-    connectorId: string,
-    owner: CredentialOwner,
-    trx?: Transaction<KernelDatabase>,
-  ): Promise<void> {
-    await this.secrets(trx).delete(orgId, keyOf(connectorId, owner));
+  async clear(orgId: string, connectorId: string, owner: CredentialOwner): Promise<void> {
+    await this.secrets().delete(orgId, keyOf(connectorId, owner));
   }
 
   /** 删除某连接器的全部凭据（组织凭据与所有成员的个人凭据），连接器删除时调用。 */
-  async clearConnector(
-    orgId: string,
-    connectorId: string,
-    trx?: Transaction<KernelDatabase>,
-  ): Promise<void> {
+  async clearConnector(orgId: string, connectorId: string): Promise<void> {
     const prefix = orgKey(connectorId).slice(0, -"org".length);
-    await (trx ?? this.db)
+    await this.db
       .deleteFrom("secrets")
       .where("namespace", "=", NAMESPACE)
       .where("org_id", "=", orgId)
@@ -342,12 +325,8 @@ export class Credentials {
   }
 
   /** 删除某账号在该组织所有连接器上的个人凭据，见 {@link clearAccountCredentials}。 */
-  async clearAccount(
-    orgId: string,
-    accountId: string,
-    trx?: Transaction<KernelDatabase>,
-  ): Promise<number> {
-    return clearAccountCredentials(trx ?? this.db, orgId, accountId);
+  async clearAccount(orgId: string, accountId: string): Promise<number> {
+    return clearAccountCredentials(this.db.db, orgId, accountId);
   }
 
   /**
@@ -363,7 +342,7 @@ export class Credentials {
       WHERE s.namespace = ${NAMESPACE} AND s.org_id = ${orgId}
         AND left(s.key, ${prefix.length}) = ${prefix}
       ORDER BY s.updated_at DESC, m.account_id
-      LIMIT ${limit}`.execute(this.db);
+      LIMIT ${limit}`.execute(this.db.db);
     return rows.rows.map((r) => r.account_id);
   }
 
@@ -373,7 +352,6 @@ export class Credentials {
     connectorId: string,
     auth: ConnectorAuth,
     accountId: string,
-    trx?: Transaction<KernelDatabase>,
   ): Promise<"connected" | "missing"> {
     if (auth.type === "none") return "connected";
     // 客户端凭据流：有客户端即可按需取 token
@@ -383,7 +361,7 @@ export class Credentials {
         : auth.ownership === "personal"
           ? userKey(connectorId, accountId)
           : orgKey(connectorId);
-    const row = await (trx ?? this.db)
+    const row = await this.db
       .selectFrom("secrets")
       .select("key")
       .where("namespace", "=", NAMESPACE)

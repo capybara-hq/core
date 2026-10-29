@@ -10,7 +10,7 @@ import { ApiError } from "../errors.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
-import { isSafeReturnPath } from "../tools/oauth/flow.js";
+import { isSafeReturnPath } from "../tools/oauth/flow-paths.js";
 import { ExternalIdentities, IdentityNotVerified } from "./external.js";
 
 /** state 的有效期（秒）。 */

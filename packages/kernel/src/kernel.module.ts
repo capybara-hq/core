@@ -55,6 +55,12 @@ import { SkillsModule } from "./skills/skills.module.js";
 import { SkillsService } from "./skills/skills.service.js";
 import { StorageModule } from "./storage/storage.module.js";
 import { StorageService } from "./storage/storage.service.js";
+import { ApprovalsService } from "./tools/approvals.service.js";
+import { ToolDrift } from "./tools/drift.js";
+import { ToolPipeline } from "./tools/pipeline.js";
+import { QuestionsService } from "./tools/questions.service.js";
+import { ToolRegistry } from "./tools/registry.js";
+import { ToolsModule } from "./tools/tools.module.js";
 
 /**
  * Global: the legacy service graph (`LEGACY_GRAPH`, one factory provider over the infra modules)
@@ -77,6 +83,7 @@ class LegacyGraphModule {
         SkillsModule,
         IdentityModule,
         OrgsModule,
+        ToolsModule,
       ],
       providers: [
         { provide: KERNEL_APP_OPTIONS, useValue: options },
@@ -109,6 +116,11 @@ class LegacyGraphModule {
             ExtensionHost,
             ReplicaStatusStore,
             OrgExtensionConfigs,
+            ToolRegistry,
+            ApprovalsService,
+            QuestionsService,
+            ToolDrift,
+            ToolPipeline,
           ],
           useFactory: (
             config: KernelConfigService,
@@ -136,6 +148,11 @@ class LegacyGraphModule {
             host: ExtensionHost,
             replicaStatus: ReplicaStatusStore,
             orgExtensionConfigs: OrgExtensionConfigs,
+            toolRegistry: ToolRegistry,
+            approvals: ApprovalsService,
+            questions: QuestionsService,
+            toolDrift: ToolDrift,
+            toolPipeline: ToolPipeline,
           ): LegacyGraph =>
             createLegacyGraph(config, log, kdb, redis, bus, hooks, {
               txHost,
@@ -157,6 +174,11 @@ class LegacyGraphModule {
               host,
               replicaStatus,
               orgExtensionConfigs,
+              toolRegistry,
+              approvals,
+              questions,
+              toolDrift,
+              toolPipeline,
             }),
         },
         ...(options.overrides ?? []).map((o) => ({

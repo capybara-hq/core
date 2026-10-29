@@ -9,6 +9,7 @@ import { KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
+import { LockedIntervalScheduler } from "../../src/infra/schedule/locked-interval.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
@@ -815,7 +816,7 @@ describe("定时任务与 list_changed", () => {
     );
   });
 
-  it("双副本：只有一个 drift scheduler；扫描任务重复执行也只检查每个连接器一次", async () => {
+  it("双副本：drift-scan 是 @LockedInterval（旧 scheduler 已退役）；扫描重复执行也只检查每个连接器一次", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);
     const app = await createApp(req, orgId);
@@ -827,15 +828,16 @@ describe("定时任务与 list_changed", () => {
     const k2 = await createKernel(kernelConfig(), { env: {}, logger: silent() });
     try {
       await k2.start();
+      // the scan is a @LockedInterval every tools.driftIntervalHours (once per tick across
+      // replicas: the infra schedule tests); the old repeatable scheduler is retired
+      expect(k2.app.get(LockedIntervalScheduler).periodOf(DRIFT_SCAN_JOB)).toBe(24 * 3_600_000);
       const schedulers = (await probe.getJobSchedulers()).filter(
         (s) => s.key === DRIFT_SCHEDULER_ID,
       );
-      expect(schedulers).toHaveLength(1);
-      expect(schedulers[0]).toMatchObject({ name: DRIFT_SCAN_JOB, every: 24 * 3_600_000 });
+      expect(schedulers).toHaveLength(0);
 
-      // 模拟同一周期的扫描被投递了两次（两个副本各一次）
-      await probe.add(DRIFT_SCAN_JOB, {}, { removeOnComplete: true });
-      await probe.add(DRIFT_SCAN_JOB, {}, { removeOnComplete: true });
+      // 模拟同一周期的扫描执行了两次（两个副本各一次）
+      await Promise.all([k.tools.drift.scan(), k2.tools.drift.scan()]);
       await waitFor(
         async () => (await auditOf("connector.tools_drifted")).length === 1,
         10_000,

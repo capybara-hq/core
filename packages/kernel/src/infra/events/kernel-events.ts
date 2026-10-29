@@ -19,6 +19,23 @@ export interface KernelEventMap {
    * drop their long connections at once (the supervisor's periodic re-check is the fallback).
    */
   "extension.org-disabled": { orgId: string; plugin: string };
+  /**
+   * A person decided a tool call approval (after the commit, exactly once: only the decision that
+   * changed it from pending). The run's waits resume it and its IM delivery is enqueued; a lost
+   * event is re-derived by the wait sweep (runs waiting on a decided approval are resumed).
+   */
+  "approval.decided": {
+    id: string;
+    orgId: string;
+    conversationId: string;
+    runId: string;
+    status: "approved" | "denied";
+  };
+  /**
+   * A person answered a tool call's input request (after the commit, exactly once). Same
+   * consumers and the same re-derivation as `approval.decided`.
+   */
+  "question.answered": { id: string; orgId: string; conversationId: string; runId: string };
 }
 
 type Handler<K extends keyof KernelEventMap> = (payload: KernelEventMap[K]) => Promise<void> | void;

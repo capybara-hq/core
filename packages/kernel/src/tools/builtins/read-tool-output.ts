@@ -1,5 +1,5 @@
 import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
-import type { KernelConfig } from "../../config/schema.js";
+import type { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { outputNotFoundText, type ToolOutputs } from "../outputs.js";
 import type { BuiltinTool } from "../registry.js";
 
@@ -111,7 +111,7 @@ export function readPage(
 /** 内置工具 `read_tool_output`：读本会话未过期的输出存档（只读、默认 allow）。 */
 export function readToolOutputTool(deps: {
   outputs: Pick<ToolOutputs, "load">;
-  config: () => KernelConfig;
+  config: Pick<KernelConfigService, "get">;
 }): BuiltinTool {
   return {
     spec: SPEC,
@@ -123,7 +123,7 @@ export function readToolOutputTool(deps: {
         id,
       );
       if (content === null) throw new ToolError(outputNotFoundText(id));
-      const cfg = deps.config().tools;
+      const cfg = deps.config.get().tools;
       const budget = Math.max(
         1,
         Math.min(cfg.maxResultReadChars, cfg.outputSpillChars - FOOTER_RESERVE),

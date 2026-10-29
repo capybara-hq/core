@@ -12,10 +12,11 @@ import {
   renderResult,
   resolveOutputRefs,
   spillIfLarge,
-  ToolOutputs,
+  type ToolOutputs,
 } from "../../src/tools/outputs.js";
 import { truncateTables } from "../helpers/db.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
+import { outputsFor } from "../helpers/tools.js";
 
 let pgc: TestContainer;
 let raw: ReturnType<typeof createDb>;
@@ -39,7 +40,7 @@ beforeAll(async () => {
   });
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
-  outputs = new ToolOutputs(db, config);
+  outputs = outputsFor(db, config);
 }, 120_000);
 afterAll(async () => {
   await raw?.destroy();

@@ -2,25 +2,26 @@ import { createHash } from "node:crypto";
 import type {
   Connector,
   InputRequired,
-  Logger,
   ToolAnnotations,
   ToolCallContext,
   ToolResult,
   ToolSpec,
 } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
 import type { AgentDefinition } from "../agents/definition.js";
-import type { KernelConfig } from "../config/schema.js";
 import type { ToolView } from "../conversations/events.js";
-import type { KernelSchemaDb } from "../db/kernel-schema.js";
-import type { ExtensionHost } from "../extensions/host.js";
+import { ExtensionHost } from "../extensions/host.js";
+import { ExtensionRegistry } from "../extensions/registry.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import { SUBAGENT_LIMIT_DEFAULTS, subagentLimits } from "../runtime/subagents/limits.js";
 import { resolveRoster } from "../runtime/subagents/roster.js";
 import { AGENT_TOOL, agentToolSpec } from "./builtins/agent.js";
+import { BuiltinTools } from "./builtins/builtin-tools.js";
 import { SANDBOX_TOOL_NAMES } from "./builtins/sandbox/names.js";
-import type { Credentials } from "./credentials.js";
 import { toolKey, toolKeyIssue } from "./naming.js";
 
 /**
@@ -184,18 +185,6 @@ export function policyFromAnnotations(a: ToolAnnotations | undefined): "allow" |
   return a?.readOnlyHint === true ? "allow" : "ask";
 }
 
-export interface ToolRegistryDeps {
-  db: KernelSchemaDb;
-  host: ExtensionHost;
-  credentials: Credentials;
-  log: Logger;
-  builtins: BuiltinTool[];
-  /**
-   * 当前配置（`tools.searchThreshold*`）。不提供时从不启用 `tool_search`（只用于不关心它的测试 / 调用方）。
-   */
-  config?: () => KernelConfig;
-}
-
 /** `forAgent` 的结果。 */
 export interface AgentTools {
   tools: ResolvedTool[];
@@ -254,12 +243,30 @@ const sourceId = (s: ResolvedTool["source"]): string =>
  * Only the first of a key is kept; the same source referenced twice is deduplicated silently,
  * different sources with the same key report a duplicate.
  */
+@Injectable()
 export class ToolRegistry {
-  constructor(private readonly deps: ToolRegistryDeps) {}
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    /** Extension tools and the organization's enabled extensions. */
+    @Inject(ExtensionHost) private readonly host: Pick<ExtensionHost, "tools" | "enabledPlugins">,
+    /** The installed connectors (`connector@1`, R6). */
+    @Inject(ExtensionRegistry) private readonly extensions: Pick<ExtensionRegistry, "list">,
+    @Inject(BuiltinTools) private readonly builtinTools: Pick<BuiltinTools, "list">,
+    /**
+     * `tools.searchThreshold*` and the sub-agent limits. Absent (some tests): `tool_search` is never
+     * offered and the sub-agent limits are the schema defaults.
+     */
+    @Inject(KernelConfigService) private readonly config?: Pick<KernelConfigService, "get">,
+  ) {}
+
+  /** The kernel's builtin tools (`tool_search` is added by {@link forAgent}, not by definitions). */
+  private get builtins(): readonly BuiltinTool[] {
+    return this.builtinTools.list();
+  }
 
   /** `host.list("connector")` 中 `kind` 匹配的第一个实现；未安装返回 undefined。 */
   findConnector(kind: string): Connector | undefined {
-    for (const e of this.deps.host.list("connector")) {
+    for (const e of this.extensions.list("connector")) {
       const impl = e.impl as Connector;
       if (impl?.kind === kind) return impl;
     }
@@ -282,10 +289,10 @@ export class ToolRegistry {
    */
   handler(source: ResolvedTool["source"]): BuiltinHandler | undefined {
     if (source.kind === "builtin") {
-      return this.deps.builtins.find((b) => b.spec.name === source.name)?.run;
+      return this.builtins.find((b) => b.spec.name === source.name)?.run;
     }
     if (source.kind === "plugin") {
-      const t = this.deps.host
+      const t = this.host
         .tools()
         .find((x) => x.plugin === source.plugin && x.spec.name === source.name);
       if (!t) return undefined;
@@ -297,17 +304,17 @@ export class ToolRegistry {
 
   /** The registered builtin tools' specs (display metadata for `tools/info.ts`). */
   builtinSpecs(): ToolSpec[] {
-    return this.deps.builtins.map((b) => b.spec);
+    return this.builtins.map((b) => b.spec);
   }
 
   /** The loaded extensions' registered tool specs, with their extension's name. */
   extensionToolSpecs(): { plugin: string; spec: ToolSpec }[] {
-    return this.deps.host.tools().map((t) => ({ plugin: t.plugin, spec: t.spec }));
+    return this.host.tools().map((t) => ({ plugin: t.plugin, spec: t.spec }));
   }
 
   /** 已安装连接器的 kind 列表（去重，按加载顺序）。 */
   connectorKinds(): string[] {
-    return [...new Set(this.deps.host.list("connector").map((e) => (e.impl as Connector).kind))];
+    return [...new Set(this.extensions.list("connector").map((e) => (e.impl as Connector).kind))];
   }
 
   /**
@@ -324,7 +331,7 @@ export class ToolRegistry {
   ): Promise<{ keys: Set<string>; issues: ToolRefIssue[] }> {
     const issues: ToolRefIssue[] = [];
     const owner = new Map<string, string>();
-    const pluginTools = this.deps.host.tools();
+    const pluginTools = this.host.tools();
     const connectorIds = [
       ...new Set(refs.flatMap((r) => (r.kind === "connector" ? [r.connectorId] : []))),
     ];
@@ -395,7 +402,7 @@ export class ToolRegistry {
     },
   ): Promise<AgentTools> {
     const { tools, unavailable, hidden } = await this.resolve(orgId, def);
-    const sl = def.skillLoad === true && this.deps.builtins.find((x) => x.spec.name === SKILL_LOAD);
+    const sl = def.skillLoad === true && this.builtins.find((x) => x.spec.name === SKILL_LOAD);
     if (sl) {
       tools.push({
         key: SKILL_LOAD,
@@ -408,7 +415,7 @@ export class ToolRegistry {
     }
     const toolSearch = await this.searchActive(orgId, tools);
     if (toolSearch) {
-      const b = this.deps.builtins.find((x) => x.spec.name === TOOL_SEARCH) as BuiltinTool;
+      const b = this.builtins.find((x) => x.spec.name === TOOL_SEARCH) as BuiltinTool;
       tools.push({
         key: TOOL_SEARCH,
         source: { kind: "builtin", name: TOOL_SEARCH },
@@ -422,13 +429,13 @@ export class ToolRegistry {
 
   /** 是否启用 `tool_search`（见 {@link forAgent}）；先比阈值，超过才读组织设置。 */
   private async searchActive(orgId: string, tools: readonly ResolvedTool[]): Promise<boolean> {
-    const cfg = this.deps.config?.().tools;
-    if (!cfg || !this.deps.builtins.some((b) => b.spec.name === TOOL_SEARCH)) return false;
+    const cfg = this.config?.get().tools;
+    if (!cfg || !this.builtins.some((b) => b.spec.name === TOOL_SEARCH)) return false;
     const over =
       tools.length > cfg.searchThresholdTools ||
       estimateToolTokens(tools) > cfg.searchThresholdTokens;
     if (!over) return false;
-    return (await readOrgSettings(this.deps.db, orgId)).toolSearch === "on";
+    return (await readOrgSettings(this.db.db, orgId)).toolSearch === "on";
   }
 
   private async resolve(
@@ -460,12 +467,12 @@ export class ToolRegistry {
       ...new Set(def.tools.flatMap((r) => (r.kind === "connector" ? [r.connectorId] : []))),
     ];
     const apps = await this.loadConnectors(orgId, connectorIds);
-    const pluginTools = this.deps.host.tools();
+    const pluginTools = this.host.tools();
 
     for (const ref of def.tools) {
       if (ref.kind === "builtin") {
         if (ref.name === TOOL_SEARCH || ref.name === SKILL_LOAD) continue;
-        const b = this.deps.builtins.find((x) => x.spec.name === ref.name);
+        const b = this.builtins.find((x) => x.spec.name === ref.name);
         if (!b) {
           unavailable.push({ ref: ref.name, reason: "Built-in tool does not exist" });
           continue;
@@ -479,7 +486,7 @@ export class ToolRegistry {
         // empty roster there is nothing to dispatch, so the tool is not offered at all
         let spec = b.spec;
         if (b.spec.name === AGENT_TOOL) {
-          const roster = await resolveRoster(this.deps.db, orgId, { subagents: def.subagents });
+          const roster = await resolveRoster(this.db.db, orgId, { subagents: def.subagents });
           if (roster.length === 0) continue;
           spec = agentToolSpec(roster, await this.maxConcurrentSubagents(orgId));
         }
@@ -594,13 +601,14 @@ export class ToolRegistry {
    * schema default.
    */
   private async maxConcurrentSubagents(orgId: string): Promise<number> {
-    const config = this.deps.config ?? (() => ({ subagents: SUBAGENT_LIMIT_DEFAULTS }));
-    return (await subagentLimits(this.deps.db, config, orgId)).maxConcurrentPerRun;
+    const cfg = this.config;
+    const config = cfg ? () => cfg.get() : () => ({ subagents: SUBAGENT_LIMIT_DEFAULTS });
+    return (await subagentLimits(this.db.db, config, orgId)).maxConcurrentPerRun;
   }
 
   /** Plugins the organization enabled (built-in plugins always count as enabled, C14). */
   private async enabledPlugins(orgId: string): Promise<Set<string>> {
-    return this.deps.host.enabledPlugins(orgId);
+    return this.host.enabledPlugins(orgId);
   }
 
   private async loadConnectors(
@@ -631,7 +639,7 @@ export class ToolRegistry {
     const out = new Map();
     if (ids.length === 0) return out;
     // 软删除的连接器也读出来，只为给出「已删除」这个更准确的原因（slug 可能已被新连接器复用，按 id 区分）
-    const apps = await this.deps.db
+    const apps = await this.db
       .selectFrom("connectors")
       .select(["id", "slug", "connector", "status", "deleted_at"])
       .where("org_id", "=", orgId)
@@ -641,7 +649,7 @@ export class ToolRegistry {
     const toolRows =
       live.length === 0
         ? []
-        : await this.deps.db
+        : await this.db
             .selectFrom("connector_tools")
             .select([
               "connector_id",

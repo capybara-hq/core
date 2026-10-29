@@ -102,7 +102,7 @@ export function sandboxReadTool(deps: SandboxToolDeps): BuiltinTool {
     spec: SPEC,
     defaultPolicy: "allow",
     unavailable: unavailableWhenNoSandbox(deps),
-    timeoutMs: () => sandboxBaseTimeoutMs(deps.config()),
+    timeoutMs: () => sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx) {
       const { offset = 1, limit = DEFAULT_LIMIT } = input as ReadInput;
       const path = checkPath((input as ReadInput).path);

@@ -8,7 +8,6 @@ import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { SessionService } from "../identity/sessions.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { legacyCurrentTrx } from "../infra/database/legacy-view.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
@@ -16,6 +15,9 @@ import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import { LegacyPorts } from "../lifecycle/legacy-ports.js";
 import type { KernelLogger } from "../log.js";
+import { ApprovalsService } from "../tools/approvals.service.js";
+import { Credentials } from "../tools/credentials.js";
+import { QuestionsService } from "../tools/questions.service.js";
 import type { OrgRole } from "./roles.js";
 
 /** 离职原因：管理员移出、本人离开、通讯录同步判定离职。 */
@@ -81,8 +83,8 @@ const DIRECTORY_SOURCE_PREFIX = "directory:";
  * 个人凭据重新写回（upsert）。凭据只在此人以成员身份调用工具时使用，而其运行已被中止、成员关系已删除，
  * 残留的凭据不会被使用；重新加入组织后会被新的连接覆盖。
  *
- * The collaborators of directories not converted yet (credentials, approvals, questions, the
- * event log, run control, sandbox destruction) are read from {@link LegacyPorts} at call time.
+ * The collaborators of directories not converted yet (the event log, run control, sandbox
+ * destruction) are read from {@link LegacyPorts} at call time.
  */
 @Injectable()
 export class Offboarding {
@@ -93,6 +95,11 @@ export class Offboarding {
     @Inject(REDIS) private readonly redis: Pick<Redis, "set" | "exists">,
     @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "list">,
     @Inject(LegacyPorts) private readonly ports: LegacyPorts,
+    @Inject(Credentials) private readonly credentials: Pick<Credentials, "clearAccount">,
+    @Inject(ApprovalsService)
+    private readonly approvals: Pick<ApprovalsService, "cancelPendingFor">,
+    @Inject(QuestionsService)
+    private readonly questions: Pick<QuestionsService, "cancelPendingFor">,
     @Inject(LockService) readonly lockService: LockService,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
   ) {}
@@ -196,23 +203,10 @@ export class Offboarding {
       .returning("id")
       .execute();
 
-    // the credentials, approvals and questions services are not converted yet (Task 3.5): they
-    // take this transaction as a parameter (R8)
-    const credentials = await this.ports.credentials.clearAccount(
-      orgId,
-      accountId,
-      legacyCurrentTrx(),
-    );
-    const approvals = await this.ports.approvals.cancelPendingFor(
-      legacyCurrentTrx(),
-      orgId,
-      accountId,
-    );
-    const questions = await this.ports.questions.cancelPendingFor(
-      legacyCurrentTrx(),
-      orgId,
-      accountId,
-    );
+    // in this transaction (the approvals and questions services join it: `mandatory`)
+    const credentials = await this.credentials.clearAccount(orgId, accountId);
+    const approvals = await this.approvals.cancelPendingFor(orgId, accountId);
+    const questions = await this.questions.cancelPendingFor(orgId, accountId);
     const notify = new Map(approvals.seqs);
     for (const [c, seq] of questions.seqs) notify.set(c, Math.max(notify.get(c) ?? 0, seq));
 

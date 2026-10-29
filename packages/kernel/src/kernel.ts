@@ -109,22 +109,14 @@ import type { SkillInvoker } from "./skills/invoke.js";
 import { SkillsService } from "./skills/skills.service.js";
 import { StorageService } from "./storage/storage.service.js";
 import { ApprovalsService } from "./tools/approvals.service.js";
-import { Breaker } from "./tools/breaker.js";
-import { agentTool } from "./tools/builtins/agent.js";
-import { askUserTool } from "./tools/builtins/ask-user.js";
-import { readToolOutputTool } from "./tools/builtins/read-tool-output.js";
-import { sandboxTools } from "./tools/builtins/sandbox/index.js";
-import { skillLoadTool } from "./tools/builtins/skill-load.js";
-import { skillWriteTool } from "./tools/builtins/skill-write.js";
-import { toolSearchTool } from "./tools/builtins/tool-search.js";
 import { ConnectorContent } from "./tools/connector-content.js";
-import { ConnectorsService } from "./tools/connectors.service.js";
 import { Credentials } from "./tools/credentials.js";
-import { ToolDrift } from "./tools/drift.js";
+import { type DriftConnectorJobData, ToolDrift } from "./tools/drift.js";
+import { DRIFT_CONNECTOR_JOB } from "./tools/job-ids.js";
 import { ToolOutputs } from "./tools/outputs.js";
 import { ToolPipeline } from "./tools/pipeline.js";
 import { QuestionsService } from "./tools/questions.service.js";
-import { type BuiltinTool, ToolRegistry } from "./tools/registry.js";
+import { ToolRegistry } from "./tools/registry.js";
 
 /**
  * 内核迁移目录。src/ 与 dist/ 都在包根下一层，所以统一指向 `<包根>/src/migrations`：
@@ -352,6 +344,8 @@ export interface LegacyGraph
     | "catalog"
     | "pluginImport"
     | "marketplaces"
+    // Task 3.5
+    | "tools"
   > {
   /** The kernel-schema view of the pool. */
   readonly kdb: KernelSchemaDb;
@@ -398,6 +392,12 @@ export interface ConvertedProviders {
   host: ExtensionHost;
   replicaStatus: ReplicaStatusStore;
   orgExtensionConfigs: OrgExtensionConfigs;
+  // Task 3.5
+  toolRegistry: ToolRegistry;
+  approvals: ApprovalsService;
+  questions: QuestionsService;
+  toolDrift: ToolDrift;
+  toolPipeline: ToolPipeline;
 }
 
 /**
@@ -414,8 +414,7 @@ export function createLegacyGraph(
   hooks: KernelTestHooks,
   converted: ConvertedProviders,
 ): LegacyGraph {
-  const { storage, prices, purposes, skills, skillChanges, skillsCatalog, skillInvoker } =
-    converted;
+  const { storage, purposes, skillChanges, skillsCatalog, skillInvoker } = converted;
   const config = configService.get();
   /** The current config (hot fields applied). */
   const cfg = (): KernelConfig => configService.get();
@@ -428,45 +427,16 @@ export function createLegacyGraph(
   // 每次日志推进后给有 IM 投递目标的会话排出站任务（任务追上后空闲即结束，之后的事件靠这里续上）
   const eventLog = new EventLog(kdb, bus, log, (conversationId) => enqueueOutbound(conversationId));
   const registry = new ProviderRegistry(host, redis, log);
-  const credentials = new Credentials(kdb, keyring, log, { redis, config: cfg });
-  const toolOutputs = new ToolOutputs(kdb, cfg);
-  // 内置工具；tool_search 由注册表按组织设置与阈值自动加入（不进 agent 定义）。
-  // 沙箱工具依赖下面才创建的存储、附件与沙箱服务，创建后追加进同一个数组（注册表每次调用时读它）。
-  const builtins: BuiltinTool[] = [
-    askUserTool({ config: cfg }),
-    readToolOutputTool({ outputs: toolOutputs, config: cfg }),
-    toolSearchTool(),
-    // dispatches sub-agents; the tool pipeline handles its calls (sub-agents spec §4, §7.1)
-    agentTool,
-  ];
-  const toolRegistry = new ToolRegistry({
-    db: kdb,
-    host,
-    credentials,
-    log,
-    builtins,
-    config: cfg,
+  const { toolRegistry, approvals, questions, toolDrift, toolPipeline } = converted;
+  // A decided approval / answered question resumes the waiting run on this replica and enqueues
+  // its IM delivery (domain events, spec §3b; the wait sweep resumes a run whose resume was lost)
+  converted.events.on("approval.decided", async (a) => {
+    await waits.resume(a.runId, a.id);
+    enqueueOutbound(a.conversationId);
   });
-  // 审批决定 / 输入回答提交后续跑（waits 在下面创建；回调只在运行期间被调用）
-  const approvals = new ApprovalsService({
-    db: kdb,
-    eventLog,
-    config: cfg,
-    log,
-    onDecided: async (a) => {
-      await waits.resume(a.runId, a.id);
-      enqueueOutbound(a.conversationId);
-    },
-  });
-  const questions = new QuestionsService({
-    db: kdb,
-    eventLog,
-    config: cfg,
-    log,
-    onAnswered: async (q) => {
-      await waits.resume(q.runId, q.id);
-      enqueueOutbound(q.conversationId);
-    },
+  converted.events.on("question.answered", async (q) => {
+    await waits.resume(q.runId, q.id);
+    enqueueOutbound(q.conversationId);
   });
   const maintenance = new Maintenance({ db: kdb, redisUrl: config.redis.url, log });
   // 对话附件：下载权限同会话流（只用 isAccessible，一条查询）；未绑定的过期附件由维护任务每小时清理
@@ -507,98 +477,18 @@ export function createLegacyGraph(
     log,
   });
   registerSandboxMaintenance(maintenance, sandbox, log);
-  builtins.push(
-    ...sandboxTools({ sandbox, attachments, storage, eventLog, config: cfg }),
-    // 技能加载：对话日志里有技能目录快照时由注册表自动加入（Ruling M17）
-    skillLoadTool({ db: kdb, sandbox, attachments, storage, eventLog, config: cfg }),
-    // 自写技能：agent 定义显式引用才可用
-    skillWriteTool({ changes: skillChanges }),
-  );
-  // 漂移检测：登记周期扫描与检查任务（worker 角色执行）；手动刷新与 list_changed 也经它
-  const toolDrift = new ToolDrift({
-    db: kdb,
-    registry: toolRegistry,
-    credentials,
-    config: cfg,
-    log,
-    maintenance,
+  // drift-connector jobs (ToolDrift is their producer) stay on the maintenance worker until Task
+  // 3.9 builds its @Processor (R11)
+  maintenance.handle(DRIFT_CONNECTOR_JOB, async (job) => {
+    const { orgId, connectorId, trigger } = job.data as DriftConnectorJobData;
+    await toolDrift.check(orgId, connectorId, trigger);
   });
-  // Org connectors (Task 3.5 makes it a provider): the API and the catalog's org installs (R7 port)
-  const connectors = new ConnectorsService(
-    kdb,
-    toolRegistry,
-    host,
-    credentials,
-    cfg,
-    toolDrift,
-    orgLock,
-  );
-  const breaker = new Breaker(redis, cfg);
-  // 用户直接使用连接器内容（斜杠命令 / @ 资源引用）
-  const connectorContent = new ConnectorContent({
-    db: kdb,
-    registry: toolRegistry,
-    credentials,
-    breaker,
-    config: cfg,
-    log,
-  });
-  const toolPipeline = new ToolPipeline({
-    db: kdb,
-    eventLog,
-    registry: toolRegistry,
-    credentials,
-    breaker,
-    outputs: toolOutputs,
-    approvals,
-    questions,
-    config: cfg,
-    log,
-    // plugin hooks (chat runs only; the eval replay uses RecordedToolPipeline, which has none)
-    pluginHooks: host.hooks,
-    // ToolResult.card: the extension's inline ui contributions (read live, no alias)
-    inlineViews: (plugin) =>
-      new Set(
-        (host.current(plugin)?.manifest.ui ?? [])
-          .filter((c) => c.place === "inline" && c.aliasOf === undefined)
-          .map((c) => c.id),
-      ),
-    onToolsChanged: (orgId, connectorId) => {
-      void toolDrift.onToolsChanged(orgId, connectorId);
-    },
-    // sub-agents (phase C): `agent` calls dispatch child runs onto their own queue
-    subagents: {
-      dispatch: (a) =>
-        dispatchSubagent(
-          {
-            db: kdb,
-            eventLog,
-            purposes,
-            registry,
-            config: cfg,
-            enqueue: (data, jobId, kind) => runQueue.enqueue(data, jobId, kind),
-            log,
-          },
-          a,
-        ),
-    },
-  });
-  const tools: KernelTools = {
-    registry: toolRegistry,
-    credentials,
-    outputs: toolOutputs,
-    pipeline: toolPipeline,
-    approvals,
-    questions,
-    drift: toolDrift,
-    connectorContent,
-  };
   const lock = new ConversationLock(redis, log);
   const quota = new OrgQuota(redis);
   const abort = new RunAbort(redis, bus);
   const checkpoints = new KyselyCheckpointSaver(kdb);
   const runQueue: RunQueue = new RunQueue(kdb, eventLog, lock, config.redis.url, log, checkpoints, {
-    stopOpenCalls: (t, runId) => toolPipeline.stopOpenAgentCalls(t, runId),
+    stopOpenCalls: (_t, runId) => toolPipeline.stopOpenAgentCalls(runId),
     stopChildren: (runId) => stopChildren(childDeps(), runId, null),
   });
   // sub-agents (spec §7.3, §12): reporting a finished child to its parent and stopping children
@@ -632,7 +522,7 @@ export function createLegacyGraph(
     subagents: {
       stop: (parentRunId, by, opts) => stopChildren(childDeps(), parentRunId, by, opts),
       finished: (childRunId) => onChildFinished(childDeps(), childRunId),
-      stopOpenCalls: (t, runId) => toolPipeline.stopOpenAgentCalls(t, runId),
+      stopOpenCalls: (_t, runId) => toolPipeline.stopOpenAgentCalls(runId),
     },
   });
   const runControl = {
@@ -709,14 +599,25 @@ export function createLegacyGraph(
   };
   // R7: the legacy instances converted providers read at call time
   converted.ports.bind({
-    connectors,
     eventLog,
     attachments,
     providers: registry,
     agents,
-    credentials,
-    approvals,
-    questions,
+    sandbox,
+    // sub-agents (phase C): `agent` calls dispatch child runs onto their own queue
+    subagentDispatch: (a) =>
+      dispatchSubagent(
+        {
+          db: kdb,
+          eventLog,
+          purposes,
+          registry,
+          config: cfg,
+          enqueue: (data, jobId, kind) => runQueue.enqueue(data, jobId, kind),
+          log,
+        },
+        a,
+      ),
     // offboarding stops the member's runs (by: null, a system action)
     offboardRuns: {
       abortWaiting: async (c, runId, by) => {
@@ -891,7 +792,7 @@ export function createLegacyGraph(
       skillsCatalog,
       onChildFinished: (runId) => onChildFinished(childDeps(), runId),
       stopChildren: (runId) => stopChildren(childDeps(), runId, null),
-      stopOpenCalls: (t, runId) => toolPipeline.stopOpenAgentCalls(t, runId),
+      stopOpenCalls: (_t, runId) => toolPipeline.stopOpenAgentCalls(runId),
       ...(hooks.runHooks !== undefined && { hooks: hooks.runHooks }),
     });
   const createEvalWorker = (): EvalWorker =>
@@ -958,18 +859,10 @@ export function createLegacyGraph(
     log,
     eventLog,
     registry,
-    credentials,
-    toolRegistry,
-    approvals,
-    questions,
-    drift: toolDrift,
-    outputs: toolOutputs,
-    connectorContent,
     channels: channelConnections,
     runs: runControl,
     attachments,
     sandbox,
-    connectors,
     evalQueue,
     sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
   };
@@ -985,7 +878,6 @@ export function createLegacyGraph(
     usageReport: usageReporter,
     bus,
     runs,
-    tools,
     channels,
     attachments,
     sandbox,
@@ -1039,7 +931,16 @@ export async function createKernel(
     orgExtensionConfigs: app.get(OrgExtensionConfigs),
     bus: g.bus,
     runs: g.runs,
-    tools: g.tools,
+    tools: {
+      registry: app.get(ToolRegistry),
+      credentials: app.get(Credentials),
+      outputs: app.get(ToolOutputs),
+      pipeline: app.get(ToolPipeline),
+      approvals: app.get(ApprovalsService),
+      questions: app.get(QuestionsService),
+      drift: app.get(ToolDrift),
+      connectorContent: app.get(ConnectorContent),
+    },
     identity: {
       external: app.get(ExternalIdentities),
       binding: app.get(IdentityBinding),

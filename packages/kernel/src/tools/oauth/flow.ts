@@ -1,23 +1,35 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Logger } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
-import type { KernelConfig } from "../../config/schema.js";
-import type { KernelSchemaDb } from "../../db/kernel-schema.js";
 import { ApiError } from "../../errors.js";
 import { audit } from "../../identity/audit.js";
-import type { OrgLock } from "../../orgs/org-lock.js";
-import type { ConnectorAuth, Credentials } from "../credentials.js";
+import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
+import { KernelDb } from "../../infra/database/kernel-db.js";
+import { TransactionHost } from "../../infra/database/transaction-host.js";
+import { Transactional } from "../../infra/database/transactional.decorator.js";
+import { KERNEL_LOGGER, REDIS } from "../../infra/tokens.js";
+import { OrgLock } from "../../orgs/org-lock.js";
+import { ConnectorsService } from "../connectors.service.js";
+import { type ConnectorAuth, Credentials } from "../credentials.js";
 import { oauthHttpOptions } from "./discovery.js";
+import {
+  callbackUrl,
+  DEFAULT_RETURN_PATH,
+  OAUTH_STATE_TTL_SECONDS,
+  publicUrlRequired,
+} from "./flow-paths.js";
 import { tokenRequest } from "./tokens.js";
 
-/** 授权回调的路径（`http.publicUrl` + 它 = 注册给授权服务器的 redirect_uri）。 */
-export const OAUTH_CALLBACK_PATH = "/api/v1/oauth/callback";
-/** state 的有效期（秒）。 */
-export const OAUTH_STATE_TTL_SECONDS = 600;
-/** 浏览器绑定 Cookie：回调必须来自发起连接的同一个浏览器。 */
-export const OAUTH_BINDING_COOKIE = "cap_oauth";
-/** 回调失败、或连接时没给回跳页面时回到的网页（next-intl 会补语言前缀）。 */
-export const DEFAULT_RETURN_PATH = "/settings/connections";
+export {
+  callbackUrl,
+  DEFAULT_RETURN_PATH,
+  isSafeReturnPath,
+  OAUTH_BINDING_COOKIE,
+  OAUTH_CALLBACK_PATH,
+  OAUTH_STATE_TTL_SECONDS,
+  publicUrlRequired,
+} from "./flow-paths.js";
 
 const stateKey = (state: string) => `capk:oauth-state:${state}`;
 const STATE_RE = /^[A-Za-z0-9_-]{43}$/;
@@ -25,35 +37,6 @@ const BINDING_RE = /^[A-Za-z0-9_-]{43}$/;
 
 const b64url = (n = 32) => randomBytes(n).toString("base64url");
 const sha256 = (s: string) => createHash("sha256").update(s).digest("base64url");
-
-/** OAuth 连接器需要 `http.publicUrl`（回调地址）；未配置 → 这条校验错误。 */
-export const publicUrlRequired = () =>
-  new ApiError("validation_failed", "Request validation failed", [
-    {
-      path: "auth",
-      message:
-        "OAuth connectors require http.publicUrl to be configured (it is used to build the OAuth callback URL)",
-    },
-  ]);
-
-export function callbackUrl(publicUrl: string): string {
-  return `${publicUrl.replace(/\/+$/, "")}${OAUTH_CALLBACK_PATH}`;
-}
-
-/**
- * 回跳页面只接受站内相对路径（防开放重定向）：以单个 `/` 开头，不含 `\` 与控制字符，解析后仍在同一个源。
- */
-export function isSafeReturnPath(p: string): boolean {
-  if (p.length > 500 || !p.startsWith("/") || p.startsWith("//")) return false;
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: 正是要拒绝控制字符
-  if (/[\\\u0000-\u001f\u007f]/.test(p)) return false;
-  const base = "https://return.invalid";
-  try {
-    return new URL(p, base).origin === base;
-  } catch {
-    return false;
-  }
-}
 
 /** 一个有效的浏览器绑定值（复用请求里已有的，否则新生成）。 */
 export function browserBinding(existing: string | undefined): string {
@@ -86,27 +69,34 @@ export type OAuthCallbackError =
 /** 首次连接后刷新工具清单最多等这么久再 302（超时则在后台继续，结果照常写入）。 */
 export const FIRST_CONNECT_REFRESH_WAIT_MS = 15_000;
 
-export interface OAuthFlowDeps {
-  /** The org row lock (orgs/org-lock.ts; R12): joins the caller's transaction. */
-  orgLock: Pick<OrgLock, "lock" | "tryLock" | "lockAndAuthorize">;
-  db: KernelSchemaDb;
-  redis: Redis;
-  credentials: Credentials;
-  config: () => KernelConfig;
-  log: Logger;
-  /** 某成员首次成功连接、而连接器还没有工具快照时调用（A16：用该成员的 token 刷新工具清单）。 */
-  onFirstConnect: (orgId: string, connectorId: string, accountId: string) => Promise<void>;
-}
-
 /**
  * 授权码 + PKCE（S256）连接流程。state 是 32 字节随机串，存 Redis `capk:oauth-state:<state>` 10 分钟、单次有效
  * （GETDEL），内含组织、连接器、发起人、PKCE verifier、redirect_uri、回跳页面与浏览器绑定值的哈希。
  */
+@Injectable()
 export class OAuthFlow {
-  constructor(private readonly deps: OAuthFlowDeps) {}
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    /** The org row lock (orgs/org-lock.ts; R12): joins the caller's transaction. */
+    @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
+    @Inject(REDIS) private readonly redis: Pick<Redis, "set" | "getdel">,
+    @Inject(Credentials) private readonly credentials: Credentials,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Inject(KERNEL_LOGGER) private readonly log: Logger,
+    /** A member's first connection without a tool snapshot refreshes the tools (A16). */
+    @Inject(ConnectorsService) private readonly connectors: Pick<ConnectorsService, "refresh">,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {}
+
+  /** 某成员首次成功连接、而连接器还没有工具快照时（A16：用该成员的 token 刷新工具清单）。 */
+  private async onFirstConnect(orgId: string, connectorId: string, accountId: string) {
+    await this.connectors.refresh(orgId, connectorId, accountId, undefined, {
+      trigger: "first_connect",
+    });
+  }
 
   private async app(orgId: string, connectorId: string) {
-    return this.deps.db
+    return this.db
       .selectFrom("connectors")
       .select(["id", "auth", "status"])
       .where("id", "=", connectorId)
@@ -123,7 +113,7 @@ export class OAuthFlow {
     returnTo: string | undefined,
     binding: string,
   ): Promise<{ authorizationUrl: string }> {
-    const publicUrl = this.deps.config().http.publicUrl;
+    const publicUrl = this.config.get().http.publicUrl;
     if (!publicUrl) throw publicUrlRequired();
     const app = await this.app(orgId, connectorId);
     if (!app) throw new ApiError("connector.not_found", "Connector not found");
@@ -140,7 +130,7 @@ export class OAuthFlow {
         { path: "status", message: "The connector is disabled; ask an administrator to enable it" },
       ]);
     }
-    const client = await this.deps.credentials.oauthClient(orgId, connectorId);
+    const client = await this.credentials.oauthClient(orgId, connectorId);
     if (!client?.authorizationEndpoint) {
       throw new ApiError(
         "connector.connect_failed",
@@ -160,7 +150,7 @@ export class OAuthFlow {
       binding: sha256(binding),
       ...(client.issuer !== undefined && { issuer: client.issuer }),
     };
-    await this.deps.redis.set(stateKey(state), JSON.stringify(rec), "EX", OAUTH_STATE_TTL_SECONDS);
+    await this.redis.set(stateKey(state), JSON.stringify(rec), "EX", OAUTH_STATE_TTL_SECONDS);
     const url = new URL(client.authorizationEndpoint);
     url.searchParams.set("response_type", "code");
     url.searchParams.set("client_id", client.clientId);
@@ -176,7 +166,7 @@ export class OAuthFlow {
 
   /** 回跳地址：`http.publicUrl` + 站内路径 + 结果参数（未配置 publicUrl 时为相对地址）。 */
   private redirect(path: string, param: [string, string]): string {
-    const base = (this.deps.config().http.publicUrl ?? "").replace(/\/+$/, "");
+    const base = (this.config.get().http.publicUrl ?? "").replace(/\/+$/, "");
     const u = new URL(path, "https://return.invalid");
     u.searchParams.set(param[0], param[1]);
     return `${base}${u.pathname}${u.search}${u.hash}`;
@@ -202,7 +192,7 @@ export class OAuthFlow {
   ): Promise<string> {
     const state = query.state;
     if (state === undefined || !STATE_RE.test(state)) return this.fail("state_invalid");
-    const raw = await this.deps.redis.getdel(stateKey(state));
+    const raw = await this.redis.getdel(stateKey(state));
     if (raw === null) return this.fail("state_invalid");
     const rec = JSON.parse(raw) as StateRecord;
     const back = rec.returnTo;
@@ -220,7 +210,7 @@ export class OAuthFlow {
 
     const { orgId, connectorId, accountId } = rec;
     const app = await this.app(orgId, connectorId);
-    const client = app ? await this.deps.credentials.oauthClient(orgId, connectorId) : null;
+    const client = app ? await this.credentials.oauthClient(orgId, connectorId) : null;
     if (!app || !client || (app.auth as unknown as ConnectorAuth).type !== "oauth_code") {
       return this.fail("connector_unavailable", back);
     }
@@ -235,47 +225,16 @@ export class OAuthFlow {
           code_verifier: rec.verifier,
           resource: client.resource,
         },
-        oauthHttpOptions(this.deps.config()),
+        oauthHttpOptions(this.config.get()),
       );
     } catch (e) {
-      this.deps.log.warn("oauth code exchange failed", { orgId, connectorId, err: e });
+      this.log.warn("oauth code exchange failed", { orgId, connectorId, err: e });
       return this.fail("token_exchange_failed", back);
     }
 
     let first: boolean;
     try {
-      first = await this.deps.db.transaction().execute(async (t) => {
-        await this.deps.orgLock.lockAndAuthorize(orgId, accountId, "connectors.use");
-        const still = await t
-          .selectFrom("connectors")
-          .select("id")
-          .where("id", "=", connectorId)
-          .where("deleted_at", "is", null)
-          .forUpdate()
-          .executeTakeFirst();
-        if (!still) throw new ApiError("connector.not_found", "Connector not found");
-        await this.deps.credentials.setOAuthTokens(
-          orgId,
-          connectorId,
-          { kind: "user", accountId },
-          tokens,
-          t,
-        );
-        await audit(t, {
-          actorAccountId: accountId,
-          orgId,
-          action: "connector.credential.set",
-          target: connectorId,
-          detail: { type: "oauth_code", ownership: "personal" },
-        });
-        const tool = await t
-          .selectFrom("connector_tools")
-          .select("name")
-          .where("connector_id", "=", connectorId)
-          .limit(1)
-          .executeTakeFirst();
-        return tool === undefined;
-      });
+      first = await this.storeTokens(orgId, connectorId, accountId, tokens);
     } catch (e) {
       if (e instanceof ApiError) return this.fail("connector_unavailable", back);
       throw e;
@@ -283,15 +242,13 @@ export class OAuthFlow {
     if (first) {
       // 首次连接（A16）：刷新失败不影响连接本身，凭据已存好；管理员之后可手动刷新
       // 最多等 FIRST_CONNECT_REFRESH_WAIT_MS 再回跳（本请求自己的计时器，结束即清除）；超时的刷新在后台继续
-      const refresh = this.deps
-        .onFirstConnect(orgId, connectorId, accountId)
-        .catch((err: unknown) => {
-          this.deps.log.warn("oauth first-connect tool refresh failed", {
-            orgId,
-            connectorId,
-            err,
-          });
+      const refresh = this.onFirstConnect(orgId, connectorId, accountId).catch((err: unknown) => {
+        this.log.warn("oauth first-connect tool refresh failed", {
+          orgId,
+          connectorId,
+          err,
         });
+      });
       let timer: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([
         refresh,
@@ -302,5 +259,44 @@ export class OAuthFlow {
       clearTimeout(timer);
     }
     return this.redirect(back, ["connected", connectorId]);
+  }
+
+  /**
+   * In the org row lock: re-checks that the member may still use connectors and the connector
+   * exists, stores the member's tokens with the audit row; true when the connector has no tool
+   * snapshot yet (the first connection).
+   */
+  @Transactional()
+  private async storeTokens(
+    orgId: string,
+    connectorId: string,
+    accountId: string,
+    tokens: Awaited<ReturnType<typeof tokenRequest>>,
+  ): Promise<boolean> {
+    const t = this.db.db;
+    await this.orgLock.lockAndAuthorize(orgId, accountId, "connectors.use");
+    const still = await t
+      .selectFrom("connectors")
+      .select("id")
+      .where("id", "=", connectorId)
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!still) throw new ApiError("connector.not_found", "Connector not found");
+    await this.credentials.setOAuthTokens(orgId, connectorId, { kind: "user", accountId }, tokens);
+    await audit(t, {
+      actorAccountId: accountId,
+      orgId,
+      action: "connector.credential.set",
+      target: connectorId,
+      detail: { type: "oauth_code", ownership: "personal" },
+    });
+    const tool = await t
+      .selectFrom("connector_tools")
+      .select("name")
+      .where("connector_id", "=", connectorId)
+      .limit(1)
+      .executeTakeFirst();
+    return tool === undefined;
   }
 }

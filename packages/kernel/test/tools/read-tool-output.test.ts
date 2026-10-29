@@ -8,10 +8,10 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { readToolOutputTool } from "../../src/tools/builtins/read-tool-output.js";
-import { ToolOutputs } from "../../src/tools/outputs.js";
 import { validateInput } from "../../src/tools/validate.js";
 import { truncateTables } from "../helpers/db.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
+import { configFrom, outputsFor } from "../helpers/tools.js";
 
 /** Task 10：内置工具 `read_tool_output`（按行分页读取输出存档，只读本组织、未过期的）。 */
 
@@ -52,8 +52,8 @@ beforeEach(async () => {
   other = await seedConversation(raw);
 });
 
-const outputs = () => new ToolOutputs(db, config);
-const tool = () => readToolOutputTool({ outputs: outputs(), config });
+const outputs = () => outputsFor(db, config);
+const tool = () => readToolOutputTool({ outputs: outputs(), config: configFrom(config) });
 
 const ctxFor = (orgId: string): ToolCallContext => ({
   orgId,

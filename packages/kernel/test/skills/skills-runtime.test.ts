@@ -490,7 +490,7 @@ describe("skill_load handler", { timeout: 60_000 }, () => {
         listForConversation: async () => [],
         openForConversation: async () => null,
       },
-      config: () => k.config,
+      config: { get: () => k.config },
     });
   }
 

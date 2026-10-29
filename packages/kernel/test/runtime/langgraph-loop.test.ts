@@ -32,15 +32,17 @@ import type { LoopContext } from "../../src/runtime/loop.js";
 import type { StreamSink } from "../../src/runtime/model-call.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { runJobId } from "../../src/runtime/run-queue.js";
-import { ApprovalsService } from "../../src/tools/approvals.service.js";
-import { Breaker } from "../../src/tools/breaker.js";
-import { ToolOutputs } from "../../src/tools/outputs.js";
-import { ToolPipeline } from "../../src/tools/pipeline.js";
-import { QuestionsService } from "../../src/tools/questions.service.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, PW, sleep, waitFor, waitForTerminal } from "../helpers/runs.js";
+import {
+  approvalsFor,
+  breakerFor,
+  outputsFor,
+  pipelineFor,
+  questionsFor,
+} from "../helpers/tools.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -143,15 +145,15 @@ beforeAll(async () => {
     tools: noTools,
     config,
     log: silent,
-    toolPipeline: new ToolPipeline({
+    toolPipeline: pipelineFor({
       db,
       eventLog,
       registry: noTools,
       credentials: { injection: async () => ({ headers: {} }), onUnauthorized: async () => {} },
-      breaker: new Breaker(redis, config),
-      outputs: new ToolOutputs(db, config),
-      approvals: new ApprovalsService({ db, eventLog, config, log: silent }),
-      questions: new QuestionsService({ db, eventLog, config, log: silent }),
+      breaker: breakerFor(redis, config),
+      outputs: outputsFor(db, config),
+      approvals: approvalsFor(db, eventLog, config),
+      questions: questionsFor(db, eventLog, config),
       config,
       log: silent,
     }),

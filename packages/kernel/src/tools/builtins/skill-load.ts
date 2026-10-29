@@ -461,7 +461,7 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
     spec: SPEC,
     defaultPolicy: "allow",
     // 可能要创建 / 恢复沙箱并复制文件：与沙箱工具同一时限
-    timeoutMs: () => sandboxBaseTimeoutMs(deps.config()),
+    timeoutMs: () => sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx: BuiltinCallContext) {
       const asked = (input as { name: string }).name;
       const snap = await deps.eventLog.latestOfType(ctx.conversationId, "skills_catalog");

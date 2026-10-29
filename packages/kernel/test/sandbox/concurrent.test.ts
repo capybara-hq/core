@@ -517,7 +517,7 @@ describe("path leases in the sandbox tools", () => {
       storage: {} as any,
       // biome-ignore lint/suspicious/noExplicitAny: not called
       eventLog: {} as any,
-      config: () => config,
+      config: { get: () => config },
     });
   const tool = (s: SandboxService, name: string) =>
     tools(s).find((t) => t.spec.name === name) as BuiltinTool;
@@ -571,7 +571,7 @@ describe("path leases in the sandbox tools", () => {
       storage: {} as any,
       // biome-ignore lint/suspicious/noExplicitAny: not called
       eventLog: {} as any,
-      config: () => config,
+      config: { get: () => config },
     }).find((x) => x.spec.name === "sandbox_bash") as BuiltinTool;
     await t.run({ command: "true" }, callCtx());
     expect(leased).toEqual(["/workspace/attachments/.capybara-sync.json"]);

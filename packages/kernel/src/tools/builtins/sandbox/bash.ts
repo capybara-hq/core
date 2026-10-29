@@ -115,13 +115,13 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
     unavailable: unavailableWhenNoSandbox(deps),
     // 命令自己的超时先到（提供方停掉命令、返回 timedOut），管线的时限再留出等锁与创建 / 恢复的余量
     timeoutMs: (input) => {
-      const cfg = deps.config();
+      const cfg = deps.config.get();
       const max = cfg.sandbox.limits.maxCommandSeconds;
       return Math.min(secondsFor(input as BashInput, max), max) * 1000 + sandboxBaseTimeoutMs(cfg);
     },
     async run(input, ctx) {
       const { command, description } = input as BashInput;
-      const max = deps.config().sandbox.limits.maxCommandSeconds;
+      const max = deps.config.get().sandbox.limits.maxCommandSeconds;
       const req = (input as BashInput).timeoutSeconds;
       if (req !== undefined && req > max) {
         throw new ToolError(

@@ -26,6 +26,7 @@ import {
   testOffboarding,
 } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
+import { approvalsFor, credentialsFor, questionsFor } from "../helpers/tools.js";
 
 const PW = "correct horse battery";
 
@@ -362,8 +363,8 @@ describe("离职处理", () => {
 
   it("原子：中途失败则什么都不变", async () => {
     const broken = testOffboarding(db, {
-      credentials: k.tools.credentials,
-      approvals: k.tools.approvals,
+      credentials: credentialsFor(db, null as never),
+      approvals: approvalsFor(db, k.runs.eventLog, () => k.config),
       questions: {
         cancelPendingFor: async () => {
           throw new Error("boom");
@@ -535,9 +536,9 @@ describe("兜底扫描：按创建时间分页、不碰现任成员的运行", (
     const sweeper = testOffboarding(
       db,
       {
-        credentials: k.tools.credentials,
-        approvals: k.tools.approvals,
-        questions: k.tools.questions,
+        credentials: credentialsFor(db, null as never),
+        approvals: approvalsFor(db, k.runs.eventLog, () => k.config),
+        questions: questionsFor(db, k.runs.eventLog, () => k.config),
         offboardRuns: {
           abortWaiting: async () => false,
           abortIfOrphaned: async () => false,
@@ -577,9 +578,9 @@ describe("兜底扫描：按创建时间分页、不碰现任成员的运行", (
     const sweeper = testOffboarding(
       db,
       {
-        credentials: k.tools.credentials,
-        approvals: k.tools.approvals,
-        questions: k.tools.questions,
+        credentials: credentialsFor(db, null as never),
+        approvals: approvalsFor(db, k.runs.eventLog, () => k.config),
+        questions: questionsFor(db, k.runs.eventLog, () => k.config),
         offboardRuns: {
           abortWaiting: async () => false,
           abortIfOrphaned: async () => false,
@@ -838,9 +839,9 @@ describe("修复波 S2：离职销毁此人对话的沙箱", () => {
     try {
       const scheduled: string[][] = [];
       const off = testOffboarding(db, {
-        credentials: k.tools.credentials,
-        approvals: k.tools.approvals,
-        questions: k.tools.questions,
+        credentials: credentialsFor(db, null as never),
+        approvals: approvalsFor(db, k.runs.eventLog, () => k.config),
+        questions: questionsFor(db, k.runs.eventLog, () => k.config),
         sandboxDestroy: {
           destroy: async (ids) => {
             scheduled.push(ids);
@@ -866,9 +867,9 @@ describe("修复波 S2：离职销毁此人对话的沙箱", () => {
       const off = testOffboarding(
         db,
         {
-          credentials: k.tools.credentials,
-          approvals: k.tools.approvals,
-          questions: k.tools.questions,
+          credentials: credentialsFor(db, null as never),
+          approvals: approvalsFor(db, k.runs.eventLog, () => k.config),
+          questions: questionsFor(db, k.runs.eventLog, () => k.config),
           sandboxDestroy: {
             destroy: async () => {
               throw new Error("queue down");

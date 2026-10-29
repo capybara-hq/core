@@ -1,8 +1,7 @@
-import type { Logger } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../../src/config/schema.js";
-import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import type { ExtensionHost } from "../../../src/extensions/host.js";
+import type { KernelDb } from "../../../src/infra/database/kernel-db.js";
 import { parseGrepNull } from "../../../src/tools/builtins/sandbox/grep.js";
 import {
   assignAttachmentNames,
@@ -17,7 +16,6 @@ import {
   searchTimeoutMs,
   shellQuote,
 } from "../../../src/tools/builtins/sandbox/index.js";
-import type { Credentials } from "../../../src/tools/credentials.js";
 import { BUILTIN_TOOL_NAMES, type BuiltinTool, ToolRegistry } from "../../../src/tools/registry.js";
 
 /** M5 T8：沙箱工具的纯函数与「没有沙箱提供方」时的不可用说明。 */
@@ -157,7 +155,7 @@ describe("sandbox_bash time limit", () => {
       storage: {} as any,
       // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
       eventLog: {} as any,
-      config: () => cfg,
+      config: { get: () => cfg },
     }).find((t) => t.spec.name === "sandbox_bash");
     // 等锁 + 创建 / 恢复 + 停命令的兜底（E2B 重启沙箱约 160 秒）
     const margin =
@@ -228,7 +226,7 @@ describe("glob / grep command timeout (fix wave S2 minor 2)", () => {
         storage: {} as any,
         // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
         eventLog: {} as any,
-        config: () => cfg,
+        config: { get: () => cfg },
       }).find((t) => t.spec.name === name) as BuiltinTool;
       await tool.run(input, {
         orgId: "o",
@@ -272,16 +270,11 @@ describe("registry without a sandbox provider", () => {
       // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
       eventLog: {} as any,
       // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
-      config: () => ({}) as any,
+      config: { get: () => ({}) as any },
     });
     expect(tools.map((t) => t.spec.name)).toHaveLength(7);
-    const registry = new ToolRegistry({
-      db: {} as KernelSchemaDb,
-      host: { tools: () => [], list: () => [] } as unknown as ExtensionHost,
-      credentials: {} as Credentials,
-      log: {} as Logger,
-      builtins: tools,
-    });
+    const host = { tools: () => [], list: () => [] } as unknown as ExtensionHost;
+    const registry = new ToolRegistry({} as KernelDb, host, host, { list: () => tools });
     const got = await registry.forAgent("org", {
       tools: [{ kind: "builtin", name: "sandbox_bash" }],
     });
@@ -344,12 +337,14 @@ describe("attachment sync", () => {
       storage: {} as any,
       // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
       eventLog: {} as any,
-      config: () =>
-        KernelConfigSchema.parse({
-          db: { url: "postgres://x/y" },
-          redis: { url: "redis://x" },
-          masterKey: Buffer.alloc(32, 7).toString("base64"),
-        }),
+      config: {
+        get: () =>
+          KernelConfigSchema.parse({
+            db: { url: "postgres://x/y" },
+            redis: { url: "redis://x" },
+            masterKey: Buffer.alloc(32, 7).toString("base64"),
+          }),
+      },
     }).find((t) => t.spec.name === "sandbox_read");
     mem.files.set("/workspace/f.txt", new TextEncoder().encode("hello\n"));
     const r = (await read?.run(
@@ -461,7 +456,7 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
       eventLog: {
         append: opts.append ?? (async () => []),
       } as unknown as SandboxToolDeps["eventLog"],
-      config: () => cfg,
+      config: { get: () => cfg },
     });
     const tool = (name: string) => tools.find((t) => t.spec.name === name) as BuiltinTool;
     const text = (r: unknown) => (r as { content: { text: string }[] }).content[0]?.text ?? "";

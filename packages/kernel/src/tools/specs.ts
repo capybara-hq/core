@@ -1,6 +1,5 @@
 import type { ToolSpec } from "@capybara-hq/plugin-sdk";
-import type { Transaction } from "kysely";
-import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 
 /**
  * 把工具定义按指纹存进 `capybara.tool_specs`（内容寻址：同一指纹只存一次，已存在不改）。
@@ -8,7 +7,8 @@ import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
  * 仍可按指纹取回，模型请求可由日志还原。
  */
 export async function recordToolSpecs(
-  db: KernelSchemaDb | Transaction<KernelDatabase>,
+  /** The pool or a transaction (a transaction is a Kysely handle too). */
+  db: KernelSchemaDb,
   specs: readonly { specHash: string; spec: ToolSpec }[],
 ): Promise<void> {
   const unique = new Map<string, ToolSpec>();

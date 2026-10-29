@@ -29,21 +29,18 @@ import { createLogger } from "../../src/log.js";
 import { UNKNOWN_RESULT_TEXT } from "../../src/runtime/context/pairing.js";
 import type { HookRunner } from "../../src/runtime/hook-calls.js";
 import { assistantIdemKey, modelCallIdemKey } from "../../src/runtime/model-call.js";
-import { ApprovalsService } from "../../src/tools/approvals.service.js";
-import { Breaker } from "../../src/tools/breaker.js";
+import type { Breaker } from "../../src/tools/breaker.js";
 import { notLoadedText, toolSearchTool } from "../../src/tools/builtins/tool-search.js";
 import { type ConnectorAuth, CredentialMissing } from "../../src/tools/credentials.js";
-import { ToolOutputs } from "../../src/tools/outputs.js";
+import type { ToolOutputs } from "../../src/tools/outputs.js";
 import {
   type DecidePolicy,
   hookDeniedText,
   RUN_STOPPED_DURING_TEXT,
   RUN_STOPPED_TEXT,
-  ToolPipeline,
-  type ToolPipelineDeps,
+  type ToolPipeline,
   type ToolStepContext,
 } from "../../src/tools/pipeline.js";
-import { QuestionsService } from "../../src/tools/questions.service.js";
 import {
   type BuiltinHandler,
   type ResolvedTool,
@@ -54,6 +51,14 @@ import { validateInput } from "../../src/tools/validate.js";
 import { truncateTables } from "../helpers/db.js";
 import { eventsOf } from "../helpers/runs.js";
 import { seedConnector, seedConversation } from "../helpers/tool-fixtures.js";
+import {
+  approvalsFor,
+  breakerFor,
+  outputsFor,
+  type PipelineTestDeps,
+  pipelineFor,
+  questionsFor,
+} from "../helpers/tools.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -192,7 +197,7 @@ let afterExecute: ((runId: string, callId: string) => Promise<void>) | undefined
 let pluginHooks: HookRunner | undefined;
 
 function pipeline(): ToolPipeline {
-  const deps: ToolPipelineDeps = {
+  const deps: PipelineTestDeps = {
     db,
     eventLog,
     registry: {
@@ -214,8 +219,8 @@ function pipeline(): ToolPipeline {
     },
     breaker,
     outputs,
-    approvals: new ApprovalsService({ db, eventLog, config, log: silent }),
-    questions: new QuestionsService({ db, eventLog, config, log: silent }),
+    approvals: approvalsFor(db, eventLog, config),
+    questions: questionsFor(db, eventLog, config),
     config,
     log: silent,
     onToolsChanged: (orgId, connectorId) => {
@@ -225,7 +230,7 @@ function pipeline(): ToolPipeline {
     hooks: { ...(afterExecute !== undefined && { afterExecute }) },
     ...(pluginHooks !== undefined && { pluginHooks }),
   };
-  return new ToolPipeline(deps);
+  return pipelineFor(deps);
 }
 
 beforeAll(async () => {
@@ -239,8 +244,8 @@ beforeAll(async () => {
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
   eventLog = new EventLog(db, createBus(redis, sub, "kernel"));
-  outputs = new ToolOutputs(db, config);
-  breaker = new Breaker(redis, config);
+  outputs = outputsFor(db, config);
+  breaker = breakerFor(redis, config);
 }, 120_000);
 
 afterAll(async () => {

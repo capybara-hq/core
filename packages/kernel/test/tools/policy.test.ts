@@ -26,6 +26,7 @@ import { type ResolvedTool, specHash } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
 import { eventsOf } from "../helpers/runs.js";
 import { seedConnector, seedConversation } from "../helpers/tool-fixtures.js";
+import { approvalsFor } from "../helpers/tools.js";
 
 // ---- decide 真值表（纯函数） ----
 
@@ -563,7 +564,7 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
 
 describe("ApprovalsService.request", () => {
   it("插入 pending 审批（expires_at = now + approvalTimeoutHours）并写 approval_requested；按 (run, call) 幂等", async () => {
-    const approvals = new ApprovalsService({ db, eventLog, config, log: silent });
+    const approvals = approvalsFor(db, eventLog, config);
     const input = {
       orgId: seed.orgId,
       conversationId: seed.conversationId,
@@ -615,7 +616,7 @@ describe("ApprovalsService.request", () => {
   });
 
   it("requestedFor 与 approverRole 都为空 → 拒绝创建", async () => {
-    const approvals = new ApprovalsService({ db, eventLog, config, log: silent });
+    const approvals = approvalsFor(db, eventLog, config);
     await expect(
       approvals.request({
         orgId: seed.orgId,

@@ -21,7 +21,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
 import { notLoadedText } from "../../src/tools/builtins/tool-search.js";
-import { DRIFT_SCAN_JOB } from "../../src/tools/drift.js";
+import { DRIFT_CONNECTOR_JOB } from "../../src/tools/drift.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, PW, waitFor, waitForEvent, waitForTerminal } from "../helpers/runs.js";
@@ -505,7 +505,13 @@ describe("M3 第二段双副本验收", () => {
     // 扫描只检查本周期未同步过的连接器：把同步时间拨回一个周期前（相当于过了一天）
     await sql`UPDATE capybara.connectors SET tools_synced_at = now() - interval '2 days'
       WHERE id = ${connectorId}`.execute(raw);
-    await maint.add(DRIFT_SCAN_JOB, {}, { removeOnComplete: true });
+    // the scan (a @LockedInterval, once per tick on one replica) enqueues one drift-connector job
+    // per due connector, run by any replica's maintenance worker: enqueue this connector's
+    await maint.add(
+      DRIFT_CONNECTOR_JOB,
+      { orgId: base.split("/").at(-1), connectorId, trigger: "schedule" },
+      { removeOnComplete: true },
+    );
     await waitFor(
       async () => (await toolStatus(connectorId, "search")) === "pending_review",
       30_000,

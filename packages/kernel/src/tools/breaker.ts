@@ -1,5 +1,7 @@
+import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
-import type { KernelConfig } from "../config/schema.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { REDIS } from "../infra/tokens.js";
 
 /** 熔断器键：每个组织 × 连接器一个 hash（`f` = 连续失败次数，`o` = 打开到期的毫秒时间戳）。 */
 export const breakerKey = (orgId: string, connectorId: string): string =>
@@ -65,10 +67,11 @@ export function breakerOpenMessage(
  * `tools.breakerOpenSeconds` 秒，期间直接拒绝；到期后半开放行，成功清零、失败立即重新打开。
  * 状态只在 Redis（多副本共享），计数与打开状态都带 TTL。
  */
+@Injectable()
 export class Breaker {
   constructor(
-    private readonly redis: Redis,
-    private readonly config: () => KernelConfig,
+    @Inject(REDIS) private readonly redis: Redis,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
   ) {}
 
   async check(orgId: string, connectorId: string): Promise<BreakerState> {
@@ -82,7 +85,7 @@ export class Breaker {
 
   /** 记一次失败，返回当前连续失败次数。 */
   async failure(orgId: string, connectorId: string): Promise<number> {
-    const { breakerFailures, breakerOpenSeconds } = this.config().tools;
+    const { breakerFailures, breakerOpenSeconds } = this.config.get().tools;
     return Number(
       await this.redis.eval(
         FAILURE,

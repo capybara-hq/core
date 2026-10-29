@@ -46,27 +46,6 @@ export const CONVERSATION_TOOLS = Symbol("CONVERSATION_TOOLS");
 /** `ConversationStreams`（本进程持有的会话 SSE 连接）的注入令牌。 */
 export const CONVERSATION_STREAMS = Symbol("CONVERSATION_STREAMS");
 
-/** 连接器凭据（`Credentials`）的注入令牌。 */
-export const CREDENTIALS = Symbol("CREDENTIALS");
-
-/** `ToolRegistry` 的注入令牌。 */
-export const TOOL_REGISTRY = Symbol("TOOL_REGISTRY");
-
-/** `ConnectorsService` 的注入令牌。 */
-export const CONNECTORS = Symbol("CONNECTORS");
-
-/** `ConnectorContent`（连接器的 prompts / resources，供斜杠命令与 @ 引用）的注入令牌。 */
-export const CONNECTOR_CONTENT = Symbol("CONNECTOR_CONTENT");
-
-/** `ApprovalsService`（工具调用审批与授权）的注入令牌。 */
-export const APPROVALS = Symbol("APPROVALS");
-
-/** `QuestionsService`（工具调用的输入请求）的注入令牌。 */
-export const QUESTIONS = Symbol("QUESTIONS");
-
-/** `OAuthFlow`（OAuth 授权码连接流程）的注入令牌。 */
-export const OAUTH_FLOW = Symbol("OAUTH_FLOW");
-
 /** `ChannelConnections`（组织的渠道连接）的注入令牌。 */
 export const CHANNEL_CONNECTIONS = Symbol("CHANNEL_CONNECTIONS");
 

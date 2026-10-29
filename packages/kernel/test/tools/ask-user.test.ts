@@ -34,6 +34,7 @@ import {
   waitForEvent,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { configFrom } from "../helpers/tools.js";
 
 /**
  * Task 10：内置工具 `ask_user`（用通用的输入请求机制实现）与输入请求 HTTP 接口。
@@ -51,7 +52,7 @@ const base = KernelConfigSchema.parse({
   marketplaces: { official: { enabled: false } },
 });
 const config = (): KernelConfig => base;
-const tool = () => askUserTool({ config });
+const tool = () => askUserTool({ config: configFrom(config) });
 
 const ctx = (resume?: ToolCallContext["resume"]): ToolCallContext => ({
   orgId: "o",

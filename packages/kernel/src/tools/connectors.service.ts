@@ -7,21 +7,25 @@ import {
   ToolError,
   type ToolSpec,
 } from "@capybara-hq/plugin-sdk";
-import { sql, type Transaction } from "kysely";
+import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
 import { z } from "zod";
 import { assertItemInstallable } from "../catalog/requests.service.js";
-import type { KernelConfig } from "../config/schema.js";
-import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import type { ExtensionHost } from "../extensions/host.js";
+import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { assertCustomAllowed } from "../identity/settings.js";
-import type { OrgLock } from "../orgs/org-lock.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { OrgLock } from "../orgs/org-lock.js";
 import {
   type ConnectorAuth,
   CredentialMissing,
   type CredentialOwner,
-  type Credentials,
+  Credentials,
   isOAuth,
   type OAuthAuth,
   type StaticSecret,
@@ -30,7 +34,7 @@ import {
   type DriftChanges,
   type SnapshotRow,
   snapshot,
-  type ToolDrift,
+  ToolDrift,
   type ToolIssue,
   toolIssue,
 } from "./drift.js";
@@ -45,7 +49,7 @@ import {
   pickAuthMethod,
   registerClient,
 } from "./oauth/discovery.js";
-import { callbackUrl, publicUrlRequired } from "./oauth/flow.js";
+import { callbackUrl, publicUrlRequired } from "./oauth/flow-paths.js";
 import {
   type OAuthClientRecord,
   OAuthGrantError,
@@ -53,10 +57,8 @@ import {
   OAuthUnavailable,
   tokenRequest,
 } from "./oauth/tokens.js";
-import { policyFromAnnotations, type ToolPolicy, type ToolRegistry } from "./registry.js";
+import { policyFromAnnotations, type ToolPolicy, ToolRegistry } from "./registry.js";
 import { recordToolSpecs } from "./specs.js";
-
-type Trx = Transaction<KernelDatabase>;
 
 export type { ToolIssue } from "./drift.js";
 
@@ -313,17 +315,31 @@ const unannotated = (a: ToolAnnotations | undefined) =>
  * 连接器（远端服务实例）与其工具快照、凭据。写操作都在组织行锁内复核发起人权限并写审计
  * （detail 只有凭据类型与归属，没有值）。连接器会话按操作打开、用完即关，不在进程内缓存。
  */
+@Injectable()
 export class ConnectorsService {
   constructor(
-    private readonly db: KernelSchemaDb,
-    private readonly registry: ToolRegistry,
-    private readonly host: ExtensionHost,
-    private readonly credentials: Credentials,
-    private readonly config: () => KernelConfig,
-    private readonly drift: ToolDrift,
+    @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(ToolRegistry) private readonly registry: ToolRegistry,
+    /** Extension manifests (a slug may not take an extension's name; R6). */
+    @Inject(ExtensionRegistry) private readonly extensions: Pick<ExtensionRegistry, "manifests">,
+    @Inject(Credentials) private readonly credentials: Credentials,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Inject(ToolDrift) private readonly drift: ToolDrift,
     /** The org row lock (orgs/org-lock.ts; R12): joins the caller's transaction. */
-    private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
+    @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
+
+  /** The kernel-schema handle of the current context (its transaction, else the pool). */
+  private get db(): KernelSchemaDb {
+    return this.kdb.db;
+  }
+
+  /** Runs `fn` in one transaction (the caller's when there is one); `this.db` is its handle. */
+  @Transactional()
+  private async inTransaction<T>(fn: () => Promise<T>): Promise<T> {
+    return fn();
+  }
 
   /**
    * 校验连接器存在、端点按其 schema 合法、不含凭据样式的头 / query 参数 / URL 用户信息（端点对成员可见，
@@ -355,7 +371,7 @@ export class ConnectorsService {
     return r.data;
   }
 
-  private async slugTaken(db: KernelSchemaDb | Trx, orgId: string, slug: string): Promise<boolean> {
+  private async slugTaken(db: KernelSchemaDb, orgId: string, slug: string): Promise<boolean> {
     const row = await db
       .selectFrom("connectors")
       .select("id")
@@ -389,7 +405,7 @@ export class ConnectorsService {
     credential: unknown,
     publicUrl: string,
   ): Promise<OAuthSetup> {
-    const http = oauthHttpOptions(this.config());
+    const http = oauthHttpOptions(this.config.get());
     const parseClient = (requireSecret: boolean) => parseOAuthClient(credential, requireSecret);
     const checked = (path: string, url: string) => {
       try {
@@ -500,7 +516,7 @@ export class ConnectorsService {
   ): { slug: string; endpoint: unknown; owner?: CredentialOwner; secret?: StaticSecret } {
     const slug = this.resolveSlug(input);
     const endpoint = this.parseEndpoint(input.connector, input.endpoint);
-    if (this.host.manifests().some((m) => m.name === slug)) {
+    if (this.extensions.manifests().some((m) => m.name === slug)) {
       throw fail("slug", `Slug "${slug}" is the name of an installed plugin; choose another`);
     }
     const auth = input.auth;
@@ -513,8 +529,8 @@ export class ConnectorsService {
       this.credentials.validate(auth, owner, credential);
       return { slug, endpoint, owner, secret: credential };
     }
-    if (!this.config().http.publicUrl) throw publicUrlRequired();
-    const http = oauthHttpOptions(this.config());
+    if (!this.config.get().http.publicUrl) throw publicUrlRequired();
+    const http = oauthHttpOptions(this.config.get());
     const checked = (path: string, url: string) => {
       try {
         checkOAuthUrl(url, http);
@@ -565,7 +581,7 @@ export class ConnectorsService {
     const { slug, endpoint, owner, secret } = this.checkCreateInput(actorAccountId, input);
     const id = randomUUID();
     const auth = input.auth;
-    const publicUrl = this.config().http.publicUrl;
+    const publicUrl = this.config.get().http.publicUrl;
     // 先做不需要连接的检查：冲突的 slug 不该触发一次外连
     if (await this.slugTaken(this.db, orgId, slug)) {
       throw new ApiError("connector.slug_taken", "Connector slug is already taken");
@@ -592,7 +608,8 @@ export class ConnectorsService {
       ({ rows, issues } = snapshot(slug, listed.specs, listed.resources));
     }
 
-    return this.db.transaction().execute(async (t) => {
+    return this.inTransaction(async () => {
+      const t = this.db;
       await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
       if (input.template) {
         await assertItemInstallable(
@@ -626,12 +643,12 @@ export class ConnectorsService {
           ...(auth.type !== "oauth_code" && { tools_synced_at: sql<Date>`now()` }),
         })
         .execute();
-      await this.insertTools(t, id, rows, input.template?.defaultToolPolicies);
-      if (secret && owner) await this.credentials.setStatic(orgId, id, auth, owner, secret, t);
+      await this.insertTools(id, rows, input.template?.defaultToolPolicies);
+      if (secret && owner) await this.credentials.setStatic(orgId, id, auth, owner, secret);
       if (oauth) {
-        await this.credentials.setOAuthClient(orgId, id, oauth.client, t);
+        await this.credentials.setOAuthClient(orgId, id, oauth.client);
         if (oauth.tokens) {
-          await this.credentials.setOAuthTokens(orgId, id, { kind: "org" }, oauth.tokens, t);
+          await this.credentials.setOAuthTokens(orgId, id, { kind: "org" }, oauth.tokens);
         }
       }
       await audit(t, {
@@ -685,7 +702,7 @@ export class ConnectorsService {
       this.credentials.validate(auth, owner, credential);
       return { ...out, owner, secret: credential };
     }
-    const publicUrl = this.config().http.publicUrl;
+    const publicUrl = this.config.get().http.publicUrl;
     if (!publicUrl) throw publicUrlRequired();
     return { ...out, oauth: await this.prepareOAuth(auth, endpoint, credential, publicUrl) };
   }
@@ -699,14 +716,15 @@ export class ConnectorsService {
    * unnamed `derived` tools and the org's own (`admin`) stay (spec §10). Tool definitions are untouched (the next refresh takes the new endpoint through drift review). With `resetCredentials` the credentials are replaced.
    * Audits `connector.template_applied`. Deleted / missing -> `connector.not_found`.
    */
+  @Transactional({ propagation: "mandatory" })
   async applyTemplateIn(
-    t: Trx,
     orgId: string,
     connectorId: string,
     actorAccountId: string,
     p: PreparedTemplateUpdate,
     actorTokenId?: string,
   ): Promise<void> {
+    const t = this.db;
     await this.row(t, orgId, connectorId, true);
     const { input } = p;
     const policies = input.template.defaultToolPolicies;
@@ -750,19 +768,18 @@ export class ConnectorsService {
       }
     }
     if (input.resetCredentials) {
-      await this.credentials.clearConnector(orgId, connectorId, t);
+      await this.credentials.clearConnector(orgId, connectorId);
       if (p.secret && p.owner) {
-        await this.credentials.setStatic(orgId, connectorId, input.auth, p.owner, p.secret, t);
+        await this.credentials.setStatic(orgId, connectorId, input.auth, p.owner, p.secret);
       }
       if (p.oauth) {
-        await this.credentials.setOAuthClient(orgId, connectorId, p.oauth.client, t);
+        await this.credentials.setOAuthClient(orgId, connectorId, p.oauth.client);
         if (p.oauth.tokens) {
           await this.credentials.setOAuthTokens(
             orgId,
             connectorId,
             { kind: "org" },
             p.oauth.tokens,
-            t,
           );
         }
       }
@@ -844,7 +861,7 @@ export class ConnectorsService {
       oauthClient = true;
     }
 
-    const timeoutMs = this.config().tools.timeoutMs;
+    const timeoutMs = this.config.get().tools.timeoutMs;
     let inspection: Awaited<ReturnType<NonNullable<typeof connector.inspect>>> | undefined;
     if (connector.inspect) {
       try {
@@ -863,7 +880,7 @@ export class ConnectorsService {
         auth,
         endpoint,
         credential,
-        this.config().http.publicUrl ?? "",
+        this.config.get().http.publicUrl ?? "",
       );
       const token = oauth.tokens?.access_token;
       if (token) inject = async () => this.credentials.injectionFor("preview", auth, { token });
@@ -898,12 +915,12 @@ export class ConnectorsService {
   }
 
   private async insertTools(
-    t: Trx,
     connectorId: string,
     rows: SnapshotRow[],
     templatePolicies?: Record<string, ToolPolicy>,
   ): Promise<void> {
     if (rows.length === 0) return;
+    const t = this.db;
     await recordToolSpecs(t, rows);
     const fromTemplate = (name: string): ToolPolicy | undefined =>
       templatePolicies && Object.hasOwn(templatePolicies, name)
@@ -929,7 +946,7 @@ export class ConnectorsService {
   }
 
   /** 读本组织未删除的连接器行；不存在 → `connector.not_found`。`lock` 时 FOR UPDATE。 */
-  private async row(db: KernelSchemaDb | Trx, orgId: string, connectorId: string, lock = false) {
+  private async row(db: KernelSchemaDb, orgId: string, connectorId: string, lock = false) {
     let q = db
       .selectFrom("connectors")
       .selectAll()
@@ -959,7 +976,7 @@ export class ConnectorsService {
   }
 
   private async detail(
-    db: KernelSchemaDb | Trx,
+    db: KernelSchemaDb,
     orgId: string,
     connectorId: string,
     viewerAccountId: string,
@@ -986,13 +1003,7 @@ export class ConnectorsService {
       .execute();
     const s = this.summary(r);
     const auth = s.auth;
-    const status = await this.credentials.status(
-      orgId,
-      connectorId,
-      auth,
-      viewerAccountId,
-      db === this.db ? undefined : (db as Trx),
-    );
+    const status = await this.credentials.status(orgId, connectorId, auth, viewerAccountId);
     return {
       ...s,
       tools: tools.map((t) => {
@@ -1055,7 +1066,8 @@ export class ConnectorsService {
     patch: UpdateConnectorInput,
     actorTokenId?: string,
   ): Promise<ConnectorDetail> {
-    return this.db.transaction().execute(async (t) => {
+    return this.inTransaction(async () => {
+      const t = this.db;
       await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
       const app = await this.row(t, orgId, connectorId, true);
       const current = await t
@@ -1182,9 +1194,9 @@ export class ConnectorsService {
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<void> {
-    await this.db.transaction().execute(async (t) => {
+    await this.inTransaction(async () => {
       await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
-      await this.removeIn(t, orgId, connectorId, actorAccountId, actorTokenId);
+      await this.removeIn(orgId, connectorId, actorAccountId, actorTokenId);
     });
   }
 
@@ -1192,21 +1204,22 @@ export class ConnectorsService {
    * 在调用方事务里软删除连接器（调用方已锁组织行并按需复核角色；应用安装的回滚与卸载用）：删全部凭据与授权，
    * 审计 `connector.deleted`（`reason` 并进 detail）。已删除 / 不存在 → `connector.not_found`。
    */
+  @Transactional({ propagation: "mandatory" })
   async removeIn(
-    t: Trx,
     orgId: string,
     connectorId: string,
     actorAccountId: string,
     actorTokenId?: string,
     reason?: string,
   ): Promise<void> {
+    const t = this.db;
     const app = await this.row(t, orgId, connectorId, true);
     await t
       .updateTable("connectors")
       .set({ deleted_at: sql`now()`, updated_at: sql`now()` })
       .where("id", "=", connectorId)
       .execute();
-    await this.credentials.clearConnector(orgId, connectorId, t);
+    await this.credentials.clearConnector(orgId, connectorId);
     // 授权绑定连接器 id（软删除不触发外键级联）：一并删掉，不留给任何后来的连接器
     await t.deleteFrom("tool_grants").where("connector_id", "=", connectorId).execute();
     await t
@@ -1248,14 +1261,15 @@ export class ConnectorsService {
     );
     const { rows, issues } = snapshot(app.slug, specs, resources);
 
-    return this.db.transaction().execute(async (t) => {
+    return this.inTransaction(async () => {
+      const t = this.db;
       await this.orgLock.lockAndAuthorize(
         orgId,
         actorAccountId,
         opts.trigger === "first_connect" ? "connectors.use" : "connectors.manage",
       );
       const locked = await this.row(t, orgId, connectorId, true);
-      const changes = await this.drift.apply(t, locked, rows);
+      const changes = await this.drift.apply(locked, rows);
       // 首个快照（授权码连接器首个成员连接后）：按目录模板的 defaultToolPolicies 设默认策略（policy_source 'template'）
       const templatePolicies = locked.template_tool_policies;
       if (locked.tools_synced_at === null && templatePolicies) {
@@ -1300,7 +1314,8 @@ export class ConnectorsService {
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<ConnectorDetail> {
-    return this.db.transaction().execute(async (t) => {
+    return this.inTransaction(async () => {
+      const t = this.db;
       await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
       const app = await this.row(t, orgId, connectorId, true);
       const tool = await t
@@ -1396,7 +1411,8 @@ export class ConnectorsService {
         return;
       }
     }
-    await this.db.transaction().execute(async (t) => {
+    await this.inTransaction(async () => {
+      const t = this.db;
       await this.orgLock.lockAndAuthorize(
         orgId,
         actorAccountId,
@@ -1407,7 +1423,7 @@ export class ConnectorsService {
       const owner: CredentialOwner =
         ownership === "org" ? { kind: "org" } : { kind: "user", accountId: actorAccountId };
       this.credentials.validate(auth, owner, value);
-      await this.credentials.setStatic(orgId, connectorId, auth, owner, value, t);
+      await this.credentials.setStatic(orgId, connectorId, auth, owner, value);
       await audit(t, {
         actorAccountId,
         ...(actorTokenId !== undefined && { actorTokenId }),
@@ -1463,18 +1479,19 @@ export class ConnectorsService {
         tokens = await tokenRequest(
           client,
           { grant_type: "client_credentials", scope: (auth.scopes ?? client.scopes)?.join(" ") },
-          oauthHttpOptions(this.config()),
+          oauthHttpOptions(this.config.get()),
         );
       } catch (e) {
         throw connectFailed(e);
       }
     }
-    await this.db.transaction().execute(async (t) => {
+    await this.inTransaction(async () => {
+      const t = this.db;
       await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
       await this.row(t, orgId, connectorId, true);
-      await this.credentials.setOAuthClient(orgId, connectorId, client, t);
+      await this.credentials.setOAuthClient(orgId, connectorId, client);
       if (tokens)
-        await this.credentials.setOAuthTokens(orgId, connectorId, { kind: "org" }, tokens, t);
+        await this.credentials.setOAuthTokens(orgId, connectorId, { kind: "org" }, tokens);
       await audit(t, {
         actorAccountId,
         ...(actorTokenId !== undefined && { actorTokenId }),
@@ -1493,15 +1510,11 @@ export class ConnectorsService {
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<void> {
-    await this.db.transaction().execute(async (t) => {
+    await this.inTransaction(async () => {
+      const t = this.db;
       await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.use");
       const app = await this.row(t, orgId, connectorId);
-      await this.credentials.clear(
-        orgId,
-        connectorId,
-        { kind: "user", accountId: actorAccountId },
-        t,
-      );
+      await this.credentials.clear(orgId, connectorId, { kind: "user", accountId: actorAccountId });
       await audit(t, {
         actorAccountId,
         ...(actorTokenId !== undefined && { actorTokenId }),

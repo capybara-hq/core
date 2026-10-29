@@ -8,19 +8,17 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import type { ApiTokenService } from "../../src/identity/api-tokens.js";
+import { type KernelEventMap, KernelEvents } from "../../src/infra/events/kernel-events.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
-import {
-  type ApprovalRecord,
-  type ApprovalRequestInput,
-  ApprovalsService,
-} from "../../src/tools/approvals.service.js";
+import type { ApprovalRecord, ApprovalRequestInput } from "../../src/tools/approvals.service.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { eventsOf, waitFor } from "../helpers/runs.js";
+import { approvalsFor } from "../helpers/tools.js";
 
 /**
  * 审批 HTTP。两个内核实例（各自的连接池与 HTTP 连接器，共用 PG / Redis）模拟两个副本，
@@ -606,18 +604,13 @@ describe("Review Focus 1：两个副本并发处理同一审批", () => {
     }
   });
 
-  it("onDecided 在提交后恰好调用一次（两个服务实例并发决定）", async () => {
-    const calls: ApprovalRecord[] = [];
-    const mk = (k: Kernel) =>
-      new ApprovalsService({
-        db,
-        eventLog: k.runs.eventLog,
-        config: () => k.config,
-        log: createLogger("error", { write: () => {} }),
-        onDecided: async (r) => {
-          calls.push(r);
-        },
-      });
+  it("approval.decided 在提交后恰好发布一次（两个服务实例并发决定）", async () => {
+    const calls: KernelEventMap["approval.decided"][] = [];
+    const events = new KernelEvents(createLogger("error", { write: () => {} }));
+    events.on("approval.decided", (r) => {
+      calls.push(r);
+    });
+    const mk = (k: Kernel) => approvalsFor(db, k.runs.eventLog, () => k.config, events);
     const [s1, s2] = [mk(ka), mk(kb)];
     const a = await request();
     const results = await Promise.allSettled([

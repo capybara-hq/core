@@ -169,16 +169,8 @@ beforeAll(async () => {
           // 探针请求都不带凭据，不会写事件日志
           eventLog: k.runs.eventLog,
           registry: k.runs.registry,
-          credentials: k.tools.credentials,
-          toolRegistry: k.tools.registry,
-          approvals: k.tools.approvals,
-          questions: k.tools.questions,
-          drift: k.tools.drift,
-          outputs: k.tools.outputs,
-          connectorContent: k.tools.connectorContent,
           channels: k.channels.connections,
           attachments: k.attachments,
-          connectors: k.app.get(LegacyPorts).connectors,
           evalQueue: { enqueue: async () => {} },
           sandbox: k.sandbox,
           runs: {

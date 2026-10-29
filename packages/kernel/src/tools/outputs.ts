@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { ToolError } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
-import type { KernelConfig } from "../config/schema.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
 
 /** 文本行数（按 `\n` 切分；空串算 1 行，与按行分页读取一致）。 */
 export function countLines(s: string): number {
@@ -25,12 +27,14 @@ export interface OutputScope {
 
 /**
  * 输出存档（spec 5.4）：超大工具结果的全文存进 `capybara.tool_outputs`，保留 `tools.outputRetentionDays` 天。
- * 只能在产生它的会话里读取（同组织别的会话也不行：会话之间可见范围不同），过期即视为不存在（清理由维护任务负责）。
+ * 只能在产生它的会话里读取（同组织别的会话也不行：会话之间可见范围不同），过期即视为不存在（清理由
+ * `output-cleanup` 每小时一次，见 {@link deleteExpiredOutputs}）。
  */
+@Injectable()
 export class ToolOutputs {
   constructor(
-    private readonly db: KernelSchemaDb,
-    private readonly config: () => KernelConfig,
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
   ) {}
 
   async save(a: {
@@ -42,7 +46,7 @@ export class ToolOutputs {
     const id = randomUUID();
     const sizeChars = a.content.length;
     const lineCount = countLines(a.content);
-    const days = this.config().tools.outputRetentionDays;
+    const days = this.config.get().tools.outputRetentionDays;
     await this.db
       .insertInto("tool_outputs")
       .values({
@@ -70,6 +74,39 @@ export class ToolOutputs {
       .where("expires_at", ">", sql<Date>`now()`)
       .executeTakeFirst();
     return row?.content ?? null;
+  }
+}
+
+/** Rows deleted per statement by {@link deleteExpiredOutputs}. */
+export const OUTPUT_CLEANUP_BATCH = 1000;
+
+/**
+ * 删除已过期（`expires_at < now()`）的输出存档，每批 `batch` 行，直到删完；返回删除的总行数。
+ * 每批一条独立语句（不开长事务）；多个 worker 同时清理时 `SKIP LOCKED` 互不等待。
+ */
+export async function deleteExpiredOutputs(
+  db: KernelSchemaDb,
+  batch = OUTPUT_CLEANUP_BATCH,
+): Promise<number> {
+  let total = 0;
+  for (;;) {
+    const r = await db
+      .deleteFrom("tool_outputs")
+      .where(
+        "id",
+        "in",
+        db
+          .selectFrom("tool_outputs")
+          .select("id")
+          .where("expires_at", "<", sql<Date>`now()`)
+          .limit(batch)
+          .forUpdate()
+          .skipLocked(),
+      )
+      .executeTakeFirst();
+    const n = Number(r.numDeletedRows);
+    total += n;
+    if (n < batch) return total;
   }
 }
 

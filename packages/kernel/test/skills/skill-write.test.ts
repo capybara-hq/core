@@ -954,7 +954,7 @@ describe("skill_write on a shared agent (R4)", { timeout: 180_000 }, () => {
         listForConversation: async () => [],
         openForConversation: async () => null,
       },
-      config: () => k.config,
+      config: { get: () => k.config },
     });
     await expect(
       t.run(

@@ -1,7 +1,6 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { type Job, type JobsOptions, Queue, Worker } from "bullmq";
 import type { Redis } from "ioredis";
-import { sql } from "kysely";
 import {
   MARKETPLACES_REFRESH_SCHEDULER_ID,
   PLUGIN_STAGING_CLEANUP_SCHEDULER_ID,
@@ -12,16 +11,11 @@ import { withJobContext } from "../log-context.js";
 import { DIRECTORY_SCAN_SCHEDULER_ID } from "../orgs/directory-sync.js";
 import { OFFBOARD_SWEEP_SCHEDULER_ID } from "../orgs/offboarding.js";
 import { STORAGE_PURGE_SCHEDULER_ID } from "../storage/purge.js";
+import { DRIFT_SCHEDULER_ID, OUTPUT_CLEANUP_SCHEDULER_ID } from "../tools/job-ids.js";
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { bullConnection } from "./run-queue.js";
 
 export { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
-
-/** 输出存档清理：任务名、job scheduler id（不含 `:`）、周期与每批删除行数。 */
-export const OUTPUT_CLEANUP_JOB = "output-cleanup";
-export const OUTPUT_CLEANUP_SCHEDULER_ID = "output-cleanup-hourly";
-export const OUTPUT_CLEANUP_EVERY_MS = 3_600_000;
-export const OUTPUT_CLEANUP_BATCH = 1000;
 
 /** 维护任务的处理函数（`token` 供 `moveToDelayed` 等使用）。 */
 export type MaintenanceHandler = (job: Job, token: string | undefined) => Promise<void>;
@@ -31,36 +25,6 @@ export interface MaintenanceSchedule {
   id: string;
   name: string;
   everyMs: () => number;
-}
-
-/**
- * 删除已过期（`expires_at < now()`）的输出存档，每批 `batch` 行，直到删完；返回删除的总行数。
- * 每批一条独立语句（不开长事务）；多个 worker 同时清理时 `SKIP LOCKED` 互不等待。
- */
-export async function deleteExpiredOutputs(
-  db: KernelSchemaDb,
-  batch = OUTPUT_CLEANUP_BATCH,
-): Promise<number> {
-  let total = 0;
-  for (;;) {
-    const r = await db
-      .deleteFrom("tool_outputs")
-      .where(
-        "id",
-        "in",
-        db
-          .selectFrom("tool_outputs")
-          .select("id")
-          .where("expires_at", "<", sql<Date>`now()`)
-          .limit(batch)
-          .forUpdate()
-          .skipLocked(),
-      )
-      .executeTakeFirst();
-    const n = Number(r.numDeletedRows);
-    total += n;
-    if (n < batch) return total;
-  }
 }
 
 export interface MaintenanceDeps {
@@ -85,6 +49,9 @@ export const RETIRED_SCHEDULER_IDS: readonly string[] = [
   // Task 3.4
   MARKETPLACES_REFRESH_SCHEDULER_ID,
   PLUGIN_STAGING_CLEANUP_SCHEDULER_ID,
+  // Task 3.5
+  DRIFT_SCHEDULER_ID,
+  OUTPUT_CLEANUP_SCHEDULER_ID,
 ];
 
 /**
@@ -100,12 +67,7 @@ export class Maintenance {
   private readonly handlers = new Map<string, MaintenanceHandler>();
   private readonly schedules: MaintenanceSchedule[] = [];
 
-  constructor(private readonly d: MaintenanceDeps) {
-    this.handle(OUTPUT_CLEANUP_JOB, async () => {
-      const n = await deleteExpiredOutputs(d.db);
-      if (n > 0) d.log.info("expired tool outputs deleted", { count: n });
-    });
-  }
+  constructor(private readonly d: MaintenanceDeps) {}
 
   /** 登记某个任务名的处理函数（构造期调用；Worker 启动前后都可）。 */
   handle(name: string, fn: MaintenanceHandler): void {
@@ -125,15 +87,6 @@ export class Maintenance {
   /** 登记周期任务的 job scheduler（幂等；worker 角色启动时调用）。 */
   async ensureSchedules(): Promise<void> {
     for (const id of RETIRED_SCHEDULER_IDS) await this.getQueue().removeJobScheduler(id);
-    await this.getQueue().upsertJobScheduler(
-      OUTPUT_CLEANUP_SCHEDULER_ID,
-      { every: OUTPUT_CLEANUP_EVERY_MS },
-      {
-        name: OUTPUT_CLEANUP_JOB,
-        data: {},
-        opts: { removeOnComplete: true, removeOnFail: 100 },
-      },
-    );
     for (const s of this.schedules) {
       await this.getQueue().upsertJobScheduler(
         s.id,

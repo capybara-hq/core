@@ -85,23 +85,19 @@ import { SkillsModule } from "../skills/skills.module.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { StorageService } from "../storage/storage.service.js";
 import { ApprovalsController, ToolGrantsController } from "../tools/approvals.controller.js";
-import type { ApprovalsService } from "../tools/approvals.service.js";
+import { ApprovalsService } from "../tools/approvals.service.js";
 import { ConnectorContentController } from "../tools/connector-content.controller.js";
-import type { ConnectorContent } from "../tools/connector-content.js";
+import { ConnectorContent } from "../tools/connector-content.js";
 import { ConnectorsController } from "../tools/connectors.controller.js";
-import type { ConnectorsService } from "../tools/connectors.service.js";
-import type { Credentials } from "../tools/credentials.js";
-import type { ToolDrift } from "../tools/drift.js";
 import { ConversationToolInfo } from "../tools/info.js";
-import { OAuthFlow } from "../tools/oauth/flow.js";
 import {
   OAuthCallbackController,
   OAuthConnectController,
 } from "../tools/oauth/oauth.controller.js";
-import type { ToolOutputs } from "../tools/outputs.js";
+import { ToolOutputs } from "../tools/outputs.js";
 import { QuestionsController } from "../tools/questions.controller.js";
-import type { QuestionsService } from "../tools/questions.service.js";
-import type { ToolRegistry } from "../tools/registry.js";
+import { ToolRegistry } from "../tools/registry.js";
+import { ToolsModule } from "../tools/tools.module.js";
 import { EmbedTokens } from "../ui/embed-token.js";
 import { OrgUiStreams, orgMembership } from "../ui/ui-stream.js";
 import { UiController } from "../ui/views.controller.js";
@@ -109,11 +105,8 @@ import { recordedCard, UiViews } from "../ui/views.js";
 import {
   AGENT_TEMPLATES,
   AGENTS,
-  APPROVALS,
   ATTACHMENTS,
   CHANNEL_CONNECTIONS,
-  CONNECTOR_CONTENT,
-  CONNECTORS,
   CONVERSATION_ARTIFACTS,
   CONVERSATION_FILES,
   CONVERSATION_OUTPUTS,
@@ -122,7 +115,6 @@ import {
   CONVERSATION_STREAMS,
   CONVERSATION_TOOLS,
   CONVERSATIONS,
-  CREDENTIALS,
   EMBED_TOKENS,
   EVAL_RUNS,
   EVAL_SETS,
@@ -131,11 +123,8 @@ import {
   INBOX,
   KERNEL_CONFIG,
   KERNEL_DB,
-  OAUTH_FLOW,
   ORG_UI_STREAMS,
   PROVIDER_REGISTRY,
-  QUESTIONS,
-  TOOL_REGISTRY,
   TRAJECTORIES,
   UI_VIEWS,
 } from "./tokens.js";
@@ -157,28 +146,12 @@ export interface ApiDeps {
   registry: ProviderRegistry;
   /** 运行投递与中止。 */
   runs: RunControl;
-  /** 连接器凭据（与 `Kernel.tools.credentials` 同一实例）。 */
-  credentials: Credentials;
-  /** 工具注册表（与 `Kernel.tools.registry` 同一实例）。 */
-  toolRegistry: ToolRegistry;
-  /** 工具调用审批（与 `Kernel.tools.approvals` 同一实例）。 */
-  approvals: ApprovalsService;
-  /** 工具调用的输入请求（与 `Kernel.tools.questions` 同一实例）。 */
-  questions: QuestionsService;
-  /** 工具定义漂移检测（与 `Kernel.tools.drift` 同一实例；手动刷新走同一套比对）。 */
-  drift: ToolDrift;
-  /** 工具输出存档（与 `Kernel.tools.outputs` 同一实例；网页的运行标签读全文）。 */
-  outputs: ToolOutputs;
-  /** 连接器的 prompts / resources（斜杠命令、@ 资源引用与消息附件）。 */
-  connectorContent: ConnectorContent;
   /** 渠道连接（与 `Kernel.channels.connections` 同一实例）。 */
   channels: ChannelConnections;
   /** 对话附件（与 `Kernel.attachments` 同一实例）。 */
   attachments: AttachmentsService;
   /** 按对话的沙箱（与 `Kernel.sandbox` 同一实例；上下文标签读状态）。 */
   sandbox: SandboxService;
-  /** Org connectors (the legacy graph's instance, also the catalog's R7 port; Task 3.5). */
-  connectors: ConnectorsService;
   /** 评测队列的生产方（与 worker 同一队列名）。 */
   evalQueue: Pick<EvalQueue, "enqueue">;
   /** 删除 agent 后投递销毁它各对话的沙箱（一次性维护任务）；不给时留给不活跃销毁扫描。 */
@@ -283,7 +256,7 @@ function serviceProviders(): Provider[] {
           deps.sandboxDestroy,
           deps.log,
         ),
-      inject: [KERNEL_DB, PROVIDER_REGISTRY, TOOL_REGISTRY, SkillChangesService, OrgLock, API_DEPS],
+      inject: [KERNEL_DB, PROVIDER_REGISTRY, ToolRegistry, SkillChangesService, OrgLock, API_DEPS],
     },
     {
       provide: TRAJECTORIES,
@@ -343,25 +316,20 @@ function serviceProviders(): Provider[] {
       ],
     },
     { provide: EVENT_LOG, useFactory: (deps: ApiDeps) => deps.eventLog, inject: [API_DEPS] },
-    {
-      provide: CONNECTOR_CONTENT,
-      useFactory: (deps: ApiDeps) => deps.connectorContent,
-      inject: [API_DEPS],
-    },
     { provide: ATTACHMENTS, useFactory: (deps: ApiDeps) => deps.attachments, inject: [API_DEPS] },
     {
       provide: INBOX,
       useFactory: (
         requests: CatalogRequestsService,
         skillChanges: SkillChangesService,
-        deps: ApiDeps,
+        approvals: ApprovalsService,
       ) =>
         new InboxService({
-          approvals: deps.approvals,
+          approvals,
           skillChanges,
           catalogRequests: requests,
         }),
-      inject: [CatalogRequestsService, SkillChangesService, API_DEPS],
+      inject: [CatalogRequestsService, SkillChangesService, ApprovalsService],
     },
     {
       provide: CONVERSATIONS,
@@ -386,24 +354,16 @@ function serviceProviders(): Provider[] {
           deps.registry,
           invoker,
         ),
-      inject: [
-        KERNEL_DB,
-        EVENT_LOG,
-        AGENTS,
-        CONNECTOR_CONTENT,
-        ATTACHMENTS,
-        SkillInvoker,
-        API_DEPS,
-      ],
+      inject: [KERNEL_DB, EVENT_LOG, AGENTS, ConnectorContent, ATTACHMENTS, SkillInvoker, API_DEPS],
     },
     {
       provide: CONVERSATION_OUTPUTS,
-      useFactory: (conversations: ConversationsService, deps: ApiDeps) =>
+      useFactory: (conversations: ConversationsService, outputs: ToolOutputs) =>
         new ConversationOutputs({
           isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
-          load: (scope, id) => deps.outputs.load(scope, id),
+          load: (scope, id) => outputs.load(scope, id),
         }),
-      inject: [CONVERSATIONS, API_DEPS],
+      inject: [CONVERSATIONS, ToolOutputs],
     },
     {
       provide: CONVERSATION_ARTIFACTS,
@@ -455,13 +415,17 @@ function serviceProviders(): Provider[] {
     },
     {
       provide: CONVERSATION_TOOLS,
-      useFactory: (db: KernelSchemaDb, conversations: ConversationsService, deps: ApiDeps) =>
+      useFactory: (
+        db: KernelSchemaDb,
+        conversations: ConversationsService,
+        registry: ToolRegistry,
+      ) =>
         new ConversationToolInfo({
           db,
-          registry: deps.toolRegistry,
+          registry,
           isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
         }),
-      inject: [KERNEL_DB, CONVERSATIONS, API_DEPS],
+      inject: [KERNEL_DB, CONVERSATIONS, ToolRegistry],
     },
     {
       provide: CONVERSATION_STREAMS,
@@ -561,45 +525,10 @@ function serviceProviders(): Provider[] {
         { token: GracefulShutdown, optional: true },
       ],
     },
-    { provide: CREDENTIALS, useFactory: (deps: ApiDeps) => deps.credentials, inject: [API_DEPS] },
     {
       provide: CHANNEL_CONNECTIONS,
       useFactory: (deps: ApiDeps) => deps.channels,
       inject: [API_DEPS],
-    },
-    {
-      provide: TOOL_REGISTRY,
-      useFactory: (deps: ApiDeps) => deps.toolRegistry,
-      inject: [API_DEPS],
-    },
-    { provide: APPROVALS, useFactory: (deps: ApiDeps) => deps.approvals, inject: [API_DEPS] },
-    { provide: QUESTIONS, useFactory: (deps: ApiDeps) => deps.questions, inject: [API_DEPS] },
-    { provide: CONNECTORS, useFactory: (deps: ApiDeps) => deps.connectors, inject: [API_DEPS] },
-    {
-      provide: OAUTH_FLOW,
-      useFactory: (
-        db: KernelSchemaDb,
-        redis: Redis,
-        credentials: Credentials,
-        config: () => KernelConfig,
-        connectors: ConnectorsService,
-        orgLock: OrgLock,
-        deps: ApiDeps,
-      ) =>
-        new OAuthFlow({
-          db,
-          orgLock,
-          redis,
-          credentials,
-          config,
-          log: deps.log,
-          onFirstConnect: async (orgId, connectorId, accountId) => {
-            await connectors.refresh(orgId, connectorId, accountId, undefined, {
-              trigger: "first_connect",
-            });
-          },
-        }),
-      inject: [KERNEL_DB, REDIS, CREDENTIALS, KERNEL_CONFIG, CONNECTORS, OrgLock, API_DEPS],
     },
   ];
 }
@@ -634,6 +563,7 @@ export class ApiModule {
         AdminModule,
         ExtensionsModule,
         CatalogModule,
+        ToolsModule,
       ],
       controllers: CONTROLLERS,
       providers: [deps, ...serviceProviders(), { provide: APP_GUARD, useClass: AuthGuard }],

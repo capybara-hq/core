@@ -26,11 +26,6 @@ import { UNKNOWN_RESULT_TEXT } from "../../src/runtime/context/pairing.js";
 import { LangGraphLoop, type LoopDeps } from "../../src/runtime/langgraph-loop.js";
 import type { LoopContext } from "../../src/runtime/loop.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
-import { ApprovalsService } from "../../src/tools/approvals.service.js";
-import { Breaker } from "../../src/tools/breaker.js";
-import { ToolOutputs } from "../../src/tools/outputs.js";
-import { ToolPipeline } from "../../src/tools/pipeline.js";
-import { QuestionsService } from "../../src/tools/questions.service.js";
 import { type ResolvedTool, specHash } from "../../src/tools/registry.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
@@ -48,6 +43,13 @@ import {
   waitForTerminal,
 } from "../helpers/runs.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
+import {
+  approvalsFor,
+  breakerFor,
+  outputsFor,
+  pipelineFor,
+  questionsFor,
+} from "../helpers/tools.js";
 
 const MEM_CONNECTOR = fileURLToPath(
   new URL("../fixtures/plugins/mem-connector/index.ts", import.meta.url),
@@ -175,19 +177,19 @@ describe("tools 节点（LangGraphLoop + 执行管线）", () => {
       tools: registry,
       config: () => config,
       log: silent,
-      toolPipeline: new ToolPipeline({
+      toolPipeline: pipelineFor({
         db,
         eventLog,
         registry,
         credentials: { injection: async () => ({ headers: {} }), onUnauthorized: async () => {} },
-        breaker: new Breaker(redis, () => config),
-        outputs: new ToolOutputs(db, () => config),
-        approvals: new ApprovalsService({ db, eventLog, config: () => config, log: silent }),
-        questions: new QuestionsService({ db, eventLog, config: () => config, log: silent }),
+        breaker: breakerFor(redis, () => config),
+        outputs: outputsFor(db, () => config),
+        approvals: approvalsFor(db, eventLog, () => config),
+        questions: questionsFor(db, eventLog, () => config),
         config: () => config,
         log: silent,
         hooks: {
-          afterExecute: async (_runId, callId) => {
+          afterExecute: async (_runId: string, callId: string) => {
             if (callId === crashOn) {
               crashOn = null;
               throw new SimulatedCrash();

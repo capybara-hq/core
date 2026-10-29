@@ -28,11 +28,9 @@ import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { legacyCurrentTrx } from "../infra/database/legacy-view.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
-import { LegacyPorts } from "../lifecycle/legacy-ports.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import type { OrgAction } from "../orgs/roles.js";
@@ -45,6 +43,7 @@ import {
 } from "../skills/skills.service.js";
 import { StorageService } from "../storage/storage.service.js";
 import type { CreateConnectorInput } from "../tools/connectors.service.js";
+import { ConnectorsService } from "../tools/connectors.service.js";
 import type { ConnectorAuth } from "../tools/credentials.js";
 import {
   type CatalogVersionFiles,
@@ -428,8 +427,8 @@ export class PluginInstaller {
     @Inject(OrgExtensionConfigs) private readonly orgConfigs: OrgExtensionConfigs,
     @Inject(CatalogRequestsService) private readonly requests: CatalogRequestsService,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
-    /** R7: `connectors` (tools/connectors.service.ts, Task 3.5). */
-    @Inject(LegacyPorts) private readonly ports: LegacyPorts,
+    /** Org connectors: installs create, upgrade and remove them. */
+    @Inject(ConnectorsService) private readonly connectors: ConnectorsService,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
@@ -668,7 +667,7 @@ export class PluginInstaller {
       );
     }
     try {
-      this.ports.connectors.checkCreateInput(actor, ci);
+      this.connectors.checkCreateInput(actor, ci);
     } catch (e) {
       throw under(e, path);
     }
@@ -867,7 +866,7 @@ export class PluginInstaller {
       for (const ct of plan.templates) {
         const ci = plan.connectors.get(ct.id);
         if (!ci) throw new ApiError("internal", `Connector template ${ct.id} was not planned`);
-        const r = await this.ports.connectors.create(orgId, actor, ci, opts.actorTokenId);
+        const r = await this.connectors.create(orgId, actor, ci, opts.actorTokenId);
         await record({
           kind: "connector",
           ref: r.connector.id,
@@ -1245,14 +1244,7 @@ export class PluginInstaller {
         .where("deleted_at", "is", null)
         .executeTakeFirst();
       if (!live) return false;
-      await this.ports.connectors.removeIn(
-        legacyCurrentTrx(),
-        orgId,
-        c.ref,
-        actor,
-        undefined,
-        reason,
-      );
+      await this.connectors.removeIn(orgId, c.ref, actor, undefined, reason);
       return true;
     }
     if (c.kind === "plugin") return false;

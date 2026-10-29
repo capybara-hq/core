@@ -132,3 +132,26 @@ the timers, aborts the stop signal a job method receives as its argument, starts
 waits for the runs in progress (bounded by the shared stop deadline, before the extension host,
 Redis and the pool close), so a stop no longer logs "cron job failed" / a failed lock release and
 leaves no run lock behind until its TTL. Failures caused by the stop are logged at WARN / INFO.
+
+Tools and connectors are a Nest module (`ToolsModule`): `Credentials`, `ToolOutputs`,
+`BuiltinTools` (the builtin tools, built once; their names, descriptions and schemas unchanged),
+`ToolRegistry`, `ApprovalsService`, `QuestionsService`, `ToolDrift`, `Breaker`,
+`ConnectorContent`, `ToolPipeline`, `ConnectorsService` and `OAuthFlow` are injectable providers.
+Export changes: their constructors take the kernel's providers (`ApprovalsServiceDeps`,
+`QuestionsServiceDeps`, `ToolDriftDeps`, `ConnectorContentDeps`, `ToolPipelineDeps`,
+`ToolRegistryDeps`, `OAuthFlowDeps` and `CredentialsOAuthDeps` are removed; a hand-built pipeline
+takes its test seams through `TOOL_PIPELINE_TEST_HOOKS`); the builtin tool factories take a config
+holder (`{ get() }`) instead of a getter; the trx-taking methods join the caller's transaction (no
+`trx` argument: `Credentials.setStatic` / `setOAuthClient` / `setOAuthTokens` / `clear` /
+`clearConnector` / `clearAccount` / `status`, `ApprovalsService` / `QuestionsService`
+`cancelPendingIn` / `cancelPendingFor`, `ToolDrift.apply`, `ToolPipeline.stopOpenAgentCalls`,
+`ConnectorsService.applyTemplateIn` / `removeIn`); the OAuth paths moved to
+`tools/oauth/flow-paths.ts` (re-exported by `flow.ts`); `deleteExpiredOutputs` moved to
+`tools/outputs.ts`. A decided approval and an answered question are the in-process domain events
+`approval.decided` / `question.answered` (`KernelEvents`), which resume the waiting run as before
+(on the deciding replica; the wait sweep still resumes a run whose resume was lost). The
+`drift-scan` job is a `@LockedInterval` (every `tools.driftIntervalHours`, and once right after the
+start, as the old scheduler's first run; a repeated scan in a period enqueues nothing new) and
+`output-cleanup` an hourly `@LockedCron` (its first run moved to the next top of the hour); their
+old maintenance schedulers are removed when a worker starts. One-off `drift-connector` jobs keep
+their names and job ids. The OAuth refresh lock uses the `LockService` lease primitives (same key).

@@ -398,8 +398,8 @@ export class Waits {
         .forUpdate()
         .executeTakeFirst();
       if (run?.status !== "waiting") return null;
-      await this.d.approvals.cancelPendingIn(t, runId);
-      await this.d.questions.cancelPendingIn(t, runId);
+      await this.d.approvals.cancelPendingIn(runId);
+      await this.d.questions.cancelPendingIn(runId);
       // 本运行全部审批 / 输入请求涉及的调用（不只刚取消的）：决定已提交、续跑尚未发生时被中止的调用同样没有结果，
       // 一并写取消说明（已有结果的按幂等键命中、不重复）。同一调用先审批后输入，后者覆盖前者。
       const cancelled = new Map<string, { toolKey: string; text: string }>();
@@ -531,8 +531,8 @@ export class Waits {
         .forUpdate()
         .executeTakeFirst();
       if (!run || !(TERMINAL_RUN_STATUSES as readonly string[]).includes(run.status)) return 0;
-      const a = await this.d.approvals.cancelPendingIn(t, runId);
-      const q = await this.d.questions.cancelPendingIn(t, runId);
+      const a = await this.d.approvals.cancelPendingIn(runId);
+      const q = await this.d.questions.cancelPendingIn(runId);
       return a.length + q.length;
     });
     if (r > 0) {

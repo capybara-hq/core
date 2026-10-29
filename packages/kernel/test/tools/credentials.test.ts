@@ -9,7 +9,12 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { createLogger } from "../../src/log.js";
-import { CredentialMissing, Credentials, type StaticAuth } from "../../src/tools/credentials.js";
+import {
+  CredentialMissing,
+  type Credentials,
+  type StaticAuth,
+} from "../../src/tools/credentials.js";
+import { credentialsFor } from "../helpers/tools.js";
 
 let box: Awaited<ReturnType<typeof startTestPostgres>>;
 // biome-ignore lint/suspicious/noExplicitAny: 测试库无表结构类型
@@ -30,7 +35,7 @@ beforeAll(async () => {
     dir: fileURLToPath(new URL("../../src/migrations", import.meta.url)),
   });
   raw = createDb(box.url, 5);
-  creds = new Credentials(kernelDb(raw), ring, log);
+  creds = credentialsFor(kernelDb(raw), ring, log);
 });
 afterAll(async () => {
   await raw.destroy();

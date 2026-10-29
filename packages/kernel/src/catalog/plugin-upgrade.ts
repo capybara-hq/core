@@ -10,11 +10,9 @@ import { OrgExtensionConfigs } from "../extensions/org-config.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { legacyCurrentTrx } from "../infra/database/legacy-view.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
-import { LegacyPorts } from "../lifecycle/legacy-ports.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import type { OrgAction } from "../orgs/roles.js";
@@ -26,6 +24,7 @@ import type {
   PreparedTemplateUpdate,
   TemplateUpdateInput,
 } from "../tools/connectors.service.js";
+import { ConnectorsService } from "../tools/connectors.service.js";
 import type { ConnectorAuth } from "../tools/credentials.js";
 import { canonicalJson } from "../tools/registry.js";
 import {
@@ -305,8 +304,8 @@ export class PluginUpgrader {
     @Inject(SkillsService) private readonly skills: SkillsService,
     @Inject(OrgExtensionConfigs) private readonly orgConfigs: OrgExtensionConfigs,
     @Inject(CatalogRequestsService) private readonly requests: CatalogRequestsService,
-    /** R7: `connectors` (tools/connectors.service.ts, Task 3.5). */
-    @Inject(LegacyPorts) private readonly ports: LegacyPorts,
+    /** Org connectors: installs create, upgrade and remove them. */
+    @Inject(ConnectorsService) private readonly connectors: ConnectorsService,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
@@ -530,7 +529,7 @@ export class PluginUpgrader {
 
       step = "connectors";
       for (const [templateId, ci] of diff.creates) {
-        const r = await this.ports.connectors.create(orgId, actor, ci, opts.actorTokenId);
+        const r = await this.connectors.create(orgId, actor, ci, opts.actorTokenId);
         await this.recordStep(record, {
           kind: "connector",
           ref: r.connector.id,
@@ -546,11 +545,7 @@ export class PluginUpgrader {
         try {
           prepared.push({
             connectorId: tpl.connector.id,
-            p: await this.ports.connectors.prepareTemplateUpdate(
-              actor,
-              tpl.connector.connector,
-              update,
-            ),
+            p: await this.connectors.prepareTemplateUpdate(actor, tpl.connector.connector, update),
           });
         } catch (e) {
           throw under(e, `connectors.${tpl.id}`);
@@ -794,14 +789,7 @@ export class PluginUpgrader {
     if (row?.status !== "upgrading" || row.upgradeId !== upgradeId) throw cleanedUp();
     await assertItemInstallable(t, orgId, itemId);
     for (const c of prepared) {
-      await this.ports.connectors.applyTemplateIn(
-        legacyCurrentTrx(),
-        orgId,
-        c.connectorId,
-        actor,
-        c.p,
-        opts.actorTokenId,
-      );
+      await this.connectors.applyTemplateIn(orgId, c.connectorId, actor, c.p, opts.actorTokenId);
     }
     onFinish();
     for (const dep of diff.dependencies) {

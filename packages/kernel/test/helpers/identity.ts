@@ -38,7 +38,9 @@ import { OrgLock } from "../../src/orgs/org-lock.js";
 import { OrgsService } from "../../src/orgs/orgs.service.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
-import { clearAccountCredentials } from "../../src/tools/credentials.js";
+import type { ApprovalsService } from "../../src/tools/approvals.service.js";
+import { type Credentials, clearAccountCredentials } from "../../src/tools/credentials.js";
+import type { QuestionsService } from "../../src/tools/questions.service.js";
 
 const quiet = createLogger("error", { write: () => {} });
 const handles = new WeakMap<object, StandaloneDatabase>();
@@ -140,14 +142,9 @@ const noRuns: LegacyPortValues["offboardRuns"] = {
 };
 
 /** The legacy ports offboarding reads, with test stubs for whatever `ports` leaves out. */
-export function testPorts(db: Kysely<any>, ports: Partial<LegacyPortValues> = {}): LegacyPorts {
+export function testPorts(_db: Kysely<any>, ports: Partial<LegacyPortValues> = {}): LegacyPorts {
   const p = new LegacyPorts();
   p.bind({
-    credentials: {
-      clearAccount: (orgId, accountId, t) => clearAccountCredentials(t ?? db, orgId, accountId),
-    },
-    approvals: noWaits,
-    questions: noWaits,
     eventLog: { notify: async () => {}, publishChanged: async () => {} } as never,
     offboardRuns: noRuns,
     sandboxDestroy: { destroy: async () => {} },
@@ -156,13 +153,20 @@ export function testPorts(db: Kysely<any>, ports: Partial<LegacyPortValues> = {}
   return p;
 }
 
+/** What offboarding reads besides the database: the legacy ports and the tools services. */
+export type OffboardingTestDeps = Partial<LegacyPortValues> & {
+  credentials?: Pick<Credentials, "clearAccount">;
+  approvals?: Pick<ApprovalsService, "cancelPendingFor">;
+  questions?: Pick<QuestionsService, "cancelPendingFor">;
+};
+
 /**
  * Offboarding over `db`. Without `ports` it only touches the database (deletes credentials, revokes
  * sessions and tokens, reassigns agents); it cancels no approval or question and stops no run.
  */
 export function testOffboarding(
   db: Kysely<any>,
-  ports: Partial<LegacyPortValues> = {},
+  deps: OffboardingTestDeps = {},
   opts: {
     redis?: ConstructorParameters<typeof Offboarding>[3];
     sessions?: ConstructorParameters<typeof Offboarding>[2];
@@ -171,6 +175,7 @@ export function testOffboarding(
   } = {},
 ): Offboarding {
   const h = handlesFor(db);
+  const { credentials, approvals, questions, ...ports } = deps;
   return new Offboarding(
     h.db,
     h.txHost,
@@ -178,6 +183,11 @@ export function testOffboarding(
     opts.redis ?? ({ set: async () => "OK", exists: async () => 0 } as never),
     opts.registry ?? new ExtensionRegistry(),
     testPorts(db, ports),
+    credentials ?? {
+      clearAccount: (orgId, accountId) => clearAccountCredentials(h.db.db, orgId, accountId),
+    },
+    approvals ?? noWaits,
+    questions ?? noWaits,
     // only the cron decorator reads it; tests call sweep() directly
     undefined as unknown as LockService,
     (opts.log ?? quiet) as KernelLogger,

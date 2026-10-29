@@ -4,6 +4,7 @@ import { EnterpriseAdminLockModule } from "../identity/enterprise-admin.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { StorageModule } from "../storage/storage.module.js";
+import { ToolsModule } from "../tools/tools.module.js";
 import { CatalogService } from "./catalog.service.js";
 import { CatalogJobs } from "./jobs.js";
 import { CatalogItemLock, CatalogSourceLock } from "./locks.js";
@@ -44,6 +45,7 @@ export class CatalogImportModule {}
     OrgLockModule,
     StorageModule,
     SkillsModule,
+    ToolsModule,
   ],
   providers: [
     CatalogRequestsService,

@@ -4,13 +4,11 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
-import { createKeyring } from "../../src/ctx/secrets.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { toolSearchTool } from "../../src/tools/builtins/tool-search.js";
-import { Credentials } from "../../src/tools/credentials.js";
 import {
   canonicalJson,
   DISPLAY_ONLY_SPEC_FIELDS,
@@ -21,6 +19,7 @@ import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor, orgSettingsFor } from "../helpers/identity.js";
+import { kernelDbFor } from "../helpers/tools.js";
 
 const MEM_CONNECTOR = fileURLToPath(
   new URL("../fixtures/plugins/mem-connector/index.ts", import.meta.url),
@@ -67,13 +66,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
-  registry = new ToolRegistry({
-    db,
-    host: k.host,
-    credentials: new Credentials(db, createKeyring(Buffer.alloc(32, 7), []), log),
-    log,
-    builtins: [askUser],
-  });
+  registry = new ToolRegistry(kernelDbFor(db), k.host, k.host, { list: () => [askUser] });
 }, 120_000);
 afterAll(async () => {
   await k?.stop();
@@ -345,14 +338,13 @@ describe("组织设置与 tool_search 启用条件", () => {
   let thresholds = { searchThresholdTools: 30, searchThresholdTokens: 8000 };
   const cfg = (): KernelConfig => ({ ...baseCfg, tools: { ...baseCfg.tools, ...thresholds } });
   const searchRegistry = () =>
-    new ToolRegistry({
-      db,
-      host: k.host,
-      credentials: new Credentials(db, createKeyring(Buffer.alloc(32, 7), []), log),
-      log,
-      builtins: [askUser, toolSearchTool()],
-      config: cfg,
-    });
+    new ToolRegistry(
+      kernelDbFor(db),
+      k.host,
+      k.host,
+      { list: () => [askUser, toolSearchTool()] },
+      { get: cfg },
+    );
   const settingsUrl = () => `/api/v1/orgs/${orgId}/settings`;
 
   beforeEach(() => {

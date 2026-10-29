@@ -7,20 +7,28 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
 import {
-  deleteExpiredOutputs,
   MAINTENANCE_QUEUE_NAME,
   Maintenance,
-  OUTPUT_CLEANUP_EVERY_MS,
+  RETIRED_SCHEDULER_IDS,
+} from "../../src/runtime/maintenance.js";
+import {
+  DRIFT_SCHEDULER_ID,
   OUTPUT_CLEANUP_JOB,
   OUTPUT_CLEANUP_SCHEDULER_ID,
-} from "../../src/runtime/maintenance.js";
+} from "../../src/tools/job-ids.js";
+import { ToolJobs } from "../../src/tools/jobs.js";
+import { deleteExpiredOutputs } from "../../src/tools/outputs.js";
 import { truncateTables } from "../helpers/db.js";
-import { waitFor } from "../helpers/runs.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
+import { configFrom, kernelDbFor } from "../helpers/tools.js";
 
-/** Task 10：内核维护队列（`cap-kernel-maintenance`）与输出存档的每小时清理。 */
+/**
+ * Task 10：内核维护队列（`cap-kernel-maintenance`）与输出存档的每小时清理（nest kernel 3.5: the cleanup
+ * is a `@LockedCron` of `ToolJobs`, its old scheduler retired).
+ */
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -87,38 +95,46 @@ describe("deleteExpiredOutputs", () => {
   });
 });
 
-describe("Maintenance", () => {
-  it("每小时一次的 job scheduler：id 不含冒号，多副本重复 upsert 只有一个", async () => {
+describe("output-cleanup", () => {
+  it("the old hourly scheduler is retired: a worker start removes it (and the drift scan's)", async () => {
     expect(MAINTENANCE_QUEUE_NAME).not.toContain(":");
     expect(OUTPUT_CLEANUP_SCHEDULER_ID).not.toContain(":");
-    expect(OUTPUT_CLEANUP_EVERY_MS).toBe(3_600_000);
+    expect(RETIRED_SCHEDULER_IDS).toEqual(
+      expect.arrayContaining([OUTPUT_CLEANUP_SCHEDULER_ID, DRIFT_SCHEDULER_ID]),
+    );
+    await probe.upsertJobScheduler(
+      OUTPUT_CLEANUP_SCHEDULER_ID,
+      { every: 3_600_000 },
+      { name: OUTPUT_CLEANUP_JOB, data: {} },
+    );
     await Promise.all([maintenance().ensureSchedules(), maintenance().ensureSchedules()]);
-    await maintenance().ensureSchedules();
-    const schedulers = await probe.getJobSchedulers();
-    expect(schedulers).toHaveLength(1);
-    expect(schedulers[0]).toMatchObject({
-      key: OUTPUT_CLEANUP_SCHEDULER_ID,
-      name: OUTPUT_CLEANUP_JOB,
-      every: OUTPUT_CLEANUP_EVERY_MS,
-    });
+    expect(await probe.getJobSchedulers()).toHaveLength(0);
   });
 
-  it("worker 执行清理任务：删除过期存档、保留未过期的", async () => {
+  it("the @LockedCron job deletes expired archives and keeps the others", async () => {
     await insertOutputs(5, -60, "old-");
     await insertOutputs(2, 3600, "new-");
-    const m = maintenance();
-    m.startWorker();
-    await probe.add(OUTPUT_CLEANUP_JOB, {}, { removeOnComplete: true });
-    await waitFor(async () => (await countOutputs("old-")) === 0, 10_000, "expired outputs gone");
-    expect(await countOutputs("new-")).toBe(2);
+    const redis = new Redis(rd.url);
+    try {
+      const jobs = new ToolJobs(
+        { scan: async () => 0 },
+        kernelDbFor(raw),
+        configFrom(() => ({})) as never,
+        new LockService(redis, log),
+        log,
+      );
+      await jobs.cleanupOutputs();
+      expect(await countOutputs("old-")).toBe(0);
+      expect(await countOutputs("new-")).toBe(2);
+    } finally {
+      redis.disconnect();
+    }
   });
 
-  it("未启动 worker 的实例（非 worker 角色）不处理任务", async () => {
-    await insertOutputs(2, -60, "old-");
+  it("未启动 worker 的实例（非 worker 角色）不处理维护任务", async () => {
     maintenance();
-    await probe.add(OUTPUT_CLEANUP_JOB, {}, { jobId: "cleanup-probe" });
+    await probe.add("some-job", {}, { jobId: "cleanup-probe" });
     await new Promise((r) => setTimeout(r, 500));
-    expect(await countOutputs("old-")).toBe(2);
     expect(await (await probe.getJob("cleanup-probe"))?.getState()).toBe("waiting");
   });
 });
