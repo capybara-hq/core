@@ -9,12 +9,12 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
-import { LegacyPorts } from "../lifecycle/legacy-ports.js";
 import type { KernelLogger } from "../log.js";
 import { rejectAnonymousGuest } from "../orgs/members.service.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
 import { ProviderRegistry } from "../runtime/providers.js";
+import { SandboxJobs } from "../sandbox/jobs.js";
 import { SkillChangesService } from "../skills/changes.service.js";
 import { assertOrgSkills, assertPinnedSkills } from "../skills/skills.service.js";
 import { ToolRegistry } from "../tools/registry.js";
@@ -254,10 +254,10 @@ export class AgentsService {
     /** Resolves the agent's models (and their parameter declarations) when it is saved. */
     @Inject(ProviderRegistry) private readonly providers: Pick<ProviderRegistry, "resolve">,
     /**
-     * R7: the sandbox destruction after a delete (内核投递一次性维护任务 `sandbox-destroy-for`，worker
-     * 在锁内逐个销毁，幂等; Task 3.8).
+     * The sandbox destruction after a delete (内核投递一次性维护任务 `sandbox-destroy-for`，worker
+     * 在锁内逐个销毁，幂等).
      */
-    @Inject(LegacyPorts) private readonly ports: LegacyPorts,
+    @Inject(SandboxJobs) private readonly sandboxJobs: Pick<SandboxJobs, "destroy">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
@@ -629,7 +629,7 @@ export class AgentsService {
         .execute();
       const ids = rows.map((r) => r.conversation_id);
       for (let i = 0; i < ids.length; i += SANDBOX_DESTROY_BATCH) {
-        await this.ports.sandboxDestroy.destroy(ids.slice(i, i + SANDBOX_DESTROY_BATCH));
+        await this.sandboxJobs.destroy(ids.slice(i, i + SANDBOX_DESTROY_BATCH));
       }
     } catch (err) {
       this.log.warn("cannot schedule sandbox destruction for a deleted agent", { agentId, err });

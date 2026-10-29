@@ -33,7 +33,6 @@ import {
   REDIS_SUBSCRIBER,
 } from "../../src/infra/tokens.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
-import { LegacyPorts } from "../../src/lifecycle/legacy-ports.js";
 import { KERNEL_APP_OPTIONS } from "../../src/lifecycle/tokens.js";
 import { createLogger } from "../../src/log.js";
 
@@ -115,14 +114,13 @@ beforeAll(async () => {
   const probeBus = { publish: async () => {} };
   class ProbeModule {}
   // The infra tokens the API and the converted domain modules read, global like the infra
-  // modules in the kernel (the kernel's own instances: same pool, config and ports)
+  // modules in the kernel (the kernel's own instances: same pool and config)
   const shared = [
     KernelDb,
     TransactionHost,
     XactLock,
     KernelConfigService,
     LockService,
-    LegacyPorts,
     KernelEvents,
     CredentialThrottler,
     CacheService,

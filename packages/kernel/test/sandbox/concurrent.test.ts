@@ -13,11 +13,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { SandboxLeases, SandboxLockLostError } from "../../src/sandbox/leases.js";
-import {
-  SandboxService,
-  type SandboxServiceDeps,
-  sandboxConfigWarnings,
-} from "../../src/sandbox/sandbox.service.js";
+import { type SandboxService, sandboxConfigWarnings } from "../../src/sandbox/sandbox.service.js";
 import { sandboxTools } from "../../src/tools/builtins/sandbox/index.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
 import {
@@ -27,6 +23,11 @@ import {
   setFakeSandboxDelays,
 } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
+import {
+  type SandboxServiceDeps,
+  sandboxLeasesFor,
+  sandboxServiceFor,
+} from "../helpers/sandbox.js";
 
 /**
  * Concurrent commands in one sandbox under shared leases (sub-agents spec §10, Task 4), on the
@@ -54,7 +55,7 @@ const service = (
   p: () => SandboxProvider = () => provider,
   extra: Partial<SandboxServiceDeps> = {},
 ) =>
-  new SandboxService({
+  sandboxServiceFor({
     db,
     redis,
     provider: () => ({ plugin: "sandbox-fake", impl: p() }),
@@ -453,7 +454,7 @@ describe("concurrent commands (fake sandbox)", () => {
     }
     const s2 = service(() => noTag, {
       log: quiet,
-      leases: new SiblingArrives({ redis, log: quiet, pollMs: 20 }),
+      leases: sandboxLeasesFor({ redis, log: quiet, pollMs: 20 }, SiblingArrives),
     });
     await run(s, "true");
     await redis.hset(`capk:sandbox-holders:${conversationId}`, randomUUID(), Date.now() + 600_000);

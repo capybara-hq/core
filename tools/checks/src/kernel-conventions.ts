@@ -267,22 +267,18 @@ export const KC_PENDING: KcPending = {
     { path: "packages/kernel/src/evals/", max: 19 },
     { path: "packages/kernel/src/files/", max: 1 },
   ],
-  "kc-lock": [
-    { path: "packages/kernel/src/evals/", max: 2 },
-    { path: "packages/kernel/src/sandbox/", max: 4 },
-  ],
+  "kc-lock": [{ path: "packages/kernel/src/evals/", max: 2 }],
   "kc-queue": [
     { path: "packages/kernel/src/evals/", max: 2 },
     // R11: the maintenance queue keeps its one hand-made consumer until Task 3.9 builds its
     // @Processor (the rest of runtime/ was converted in Task 3.6b)
-    { path: "packages/kernel/src/runtime/maintenance.ts", max: 3 },
+    { path: "packages/kernel/src/runtime/maintenance.ts", max: 2 },
   ],
   "kc-wiring": [
     { path: "apps/capybara/src/commands/admin-create.ts", max: 1 },
     { path: "apps/capybara/src/commands/admin-grant.ts", max: 1 },
     { path: "packages/kernel/src/http/", max: 15 },
     { path: "packages/kernel/src/kernel.module.ts", max: 5 },
-    { path: "packages/kernel/src/kernel.ts", max: 1 },
     { path: "packages/testing/src/kernel-helpers.ts", max: 1 },
   ],
   "kc-zod-pipe": [
@@ -303,29 +299,17 @@ export const KC_PENDING: KcPending = {
   ],
   "kc-legacy": [
     { path: "packages/kernel/src/http/", max: 27 },
-    // R7 ports read by orgs (event log and run control: 3.6; sandbox: 3.8; Task 3.2)
-    { path: "packages/kernel/src/orgs/", max: 2 },
     // R10: the standalone handles' legacy view, for the CLI until Task 5.2
     { path: "packages/kernel/src/infra/database/standalone.ts", max: 2 },
-    // The counts below include the Phase 3 bridges (R7 LegacyPorts / ConvertedProviders, R8
-    // legacyCurrentTrx), added to kc-legacy by Task 3.1: they shrink as their owners convert
+    // The counts below include the Phase 3 bridges (ConvertedProviders, R8 legacyCurrentTrx; R7
+    // LegacyPorts was deleted in Task 3.8), added to kc-legacy by Task 3.1: they shrink as their
+    // owners convert
     { path: "packages/kernel/src/infra/database/legacy-view.ts", max: 3 },
-    { path: "packages/kernel/src/kernel.module.ts", max: 21 },
-    { path: "packages/kernel/src/kernel.ts", max: 19 },
-    { path: "packages/kernel/src/lifecycle/", max: 13 },
-    // R7 ports (Task 3.6a): ProviderRegistry (3.6b) and the sandbox destruction (3.8) in
-    // AgentsService (LegacyPorts ×2)
-    { path: "packages/kernel/src/agents/", max: 2 },
-    // R7 port: the sandbox (3.8) in ConversationSandboxStatus (LegacyPorts ×2)
-    { path: "packages/kernel/src/conversations/", max: 2 },
-    // R7 port: SandboxService (3.8) in the builtin tools (LegacyPorts ×2)
-    { path: "packages/kernel/src/tools/", max: 2 },
-    // the probe app re-provides LegacyPorts (R7) until Task 4.1 rebuilds it on createKernelApp
-    { path: "packages/kernel/test/identity/public-routes.test.ts", max: 2 },
+    { path: "packages/kernel/src/kernel.module.ts", max: 17 },
+    { path: "packages/kernel/src/kernel.ts", max: 17 },
+    { path: "packages/kernel/src/lifecycle/", max: 5 },
     // the R8 bridge's own test, deleted with legacy-view.ts
     { path: "packages/kernel/test/infra/legacy-transaction.test.ts", max: 4 },
-    // R10: the identity / orgs providers over a test's own Kysely bind stub ports (until Task 5.1)
-    { path: "packages/kernel/test/helpers/identity.ts", max: 5 },
   ],
   "kc-config": [
     { path: "packages/kernel/src/evals/", max: 5 },

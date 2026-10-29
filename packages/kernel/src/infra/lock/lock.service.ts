@@ -7,6 +7,16 @@ import type { Redis } from "ioredis";
 import { ApiError } from "../../errors.js";
 import type { KernelLogger } from "../../log.js";
 import { KERNEL_LOGGER, REDIS } from "../tokens.js";
+import {
+  ACQUIRE_EXCLUSIVE,
+  ACQUIRE_SHARED,
+  COUNT_SHARED_LEASES,
+  DOWNGRADE_SHARED_LEASE,
+  RELEASE_SHARED_LEASE,
+  RENEW_SHARED_LEASE,
+  type SharedLeaseKeys,
+  type SharedLeaseKind,
+} from "./shared-lease.js";
 
 export interface AcquireOptions {
   /** Lock lifetime without renewal; a crashed holder's lock expires within it. */
@@ -39,6 +49,28 @@ export interface LeaseHandle extends LockHandle {
   renew(): Promise<boolean>;
   /** Stops renewing without deleting: the key expires within its TTL. `release` still deletes it while ours. */
   abandon(): void;
+}
+
+/**
+ * A held lease of a shared lease ({@link LockService.tryShared} / {@link LockService.tryExclusive}):
+ * renewed every TTL/3 like {@link LockService.hold} (R19 loss), released in its current kind.
+ */
+export interface SharedLeaseHandle extends LeaseHandle {
+  readonly token: string;
+  /** `exclusive` until a successful {@link downgrade}, then `shared`. */
+  readonly kind: SharedLeaseKind;
+  /**
+   * exclusive → shared in one step (same token, same `lost`; the deadline moves like a renewal).
+   * False (and `lost` aborts) when the exclusive lease was no longer ours. Throws when the lease is
+   * not exclusive (any more) or was released.
+   */
+  downgrade(): Promise<boolean>;
+}
+
+/** The renewal watchdog's handle with a one-off renewal through another operation. */
+interface Watched extends LeaseHandle {
+  /** Like `renew()`, through `op` (a success moves the deadline, `false` loses the lease). */
+  renewWith(op: () => Promise<boolean>): Promise<boolean>;
 }
 
 /** Deletes the key only while it holds our token. */
@@ -152,6 +184,114 @@ export class LockService {
     return this.watch(key, holder, ttlMs, sentAt);
   }
 
+  /**
+   * One try at a shared lease of `keys` for `token` (at most `cap` shared holders; not granted
+   * while an exclusive holder, another `SET NX` value of the lock key or another token's intent
+   * exists). Resolves `undefined` when not granted; a granted lease is renewed every TTL/3.
+   */
+  async tryShared(
+    keys: SharedLeaseKeys,
+    token: string,
+    cap: number,
+    ttlMs: number,
+  ): Promise<SharedLeaseHandle | undefined> {
+    const sentAt = Date.now();
+    const ok = await this.redis.eval(
+      ACQUIRE_SHARED,
+      3,
+      keys.lock,
+      keys.users,
+      keys.intent,
+      token,
+      cap,
+      Math.ceil(ttlMs),
+    );
+    return Number(ok) === 1 ? this.watchShared(keys, token, "shared", ttlMs, sentAt) : undefined;
+  }
+
+  /**
+   * One try at the exclusive lease of `keys` for `token` (granted only when no lease of either
+   * kind exists). With `intentTtlMs` a failed try sets (or refreshes) the intent to `token` unless
+   * another token's intent exists, so new shared leases wait; a successful try clears our intent.
+   */
+  async tryExclusive(
+    keys: SharedLeaseKeys,
+    token: string,
+    ttlMs: number,
+    intentTtlMs?: number,
+  ): Promise<SharedLeaseHandle | undefined> {
+    const sentAt = Date.now();
+    const ok = await this.redis.eval(
+      ACQUIRE_EXCLUSIVE,
+      3,
+      keys.lock,
+      keys.users,
+      keys.intent,
+      token,
+      Math.ceil(ttlMs),
+      intentTtlMs === undefined ? 0 : 1,
+      Math.ceil(intentTtlMs ?? 0),
+    );
+    return Number(ok) === 1 ? this.watchShared(keys, token, "exclusive", ttlMs, sentAt) : undefined;
+  }
+
+  /** Live shared leases of `keys` (expired ones are purged first). */
+  async sharedCount(keys: Pick<SharedLeaseKeys, "lock" | "users">): Promise<number> {
+    return Number(await this.redis.eval(COUNT_SHARED_LEASES, 2, keys.lock, keys.users));
+  }
+
+  /** The watchdog of a shared lease we just took; its kind changes once, on a downgrade. */
+  private watchShared(
+    keys: SharedLeaseKeys,
+    token: string,
+    initial: SharedLeaseKind,
+    ttlMs: number,
+    sentAt: number,
+  ): SharedLeaseHandle {
+    let kind = initial;
+    let released = false;
+    const ttl = String(Math.ceil(ttlMs));
+    const w = this.watchdog(
+      keys.lock,
+      ttlMs,
+      {
+        renew: async () =>
+          Number(
+            await this.redis.eval(RENEW_SHARED_LEASE, 2, keys.lock, keys.users, token, ttl, kind),
+          ) === 1,
+        release: async () => {
+          await this.redis.eval(RELEASE_SHARED_LEASE, 2, keys.lock, keys.users, token, kind);
+        },
+      },
+      sentAt,
+    );
+    return {
+      token,
+      get kind() {
+        return kind;
+      },
+      lost: w.lost,
+      renew: () => w.renew(),
+      abandon: () => w.abandon(),
+      release: async () => {
+        released = true;
+        await w.release();
+      },
+      downgrade: async () => {
+        if (kind !== "exclusive" || released) throw new Error("lease is not exclusive");
+        w.lost.throwIfAborted();
+        const ok = await w.renewWith(
+          async () =>
+            Number(
+              await this.redis.eval(DOWNGRADE_SHARED_LEASE, 2, keys.lock, keys.users, token, ttl),
+            ) === 1,
+        );
+        if (ok) kind = "shared";
+        return ok;
+      },
+    };
+  }
+
   /** The renewal watchdog of a key we just took (the `SET NX` was sent at `sentAt`). */
   private watch(lockKey: string, token: string, ttlMs: number, sentAt: number): LeaseHandle {
     return this.keepAlive(
@@ -186,6 +326,16 @@ export class LockService {
     ops: { renew(): Promise<boolean>; release(): Promise<void> },
     acquiredAt: number = Date.now(),
   ): LeaseHandle {
+    return this.watchdog(label, ttlMs, ops, acquiredAt);
+  }
+
+  /** {@link keepAlive}'s implementation, with {@link Watched.renewWith}. */
+  private watchdog(
+    label: string,
+    ttlMs: number,
+    ops: { renew(): Promise<boolean>; release(): Promise<void> },
+    acquiredAt: number,
+  ): Watched {
     const lockKey = label;
     const lost = new AbortController();
     let released = false;
@@ -205,17 +355,18 @@ export class LockService {
       lost.abort(new Error(`lock lost: ${lockKey}`));
       stop();
     };
+    const deadlineAt = () => lastOkSentAt + ttlMs - intervalMs;
     const arm = () => {
       clearTimeout(deadline);
       if (stopped) return;
-      const ms = Math.max(0, lastOkSentAt + ttlMs - intervalMs - Date.now());
+      const ms = Math.max(0, deadlineAt() - Date.now());
       deadline = setTimeout(() => lose("lock lost: renewal kept failing"), ms);
       deadline.unref();
     };
     /** One renewal: a success moves the deadline (by its send time), `false` loses the lease. */
-    const renewOnce = async (): Promise<boolean> => {
+    const renewOnce = async (op: () => Promise<boolean> = () => ops.renew()): Promise<boolean> => {
       const sentAt = Date.now();
-      const ok = await ops.renew();
+      const ok = await op();
       if (released || lost.signal.aborted) return false;
       if (!ok) {
         lose("lock lost: the key is gone or taken");
@@ -228,6 +379,12 @@ export class LockService {
       return true;
     };
     const timer = setInterval(() => {
+      // the deadline timer decides the loss; this check only backs it up on the watchdog's own
+      // clock (both fire at the deadline: never earlier)
+      if (Date.now() >= deadlineAt()) {
+        lose("lock lost: renewal kept failing");
+        return;
+      }
       renewOnce().catch((err: unknown) => {
         if (released || stopped) return;
         // a transient Redis error: the next tick retries; the deadline decides the loss
@@ -243,6 +400,10 @@ export class LockService {
       renew: async () => {
         if (released || lost.signal.aborted) return false;
         return renewOnce();
+      },
+      renewWith: async (op) => {
+        if (released || lost.signal.aborted) return false;
+        return renewOnce(op);
       },
       abandon: stop,
       release: async () => {

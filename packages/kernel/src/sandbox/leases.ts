@@ -1,7 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { Logger } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { ApiError } from "../errors.js";
+import {
+  type LeaseHandle,
+  LockService,
+  type SharedLeaseHandle,
+} from "../infra/lock/lock.service.js";
+import { SHARED_LEASE_LUA, type SharedLeaseKeys } from "../infra/lock/shared-lease.js";
+import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 
 /**
  * Shared and exclusive sandbox leases (sub-agents spec §10.3): the Redis protocol that lets several
@@ -21,9 +29,11 @@ import { ApiError } from "../errors.js";
  * - `capk:sandbox-path:<conv>:<sha256hex(path)>`: a short per-path lease around the kernel's own
  *   read-modify-write of one file.
  *
- * Every script purges expired shared leases first, and every key carries a TTL. A holder renews
- * every TTL / 3 (a timer for a lease this process holds) and treats "no successful renewal for
- * 2/3 TTL" as lost: its `signal` aborts with {@link SandboxLockLostError}.
+ * The first three keys are a {@link LockService} shared lease (`tryShared` / `tryExclusive`,
+ * infra/lock/shared-lease.ts); the holder records and the path leases are this file's. Every key
+ * carries a TTL. A holder renews every TTL / 3 (LockService's watchdog) and loses the lease at
+ * the deadline of R19 (send time of the last successful renewal + 2/3 TTL): its `signal` aborts
+ * with {@link SandboxLockLostError}.
  */
 
 /** Prefix of the lock key `capk:sandbox:<conversationId>`. */
@@ -100,99 +110,7 @@ export interface SandboxLease {
   downgrade(): Promise<SandboxLease>;
 }
 
-const NOW = `local t = redis.call('TIME'); local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)`;
-
-/** Drops expired shared leases; drops a `shared` lock value no live shared lease backs. */
-const PURGE = `
-redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', now)
-local cur = redis.call('GET', KEYS[1])
-if cur == 'shared' and redis.call('ZCARD', KEYS[2]) == 0 then
-  redis.call('DEL', KEYS[1])
-  cur = false
-end`;
-
-/**
- * Keeps the users set and the `shared` lock value alive for at least `ttl` without shortening a
- * longer TTL another holder set (holders may use different TTLs).
- */
-const KEEP_SHARED = `
-if redis.call('PTTL', KEYS[2]) < ttl then redis.call('PEXPIRE', KEYS[2], ttl) end
-local lt = redis.call('PTTL', KEYS[1])
-if redis.call('GET', KEYS[1]) ~= 'shared' or lt < ttl then
-  redis.call('SET', KEYS[1], 'shared', 'PX', math.max(ttl, lt))
-end`;
-
-/** KEYS lock, users, intent; ARGV token, cap, ttl. */
-const ACQUIRE_SHARED = `${NOW}
-${PURGE}
-if cur and cur ~= 'shared' then return 0 end
-local it = redis.call('GET', KEYS[3])
-if it and it ~= ARGV[1] then return 0 end
-if redis.call('ZCARD', KEYS[2]) >= tonumber(ARGV[2]) then return 0 end
-local ttl = tonumber(ARGV[3])
-redis.call('ZADD', KEYS[2], now + ttl, ARGV[1])
-${KEEP_SHARED}
-return 1`;
-
-/** KEYS lock, users, intent; ARGV token, ttl, setIntent (0/1), intentTtl. */
-const ACQUIRE_EXCLUSIVE = `${NOW}
-${PURGE}
-if cur or redis.call('ZCARD', KEYS[2]) > 0 then
-  if ARGV[3] == '1' then
-    local it = redis.call('GET', KEYS[3])
-    if (not it) or it == ARGV[1] then
-      redis.call('SET', KEYS[3], ARGV[1], 'PX', tonumber(ARGV[4]))
-    end
-  end
-  return 0
-end
-redis.call('SET', KEYS[1], ARGV[1], 'PX', tonumber(ARGV[2]))
-if redis.call('GET', KEYS[3]) == ARGV[1] then redis.call('DEL', KEYS[3]) end
-return 1`;
-
-/** KEYS lock, users; ARGV token, ttl, kind. Shared: lost when the member is gone or the lock holds a token. */
-const RENEW = `${NOW}
-local ttl = tonumber(ARGV[2])
-if ARGV[3] == 'exclusive' then
-  if redis.call('GET', KEYS[1]) == ARGV[1] then
-    redis.call('PEXPIRE', KEYS[1], ttl)
-    return 1
-  end
-  return 0
-end
-redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', now)
-if not redis.call('ZSCORE', KEYS[2], ARGV[1]) then return 0 end
-local cur = redis.call('GET', KEYS[1])
-if cur and cur ~= 'shared' then
-  redis.call('ZREM', KEYS[2], ARGV[1])
-  return 0
-end
-redis.call('ZADD', KEYS[2], 'XX', now + ttl, ARGV[1])
-${KEEP_SHARED}
-return 1`;
-
-/** KEYS lock, users; ARGV token, kind. */
-const RELEASE = `${NOW}
-if ARGV[2] == 'exclusive' then
-  if redis.call('GET', KEYS[1]) == ARGV[1] then redis.call('DEL', KEYS[1]) end
-  return 1
-end
-redis.call('ZREM', KEYS[2], ARGV[1])
-${PURGE}
-return 1`;
-
-/** KEYS lock, users; ARGV token, ttl. */
-const DOWNGRADE = `${NOW}
-if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
-local ttl = tonumber(ARGV[2])
-redis.call('ZADD', KEYS[2], now + ttl, ARGV[1])
-${KEEP_SHARED}
-return 1`;
-
-/** KEYS lock, users; returns the live shared count. */
-const COUNT = `${NOW}
-${PURGE}
-return redis.call('ZCARD', KEYS[2])`;
+const { now: NOW, purge: PURGE } = SHARED_LEASE_LUA;
 
 /**
  * KEYS holders, busy; ARGV token, ttl. Also writes the busy marker as v2 (kept for at least `ttl`)
@@ -249,10 +167,6 @@ if ARGV[1] ~= '' and cur == ARGV[1] and b and b ~= '${BUSY_V2}' then
 end
 return out`;
 
-/** Compare-and-delete / compare-and-expire of a single-valued key. */
-const DEL_IF = `if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0`;
-const EXPIRE_IF = `if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('PEXPIRE', KEYS[1], ARGV[2]) end return 0`;
-
 const abortReason = (signal: AbortSignal): unknown =>
   signal.reason ?? new DOMException("This operation was aborted", "AbortError");
 
@@ -274,50 +188,42 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-/** One held lease's state, shared by its exclusive and (after downgrade) shared views. */
-interface State {
-  kind: LeaseKind;
-  readonly token: string;
-  readonly conv: string;
-  readonly ctl: AbortController;
-  lastOk: number;
-  released: boolean;
-  stop(): void;
-}
-
-export interface SandboxLeasesDeps {
-  redis: Redis;
-  log: Pick<Logger, "warn">;
-  /** Lease TTL (ms), default {@link SANDBOX_LOCK_TTL_MS}. */
-  ttlMs?: number;
-  /** Poll interval while waiting (ms, jittered up to 2×), default 100. */
-  pollMs?: number;
-  /** Path lease TTL (ms), default 30 s; tests make it shorter. */
-  pathTtlMs?: number;
+/** A signal that aborts with {@link SandboxLockLostError} when `lost` aborts. */
+function lostSignal(lost: AbortSignal, conv: string): AbortSignal {
+  const ctl = new AbortController();
+  const abort = () => ctl.abort(new SandboxLockLostError(conv));
+  if (lost.aborted) abort();
+  else lost.addEventListener("abort", abort, { once: true });
+  return ctl.signal;
 }
 
 /** A path lease this process holds. */
 export interface SandboxPathLease {
-  /** Aborts with {@link SandboxLockLostError} when a renewal finds the lease gone. */
+  /** Aborts with {@link SandboxLockLostError} when the lease is lost (R19). */
   readonly signal: AbortSignal;
   release(): Promise<void>;
 }
 
-/** The lease protocol; no state in process beyond the leases this process holds. */
+/**
+ * The lease protocol over {@link LockService}'s shared leases; no state in process beyond the
+ * leases this process holds. `ttlMs`, `pollMs` and `pathTtlMs` are fields (tests make them
+ * shorter).
+ */
+@Injectable()
 export class SandboxLeases {
-  private readonly redis: Redis;
-  private readonly log: Pick<Logger, "warn">;
-  private readonly ttlMs: number;
-  private readonly pollMs: number;
-  private readonly pathTtlMs: number;
+  /** Lease TTL (ms). */
+  ttlMs = SANDBOX_LOCK_TTL_MS;
+  /** Poll interval while waiting (ms, jittered up to 2×). */
+  pollMs = 100;
+  /** Path lease TTL (ms). */
+  pathTtlMs = PATH_LEASE_TTL_MS;
 
-  constructor(d: SandboxLeasesDeps) {
-    this.redis = d.redis;
-    this.log = d.log;
-    this.ttlMs = d.ttlMs ?? SANDBOX_LOCK_TTL_MS;
-    this.pollMs = d.pollMs ?? 100;
-    this.pathTtlMs = d.pathTtlMs ?? PATH_LEASE_TTL_MS;
-  }
+  constructor(
+    @Inject(LockService) private readonly locks: LockService,
+    /** The holder records and the legacy busy marker (scripts of this file). */
+    @Inject(REDIS) private readonly redis: Pick<Redis, "eval" | "get">,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
+  ) {}
 
   /**
    * TTL of an intent (ms): 4 × the poll interval (a jittered wait is up to 2 × the interval plus
@@ -327,8 +233,12 @@ export class SandboxLeases {
     return Math.max(this.pollMs * 4, INTENT_TTL_FLOOR_MS);
   }
 
-  private keys(conv: string): [string, string, string] {
-    return [`${SANDBOX_LOCK_PREFIX}${conv}`, `${USERS_PREFIX}${conv}`, `${INTENT_PREFIX}${conv}`];
+  private keys(conv: string): SharedLeaseKeys {
+    return {
+      lock: `${SANDBOX_LOCK_PREFIX}${conv}`,
+      users: `${USERS_PREFIX}${conv}`,
+      intent: `${INTENT_PREFIX}${conv}`,
+    };
   }
 
   private wait(signal: AbortSignal): Promise<void> {
@@ -350,15 +260,8 @@ export class SandboxLeases {
     const deadline = Date.now() + capMs;
     for (;;) {
       if (signal.aborted) throw abortReason(signal);
-      const ok = await this.redis.eval(
-        ACQUIRE_SHARED,
-        3,
-        ...this.keys(conv),
-        token,
-        cap,
-        this.ttlMs,
-      );
-      if (Number(ok) === 1) return this.hold(conv, token, "shared");
+      const lease = await this.tryShared(conv, cap, token);
+      if (lease) return lease;
       if (Date.now() + this.pollMs > deadline) throw sandboxBusy();
       await this.wait(signal);
     }
@@ -378,30 +281,19 @@ export class SandboxLeases {
   ): Promise<SandboxLease> {
     const token = randomUUID();
     const deadline = capMs === undefined ? Number.POSITIVE_INFINITY : Date.now() + capMs;
-    const keys = this.keys(conv);
     try {
       for (;;) {
         if (signal.aborted) throw abortReason(signal);
-        const ok = await this.redis.eval(
-          ACQUIRE_EXCLUSIVE,
-          3,
-          ...keys,
-          token,
-          this.ttlMs,
-          o.intent ? 1 : 0,
-          this.intentTtlMs,
-        );
-        if (Number(ok) === 1) return this.hold(conv, token, "exclusive");
+        const lease = await this.tryExclusive(conv, { token, intent: o.intent === true });
+        if (lease) return lease;
         if (Date.now() + this.pollMs > deadline) throw sandboxBusy();
         await this.wait(signal);
       }
     } catch (e) {
       if (o.intent) {
-        await this.redis
-          .eval(DEL_IF, 1, keys[2], token)
-          .catch((err: unknown) =>
-            this.log.warn("cannot clear sandbox intent", { conversationId: conv, err }),
-          );
+        await this.clearIntent(conv, token).catch((err: unknown) =>
+          this.log.warn("cannot clear sandbox intent", { conversationId: conv, err }),
+        );
       }
       throw e;
     }
@@ -416,17 +308,13 @@ export class SandboxLeases {
     conv: string,
     o: { token?: string; intent?: boolean } = {},
   ): Promise<SandboxLease | null> {
-    const token = o.token ?? randomUUID();
-    const ok = await this.redis.eval(
-      ACQUIRE_EXCLUSIVE,
-      3,
-      ...this.keys(conv),
-      token,
+    const h = await this.locks.tryExclusive(
+      this.keys(conv),
+      o.token ?? randomUUID(),
       this.ttlMs,
-      o.intent ? 1 : 0,
-      this.intentTtlMs,
+      o.intent ? this.intentTtlMs : undefined,
     );
-    return Number(ok) === 1 ? this.hold(conv, token, "exclusive") : null;
+    return h ? this.held(conv, h) : null;
   }
 
   /**
@@ -439,13 +327,13 @@ export class SandboxLeases {
     cap: number,
     token: string = randomUUID(),
   ): Promise<SandboxLease | null> {
-    const ok = await this.redis.eval(ACQUIRE_SHARED, 3, ...this.keys(conv), token, cap, this.ttlMs);
-    return Number(ok) === 1 ? this.hold(conv, token, "shared") : null;
+    const h = await this.locks.tryShared(this.keys(conv), token, cap, this.ttlMs);
+    return h ? this.held(conv, h) : null;
   }
 
   /** Deletes the conversation's intent when it is `token`'s. */
   async clearIntent(conv: string, token: string): Promise<void> {
-    await this.redis.eval(DEL_IF, 1, this.keys(conv)[2], token);
+    await this.locks.releaseIf(this.keys(conv).intent, token);
   }
 
   /** Whether the single busy marker of a kernel before phase C is present (v2 does not count). */
@@ -455,9 +343,8 @@ export class SandboxLeases {
   }
 
   /** Live shared leases of the conversation. */
-  async sharedCount(conv: string): Promise<number> {
-    const [lock, users] = this.keys(conv);
-    return Number(await this.redis.eval(COUNT, 2, lock, users));
+  sharedCount(conv: string): Promise<number> {
+    return this.locks.sharedCount(this.keys(conv));
   }
 
   /**
@@ -495,7 +382,7 @@ export class SandboxLeases {
     conv: string,
     exclusiveToken?: string,
   ): Promise<{ tags: string[]; legacyMarker: boolean }> {
-    const [lock, users] = this.keys(conv);
+    const { lock, users } = this.keys(conv);
     const r = (await this.redis.eval(
       CLAIM,
       4,
@@ -511,8 +398,8 @@ export class SandboxLeases {
 
   /**
    * A short lease on one path of the sandbox (the kernel's own read-modify-write of a file); waits
-   * up to `capMs`, then throws {@link SandboxPathBusyError}. Renewed while held; a renewal that
-   * finds it gone warns and aborts its `signal`.
+   * up to `capMs`, then throws {@link SandboxPathBusyError}. A {@link LockService.hold} lease
+   * (renewed every TTL / 3): when it is lost (R19) its `signal` aborts.
    */
   async pathLease(
     conv: string,
@@ -522,148 +409,55 @@ export class SandboxLeases {
   ): Promise<SandboxPathLease> {
     const key = `${PATH_PREFIX}${conv}:${createHash("sha256").update(path).digest("hex")}`;
     const token = randomUUID();
-    const ttl = this.pathTtlMs;
     const deadline = Date.now() + capMs;
+    let h: LeaseHandle | undefined;
     for (;;) {
       if (signal.aborted) throw abortReason(signal);
-      if ((await this.redis.set(key, token, "PX", ttl, "NX")) === "OK") break;
+      h = await this.locks.hold(key, token, this.pathTtlMs);
+      if (h) break;
       if (Date.now() + this.pollMs > deadline) throw new SandboxPathBusyError();
       await this.wait(signal);
     }
-    const ctl = new AbortController();
-    const timer = setInterval(
-      () => {
-        this.redis
-          .eval(EXPIRE_IF, 1, key, token, ttl)
-          .then((ok) => {
-            if (Number(ok) === 1 || ctl.signal.aborted) return;
-            this.log.warn("sandbox path lease lost", { conversationId: conv });
-            ctl.abort(new SandboxLockLostError(conv));
-            clearInterval(timer);
-          })
-          .catch((err: unknown) =>
-            this.log.warn("sandbox path lease renew failed", { conversationId: conv, err }),
-          );
-      },
-      Math.max(1, Math.floor(ttl / 3)),
-    );
-    timer.unref();
-    return {
-      signal: ctl.signal,
-      release: async () => {
-        clearInterval(timer);
-        await this.redis.eval(DEL_IF, 1, key, token);
-      },
-    };
+    const held = h;
+    return { signal: lostSignal(held.lost, conv), release: () => held.release() };
   }
 
-  /**
-   * Wraps a just-acquired lease: renews every TTL / 3 and remembers the last successful renewal;
-   * the lease is lost when a renewal reports it gone or none succeeded for 2/3 TTL (leaving margin
-   * so the abort takes effect before the key expires).
-   */
-  private hold(conv: string, token: string, kind: LeaseKind): SandboxLease {
-    const ctl = new AbortController();
-    const staleMs = Math.floor((this.ttlMs * 2) / 3);
-    let inFlight = false;
-    const s: State = {
-      kind,
-      token,
-      conv,
-      ctl,
-      lastOk: Date.now(),
-      released: false,
-      stop: () => {
-        clearInterval(timer);
-        clearInterval(watchdog);
-      },
-    };
-    const stale = () => Date.now() - s.lastOk > staleMs;
-    const tick = () => {
-      if (stale()) this.lose(s);
-      if (ctl.signal.aborted) {
-        s.stop();
-        return;
-      }
-      if (inFlight) return;
-      inFlight = true;
-      void this.renew(s).finally(() => {
-        inFlight = false;
-      });
-    };
-    const timer = setInterval(tick, Math.max(1, Math.floor(this.ttlMs / 3)));
-    timer.unref();
-    // a finer check (at most every 5 s): notices a renewal that hangs
-    const watchdog = setInterval(
-      () => {
-        if (stale()) this.lose(s);
-        if (ctl.signal.aborted) s.stop();
-      },
-      Math.min(5000, Math.max(1, Math.floor(this.ttlMs / 6))),
-    );
-    watchdog.unref();
-    return this.view(s, kind);
+  /** A sandbox lease over a held {@link SharedLeaseHandle}, as its current kind. */
+  private held(conv: string, h: SharedLeaseHandle): SandboxLease {
+    return this.view(conv, h, lostSignal(h.lost, conv), h.kind);
   }
 
-  private lose(s: State): void {
-    if (s.ctl.signal.aborted) return;
-    this.log.warn("sandbox lease lost", { conversationId: s.conv, kind: s.kind });
-    s.ctl.abort(new SandboxLockLostError(s.conv));
-    s.stop();
-  }
-
-  private async renew(s: State): Promise<boolean> {
-    if (s.ctl.signal.aborted) return false;
-    const [lock, users] = this.keys(s.conv);
-    // Redis computes the new expiry when it runs the script: freshness counts from the send
-    const sent = Date.now();
-    try {
-      const ok = Number(await this.redis.eval(RENEW, 2, lock, users, s.token, this.ttlMs, s.kind));
-      if (ok === 1) s.lastOk = Math.max(s.lastOk, sent);
-      else this.lose(s);
-    } catch (err) {
-      this.log.warn("sandbox lease renew failed", { conversationId: s.conv, err });
-    }
-    if (Date.now() - s.lastOk > Math.floor((this.ttlMs * 2) / 3)) this.lose(s);
-    return !s.ctl.signal.aborted;
-  }
-
-  /** A lease view of `s` as `kind`; a view stops working once the lease changes kind. */
-  private view(s: State, kind: LeaseKind): SandboxLease {
-    const [lock, users] = this.keys(s.conv);
-    const current = () => s.kind === kind;
+  /** A lease view of `h` as `kind`; a view stops working once the lease changes kind. */
+  private view(
+    conv: string,
+    h: SharedLeaseHandle,
+    signal: AbortSignal,
+    kind: LeaseKind,
+  ): SandboxLease {
+    const current = () => h.kind === kind;
     return {
       kind,
-      token: s.token,
-      conversationId: s.conv,
-      signal: s.ctl.signal,
-      renew: () => (current() ? this.renew(s) : Promise.resolve(false)),
+      token: h.token,
+      conversationId: conv,
+      signal,
+      // a Redis error is warned, not thrown: the deadline decides whether the lease is lost
+      renew: async () => {
+        if (!current()) return false;
+        try {
+          return await h.renew();
+        } catch (err) {
+          this.log.warn("sandbox lease renew failed", { conversationId: conv, err });
+          return !signal.aborted;
+        }
+      },
       // Any view releases the lease in its current kind (a caller that kept only the exclusive
       // view after a downgrade must not leak the shared lease, which would renew forever)
-      release: async () => {
-        if (s.released) return;
-        s.released = true;
-        s.stop();
-        await this.redis
-          .eval(RELEASE, 2, lock, users, s.token, s.kind)
-          .catch((err: unknown) =>
-            this.log.warn("cannot release sandbox lease", { conversationId: s.conv, err }),
-          );
-      },
+      release: () => h.release(),
       downgrade: async () => {
-        if (!current() || s.kind !== "exclusive" || s.released) {
-          throw new Error("sandbox lease is not exclusive");
-        }
-        if (s.ctl.signal.aborted) throw abortReason(s.ctl.signal);
-        const sent = Date.now();
-        const ok = Number(await this.redis.eval(DOWNGRADE, 2, lock, users, s.token, this.ttlMs));
-        if (ok !== 1) {
-          this.lose(s);
-          throw new SandboxLockLostError(s.conv);
-        }
-        s.kind = "shared";
-        s.lastOk = Math.max(s.lastOk, sent);
-        return this.view(s, "shared");
+        if (!current() || h.kind !== "exclusive") throw new Error("sandbox lease is not exclusive");
+        if (signal.aborted) throw abortReason(signal);
+        if (!(await h.downgrade())) throw new SandboxLockLostError(conv);
+        return this.view(conv, h, signal, "shared");
       },
     };
   }

@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { AgentLookupModule } from "../agents/agent-lookup.js";
 import { ProvidersModule } from "../runtime/providers.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
+import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
@@ -33,6 +34,8 @@ import { ConversationSandboxStatus } from "./sandbox-status.js";
     // the run control (start a run after a message, stop runs) and the model provider registry
     RuntimeModule,
     ProvidersModule,
+    // the sandbox status
+    SandboxModule,
   ],
   providers: [
     ConversationsService,

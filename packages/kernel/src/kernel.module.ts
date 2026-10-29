@@ -44,7 +44,6 @@ import { KERNEL_BUS, KERNEL_LOGGER, KERNEL_POOL, REDIS } from "./infra/tokens.js
 import { ValidationModule } from "./infra/validation/validation.module.js";
 import { createLegacyGraph, type KernelTestHooks, type LegacyGraph } from "./kernel.js";
 import { KernelLifecycle } from "./lifecycle/kernel-lifecycle.js";
-import { LegacyPorts, LegacyPortsModule } from "./lifecycle/legacy-ports.js";
 import { KERNEL_APP_OPTIONS, KERNEL_TEST_HOOKS, LEGACY_GRAPH } from "./lifecycle/tokens.js";
 import type { KernelLogger } from "./log.js";
 import { createConfiguredLogger } from "./log-config.js";
@@ -63,6 +62,8 @@ import { RuntimeWorkersModule } from "./runtime/run-processors.js";
 import { AgentLoops, RunSteps } from "./runtime/run-steps.js";
 import { RuntimeModule } from "./runtime/runtime.module.js";
 import { Waits } from "./runtime/waits.js";
+import { SandboxModule } from "./sandbox/sandbox.module.js";
+import { SandboxService } from "./sandbox/sandbox.service.js";
 import { SkillsCatalogService } from "./skills/catalog.js";
 import { SkillChangesService } from "./skills/changes.service.js";
 import { SkillInvoker } from "./skills/invoke.js";
@@ -80,8 +81,8 @@ import { ToolsModule } from "./tools/tools.module.js";
 /**
  * Global: the legacy service graph (`LEGACY_GRAPH`, one factory provider over the infra modules)
  * with its inputs. Domains leave it one directory at a time (Phase 3): a converted domain's module
- * is imported here and its providers are injected into the factory (`ConvertedProviders`), which
- * binds the `LegacyPorts` they read back. The application's `overrides` are registered here, after
+ * is imported here and its providers are injected into the factory (`ConvertedProviders`). The
+ * application's `overrides` are registered here, after
  * the defaults, so they win.
  */
 @Global()
@@ -103,6 +104,7 @@ class LegacyGraphModule {
         AgentsModule,
         ConversationsModule,
         RuntimeModule,
+        SandboxModule,
       ],
       providers: [
         { provide: KERNEL_APP_OPTIONS, useValue: options },
@@ -113,12 +115,10 @@ class LegacyGraphModule {
             KernelConfigService,
             KERNEL_LOGGER,
             KernelDb,
-            REDIS,
             KERNEL_BUS,
             KERNEL_TEST_HOOKS,
             TransactionHost,
             ExtensionRegistry,
-            LegacyPorts,
             StorageService,
             PricesService,
             ModelPurposesService,
@@ -151,17 +151,16 @@ class LegacyGraphModule {
             RunSteps,
             AgentLoops,
             EVAL_QUOTA,
+            SandboxService,
           ],
           useFactory: (
             config: KernelConfigService,
             log: KernelLogger,
             kdb: KernelDb,
-            redis: Redis,
             bus: ExtensionContext["bus"],
             hooks: KernelTestHooks,
             txHost: TransactionHost,
             extensionRegistry: ExtensionRegistry,
-            ports: LegacyPorts,
             storage: StorageService,
             prices: PricesService,
             purposes: ModelPurposesService,
@@ -194,11 +193,11 @@ class LegacyGraphModule {
             steps: RunSteps,
             loops: AgentLoops,
             evalQuota: OrgQuota,
+            sandbox: SandboxService,
           ): LegacyGraph =>
-            createLegacyGraph(config, log, kdb, redis, bus, hooks, {
+            createLegacyGraph(config, log, kdb, bus, hooks, {
               txHost,
               extensionRegistry,
-              ports,
               storage,
               prices,
               purposes,
@@ -231,6 +230,7 @@ class LegacyGraphModule {
               steps,
               loops,
               evalQuota,
+              sandbox,
             }),
         },
         ...(options.overrides ?? []).map((o) => ({
@@ -264,7 +264,6 @@ export class KernelModule {
         LoggingModule.forRoot(config, { logger }),
         ConfigModule.forRoot(config, options.env !== undefined ? { env: options.env } : {}),
         GracefulShutdownModule,
-        LegacyPortsModule,
         DatabaseModule,
         RedisModule,
         LockModule,

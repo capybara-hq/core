@@ -278,11 +278,10 @@ export { runJobId } from "./runtime/run-queue.js";
 export {
   SANDBOX_DESTROY_JOB,
   SANDBOX_SUSPEND_JOB,
-} from "./sandbox/lifecycle.js";
+} from "./sandbox/jobs.js";
 export {
   SANDBOX_LOCK_TTL_MS,
   SandboxService,
-  type SandboxServiceDeps,
   type SandboxUseInfo,
 } from "./sandbox/sandbox.service.js";
 export {

@@ -12,6 +12,7 @@ import { PLUGINS_RECONCILE_SCHEDULER_ID } from "../extensions/lifecycle-topics.j
 import { withJobContext } from "../log-context.js";
 import { DIRECTORY_SCAN_SCHEDULER_ID } from "../orgs/directory-sync.js";
 import { OFFBOARD_SWEEP_SCHEDULER_ID } from "../orgs/offboarding.js";
+import { SANDBOX_DESTROY_SCHEDULER_ID, SANDBOX_SUSPEND_SCHEDULER_ID } from "../sandbox/job-ids.js";
 import { STORAGE_PURGE_SCHEDULER_ID } from "../storage/purge.js";
 import { DRIFT_SCHEDULER_ID, OUTPUT_CLEANUP_SCHEDULER_ID } from "../tools/job-ids.js";
 import { bullConnection } from "./bull-connection.js";
@@ -22,13 +23,6 @@ export { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 
 /** 维护任务的处理函数（`token` 供 `moveToDelayed` 等使用）。 */
 export type MaintenanceHandler = (job: Job, token: string | undefined) => Promise<void>;
-
-/** 由其他模块登记的周期任务（如漂移检测）：scheduler id 与任务名不含 `:`，周期在登记时读取。 */
-export interface MaintenanceSchedule {
-  id: string;
-  name: string;
-  everyMs: () => number;
-}
 
 export interface MaintenanceDeps {
   db: KernelSchemaDb;
@@ -62,11 +56,14 @@ export const RETIRED_SCHEDULER_IDS: readonly string[] = [
   USAGE_SWEEP_SCHEDULER_ID,
   // Task 3.7
   GATEWAY_CHECK_SCHEDULER_ID,
+  // Task 3.8
+  SANDBOX_SUSPEND_SCHEDULER_ID,
+  SANDBOX_DESTROY_SCHEDULER_ID,
 ];
 
 /**
- * 维护队列的生产方与（worker 角色上的）唯一 Worker。状态都在 Redis / PG，没有进程内定时器：
- * 周期任务用 BullMQ job scheduler（`upsertJobScheduler` 幂等，多副本重复调用只有一个 scheduler）。
+ * The maintenance queue's producer and its one Worker (worker role only), which dispatches the
+ * one-off jobs by name. State lives in Redis / PG; no in-process timers.
  */
 export class Maintenance {
   private queue: Queue | undefined;
@@ -75,7 +72,6 @@ export class Maintenance {
   private workerConn: Redis | undefined;
   private closed = false;
   private readonly handlers = new Map<string, MaintenanceHandler>();
-  private readonly schedules: MaintenanceSchedule[] = [];
 
   constructor(private readonly d: MaintenanceDeps) {}
 
@@ -84,26 +80,18 @@ export class Maintenance {
     this.handlers.set(name, fn);
   }
 
-  /** 登记一个周期任务（构造期调用；`ensureSchedules` 时一并 upsert）。 */
-  schedule(s: MaintenanceSchedule): void {
-    this.schedules.push(s);
-  }
-
   /** 投递一个维护任务。 */
   async add(name: string, data: unknown, opts: JobsOptions): Promise<void> {
     await this.getQueue().add(name, data, opts);
   }
 
-  /** 登记周期任务的 job scheduler（幂等；worker 角色启动时调用）。 */
+  /**
+   * Removes the retired job schedulers (idempotent; called when a worker role starts). Every
+   * fixed-period maintenance job is a `@LockedCron` / `@LockedInterval` now (the sandbox sweeps
+   * were the last schedulers, Task 3.8).
+   */
   async ensureSchedules(): Promise<void> {
     for (const id of RETIRED_SCHEDULER_IDS) await this.getQueue().removeJobScheduler(id);
-    for (const s of this.schedules) {
-      await this.getQueue().upsertJobScheduler(
-        s.id,
-        { every: s.everyMs() },
-        { name: s.name, data: {}, opts: { removeOnComplete: true, removeOnFail: 100 } },
-      );
-    }
   }
 
   /** 启动维护队列的 Worker（只在含 `worker` 角色的进程）。 */

@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import {
   isSandboxGoneError,
-  type Logger,
   type SandboxHandle,
   type SandboxLimits,
   type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import {
   type Expression,
@@ -20,23 +20,27 @@ import {
   DEFAULT_MAX_RUN_SECONDS,
   type KernelConfig,
 } from "../config/schema.js";
-import type { KernelDatabase, KernelSchemaDb, SandboxesTable } from "../db/kernel-schema.js";
+import type { KernelDatabase, SandboxesTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { readSandboxLimitOverride } from "../identity/settings.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 import {
   effectiveSandboxEgress,
   effectiveSandboxLimits,
   readOrgSettings,
 } from "../orgs/settings.service.js";
-import { canonicalJson } from "../tools/registry.js";
+import { canonicalJson } from "../tools/canonical-json.js";
 import {
-  SANDBOX_LOCK_TTL_MS,
   type SandboxLease,
   SandboxLeases,
   SandboxLockLostError,
   type SandboxPathLease,
   sandboxBusy,
 } from "./leases.js";
+import { type SandboxProviderEntry, SandboxProviders } from "./providers.js";
 
 // Moved to leases.ts (phase C); re-exported for existing importers
 export {
@@ -69,28 +73,7 @@ export interface SandboxUseInfo {
   recreated: boolean;
 }
 
-/** 当前的 `sandbox@1` 提供方：插件名与实现。 */
-export interface SandboxProviderEntry {
-  plugin: string;
-  impl: SandboxProvider;
-}
-
-export interface SandboxServiceDeps {
-  db: KernelSchemaDb;
-  redis: Redis;
-  /** 每次调用时取（提供方在插件加载后才就绪）；没有提供方为 undefined。 */
-  provider: () => SandboxProviderEntry | undefined;
-  /** 按插件名找仍加载着的提供方（销毁换提供方前的旧实例）；省略则视为找不到。 */
-  lookup?: (plugin: string) => SandboxProvider | undefined;
-  config: () => Pick<KernelConfig, "sandbox">;
-  log: Pick<Logger, "info" | "warn">;
-  /** Poll interval while waiting for a lease (ms), default 100; tests make it shorter. */
-  lockPollMs?: number;
-  /** Lease TTL (ms), default {@link SANDBOX_LOCK_TTL_MS}; tests make it shorter to notice a lost lease quickly. */
-  lockTtlMs?: number;
-  /** Lease implementation, default a {@link SandboxLeases} on `redis` (tests may wrap one). */
-  leases?: SandboxLeases;
-}
+export type { SandboxProviderEntry } from "./providers.js";
 
 type Row = Selectable<SandboxesTable>;
 type Patch = UpdateObject<KernelDatabase, "sandboxes">;
@@ -258,7 +241,7 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
  *   first, so a stale exclusive holder's later writes fail. Shared holders write nothing else but
  *   `last_used_at` (monotonic). A lost
  *   lease aborts the signal passed to `fn` and to maintenance provider calls.
- * - **休眠与销毁**由维护队列定期调用 {@link suspendIdle} / {@link destroyInactive}；它们只试一次 exclusive
+ * - **Suspension and destruction**: the sweeps (`SandboxSweepJobs`, crons) call {@link suspendIdle} / {@link destroyInactive}；它们只试一次 exclusive
  *   lease and skip a sandbox with any holder; a sandbox past `maxRunningMinutes` gets the intent for
  *   a short window (about a second) so the suspension can get in when its commands end.
  * - **透明恢复**：已休眠的在下次使用时恢复；恢复返回 `gone`、已销毁、记录的提供方不是当前提供方、
@@ -280,30 +263,33 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
  * 换提供方会泄漏旧实例：新提供方销毁不了旧提供方的实例，只有旧提供方仍加载时才能清理（记在 `prev_*` 列）。
  * 没有提供方时 {@link available} 为 false，使用时抛 `sandbox.unavailable`（503）。本身无进程内状态，可多副本共用。
  */
+@Injectable()
 export class SandboxService {
-  private readonly leases: SandboxLeases;
-  private readonly pollMs: number;
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    /** The record of the instance each holder last used (`capk:sandbox-seen:…`). */
+    @Inject(REDIS) private readonly redis: Pick<Redis, "set">,
+    @Inject(SandboxLeases) private readonly leases: SandboxLeases,
+    /** The `sandbox@1` provider (read at every call: providers are ready after the extension load). */
+    @Inject(SandboxProviders)
+    private readonly providers: Pick<SandboxProviders, "current" | "lookup">,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "info" | "warn">,
+  ) {}
 
-  constructor(private readonly d: SandboxServiceDeps) {
-    this.pollMs = d.lockPollMs ?? 100;
-    this.leases =
-      d.leases ??
-      new SandboxLeases({
-        redis: d.redis,
-        log: d.log,
-        ttlMs: d.lockTtlMs ?? SANDBOX_LOCK_TTL_MS,
-        pollMs: this.pollMs,
-      });
+  /** Poll interval while waiting for a lease (the leases' own). */
+  private get pollMs(): number {
+    return this.leases.pollMs;
   }
 
   /** 是否有沙箱提供方。 */
   get available(): boolean {
-    return this.d.provider() !== undefined;
+    return this.providers.current() !== undefined;
   }
 
   /** Concurrent holders the provider gets ({@link sandboxConcurrency} with the current config). */
   effectiveCap(p: SandboxProviderEntry): number {
-    return sandboxConcurrency(p.impl, this.d.config().sandbox.maxConcurrentCommands);
+    return sandboxConcurrency(p.impl, this.config.get().sandbox.maxConcurrentCommands);
   }
 
   /**
@@ -314,7 +300,7 @@ export class SandboxService {
     orgId: string,
     conversationId: string,
   ): Promise<{ status: "running" | "suspended"; lastUsedAt: Date } | null> {
-    const row = await this.d.db
+    const row = await this.db
       .selectFrom("sandboxes")
       .select(["status", "last_used_at"])
       .where("conversation_id", "=", conversationId)
@@ -365,7 +351,7 @@ export class SandboxService {
         return await this.runAs(e, p, fn, signal);
       } catch (err) {
         if (!isSandboxGoneError(err)) throw err;
-        this.d.log.info("sandbox instance is gone during use; recreating", {
+        this.log.info("sandbox instance is gone during use; recreating", {
           conversationId: ctx.conversationId,
         });
         const gone: Instance = { handle: e.handle, createdAt: e.createdAt };
@@ -386,8 +372,8 @@ export class SandboxService {
    */
   private async seenBy(conversationId: string, holder: string, e: Entered): Promise<Entered> {
     try {
-      const ttl = (this.d.config().sandbox.limits.destroyAfterInactiveDays + 1) * 86_400;
-      const prev = await this.d.redis.set(
+      const ttl = (this.config.get().sandbox.limits.destroyAfterInactiveDays + 1) * 86_400;
+      const prev = await this.redis.set(
         `capk:sandbox-seen:${conversationId}:${holder}`,
         String(e.createdAt),
         "EX",
@@ -398,7 +384,7 @@ export class SandboxService {
         return { ...e, info: { fresh: e.info.fresh, recreated: true } };
       }
     } catch (err) {
-      this.d.log.warn("cannot record the sandbox instance a holder uses", {
+      this.log.warn("cannot record the sandbox instance a holder uses", {
         conversationId,
         holder,
         err,
@@ -439,7 +425,7 @@ export class SandboxService {
   ): Promise<Entered> {
     const conv = ctx.conversationId;
     const cap = this.effectiveCap(p);
-    const deadline = Date.now() + this.d.config().sandbox.lockWaitSeconds * 1000;
+    const deadline = Date.now() + this.config.get().sandbox.lockWaitSeconds * 1000;
     const token = randomUUID();
     let intent = false;
     try {
@@ -472,12 +458,12 @@ export class SandboxService {
     await this.leases
       .clearIntent(conv, token)
       .catch((err: unknown) =>
-        this.d.log.warn("cannot clear sandbox intent", { conversationId: conv, err }),
+        this.log.warn("cannot clear sandbox intent", { conversationId: conv, err }),
       );
   }
 
   private async readRow(ctx: { orgId: string; conversationId: string }): Promise<Row | undefined> {
-    const row = await this.d.db
+    const row = await this.db
       .selectFrom("sandboxes")
       .selectAll()
       .where("conversation_id", "=", ctx.conversationId)
@@ -527,7 +513,7 @@ export class SandboxService {
       // Bump the fence as every acquisition did before phase C: an exclusive holder whose lease
       // expired unnoticed (a stalled sweep) then fails its next write instead of suspending or
       // destroying the instance under this holder. Shared holders never compare it.
-      await this.d.db
+      await this.db
         .updateTable("sandboxes")
         .set((eb) => ({ generation: eb("generation", "+", 1) }))
         .where("conversation_id", "=", conv)
@@ -551,7 +537,7 @@ export class SandboxService {
           // cap 1 and this holder is alone: killing everything cannot hit a sibling
           await this.killLeftovers(conv, row.handle, p, sig, "takeover");
         } else {
-          this.d.log.warn(
+          this.log.warn(
             "cannot kill leftover sandbox commands: the provider has no killTagged and another holder is live; the in-sandbox time limit ends them",
             { conversationId: conv },
           );
@@ -610,23 +596,23 @@ export class SandboxService {
   private async leave(conv: string, e: Entered): Promise<void> {
     await this.unregister(conv, e.lease.token);
     await e.lease.release();
-    await this.d.db
+    await this.db
       .updateTable("sandboxes")
       .set({ last_used_at: sql<Date>`GREATEST(last_used_at, now())` })
       .where("conversation_id", "=", conv)
       .where("status", "=", "running")
       .execute()
       .catch((err: unknown) =>
-        this.d.log.warn("cannot update sandbox last_used_at", { conversationId: conv, err }),
+        this.log.warn("cannot update sandbox last_used_at", { conversationId: conv, err }),
       );
   }
 
   private async register(conv: string, token: string): Promise<void> {
-    const ttl = this.d.config().sandbox.limits.maxCommandSeconds * 1000 + HOLDER_TTL_MARGIN_MS;
+    const ttl = this.config.get().sandbox.limits.maxCommandSeconds * 1000 + HOLDER_TTL_MARGIN_MS;
     await this.leases
       .registerHolder(conv, token, ttl)
       .catch((err: unknown) =>
-        this.d.log.warn("cannot record sandbox holder", { conversationId: conv, err }),
+        this.log.warn("cannot record sandbox holder", { conversationId: conv, err }),
       );
   }
 
@@ -634,7 +620,7 @@ export class SandboxService {
     await this.leases
       .unregisterHolder(conv, token)
       .catch((err: unknown) =>
-        this.d.log.warn("cannot clear sandbox holder record", { conversationId: conv, err }),
+        this.log.warn("cannot clear sandbox holder record", { conversationId: conv, err }),
       );
   }
 
@@ -649,7 +635,7 @@ export class SandboxService {
     try {
       return await this.leases.claimDeadHolders(conv, exclusiveToken);
     } catch (err) {
-      this.d.log.warn("cannot read sandbox holder records", { conversationId: conv, err });
+      this.log.warn("cannot read sandbox holder records", { conversationId: conv, err });
       return { tags: [], legacyMarker: false };
     }
   }
@@ -664,28 +650,28 @@ export class SandboxService {
     try {
       await call();
       if (why === "takeover") {
-        this.d.log.info(
+        this.log.info(
           "sandbox taken over from a holder that did not finish; leftover commands killed",
           { conversationId },
         );
       }
     } catch (err) {
       if (signal?.aborted || isSandboxGoneError(err)) throw err;
-      this.d.log.warn("cannot kill leftover sandbox commands", { conversationId, err });
+      this.log.warn("cannot kill leftover sandbox commands", { conversationId, err });
     }
   }
 
   /**
    * 休眠：空闲超过 `suspendAfterIdleMinutes`、或连续运行超过 `maxRunningMinutes` 的运行中沙箱。
    * Skips a sandbox with any holder; one past `maxRunningMinutes` gets the intent for one poll
-   * window (about a second) first. 返回本次休眠的个数。由维护队列每分钟调用。
+   * window (about a second) first. 返回本次休眠的个数。Called every minute by the `sandbox-suspend-idle` cron.
    */
   async suspendIdle(now: Date): Promise<number> {
-    const p = this.d.provider();
+    const p = this.providers.current();
     if (!p) return 0;
     const due = this.suspendDue(now, p.plugin);
     const runningBefore = new Date(
-      now.getTime() - this.d.config().sandbox.limits.maxRunningMinutes * 60_000,
+      now.getTime() - this.config.get().sandbox.limits.maxRunningMinutes * 60_000,
     );
     const rows = await this.candidates(due);
     let n = 0;
@@ -695,7 +681,7 @@ export class SandboxService {
         c.conversation_id,
         async (lease) => {
           const id = c.conversation_id;
-          const row = await this.d.db
+          const row = await this.db
             .selectFrom("sandboxes")
             .selectAll()
             .where("conversation_id", "=", id)
@@ -711,7 +697,7 @@ export class SandboxService {
             running_since: null,
             sweep_failed_at: null,
           });
-          this.d.log.info("sandbox suspended", { conversationId: id });
+          this.log.info("sandbox suspended", { conversationId: id });
           return true;
         },
         overdue,
@@ -723,17 +709,17 @@ export class SandboxService {
 
   /**
    * 销毁：超过 `destroyAfterInactiveDays` 没用过的、所属组织已删除的、对话已不存在的沙箱
-   * （对话已不存在的，销毁后删掉记录）。有 holder 的跳过。返回本次销毁的个数。由维护队列每小时调用。
+   * （对话已不存在的，销毁后删掉记录）。有 holder 的跳过。返回本次销毁的个数。Called hourly by the `sandbox-destroy-inactive` cron.
    */
   async destroyInactive(now: Date): Promise<number> {
-    const p = this.d.provider();
+    const p = this.providers.current();
     if (!p) return 0;
     const due = this.destroyDue(now);
     const rows = await this.candidates(due);
     let n = 0;
     await inPool(rows, SWEEP_CONCURRENCY, async ({ conversation_id: id }) => {
       const done = await this.tryLocked(id, async (lease) => {
-        const row = await this.d.db
+        const row = await this.db
           .selectFrom("sandboxes")
           .selectAll()
           .where("conversation_id", "=", id)
@@ -746,7 +732,7 @@ export class SandboxService {
       if (done) n++;
     });
     // 早先已销毁、对话后来才删除、且没有遗留旧实例的记录
-    await this.d.db
+    await this.db
       .deleteFrom("sandboxes")
       .where("status", "=", "destroyed")
       .where("prev_handle", "is", null)
@@ -769,15 +755,15 @@ export class SandboxService {
    * to 10 minutes. 没有提供方时只记 warn。
    */
   async destroyFor(conversationId: string): Promise<void> {
-    const row = await this.d.db
+    const row = await this.db
       .selectFrom("sandboxes")
       .select("status")
       .where("conversation_id", "=", conversationId)
       .executeTakeFirst();
     if (!row || row.status === "destroyed") return;
-    const p = this.d.provider();
+    const p = this.providers.current();
     if (!p) {
-      this.d.log.warn("cannot destroy sandbox: no sandbox provider", { conversationId });
+      this.log.warn("cannot destroy sandbox: no sandbox provider", { conversationId });
       return;
     }
     const lease = await this.leases.acquireExclusive(
@@ -787,7 +773,7 @@ export class SandboxService {
       { intent: true },
     );
     try {
-      const current = await this.d.db
+      const current = await this.db
         .selectFrom("sandboxes")
         .selectAll()
         .where("conversation_id", "=", conversationId)
@@ -813,7 +799,7 @@ export class SandboxService {
     const killAll = p.impl.killAll;
     if (!killAll) {
       if (why === "takeover") {
-        this.d.log.info(
+        this.log.info(
           "sandbox taken over from a holder that did not finish; provider cannot kill its commands",
           { conversationId },
         );
@@ -824,7 +810,7 @@ export class SandboxService {
   }
 
   private require(): SandboxProviderEntry {
-    const p = this.d.provider();
+    const p = this.providers.current();
     if (!p) throw sandboxUnavailable();
     return p;
   }
@@ -834,7 +820,7 @@ export class SandboxService {
    */
   private async fenced(lease: SandboxLease, id: string, fence: Fence, set: Patch): Promise<Date> {
     if (lease.signal.aborted) throw new SandboxLockLostError(id);
-    const r = await this.d.db
+    const r = await this.db
       .updateTable("sandboxes")
       .set({ ...set, generation: fence.gen + 1 })
       .where("conversation_id", "=", id)
@@ -850,7 +836,7 @@ export class SandboxService {
   private async candidates(
     due: (eb: ExpressionBuilder<KernelDatabase, "sandboxes">) => Expression<SqlBool>,
   ): Promise<{ conversation_id: string; running_since: Date | null }[]> {
-    return await this.d.db
+    return await this.db
       .selectFrom("sandboxes")
       .select(["conversation_id", "running_since"])
       .where(due)
@@ -888,15 +874,15 @@ export class SandboxService {
           });
       }
     } catch (err) {
-      this.d.log.warn("cannot take sandbox lock", { conversationId, err });
+      this.log.warn("cannot take sandbox lock", { conversationId, err });
       return false;
     }
     if (!lease) return false;
     try {
       return await fn(lease);
     } catch (err) {
-      this.d.log.warn("sandbox maintenance failed; will retry", { conversationId, err });
-      await this.d.db
+      this.log.warn("sandbox maintenance failed; will retry", { conversationId, err });
+      await this.db
         .updateTable("sandboxes")
         .set({ sweep_failed_at: sql<Date>`now()` })
         .where("conversation_id", "=", conversationId)
@@ -927,12 +913,12 @@ export class SandboxService {
     resumed?: boolean;
   }> {
     const id = ctx.conversationId;
-    await this.d.db
+    await this.db
       .insertInto("sandboxes")
       .values({ conversation_id: id, org_id: ctx.orgId, provider: p.plugin, status: "creating" })
       .onConflict((oc) => oc.column("conversation_id").doNothing())
       .execute();
-    const row = await this.d.db
+    const row = await this.db
       .selectFrom("sandboxes")
       .selectAll()
       .where("conversation_id", "=", id)
@@ -973,7 +959,7 @@ export class SandboxService {
             resumed: true,
           };
         }
-        this.d.log.info("sandbox is gone at the provider; recreating", { conversationId: id });
+        this.log.info("sandbox is gone at the provider; recreating", { conversationId: id });
       }
     }
     // 换了提供方且旧实例还没销毁：交给旧提供方（仍加载时）销毁，否则记进 prev_*
@@ -982,7 +968,7 @@ export class SandboxService {
       const kept = await this.retire(id, row.provider, handle, signal);
       if (kept) {
         if (row.prev_handle) {
-          this.d.log.warn("sandbox instance of an earlier provider is leaked", {
+          this.log.warn("sandbox instance of an earlier provider is leaked", {
             conversationId: id,
             provider: row.prev_provider,
           });
@@ -1020,16 +1006,16 @@ export class SandboxService {
       sweep_failed_at: null,
       ...extra,
     });
-    const cfg = this.d.config().sandbox;
+    const cfg = this.config.get().sandbox;
     // 出站按组织设置收窄（Ruling M19）；只在创建时生效，改设置只影响之后新建的沙箱
     const egress = effectiveSandboxEgress(
       cfg.limits,
-      (await readOrgSettings(this.d.db, ctx.orgId)).sandboxEgress,
+      (await readOrgSettings(this.db.db, ctx.orgId)).sandboxEgress,
     );
     // cpu / 内存按企业管理员的组织覆盖（C19 / Ruling M16），同样只在创建时生效
     const sized = effectiveSandboxLimits(
       { ...cfg.limits, ...egress },
-      await readSandboxLimitOverride(this.d.db, ctx.orgId),
+      await readSandboxLimitOverride(this.db.db, ctx.orgId),
     );
     const limits: SandboxLimits = {
       cpu: sized.cpu,
@@ -1054,14 +1040,14 @@ export class SandboxService {
       // 提供方按名字（cap-<对话>）复用实例时（Ruling M10），这个 destroy 可能打到新持有者刚恢复 / 创建的同一个实例。
       // 这能自愈：新持有者下一次提供方调用抛 SandboxGoneError（或 resume 返回 gone），withSandbox 原地重建并重试。
       await p.impl.destroy(handle, AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS)).catch((err: unknown) =>
-        this.d.log.warn("cannot destroy sandbox created after the lock was lost", {
+        this.log.warn("cannot destroy sandbox created after the lock was lost", {
           conversationId: id,
           err,
         }),
       );
       throw e;
     }
-    this.d.log.info("sandbox created", { conversationId: id, provider: p.plugin });
+    this.log.info("sandbox created", { conversationId: id, provider: p.plugin });
     return { handle, createdAt: createdAt.getTime() };
   }
 
@@ -1074,7 +1060,7 @@ export class SandboxService {
     handle: SandboxHandle,
     signal: AbortSignal,
   ): Promise<boolean> {
-    const old = this.d.lookup?.(provider);
+    const old = this.providers.lookup(provider);
     if (old) {
       try {
         await old.destroy(
@@ -1083,7 +1069,7 @@ export class SandboxService {
         );
         return false;
       } catch (err) {
-        this.d.log.warn("cannot destroy sandbox instance of the previous provider", {
+        this.log.warn("cannot destroy sandbox instance of the previous provider", {
           conversationId: id,
           provider,
           err,
@@ -1091,7 +1077,7 @@ export class SandboxService {
         return true;
       }
     }
-    this.d.log.warn(
+    this.log.warn(
       "sandbox was created by another provider that is not loaded; its instance may leak",
       { conversationId: id, provider },
     );
@@ -1120,7 +1106,7 @@ export class SandboxService {
       }
     }
     if (!(await held.renew())) throw new SandboxLockLostError(id);
-    const conversation = await this.d.db
+    const conversation = await this.db
       .selectFrom("conversations")
       .select("id")
       .where("id", "=", id)
@@ -1135,19 +1121,19 @@ export class SandboxService {
         ...prev,
       });
     } else {
-      const r = await this.d.db
+      const r = await this.db
         .deleteFrom("sandboxes")
         .where("conversation_id", "=", id)
         .where("generation", "=", fence.gen)
         .executeTakeFirst();
       if (Number(r.numDeletedRows) !== 1) throw new SandboxLockLostError(id, "generation");
     }
-    this.d.log.info("sandbox destroyed", { conversationId: id });
+    this.log.info("sandbox destroyed", { conversationId: id });
   }
 
   /** 该休眠的：本提供方创建、运行中，且空闲到期或连续运行超时。 */
   private suspendDue(now: Date, plugin: string) {
-    const lim = this.d.config().sandbox.limits;
+    const lim = this.config.get().sandbox.limits;
     const idleBefore = new Date(now.getTime() - lim.suspendAfterIdleMinutes * 60_000);
     const runningBefore = new Date(now.getTime() - lim.maxRunningMinutes * 60_000);
     return (eb: ExpressionBuilder<KernelDatabase, "sandboxes">) =>
@@ -1160,7 +1146,7 @@ export class SandboxService {
 
   /** 该销毁的：未销毁，且不活跃到期、组织已删除或对话已不存在。 */
   private destroyDue(now: Date) {
-    const days = this.d.config().sandbox.limits.destroyAfterInactiveDays;
+    const days = this.config.get().sandbox.limits.destroyAfterInactiveDays;
     const before = new Date(now.getTime() - days * 24 * 3_600_000);
     return (eb: ExpressionBuilder<KernelDatabase, "sandboxes">) =>
       eb.and([

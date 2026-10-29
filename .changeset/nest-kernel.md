@@ -238,3 +238,21 @@ taken elsewhere. This applies to every lock and lease (the conversation run leas
 slots, the channel long-connection leases); after a Redis blip longer than about two thirds of the
 TTL a holder now gives up earlier than before (a run is re-queued, a long connection reconnects),
 never later. A channel lease lost while its connection's config is read is no longer connected on.
+
+The sandbox is a Nest module (Task 3.8, `SandboxModule`): `SandboxService`, `SandboxLeases`, the new
+`SandboxProviders` (the `sandbox@1` provider from the extension registry), `SandboxJobs` (the
+producer of `sandbox-destroy-for`) and `SandboxSweepJobs` are injectable providers. Export changes:
+`SandboxServiceDeps` is removed (the constructor takes the kernel's providers; `SandboxLeases`'
+`ttlMs` / `pollMs` / `pathTtlMs` are fields); `SANDBOX_SUSPEND_JOB` / `SANDBOX_DESTROY_JOB` are
+exported from `sandbox/jobs.ts` (was `sandbox/lifecycle.ts`); `scheduleSandboxDestroy` and
+`registerSandboxMaintenance` became `SandboxJobs.destroy` and `runSandboxDestroyFor`;
+`Maintenance.schedule` is removed (no periodic maintenance job is left). `LockService` gains shared
+leases (`tryShared` / `tryExclusive` / `sharedCount`, a `SharedLeaseHandle` with `downgrade`) and
+the sandbox leases are built on them: same Redis keys and scripts, holder records, path leases,
+fencing generation, `sandbox.maxConcurrentCommands` and `sandbox.lockWaitSeconds`. A held sandbox
+or path lease is lost at the R19 deadline (a path lease whose renewals keep failing is now lost
+too), with one `lock lost` line instead of `sandbox lease lost` / `sandbox path lease lost`.
+`sandbox-suspend-idle` (every minute) and `sandbox-destroy-inactive` (hourly) are `@LockedCron`
+jobs (once per tick across replicas, on every role until Task 4.1); their old maintenance
+schedulers are removed when a worker starts. `sandbox-destroy-for` jobs now have a deterministic id
+per batch, so a batch enqueued twice while queued is one job.

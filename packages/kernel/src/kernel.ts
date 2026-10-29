@@ -1,12 +1,7 @@
 import { fileURLToPath } from "node:url";
-import {
-  type ExtensionContext,
-  SANDBOX_EXTENSION_POINT,
-  type SandboxProvider,
-} from "@capybara-hq/plugin-sdk";
+import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
 import type { INestApplication } from "@nestjs/common";
 import type { Job } from "bullmq";
-import type { Redis } from "ioredis";
 import { buildKernelApp, closeKernelApp, type KernelAppOptions } from "./app.js";
 import { CatalogService } from "./catalog/catalog.service.js";
 import { MarketplacesService } from "./catalog/marketplaces.service.js";
@@ -49,7 +44,6 @@ import type { TransactionHost } from "./infra/database/transaction-host.js";
 import type { KernelEvents } from "./infra/events/kernel-events.js";
 import { GracefulShutdown } from "./infra/lifecycle/graceful-shutdown.service.js";
 import { KernelLifecycle } from "./lifecycle/kernel-lifecycle.js";
-import type { LegacyPorts } from "./lifecycle/legacy-ports.js";
 import { KERNEL_TEST_HOOKS, LEGACY_GRAPH } from "./lifecycle/tokens.js";
 import type { KernelLogger } from "./log.js";
 import { PricesService } from "./models/prices.js";
@@ -69,7 +63,7 @@ import { RunQueue } from "./runtime/run-queue.js";
 import { type AgentLoops, RunSteps } from "./runtime/run-steps.js";
 import { UsageReporter } from "./runtime/usage-report.js";
 import { WAIT_TIMEOUT_JOB, Waits, type WaitTimeoutData } from "./runtime/waits.js";
-import { registerSandboxMaintenance, scheduleSandboxDestroy } from "./sandbox/lifecycle.js";
+import { runSandboxDestroyFor, SANDBOX_DESTROY_FOR_JOB } from "./sandbox/jobs.js";
 import { SandboxService } from "./sandbox/sandbox.service.js";
 import type { SkillsCatalogService } from "./skills/catalog.js";
 import { SkillChangesService } from "./skills/changes.service.js";
@@ -321,6 +315,8 @@ export interface LegacyGraph
     | "runs"
     // Task 3.7
     | "channels"
+    // Task 3.8
+    | "sandbox"
   > {
   /** The kernel-schema view of the pool. */
   readonly kdb: KernelSchemaDb;
@@ -335,14 +331,12 @@ export interface LegacyGraph
 
 /**
  * The converted providers the legacy graph consumes (Phase 3: each task adds its own and removes
- * their construction from the graph), plus the bridges of rulings R6–R8.
+ * their construction from the graph), plus the bridges of rulings R6 and R8.
  */
 export interface ConvertedProviders {
   txHost: TransactionHost;
   /** R6: the host writes it; converted providers read extension points from it. */
   extensionRegistry: ExtensionRegistry;
-  /** R7: bound here with the legacy instances converted providers still need. */
-  ports: LegacyPorts;
   storage: StorageService;
   prices: PricesService;
   purposes: ModelPurposesService;
@@ -382,6 +376,8 @@ export interface ConvertedProviders {
   steps: RunSteps;
   loops: AgentLoops;
   evalQuota: OrgQuota;
+  // Task 3.8
+  sandbox: SandboxService;
 }
 
 /**
@@ -393,7 +389,6 @@ export function createLegacyGraph(
   configService: KernelConfigService,
   log: KernelLogger,
   kernelDbHandle: KernelDb,
-  redis: Redis,
   bus: ExtensionContext["bus"],
   hooks: KernelTestHooks,
   converted: ConvertedProviders,
@@ -407,7 +402,7 @@ export function createLegacyGraph(
     config.masterKeyPrevious.map((k) => Buffer.from(k, "base64")),
   );
   const kdb = legacyKernelView(kernelDbHandle, converted.txHost);
-  const { host, eventLog } = converted;
+  const { eventLog } = converted;
   const { toolDrift } = converted;
   // A decided approval / answered question resumes the waiting run on this replica (domain events,
   // spec §3b; the wait sweep resumes a run whose resume was lost). Its IM delivery follows the same
@@ -424,35 +419,16 @@ export function createLegacyGraph(
   maintenance.handle(WAIT_TIMEOUT_JOB, (job, token) =>
     waits.processTimeout(job as Job<WaitTimeoutData>, token),
   );
-  // 沙箱：提供方在 host.load() 之后才就绪，按调用时取；休眠与销毁由维护队列扫描
-  const sandbox = new SandboxService({
-    db: kdb,
-    redis,
-    provider: () => {
-      const e = host.list("sandbox").find((x) => x.capability === SANDBOX_EXTENSION_POINT);
-      return e ? { plugin: e.plugin, impl: e.impl as SandboxProvider } : undefined;
-    },
-    lookup: (plugin) =>
-      host
-        .list("sandbox")
-        .find((x) => x.capability === SANDBOX_EXTENSION_POINT && x.plugin === plugin)?.impl as
-        | SandboxProvider
-        | undefined,
-    config: cfg,
-    log,
-  });
-  registerSandboxMaintenance(maintenance, sandbox, log);
+  // sandbox-destroy-for jobs (SandboxJobs is their producer) stay on the maintenance worker until
+  // Task 3.9 builds its @Processor (R11)
+  maintenance.handle(SANDBOX_DESTROY_FOR_JOB, (job) =>
+    runSandboxDestroyFor(converted.sandbox, log, job),
+  );
   // drift-connector jobs (ToolDrift is their producer) stay on the maintenance worker until Task
   // 3.9 builds its @Processor (R11)
   maintenance.handle(DRIFT_CONNECTOR_JOB, async (job) => {
     const { orgId, connectorId, trigger } = job.data as DriftConnectorJobData;
     await toolDrift.check(orgId, connectorId, trigger);
-  });
-  // R7: the legacy instances converted providers read at call time
-  converted.ports.bind({
-    sandbox,
-    // the departed member's sandboxes: one-off maintenance jobs, destroyed one by one by a worker
-    sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
   });
   // directory-sync jobs stay on the maintenance worker until Task 3.9 builds its @Processor (R11)
   maintenance.handle(DIRECTORY_SYNC_JOB, async (job) => {
@@ -524,7 +500,6 @@ export function createLegacyGraph(
     apiDeps,
     createEvalWorker,
     bus,
-    sandbox,
     log,
   };
 }
@@ -609,7 +584,7 @@ export async function createKernel(
     skillChanges: app.get(SkillChangesService),
     prices: app.get(PricesService),
     purposes: app.get(ModelPurposesService),
-    sandbox: g.sandbox,
+    sandbox: app.get(SandboxService),
     log: g.log,
     get config() {
       return configService.get();

@@ -14,7 +14,7 @@ import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
-import { SANDBOX_DESTROY_FOR_JOB } from "../../src/sandbox/lifecycle.js";
+import { SANDBOX_DESTROY_FOR_JOB } from "../../src/sandbox/jobs.js";
 import { anonymousGuestsFor } from "../helpers/channels.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";

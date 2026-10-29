@@ -1,6 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { ApiError } from "../errors.js";
-import { LegacyPorts } from "../lifecycle/legacy-ports.js";
+import { SandboxService } from "../sandbox/sandbox.service.js";
 import { UUID_RE } from "../ui/registry.js";
 import { ConversationAccess } from "./access.js";
 import { ConversationsService } from "./conversations.service.js";
@@ -22,8 +22,7 @@ export class ConversationSandboxStatus {
     /** The conversation whose sandbox it works in: a sub-agent's parent, else itself. */
     @Inject(ConversationsService)
     private readonly conversations: Pick<ConversationsService, "sandboxConversationOf">,
-    /** R7 (Task 3.8): the sandbox service (`status`). */
-    @Inject(LegacyPorts) private readonly ports: LegacyPorts,
+    @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "status">,
   ) {}
 
   async get(
@@ -39,7 +38,7 @@ export class ConversationSandboxStatus {
     }
     // a sub-agent works in its parent conversation's sandbox (sub-agents spec §10.1)
     const sandboxConv = await this.conversations.sandboxConversationOf(orgId, conversationId);
-    const s = await this.ports.sandbox.status(orgId, sandboxConv);
+    const s = await this.sandbox.status(orgId, sandboxConv);
     if (!s) throw new ApiError("sandbox.not_found", "This conversation has no sandbox");
     return { status: s.status, lastUsedAt: s.lastUsedAt.toISOString() };
   }

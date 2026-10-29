@@ -123,7 +123,8 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   upgrades: an exclusive token or the literal `shared`), `capk:sandbox-users:<conv>` (zset of shared tokens by expiry), `capk:sandbox-intent:<conv>`
   (an exclusive waiter's intent: new shared leases wait, writer preference), `capk:sandbox-holders:<conv>` (holder records), `capk:sandbox-path:<conv>:<sha256>`.
   Every key carries a TTL, never shortened by a holder for a TTL another holder set: the lease keys (`capk:sandbox:<conv>`, `capk:sandbox-users:<conv>`)
-  60 s (`SANDBOX_LOCK_TTL_MS`, renewed every TTL/3; no successful renewal for 2/3 TTL counts as lost and aborts that holder's signal); the holder records
+  60 s (`SANDBOX_LOCK_TTL_MS`; the lease is a `LockService` shared lease, `tryShared` / `tryExclusive` in `infra/lock`, renewed every TTL/3 and lost at
+  the R19 deadline: send time of the last successful renewal + 2/3 TTL, which aborts that holder's signal); the holder records
   and the `v2` busy marker `sandbox.limits.maxCommandSeconds` + 10 min; the intent max(4 × poll, 2 s); a path lease 30 s (renewed); the seen key
   below `destroyAfterInactiveDays` + 1 day. A caller loops: sandbox `running` → one try at a shared lease; otherwise one try at the exclusive lease with
   intent (same token, so it can switch to shared under its own intent once someone else made the sandbox run); the exclusive holder makes it run and
@@ -148,12 +149,13 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   lease (30 s, renewed, waited for up to 30 s, then the tool error "Another sub-agent is writing this file; wait a moment and retry."). What shell commands write is not
   serialized; the `sandbox_bash` description says other sub-agents may run commands at the same time.
 - **Fencing generation**: each lease acquisition (shared ones too) first increments `generation`, and later state writes (exclusive holders only; shared holders only move `last_used_at` forward with `GREATEST`) compare against it, so an old exclusive holder's writes necessarily fail (`SandboxLockLostError`).
-- **Suspension**: a maintenance job scans every minute and calls `suspend` on sandboxes idle longer than `suspendAfterIdleMinutes` (default 10), or running continuously longer than `maxRunningMinutes`
+- **Suspension**: a `@LockedCron` (`sandbox-suspend-idle`, once per minute across replicas) calls `suspend` on sandboxes idle longer than `suspendAfterIdleMinutes` (default 10), or running continuously longer than `maxRunningMinutes`
   (default 120, Ruling M1). Those with any holder are skipped until the next time (one try at the exclusive lease, no intent); one past `maxRunningMinutes`
   gets the intent for about a second so new commands wait briefly and the suspension can get in when the running ones end. `last_used_at` is set when each
   holder leaves, so the idle clock starts when the last concurrent holder finishes.
-- **Destruction**: scanned hourly; sandboxes inactive longer than `destroyAfterInactiveDays` (default 7), whose org is deleted, or whose conversation is deleted get `destroy`;
-  a departing member is destroyed immediately through the one-off job `sandbox-destroy-for`.
+- **Destruction**: a `@LockedCron` (`sandbox-destroy-inactive`, hourly); sandboxes inactive longer than `destroyAfterInactiveDays` (default 7), whose org is deleted, or whose conversation is deleted get `destroy`;
+  a departing member's (or a deleted agent's) are destroyed immediately through the one-off maintenance job `sandbox-destroy-for` (producer
+  `SandboxJobs`, job id `sandbox-destroy-for-<sha256 of the sorted ids>`).
 - **Transparent recovery**: a suspended sandbox is `resume`d on next use; on `gone`, destroyed, or a recorded provider that is not the current provider, an empty sandbox is rebuilt and the tool result carries
   an English notice. Switching providers leaks old instances (the new provider cannot destroy them; they are recorded in the `prev_*` columns and cleaned up only while the old extension is still loaded).
 - **Per-command** limit `sandbox.limits.maxCommandSeconds` (default 7200); `sandbox_bash` defaults to 120 seconds. A command timeout is also tightened to

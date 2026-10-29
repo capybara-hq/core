@@ -14,10 +14,11 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { readSandboxLimitOverride } from "../../src/identity/settings.js";
 import { effectiveSandboxLimits } from "../../src/orgs/settings.service.js";
-import { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { createFakeSandbox, fakeSandboxMeta } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { orgSettingsFor } from "../helpers/identity.js";
+import { sandboxServiceFor } from "../helpers/sandbox.js";
 
 /**
  * 组织级沙箱 cpu / 内存（C19 / Ruling M16）：企业管理员在部署设置 `sandboxLimitOverrides` 里按组织覆盖，
@@ -112,7 +113,7 @@ const setOverrides = (value: unknown) =>
     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`.execute(raw);
 
 const service = () =>
-  new SandboxService({
+  sandboxServiceFor({
     db,
     redis,
     provider: () => ({ plugin: "sandbox-fake", impl: provider }),

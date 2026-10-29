@@ -22,7 +22,10 @@ import { resolveRoster } from "../runtime/subagents/roster.js";
 import { AGENT_TOOL, agentToolSpec } from "./builtins/agent.js";
 import { BuiltinTools } from "./builtins/builtin-tools.js";
 import { SANDBOX_TOOL_NAMES } from "./builtins/sandbox/names.js";
+import { canonicalJson } from "./canonical-json.js";
 import { toolKey, toolKeyIssue } from "./naming.js";
+
+export { canonicalJson } from "./canonical-json.js";
 
 /**
  * 内核内置工具的名字（Task 10 / Task 19 实现；M5 T8 加沙箱工具）。保存 agent 时内置工具引用按这份清单校验，
@@ -138,18 +141,6 @@ export interface ResolvedTool {
 export interface UnavailableTool {
   ref: string;
   reason: string;
-}
-
-/** 键排序、去掉 undefined 的 JSON（jsonb 不保留键顺序，指纹必须与顺序无关）。 */
-export function canonicalJson(v: unknown): string {
-  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(",")}]`;
-  if (v !== null && typeof v === "object") {
-    const entries = Object.entries(v as Record<string, unknown>)
-      .filter(([, x]) => x !== undefined)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-    return `{${entries.map(([k, x]) => `${JSON.stringify(k)}:${canonicalJson(x)}`).join(",")}}`;
-  }
-  return JSON.stringify(v);
 }
 
 /** The first 16 hex digits of sha256(canonicalJson(v)): a fingerprint independent of key order. */

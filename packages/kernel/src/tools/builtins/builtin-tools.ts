@@ -3,7 +3,7 @@ import { AttachmentsService } from "../../conversations/attachments.service.js";
 import { EventLog } from "../../conversations/event-log.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
-import { LegacyPorts } from "../../lifecycle/legacy-ports.js";
+import { SandboxService } from "../../sandbox/sandbox.service.js";
 import { SkillChangesService } from "../../skills/changes.service.js";
 import { StorageService } from "../../storage/storage.service.js";
 import { ToolOutputs } from "../outputs.js";
@@ -22,9 +22,6 @@ import { toolSearchTool } from "./tool-search.js";
  * descriptions and schemas, are the factories' own and unchanged). `tool_search` and `skill_load`
  * are added to a run by the registry (`forAgent`: organization setting and threshold, a skills
  * catalog snapshot), not by agent definitions; `skill_write` only when a definition names it.
- *
- * The sandbox is still built by the legacy graph (Task 3.8): the tools read it through
- * `LegacyPorts` at call time (R7), never at construction.
  */
 @Injectable()
 export class BuiltinTools {
@@ -38,13 +35,10 @@ export class BuiltinTools {
     @Inject(SkillChangesService) skillChanges: SkillChangesService,
     @Inject(AttachmentsService) attachments: AttachmentsService,
     @Inject(EventLog) eventLog: EventLog,
-    /** R7 (Task 3.8): the sandbox service, read at call time. */
-    @Inject(LegacyPorts) ports: LegacyPorts,
+    @Inject(SandboxService) sandbox: SandboxService,
   ) {
     const sandboxDeps: SandboxToolDeps = {
-      get sandbox() {
-        return ports.sandbox;
-      },
+      sandbox,
       attachments,
       storage,
       eventLog,
@@ -61,9 +55,7 @@ export class BuiltinTools {
       skillLoadTool({
         storage,
         config,
-        get sandbox() {
-          return ports.sandbox;
-        },
+        sandbox,
         attachments,
         eventLog,
         get db() {

@@ -337,6 +337,128 @@ describe("LockService.keepAlive: loss is a deadline (R19)", () => {
   });
 });
 
+describe("LockService shared leases (Task 3.8)", () => {
+  const keysOf = (name: string) => {
+    const id = k(name);
+    return { lock: `${id}:lock`, users: `${id}:users`, intent: `${id}:intent` };
+  };
+
+  it("up to cap shared holders across two clients; exclusive only when none is left", async () => {
+    const a = new LockService(r1, log);
+    const b = new LockService(r2, log);
+    const keys = keysOf("rw");
+    const s1 = await a.tryShared(keys, "s1", 2, 5000);
+    const s2 = await b.tryShared(keys, "s2", 2, 5000);
+    expect(s1?.kind).toBe("shared");
+    expect(s2).toBeDefined();
+    expect(await a.tryShared(keys, "s3", 2, 5000)).toBeUndefined();
+    expect(await b.sharedCount(keys)).toBe(2);
+    expect(await r1.get(keys.lock)).toBe("shared");
+    expect(await b.tryExclusive(keys, "x", 5000)).toBeUndefined();
+    await s1?.release();
+    await s2?.release();
+    expect(await a.sharedCount(keys)).toBe(0);
+    expect(await r1.exists(keys.lock)).toBe(0);
+    const x = await b.tryExclusive(keys, "x", 5000);
+    expect(x?.kind).toBe("exclusive");
+    expect(await r1.get(keys.lock)).toBe("x");
+    expect(await a.tryShared(keys, "s4", 2, 5000)).toBeUndefined();
+    await x?.release();
+  });
+
+  it("intent: a failed exclusive try with an intent blocks other tokens' shared leases, not its own", async () => {
+    const a = new LockService(r1, log);
+    const b = new LockService(r2, log);
+    const keys = keysOf("intent");
+    const s = await a.tryShared(keys, "s", 4, 5000);
+    expect(await b.tryExclusive(keys, "w", 5000, 2000)).toBeUndefined();
+    expect(await r1.get(keys.intent)).toBe("w");
+    expect(await a.tryShared(keys, "other", 4, 5000)).toBeUndefined();
+    const own = await b.tryShared(keys, "w", 4, 5000);
+    expect(own).toBeDefined();
+    await own?.release();
+    await s?.release();
+    // a successful exclusive try clears its own intent
+    const x = await b.tryExclusive(keys, "w", 5000, 2000);
+    expect(x).toBeDefined();
+    expect(await r1.exists(keys.intent)).toBe(0);
+    await x?.release();
+  });
+
+  it("a crashed shared holder's lease expires within the TTL (no renewal)", async () => {
+    const a = new LockService(r1, log);
+    const keys = keysOf("crash");
+    const s = await a.tryShared(keys, "crashed", 4, 300);
+    // stops renewing without releasing: the holder "crashed"
+    s?.abandon();
+    const b = new LockService(r2, log);
+    expect(await b.tryExclusive(keys, "x", 5000)).toBeUndefined();
+    await sleep(400);
+    const x = await b.tryExclusive(keys, "x", 5000);
+    expect(x).toBeDefined();
+    await x?.release();
+  });
+
+  it("fencing: a holder whose key was taken loses its lease (renew false, lost aborts) and its release leaves the new holder alone", async () => {
+    const a = new LockService(r1, log);
+    const keys = keysOf("fence");
+    const x = await a.tryExclusive(keys, "old", 5000);
+    await r2.set(keys.lock, "new", "PX", 5000);
+    expect(await x?.renew()).toBe(false);
+    expect(x?.lost.aborted).toBe(true);
+    await x?.release();
+    expect(await r1.get(keys.lock)).toBe("new");
+
+    // a shared holder whose lock key now holds an exclusive token is out
+    const sk = keysOf("fence-s");
+    const s = await a.tryShared(sk, "s", 4, 5000);
+    await r2.set(sk.lock, "intruder", "PX", 5000);
+    expect(await s?.renew()).toBe(false);
+    expect(s?.lost.aborted).toBe(true);
+    expect(await r1.zscore(sk.users, "s")).toBeNull();
+    await s?.release();
+    expect(await r1.get(sk.lock)).toBe("intruder");
+  });
+
+  it("downgrade: exclusive → shared with the same token; others join; downgrade twice throws", async () => {
+    const a = new LockService(r1, log);
+    const b = new LockService(r2, log);
+    const keys = keysOf("down");
+    const x = await a.tryExclusive(keys, "t", 5000);
+    expect(await x?.downgrade()).toBe(true);
+    expect(x?.kind).toBe("shared");
+    expect(x?.token).toBe("t");
+    await expect(x?.downgrade()).rejects.toThrow(/not exclusive/);
+    expect(await r1.get(keys.lock)).toBe("shared");
+    const other = await b.tryShared(keys, "o", 4, 5000);
+    expect(await a.sharedCount(keys)).toBe(2);
+    expect(await x?.renew()).toBe(true);
+    await x?.release();
+    await other?.release();
+    expect(await a.sharedCount(keys)).toBe(0);
+  });
+
+  it("a downgrade of a lost exclusive lease answers false and loses it", async () => {
+    const a = new LockService(r1, log);
+    const keys = keysOf("down-lost");
+    const x = await a.tryExclusive(keys, "t", 5000);
+    await r1.del(keys.lock);
+    expect(await x?.downgrade()).toBe(false);
+    expect(x?.lost.aborted).toBe(true);
+    await x?.release();
+  });
+
+  it("renewal keeps a shared lease past its TTL", async () => {
+    const a = new LockService(r1, log);
+    const keys = keysOf("renew");
+    const s = await a.tryShared(keys, "s", 4, 300);
+    await sleep(700);
+    expect(s?.lost.aborted).toBe(false);
+    expect(await a.sharedCount(keys)).toBe(1);
+    await s?.release();
+  });
+});
+
 describe("@WithLock", () => {
   it("holds the expanded key during the call and throws lock.acquire_failed when busy", async () => {
     const svc = new Svc(new LockService(r1, log));

@@ -29,7 +29,6 @@ import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { KernelEvents } from "../../src/infra/events/kernel-events.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { REDIS } from "../../src/infra/tokens.js";
-import { LegacyPorts, type LegacyPortValues } from "../../src/lifecycle/legacy-ports.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
 import { DirectorySync } from "../../src/orgs/directory-sync.js";
 import { InvitationsService } from "../../src/orgs/invitations.service.js";
@@ -39,6 +38,7 @@ import { OrgLock } from "../../src/orgs/org-lock.js";
 import { OrgsService } from "../../src/orgs/orgs.service.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
+import type { SandboxJobs } from "../../src/sandbox/jobs.js";
 import type { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { type Credentials, clearAccountCredentials } from "../../src/tools/credentials.js";
 import type { QuestionsService } from "../../src/tools/questions.service.js";
@@ -153,18 +153,10 @@ const noRuns: OffboardingRunControl = {
   requestAbort: async () => {},
 };
 
-/** The legacy ports offboarding reads, with test stubs for whatever `ports` leaves out. */
-export function testPorts(_db: Kysely<any>, ports: Partial<LegacyPortValues> = {}): LegacyPorts {
-  const p = new LegacyPorts();
-  p.bind({
-    sandboxDestroy: { destroy: async () => {} },
-    ...ports,
-  } as LegacyPortValues);
-  return p;
-}
-
-/** What offboarding reads besides the database: the legacy ports and the tools services. */
-export type OffboardingTestDeps = Partial<LegacyPortValues> & {
+/** What offboarding reads besides the database: the sandbox jobs and the tools services. */
+export type OffboardingTestDeps = {
+  /** Enqueues the member's sandbox destruction (nothing by default). */
+  sandboxDestroy?: Pick<SandboxJobs, "destroy">;
   eventLog?: ConstructorParameters<typeof Offboarding>[5];
   /** Stops the member's runs (none by default). */
   offboardRuns?: OffboardingRunControl;
@@ -174,7 +166,7 @@ export type OffboardingTestDeps = Partial<LegacyPortValues> & {
 };
 
 /**
- * Offboarding over `db`. Without `ports` it only touches the database (deletes credentials, revokes
+ * Offboarding over `db`. Without `deps` it only touches the database (deletes credentials, revokes
  * sessions and tokens, reassigns agents); it cancels no approval or question and stops no run.
  */
 export function testOffboarding(
@@ -188,7 +180,7 @@ export function testOffboarding(
   } = {},
 ): Offboarding {
   const h = handlesFor(db);
-  const { credentials, approvals, questions, eventLog, offboardRuns, ...ports } = deps;
+  const { credentials, approvals, questions, eventLog, offboardRuns, sandboxDestroy } = deps;
   return new Offboarding(
     h.db,
     h.txHost,
@@ -196,7 +188,7 @@ export function testOffboarding(
     opts.redis ?? ({ set: async () => "OK", exists: async () => 0 } as never),
     opts.registry ?? new ExtensionRegistry(),
     eventLog ?? { notify: async () => {}, publishChanged: async () => {} },
-    testPorts(db, ports),
+    sandboxDestroy ?? { destroy: async () => {} },
     offboardRuns ?? noRuns,
     credentials ?? {
       clearAccount: (orgId, accountId) => clearAccountCredentials(h.db.db, orgId, accountId),

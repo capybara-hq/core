@@ -14,9 +14,9 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
-import { LegacyPorts } from "../lifecycle/legacy-ports.js";
 import type { KernelLogger } from "../log.js";
 import { RunControl } from "../runtime/run-control.js";
+import { SandboxJobs } from "../sandbox/jobs.js";
 import { ApprovalsService } from "../tools/approvals.service.js";
 import { Credentials } from "../tools/credentials.js";
 import { QuestionsService } from "../tools/questions.service.js";
@@ -84,8 +84,6 @@ const DIRECTORY_SOURCE_PREFIX = "directory:";
  * 已接受的窄窗口：离职提交时正在进行的 OAuth token 刷新（`Credentials` 刷新锁内）可能在提交之后把此人的
  * 个人凭据重新写回（upsert）。凭据只在此人以成员身份调用工具时使用，而其运行已被中止、成员关系已删除，
  * 残留的凭据不会被使用；重新加入组织后会被新的连接覆盖。
- *
- * The sandbox destruction (Task 3.8) is read from {@link LegacyPorts} at call time.
  */
 @Injectable()
 export class Offboarding {
@@ -96,7 +94,8 @@ export class Offboarding {
     @Inject(REDIS) private readonly redis: Pick<Redis, "set" | "exists">,
     @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "list">,
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "notify" | "publishChanged">,
-    @Inject(LegacyPorts) private readonly ports: LegacyPorts,
+    /** The departed member's sandboxes: one-off maintenance jobs, destroyed one by one by a worker. */
+    @Inject(SandboxJobs) private readonly sandboxJobs: Pick<SandboxJobs, "destroy">,
     /** Stops the departed member's runs (`by: null`, a system action). */
     @Inject(RunControl) private readonly runs: OffboardingRunControl,
     @Inject(Credentials) private readonly credentials: Pick<Credentials, "clearAccount">,
@@ -400,7 +399,7 @@ export class Offboarding {
     for (const run of r.runs) await this.stopRun(run);
     if (r.sandboxConversations.length > 0) {
       try {
-        await this.ports.sandboxDestroy.destroy(r.sandboxConversations);
+        await this.sandboxJobs.destroy(r.sandboxConversations);
       } catch (err) {
         log.warn("offboarding: cannot schedule sandbox destruction", {
           count: r.sandboxConversations.length,

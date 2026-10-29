@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { SchedulerRegistry } from "@nestjs/schedule";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -12,13 +13,12 @@ import { KernelConfigSchema } from "../../src/config/schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import type { Kernel } from "../../src/kernel.js";
-import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
+import { MAINTENANCE_QUEUE_NAME, RETIRED_SCHEDULER_IDS } from "../../src/runtime/maintenance.js";
 import {
-  SANDBOX_DESTROY_JOB,
   SANDBOX_DESTROY_SCHEDULER_ID,
-  SANDBOX_SUSPEND_JOB,
   SANDBOX_SUSPEND_SCHEDULER_ID,
-} from "../../src/sandbox/lifecycle.js";
+} from "../../src/sandbox/job-ids.js";
+import { SANDBOX_DESTROY_JOB, SANDBOX_SUSPEND_JOB } from "../../src/sandbox/jobs.js";
 import {
   readFakeSandboxOps,
   setFakeSandboxDelays,
@@ -110,21 +110,22 @@ describe("沙箱（两个副本）", () => {
     expect(rows.rows[0]?.n).toBe(1);
   });
 
-  it("worker 角色登记两个周期任务（job id 不含 `:`）", async () => {
+  it("两个扫描是 @LockedCron 任务（每分钟 / 每小时）；旧的 job scheduler 已退役（名字不含 `:`）", async () => {
+    // the worker kernel of the first case (Task 3.8: crons instead of maintenance schedulers)
+    const registry = kernels[0]?.app.get(SchedulerRegistry);
+    if (!registry) throw new Error("the worker kernel of the first case is missing");
+    expect(String(registry.getCronJob(SANDBOX_SUSPEND_JOB).cronTime.source)).toBe("* * * * *");
+    expect(String(registry.getCronJob(SANDBOX_DESTROY_JOB).cronTime.source)).toBe("0 * * * *");
+    expect(RETIRED_SCHEDULER_IDS).toEqual(
+      expect.arrayContaining([SANDBOX_SUSPEND_SCHEDULER_ID, SANDBOX_DESTROY_SCHEDULER_ID]),
+    );
     const q = new Queue(MAINTENANCE_QUEUE_NAME, {
       connection: new Redis(rdc.url, { maxRetriesPerRequest: null }),
     });
     try {
-      const schedulers = await q.getJobSchedulers();
-      const byId = new Map(schedulers.map((s) => [s.key, s]));
-      expect(byId.get(SANDBOX_SUSPEND_SCHEDULER_ID)).toMatchObject({
-        name: SANDBOX_SUSPEND_JOB,
-        every: 60_000,
-      });
-      expect(byId.get(SANDBOX_DESTROY_SCHEDULER_ID)).toMatchObject({
-        name: SANDBOX_DESTROY_JOB,
-        every: 3_600_000,
-      });
+      const ids = (await q.getJobSchedulers()).map((s) => s.key);
+      expect(ids).not.toContain(SANDBOX_SUSPEND_SCHEDULER_ID);
+      expect(ids).not.toContain(SANDBOX_DESTROY_SCHEDULER_ID);
       for (const id of [
         SANDBOX_SUSPEND_SCHEDULER_ID,
         SANDBOX_DESTROY_SCHEDULER_ID,

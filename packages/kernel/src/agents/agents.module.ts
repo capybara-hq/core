@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { ProvidersModule } from "../runtime/providers.js";
+import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { AgentLookupModule } from "./agent-lookup.js";
@@ -13,7 +14,15 @@ import { AgentTemplatesService } from "./templates.js";
  * (re-exported), which the conversations and the skill invoker use without this module.
  */
 @Module({
-  imports: [AgentLookupModule, OrgLockModule, ProvidersModule, SkillsModule, ToolsModule],
+  imports: [
+    AgentLookupModule,
+    OrgLockModule,
+    ProvidersModule,
+    SkillsModule,
+    ToolsModule,
+    // the producer of sandbox-destroy-for jobs after a delete
+    SandboxModule,
+  ],
   providers: [AgentsService, AgentTemplatesService],
   exports: [AgentLookupModule, AgentsService, AgentTemplatesService],
 })

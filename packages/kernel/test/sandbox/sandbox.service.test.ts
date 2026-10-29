@@ -21,8 +21,7 @@ import { SandboxLeases } from "../../src/sandbox/leases.js";
 import {
   SANDBOX_BUSY_PREFIX,
   SandboxLockLostError,
-  SandboxService,
-  type SandboxServiceDeps,
+  type SandboxService,
 } from "../../src/sandbox/sandbox.service.js";
 import {
   createFakeSandbox,
@@ -33,6 +32,11 @@ import {
   setFakeSandboxDelays,
 } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
+import {
+  type SandboxServiceDeps,
+  sandboxLeasesFor,
+  sandboxServiceFor,
+} from "../helpers/sandbox.js";
 
 /**
  * 内核沙箱服务（M5 T7）：按对话懒创建、Redis 锁下串行、空闲休眠 / 超时强制休眠、不活跃销毁、
@@ -60,7 +64,7 @@ const service = (
   plugin = "sandbox-fake",
   extra: Partial<SandboxServiceDeps> = {},
 ) =>
-  new SandboxService({
+  sandboxServiceFor({
     db,
     redis,
     provider: () => {
@@ -834,7 +838,7 @@ describe("扫描失败的排在后面（fix round 1）", () => {
 
 /** Leases whose renewals always fail with a Redis error (the renew script throws). */
 const renewThrows = (ttlMs: number) =>
-  new SandboxLeases({
+  sandboxLeasesFor({
     redis: new Proxy(redis, {
       get(t, k) {
         if (k === "eval") {
@@ -891,7 +895,7 @@ describe("锁的防护（fix round 2）", () => {
         };
       }
     }
-    const blind = new BlindLeases({ redis, log, ttlMs: 300, pollMs: 20 });
+    const blind = sandboxLeasesFor({ redis, log, ttlMs: 300, pollMs: 20 }, BlindLeases);
     const failures: unknown[] = [];
     const sweeper = service(() => slow, undefined, {
       lockTtlMs: 300,
