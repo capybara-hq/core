@@ -498,6 +498,34 @@ describe("LockService shared leases (Task 3.8)", () => {
     expect(await new LockService(r1, log).sharedCount(keys)).toBe(0);
   });
 
+  it("a renewal sent while a downgrade is in flight renews the lease as shared (no spurious loss)", async () => {
+    // TTL 1500 -> a renewal every 500, deadline 1000 after the acquire; the downgrade runs in
+    // Redis at once and its reply takes 700 ms, so the renewal at 500 is due while the handle still
+    // says exclusive
+    const proxied = new Proxy(r1, {
+      get(t, p) {
+        if (p === "eval") {
+          return async (script: string, ...args: unknown[]) => {
+            // biome-ignore lint/suspicious/noExplicitAny: forwards the call unchanged
+            const r = await (t.eval as any)(script, ...args);
+            if (script === DOWNGRADE_SHARED_LEASE) await sleep(700);
+            return r;
+          };
+        }
+        const v = Reflect.get(t, p);
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+    const a = new LockService(proxied, createLogger("error", { write: () => {} }));
+    const keys = keysOf("down-race");
+    const x = await a.tryExclusive(keys, "t", 1500);
+    expect(await x?.downgrade()).toBe(true);
+    await sleep(1200);
+    expect(x?.lost.aborted).toBe(false);
+    expect(await new LockService(r1, log).sharedCount(keys)).toBe(1);
+    await x?.release();
+  });
+
   it("a successful downgrade moves the R19 deadline (fake timers)", async () => {
     vi.useFakeTimers({
       toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],

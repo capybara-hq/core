@@ -257,10 +257,15 @@ export class LockService {
       keys.lock,
       ttlMs,
       {
-        renew: async () =>
-          Number(
-            await this.redis.eval(RENEW_SHARED_LEASE, 2, keys.lock, keys.users, token, ttl, kind),
-          ) === 1,
+        renew: async () => {
+          // a downgrade still in flight decides the kind to renew (Redis may have made it shared)
+          await downgrading?.catch(() => {});
+          return (
+            Number(
+              await this.redis.eval(RENEW_SHARED_LEASE, 2, keys.lock, keys.users, token, ttl, kind),
+            ) === 1
+          );
+        },
         release: async () => {
           // a downgrade still in flight decides the kind the lease has in Redis
           await downgrading?.catch(() => {});
