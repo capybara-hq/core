@@ -117,11 +117,16 @@ export const KC_RULES = [
 ] as const;
 export type KcRule = (typeof KC_RULES)[number];
 
-/** A permanent exception: `path` (a file, or a directory ending in `/`), optionally only inside the function or method `within`. */
+/**
+ * A permanent exception: `path` (a file, or a directory ending in `/`), optionally only inside the
+ * class, function or method `within`, and only for the finding whose message starts with `what`
+ * (one entry of a list, say).
+ */
 export interface KcException {
   rule: KcRule;
   path: string;
   within?: string;
+  what?: string;
   reason: string;
 }
 
@@ -273,6 +278,7 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
     rule: "kc-wiring",
     path: "packages/kernel/src/kernel.module.ts",
     within: "KernelAppOptionsModule",
+    what: "the provider `options.overrides`",
     reason:
       "the application's `overrides` are KernelOverride values, `{ provide: <seam token>, " +
       "useValue }`, each checked against KERNEL_OVERRIDE_TOKENS before they are listed: a value, " +
@@ -282,6 +288,7 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
     rule: "kc-worker-only",
     path: "packages/kernel/src/kernel.module.ts",
     within: "KernelAppOptionsModule",
+    what: "the provider `options.overrides`",
     reason:
       "the application's `overrides` are KernelOverride values, `{ provide: <seam token>, " +
       "useValue }`, each checked against KERNEL_OVERRIDE_TOKENS before they are listed: a value, " +
@@ -612,7 +619,8 @@ export function checkKernelConventions(root: string, opts: KcOptions = {}): Find
       (e) =>
         e.rule === h.rule &&
         coveredBy(e.path, h.rel) &&
-        (e.within === undefined || h.within.includes(e.within)),
+        (e.within === undefined || h.within.includes(e.within)) &&
+        (e.what === undefined || h.message.startsWith(e.what)),
     );
     if (ex) {
       usedException.add(ex);
@@ -667,7 +675,7 @@ export function checkKernelConventions(root: string, opts: KcOptions = {}): Find
       file: join(root, e.path),
       line: 1,
       rule: "kc-stale-exception",
-      message: `the ${e.rule} exception${e.within ? ` (within ${e.within})` : ""} matches nothing: remove it from KC_EXCEPTIONS in tools/checks/src/kernel-conventions.ts`,
+      message: `the ${e.rule} exception${e.within ? ` (within ${e.within})` : ""}${e.what ? ` (${e.what})` : ""} matches nothing: remove it from KC_EXCEPTIONS in tools/checks/src/kernel-conventions.ts`,
     });
   }
   return out;

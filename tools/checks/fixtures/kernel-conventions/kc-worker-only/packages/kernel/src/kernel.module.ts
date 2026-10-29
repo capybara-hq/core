@@ -32,12 +32,20 @@ export class KernelModule {
   }
 }
 
-// the application's own seam values: a KC_EXCEPTIONS entry (kc-worker-only, within this class);
-// kc-wiring's own entry is not applied to this fixture
+// the application's own seam values: a KC_EXCEPTIONS entry (kc-worker-only) for the
+// `...overrides` entry of this class only; kc-wiring's entry is not applied to this fixture
+declare function makeExtra(): Provider;
+
 @Module({})
 class KernelAppOptionsModule {
   static forRoot(options: { overrides?: Provider[] }): DynamicModule {
     const overrides = options.overrides ?? []; // expect: kc-wiring
-    return { module: KernelAppOptionsModule, providers: [...overrides] };
+    return {
+      module: KernelAppOptionsModule,
+      providers: [
+        ...overrides,
+        makeExtra(), // expect: kc-wiring, kc-worker-only
+      ],
+    };
   }
 }

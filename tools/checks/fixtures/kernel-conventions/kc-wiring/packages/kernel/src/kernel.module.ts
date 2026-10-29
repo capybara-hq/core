@@ -15,11 +15,20 @@ import { EVAL_QUOTA, HEALTH_CHECKS } from "./tokens.js";
 })
 export class KernelModule {}
 
-// the application's own seam values: a KC_EXCEPTIONS entry (kc-wiring, within this class)
+// the application's own seam values: a KC_EXCEPTIONS entry (kc-wiring) for the `...overrides`
+// entry of this class only
+declare function makeExtra(): Provider;
+
 @Module({})
 class KernelAppOptionsModule {
   static forRoot(options: { overrides?: Provider[] }): DynamicModule {
     const overrides = options.overrides ?? [];
-    return { module: KernelAppOptionsModule, providers: [...overrides] };
+    return {
+      module: KernelAppOptionsModule,
+      providers: [
+        ...overrides,
+        makeExtra(), // expect: kc-wiring
+      ],
+    };
   }
 }
