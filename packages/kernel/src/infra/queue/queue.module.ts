@@ -48,6 +48,9 @@ export class QueueModule {
     for (const name of names) {
       if (name.includes(":")) throw new Error(`queue name "${name}" must not contain ":"`);
     }
-    return BullModule.registerQueue(...names.map((name) => ({ name })));
+    // forceDisconnectOnShutdown: a queue's connection is dropped after its close at shutdown
+    return BullModule.registerQueue(
+      ...names.map((name) => ({ name, forceDisconnectOnShutdown: true })),
+    );
   }
 }

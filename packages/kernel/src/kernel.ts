@@ -595,12 +595,21 @@ export function createLegacyGraph(
         loop: (d) => {
           // nor dispatch fork invocations: run-replay passes the recorded reports instead
           const {
+            db: _snapshot,
             hooks: _noHooks,
             subagentProgress: _noProgress,
             skillForks: _noForks,
             ...replayDeps
           } = stepDeps;
-          return loops.create({ ...replayDeps, ...d });
+          // the object rest above copied `db` as a value: read it through the step deps' getter
+          // instead, so the loop always resolves the context-aware handle
+          return loops.create({
+            ...replayDeps,
+            get db() {
+              return stepDeps.db;
+            },
+            ...d,
+          });
         },
         ...(hooks.evalHooks !== undefined && { hooks: hooks.evalHooks }),
       },

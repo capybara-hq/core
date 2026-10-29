@@ -164,7 +164,7 @@ describe("usage.report delivery", { timeout: 60_000 }, () => {
     const got = await waitFor(
       async () => {
         const d = await probeUsage(ids);
-        return ids.every((id) => d[id]?.calls === 1) ? d : null;
+        return ids.every((id) => d[id]?.calls === 1 && d[id]?.last != null) ? d : null;
       },
       10_000,
       "probe deliveries",
@@ -225,7 +225,7 @@ describe("usage.report delivery", { timeout: 60_000 }, () => {
     const got = await waitFor(
       async () => {
         const d = await probeUsage([id]);
-        return d[id]?.calls === 1 ? d : null;
+        return d[id]?.calls === 1 && d[id]?.last != null ? d : null;
       },
       10_000,
       "title usage delivered",

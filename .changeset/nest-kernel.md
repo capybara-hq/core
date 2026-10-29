@@ -203,6 +203,7 @@ schedulers are removed when a worker starts. `finishRun` / `finishRunIn` became
 deps take a `stepLog`, step deps and the sub-agent limits read a `KernelConfigService`-like
 `config` (`get()`), and `pairStoppedForks` takes the context's handle. `KernelOptions` lost `loop`
 and `runHooks`: tests override `AGENT_LOOP_FACTORY` / `RUN_HOOKS` through `overrides`. The model
-list cache moved to `@Cacheable` (`cache:capk:models:…`; the old keys expire by TTL). A lost
+list cache moved to `@Cacheable` (`cache:capk:models:…`; the old keys expire by TTL); it now
+fails open: a Redis error lists the provider's models again, where it used to throw. A lost
 conversation lease logs one `lock lost` line (with its key); conversation writes the caller notifies
 after run in their own transaction.

@@ -1,6 +1,6 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { getQueueToken } from "@nestjs/bullmq";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, type OnModuleDestroy } from "@nestjs/common";
 import { DelayedError, type Job, type Queue } from "bullmq";
 import { sql } from "kysely";
 import { type AppendEvent, EventLog } from "../conversations/event-log.js";
@@ -95,7 +95,10 @@ const TIMEOUT_JOB_BACKOFF_MS = 5_000;
  * 暂停后的复查都可能调用它，谁先谁后都只有一次续跑。
  */
 @Injectable()
-export class Waits {
+export class Waits implements OnModuleDestroy {
+  /** Drops the `run.orphaned` subscription (the events may outlive this instance). */
+  private readonly unsubscribe: () => void;
+
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(EventLog) private readonly eventLog: EventLog,
@@ -128,13 +131,17 @@ export class Waits {
   ) {
     // an orphaned parent run (marked failed by `ensureRun`) stops its children at once; the
     // sweep's `sweepChildrenOfFinished` is the backstop
-    events.on("run.orphaned", ({ runId }) =>
+    this.unsubscribe = events.on("run.orphaned", ({ runId }) =>
       this.stopChildren(runId, null)
         .then(() => {})
         .catch((err) =>
           this.log.error("cannot stop the sub-agents of an orphaned run", { runId, err }),
         ),
     );
+  }
+
+  onModuleDestroy(): void {
+    this.unsubscribe();
   }
 
   /** The context's handle (the transaction of a `@Transactional` method, else the pool). */

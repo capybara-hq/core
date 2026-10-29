@@ -194,9 +194,12 @@ export default defineExtension({
       const ids = (new URL(req.url).searchParams.get("eventIds") ?? "").split(",").filter(Boolean);
       const out: Record<string, { calls: number; last: unknown; holder: string | null }> = {};
       for (const id of ids) {
+        // the count first, then the payload: the handler writes the payload before it counts the
+        // delivery, so a count of at least 1 read here always comes with its payload
+        const calls = Number((await ctx.kv.get(`usage:${id}`)) ?? 0);
         const last = await ctx.kv.get(`usage-last:${id}`);
         out[id] = {
-          calls: Number((await ctx.kv.get(`usage:${id}`)) ?? 0),
+          calls,
           last: last === null ? null : JSON.parse(last),
           holder: await ctx.kv.get(`usage-holder:${id}`),
         };

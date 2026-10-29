@@ -377,16 +377,24 @@ describe("model-provider@1 / @2", () => {
     expect(await redis.exists("cache:capk:models:p2:v2:-:-")).toBe(0);
   });
 
-  it("缓存中缺少 parameters 的旧条目视为未命中，重新列模型", async () => {
-    // an older kernel's entry (its raw `@1` shape, under the key it used before `@Cacheable`)
+  it("an older kernel's entry under the pre-@Cacheable key is ignored: the list is cached under the new key", async () => {
+    // what an older kernel wrote (a raw `@1` shape, under its old key)
     await redis.set("capk:models:p2:v2:-:-", JSON.stringify([{ id: "stale" }]), "EX", 600);
     const p = v2();
     const r = reg([{ plugin: "p2", capability: "model-provider@2", impl: p.impl }]);
     const [entry] = await r.list();
     expect(entry?.models.map((m) => m.id)).toEqual(["v2-model"]);
     expect(p.calls()).toBe(1);
+    // cached under the new key (`@Cacheable`), which the next list reads
+    const cached = JSON.parse((await redis.get("cache:capk:models:p2:v2:-:-")) ?? "null");
+    expect(cached.map((m: { id: string }) => m.id)).toEqual(["v2-model"]);
+    expect(await redis.ttl("cache:capk:models:p2:v2:-:-")).toBeGreaterThan(0);
     await r.list();
     expect(p.calls()).toBe(1);
+    // the old key is neither read nor rewritten
+    expect(JSON.parse((await redis.get("capk:models:p2:v2:-:-")) ?? "null")).toEqual([
+      { id: "stale" },
+    ]);
   });
 
   it("插件从 @1 升级到 @2：不读 @1 时写入的缓存（键带契约主版本）", async () => {
