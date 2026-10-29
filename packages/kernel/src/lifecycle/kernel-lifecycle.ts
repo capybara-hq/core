@@ -204,7 +204,7 @@ export class KernelLifecycle
     // official 清单来源按配置同步（幂等；每个副本启动时都做）
     await this.marketplaces.syncOfficialFromConfig();
     // The bootstrap plugins (spec §7), once per manifest across replicas (the Redis lock
-    // `lock:bootstrap`, R5); a bootstrap entry named like a config-declared extension is kept
+    // `lock:bootstrap`); a bootstrap entry named like a config-declared extension is kept
     if (opts.bootstrap !== undefined) {
       this.registry.declare(
         await ExtensionHost.declaredNames(config.extensions, {
@@ -258,10 +258,10 @@ export class KernelLifecycle
         this.log[w.level](w.message);
       }
     }
-    // The role parts (nest kernel spec §4): the worker role's queue consumers and schedules (R21:
-    // their timers are armed at application bootstrap, but no tick runs before the worker role
-    // opens the start gate here; the runOnStart jobs run then), the gateway role's supervisor and
-    // webhook inbound
+    // The role parts (nest kernel spec §4): the worker role's queue consumers and schedules (the
+    // start gate: their timers are armed at application bootstrap, but no tick runs before the
+    // worker role opens the start gate here; the runOnStart jobs run then), the gateway role's
+    // supervisor and webhook inbound
     if (worker) await worker.start(() => this.checkpoint());
     if (gateway) await gateway.start(() => this.checkpoint());
     // Routes stay mounted and are resolved live: 503 extension.unavailable after an extension is revoked, back after it reloads (C17)

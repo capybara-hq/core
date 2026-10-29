@@ -1,6 +1,6 @@
 /**
  * The maintenance job scheduler ids the sandbox sweeps had before they became `@LockedCron` jobs
- * (nest kernel Task 3.8): an upgraded deployment still has them in Redis, so the worker removes
+ * an upgraded deployment still has them in Redis, so the worker removes
  * them at start (`RETIRED_SCHEDULER_IDS`). A leaf module: the maintenance worker imports it without
  * the sandbox providers.
  */

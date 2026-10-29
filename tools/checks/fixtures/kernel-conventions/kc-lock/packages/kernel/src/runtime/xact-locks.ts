@@ -3,7 +3,7 @@ import { sql } from "kysely";
 
 declare const Transactional: (o?: object) => MethodDecorator;
 
-/** R9: a dedicated lock provider whose mandatory method takes the transaction-scoped lock. */
+/** A dedicated lock provider whose mandatory method takes the transaction-scoped lock. */
 @Injectable()
 export class SetupLock {
   readonly txHost: unknown = undefined;

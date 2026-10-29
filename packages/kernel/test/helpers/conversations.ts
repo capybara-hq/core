@@ -1,7 +1,7 @@
 // biome-ignore-all lint/suspicious/noExplicitAny: test pools carry no schema types
 /**
  * The conversations providers over a test's own Kysely, for tests without a running kernel
- * (ruling R10; Task 5.1 moves the tests to the Nest application). Handles built for the same
+ * (unit tests that need a few providers without an application). Handles built for the same
  * Kysely object (or for its `legacyDbFor` view) share one `TransactionHost`, so the legacy code a
  * test drives and the event log it appends through share their transactions.
  */

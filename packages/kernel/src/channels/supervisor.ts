@@ -152,10 +152,11 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
  *   一个插件迟迟不退出不会拖慢其他连接的续租。
  * - 扫描循环：复核持有的连接仍为 active、未删除且插件在该组织启用（不满足就交还，交还不阻塞本轮），
  *   再扫描无人持有的这类连接，取到租约（`LockService.hold`）的副本调用插件 `connect`（传 `signal`）。
- * 租约 `capk:channel-lease:<id>`（值为本副本的随机 token，TTL `channels.leaseTtlMs` 默认 30s）由 `LockService` 续租
- * （每 TTL/3，另加心跳循环里的一次）。租约丢失（被改写 / 已过期，或 Redis 出错直到下一次续租会落在过期之后，R17）→
- * 立即中止，不释放（已不是自己的）。连接被停用 / 删除 / 改配置（内核 bus `channel.changed`，
- * 或扫描时复核发现）→ 中止、等 `connect` 返回后释放租约，下一轮任一副本按新配置重连；取得租约到 `connect` 开始之间
+ * The lease `capk:channel-lease:<id>` (value: this replica's random token, TTL
+ * `channels.leaseTtlMs`, default 30 s) is renewed by `LockService` (every TTL/3, plus once in the
+ * heartbeat loop). A lost lease (overwritten or expired, or no successful renewal by the renewal
+ * deadline) aborts at once and is not released (it is no longer ours).
+ * 连接被停用 / 删除 / 改配置（内核 bus `channel.changed`，或扫描时复核发现）→ 中止、等 `connect` 返回后释放租约，下一轮任一副本按新配置重连；取得租约到 `connect` 开始之间
  * 收到的重连广播会被记下，开始后立即交还。
  * `connect` 抛错或提前返回 → 记 `last_error`，在 Redis 写退避标记（指数退避，上限 5 分钟），释放租约后由任一副本重试。
  * Fair share (E11-B): the heartbeat loop writes this replica's heartbeat into `capk:gateway-replicas`;
@@ -295,7 +296,7 @@ export class ChannelSupervisor {
     await Promise.all(
       [...this.held].map(async ([id, h]) => {
         // false marks the lease lost (`lost` aborts, the connection drops); a Redis error is the
-        // watchdog's to log and judge (R19: lost at the deadline)
+        // watchdog's to log and judge (lost at the renewal deadline)
         const ok = await h.lease.renew().catch(() => undefined);
         if (ok === true) await this.afterRenew(id, h, ttl);
         // false: the key is gone or taken, or the lease was already lost (`drop` is idempotent)

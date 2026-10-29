@@ -15,9 +15,9 @@ const ANONYMOUS_DISPLAY_NAME = "Anonymous guest";
 const ANONYMOUS_MEMBERSHIP_SOURCE = "anonymous";
 
 /**
- * The lock of an org's anonymous guest account (R9: one provider per lock): serializes the first
- * creation across replicas, so only one account is created. Joins the caller's transaction
- * (`mandatory`), which holds it until it ends.
+ * The lock of an org's anonymous guest account (one provider per transaction-scoped lock):
+ * serializes the first creation across replicas, so only one account is created. Joins the caller's
+ * transaction (`mandatory`), which holds it until it ends.
  */
 @Injectable()
 export class AnonymousGuestLock {

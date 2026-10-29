@@ -297,6 +297,10 @@ otherwise.
   all within a 30 s budget, and exits 0 (1 if the stop failed). A second signal exits 1 at once.
   When Redis is unreachable the stop takes the whole budget: queue connections that cannot close are
   abandoned rather than holding the exit.
+- **Unhandled errors.** `capybara start` logs an unhandled promise rejection or uncaught exception
+  and keeps running; it exits 1 only after more than 5 of them within 60 s, so the orchestrator
+  restarts a process that keeps failing. Before, it exited on the first one. Every other `capybara`
+  command still exits 1 on the first.
 - **Redis outages and leases.** Conversation runs, IM long connections, sandbox commands and org
   quota slots hold Redis leases renewed every third of their TTL. A holder whose renewals keep
   failing gives up one renewal period before the key could expire (two thirds of the TTL after its

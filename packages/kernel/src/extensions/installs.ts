@@ -133,7 +133,7 @@ export class ExtensionInstalls {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    /** The enterprise admin lock (R12): joins the transaction. */
+    /** The enterprise admin lock (identity/enterprise-admin.ts): joins the transaction. */
     @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
     @Inject(ExtensionBlobs) private readonly blobs: ExtensionBlobs,
     @Inject(ExtensionApprovals) private readonly approvals: ExtensionApprovals,

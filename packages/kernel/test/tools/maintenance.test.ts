@@ -32,8 +32,8 @@ import { seedConversation } from "../helpers/tool-fixtures.js";
 import { configFrom, kernelDbFor } from "../helpers/tools.js";
 
 /**
- * Task 10：内核维护队列（`cap-kernel-maintenance`）与输出存档的每小时清理（nest kernel 3.5: the cleanup
- * is a `@LockedCron` of `ToolJobs`, its old scheduler retired).
+ * The kernel maintenance queue (`cap-kernel-maintenance`) and the hourly cleanup of output
+ * archives (a `@LockedCron` of `ToolJobs`; its old scheduler is retired).
  */
 
 let pgc: TestContainer;
@@ -132,7 +132,7 @@ describe("output-cleanup", () => {
   });
 
   it("未启动 worker 的实例（非 worker 角色）不处理维护任务", async () => {
-    // nest kernel 4.1: the maintenance processor's module is imported by the worker role only
+    // the maintenance processor's module is imported by the worker role only
     const config = (roles: string[]) =>
       KernelConfigSchema.parse({
         db: { url: pgc.url },
@@ -155,7 +155,7 @@ describe("output-cleanup", () => {
   });
 });
 
-describe("MaintenanceProcessor (the one consumer, nest kernel 3.9)", () => {
+describe("MaintenanceProcessor (the one consumer)", () => {
   it("dispatches each one-off job by name to its domain, a periodic job's name to its body; an unknown name is only warned", async () => {
     const calls: unknown[][] = [];
     const warned: unknown[][] = [];

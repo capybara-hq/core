@@ -58,10 +58,11 @@ export class WorkerRole {
   }
 
   /**
-   * Starts the queue consumers (after the extension load), then opens the schedules' start gate
-   * (R21): the cron and interval timers were armed at application bootstrap, but every tick before
-   * this point skipped; the `@LockedInterval({ runOnStart })` jobs run now, in the background (once
-   * across replicas starting together). `checkpoint` throws when a stop began meanwhile.
+   * Starts the queue consumers (after the extension load), then opens the schedules' start gate:
+   * the cron and interval timers were armed at application bootstrap, but every tick before this
+   * point skipped (decision R21 of the Nest kernel spec); the `@LockedInterval({ runOnStart })`
+   * jobs run now, in the background (once across replicas starting together). `checkpoint` throws
+   * when a stop began meanwhile.
    */
   async start(checkpoint: () => void): Promise<void> {
     // both run queues' @Processor workers (built with the run config, never autorun)
@@ -88,7 +89,7 @@ export class WorkerRole {
         { roles: this.config.roles },
       );
     }
-    // R21: from here on ticks run; the runOnStart jobs run once now, in the background
+    // The gate opens: from here on ticks run; the runOnStart jobs run once now, in the background
     this.scheduledRuns.open();
     this.intervals.runStartJobs();
   }

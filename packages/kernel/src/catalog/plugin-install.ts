@@ -422,10 +422,10 @@ export function under(e: unknown, at: string): unknown {
 export class PluginInstaller {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
-    /** The org row lock (orgs/org-lock.ts; R12): joins the caller's transaction. */
+    /** The org row lock (orgs/org-lock.ts): joins the caller's transaction. */
     @Inject(OrgLock) private readonly orgLock: OrgLock,
     @Inject(StorageService) private readonly storage: StorageService,
-    /** The loaded extensions and connectors of this replica (R6). */
+    /** The loaded extensions and connectors of this replica (the extension registry). */
     @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
     @Inject(SkillsService) private readonly skills: SkillsService,
     @Inject(OrgExtensionConfigs) private readonly orgConfigs: OrgExtensionConfigs,

@@ -240,7 +240,7 @@ export class ToolRegistry {
     @Inject(KernelDb) private readonly db: KernelDb,
     /** Extension tools and the organization's enabled extensions. */
     @Inject(ExtensionHost) private readonly host: Pick<ExtensionHost, "tools" | "enabledPlugins">,
-    /** The installed connectors (`connector@1`, R6). */
+    /** The installed connectors (`connector@1`, from the extension registry). */
     @Inject(ExtensionRegistry) private readonly extensions: Pick<ExtensionRegistry, "list">,
     @Inject(BuiltinTools) private readonly builtinTools: Pick<BuiltinTools, "list">,
     /**

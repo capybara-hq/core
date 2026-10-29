@@ -1,7 +1,7 @@
 // biome-ignore-all lint/suspicious/noExplicitAny: test pools carry no schema types
 /**
  * Runtime providers over a test's own pool and Redis, for tests without a running kernel (or that
- * swap a provider's inputs): Task 5.1 moves them to the Nest application.
+ * swap a provider's inputs).
  */
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { type Job, Queue, Worker } from "bullmq";

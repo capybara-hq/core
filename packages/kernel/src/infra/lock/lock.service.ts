@@ -35,7 +35,7 @@ export interface LockHandle {
   release(): Promise<void>;
   /**
    * Aborts when the lock was lost: the key is gone or taken, or no renewal succeeded by the
-   * deadline (send time of the last successful renewal + TTL − TTL/3, R19).
+   * deadline (send time of the last successful renewal + TTL − TTL/3).
    */
   readonly lost: AbortSignal;
 }
@@ -54,7 +54,8 @@ export interface LeaseHandle extends LockHandle {
 
 /**
  * A held lease of a shared lease ({@link LockService.tryShared} / {@link LockService.tryExclusive}):
- * renewed every TTL/3 like {@link LockService.hold} (R19 loss), released in its current kind.
+ * renewed every TTL/3 like {@link LockService.hold} (lost at the same deadline), released in its
+ * current kind.
  */
 export interface SharedLeaseHandle extends LeaseHandle {
   readonly token: string;
@@ -347,12 +348,12 @@ export class LockService {
    * The renewal watchdog for a lease kept by other means than a `SET NX` key (e.g. an org quota
    * slot, a member of a Redis sorted set): calls `ops.renew` every TTL/3 while held. A renewal
    * answered `false` marks it lost at once (`lost` aborts, one WARN `lock lost` with `label`).
-   * R19: loss is a deadline, not a counter. The deadline is the send time of the last successful
-   * renewal (or of the acquire, `acquiredAt`, default now) + TTL − TTL/3; any successful renewal
-   * through the handle (the watchdog's or an explicit `renew()`) moves it; when it passes without
-   * one, `lost` aborts, even with a renewal still in flight. So a holder gives up one renewal
-   * period before the key can expire elsewhere. `release` stops renewing and calls `ops.release`
-   * once.
+   * Loss is a deadline (decision R19 of the Nest kernel spec), not a counter. The deadline is the
+   * send time of the last successful renewal (or of the acquire, `acquiredAt`, default now) + TTL −
+   * TTL/3; any successful renewal through the handle (the watchdog's or an explicit `renew()`)
+   * moves it; when it passes without one, `lost` aborts, even with a renewal still in flight. So a
+   * holder gives up one renewal period before the key can expire elsewhere. `release` stops
+   * renewing and calls `ops.release` once.
    */
   keepAlive(
     label: string,
@@ -448,7 +449,7 @@ export class LockService {
         try {
           await ops.release();
         } catch (err) {
-          // warn: the key expires within its TTL anyway (controller ruling, Task 3.8)
+          // warn: the key expires within its TTL anyway
           this.log.warn("lock release failed", { lockKey, err });
         }
       },

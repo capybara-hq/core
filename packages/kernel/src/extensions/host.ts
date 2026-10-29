@@ -622,7 +622,7 @@ export class ExtensionHost {
    * must expose the `default` (or `require`) condition.
    */
   constructor(
-    /** The process's extension registry (ruling R6: one provider, shared with other domains). */
+    /** The process's extension registry (one provider, shared with other domains). */
     @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
     /**
      * The deployment's desired state (one way, spec §3): install record names (with the

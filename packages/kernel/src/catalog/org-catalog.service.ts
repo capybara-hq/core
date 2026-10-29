@@ -57,7 +57,7 @@ const itemDisabled = () =>
 export class OrgCatalogService {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
-    /** The org row lock (orgs/org-lock.ts; R12): joins the caller's transaction. */
+    /** The org row lock (orgs/org-lock.ts): joins the caller's transaction. */
     @Inject(OrgLock) private readonly orgLock: OrgLock,
     @Inject(StorageService) private readonly storage: StorageService,
     @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,

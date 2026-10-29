@@ -1,7 +1,7 @@
 // biome-ignore-all lint/suspicious/noExplicitAny: test handles over an untyped Kysely
 /**
  * The identity / orgs / admin providers over a test's own Kysely, for tests without a running
- * kernel (ruling R10; Task 5.1 moves the tests to the Nest application). Every service built for
+ * kernel (unit tests that need a few providers). Every service built for
  * the same `db` shares one set of database handles, so their transactions see each other.
  */
 

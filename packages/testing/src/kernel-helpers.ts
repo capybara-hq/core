@@ -99,7 +99,11 @@ export type KernelApp = Awaited<ReturnType<typeof startKernelApp>>;
 
 /** A running in-process kernel ({@link startTestKernel}). */
 export interface TestKernel {
-  /** The kernel's Nest application: reach a kernel service with `app.get(Class)`. */
+  /**
+   * The kernel's Nest application. Core's own tests reach a kernel service with `app.get(Class)`;
+   * a plugin test cannot import kernel classes (`plugin-test-imports`), so it drives the kernel
+   * through `http` and the helpers of this package.
+   */
   readonly app: KernelApp;
   /** In-process HTTP: `inject` requests, list the routes. */
   readonly http: KernelHttp;

@@ -103,9 +103,10 @@ export interface KernelCliOptions {
 }
 
 /**
- * The application context of a CLI command (ruling R13): the config loaded once (no watch), the
- * logger, the database, the CLI's Redis, locks and in-process events, plus only the domain modules
- * the command needs. Open it with {@link openKernelCli} and close it at the end of the command.
+ * The application context of a CLI command (decision R13 of the Nest kernel spec): the config
+ * loaded once (no watch), the logger, the database, the CLI's Redis, locks and in-process events,
+ * plus only the domain modules the command needs. Open it with {@link openKernelCli} and close it
+ * at the end of the command.
  */
 @Global()
 @Module({})

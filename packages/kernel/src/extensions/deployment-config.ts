@@ -128,7 +128,7 @@ export class ExtensionDeploymentConfigService {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    /** The enterprise admin lock (R12): joins the transaction. */
+    /** The enterprise admin lock (identity/enterprise-admin.ts): joins the transaction. */
     @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
     @Inject(PluginDeploymentConfigLock) private readonly configLock: PluginDeploymentConfigLock,
     @Inject(KEYRING) private readonly keyring: Keyring,

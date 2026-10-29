@@ -385,7 +385,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
 
     // ---- 5. 空闲到期 → 维护任务休眠 → 下一次调用恢复 ----
     // suspendAfterIdleMinutes 最小 1 分钟：把 last_used_at 拨回 2 分钟前（PG 时钟），再立即执行一次扫描
-    // (Task 3.8: the sweep is a @LockedCron on the replicas; the test runs the same sweep at once
+    // (the sweep is a @LockedCron on the replicas; the test runs the same sweep at once
     // over the shared PG, Redis and fake-sandbox root; a replica's own tick may get there first)
     await sql`UPDATE capybara.sandboxes SET last_used_at = now() - interval '2 minutes'
       WHERE conversation_id = ${convId}`.execute(raw);

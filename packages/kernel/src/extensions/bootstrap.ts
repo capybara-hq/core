@@ -54,8 +54,8 @@ import { ExtensionRegistry } from "./registry.js";
  *   download `bootstrap.download_failed`, a download that differs from the pin
  *   `bootstrap.integrity_mismatch` (all name the plugin), and then nothing is written. Downloading
  *   inside the lock means a fleet starting together downloads once.
- * - The whole run holds the Redis lock `lock:bootstrap` (`LockService`, ruling R5: TTL
- *   {@link BOOTSTRAP_LOCK_TTL_MS}, renewed every third of it, so a run longer than the TTL keeps
+ * - The whole run holds the Redis lock `lock:bootstrap` (`LockService`, decision R5 of the Nest
+ *   kernel spec: TTL {@link BOOTSTRAP_LOCK_TTL_MS}, renewed every third of it, so a run longer than the TTL keeps
  *   it and a crashed holder's lock expires within it), taken by an unbounded wait that observes
  *   the signal: when several replicas (or `capybara bootstrap` and a starting kernel) run it
  *   together only one runs it; the others wait, then find it done. A lost lock (renewal failed
@@ -288,7 +288,7 @@ async function scanOfflineDir(
 
 /** The lock around a whole run (`lock:bootstrap`). */
 export const BOOTSTRAP_LOCK_KEY = "bootstrap";
-/** Its lifetime without renewal (R5); a run keeps it by renewal, a crashed holder's expires. */
+/** Its lifetime without renewal; a run keeps it by renewal, a crashed holder's expires. */
 export const BOOTSTRAP_LOCK_TTL_MS = 120_000;
 /** Optional provider: the lock's lifetime (ms) instead of {@link BOOTSTRAP_LOCK_TTL_MS} (tests shorten it). */
 export const BOOTSTRAP_LOCK_TTL = Symbol("BOOTSTRAP_LOCK_TTL");
@@ -429,7 +429,7 @@ export class BootstrapService {
   }
 
   /**
-   * Runs `fn` holding `lock:bootstrap` (R5): waits without bound while another replica holds it
+   * Runs `fn` holding `lock:bootstrap`: waits without bound while another replica holds it
    * (until `signal` aborts), renews it while `fn` runs and releases it afterwards. `fn` gets a
    * signal that also aborts when the lock is lost.
    */

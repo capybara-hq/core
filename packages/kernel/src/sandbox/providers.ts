@@ -9,7 +9,7 @@ export interface SandboxProviderEntry {
 }
 
 /**
- * The `sandbox@1` providers of this process, read from the {@link ExtensionRegistry} (R6) at every
+ * The `sandbox@1` providers of this process, read from the {@link ExtensionRegistry} at every
  * call: providers are ready only after the extension load, and change with installs.
  */
 @Injectable()

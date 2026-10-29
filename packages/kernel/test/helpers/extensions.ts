@@ -1,7 +1,7 @@
 // biome-ignore-all lint/suspicious/noExplicitAny: test handles over an untyped Kysely
 /**
  * The extensions providers over a test's own pool and Redis, for tests that host extensions
- * without a running kernel (Task 5.1 moves them to the Nest application). The host takes the same
+ * without a running kernel (unit tests that need a few providers). The host takes the same
  * options the hand-wired host took; they become the config values it reads.
  */
 

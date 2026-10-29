@@ -189,7 +189,7 @@ export class ChannelConnections implements OnApplicationShutdown {
 
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
-    /** The org row lock (orgs/org-lock.ts; R12): joins the transaction of the write. */
+    /** The org row lock (orgs/org-lock.ts): joins the transaction of the write. */
     @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
     @Inject(KEYRING) private readonly keyring: Keyring,
     @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "list">,

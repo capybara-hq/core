@@ -17,7 +17,7 @@ import { CatalogRequestsService } from "./requests.service.js";
 /**
  * The enterprise side of the catalog: marketplaces, the one import review (prepare -> confirm) and
  * the items with their policy. The CLI's `capybara plugins *` and `capybara bootstrap` run on this
- * part alone (R13).
+ * part alone.
  */
 @Module({
   imports: [ExtensionsModule, EnterpriseAdminLockModule, StorageModule],

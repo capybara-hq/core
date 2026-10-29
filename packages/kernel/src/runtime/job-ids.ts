@@ -1,6 +1,6 @@
 /**
  * The maintenance job scheduler ids the runtime's fixed-period jobs had before they became
- * `@LockedCron` jobs (nest kernel Task 3.6b): an upgraded deployment still has them in Redis, so the
+ * `@LockedCron` jobs: an upgraded deployment still has them in Redis, so the
  * worker removes them at start (`RETIRED_SCHEDULER_IDS`). A leaf module: the maintenance worker
  * imports it without the runtime's providers.
  */

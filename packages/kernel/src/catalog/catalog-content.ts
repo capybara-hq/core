@@ -285,7 +285,7 @@ export function setPath(obj: Record<string, unknown>, path: string, value: unkno
   node[segs[segs.length - 1] as string] = value;
 }
 
-/** The connector `kind` provided by extension `plugin` loaded on this replica (R6: the registry). */
+/** The connector `kind` provided by extension `plugin` loaded on this replica (from the registry). */
 export function findConnectorIn(
   registry: Pick<ExtensionRegistry, "list">,
   plugin: string,

@@ -34,8 +34,9 @@ export interface LockedJobHost {
 /** What a locked job's run sees of `ScheduledRuns`: the stop state, the signal and the tracking. */
 export interface ScheduledRunScope {
   /**
-   * The start gate (R21): false until the role that runs the jobs opened it (the kernel's worker
-   * role, after the extension load) and again once the stop began; no run starts while it is shut.
+   * The start gate (decision R21 of the Nest kernel spec): false until the role that runs the jobs
+   * opened it (the kernel's worker role, after the extension load) and again once the stop began;
+   * no run starts while it is shut.
    */
   readonly opened: boolean;
   /** True once the stop began: no new run starts. */
@@ -82,8 +83,8 @@ export const startMarkerTtl = (periodMs: number): number => Math.min(periodMs, 6
  * and the lock is released afterwards. The job starts in a fresh async context (no transaction).
  *
  * Inside a Nest application the run is tracked by `ScheduledRuns` (the stop aborts the signal the
- * job gets and waits for the run, bounded) and no run starts before `ScheduledRuns.open()` (R21:
- * the timers are armed at application bootstrap, before the kernel's start sequence) or once the
+ * job gets and waits for the run, bounded) and no run starts before `ScheduledRuns.open()` (the
+ * timers are armed at application bootstrap, before the kernel's start sequence) or once the
  * stop began; failures caused
  * by the stop (an aborted job, a lock release after Redis closed) are logged at WARN / INFO. Only
  * the host check rejects (see {@link assertLockedJobHost}).
@@ -119,7 +120,7 @@ export async function runLockedTick(
     return;
   }
   if (scope && !scope.opened) {
-    // R21: a tick before the start sequence reached the jobs (migrations, bootstrap, extensions)
+    // the start gate is shut: the start sequence (migrations, bootstrap, extensions) is not done
     log.info("cron skipped: the scheduler is not started", { cron: o.name });
     return;
   }

@@ -77,7 +77,7 @@ export const FIRST_CONNECT_REFRESH_WAIT_MS = 15_000;
 export class OAuthFlow {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
-    /** The org row lock (orgs/org-lock.ts; R12): joins the caller's transaction. */
+    /** The org row lock (orgs/org-lock.ts): joins the caller's transaction. */
     @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
     @Inject(REDIS) private readonly redis: Pick<Redis, "set" | "getdel">,
     @Inject(Credentials) private readonly credentials: Credentials,

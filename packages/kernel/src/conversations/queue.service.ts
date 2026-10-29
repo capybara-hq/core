@@ -206,7 +206,7 @@ export class ConversationQueue {
 
   /**
    * Changes a queued item's text (its resources and files stay as queued). A skill invocation's
-   * text is its arguments: the skill is rendered again with them now (phase D Task 9).
+   * text is its arguments: the skill is rendered again with them now.
    */
   async edit(
     orgId: string,

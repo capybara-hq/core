@@ -168,7 +168,7 @@ export class EvalSetsService {
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(PricesService) private readonly prices: Pick<PricesService, "table">,
     @Inject(SettingsService) private readonly settings: Pick<SettingsService, "get">,
-    /** The org row lock (orgs/org-lock.ts; R12): joins the caller's transaction. */
+    /** The org row lock (orgs/org-lock.ts): joins the caller's transaction. */
     @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
     @Inject(EvalBudget) private readonly budget: Pick<EvalBudget, "skipRun">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,

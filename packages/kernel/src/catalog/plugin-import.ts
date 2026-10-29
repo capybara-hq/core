@@ -445,7 +445,7 @@ export class PluginImport {
 
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
-    /** The enterprise admin lock (identity/enterprise-admin.ts; R12): joins the caller's transaction. */
+    /** The enterprise admin lock (identity/enterprise-admin.ts): joins the caller's transaction. */
     @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
     @Inject(PluginInstallLock) private readonly installLock: PluginInstallLock,
     @Inject(PluginApproveLock) private readonly approveLock: PluginApproveLock,
@@ -456,7 +456,7 @@ export class PluginImport {
     @Inject(ExtensionAdminOps) private readonly ops: ExtensionAdminOps,
     /** Reads a package from the package store (confirm recomputes the permission set). */
     @Inject(ExtensionBlobs) private readonly blobs: ExtensionBlobs,
-    /** Config-declared names, loaded connectors and extension versions (R6). */
+    /** Config-declared names, loaded connectors and extension versions (the extension registry). */
     @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,

@@ -221,7 +221,7 @@ export async function cancelPendingRequests(
 export class CatalogRequestsService {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
-    /** The org row and enterprise admin locks (R12): both join the caller's transaction. */
+    /** The org row and enterprise admin locks: both join the caller's transaction. */
     @Inject(OrgLock) private readonly orgLock: OrgLock,
     @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
     @Inject(TransactionHost) readonly txHost: TransactionHost,

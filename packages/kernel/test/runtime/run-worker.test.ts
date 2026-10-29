@@ -119,7 +119,7 @@ async function worker(
   } = {},
 ): Promise<TestKernel> {
   const k = await startKernel(runConfig(urls(), { roles: opts.roles ?? ["worker"], runtime }), {
-    // the run loop and the worker's hooks are provider overrides (R2)
+    // the run loop and the worker's hooks are provider overrides (test seams)
     overrides: [
       { provide: AGENT_LOOP_FACTORY, useValue: opts.loop ?? defaultLoop },
       ...(opts.hooks ? [{ provide: RUN_HOOKS, useValue: opts.hooks } as const] : []),

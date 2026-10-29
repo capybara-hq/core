@@ -29,10 +29,12 @@ const TRACKED_EXTENSION_POINTS: Record<string, TrackOptions> = {
 };
 
 /**
- * 本进程生效的插件实例（按插件名，一名一个）。One provider per process (ruling R6): the extension host
- * writes it, other domains read extension points and manifests from it, never from the host.
- * 顺序 = 首次激活的顺序（宿主按依赖拓扑序加载；
- * 替换同名实例保持原位置）。只是本进程的视图：跨副本的期望状态在 PG（安装记录），由各副本自己 reconcile。
+ * The extension instances in effect in this process (by extension name, one each). One provider
+ * per process (decision R6 of the Nest kernel spec): the extension host writes it, other domains
+ * read extension points and manifests from it, never from the host. The order is the order of
+ * first activation (the host loads in dependency order; a replaced instance keeps its place). It
+ * is only this process's view: the desired state across replicas is in PG (the install records),
+ * and each replica reconciles itself.
  */
 @Injectable()
 export class ExtensionRegistry {
@@ -154,6 +156,6 @@ export class ExtensionRegistry {
   }
 }
 
-/** The one {@link ExtensionRegistry} (R6): every domain that reads extension points imports this. */
+/** The one {@link ExtensionRegistry}: every domain that reads extension points imports this. */
 @Module({ providers: [ExtensionRegistry], exports: [ExtensionRegistry] })
 export class ExtensionRegistryModule {}

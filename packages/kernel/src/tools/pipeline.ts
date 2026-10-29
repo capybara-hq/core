@@ -214,7 +214,7 @@ type ToolCard = { plugin: string; view: string; key?: string };
 /** Optional provider: the pipeline's {@link ToolPipelineHooks} (tests). */
 export const TOOL_PIPELINE_HOOKS = Symbol("TOOL_PIPELINE_HOOKS");
 
-/** What the pipeline calls through (the sub-agent dispatch is read at call time: an R7 port). */
+/** What the pipeline calls through (the sub-agent dispatch is read at call time). */
 interface PipelineDeps {
   /** The kernel-schema handle of the current context (its transaction, else the pool). */
   readonly db: KernelSchemaDb;

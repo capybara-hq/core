@@ -267,7 +267,7 @@ beforeAll(async () => {
       },
     ),
     {
-      // the replay and judge test hooks are a provider override (R2)
+      // the replay and judge test hooks are a provider override (a test seam)
       overrides: [
         {
           provide: EVAL_REPLAY_HOOKS,

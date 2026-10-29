@@ -322,7 +322,7 @@ interface CaseProblem {
 }
 
 interface EvalRunsDeps {
-  /** The org row lock (orgs/org-lock.ts; R12): joins the caller's transaction. */
+  /** The org row lock (orgs/org-lock.ts): joins the caller's transaction. */
   orgLock: Pick<OrgLock, "lockAndAuthorize">;
   /** The context-aware handle (the `@Transactional` method's transaction, else the pool). */
   readonly db: KernelSchemaDb;

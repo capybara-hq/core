@@ -89,13 +89,13 @@ export class ScheduledRuns implements ScheduledRunScope, OnModuleInit, BeforeApp
     return true;
   }
 
-  /** The start gate is open: ticks and start runs may run (R21). */
+  /** The start gate is open: ticks and start runs may run. */
   get opened(): boolean {
     return this.gateOpen && this.stopping === undefined;
   }
 
   /**
-   * Opens the start gate (R21). Until this is called every tick and start run skips at INFO: the
+   * Opens the start gate. Until this is called every tick and start run skips at INFO: the
    * cron and interval timers are armed at application bootstrap, which runs before the kernel's
    * start sequence (migrations, bootstrap, extension load). The kernel's worker role opens it once
    * its queue consumers started (then starts the `runOnStart` runs); a stop closes it again.

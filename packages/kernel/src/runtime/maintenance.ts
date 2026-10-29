@@ -28,14 +28,14 @@ export { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 export const MAINTENANCE_CONCURRENCY = 5;
 
 /**
- * The one consumer of `cap-kernel-maintenance` (ruling R11): dispatches each one-off job by name
- * to its domain (`wait-timeout` → {@link Waits}, `sandbox-destroy-for` → {@link SandboxService},
- * `drift-connector` → {@link ToolDrift}, `directory-sync` → {@link DirectorySync}). The name of a
- * periodic job (a `@LockedCron` / `@LockedInterval` job, such as `sandbox-suspend-idle`) runs that
- * job's body once ({@link ScheduledRuns.runNow}), as the maintenance handlers did when those jobs
- * were schedulers on this queue: an operator's or a test's one-off run, not a second schedule. Any
- * other name is warned and completes. The producers are the domains' own (same names, ids and
- * options).
+ * The one consumer of `cap-kernel-maintenance` (decision R11 of the Nest kernel spec): dispatches
+ * each one-off job by name to its domain (`wait-timeout` → {@link Waits}, `sandbox-destroy-for` →
+ * {@link SandboxService}, `drift-connector` → {@link ToolDrift}, `directory-sync` →
+ * {@link DirectorySync}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
+ * such as `sandbox-suspend-idle`) runs that job's body once ({@link ScheduledRuns.runNow}), as the
+ * maintenance handlers did when those jobs were schedulers on this queue: an operator's or a
+ * test's one-off run, not a second schedule (decision R23 of the Nest kernel spec). Any other
+ * name is warned and completes. The producers are the domains' own (same names, ids and options).
  */
 @Injectable()
 export class MaintenanceProcessor extends WorkerHost<Worker> {

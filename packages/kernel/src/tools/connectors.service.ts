@@ -320,12 +320,12 @@ export class ConnectorsService {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(ToolRegistry) private readonly registry: ToolRegistry,
-    /** Extension manifests (a slug may not take an extension's name; R6). */
+    /** Extension manifests (a slug may not take an extension's name). */
     @Inject(ExtensionRegistry) private readonly extensions: Pick<ExtensionRegistry, "manifests">,
     @Inject(Credentials) private readonly credentials: Credentials,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(ToolDrift) private readonly drift: ToolDrift,
-    /** The org row lock (orgs/org-lock.ts; R12): joins the caller's transaction. */
+    /** The org row lock (orgs/org-lock.ts): joins the caller's transaction. */
     @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}

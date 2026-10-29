@@ -158,10 +158,14 @@ type Eligible =
  *
  * - 维护队列每小时 `directory-scan`：给每个「插件提供 `directory@1`、在该组织启用、组织级配置满足 schema」的
  *   (组织, 插件) 投递一次同步（job id 按小时桶去重，多副本重复扫描只跑一次）；手动与 `directory_changed` 也投递同步。
- * - 同一 (组织, 插件) 同时只跑一个同步（Redis 锁 `capk:directory-sync:<org>:<plugin>`，持有期间续租）；
- *   锁被占时本任务记下脏标记 `capk:directory-sync-dirty:<org>:<plugin>`（1 小时）后结束；持有者释放锁后 GETDEL
- *   取走标记，有就投递一次 changed 同步（在跑的那一轮可能已经读过变化之前的页）。Ruling A32：移除阶段前 GET
- *   （不取走）脏标记，有就本轮按不完整处理、不移除任何人（审计 `partialReason = changed_during_sync`），移除留给补跑。
+ * - One sync at a time per (org, extension): the `LockService` lock
+ *   `lock:directory-sync:<org>:<plugin>`, renewed while held. A sync that finds the lock taken sets
+ *   the dirty flag `capk:directory-sync-dirty:<org>:<plugin>` (1 hour) and ends; after releasing
+ *   the lock the holder takes the flag with GETDEL and, if it was set, enqueues one `changed` sync
+ *   (the running round may have read pages from before the change). Ruling A32: before the removal
+ *   phase the holder GETs the flag (without taking it); if it is set, the round counts as
+ *   incomplete and removes nobody (audit `partialReason = changed_during_sync`), leaving removals
+ *   to the follow-up sync.
  *   After writing the flag, a blocked sync tries the lock once more: when the holder finished in
  *   between (and its GETDEL found no flag), this sync clears the flag and runs itself.
  * - Ruling A17：非手动触发的一轮，计划移除数超过 `max(5, 20% × 现有通讯录成员数)`，或列表里没有在职成员而已有

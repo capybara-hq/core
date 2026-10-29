@@ -595,7 +595,7 @@ export async function loadMarketplaceEntry(
 export class MarketplacesService {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
-    /** The enterprise admin lock (identity/enterprise-admin.ts; R12): joins the caller's transaction. */
+    /** The enterprise admin lock (identity/enterprise-admin.ts): joins the caller's transaction. */
     @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
     @Inject(CatalogSourceLock) private readonly sourceLock: CatalogSourceLock,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,

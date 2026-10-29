@@ -36,7 +36,7 @@ import type { KernelLogger } from "../log.js";
  * The first three keys are a {@link LockService} shared lease (`tryShared` / `tryExclusive`,
  * infra/lock/shared-lease.ts); the holder records and the path leases are this file's. Every key
  * carries a TTL. A holder renews every TTL / 3 (LockService's watchdog) and loses the lease at
- * the deadline of R19 (send time of the last successful renewal + 2/3 TTL): its `signal` aborts
+ * the renewal deadline (send time of the last successful renewal + 2/3 TTL): its `signal` aborts
  * with {@link SandboxLockLostError}.
  */
 
@@ -198,7 +198,7 @@ function lostSignal(lost: AbortSignal, conv: string): AbortSignal {
 
 /** A path lease this process holds. */
 export interface SandboxPathLease {
-  /** Aborts with {@link SandboxLockLostError} when the lease is lost (R19). */
+  /** Aborts with {@link SandboxLockLostError} when the lease is lost. */
   readonly signal: AbortSignal;
   release(): Promise<void>;
 }
@@ -415,7 +415,7 @@ export class SandboxLeases {
   /**
    * A short lease on one path of the sandbox (the kernel's own read-modify-write of a file); waits
    * up to `capMs`, then throws {@link SandboxPathBusyError}. A {@link LockService.hold} lease
-   * (renewed every TTL / 3): when it is lost (R19) its `signal` aborts.
+   * (renewed every TTL / 3): when it is lost its `signal` aborts.
    */
   async pathLease(
     conv: string,

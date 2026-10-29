@@ -239,7 +239,7 @@ async function boot(keep: string[] = [], o: { open?: boolean } = {}) {
     { logger: false, abortOnError: false },
   );
   await app.init();
-  // the start gate (R21): the kernel's worker role opens it after its start sequence
+  // the start gate: the kernel's worker role opens it after its start sequence
   if (o.open !== false) app.get(ScheduledRuns).open();
   const reg = app.get(SchedulerRegistry);
   for (const name of [...reg.getCronJobs().keys()])
@@ -421,7 +421,7 @@ describe("@LockedCron", () => {
     }
   });
 
-  it("before the start gate opens a tick runs nothing and claims neither its marker nor the run lock (R21)", async () => {
+  it("before the start gate opens a tick runs nothing and claims neither its marker nor the run lock", async () => {
     Object.assign(shared, {
       active: 0,
       inflight: 0,

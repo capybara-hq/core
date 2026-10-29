@@ -21,7 +21,7 @@ import { ReplicaStatusStore } from "./sources.js";
  * The extensions domain: the extension host (it builds each `ctx` from the injected kernel
  * services), the package store and install records (the desired state the host converges to, one
  * way: spec §3), the per-replica lifecycle and its periodic reconcile, the admin operations,
- * deployment and org configs, the bootstrap step, and the shared {@link ExtensionRegistry} (R6).
+ * deployment and org configs, the bootstrap step, and the shared {@link ExtensionRegistry}.
  */
 @Module({
   imports: [

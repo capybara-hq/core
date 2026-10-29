@@ -9,7 +9,7 @@ import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 
 /** 成员离职后的一次性销毁任务（fix wave S2 minor 5）：投递与 worker 上的处理。 */
 
-/** A stand-in for the maintenance queue's producer side (Task 3.8: `SandboxJobs`). */
+/** A stand-in for the maintenance queue's producer side (`SandboxJobs`). */
 function stubQueue() {
   const added: { name: string; data: unknown; opts: unknown }[] = [];
   const queue = {

@@ -1230,7 +1230,7 @@ export class DecisionResumer implements OnApplicationShutdown {
 }
 
 /**
- * The wait sweep (Task 22), every 10 minutes, once across replicas: {@link Waits.sweep}. Replaces
+ * The wait sweep, every 10 minutes, once across replicas: {@link Waits.sweep}. Replaces
  * the maintenance scheduler `wait-sweep-every-10m` (retired at worker start).
  */
 @Injectable()

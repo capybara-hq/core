@@ -15,10 +15,10 @@ import {
  * - kc-transaction: `.transaction()` / `.startTransaction()`, `isTransaction`, `Transaction`
  *   types (also inside `KernelSchemaDb | Transaction` unions) and parameters named `trx` / `tx`
  *   outside `infra/database` (`@Transactional` + `KernelDb` + `afterCommit` instead);
- * - kc-lock: `pg_advisory*` / `pg_try_advisory*` outside the migrations (R9: a transaction-scoped
- *   `pg_advisory_xact_lock` is transaction semantics, like `FOR UPDATE`, and is allowed only inside a
- *   `@Transactional({ propagation: "mandatory" })` method of a dedicated lock provider, an
- *   `@Injectable` class named `*Lock`), `"NX"` / `SET … NX` outside `infra/lock`, and
+ * - kc-lock: `pg_advisory*` / `pg_try_advisory*` outside the migrations (decision R9 of the Nest
+ *   kernel spec: a transaction-scoped `pg_advisory_xact_lock` is transaction semantics, like
+ *   `FOR UPDATE`, and is allowed only inside a `@Transactional({ propagation: "mandatory" })`
+ *   method of a dedicated lock provider, an `@Injectable` class named `*Lock`), `"NX"` / `SET … NX` outside `infra/lock`, and
  *   `setInterval` in a file importing ioredis outside `infra/` (a hand-rolled renewal timer;
  *   heuristic); `LockService` / `@WithLock` instead;
  * - kc-queue: BullMQ `new Worker` / `new Queue` / `new QueueEvents` and `upsertJobScheduler`
@@ -170,7 +170,7 @@ export const FACADE_ROOTS = [
   "apps/capybara/test",
 ] as const;
 
-/** Names of the temporary legacy graph (Phase 3 / 5 remove them; R2 for the test hooks). */
+/** Names of the temporary legacy graph (removed with the legacy graph and the old test hooks). */
 export const LEGACY_NAMES: ReadonlySet<string> = new Set([
   "legacyKernelView",
   "KERNEL_DB",
@@ -184,7 +184,7 @@ export const LEGACY_NAMES: ReadonlySet<string> = new Set([
   "createLegacyGraph",
   "KERNEL_TEST_HOOKS",
   "KernelTestHooks",
-  // the Phase 3 bridges (rulings R7, R8): deleted with the legacy graph (Task 3.9)
+  // the bridges to the legacy graph, deleted with it
   "ConvertedProviders",
   "LegacyPorts",
   "LegacyPortsModule",
@@ -234,14 +234,14 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
     rule: "kc-lock",
     path: "packages/kernel/src/db/migrator.ts",
     reason:
-      "R4: the migration runner's session advisory lock serialises migrations on the database " +
+      "the migration runner's session advisory lock serialises migrations on the database " +
       "itself, before Redis is part of the start sequence",
   },
   {
     rule: "kc-lock",
     path: "packages/kernel/src/extensions/migrate-lock.ts",
     reason:
-      "R4: the extension migration runner's advisory lock serialises an extension's migrations " +
+      "the extension migration runner's advisory lock serialises an extension's migrations " +
       "on the database itself, like the kernel migration runner's",
   },
   {
@@ -405,14 +405,15 @@ const PROCESS_SOURCES: ReadonlySet<string> = new Set(["process", "node:process"]
 const HEALTH_PATH = /^\/?(?:healthz|readyz)$/;
 const SET_NX = /\bset\b[^\n]*\bNX\b/i;
 const PG_ADVISORY = /pg_(?:try_)?advisory/;
-/** A transaction-scoped advisory lock and nothing session-level in the same text (R9). */
+/** A transaction-scoped advisory lock and nothing session-level in the same text. */
 const PG_XACT = /pg_advisory_xact_lock/;
 
 /**
- * R9: `pg_advisory_xact_lock` (released at COMMIT / ROLLBACK, transaction semantics like
- * `FOR UPDATE`) is allowed in a `@Transactional({ propagation: "mandatory" })` method of an
- * `@Injectable` class whose name ends with `Lock`: the caller's transaction holds it, and one
- * provider per lock owns it. Session-level advisory locks never qualify.
+ * Decision R9 of the Nest kernel spec: `pg_advisory_xact_lock` (released at COMMIT / ROLLBACK,
+ * transaction semantics like `FOR UPDATE`) is allowed in a `@Transactional({ propagation:
+ * "mandatory" })` method of an `@Injectable` class whose name ends with `Lock`: the caller's
+ * transaction holds it, and one provider per lock owns it. Session-level advisory locks never
+ * qualify.
  */
 function xactLockAllowed(value: string, anc: readonly Node[]): boolean {
   if (!PG_XACT.test(value) || /pg_(?:try_)?advisory_(?:lock|unlock)\b/.test(value)) return false;
@@ -845,7 +846,7 @@ function scanFile(
             n,
             anc,
             PG_XACT.test(value)
-              ? `${MESSAGES["kc-lock"]} (R9: pg_advisory_xact_lock only inside a @Transactional({ propagation: "mandatory" }) method of an @Injectable *Lock provider)`
+              ? `${MESSAGES["kc-lock"]} (pg_advisory_xact_lock only inside a @Transactional({ propagation: "mandatory" }) method of an @Injectable *Lock provider)`
               : MESSAGES["kc-lock"],
           );
         }

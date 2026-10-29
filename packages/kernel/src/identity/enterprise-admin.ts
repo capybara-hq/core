@@ -7,9 +7,9 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { XactLock } from "../infra/database/xact-lock.js";
 
 /**
- * The transaction-scoped lock (`XactLock`, R9) that serializes every enterprise admin write:
- * revoke / disable / create an admin, deployment settings, prices, purposes, the catalog and
- * extension admin writes, the CLI's `capybara admin grant|revoke`.
+ * The transaction-scoped lock (`XactLock`, `pg_advisory_xact_lock`) that serializes every
+ * enterprise admin write: revoke / disable / create an admin, deployment settings, prices,
+ * purposes, the catalog and extension admin writes, the CLI's `capybara admin grant|revoke`.
  */
 const ENTERPRISE_ADMINS_LOCK = "capybara.enterprise_admins";
 
@@ -34,7 +34,7 @@ async function assertActiveEnterpriseAdmin(
 }
 
 /**
- * The enterprise admin lock (R9 / R12), the one implementation of "lock, then re-check the actor":
+ * The enterprise admin lock, the one implementation of "lock, then re-check the actor":
  * both methods join the caller's transaction (`mandatory`), which holds the lock until it ends.
  */
 @Injectable()

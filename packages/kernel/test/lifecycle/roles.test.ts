@@ -32,7 +32,7 @@ import { SLOW_GATES_KEY, type SlowGates } from "../fixtures/plugins/slow/index.j
 const SLOW = fileURLToPath(new URL("../fixtures/plugins/slow/index.ts", import.meta.url));
 
 /**
- * The role modules (nest kernel Task 4.1): `roles` selects ApiModule (controllers), WorkerModule
+ * The role modules : `roles` selects ApiModule (controllers), WorkerModule
  * (every cron and queue consumer) and GatewayModule (the channel supervisor and webhook inbound).
  * Each case runs one kernel alone on the shared Redis, so the BullMQ worker count is its own.
  */
@@ -238,7 +238,7 @@ describe("role modules", () => {
     expect(routes(a)).toContain("POST /channels/webhook/:connectionId");
   }, 60_000);
 
-  it("R21: no cron or interval tick runs before the worker role started (after the extension load)", async () => {
+  it("no cron or interval tick runs before the worker role started (after the extension load)", async () => {
     const r = new Redis(rd.url);
     try {
       const stale = await r.keys("cron:*");

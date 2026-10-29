@@ -4,9 +4,10 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { XactLock } from "../infra/database/xact-lock.js";
 
 /**
- * The lock of one external identity (R9: one provider per lock): serializes resolve / link of the
- * same `(source, externalId)`, whose row may not exist yet, so concurrent first resolves create one
- * account. Joins the caller's transaction (`mandatory`), which holds it until it ends.
+ * The lock of one external identity (one provider per transaction-scoped lock): serializes resolve
+ * / link of the same `(source, externalId)`, whose row may not exist yet, so concurrent first
+ * resolves create one account. Joins the caller's transaction (`mandatory`), which holds it until
+ * it ends.
  */
 @Injectable()
 export class ExternalIdentityLock {

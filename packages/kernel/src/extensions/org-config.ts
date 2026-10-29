@@ -160,7 +160,7 @@ export class OrgExtensionConfigs {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(KEYRING) private readonly keyring: Keyring,
     @Inject(ExtensionHost) private readonly host: ExtensionHost,
-    /** The org row lock (R12): joins the transaction. */
+    /** The org row lock (orgs/org-lock.ts): joins the transaction. */
     @Inject(OrgLock) private readonly orgLock: OrgLock,
     /** Install records (any desired state): the ones not loaded are listed unavailable (T14). */
     @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,

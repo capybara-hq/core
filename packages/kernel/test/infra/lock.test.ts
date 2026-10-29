@@ -256,7 +256,7 @@ class Svc {
   }
 }
 
-describe("LockService.keepAlive: loss is a deadline (R19)", () => {
+describe("LockService.keepAlive: loss is a deadline", () => {
   // TTL 300 -> renewal every 100; deadline = send time of the last successful renewal + 200
   const TTL = 300;
   const quiet = createLogger("error", { write: () => {} });
@@ -360,7 +360,7 @@ describe("LockService.keepAlive: loss is a deadline (R19)", () => {
   });
 });
 
-describe("LockService shared leases (Task 3.8)", () => {
+describe("LockService shared leases", () => {
   const keysOf = (name: string) => {
     const id = k(name);
     return { lock: `${id}:lock`, users: `${id}:users`, intent: `${id}:intent` };
@@ -527,7 +527,7 @@ describe("LockService shared leases (Task 3.8)", () => {
     await x?.release();
   });
 
-  it("a successful downgrade moves the R19 deadline (fake timers)", async () => {
+  it("a successful downgrade moves the loss deadline (fake timers)", async () => {
     vi.useFakeTimers({
       toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
       now: 0,

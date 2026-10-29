@@ -5,12 +5,12 @@ import { TransactionHost } from "./transaction-host.js";
 import { Transactional } from "./transactional.decorator.js";
 
 /**
- * Transaction-scoped advisory locks (ruling R9): `pg_advisory_xact_lock` is transaction semantics,
- * like `FOR UPDATE`. It is held by the caller's transaction and released at its COMMIT or
- * ROLLBACK, so it serializes writers whose invariant is checked inside that same transaction
- * ("never zero active enterprise admins", "set up once", "one account per external identity").
- * The one place that takes such a lock; `propagation: "mandatory"` makes a call outside a
- * transaction (where the lock would be released at once) throw.
+ * Transaction-scoped advisory locks (decision R9 of the Nest kernel spec): `pg_advisory_xact_lock`
+ * is transaction semantics, like `FOR UPDATE`. It is held by the caller's transaction and released
+ * at its COMMIT or ROLLBACK, so it serializes writers whose invariant is checked inside that same
+ * transaction ("never zero active enterprise admins", "set up once", "one account per external
+ * identity"). The one place that takes such a lock; `propagation: "mandatory"` makes a call outside
+ * a transaction (where the lock would be released at once) throw.
  */
 @Injectable()
 export class XactLock {

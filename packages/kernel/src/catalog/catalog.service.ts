@@ -243,7 +243,7 @@ export const CATALOG_LIST_MAX_LIMIT = 1000;
 export class CatalogService {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
-    /** The enterprise admin lock (identity/enterprise-admin.ts; R12): joins the caller's transaction. */
+    /** The enterprise admin lock (identity/enterprise-admin.ts): joins the caller's transaction. */
     @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,

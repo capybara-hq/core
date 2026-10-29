@@ -873,7 +873,7 @@ describe("config-declared names and the lock", () => {
 
   it("stop() ends a start that waits for the bootstrap lock", async () => {
     const fx = await fixture([{ bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) }]);
-    // Another holder of `lock:bootstrap` (R5: the Redis lock, renewed by its holder)
+    // Another holder of `lock:bootstrap` (the Redis lock, renewed by its holder)
     const holder = new Redis(rd.url);
     try {
       await holder.set("lock:bootstrap", "another-replica", "PX", 60_000);

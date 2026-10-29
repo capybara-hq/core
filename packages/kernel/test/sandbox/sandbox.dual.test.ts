@@ -114,7 +114,7 @@ describe("沙箱（两个副本）", () => {
   });
 
   it("两个扫描是 @LockedCron 任务（每分钟 / 每小时）；旧的 job scheduler 已退役（名字不含 `:`）", async () => {
-    // the worker kernel of the first case (Task 3.8: crons instead of maintenance schedulers)
+    // the worker kernel of the first case (crons instead of maintenance schedulers)
     const registry = kernels[0]?.app.get(SchedulerRegistry);
     if (!registry) throw new Error("the worker kernel of the first case is missing");
     expect(String(registry.getCronJob(SANDBOX_SUSPEND_JOB).cronTime.source)).toBe("* * * * *");

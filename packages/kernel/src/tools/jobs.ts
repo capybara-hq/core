@@ -13,9 +13,9 @@ import { deleteExpiredOutputs } from "./outputs.js";
 /**
  * The tools' periodic jobs, each run once per tick across replicas: the tool drift scan
  * (`drift-scan`, every `tools.driftIntervalHours` and once right after the start, as the old
- * repeatable scheduler's first run: `@LockedInterval`, R15 / R16; a repeated scan in the same
- * period enqueues nothing new, its job ids are per period) and the hourly cleanup of expired tool
- * output archives (`output-cleanup`: `@LockedCron`).
+ * repeatable scheduler's first run: `@LockedInterval` with `runOnStart`; a repeated scan in the
+ * same period enqueues nothing new, its job ids are per period) and the hourly cleanup of expired
+ * tool output archives (`output-cleanup`: `@LockedCron`).
  */
 @Injectable()
 export class ToolJobs {

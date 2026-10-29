@@ -249,7 +249,7 @@ export class AgentsService {
       SkillChangesService,
       "cancelPendingForAgent" | "finishCancel"
     >,
-    /** The org row lock (orgs/org-lock.ts; R12): joins the caller's transaction. */
+    /** The org row lock (orgs/org-lock.ts): joins the caller's transaction. */
     @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
     /** Resolves the agent's models (and their parameter declarations) when it is saved. */
     @Inject(ProviderRegistry) private readonly providers: Pick<ProviderRegistry, "resolve">,

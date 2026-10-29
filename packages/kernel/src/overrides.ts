@@ -45,7 +45,7 @@ interface KernelSeams {
  * A seam of the kernel's own tests (`KernelAppOptions.overrides`): a value for one of the named
  * seam tokens of {@link KernelSeams}. Domain classes cannot be replaced this way. The tokens are
  * not exported from the package, and `@capybara-hq/testing`'s `startTestKernel` takes no
- * overrides (ruling R22).
+ * overrides (decision R22 of the Nest kernel spec).
  */
 export type KernelOverride = {
   [K in keyof KernelSeams]: { provide: K; useValue: KernelSeams[K] };

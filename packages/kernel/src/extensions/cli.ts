@@ -35,7 +35,7 @@ import type { PermissionSet } from "./permission-set.js";
 export interface ExtensionCli {
   config: KernelConfig;
   /**
-   * The command's Nest application context (ruling R13): the extension providers, the database
+   * The command's Nest application context: the extension providers, the database
    * and the CLI's Redis. Closed by {@link close}.
    */
   app: INestApplicationContext;
@@ -60,7 +60,7 @@ export interface ExtensionCli {
   admin: ExtensionAdmin;
   ops: ExtensionAdminOps;
   approvals: ExtensionApprovals;
-  /** The bootstrap step (`capybara bootstrap`), under the same `lock:bootstrap` as the kernel (R14). */
+  /** The bootstrap step (`capybara bootstrap`), under the same `lock:bootstrap` as the kernel. */
   bootstrap: BootstrapService;
   /** CLI 本次刚导入的包字节（降级判断等读包时优先用它：包可能存在 CLI 读不到的对象存储里）。 */
   remember(sha256: string, bytes: Uint8Array): void;
@@ -74,7 +74,7 @@ export interface ExtensionCli {
 }
 
 /**
- * The CLI's extension management context (C18, F-Q; ruling R13): a Nest application context with
+ * The CLI's extension management context (C18, F-Q): a Nest application context with
  * the extensions module over the database and a lazy Redis connection used only for publishing
  * and the bootstrap lock. It loads no extension and runs no extension's `setup` (a catalog import
  * sets up the declared object-store extension itself, see `openCatalogCli`). Packages the CLI
