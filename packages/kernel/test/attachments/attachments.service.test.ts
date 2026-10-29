@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import {
-  ATTACHMENT_CLEANUP_SCHEDULER_ID,
   ATTACHMENT_DOWNLOAD_CACHE_SECONDS,
   ATTACHMENT_DOWNLOAD_TTL_SECONDS,
   normalizeContentType,
   sniffMatches,
 } from "../../src/conversations/attachments.service.js";
-import { RETIRED_SCHEDULER_IDS } from "../../src/infra/queue/retired-schedulers.js";
+import { ATTACHMENT_CLEANUP_SCHEDULER_ID } from "../../src/conversations/job-ids.js";
+import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
 import { PrefixedStorage } from "../../src/storage/storage.service.js";
 import { attachmentsFor } from "../helpers/conversations.js";
 

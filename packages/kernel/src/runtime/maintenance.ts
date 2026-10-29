@@ -17,6 +17,7 @@ import { type DriftConnectorJobData, ToolDrift } from "../tools/drift.js";
 import { DRIFT_CONNECTOR_JOB } from "../tools/job-ids.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
+import { RETIRED_SCHEDULER_IDS } from "./retired-schedulers.js";
 import { RuntimeModule } from "./runtime.module.js";
 import { WAIT_TIMEOUT_JOB, Waits, type WaitTimeoutData } from "./waits.js";
 
@@ -46,12 +47,12 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
   }
 
   /**
-   * Removes the retired job schedulers (`RETIRED_SCHEDULER_IDS`, infra/queue): every fixed-period
+   * Removes the retired job schedulers (`RETIRED_SCHEDULER_IDS`, runtime/retired-schedulers.ts): every fixed-period
    * maintenance job is a `@LockedCron` / `@LockedInterval` now. Idempotent; called once when a
    * worker role starts.
    */
   removeRetiredSchedulers(): Promise<void> {
-    return removeRetiredSchedulers(this.queue);
+    return removeRetiredSchedulers(this.queue, RETIRED_SCHEDULER_IDS);
   }
 
   process(job: Job, token?: string): Promise<void> {

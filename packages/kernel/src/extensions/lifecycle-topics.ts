@@ -10,8 +10,6 @@ export const PLUGINS_RECONCILE_TOPIC = "plugins.reconcile";
 
 /** The `@LockedInterval` job that publishes `plugins.reconcile` every `extensionHost.reconcileIntervalSeconds`. */
 export const PLUGINS_RECONCILE_JOB = "plugins-reconcile";
-/** The BullMQ repeatable scheduler the job had before it became `@LockedInterval` (retired). */
-export const PLUGINS_RECONCILE_SCHEDULER_ID = "plugins-reconcile-every";
 
 /** 副本行心跳超过这么多个 reconcile 周期的副本不计入（C16；读状态的一方据此筛选）。 */
 export const STALE_RECONCILE_PERIODS = 3;

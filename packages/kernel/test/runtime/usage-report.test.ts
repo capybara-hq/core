@@ -8,9 +8,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { RETIRED_SCHEDULER_IDS } from "../../src/infra/queue/retired-schedulers.js";
 import type { Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
+import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
 import {
   narrowPending,
   queryUnservable,

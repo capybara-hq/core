@@ -50,8 +50,6 @@ export const skillFilesPrefix = (uploadId: string) => `skills/${uploadId}/`;
 
 /** 周期任务：每小时清理过期未绑定的附件（`@LockedCron`）。 */
 export const ATTACHMENT_CLEANUP_JOB = "attachment-cleanup";
-/** The retired BullMQ repeatable scheduler of the cleanup (removed from Redis at worker start). */
-export const ATTACHMENT_CLEANUP_SCHEDULER_ID = "attachment-cleanup-hourly";
 /** 每批认领的行数。 */
 const CLEANUP_BATCH = 100;
 /** finalize 时读取开头多少字节核对文件签名。 */

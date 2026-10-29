@@ -3,7 +3,7 @@ import { ConversationsModule } from "../conversations/conversations.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { FilesModule } from "../files/files.module.js";
 import { EmbedTokensModule } from "./embed-token.js";
-import { OrgMembership, OrgUiStreams } from "./ui-stream.js";
+import { OrgUiStreams, UiStreamMembership } from "./ui-stream.js";
 import { UiViews } from "./views.js";
 
 /**
@@ -13,7 +13,7 @@ import { UiViews } from "./views.js";
  */
 @Module({
   imports: [ExtensionsModule, ConversationsModule, FilesModule, EmbedTokensModule],
-  providers: [UiViews, OrgMembership, OrgUiStreams],
+  providers: [UiViews, UiStreamMembership, OrgUiStreams],
   exports: [UiViews, OrgUiStreams, EmbedTokensModule],
 })
 export class UiModule {}

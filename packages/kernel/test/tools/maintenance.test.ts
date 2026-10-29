@@ -8,13 +8,11 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
-import {
-  RETIRED_SCHEDULER_IDS,
-  removeRetiredSchedulers,
-} from "../../src/infra/queue/retired-schedulers.js";
+import { removeRetiredSchedulers } from "../../src/infra/queue/retired-schedulers.js";
 import { createLogger } from "../../src/log.js";
 import { MaintenanceModule, MaintenanceProcessor } from "../../src/runtime/maintenance.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
+import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
 import {
   DRIFT_SCHEDULER_ID,
   OUTPUT_CLEANUP_JOB,
@@ -98,8 +96,11 @@ describe("output-cleanup", () => {
       { every: 3_600_000 },
       { name: OUTPUT_CLEANUP_JOB, data: {} },
     );
-    // two worker replicas starting together (nest kernel 3.9: the list lives in infra/queue)
-    await Promise.all([removeRetiredSchedulers(probe), removeRetiredSchedulers(probe)]);
+    // two worker replicas starting together
+    await Promise.all([
+      removeRetiredSchedulers(probe, RETIRED_SCHEDULER_IDS),
+      removeRetiredSchedulers(probe, RETIRED_SCHEDULER_IDS),
+    ]);
     expect(await probe.getJobSchedulers()).toHaveLength(0);
   });
 

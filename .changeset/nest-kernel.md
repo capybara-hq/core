@@ -264,24 +264,33 @@ The last domains are Nest modules (Task 3.9) and the legacy service graph is gon
 (`EvalsModule`: `EvalSetsService`, `EvalRunsService`, the new `EvalJobs` producer of
 `cap-kernel-evals`, `EvalBudget`; `EvalWorkersModule`: `EvalWorker`, `EvalReplaySeeder` and the
 `EvalsProcessor` on the worker role), extension UI (`UiModule`: `UiViews`, `OrgUiStreams`,
-`OrgMembership`; `EmbedTokensModule`: `EmbedTokens`), file previewers (`FilesModule`:
+`UiStreamMembership`; `EmbedTokensModule`: `EmbedTokens`), file previewers (`FilesModule`:
 `PreviewerRegistry`), the inbox (`InboxModule`: `InboxService`) and `ConversationToolInfo`
 (`ToolsModule`) are injectable providers; `ApiModule` is a static module (no `register` /
 `registerFrom`, no `ApiDeps` / `API_DEPS`). The maintenance queue has one `@Processor`,
 `MaintenanceProcessor` (`MaintenanceModule`, worker role, concurrency 5), which dispatches
 `wait-timeout`, `sandbox-destroy-for`, `drift-connector` and `directory-sync` by name (names, data,
-ids and options unchanged); `RETIRED_SCHEDULER_IDS` moved to `infra/queue/retired-schedulers.ts`
-and a starting worker role still removes them once. Export changes: `Maintenance`, `EvalQueue`,
+ids and options unchanged); `RETIRED_SCHEDULER_IDS` moved to `runtime/retired-schedulers.ts`
+(each id from its domain's leaf `job-ids.ts`: the storage, orgs, extensions and conversations
+scheduler ids moved there from `storage/purge.ts`, `orgs/offboarding.ts`, `orgs/directory-sync.ts`,
+`extensions/lifecycle-topics.ts` / `extensions/lifecycle.ts` and `conversations/attachments.service.ts`;
+none was a package export) and a starting worker role still removes them once, through the generic
+`removeRetiredSchedulers(queue, ids)` of `infra/queue`. Export changes: `Maintenance`, `EvalQueue`,
 `cancelEvalRuns` / `recountCases` (now `EvalBudget.cancelRuns` / `recountCases`),
 `legacyKernelView` / `legacyCurrentTrx`, `StandaloneDatabase.schemaDb`, `KernelRuns.maintenance`,
 `KernelTestHooks` and `KernelOptions.evalHooks` are removed (`KernelOptions` is
 `KernelAppOptions`; the eval replay hooks are the `EVAL_REPLAY_HOOKS` provider override);
 `KernelDeps` gains `embedTokens` (the one `EmbedTokens` provider, which `ctx` verifies with);
 `EmbedTokens` takes only the keyring (its clock is the `now` field); `orgMembership(db)` became
-the `OrgMembership` provider; `MAINTENANCE_QUEUE_NAME` is exported from
+the `UiStreamMembership` provider; `MAINTENANCE_QUEUE_NAME` is exported from
 `runtime/maintenance-queue.ts`; the eval replay deps take `KernelConfigService` instead of a config
 getter, and the full-run replay seed is written by `EvalReplaySeeder`. The eval quota slot is held
 through `OrgQuota.enter` (renewed by the lock service, one `lock lost` line instead of `eval quota
 renew failed`), and the results-viewed audit dedupe is a `LockService` lease on the same key.
 The shared-lease Lua fragments are no longer exported: domain scripts that read a lease next to
 their own keys use `sharedLeaseReadScript(body)` / `redisClockScript(body)` (same scripts).
+Under the R19 deadline, a Redis outage of roughly 40–60 s can let an eval's org quota slot lapse
+while the eval keeps running, so an org may briefly run more evals than `evals.orgConcurrency`
+(accepted). Route parameters validated by `@ZParam` DTOs (R20: the UI `:plugin/:id` and the file
+preview `:plugin/:previewerId` routes) report `validation_failed` with `details[].path` naming the
+parameter instead of `""`; the code and status are unchanged.

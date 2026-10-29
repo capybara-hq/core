@@ -12,9 +12,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
-import { RETIRED_SCHEDULER_IDS } from "../../src/infra/queue/retired-schedulers.js";
 import type { Kernel } from "../../src/kernel.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
+import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
 import {
   SANDBOX_DESTROY_SCHEDULER_ID,
   SANDBOX_SUSPEND_SCHEDULER_ID,

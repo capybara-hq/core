@@ -34,7 +34,7 @@ export interface OrgUiStreamParams {
 
 /** The org role the org UI stream re-checks. */
 @Injectable()
-export class OrgMembership {
+export class UiStreamMembership {
   constructor(@Inject(KernelDb) private readonly db: KernelDb) {}
 
   /** 组织成员角色（一条查询）：组织未删除、账号 active、仍有成员关系。 */
@@ -84,7 +84,7 @@ export class OrgUiStreams {
    */
   constructor(
     @Inject(KERNEL_BUS) bus: StreamBus,
-    @Inject(OrgMembership) membership: Pick<OrgMembership, "role">,
+    @Inject(UiStreamMembership) membership: Pick<UiStreamMembership, "role">,
     @Inject(KernelConfigService) config: Pick<KernelConfigService, "get">,
     @Inject(KERNEL_LOGGER) log: Pick<Logger, "warn">,
     @Optional() @Inject(GracefulShutdown) shutdown?: Pick<GracefulShutdown, "signal">,

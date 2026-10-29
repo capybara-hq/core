@@ -62,8 +62,6 @@ export interface OffboardingRunControl {
 
 /** The safety-net sweep: cron job name (no `:`), every 10 minutes, and the rows per page. */
 export const OFFBOARD_SWEEP_JOB = "offboard-sweep";
-/** The maintenance job scheduler id it had before it became a cron (retired at worker start). */
-export const OFFBOARD_SWEEP_SCHEDULER_ID = "offboard-sweep-every-10m";
 export const OFFBOARD_SWEEP_BATCH = 500;
 /** 一次兜底扫描最多翻的页数（每页 {@link OFFBOARD_SWEEP_BATCH} 条），防止单次任务无限长。 */
 export const OFFBOARD_SWEEP_MAX_PAGES = 20;
@@ -220,7 +218,7 @@ export class Offboarding {
       .where("conversations.org_id", "=", orgId)
       // 评测回放的隐藏对话由评测 worker 驱动（不执行工具），随评测运行停下，不在这里中止。
       // 评测运行的创建者离开组织也不取消评测运行（Ruling S1-b）：管理员发起的评测运行是组织的工作，
-      // 只有取消、删除评测集、删除组织或 agent 才会停下（见 evals/budget.ts cancelEvalRuns）
+      // 只有取消、删除评测集、删除组织或 agent 才会停下（见 evals/budget.ts `EvalBudget.cancelRuns`）
       // a removed member's sub-agents run with their identity and credentials: stopped too
       .where("conversations.kind", "in", ["chat", "subagent"])
       .where("runs.status", "in", ACTIVE)

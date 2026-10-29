@@ -9,9 +9,9 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { RETIRED_SCHEDULER_IDS } from "../../src/infra/queue/retired-schedulers.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
+import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
 import { RUN_QUEUE_NAME } from "../../src/runtime/run-queue.js";
 import {
   MAINTENANCE_QUEUE_NAME,

@@ -29,8 +29,6 @@ import { OrgLock } from "./org-lock.js";
 
 /** The hourly scan: cron job name (no `:`). */
 export const DIRECTORY_SCAN_JOB = "directory-scan";
-/** The maintenance job scheduler id it had before it became a cron (retired at worker start). */
-export const DIRECTORY_SCAN_SCHEDULER_ID = "directory-scan-hourly";
 /** The job name of one (org, extension) sync on the maintenance queue. */
 export const DIRECTORY_SYNC_JOB = "directory-sync";
 /** The run lock's TTL (renewed while held); a crashed holder's lock expires within it. */
