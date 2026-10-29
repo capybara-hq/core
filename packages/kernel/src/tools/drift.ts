@@ -616,6 +616,8 @@ export class ToolDrift {
         { orgId, connectorId, trigger: "list_changed" } satisfies DriftConnectorJobData,
         {
           jobId: listChangedJobId(connectorId),
+          // a check runs once: a failure waits for the next trigger (the queue default retries)
+          attempts: 1,
           removeOnComplete: { age: 3_600 },
           removeOnFail: KEEP_FAILED,
         },
@@ -656,6 +658,7 @@ export class ToolDrift {
         { orgId: a.org_id, connectorId: a.id, trigger: "schedule" } satisfies DriftConnectorJobData,
         {
           jobId: driftScanJobId(a.id, bucket),
+          attempts: 1,
           removeOnComplete: { age: Math.ceil(interval / 1000) },
           removeOnFail: KEEP_FAILED,
         },

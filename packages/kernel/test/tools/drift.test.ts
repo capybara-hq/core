@@ -225,6 +225,14 @@ const auditOf = (action: string) =>
     .where("action", "=", action)
     .execute();
 
+/** The attempts of every drift check job enqueued for a connector (a check runs once, no retry). */
+async function driftJobAttempts(connectorId: string): Promise<(number | undefined)[]> {
+  const jobs = await probe.getJobs(["completed", "failed", "waiting", "active", "delayed"]);
+  return jobs
+    .filter((j) => j.name === DRIFT_CONNECTOR_JOB && j.data?.connectorId === connectorId)
+    .map((j) => j.opts.attempts);
+}
+
 describe("漂移检测（后台检查）", () => {
   it("新增 → pending_review；描述变化 → pending_review 并保留旧定义；消失 → disabled；审计只有计数", async () => {
     const req = await session("owner");
@@ -814,6 +822,7 @@ describe("定时任务与 list_changed", () => {
     expect(toolsByName(await getConnector(req, orgId, app.id)).search?.status).toBe(
       "pending_review",
     );
+    expect(await driftJobAttempts(app.id)).toEqual([1]);
   });
 
   it("双副本：drift-scan 是 @LockedInterval（旧 scheduler 已退役）；扫描重复执行也只检查每个连接器一次", async () => {
@@ -846,6 +855,7 @@ describe("定时任务与 list_changed", () => {
       await new Promise((r) => setTimeout(r, 1000));
       expect(await auditOf("connector.tools_drifted")).toHaveLength(1);
       expect(memState().opened - opened).toBe(1);
+      expect(await driftJobAttempts(app.id)).toEqual([1]);
     } finally {
       await k2.close();
     }
