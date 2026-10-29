@@ -254,6 +254,89 @@ class Svc {
   }
 }
 
+describe("LockService.keepAlive: loss is a deadline (R19)", () => {
+  // TTL 300 -> renewal every 100; deadline = send time of the last successful renewal + 200
+  const TTL = 300;
+  const quiet = createLogger("error", { write: () => {} });
+  type Next = "ok" | "fail" | "hang";
+  function start(plan: () => Next) {
+    vi.useFakeTimers({
+      toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
+      now: 0,
+    });
+    const renew = vi.fn(async () => {
+      const next = plan();
+      if (next === "ok") return true;
+      if (next === "fail") throw new Error("redis down");
+      return new Promise<boolean>(() => {});
+    });
+    const h = new LockService(r1, quiet).keepAlive("lease", TTL, {
+      renew,
+      release: async () => {},
+    });
+    return { h, renew };
+  }
+  const at = (ms: number) => vi.advanceTimersByTimeAsync(ms - Date.now());
+
+  it("(a) a renewal just after a watchdog tick, then fast failures: lost at its send time + ttl - interval", async () => {
+    let mode: Next = "ok";
+    const { h } = start(() => mode);
+    await at(100); // the watchdog's renewal (sent at 100) succeeds
+    await at(105);
+    // an out-of-phase renewal (e.g. the supervisor's heartbeat), sent at 105, succeeds
+    expect(await h.renew()).toBe(true);
+    mode = "fail"; // then Redis rejects at once
+    await at(304);
+    expect(h.lost.aborted).toBe(false);
+    await at(305);
+    // 200 after that renewal was sent: one full interval before the key could expire (405)
+    expect(h.lost.aborted).toBe(true);
+    await h.release();
+    vi.useRealTimers();
+  });
+
+  it("(b) a renewal that hangs: lost on time, with the renewal still in flight", async () => {
+    const { h, renew } = start(() => "hang");
+    await at(199);
+    expect(renew).toHaveBeenCalled();
+    expect(h.lost.aborted).toBe(false);
+    await at(200);
+    expect(h.lost.aborted).toBe(true);
+    await h.release();
+    vi.useRealTimers();
+  });
+
+  it("(c) a successful explicit renew() moves the deadline", async () => {
+    let mode: Next = "fail";
+    const { h } = start(() => mode);
+    await at(150);
+    mode = "ok";
+    expect(await h.renew()).toBe(true); // sent at 150
+    mode = "fail";
+    await at(349);
+    expect(h.lost.aborted).toBe(false);
+    await at(350);
+    expect(h.lost.aborted).toBe(true);
+    await h.release();
+    vi.useRealTimers();
+  });
+
+  it("a renewal answered false loses the lease at once", async () => {
+    let ok = true;
+    const quietLock = new LockService(r1, quiet);
+    vi.useFakeTimers({
+      toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
+      now: 0,
+    });
+    const h = quietLock.keepAlive("lease", TTL, { renew: async () => ok, release: async () => {} });
+    ok = false;
+    await vi.advanceTimersByTimeAsync(100);
+    expect(h.lost.aborted).toBe(true);
+    await h.release();
+    vi.useRealTimers();
+  });
+});
+
 describe("@WithLock", () => {
   it("holds the expanded key during the call and throws lock.acquire_failed when busy", async () => {
     const svc = new Svc(new LockService(r1, log));

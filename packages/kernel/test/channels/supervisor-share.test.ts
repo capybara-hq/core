@@ -19,6 +19,7 @@ import {
   CHANNEL_HANDOFF_TOPIC,
   type ChannelSupervisor,
   channelHandoffKey,
+  channelLeaseKey,
   checkGatewayPresence,
   gatewayMissingWarnedKey,
   gatewayReplicasKey,
@@ -418,6 +419,53 @@ describe("channel long connections: fair share across gateway replicas", () => {
     );
     await stopAll();
     expect(await redis.zscore(MINI_KEY, s.replicaId)).toBeNull();
+  }, 30_000);
+
+  it("a lease lost while the connection's config is read is never connected on (I1)", async () => {
+    const gated: string[] = [];
+    let first: string | undefined;
+    const channel = fakeChannel("gate");
+    const connections: Pick<ChannelConnections, "runtime"> = {
+      runtime: async (id) => {
+        if (first === undefined) {
+          first = id;
+          // the lease is taken from under us while runtime() is pending; the watchdog sees it
+          // (renewal answered false: lost) before the config arrives
+          await redis.del(channelLeaseKey(id));
+          await sleep(TTL);
+          return {
+            row: { plugin: "chan-mini" },
+            config: {},
+            channel: {
+              connectionSchema: z.object({}),
+              connect: async () => {
+                gated.push(id);
+              },
+            },
+          } as unknown as Awaited<ReturnType<ChannelConnections["runtime"]>>;
+        }
+        return { row: { plugin: "chan-mini" }, channel, config: {} } as unknown as Awaited<
+          ReturnType<ChannelConnections["runtime"]>
+        >;
+      },
+    };
+    const sup = channelSupervisorFor({
+      pool: raw,
+      redis,
+      bus,
+      connections,
+      localPlugins: () => ["chan-mini"],
+      onEvent: async () => {},
+      config: () => ({ channels }),
+      log: { warn: () => {}, error: () => {} },
+      replicaId: `rep-gate-${randomUUID()}`,
+    });
+    await sup.start();
+    running.push({ name: "gate", replicaId: sup.replicaId, sup });
+    // the lost one is claimed again later on a fresh lease: every connection ends up held once
+    await waitFor(async () => countOf("gate") === CONNECTIONS, 15_000, "all held");
+    expect(first).toBeDefined();
+    expect(gated).toEqual([]);
   }, 30_000);
 
   it("the gateway check runs every minute as a @LockedCron; its old maintenance scheduler is retired", () => {

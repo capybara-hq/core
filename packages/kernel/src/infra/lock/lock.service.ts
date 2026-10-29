@@ -22,7 +22,10 @@ export interface AcquireOptions {
 export interface LockHandle {
   /** Stops renewing and deletes the key if it is still ours. Idempotent. */
   release(): Promise<void>;
-  /** Aborts when the lock was lost: the key is gone or taken, or renewal failed until the next attempt would land past expiry. */
+  /**
+   * Aborts when the lock was lost: the key is gone or taken, or no renewal succeeded by the
+   * deadline (send time of the last successful renewal + TTL − TTL/3, R19).
+   */
   readonly lost: AbortSignal;
 }
 
@@ -87,9 +90,10 @@ export class LockService {
     const retryMs = opts.retryMs ?? 100;
     for (;;) {
       opts.signal?.throwIfAborted();
+      const sentAt = Date.now();
       if ((await this.redis.set(lockKey, token, "PX", Math.ceil(opts.ttlMs), "NX")) === "OK") {
         this.log.debug("lock acquired", { lockKey });
-        return this.watch(lockKey, token, opts.ttlMs);
+        return this.watch(lockKey, token, opts.ttlMs, sentAt);
       }
       const remaining = deadline - Date.now();
       if (remaining <= 0) {
@@ -143,41 +147,57 @@ export class LockService {
    * once. For leases whose holder other replicas read (the conversation run lock: the run id).
    */
   async hold(key: string, holder: string, ttlMs: number): Promise<LeaseHandle | undefined> {
+    const sentAt = Date.now();
     if (!(await this.lease(key, holder, ttlMs))) return undefined;
-    return this.watch(key, holder, ttlMs);
+    return this.watch(key, holder, ttlMs, sentAt);
   }
 
-  /** The renewal watchdog of a key we just took. */
-  private watch(lockKey: string, token: string, ttlMs: number): LeaseHandle {
-    return this.keepAlive(lockKey, ttlMs, {
-      renew: () => this.renew(lockKey, token, ttlMs),
-      release: async () => {
-        if (!(await this.releaseIf(lockKey, token))) {
-          this.log.warn("lock was not ours at release (expired or taken)", { lockKey });
-        }
+  /** The renewal watchdog of a key we just took (the `SET NX` was sent at `sentAt`). */
+  private watch(lockKey: string, token: string, ttlMs: number, sentAt: number): LeaseHandle {
+    return this.keepAlive(
+      lockKey,
+      ttlMs,
+      {
+        renew: () => this.renew(lockKey, token, ttlMs),
+        release: async () => {
+          if (!(await this.releaseIf(lockKey, token))) {
+            this.log.warn("lock was not ours at release (expired or taken)", { lockKey });
+          }
+        },
       },
-    });
+      sentAt,
+    );
   }
 
   /**
    * The renewal watchdog for a lease kept by other means than a `SET NX` key (e.g. an org quota
-   * slot, a member of a Redis sorted set): calls `ops.renew` every TTL/3 while held; `false`, or
-   * renewal errors until the next attempt would land past expiry, mark it lost (`lost` aborts, one
-   * WARN `lock lost` with `label`). `release` stops renewing and calls `ops.release` once.
+   * slot, a member of a Redis sorted set): calls `ops.renew` every TTL/3 while held. A renewal
+   * answered `false` marks it lost at once (`lost` aborts, one WARN `lock lost` with `label`).
+   * R19: loss is a deadline, not a counter. The deadline is the send time of the last successful
+   * renewal (or of the acquire, `acquiredAt`, default now) + TTL − TTL/3; any successful renewal
+   * through the handle (the watchdog's or an explicit `renew()`) moves it; when it passes without
+   * one, `lost` aborts, even with a renewal still in flight. So a holder gives up one renewal
+   * period before the key can expire elsewhere. `release` stops renewing and calls `ops.release`
+   * once.
    */
   keepAlive(
     label: string,
     ttlMs: number,
     ops: { renew(): Promise<boolean>; release(): Promise<void> },
+    acquiredAt: number = Date.now(),
   ): LeaseHandle {
     const lockKey = label;
     const lost = new AbortController();
     let released = false;
     let stopped = false;
-    let lastOk = Date.now();
+    const intervalMs = Math.max(1, Math.floor(ttlMs / 3));
+    /** Send time of the last successful renewal (or of the acquire). */
+    let lastOkSentAt = acquiredAt;
+    let deadline: NodeJS.Timeout | undefined;
     const stop = () => {
       stopped = true;
       clearInterval(timer);
+      clearTimeout(deadline);
     };
     const lose = (reason: string) => {
       if (released || lost.signal.aborted) return;
@@ -185,35 +205,44 @@ export class LockService {
       lost.abort(new Error(`lock lost: ${lockKey}`));
       stop();
     };
-    const intervalMs = Math.max(1, Math.floor(ttlMs / 3));
+    const arm = () => {
+      clearTimeout(deadline);
+      if (stopped) return;
+      const ms = Math.max(0, lastOkSentAt + ttlMs - intervalMs - Date.now());
+      deadline = setTimeout(() => lose("lock lost: renewal kept failing"), ms);
+      deadline.unref();
+    };
+    /** One renewal: a success moves the deadline (by its send time), `false` loses the lease. */
+    const renewOnce = async (): Promise<boolean> => {
+      const sentAt = Date.now();
+      const ok = await ops.renew();
+      if (released || lost.signal.aborted) return false;
+      if (!ok) {
+        lose("lock lost: the key is gone or taken");
+        return false;
+      }
+      if (sentAt > lastOkSentAt) {
+        lastOkSentAt = sentAt;
+        arm();
+      }
+      return true;
+    };
     const timer = setInterval(() => {
-      ops.renew().then(
-        (ok) => {
-          if (released || stopped) return;
-          if (ok) lastOk = Date.now();
-          else lose("lock lost: the key is gone or taken");
-        },
-        (err: unknown) => {
-          if (released || stopped) return;
-          // A transient Redis error: try again next tick, unless the next tick would land past
-          // expiry (then another replica may already hold the key): report the loss now.
-          if (Date.now() - lastOk >= ttlMs - intervalMs) {
-            lose("lock lost: renewal kept failing");
-          } else {
-            this.log.warn("lock renewal failed", { lockKey, err });
-          }
-        },
-      );
+      renewOnce().catch((err: unknown) => {
+        if (released || stopped) return;
+        // a transient Redis error: the next tick retries; the deadline decides the loss
+        this.log.warn("lock renewal failed", { lockKey, err });
+      });
     }, intervalMs);
     timer.unref();
+    arm();
     return {
       lost: lost.signal,
+      // an explicit renewal: a Redis error is thrown to the caller, not logged (the watchdog's
+      // own failures are, once each)
       renew: async () => {
         if (released || lost.signal.aborted) return false;
-        const ok = await ops.renew();
-        if (ok) lastOk = Date.now();
-        else lose("lock lost: the key is gone or taken");
-        return ok;
+        return renewOnce();
       },
       abandon: stop,
       release: async () => {

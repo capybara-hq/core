@@ -230,3 +230,11 @@ failing until the key would expire marks it lost and drops the connection, as be
 no-gateway warning markers use the `LockService` lease primitives (same keys). `channel-gateway-check`
 is a `@LockedCron` (every minute, once across replicas; its old maintenance scheduler is removed when
 a worker starts).
+
+`LockService` lease loss is a deadline (R19): a holder gives up at the send time of its last
+confirmed renewal (or of the acquire) + TTL − TTL/3 unless another renewal succeeds first, even
+with a renewal still in flight, so it lets go one renewal period before the key can expire and be
+taken elsewhere. This applies to every lock and lease (the conversation run lease, the org quota
+slots, the channel long-connection leases); after a Redis blip longer than about two thirds of the
+TTL a holder now gives up earlier than before (a run is re-queued, a long connection reconnects),
+never later. A channel lease lost while its connection's config is read is no longer connected on.

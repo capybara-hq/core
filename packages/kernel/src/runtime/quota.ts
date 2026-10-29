@@ -95,11 +95,17 @@ export class OrgQuota {
   ): Promise<LeaseHandle | undefined> {
     const locks = this.locks;
     if (!locks) throw new Error("OrgQuota.enter needs the lock service");
+    const sentAt = Date.now();
     if (!(await this.tryEnter(orgId, runId, limit, leaseMs))) return undefined;
-    return locks.keepAlive(`${this.key(orgId)}/${runId}`, leaseMs, {
-      renew: () => this.renew(orgId, runId, leaseMs),
-      release: () => this.leave(orgId, runId),
-    });
+    return locks.keepAlive(
+      `${this.key(orgId)}/${runId}`,
+      leaseMs,
+      {
+        renew: () => this.renew(orgId, runId, leaseMs),
+        release: () => this.leave(orgId, runId),
+      },
+      sentAt,
+    );
   }
 }
 

@@ -6,7 +6,10 @@ import { ConversationsModule } from "../conversations/conversations.module.js";
 import { EventLogModule } from "../conversations/event-log.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { IdentityModule } from "../identity/identity.module.js";
-import { configuredProcessor } from "../infra/queue/configured-processor.js";
+import {
+  configuredProcessor,
+  type ProcessorWorkerOptions,
+} from "../infra/queue/configured-processor.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { runJob } from "../infra/queue/run-job.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
@@ -75,6 +78,23 @@ export class ChannelsProcessor extends WorkerHost<Worker<ChannelJobData>> {
 }
 
 /**
+ * The worker options of the channel queue's consumer, from the startup config: concurrency
+ * `channels.deliveryConcurrency`, the run queue's job lock and stalled detection, and the delivery
+ * backoff (a platform's retry-after, else exponential).
+ */
+export function channelsProcessorOptions(
+  config: Pick<KernelConfig, "runtime" | "channels">,
+): ProcessorWorkerOptions {
+  return {
+    concurrency: config.channels.deliveryConcurrency,
+    lockDuration: config.runtime.jobLockMs,
+    stalledInterval: config.runtime.stalledIntervalMs,
+    maxStalledCount: 3,
+    settings: { backoffStrategy: (n, _type, err) => deliverBackoff(n, err) },
+  };
+}
+
+/**
  * The channels' role parts. Worker role: the consumer of the channel queue (concurrency
  * `channels.deliveryConcurrency`, the run queue's job lock and stalled detection, the delivery
  * backoff); it never starts by itself, `KernelLifecycle` starts it after the extension load and
@@ -85,7 +105,6 @@ export class ChannelsProcessor extends WorkerHost<Worker<ChannelJobData>> {
 // biome-ignore lint/complexity/noStaticOnlyClass: a Nest dynamic module
 export class ChannelRolesModule {
   static forRoot(config: KernelConfig): DynamicModule {
-    const { jobLockMs, stalledIntervalMs } = config.runtime;
     const worker = config.roles.includes("worker");
     const gateway = config.roles.includes("gateway");
     return {
@@ -94,13 +113,11 @@ export class ChannelRolesModule {
       providers: [
         ...(worker
           ? [
-              configuredProcessor(ChannelsProcessor, CHANNEL_QUEUE_NAME, {
-                concurrency: config.channels.deliveryConcurrency,
-                lockDuration: jobLockMs,
-                stalledInterval: stalledIntervalMs,
-                maxStalledCount: 3,
-                settings: { backoffStrategy: (n, _type, err) => deliverBackoff(n, err) },
-              }),
+              configuredProcessor(
+                ChannelsProcessor,
+                CHANNEL_QUEUE_NAME,
+                channelsProcessorOptions(config),
+              ),
             ]
           : []),
         ...(gateway ? [ChannelSupervisor, ChannelWebhooks] : []),

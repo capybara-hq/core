@@ -3,13 +3,14 @@ import { startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { type Job, Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { ChannelsProcessor, channelsProcessorOptions } from "../../src/channels/channels.module.js";
 import {
   CHANNEL_QUEUE_NAME,
   type ChannelJobData,
   ChannelJobs,
   inboundJobId,
 } from "../../src/channels/jobs.js";
-import { ChannelOutbound, deliverBackoff } from "../../src/channels/outbound.js";
+import { ChannelOutbound } from "../../src/channels/outbound.js";
 import { ApiError } from "../../src/errors.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
@@ -100,20 +101,13 @@ describe("渠道队列优先级（行为）", () => {
       log,
       {} as never,
     );
-    // the worker as the kernel's `@Processor` builds it (worker role)
-    const { jobLockMs, stalledIntervalMs } = config().runtime;
+    // the worker as the kernel's `@Processor` builds it (worker role): the same options and the
+    // processor's own job path (`runJob`)
+    const processor = new ChannelsProcessor(outbound);
     const worker = new Worker<ChannelJobData>(
       CHANNEL_QUEUE_NAME,
-      (job: Job<ChannelJobData>, token?: string) => outbound.process(job, token),
-      {
-        connection: conn(),
-        concurrency: config().channels.deliveryConcurrency,
-        lockDuration: jobLockMs,
-        stalledInterval: stalledIntervalMs,
-        maxStalledCount: 3,
-        settings: { backoffStrategy: (n, _type, err) => deliverBackoff(n, err) },
-        autorun: false,
-      },
+      (job: Job<ChannelJobData>, token?: string) => processor.process(job, token),
+      { ...channelsProcessorOptions(config()), connection: conn(), autorun: false },
     );
     try {
       // 先积压 20 条投递（各一个会话），worker 还没启动

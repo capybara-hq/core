@@ -296,11 +296,11 @@ export class ChannelSupervisor {
       [...this.held].map(async ([id, h]) => {
         // false marks the lease lost (`lost` aborts, the connection drops); a Redis error is the
         // watchdog's to judge (lost once renewals failed until the next would land past expiry)
-        const ok = await h.lease.renew().catch((err: unknown) => {
-          this.log.warn("channel lease renew failed", { connectionId: id, err });
-          return undefined;
-        });
+        // a Redis error is the watchdog's to log and judge (R19: lost at the deadline)
+        const ok = await h.lease.renew().catch(() => undefined);
         if (ok === true) await this.afterRenew(id, h, ttl);
+        // false: the key is gone or taken, or the lease was already lost (`drop` is idempotent)
+        else if (ok === false) this.drop(id, h);
       }),
     );
   }
@@ -486,6 +486,13 @@ export class ChannelSupervisor {
       this.connecting.delete(id);
       await this.failed(id, err);
       await lease.release();
+      return;
+    }
+    // The lease was lost while the config was read (an aborted signal never fires a listener
+    // added later): not ours any more, so no connect and no release
+    if (lease.lost.aborted) {
+      this.connecting.delete(id);
+      lease.abandon();
       return;
     }
     // 插件异常信息可能带上凭据：写进 last_error / 日志前按该连接的密钥打码
