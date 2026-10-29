@@ -2,7 +2,7 @@ import {
   type BeforeApplicationShutdown,
   Inject,
   Injectable,
-  type OnApplicationBootstrap,
+  type OnModuleInit,
 } from "@nestjs/common";
 import { DiscoveryService, MetadataScanner } from "@nestjs/core";
 import { SchedulerRegistry } from "@nestjs/schedule";
@@ -21,7 +21,7 @@ import {
 
 /**
  * The runs of the `@LockedCron` / `@LockedInterval` jobs (ticks and `runOnStart` runs), their
- * start gate ({@link open}, R21) and their stop. At application bootstrap it attaches itself to every provider instance with a locked job
+ * start gate ({@link open}) and their stop. At module init it attaches itself to every provider instance with a locked job
  * (`SCHEDULED_RUNS`), so each run is tracked and gets {@link signal}. {@link stop} (idempotent)
  * stops the cron and interval timers, aborts the signal, refuses new runs and waits for the runs in
  * progress within its budget, capped by what is left of the shared stop deadline
@@ -32,9 +32,7 @@ import {
  * call extensions); `beforeApplicationShutdown` covers an application without them.
  */
 @Injectable()
-export class ScheduledRuns
-  implements ScheduledRunScope, OnApplicationBootstrap, BeforeApplicationShutdown
-{
+export class ScheduledRuns implements ScheduledRunScope, OnModuleInit, BeforeApplicationShutdown {
   private readonly abort = new AbortController();
   private readonly inFlight = new Set<Promise<unknown>>();
   private stopping: Promise<void> | undefined;
@@ -51,7 +49,12 @@ export class ScheduledRuns
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
   ) {}
 
-  onApplicationBootstrap(): void {
+  /**
+   * Attaches itself to every instance with a locked job in `onModuleInit`, which runs before any
+   * `onApplicationBootstrap` hook, so the start gate already guards the jobs when the cron
+   * orchestrator and the interval scheduler arm their timers there.
+   */
+  onModuleInit(): void {
     for (const wrapper of this.discovery.getProviders()) {
       const instance = wrapper.instance as Record<string, unknown> | undefined;
       if (!instance || typeof instance !== "object" || !wrapper.isDependencyTreeStatic()) continue;

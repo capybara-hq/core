@@ -27,7 +27,7 @@ export const SCHEDULED_RUNS = Symbol("SCHEDULED_RUNS");
 export interface LockedJobHost {
   lockService?: LockService;
   log?: KernelLogger;
-  /** Attached by `ScheduledRuns` at application bootstrap (absent outside a Nest application). */
+  /** Attached by `ScheduledRuns` at module init (absent outside a Nest application). */
   [SCHEDULED_RUNS]?: ScheduledRunScope;
 }
 

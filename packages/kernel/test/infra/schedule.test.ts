@@ -23,6 +23,7 @@ import {
   LockedInterval,
   LockedIntervalScheduler,
 } from "../../src/infra/schedule/locked-interval.js";
+import { SCHEDULED_RUNS } from "../../src/infra/schedule/locked-tick.js";
 import { KernelScheduleModule } from "../../src/infra/schedule/schedule.module.js";
 import { ScheduledRuns } from "../../src/infra/schedule/scheduled-runs.js";
 import { KERNEL_LOGGER, KERNEL_POOL, REDIS } from "../../src/infra/tokens.js";
@@ -430,6 +431,60 @@ describe("@LockedCron", () => {
       expect(await redisOf(a).keys("cron:test-gated:*")).toHaveLength(1);
     } finally {
       await shutDown(a);
+    }
+  });
+
+  it("the start gate guards every job before any application bootstrap hook runs (the cron orchestrator's included)", async () => {
+    const config = resolveConfig(
+      {
+        db: { url: pgc.url },
+        redis: { url: rd.url },
+        masterKey: Buffer.alloc(32, 1).toString("base64"),
+      },
+      {},
+    );
+    const seen: boolean[] = [];
+    @Injectable()
+    class Probe {
+      constructor(@Inject(Jobs) private readonly jobs: Jobs) {}
+      // a module deeper than the schedule module: its bootstrap hook runs before ScheduledRuns'
+      onApplicationBootstrap() {
+        seen.push((this.jobs as { [SCHEDULED_RUNS]?: unknown })[SCHEDULED_RUNS] !== undefined);
+      }
+    }
+    @Global()
+    @Module({
+      providers: [{ provide: KERNEL_POOL, useValue: pool }, TransactionHost],
+      exports: [KERNEL_POOL, TransactionHost],
+    })
+    class TxModule {}
+    @Module({ providers: [Jobs, Probe] })
+    class DeepModule {}
+    @Module({ imports: [DeepModule] })
+    class MiddleModule {}
+    class Root {}
+    const app = await NestFactory.createApplicationContext(
+      {
+        module: Root,
+        imports: [
+          LoggingModule.forRoot(config, { logger: createLogger("error") as KernelLogger }),
+          ConfigModule.forRoot(config),
+          GracefulShutdownModule,
+          RedisModule,
+          LockModule,
+          TxModule,
+          KernelScheduleModule,
+          MiddleModule,
+        ],
+      },
+      { logger: false, abortOnError: false },
+    );
+    try {
+      expect(seen).toEqual([true]);
+    } finally {
+      for (const j of app.get(SchedulerRegistry).getCronJobs().values()) void j.stop();
+      app.get(LockedIntervalScheduler).stopAll();
+      await app.close();
     }
   });
 
