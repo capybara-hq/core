@@ -149,6 +149,35 @@ describe("role modules", () => {
     expect(await bullWorkers()).toBe(0);
   }, 60_000);
 
+  it("api only consumes nothing: a job on every kernel queue stays waiting until a worker-role process takes it", async () => {
+    const BOUND_MS = 2_000;
+    const a = await start(["api"]);
+    const tag = `api-only-${Date.now()}`;
+    const jobs = await Promise.all(
+      queues.map((q) => q.add("probe", { probe: tag }, { jobId: `${tag}-${q.name}`, attempts: 1 })),
+    );
+    const states = () => Promise.all(jobs.map((j) => j.getState()));
+    // every job stays waiting for the whole bound (each state polled throughout, not once)
+    const until = Date.now() + BOUND_MS;
+    while (Date.now() < until) {
+      expect(new Set(await states())).toEqual(new Set(["waiting"]));
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(await bullWorkers()).toBe(0);
+    await closeKernelApp(a);
+    app = undefined;
+    // the contrast: a worker-role process takes every one of them well within the same bound
+    await start(["worker"]);
+    const t0 = Date.now();
+    await vi.waitFor(
+      async () => {
+        for (const st of await states()) expect(st).not.toBe("waiting");
+      },
+      { timeout: BOUND_MS, interval: 50 },
+    );
+    expect(Date.now() - t0).toBeLessThan(BOUND_MS);
+  }, 60_000);
+
   it("gateway only: runs the supervisor and the webhook route, no cron and no BullMQ worker", async () => {
     const a = await start(["gateway"]);
     // the extension routes are served by the api and gateway roles (unchanged)
