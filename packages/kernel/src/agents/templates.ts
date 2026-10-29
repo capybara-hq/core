@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { AgentTemplate, AgentTemplateTier } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
 import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
 import { canonicalJson } from "../tools/registry.js";
 
 /**
@@ -84,12 +86,13 @@ export async function loadTemplates(
 }
 
 /** Reads the org's agent templates (consumed by the roster, the agent page and Task 19's API). */
+@Injectable()
 export class AgentTemplatesService {
-  constructor(private readonly db: KernelSchemaDb) {}
+  constructor(@Inject(KernelDb) private readonly db: KernelDb) {}
 
   /** Every live template of the org, by plugin then name. */
   async listForOrg(orgId: string): Promise<AgentTemplateView[]> {
-    const rows = await baseQuery(this.db, orgId)
+    const rows = await baseQuery(this.db.db, orgId)
       .orderBy("t.plugin_name")
       .orderBy("t.name")
       .execute();
@@ -116,7 +119,7 @@ export class AgentTemplatesService {
     ref: string,
   ): Promise<{ id: string; version: number; plugin: string; template: AgentTemplate } | null> {
     const i = ref.indexOf(":");
-    let q = baseQuery(this.db, orgId);
+    let q = baseQuery(this.db.db, orgId);
     q =
       i < 0
         ? q.where("t.id", "=", ref)

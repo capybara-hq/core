@@ -8,7 +8,7 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
-import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import type { Kernel } from "../../../src/kernel.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../../src/runtime/maintenance.js";
@@ -19,6 +19,7 @@ import { onChildFinished } from "../../../src/runtime/subagents/child.js";
 import { resumeJobId, waitTimeoutJobId } from "../../../src/runtime/waits.js";
 import { AGENT_STOPPED_WITH_RUN_TEXT } from "../../../src/tools/builtins/agent.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
+import { eventLogFor, legacyDbFor } from "../../helpers/conversations.js";
 import { truncateTables } from "../../helpers/db.js";
 import { accountsFor } from "../../helpers/identity.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
@@ -114,7 +115,7 @@ beforeAll(async () => {
   capture.install();
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   const raw = createDb(pgc.url, 3);
-  db = kernelDb(raw);
+  db = legacyDbFor(raw);
   destroyDb = () => raw.destroy();
   root = await mkdtemp(join(tmpdir(), "cap-subagents-resume-"));
   k = await startKernel(
@@ -236,7 +237,12 @@ async function waitTimeoutJobGone(waitId: string) {
   }
 }
 
-const childDeps = () => ({ db, eventLog: k.runs.eventLog, waits: k.runs.waits, log: console });
+const childDeps = () => ({
+  db,
+  eventLog: eventLogFor(db, k.bus),
+  waits: k.runs.waits,
+  log: console,
+});
 
 describe("resume after sub-agents", () => {
   it.each([
@@ -255,7 +261,7 @@ describe("resume after sub-agents", () => {
       ).toBe(3);
       for (const [i, idx] of order.entries()) {
         const child = children[idx] as (typeof children)[number];
-        await finishChildByHand(db, k.runs.eventLog, child, `reply ${idx}`);
+        await finishChildByHand(db, eventLogFor(db, k.bus), child, `reply ${idx}`);
         // every finisher tries (twice here, as a redelivery would); only the last one resumes
         await Promise.all([
           onChildFinished(childDeps(), child.runId),
@@ -462,7 +468,7 @@ describe("recovery by the wait sweep", () => {
     const { conv, runId, children } = await startPaused("SCENARIO one");
     const child = children[0] as (typeof children)[number];
     await dropChildJobs(subQueue, [child.conversationId]);
-    await finishChildByHand(db, k.runs.eventLog, child, "finished alone");
+    await finishChildByHand(db, eventLogFor(db, k.bus), child, "finished alone");
     // Waits.resume's update committed, then its replica died before queue.add
     await db
       .updateTable("runs")
@@ -488,7 +494,7 @@ describe("recovery by the wait sweep", () => {
     const { conv, runId, children } = await startPaused("SCENARIO one");
     const child = children[0] as (typeof children)[number];
     await dropChildJobs(subQueue, [child.conversationId]);
-    await finishChildByHand(db, k.runs.eventLog, child, "finished alone");
+    await finishChildByHand(db, eventLogFor(db, k.bus), child, "finished alone");
     await sleep(300);
     expect(await runStatus(db, runId)).toBe("waiting");
     expect(ofType(await eventsOf(db, conv), "subagent_finished")).toEqual([]);
@@ -521,7 +527,7 @@ describe("recovery by the wait sweep", () => {
     const { conv, runId, children } = await startPaused("SCENARIO one");
     const child = children[0] as (typeof children)[number];
     // the parent ended without stopping its child (e.g. a crash between the two)
-    await finishRun(db, k.runs.eventLog, {
+    await finishRun(db, eventLogFor(db, k.bus), {
       conversationId: conv,
       runId,
       status: "aborted",
@@ -553,9 +559,9 @@ describe("recovery by the wait sweep", () => {
     const { conv, runId, children } = await startPaused("SCENARIO three", 3);
     const [done, active] = children as [(typeof children)[number], (typeof children)[number]];
     // one child ended (its finisher never reported), the others are still queued
-    await finishChildByHand(db, k.runs.eventLog, done, "child ok");
+    await finishChildByHand(db, eventLogFor(db, k.bus), done, "child ok");
     // the parent ended through a path that wrote no agent results (e.g. an old replica)
-    await finishRun(db, k.runs.eventLog, {
+    await finishRun(db, eventLogFor(db, k.bus), {
       conversationId: conv,
       runId,
       status: "aborted",

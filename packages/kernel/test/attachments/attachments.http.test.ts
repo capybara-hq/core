@@ -10,13 +10,13 @@ import {
 } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { AttachmentsService } from "../../src/conversations/attachments.service.js";
 import { TITLE_PROMPT } from "../../src/conversations/titles.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { Kernel } from "../../src/kernel.js";
 import { PrefixedStorage } from "../../src/storage/storage.service.js";
 import type { MediaProvider } from "../fixtures/plugins/model-media/index.js";
+import { attachmentsFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -583,7 +583,7 @@ describe("大文本附件（Ruling M8）", { timeout: 30_000 }, () => {
       head: (key) => real.head(key),
       get: (key) => real.get(key),
     };
-    const svc = new AttachmentsService({
+    const svc = attachmentsFor({
       db,
       storage: new PrefixedStorage({ provider: () => noRange, plugins: async () => [] }),
       config: () => k.config,
@@ -711,7 +711,7 @@ describe("清理", { timeout: 30_000 }, () => {
         return real.delete(key);
       },
     };
-    const svc = new AttachmentsService({
+    const svc = attachmentsFor({
       db,
       storage: new PrefixedStorage({ provider: () => flaky, plugins: async () => [] }),
       config: () => k.config,

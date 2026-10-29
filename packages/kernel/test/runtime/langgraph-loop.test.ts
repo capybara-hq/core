@@ -19,7 +19,7 @@ import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
-import { EventLog } from "../../src/conversations/event-log.js";
+import type { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -32,6 +32,7 @@ import type { LoopContext } from "../../src/runtime/loop.js";
 import type { StreamSink } from "../../src/runtime/model-call.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { runJobId } from "../../src/runtime/run-queue.js";
+import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -120,10 +121,10 @@ beforeAll(async () => {
     dir: fileURLToPath(new URL("../../src/migrations", import.meta.url)),
   });
   raw = createDb(pgc.url, 10);
-  db = kernelDb(raw);
+  db = legacyDbFor(raw);
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
-  eventLog = new EventLog(db, createBus(redis, sub, "kernel"));
+  eventLog = eventLogFor(db, createBus(redis, sub, "kernel"));
   const base = KernelConfigSchema.parse({
     db: { url: pgc.url },
     redis: { url: rd.url },

@@ -2,8 +2,8 @@ import { fileURLToPath } from "node:url";
 import { ModelError } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { EventLog } from "../../src/conversations/event-log.js";
-import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
+import type { EventLog } from "../../src/conversations/event-log.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { runActive } from "../../src/evals/budget.js";
 import type { EvalEstimate, EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
@@ -11,6 +11,7 @@ import type { EvalSetView } from "../../src/evals/sets.service.js";
 import { ExtensionUnloadedError } from "../../src/extensions/inflight.js";
 import type { Kernel } from "../../src/kernel.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
+import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -51,8 +52,8 @@ let eventLog: EventLog;
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   raw = createDb(pgc.url, 3);
-  db = kernelDb(raw);
-  eventLog = new EventLog(db, { publish: async () => {} });
+  db = legacyDbFor(raw);
+  eventLog = eventLogFor(db, { publish: async () => {} });
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },

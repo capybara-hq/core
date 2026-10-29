@@ -1,7 +1,5 @@
 import { Global, Injectable, Module } from "@nestjs/common";
-import type { AgentsService } from "../agents/agents.service.js";
-import type { AttachmentsService } from "../conversations/attachments.service.js";
-import type { EventLog } from "../conversations/event-log.js";
+import type { RunControl } from "../conversations/conversations.service.js";
 import type { OffboardingRunControl } from "../orgs/offboarding.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
 import type { SandboxService } from "../sandbox/sandbox.service.js";
@@ -9,22 +7,21 @@ import type { SubagentDispatch } from "../tools/pipeline.js";
 
 /** The legacy-graph instances converted providers may still need (one field per owning task). */
 export interface LegacyPortValues {
-  /** conversations/event-log.ts (Task 3.6). */
-  eventLog: EventLog;
-  /** conversations/attachments.service.ts (Task 3.6). */
-  attachments: AttachmentsService;
-  /** runtime/providers.ts (Task 3.6). */
+  /** runtime/providers.ts (Task 3.6b). */
   providers: ProviderRegistry;
-  /** agents/agents.service.ts (Task 3.6). */
-  agents: AgentsService;
-  /** The run control offboarding stops runs with (waits, run queue, abort: Task 3.6). */
+  /**
+   * The conversations' run control (RunQueue, Waits, RunAbort: Task 3.6b): start, abort a waiting
+   * or orphaned run, request an abort.
+   */
+  runs: RunControl;
+  /** The run control offboarding stops runs with (waits, run queue, abort: Task 3.6b). */
   offboardRuns: OffboardingRunControl;
   /** Sandbox destruction after offboarding (sandbox/lifecycle.ts, Task 3.8). */
   sandboxDestroy: { destroy(conversationIds: string[]): Promise<void> };
   /** sandbox/sandbox.service.ts (Task 3.8): the builtin sandbox and skill tools run in it. */
   sandbox: SandboxService;
   /**
-   * The `agent` tool's dispatch (runtime/subagents/dispatch.ts over the run queue, Task 3.6): the
+   * The `agent` tool's dispatch (runtime/subagents/dispatch.ts over the run queue, Task 3.6b): the
    * tool pipeline dispatches sub-agents through it.
    */
   subagentDispatch: SubagentDispatch;
@@ -34,7 +31,7 @@ export interface LegacyPortValues {
  * Temporary (ruling R7; Task 3.9 deletes it with the legacy graph): the bridge from converted
  * providers to the instances the legacy graph still builds. It has no dependencies; the
  * `LEGACY_GRAPH` factory binds the legacy instances at init, before anything is served, and
- * converted providers read a port at call time (`this.ports.eventLog`), never in a constructor.
+ * converted providers read a port at call time (`this.ports.providers`), never in a constructor.
  * A task that converts the owner of a port replaces every read of it with a direct `@Inject` and
  * deletes the field.
  */
@@ -57,20 +54,12 @@ export class LegacyPorts {
     return this.values[key];
   }
 
-  get eventLog(): EventLog {
-    return this.get("eventLog");
-  }
-
-  get attachments(): AttachmentsService {
-    return this.get("attachments");
-  }
-
   get providers(): ProviderRegistry {
     return this.get("providers");
   }
 
-  get agents(): AgentsService {
-    return this.get("agents");
+  get runs(): RunControl {
+    return this.get("runs");
   }
 
   get offboardRuns(): OffboardingRunControl {

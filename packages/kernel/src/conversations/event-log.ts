@@ -1,15 +1,18 @@
-import type { Logger } from "@capybara-hq/plugin-sdk";
-import { sql, type Transaction } from "kysely";
-import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
+import { Inject, Injectable, Module } from "@nestjs/common";
+import { sql } from "kysely";
 import { ApiError } from "../errors.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KernelEvents } from "../infra/events/kernel-events.js";
+import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 import {
   type ConversationEvent,
   type ConversationEventBody,
   ConversationEventSchema,
   type ConversationEventType,
 } from "./events.js";
-
-type Trx = Transaction<KernelDatabase>;
 
 /** 事件日志依赖的总线：内核 bus（命名空间 `kernel`）。 */
 export interface EventBus {
@@ -123,50 +126,65 @@ const EVENT_COLUMNS = [
  * 会话事件日志：只追加，是 agent 运行的唯一事实来源。
  * seq 由 `conversations.last_seq` 在会话行锁内连续分配（多副本并发写同一会话时串行化）；
  * 幂等键的「先查后写」也在同一把行锁内完成。
+ *
+ * Every published advance (`notify`) is also announced in-process as `conversation.event-appended`
+ * on {@link KernelEvents} (the channel outbound delivery enqueues from it), on this replica, right
+ * after the bus publish, in append order.
  */
+@Injectable()
 export class EventLog {
   constructor(
-    private readonly db: KernelSchemaDb,
-    private readonly bus: EventBus,
-    private readonly log?: Pick<Logger, "warn">,
-    /**
-     * 每次发布「日志已推进」之后调用（同步、不等待）：内核用它给有 IM 投递目标的会话排出站任务。
-     * 钩子自己负责吞掉错误。
-     */
-    private readonly onNotify?: (conversationId: string, toSeq: number) => void,
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(KERNEL_BUS) private readonly bus: EventBus,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
+    @Inject(KernelEvents) private readonly events: Pick<KernelEvents, "emit">,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
   /**
    * 追加事件，返回与输入一一对应的事件（幂等命中的为已有事件）。
-   * 不传 `trx` 时自开事务，提交后发布 `conv.<id>`；传入外部 `trx` 时由调用方在提交后调用 `notify`。
+   * 自开一个独立事务（`requires_new`，与调用方的事务无关），提交后发布 `conv.<id>`。
+   * 要在调用方的事务里追加（与其他写入一起提交），用 {@link appendIn}。
    */
-  async append(
-    conversationId: string,
-    events: AppendEvent[],
-    trx?: Trx,
-  ): Promise<ConversationEvent[]> {
+  async append(conversationId: string, events: AppendEvent[]): Promise<ConversationEvent[]> {
     const bodies = events.map((e) => this.validate(e));
-    if (trx) return (await this.appendIn(trx, conversationId, events, bodies)).events;
-    const { events: out, toSeq } = await this.db
-      .transaction()
-      .execute((t) => this.appendIn(t, conversationId, events, bodies));
+    const { events: out, toSeq } = await this.appendOwn(conversationId, events, bodies);
     if (toSeq !== null) await this.notify(conversationId, toSeq);
     return out;
   }
 
-  /** 发布「日志已推进到 toSeq」；发布失败只记日志（事件已提交，订阅方可按 seq 补读）。 */
+  /**
+   * {@link append} inside the caller's transaction (it must hold one: `mandatory`): the events
+   * commit or roll back with the caller's writes, and the caller calls {@link notify} after the
+   * commit with the highest seq it wrote.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async appendIn(conversationId: string, events: AppendEvent[]): Promise<ConversationEvent[]> {
+    const bodies = events.map((e) => this.validate(e));
+    return (await this.write(conversationId, events, bodies)).events;
+  }
+
+  @Transactional({ propagation: "requires_new" })
+  private async appendOwn(
+    conversationId: string,
+    events: AppendEvent[],
+    bodies: ConversationEventBody[],
+  ): Promise<{ events: ConversationEvent[]; toSeq: number | null }> {
+    return this.write(conversationId, events, bodies);
+  }
+
+  /**
+   * 发布「日志已推进到 toSeq」；发布失败只记日志（事件已提交，订阅方可按 seq 补读）。Then announces
+   * it in-process (`conversation.event-appended`); a failing subscriber is logged by KernelEvents.
+   */
   async notify(conversationId: string, toSeq: number): Promise<void> {
     const msg: ConversationBusMessage = { kind: "events", toSeq };
     try {
       await this.bus.publish(conversationTopic(conversationId), msg);
     } catch (err) {
-      this.log?.warn("conversation event notify failed", { conversationId, toSeq, err });
+      this.log.warn("conversation event notify failed", { conversationId, toSeq, err });
     }
-    try {
-      this.onNotify?.(conversationId, toSeq);
-    } catch (err) {
-      this.log?.warn("conversation event notify hook failed", { conversationId, err });
-    }
+    await this.events.emit("conversation.event-appended", { conversationId, toSeq });
   }
 
   /**
@@ -178,7 +196,7 @@ export class EventLog {
     try {
       await this.bus.publish(conversationTopic(conversationId), msg);
     } catch (err) {
-      this.log?.warn("conversation change publish failed", { conversationId, what, err });
+      this.log.warn("conversation change publish failed", { conversationId, what, err });
     }
   }
 
@@ -267,12 +285,13 @@ export class EventLog {
     return r.data;
   }
 
-  private async appendIn(
-    t: Trx,
+  /** The append itself, in the context's transaction (both callers open or join one). */
+  private async write(
     conversationId: string,
     events: AppendEvent[],
     bodies: ConversationEventBody[],
   ): Promise<{ events: ConversationEvent[]; toSeq: number | null }> {
+    const t = this.db;
     // 先锁会话行：之后的幂等查询与 seq 分配都在这把锁内，并发 append 依次执行。
     const conv = await t
       .selectFrom("conversations")
@@ -355,3 +374,7 @@ export class EventLog {
     };
   }
 }
+
+/** The one {@link EventLog} (infra dependencies only, so every domain can import it). */
+@Module({ providers: [EventLog], exports: [EventLog] })
+export class EventLogModule {}

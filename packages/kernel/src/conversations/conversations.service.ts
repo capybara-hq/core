@@ -1,22 +1,24 @@
 import { randomUUID } from "node:crypto";
-import type { Logger } from "@capybara-hq/plugin-sdk";
-import { type ExpressionBuilder, sql, type Transaction } from "kysely";
-import { type AgentsService, visibleTo } from "../agents/agents.service.js";
+import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
+import { AgentLookup, visibleTo } from "../agents/agent-lookup.js";
 import type { AgentDefinition, ModelRef } from "../agents/definition.js";
-import type { KernelDatabase, KernelSchemaDb, TitleSource } from "../db/kernel-schema.js";
+import type { TitleSource } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import type { ProviderRegistry } from "../runtime/providers.js";
-import type { RenderedInvocation, SkillInvoker } from "../skills/invoke.js";
-import type { AppendEvent, EventLog } from "./event-log.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import { LegacyPorts } from "../lifecycle/legacy-ports.js";
+import type { KernelLogger } from "../log.js";
+import { type RenderedInvocation, SkillInvoker } from "../skills/invoke.js";
+import { ConnectorContent } from "../tools/connector-content.js";
+import { ConversationAccess, parentReachable } from "./access.js";
+import { AttachmentsService } from "./attachments.service.js";
+import { type AppendEvent, EventLog } from "./event-log.js";
 import type { ConversationEvent, LogContentBlock } from "./events.js";
-import {
-  NO_SELECTION,
-  planSelection,
-  readSelection,
-  type Selection,
-  sameModel,
-  sameSelection,
-} from "./selection.js";
+import { userMessageIdemKey } from "./idem-keys.js";
+import { NO_SELECTION, planSelection, readSelection, type Selection } from "./selection.js";
 
 /** 对外的会话视图。 */
 export interface ConversationView {
@@ -104,13 +106,6 @@ export interface AttachmentRef {
   uri: string;
 }
 
-/** 附件解析：以发送者的凭据读取资源，返回追加在消息后的文本块与元数据（见 tools/connector-content.ts）。 */
-export type ResolveAttachments = (
-  orgId: string,
-  accountId: string,
-  refs: AttachmentRef[],
-) => Promise<ResolvedExtra>;
-
 /** Resolved `@` resources: the blocks after the user text and their metadata. */
 export interface ResolvedExtra {
   blocks: { type: "text"; text: string }[];
@@ -118,23 +113,7 @@ export interface ResolvedExtra {
   attachments: { appId: string; appName: string; uri: string; name: string }[];
 }
 
-/**
- * 消息引用的上传附件（`files`）：在发消息的事务里校验并绑定到会话，返回写进 user_message 的媒体块
- * （`source: {kind: "ref"}`，见 AttachmentsService.bindForMessage）。
- */
-export type BindFiles = (
-  trx: Transaction<KernelDatabase>,
-  orgId: string,
-  conversationId: string,
-  accountId: string,
-  ids: readonly string[],
-) => Promise<LogContentBlock[]>;
-
-/**
- * 用户消息的幂等键：客户端的 `clientMessageId` 加前缀，与运行流水线自用的幂等键分开，
- * 避免客户端恰好选中内部键而命中别的事件。
- */
-export const userMessageIdemKey = (clientMessageId: string): string => `msg:${clientMessageId}`;
+export { userMessageIdemKey } from "./idem-keys.js";
 
 const COLUMNS = [
   "id",
@@ -203,30 +182,6 @@ export interface UserMessageInput {
   skill?: { name: string };
 }
 
-/**
- * A sub-agent's conversation is reached through its parent (sub-agents spec §6.1, review m6, the
- * same rule as its trajectory): the parent is a chat conversation of the same owner whose agent is
- * not deleted and still visible to the viewer. Any other kind passes. The child's own `agent_id`
- * (the dispatched agent for an org agent, §5.5) is checked on top by the callers.
- */
-const parentReachable =
-  (viewerAccountId: string) => (eb: ExpressionBuilder<KernelDatabase, "conversations">) =>
-    eb.or([
-      eb("conversations.kind", "<>", "subagent"),
-      eb.exists(
-        eb
-          .selectFrom("conversations as p")
-          .innerJoin("agents", "agents.id", "p.agent_id")
-          .select(sql`1`.as("one"))
-          .whereRef("p.id", "=", "conversations.parent_conversation_id")
-          .whereRef("p.org_id", "=", "conversations.org_id")
-          .where("p.account_id", "=", viewerAccountId)
-          .where("p.kind", "=", "chat")
-          .where("agents.deleted_at", "is", null)
-          .where(visibleTo(viewerAccountId)),
-      ),
-    ]);
-
 interface UsageRow {
   input_tokens: string;
   output_tokens: string;
@@ -256,19 +211,28 @@ const toUsage = (r: UsageRow): UsageTotals => ({
  * 会话：只有所有者可见；每次访问都实时复核 agent 对所有者仍可用（spec 3.6 R5），
  * 不可用时会话也按不存在处理（`conversation.not_found`）。
  */
+@Injectable()
 export class ConversationsService {
   constructor(
-    private readonly db: KernelSchemaDb,
-    private readonly eventLog: EventLog,
-    private readonly agents: AgentsService,
-    private readonly runs?: RunControl,
-    private readonly log?: Pick<Logger, "warn">,
-    private readonly resolveAttachments?: ResolveAttachments,
-    private readonly bindFiles?: BindFiles,
-    /** Resolves a switched-to model and its declared parameters (UI refresh B). */
-    private readonly models?: Pick<ProviderRegistry, "resolve">,
-    /** Renders a person's skill invocation (phase D); without it `skill` is refused. */
-    private readonly invoker?: Pick<SkillInvoker, "prepare">,
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(EventLog) private readonly eventLog: EventLog,
+    @Inject(AgentLookup) private readonly agents: Pick<AgentLookup, "get">,
+    @Inject(ConversationAccess) private readonly access: Pick<ConversationAccess, "isAccessible">,
+    /**
+     * R7 (Task 3.6b): `runs` (the run control: RunQueue, Waits, RunAbort) and `providers`
+     * (resolves a switched-to model and its declared parameters, UI refresh B).
+     */
+    @Inject(LegacyPorts) private readonly ports: LegacyPorts,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
+    /** Reads `@` resources with the sender's credentials. */
+    @Inject(ConnectorContent)
+    private readonly content: Pick<ConnectorContent, "resolveAttachments">,
+    /** Binds uploaded files to the conversation in the message's transaction. */
+    @Inject(AttachmentsService)
+    private readonly attachments: Pick<AttachmentsService, "bindForMessage">,
+    /** Renders a person's skill invocation (phase D). */
+    @Inject(SkillInvoker) private readonly invoker: Pick<SkillInvoker, "prepare">,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
   /**
@@ -276,11 +240,10 @@ export class ConversationsService {
    * 会话不会因为某次运行结束后的投递失败而永远停在「运行中」。失败只记日志。
    */
   kickRun(conversationId: string): void {
-    if (!this.runs) return;
-    this.runs
+    this.ports.runs
       .ensureRun(conversationId)
       .catch((err) =>
-        this.log?.warn("ensureRun on conversation open failed", { conversationId, err }),
+        this.log.warn("ensureRun on conversation open failed", { conversationId, err }),
       );
   }
 
@@ -311,42 +274,54 @@ export class ConversationsService {
     const agent = await this.agents.get(orgId, agentId, accountId);
     const prior = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
     if (prior) return prior;
-    this.checkFilesSupported(input);
     const next = await this.planSwitch(agent.definition, NO_SELECTION, input);
     const extra = await this.resolveExtra(orgId, accountId, input);
     const invoked = await this.prepareSkill(orgId, agentId, undefined, agent.definition, input);
     const id = randomUUID();
-    const written = await this.db.transaction().execute(async (t) => {
-      const row = await t
-        .insertInto("conversations")
-        .values({
-          id,
-          org_id: orgId,
-          agent_id: agentId,
-          account_id: accountId,
-          create_request_id: input.clientMessageId,
-        })
-        .onConflict((oc) =>
-          oc
-            .columns(["org_id", "account_id", "create_request_id"])
-            .where("create_request_id", "is not", null)
-            .doNothing(),
-        )
-        .returning("id")
-        .executeTakeFirst();
-      // a concurrent retry committed first: answer with its conversation below
-      if (!row) return undefined;
-      const blocks = await this.bindIn(t, orgId, id, accountId, input.files ?? []);
-      return this.writeMessage(t, id, accountId, input, next, extra, blocks, invoked);
-    });
+    const written = await this.createIn(id, orgId, accountId, agentId, input, next, extra, invoked);
     if (!written) {
       const raced = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
       if (!raced) throw new ApiError("conflict", "The conversation is being created; retry");
       return raced;
     }
     await this.eventLog.notify(id, written.seq);
-    await this.runs?.ensureRun(id);
+    await this.ports.runs.ensureRun(id);
     return { conversation: await this.rowView(id), event: written, created: true };
+  }
+
+  /** The conversation row and its first message (undefined: a concurrent retry committed first). */
+  @Transactional()
+  private async createIn(
+    id: string,
+    orgId: string,
+    accountId: string,
+    agentId: string,
+    input: UserMessageInput & { clientMessageId: string },
+    next: Selection | null,
+    extra: ResolvedExtra,
+    invoked: RenderedInvocation | undefined,
+  ): Promise<ConversationEvent | undefined> {
+    const row = await this.db
+      .insertInto("conversations")
+      .values({
+        id,
+        org_id: orgId,
+        agent_id: agentId,
+        account_id: accountId,
+        create_request_id: input.clientMessageId,
+      })
+      .onConflict((oc) =>
+        oc
+          .columns(["org_id", "account_id", "create_request_id"])
+          .where("create_request_id", "is not", null)
+          .doNothing(),
+      )
+      .returning("id")
+      .executeTakeFirst();
+    // a concurrent retry committed first: answer with its conversation below
+    if (!row) return undefined;
+    const blocks = await this.bindIn(orgId, id, accountId, input.files ?? []);
+    return this.writeMessage(id, accountId, input, next, extra, blocks, invoked);
   }
 
   /**
@@ -377,7 +352,7 @@ export class ConversationsService {
     }
     const event = await this.eventLog.findByIdem(row.id, userMessageIdemKey(clientMessageId));
     if (!event) return null;
-    await this.runs?.ensureRun(row.id);
+    await this.ports.runs.ensureRun(row.id);
     return { conversation: toView(row), event, created: false };
   }
 
@@ -461,45 +436,9 @@ export class ConversationsService {
     return row;
   }
 
-  /**
-   * 轻量的可见性判定（一条查询，不加载 agent 视图），供长连接（SSE）建立时与定期复核用：
-   * 会话属于该组织且归 viewer 所有、viewer 账号仍为 active、agent 未删除且对 viewer 仍可见
-   * （`visibleTo` 已含「组织未删除、viewer 仍是成员」）。
-   */
-  async isAccessible(
-    orgId: string,
-    conversationId: string,
-    viewerAccountId: string,
-  ): Promise<boolean> {
-    const row = await this.db
-      .selectFrom("conversations")
-      .select("conversations.id")
-      .where("conversations.id", "=", conversationId)
-      .where("conversations.org_id", "=", orgId)
-      .where("conversations.account_id", "=", viewerAccountId)
-      .where("conversations.kind", "in", ["chat", "subagent"])
-      .where(parentReachable(viewerAccountId))
-      .where((eb) =>
-        eb.and([
-          eb.exists(
-            eb
-              .selectFrom("accounts")
-              .select(sql`1`.as("one"))
-              .where("accounts.id", "=", viewerAccountId)
-              .where("accounts.status", "=", "active"),
-          ),
-          eb.exists(
-            eb
-              .selectFrom("agents")
-              .select(sql`1`.as("one"))
-              .whereRef("agents.id", "=", "conversations.agent_id")
-              .where("agents.deleted_at", "is", null)
-              .where(visibleTo(viewerAccountId)),
-          ),
-        ]),
-      )
-      .executeTakeFirst();
-    return row !== undefined;
+  /** The stream's visibility check ({@link ConversationAccess.isAccessible}). */
+  isAccessible(orgId: string, conversationId: string, viewerAccountId: string): Promise<boolean> {
+    return this.access.isAccessible(orgId, conversationId, viewerAccountId);
   }
 
   /**
@@ -613,7 +552,7 @@ export class ConversationsService {
         LIMIT ${opts.perGroup + 1}
       ) cs
       ORDER BY page.latest_at DESC, page.agent_id DESC, cs.updated_at DESC, cs.id DESC
-    `.execute(this.db);
+    `.execute(this.db.db);
     const groups: ConversationGroup[] = [];
     let current: ConversationGroup | undefined;
     for (const r of rows) {
@@ -719,7 +658,7 @@ export class ConversationsService {
       CROSS JOIN LATERAL (${usageSums(sql`e.conversation_id = c.id`)}) u
       LEFT JOIN described d ON d.id = c.id
       ORDER BY c.created_at DESC, c.id DESC
-    `.execute(this.db);
+    `.execute(this.db.db);
     const subagents = rows.slice(0, opts.limit).map(
       (r): SubagentView => ({
         id: r.id,
@@ -755,7 +694,7 @@ export class ConversationsService {
         SELECT c.id FROM capybara.conversations c
         WHERE c.parent_conversation_id = ${conversationId} AND c.kind = 'subagent'
       )`,
-    )}`.execute(this.db);
+    )}`.execute(this.db.db);
     const row = rows[0];
     return row
       ? toUsage(row)
@@ -811,7 +750,6 @@ export class ConversationsService {
     const conv = await this.writable(orgId, conversationId, accountId);
     const refs = input.attachments ?? [];
     const files = input.files ?? [];
-    this.checkFilesSupported(input);
     // A retry returns the written event (no resource read, no file check, no skill resolution)
     if (
       (refs.length > 0 || files.length > 0 || input.skill !== undefined) &&
@@ -822,7 +760,7 @@ export class ConversationsService {
         userMessageIdemKey(input.clientMessageId),
       );
       if (existing) {
-        await this.runs?.ensureRun(conversationId);
+        await this.ports.runs.ensureRun(conversationId);
         return existing;
       }
     }
@@ -842,10 +780,7 @@ export class ConversationsService {
         : await this.prepareSkill(orgId, conv.agentId, conversationId, agent, input);
     let event: ConversationEvent | undefined;
     if (files.length > 0 || next !== null) {
-      event = await this.db.transaction().execute(async (t) => {
-        const blocks = await this.bindIn(t, orgId, conversationId, accountId, files);
-        return this.writeMessage(t, conversationId, accountId, input, next, extra, blocks, invoked);
-      });
+      event = await this.postIn(orgId, conversationId, accountId, input, next, extra, invoked);
       await this.eventLog.notify(conversationId, event.seq);
       if (next !== null) await this.eventLog.publishChanged(conversationId, "selection");
     } else {
@@ -853,8 +788,23 @@ export class ConversationsService {
         this.userMessage(accountId, input, extra, [], invoked),
       ]);
     }
-    await this.runs?.ensureRun(conversationId);
+    await this.ports.runs.ensureRun(conversationId);
     return event as ConversationEvent;
+  }
+
+  /** A message with files or a model switch: binds the files and writes it in one transaction. */
+  @Transactional()
+  private async postIn(
+    orgId: string,
+    conversationId: string,
+    accountId: string,
+    input: UserMessageInput,
+    next: Selection | null,
+    extra: ResolvedExtra,
+    invoked: RenderedInvocation | undefined,
+  ): Promise<ConversationEvent> {
+    const blocks = await this.bindIn(orgId, conversationId, accountId, input.files ?? []);
+    return this.writeMessage(conversationId, accountId, input, next, extra, blocks, invoked);
   }
 
   /**
@@ -873,12 +823,7 @@ export class ConversationsService {
     const next = planSelection(agent.model, current, input);
     if (next === null) return null;
     const { model, effort } = next;
-    if (!this.models) {
-      throw new ApiError("validation_failed", "Request validation failed", [
-        { path: "model", message: "Model switching is not supported" },
-      ]);
-    }
-    const { info } = await this.models.resolve(model ?? agent.model);
+    const { info } = await this.ports.providers.resolve(model ?? agent.model);
     if (effort !== null) {
       const knob = info.parameters.find((p) => p.key === "effort");
       const values = (knob?.schema as { enum?: unknown[] } | undefined)?.enum ?? [];
@@ -911,8 +856,8 @@ export class ConversationsService {
    * Writes the message (preceded by its `model_switched` when it switches) inside `t` and updates
    * `conversations.selection`; returns the `user_message` event. The caller notifies after commit.
    */
+  @Transactional({ propagation: "mandatory" })
   private async writeMessage(
-    t: Transaction<KernelDatabase>,
     conversationId: string,
     accountId: string,
     input: UserMessageInput,
@@ -932,8 +877,9 @@ export class ConversationsService {
       });
     }
     events.push(this.userMessage(accountId, input, extra, blocks, invoked));
-    const written = await this.eventLog.append(conversationId, events, t);
+    const written = await this.eventLog.appendIn(conversationId, events);
     if (next !== null) {
+      const t = this.db.db;
       // the cache follows the log (a retried message's switch may be an old, deduped event that a
       // later switch already replaced), read under the row lock append took
       await t
@@ -957,11 +903,6 @@ export class ConversationsService {
     input: Pick<UserMessageInput, "skill" | "text">,
   ): Promise<RenderedInvocation | undefined> {
     if (input.skill === undefined) return undefined;
-    if (!this.invoker) {
-      throw new ApiError("validation_failed", "Request validation failed", [
-        { path: "skill", message: "Skill invocation is not supported" },
-      ]);
-    }
     return this.invoker.prepare({
       orgId,
       agentId,
@@ -988,15 +929,6 @@ export class ConversationsService {
     return this.prepareSkill(orgId, conv.agentId, conv.id, agent.definition, input);
   }
 
-  /** `files` need the attachments service (shared with the queue). */
-  checkFilesSupported(input: Pick<UserMessageInput, "files">): void {
-    if ((input.files?.length ?? 0) > 0 && !this.bindFiles) {
-      throw new ApiError("validation_failed", "Request validation failed", [
-        { path: "files", message: "Files are not supported" },
-      ]);
-    }
-  }
-
   /**
    * Reads the `@` resources with the sender's credentials (nothing when there are none). Shared
    * with the queue, which reads them when a message is queued (decision 15).
@@ -1008,24 +940,19 @@ export class ConversationsService {
   ): Promise<ResolvedExtra> {
     const refs = input.attachments ?? [];
     if (refs.length === 0) return { blocks: [], attachments: [] };
-    if (!this.resolveAttachments) {
-      throw new ApiError("validation_failed", "Request validation failed", [
-        { path: "attachments", message: "Attachments are not supported" },
-      ]);
-    }
-    return this.resolveAttachments(orgId, accountId, refs);
+    return this.content.resolveAttachments(orgId, accountId, refs);
   }
 
   /** Binds uploaded files inside the message's (or queue item's) transaction; none → no blocks. */
+  @Transactional({ propagation: "mandatory" })
   async bindIn(
-    t: Transaction<KernelDatabase>,
     orgId: string,
     conversationId: string,
     accountId: string,
     files: readonly string[],
   ): Promise<LogContentBlock[]> {
-    if (files.length === 0 || !this.bindFiles) return [];
-    return this.bindFiles(t, orgId, conversationId, accountId, files);
+    if (files.length === 0) return [];
+    return this.attachments.bindForMessage(orgId, conversationId, accountId, files);
   }
 
   private userMessage(
@@ -1072,21 +999,19 @@ export class ConversationsService {
       .where("status", "in", ["queued", "running", "waiting"])
       .orderBy("created_at", "desc")
       .executeTakeFirst();
-    if (!run || !this.runs) throw new ApiError("run.not_active", "No active run to abort");
+    if (!run) throw new ApiError("run.not_active", "No active run to abort");
+    const runs = this.ports.runs;
     // 等待中：直接结束；没成功（刚被续跑、已回到 queued）则按下面的常规路径中止。
-    if (
-      run.status === "waiting" &&
-      (await this.runs.abortWaiting(conversationId, run.id, accountId))
-    ) {
+    if (run.status === "waiting" && (await runs.abortWaiting(conversationId, run.id, accountId))) {
       this.kickRun(conversationId);
       return run.id;
     }
     // 孤儿运行没有 worker 在听中止广播：直接写成 aborted，之后再看有没有等待中的消息要起新一轮。
-    if (await this.runs.abortIfOrphaned(conversationId, run.id, accountId)) {
+    if (await runs.abortIfOrphaned(conversationId, run.id, accountId)) {
       this.kickRun(conversationId);
       return run.id;
     }
-    await this.runs.requestAbort(run.id, accountId);
+    await runs.requestAbort(run.id, accountId);
     return run.id;
   }
 }

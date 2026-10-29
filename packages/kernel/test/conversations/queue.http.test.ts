@@ -2,17 +2,15 @@ import { randomUUID } from "node:crypto";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { AgentsService } from "../../src/agents/agents.service.js";
-import { ConversationsService } from "../../src/conversations/conversations.service.js";
-import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { ConversationQueue, QUEUE_MAX_ITEMS } from "../../src/conversations/queue.js";
-import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { QUEUE_MAX_ITEMS } from "../../src/conversations/queue.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { Kernel } from "../../src/kernel.js";
+import { conversationsFor, eventLogFor, legacyDbFor, queueFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
-import { accountsFor } from "../helpers/identity.js";
+import { accountsFor, handlesFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createAgent,
@@ -54,7 +52,7 @@ let agentId: string;
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   raw = createDb(pgc.url, 3);
-  db = kernelDb(raw);
+  db = legacyDbFor(raw);
   k = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] }));
 }, 120_000);
 afterAll(async () => {
@@ -523,14 +521,11 @@ describe("@ resources are read at queue time (decision 15)", { timeout: 30_000 }
     expect((await queueOf(conv)).paused).toBe(true);
 
     const reads: { orgId: string; accountId: string }[] = [];
-    const eventLog = new EventLog(db, { publish: async () => {} });
-    const conversations = new ConversationsService(
-      db,
+    const eventLog = eventLogFor(db, { publish: async () => {} });
+    const conversations = conversationsFor(handlesFor(db), {
       eventLog,
-      { get: async () => ({}) } as unknown as AgentsService,
-      undefined,
-      undefined,
-      async (o, a, refs) => {
+      agents: { get: async () => ({}) } as never,
+      resolveAttachments: async (o, a, refs) => {
         reads.push({ orgId: o, accountId: a });
         return {
           blocks: refs.map((r) => ({ type: "text" as const, text: `<resource ${r.uri}>` })),
@@ -542,8 +537,8 @@ describe("@ resources are read at queue time (decision 15)", { timeout: 30_000 }
           })),
         };
       },
-    );
-    const queue = new ConversationQueue({ db, eventLog, conversations });
+    });
+    const queue = queueFor(handlesFor(db), { eventLog, conversations });
     const connectorId = randomUUID();
     const { item } = await queue.add(orgId, conv, ownerId, {
       text: "summarize",

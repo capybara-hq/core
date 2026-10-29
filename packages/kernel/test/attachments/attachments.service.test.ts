@@ -1,14 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import {
+  ATTACHMENT_CLEANUP_SCHEDULER_ID,
   ATTACHMENT_DOWNLOAD_CACHE_SECONDS,
   ATTACHMENT_DOWNLOAD_TTL_SECONDS,
-  AttachmentsService,
   normalizeContentType,
   sniffMatches,
 } from "../../src/conversations/attachments.service.js";
-import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
+import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/maintenance.js";
 import { PrefixedStorage } from "../../src/storage/storage.service.js";
+import { attachmentsFor } from "../helpers/conversations.js";
 
 const config = KernelConfigSchema.parse({
   db: { url: "postgres://x" },
@@ -18,8 +19,7 @@ const config = KernelConfigSchema.parse({
 
 describe("AttachmentsService", () => {
   it("没有对象存储提供方：上传、finalize、下载都是 storage.unavailable（503）", async () => {
-    const svc = new AttachmentsService({
-      db: {} as KernelSchemaDb,
+    const svc = attachmentsFor({
       storage: new PrefixedStorage({ provider: () => undefined, plugins: async () => [] }),
       config: () => config,
       canAccessConversation: async () => true,
@@ -38,8 +38,7 @@ describe("AttachmentsService", () => {
 
   it("limits：允许的类型、单个上限（图片另受 MEDIA_LIMITS 限制）与每条条数；没有存储也能读", () => {
     const mk = (attachments: Record<string, unknown>) =>
-      new AttachmentsService({
-        db: {} as KernelSchemaDb,
+      attachmentsFor({
         storage: new PrefixedStorage({ provider: () => undefined, plugins: async () => [] }),
         config: () =>
           KernelConfigSchema.parse({
@@ -168,5 +167,11 @@ describe("类型核对", () => {
     expect(sniffMatches("application/pdf", s("<html>"))).toBe(false);
     expect(sniffMatches("text/plain", s("hello"))).toBe(true);
     expect(sniffMatches("text/csv", b(0x61, 0x00, 0x62))).toBe(false);
+  });
+});
+
+describe("attachment-cleanup", () => {
+  it("its old maintenance scheduler is retired (the job is an hourly @LockedCron)", () => {
+    expect(RETIRED_SCHEDULER_IDS).toContain(ATTACHMENT_CLEANUP_SCHEDULER_ID);
   });
 });

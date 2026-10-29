@@ -76,7 +76,7 @@ export function approvalsFor(
   events: KernelEvents = new KernelEvents(quiet),
 ): ApprovalsService {
   const h = handlesFor(db);
-  return new ApprovalsService(h.db, configFrom(config), { eventLog }, events, h.txHost);
+  return new ApprovalsService(h.db, configFrom(config), eventLog, events, h.txHost);
 }
 
 /** The questions over a test's Kysely and an event log; `events` gets `question.answered`. */
@@ -87,7 +87,7 @@ export function questionsFor(
   events: KernelEvents = new KernelEvents(quiet),
 ): QuestionsService {
   const h = handlesFor(db);
-  return new QuestionsService(h.db, configFrom(config), { eventLog }, events, h.txHost);
+  return new QuestionsService(h.db, configFrom(config), eventLog, events, h.txHost);
 }
 
 /** What a hand-built pipeline runs on (the shape of the old `ToolPipelineDeps`). */
@@ -114,7 +114,8 @@ export function pipelineFor(d: PipelineTestDeps): ToolPipeline {
   const onToolsChanged = d.onToolsChanged;
   return new ToolPipeline(
     h.db,
-    { eventLog: d.eventLog },
+    d.eventLog,
+    {},
     d.registry,
     d.credentials,
     d.breaker,

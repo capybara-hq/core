@@ -7,10 +7,9 @@ import { AdminModule } from "../admin/admin.module.js";
 import { AdminExtensionsController } from "../admin/extensions.controller.js";
 import { SetupController } from "../admin/setup.controller.js";
 import { AgentsController } from "../agents/agents.controller.js";
-import { AgentsService } from "../agents/agents.service.js";
+import { AgentsModule } from "../agents/agents.module.js";
 import { ModelsController } from "../agents/models.controller.js";
 import { AgentTemplatesController } from "../agents/templates.controller.js";
-import { AgentTemplatesService } from "../agents/templates.js";
 import { AdminCatalogController } from "../catalog/admin-catalog.controller.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
 import { MarketplacesController } from "../catalog/marketplaces.controller.js";
@@ -22,24 +21,19 @@ import { CatalogRequestsService } from "../catalog/requests.service.js";
 import { ChannelConnectionsController } from "../channels/connections.controller.js";
 import type { ChannelConnections } from "../channels/connections.service.js";
 import type { KernelConfig } from "../config/schema.js";
-import { ConversationArtifacts } from "../conversations/artifacts.js";
 import { AttachmentsController } from "../conversations/attachments.controller.js";
-import type { AttachmentsService } from "../conversations/attachments.service.js";
 import { ConversationsController } from "../conversations/conversations.controller.js";
-import { ConversationsService, type RunControl } from "../conversations/conversations.service.js";
-import type { EventLog } from "../conversations/event-log.js";
+import { ConversationsModule } from "../conversations/conversations.module.js";
+import { ConversationsService } from "../conversations/conversations.service.js";
 import { ConversationFiles } from "../conversations/files.js";
-import { ConversationOutputs } from "../conversations/outputs-read.js";
-import { ConversationQueue } from "../conversations/queue.js";
-import { ConversationSandboxStatus } from "../conversations/sandbox-status.js";
 import type { Keyring } from "../ctx/secrets.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import { EvalsModule } from "../evals/evals.module.js";
 import { EvalRunsController } from "../evals/runs.controller.js";
 import { type EvalQueue, EvalRunsService } from "../evals/runs.service.js";
 import { EvalSetsController } from "../evals/sets.controller.js";
 import { EvalSetsService } from "../evals/sets.service.js";
 import { TrajectoryController } from "../evals/trajectory.controller.js";
-import { TrajectoryService } from "../evals/trajectory.service.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { ExtensionHost } from "../extensions/host.js";
 import { OrgExtensionConfigsController } from "../extensions/org-config.controller.js";
@@ -69,9 +63,9 @@ import { OrgsController } from "../orgs/orgs.controller.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
 import { OrgSettingsController } from "../orgs/settings.controller.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
+import { RuntimeModule } from "../runtime/runtime.module.js";
 import { ConversationStreamController } from "../runtime/stream.controller.js";
-import { ConversationStreams, type StreamBus } from "../runtime/stream.js";
-import type { SandboxService } from "../sandbox/sandbox.service.js";
+import type { StreamBus } from "../runtime/stream.js";
 import {
   AgentSkillsController,
   InboxController,
@@ -79,7 +73,6 @@ import {
 } from "../skills/changes.controller.js";
 import { SkillChangesService } from "../skills/changes.service.js";
 import { InvocableSkillsController } from "../skills/invocable.controller.js";
-import { SkillInvoker } from "../skills/invoke.js";
 import { SkillsController } from "../skills/skills.controller.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { StorageModule } from "../storage/storage.module.js";
@@ -87,14 +80,12 @@ import { StorageService } from "../storage/storage.service.js";
 import { ApprovalsController, ToolGrantsController } from "../tools/approvals.controller.js";
 import { ApprovalsService } from "../tools/approvals.service.js";
 import { ConnectorContentController } from "../tools/connector-content.controller.js";
-import { ConnectorContent } from "../tools/connector-content.js";
 import { ConnectorsController } from "../tools/connectors.controller.js";
 import { ConversationToolInfo } from "../tools/info.js";
 import {
   OAuthCallbackController,
   OAuthConnectController,
 } from "../tools/oauth/oauth.controller.js";
-import { ToolOutputs } from "../tools/outputs.js";
 import { QuestionsController } from "../tools/questions.controller.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { ToolsModule } from "../tools/tools.module.js";
@@ -103,29 +94,17 @@ import { OrgUiStreams, orgMembership } from "../ui/ui-stream.js";
 import { UiController } from "../ui/views.controller.js";
 import { recordedCard, UiViews } from "../ui/views.js";
 import {
-  AGENT_TEMPLATES,
-  AGENTS,
-  ATTACHMENTS,
   CHANNEL_CONNECTIONS,
-  CONVERSATION_ARTIFACTS,
-  CONVERSATION_FILES,
-  CONVERSATION_OUTPUTS,
-  CONVERSATION_QUEUE,
-  CONVERSATION_SANDBOX,
-  CONVERSATION_STREAMS,
   CONVERSATION_TOOLS,
-  CONVERSATIONS,
   EMBED_TOKENS,
   EVAL_RUNS,
   EVAL_SETS,
-  EVENT_LOG,
   FILE_PREVIEWERS,
   INBOX,
   KERNEL_CONFIG,
   KERNEL_DB,
   ORG_UI_STREAMS,
   PROVIDER_REGISTRY,
-  TRAJECTORIES,
   UI_VIEWS,
 } from "./tokens.js";
 
@@ -139,23 +118,12 @@ export interface ApiDeps {
   /** 取当前配置（热更新后返回新配置）。 */
   config: () => KernelConfig;
   log: Logger;
-  /** 内核总线（命名空间 `kernel`，插件名不能取 `kernel`，不会与插件冲突）。 */
-  /** 会话事件日志（与运行 worker 共用同一实例）。 */
-  eventLog: EventLog;
   /** 模型供应商注册表（与运行 worker 共用同一实例）。 */
   registry: ProviderRegistry;
-  /** 运行投递与中止。 */
-  runs: RunControl;
   /** 渠道连接（与 `Kernel.channels.connections` 同一实例）。 */
   channels: ChannelConnections;
-  /** 对话附件（与 `Kernel.attachments` 同一实例）。 */
-  attachments: AttachmentsService;
-  /** 按对话的沙箱（与 `Kernel.sandbox` 同一实例；上下文标签读状态）。 */
-  sandbox: SandboxService;
   /** 评测队列的生产方（与 worker 同一队列名）。 */
   evalQueue: Pick<EvalQueue, "enqueue">;
-  /** 删除 agent 后投递销毁它各对话的沙箱（一次性维护任务）；不给时留给不活跃销毁扫描。 */
-  sandboxDestroy?: { destroy(conversationIds: string[]): Promise<void> };
 }
 
 /** 内核 API 的全部 controller；后续任务往这里追加。 */
@@ -205,10 +173,6 @@ const CONTROLLERS: Type[] = [
 ];
 
 /**
- * 领域服务 provider：领域类保持框架无关（不加装饰器），一律用 `useFactory` 构造。
- * 后续任务往这里追加。
- */
-/**
  * Closes a stream registry's streams when the shutdown begins (readiness answers 503 from that
  * moment), and latches it: streams opened afterwards end at once, so the HTTP phase of the stop
  * never waits on an event stream. A standalone HTTP application (`createHttpApp` without the
@@ -231,42 +195,6 @@ function serviceProviders(): Provider[] {
       provide: PROVIDER_REGISTRY,
       useFactory: (deps: ApiDeps) => deps.registry,
       inject: [API_DEPS],
-    },
-    {
-      provide: AGENT_TEMPLATES,
-      useFactory: (db: KernelSchemaDb) => new AgentTemplatesService(db),
-      inject: [KERNEL_DB],
-    },
-    {
-      provide: AGENTS,
-      useFactory: (
-        db: KernelSchemaDb,
-        registry: ProviderRegistry,
-        tools: ToolRegistry,
-        skillChanges: SkillChangesService,
-        orgLock: OrgLock,
-        deps: ApiDeps,
-      ) =>
-        new AgentsService(
-          db,
-          registry,
-          tools,
-          skillChanges,
-          orgLock,
-          deps.sandboxDestroy,
-          deps.log,
-        ),
-      inject: [KERNEL_DB, PROVIDER_REGISTRY, ToolRegistry, SkillChangesService, OrgLock, API_DEPS],
-    },
-    {
-      provide: TRAJECTORIES,
-      useFactory: (
-        db: KernelSchemaDb,
-        eventLog: EventLog,
-        prices: PricesService,
-        settings: SettingsService,
-      ) => new TrajectoryService(db, eventLog, prices, settings),
-      inject: [KERNEL_DB, EVENT_LOG, PricesService, SettingsService],
     },
     {
       provide: EVAL_SETS,
@@ -315,8 +243,6 @@ function serviceProviders(): Provider[] {
         API_DEPS,
       ],
     },
-    { provide: EVENT_LOG, useFactory: (deps: ApiDeps) => deps.eventLog, inject: [API_DEPS] },
-    { provide: ATTACHMENTS, useFactory: (deps: ApiDeps) => deps.attachments, inject: [API_DEPS] },
     {
       provide: INBOX,
       useFactory: (
@@ -332,88 +258,6 @@ function serviceProviders(): Provider[] {
       inject: [CatalogRequestsService, SkillChangesService, ApprovalsService],
     },
     {
-      provide: CONVERSATIONS,
-      useFactory: (
-        db: KernelSchemaDb,
-        eventLog: EventLog,
-        agents: AgentsService,
-        content: ConnectorContent,
-        attachments: AttachmentsService,
-        invoker: SkillInvoker,
-        deps: ApiDeps,
-      ) =>
-        new ConversationsService(
-          db,
-          eventLog,
-          agents,
-          deps.runs,
-          deps.log,
-          (orgId, accountId, refs) => content.resolveAttachments(orgId, accountId, refs),
-          (trx, orgId, conversationId, accountId, ids) =>
-            attachments.bindForMessage(trx, orgId, conversationId, accountId, ids),
-          deps.registry,
-          invoker,
-        ),
-      inject: [KERNEL_DB, EVENT_LOG, AGENTS, ConnectorContent, ATTACHMENTS, SkillInvoker, API_DEPS],
-    },
-    {
-      provide: CONVERSATION_OUTPUTS,
-      useFactory: (conversations: ConversationsService, outputs: ToolOutputs) =>
-        new ConversationOutputs({
-          isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
-          load: (scope, id) => outputs.load(scope, id),
-        }),
-      inject: [CONVERSATIONS, ToolOutputs],
-    },
-    {
-      provide: CONVERSATION_ARTIFACTS,
-      useFactory: (
-        db: KernelSchemaDb,
-        conversations: ConversationsService,
-        storage: StorageService,
-      ) =>
-        new ConversationArtifacts({
-          db,
-          storage,
-          isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
-        }),
-      inject: [KERNEL_DB, CONVERSATIONS, StorageService],
-    },
-    {
-      provide: CONVERSATION_FILES,
-      useFactory: (
-        db: KernelSchemaDb,
-        conversations: ConversationsService,
-        storage: StorageService,
-      ) =>
-        new ConversationFiles({
-          db,
-          storage,
-          isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
-        }),
-      inject: [KERNEL_DB, CONVERSATIONS, StorageService],
-    },
-    {
-      provide: CONVERSATION_QUEUE,
-      useFactory: (
-        db: KernelSchemaDb,
-        eventLog: EventLog,
-        conversations: ConversationsService,
-        deps: ApiDeps,
-      ) => new ConversationQueue({ db, eventLog, conversations, runs: deps.runs }),
-      inject: [KERNEL_DB, EVENT_LOG, CONVERSATIONS, API_DEPS],
-    },
-    {
-      provide: CONVERSATION_SANDBOX,
-      useFactory: (conversations: ConversationsService, deps: ApiDeps) =>
-        new ConversationSandboxStatus({
-          sandbox: deps.sandbox,
-          isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
-          sandboxConversationOf: (orgId, id) => conversations.sandboxConversationOf(orgId, id),
-        }),
-      inject: [CONVERSATIONS, API_DEPS],
-    },
-    {
       provide: CONVERSATION_TOOLS,
       useFactory: (
         db: KernelSchemaDb,
@@ -425,36 +269,7 @@ function serviceProviders(): Provider[] {
           registry,
           isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
         }),
-      inject: [KERNEL_DB, CONVERSATIONS, ToolRegistry],
-    },
-    {
-      provide: CONVERSATION_STREAMS,
-      useFactory: (
-        eventLog: EventLog,
-        bus: StreamBus,
-        conversations: ConversationsService,
-        config: () => KernelConfig,
-        deps: ApiDeps,
-        shutdown: GracefulShutdown | undefined,
-      ) =>
-        closeOnShutdown(
-          new ConversationStreams({
-            eventLog,
-            bus,
-            access: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
-            config,
-            log: deps.log,
-          }),
-          shutdown,
-        ),
-      inject: [
-        EVENT_LOG,
-        KERNEL_BUS,
-        CONVERSATIONS,
-        KERNEL_CONFIG,
-        API_DEPS,
-        { token: GracefulShutdown, optional: true },
-      ],
+      inject: [KERNEL_DB, ConversationsService, ToolRegistry],
     },
     {
       provide: FILE_PREVIEWERS,
@@ -473,7 +288,7 @@ function serviceProviders(): Provider[] {
           storage,
           log: deps.log,
         }),
-      inject: [KERNEL_DB, CONVERSATION_FILES, StorageService, ExtensionHost, API_DEPS],
+      inject: [KERNEL_DB, ConversationFiles, StorageService, ExtensionHost, API_DEPS],
     },
     {
       provide: UI_VIEWS,
@@ -497,7 +312,7 @@ function serviceProviders(): Provider[] {
           recordedCard: (conversationId, callId) => recordedCard(db, conversationId, callId),
           log: deps.log,
         }),
-      inject: [CONVERSATIONS, FILE_PREVIEWERS, KERNEL_DB, ExtensionHost, API_DEPS],
+      inject: [ConversationsService, FILE_PREVIEWERS, KERNEL_DB, ExtensionHost, API_DEPS],
     },
     {
       provide: EMBED_TOKENS,
@@ -564,6 +379,10 @@ export class ApiModule {
         ExtensionsModule,
         CatalogModule,
         ToolsModule,
+        AgentsModule,
+        ConversationsModule,
+        RuntimeModule,
+        EvalsModule,
       ],
       controllers: CONTROLLERS,
       providers: [deps, ...serviceProviders(), { provide: APP_GUARD, useClass: AuthGuard }],

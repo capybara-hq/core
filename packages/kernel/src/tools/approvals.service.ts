@@ -1,16 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
+import { EventLog } from "../conversations/event-log.js";
 import type { ApprovalsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { legacyCurrentTrx } from "../infra/database/legacy-view.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
-import { LegacyPorts } from "../lifecycle/legacy-ports.js";
 import { ORG_ROLES, type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import type { ApprovalPolicySource } from "./pipeline.js";
 
@@ -159,15 +158,15 @@ function canHandle(
  *
  * A decision is announced after the commit as the domain event `approval.decided` (exactly once:
  * only the decision that changed the row from pending), which the run's waits follow to resume it
- * (spec §3b; the wait sweep resumes a run whose resume was lost). The event log (Task 3.6) is read
- * through `LegacyPorts` and gets the context's transaction through `legacyCurrentTrx()` (R7, R8).
+ * (spec §3b; the wait sweep resumes a run whose resume was lost). Events are appended in the
+ * context's transaction (`EventLog.appendIn`) and published after the commit.
  */
 @Injectable()
 export class ApprovalsService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
-    @Inject(LegacyPorts) private readonly ports: Pick<LegacyPorts, "eventLog">,
+    @Inject(EventLog) private readonly eventLog: Pick<EventLog, "appendIn" | "notify">,
     @Inject(KernelEvents) private readonly events: Pick<KernelEvents, "emit">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
@@ -181,7 +180,7 @@ export class ApprovalsService {
       throw new Error("approval requires requestedFor or approverRole");
     }
     const { record, toSeq } = await this.requestIn(input);
-    await this.ports.eventLog.notify(record.conversationId, toSeq);
+    await this.eventLog.notify(record.conversationId, toSeq);
     return record;
   }
 
@@ -229,25 +228,21 @@ export class ApprovalsService {
       .where("attempt", "=", input.attempt ?? 1)
       .executeTakeFirstOrThrow();
     const rec = toRecord(row);
-    const written = await this.ports.eventLog.append(
-      rec.conversationId,
-      [
-        {
-          type: "approval_requested",
-          runId: rec.runId,
-          idemKey: `approval_requested:${rec.id}`,
-          payload: {
-            step: input.step,
-            callId: rec.callId,
-            approvalId: rec.id,
-            toolKey: rec.toolKey,
-            expiresAt: rec.expiresAt,
-            ...(input.policy !== undefined && { policy: input.policy }),
-          },
+    const written = await this.eventLog.appendIn(rec.conversationId, [
+      {
+        type: "approval_requested",
+        runId: rec.runId,
+        idemKey: `approval_requested:${rec.id}`,
+        payload: {
+          step: input.step,
+          callId: rec.callId,
+          approvalId: rec.id,
+          toolKey: rec.toolKey,
+          expiresAt: rec.expiresAt,
+          ...(input.policy !== undefined && { policy: input.policy }),
         },
-      ],
-      legacyCurrentTrx(),
-    );
+      },
+    ]);
     return { record: rec, toSeq: Math.max(...written.map((e) => e.seq)) };
   }
 
@@ -313,7 +308,7 @@ export class ApprovalsService {
     actorTokenId?: string,
   ): Promise<ApprovalRecord> {
     const { record, toSeq } = await this.decideIn(orgId, id, accountId, body, actorTokenId);
-    await this.ports.eventLog.notify(record.conversationId, toSeq);
+    await this.eventLog.notify(record.conversationId, toSeq);
     // waits resume the run and its IM delivery is enqueued (handler failures are logged)
     await this.events.emit("approval.decided", {
       id: record.id,
@@ -427,25 +422,21 @@ export class ApprovalsService {
         )
         .execute();
     }
-    const written = await this.ports.eventLog.append(
-      before.conversationId,
-      [
-        {
-          type: "approval_decided",
-          runId: before.runId,
-          idemKey: `approval_decided:${id}`,
-          payload: {
-            approvalId: id,
-            callId: before.callId,
-            decision: approved ? "approved" : "denied",
-            ...(scope !== null && { scope }),
-            byAccountId: accountId,
-            ...(reason !== undefined && { reason }),
-          },
+    const written = await this.eventLog.appendIn(before.conversationId, [
+      {
+        type: "approval_decided",
+        runId: before.runId,
+        idemKey: `approval_decided:${id}`,
+        payload: {
+          approvalId: id,
+          callId: before.callId,
+          decision: approved ? "approved" : "denied",
+          ...(scope !== null && { scope }),
+          byAccountId: accountId,
+          ...(reason !== undefined && { reason }),
         },
-      ],
-      legacyCurrentTrx(),
-    );
+      },
+    ]);
     await audit(t, {
       actorAccountId: accountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
@@ -506,7 +497,7 @@ export class ApprovalsService {
   }> {
     const r = await this.expireIn(id);
     if ("toSeq" in r && r.toSeq !== undefined && r.record) {
-      await this.ports.eventLog.notify(r.record.conversationId, r.toSeq);
+      await this.eventLog.notify(r.record.conversationId, r.toSeq);
     }
     return r.record ? { outcome: r.outcome, record: r.record } : { outcome: r.outcome };
   }
@@ -609,18 +600,14 @@ export class ApprovalsService {
     a: ApprovalRecord,
     decision: "expired" | "cancelled",
   ): Promise<number> {
-    const written = await this.ports.eventLog.append(
-      a.conversationId,
-      [
-        {
-          type: "approval_decided",
-          runId: a.runId,
-          idemKey: `approval_decided:${a.id}`,
-          payload: { approvalId: a.id, callId: a.callId, decision, byAccountId: null },
-        },
-      ],
-      legacyCurrentTrx(),
-    );
+    const written = await this.eventLog.appendIn(a.conversationId, [
+      {
+        type: "approval_decided",
+        runId: a.runId,
+        idemKey: `approval_decided:${a.id}`,
+        payload: { approvalId: a.id, callId: a.callId, decision, byAccountId: null },
+      },
+    ]);
     return Math.max(...written.map((e) => e.seq));
   }
 

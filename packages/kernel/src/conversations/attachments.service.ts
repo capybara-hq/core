@@ -2,19 +2,25 @@ import { randomUUID } from "node:crypto";
 import {
   IMAGE_MEDIA_TYPES,
   type ImageMediaType,
-  type Logger,
   MEDIA_LIMITS,
   type PresignedUpload,
 } from "@capybara-hq/plugin-sdk";
-import { sql, type Transaction } from "kysely";
-import type { KernelConfig } from "../config/schema.js";
-import type { AttachmentPurpose, KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
+import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
+import type { AttachmentPurpose } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { LockService } from "../infra/lock/lock.service.js";
+import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 import type { MediaBytes, MediaInfo } from "../runtime/context/build.js";
-import type { StorageService } from "../storage/storage.service.js";
+import { StorageService } from "../storage/storage.service.js";
+import { ConversationAccess } from "./access.js";
 import type { LogContentBlock } from "./events.js";
-
-type Trx = Transaction<KernelDatabase>;
 
 /** 预签名上传的有效期（秒）。尽量短：表单在有效期内可被再次使用（内容替换由 etag 核对兜底）。 */
 export const ATTACHMENT_UPLOAD_TTL_SECONDS = 300;
@@ -42,10 +48,10 @@ export const SKILL_PACKAGE_TTL_HOURS = 1;
  */
 export const skillFilesPrefix = (uploadId: string) => `skills/${uploadId}/`;
 
-/** 维护任务：清理过期未绑定的附件（任务名与 scheduler id 不含 `:`）。 */
+/** 周期任务：每小时清理过期未绑定的附件（`@LockedCron`）。 */
 export const ATTACHMENT_CLEANUP_JOB = "attachment-cleanup";
+/** The retired BullMQ repeatable scheduler of the cleanup (removed from Redis at worker start). */
 export const ATTACHMENT_CLEANUP_SCHEDULER_ID = "attachment-cleanup-hourly";
-export const ATTACHMENT_CLEANUP_EVERY_MS = 3_600_000;
 /** 每批认领的行数。 */
 const CLEANUP_BATCH = 100;
 /** finalize 时读取开头多少字节核对文件签名。 */
@@ -89,19 +95,6 @@ export interface CreatedAttachment {
   upload: PresignedUpload;
   /** 预签名上传的过期时间（ISO 8601）。 */
   expiresAt: string;
-}
-
-export interface AttachmentsDeps {
-  db: KernelSchemaDb;
-  storage: StorageService;
-  config: () => KernelConfig;
-  /** viewer 能否访问该会话（与会话流相同的规则）。 */
-  canAccessConversation: (
-    orgId: string,
-    conversationId: string,
-    viewerAccountId: string,
-  ) => Promise<boolean>;
-  log: Pick<Logger, "info" | "warn">;
 }
 
 const notFound = () => new ApiError("attachment.not_found", "Attachment not found");
@@ -161,12 +154,22 @@ async function readAll(body: ReadableStream<Uint8Array>): Promise<Uint8Array> {
  * 字节只在对象存储（`kernel/<orgId>/attachments/<id>`），日志里只有引用；构建模型请求时经 {@link fetchMedia} 取字节。
  * 无进程内状态，可多副本共用。
  */
+@Injectable()
 export class AttachmentsService {
-  constructor(private readonly d: AttachmentsDeps) {}
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(StorageService)
+    private readonly storage: Pick<StorageService, "available" | "assertAvailable" | "kernel">,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    /** viewer 能否访问该会话（与会话流相同的规则）。 */
+    @Inject(ConversationAccess) private readonly access: Pick<ConversationAccess, "isAccessible">,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "info" | "warn">,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {}
 
   /** 单个附件的大小上限：配置的 `maxBytes`，图片再受 `MEDIA_LIMITS.imageBytes` 限制。 */
   private limitFor(contentType: string): number {
-    const { maxBytes } = this.d.config().attachments;
+    const { maxBytes } = this.config.get().attachments;
     return Math.min(
       maxBytes,
       isImage(contentType) ? MEDIA_LIMITS.imageBytes : MEDIA_LIMITS.documentBytes,
@@ -175,14 +178,14 @@ export class AttachmentsService {
 
   /** 当前配置下的上限（不需要对象存储）。 */
   limits(): AttachmentLimits {
-    const cfg = this.d.config().attachments;
+    const cfg = this.config.get().attachments;
     return {
       types: [...cfg.allowedTypes],
       maxBytes: Math.min(cfg.maxBytes, MEDIA_LIMITS.documentBytes),
       imageMaxBytes: Math.min(cfg.maxBytes, MEDIA_LIMITS.imageBytes),
       maxPerMessage: cfg.maxPerMessage,
       requestMediaBytes: cfg.requestMediaBytes,
-      available: this.d.storage.available,
+      available: this.storage.available,
     };
   }
 
@@ -198,8 +201,8 @@ export class AttachmentsService {
     input: { name: string; contentType: string; size: number },
     purpose: AttachmentPurpose = "chat",
   ): Promise<CreatedAttachment> {
-    this.d.storage.assertAvailable();
-    const cfg = this.d.config().attachments;
+    this.storage.assertAvailable();
+    const cfg = this.config.get().attachments;
     const contentType = normalizeContentType(input.contentType);
     const skill = purpose === "skill-package";
     if (
@@ -219,7 +222,7 @@ export class AttachmentsService {
         `Attachment is ${input.size} bytes, over the limit of ${limit} bytes`,
       );
     }
-    const pending = await this.d.db
+    const pending = await this.db
       .selectFrom("attachments")
       .select((eb) => eb.fn.countAll<string>().as("n"))
       .where("org_id", "=", orgId)
@@ -237,12 +240,12 @@ export class AttachmentsService {
     const id = randomUUID();
     const key = objectKey(id, purpose);
     const ttlHours = skill ? SKILL_PACKAGE_TTL_HOURS : cfg.unboundTtlHours;
-    const upload = await this.d.storage.kernel(orgId).presignPut(key, {
+    const upload = await this.storage.kernel(orgId).presignPut(key, {
       contentType,
       maxSize: input.size,
       ttlSeconds: ATTACHMENT_UPLOAD_TTL_SECONDS,
     });
-    await this.d.db
+    await this.db
       .insertInto("attachments")
       .values({
         id,
@@ -271,8 +274,8 @@ export class AttachmentsService {
    * - 存储记录的类型或文件开头的签名与声明不符 → 删除对象，`attachment.type_not_allowed`。
    */
   async finalize(orgId: string, accountId: string, id: string): Promise<AttachmentView> {
-    this.d.storage.assertAvailable();
-    const row = await this.d.db
+    this.storage.assertAvailable();
+    const row = await this.db
       .selectFrom("attachments")
       .select(["id", "name", "content_type", "size", "object_key", "status"])
       .where("id", "=", id)
@@ -288,7 +291,7 @@ export class AttachmentsService {
       size: Number(row.size),
     };
     if (row.status === "ready") return view;
-    const store = this.d.storage.kernel(orgId);
+    const store = this.storage.kernel(orgId);
     const head = await store.head(row.object_key);
     if (!head) {
       throw new ApiError("attachment.not_ready", "The file has not been uploaded yet");
@@ -328,7 +331,7 @@ export class AttachmentsService {
         ),
       );
     }
-    await this.d.db
+    await this.db
       .updateTable("attachments")
       .set({ status: "ready", etag: got?.head.etag ?? head.etag ?? null, pages })
       .where("id", "=", id)
@@ -343,8 +346,8 @@ export class AttachmentsService {
    * （即使存储里的类型被改成 text/html 也不会在页面里渲染）；响应类型按 finalize 核对过的类型返回。
    */
   async downloadUrl(orgId: string, accountId: string, id: string): Promise<string> {
-    this.d.storage.assertAvailable();
-    const row = await this.d.db
+    this.storage.assertAvailable();
+    const row = await this.db
       .selectFrom("attachments")
       .select(["account_id", "conversation_id", "name", "content_type", "object_key", "etag"])
       .where("id", "=", id)
@@ -356,9 +359,9 @@ export class AttachmentsService {
     const allowed =
       row.conversation_id === null
         ? row.account_id === accountId
-        : await this.d.canAccessConversation(orgId, row.conversation_id, accountId);
+        : await this.access.isAccessible(orgId, row.conversation_id, accountId);
     if (!allowed) throw notFound();
-    const store = this.d.storage.kernel(orgId);
+    const store = this.storage.kernel(orgId);
     const head = await store.head(row.object_key);
     if (!head || !this.sameContent(row.etag, head.etag, { orgId, attachmentId: id })) {
       throw notFound();
@@ -379,7 +382,7 @@ export class AttachmentsService {
     orgId: string,
     conversationId: string,
   ): Promise<{ id: string; name: string }[]> {
-    return this.d.db
+    return this.db
       .selectFrom("attachments")
       .select(["id", "name"])
       .where("org_id", "=", orgId)
@@ -400,7 +403,7 @@ export class AttachmentsService {
     conversationId: string,
     attachmentId: string,
   ): Promise<OpenedAttachment | null> {
-    const row = await this.d.db
+    const row = await this.db
       .selectFrom("attachments")
       .select(["name", "content_type", "object_key", "size", "etag"])
       .where("id", "=", attachmentId)
@@ -410,7 +413,7 @@ export class AttachmentsService {
       .where("status", "=", "ready")
       .executeTakeFirst();
     if (!row) return null;
-    const got = await this.d.storage.kernel(orgId).get(row.object_key);
+    const got = await this.storage.kernel(orgId).get(row.object_key);
     if (!got) return null;
     const size = Number(row.size);
     if (
@@ -431,15 +434,15 @@ export class AttachmentsService {
    * 后两种的 details 为 `[{ path: "files", message, attachmentId }]`，网页据此标出对应条目。
    * 已绑定到本会话的（重试）照常返回块。
    */
+  @Transactional({ propagation: "mandatory" })
   async bindForMessage(
-    trx: Trx,
     orgId: string,
     conversationId: string,
     accountId: string,
     ids: readonly string[],
   ): Promise<LogContentBlock[]> {
     const unique = [...new Set(ids)];
-    const max = this.d.config().attachments.maxPerMessage;
+    const max = this.config.get().attachments.maxPerMessage;
     if (ids.length > max) {
       throw new ApiError("validation_failed", "Request validation failed", [
         { path: "files", message: `At most ${max} files per message` },
@@ -451,6 +454,7 @@ export class AttachmentsService {
       ]);
     }
     if (unique.length === 0) return [];
+    const trx = this.db.db;
     const rows = await trx
       .selectFrom("attachments")
       .select([
@@ -525,7 +529,7 @@ export class AttachmentsService {
     where: { orgId: string; attachmentId: string; conversationId?: string },
   ): boolean {
     if (recorded === null || recorded === (current ?? null)) return true;
-    this.d.log.warn("attachment content changed after finalize; treating it as unavailable", where);
+    this.log.warn("attachment content changed after finalize; treating it as unavailable", where);
     return false;
   }
 
@@ -539,7 +543,7 @@ export class AttachmentsService {
     ids: readonly string[],
   ): Promise<Map<string, MediaInfo>> {
     if (ids.length === 0) return new Map();
-    const rows = await this.d.db
+    const rows = await this.db
       .selectFrom("attachments")
       .select(["id", "size", "pages", "etag"])
       .where("org_id", "=", orgId)
@@ -564,7 +568,7 @@ export class AttachmentsService {
   ): Promise<Map<string, MediaBytes | null>> {
     const out = new Map<string, MediaBytes | null>();
     if (ids.length === 0) return out;
-    const rows = await this.d.db
+    const rows = await this.db
       .selectFrom("attachments")
       .select(["id", "content_type", "object_key", "size", "etag"])
       .where("org_id", "=", orgId)
@@ -574,7 +578,7 @@ export class AttachmentsService {
       .where("id", "in", [...ids])
       .execute();
     const byId = new Map(rows.map((r) => [r.id, r]));
-    const store = this.d.storage.kernel(orgId);
+    const store = this.storage.kernel(orgId);
     await Promise.all(
       ids.map(async (id) => {
         const r = byId.get(id);
@@ -589,7 +593,7 @@ export class AttachmentsService {
         const where = { orgId, conversationId, attachmentId: id };
         if (got.head.size !== Number(r.size) || !this.sameContent(r.etag, got.head.etag, where)) {
           if (got.head.size !== Number(r.size)) {
-            this.d.log.warn(
+            this.log.warn(
               "attachment size changed after finalize; treating it as unavailable",
               where,
             );
@@ -613,8 +617,8 @@ export class AttachmentsService {
    * 对象已不在或内容与 finalize 时不符 → `attachment.not_found`。
    */
   async readSkillPackage(orgId: string, accountId: string, id: string): Promise<Uint8Array> {
-    this.d.storage.assertAvailable();
-    const row = await this.d.db
+    this.storage.assertAvailable();
+    const row = await this.db
       .selectFrom("attachments")
       .select(["status", "purpose", sql<boolean>`expires_at <= now()`.as("expired")])
       .where("id", "=", id)
@@ -625,7 +629,7 @@ export class AttachmentsService {
       throw notFound();
     }
     if (row.status === "pending") await this.finalize(orgId, accountId, id);
-    const live = await this.d.db
+    const live = await this.db
       .updateTable("attachments")
       .set({ expires_at: sql<Date>`now() + make_interval(hours => ${SKILL_PACKAGE_TTL_HOURS})` })
       .where("id", "=", id)
@@ -634,7 +638,7 @@ export class AttachmentsService {
       .returning(["object_key", "size", "etag"])
       .executeTakeFirst();
     if (!live) throw notFound();
-    const got = await this.d.storage.kernel(orgId).get(live.object_key);
+    const got = await this.storage.kernel(orgId).get(live.object_key);
     if (!got) throw notFound();
     if (
       got.head.size !== Number(live.size) ||
@@ -650,7 +654,9 @@ export class AttachmentsService {
    * 在调用方事务里把技能包上传标记为已用掉（行锁；之后由清理任务删 zip，解出的文件因被版本引用而保留）。
    * 不是该账号的 ready 技能包（如已被并发的请求用掉）→ `attachment.not_found`。
    */
-  async consumeSkillPackage(trx: Trx, orgId: string, accountId: string, id: string): Promise<void> {
+  @Transactional({ propagation: "mandatory" })
+  async consumeSkillPackage(orgId: string, accountId: string, id: string): Promise<void> {
+    const trx = this.db.db;
     const row = await trx
       .selectFrom("attachments")
       .select("status")
@@ -676,17 +682,17 @@ export class AttachmentsService {
    * 没有对象存储时什么也不做。返回删除的附件数。
    */
   async deleteExpired(): Promise<number> {
-    if (!this.d.storage.available) return 0;
+    if (!this.storage.available) return 0;
     let deleted = 0;
     const failed: string[] = [];
     for (;;) {
-      const claimed = await this.d.db
+      const claimed = await this.db
         .updateTable("attachments")
         .set({ status: "deleting" })
         .where(
           "id",
           "in",
-          this.d.db
+          this.db
             .selectFrom("attachments")
             .select("id")
             .where("conversation_id", "is", null)
@@ -702,19 +708,19 @@ export class AttachmentsService {
       if (claimed.length === 0) return deleted;
       for (const r of claimed) {
         try {
-          const store = this.d.storage.kernel(r.org_id);
+          const store = this.storage.kernel(r.org_id);
           await store.delete(r.object_key);
           if (r.purpose === "skill-package") {
             // 解出的文件没被任何版本引用（处理中途失败、或从未用掉）才删
             const prefix = skillFilesPrefix(r.id);
-            const used = await this.d.db
+            const used = await this.db
               .selectFrom("skill_versions")
               .select("skill_id")
               .where("object_prefix", "=", prefix)
               .executeTakeFirst();
             if (!used) await store.deletePrefix(prefix);
           }
-          await this.d.db
+          await this.db
             .deleteFrom("attachments")
             .where("id", "=", r.id)
             .where("conversation_id", "is", null)
@@ -722,7 +728,7 @@ export class AttachmentsService {
           deleted++;
         } catch (err) {
           failed.push(r.id);
-          this.d.log.warn("cannot delete expired attachment; will retry", {
+          this.log.warn("cannot delete expired attachment; will retry", {
             orgId: r.org_id,
             attachmentId: r.id,
             err,
@@ -731,5 +737,22 @@ export class AttachmentsService {
       }
       if (claimed.length < CLEANUP_BATCH) return deleted;
     }
+  }
+}
+
+/** The hourly cleanup of expired unbound attachments, once per tick across replicas. */
+@Injectable()
+export class AttachmentCleanupJob {
+  constructor(
+    @Inject(AttachmentsService)
+    private readonly attachments: Pick<AttachmentsService, "deleteExpired">,
+    @Inject(LockService) readonly lockService: LockService,
+    @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
+  ) {}
+
+  @LockedCron("0 * * * *", { name: ATTACHMENT_CLEANUP_JOB })
+  async run(): Promise<void> {
+    const n = await this.attachments.deleteExpired();
+    if (n > 0) this.log.info("expired attachments deleted", { count: n });
   }
 }

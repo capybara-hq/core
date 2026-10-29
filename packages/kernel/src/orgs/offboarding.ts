@@ -2,6 +2,7 @@ import { DIRECTORY_EXTENSION_POINT } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
+import { EventLog } from "../conversations/event-log.js";
 import { ApiError } from "../errors.js";
 import { enabledExtensionsQuery } from "../extensions/enabled.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
@@ -83,8 +84,8 @@ const DIRECTORY_SOURCE_PREFIX = "directory:";
  * 个人凭据重新写回（upsert）。凭据只在此人以成员身份调用工具时使用，而其运行已被中止、成员关系已删除，
  * 残留的凭据不会被使用；重新加入组织后会被新的连接覆盖。
  *
- * The collaborators of directories not converted yet (the event log, run control, sandbox
- * destruction) are read from {@link LegacyPorts} at call time.
+ * The collaborators of directories not converted yet (run control: Task 3.6b; sandbox
+ * destruction: Task 3.8) are read from {@link LegacyPorts} at call time.
  */
 @Injectable()
 export class Offboarding {
@@ -94,6 +95,7 @@ export class Offboarding {
     @Inject(SessionService) private readonly sessions: Pick<SessionService, "markRevoked">,
     @Inject(REDIS) private readonly redis: Pick<Redis, "set" | "exists">,
     @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "list">,
+    @Inject(EventLog) private readonly eventLog: Pick<EventLog, "notify" | "publishChanged">,
     @Inject(LegacyPorts) private readonly ports: LegacyPorts,
     @Inject(Credentials) private readonly credentials: Pick<Credentials, "clearAccount">,
     @Inject(ApprovalsService)
@@ -373,8 +375,7 @@ export class Offboarding {
    * logs a warning.
    */
   async afterOffboard(r: OffboardResult): Promise<void> {
-    const { sessions, log } = this;
-    const eventLog = this.ports.eventLog;
+    const { sessions, log, eventLog } = this;
     try {
       await sessions.markRevoked(r.revokedSessionIds);
     } catch (err) {

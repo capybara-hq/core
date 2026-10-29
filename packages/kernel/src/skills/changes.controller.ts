@@ -1,7 +1,7 @@
 import { Controller, Delete, Get, HttpCode, Inject, Param, Post } from "@nestjs/common";
 import { z } from "zod";
-import type { AgentsService } from "../agents/agents.service.js";
-import { AGENTS, INBOX } from "../http/tokens.js";
+import { AgentsService } from "../agents/agents.service.js";
+import { INBOX } from "../http/tokens.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -74,7 +74,7 @@ export class SkillChangesController {
 export class AgentSkillsController {
   constructor(
     @Inject(SkillChangesService) private readonly changes: SkillChangesService,
-    @Inject(AGENTS) private readonly agents: AgentsService,
+    @Inject(AgentsService) private readonly agents: AgentsService,
     @Inject(SkillsService) private readonly skills: SkillsService,
   ) {}
 

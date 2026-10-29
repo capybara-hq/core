@@ -64,11 +64,9 @@ export async function finishRunIn(
     .executeTakeFirst();
   if (!run || TERMINAL_STATUSES.has(run.status)) return null;
   await a.beforeTerminal?.(t);
-  const [ev] = await eventLog.append(
-    a.conversationId,
-    [{ ...a.event, runId: a.runId, idemKey: `${a.event.type}:${a.runId}` }],
-    t,
-  );
+  const [ev] = await eventLog.appendIn(a.conversationId, [
+    { ...a.event, runId: a.runId, idemKey: `${a.event.type}:${a.runId}` },
+  ]);
   await t
     .updateTable("conversations")
     .set({

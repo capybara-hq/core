@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { EventLogModule } from "../conversations/event-log.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { IdentityModule } from "../identity/identity.module.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
@@ -19,6 +20,8 @@ import { OrgSettingsService } from "./settings.service.js";
 @Module({
   imports: [
     IdentityModule,
+    // offboarding publishes the events it cancelled
+    EventLogModule,
     OrgLockModule,
     ExtensionsModule,
     // offboarding clears credentials and cancels approvals and questions

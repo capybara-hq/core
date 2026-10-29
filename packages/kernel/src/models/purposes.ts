@@ -8,8 +8,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { z } from "zod";
-import { paramIssues } from "../agents/agents.service.js";
-import { ModelRef } from "../agents/definition.js";
+import { ModelRef, paramIssues } from "../agents/definition.js";
 import { ApiError } from "../errors.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";

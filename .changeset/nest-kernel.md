@@ -155,3 +155,31 @@ start, as the old scheduler's first run; a repeated scan in a period enqueues no
 `output-cleanup` an hourly `@LockedCron` (its first run moved to the next top of the hour); their
 old maintenance schedulers are removed when a worker starts. One-off `drift-connector` jobs keep
 their names and job ids. The OAuth refresh lock uses the `LockService` lease primitives (same key).
+
+Conversations and agents are Nest modules (`ConversationsModule`, `AgentsModule`, with the small
+`EventLogModule`, `ConversationAccessModule`, `AttachmentsModule` and `AgentLookupModule` the
+skills and tools import): `EventLog`, `ConversationAccess`, `AttachmentsService`,
+`ConversationsService` (one instance: the API's, IM inbound's and the attachments' were three),
+`ConversationQueue` (now in `conversations/queue.service.ts`), `ConversationOutputs`,
+`ConversationArtifacts`, `ConversationFiles`, `ConversationSandboxStatus`, `AgentsService` (one
+instance), `AgentLookup` (the viewer reads of agents), `AgentTemplatesService`, `TrajectoryService`,
+`ConversationLock` and `ConversationStreams` are injectable providers. Export changes: their
+constructors take the kernel's providers (`AttachmentsDeps`, `ConversationQueueDeps`,
+`ConversationFilesDeps`, `ConversationArtifactsDeps`, `ConversationOutputsDeps`,
+`ConversationSandboxStatusDeps`, `ResolveAttachments` and `BindFiles` are removed);
+`EventLog.append(conversationId, events)` always appends in its own transaction and publishes after
+the commit, and `EventLog.appendIn(conversationId, events)` appends in the caller's transaction
+(it must hold one; the caller notifies after the commit), replacing the optional `trx` argument;
+`AttachmentsService.bindForMessage` / `consumeSkillPackage` and `ConversationsService.bindIn` join
+the caller's transaction (no `trx` argument); `ConversationsService.checkFilesSupported` is gone
+(files are always supported); `paramIssues` and `SUBAGENT_ROSTER_MAX` moved to
+`agents/definition.ts` and `visibleTo` / `isAgentVisibleTo` / `AGENT_VISIBILITIES` to
+`agents/agent-lookup.ts` (all still re-exported by `agents.service.ts`). The event log's advance is
+announced in-process as `conversation.event-appended` (`KernelEvents`), from which the channel
+outbound delivery is enqueued, on the same replica, right after the bus publish, as the old direct
+hook did. The conversation run lock is a lease of `LockService` (`LockService.hold`: same key
+`capk:conv-run:<id>`, the run id as its value, renewed every TTL/3); a renewal that keeps failing
+until the key would expire now marks the lease lost (handled as when another holder took the key)
+instead of renewing on. The channel delivery lock is the same lease under its own prefix. The
+hourly `attachment-cleanup` is a `@LockedCron` (its first run moved to the next top of the hour);
+its old maintenance scheduler is removed when a worker starts.

@@ -7,7 +7,6 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import type { INestApplication } from "@nestjs/common";
 import type { Redis } from "ioredis";
-import { AgentsService } from "./agents/agents.service.js";
 import { buildKernelApp, closeKernelApp, type KernelAppOptions } from "./app.js";
 import { CatalogService } from "./catalog/catalog.service.js";
 import { MarketplacesService } from "./catalog/marketplaces.service.js";
@@ -24,17 +23,12 @@ import {
 } from "./channels/supervisor.js";
 import { ChannelWebhooks } from "./channels/webhook.js";
 import type { KernelConfig } from "./config/schema.js";
-import {
-  ATTACHMENT_CLEANUP_EVERY_MS,
-  ATTACHMENT_CLEANUP_JOB,
-  ATTACHMENT_CLEANUP_SCHEDULER_ID,
-  AttachmentsService,
-} from "./conversations/attachments.service.js";
-import { ConversationsService } from "./conversations/conversations.service.js";
+import { AttachmentsService } from "./conversations/attachments.service.js";
+import type { ConversationsService } from "./conversations/conversations.service.js";
 import {
   type ConversationBusMessage,
   conversationTopic,
-  EventLog,
+  type EventLog,
 } from "./conversations/event-log.js";
 import { TitleQueue } from "./conversations/titles.js";
 import { createKeyring } from "./ctx/secrets.js";
@@ -79,7 +73,7 @@ import { Offboarding } from "./orgs/offboarding.js";
 import type { OrgLock } from "./orgs/org-lock.js";
 import { RunAbort } from "./runtime/abort.js";
 import { KyselyCheckpointSaver } from "./runtime/checkpointer.js";
-import { ConversationLock } from "./runtime/conversation-lock.js";
+import type { ConversationLock } from "./runtime/conversation-lock.js";
 import { LangGraphLoop, type LoopDeps } from "./runtime/langgraph-loop.js";
 import type { AgentLoop } from "./runtime/loop.js";
 import { Maintenance } from "./runtime/maintenance.js";
@@ -346,6 +340,8 @@ export interface LegacyGraph
     | "marketplaces"
     // Task 3.5
     | "tools"
+    // Task 3.6a
+    | "attachments"
   > {
   /** The kernel-schema view of the pool. */
   readonly kdb: KernelSchemaDb;
@@ -398,6 +394,12 @@ export interface ConvertedProviders {
   questions: QuestionsService;
   toolDrift: ToolDrift;
   toolPipeline: ToolPipeline;
+  // Task 3.6a
+  eventLog: EventLog;
+  conversationLock: ConversationLock;
+  attachments: AttachmentsService;
+  /** The one conversations service (ChannelInbound posts IM messages and skill invocations). */
+  conversations: ConversationsService;
 }
 
 /**
@@ -414,7 +416,7 @@ export function createLegacyGraph(
   hooks: KernelTestHooks,
   converted: ConvertedProviders,
 ): LegacyGraph {
-  const { storage, purposes, skillChanges, skillsCatalog, skillInvoker } = converted;
+  const { purposes, skillsCatalog, skillInvoker } = converted;
   const config = configService.get();
   /** The current config (hot fields applied). */
   const cfg = (): KernelConfig => configService.get();
@@ -423,9 +425,14 @@ export function createLegacyGraph(
     config.masterKeyPrevious.map((k) => Buffer.from(k, "base64")),
   );
   const kdb = legacyKernelView(kernelDbHandle, converted.txHost);
-  const { host, replicaStatus, orgLock } = converted;
-  // 每次日志推进后给有 IM 投递目标的会话排出站任务（任务追上后空闲即结束，之后的事件靠这里续上）
-  const eventLog = new EventLog(kdb, bus, log, (conversationId) => enqueueOutbound(conversationId));
+  const { host, replicaStatus, orgLock, eventLog, attachments } = converted;
+  // EventAppended (spec §3 cycle "event log → channel outbound"): every published log advance
+  // enqueues the conversation's IM delivery when it has a target (the job ends once idle after
+  // catching up; later events start it again from here). Same replica, right after the bus
+  // publish, in append order: what the event log's direct notify hook did.
+  converted.events.on("conversation.event-appended", ({ conversationId }) =>
+    enqueueOutbound(conversationId),
+  );
   const registry = new ProviderRegistry(host, redis, log);
   const { toolRegistry, approvals, questions, toolDrift, toolPipeline } = converted;
   // A decided approval / answered question resumes the waiting run on this replica and enqueues
@@ -439,26 +446,6 @@ export function createLegacyGraph(
     enqueueOutbound(q.conversationId);
   });
   const maintenance = new Maintenance({ db: kdb, redisUrl: config.redis.url, log });
-  // 对话附件：下载权限同会话流（只用 isAccessible，一条查询）；未绑定的过期附件由维护任务每小时清理
-  const agents = new AgentsService(kdb, registry, toolRegistry, skillChanges, orgLock);
-  const conversationAccess = new ConversationsService(kdb, eventLog, agents);
-  const attachments = new AttachmentsService({
-    db: kdb,
-    storage,
-    config: cfg,
-    canAccessConversation: (orgId, id, viewer) =>
-      conversationAccess.isAccessible(orgId, id, viewer),
-    log,
-  });
-  maintenance.handle(ATTACHMENT_CLEANUP_JOB, async () => {
-    const n = await attachments.deleteExpired();
-    if (n > 0) log.info("expired attachments deleted", { count: n });
-  });
-  maintenance.schedule({
-    id: ATTACHMENT_CLEANUP_SCHEDULER_ID,
-    name: ATTACHMENT_CLEANUP_JOB,
-    everyMs: () => ATTACHMENT_CLEANUP_EVERY_MS,
-  });
   // 沙箱：提供方在 host.load() 之后才就绪，按调用时取；休眠与销毁由维护队列扫描
   const sandbox = new SandboxService({
     db: kdb,
@@ -483,7 +470,7 @@ export function createLegacyGraph(
     const { orgId, connectorId, trigger } = job.data as DriftConnectorJobData;
     await toolDrift.check(orgId, connectorId, trigger);
   });
-  const lock = new ConversationLock(redis, log);
+  const lock = converted.conversationLock;
   const quota = new OrgQuota(redis);
   const abort = new RunAbort(redis, bus);
   const checkpoints = new KyselyCheckpointSaver(kdb);
@@ -554,6 +541,7 @@ export function createLegacyGraph(
     redisUrl: config.redis.url,
     bus,
     eventLog,
+    lock,
     connections: channelConnections,
     approvals,
     questions,
@@ -576,17 +564,7 @@ export function createLegacyGraph(
       redis,
       connections: channelConnections,
       // phase D: `/name args` in IM goes through the same skill invocation as the web
-      conversations: new ConversationsService(
-        kdb,
-        eventLog,
-        new AgentsService(kdb, registry, toolRegistry, skillChanges, orgLock),
-        runControl,
-        log,
-        undefined,
-        undefined,
-        undefined,
-        skillInvoker,
-      ),
+      conversations: converted.conversations,
       external: converted.external,
       binding: converted.binding,
       directorySync: converted.directory,
@@ -599,10 +577,8 @@ export function createLegacyGraph(
   };
   // R7: the legacy instances converted providers read at call time
   converted.ports.bind({
-    eventLog,
-    attachments,
     providers: registry,
-    agents,
+    runs: runControl,
     sandbox,
     // sub-agents (phase C): `agent` calls dispatch child runs onto their own queue
     subagentDispatch: (a) =>
@@ -857,14 +833,9 @@ export function createLegacyGraph(
     keyring,
     config: cfg,
     log,
-    eventLog,
     registry,
     channels: channelConnections,
-    runs: runControl,
-    attachments,
-    sandbox,
     evalQueue,
-    sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
   };
   return {
     kdb,
@@ -879,7 +850,6 @@ export function createLegacyGraph(
     bus,
     runs,
     channels,
-    attachments,
     sandbox,
     log,
   };
@@ -950,7 +920,7 @@ export async function createKernel(
     },
     channels: g.channels,
     storage: app.get(StorageService),
-    attachments: g.attachments,
+    attachments: app.get(AttachmentsService),
     skills: app.get(SkillsService),
     skillChanges: app.get(SkillChangesService),
     prices: app.get(PricesService),

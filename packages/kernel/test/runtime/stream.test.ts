@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { ApiError } from "../../src/errors.js";
-import { ConversationStreams, type SseOutput, type StreamBus } from "../../src/runtime/stream.js";
+import {
+  ConversationStreams,
+  type ConversationStreamsDeps,
+  type SseOutput,
+  type StreamBus,
+} from "../../src/runtime/stream.js";
 
 const config = KernelConfigSchema.parse({
   db: { url: "postgres://x" },
@@ -35,12 +40,21 @@ const params = {
   credential: async () => null,
 };
 
+/** The provider over test doubles (its constructor takes the injected dependencies). */
+const streamsWith = (
+  d: Omit<ConversationStreamsDeps, "config" | "eventLog"> & {
+    eventLog: ConversationStreamsDeps["eventLog"];
+    config: () => typeof config;
+  },
+) =>
+  new ConversationStreams(d.eventLog, d.bus, { isAccessible: d.access }, { get: d.config }, d.log);
+
 const flush = () => new Promise((r) => setTimeout(r, 10));
 
 describe("ConversationStreams", () => {
   it("订阅失败：抛出原错误，且不碰输出端（由 HTTP 层按普通错误返回）", async () => {
     const out = output();
-    const streams = new ConversationStreams({
+    const streams = streamsWith({
       eventLog: { readAfter: async () => [] },
       bus: busWith(async () => {
         throw new Error("redis down");
@@ -58,7 +72,7 @@ describe("ConversationStreams", () => {
 
   it("不可见：conversation.not_found，不订阅", async () => {
     const subscribe = vi.fn(async () => async () => {});
-    const streams = new ConversationStreams({
+    const streams = streamsWith({
       eventLog: { readAfter: async () => [] },
       bus: busWith(subscribe),
       access: async () => false,
@@ -79,7 +93,7 @@ describe("ConversationStreams", () => {
     out.write.mockImplementation((c: string) => {
       pending += c.length;
     });
-    const streams = new ConversationStreams({
+    const streams = streamsWith({
       eventLog: { readAfter: async () => [] },
       bus: busWith(async (_t, h) => {
         handler = h;
@@ -104,7 +118,7 @@ describe("ConversationStreams", () => {
 
   it("内部故障（补读失败）：销毁连接", async () => {
     const out = output();
-    const streams = new ConversationStreams({
+    const streams = streamsWith({
       eventLog: {
         readAfter: async () => {
           throw new Error("pg down");
@@ -124,7 +138,7 @@ describe("ConversationStreams", () => {
 
   it("停机 closeAll：正常 end", async () => {
     const out = output();
-    const streams = new ConversationStreams({
+    const streams = streamsWith({
       eventLog: { readAfter: async () => [] },
       bus: busWith(async () => async () => {}),
       access: async () => true,
@@ -140,7 +154,7 @@ describe("ConversationStreams", () => {
 
   it("after closeAll a new stream ends right after its headers and never subscribes", async () => {
     const subscribe = vi.fn(async () => async () => {});
-    const streams = new ConversationStreams({
+    const streams = streamsWith({
       eventLog: { readAfter: async () => [] },
       bus: busWith(subscribe),
       access: async () => true,
@@ -164,7 +178,7 @@ describe("ConversationStreams", () => {
       release = r;
     });
     const unsubscribe = vi.fn(async () => {});
-    const streams = new ConversationStreams({
+    const streams = streamsWith({
       eventLog: { readAfter: async () => [] },
       bus: busWith(async () => {
         await gate;

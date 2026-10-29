@@ -204,7 +204,7 @@ export async function recordHookDenial(
   if (await d.eventLog.findByIdem(at.conversationId, at.idemKey)) return;
   const event = hookDeniedEvent(at, mount, denial, where);
   const written = await d.db.transaction().execute(async (t) => {
-    const out = await d.eventLog.append(at.conversationId, [event], t);
+    const out = await d.eventLog.appendIn(at.conversationId, [event]);
     await audit(t, hookDeniedAudit(at, event.payload, denial));
     return out;
   });

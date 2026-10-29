@@ -14,7 +14,6 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { AgentTemplatesService } from "../../src/agents/templates.js";
 import type { TranslationReport } from "../../src/catalog/claude/report.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -26,6 +25,7 @@ import { takeSnapshot, toEvents } from "../../src/evals/snapshot.js";
 import type { Kernel } from "../../src/kernel.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import { pinnedBlock } from "../../src/runtime/context/skills.js";
+import { agentTemplatesFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
@@ -242,7 +242,7 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
       ["writing-plans", "superpowers", "claude-code", false],
     ]);
     // phase C: the translated code-reviewer agent is an org agent template
-    const [reviewer, ...others] = await new AgentTemplatesService(db).listForOrg(orgId);
+    const [reviewer, ...others] = await agentTemplatesFor(db).listForOrg(orgId);
     expect(others).toEqual([]);
     expect(reviewer).toMatchObject({
       type: "superpowers:code-reviewer",

@@ -22,7 +22,7 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { withJobContext } from "../log-context.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
-import { ConversationLock, type Lease } from "../runtime/conversation-lock.js";
+import type { ConversationLeases, ConversationLock, Lease } from "../runtime/conversation-lock.js";
 import { bullConnection } from "../runtime/run-queue.js";
 import type { StreamBus } from "../runtime/stream.js";
 import type { ApprovalsService } from "../tools/approvals.service.js";
@@ -187,6 +187,8 @@ export interface ChannelOutboundDeps {
   redisUrl: string;
   bus: StreamBus;
   eventLog: Pick<EventLog, "readAfter">;
+  /** The conversation lock provider; delivery takes it under its own key prefix. */
+  lock: Pick<ConversationLock, "scoped">;
   connections: Pick<ChannelConnections, "outbound">;
   approvals: Pick<ApprovalsService, "describe">;
   questions: Pick<QuestionsService, "forCall">;
@@ -220,10 +222,10 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
   private closed = false;
   /** 停机：进行中的任务在下一个检查点交还队列（由其他副本续投）。 */
   private readonly stopping = new AbortController();
-  private readonly lock: ConversationLock;
+  private readonly lock: ConversationLeases;
 
   constructor(private readonly d: ChannelOutboundDeps) {
-    this.lock = new ConversationLock(d.redis, d.log, DELIVER_LOCK_PREFIX);
+    this.lock = d.lock.scoped(DELIVER_LOCK_PREFIX);
   }
 
   /** 会话有 IM 投递目标时投递一个出站任务（同一日志位置重复调用只排一个）；已关闭时什么都不做。 */

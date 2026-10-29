@@ -1,11 +1,11 @@
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { EventLog } from "../../src/conversations/event-log.js";
 import { runTitleJob } from "../../src/conversations/titles.js";
-import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { Kernel } from "../../src/kernel.js";
 import type { ModelPurposesService } from "../../src/models/purposes.js";
+import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import {
   createAgent,
@@ -45,8 +45,8 @@ beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   rawA = createDb(pgc.url, 3);
   rawB = createDb(pgc.url, 3);
-  dbA = kernelDb(rawA);
-  dbB = kernelDb(rawB);
+  dbA = legacyDbFor(rawA);
+  dbB = legacyDbFor(rawB);
   const cfg = runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] });
   a = await startKernel(cfg);
   b = await startKernel(cfg);
@@ -92,7 +92,7 @@ describe("titles on two replicas", { timeout: 90_000 }, () => {
 
   it("the same attempt executed concurrently by two replicas: one call, one title, one usage", async () => {
     const conv = await createConv(owner, orgId, agentId);
-    const seed = new EventLog(dbA, { publish: async () => {} });
+    const seed = eventLogFor(dbA, { publish: async () => {} });
     await seed.append(conv, [
       {
         type: "user_message",
@@ -121,7 +121,7 @@ describe("titles on two replicas", { timeout: 90_000 }, () => {
       runTitleJob(
         {
           db,
-          eventLog: new EventLog(db, { publish: async () => {} }),
+          eventLog: eventLogFor(db, { publish: async () => {} }),
           purposes: purposes(name),
           log: console,
         },

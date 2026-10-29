@@ -4,9 +4,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { EventLog } from "../../src/conversations/event-log.js";
+import type { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
-import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { REPLAY_NO_RECORDING } from "../../src/evals/recorded-tools.js";
 import type { RunReplayResult } from "../../src/evals/run-replay.js";
@@ -16,6 +16,7 @@ import type { TrajectoryDetail, TrajectoryListItem } from "../../src/evals/traje
 import type { Kernel } from "../../src/kernel.js";
 import { readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
 import { toolsCountState } from "../fixtures/plugins/tools-count/index.js";
+import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -74,8 +75,8 @@ let agentId: string;
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   raw = createDb(pgc.url, 3);
-  db = kernelDb(raw);
-  eventLog = new EventLog(db, { publish: async () => {} });
+  db = legacyDbFor(raw);
+  eventLog = eventLogFor(db, { publish: async () => {} });
   root = await mkdtemp(join(tmpdir(), "cap-run-replay-"));
   k = await startKernel(
     runConfig(

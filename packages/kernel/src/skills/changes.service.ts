@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { type Logger, parseSkillMd, SKILL_ENTRY_FILE, ToolError } from "@capybara-hq/plugin-sdk";
+import { parseSkillMd, SKILL_ENTRY_FILE, ToolError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
-import { visibleTo } from "../agents/agents.service.js";
+import { visibleTo } from "../agents/agent-lookup.js";
 import { skillFilesPrefix } from "../conversations/attachments.service.js";
+import { EventLog } from "../conversations/event-log.js";
 import type {
   ProposedSkillVersion,
   SkillChangeRequestsTable,
@@ -12,11 +13,9 @@ import type {
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { legacyCurrentTrx } from "../infra/database/legacy-view.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
-import { LegacyPorts } from "../lifecycle/legacy-ports.js";
 import type { KernelLogger } from "../log.js";
 import {
   type CatalogSkill,
@@ -155,7 +154,7 @@ export class SkillChangesService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(StorageService) private readonly storage: StorageService,
-    @Inject(LegacyPorts) private readonly ports: LegacyPorts,
+    @Inject(EventLog) private readonly eventLog: EventLog,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
@@ -185,7 +184,7 @@ export class SkillChangesService {
       throw e;
     }
     if (committed.toSeq !== null) {
-      await this.ports.eventLog.notify(ctx.conversationId, committed.toSeq);
+      await this.eventLog.notify(ctx.conversationId, committed.toSeq);
     }
     for (const p of committed.drop) await this.deletePrefix(ctx.orgId, p);
     return committed.outcome;
@@ -214,7 +213,7 @@ export class SkillChangesService {
     const done = await this.decideIn(orgId, id, accountId, body, actorTokenId, head.agent_id);
     const row = done.updated;
     if (done.revertSeq !== null) {
-      await this.ports.eventLog.notify(row.requested_in_conversation, done.revertSeq);
+      await this.eventLog.notify(row.requested_in_conversation, done.revertSeq);
     }
     if (row.status === "rejected") await this.deletePrefix(orgId, row.object_prefix);
     const [view] = await this.views([row]);
@@ -700,18 +699,14 @@ export class SkillChangesService {
       ...(derived.toolMap !== undefined && { toolMap: derived.toolMap }),
     };
     if (sameSnapshot(base, next)) return null;
-    const written = await this.ports.eventLog.append(
-      conversationId,
-      [
-        {
-          type: "skills_catalog",
-          ...(runId !== undefined && { runId }),
-          idemKey,
-          payload: next,
-        },
-      ],
-      legacyCurrentTrx(),
-    );
+    const written = await this.eventLog.appendIn(conversationId, [
+      {
+        type: "skills_catalog",
+        ...(runId !== undefined && { runId }),
+        idemKey,
+        payload: next,
+      },
+    ]);
     return Math.max(...written.map((e) => e.seq));
   }
 
@@ -820,7 +815,7 @@ export class SkillChangesService {
 
   /** {@link cancelPendingForAgent} 提交之后：发布事件、尽力删除草稿对象。 */
   async finishCancel(orgId: string, c: CancelledDrafts): Promise<void> {
-    for (const [conv, seq] of c.seqs) await this.ports.eventLog.notify(conv, seq);
+    for (const [conv, seq] of c.seqs) await this.eventLog.notify(conv, seq);
     for (const p of c.prefixes) await this.deletePrefix(orgId, p);
   }
 

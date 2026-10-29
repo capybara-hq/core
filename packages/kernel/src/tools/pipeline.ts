@@ -13,7 +13,7 @@ import {
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { type AgentDefinition, normalizeStoredDefinition } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
-import type { AppendEvent, EventLog } from "../conversations/event-log.js";
+import { type AppendEvent, EventLog } from "../conversations/event-log.js";
 import { type ToolView, ToolViewSchema } from "../conversations/events.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { clipText } from "../extensions/hooks.js";
@@ -221,7 +221,7 @@ export interface ToolPipelineTestHooks {
 /** The injection token of {@link ToolPipelineTestHooks} (optional; tests only). */
 export const TOOL_PIPELINE_TEST_HOOKS = Symbol("TOOL_PIPELINE_TEST_HOOKS");
 
-/** What the pipeline calls through, read at call time (the event log and sub-agent dispatch: R7 ports). */
+/** What the pipeline calls through (the sub-agent dispatch is read at call time: an R7 port). */
 interface PipelineDeps {
   /** The kernel-schema handle of the current context (its transaction, else the pool). */
   readonly db: KernelSchemaDb;
@@ -447,8 +447,9 @@ export class ToolPipeline {
 
   constructor(
     @Inject(KernelDb) kdb: KernelDb,
-    @Inject(LegacyPorts)
-    ports: Pick<LegacyPorts, "eventLog"> & Partial<Pick<LegacyPorts, "subagentDispatch">>,
+    @Inject(EventLog) eventLog: EventLog,
+    /** R7 (Task 3.6b): the `agent` tool's sub-agent dispatch. */
+    @Inject(LegacyPorts) ports: Partial<Pick<LegacyPorts, "subagentDispatch">>,
     @Inject(ToolRegistry) registry: Pick<ToolRegistry, "forAgent" | "findConnector" | "handler">,
     @Inject(Credentials) credentials: Pick<Credentials, "injection" | "onUnauthorized">,
     @Inject(Breaker) breaker: Pick<Breaker, "check" | "failure" | "success">,
@@ -467,9 +468,7 @@ export class ToolPipeline {
       get db() {
         return kdb.db;
       },
-      get eventLog() {
-        return ports.eventLog;
-      },
+      eventLog,
       registry,
       credentials,
       breaker,
@@ -775,7 +774,7 @@ export class ToolPipeline {
       calls.push({ step: d.step, callId: d.parent_call_id, input, r });
     }
     if (calls.length === 0) return none;
-    const written = await this.deps.eventLog.append(conversationId, events, legacyCurrentTrx());
+    const written = await this.deps.eventLog.appendIn(conversationId, events);
     for (const c of calls) {
       const approval = await t
         .selectFrom("approvals")
@@ -1723,7 +1722,7 @@ export class ToolPipeline {
     audits: AuditEntry[],
   ) {
     const t = this.deps.db;
-    const out = await this.deps.eventLog.append(ctx.conversationId, events, legacyCurrentTrx());
+    const out = await this.deps.eventLog.appendIn(ctx.conversationId, events);
     for (const a of audits) await audit(t, a);
     if (callAudit === undefined) return out;
     await audit(t, {

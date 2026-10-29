@@ -8,16 +8,14 @@ import {
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
-import type { EventLog } from "../conversations/event-log.js";
+import { EventLog } from "../conversations/event-log.js";
 import { type ConversationEvent, SKILLS_CATALOG_MAX } from "../conversations/events.js";
 import type { KernelSchemaDb, SkillManifest, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { legacyCurrentTrx } from "../infra/database/legacy-view.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
-import { LegacyPorts } from "../lifecycle/legacy-ports.js";
 import type { KernelLogger } from "../log.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../runtime/context/claude-tools.js";
 import {
@@ -472,7 +470,7 @@ export class SkillsCatalogService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(StorageService) private readonly storage: StorageService,
-    @Inject(LegacyPorts) private readonly ports: LegacyPorts,
+    @Inject(EventLog) private readonly eventLog: EventLog,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
@@ -503,7 +501,7 @@ export class SkillsCatalogService {
       );
       const toSeq = await this.append(input, first, pinned, log);
       if (toSeq === "retry") continue;
-      if (toSeq !== null) await this.ports.eventLog.notify(input.conversationId, toSeq);
+      if (toSeq !== null) await this.eventLog.notify(input.conversationId, toSeq);
       return;
     }
     throw new ApiError(
@@ -539,18 +537,14 @@ export class SkillsCatalogService {
       }),
     };
     if (last ? sameSnapshot(last, next) : skills.length === 0) return null;
-    const written = await this.ports.eventLog.append(
-      input.conversationId,
-      [
-        {
-          type: "skills_catalog",
-          runId: input.runId,
-          idemKey: skillsCatalogIdemKey(input.runId),
-          payload: next,
-        },
-      ],
-      legacyCurrentTrx(),
-    );
+    const written = await this.eventLog.appendIn(input.conversationId, [
+      {
+        type: "skills_catalog",
+        runId: input.runId,
+        idemKey: skillsCatalogIdemKey(input.runId),
+        payload: next,
+      },
+    ]);
     return Math.max(...written.map((e) => e.seq));
   }
 }

@@ -3,9 +3,14 @@ import { type DynamicModule, Global, Module } from "@nestjs/common";
 import { APP_FILTER } from "@nestjs/core";
 import type { Redis } from "ioredis";
 import type { Kysely } from "kysely";
+import { AgentsModule } from "./agents/agents.module.js";
 import type { KernelAppOptions } from "./app.js";
 import { CatalogModule } from "./catalog/catalog.module.js";
 import type { KernelConfig } from "./config/schema.js";
+import { AttachmentsService } from "./conversations/attachments.service.js";
+import { ConversationsModule } from "./conversations/conversations.module.js";
+import { ConversationsService } from "./conversations/conversations.service.js";
+import { EventLog } from "./conversations/event-log.js";
 import { ExtensionsModule } from "./extensions/extensions.module.js";
 import { ExtensionHost } from "./extensions/host.js";
 import { OrgExtensionConfigs } from "./extensions/org-config.js";
@@ -48,6 +53,8 @@ import { ModelPurposesService } from "./models/purposes.js";
 import { DirectorySync } from "./orgs/directory-sync.js";
 import { OrgLock } from "./orgs/org-lock.js";
 import { OrgsModule } from "./orgs/orgs.module.js";
+import { ConversationLock } from "./runtime/conversation-lock.js";
+import { RuntimeModule } from "./runtime/runtime.module.js";
 import { SkillsCatalogService } from "./skills/catalog.js";
 import { SkillChangesService } from "./skills/changes.service.js";
 import { SkillInvoker } from "./skills/invoke.js";
@@ -84,6 +91,9 @@ class LegacyGraphModule {
         IdentityModule,
         OrgsModule,
         ToolsModule,
+        AgentsModule,
+        ConversationsModule,
+        RuntimeModule,
       ],
       providers: [
         { provide: KERNEL_APP_OPTIONS, useValue: options },
@@ -121,6 +131,10 @@ class LegacyGraphModule {
             QuestionsService,
             ToolDrift,
             ToolPipeline,
+            EventLog,
+            ConversationLock,
+            AttachmentsService,
+            ConversationsService,
           ],
           useFactory: (
             config: KernelConfigService,
@@ -153,6 +167,10 @@ class LegacyGraphModule {
             questions: QuestionsService,
             toolDrift: ToolDrift,
             toolPipeline: ToolPipeline,
+            eventLog: EventLog,
+            conversationLock: ConversationLock,
+            attachments: AttachmentsService,
+            conversations: ConversationsService,
           ): LegacyGraph =>
             createLegacyGraph(config, log, kdb, redis, bus, hooks, {
               txHost,
@@ -179,6 +197,10 @@ class LegacyGraphModule {
               questions,
               toolDrift,
               toolPipeline,
+              eventLog,
+              conversationLock,
+              attachments,
+              conversations,
             }),
         },
         ...(options.overrides ?? []).map((o) => ({

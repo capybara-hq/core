@@ -1,12 +1,12 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
-import { AgentTemplatesService } from "../../src/agents/templates.js";
 import type { PluginReview } from "../../src/catalog/plugin-import.js";
 import type { UpgradePreview } from "../../src/catalog/plugin-upgrade.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { CaseSnapshot } from "../../src/evals/snapshot.js";
 import { currentTemplate } from "../../src/evals/worker.js";
 import { resolveRoster } from "../../src/runtime/subagents/roster.js";
+import { agentTemplatesFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
@@ -106,7 +106,7 @@ async function upgradeTo(installId: string, version: string): Promise<UpgradePre
   return preview;
 }
 
-const templates = () => new AgentTemplatesService(env.db).listForOrg(env.orgId);
+const templates = () => agentTemplatesFor(env.db).listForOrg(env.orgId);
 
 const allTemplateRows = () =>
   env.db
@@ -192,9 +192,11 @@ describe("agent templates in plugins", () => {
     const { definition } = await lead([t?.id as string]);
     const roster = await resolveRoster(env.db, env.orgId, definition);
     expect(roster.map((e) => e.type)).toEqual(["general-purpose", "crm:reviewer"]);
-    expect(
-      await new AgentTemplatesService(env.db).resolve(env.orgId, "crm:reviewer"),
-    ).toMatchObject({ id: t?.id, version: 1, plugin: "crm" });
+    expect(await agentTemplatesFor(env.db).resolve(env.orgId, "crm:reviewer")).toMatchObject({
+      id: t?.id,
+      version: 1,
+      plugin: "crm",
+    });
   });
 
   it("upgrade adds a version and lists it in the diff; rollback restores the previous version", async () => {
@@ -211,7 +213,7 @@ describe("agent templates in plugins", () => {
       { kind: "agent_template", ref: "reviewer", change: "changed" },
       { kind: "agent_template", ref: "tester", change: "added" },
     ]);
-    const svc = new AgentTemplatesService(env.db);
+    const svc = agentTemplatesFor(env.db);
     expect((await svc.resolve(env.orgId, "crm:reviewer"))?.version).toBe(2);
     expect((await svc.resolve(env.orgId, "crm:reviewer"))?.template.instructions).toBe("R2.\n");
     expect((await svc.resolve(env.orgId, "crm:tester"))?.version).toBe(1);
@@ -380,7 +382,7 @@ describe("agent templates in plugins", () => {
       payload: { version: "1.1.0", diffHash: (p.json() as UpgradePreview).diffHash },
     });
     expect(u.statusCode, u.body).toBe(502);
-    const r = await new AgentTemplatesService(env.db).resolve(env.orgId, "crm:reviewer");
+    const r = await agentTemplatesFor(env.db).resolve(env.orgId, "crm:reviewer");
     expect(r).toMatchObject({ version: 1 });
     expect(r?.template.instructions).toBe("R1.\n");
     const versions = await env.db
@@ -423,7 +425,7 @@ describe("agent templates in plugins", () => {
 
     await upgradeTo(installId, "1.2.0");
     expect(await ledger()).toEqual([{ ref: tester?.id, dropped: false }]);
-    const back = await new AgentTemplatesService(env.db).resolve(env.orgId, "crm:tester");
+    const back = await agentTemplatesFor(env.db).resolve(env.orgId, "crm:tester");
     expect(back?.id).toBe(tester?.id);
     expect(back?.template.instructions).toBe("T2.\n");
   });

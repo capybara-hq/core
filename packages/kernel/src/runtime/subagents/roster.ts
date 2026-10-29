@@ -1,5 +1,5 @@
-import { SUBAGENT_ROSTER_MAX } from "../../agents/agents.service.js";
 import type { AgentDefinition } from "../../agents/definition.js";
+import { SUBAGENT_ROSTER_MAX } from "../../agents/definition.js";
 import { loadTemplates } from "../../agents/templates.js";
 import type { KernelSchemaDb } from "../../db/kernel-schema.js";
 

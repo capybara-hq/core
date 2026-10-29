@@ -1,13 +1,12 @@
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { AgentsService, AgentView } from "../../src/agents/agents.service.js";
+import { AgentsService, type AgentView } from "../../src/agents/agents.service.js";
 import { type AgentDefinition, AgentDefinitionSchema } from "../../src/agents/definition.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
-import { AGENTS } from "../../src/http/tokens.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
@@ -54,7 +53,7 @@ beforeAll(async () => {
   orgs = orgsFor(db);
   // the kernel's own instance: soft delete cancels pending skill changes in its transaction, which
   // must be the kernel's (a service over another pool would run them outside it)
-  agents = k.app.get<AgentsService>(AGENTS);
+  agents = k.app.get(AgentsService);
 }, 120_000);
 afterAll(async () => {
   await k?.stop();

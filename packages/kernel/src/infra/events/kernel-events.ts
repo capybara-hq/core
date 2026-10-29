@@ -36,6 +36,13 @@ export interface KernelEventMap {
    * consumers and the same re-derivation as `approval.decided`.
    */
   "question.answered": { id: string; orgId: string; conversationId: string; runId: string };
+  /**
+   * EventAppended: a conversation's event log advanced to `toSeq` (after the commit, from
+   * `EventLog.notify`, right after the bus publish). The channel outbound delivery enqueues a job
+   * for a conversation with an IM target; a lost event is re-derived by the next append's (and the
+   * finished delivery job re-checks the log for content it has not delivered).
+   */
+  "conversation.event-appended": { conversationId: string; toSeq: number };
 }
 
 /** The payload's id for the failure log (`approvalId` / `questionId`, as the old hooks logged). */

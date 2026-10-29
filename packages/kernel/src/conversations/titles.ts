@@ -119,7 +119,10 @@ const typedText = (content: readonly ContentBlock[]): string => {
 
 export interface TitleDeps {
   db: KernelSchemaDb;
-  eventLog: Pick<EventLog, "append" | "readAfter" | "latestOfType" | "notify" | "publishChanged">;
+  eventLog: Pick<
+    EventLog,
+    "append" | "appendIn" | "readAfter" | "latestOfType" | "notify" | "publishChanged"
+  >;
   purposes: Pick<ModelPurposesService, "chat">;
   log: Pick<Logger, "warn">;
   /**
@@ -294,7 +297,7 @@ export async function runTitleJob(
     // Updating the title first held the row FOR NO KEY UPDATE, which lets in another
     // transaction's foreign key check (FOR KEY SHARE, e.g. inserting an approval); the append's
     // FOR UPDATE then waited for that one while it waited for the title row: 40P01
-    const [ev] = await d.eventLog.append(conversationId, [usageEvent(attempt, out)], t);
+    const [ev] = await d.eventLog.appendIn(conversationId, [usageEvent(attempt, out)]);
     const row =
       title === null
         ? undefined

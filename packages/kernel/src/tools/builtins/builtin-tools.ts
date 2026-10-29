@@ -1,4 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
+import { AttachmentsService } from "../../conversations/attachments.service.js";
+import { EventLog } from "../../conversations/event-log.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { LegacyPorts } from "../../lifecycle/legacy-ports.js";
@@ -21,8 +23,8 @@ import { toolSearchTool } from "./tool-search.js";
  * are added to a run by the registry (`forAgent`: organization setting and threshold, a skills
  * catalog snapshot), not by agent definitions; `skill_write` only when a definition names it.
  *
- * The sandbox, the attachments and the event log are still built by the legacy graph (Tasks 3.6,
- * 3.8): the tools read them through `LegacyPorts` at call time (R7), never at construction.
+ * The sandbox is still built by the legacy graph (Task 3.8): the tools read it through
+ * `LegacyPorts` at call time (R7), never at construction.
  */
 @Injectable()
 export class BuiltinTools {
@@ -34,19 +36,18 @@ export class BuiltinTools {
     @Inject(ToolOutputs) outputs: ToolOutputs,
     @Inject(StorageService) storage: StorageService,
     @Inject(SkillChangesService) skillChanges: SkillChangesService,
+    @Inject(AttachmentsService) attachments: AttachmentsService,
+    @Inject(EventLog) eventLog: EventLog,
+    /** R7 (Task 3.8): the sandbox service, read at call time. */
     @Inject(LegacyPorts) ports: LegacyPorts,
   ) {
     const sandboxDeps: SandboxToolDeps = {
       get sandbox() {
         return ports.sandbox;
       },
-      get attachments() {
-        return ports.attachments;
-      },
+      attachments,
       storage,
-      get eventLog() {
-        return ports.eventLog;
-      },
+      eventLog,
       config,
     };
     this.tools = [
@@ -63,12 +64,8 @@ export class BuiltinTools {
         get sandbox() {
           return ports.sandbox;
         },
-        get attachments() {
-          return ports.attachments;
-        },
-        get eventLog() {
-          return ports.eventLog;
-        },
+        attachments,
+        eventLog,
         get db() {
           return db.db;
         },

@@ -486,7 +486,7 @@ async function appendCounted(
       .where("id", "=", conversationId)
       .forUpdate()
       .executeTakeFirstOrThrow();
-    const written = await deps.eventLog.append(conversationId, events, t);
+    const written = await deps.eventLog.appendIn(conversationId, events);
     const fresh = written.filter((e) => e.seq > Number(before.last_seq));
     let tokens = 0;
     for (const e of fresh) if (e.type === "usage") tokens += usageTokens(e.payload);
@@ -894,7 +894,7 @@ async function maybeCompact(
         cause: verdict.cause,
       });
       const written = await deps.db.transaction().execute(async (t) => {
-        const out = await deps.eventLog.append(conversationId, [failed], t);
+        const out = await deps.eventLog.appendIn(conversationId, [failed]);
         await audit(t, entry);
         return out;
       });
@@ -1140,30 +1140,26 @@ async function ladder(
           t,
           tools.list.filter((x) => sent.has(x.specHash)),
         );
-        return deps.eventLog.append(
-          conversationId,
-          [
-            {
-              type: "model_call",
-              runId,
-              idemKey: idem.modelCall(runId, step, attempt),
-              payload: {
-                step,
-                attempt,
-                provider: rung.ref.provider,
-                model: rung.ref.model,
-                fallback: rung.fallback,
-                request: {
-                  ...meta,
-                  maxOutputTokens: request.maxOutputTokens,
-                  ...(params.dropped.length > 0 && { droppedParams: params.dropped }),
-                  estimatedInputTokens: estimate,
-                },
+        return deps.eventLog.appendIn(conversationId, [
+          {
+            type: "model_call",
+            runId,
+            idemKey: idem.modelCall(runId, step, attempt),
+            payload: {
+              step,
+              attempt,
+              provider: rung.ref.provider,
+              model: rung.ref.model,
+              fallback: rung.fallback,
+              request: {
+                ...meta,
+                maxOutputTokens: request.maxOutputTokens,
+                ...(params.dropped.length > 0 && { droppedParams: params.dropped }),
+                estimatedInputTokens: estimate,
               },
             },
-          ],
-          t,
-        );
+          },
+        ]);
       });
       await deps.eventLog.notify(conversationId, Math.max(...written.map((e) => e.seq)));
       sentAt = Date.now();

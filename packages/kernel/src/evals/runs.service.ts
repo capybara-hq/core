@@ -2,11 +2,11 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import { Queue } from "bullmq";
 import type { Redis } from "ioredis";
 import { type Selectable, sql, type Transaction } from "kysely";
-import { paramIssues } from "../agents/agents.service.js";
 import {
   type AgentDefinition,
   type ModelRef,
   normalizeStoredDefinition,
+  paramIssues,
 } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import {

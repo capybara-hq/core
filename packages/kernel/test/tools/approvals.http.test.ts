@@ -4,7 +4,7 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
-import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import type { ApiTokenService } from "../../src/identity/api-tokens.js";
@@ -13,6 +13,7 @@ import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
 import type { ApprovalRecord, ApprovalRequestInput } from "../../src/tools/approvals.service.js";
+import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
@@ -55,7 +56,7 @@ beforeAll(async () => {
   kb = await createKernel(kernelConfig(), { env: {}, logger: silent() });
   await kb.start();
   raw = createDb(pgc.url, 5);
-  db = kernelDb(raw);
+  db = legacyDbFor(raw);
   redis = new Redis(rd.url);
   accounts = accountsFor(db);
   members = testMembers(db);
@@ -610,7 +611,7 @@ describe("Review Focus 1：两个副本并发处理同一审批", () => {
     events.on("approval.decided", (r) => {
       calls.push(r);
     });
-    const mk = (k: Kernel) => approvalsFor(db, k.runs.eventLog, () => k.config, events);
+    const mk = (k: Kernel) => approvalsFor(db, eventLogFor(db, k.bus), () => k.config, events);
     const [s1, s2] = [mk(ka), mk(kb)];
     const a = await request();
     const results = await Promise.allSettled([

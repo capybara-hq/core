@@ -4,7 +4,7 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
-import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { migrate } from "../../../src/db/migrator.js";
 import { createDb } from "../../../src/db/pool.js";
 import type { Kernel } from "../../../src/kernel.js";
@@ -14,6 +14,7 @@ import {
   SUBAGENT_RUN_QUEUE_NAME,
 } from "../../../src/runtime/run-queue.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
+import { eventLogFor, legacyDbFor } from "../../helpers/conversations.js";
 import { truncateTables } from "../../helpers/db.js";
 import { asUser, cookieJar } from "../../helpers/http.js";
 import { accountsFor } from "../../helpers/identity.js";
@@ -135,7 +136,7 @@ beforeAll(async () => {
     dir: fileURLToPath(new URL("../../../src/migrations", import.meta.url)),
   });
   raw = createDb(pgc.url, 5);
-  db = kernelDb(raw);
+  db = legacyDbFor(raw);
   redis = new Redis(rd.url);
   subQueue = new Queue(SUBAGENT_RUN_QUEUE_NAME, { connection: new Redis(rd.url) });
   runQueue = new Queue(RUN_QUEUE_NAME, { connection: new Redis(rd.url) });
@@ -270,7 +271,8 @@ describe("sub-agents across two replicas", () => {
       subQueue,
       children.map((c) => c.conversationId),
     );
-    for (const c of children) await finishChildByHand(db, a.runs.eventLog, c, `by hand ${c.runId}`);
+    for (const c of children)
+      await finishChildByHand(db, eventLogFor(db, a.bus), c, `by hand ${c.runId}`);
     await backdateRun(db, runId);
     const [ra, rb] = await Promise.all([a.runs.waits.sweep(), b.runs.waits.sweep()]);
     expect(ra.resumed + rb.resumed).toBe(1);

@@ -1,5 +1,8 @@
+import { Inject, Injectable } from "@nestjs/common";
 import { ApiError } from "../errors.js";
+import { ToolOutputs } from "../tools/outputs.js";
 import { UUID_RE } from "../ui/registry.js";
+import { ConversationAccess } from "./access.js";
 
 /** 一次最多返回的字符数（也是默认值）：大存档按字符分页取。 */
 export const OUTPUT_PAGE_MAX_CHARS = 200_000;
@@ -15,13 +18,6 @@ export interface OutputPage {
   next: number | null;
 }
 
-export interface ConversationOutputsDeps {
-  /** 会话可见性（与会话 SSE 流同一判定：`ConversationsService.isAccessible`）。 */
-  isAccessible(orgId: string, conversationId: string, viewerAccountId: string): Promise<boolean>;
-  /** 读本会话未过期的存档（`ToolOutputs.load`）：不存在 / 过期 / 属于别的会话 → null。 */
-  load(scope: { orgId: string; conversationId: string }, id: string): Promise<string | null>;
-}
-
 const conversationNotFound = () => new ApiError("conversation.not_found", "Conversation not found");
 const outputNotFound = () =>
   new ApiError("conversation.output_not_found", "Output not found or expired");
@@ -31,8 +27,14 @@ const outputNotFound = () =>
  * 再只在这个会话的存档里找（别的会话 / 过期 → `conversation.output_not_found`）。
  * 按字符分页（单行可能就很长，按行分页不能保证页大小）；id 不是 UUID 时直接 404，不打到数据库。
  */
+@Injectable()
 export class ConversationOutputs {
-  constructor(private readonly d: ConversationOutputsDeps) {}
+  constructor(
+    /** 会话可见性（与会话 SSE 流同一判定）。 */
+    @Inject(ConversationAccess) private readonly access: Pick<ConversationAccess, "isAccessible">,
+    /** 读本会话未过期的存档：不存在 / 过期 / 属于别的会话 → null。 */
+    @Inject(ToolOutputs) private readonly outputs: Pick<ToolOutputs, "load">,
+  ) {}
 
   async read(
     orgId: string,
@@ -42,10 +44,10 @@ export class ConversationOutputs {
     page: { offset: number; limit: number },
   ): Promise<OutputPage> {
     if (!UUID_RE.test(conversationId)) throw conversationNotFound();
-    if (!(await this.d.isAccessible(orgId, conversationId, viewerAccountId)))
+    if (!(await this.access.isAccessible(orgId, conversationId, viewerAccountId)))
       throw conversationNotFound();
     if (!UUID_RE.test(outputId)) throw outputNotFound();
-    const content = await this.d.load({ orgId, conversationId }, outputId);
+    const content = await this.outputs.load({ orgId, conversationId }, outputId);
     if (content === null) throw outputNotFound();
     const offset = Math.min(page.offset, content.length);
     const end = Math.min(content.length, offset + page.limit);

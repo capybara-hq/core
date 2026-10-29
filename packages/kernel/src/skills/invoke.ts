@@ -1,7 +1,6 @@
 import {
   escapeSkillInvocationTags,
   hasShellInjection,
-  type Logger,
   parseSkillMd,
   renderSkillBody,
   renderSkillInvocation,
@@ -9,13 +8,13 @@ import {
   SKILL_INVOCATION_LIMITS,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
+import { AgentLookup } from "../agents/agent-lookup.js";
 import type { AgentDefinition } from "../agents/definition.js";
 import type { EventPayload } from "../conversations/events.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
-import { LegacyPorts } from "../lifecycle/legacy-ports.js";
 import type { KernelLogger } from "../log.js";
 import { isGeneralAlias, resolveSkillForkType } from "../runtime/subagents/roster.js";
 import { StorageService } from "../storage/storage.service.js";
@@ -136,15 +135,14 @@ export const forkAgentUnknownText = (name: string, agent: string): string =>
 /**
  * Skill invocations by a person (one provider: the HTTP routes, IM channels and fork dispatch all
  * use it). Unreadable SKILL.md files are logged at `error` (skill id, version, source), as pinned
- * skills; the agent access check of {@link SkillInvoker.listFor} goes through `AgentsService` (a
- * legacy port until Task 3.6).
+ * skills; the agent access check of {@link SkillInvoker.listFor} is `AgentLookup.get`.
  */
 @Injectable()
 export class SkillInvoker {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(StorageService) private readonly storage: StorageService,
-    @Inject(LegacyPorts) private readonly ports: LegacyPorts,
+    @Inject(AgentLookup) private readonly agents: Pick<AgentLookup, "get">,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
   ) {}
 
@@ -159,7 +157,7 @@ export class SkillInvoker {
     accountId: string,
     conversationId?: string,
   ): Promise<InvocableSkill[]> {
-    const agent = await this.ports.agents.get(orgId, agentId, accountId);
+    const agent = await this.agents.get(orgId, agentId, accountId);
     if (conversationId !== undefined) {
       const row = await this.db
         .selectFrom("conversations")

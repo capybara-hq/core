@@ -1,4 +1,6 @@
 import { Module } from "@nestjs/common";
+import { AttachmentsModule } from "../conversations/attachments.module.js";
+import { EventLogModule } from "../conversations/event-log.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
@@ -28,6 +30,8 @@ import { ToolRegistry } from "./registry.js";
  */
 @Module({
   imports: [
+    EventLogModule,
+    AttachmentsModule,
     ExtensionsModule,
     StorageModule,
     SkillsModule,

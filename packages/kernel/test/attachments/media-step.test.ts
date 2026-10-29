@@ -14,10 +14,10 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
-import { EventLog } from "../../src/conversations/event-log.js";
+import type { EventLog } from "../../src/conversations/event-log.js";
 import type { LogContentBlock } from "../../src/conversations/events.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
-import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
@@ -30,6 +30,7 @@ import {
 import { MediaCache } from "../../src/runtime/media-cache.js";
 import { type ModelStepDeps, RunError, runModelStep } from "../../src/runtime/model-call.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 
 /**
@@ -118,10 +119,10 @@ beforeAll(async () => {
     masterKey: Buffer.alloc(32, 7).toString("base64"),
   });
   raw = createDb(pgc.url, 5);
-  db = kernelDb(raw);
+  db = legacyDbFor(raw);
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
-  eventLog = new EventLog(db, createBus(redis, sub, "kernel"));
+  eventLog = eventLogFor(db, createBus(redis, sub, "kernel"));
   deps = {
     db,
     eventLog,

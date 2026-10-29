@@ -9,6 +9,7 @@ import { getQueueToken } from "@nestjs/bullmq";
 import type { Kysely } from "kysely";
 import { SetupService } from "../../src/admin/setup.service.js";
 import type { Keyring } from "../../src/ctx/secrets.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { AccountsService } from "../../src/identity/accounts.js";
@@ -53,6 +54,17 @@ export function handlesFor(db: Kysely<any>): StandaloneDatabase {
     handles.set(db, h);
   }
   return h;
+}
+
+/**
+ * The `capybara` view of `db` for classes not converted yet (R8; the run worker, model calls,
+ * titles, evals): its transactions run through `db`'s handles, so the converted providers built for
+ * `db` (the locks, the event log; or for the view itself: it maps to the same handles) join them.
+ */
+export function legacyDbFor(db: Kysely<any>): KernelSchemaDb {
+  const h = handlesFor(db);
+  handles.set(h.schemaDb, h);
+  return h.schemaDb;
 }
 
 /** A config holder for providers that read a few config values. */
@@ -145,7 +157,6 @@ const noRuns: LegacyPortValues["offboardRuns"] = {
 export function testPorts(_db: Kysely<any>, ports: Partial<LegacyPortValues> = {}): LegacyPorts {
   const p = new LegacyPorts();
   p.bind({
-    eventLog: { notify: async () => {}, publishChanged: async () => {} } as never,
     offboardRuns: noRuns,
     sandboxDestroy: { destroy: async () => {} },
     ...ports,
@@ -155,6 +166,7 @@ export function testPorts(_db: Kysely<any>, ports: Partial<LegacyPortValues> = {
 
 /** What offboarding reads besides the database: the legacy ports and the tools services. */
 export type OffboardingTestDeps = Partial<LegacyPortValues> & {
+  eventLog?: ConstructorParameters<typeof Offboarding>[5];
   credentials?: Pick<Credentials, "clearAccount">;
   approvals?: Pick<ApprovalsService, "cancelPendingFor">;
   questions?: Pick<QuestionsService, "cancelPendingFor">;
@@ -175,13 +187,14 @@ export function testOffboarding(
   } = {},
 ): Offboarding {
   const h = handlesFor(db);
-  const { credentials, approvals, questions, ...ports } = deps;
+  const { credentials, approvals, questions, eventLog, ...ports } = deps;
   return new Offboarding(
     h.db,
     h.txHost,
     opts.sessions ?? { markRevoked: async () => {} },
     opts.redis ?? ({ set: async () => "OK", exists: async () => 0 } as never),
     opts.registry ?? new ExtensionRegistry(),
+    eventLog ?? { notify: async () => {}, publishChanged: async () => {} },
     testPorts(db, ports),
     credentials ?? {
       clearAccount: (orgId, accountId) => clearAccountCredentials(h.db.db, orgId, accountId),
@@ -214,15 +227,6 @@ export function invitationsFor(
 /** Runs `fn` in a transaction of `db`'s handles (for `mandatory` methods). */
 export function inTransaction<T>(db: Kysely<any>, fn: () => Promise<T>): Promise<T> {
   return handlesFor(db).txHost.run(fn);
-}
-
-/**
- * The `capybara` view of `db` (pass the raw pool, not a schema view) for classes not converted yet
- * (R8): its transactions run through
- * `db`'s handles, so the converted locks they call (`orgLockFor`, `adminLockFor`) join them.
- */
-export function legacyDbFor(db: Kysely<any>): ReturnType<typeof standaloneDatabase>["schemaDb"] {
-  return handlesFor(db).schemaDb;
 }
 
 export function orgSettingsFor(db: Kysely<any>, config: () => unknown): OrgSettingsService {

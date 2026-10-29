@@ -1,12 +1,13 @@
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { EventLog } from "../../src/conversations/event-log.js";
-import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
+import type { EventLog } from "../../src/conversations/event-log.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { EvalCaseView, EvalSetView } from "../../src/evals/sets.service.js";
 import type { TrajectoryRun } from "../../src/evals/trajectory.js";
 import type { TrajectoryListItem } from "../../src/evals/trajectory.service.js";
 import type { Kernel } from "../../src/kernel.js";
+import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -34,8 +35,8 @@ const MAX_CASE_BYTES = 20_000;
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   raw = createDb(pgc.url, 3);
-  db = kernelDb(raw);
-  eventLog = new EventLog(db, { publish: async () => {} });
+  db = legacyDbFor(raw);
+  eventLog = eventLogFor(db, { publish: async () => {} });
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },

@@ -1,4 +1,5 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: Claude Code variables such as ${CLAUDE_SKILL_DIR} are plain text here
+
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,14 +15,16 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { AgentsService } from "../../src/agents/agents.service.js";
-import { ConversationsService } from "../../src/conversations/conversations.service.js";
+import { AgentLookup } from "../../src/agents/agent-lookup.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import type { Kernel } from "../../src/kernel.js";
 import { parseSlashCommand, SkillInvoker } from "../../src/skills/invoke.js";
+import { conversationsFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -280,8 +283,7 @@ const list = (agentId: string, conversationId?: string, req: Req = owner) =>
   });
 
 /** Only `get` is used here (reads the agent row and version). */
-const agentsService = () =>
-  new AgentsService(db, {} as never, {} as never, {} as never, {} as never);
+const agentsService = () => k.app.get(AgentLookup);
 
 const FIX_ISSUE = "Fix GitHub issue $ARGUMENTS following our coding standards.";
 
@@ -615,25 +617,24 @@ describe("POST …/messages with skill", { timeout: 60_000 }, () => {
     const s = await seedSkill({ name: "fix-issue", body: FIX_ISSUE });
     const agentId = await createAgent([s.id]);
     const conv = await createConv(owner, orgId, agentId);
-    const svc = new ConversationsService(
-      db,
-      k.runs.eventLog,
-      agentsService(),
-      undefined,
-      undefined,
-      async (_o, _a, refs) => ({
-        blocks: refs.map((r) => ({ type: "text" as const, text: `resource ${r.uri}` })),
-        attachments: refs.map((r) => ({
-          appId: r.connectorId,
-          appName: "c",
-          uri: r.uri,
-          name: "n",
-        })),
-      }),
-      async (_t, _o, _c, _a, ids) =>
-        ids.map((id) => ({ type: "text" as const, text: `file ${id}` })),
-      undefined,
-      k.app.get(SkillInvoker),
+    const svc = conversationsFor(
+      { db: k.app.get(KernelDb), txHost: k.app.get(TransactionHost) },
+      {
+        eventLog: k.runs.eventLog,
+        agents: agentsService(),
+        resolveAttachments: async (_o, _a, refs) => ({
+          blocks: refs.map((r) => ({ type: "text" as const, text: `resource ${r.uri}` })),
+          attachments: refs.map((r) => ({
+            appId: r.connectorId,
+            appName: "c",
+            uri: r.uri,
+            name: "n",
+          })),
+        }),
+        bindFiles: async (_o, _c, _a, ids) =>
+          ids.map((id) => ({ type: "text" as const, text: `file ${id}` })),
+        invoker: k.app.get(SkillInvoker),
+      },
     );
     const connectorId = randomUUID();
     const fileId = randomUUID();

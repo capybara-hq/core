@@ -2,15 +2,14 @@ import { randomUUID } from "node:crypto";
 import { type FormAnswer, type InputForm, validateAnswer } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
+import { EventLog } from "../conversations/event-log.js";
 import type { QuestionsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { legacyCurrentTrx } from "../infra/database/legacy-view.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
-import { LegacyPorts } from "../lifecycle/legacy-ports.js";
 
 export type QuestionStatus = "pending" | "answered" | "expired" | "cancelled";
 
@@ -101,14 +100,14 @@ const isPlainObject = (v: unknown): v is Record<string, unknown> =>
  *
  * An answer is announced after the commit as the domain event `question.answered` (exactly once),
  * which the run's waits follow to resume it (spec §3b; the wait sweep resumes a run whose resume was
- * lost). The event log (Task 3.6) is read through `LegacyPorts` (R7, R8).
+ * lost). Events are appended in the context's transaction (`EventLog.appendIn`).
  */
 @Injectable()
 export class QuestionsService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
-    @Inject(LegacyPorts) private readonly ports: Pick<LegacyPorts, "eventLog">,
+    @Inject(EventLog) private readonly eventLog: Pick<EventLog, "appendIn" | "notify">,
     @Inject(KernelEvents) private readonly events: Pick<KernelEvents, "emit">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
@@ -119,7 +118,7 @@ export class QuestionsService {
    */
   async ask(input: QuestionAskInput): Promise<QuestionRecord> {
     const { record, toSeq } = await this.askIn(input);
-    await this.ports.eventLog.notify(record.conversationId, toSeq);
+    await this.eventLog.notify(record.conversationId, toSeq);
     return record;
   }
 
@@ -157,24 +156,20 @@ export class QuestionsService {
       .where("attempt", "=", input.attempt)
       .executeTakeFirstOrThrow();
     const rec = toRecord(row);
-    const written = await this.ports.eventLog.append(
-      rec.conversationId,
-      [
-        {
-          type: "question_asked",
-          runId: rec.runId,
-          idemKey: `question_asked:${rec.id}`,
-          payload: {
-            step: rec.step,
-            callId: rec.callId,
-            questionId: rec.id,
-            form: rec.form,
-            expiresAt: rec.expiresAt,
-          },
+    const written = await this.eventLog.appendIn(rec.conversationId, [
+      {
+        type: "question_asked",
+        runId: rec.runId,
+        idemKey: `question_asked:${rec.id}`,
+        payload: {
+          step: rec.step,
+          callId: rec.callId,
+          questionId: rec.id,
+          form: rec.form,
+          expiresAt: rec.expiresAt,
         },
-      ],
-      legacyCurrentTrx(),
-    );
+      },
+    ]);
     return { record: rec, toSeq: Math.max(...written.map((e) => e.seq)) };
   }
 
@@ -221,7 +216,7 @@ export class QuestionsService {
     orgId?: string,
   ): Promise<QuestionRecord> {
     const { record, toSeq } = await this.answerIn(questionId, accountId, answer, orgId);
-    await this.ports.eventLog.notify(record.conversationId, toSeq);
+    await this.eventLog.notify(record.conversationId, toSeq);
     // waits resume the run and its IM delivery is enqueued (handler failures are logged)
     await this.events.emit("question.answered", {
       id: record.id,
@@ -298,7 +293,7 @@ export class QuestionsService {
   }> {
     const r = await this.expireIn(questionId);
     if ("toSeq" in r && r.toSeq !== undefined && r.record) {
-      await this.ports.eventLog.notify(r.record.conversationId, r.toSeq);
+      await this.eventLog.notify(r.record.conversationId, r.toSeq);
     }
     return r.record ? { outcome: r.outcome, record: r.record } : { outcome: r.outcome };
   }
@@ -406,18 +401,14 @@ export class QuestionsService {
     byAccountId: string | null,
     outcome: "answered" | "expired" | "cancelled",
   ): Promise<number> {
-    const written = await this.ports.eventLog.append(
-      q.conversationId,
-      [
-        {
-          type: "question_answered",
-          runId: q.runId,
-          idemKey: `question_answered:${q.id}`,
-          payload: { questionId: q.id, callId: q.callId, answer, byAccountId, outcome },
-        },
-      ],
-      legacyCurrentTrx(),
-    );
+    const written = await this.eventLog.appendIn(q.conversationId, [
+      {
+        type: "question_answered",
+        runId: q.runId,
+        idemKey: `question_answered:${q.id}`,
+        payload: { questionId: q.id, callId: q.callId, answer, byAccountId, outcome },
+      },
+    ]);
     return Math.max(...written.map((e) => e.seq));
   }
 }

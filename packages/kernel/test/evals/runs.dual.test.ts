@@ -2,14 +2,14 @@ import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { EventLog } from "../../src/conversations/event-log.js";
-import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import type { Kernel } from "../../src/kernel.js";
 import { EVAL_QUOTA_PREFIX } from "../../src/runtime/quota.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
+import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -51,7 +51,7 @@ beforeAll(async () => {
     dir: fileURLToPath(new URL("../../src/migrations", import.meta.url)),
   });
   raw = createDb(pgc.url, 5);
-  db = kernelDb(raw);
+  db = legacyDbFor(raw);
 }, 120_000);
 
 afterEach(async () => {
@@ -91,7 +91,7 @@ async function capScenario(
   cases: number,
 ): Promise<{ run: EvalRunView; results: EvalResultView[] }> {
   const [a, b] = kernels as [Kernel, Kernel];
-  const eventLog = new EventLog(db, { publish: async () => {} });
+  const eventLog = eventLogFor(db, { publish: async () => {} });
   const accounts = accountsFor(db);
   const ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "o" }))
     .id;

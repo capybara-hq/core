@@ -6,7 +6,7 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ensureAnonymousGuest } from "../../src/channels/threads.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
-import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
@@ -16,6 +16,7 @@ import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
 import { SANDBOX_DESTROY_FOR_JOB } from "../../src/sandbox/lifecycle.js";
+import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import {
@@ -55,7 +56,7 @@ beforeAll(async () => {
   );
   await k.start();
   raw = createDb(pgc.url, 5);
-  db = kernelDb(raw);
+  db = legacyDbFor(raw);
   redis = new Redis(rd.url);
   accounts = accountsFor(db);
   members = testMembers(db);
@@ -364,7 +365,7 @@ describe("离职处理", () => {
   it("原子：中途失败则什么都不变", async () => {
     const broken = testOffboarding(db, {
       credentials: credentialsFor(db, null as never),
-      approvals: approvalsFor(db, k.runs.eventLog, () => k.config),
+      approvals: approvalsFor(db, eventLogFor(db, k.bus), () => k.config),
       questions: {
         cancelPendingFor: async () => {
           throw new Error("boom");
@@ -537,8 +538,8 @@ describe("兜底扫描：按创建时间分页、不碰现任成员的运行", (
       db,
       {
         credentials: credentialsFor(db, null as never),
-        approvals: approvalsFor(db, k.runs.eventLog, () => k.config),
-        questions: questionsFor(db, k.runs.eventLog, () => k.config),
+        approvals: approvalsFor(db, eventLogFor(db, k.bus), () => k.config),
+        questions: questionsFor(db, eventLogFor(db, k.bus), () => k.config),
         offboardRuns: {
           abortWaiting: async () => false,
           abortIfOrphaned: async () => false,
@@ -579,8 +580,8 @@ describe("兜底扫描：按创建时间分页、不碰现任成员的运行", (
       db,
       {
         credentials: credentialsFor(db, null as never),
-        approvals: approvalsFor(db, k.runs.eventLog, () => k.config),
-        questions: questionsFor(db, k.runs.eventLog, () => k.config),
+        approvals: approvalsFor(db, eventLogFor(db, k.bus), () => k.config),
+        questions: questionsFor(db, eventLogFor(db, k.bus), () => k.config),
         offboardRuns: {
           abortWaiting: async () => false,
           abortIfOrphaned: async () => false,
@@ -840,8 +841,8 @@ describe("修复波 S2：离职销毁此人对话的沙箱", () => {
       const scheduled: string[][] = [];
       const off = testOffboarding(db, {
         credentials: credentialsFor(db, null as never),
-        approvals: approvalsFor(db, k.runs.eventLog, () => k.config),
-        questions: questionsFor(db, k.runs.eventLog, () => k.config),
+        approvals: approvalsFor(db, eventLogFor(db, k.bus), () => k.config),
+        questions: questionsFor(db, eventLogFor(db, k.bus), () => k.config),
         sandboxDestroy: {
           destroy: async (ids) => {
             scheduled.push(ids);
@@ -868,8 +869,8 @@ describe("修复波 S2：离职销毁此人对话的沙箱", () => {
         db,
         {
           credentials: credentialsFor(db, null as never),
-          approvals: approvalsFor(db, k.runs.eventLog, () => k.config),
-          questions: questionsFor(db, k.runs.eventLog, () => k.config),
+          approvals: approvalsFor(db, eventLogFor(db, k.bus), () => k.config),
+          questions: questionsFor(db, eventLogFor(db, k.bus), () => k.config),
           sandboxDestroy: {
             destroy: async () => {
               throw new Error("queue down");

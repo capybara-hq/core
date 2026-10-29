@@ -204,49 +204,45 @@ export async function dispatchSubagent(
         subagent_type: entry.type,
       })
       .execute();
-    const [, task] = await d.eventLog.append(
-      childId,
-      [
-        {
-          type: "subagent_started",
-          idemKey: "subagent_started",
-          payload: {
-            parent: {
-              conversationId: ctx.conversationId,
-              runId: ctx.runId,
-              callId: a.callId,
-              step: ctx.step,
-            },
-            agentType: entry.type,
-            template:
-              fork === undefined
-                ? eff.template
-                : {
-                    ...eff.template,
-                    invokedSkill: {
-                      id: fork.skill.id,
-                      version: fork.skill.version,
-                      name: fork.skill.name,
-                    },
-                  },
-            definition: eff.definition,
-            preamble: SUBAGENT_PREAMBLE,
-            maxSteps: eff.maxSteps,
-            ...([...eff.warnings, ...warnings].length > 0 && {
-              warnings: [...eff.warnings, ...warnings],
-            }),
+    const [, task] = await d.eventLog.appendIn(childId, [
+      {
+        type: "subagent_started",
+        idemKey: "subagent_started",
+        payload: {
+          parent: {
+            conversationId: ctx.conversationId,
+            runId: ctx.runId,
+            callId: a.callId,
+            step: ctx.step,
           },
+          agentType: entry.type,
+          template:
+            fork === undefined
+              ? eff.template
+              : {
+                  ...eff.template,
+                  invokedSkill: {
+                    id: fork.skill.id,
+                    version: fork.skill.version,
+                    name: fork.skill.name,
+                  },
+                },
+          definition: eff.definition,
+          preamble: SUBAGENT_PREAMBLE,
+          maxSteps: eff.maxSteps,
+          ...([...eff.warnings, ...warnings].length > 0 && {
+            warnings: [...eff.warnings, ...warnings],
+          }),
         },
-        taskMessage(
-          ctx,
-          a.callId,
-          fork === undefined ? input.prompt : fork.task(eff.definition),
-          undefined,
-          fork?.skill,
-        ),
-      ],
-      t,
-    );
+      },
+      taskMessage(
+        ctx,
+        a.callId,
+        fork === undefined ? input.prompt : fork.task(eff.definition),
+        undefined,
+        fork?.skill,
+      ),
+    ]);
     return task as ConversationEvent;
   });
   // a new sub-agent's writer never refuses
@@ -336,11 +332,9 @@ async function resume(
       .forUpdate()
       .executeTakeFirst();
     if (await activeRun()) return null;
-    const [task] = await d.eventLog.append(
-      child.id,
-      [taskMessage(ctx, a.callId, a.input.prompt, narrowFollowUp(frozen, current))],
-      t,
-    );
+    const [task] = await d.eventLog.appendIn(child.id, [
+      taskMessage(ctx, a.callId, a.input.prompt, narrowFollowUp(frozen, current)),
+    ]);
     return task as ConversationEvent;
   }).then((r) => r ?? refused(AGENT_REFUSALS.stillRunning(a.id)));
 }
@@ -513,29 +507,25 @@ async function commit(
         resumed: plan.resumed,
       })
       .execute();
-    const [dispatched] = await d.eventLog.append(
-      ctx.conversationId,
-      [
-        {
-          type: "subagent_dispatched",
-          runId: ctx.runId,
-          idemKey: dispatchedIdemKey(ctx.runId, callId),
-          payload: {
-            step: ctx.step,
-            callId,
-            subagentId: plan.childConversationId,
-            childRunId,
-            agentType: plan.agentType,
-            description: input.description,
-            resumed: plan.resumed,
-            model: { provider: plan.model.provider, model: plan.model.model },
-            ...(plan.tierFallback && { tierFallback: true }),
-            ...(a.forSkill !== undefined && { invokedSeq: a.forSkill.seq }),
-          },
+    const [dispatched] = await d.eventLog.appendIn(ctx.conversationId, [
+      {
+        type: "subagent_dispatched",
+        runId: ctx.runId,
+        idemKey: dispatchedIdemKey(ctx.runId, callId),
+        payload: {
+          step: ctx.step,
+          callId,
+          subagentId: plan.childConversationId,
+          childRunId,
+          agentType: plan.agentType,
+          description: input.description,
+          resumed: plan.resumed,
+          model: { provider: plan.model.provider, model: plan.model.model },
+          ...(plan.tierFallback && { tierFallback: true }),
+          ...(a.forSkill !== undefined && { invokedSeq: a.forSkill.seq }),
         },
-      ],
-      t,
-    );
+      },
+    ]);
     await audit(t, {
       actorAccountId: ctx.accountId,
       orgId: ctx.orgId,

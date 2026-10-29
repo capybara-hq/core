@@ -343,6 +343,6 @@ export async function pairStoppedForks(
       ),
     );
   }
-  const out = await eventLog.append(conversationId, events, t);
+  const out = await eventLog.appendIn(conversationId, events);
   return { callIds: [callId], toSeq: Math.max(...out.map((e) => e.seq)) };
 }

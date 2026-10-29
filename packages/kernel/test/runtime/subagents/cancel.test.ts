@@ -8,13 +8,14 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
-import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import type { Kernel } from "../../../src/kernel.js";
 import { finishRun } from "../../../src/runtime/run-finish.js";
 import { SUBAGENT_RUN_QUEUE_NAME } from "../../../src/runtime/run-queue.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
 import { setFakeSandboxDelays } from "../../fixtures/plugins/sandbox-fake/index.js";
+import { eventLogFor, legacyDbFor } from "../../helpers/conversations.js";
 import { truncateTables } from "../../helpers/db.js";
 import { accountsFor } from "../../helpers/identity.js";
 import { testMembers } from "../../helpers/members.js";
@@ -107,7 +108,7 @@ let subQueue: Queue;
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   const raw = createDb(pgc.url, 3);
-  db = kernelDb(raw);
+  db = legacyDbFor(raw);
   destroyDb = () => raw.destroy();
   root = await mkdtemp(join(tmpdir(), "cap-subagents-cancel-"));
   k = await startKernel(
@@ -467,7 +468,7 @@ describe("offboarding", () => {
     const { runId, children } = await parentWaiting(db, conv, 1);
     // the parent ended without stopping its child, and the membership went away without the
     // offboarding steps (a crash between the two): only the offboarding sweep catches the child
-    await finishRun(db, k.runs.eventLog, {
+    await finishRun(db, eventLogFor(db, k.bus), {
       conversationId: conv,
       runId,
       status: "aborted",

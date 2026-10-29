@@ -1,4 +1,7 @@
 import { Module } from "@nestjs/common";
+import { AgentLookupModule } from "../agents/agent-lookup.js";
+import { AttachmentsModule } from "../conversations/attachments.module.js";
+import { EventLogModule } from "../conversations/event-log.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { SkillsCatalogService } from "./catalog.js";
@@ -11,7 +14,7 @@ import { SkillsService } from "./skills.service.js";
  * catalog snapshot and the one {@link SkillInvoker}.
  */
 @Module({
-  imports: [StorageModule, OrgLockModule],
+  imports: [StorageModule, OrgLockModule, EventLogModule, AttachmentsModule, AgentLookupModule],
   providers: [SkillsService, SkillChangesService, SkillsCatalogService, SkillInvoker],
   exports: [SkillsService, SkillChangesService, SkillsCatalogService, SkillInvoker],
 })

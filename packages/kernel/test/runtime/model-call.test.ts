@@ -15,10 +15,10 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
-import { EventLog } from "../../src/conversations/event-log.js";
+import type { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
-import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
@@ -36,6 +36,7 @@ import {
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { toolSearchTool } from "../../src/tools/builtins/tool-search.js";
 import { type ResolvedTool, specHash } from "../../src/tools/registry.js";
+import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 
@@ -139,10 +140,10 @@ beforeAll(async () => {
   k = await createKernel(baseConfig, { env: {}, logger: silent });
   await k.start();
   raw = createDb(pgc.url, 10);
-  db = kernelDb(raw);
+  db = legacyDbFor(raw);
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
-  eventLog = new EventLog(db, createBus(redis, sub, "kernel"));
+  eventLog = eventLogFor(db, createBus(redis, sub, "kernel"));
   const registry = new ProviderRegistry(
     {
       list: (cap: string) => [

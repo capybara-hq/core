@@ -4,12 +4,13 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
-import { EventLog, payloadJson } from "../../src/conversations/event-log.js";
+import { type EventLog, payloadJson } from "../../src/conversations/event-log.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
-import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
+import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 
 let pgc: TestContainer;
@@ -41,13 +42,13 @@ beforeAll(async () => {
   // 两个独立连接池，模拟两个副本并发写同一会话。
   rawA = createDb(pgc.url, 10);
   rawB = createDb(pgc.url, 10);
-  dbA = kernelDb(rawA);
-  dbB = kernelDb(rawB);
+  dbA = legacyDbFor(rawA);
+  dbB = legacyDbFor(rawB);
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
   bus = createBus(redis, sub, "kernel");
-  logA = new EventLog(dbA, bus);
-  logB = new EventLog(dbB, bus);
+  logA = eventLogFor(dbA, bus);
+  logB = eventLogFor(dbB, bus);
 }, 120_000);
 afterAll(async () => {
   await k?.stop();
@@ -173,8 +174,8 @@ describe("EventLog", () => {
     });
     try {
       await expect(
-        dbA.transaction().execute(async (trx) => {
-          const out = await logA.append(conversationId, [userMsg("a")], trx);
+        dbA.transaction().execute(async () => {
+          const out = await logA.appendIn(conversationId, [userMsg("a")]);
           expect(out[0]?.seq).toBe(1);
           throw new Error("rollback");
         }),

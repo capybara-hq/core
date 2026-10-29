@@ -5,6 +5,7 @@ import { sql } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
 import { assertItemInstallable } from "../catalog/requests.service.js";
 import {
+  AttachmentsService,
   type CreatedAttachment,
   SKILL_PACKAGE_CONTENT_TYPE,
   skillFilesPrefix,
@@ -14,10 +15,8 @@ import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { assertCustomAllowed } from "../identity/settings.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { legacyCurrentTrx } from "../infra/database/legacy-view.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
-import { LegacyPorts } from "../lifecycle/legacy-ports.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { textBytesTokens } from "../runtime/context/tokens.js";
 import { StorageService } from "../storage/storage.service.js";
@@ -369,7 +368,7 @@ export class SkillsService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(StorageService) private readonly storage: StorageService,
-    @Inject(LegacyPorts) private readonly ports: LegacyPorts,
+    @Inject(AttachmentsService) private readonly attachments: AttachmentsService,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(OrgLock) private readonly orgLock: OrgLock,
   ) {}
@@ -382,7 +381,7 @@ export class SkillsService {
   ): Promise<CreatedAttachment> {
     // 部署设置 customSkills 为 deny：组织只能从企业目录安装技能（C22）
     await assertCustomAllowed(this.db.db, "customSkills");
-    return this.ports.attachments.create(
+    return this.attachments.create(
       orgId,
       accountId,
       { name: input.name, contentType: SKILL_PACKAGE_CONTENT_TYPE, size: input.size },
@@ -425,19 +424,14 @@ export class SkillsService {
     }
     // 自建被禁止时先拒绝（事务里再复核一次）
     await assertCustomAllowed(this.db.db, "customSkills");
-    const zip = await this.ports.attachments.readSkillPackage(orgId, actorAccountId, uploadId);
+    const zip = await this.attachments.readSkillPackage(orgId, actorAccountId, uploadId);
     const pkg = await readSkillPackage(zip);
     return this.createVersionFromFiles(orgId, actorAccountId, pkg, {
       prefix,
       ...(actorTokenId !== undefined && { actorTokenId }),
       inTransaction: async () => {
         await assertCustomAllowed(this.db.db, "customSkills");
-        await this.ports.attachments.consumeSkillPackage(
-          legacyCurrentTrx(),
-          orgId,
-          actorAccountId,
-          uploadId,
-        );
+        await this.attachments.consumeSkillPackage(orgId, actorAccountId, uploadId);
       },
     });
   }
@@ -514,7 +508,7 @@ export class SkillsService {
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "skills.manage");
     if (opts.catalog) {
       const c = opts.catalog;
-      await assertItemInstallable(legacyCurrentTrx(), orgId, c.itemId, c.approvedBy ?? c.itemId);
+      await assertItemInstallable(this.db.db, orgId, c.itemId, c.approvedBy ?? c.itemId);
     }
     await opts.inTransaction?.();
     const existing = await this.db

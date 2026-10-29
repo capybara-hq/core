@@ -8,6 +8,9 @@ import {
   inboundJobId,
 } from "../../src/channels/outbound.js";
 import { ApiError } from "../../src/errors.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
+import { createLogger } from "../../src/log.js";
+import { ConversationLock } from "../../src/runtime/conversation-lock.js";
 import { runConfig, waitFor } from "../helpers/runs.js";
 
 /**
@@ -18,6 +21,7 @@ import { runConfig, waitFor } from "../helpers/runs.js";
  */
 
 const BACKLOG = 20;
+const quiet = createLogger("error", { write: () => {} });
 let rd: TestContainer;
 
 beforeAll(async () => {
@@ -61,6 +65,7 @@ describe("渠道队列优先级（行为）", () => {
         },
       },
       eventLog: { readAfter: async () => [] },
+      lock: new ConversationLock(new LockService(redis, quiet), quiet),
       // 取不到出站会话：投递任务记一笔警告后直接结束，不走真实投递
       connections: {
         outbound: async () => {

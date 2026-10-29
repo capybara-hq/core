@@ -15,6 +15,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import type { Kernel } from "../../src/kernel.js";
 import { sameSkills, skillsChangeText } from "../../src/runtime/context/skills.js";
 import { SkillsCatalogService } from "../../src/skills/catalog.js";
@@ -1088,7 +1090,9 @@ describe("skill_write on a shared agent (R4)", { timeout: 180_000 }, () => {
     const isLocked = new Promise<void>((r) => {
       locked = r;
     });
-    const rejecting = db.transaction().execute(async (t) => {
+    // an external writer in the kernel's own transaction (the event log joins it)
+    const rejecting = k.app.get(TransactionHost).run(async () => {
+      const t = k.app.get(KernelDb).db;
       await t
         .selectFrom("conversations")
         .select("id")
@@ -1100,27 +1104,23 @@ describe("skill_write on a shared agent (R4)", { timeout: 180_000 }, () => {
         .set({ status: "rejected" })
         .where("id", "=", d2?.id as string)
         .execute();
-      await k.runs.eventLog.append(
-        convA,
-        [
-          {
-            type: "skills_catalog",
-            idemKey: "test-revert",
-            payload: {
-              skills: [
-                {
-                  id: real.id,
-                  name: "rho",
-                  description: real.description,
-                  version: 1,
-                  source: v1?.object_prefix as string,
-                },
-              ],
-            },
+      await k.runs.eventLog.appendIn(convA, [
+        {
+          type: "skills_catalog",
+          idemKey: "test-revert",
+          payload: {
+            skills: [
+              {
+                id: real.id,
+                name: "rho",
+                description: real.description,
+                version: 1,
+                source: v1?.object_prefix as string,
+              },
+            ],
           },
-        ],
-        t,
-      );
+        },
+      ]);
       locked();
       await held;
     });

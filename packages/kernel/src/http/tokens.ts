@@ -7,44 +7,13 @@ export const KERNEL_CONFIG = Symbol("KERNEL_CONFIG");
 /** `ProviderRegistry` 的注入令牌。 */
 export const PROVIDER_REGISTRY = Symbol("PROVIDER_REGISTRY");
 
-/** `AgentsService` 的注入令牌。 */
-export const AGENTS = Symbol("AGENTS");
-
-/** `AgentTemplatesService` (agent templates from plugins). */
-export const AGENT_TEMPLATES = Symbol("AGENT_TEMPLATES");
-
-/** `EventLog` 的注入令牌。 */
-export const EVENT_LOG = Symbol("EVENT_LOG");
-
-/** `ConversationsService` 的注入令牌。 */
-export const CONVERSATIONS = Symbol("CONVERSATIONS");
-
-/** `AttachmentsService`（对话附件）的注入令牌。 */
-export const ATTACHMENTS = Symbol("ATTACHMENTS");
-
 /** `InboxService`（收件箱汇总）的注入令牌。 */
 export const INBOX = Symbol("INBOX");
 
-/** `ConversationOutputs`（网页读工具输出存档）的注入令牌。 */
-export const CONVERSATION_OUTPUTS = Symbol("CONVERSATION_OUTPUTS");
-
-/** `ConversationArtifacts`（产物下载）的注入令牌。 */
-export const CONVERSATION_ARTIFACTS = Symbol("CONVERSATION_ARTIFACTS");
-
-/** `ConversationFiles` (file outputs list and text content, UI refresh B). */
-export const CONVERSATION_FILES = Symbol("CONVERSATION_FILES");
 export const FILE_PREVIEWERS = Symbol("FILE_PREVIEWERS");
 
-/** `ConversationQueue` (queued messages, UI refresh B). */
-export const CONVERSATION_QUEUE = Symbol("CONVERSATION_QUEUE");
-
-/** `ConversationSandboxStatus`（对话沙箱状态）的注入令牌。 */
-export const CONVERSATION_SANDBOX = Symbol("CONVERSATION_SANDBOX");
 /** `ConversationToolInfo` (tool titles, kinds and key arguments for the conversation page). */
 export const CONVERSATION_TOOLS = Symbol("CONVERSATION_TOOLS");
-
-/** `ConversationStreams`（本进程持有的会话 SSE 连接）的注入令牌。 */
-export const CONVERSATION_STREAMS = Symbol("CONVERSATION_STREAMS");
 
 /** `ChannelConnections`（组织的渠道连接）的注入令牌。 */
 export const CHANNEL_CONNECTIONS = Symbol("CHANNEL_CONNECTIONS");
@@ -56,9 +25,6 @@ export const EMBED_TOKENS = Symbol("EMBED_TOKENS");
 
 /** `OrgUiStreams`（组织级界面刷新 SSE）的注入令牌。 */
 export const ORG_UI_STREAMS = Symbol("ORG_UI_STREAMS");
-
-/** `TrajectoryService`（轨迹查看器）的注入令牌。 */
-export const TRAJECTORIES = Symbol("TRAJECTORIES");
 
 /** `EvalSetsService`（评测集与用例）的注入令牌。 */
 export const EVAL_SETS = Symbol("EVAL_SETS");

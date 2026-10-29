@@ -437,7 +437,7 @@ export class Waits {
         cancelled,
         agents?.callIds,
       );
-      if (results.length > 0) await this.d.eventLog.append(conversationId, results, t);
+      if (results.length > 0) await this.d.eventLog.appendIn(conversationId, results);
       stopped = agents;
       return finishRunIn(t, this.d.eventLog, {
         conversationId,

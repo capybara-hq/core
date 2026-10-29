@@ -17,10 +17,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
-import { EventLog } from "../../src/conversations/event-log.js";
+import type { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
-import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { HookRegistry } from "../../src/extensions/hooks.js";
@@ -48,6 +48,7 @@ import {
   type UnavailableTool,
 } from "../../src/tools/registry.js";
 import { validateInput } from "../../src/tools/validate.js";
+import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { eventsOf } from "../helpers/runs.js";
 import { seedConnector, seedConversation } from "../helpers/tool-fixtures.js";
@@ -240,10 +241,10 @@ beforeAll(async () => {
     dir: fileURLToPath(new URL("../../src/migrations", import.meta.url)),
   });
   raw = createDb(pgc.url, 10);
-  db = kernelDb(raw);
+  db = legacyDbFor(raw);
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
-  eventLog = new EventLog(db, createBus(redis, sub, "kernel"));
+  eventLog = eventLogFor(db, createBus(redis, sub, "kernel"));
   outputs = outputsFor(db, config);
   breaker = breakerFor(redis, config);
 }, 120_000);

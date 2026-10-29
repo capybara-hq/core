@@ -26,6 +26,18 @@ export interface LockHandle {
   readonly lost: AbortSignal;
 }
 
+/**
+ * A renewed lease ({@link LockService.hold}): a {@link LockHandle} whose holder value is the
+ * caller's (other replicas read it), with an explicit renewal and an abandon for a holder that
+ * hands the key over to its TTL.
+ */
+export interface LeaseHandle extends LockHandle {
+  /** Renews now; false (and `lost` aborts) when the key is no longer ours. */
+  renew(): Promise<boolean>;
+  /** Stops renewing without deleting: the key expires within its TTL. `release` still deletes it while ours. */
+  abandon(): void;
+}
+
 /** Deletes the key only while it holds our token. */
 const RELEASE_IF = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`;
 /** Extends the key only while it holds our token. */
@@ -77,7 +89,7 @@ export class LockService {
       opts.signal?.throwIfAborted();
       if ((await this.redis.set(lockKey, token, "PX", Math.ceil(opts.ttlMs), "NX")) === "OK") {
         this.log.debug("lock acquired", { lockKey });
-        return this.hold(lockKey, token, opts.ttlMs);
+        return this.watch(lockKey, token, opts.ttlMs);
       }
       const remaining = deadline - Date.now();
       if (remaining <= 0) {
@@ -114,31 +126,53 @@ export class LockService {
     return (await this.redis.eval(RENEW_IF, 1, key, holder, String(Math.ceil(ttlMs)))) === 1;
   }
 
+  /** The holder value of `key` (a lease's or a lock's token); null when nobody holds it. */
+  holderOf(key: string): Promise<string | null> {
+    return this.redis.get(key);
+  }
+
   /** Deletes `key` when `holder` still owns it. */
   async releaseIf(key: string, holder: string): Promise<boolean> {
     return (await this.redis.eval(RELEASE_IF, 1, key, holder)) === 1;
   }
 
-  private hold(lockKey: string, token: string, ttlMs: number): LockHandle {
+  /**
+   * Takes `key` (no `lock:` prefix) with the caller's `holder` value for `ttlMs`, unless it is
+   * held, and renews it every TTL/3 like {@link acquire} (a run longer than the TTL keeps it, a
+   * crashed holder's key expires within the TTL). Resolves `undefined` when the key is held; tries
+   * once. For leases whose holder other replicas read (the conversation run lock: the run id).
+   */
+  async hold(key: string, holder: string, ttlMs: number): Promise<LeaseHandle | undefined> {
+    if (!(await this.lease(key, holder, ttlMs))) return undefined;
+    return this.watch(key, holder, ttlMs);
+  }
+
+  /** The renewal watchdog of a key we just took. */
+  private watch(lockKey: string, token: string, ttlMs: number): LeaseHandle {
     const lost = new AbortController();
     let released = false;
+    let stopped = false;
     let lastOk = Date.now();
+    const stop = () => {
+      stopped = true;
+      clearInterval(timer);
+    };
     const lose = (reason: string) => {
       if (released || lost.signal.aborted) return;
       this.log.warn(reason, { lockKey });
       lost.abort(new Error(`lock lost: ${lockKey}`));
-      clearInterval(timer);
+      stop();
     };
     const intervalMs = Math.max(1, Math.floor(ttlMs / 3));
     const timer = setInterval(() => {
       this.renew(lockKey, token, ttlMs).then(
         (ok) => {
-          if (released) return;
+          if (released || stopped) return;
           if (ok) lastOk = Date.now();
           else lose("lock lost: the key is gone or taken");
         },
         (err: unknown) => {
-          if (released) return;
+          if (released || stopped) return;
           // A transient Redis error: try again next tick, unless the next tick would land past
           // expiry (then another replica may already hold the key): report the loss now.
           if (Date.now() - lastOk >= ttlMs - intervalMs) {
@@ -152,10 +186,18 @@ export class LockService {
     timer.unref();
     return {
       lost: lost.signal,
+      renew: async () => {
+        if (released || lost.signal.aborted) return false;
+        const ok = await this.renew(lockKey, token, ttlMs);
+        if (ok) lastOk = Date.now();
+        else lose("lock lost: the key is gone or taken");
+        return ok;
+      },
+      abandon: stop,
       release: async () => {
         if (released) return;
         released = true;
-        clearInterval(timer);
+        stop();
         try {
           if (!(await this.releaseIf(lockKey, token))) {
             this.log.warn("lock was not ours at release (expired or taken)", { lockKey });

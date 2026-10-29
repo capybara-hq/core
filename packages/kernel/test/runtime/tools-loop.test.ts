@@ -13,7 +13,7 @@ import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
-import { EventLog } from "../../src/conversations/event-log.js";
+import type { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -28,6 +28,7 @@ import type { LoopContext } from "../../src/runtime/loop.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { type ResolvedTool, specHash } from "../../src/tools/registry.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
+import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -146,10 +147,10 @@ describe("tools 节点（LangGraphLoop + 执行管线）", () => {
       dir: fileURLToPath(new URL("../../src/migrations", import.meta.url)),
     });
     raw = createDb(pgc.url, 10);
-    db = kernelDb(raw);
+    db = legacyDbFor(raw);
     redis = new Redis(rd.url);
     sub = createBusSubscriber(() => new Redis(rd.url));
-    eventLog = new EventLog(db, createBus(redis, sub, "kernel"));
+    eventLog = eventLogFor(db, createBus(redis, sub, "kernel"));
     const config = KernelConfigSchema.parse({
       db: { url: pgc.url },
       redis: { url: rd.url },

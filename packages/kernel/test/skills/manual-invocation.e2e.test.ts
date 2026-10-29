@@ -13,7 +13,6 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { AgentTemplatesService } from "../../src/agents/templates.js";
 import type { TranslationReport } from "../../src/catalog/claude/report.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -23,6 +22,7 @@ import { takeSnapshot, toEvents } from "../../src/evals/snapshot.js";
 import type { Kernel } from "../../src/kernel.js";
 import { loadFixtureAsStrings } from "../catalog/claude-fixtures.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
+import { agentTemplatesFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
@@ -241,7 +241,7 @@ describe("phase D acceptance: commands, manual-only and forked skills", {
       ["manual-script", "commands-demo", true, false],
       ["review", "commands-demo", false, true],
     ]);
-    const templates = await new AgentTemplatesService(db).listForOrg(orgId);
+    const templates = await agentTemplatesFor(db).listForOrg(orgId);
     expect(templates.map((t) => t.type)).toEqual(["commands-demo:code-reviewer"]);
     const created = await admin({
       method: "POST",

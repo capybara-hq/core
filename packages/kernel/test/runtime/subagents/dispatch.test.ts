@@ -9,7 +9,7 @@ import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { normalizeStoredDefinition } from "../../../src/agents/definition.js";
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
-import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import type { Kernel } from "../../../src/kernel.js";
 import { BEHAVIOR_RULES } from "../../../src/runtime/context/build.js";
@@ -18,6 +18,7 @@ import { SUBAGENT_PREAMBLE } from "../../../src/runtime/subagents/preamble.js";
 import { AGENT_REFUSALS } from "../../../src/tools/builtins/agent.js";
 import { hookDeniedText } from "../../../src/tools/pipeline.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
+import { eventLogFor, legacyDbFor } from "../../helpers/conversations.js";
 import { truncateTables } from "../../helpers/db.js";
 import { accountsFor } from "../../helpers/identity.js";
 import { testMembers } from "../../helpers/members.js";
@@ -169,7 +170,7 @@ beforeAll(async () => {
   capture.install();
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   const raw = createDb(pgc.url, 3);
-  db = kernelDb(raw);
+  db = legacyDbFor(raw);
   destroyDb = () => raw.destroy();
   root = await mkdtemp(join(tmpdir(), "cap-subagents-"));
   k = await startKernel(
@@ -735,7 +736,7 @@ describe("dispatch idempotency under the parent run lock", () => {
   const enqueued: string[] = [];
   const deps = (): DispatchDeps => ({
     db,
-    eventLog: k.runs.eventLog,
+    eventLog: eventLogFor(db, k.bus),
     purposes: k.purposes,
     registry: k.runs.registry,
     config: () => k.config,

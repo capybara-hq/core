@@ -348,32 +348,28 @@ export async function replayRun(
         started_at: new Date(),
       })
       .execute();
-    await eventLog.append(
-      conversationId,
-      [
-        {
-          type: "run_started",
-          runId,
-          idemKey: `run_started:${runId}`,
-          payload: {
-            agentVersion: candidate.agentVersion,
-            model: agent.model,
-            triggerAccountId: accountId,
-          },
+    await eventLog.appendIn(conversationId, [
+      {
+        type: "run_started",
+        runId,
+        idemKey: `run_started:${runId}`,
+        payload: {
+          agentVersion: candidate.agentVersion,
+          model: agent.model,
+          triggerAccountId: accountId,
         },
-        ...(catalog
-          ? [
-              {
-                type: "skills_catalog" as const,
-                runId,
-                idemKey: skillsCatalogIdemKey(runId),
-                payload: catalog.payload,
-              },
-            ]
-          : []),
-      ],
-      t,
-    );
+      },
+      ...(catalog
+        ? [
+            {
+              type: "skills_catalog" as const,
+              runId,
+              idemKey: skillsCatalogIdemKey(runId),
+              payload: catalog.payload,
+            },
+          ]
+        : []),
+    ]);
     if (d.onSeeded && !(await d.onSeeded(t, conversationId))) throw new ReplayClaimLost();
   });
   await d.hooks?.afterRunSeeded?.(evalRunId, conversationId);

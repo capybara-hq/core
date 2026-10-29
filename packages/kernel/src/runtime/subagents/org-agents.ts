@@ -1,4 +1,4 @@
-import { isAgentVisibleTo } from "../../agents/agents.service.js";
+import { isAgentVisibleTo } from "../../agents/agent-lookup.js";
 import { type AgentDefinition, normalizeStoredDefinition } from "../../agents/definition.js";
 import type { KernelSchemaDb } from "../../db/kernel-schema.js";
 import { audit } from "../../identity/audit.js";

@@ -5,6 +5,7 @@ import {
   MARKETPLACES_REFRESH_SCHEDULER_ID,
   PLUGIN_STAGING_CLEANUP_SCHEDULER_ID,
 } from "../catalog/job-ids.js";
+import { ATTACHMENT_CLEANUP_SCHEDULER_ID } from "../conversations/attachments.service.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { PLUGINS_RECONCILE_SCHEDULER_ID } from "../extensions/lifecycle-topics.js";
 import { withJobContext } from "../log-context.js";
@@ -52,6 +53,8 @@ export const RETIRED_SCHEDULER_IDS: readonly string[] = [
   // Task 3.5
   DRIFT_SCHEDULER_ID,
   OUTPUT_CLEANUP_SCHEDULER_ID,
+  // Task 3.6a
+  ATTACHMENT_CLEANUP_SCHEDULER_ID,
 ];
 
 /**

@@ -636,22 +636,18 @@ export class RunWorker {
           if (saved !== undefined) {
             agent = effectiveDefinition(saved, await readSelection(t, conversationId));
           }
-          const [ev] = await this.d.eventLog.append(
-            conversationId,
-            [
-              {
-                type: "run_started",
-                runId,
-                idemKey: `run_started:${runId}`,
-                payload: {
-                  agentVersion: run.agent_version,
-                  model: agent.model,
-                  triggerAccountId: run.trigger_account_id,
-                },
+          const [ev] = await this.d.eventLog.appendIn(conversationId, [
+            {
+              type: "run_started",
+              runId,
+              idemKey: `run_started:${runId}`,
+              payload: {
+                agentVersion: run.agent_version,
+                model: agent.model,
+                triggerAccountId: run.trigger_account_id,
               },
-            ],
-            t,
-          );
+            },
+          ]);
           return ev?.seq;
         });
         if (toSeq !== undefined) await this.d.eventLog.notify(conversationId, toSeq);
@@ -910,18 +906,14 @@ export class RunWorker {
         .forUpdate()
         .executeTakeFirst();
       if (!sameSelection(await readSelection(t, conversationId), sel)) return null;
-      const [written] = await this.d.eventLog.append(
-        conversationId,
-        [
-          {
-            type: "model_switched",
-            runId,
-            idemKey: `model_fallback:${runId}`,
-            payload: { model: null, effort: null, byAccountId: null, reason: "unavailable" },
-          },
-        ],
-        t,
-      );
+      const [written] = await this.d.eventLog.appendIn(conversationId, [
+        {
+          type: "model_switched",
+          runId,
+          idemKey: `model_fallback:${runId}`,
+          payload: { model: null, effort: null, byAccountId: null, reason: "unavailable" },
+        },
+      ]);
       await t
         .updateTable("conversations")
         .set({ selection: JSON.stringify(NO_SELECTION) })

@@ -17,7 +17,6 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { AgentTemplatesService } from "../../src/agents/templates.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -31,6 +30,7 @@ import { BEHAVIOR_RULES } from "../../src/runtime/context/build.js";
 import { SUBAGENT_PREAMBLE } from "../../src/runtime/subagents/preamble.js";
 import { loadFixtureAsStrings } from "../catalog/claude-fixtures.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
+import { agentTemplatesFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
@@ -244,7 +244,7 @@ describe("phase C acceptance: superpowers subagent-driven-development", {
     expect(listed.statusCode, listed.body).toBe(200);
     const skills = listed.json().skills as { id: string; name: string }[];
     const skillId = (n: string) => skills.find((s) => s.name === n)?.id as string;
-    const [reviewer] = await new AgentTemplatesService(db).listForOrg(orgId);
+    const [reviewer] = await agentTemplatesFor(db).listForOrg(orgId);
     expect(reviewer?.type).toBe("superpowers:code-reviewer");
 
     // the fast tier is mapped (to model-script); capable stays unmapped and falls back
@@ -386,7 +386,7 @@ describe("phase C acceptance: superpowers subagent-driven-development", {
     });
     const fresh = prompts.filter((p) => !p.resumed);
     expect(fresh).toHaveLength(7);
-    const reviewerBody = (await new AgentTemplatesService(db).listForOrg(orgId))[0];
+    const reviewerBody = (await agentTemplatesFor(db).listForOrg(orgId))[0];
     for (const p of fresh) {
       const first = original.find(
         (r) => isChildRequest(r) && r.messages.length === 1 && textOf(r, 0) === p.prompt,

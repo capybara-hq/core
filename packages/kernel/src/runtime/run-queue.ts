@@ -3,7 +3,7 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql, type Transaction } from "kysely";
-import { visibleTo } from "../agents/agents.service.js";
+import { visibleTo } from "../agents/agent-lookup.js";
 import type { EventLog } from "../conversations/event-log.js";
 import { dispatchQueuedIn, pauseQueueWith } from "../conversations/queue.js";
 import type { ConversationKind, KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
