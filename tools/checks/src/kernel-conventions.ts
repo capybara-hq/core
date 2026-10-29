@@ -2054,7 +2054,8 @@ const JOB_DECORATORS = new Set([...SCHEDULED_DECORATORS, "Processor"]);
  * kc-worker-only (spec §2: crons and queue consumers run on the worker role only). The worker-only
  * classes are those with a `@LockedCron` / `@LockedInterval` method, those decorated `@Processor`,
  * the first argument of every `configuredProcessor(…)` call (the base class that gets `@Processor`
- * on a subclass), and every subclass of one of them (the class and method metadata is inherited,
+ * on a subclass; the provider `configuredProcessor` returns is checked at each call, by that
+ * argument, not in the factory's own body), and every subclass of one of them (the class and method metadata is inherited,
  * so a subclass is a job too). Each place such a class is provided (an array element, a `useClass`
  * value, a `configuredProcessor` argument) must lie in the definition of a worker-only module, else
  * it is reported (also when it lies in no module definition at all: what module the list ends up in
@@ -2290,6 +2291,8 @@ function checkWorkerOnly(r: Resolver, hits: Hit[]): void {
     file: FileInfo;
     rel: string;
     line: number;
+    /** Inside `configuredProcessor` itself, whose provider is checked at its calls (by `base`). */
+    factory?: boolean;
   }[] = [];
   /**
    * A reference placed past the wrappers that do not change what it is (`X as Provider`,
@@ -2330,8 +2333,11 @@ function checkWorkerOnly(r: Resolver, hits: Hit[]): void {
         return;
       }
       const at = enclosing(anc);
+      const factory = anc.some(
+        (a) => a.type === "FunctionDeclaration" && nameOf(a.id) === "configuredProcessor",
+      );
       for (const name of r.canon(f, n.name as string)) {
-        refs.push({ name, ...placed(n, anc), at, file: f, rel: f.rel, line });
+        refs.push({ name, ...placed(n, anc), at, file: f, rel: f.rel, line, factory });
       }
     });
   }
@@ -2361,7 +2367,7 @@ function checkWorkerOnly(r: Resolver, hits: Hit[]): void {
   }
 
   for (const ref of refs) {
-    if (!jobs.has(ref.name)) continue;
+    if (!jobs.has(ref.name) || ref.factory) continue;
     const p = ref.parent;
     const provided =
       p.type === "ArrayExpression" ||
