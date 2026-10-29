@@ -468,6 +468,48 @@ describe("channel long connections: fair share across gateway replicas", () => {
     expect(gated).toEqual([]);
   }, 30_000);
 
+  it("a heartbeat renewal answered false drops the connection (the watchdog never saw it)", async () => {
+    // The watchdog keeps renewing the real key; only the heartbeat round's explicit renew() of one
+    // connection's lease answers false, so only the heartbeat path can drop it
+    let refused: string | undefined;
+    const real = new LockService(redis, createLogger("error", { write: () => {} }));
+    const locks: Pick<LockService, "hold"> = {
+      hold: async (key, token, ttlMs) => {
+        const h = await real.hold(key, token, ttlMs);
+        return h && { ...h, renew: async () => (key === refused ? false : h.renew()) };
+      },
+    };
+    const channel = fakeChannel("hb-false");
+    const sup = channelSupervisorFor({
+      pool: raw,
+      redis,
+      bus,
+      connections: {
+        runtime: async () =>
+          ({ row: { plugin: "chan-mini" }, channel, config: {} }) as unknown as Awaited<
+            ReturnType<ChannelConnections["runtime"]>
+          >,
+      },
+      localPlugins: () => ["chan-mini"],
+      onEvent: async () => {},
+      config: () => ({ channels }),
+      log: { warn: () => {}, error: () => {} },
+      replicaId: `rep-hb-false-${randomUUID()}`,
+      locks,
+    });
+    await sup.start();
+    running.push({ name: "hb-false", replicaId: sup.replicaId, sup });
+    await waitFor(async () => countOf("hb-false") === CONNECTIONS, 15_000, "all held");
+    const id = ids[0] as string;
+    refused = channelLeaseKey(id);
+    await waitFor(
+      async () => events.some((e) => e.inst === "hb-false" && e.id === id && e.kind === "down"),
+      5_000,
+      "dropped on the heartbeat's false",
+    );
+    refused = undefined;
+  }, 30_000);
+
   it("the gateway check runs every minute as a @LockedCron; its old maintenance scheduler is retired", () => {
     expect(GATEWAY_CHECK_JOB).not.toContain(":");
     expect(RETIRED_SCHEDULER_IDS).toContain(GATEWAY_CHECK_SCHEDULER_ID);

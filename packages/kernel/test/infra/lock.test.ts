@@ -336,6 +336,27 @@ describe("LockService.keepAlive: loss is a deadline (R19)", () => {
     await h.release();
     vi.useRealTimers();
   });
+
+  it("a renewal answered false after abandon() logs nothing and loses nothing", async () => {
+    const lines: string[] = [];
+    const lock = new LockService(r1, createLogger("warn", { write: (l) => lines.push(l) }));
+    vi.useFakeTimers({
+      toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
+      now: 0,
+    });
+    let answer: (ok: boolean) => void = () => {};
+    const h = lock.keepAlive("lease", TTL, {
+      renew: () => new Promise<boolean>((r) => (answer = r)),
+      release: async () => {},
+    });
+    await vi.advanceTimersByTimeAsync(100); // the watchdog's renewal is in flight
+    h.abandon();
+    answer(false); // the key was taken meanwhile: nobody holds this lease any more
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(lines).toEqual([]);
+    expect(h.lost.aborted).toBe(false);
+    vi.useRealTimers();
+  });
 });
 
 describe("LockService shared leases (Task 3.8)", () => {

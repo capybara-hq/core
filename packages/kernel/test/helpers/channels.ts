@@ -70,13 +70,15 @@ export function channelSupervisorFor(d: {
   log: Pick<Logger, "warn" | "error">;
   replicaId: string;
   onScan?: (claimOnly: boolean) => void;
+  /** The lease source; default a `LockService` on `redis`. */
+  locks?: Pick<LockService, "hold">;
 }): ChannelSupervisor {
   const { db } = standaloneDatabase(d.pool, quiet);
   const sup = new ChannelSupervisor(
     db,
     d.redis,
     d.bus,
-    new LockService(d.redis, quiet),
+    d.locks ?? new LockService(d.redis, quiet),
     d.connections,
     {
       list: () => d.localPlugins().map((plugin) => ({ plugin, capability: "channel@1" })) as never,

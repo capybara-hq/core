@@ -360,7 +360,8 @@ export class LockService {
       clearTimeout(deadline);
     };
     const lose = (reason: string) => {
-      if (released || lost.signal.aborted) return;
+      // released or abandoned: the holder gave the lease up, so a late answer loses nothing
+      if (released || stopped || lost.signal.aborted) return;
       this.log.warn(reason, { lockKey });
       lost.abort(new Error(`lock lost: ${lockKey}`));
       stop();
