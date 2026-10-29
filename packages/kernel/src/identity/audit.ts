@@ -2,8 +2,8 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
 
 /**
  * Writes one audit event (`action` is dotted lower-case English, e.g. `org.member.role_changed`)
- * through `db`: converted code passes `this.db.db` (the context's transaction or the pool), code
- * not converted yet its transaction (a `Transaction` is a `Kysely`).
+ * through `db`: a service passes `this.db.db` (`KernelDb`: the context's transaction or the pool),
+ * so the event commits or rolls back with the write it records.
  */
 export async function audit(
   db: KernelSchemaDb,

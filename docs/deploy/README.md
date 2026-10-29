@@ -275,7 +275,7 @@ otherwise.
 | Role | Does | Scale by |
 |---|---|---|
 | `api` | The HTTP API behind `web` (`/api/v1/*`, extension routes) | CPU and request rate. Stateless. |
-| `worker` | Agent runs, BullMQ queues (channel inbound and outbound delivery, evals, extension jobs), maintenance jobs | Queue backlog and run concurrency. Serves only `/healthz` and `/readyz`. |
+| `worker` | Agent runs, every BullMQ queue consumer (channel inbound and outbound delivery, evals, titles, usage reports, maintenance, extension jobs) and every periodic job (sweeps, cleanups, marketplace refresh, drift scan, extension reconcile, the gateway check) | Queue backlog and run concurrency. Serves only `/healthz` and `/readyz`. |
 | `gateway` | IM long connections (Slack Socket Mode, Lark long connection) and the channel webhook route | For availability and to spread connections; see below. |
 
 - **Choosing roles:**
@@ -286,6 +286,25 @@ otherwise.
     `gateway`. They are built from one Dockerfile with the build argument `ROLES` (comma-separated or
     a JSON array, default `api,worker,gateway`):
     `docker build -f docker/kernel.Dockerfile --build-arg ROLES=worker .`.
+- **Periodic jobs run on `worker` only.** Each runs once per period across all worker replicas
+  (another replica's attempt logs at info, not error). A deployment without a `worker` process runs
+  none of them and consumes no queue. A starting worker runs no periodic job before its start
+  sequence (migrations, the bootstrap step, the extension load) has finished; a tick that fires
+  earlier logs `cron skipped: the scheduler is not started` at info. The marketplace refresh and the
+  connector drift scan also run once right after a worker starts.
+- **Stopping.** On SIGTERM or SIGINT a process answers `/readyz` with 503 at once, aborts a start in
+  progress, drains its runs, jobs and extension calls, closes its queues, then Redis and PostgreSQL,
+  all within a 30 s budget, and exits 0 (1 if the stop failed). A second signal exits 1 at once.
+  When Redis is unreachable the stop takes the whole budget: queue connections that cannot close are
+  abandoned rather than holding the exit.
+- **Redis outages and leases.** Conversation runs, IM long connections, sandbox commands and org
+  quota slots hold Redis leases renewed every third of their TTL. A holder whose renewals keep
+  failing gives up one renewal period before the key could expire (two thirds of the TTL after its
+  last successful renewal) and logs `lock lost: <key>`: a run that lost its conversation lease is
+  re-queued and resumes on another worker, a long connection reconnects, and a lost quota slot lets
+  the run go on (the org may briefly exceed its concurrency). So after a Redis outage longer than
+  about two thirds of a lease TTL (`runtime.jobLockMs`, `channels.leaseTtlMs`) expect re-queued runs
+  and reconnects, never two holders of one lease.
 - **IM needs a gateway.** Since 0.1.0, IM long connections run **only on processes with the `gateway`
   role**. A deployment whose processes don't include `gateway` receives no IM messages. Two log lines
   catch this:
@@ -711,7 +730,8 @@ this:
   cache rebuilt from object storage or PostgreSQL, so an `emptyDir` is enough. Don't share a volume
   between pods.
 - **Shutdown:** set `terminationGracePeriodSeconds` to 40 or more. The kernel's shutdown budget is 30
-  seconds.
+  seconds (readiness turns 503 at the first SIGTERM; a repeated SIGTERM exits at once, see
+  [Roles and scaling](#roles-and-scaling)).
 - **Probes:** `/readyz` and `/healthz` on port 8080 (`CAPYBARA_HTTP__PORT`) for every kernel role, and
   `/zh/login` on port 3000 for `web`. Give the kernel pods a `startupProbe` on `/healthz` with a
   generous failure threshold (minutes, not seconds): a pod that finds pending migrations doesn't listen

@@ -1,6 +1,9 @@
 # The kernel as a standard NestJS application
 
-Status: draft for maintainer review (2026-10-28). Decided in conversation on 2026-10-28:
+Status: implemented (2026-10-30, branch `refactor/nest-kernel`; plan
+`docs/superpowers/plans/2026-10-28-nest-kernel.md`). Where the implementation refined this design
+(the rulings recorded with the plan), `AGENTS.md` and `.agents/skills/writing-kernel-api` describe
+the result. Decided in conversation on 2026-10-28:
 the server is a normal Nest application, the web app is Next.js, extensions never see Nest;
 keep Kysely (no TypeORM); octok-platform's infrastructure code may be ported (with the owner's
 permission; octok's `package.json` says MIT, the repository has no LICENSE file); prefer official
@@ -152,9 +155,16 @@ There is no compatibility facade in the final state. `createKernel` / `Kernel` a
 `createKernelApp(config, options): Promise<INestApplication>` (plus `startKernelApp` that also
 starts and listens). Tests and helpers use `app.get(Service)`:
 
-- `packages/testing`: `startTestKernel` returns the Nest app; the dual-replica harness and the
-  replica runner start `createKernelApp`; fakes override providers with Nest's testing
-  utilities instead of `KernelOptions` hooks (`loop`, `runHooks`, `evalHooks`).
+- `packages/testing`: `startTestKernel` returns a `TestKernel` `{ app, http, port, close() }`
+  started with `startKernelApp` (its own signal source, no process handlers); the dual-replica
+  harness's replicas start with `startKernelApp` too and stop through the same shutdown path.
+  Extension and plugin tests drive a real kernel this way and never replace a kernel provider.
+- Test seams (ruling R22): the old option hooks (`loop`, `runHooks`, `evalHooks`) and the mutable
+  test fields became named seam tokens (`AGENT_LOOP_FACTORY`, `RUN_HOOKS`, `EVAL_REPLAY_HOOKS`,
+  `TOOL_PIPELINE_HOOKS`, timing and clock tokens, `APP_INTERCEPTOR`), optional providers the kernel
+  never provides. `KernelAppOptions.overrides` accepts only those tokens (`KernelOverride`) and
+  refuses any other, so no domain class can be replaced; they serve the kernel's own tests only:
+  the tokens are not exported, and `startTestKernel` takes no overrides.
 - The 139 kernel test files that start a kernel and the 67 that read `k.<field>` are converted
   (`k.host` → `app.get(ExtensionHost)`, …).
 - `apps/capybara`: `start` builds the app; `admin create`, `bootstrap`, `extensions *` and

@@ -1,24 +1,38 @@
 ---
 name: writing-kernel-api
-description: 'Use when adding or changing a kernel HTTP API (Nest controller, guard, error code): domain classes do not depend on Nest and are injected with useFactory, constructor parameters use explicit @Inject, default deny and the @Public list, @OrgAction and HUMAN_ONLY, ZodPipe, registering error codes, where state lives under multiple replicas, and a template for writing tests with http.inject().'
+description: 'Use when adding or changing kernel code wired into its Nest application, above all an HTTP API (controller, guard, DTO, error code): domain modules and @Injectable providers (one instance each), explicit @Inject on every constructor parameter, the one-convention-per-concern table (KernelConfigService, @Transactional + KernelDb + afterCommit, LockService / @WithLock, lock providers for pg_advisory_xact_lock, @LockedCron / @LockedInterval, @Processor + runJob, @Cacheable, throttlers, createZodDto with @ZBody / @ZQuery / @ZParam), the role modules (ApiModule / WorkerModule / GatewayModule), the start gate and the shutdown, default deny and the @Public list, @OrgAction and HUMAN_ONLY, registering error codes, where state lives under multiple replicas, and tests with app.get and the named test seams.'
 ---
 
-# Writing the kernel HTTP API
+# Writing kernel code and the kernel HTTP API
 
-The kernel HTTP layer is **NestJS + Fastify** (`packages/kernel/src/http/`). Only the kernel uses Nest: **extensions do not depend on Nest**, and extension routes are still `ctx.http.route(method, path, (req: Request) => Promise<Response>)` (see `.agents/skills/writing-extensions`).
+The kernel is **one standard NestJS application on Fastify** (spec `docs/superpowers/specs/2026-10-28-nest-kernel-design.md`). Only the kernel uses Nest: **extensions never see Nest**; they get the SDK `ctx`, and extension routes are still `ctx.http.route(method, path, (req: Request) => Promise<Response>)` (see `.agents/skills/writing-extensions`).
 
-Reference implementation: `packages/kernel/src/orgs/` (`orgs.controller.ts` + `members.service.ts` + `org.guard.ts`).
+Reference implementation: `packages/kernel/src/orgs/` (`orgs.module.ts`, `orgs.controller.ts`, `members.service.ts`, `org.guard.ts`, `org-lock.ts`).
 
-## Layering: domain classes do not depend on Nest
+## Modules and providers
 
-| Layer | Where it lives | Rule |
+```
+createKernelApp(config, options) / startKernelApp(...)      (src/app.ts)
+└─ KernelModule.forRoot(config, options)                    (src/kernel.module.ts)
+   ├─ global infra (src/infra/*): ConfigModule (KernelConfigService), LoggingModule (KERNEL_LOGGER),
+   │  GracefulShutdownModule, DatabaseModule (KernelDb, TransactionHost, XactLock), RedisModule
+   │  (REDIS, KERNEL_BUS), LockModule (LockService), CacheModule, KernelEventsModule, QueueModule,
+   │  KernelThrottlerModule, HealthModule, ValidationModule, ErrorFilterModule
+   ├─ domain modules, one per directory (IdentityModule, OrgsModule, ToolsModule, …)
+   ├─ role modules by `roles`: ApiModule (api), WorkerModule.forRoot (worker), GatewayModule (gateway)
+   └─ KernelLifecycle: the start order and the stop phases (src/lifecycle/kernel-lifecycle.ts)
+```
+
+| Piece | Where | Rule |
 |---|---|---|
-| Domain service | `src/<domain>/*.service.ts` or a similar file | A plain class with **no Nest decorators and no `@nestjs/*` imports**; dependencies (`KernelDb`, `Redis`, other services) come through constructor parameters |
-| Injection token | `src/http/tokens.ts` | One `Symbol` per service, with a one-line JSDoc stating the corresponding type |
-| Wiring | `serviceProviders()` in `src/http/api.module.ts` | `{ provide: TOKEN, useFactory: (db: KernelDb) => new XxxService(db), inject: [KERNEL_DB] }` |
-| Controller | `src/<domain>/*.controller.ts`, added to `CONTROLLERS` | Only parses parameters, declares auth, calls services and sets cookies; business rules live in the service |
+| Domain service | `src/<domain>/*.ts` | `@Injectable()` class, provided by exactly **one** module (`kc-wiring` reports a class in two modules' `providers`); one instance per application. Pure functions stay plain functions |
+| Domain module | `src/<domain>/<domain>.module.ts` | `@Module({ imports, providers, exports })`; imports the modules whose providers it injects, exports what other modules use. No `useFactory` / `useValue` for domain classes (`kc-wiring`; the few allowed tokens are listed in `KC_ALLOWED_FACTORY_TOKENS` of `tools/checks/src/kernel-conventions.ts`) |
+| Controller | `src/<domain>/*.controller.ts`, listed in `CONTROLLERS` of `src/http/api.module.ts` | Parses parameters (DTOs), declares auth, calls services, sets cookies; business rules live in the service. `ApiModule` imports the controller's domain module |
+| Infra token | `src/infra/tokens.ts` | Only for non-class values (`KERNEL_LOGGER`, `REDIS`, `KERNEL_BUS`, `KEYRING`, …); services are injected by class |
 
-Domain classes that don't depend on Nest can be unit-tested with a direct `new XxxService(db)`, and the CLI (such as `capybara admin create`) can reuse them.
+Cycles are cut by design, in this order (spec §3): move the shared part into its own provider both sides inject (e.g. `RunJobs`, the run queues' producer; `ChannelJobs`); else an in-process domain event on `KernelEvents` (`src/infra/events/kernel-events.ts`) for notifications that may be lost and are re-derived by a sweep (e.g. `run.orphaned`, `approval.decided`); `forwardRef` only from an allowlist with its reason (`kc-late-binding`), `ModuleRef.get` / `resolve` never outside `infra/`. No late-bound setters or closures filled in after construction.
+
+The CLI uses the same providers through a Nest application context: `openKernelCli(config, { logger, modules: [AccountsModule], redis: false })` (`src/infra/cli/kernel-cli.module.ts`; `redis: false` leaves Redis and `LockService` out for PostgreSQL-only commands), so domain classes must not depend on request context.
 
 ## Constructor parameters must use an explicit `@Inject`
 
@@ -26,13 +40,45 @@ Domain classes that don't depend on Nest can be unit-tested with a direct `new X
 @Controller("api/v1/widgets")
 export class WidgetsController {
   constructor(
-    @Inject(WIDGETS) private readonly widgets: WidgetsService,
-    @Inject(KERNEL_CONFIG) private readonly config: () => KernelConfig,
+    @Inject(WidgetsService) private readonly widgets: WidgetsService,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
   ) {}
 }
 ```
 
-Reason: the repo enables `experimentalDecorators` but **not `emitDecoratorMetadata`**; tsx / esbuild and Vitest also do not emit design-time type metadata. Nest cannot get the parameter types, and a missing `@Inject` reports "Nest can't resolve dependencies" at app initialization. The same goes for guards (`@Inject(Reflector)`, `@Inject(KERNEL_DB)`). An entry point that runs the kernel with tsx must load the repo's `tsconfig.base.json` (root scripts use `--tsconfig tsconfig.base.json`), otherwise the decorators cannot compile.
+Reason: the repo enables `experimentalDecorators` but **not `emitDecoratorMetadata`**; tsx / esbuild and Vitest emit no design-time type metadata, so Nest cannot see parameter types and a missing `@Inject` fails with "Nest can't resolve dependencies" at init. This holds for every `@Injectable`, `@Controller`, `@Processor`, `@Catch`, `@Module` class and guard (`kc-inject`); optional dependencies are `@Optional() @Inject(X)`. An entry point that runs the kernel with tsx must load the repo's `tsconfig.base.json` (root scripts use `--tsconfig tsconfig.base.json`), otherwise the decorators cannot compile.
+
+## One convention per concern
+
+Each concern is done one way; `pnpm check:kernel-conventions` (rules `kc-*`, listed in `AGENTS.md`) rejects the removed patterns.
+
+| Concern | Do | Never (rule) |
+|---|---|---|
+| Config | Inject `KernelConfigService`; call `get()` on every use (hot updates), `onChange` for appliers | pass `() => KernelConfig` closures (`kc-config`) |
+| Transactions | `@Transactional()` on a provider method (it needs `txHost: TransactionHost`) and inject `KernelDb`, which resolves to the context's transaction or the pool; `propagation: "requires_new"` for an own transaction whose commit the caller relies on before notifying, `"mandatory"` for methods that rely on the caller's transaction or lock (throws outside one); side effects after the root commit with `afterCommit(fn)` | `db.transaction()`, `trx` / `tx` parameters, `isTransaction` branches, a lock or an enqueue / bus publish / Redis call inside a `@Transactional` method (`kc-transaction`, `kc-lock-in-tx`, `kc-side-effect-in-tx`) |
+| Row locking | `FOR UPDATE` / `FOR NO KEY UPDATE` / `FOR SHARE` inside the transaction | |
+| Transaction-scoped advisory locks (ruling R9) | `pg_advisory_xact_lock` is transaction semantics, like `FOR UPDATE`: only through `XactLock.lock(key)` inside a `@Transactional({ propagation: "mandatory" })` method of one small `*Lock` provider per lock (`OrgLock`, `EnterpriseAdminLock`, `SetupLock`, `CatalogItemLock`, …) | session-level `pg_advisory_lock` / `pg_try_advisory_lock` outside the migration runners (`kc-lock`) |
+| Distributed mutual exclusion | `LockService` (`acquire` / `run` / `lease` / `hold` / shared leases, Redis, renewed every TTL/3) or `@WithLock` (never inside a transaction); `lock.acquire_failed` (409) when the wait runs out | hand-written `SET NX`, renewal timers (`kc-lock`) |
+| Fixed-period jobs | `@LockedCron(expression, { name })`, or `@LockedInterval(name, (config) => ms, { runOnStart? })` for a config-driven period; the class has `lockService` and `log` (and `config` for intervals) and is provided only under `WorkerModule` | bare `@Cron` / `@Interval` (`kc-cron`), BullMQ repeatable schedulers, a job provider outside `WorkerModule` (`kc-worker-only`) |
+| One-off and delayed jobs | `QueueModule.registerQueue(name)` + `@Inject(getQueueToken(name))`, deterministic job ids without `:` | `new Queue` / `new Worker` (`kc-queue`; extension queues behind `ctx.queue` are the exception) |
+| Queue consumers | a `WorkerHost` with `@Processor(queue)` (or `configuredProcessor(Base, …)` when its options come from the config), provided only under `WorkerModule`; every job runs inside `runJob(queue, job, fn)` (fresh async context, log context) | `kc-queue`, `kc-worker-only` |
+| Cache | `@Cacheable` / `@CacheEvict` (Redis, fail-open, keys prefixed `cache:`) | ad-hoc read-through Redis caches (`kc-cache`) |
+| Rate limits | `@Throttled(...)` per route; credential routes `CredentialThrottler` (below) | hand-written counters (`kc-rate-limit`) |
+| Validation | `createZodDto(schema, name)` with `@ZBody` / `@ZQuery` / `@ZParam` (below) | `new ZodPipe(`, `@Body()` / `@Query()` / `@Param()` typed with a DTO (`kc-zod-pipe`) |
+| Logging | inject `KERNEL_LOGGER` | module-level loggers (`kc-logger`) |
+| Process handlers | only in `src/infra/lifecycle` | `process.on` anywhere else (`kc-process`) |
+| Health | `HealthModule` (`/healthz`, `/readyz`, terminus) | other health routes (`kc-health`) |
+
+Code ported from octok-platform starts with `// Ported from octok-platform <path> (owner-approved, 2026-10-28).` (`kc-ported-header`).
+
+## Roles, start and stop
+
+- `roles` selects the role modules: `ApiModule` (controllers, `AuthGuard`), `WorkerModule` (the schedulers, every `@LockedCron` / `@LockedInterval` job, every `@Processor`, `WorkerRole`), `GatewayModule` (channel supervisor, webhook inbound, `GatewayRole`). An `api`-only or `gateway`-only process builds no BullMQ worker and no scheduler; queue producers exist on every role. Health and the error filter are on every role.
+- **Start** (`KernelLifecycle.onApplicationBootstrap`, spec §4): Redis, kernel migrations, the official marketplace, the bootstrap step (`LockService` lock `lock:bootstrap`, also taken by `capybara bootstrap`), the extension load, the worker parts (queue consumers, then the schedule gate opens), the gateway parts, extension routes, the lifecycle reconcile, the config watch. `listen()` runs only after `app.init()` resolved.
+- **Start gate (ruling R21)**: no scheduled tick (cron, interval, `runOnStart`) runs before `WorkerRole.start` opened the gate after the extension load; a tick that fires earlier logs INFO `cron skipped: the scheduler is not started` and claims nothing; `runOnStart` jobs run when the gate opens; the stop closes it again. Each tick runs once across replicas (a per-tick Redis marker plus the renewed run lock; another replica's tick logs INFO, not ERROR) in a fresh async context.
+- **Stop**: `startKernelApp` installs its own `handleShutdownSignals` (`src/infra/lifecycle/shutdown-signals.ts`) instead of Nest's `enableShutdownHooks()`: the first SIGTERM / SIGINT starts the stop at once (readiness 503, a start in progress aborts at its next checkpoint), runs the stop phases (schedules, webhooks, runs, evals, channels, scheduled jobs, maintenance, titles, usage, channel outbound, extensions), closes the queues and workers (`QueueShutdown`: within what is left of the 30 s budget, `STOP_TIMEOUT_MS`, minus a 2 s reserve; one that cannot close, e.g. Redis down, is abandoned) and finally Redis and the pool, then exits 0 (1 on failure); a second signal exits 1 at once. `createKernelApp` installs no process-wide handler; stop it with `closeKernelApp(app)`.
+- **Lost locks and leases (rulings R17 / R19)**: a `LockService` holder gives up at a deadline, the send time of its last successful renewal (or acquire) + TTL − TTL/3, even with a renewal in flight; `handle.lost` aborts and `LockService` logs one `lock lost: <key>` WARN. A lost conversation run lease aborts the run at the next step boundary (re-queued); a lost channel lease drops the connection. A failed release is logged at WARN (`lock release failed`; the key expires within its TTL).
 
 ## Auth: default deny
 
@@ -97,7 +143,7 @@ Old audit records `app.*` are not rewritten; when querying audit by action use t
 
 ### Enterprise admin endpoints (`/api/v1/admin/*`)
 
-Deployment-level endpoints always go under `/api/v1/admin/*`, with `@EnterpriseAdmin()` on the controller (service tokens always 403), and are always called "enterprise admin" (the code identifier `@EnterpriseAdmin` and the path `/admin` are not renamed, C1). A write first calls `lockEnterpriseAdminsAndAuthorize` in its transaction (see above). Existing ones:
+Deployment-level endpoints always go under `/api/v1/admin/*`, with `@EnterpriseAdmin()` on the controller (service tokens always 403), and are always called "enterprise admin" (the code identifier `@EnterpriseAdmin` and the path `/admin` are not renamed, C1). A write first calls `adminLock.lockAndAuthorize` in its transaction (see above). Existing ones:
 
 | Path | Controller | Content |
 |---|---|---|
@@ -110,29 +156,30 @@ Deployment-level endpoints always go under `/api/v1/admin/*`, with `@EnterpriseA
 - Enterprise admins **cannot read conversations** by default: trajectories and evals go only to org admins and agent owners (C1); do not add endpoints under `/admin` that read conversation content.
 - The package upload route takes raw bytes (`application/octet-stream`, limit `packages.maxBytes`, with the bodyLimit raised separately in Fastify); the web layer proxy has its own limit `CAPYBARA_WEB_MAX_PACKAGE_BYTES`, see `docs/config.md`.
 - Every download from a URL a marketplace or an admin supplied (marketplace manifests, mirrors, archive and git sources, git marketplaces, direct git import) goes through `packages/kernel/src/net` (`safeFetch`: https, no redirects, public addresses only unless `marketplaces.allowPrivateHosts`, connection pinned to the checked address); never call `fetch` on such a URL directly. Refusals map to `marketplace.private_address` / `marketplace.redirect` (422), with the refused host in `details` when known.
-- The CLI reuses the same domain classes (`capybara admin grant|revoke <login>`, `capybara extensions …`), so domain classes must not depend on request context.
+- The CLI reuses the same providers (`capybara admin grant|revoke <login>`, `capybara extensions …`) through `openKernelCli`, so domain classes must not depend on request context.
 
 ### Audit and personal tokens
 
-A write calls `audit(trx, { actorAccountId, actorTokenId?, orgId?, action, target?, detail? })` in the same transaction. When the request comes from a personal token, record the token id in `actor_token_id`: the controller takes the value with `patTokenId(requireUser(p))` (returns undefined for a web session) and passes it down as the optional trailing argument `actorTokenId` of the service method. `detail` must not contain secrets such as tokens or passwords.
+A write calls `audit(this.db.db, { actorAccountId, actorTokenId?, orgId?, action, target?, detail? })` inside its `@Transactional` method (`KernelDb.db` is the context's transaction). When the request comes from a personal token, record the token id in `actor_token_id`: the controller takes the value with `patTokenId(requireUser(p))` (returns undefined for a web session) and passes it down as the optional trailing argument `actorTokenId` of the service method. `detail` must not contain secrets such as tokens or passwords.
 
 ### Current credential behavior
 
 - Change password (`PUT /me/password`, `@SessionOnly`): reserves rate limit quota before checking the old password (scope `acct`: 10 per account id, 50 per client IP, separate from the login quota; over the limit 429 `auth.rate_limited`); on success it revokes **all web sessions of that account except the current one** and **revokes all of its personal access tokens** (R24); the new password, the session `revoked_at` and the token revocation are in the same PG transaction (`AccountsService.changePassword`), and the Redis revocation markers are then written on a best-effort basis.
 - Disabling an account (`PATCH /admin/accounts/:id`) and revoking all its sessions and personal tokens are done in the same PG transaction (`AccountsService.updateAccount`), and the Redis revocation markers are written best-effort after commit (auth is settled by PG `revoked_at`).
-- In the setup wizard and invitation sign-up, the session row is written in the same transaction as the account / org / membership (`SessionService.create(accountId, meta, trx)`), and the cookie is set only after commit; a new "create an account and log in" flow should do the same.
+- In the setup wizard and invitation sign-up, the session row is written in the same transaction as the account / org / membership (`SessionService.create(accountId, meta)` joins the context's transaction), and the cookie is set only after commit; a new "create an account and log in" flow should do the same.
 - List endpoints always return an envelope object (such as `{ tokens: [...] }`, `{ members: [...] }`), never a bare array; paginated lists add `next` (the next-page cursor, passed back as `after`, null when there is no more), such as `GET /admin/accounts`.
 
-## Parameter validation: `ZodPipe`
+## Parameter validation: zod DTOs
 
 ```ts
-const Body = z.object({ name: z.string().min(1).max(100) });
+const CreateSchema = z.object({ name: z.string().min(1).max(100) });
+class WidgetCreateBody extends createZodDto(CreateSchema, "WidgetCreateBody") {}
 
 @Post()
-async create(@Body(new ZodPipe(Body)) body: z.infer<typeof Body>) {}
+async create(@ZBody(WidgetCreateBody) body: z.infer<typeof CreateSchema>) {}
 ```
 
-A validation failure returns 400 `validation_failed` with `details` as the list of field problems. Give every string an upper bound (`max`) to prevent oversized input.
+`createZodDto` (`src/infra/validation/create-zod-dto.ts`) turns a zod schema into a named DTO class; `@ZBody(Dto)` / `@ZQuery(Dto)` / `@ZParam(Dto)` pass the DTO to the global validation pipe (no decorator metadata, so a bare `@Body()` typed with a DTO is never validated and `kc-zod-pipe` rejects it) and feed the OpenAPI document (`http.swagger`, served at `/docs`). A failure returns 400 `validation_failed` with `details` as the list of field problems. Route parameters that need validation go through a `@ZParam` DTO too (ruling R20), so `details[].path` names the parameter. Give every string an upper bound (`max`) to prevent oversized input.
 
 ## Error codes
 
@@ -147,52 +194,53 @@ Production runs multiple replicas, and consecutive requests from the same user l
 
 | State | Where |
 |---|---|
-| Persistent data such as accounts, sessions, member roles, invitations | PG (`KERNEL_DB`), read live on every request, **not cached in process memory** |
-| Rate limit counters, short-lived markers | Redis (`KERNEL_REDIS`), key prefix `capk:`, **must have a TTL**; "check then write" must be done atomically with Lua |
-| Concurrency mutual exclusion | PG row locks / advisory locks (e.g. the setup wizard uses `pg_advisory_xact_lock`) |
-| Config | Inject `KERNEL_CONFIG` (`() => KernelConfig`) and take the current value on every call, so hot updates take effect |
+| Persistent data such as accounts, sessions, member roles, invitations | PG (`KernelDb`), read live on every request, **not cached in process memory** |
+| Rate limit counters, short-lived markers | Redis (`REDIS`, throttlers, `LockService.lease` for markers), key prefix `capk:`, **must have a TTL**; "check then write" must be atomic (Lua or `SET NX` through `LockService`) |
+| Mutual exclusion inside a transaction | PG row locks, or a `*Lock` provider over `XactLock` (e.g. `SetupLock` for the setup wizard) |
+| Mutual exclusion across a longer operation | `LockService` / `@WithLock` (Redis, renewed, lost at the R19 deadline) |
+| Config | `KernelConfigService.get()` on every call, so hot updates take effect |
+| Same-process notifications | `KernelEvents` only when the event may be lost and something re-derives it (a sweep, the next append); cross-replica ones go over the kernel bus |
 
 Do not use in-process Maps, timers or local events to hold cross-request state. The dual-replica acceptance test (`packages/testing/test/m1-acceptance.test.ts`) exposes this kind of defect.
 
-## Test template
+## Tests
 
-Single-replica HTTP tests use `kernel.http.inject()` (Fastify light-my-request, takes no port) plus the cookie jar from `packages/kernel/test/helpers/http.ts`:
+Kernel tests start the real application with the helpers in `packages/kernel/test/helpers/runs.ts`: `startKernel(config, opts)` returns a `TestKernel` `{ app, http, port, close() }` (`port` is undefined after `close()`), `buildKernel` one that is built but not started (`start()` runs the production start). Reach a service with `k.app.get(Class)` (tokens: `k.app.get<KernelLogger>(KERNEL_LOGGER)`); `k.http.inject()` is Fastify light-my-request (no port), with the cookie jar from `packages/kernel/test/helpers/http.ts`:
 
 ```ts
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
-import { createLogger } from "../../src/log.js";
+import { AccountsService } from "../../src/identity/accounts.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { startKernel, type TestKernel } from "../helpers/runs.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  k = await createKernel(
+  k = await startKernel(
     KernelConfigSchema.parse({
       db: { url: pgc.url, poolMax: 5 },
       redis: { url: rd.url },
       masterKey: Buffer.alloc(32, 7).toString("base64"),
+      marketplaces: { official: { enabled: false } },
       http: { port: 0 },
     }),
-    { env: {}, logger: createLogger("error", { write: () => {} }) },
   );
-  await k.start();
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
 it("is rejected when not logged in and allowed after login", async () => {
   expect((await k.http.inject({ method: "GET", url: "/api/v1/me" })).statusCode).toBe(401);
-  // after preparing an account (e.g. new AccountsService(kernelDb(db)).createLocal(...)):
-  const req = asUser(k.http, cookieJar()); // automatically sends the cookie and X-Capybara-Csrf: 1, and collects set-cookie
-  const login = await req({ method: "POST", url: "/api/v1/auth/login", payload: { login: "u", password: "pw" } });
+  await k.app.get(AccountsService).createLocal({ login: "u", displayName: "U", password: "pw-long-enough" });
+  const req = asUser(k.http, cookieJar()); // sends the cookie and X-Capybara-Csrf: 1, collects set-cookie
+  const login = await req({ method: "POST", url: "/api/v1/auth/login", payload: { login: "u", password: "pw-long-enough" } });
   expect(login.statusCode).toBe(200);
   expect((await req({ method: "GET", url: "/api/v1/me" })).statusCode).toBe(200);
 });
@@ -200,15 +248,18 @@ it("is rejected when not logged in and allowed after login", async () => {
 
 Key points:
 
+- **Test seams (ruling R22)**: `KernelAppOptions.overrides` is for the kernel's own tests only. It takes values for the named seam tokens of `KernelOverride` (`src/overrides.ts`: `AGENT_LOOP_FACTORY`, `RUN_HOOKS`, `EVAL_REPLAY_HOOKS`, `TOOL_PIPELINE_HOOKS`, shorter timings such as `BOOTSTRAP_LOCK_TTL`, `EMBED_TOKEN_CLOCK`, `APP_INTERCEPTOR`) and refuses any other token when the application is built, so no domain class can be replaced. A new seam is an optional provider (`@Optional() @Inject(TOKEN)`, production default when absent) added to `KernelSeams` and its token tuple (a compile-time check ties the two); never a mutable public field. The tokens are not exported from the package, and `@capybara-hq/testing`'s `startTestKernel` takes no overrides: extension and plugin tests drive a real kernel through `startTestKernel` / `createDualReplicaHarness`.
+- Unit tests that need a few providers without an application build them by hand through the test helpers (`test/helpers/database.ts` `databaseHandles(pool, log)`, `accountsFor`, …); tests are outside the `kc-wiring` scan, production code is not.
 - When asserting errors, assert both the status code and `error.code`.
 - Every new endpoint covers at least: not logged in, insufficient role / non-member (404), service token (if it has `@OrgAction`), validation failure, success path.
 - For concurrency and cross-replica behavior (races, immediate invalidation on another replica after logout and so on) use `createDualReplicaHarness` from `@capybara-hq/testing` (the `config` option deep-merges kernel config, e.g. `{ auth: { cookieSecure: false } }`); see `packages/testing/test/m1-acceptance.test.ts`.
+- A cron or processor test asserts on the worker role's application (`roles: ["worker"]`); `test/lifecycle/roles.test.ts` pins which providers each role builds.
 
 ## Checklist
 
-1. Domain service (no Nest) + unit tests.
-2. Add a token in `tokens.ts`, and a `useFactory` provider and the controller in `api.module.ts`.
-3. Controller: constructor parameters with `@Inject`, auth decorators, `ZodPipe`; register new error codes in `errors.ts`.
+1. Service: an `@Injectable` provider with `@Inject` on every constructor parameter, in its domain module's `providers` (and `exports` when another module or a controller uses it); `@Transactional` methods for writes; unit tests.
+2. Controller: listed in `CONTROLLERS` of `src/http/api.module.ts` (`ApiModule` imports the domain module), auth decorators, DTOs with `@ZBody` / `@ZQuery` / `@ZParam`; register new error codes in `errors.ts`.
+3. A periodic job: `@LockedCron` / `@LockedInterval` in a job provider listed in `WorkerModule`; a queue consumer: a `@Processor` under `WorkerModule` running each job in `runJob`.
 4. A new `@Public()` route -> update `public-routes.test.ts`.
 5. New config items follow `.agents/skills/adding-config`; new tables follow `.agents/skills/writing-migrations`.
-6. `pnpm lint && pnpm typecheck && pnpm check && pnpm test`; changes that affect publishing add a changeset.
+6. `pnpm lint && pnpm typecheck && pnpm check && pnpm test` (`check:kernel-conventions` is part of `pnpm check`); changes that affect publishing add a changeset.

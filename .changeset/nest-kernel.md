@@ -4,365 +4,142 @@
 "@capybara-hq/testing": patch
 ---
 
-The kernel is being refactored into a standard NestJS application: shared infra modules (config,
-logging, database with `@Transactional`, Redis) come first, with no change in behaviour.
+The kernel is now one standard NestJS application (`createKernelApp` / `startKernelApp`, root
+module `KernelModule`): global infra modules (config, logging, the database with `@Transactional`,
+Redis, locks, cache, queues, schedules, throttling, health, validation), one module per domain whose
+services are injectable providers with one instance each, and the role modules `roles` selects
+(`ApiModule`, `WorkerModule`, `GatewayModule`). `KernelLifecycle` owns the start order and the stop
+phases. Every concern is done one way, enforced by the new check `check:kernel-conventions`.
+Extensions are unchanged: they see only the SDK `ctx`, which the extension host builds from the
+injected services. HTTP routes, status codes, error codes and bodies, queue names, job ids, the
+event log, config keys and the SDK are unchanged except where noted below.
 
-The kernel is now built as one Nest application (`createKernelApp` / `startKernelApp`) whose
-lifecycle owns the start order and the stop phases; `createKernel` remains as a facade over it.
+**Operations**
 
-Queue and schedule infra: BullMQ root configuration (`QueueModule`, `runJob`, `logJobFailure`), the cron
-scheduler and `@LockedCron` (a try-once cross-replica lock around `@Cron`); lock renewal loss is now
-reported before expiry.
+- **`capybara bootstrap` needs Redis.** The bootstrap step runs under the Redis lock
+  `lock:bootstrap` (120 s TTL, renewed while it runs), in a starting kernel and in
+  `capybara bootstrap` alike, instead of a PostgreSQL advisory lock, so compose `init` and a
+  Kubernetes init Job need `CAPYBARA_REDIS__URL` as well as the database; the compose `init` service
+  waits for valkey. During the rolling deploy that brings this change an old and a new process do
+  not exclude each other; the step is recorded once per manifest and its writes are idempotent. The
+  CLI's Redis connection keeps reconnecting, so a `capybara bootstrap` holding the lock survives a
+  Redis blip.
+- **Periodic jobs** were BullMQ repeatable schedulers on the maintenance queue; they are now
+  schedules inside the worker processes (`@LockedCron`, or `@LockedInterval` for a period from the
+  config), each run once per period across all worker replicas (another replica's attempt logs at
+  info). Names and periods are unchanged: `wait-sweep`, `usage-report-sweep`,
+  `attachment-cleanup`, `storage-org-purge`, `sandbox-suspend-idle`, `sandbox-destroy-inactive`,
+  `drift-scan`, `catalogs-refresh`, `output-cleanup`, `app-staging-cleanup`, `directory-scan`,
+  `offboard-sweep`, `plugins-reconcile`, `channel-gateway-check`. A starting worker removes the old
+  schedulers from Redis. They still run only on processes with the `worker` role, as do all queue
+  consumers; an `api`- or `gateway`-only process builds no BullMQ worker and no scheduler.
+  - A worker runs no periodic job before its start sequence (migrations, the bootstrap step, the
+    extension load) has started its queue consumers; a tick that fires earlier is skipped with the
+    info line `cron skipped: the scheduler is not started`. `catalogs-refresh` and `drift-scan` run
+    once at that point, as their schedulers' first run did. At shutdown the schedules stop first and
+    runs in progress are awaited within the stop budget, so a stop leaves no run lock behind.
+  - The hourly jobs now fire at the top of the hour: the first `attachment-cleanup`,
+    `output-cleanup` and `app-staging-cleanup` after an upgrade runs at the next full hour.
+  - `sandbox-destroy-for`, `wait-timeout`, `drift-connector` and `directory-sync` stay one-off jobs
+    on the maintenance queue (names, data, ids and retries unchanged), consumed by one maintenance
+    processor on the worker role.
+- **Shutdown.** `capybara start` handles SIGTERM / SIGINT from before the start: a signal turns
+  `/readyz` to 503 at once and aborts a start in progress at its next step; the stop phases, the
+  queue and worker closes, and finally Redis and the pool share the 30 s stop budget; a second
+  signal exits 1 at once. Event streams close when the shutdown begins and later ones end at once.
+  With Redis unreachable the stop now uses the whole budget: queues and workers that cannot close
+  are abandoned instead of holding the exit. The main Redis connection closes with QUIT.
+  `capybara start` logs an unhandled rejection or uncaught exception and exits only after more than
+  5 within 60 s (other commands still exit on the first). A PostgreSQL restart while a pooled client
+  is checked out is logged (`pg client error`, warn) instead of crashing the process.
+- **Leases give up on a deadline.** Every Redis lock and lease (the conversation run lease
+  `capk:conv-run:<id>`, channel long-connection leases, sandbox and path leases, org run and eval
+  quota slots) is renewed every third of its TTL and is lost at the send time of its last successful
+  renewal + TTL − TTL/3, even with a renewal in flight, so a holder lets go one renewal period
+  before the key can be taken elsewhere. Before, a conversation lease whose renewals failed until
+  expiry kept running, so a second replica could start a second run on the conversation. After a
+  Redis outage longer than about two thirds of a TTL a run is now re-queued (and resumes), a long
+  connection reconnects, and a sandbox path lease is lost too; a lapsed quota slot lets the run or
+  eval go on, so an org may briefly run more than its concurrency (for evals after an outage of
+  about 40–60 s). A lost lease logs one `lock lost: <key>` warning (it replaces `channel lease lost;
+  disconnecting`, `sandbox lease lost`, `sandbox path lease lost`, `org quota lease lost` and `eval
+  quota renew failed`); a failed release logs `lock release failed` at warn (the key expires within
+  its TTL). Keys and values are unchanged. A channel lease lost while its connection's config is
+  read is no longer connected on.
+- **Rate limits.** The credential limits (login, change password, setup token, invitation accept)
+  keep their limits, codes, bodies and `retry-after`, and still fail closed when Redis is down;
+  their counters move to `throttler:{cred:<group>}:…` (from `capk:login-fail:*` / `capk:rl:*`),
+  so the counts reset once at deploy.
+- **Directory sync** takes its per-(org, extension) lock as `lock:directory-sync:<org>:<plugin>`
+  (was `capk:directory-sync:<org>:<plugin>`): during a rolling deploy an old and a new replica may
+  each run one sync of the same pair (harmless: the dirty flag and idempotent writes cover it).
+- **Model list cache** keys are `cache:capk:models:…` (old keys expire by TTL), and the cache fails
+  open: a Redis error lists the provider's models again instead of failing the request.
+- **After-commit notifications** (after an org extension config write, an extension install,
+  state change or uninstall, an org plugin uninstall) run after the commit; a failing one is logged
+  and no longer turns the committed request into a 500.
+- **Validation.** The UI `:plugin/:id` and file preview `:plugin/:previewerId` routes validate their
+  parameters with DTOs: `validation_failed` names the parameter in `details[].path` (was `""`);
+  code and status are unchanged.
+- **Swagger.** New config `http.swagger` (default `false`, `CAPYBARA_HTTP__SWAGGER`) serves the
+  OpenAPI document and UI at `/docs` (unauthenticated: development and trials only).
+- **CLI.** A kernel that cannot even be built now logs `kernel start failed` (was `cannot load
+  configuration`); the exit code is still 1. `capybara admin create` / `admin grant` still need
+  only PostgreSQL.
 
-Redis-backed rate limiting infra: `@nestjs/throttler` with a shared Redis storage (fail-open) and the
-kernel's credential limits as named throttlers, applied per route with `@Throttled`.
+**`@capybara-hq/kernel` API (breaking)**
 
-Health is terminus-based (`HealthModule`, `/healthz` and `/readyz` with unchanged bodies, status
-codes and replica header); readiness reads a `ShutdownState` the shutdown service will provide.
+- Removed: `createKernel`, the `Kernel` facade type, `KernelOptions` and `KernelRuns`. Build the
+  kernel with `createKernelApp(config, options)` (started, not listening, no signal handlers) or
+  `startKernelApp(config, options)` (started, listening, SIGTERM / SIGINT handled), stop it with
+  `closeKernelApp(app)`, reach its HTTP side with `kernelAppHttp(app)` / `kernelAppPort(app)` and a
+  service with `app.get(Class)`. The options are `KernelAppOptions` (the old `KernelOptions` fields
+  `loop`, `runHooks` and `evalHooks` are gone).
+- `KernelAppOptions.overrides` is for the kernel's own tests only: it takes values for the named
+  seam tokens of `KernelOverride` and refuses any other token when the application is built, so no
+  kernel service can be replaced. The seam tokens are not exported.
+- The type `KernelDb` (the `capybara` schema view, a `Kysely<KernelDatabase>`) is renamed
+  `KernelSchemaDb`; `KernelDb` is no longer exported.
+- Every exported service class (`ExtensionHost`, `ExtensionInstalls`, `ExtensionLifecycle`,
+  `ExtensionAdminOps`, `BootstrapService`, `SandboxService`, `StorageService`, `AccountsService`,
+  `SetupService`, `SessionService`, `SettingsService`, `OrgsService`, …) is a Nest provider whose
+  constructor takes the kernel's providers: take instances with `app.get(Class)` from an
+  application or a CLI context instead of constructing them. Removed with that:
+  `BootstrapServiceDeps`, `ExtensionAdminOpsDeps`, `ExtensionLifecycleDeps`, `LifecycleHost`,
+  `SandboxServiceDeps` and `StorageServiceDeps`. The prefixing storage is the plain class
+  `PrefixedStorage` over a `StorageSource` (an extension's `ctx.storage` and the CLI use it), which
+  `StorageService` extends.
+- Moved or changed: `SetupService.createEnterpriseAdmin` / `createEnterpriseAdminIfNone` are on
+  `AccountsService`; `BootstrapService.run` takes the plugin import it uses (`imports`);
+  `rewrapDataKeys(handles, keyring)` takes the database handles of an application context
+  (`{ db, txHost }`) instead of a Kysely and opens its own transaction; `ExtensionCli` exposes the
+  command's application context (`app`) and `bootstrap` instead of `db`; `ExtensionLifecycle` no
+  longer publishes the periodic reconcile itself (the worker's `plugins-reconcile` job does).
+- New: `KernelModule`, the type `KernelOverride`, the infra decorators `Transactional`,
+  `afterCommit`, `WithLock`, `Cacheable`, `CacheEvict`, `LockedCron`, `LockedInterval`, `Throttled`,
+  `createZodDto`, `ZBody`, `ZQuery`, `ZParam`; `openKernelCli(config, opts)` (a CLI command's
+  application context; `redis: false` leaves Redis and `LockService` out),
+  `openKernelCliOverPool(pool, opts)` (a context over a pool the caller owns and keeps open),
+  `KernelCliOptions` and `AccountsModule`; `handleShutdownSignals` with `ShutdownSignalOptions` /
+  `ShutdownSignalHandle`, and `installProcessGuards` with `ProcessGuardDeps`, `GUARD_CIRCUIT_LIMIT`
+  and `GUARD_CIRCUIT_WINDOW_MS`.
 
-Zod DTOs: `createZodDto`, `@ZBody` / `@ZQuery` / `@ZParam` and a global validation pipe with the same
-`validation_failed` error as `ZodPipe`; new `http.swagger` (default false) serves the OpenAPI document
-at `/docs`.
+**`@capybara-hq/testing` API (breaking)**
 
-Graceful shutdown: `GracefulShutdown` is the one shutdown state (readiness, the start abort, the 30 s
-stop deadline that the stop phases and the Redis / pool closes now share, `trackInFlight` / `drain`);
-event streams close when the shutdown begins and later ones end at once; the main Redis connection
-closes with QUIT again. `startKernelApp` handles SIGTERM / SIGINT from before the start (a signal
-during the start aborts it; a second signal exits at once). `capybara start` installs process
-guards: unhandled rejections and uncaught exceptions are logged, more than 5 within 60 s exit.
-
-The legacy service graph consumes the infra providers (one pool, Redis connection, bus and config
-holder).
-
-Breaking export rename: the `KernelDb` type (the `capybara` schema view, a `Kysely<KernelDatabase>`)
-is now `KernelSchemaDb` in `@capybara-hq/kernel` and `@capybara-hq/testing`; `KernelDb` now names the
-injectable, context-aware database handle class.
-
-Storage, models and skills are Nest modules: `StorageService`, `PricesService`,
-`ModelPurposesService`, `SkillsService`, `SkillChangesService` and one `SkillInvoker` are injectable
-providers. Export change: the prefixing logic is the plain class `PrefixedStorage` (over a
-`StorageSource`, formerly `StorageServiceDeps`), which `StorageService` extends; an extension's
-`ctx.storage` and the CLI build a `PrefixedStorage`. The `storage-org-purge` job is an hourly
-`@LockedCron` (same name); its old maintenance scheduler is removed when a worker starts.
-
-Breaking export change: `ExtensionHost`'s third constructor argument now requires `registry` (an
-`ExtensionRegistry`, the shared provider the host writes and other services read extension points
-from); code that builds a host by hand passes `registry: new ExtensionRegistry()`.
-
-`@Transactional` / `TransactionHost.run` accept `propagation: "mandatory"` (join the transaction in
-context, throw outside one) for methods that rely on a lock their caller holds.
-
-Identity, orgs and admin are Nest modules (`IdentityModule`, `OrgsModule`, `AdminModule`):
-`AccountsService`, one `SessionService`, `ApiTokenService`, one `SettingsService`,
-`ExternalIdentities`, `IdentityBinding`, `SsoFlow`, `OrgsService`, `OrgSettingsService`,
-`MembersService`, `InvitationsService`, `SetupService`, `Offboarding` and `DirectorySync` are
-injectable providers; their constructors take the kernel's providers (export change). The org row
-lock and the enterprise admin lock are the providers `OrgLock` and `EnterpriseAdminLock`
-(`propagation: "mandatory"`: they join the caller's transaction); transaction-scoped advisory locks
-go through the infra `XactLock`. Export changes: `SetupService.createEnterpriseAdmin` /
-`createEnterpriseAdminIfNone` moved to `AccountsService`; `LoginRateLimiter` is removed;
-`standaloneDatabase(pool, log)` gives the database handles to code that runs outside the kernel
-application (the CLI's `admin create` / `admin grant`, `@capybara-hq/testing`'s
-`createLocalAccount`, whose signature is unchanged). The `directory-scan` and `offboard-sweep` jobs
-are `@LockedCron` jobs (hourly at the top of the hour, every 10 minutes); their old maintenance
-schedulers are removed when a worker starts. The credential routes (login, change password, setup
-token, invitation accept) are limited by `CredentialThrottler` with the same limits, codes, bodies
-and `retry-after`; their counters move to new Redis keys (`throttler:{cred:<group>}:…` instead of
-`capk:login-fail:*` / `capk:rl:*`), so the counts reset once at deploy.
-
-Directory sync: its per-(org, extension) run lock moved from `capk:directory-sync:<org>:<plugin>`
-to the `LockService` key `lock:directory-sync:<org>:<plugin>`; during a rolling deploy an old and a
-new replica may each run one sync of the same pair once (harmless: the dirty flag and idempotent
-writes cover it). The hourly `directory-scan` now fires at the top of each hour. The lock
-providers `SetupLock` and `ExternalIdentityLock` own the setup and external identity locks;
-`Offboarding.afterCommit` is renamed `afterOffboard` (callers register it with the infra
-`afterCommit`), and `standaloneDatabase` also returns `adminLock` / `setupLock`.
-
-The extensions are a Nest module (`ExtensionsModule`): `ExtensionHost`, `ReplicaStatusStore`,
-`ExtensionApprovals`, `ExtensionBlobs`, `ExtensionInstalls`, `ExtensionAdmin`, `ExtensionAdminOps`,
-`ExtensionLifecycle`, `ExtensionDeploymentConfigService`, `OrgExtensionConfigs` and
-`BootstrapService` are injectable providers; the host builds each extension's `ctx` from the
-injected kernel services and reads its time limits and `extensionConfig` from the config (no SDK
-or `ctx` change). Export changes: their constructors take the kernel's providers;
-`ExtensionAdminOpsDeps`, `BootstrapServiceDeps`, `ExtensionLifecycleDeps` and `LifecycleHost` are
-removed; `BootstrapService.run` takes the plugin import it uses (`imports`); `rewrapDataKeys` takes
-the database handles (`{ db, txHost }`, e.g. from `standaloneDatabase`); `ExtensionCli` exposes the
-command's application context (`app`) and `bootstrap` instead of `db` / `adminLock`.
-`OrgExtensionConfigs.enabledDependents` / `disableIn` join the caller's transaction (no `trx`
-argument) and `inTransaction` receives only `skipped`. The bootstrap step runs under the Redis lock
-`lock:bootstrap` (`LockService`, 120 s TTL with renewal) instead of a PostgreSQL advisory lock, in
-the kernel and in `capybara bootstrap` alike: **`capybara bootstrap` (compose `init`, a Kubernetes
-init Job) now needs Redis**; the compose `init` service waits for valkey. During a rolling deploy an
-old replica (advisory lock) and a new one (Redis lock) do not exclude each other; the step is
-recorded once per manifest and its writes are idempotent. The `capybara extensions *`, `plugins *`
-and `bootstrap` commands run on a Nest application context (`KernelCliModule`). The
-`plugins-reconcile` job is a `@LockedInterval` (a new infra decorator for config-driven periods;
-every `extensionHost.reconcileIntervalSeconds`, once per tick across replicas); its old maintenance
-scheduler is removed when a worker starts. `LockService.acquire` accepts `signal` and an unbounded
-`waitMs`. `ctx.lock` and the permission-denial / hook warn-once markers use the `LockService`
-primitives (same keys).
-
-The catalog is a Nest module (`CatalogModule`, with `CatalogImportModule` for the CLI):
-`CatalogRequestsService`, `MarketplacesService`, `PluginImport`, `CatalogService`,
-`PluginInstaller`, `PluginUpgrader` and `OrgCatalogService` are injectable providers. Export
-changes: their constructors take the kernel's providers (`CatalogServiceDeps`,
-`MarketplacesServiceDeps`, `PluginImportDeps`, `PluginInstallerDeps` and `OrgCatalogDeps` are
-removed); `CatalogRequestsService.requestDeployment` / `resolveByInstall` and the installer's
-`*In` methods join the caller's transaction (no `trx` argument); the item and version helpers moved
-to `catalog/catalog-items.ts` and the version content readers to `catalog/catalog-content.ts`. Org
-installs, upgrades and their rollbacks keep one transaction per step (each committed on its own,
-the undo on failure relies on it). The catalog's advisory locks are lock providers
-(`CatalogSourceLock`, `CatalogItemLock`; the extensions' `PluginInstallLock` /
-`PluginApproveLock`), same keys. `catalogs-refresh` is a `@LockedInterval` (every
-`marketplaces.refreshIntervalMinutes`) with the new `runOnStart` option: as the old scheduler's
-first run did, it also runs once right after the start (once across replicas starting within a
-minute of each other; a later restart runs it again). `app-staging-cleanup` is an hourly
-`@LockedCron`; its first run moved from the scheduler's creation to the next top of the hour
-(harmless: staging lives 24 hours). Their old maintenance schedulers are removed when a worker
-starts. `LockedIntervalScheduler.periodOf(name)` returns a job's scheduled period. The
-notifications after an org extension config write and after an extension install / state change
-/ uninstall (and an org plugin uninstall's `afterDisable`) run as `afterCommit` hooks: a failing
-hook is logged and no longer turns the committed request into a 500. The CLI's
-Redis connection keeps reconnecting (a `capybara bootstrap` holding `lock:bootstrap` survives a
-Redis blip), and a lost `LockService` lock aborts with `lock lost: <key>`.
-
-Scheduled jobs stop cleanly: `ScheduledRuns` (new, `KernelScheduleModule`) tracks every
-`@LockedCron` / `@LockedInterval` run (ticks and `runOnStart` runs). At shutdown the kernel stops
-the timers, aborts the stop signal a job method receives as its argument, starts no new run and
-waits for the runs in progress (bounded by the shared stop deadline, before the extension host,
-Redis and the pool close), so a stop no longer logs "cron job failed" / a failed lock release and
-leaves no run lock behind until its TTL. Failures caused by the stop are logged at WARN / INFO.
-
-Tools and connectors are a Nest module (`ToolsModule`): `Credentials`, `ToolOutputs`,
-`BuiltinTools` (the builtin tools, built once; their names, descriptions and schemas unchanged),
-`ToolRegistry`, `ApprovalsService`, `QuestionsService`, `ToolDrift`, `Breaker`,
-`ConnectorContent`, `ToolPipeline`, `ConnectorsService` and `OAuthFlow` are injectable providers.
-Export changes: their constructors take the kernel's providers (`ApprovalsServiceDeps`,
-`QuestionsServiceDeps`, `ToolDriftDeps`, `ConnectorContentDeps`, `ToolPipelineDeps`,
-`ToolRegistryDeps`, `OAuthFlowDeps` and `CredentialsOAuthDeps` are removed; a hand-built pipeline
-takes its test seams through `TOOL_PIPELINE_TEST_HOOKS`); the builtin tool factories take a config
-holder (`{ get() }`) instead of a getter; the trx-taking methods join the caller's transaction (no
-`trx` argument: `Credentials.setStatic` / `setOAuthClient` / `setOAuthTokens` / `clear` /
-`clearConnector` / `clearAccount` / `status`, `ApprovalsService` / `QuestionsService`
-`cancelPendingIn` / `cancelPendingFor`, `ToolDrift.apply`, `ToolPipeline.stopOpenAgentCalls`,
-`ConnectorsService.applyTemplateIn` / `removeIn`); the OAuth paths moved to
-`tools/oauth/flow-paths.ts` (re-exported by `flow.ts`); `deleteExpiredOutputs` moved to
-`tools/outputs.ts`. A decided approval and an answered question are the in-process domain events
-`approval.decided` / `question.answered` (`KernelEvents`), which resume the waiting run as before
-(on the deciding replica; the wait sweep still resumes a run whose resume was lost). The
-`drift-scan` job is a `@LockedInterval` (every `tools.driftIntervalHours`, and once right after the
-start, as the old scheduler's first run; a repeated scan in a period enqueues nothing new) and
-`output-cleanup` an hourly `@LockedCron` (its first run moved to the next top of the hour); their
-old maintenance schedulers are removed when a worker starts. One-off `drift-connector` jobs keep
-their names and job ids. The OAuth refresh lock uses the `LockService` lease primitives (same key).
-
-Conversations and agents are Nest modules (`ConversationsModule`, `AgentsModule`, with the small
-`EventLogModule`, `ConversationAccessModule`, `AttachmentsModule` and `AgentLookupModule` the
-skills and tools import): `EventLog`, `ConversationAccess`, `AttachmentsService`,
-`ConversationsService` (one instance: the API's, IM inbound's and the attachments' were three),
-`ConversationQueue` (now in `conversations/queue.service.ts`), `ConversationOutputs`,
-`ConversationArtifacts`, `ConversationFiles`, `ConversationSandboxStatus`, `AgentsService` (one
-instance), `AgentLookup` (the viewer reads of agents), `AgentTemplatesService`, `TrajectoryService`,
-`ConversationLock` and `ConversationStreams` are injectable providers. Export changes: their
-constructors take the kernel's providers (`AttachmentsDeps`, `ConversationQueueDeps`,
-`ConversationFilesDeps`, `ConversationArtifactsDeps`, `ConversationOutputsDeps`,
-`ConversationSandboxStatusDeps`, `ResolveAttachments` and `BindFiles` are removed);
-`EventLog.append(conversationId, events)` always appends in its own transaction and publishes after
-the commit, and `EventLog.appendIn(conversationId, events)` appends in the caller's transaction
-(it must hold one; the caller notifies after the commit), replacing the optional `trx` argument;
-`AttachmentsService.bindForMessage` / `consumeSkillPackage` and `ConversationsService.bindIn` join
-the caller's transaction (no `trx` argument); `ConversationsService.checkFilesSupported` is gone
-(files are always supported); `paramIssues` and `SUBAGENT_ROSTER_MAX` moved to
-`agents/definition.ts` and `visibleTo` / `isAgentVisibleTo` / `AGENT_VISIBILITIES` to
-`agents/agent-lookup.ts` (all still re-exported by `agents.service.ts`). The event log's advance is
-announced in-process as `conversation.event-appended` (`KernelEvents`), from which the channel
-outbound delivery is enqueued, on the same replica, right after the bus publish, as the old direct
-hook did. The conversation run lock is a lease of `LockService` (`LockService.hold`: same key
-`capk:conv-run:<id>`, the run id as its value, renewed every TTL/3); a renewal that keeps failing
-until the key would expire now marks the lease lost (handled as when another holder took the key)
-instead of renewing on. The channel delivery lock is the same lease under its own prefix. The
-hourly `attachment-cleanup` is a `@LockedCron` (its first run moved to the next top of the hour);
-its old maintenance scheduler is removed when a worker starts.
-
-The run runtime is a Nest module too (Task 3.6b). `ProviderRegistry`, `RunAbort`,
-`KyselyCheckpointSaver`, `RunQueue`, `Waits`, `RunWorker`, `UsageReporter`, `TitleQueue` and the new
-`RunFinish`, `StepLog`, `RunControl`, `RunJobs`, `RunSteps`, `AgentLoops`, `TitleGenerator` and
-`SubagentsService` are injectable providers (their constructors take injected services, no deps
-objects); `OrgQuota` is provided once per key prefix (`RUN_QUOTA`, `EVAL_QUOTA`) and keeps a slot
-through `OrgQuota.enter` (a `LockService` lease handle, renewed every lease/3). The run queues,
-`cap-kernel-usage-report` and `cap-kernel-titles` are consumed by `@Processor` workers whose options
-come from the startup config (unchanged: `runtime.workerConcurrency`, `jobLockMs`,
-`stalledIntervalMs`, `hooks.usageReportConcurrency`), built and started on the worker role only,
-after the extensions loaded; queue names, job ids and job options are unchanged. At shutdown every
-BullMQ queue and worker closes within what is left of the stop budget; one that cannot (Redis
-down) is abandoned instead of holding the application's close. `wait-sweep` (every 10
-minutes) and `usage-report-sweep` (every minute) are `@LockedCron` jobs; their old maintenance
-schedulers are removed when a worker starts. `finishRun` / `finishRunIn` became
-`RunFinish.finish` / `finishIn`, `onChildFinished` / `stopChildren` became `Waits.childFinished` /
-`stopChildren`, `runTitleJob` takes the generator's writes, `recordHookDenial` and the model step's
-deps take a `stepLog`, step deps and the sub-agent limits read a `KernelConfigService`-like
-`config` (`get()`), and `pairStoppedForks` takes the context's handle. `KernelOptions` lost `loop`
-and `runHooks`: tests override `AGENT_LOOP_FACTORY` / `RUN_HOOKS` through `overrides`. The model
-list cache moved to `@Cacheable` (`cache:capk:models:…`; the old keys expire by TTL); it now
-fails open: a Redis error lists the provider's models again, where it used to throw. A lost
-conversation lease logs one `lock lost` line (with its key); conversation writes the caller notifies
-after run in their own transaction.
-
-Channels are a Nest module (Task 3.7, `ChannelsModule` with `ChannelRolesModule` for the role
-parts): `ChannelConnections`, `ChannelInbound`, `ChannelOutbound`, `ChannelWebhooks`,
-`ChannelSupervisor` and the new `ChannelJobs` (the producer of `cap-kernel-channels`: delivery and
-inbound jobs, `resumeConnection`), `AnonymousGuests` / `AnonymousGuestLock` and `GatewayCheckJob`
-are injectable providers. Export changes: their constructors take the kernel's providers
-(`ChannelConnectionsDeps`, `ChannelInboundDeps`, `ChannelOutboundDeps`, `ChannelSupervisorDeps`,
-`ChannelWebhooksDeps`, `DirectorySyncScheduler`, `ChannelOutboundScheduler` and
-`ChannelInboundQueue` are removed; `ChannelWebhooks.handleTimeoutMs` / `runtimeCacheMs` and
-`ChannelSupervisor.onScan` are fields); `enqueue` / `enqueueInbound` / `resumeConnection` moved from
-`ChannelOutbound` to `ChannelJobs`; `ensureAnonymousGuest(db, orgId)` became
-`AnonymousGuests.ensure(orgId)`; `checkGatewayPresence` takes `locks` and a config holder
-(`{ get() }`); `ApiDeps.channels` is gone (the API injects `ChannelConnections`). The channel queue
-is consumed by a `@Processor` worker on the worker role (concurrency, job lock, stalled detection
-and the delivery backoff unchanged); the supervisor and the webhook inbound exist on the gateway
-role only and still start after the extensions loaded. Queue name, job ids and options, Redis keys
-and lease names are unchanged. A channel long-connection lease is a `LockService` lease (same key
-`capk:channel-lease:<id>`, renewed every TTL/3 and once per heartbeat round); a renewal that keeps
-failing until the key would expire marks it lost and drops the connection, as before, now with one
-`lock lost` line instead of `channel lease lost; disconnecting`. The inbound dedupe and the
-no-gateway warning markers use the `LockService` lease primitives (same keys). `channel-gateway-check`
-is a `@LockedCron` (every minute, once across replicas; its old maintenance scheduler is removed when
-a worker starts).
-
-`LockService` lease loss is a deadline (R19): a holder gives up at the send time of its last
-confirmed renewal (or of the acquire) + TTL − TTL/3 unless another renewal succeeds first, even
-with a renewal still in flight, so it lets go one renewal period before the key can expire and be
-taken elsewhere. This applies to every lock and lease (the conversation run lease, the org quota
-slots, the channel long-connection leases); after a Redis blip longer than about two thirds of the
-TTL a holder now gives up earlier than before (a run is re-queued, a long connection reconnects),
-never later. A channel lease lost while its connection's config is read is no longer connected on.
-
-The sandbox is a Nest module (Task 3.8, `SandboxModule`): `SandboxService`, `SandboxLeases`, the new
-`SandboxProviders` (the `sandbox@1` provider from the extension registry), `SandboxJobs` (the
-producer of `sandbox-destroy-for`) and `SandboxSweepJobs` are injectable providers. Export changes:
-`SandboxServiceDeps` is removed (the constructor takes the kernel's providers; `SandboxLeases`'
-`ttlMs` / `pollMs` / `pathTtlMs` are fields); `SANDBOX_SUSPEND_JOB` / `SANDBOX_DESTROY_JOB` are
-exported from `sandbox/jobs.ts` (was `sandbox/lifecycle.ts`); `scheduleSandboxDestroy` and
-`registerSandboxMaintenance` became `SandboxJobs.destroy` and `runSandboxDestroyFor`;
-`Maintenance.schedule` is removed (no periodic maintenance job is left). `LockService` gains shared
-leases (`tryShared` / `tryExclusive` / `sharedCount`, a `SharedLeaseHandle` with `downgrade`) and
-the sandbox leases are built on them: same Redis keys and scripts, holder records, path leases,
-fencing generation, `sandbox.maxConcurrentCommands` and `sandbox.lockWaitSeconds`. A held sandbox
-or path lease is lost at the R19 deadline (a path lease whose renewals keep failing is now lost
-too), with one `lock lost` line instead of `sandbox lease lost` / `sandbox path lease lost`. A
-`LockService` release that fails is logged at warn (`lock release failed`; the key expires within
-its TTL), for every lock and lease. A downgrade answered after its lease was lost still releases
-the shared lease.
-`sandbox-suspend-idle` (every minute) and `sandbox-destroy-inactive` (hourly) are `@LockedCron`
-jobs (once per tick across replicas, on every role until Task 4.1); their old maintenance
-schedulers are removed when a worker starts. `sandbox-destroy-for` jobs are unchanged (name, data,
-retries, BullMQ's own ids).
-
-The last domains are Nest modules (Task 3.9) and the legacy service graph is gone. Evals
-(`EvalsModule`: `EvalSetsService`, `EvalRunsService`, the new `EvalJobs` producer of
-`cap-kernel-evals`, `EvalBudget`; `EvalWorkersModule`: `EvalWorker`, `EvalReplaySeeder` and the
-`EvalsProcessor` on the worker role), extension UI (`UiModule`: `UiViews`, `OrgUiStreams`,
-`UiStreamMembership`; `EmbedTokensModule`: `EmbedTokens`), file previewers (`FilesModule`:
-`PreviewerRegistry`), the inbox (`InboxModule`: `InboxService`) and `ConversationToolInfo`
-(`ToolsModule`) are injectable providers; `ApiModule` is a static module (no `register` /
-`registerFrom`, no `ApiDeps` / `API_DEPS`). The maintenance queue has one `@Processor`,
-`MaintenanceProcessor` (`MaintenanceModule`, worker role, concurrency 5), which dispatches
-`wait-timeout`, `sandbox-destroy-for`, `drift-connector` and `directory-sync` by name (names, data,
-ids and options unchanged); `RETIRED_SCHEDULER_IDS` moved to `runtime/retired-schedulers.ts`
-(each id from its domain's leaf `job-ids.ts`: the storage, orgs, extensions and conversations
-scheduler ids moved there from `storage/purge.ts`, `orgs/offboarding.ts`, `orgs/directory-sync.ts`,
-`extensions/lifecycle-topics.ts` / `extensions/lifecycle.ts` and `conversations/attachments.service.ts`;
-none was a package export) and a starting worker role still removes them once, through the generic
-`removeRetiredSchedulers(queue, ids)` of `infra/queue`. Export changes: `Maintenance`, `EvalQueue`,
-`cancelEvalRuns` / `recountCases` (now `EvalBudget.cancelRuns` / `recountCases`),
-`legacyKernelView` / `legacyCurrentTrx`, `StandaloneDatabase.schemaDb`, `KernelRuns.maintenance`,
-`KernelTestHooks` and `KernelOptions.evalHooks` are removed (`KernelOptions` is
-`KernelAppOptions`; the eval replay hooks are the `EVAL_REPLAY_HOOKS` provider override);
-`KernelDeps` gains `embedTokens` (the one `EmbedTokens` provider, which `ctx` verifies with);
-`EmbedTokens` takes only the keyring (its clock is the `now` field); `orgMembership(db)` became
-the `UiStreamMembership` provider; `MAINTENANCE_QUEUE_NAME` is exported from
-`runtime/maintenance-queue.ts`; the eval replay deps take `KernelConfigService` instead of a config
-getter, and the full-run replay seed is written by `EvalReplaySeeder`. The eval quota slot is held
-through `OrgQuota.enter` (renewed by the lock service, one `lock lost` line instead of `eval quota
-renew failed`), and the results-viewed audit dedupe is a `LockService` lease on the same key.
-The shared-lease Lua fragments are no longer exported: domain scripts that read a lease next to
-their own keys use `sharedLeaseReadScript(body)` / `redisClockScript(body)` (same scripts).
-Under the R19 deadline, a Redis outage of roughly 40–60 s can let an eval's org quota slot lapse
-while the eval keeps running, so an org may briefly run more evals than `evals.orgConcurrency`
-(accepted). Route parameters validated by `@ZParam` DTOs (R20: the UI `:plugin/:id` and the file
-preview `:plugin/:previewerId` routes) report `validation_failed` with `details[].path` naming the
-parameter instead of `""`; the code and status are unchanged.
-
-Roles (nest kernel Task 4.1): `roles` now selects three Nest role modules. `ApiModule` serves the
-controllers; `WorkerModule` holds the cron scheduler, every fixed-period job and every queue
-consumer; `GatewayModule` holds the channel long-connection supervisor and the webhook inbound.
-The role behaviour is unchanged from the last release: the fixed-period jobs (`wait-sweep`,
-`usage-report-sweep`, `attachment-cleanup`, `storage-org-purge`, `sandbox-suspend-idle`,
-`sandbox-destroy-inactive`, `drift-scan`, `catalogs-refresh`, `output-cleanup`,
-`app-staging-cleanup`, `directory-scan`, `offboard-sweep`, `plugins-reconcile`,
-`channel-gateway-check`) and the queue consumers run only on processes with the `worker` role; an
-`api`-only or `gateway`-only process builds no BullMQ worker and no scheduler. Start gate (R21): a
-worker process runs no fixed-period job before its start sequence (migrations, the bootstrap step,
-the extension load) has started the queue consumers; a tick that fires earlier is skipped with an
-INFO line (`cron skipped: the scheduler is not started`), and the `drift-scan` / `catalogs-refresh`
-runs right after the start happen at that point; the stop closes the gate again.
-Export changes: `ExtensionLifecycle` no longer takes a `LockService` and its periodic reconcile
-publish is the worker-role job `PluginsReconcileJob`; `DirectorySync.scanJob` and
-`Offboarding.sweepJob` became the jobs `DirectoryScanJob` and `OffboardSweepJob` (and `Offboarding`
-no longer takes a `LockService`); `ChannelRolesModule` became `ChannelWorkersModule` (the
-supervisor and the webhooks are `GatewayModule`'s); `MaintenanceModule` is a static module; the
-`KernelAppOptions.overrides` may name an application enhancer (`APP_INTERCEPTOR`, …). A lease
-abandoned while one of its renewals was in flight no longer logs `lock lost` when that renewal
-comes back refused.
-
-Tests and `@capybara-hq/testing` (nest kernel Task 5.1): `startTestKernel` now starts the kernel
-with `startKernelApp` (no process-wide signal handlers) and returns a `TestKernel`
-`{ app, http, port, close() }` instead of the `Kernel` facade (`port` is undefined after
-`close()`); the dual-replica harness's replicas start with `startKernelApp` too (the harness's stop
-raises SIGTERM on the replica's own signal source, so a replica stops through the same shutdown
-path as `capybara start`). `@capybara-hq/testing` no longer re-exports `Kernel`; it exports
-`TestKernel` and `KernelApp` (the Nest application type). `@capybara-hq/kernel` now exports
-`closeKernelApp` and the accessors `kernelAppHttp(app)` / `kernelAppPort(app)`. Migration for
-extension tests: type the kernel as `TestKernel` instead of `Kernel`, replace `k.stop()` with
-`k.close()`, and reach a kernel service with `k.app.get(Class)` instead of a facade field (e.g.
-`k.host` → `k.app.get(ExtensionHost)`, `k.storage` → `k.app.get(StorageService)`); `k.http` and
-`k.port` stay, and `login(k, …)` / `joinOrg(k, …)` take any `{ http }`.
-
-CLI (nest kernel Task 5.2): `capybara start` runs `startKernelApp` (same start order, signal
-handling and exit codes; a kernel whose application cannot even be built now logs `kernel start
-failed`, where it logged `cannot load configuration` before). `capybara admin create` /
-`admin grant` run on a CLI application context without Redis (still PostgreSQL only). Export
-changes: `standaloneDatabase` / `StandaloneDatabase` are removed; new exports `AccountsModule`
-(`AccountsService` with its locks), `openKernelCli(config, opts)` (a CLI command's application
-context; `redis: false` leaves Redis and `LockService` out) and `openKernelCliOverPool(pool, opts)`
-(a context over a pool the caller owns and keeps open). `@capybara-hq/testing`'s
-`createLocalAccount` keeps its signature and runs on `openKernelCliOverPool`.
-
-The facade is gone (nest kernel Task 5.3). Breaking removals from `@capybara-hq/kernel`:
-`createKernel`, the `Kernel` facade type, `KernelOptions` and `KernelRuns`. Migration: build the
-kernel with `createKernelApp(config, options)` (started, not listening) or
-`startKernelApp(config, options)` (started and listening, with signal handling), stop it with
-`closeKernelApp(app)`, reach its HTTP side with `kernelAppHttp(app)` / `kernelAppPort(app)` and a
-service with `app.get(Class)`; tests use `@capybara-hq/testing`'s `startTestKernel`.
-`KernelOptions` is `KernelAppOptions`. `KernelAppOptions.overrides` is for the kernel's own tests
-only: it takes the named seam tokens of `KernelOverride` and refuses any other token when the
-application is built. The seam tokens are not exported from the package, and
-`@capybara-hq/testing`'s `startTestKernel` takes no overrides. New exports: `KernelModule`, the
-type `KernelOverride` and the infra decorators `Transactional`, `afterCommit`, `WithLock`,
-`Cacheable`, `CacheEvict`, `LockedCron`, `LockedInterval`, `Throttled`, `createZodDto`, `ZBody`,
-`ZQuery`, `ZParam`.
-
-Test seams (nest kernel Task 5.3): no provider has a mutable public test knob any more. Each
-timing or clock the kernel's tests shorten is an optional seam token the kernel never provides,
-set by those tests through `KernelAppOptions.overrides` or a constructor argument (internal, not
-exported): `BOOTSTRAP_LOCK_TTL` (was
-`BootstrapService.lockTtlMs`), `FILE_PREVIEW_TIMEOUT` (`PreviewerRegistry.timeoutMs`),
-`LIST_MODELS_TIMEOUT` (`ProviderRegistry.listTimeoutMs`), `USAGE_REPORT_RETRY`
-(`UsageReporter.retry`), `SANDBOX_LEASE_TIMINGS` (`SandboxLeases.ttlMs` / `pollMs` / `pathTtlMs`,
-now read-only), `CHANNEL_WEBHOOK_TIMINGS` (`ChannelWebhooks.handleTimeoutMs` / `runtimeCacheMs`)
-and `EMBED_TOKEN_CLOCK` (`EmbedTokens.now`). `UiViews.timeoutMs`, `EvalWorker.quotaRetryMs` and
-`MarketplacesService.fetchTimeoutMs` are gone (their constants apply). The tool pipeline's seam
-`TOOL_PIPELINE_TEST_HOOKS` is now `TOOL_PIPELINE_HOOKS` (`ToolPipelineHooks` carries
-`afterExecute` and `decidePolicy`), one of the `KernelOverride` tokens.
+- `startTestKernel(config, opts)` (options unchanged, no `overrides`) starts the kernel with
+  `startKernelApp` on a signal source of its own (no process-wide handlers) and returns a
+  `TestKernel` `{ app, http, port, close() }` instead of the `Kernel` facade; `port` is
+  `number | undefined` (undefined after `close()`).
+- The `Kernel` and `KernelDb` re-exports are removed; `TestKernel`, `KernelApp` (the Nest
+  application type) and `KernelSchemaDb` are exported. `login(k, …)` / `joinOrg(k, …)` take any
+  `{ http }`.
+- `createDualReplicaHarness` keeps its API; each replica starts with `startKernelApp`, and the
+  harness's stop sends SIGTERM to the replica's own signal source, so a replica stops through the
+  same shutdown path as `capybara start`. `createLocalAccount` keeps its signature.
+- Migration for extension tests: type the kernel as `TestKernel` instead of `Kernel`, call
+  `k.close()` instead of `k.stop()`, treat `k.port` as `number | undefined`, reach a kernel service
+  with `k.app.get(Class)` instead of a facade field, and import the type `KernelSchemaDb` instead of
+  `KernelDb`; `k.http` is unchanged. The official plugins (capybara-hq/plugins) need this in 8 test
+  files (connector-mcp: claude-template, live/m3, kernel/mcp-e2e; connector-openapi: live/m3,
+  kernel/openapi-e2e; example-board: board.http; sandbox-docker: sandbox-tools.smoke; todo:
+  kernel.http) and 15 `KernelDb` → `KernelSchemaDb` type imports.
