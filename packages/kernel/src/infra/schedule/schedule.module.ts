@@ -7,8 +7,8 @@ import { ScheduledRuns } from "./scheduled-runs.js";
 /**
  * The cron scheduler (`@nestjs/schedule`), the `@LockedInterval` scheduler and the runs of both
  * (`ScheduledRuns`: tracked, stopped within the stop budget). The one place that imports them;
- * only the worker role (`WorkerModule`) imports this module, so only worker processes run
- * `@LockedCron` / `@LockedInterval` jobs.
+ * only worker-only modules import this module (`WorkerModule` and `MaintenanceModule`, which only
+ * `WorkerModule` imports), so only worker processes run `@LockedCron` / `@LockedInterval` jobs.
  */
 @Module({
   imports: [ScheduleModule.forRoot(), DiscoveryModule],

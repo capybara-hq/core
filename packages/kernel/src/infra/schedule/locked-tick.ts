@@ -104,6 +104,8 @@ export async function runLockedTick(
     start?: { ttlMs: number };
     /**
      * The job body; `signal` aborts when the stop begins (`ScheduledRuns`) or the run lock is lost.
+     * Only a body that reads `signal` stops on a lost lock; the others are idempotent sweeps that
+     * run to completion.
      */
     run: (signal: AbortSignal) => Promise<unknown>;
   },
@@ -167,8 +169,9 @@ export async function runLockedTick(
         if (signal?.aborted) {
           log.info("cron skipped: the scheduler is stopping", { cron: o.name, tick });
         } else {
-          // the job stops on the stop signal and when its run lock is lost (another replica may
-          // take the lock and start the next run)
+          // the signal aborts on the stop and when the run lock is lost (another replica may take
+          // the lock and start the next run); only jobs that read it stop, the others are
+          // idempotent sweeps that run to completion
           await o.run(signal ? AbortSignal.any([signal, handle.lost]) : handle.lost);
         }
       } catch (err) {
