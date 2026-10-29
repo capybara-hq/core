@@ -12,7 +12,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { loadToolSpec } from "../../src/tools/specs.js";
 import { truncateTables } from "../helpers/db.js";
@@ -27,6 +26,8 @@ import {
   type Req,
   runConfig,
   session,
+  startKernel,
+  type TestKernel,
   waitFor,
   waitForEvent,
   waitForTerminal,
@@ -49,7 +50,7 @@ const TOKEN = "mcp-org-token-7f3a9c1e5b2d4086";
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let mcp: FakeMcpServer;
@@ -138,7 +139,7 @@ beforeAll(async () => {
     },
   });
   const logger = createLogger("info", { write: (l) => logLines.push(l) });
-  k = await createKernel(
+  k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
@@ -152,13 +153,12 @@ beforeAll(async () => {
     ),
     { env: {}, logger },
   );
-  await k.start();
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
 }, 120_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await mcp?.stop();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);

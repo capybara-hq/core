@@ -21,7 +21,7 @@ import {
   replayableCalls,
   toEvents,
 } from "../../src/evals/snapshot.js";
-import type { Kernel } from "../../src/kernel.js";
+import { ToolRegistry } from "../../src/tools/registry.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -34,6 +34,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitForTerminal,
 } from "../helpers/runs.js";
 
@@ -84,7 +85,7 @@ const CONNECTOR = fakeExtensionEntry("fake-connector");
 describe("改名后的路由与旧 agent 版本", () => {
   let pgc: TestContainer;
   let rd: TestContainer;
-  let k: Kernel;
+  let k: TestKernel;
   let raw: ReturnType<typeof createDb>;
   let db: KernelSchemaDb;
   let mcp: FakeMcpServer;
@@ -122,7 +123,7 @@ describe("改名后的路由与旧 agent 版本", () => {
   }, 180_000);
 
   afterAll(async () => {
-    await k?.stop();
+    await k?.close();
     await mcp?.stop();
     await raw?.destroy();
     await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -240,7 +241,9 @@ describe("改名后的路由与旧 agent 版本", () => {
       { kind: "connector", connectorId: docs, tools: "all" },
       { kind: "connector", connectorId: priv, tools: ["search"] },
     ]);
-    const resolved = await k.tools.registry.forAgent(orgId, base?.definition ?? { tools: [] });
+    const resolved = await k.app
+      .get(ToolRegistry)
+      .forAgent(orgId, base?.definition ?? { tools: [] });
     const keys = resolved.tools.map((t) => t.key);
     expect(keys).toEqual(expect.arrayContaining(["fx_docs__search", "fx_priv__search"]));
     expect(JSON.stringify(resolved.unavailable)).not.toContain("undefined");

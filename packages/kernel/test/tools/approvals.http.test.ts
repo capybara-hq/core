@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -8,17 +9,19 @@ import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import type { ApiTokenService } from "../../src/identity/api-tokens.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { type KernelEventMap, KernelEvents } from "../../src/infra/events/kernel-events.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
+import { KERNEL_BUS } from "../../src/infra/tokens.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
 import type { ApprovalRecord, ApprovalRequestInput } from "../../src/tools/approvals.service.js";
+import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
-import { eventsOf, waitFor } from "../helpers/runs.js";
+import { eventsOf, startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
 import { approvalsFor } from "../helpers/tools.js";
 
 /**
@@ -28,8 +31,8 @@ import { approvalsFor } from "../helpers/tools.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let ka: Kernel;
-let kb: Kernel;
+let ka: TestKernel;
+let kb: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
@@ -51,10 +54,8 @@ const kernelConfig = () =>
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  ka = await createKernel(kernelConfig(), { env: {}, logger: silent() });
-  await ka.start();
-  kb = await createKernel(kernelConfig(), { env: {}, logger: silent() });
-  await kb.start();
+  ka = await startKernel(kernelConfig(), { env: {}, logger: silent() });
+  kb = await startKernel(kernelConfig(), { env: {}, logger: silent() });
   raw = createDb(pgc.url, 5);
   db = legacyDbFor(raw);
   redis = new Redis(rd.url);
@@ -63,8 +64,8 @@ beforeAll(async () => {
   tokens = apiTokensFor(db);
 }, 120_000);
 afterAll(async () => {
-  await kb?.stop();
-  await ka?.stop();
+  await kb?.close();
+  await ka?.close();
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -107,7 +108,7 @@ async function member(loginName: string, role: "admin" | "member" | "guest") {
   return { account, ...(await login(loginName)) };
 }
 
-const svc = () => ka.tools.approvals;
+const svc = () => ka.app.get(ApprovalsService);
 
 function request(over: Partial<ApprovalRequestInput> = {}): Promise<ApprovalRecord> {
   return svc().request({
@@ -611,7 +612,13 @@ describe("Review Focus 1：两个副本并发处理同一审批", () => {
     events.on("approval.decided", (r) => {
       calls.push(r);
     });
-    const mk = (k: Kernel) => approvalsFor(db, eventLogFor(db, k.bus), () => k.config, events);
+    const mk = (k: TestKernel) =>
+      approvalsFor(
+        db,
+        eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
+        () => k.app.get(KernelConfigService).get(),
+        events,
+      );
     const [s1, s2] = [mk(ka), mk(kb)];
     const a = await request();
     const results = await Promise.allSettled([

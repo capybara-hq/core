@@ -12,15 +12,17 @@ import {
 } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import type { Kernel } from "../../src/kernel.js";
 import { sameSkills, skillsChangeText } from "../../src/runtime/context/skills.js";
 import { SkillsCatalogService } from "../../src/skills/catalog.js";
-import { AGENT_SKILLS_MAX } from "../../src/skills/changes.service.js";
+import { AGENT_SKILLS_MAX, SkillChangesService } from "../../src/skills/changes.service.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import { skillLoadTool } from "../../src/tools/builtins/skill-load.js";
 import { buildSkillWrite, SKILL_WRITE_MAX_BYTES } from "../../src/tools/builtins/skill-write.js";
 import { truncateTables } from "../helpers/db.js";
@@ -37,6 +39,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -56,7 +59,7 @@ let rd: TestContainer;
 let s3: TestS3;
 let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 let root: string;
 
 beforeAll(async () => {
@@ -88,7 +91,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
   if (root) await rm(root, { recursive: true, force: true });
@@ -333,7 +336,7 @@ describe("skill_write on a private agent", { timeout: 120_000 }, () => {
       .executeTakeFirstOrThrow();
     expect(v.manifest.files.map((f) => f.path).sort()).toEqual(["SKILL.md", "scripts/a.sh"]);
     // 合成的 SKILL.md：frontmatter 来自 name / description
-    const md = await k.storage.kernel(orgId).get(`${v.object_prefix}SKILL.md`);
+    const md = await k.app.get(StorageService).kernel(orgId).get(`${v.object_prefix}SKILL.md`);
     const text = await new Response(md?.body).text();
     expect(text).toMatch(/^---\nname: notes\ndescription: Use for notes work\.\n---\n/);
     expect(text).toContain("Take notes v1.");
@@ -450,10 +453,9 @@ describe("skill_write on a private agent", { timeout: 120_000 }, () => {
     await rowLocked;
     const built = buildSkillWrite(write("notes", "Take notes."));
     if ("errors" in built) throw new Error(built.errors.join("; "));
-    const written = k.skillChanges.write(
-      { orgId, agentId, accountId: ownerId, conversationId: conv },
-      built,
-    );
+    const written = k.app
+      .get(SkillChangesService)
+      .write({ orgId, agentId, accountId: ownerId, conversationId: conv }, built);
     await waitFor(
       async () => {
         const r = await sql<{ n: number }>`SELECT count(*)::int AS n FROM pg_stat_activity
@@ -495,10 +497,9 @@ describe("skill_write on a private agent", { timeout: 120_000 }, () => {
     await rowShared;
     const built = buildSkillWrite(write("notes", "Take notes."));
     if ("errors" in built) throw new Error(built.errors.join("; "));
-    const written = k.skillChanges.write(
-      { orgId, agentId, accountId: memberId, conversationId: conv },
-      built,
-    );
+    const written = k.app
+      .get(SkillChangesService)
+      .write({ orgId, agentId, accountId: memberId, conversationId: conv }, built);
     await waitFor(
       async () => {
         const r = await sql<{ n: number }>`SELECT count(*)::int AS n FROM pg_stat_activity
@@ -785,12 +786,13 @@ describe("skill_write on a shared agent (R4)", { timeout: 180_000 }, () => {
 
     // 拒绝：草稿对象删除，发起对话的下一份快照回到 v1
     const prefix = second?.object_prefix as string;
-    expect(await k.storage.kernel(orgId).head(`${prefix}SKILL.md`)).not.toBeNull();
+    expect(await k.app.get(StorageService).kernel(orgId).head(`${prefix}SKILL.md`)).not.toBeNull();
     const no = await decide(owner, second?.id as string, "reject");
     expect(no.statusCode, no.body).toBe(200);
     expect((no.json() as { skillChange: { status: string } }).skillChange.status).toBe("rejected");
     await waitFor(
-      async () => (await k.storage.kernel(orgId).head(`${prefix}SKILL.md`)) === null,
+      async () =>
+        (await k.app.get(StorageService).kernel(orgId).head(`${prefix}SKILL.md`)) === null,
       10_000,
       "draft deleted",
     );
@@ -837,7 +839,9 @@ describe("skill_write on a shared agent (R4)", { timeout: 180_000 }, () => {
     expect(old.status).toBe("cancelled");
     expect(d2?.proposed_version.skillId).toBe(d1?.proposed_version.skillId);
     await waitFor(
-      async () => (await k.storage.kernel(orgId).head(`${d1?.object_prefix}SKILL.md`)) === null,
+      async () =>
+        (await k.app.get(StorageService).kernel(orgId).head(`${d1?.object_prefix}SKILL.md`)) ===
+        null,
       10_000,
       "superseded draft deleted",
     );
@@ -931,7 +935,7 @@ describe("skill_write on a shared agent (R4)", { timeout: 180_000 }, () => {
     const skillId = a2?.proposed_version.skillId as string;
     const t = skillLoadTool({
       db,
-      storage: k.storage,
+      storage: k.app.get(StorageService),
       eventLog: {
         append: async () => [],
         latestOfType: async () =>
@@ -956,7 +960,7 @@ describe("skill_write on a shared agent (R4)", { timeout: 180_000 }, () => {
         listForConversation: async () => [],
         openForConversation: async () => null,
       },
-      config: { get: () => k.config },
+      config: { get: () => k.app.get(KernelConfigService).get() },
     });
     await expect(
       t.run(
@@ -1042,7 +1046,9 @@ describe("skill_write on a shared agent (R4)", { timeout: 180_000 }, () => {
     expect(await pending()).toHaveLength(0);
     expect((await catalogs(convM)).at(-1)?.payload.skills).toEqual([]);
     await waitFor(
-      async () => (await k.storage.kernel(orgId).head(`${k2?.object_prefix}SKILL.md`)) === null,
+      async () =>
+        (await k.app.get(StorageService).kernel(orgId).head(`${k2?.object_prefix}SKILL.md`)) ===
+        null,
       10_000,
       "draft deleted on skill delete",
     );
@@ -1060,7 +1066,9 @@ describe("skill_write on a shared agent (R4)", { timeout: 180_000 }, () => {
       .executeTakeFirstOrThrow();
     expect(row.status).toBe("cancelled");
     await waitFor(
-      async () => (await k.storage.kernel(orgId).head(`${o1?.object_prefix}SKILL.md`)) === null,
+      async () =>
+        (await k.app.get(StorageService).kernel(orgId).head(`${o1?.object_prefix}SKILL.md`)) ===
+        null,
       10_000,
       "draft deleted on agent delete",
     );
@@ -1104,7 +1112,7 @@ describe("skill_write on a shared agent (R4)", { timeout: 180_000 }, () => {
         .set({ status: "rejected" })
         .where("id", "=", d2?.id as string)
         .execute();
-      await k.runs.eventLog.appendIn(convA, [
+      await k.app.get(EventLog).appendIn(convA, [
         {
           type: "skills_catalog",
           idemKey: "test-revert",

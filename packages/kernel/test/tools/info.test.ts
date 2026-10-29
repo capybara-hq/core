@@ -6,7 +6,6 @@ import { KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
 import { BUILTIN_TOOL_KINDS, type ToolInfo } from "../../src/tools/info.js";
@@ -16,6 +15,7 @@ import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
+import { startKernel, type TestKernel } from "../helpers/runs.js";
 
 // Tool presentation metadata for the conversation page (UI refresh B, Task 4):
 // GET /orgs/:orgId/conversations/:id/tools?keys=… -> titles, kinds, key arguments and sources.
@@ -26,7 +26,7 @@ const MEM_CONNECTOR = fileURLToPath(
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
@@ -38,7 +38,7 @@ const PW = "correct horse battery";
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  k = await createKernel(
+  k = await startKernel(
     KernelConfigSchema.parse({
       db: { url: pgc.url, poolMax: 5 },
       redis: { url: rd.url },
@@ -51,7 +51,6 @@ beforeAll(async () => {
     }),
     { env: {}, logger: createLogger("error", { write: () => {} }) },
   );
-  await k.start();
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
@@ -59,7 +58,7 @@ beforeAll(async () => {
   members = testMembers(db);
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);

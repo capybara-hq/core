@@ -14,7 +14,6 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import type { ConversationEvent } from "../../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
-import { createKernel, type Kernel } from "../../../src/kernel.js";
 import { createLogger } from "../../../src/log.js";
 import { truncateTables } from "../../helpers/db.js";
 import { accountsFor } from "../../helpers/identity.js";
@@ -27,6 +26,8 @@ import {
   type Req,
   runConfig,
   session,
+  startKernel,
+  type TestKernel,
   waitForTerminal,
 } from "../../helpers/runs.js";
 
@@ -43,7 +44,7 @@ const CALLBACK = `${PUBLIC_URL}/api/v1/oauth/callback`;
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
@@ -58,7 +59,7 @@ const ofType = <T extends ConversationEvent["type"]>(evs: ConversationEvent[], t
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  k = await createKernel(
+  k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
@@ -73,14 +74,13 @@ beforeAll(async () => {
     ),
     { env: {}, logger: createLogger("info", { write: (l) => logLines.push(l) }) },
   );
-  await k.start();
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
 }, 120_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -766,7 +766,7 @@ describe("轮换客户端与其他校验", () => {
 
 describe("http.publicUrl 未配置", () => {
   it("OAuth 连接器创建返回 validation_failed（path auth）", async () => {
-    const k2 = await createKernel(
+    const k2 = await startKernel(
       runConfig(
         { pg: pgc.url, redis: rd.url },
         {
@@ -779,7 +779,6 @@ describe("http.publicUrl 未配置", () => {
       ),
       { env: {}, logger: createLogger("error", { write: () => {} }) },
     );
-    await k2.start();
     try {
       const r2 = await session(k2, "owner");
       for (const auth of [
@@ -812,7 +811,7 @@ describe("http.publicUrl 未配置", () => {
         expect(err.details[0]?.message).toContain("http.publicUrl");
       }
     } finally {
-      await k2.stop();
+      await k2.close();
     }
   }, 60_000);
 });

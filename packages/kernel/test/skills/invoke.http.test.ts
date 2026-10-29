@@ -16,14 +16,17 @@ import {
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentLookup } from "../../src/agents/agent-lookup.js";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import type { Kernel } from "../../src/kernel.js";
+import { KERNEL_LOGGER } from "../../src/infra/tokens.js";
+import type { KernelLogger } from "../../src/log.js";
 import { parseSlashCommand, SkillInvoker } from "../../src/skills/invoke.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import { conversationsFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -38,6 +41,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitForTerminal,
 } from "../helpers/runs.js";
 
@@ -58,7 +62,7 @@ let rd: TestContainer;
 let s3: TestS3;
 let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 let root: string;
 
 beforeAll(async () => {
@@ -90,7 +94,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
   if (root) await rm(root, { recursive: true, force: true });
@@ -128,7 +132,7 @@ async function seedSkill(opts: {
   plugin?: string;
 }): Promise<{ id: string; version: number; prefix: string }> {
   const prefix = `skills/${randomUUID()}/`;
-  const store = k.storage.kernel(orgId);
+  const store = k.app.get(StorageService).kernel(orgId);
   const files: SkillManifest["files"] = [];
   for (const [path, text] of Object.entries({
     "SKILL.md": skillMd(opts.name, opts.body),
@@ -381,7 +385,7 @@ describe("GET …/agents/:agentId/invocable-skills", { timeout: 60_000 }, () => 
     const conv2 = await createConv(owner, orgId, agentId);
     const prefix = `skill-changes/${randomUUID()}/`;
     const data = new TextEncoder().encode(skillMd("draft", "D."));
-    await k.storage.kernel(orgId).put(`${prefix}SKILL.md`, data, {
+    await k.app.get(StorageService).kernel(orgId).put(`${prefix}SKILL.md`, data, {
       contentType: "application/octet-stream",
       size: data.byteLength,
     });
@@ -620,7 +624,7 @@ describe("POST …/messages with skill", { timeout: 60_000 }, () => {
     const svc = conversationsFor(
       { db: k.app.get(KernelDb), txHost: k.app.get(TransactionHost) },
       {
-        eventLog: k.runs.eventLog,
+        eventLog: k.app.get(EventLog),
         agents: agentsService(),
         resolveAttachments: async (_o, _a, refs) => ({
           blocks: refs.map((r) => ({ type: "text" as const, text: `resource ${r.uri}` })),
@@ -775,8 +779,8 @@ describe("Review Focus 2: the skill changes between listing and sending", {
     const s = await seedSkill({ name: "fix-issue", body: FIX_ISSUE });
     const agentId = await createAgent([s.id]);
     const conv = await createConv(owner, orgId, agentId);
-    const original = k.storage.kernel.bind(k.storage);
-    vi.spyOn(k.storage, "kernel").mockImplementation((id: string) => {
+    const original = k.app.get(StorageService).kernel.bind(k.app.get(StorageService));
+    vi.spyOn(k.app.get(StorageService), "kernel").mockImplementation((id: string) => {
       const store = original(id);
       return new Proxy(store, {
         get(target, prop, receiver) {
@@ -798,7 +802,7 @@ describe("Review Focus 2: the skill changes between listing and sending", {
     const agentId = await createAgent([s.id]);
     const conv = await createConv(owner, orgId, agentId);
     const evil = new TextEncoder().encode(skillMd("fix-issue", "tampered"));
-    await k.storage.kernel(orgId).put(`${s.prefix}SKILL.md`, evil, {
+    await k.app.get(StorageService).kernel(orgId).put(`${s.prefix}SKILL.md`, evil, {
       contentType: "application/octet-stream",
       size: evil.byteLength,
     });
@@ -817,12 +821,12 @@ describe("SkillInvoker logging", { timeout: 60_000 }, () => {
     const s = await seedSkill({ name: "fix-issue", body: FIX_ISSUE });
     const agentId = await createAgent([s.id]);
     const evil = new TextEncoder().encode(skillMd("fix-issue", "tampered"));
-    await k.storage.kernel(orgId).put(`${s.prefix}SKILL.md`, evil, {
+    await k.app.get(StorageService).kernel(orgId).put(`${s.prefix}SKILL.md`, evil, {
       contentType: "application/octet-stream",
       size: evil.byteLength,
     });
     // the one SkillInvoker logs through the kernel logger
-    const error = vi.spyOn(k.log, "error");
+    const error = vi.spyOn(k.app.get<KernelLogger>(KERNEL_LOGGER), "error");
     const invoker = k.app.get(SkillInvoker);
     const agent = (await agentsService().get(orgId, agentId, ownerId)).definition;
     try {

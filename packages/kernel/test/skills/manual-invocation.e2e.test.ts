@@ -19,7 +19,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
 import { takeSnapshot, toEvents } from "../../src/evals/snapshot.js";
-import type { Kernel } from "../../src/kernel.js";
+import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { loadFixtureAsStrings } from "../catalog/claude-fixtures.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
 import { agentTemplatesFor } from "../helpers/conversations.js";
@@ -35,6 +35,7 @@ import {
   runsOf,
   session,
   startKernel,
+  type TestKernel,
   waitForTerminal,
 } from "../helpers/runs.js";
 
@@ -90,7 +91,7 @@ let destroyDb: () => Promise<void>;
 let srv: FakeGitServer;
 let pluginsDir: string;
 let root: string;
-let k: Kernel;
+let k: TestKernel;
 let admin: Req;
 let orgId: string;
 
@@ -140,7 +141,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   capture.restore();
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await srv?.stop();
   if (pluginsDir) await rm(pluginsDir, { recursive: true, force: true });
@@ -377,7 +378,7 @@ describe("phase D acceptance: commands, manual-only and forked skills", {
     const calls = ofType(toEvents(snap), "model_call");
     const parentSent = sent.filter((r) => !isChild(r));
     expect(calls).toHaveLength(parentSent.length);
-    const info = (await k.runs.registry.resolve(SCRIPT)).info;
+    const info = (await k.app.get(ProviderRegistry).resolve(SCRIPT)).info;
     for (const [i, c] of calls.entries()) {
       const out = reconstructRequest(snap, c.seq, { model: info });
       expect(out.drift, `parent model_call seq ${c.seq}`).toEqual([]);

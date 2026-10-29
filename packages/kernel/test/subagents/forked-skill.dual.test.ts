@@ -14,8 +14,9 @@ import type { ConversationEvent, EventPayload } from "../../src/conversations/ev
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import type { Kernel } from "../../src/kernel.js";
 import { RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME } from "../../src/runtime/run-queue.js";
+import { Waits } from "../../src/runtime/waits.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { seedForkedSkill } from "../helpers/forked-skills.js";
@@ -32,6 +33,7 @@ import {
   runsOf,
   sleep,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForRunJobDone,
   waitForTerminal,
@@ -61,7 +63,7 @@ let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let subQueue: Queue;
 let runQueue: Queue;
-const kernels: Kernel[] = [];
+const kernels: TestKernel[] = [];
 
 const config = () =>
   runConfig(
@@ -83,18 +85,18 @@ const config = () =>
     },
   );
 
-async function boot(): Promise<Kernel> {
+async function boot(): Promise<TestKernel> {
   const k = await startKernel(config());
   kernels.push(k);
   return k;
 }
 
-async function stopKernel(k: Kernel): Promise<void> {
+async function stopKernel(k: TestKernel): Promise<void> {
   kernels.splice(kernels.indexOf(k), 1);
-  await k.stop();
+  await k.close();
 }
 
-async function login(k: Kernel): Promise<Req> {
+async function login(k: TestKernel): Promise<Req> {
   const req = asUser(k.http, cookieJar());
   const res = await req({
     method: "POST",
@@ -118,7 +120,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  for (const k of kernels.splice(0)) await k.stop();
+  for (const k of kernels.splice(0)) await k.close();
   await subQueue?.close();
   await runQueue?.close();
   await raw?.destroy();
@@ -128,7 +130,7 @@ afterAll(async () => {
 let ownerId: string;
 
 beforeEach(async () => {
-  for (const k of kernels.splice(0)) await k.stop();
+  for (const k of kernels.splice(0)) await k.close();
   await subQueue.resume();
   await runQueue.resume();
   scriptRules([]);
@@ -138,10 +140,10 @@ beforeEach(async () => {
 });
 
 /** An org with an agent selecting one forked skill; returns the conversation. */
-async function setup(k: Kernel, req: Req): Promise<{ orgId: string; conv: string }> {
+async function setup(k: TestKernel, req: Req): Promise<{ orgId: string; conv: string }> {
   const orgId = await createOrg(req);
   const skill = await seedForkedSkill(
-    { db, storage: k.storage, orgId, ownerId },
+    { db, storage: k.app.get(StorageService), orgId, ownerId },
     "review",
     "Review $ARGUMENTS.",
   );
@@ -234,7 +236,7 @@ describe("forked skills across two replicas", () => {
     await dropChildJobs(subQueue, [child.conversationId]);
     await backdateRun(db, child.runId);
     await subQueue.resume();
-    const [ra, rb] = await Promise.all([a.runs.waits.sweep(), b.runs.waits.sweep()]);
+    const [ra, rb] = await Promise.all([a.app.get(Waits).sweep(), b.app.get(Waits).sweep()]);
     expect(ra.requeued + rb.requeued).toBeGreaterThanOrEqual(1);
     await waitForTerminal(db, conv, 1, 30_000);
     await sleep(500);

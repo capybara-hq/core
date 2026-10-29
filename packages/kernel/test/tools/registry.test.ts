@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
 import { createLogger } from "../../src/log.js";
 import { toolSearchTool } from "../../src/tools/builtins/tool-search.js";
 import {
@@ -19,6 +19,7 @@ import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor, orgSettingsFor } from "../helpers/identity.js";
+import { startKernel, type TestKernel } from "../helpers/runs.js";
 import { kernelDbFor } from "../helpers/tools.js";
 
 const MEM_CONNECTOR = fileURLToPath(
@@ -27,7 +28,7 @@ const MEM_CONNECTOR = fileURLToPath(
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
@@ -50,7 +51,7 @@ const askUser = {
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  k = await createKernel(
+  k = await startKernel(
     KernelConfigSchema.parse({
       db: { url: pgc.url, poolMax: 5 },
       redis: { url: rd.url },
@@ -62,14 +63,15 @@ beforeAll(async () => {
     }),
     { env: {}, logger: log },
   );
-  await k.start();
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
-  registry = new ToolRegistry(kernelDbFor(db), k.host, k.host, { list: () => [askUser] });
+  registry = new ToolRegistry(kernelDbFor(db), k.app.get(ExtensionHost), k.app.get(ExtensionHost), {
+    list: () => [askUser],
+  });
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -340,8 +342,8 @@ describe("组织设置与 tool_search 启用条件", () => {
   const searchRegistry = () =>
     new ToolRegistry(
       kernelDbFor(db),
-      k.host,
-      k.host,
+      k.app.get(ExtensionHost),
+      k.app.get(ExtensionHost),
       { list: () => [askUser, toolSearchTool()] },
       { get: cfg },
     );

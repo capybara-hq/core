@@ -18,10 +18,11 @@ import type { ConversationEvent, EventPayload } from "../../src/conversations/ev
 import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
-import type { Kernel } from "../../src/kernel.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { buildModelRequest } from "../../src/runtime/context/build.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import { SkillsCatalogService } from "../../src/skills/catalog.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import { skillLoadTool } from "../../src/tools/builtins/skill-load.js";
 import { specHash } from "../../src/tools/registry.js";
 import { removeFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
@@ -38,6 +39,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitForTerminal,
 } from "../helpers/runs.js";
 import { MODEL } from "../runtime/context/fixtures.js";
@@ -57,7 +59,7 @@ let rd: TestContainer;
 let s3: TestS3;
 let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 let root: string;
 
 beforeAll(async () => {
@@ -89,7 +91,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
   if (root) await rm(root, { recursive: true, force: true });
@@ -129,7 +131,7 @@ async function seedSkill(opts: {
   invocation?: SkillManifest["invocation"];
 }): Promise<{ id: string; version: number; prefix: string }> {
   const prefix = `skills/${randomUUID()}/`;
-  const store = k.storage.kernel(orgId);
+  const store = k.app.get(StorageService).kernel(orgId);
   const files: { path: string; size: number; sha256: string }[] = [];
   for (const [path, text] of Object.entries(opts.files)) {
     const data = new TextEncoder().encode(text);
@@ -465,7 +467,7 @@ describe("skill_load handler", { timeout: 60_000 }, () => {
   function tool(snapshot: Snapshot | null, sandboxAvailable: boolean) {
     return skillLoadTool({
       db,
-      storage: k.storage,
+      storage: k.app.get(StorageService),
       eventLog: {
         append: async () => [],
         latestOfType: async () =>
@@ -490,7 +492,7 @@ describe("skill_load handler", { timeout: 60_000 }, () => {
         listForConversation: async () => [],
         openForConversation: async () => null,
       },
-      config: { get: () => k.config },
+      config: { get: () => k.app.get(KernelConfigService).get() },
     });
   }
 
@@ -555,7 +557,7 @@ describe("skill_load handler", { timeout: 60_000 }, () => {
       .where("skill_id", "=", s.id)
       .executeTakeFirstOrThrow();
     const evil = new TextEncoder().encode(skillMd("bad", "tampered"));
-    await k.storage.kernel(orgId).put(`${v.object_prefix}SKILL.md`, evil, {
+    await k.app.get(StorageService).kernel(orgId).put(`${v.object_prefix}SKILL.md`, evil, {
       contentType: "application/octet-stream",
       size: evil.byteLength,
     });
@@ -729,7 +731,7 @@ describe("phase B snapshot: plugins, pinned skills and the Claude tool map", {
     const agentId = await createSkillAgent([a.id], [a.id]);
     // the stored SKILL.md no longer matches its manifest
     const evil = new TextEncoder().encode(skillMd("alpha", "tampered"));
-    await k.storage.kernel(orgId).put(`${a.prefix}SKILL.md`, evil, {
+    await k.app.get(StorageService).kernel(orgId).put(`${a.prefix}SKILL.md`, evil, {
       contentType: "application/octet-stream",
       size: evil.byteLength,
     });
@@ -752,8 +754,8 @@ describe("phase B snapshot: plugins, pinned skills and the Claude tool map", {
    * (the run worker and the test share this StorageService instance).
    */
   function onPinnedRead(onRead: () => Promise<void>) {
-    const original = k.storage.kernel.bind(k.storage);
-    return vi.spyOn(k.storage, "kernel").mockImplementation((id: string) => {
+    const original = k.app.get(StorageService).kernel.bind(k.app.get(StorageService));
+    return vi.spyOn(k.app.get(StorageService), "kernel").mockImplementation((id: string) => {
       const store = original(id);
       return new Proxy(store, {
         get(target, prop, receiver) {

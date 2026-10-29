@@ -4,14 +4,21 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { createOrg, PW, type Req, runConfig, session } from "../helpers/runs.js";
+import {
+  createOrg,
+  PW,
+  type Req,
+  runConfig,
+  session,
+  startKernel,
+  type TestKernel,
+} from "../helpers/runs.js";
 
 /**
  * The connector preview (`POST /connectors/preview`, Ruling A20) on the kernel side, with the test
@@ -29,7 +36,7 @@ const MEM_TOKEN = "mem_secret_value_0123456789";
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let req: Req;
@@ -38,7 +45,7 @@ let ownerId: string;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  k = await createKernel(
+  k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
@@ -50,13 +57,12 @@ beforeAll(async () => {
     ),
     { env: {}, logger: createLogger("error", { write: () => {} }) },
   );
-  await k.start();
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
 }, 120_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });

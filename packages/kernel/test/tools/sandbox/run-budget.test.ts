@@ -8,7 +8,6 @@ import { KernelConfigSchema } from "../../../src/config/schema.js";
 import type { ConversationEvent } from "../../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
-import type { Kernel } from "../../../src/kernel.js";
 import { sandboxConfigWarnings } from "../../../src/sandbox/sandbox.service.js";
 import {
   RUN_DEADLINE_MARGIN_MS,
@@ -26,6 +25,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitForTerminal,
 } from "../../helpers/runs.js";
 
@@ -99,7 +99,7 @@ let pgc: TestContainer;
 let rd: TestContainer;
 let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 let root: string;
 
 beforeAll(async () => {
@@ -122,7 +122,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop()]);
   if (root) await rm(root, { recursive: true, force: true });

@@ -11,7 +11,6 @@ import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.j
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import type { Kernel } from "../../src/kernel.js";
 import { TOOLS_UNAVAILABLE_PREFIX } from "../../src/runtime/model-call.js";
 import { askUserTool } from "../../src/tools/builtins/ask-user.js";
 import { validateInput } from "../../src/tools/validate.js";
@@ -30,6 +29,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForEvent,
   waitForTerminal,
@@ -183,8 +183,8 @@ describe("ask_user（单元）", () => {
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let ka: Kernel;
-let kb: Kernel;
+let ka: TestKernel;
+let kb: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let reqA: Req;
@@ -208,8 +208,8 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await kb?.stop();
-  await ka?.stop();
+  await kb?.close();
+  await ka?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });

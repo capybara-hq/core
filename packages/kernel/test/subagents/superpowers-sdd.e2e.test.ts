@@ -25,8 +25,8 @@ import { reconstructRequest } from "../../src/evals/reconstruct.js";
 import type { RunReplayResult } from "../../src/evals/run-replay.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import { takeSnapshot, toEvents } from "../../src/evals/snapshot.js";
-import type { Kernel } from "../../src/kernel.js";
 import { BEHAVIOR_RULES } from "../../src/runtime/context/build.js";
+import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { SUBAGENT_PREAMBLE } from "../../src/runtime/subagents/preamble.js";
 import { loadFixtureAsStrings } from "../catalog/claude-fixtures.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
@@ -45,6 +45,7 @@ import {
   runsOf,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -85,7 +86,7 @@ let destroyDb: () => Promise<void>;
 let srv: FakeGitServer;
 let pluginsDir: string;
 let sandboxRoot: string;
-let k: Kernel;
+let k: TestKernel;
 let admin: Req;
 let orgId: string;
 
@@ -140,7 +141,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   capture.restore();
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await srv?.stop();
   for (const d of [pluginsDir, sandboxRoot]) if (d) await rm(d, { recursive: true, force: true });
@@ -481,8 +482,9 @@ describe("phase C acceptance: superpowers subagent-driven-development", {
         const calls = toEvents(snap).filter((e) => e.type === "model_call");
         for (const call of calls) {
           const p = call.payload as EventPayload<"model_call">;
-          const info = (await k.runs.registry.resolve({ provider: p.provider, model: p.model }))
-            .info;
+          const info = (
+            await k.app.get(ProviderRegistry).resolve({ provider: p.provider, model: p.model })
+          ).info;
           const r = reconstructRequest(snap, call.seq, { model: info });
           expect(r.drift, `${c.id} seq ${call.seq}`).toEqual([]);
           expect(
