@@ -134,7 +134,8 @@ export class ConversationQueue {
     return { item: toItem(out.row), created: out.created };
   }
 
-  @Transactional()
+  // its own transaction: the caller notifies and publishes after the commit
+  @Transactional({ propagation: "requires_new" })
   private async addIn(
     orgId: string,
     conversationId: string,
@@ -231,7 +232,8 @@ export class ConversationQueue {
     return toItem(row);
   }
 
-  @Transactional()
+  // its own transaction: the caller notifies and publishes after the commit
+  @Transactional({ propagation: "requires_new" })
   private async editIn(
     conversationId: string,
     itemId: string,
@@ -283,7 +285,8 @@ export class ConversationQueue {
     await this.eventLog.publishChanged(conversationId, "queue");
   }
 
-  @Transactional()
+  // its own transaction: the caller notifies and publishes after the commit
+  @Transactional({ propagation: "requires_new" })
   private async removeIn(conversationId: string, itemId: string): Promise<void> {
     const t = this.db.db;
     await this.lockConversation(conversationId);
@@ -317,7 +320,8 @@ export class ConversationQueue {
     return event;
   }
 
-  @Transactional()
+  // its own transaction: the caller notifies and publishes after the commit
+  @Transactional({ propagation: "requires_new" })
   private async sendNowIn(
     conversationId: string,
     itemId: string,

@@ -11,7 +11,7 @@ let redisB: Redis;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const quiet = createLogger("error", { write: () => {} });
 /** The run lock over one Redis client (the provider the kernel injects). */
-const lockOn = (redis: Redis) => new ConversationLock(new LockService(redis, quiet), quiet);
+const lockOn = (redis: Redis) => new ConversationLock(new LockService(redis, quiet));
 
 beforeAll(async () => {
   rd = await startTestRedis({ shared: true });

@@ -290,7 +290,8 @@ export class ConversationsService {
   }
 
   /** The conversation row and its first message (undefined: a concurrent retry committed first). */
-  @Transactional()
+  // its own transaction: the caller notifies and publishes after the commit
+  @Transactional({ propagation: "requires_new" })
   private async createIn(
     id: string,
     orgId: string,
@@ -793,7 +794,8 @@ export class ConversationsService {
   }
 
   /** A message with files or a model switch: binds the files and writes it in one transaction. */
-  @Transactional()
+  // its own transaction: the caller notifies and publishes after the commit
+  @Transactional({ propagation: "requires_new" })
   private async postIn(
     orgId: string,
     conversationId: string,

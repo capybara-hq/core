@@ -1,7 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { type LeaseHandle, LockService } from "../infra/lock/lock.service.js";
-import { KERNEL_LOGGER } from "../infra/tokens.js";
-import type { KernelLogger } from "../log.js";
 
 /** 会话运行锁的默认 TTL（毫秒）：持有方每 `ttlMs / 3` 续租一次。 */
 export const CONVERSATION_LOCK_TTL_MS = 30_000;
@@ -31,11 +29,11 @@ export interface Lease {
  * service while held; a crashed holder's key expires within the TTL and another replica can take
  * it. Built by {@link ConversationLock} (the run lock) and its {@link ConversationLock.scoped}
  * views (the same lock for another purpose, e.g. the channel delivery `capk:channel-deliver:`).
+ * A loss is logged once, by the lock service (`lock lost`, with the key).
  */
 export class ConversationLeases {
   constructor(
     protected readonly locks: LockService,
-    protected readonly log: Pick<KernelLogger, "warn">,
     private readonly keyPrefix: string,
   ) {}
 
@@ -50,7 +48,7 @@ export class ConversationLeases {
   ): Promise<Lease | null> {
     const held = await this.locks.hold(this.lockKey(conversationId), runId, ttlMs);
     if (!held) return null;
-    return toLease(held, conversationId, runId, this.log);
+    return toLease(held, conversationId, runId);
   }
 
   /**
@@ -67,17 +65,7 @@ export class ConversationLeases {
   }
 }
 
-function toLease(
-  held: LeaseHandle,
-  conversationId: string,
-  runId: string,
-  log: Pick<KernelLogger, "warn">,
-): Lease {
-  held.lost.addEventListener(
-    "abort",
-    () => log.warn("conversation run lock lost", { conversationId, runId }),
-    { once: true },
-  );
+function toLease(held: LeaseHandle, conversationId: string, runId: string): Lease {
   return {
     conversationId,
     runId,
@@ -100,12 +88,12 @@ function toLease(
  */
 @Injectable()
 export class ConversationLock extends ConversationLeases {
-  constructor(@Inject(LockService) locks: LockService, @Inject(KERNEL_LOGGER) log: KernelLogger) {
-    super(locks, log, RUN_LOCK_PREFIX);
+  constructor(@Inject(LockService) locks: LockService) {
+    super(locks, RUN_LOCK_PREFIX);
   }
 
   /** The same per-conversation lease under another key prefix (another purpose). */
   scoped(keyPrefix: string): ConversationLeases {
-    return new ConversationLeases(this.locks, this.log, keyPrefix);
+    return new ConversationLeases(this.locks, keyPrefix);
   }
 }

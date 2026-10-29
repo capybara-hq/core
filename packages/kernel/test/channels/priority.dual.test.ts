@@ -65,7 +65,7 @@ describe("渠道队列优先级（行为）", () => {
         },
       },
       eventLog: { readAfter: async () => [] },
-      lock: new ConversationLock(new LockService(redis, quiet), quiet),
+      lock: new ConversationLock(new LockService(redis, quiet)),
       // 取不到出站会话：投递任务记一笔警告后直接结束，不走真实投递
       connections: {
         outbound: async () => {
