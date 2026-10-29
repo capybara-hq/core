@@ -27,7 +27,8 @@ export class CatalogJobs {
 
   /**
    * Refreshes every enabled marketplace in turn (overall deadline
-   * {@link MARKETPLACES_REFRESH_DEADLINE_MS}; the scheduler's stop signal aborts it).
+   * {@link MARKETPLACES_REFRESH_DEADLINE_MS}; the job's signal aborts it: the stop, or the run
+   * lock lost).
    */
   @LockedInterval(
     MARKETPLACES_REFRESH_JOB,

@@ -40,7 +40,7 @@ export interface ScheduledRunScope {
   readonly opened: boolean;
   /** True once the stop began: no new run starts. */
   readonly stopped: boolean;
-  /** Aborted when the stop begins; passed to the job method as its argument. */
+  /** Aborted when the stop begins; the job method's argument aborts with it. */
   readonly signal: AbortSignal;
   /** Registers a run the stop waits for (bounded); returns `p`. */
   track<T>(p: Promise<T>): Promise<T>;
@@ -102,8 +102,10 @@ export async function runLockedTick(
      * start marker `cron:<name>:start` for `ttlMs` (see {@link startMarkerTtl}).
      */
     start?: { ttlMs: number };
-    /** The job body; `signal` is the stop signal of `ScheduledRuns` (undefined outside Nest). */
-    run: (signal: AbortSignal | undefined) => Promise<unknown>;
+    /**
+     * The job body; `signal` aborts when the stop begins (`ScheduledRuns`) or the run lock is lost.
+     */
+    run: (signal: AbortSignal) => Promise<unknown>;
   },
 ): Promise<void> {
   assertLockedJobHost(host, o.kind);
@@ -165,11 +167,15 @@ export async function runLockedTick(
         if (signal?.aborted) {
           log.info("cron skipped: the scheduler is stopping", { cron: o.name, tick });
         } else {
-          await o.run(signal);
+          // the job stops on the stop signal and when its run lock is lost (another replica may
+          // take the lock and start the next run)
+          await o.run(signal ? AbortSignal.any([signal, handle.lost]) : handle.lost);
         }
       } catch (err) {
         if (signal?.aborted) {
           log.info("cron run stopped by the shutdown", { cron: o.name, error: errMsg(err) });
+        } else if (handle.lost.aborted) {
+          log.warn("cron run stopped: its run lock was lost", { cron: o.name, error: errMsg(err) });
         } else {
           log.error("cron job failed", { cron: o.name, error: errMsg(err), err });
         }

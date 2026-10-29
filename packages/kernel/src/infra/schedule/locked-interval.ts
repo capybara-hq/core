@@ -63,8 +63,8 @@ interface IntervalHost extends LockedJobHost {
  * a cron expression cannot express, such as `extensionHost.reconcileIntervalSeconds`): every
  * replica fires at the multiples of the period (epoch-aligned, so replicas agree on the tick), and
  * the same two layers run the job exactly once per tick across replicas. The period is read when
- * the application starts (like the old repeatable schedulers, not hot). The method gets the
- * scheduler's stop signal as its only argument (see `ScheduledRuns`). The class must inject
+ * the application starts (like the old repeatable schedulers, not hot). The method gets
+ * the same signal as a `@LockedCron` job (the stop, or the loss of the run lock). The class must inject
  * `lockService`, `log` and `config` (`KernelConfigService`); {@link LockedIntervalScheduler}
  * schedules every decorated method of the application's providers.
  */

@@ -26,8 +26,8 @@ export interface LockedCronOptions extends Pick<CronOptions, "timeZone"> {
  * renewed run lock and runs the job; the others log INFO and skip, as does a tick whose
  * predecessor is still running. An error in the job is logged (never thrown into the scheduler)
  * and the lock is released afterwards. The job starts in a fresh async context (no transaction).
- * The method gets the scheduler's stop signal as its only argument (`ScheduledRuns`: aborted when
- * the application stops, which waits for the run, bounded). The class must inject `lockService`
+ * The method gets a signal as its only argument: it aborts when the application stops
+ * (`ScheduledRuns`, which waits for the run, bounded) or when the run lock is lost. The class must inject `lockService`
  * and `log`:
  *
  * ```ts

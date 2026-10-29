@@ -32,6 +32,9 @@ export interface WithLockOptions {
  * ```
  *
  * Never inside a transaction: the lock would be released before COMMIT.
+ *
+ * The method's arguments are the caller's, so it gets no signal of the lock's loss: a body that
+ * must stop when the lock is lost uses `LockService.run`, whose callback gets the handle (`lost`).
  */
 export function WithLock(options: WithLockOptions) {
   return (_target: object, _key: string | symbol, descriptor: PropertyDescriptor) => {

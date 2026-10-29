@@ -54,6 +54,8 @@ const shared = {
   startRuns: 0,
   tx: [] as boolean[],
   perSecond: new Map<number, number>(),
+  /** Whether the run-lock-loss job saw its signal abort. */
+  lostJob: { aborted: false },
   /** What the stop tests' jobs saw: the signal they got and whether it was aborted at the end. */
   stopJob: { gotSignal: false, aborted: false, finished: false },
 };
@@ -159,6 +161,19 @@ class Jobs {
       signal?.addEventListener("abort", () => {
         shared.stopJob.aborted = true;
         setTimeout(() => reject(new Error("aborted by the stop")), 100);
+      });
+    });
+  }
+
+  /** Short run lock (renewed every 100 ms): ends once its signal aborts (at most 3 s). */
+  @LockedCron("0 0 1 1 *", { name: "test-lost", lockKey: "test-cron-lost", ttl: 300 })
+  async losable(signal?: AbortSignal) {
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 3000);
+      signal?.addEventListener("abort", () => {
+        shared.lostJob.aborted = true;
+        clearTimeout(timer);
+        resolve();
       });
     });
   }
@@ -485,6 +500,23 @@ describe("@LockedCron", () => {
       for (const j of app.get(SchedulerRegistry).getCronJobs().values()) void j.stop();
       app.get(LockedIntervalScheduler).stopAll();
       await app.close();
+    }
+  });
+
+  it("a job whose run lock is lost (taken by another holder) sees its signal abort", async () => {
+    shared.lostJob.aborted = false;
+    const a = await boot();
+    try {
+      const running = a.jobs.losable();
+      const redis = redisOf(a);
+      await vi.waitFor(async () => expect(await redis.exists("lock:test-cron-lost")).toBe(1));
+      // another holder took the key: the next renewal fails and the lock is lost
+      await redis.set("lock:test-cron-lost", "intruder", "PX", 5000);
+      await running;
+      expect(shared.lostJob.aborted).toBe(true);
+      expect(await redis.get("lock:test-cron-lost")).toBe("intruder");
+    } finally {
+      await shutDown(a);
     }
   });
 
