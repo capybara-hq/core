@@ -4,7 +4,6 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { ensureAnonymousGuest } from "../../src/channels/threads.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -16,6 +15,7 @@ import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
 import { SANDBOX_DESTROY_FOR_JOB } from "../../src/sandbox/lifecycle.js";
+import { anonymousGuestsFor } from "../helpers/channels.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
@@ -519,7 +519,7 @@ describe("兜底扫描：按创建时间分页、不碰现任成员的运行", (
   }
 
   it("现任成员（含匿名访客 guest 成员）的运行不被中止；超过一批的前成员运行全部处理", async () => {
-    const anon = await ensureAnonymousGuest(db, f.orgId);
+    const anon = await anonymousGuestsFor(raw).ensure(f.orgId);
     const memberRun = await runOf(f.bystander.id, "2026-01-01T00:00:00Z");
     const anonRun = await runOf(anon, "2026-01-01T00:00:01Z");
     const formerRuns: string[] = [];
@@ -748,7 +748,7 @@ describe("修复波 W1：通讯录排除（Ruling A20）", () => {
 describe("修复波 W1：匿名访客保护", () => {
   let guestId: string;
   beforeEach(async () => {
-    guestId = await ensureAnonymousGuest(db, f.orgId);
+    guestId = await anonymousGuestsFor(raw).ensure(f.orgId);
   });
 
   it("不能改角色、不能被授予 owner", async () => {

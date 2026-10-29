@@ -268,7 +268,7 @@ export class DirectorySync {
 
   /**
    * 投递一次 `directory_changed` 同步（按分钟桶去重）；返回 job id。入站 `directory_changed` 经
-   * {@link DirectorySyncScheduler} 调用这里。通讯录未配置（`Directory.configured` 返回 false，Ruling A28）时
+   * `ChannelInbound`（`directory_changed`）调用这里。通讯录未配置（`Directory.configured` 返回 false，Ruling A28）时
    * 静默不投递，返回 undefined；其他不可同步的情况照常投递，由任务执行时跳过。
    */
   async enqueue(

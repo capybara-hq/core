@@ -5,6 +5,7 @@ import {
   MARKETPLACES_REFRESH_SCHEDULER_ID,
   PLUGIN_STAGING_CLEANUP_SCHEDULER_ID,
 } from "../catalog/job-ids.js";
+import { GATEWAY_CHECK_SCHEDULER_ID } from "../channels/job-ids.js";
 import { ATTACHMENT_CLEANUP_SCHEDULER_ID } from "../conversations/attachments.service.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { PLUGINS_RECONCILE_SCHEDULER_ID } from "../extensions/lifecycle-topics.js";
@@ -59,6 +60,8 @@ export const RETIRED_SCHEDULER_IDS: readonly string[] = [
   // Task 3.6b
   WAIT_SWEEP_SCHEDULER_ID,
   USAGE_SWEEP_SCHEDULER_ID,
+  // Task 3.7
+  GATEWAY_CHECK_SCHEDULER_ID,
 ];
 
 /**

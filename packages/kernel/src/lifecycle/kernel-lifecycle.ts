@@ -12,8 +12,12 @@ import { type Kysely, sql } from "kysely";
 import type { KernelAppOptions } from "../app.js";
 import { MarketplacesService } from "../catalog/marketplaces.service.js";
 import { PluginImport } from "../catalog/plugin-import.js";
+import { ChannelsProcessor } from "../channels/channels.module.js";
 import { CHANNEL_CHANGED_TOPIC } from "../channels/connections.service.js";
-import type { ChannelSupervisor } from "../channels/supervisor.js";
+import { ChannelJobs } from "../channels/jobs.js";
+import { ChannelOutbound } from "../channels/outbound.js";
+import { ChannelSupervisor } from "../channels/supervisor.js";
+import { ChannelWebhooks } from "../channels/webhook.js";
 import type { KernelConfig } from "../config/schema.js";
 import { TitleQueue } from "../conversations/titles.js";
 import { migrate } from "../db/migrator.js";
@@ -119,7 +123,8 @@ export class KernelLifecycle
   /** The run worker was started (worker role): the runs phase drains it. */
   private runsStarted = false;
   private evalWorker: EvalWorker | undefined;
-  private channelSupervisor: ChannelSupervisor | undefined;
+  /** The channel supervisor was started (gateway role): the runs phase stops it. */
+  private supervisorStarted = false;
   /** What the first bootstrap pass did, carried into the second one. */
   private bootstrapCarry: BootstrapEntryResult[] | undefined;
 
@@ -149,6 +154,8 @@ export class KernelLifecycle
     @Inject(RunWorker) private readonly runWorker: RunWorker,
     @Inject(UsageReporter) private readonly usageReport: UsageReporter,
     @Inject(TitleQueue) private readonly titles: TitleQueue,
+    @Inject(ChannelJobs) private readonly channelJobs: ChannelJobs,
+    @Inject(ChannelOutbound) private readonly channelOutbound: ChannelOutbound,
     // the consumers exist on the worker role only (`RuntimeWorkersModule`)
     @Optional() @Inject(RunsProcessor) private readonly runsProcessor?: RunsProcessor,
     @Optional()
@@ -158,6 +165,12 @@ export class KernelLifecycle
     @Inject(UsageReportProcessor)
     private readonly usageProcessor?: UsageReportProcessor,
     @Optional() @Inject(TitleProcessor) private readonly titleProcessor?: TitleProcessor,
+    @Optional() @Inject(ChannelsProcessor) private readonly channelsProcessor?: ChannelsProcessor,
+    // the gateway role's parts (`ChannelRolesModule`)
+    @Optional()
+    @Inject(ChannelSupervisor)
+    private readonly channelSupervisor?: ChannelSupervisor,
+    @Optional() @Inject(ChannelWebhooks) private readonly channelWebhooks?: ChannelWebhooks,
   ) {
     this.config = configService.get();
   }
@@ -174,7 +187,7 @@ export class KernelLifecycle
 
   /** The gateway role's HTTP routes (the channel webhook), when the roles include `gateway`. */
   gatewayRoutes(): GatewayRoutes | undefined {
-    const webhooks = this.graph.channelWebhooks;
+    const webhooks = this.channelWebhooks;
     return webhooks
       ? { webhooks, webhookMaxBodyBytes: this.config.channels.webhookMaxBodyBytes }
       : undefined;
@@ -271,7 +284,14 @@ export class KernelLifecycle
     }
     if (config.roles.includes("worker")) {
       const { runsProcessor, subagentRunsProcessor, usageProcessor, titleProcessor } = this;
-      if (!runsProcessor || !subagentRunsProcessor || !usageProcessor || !titleProcessor) {
+      const { channelsProcessor } = this;
+      if (
+        !runsProcessor ||
+        !subagentRunsProcessor ||
+        !usageProcessor ||
+        !titleProcessor ||
+        !channelsProcessor
+      ) {
         throw new Error("the worker role's queue processors are missing");
       }
       // both run queues' @Processor workers (built with the run config, never autorun)
@@ -288,7 +308,7 @@ export class KernelLifecycle
       }
       this.checkpoint();
       g.maintenance.startWorker();
-      g.channels.outbound.startWorker();
+      this.channelOutbound.startWorker(channelsProcessor.worker);
       this.usageReport.startWorker(usageProcessor.worker);
       this.titles.startWorker(titleProcessor.worker);
       if (!config.roles.includes("gateway")) {
@@ -299,14 +319,15 @@ export class KernelLifecycle
       }
     }
     if (config.roles.includes("gateway")) {
-      const supervisor = g.createChannelSupervisor();
-      this.channelSupervisor = supervisor;
+      const supervisor = this.channelSupervisor;
+      if (!supervisor) throw new Error("the gateway role's channel supervisor is missing");
+      this.supervisorStarted = true;
       await supervisor.start();
       // 插件实例撤销 / 替换：交还它持有的长连接，按新实例重新选主（C17）
       this.unwatchPlugins = this.host.onChange((plugin) => supervisor.pluginChanged(plugin));
       this.checkpoint();
     }
-    const webhooks = g.channelWebhooks;
+    const webhooks = this.channelWebhooks;
     if (webhooks) {
       // The webhook runtime cache is read-through only: drop entries on every connection change
       // and whenever a plugin instance changes
@@ -495,7 +516,7 @@ export class KernelLifecycle
     // runs 阶段：停止领取运行、让本进程的运行在步骤边界停下并回到队列；再关闭运行队列的生产方连接。
     // 渠道长连接与之并行停止（中止 connect、释放租约），必须在插件关闭之前。
     const runsDeadline = Date.now() + STOP_BUDGET_MS.runs;
-    const channelsStopped = this.channelSupervisor?.stop();
+    const channelsStopped = this.supervisorStarted ? this.channelSupervisor?.stop() : undefined;
     if (this.runsStarted) {
       const budget = Math.min(STOP_BUDGET_MS.runs, shutdown.remainingMs()) - RUNS_FORCE_CLOSE_MS;
       await within("runs", this.runWorker.close(Math.max(0, budget)), STOP_BUDGET_MS.runs);
@@ -522,9 +543,10 @@ export class KernelLifecycle
     // usage.report: in-flight deliveries are aborted and retried by any replica; before the plugins close
     await within("usage-report", this.usageReport.stop(), Math.max(0, runsDeadline - Date.now()));
     // 出站投递：进行中的任务交还队列（由其他副本从 last_seq 续投），必须在插件关闭之前
+    this.channelJobs.close();
     await within(
       "channel-outbound",
-      g.channels.outbound.close(),
+      this.channelOutbound.close(),
       Math.max(CHANNELS_STOP_MIN_MS, runsDeadline - Date.now()),
     );
     await within("eval-queue", g.evalQueue.close(), Math.max(0, runsDeadline - Date.now()));

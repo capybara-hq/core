@@ -6,6 +6,7 @@ import type { Kysely } from "kysely";
 import { AgentsModule } from "./agents/agents.module.js";
 import type { KernelAppOptions } from "./app.js";
 import { CatalogModule } from "./catalog/catalog.module.js";
+import { ChannelRolesModule } from "./channels/channels.module.js";
 import type { KernelConfig } from "./config/schema.js";
 import { AttachmentsService } from "./conversations/attachments.service.js";
 import { ConversationsModule } from "./conversations/conversations.module.js";
@@ -281,6 +282,9 @@ export class KernelModule {
         CatalogModule,
         // the run worker, usage.report and title consumers (started on the worker role)
         RuntimeWorkersModule.forRoot(config),
+        // channels; the channel queue's consumer (worker role), the long-connection supervisor and
+        // the webhook inbound (gateway role)
+        ChannelRolesModule.forRoot(config),
         ...(config.roles.includes("api")
           ? [
               ApiModule.registerFrom({

@@ -8,14 +8,16 @@ import {
   startTestRedis,
   type TestContainer,
 } from "@capybara-hq/testing";
+import { SchedulerRegistry } from "@nestjs/schedule";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { ChannelConnections } from "../../src/channels/connections.service.js";
+import { GATEWAY_CHECK_JOB, GATEWAY_CHECK_SCHEDULER_ID } from "../../src/channels/job-ids.js";
 import {
   CHANNEL_HANDOFF_TOPIC,
-  ChannelSupervisor,
+  type ChannelSupervisor,
   channelHandoffKey,
   checkGatewayPresence,
   gatewayMissingWarnedKey,
@@ -25,8 +27,11 @@ import {
 import type { KernelConfig } from "../../src/config/schema.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
+import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/maintenance.js";
+import { channelSupervisorFor } from "../helpers/channels.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { createAgent, createOrg, PW, runConfig, session, sleep, waitFor } from "../helpers/runs.js";
@@ -197,8 +202,8 @@ async function startSup(
         ReturnType<ChannelConnections["runtime"]>
       >,
   };
-  const sup = new ChannelSupervisor({
-    db: kernelDb(raw),
+  const sup = channelSupervisorFor({
+    pool: raw,
     redis,
     bus,
     connections,
@@ -415,13 +420,21 @@ describe("channel long connections: fair share across gateway replicas", () => {
     expect(await redis.zscore(MINI_KEY, s.replicaId)).toBeNull();
   }, 30_000);
 
+  it("the gateway check runs every minute as a @LockedCron; its old maintenance scheduler is retired", () => {
+    expect(GATEWAY_CHECK_JOB).not.toContain(":");
+    expect(RETIRED_SCHEDULER_IDS).toContain(GATEWAY_CHECK_SCHEDULER_ID);
+    const cron = k.app.get(SchedulerRegistry).getCronJob(GATEWAY_CHECK_JOB);
+    expect(String(cron.cronTime.source)).toBe("* * * * *");
+  });
+
   it("maintenance check warns once per interval per missing plugin, after the grace period", async () => {
     await redis.del(MINI_KEY, OTHER_KEY, gatewayMissingWarnedKey);
     const warns: { msg: string; fields: Record<string, unknown> | undefined }[] = [];
     const deps = {
       db: kernelDb(raw),
       redis,
-      config: () => ({ channels }),
+      locks: new LockService(redis, createLogger("error", { write: () => {} })),
+      config: { get: () => ({ channels }) },
       log: { warn: (msg: string, fields?: Record<string, unknown>) => warns.push({ msg, fields }) },
       everyMs: 1000,
     };

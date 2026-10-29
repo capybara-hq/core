@@ -12,9 +12,6 @@ export const FILE_PREVIEWERS = Symbol("FILE_PREVIEWERS");
 /** `ConversationToolInfo` (tool titles, kinds and key arguments for the conversation page). */
 export const CONVERSATION_TOOLS = Symbol("CONVERSATION_TOOLS");
 
-/** `ChannelConnections`（组织的渠道连接）的注入令牌。 */
-export const CHANNEL_CONNECTIONS = Symbol("CHANNEL_CONNECTIONS");
-
 /** `UiViews`（插件视图：列出贡献、render / action）的注入令牌。 */
 export const UI_VIEWS = Symbol("UI_VIEWS");
 /** `EmbedTokens`（嵌入应用的短期令牌，签发 / 校验）的注入令牌。 */

@@ -1,8 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { ChannelTarget } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { XactLock } from "../infra/database/xact-lock.js";
 
 /** 匿名访客账号的显示名。 */
 const ANONYMOUS_DISPLAY_NAME = "Anonymous guest";
@@ -10,14 +15,41 @@ const ANONYMOUS_DISPLAY_NAME = "Anonymous guest";
 const ANONYMOUS_MEMBERSHIP_SOURCE = "anonymous";
 
 /**
- * 该组织唯一的匿名访客账号 id；首次使用时创建（`accounts.status = active`、没有任何登录方式、组织角色 guest）。
- * 每次都确保成员关系存在（被移出后再次使用会补回 guest）：运行的兜底扫描会中止「发起人已不是该组织成员」的运行。
- * 跨副本并发首次创建用事务级咨询锁串行化，只建一个账号。
+ * The lock of an org's anonymous guest account (R9: one provider per lock): serializes the first
+ * creation across replicas, so only one account is created. Joins the caller's transaction
+ * (`mandatory`), which holds it until it ends.
  */
-export async function ensureAnonymousGuest(db: KernelSchemaDb, orgId: string): Promise<string> {
-  return db.transaction().execute(async (t) => {
-    await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.anonymous:${orgId}`}))`.execute(t);
-    const existing = await t
+@Injectable()
+export class AnonymousGuestLock {
+  constructor(
+    @Inject(XactLock) private readonly xactLock: XactLock,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {}
+
+  @Transactional({ propagation: "mandatory" })
+  async lock(orgId: string): Promise<void> {
+    await this.xactLock.lock(`capybara.anonymous:${orgId}`);
+  }
+}
+
+/** 组织的匿名访客账号（渠道连接的未绑定策略 `anonymous`）。 */
+@Injectable()
+export class AnonymousGuests {
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(AnonymousGuestLock) private readonly guestLock: AnonymousGuestLock,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {}
+
+  /**
+   * 该组织唯一的匿名访客账号 id；首次使用时创建（`accounts.status = active`、没有任何登录方式、组织角色 guest）。
+   * 每次都确保成员关系存在（被移出后再次使用会补回 guest）：运行的兜底扫描会中止「发起人已不是该组织成员」的运行。
+   * 跨副本并发首次创建由 {@link AnonymousGuestLock} 串行化，只建一个账号。
+   */
+  @Transactional()
+  async ensure(orgId: string): Promise<string> {
+    await this.guestLock.lock(orgId);
+    const existing = await this.db
       .selectFrom("org_anonymous_accounts")
       .select("account_id")
       .where("org_id", "=", orgId)
@@ -25,22 +57,22 @@ export async function ensureAnonymousGuest(db: KernelSchemaDb, orgId: string): P
     let accountId = existing?.account_id;
     if (accountId === undefined) {
       accountId = randomUUID();
-      await t
+      await this.db
         .insertInto("accounts")
         .values({ id: accountId, display_name: ANONYMOUS_DISPLAY_NAME, email: null })
         .execute();
-      await t
+      await this.db
         .insertInto("org_anonymous_accounts")
         .values({ org_id: orgId, account_id: accountId })
         .execute();
-      await audit(t, {
+      await audit(this.db.db, {
         orgId,
         action: "account.created",
         target: accountId,
         detail: { anonymousGuest: true },
       });
     }
-    await t
+    await this.db
       .insertInto("memberships")
       .values({
         org_id: orgId,
@@ -51,7 +83,7 @@ export async function ensureAnonymousGuest(db: KernelSchemaDb, orgId: string): P
       .onConflict((oc) => oc.columns(["org_id", "account_id"]).doNothing())
       .execute();
     return accountId;
-  });
+  }
 }
 
 /** 一条 IM 话题的定位：连接 + chat + 话题键 + 账号（匿名为 null）。 */

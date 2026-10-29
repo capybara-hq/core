@@ -207,3 +207,26 @@ list cache moved to `@Cacheable` (`cache:capk:models:…`; the old keys expire b
 fails open: a Redis error lists the provider's models again, where it used to throw. A lost
 conversation lease logs one `lock lost` line (with its key); conversation writes the caller notifies
 after run in their own transaction.
+
+Channels are a Nest module (Task 3.7, `ChannelsModule` with `ChannelRolesModule` for the role
+parts): `ChannelConnections`, `ChannelInbound`, `ChannelOutbound`, `ChannelWebhooks`,
+`ChannelSupervisor` and the new `ChannelJobs` (the producer of `cap-kernel-channels`: delivery and
+inbound jobs, `resumeConnection`), `AnonymousGuests` / `AnonymousGuestLock` and `GatewayCheckJob`
+are injectable providers. Export changes: their constructors take the kernel's providers
+(`ChannelConnectionsDeps`, `ChannelInboundDeps`, `ChannelOutboundDeps`, `ChannelSupervisorDeps`,
+`ChannelWebhooksDeps`, `DirectorySyncScheduler`, `ChannelOutboundScheduler` and
+`ChannelInboundQueue` are removed; `ChannelWebhooks.handleTimeoutMs` / `runtimeCacheMs` and
+`ChannelSupervisor.onScan` are fields); `enqueue` / `enqueueInbound` / `resumeConnection` moved from
+`ChannelOutbound` to `ChannelJobs`; `ensureAnonymousGuest(db, orgId)` became
+`AnonymousGuests.ensure(orgId)`; `checkGatewayPresence` takes `locks` and a config holder
+(`{ get() }`); `ApiDeps.channels` is gone (the API injects `ChannelConnections`). The channel queue
+is consumed by a `@Processor` worker on the worker role (concurrency, job lock, stalled detection
+and the delivery backoff unchanged); the supervisor and the webhook inbound exist on the gateway
+role only and still start after the extensions loaded. Queue name, job ids and options, Redis keys
+and lease names are unchanged. A channel long-connection lease is a `LockService` lease (same key
+`capk:channel-lease:<id>`, renewed every TTL/3 and once per heartbeat round); a renewal that keeps
+failing until the key would expire marks it lost and drops the connection, as before, now with one
+`lock lost` line instead of `channel lease lost; disconnecting`. The inbound dedupe and the
+no-gateway warning markers use the `LockService` lease primitives (same keys). `channel-gateway-check`
+is a `@LockedCron` (every minute, once across replicas; its old maintenance scheduler is removed when
+a worker starts).

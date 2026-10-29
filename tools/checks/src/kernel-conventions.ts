@@ -264,17 +264,14 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
  */
 export const KC_PENDING: KcPending = {
   "kc-transaction": [
-    { path: "packages/kernel/src/channels/", max: 5 },
     { path: "packages/kernel/src/evals/", max: 19 },
     { path: "packages/kernel/src/files/", max: 1 },
   ],
   "kc-lock": [
-    { path: "packages/kernel/src/channels/", max: 4 },
     { path: "packages/kernel/src/evals/", max: 2 },
     { path: "packages/kernel/src/sandbox/", max: 4 },
   ],
   "kc-queue": [
-    { path: "packages/kernel/src/channels/", max: 2 },
     { path: "packages/kernel/src/evals/", max: 2 },
     // R11: the maintenance queue keeps its one hand-made consumer until Task 3.9 builds its
     // @Processor (the rest of runtime/ was converted in Task 3.6b)
@@ -283,13 +280,12 @@ export const KC_PENDING: KcPending = {
   "kc-wiring": [
     { path: "apps/capybara/src/commands/admin-create.ts", max: 1 },
     { path: "apps/capybara/src/commands/admin-grant.ts", max: 1 },
-    { path: "packages/kernel/src/http/", max: 16 },
+    { path: "packages/kernel/src/http/", max: 15 },
     { path: "packages/kernel/src/kernel.module.ts", max: 5 },
     { path: "packages/kernel/src/kernel.ts", max: 1 },
     { path: "packages/testing/src/kernel-helpers.ts", max: 1 },
   ],
   "kc-zod-pipe": [
-    { path: "packages/kernel/src/channels/", max: 2 },
     { path: "packages/kernel/src/evals/", max: 8 },
     { path: "packages/kernel/src/files/", max: 4 },
     { path: "packages/kernel/src/ui/", max: 9 },
@@ -306,7 +302,7 @@ export const KC_PENDING: KcPending = {
     { path: "packages/testing/test/", max: 7 },
   ],
   "kc-legacy": [
-    { path: "packages/kernel/src/http/", max: 29 },
+    { path: "packages/kernel/src/http/", max: 27 },
     // R7 ports read by orgs (event log and run control: 3.6; sandbox: 3.8; Task 3.2)
     { path: "packages/kernel/src/orgs/", max: 2 },
     // R10: the standalone handles' legacy view, for the CLI until Task 5.2
@@ -332,7 +328,6 @@ export const KC_PENDING: KcPending = {
     { path: "packages/kernel/test/helpers/identity.ts", max: 5 },
   ],
   "kc-config": [
-    { path: "packages/kernel/src/channels/", max: 1 },
     { path: "packages/kernel/src/evals/", max: 5 },
     { path: "packages/kernel/src/http/", max: 4 },
     { path: "packages/kernel/src/ui/", max: 1 },

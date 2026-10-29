@@ -5,10 +5,12 @@ import type {
   InboundEvent,
   Logger,
 } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
 import { ApiError, type ErrorCode, errorBody } from "../errors.js";
 import { ExtensionUnloadedError, type InflightEntry } from "../extensions/inflight.js";
-import type { ChannelConnections } from "./connections.service.js";
-import type { ChannelInbound } from "./inbound.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import { ChannelConnections } from "./connections.service.js";
+import { ChannelInbound } from "./inbound.js";
 
 /**
  * Deadline of one webhook request: connection lookups, the plugin's `webhook.handle` and handing
@@ -84,18 +86,8 @@ function raceAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
 
 type Runtime = Awaited<ReturnType<ChannelConnections["runtime"]>>;
 
-export interface ChannelWebhooksDeps {
-  connections: Pick<ChannelConnections, "row" | "runtime">;
-  inbound: Pick<ChannelInbound, "onEvent">;
-  log: Pick<Logger, "warn">;
-  /** Defaults to {@link WEBHOOK_HANDLE_TIMEOUT_MS}. */
-  handleTimeoutMs?: number;
-  /** Defaults to {@link WEBHOOK_RUNTIME_CACHE_MS}; 0 disables the cache. */
-  runtimeCacheMs?: number;
-}
-
 /**
- * Channel webhook inbound (F8 / F9), framework free. The gateway route
+ * Channel webhook inbound (F8 / F9), gateway role only. The gateway route
  * `POST /channels/webhook/:connectionId` hands every request here; the kernel applies no auth, so
  * everything a request can do goes through the plugin's `webhook.handle`, which verifies the
  * signature, decrypts and checks timestamps:
@@ -126,12 +118,22 @@ export interface ChannelWebhooksDeps {
  * mode switch, deletion…) and {@link invalidateAll} when a plugin instance changes; a generation
  * counter keeps a fetch that started before `invalidateAll` from storing the old plugin instance.
  */
+@Injectable()
 export class ChannelWebhooks {
   private readonly runtimes = new Map<string, { value: Runtime; expiresAt: number }>();
   /** Bumped by {@link invalidateAll}: a fetch started before the bump is not stored. */
   private generation = 0;
+  /** The deadline of one request (tests shorten it). */
+  handleTimeoutMs = WEBHOOK_HANDLE_TIMEOUT_MS;
+  /** How long a connection's runtime is reused; 0 disables the cache (tests). */
+  runtimeCacheMs = WEBHOOK_RUNTIME_CACHE_MS;
 
-  constructor(private readonly deps: ChannelWebhooksDeps) {}
+  constructor(
+    @Inject(ChannelConnections)
+    private readonly connections: Pick<ChannelConnections, "row" | "runtime">,
+    @Inject(ChannelInbound) private readonly inbound: Pick<ChannelInbound, "onEvent">,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "warn">,
+  ) {}
 
   /** Drops the cached runtime of one connection (on `channel.changed`). */
   invalidate(connectionId: string): void {
@@ -153,12 +155,12 @@ export class ChannelWebhooks {
   }
 
   private async runtime(connectionId: string, deadline: AbortSignal): Promise<Runtime> {
-    const ttl = this.deps.runtimeCacheMs ?? WEBHOOK_RUNTIME_CACHE_MS;
+    const ttl = this.runtimeCacheMs;
     const now = Date.now();
     const hit = this.runtimes.get(connectionId);
     if (hit && hit.expiresAt > now) return hit.value;
     const generation = this.generation;
-    const value = await raceAbort(this.deps.connections.runtime(connectionId), deadline);
+    const value = await raceAbort(this.connections.runtime(connectionId), deadline);
     // A plugin instance changed while fetching: use the value once, keep no stale instance
     if (ttl > 0 && generation === this.generation) {
       this.runtimes.delete(connectionId);
@@ -180,15 +182,12 @@ export class ChannelWebhooks {
     if (!UUID_RE.test(connectionId)) return notFound();
     // One deadline for the whole request (DB lookups, handle, onEvent); also aborts when the
     // platform hangs up
-    const deadline = AbortSignal.any([
-      signal,
-      AbortSignal.timeout(this.deps.handleTimeoutMs ?? WEBHOOK_HANDLE_TIMEOUT_MS),
-    ]);
+    const deadline = AbortSignal.any([signal, AbortSignal.timeout(this.handleTimeoutMs)]);
     try {
       return await this.respondBefore(connectionId, request, deadline);
     } catch (err) {
       if (!(err instanceof WebhookDeadline)) throw err;
-      this.deps.log.warn("channel webhook timed out; the platform will retry", { connectionId });
+      this.log.warn("channel webhook timed out; the platform will retry", { connectionId });
       return retryLater();
     }
   }
@@ -198,7 +197,7 @@ export class ChannelWebhooks {
     request: ChannelWebhookRequest,
     deadline: AbortSignal,
   ): Promise<ChannelWebhookResponse> {
-    const row = await raceAbort(this.deps.connections.row(connectionId), deadline);
+    const row = await raceAbort(this.connections.row(connectionId), deadline);
     if (
       row === undefined ||
       row.inboundMode !== "webhook" ||
@@ -219,7 +218,7 @@ export class ChannelWebhooks {
       ) {
         return notFound();
       }
-      this.deps.log.warn("channel webhook cannot load its connection", {
+      this.log.warn("channel webhook cannot load its connection", {
         connectionId,
         code: err instanceof ApiError ? err.code : undefined,
       });
@@ -250,13 +249,13 @@ export class ChannelWebhooks {
       );
     } catch (err) {
       if (err instanceof WebhookDeadline) {
-        this.deps.log.warn("channel webhook handler timed out; the platform will retry", {
+        this.log.warn("channel webhook handler timed out; the platform will retry", {
           connectionId,
         });
         return retryLater();
       }
       // The kernel log redacts the connection's secrets (runtime() registered them)
-      this.deps.log.warn("channel webhook handler failed", { connectionId, err });
+      this.log.warn("channel webhook handler failed", { connectionId, err });
       return jsonError(500, "internal", "Internal error");
     } finally {
       inflight?.leave();
@@ -272,9 +271,9 @@ export class ChannelWebhooks {
         if (!Array.isArray(events)) break;
         for (const e of events as InboundEvent[]) {
           try {
-            await raceAbort(this.deps.inbound.onEvent(connectionId, e), deadline);
+            await raceAbort(this.inbound.onEvent(connectionId, e), deadline);
           } catch (err) {
-            this.deps.log.warn("channel webhook event not accepted; the platform will retry", {
+            this.log.warn("channel webhook event not accepted; the platform will retry", {
               connectionId,
               ...(err instanceof WebhookDeadline ? { timedOut: true } : { err }),
             });
@@ -284,7 +283,7 @@ export class ChannelWebhooks {
         return sanitize(result.ack);
       }
     }
-    this.deps.log.warn("channel webhook handler returned an invalid result", { connectionId });
+    this.log.warn("channel webhook handler returned an invalid result", { connectionId });
     return jsonError(500, "internal", "Internal error");
   }
 }

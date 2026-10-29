@@ -1,6 +1,5 @@
 import { fileURLToPath } from "node:url";
 import {
-  CHANNEL_EXTENSION_POINT,
   type ExtensionContext,
   SANDBOX_EXTENSION_POINT,
   type SandboxProvider,
@@ -15,14 +14,6 @@ import { PluginImport } from "./catalog/plugin-import.js";
 import { ChannelConnections } from "./channels/connections.service.js";
 import { ChannelInbound } from "./channels/inbound.js";
 import { ChannelOutbound } from "./channels/outbound.js";
-import {
-  ChannelSupervisor,
-  checkGatewayPresence,
-  GATEWAY_CHECK_EVERY_MS,
-  GATEWAY_CHECK_JOB,
-  GATEWAY_CHECK_SCHEDULER_ID,
-} from "./channels/supervisor.js";
-import { ChannelWebhooks } from "./channels/webhook.js";
 import type { KernelConfig } from "./config/schema.js";
 import { AttachmentsService } from "./conversations/attachments.service.js";
 import type { ConversationsService } from "./conversations/conversations.service.js";
@@ -328,20 +319,18 @@ export interface LegacyGraph
     // Task 3.6b
     | "usageReport"
     | "runs"
+    // Task 3.7
+    | "channels"
   > {
   /** The kernel-schema view of the pool. */
   readonly kdb: KernelSchemaDb;
   readonly evalQueue: EvalQueue;
   /** The maintenance queue (its one worker until Task 3.9). */
   readonly maintenance: Maintenance;
-  /** Channel webhook inbound (gateway role only). */
-  readonly channelWebhooks: ChannelWebhooks | undefined;
   /** What the API module is built from (`ApiModule.registerFrom`). */
   readonly apiDeps: ApiDeps;
   /** The eval worker (worker role). */
   createEvalWorker(): EvalWorker;
-  /** The channel long-connection supervisor (gateway role). */
-  createChannelSupervisor(): ChannelSupervisor;
 }
 
 /**
@@ -367,7 +356,7 @@ export interface ConvertedProviders {
   binding: IdentityBinding;
   directory: DirectorySync;
   orgLock: OrgLock;
-  /** In-process domain events: channel connections follow `org.deleted`. */
+  /** In-process domain events: a decided approval / answered question resumes its run. */
   events: KernelEvents;
   // Task 3.3
   host: ExtensionHost;
@@ -418,28 +407,16 @@ export function createLegacyGraph(
     config.masterKeyPrevious.map((k) => Buffer.from(k, "base64")),
   );
   const kdb = legacyKernelView(kernelDbHandle, converted.txHost);
-  const { host, replicaStatus, orgLock, eventLog } = converted;
-  // EventAppended (spec §3 cycle "event log → channel outbound"): every published log advance
-  // enqueues the conversation's IM delivery when it has a target (the job ends once idle after
-  // catching up; later events start it again from here). Same replica, right after the bus
-  // publish, in append order: what the event log's direct notify hook did.
-  converted.events.on("conversation.event-appended", ({ conversationId }) =>
-    enqueueOutbound(conversationId),
-  );
-  // A run started executing here (the run worker's old onRunStart hook): its IM delivery
-  converted.events.on("run.started", ({ conversationId }) => enqueueOutbound(conversationId));
-  // A stop of a waiting run: its approval / question cards change (the run control's old hook)
-  converted.events.on("run.wait-stopped", ({ conversationId }) => enqueueOutbound(conversationId));
-  const { approvals, questions, toolDrift } = converted;
-  // A decided approval / answered question resumes the waiting run on this replica and enqueues
-  // its IM delivery (domain events, spec §3b; the wait sweep resumes a run whose resume was lost)
+  const { host, eventLog } = converted;
+  const { toolDrift } = converted;
+  // A decided approval / answered question resumes the waiting run on this replica (domain events,
+  // spec §3b; the wait sweep resumes a run whose resume was lost). Its IM delivery follows the same
+  // events (ChannelJobs).
   converted.events.on("approval.decided", async (a) => {
     await waits.resume(a.runId, a.id);
-    enqueueOutbound(a.conversationId);
   });
   converted.events.on("question.answered", async (q) => {
     await waits.resume(q.runId, q.id);
-    enqueueOutbound(q.conversationId);
   });
   const maintenance = new Maintenance({ db: kdb, redisUrl: config.redis.url, log });
   // wait-timeout jobs (Waits is their producer) stay on the maintenance worker until Task 3.9
@@ -471,59 +448,6 @@ export function createLegacyGraph(
     const { orgId, connectorId, trigger } = job.data as DriftConnectorJobData;
     await toolDrift.check(orgId, connectorId, trigger);
   });
-  const lock = converted.conversationLock;
-  const channelConnections = new ChannelConnections({
-    db: kdb,
-    orgLock,
-    keyring,
-    host,
-    bus,
-    redis,
-    log,
-    onSecrets: (v) => log.addOrgSecrets(v),
-    onResume: (id) => channelOutbound.resumeConnection(id),
-    config: cfg,
-  });
-  const channelOutbound = new ChannelOutbound({
-    db: kdb,
-    redis,
-    redisUrl: config.redis.url,
-    bus,
-    eventLog,
-    lock,
-    connections: channelConnections,
-    approvals,
-    questions,
-    config: cfg,
-    log,
-    // 入站任务（Ruling A21）在同一队列的 worker 上处理
-    inbound: (id, e) => channels.inbound.handle(id, e),
-  });
-  /** 会话有 IM 投递目标时排一个出站任务（审批 / 回答 / 运行开始后）；失败只记日志。 */
-  function enqueueOutbound(conversationId: string): void {
-    channelOutbound
-      .enqueue(conversationId)
-      .catch((err) => log.warn("cannot enqueue channel delivery", { conversationId, err }));
-  }
-  const channels: KernelChannels = {
-    connections: channelConnections,
-    outbound: channelOutbound,
-    inbound: new ChannelInbound({
-      db: kdb,
-      redis,
-      connections: channelConnections,
-      // phase D: `/name args` in IM goes through the same skill invocation as the web
-      conversations: converted.conversations,
-      external: converted.external,
-      binding: converted.binding,
-      directorySync: converted.directory,
-      outbound: channelOutbound,
-      queue: channelOutbound,
-      approvals,
-      questions,
-      log,
-    }),
-  };
   // R7: the legacy instances converted providers read at call time
   converted.ports.bind({
     sandbox,
@@ -533,34 +457,6 @@ export function createLegacyGraph(
   // directory-sync jobs stay on the maintenance worker until Task 3.9 builds its @Processor (R11)
   maintenance.handle(DIRECTORY_SYNC_JOB, async (job) => {
     await converted.directory.runSyncJob(job.data as SyncJobData);
-  });
-  // a deleted org's channel connections drop their long connections at once
-  converted.events.on("org.deleted", ({ orgId }) => channelConnections.notifyOrgChanged(orgId));
-  // an org disabling an extension drops that extension's channel connections at once (the
-  // supervisor's periodic re-check is the fallback)
-  converted.events.on("extension.org-disabled", ({ orgId, plugin }) =>
-    channelConnections.notifyOrgChanged(orgId, plugin),
-  );
-  /** Channel webhook inbound (gateway role only; F8 / F9). */
-  const channelWebhooks = config.roles.includes("gateway")
-    ? new ChannelWebhooks({ connections: channelConnections, inbound: channels.inbound, log })
-    : undefined;
-  // Warn (rate limited) when a channel plugin has holdable connections but no live gateway replica
-  // with it loaded (R1 / R3); silent for one lease TTL after this process starts (first heartbeats)
-  const gatewayCheckGraceFrom = Date.now();
-  maintenance.handle(GATEWAY_CHECK_JOB, async () => {
-    await checkGatewayPresence({
-      db: kdb,
-      redis,
-      config: cfg,
-      log,
-      graceUntil: gatewayCheckGraceFrom + cfg().channels.leaseTtlMs,
-    });
-  });
-  maintenance.schedule({
-    id: GATEWAY_CHECK_SCHEDULER_ID,
-    name: GATEWAY_CHECK_JOB,
-    everyMs: () => GATEWAY_CHECK_EVERY_MS,
   });
   const stepDeps: LoopDeps = steps.deps;
   /** 评测队列（生产方：API 启动运行时入队）与 worker（含 worker 角色时启动）。 */
@@ -614,42 +510,20 @@ export function createLegacyGraph(
         ...(hooks.evalHooks !== undefined && { hooks: hooks.evalHooks }),
       },
     });
-  // Channel long-connection leader election: every gateway replica takes part, and only the
-  // replica that holds a connection's lease connects it (E11-A)
-  const createChannelSupervisor = (): ChannelSupervisor =>
-    new ChannelSupervisor({
-      db: kdb,
-      redis,
-      bus,
-      connections: channelConnections,
-      localPlugins: () =>
-        host
-          .list("channel")
-          .filter((e) => e.capability === CHANNEL_EXTENSION_POINT)
-          .map((e) => e.plugin),
-      onEvent: (id, e) => channels.inbound.onEvent(id, e),
-      config: cfg,
-      log,
-      replicaId: replicaStatus.replicaId,
-    });
   const apiDeps: ApiDeps = {
     db: kdb,
     keyring,
     config: cfg,
     log,
-    channels: channelConnections,
     evalQueue,
   };
   return {
     kdb,
     evalQueue,
     maintenance,
-    channelWebhooks,
     apiDeps,
     createEvalWorker,
-    createChannelSupervisor,
     bus,
-    channels,
     sandbox,
     log,
   };
@@ -724,7 +598,11 @@ export async function createKernel(
       offboarding: app.get(Offboarding),
       directory: app.get(DirectorySync),
     },
-    channels: g.channels,
+    channels: {
+      connections: app.get(ChannelConnections),
+      outbound: app.get(ChannelOutbound),
+      inbound: app.get(ChannelInbound),
+    },
     storage: app.get(StorageService),
     attachments: app.get(AttachmentsService),
     skills: app.get(SkillsService),

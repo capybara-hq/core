@@ -12,7 +12,6 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ensureAnonymousGuest } from "../../src/channels/threads.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
@@ -28,6 +27,7 @@ import {
 } from "../../src/orgs/directory-sync.js";
 import type { Offboarding, OffboardResult } from "../../src/orgs/offboarding.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
+import { anonymousGuestsFor } from "../helpers/channels.js";
 import { accountsFor, apiTokensFor, directorySyncFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -164,7 +164,7 @@ describe("通讯录同步", () => {
     await linkIdentity(dave.id, "u-dave");
     await addManual(orgId, dave.id);
     // T10 的匿名访客（source = "anonymous"）：同步永远不碰
-    const guestId = await ensureAnonymousGuest(db, orgId);
+    const guestId = await anonymousGuestsFor(raw).ensure(orgId);
 
     book.members = [person("u-alice"), person("u-bob"), person("u-carol"), person("u-dave")];
     const r1 = await sync(orgId);

@@ -18,8 +18,8 @@ import {
   OrgCatalogController,
 } from "../catalog/org-catalog.controller.js";
 import { CatalogRequestsService } from "../catalog/requests.service.js";
+import { ChannelsModule } from "../channels/channels.module.js";
 import { ChannelConnectionsController } from "../channels/connections.controller.js";
-import type { ChannelConnections } from "../channels/connections.service.js";
 import type { KernelConfig } from "../config/schema.js";
 import { AttachmentsController } from "../conversations/attachments.controller.js";
 import { ConversationsController } from "../conversations/conversations.controller.js";
@@ -94,7 +94,6 @@ import { OrgUiStreams, orgMembership } from "../ui/ui-stream.js";
 import { UiController } from "../ui/views.controller.js";
 import { recordedCard, UiViews } from "../ui/views.js";
 import {
-  CHANNEL_CONNECTIONS,
   CONVERSATION_TOOLS,
   EMBED_TOKENS,
   EVAL_RUNS,
@@ -117,8 +116,6 @@ export interface ApiDeps {
   /** 取当前配置（热更新后返回新配置）。 */
   config: () => KernelConfig;
   log: Logger;
-  /** 渠道连接（与 `Kernel.channels.connections` 同一实例）。 */
-  channels: ChannelConnections;
   /** 评测队列的生产方（与 worker 同一队列名）。 */
   evalQueue: Pick<EvalQueue, "enqueue">;
 }
@@ -332,11 +329,6 @@ function serviceProviders(): Provider[] {
         { token: GracefulShutdown, optional: true },
       ],
     },
-    {
-      provide: CHANNEL_CONNECTIONS,
-      useFactory: (deps: ApiDeps) => deps.channels,
-      inject: [API_DEPS],
-    },
   ];
 }
 
@@ -374,6 +366,7 @@ export class ApiModule {
         AgentsModule,
         ConversationsModule,
         RuntimeModule,
+        ChannelsModule,
         EvalsModule,
       ],
       controllers: CONTROLLERS,

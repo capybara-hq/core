@@ -168,7 +168,6 @@ beforeAll(async () => {
           keyring: createKeyring(Buffer.from(masterKey, "base64"), []),
           config: () => k.config,
           log,
-          channels: k.channels.connections,
           evalQueue: { enqueue: async () => {} },
         }),
       ],

@@ -23,12 +23,12 @@ import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { CHANNEL_CHANGED_TOPIC } from "../../src/channels/connections.service.js";
 import { CHANNEL_QUEUE_NAME } from "../../src/channels/outbound.js";
-import { ChannelWebhooks } from "../../src/channels/webhook.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { InflightTracker } from "../../src/extensions/inflight.js";
 import type { Kernel } from "../../src/kernel.js";
+import { channelWebhooksFor } from "../helpers/channels.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -396,7 +396,7 @@ describe("ChannelWebhooks.handle", () => {
     } = {},
   ) => {
     let runtimeCalls = 0;
-    const webhooks = new ChannelWebhooks({
+    const webhooks = channelWebhooksFor({
       connections: {
         row: async () => ({
           id: ID,
@@ -638,7 +638,7 @@ describe("ChannelWebhooks.handle", () => {
   });
 
   it("a slow connection row lookup → 503 at the deadline", async () => {
-    const webhooks = new ChannelWebhooks({
+    const webhooks = channelWebhooksFor({
       connections: { row: () => new Promise(() => {}), runtime: (async () => ({})) as never },
       inbound: { onEvent: async () => {} },
       log: { warn: () => {} },
