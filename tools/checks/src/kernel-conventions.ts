@@ -2291,6 +2291,16 @@ function checkWorkerOnly(r: Resolver, hits: Hit[]): void {
     rel: string;
     line: number;
   }[] = [];
+  /**
+   * A reference placed past the wrappers that do not change what it is (`X as Provider`,
+   * `<Provider>X`, `X!`, `(X)`): the outermost wrapper and the node it sits in.
+   */
+  const placed = (n: Node, anc: readonly Node[]): { node: Node; parent: Node } => {
+    let node = n;
+    let i = anc.length - 1;
+    while (i > 0 && TRANSPARENT.has((anc[i] as Node).type)) node = anc[i--] as Node;
+    return { node, parent: anc[i] as Node };
+  };
   for (const f of files) {
     const fn = r.names.get(f) as FileNames;
     visit(f.parsed.program, (n, anc) => {
@@ -2307,8 +2317,7 @@ function checkWorkerOnly(r: Resolver, hits: Hit[]): void {
           for (const name of r.nsMember(f, n.name as string, nameOf(p.property) as string) ?? []) {
             refs.push({
               name,
-              node: p,
-              parent: outer[outer.length - 1] as Node,
+              ...placed(p, outer),
               at,
               file: f,
               rel: f.rel,
@@ -2322,7 +2331,7 @@ function checkWorkerOnly(r: Resolver, hits: Hit[]): void {
       }
       const at = enclosing(anc);
       for (const name of r.canon(f, n.name as string)) {
-        refs.push({ name, node: n, parent: parent as Node, at, file: f, rel: f.rel, line });
+        refs.push({ name, ...placed(n, anc), at, file: f, rel: f.rel, line });
       }
     });
   }

@@ -1,4 +1,5 @@
-import { Module } from "@nestjs/common";
+import { Module, type Provider } from "@nestjs/common";
+import { AngleJob, AsJob, BangJob, CastClassJob, ParenJob } from "../jobs/cast.js";
 import { configuredProcessor } from "../infra/queue/configured-processor.js";
 import { AliasCronJob, AliasProcessor } from "../jobs/aliased.js";
 import { DirectCron, DirectProcessor } from "../jobs/direct.js";
@@ -27,6 +28,11 @@ import {
     VarProcessor, // expect: kc-worker-only
     VarCron, // expect: kc-worker-only
     ReflectProcessor, // expect: kc-worker-only
+    AsJob as Provider, // expect: kc-worker-only
+    <Provider>AngleJob, // expect: kc-worker-only
+    BangJob!, // expect: kc-worker-only
+    (ParenJob), // expect: kc-worker-only
+    { provide: "C", useClass: CastClassJob as any }, // expect: kc-worker-only
   ],
 })
 export class ApiModule {}
