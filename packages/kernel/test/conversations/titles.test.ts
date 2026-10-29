@@ -20,7 +20,6 @@ import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { HookRegistry } from "../../src/extensions/hooks.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
-import type { Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { type ModelPurposesService, PurposeAttemptError } from "../../src/models/purposes.js";
 import type { HookRunner } from "../../src/runtime/hook-calls.js";
@@ -39,6 +38,7 @@ import {
   runConfig,
   sleep,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -50,7 +50,7 @@ let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
-let k: Kernel;
+let k: TestKernel;
 let owner: { req: Req; cookie: () => string };
 let orgId: string;
 let agentId: string;
@@ -71,7 +71,7 @@ beforeAll(async () => {
   );
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });

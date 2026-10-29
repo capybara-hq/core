@@ -6,7 +6,6 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { QUEUE_MAX_ITEMS } from "../../src/conversations/queue.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import type { Kernel } from "../../src/kernel.js";
 import { conversationsFor, eventLogFor, legacyDbFor, queueFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
@@ -25,6 +24,7 @@ import {
   session,
   sleep,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForEvent,
   waitForTerminal,
@@ -41,7 +41,7 @@ let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
-let k: Kernel;
+let k: TestKernel;
 let owner: Req;
 let other: Req;
 let ownerId: string;
@@ -56,7 +56,7 @@ beforeAll(async () => {
   k = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] }));
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });

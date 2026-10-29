@@ -13,12 +13,12 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { channelBackoffKey } from "../../src/channels/connections.service.js";
+import { ChannelConnections, channelBackoffKey } from "../../src/channels/connections.service.js";
+import { ChannelInbound } from "../../src/channels/inbound.js";
 import { CHANNEL_QUEUE_NAME, inboundJobId } from "../../src/channels/outbound.js";
 import { channelLeaseKey } from "../../src/channels/supervisor.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import type { Kernel } from "../../src/kernel.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -32,6 +32,7 @@ import {
   session,
   sleep,
   startKernel,
+  type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
 
@@ -50,7 +51,7 @@ const FAST = 1500;
 let pgc: TestContainer;
 let rd: TestContainer;
 let im: FakeChannelServer;
-let a: Kernel;
+let a: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
@@ -84,7 +85,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await queue?.close();
-  await a?.stop();
+  await a?.close();
   await im?.stop();
   redis?.disconnect();
   await raw?.destroy();
@@ -149,10 +150,10 @@ describe("渠道连接生命周期", () => {
     expect(im.active(connId)).toHaveLength(0);
     // 入站（已排进队列的消息由 worker 处理）：组织已删除 → 不建话题、不写消息、不回复
     const before = im.sent.length;
-    await a.channels.inbound.handle(connId, dm("after-delete", "u-doomed", "hello"));
+    await a.app.get(ChannelInbound).handle(connId, dm("after-delete", "u-doomed", "hello"));
     expect(await threadsOf(connId)).toBe(0);
     expect(im.sent.length).toBe(before);
-    await expect(a.channels.connections.row(connId)).resolves.toBeUndefined();
+    await expect(a.app.get(ChannelConnections).row(connId)).resolves.toBeUndefined();
   }, 60_000);
 
   it("组织停用插件 → 广播 channel.changed，长连接立即断开（不等扫描复核）", async () => {
@@ -170,16 +171,18 @@ describe("渠道连接生命周期", () => {
     await sql`INSERT INTO capybara.identities (source, external_id, account_id, linked_via)
       VALUES ('chan-mini:t1', 'u-toggle', ${ownerId}, 'sso')`.execute(raw);
     const before = im.sent.length;
-    await a.channels.inbound.handle(connId, dm("late-1", "u-toggle", "hello"));
-    await a.channels.inbound.handle(
-      connId,
-      cardAction(
-        "card-msg",
-        "u-toggle",
-        { cardKind: "approval", cardId: "ap-1", action: "approve" },
-        { chatId: "dm-u-toggle", chatType: "dm" },
-      ),
-    );
+    await a.app.get(ChannelInbound).handle(connId, dm("late-1", "u-toggle", "hello"));
+    await a.app
+      .get(ChannelInbound)
+      .handle(
+        connId,
+        cardAction(
+          "card-msg",
+          "u-toggle",
+          { cardKind: "approval", cardId: "ap-1", action: "approve" },
+          { chatId: "dm-u-toggle", chatType: "dm" },
+        ),
+      );
     expect(await threadsOf(connId)).toBe(0);
     expect(im.sent.length).toBe(before);
   }, 60_000);
@@ -331,7 +334,7 @@ describe("渠道连接生命周期", () => {
         WHERE connection_id = ${connId}`.execute(raw)
     ).rows[0]?.conversation_id as string;
     // a 停机（交还租约）；只启动没有 chan-mini 的 b
-    await a.stop();
+    await a.close();
     await waitFor(async () => im.active(connId).length === 0, 10_000, "closed on stop");
     expect(await redis.exists(channelLeaseKey(connId))).toBe(0);
     const b = await startKernel(cfg([MODEL_FAKE], 100, 2000));
@@ -358,7 +361,7 @@ describe("渠道连接生命周期", () => {
       await sleep(1000);
       expect(toRoll().length).toBe(before);
       // b 上处理需要回复的入站任务：插件不在本副本 → 推迟重试，不消耗重试次数
-      await b.channels.inbound.onEvent(connId, dm("roll-bind", "u-roll-new", "hi"));
+      await b.app.get(ChannelInbound).onEvent(connId, dm("roll-bind", "u-roll-new", "hi"));
       // Wait for the state instead of reading it once after a fixed sleep: under load the job can
       // still be waiting or active at any fixed moment.
       const job = await waitFor(
@@ -373,7 +376,7 @@ describe("渠道连接生命周期", () => {
       // 有插件的副本回来：照常接管长连接，并补投 b 上没投出去的回复
       a = await startKernel(cfg([MODEL_FAKE, CHAN_MINI], 100, 2000));
       owner = await session(a, "owner");
-      await b.stop();
+      await b.close();
       await waitFor(async () => im.active(connId).length === 1, 10_000, "taken over by a");
       await waitFor(async () => toRoll().length > before, 20_000, "pending reply delivered");
       await waitFor(
@@ -382,7 +385,7 @@ describe("渠道连接生命周期", () => {
         "pending inbound reply delivered",
       );
     } finally {
-      await b.stop();
+      await b.close();
     }
   }, 90_000);
 });

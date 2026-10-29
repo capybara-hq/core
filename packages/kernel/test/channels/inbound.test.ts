@@ -13,6 +13,7 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { ChannelInbound } from "../../src/channels/inbound.js";
 import {
   CHANNEL_QUEUE_NAME,
   DELIVER_PRIORITY,
@@ -22,7 +23,6 @@ import {
 } from "../../src/channels/outbound.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import type { Kernel } from "../../src/kernel.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -35,6 +35,7 @@ import {
   session,
   sleep,
   startKernel,
+  type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
 
@@ -43,7 +44,7 @@ const SOURCE = "chan-mini:t1";
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let im: FakeChannelServer;
@@ -110,7 +111,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await queue?.close();
-  await k?.stop();
+  await k?.close();
   await im?.stop();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -292,7 +293,7 @@ describe("渠道入站", () => {
     const before = await convCount();
     await Promise.all(
       ["race-1", "race-2", "race-3"].map((m) =>
-        k.channels.inbound.handle(connId, dm(m, "u-race", `hello ${m}`)),
+        k.app.get(ChannelInbound).handle(connId, dm(m, "u-race", `hello ${m}`)),
       ),
     );
     const rows = (await threads()).filter((r) => r.chat_id === "dm-u-race");
@@ -454,8 +455,8 @@ describe("入站持久化（Ruling A21）", () => {
   });
 
   it("onEvent 只去重并入队：平台重投同一条消息只排一个任务、只写一次", async () => {
-    await k.channels.inbound.onEvent(connId, dm("enq-1", "u-race", "hello"));
-    await k.channels.inbound.onEvent(connId, dm("enq-1", "u-race", "hello"));
+    await k.app.get(ChannelInbound).onEvent(connId, dm("enq-1", "u-race", "hello"));
+    await k.app.get(ChannelInbound).onEvent(connId, dm("enq-1", "u-race", "hello"));
     await waitFor(() => processed("enq-1"), 10_000, "job completed");
     await sleep(300);
     const r = await sql`SELECT 1 FROM capybara.conversation_events

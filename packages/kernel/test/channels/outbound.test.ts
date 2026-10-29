@@ -18,7 +18,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { CHANNEL_QUEUE_NAME, idempotencyKey } from "../../src/channels/outbound.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import type { Kernel } from "../../src/kernel.js";
 import { COLOR_FORM } from "../fixtures/plugins/mem-connector/index.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -33,6 +32,7 @@ import {
   session,
   sleep,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForEvent,
 } from "../helpers/runs.js";
@@ -60,7 +60,7 @@ const ASK = "tool:mem-connector__ask:{}";
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let im: FakeChannelServer;
@@ -197,7 +197,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   redis?.disconnect();
-  await k?.stop();
+  await k?.close();
   await im?.stop();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);

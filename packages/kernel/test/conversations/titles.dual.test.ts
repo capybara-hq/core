@@ -2,7 +2,6 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import type { Kernel } from "../../src/kernel.js";
 import type { ModelPurposesService } from "../../src/models/purposes.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -18,6 +17,7 @@ import {
   session,
   sleep,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -34,8 +34,8 @@ let rawA: ReturnType<typeof createDb>;
 let rawB: ReturnType<typeof createDb>;
 let dbA: KernelSchemaDb;
 let dbB: KernelSchemaDb;
-let a: Kernel;
-let b: Kernel;
+let a: TestKernel;
+let b: TestKernel;
 let owner: Req;
 let orgId: string;
 let agentId: string;
@@ -57,7 +57,7 @@ beforeAll(async () => {
   agentId = await createAgent(owner, orgId);
 }, 180_000);
 afterAll(async () => {
-  await Promise.all([a?.stop(), b?.stop()]);
+  await Promise.all([a?.close(), b?.close()]);
   await Promise.all([rawA?.destroy(), rawB?.destroy()]);
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });

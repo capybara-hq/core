@@ -29,13 +29,22 @@ import type { KernelConfig } from "../../src/config/schema.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
 import { channelSupervisorFor } from "../helpers/channels.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { createAgent, createOrg, PW, runConfig, session, sleep, waitFor } from "../helpers/runs.js";
+import {
+  createAgent,
+  createOrg,
+  PW,
+  runConfig,
+  session,
+  sleep,
+  startKernel,
+  type TestKernel,
+  waitFor,
+} from "../helpers/runs.js";
 
 /**
  * Fair sharing of channel long connections across gateway replicas (E11-B), single process: several
@@ -54,7 +63,7 @@ const OTHER_KEY = gatewayReplicasKey("chan-other");
 let pgc: TestContainer;
 let rd: TestContainer;
 let im: FakeChannelServer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let redis: Redis;
 const ids: string[] = [];
@@ -73,7 +82,7 @@ const channels: KernelConfig["channels"] = {
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   im = await startFakeChannelServer();
-  k = await createKernel(
+  k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
@@ -85,7 +94,6 @@ beforeAll(async () => {
     ),
     { env: {}, logger: createLogger("info", { write: (l) => logLines.push(l) }) },
   );
-  await k.start();
   raw = createDb(pgc.url, 3);
   redis = new Redis(rd.url);
   await accountsFor(kernelDb(raw)).createLocal({
@@ -120,7 +128,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await stopAll();
-  await k?.stop();
+  await k?.close();
   await im?.stop();
   redis?.disconnect();
   await raw?.destroy();

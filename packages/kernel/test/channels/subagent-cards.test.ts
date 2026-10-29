@@ -16,7 +16,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import type { Kernel } from "../../src/kernel.js";
 import { COLOR_FORM } from "../fixtures/plugins/mem-connector/index.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -31,6 +30,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
 
@@ -121,7 +121,7 @@ const RULES: ScriptRule[] = [
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let im: FakeChannelServer;
@@ -203,7 +203,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await im?.stop();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
