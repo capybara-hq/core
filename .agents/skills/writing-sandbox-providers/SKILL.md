@@ -155,7 +155,7 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   holder leaves, so the idle clock starts when the last concurrent holder finishes.
 - **Destruction**: a `@LockedCron` (`sandbox-destroy-inactive`, hourly); sandboxes inactive longer than `destroyAfterInactiveDays` (default 7), whose org is deleted, or whose conversation is deleted get `destroy`;
   a departing member's (or a deleted agent's) are destroyed immediately through the one-off maintenance job `sandbox-destroy-for` (producer
-  `SandboxJobs`, job id `sandbox-destroy-for-<sha256 of the sorted ids>`).
+  `SandboxJobs`).
 - **Transparent recovery**: a suspended sandbox is `resume`d on next use; on `gone`, destroyed, or a recorded provider that is not the current provider, an empty sandbox is rebuilt and the tool result carries
   an English notice. Switching providers leaks old instances (the new provider cannot destroy them; they are recorded in the `prev_*` columns and cleaned up only while the old extension is still loaded).
 - **Per-command** limit `sandbox.limits.maxCommandSeconds` (default 7200); `sandbox_bash` defaults to 120 seconds. A command timeout is also tightened to

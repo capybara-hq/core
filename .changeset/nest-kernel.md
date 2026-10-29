@@ -251,8 +251,11 @@ leases (`tryShared` / `tryExclusive` / `sharedCount`, a `SharedLeaseHandle` with
 the sandbox leases are built on them: same Redis keys and scripts, holder records, path leases,
 fencing generation, `sandbox.maxConcurrentCommands` and `sandbox.lockWaitSeconds`. A held sandbox
 or path lease is lost at the R19 deadline (a path lease whose renewals keep failing is now lost
-too), with one `lock lost` line instead of `sandbox lease lost` / `sandbox path lease lost`.
+too), with one `lock lost` line instead of `sandbox lease lost` / `sandbox path lease lost`. A
+`LockService` release that fails is logged at warn (`lock release failed`; the key expires within
+its TTL), for every lock and lease. A downgrade answered after its lease was lost still releases
+the shared lease.
 `sandbox-suspend-idle` (every minute) and `sandbox-destroy-inactive` (hourly) are `@LockedCron`
 jobs (once per tick across replicas, on every role until Task 4.1); their old maintenance
-schedulers are removed when a worker starts. `sandbox-destroy-for` jobs now have a deterministic id
-per batch, so a batch enqueued twice while queued is one job.
+schedulers are removed when a worker starts. `sandbox-destroy-for` jobs are unchanged (name, data,
+retries, BullMQ's own ids).

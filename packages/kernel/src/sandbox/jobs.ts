@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Job, Queue } from "bullmq";
@@ -19,19 +18,8 @@ export const SANDBOX_DESTROY_JOB = "sandbox-destroy-inactive";
 export const SANDBOX_DESTROY_FOR_JOB = "sandbox-destroy-for";
 
 /**
- * The deterministic job id of one batch (no `:`): the same batch enqueued twice while the first job
- * is still queued or retrying is one job.
- */
-export function sandboxDestroyJobId(conversationIds: readonly string[]): string {
-  const digest = createHash("sha256")
-    .update([...conversationIds].sort().join(","))
-    .digest("hex")
-    .slice(0, 32);
-  return `${SANDBOX_DESTROY_FOR_JOB}-${digest}`;
-}
-
-/**
- * The producer of {@link SANDBOX_DESTROY_FOR_JOB} on the maintenance queue (the maintenance worker
+ * The producer of {@link SANDBOX_DESTROY_FOR_JOB} on the maintenance queue (BullMQ's own job ids, as
+ * before: every enqueue is a new job, also after a batch failed all its attempts) (the maintenance worker
  * consumes it until Task 3.9 builds its `@Processor`, R11).
  */
 @Injectable()
@@ -46,7 +34,6 @@ export class SandboxJobs {
       SANDBOX_DESTROY_FOR_JOB,
       { conversationIds },
       {
-        jobId: sandboxDestroyJobId(conversationIds),
         attempts: 5,
         backoff: { type: "exponential", delay: 30_000 },
         removeOnComplete: true,

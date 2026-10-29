@@ -19,6 +19,7 @@ import {
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { KernelConfigSchema } from "../../src/config/schema.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -29,10 +30,15 @@ import {
   SANDBOX_RECREATED_NOTICE,
   SANDBOX_STARTED_NOTICE,
 } from "../../src/tools/builtins/sandbox/common.js";
-import { fakeSandboxState, readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
+import {
+  createFakeSandbox,
+  fakeSandboxState,
+  readFakeSandboxOps,
+} from "../fixtures/plugins/sandbox-fake/index.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
+import { sandboxServiceFor } from "../helpers/sandbox.js";
 
 /**
  * Sandbox and artifacts across replicas (dual replica, the kernel side of M5 segment 2): two kernel
@@ -378,14 +384,27 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     expect(row4.handle).toEqual(row2.handle);
 
     // ---- 5. 空闲到期 → 维护任务休眠 → 下一次调用恢复 ----
-    // suspendAfterIdleMinutes 最小 1 分钟：把 last_used_at 拨回 2 分钟前（PG 时钟），等下一次扫描
-    // (Task 3.8: the sweep is a @LockedCron on the replicas, every minute: wait up to one tick and
-    // a margin instead of enqueueing the old maintenance job)
+    // suspendAfterIdleMinutes 最小 1 分钟：把 last_used_at 拨回 2 分钟前（PG 时钟），再立即执行一次扫描
+    // (Task 3.8: the sweep is a @LockedCron on the replicas; the test runs the same sweep at once
+    // over the shared PG, Redis and fake-sandbox root; a replica's own tick may get there first)
     await sql`UPDATE capybara.sandboxes SET last_used_at = now() - interval '2 minutes'
       WHERE conversation_id = ${convId}`.execute(raw);
+    await sandboxServiceFor({
+      db,
+      redis,
+      provider: () => ({ plugin: "sandbox-fake", impl: createFakeSandbox(root) }),
+      config: () =>
+        KernelConfigSchema.parse({
+          db: { url: h.dbUrl },
+          redis: { url: rdc.url },
+          masterKey: Buffer.alloc(32, 7).toString("base64"),
+          sandbox: { limits: { memoryMb: 512, egress: "none", suspendAfterIdleMinutes: 1 } },
+        }),
+      log: {},
+    }).suspendIdle(new Date());
     await waitFor(
       async () => (await at(survivor, "GET", `${convPath}/sandbox`)).json.status === "suspended",
-      90_000,
+      60_000,
       "sandbox suspended",
       250,
     );

@@ -250,6 +250,8 @@ export class LockService {
   ): SharedLeaseHandle {
     let kind = initial;
     let released = false;
+    /** The DOWNGRADE eval in flight, if any. */
+    let downgrading: Promise<boolean> | undefined;
     const ttl = String(Math.ceil(ttlMs));
     const w = this.watchdog(
       keys.lock,
@@ -260,6 +262,8 @@ export class LockService {
             await this.redis.eval(RENEW_SHARED_LEASE, 2, keys.lock, keys.users, token, ttl, kind),
           ) === 1,
         release: async () => {
+          // a downgrade still in flight decides the kind the lease has in Redis
+          await downgrading?.catch(() => {});
           await this.redis.eval(RELEASE_SHARED_LEASE, 2, keys.lock, keys.users, token, kind);
         },
       },
@@ -280,14 +284,20 @@ export class LockService {
       downgrade: async () => {
         if (kind !== "exclusive" || released) throw new Error("lease is not exclusive");
         w.lost.throwIfAborted();
-        const ok = await w.renewWith(
-          async () =>
-            Number(
-              await this.redis.eval(DOWNGRADE_SHARED_LEASE, 2, keys.lock, keys.users, token, ttl),
-            ) === 1,
-        );
-        if (ok) kind = "shared";
-        return ok;
+        return w.renewWith(async () => {
+          downgrading = this.redis
+            .eval(DOWNGRADE_SHARED_LEASE, 2, keys.lock, keys.users, token, ttl)
+            .then((r) => Number(r) === 1);
+          try {
+            const done = await downgrading;
+            // Redis made it shared: record that even when the lease was lost or released while the
+            // call was in flight, so the release removes the shared member (no leak)
+            if (done) kind = "shared";
+            return done;
+          } finally {
+            downgrading = undefined;
+          }
+        });
       },
     };
   }
@@ -413,7 +423,8 @@ export class LockService {
         try {
           await ops.release();
         } catch (err) {
-          this.log.error("lock release failed", { lockKey, err });
+          // warn: the key expires within its TTL anyway (controller ruling, Task 3.8)
+          this.log.warn("lock release failed", { lockKey, err });
         }
       },
     };

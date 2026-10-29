@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../src/errors.js";
 import { generateKey } from "../../src/infra/lock/key-template.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
+import { DOWNGRADE_SHARED_LEASE, RENEW_SHARED_LEASE } from "../../src/infra/lock/shared-lease.js";
 import { WithLock } from "../../src/infra/lock/with-lock.decorator.js";
 import { createLogger } from "../../src/log.js";
 
@@ -446,6 +447,62 @@ describe("LockService shared leases (Task 3.8)", () => {
     expect(await x?.downgrade()).toBe(false);
     expect(x?.lost.aborted).toBe(true);
     await x?.release();
+  });
+
+  it("a downgrade answered after the lease was lost still releases the shared member (no leak)", async () => {
+    // TTL 3000 -> deadline 2000 after the acquire; the renewals hang, the downgrade runs in Redis
+    // at once but its reply arrives at ~2300, after the lease was lost
+    const proxied = new Proxy(r1, {
+      get(t, p) {
+        if (p === "eval") {
+          return async (script: string, ...args: unknown[]) => {
+            if (script === RENEW_SHARED_LEASE) return new Promise(() => {});
+            // biome-ignore lint/suspicious/noExplicitAny: forwards the call unchanged
+            const r = await (t.eval as any)(script, ...args);
+            if (script === DOWNGRADE_SHARED_LEASE) await sleep(2300);
+            return r;
+          };
+        }
+        const v = Reflect.get(t, p);
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+    const a = new LockService(proxied, createLogger("error", { write: () => {} }));
+    const keys = keysOf("down-late");
+    const x = await a.tryExclusive(keys, "t", 3000);
+    expect(await x?.downgrade()).toBe(false);
+    expect(x?.lost.aborted).toBe(true);
+    await x?.release();
+    expect(await r1.zscore(keys.users, "t")).toBeNull();
+    expect(await new LockService(r1, log).sharedCount(keys)).toBe(0);
+  });
+
+  it("a successful downgrade moves the R19 deadline (fake timers)", async () => {
+    vi.useFakeTimers({
+      toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
+      now: 0,
+    });
+    try {
+      // TTL 300 -> renewal every 100; deadline = send time of the last success + 200
+      const stub = {
+        eval: async (script: string) => {
+          if (script === RENEW_SHARED_LEASE) throw new Error("redis down");
+          return 1;
+        },
+      } as unknown as Redis;
+      const a = new LockService(stub, createLogger("error", { write: () => {} }));
+      const x = await a.tryExclusive(keysOf("down-deadline"), "t", 300);
+      await vi.advanceTimersByTimeAsync(50);
+      expect(await x?.downgrade()).toBe(true); // sent at 50
+      await vi.advanceTimersByTimeAsync(249 - Date.now());
+      // without the move the lease would be lost at 200
+      expect(x?.lost.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(250 - Date.now());
+      expect(x?.lost.aborted).toBe(true);
+      await x?.release();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("renewal keeps a shared lease past its TTL", async () => {
