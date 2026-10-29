@@ -6,7 +6,6 @@ import { createDb } from "../../src/db/pool.js";
 import type { EvalCaseView, EvalSetView } from "../../src/evals/sets.service.js";
 import type { TrajectoryRun } from "../../src/evals/trajectory.js";
 import type { TrajectoryListItem } from "../../src/evals/trajectory.service.js";
-import type { Kernel } from "../../src/kernel.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -20,13 +19,14 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
 } from "../helpers/runs.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
-let k: Kernel;
+let k: TestKernel;
 let eventLog: EventLog;
 
 const MAX_CASES = 4;
@@ -45,7 +45,7 @@ beforeAll(async () => {
   );
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });

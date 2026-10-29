@@ -14,19 +14,35 @@ import {
 } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { PluginImport } from "../../src/catalog/plugin-import.js";
 import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { BootstrapFailedError, bootstrapManifestSha256 } from "../../src/extensions/bootstrap.js";
+import {
+  BootstrapFailedError,
+  BootstrapService,
+  bootstrapManifestSha256,
+} from "../../src/extensions/bootstrap.js";
 import { enabledExtensionsByOrg, isExtensionEnabled } from "../../src/extensions/enabled.js";
-import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
+import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
+import { StorageService } from "../../src/storage/storage.service.js";
+import { ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, lifePkg, packFake, pluginTgz } from "../helpers/plugin-packages.js";
-import { createOrg, PW, type Req, runConfig, session } from "../helpers/runs.js";
+import {
+  buildKernel,
+  createOrg,
+  PW,
+  type Req,
+  runConfig,
+  session,
+  type TestKernel,
+} from "../helpers/runs.js";
 
 const PERM_A = fileURLToPath(new URL("../fixtures/plugins/perm-a/index.ts", import.meta.url));
 
@@ -44,12 +60,12 @@ let destroyDb: () => Promise<void>;
 let extensionsDir: string;
 const cleanups: (() => Promise<void>)[] = [];
 
-const kernels: Kernel[] = [];
+const kernels: TestKernel[] = [];
 async function boot(
   fx: { dir: string; manifest: BootstrapManifest } | undefined,
   overrides: Record<string, unknown> = {},
   logger: KernelLogger = createLogger("error"),
-): Promise<Kernel> {
+): Promise<TestKernel> {
   const config: KernelConfig = runConfig(
     { pg: pgc.url, redis: rd.url },
     {
@@ -60,7 +76,7 @@ async function boot(
       ...overrides,
     },
   );
-  const k = await createKernel(config, {
+  const k = await buildKernel(config, {
     env: {},
     logger,
     ...(fx !== undefined && { bootstrap: { dir: fx.dir }, bootstrapManifest: fx.manifest }),
@@ -70,7 +86,7 @@ async function boot(
   return k;
 }
 async function stopAll(): Promise<void> {
-  while (kernels.length > 0) await kernels.pop()?.stop();
+  while (kernels.length > 0) await kernels.pop()?.close();
 }
 
 async function fixture(...args: Parameters<typeof bootstrapFixture>) {
@@ -108,7 +124,7 @@ const snapshot = (plugin: string) =>
     .executeTakeFirst();
 
 let admin: Req;
-async function loginAdmin(k: Kernel): Promise<void> {
+async function loginAdmin(k: TestKernel): Promise<void> {
   await accountsFor(db).createLocal({
     login: "root",
     password: PW,
@@ -136,7 +152,7 @@ afterAll(async () => {
 
 describe("a fresh deployment", () => {
   let fx: Awaited<ReturnType<typeof bootstrapFixture>>;
-  let k: Kernel;
+  let k: TestKernel;
   beforeAll(async () => {
     await reset();
     fx = await fixture([
@@ -172,8 +188,8 @@ describe("a fresh deployment", () => {
       },
     ]);
     // autoApprove is off: loading proves the bootstrap snapshot
-    expect(k.host.current("alpha")?.manifest.version).toBe("1.0.0");
-    expect(k.host.current("beta")?.manifest.version).toBe("1.0.0");
+    expect(k.app.get(ExtensionHost).current("alpha")?.manifest.version).toBe("1.0.0");
+    expect(k.app.get(ExtensionHost).current("beta")?.manifest.version).toBe("1.0.0");
     expect(await snapshot("alpha")).toEqual({ version: "1.0.0", source: "bootstrap" });
     const approved = await audits("extension.permissions_approved");
     expect(approved.map((a) => a.target).sort()).toEqual(["alpha", "beta"]);
@@ -205,7 +221,7 @@ describe("a fresh deployment", () => {
       })),
     );
     const sha = bootstrapManifestSha256(fx.manifest);
-    expect(await k.bootstrap.isDone(sha)).toBe(true);
+    expect(await k.app.get(BootstrapService).isDone(sha)).toBe(true);
     const completed = await audits("bootstrap.completed");
     expect(completed).toEqual([
       {
@@ -232,10 +248,10 @@ describe("a fresh deployment", () => {
           .execute()
       ).length;
     const before = await writes();
-    const r = await k.bootstrap.run({
+    const r = await k.app.get(BootstrapService).run({
       manifest: fx.manifest,
       dir: fx.dir,
-      imports: k.pluginImport,
+      imports: k.app.get(PluginImport),
     });
     expect(r.results.map((x) => x.action)).toEqual(["installed", "installed"]);
     await stopAll();
@@ -255,7 +271,7 @@ describe("a fresh deployment", () => {
         .where("org_id", "=", orgId)
         .execute(),
     ).toEqual([]);
-    const enabled = await k.host.enabledPlugins(orgId);
+    const enabled = await k.app.get(ExtensionHost).enabledPlugins(orgId);
     expect(enabled.has("alpha")).toBe(true);
     expect(enabled.has("beta")).toBe(false);
     const list = await admin({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
@@ -274,7 +290,7 @@ describe("a fresh deployment", () => {
     expect(pairs).toContainEqual({ org_id: orgId, plugin: "alpha" });
     expect(pairs).not.toContainEqual({ org_id: orgId, plugin: "beta" });
     // A required plugin's tools are available to the org's agents
-    const tools = await k.tools.registry.forAgent(orgId, {
+    const tools = await k.app.get(ToolRegistry).forAgent(orgId, {
       tools: [{ kind: "plugin", plugin: "alpha", name: "wait" }],
     });
     expect(tools.tools.map((t) => t.key)).toEqual(["alpha__wait"]);
@@ -403,8 +419,8 @@ describe("a core upgrade (Review Focus 3)", () => {
         required: false,
       },
     ]);
-    expect(k.host.current("delta")).toBeUndefined();
-    expect(k.host.current("epsilon")).toBeUndefined();
+    expect(k.app.get(ExtensionHost).current("delta")).toBeUndefined();
+    expect(k.app.get(ExtensionHost).current("epsilon")).toBeUndefined();
     expect(await snapshot("alpha")).toEqual({ version: "1.1.0", source: "bootstrap" });
     const approved = (await audits("extension.permissions_approved")).filter(
       (a) => a.target === "alpha",
@@ -415,9 +431,9 @@ describe("a core upgrade (Review Focus 3)", () => {
       added: expect.arrayContaining([expect.stringContaining("tool.preExecute")]),
     });
     // autoApprove is off: the raised version loads with the added permission pre-approved
-    expect(k.host.current("alpha")?.manifest.version).toBe("1.1.0");
-    expect(k.host.current("beta")?.manifest.version).toBe("1.2.0");
-    expect(k.host.current("gamma")?.manifest.version).toBe("1.0.0");
+    expect(k.app.get(ExtensionHost).current("alpha")?.manifest.version).toBe("1.1.0");
+    expect(k.app.get(ExtensionHost).current("beta")?.manifest.version).toBe("1.2.0");
+    expect(k.app.get(ExtensionHost).current("gamma")?.manifest.version).toBe("1.0.0");
     // gamma is an ordinary install now: it can be disabled
     admin = await session(k, "root");
     const off = await admin({ method: "POST", url: "/api/v1/admin/extensions/gamma/disable" });
@@ -452,7 +468,7 @@ describe("same version, different bytes", () => {
     const k = await boot(v2, {}, logger);
     const r = (await audits("bootstrap.completed")).at(-1)?.detail as { results: unknown[] };
     expect(r.results).toEqual([{ name: "alpha", action: "kept", version: "1.0.0" }]);
-    expect(k.host.current("alpha")?.manifest.version).toBe("1.0.0");
+    expect(k.app.get(ExtensionHost).current("alpha")?.manifest.version).toBe("1.0.0");
     expect(
       warns.filter((w) => w.msg.includes("differs from the installed one at the same version")),
     ).toEqual([
@@ -498,7 +514,9 @@ describe("tampered and missing packages (Review Focus 2)", () => {
     cleanups.push(() => rm(other, { recursive: true, force: true }));
     const k = await boot(undefined);
     await expect(
-      k.bootstrap.run({ manifest: fx.manifest, dir: other, imports: k.pluginImport }),
+      k.app
+        .get(BootstrapService)
+        .run({ manifest: fx.manifest, dir: other, imports: k.app.get(PluginImport) }),
     ).rejects.toMatchObject({
       code: "bootstrap.missing_file",
       message: expect.stringContaining("alpha"),
@@ -527,8 +545,10 @@ describe("tampered and missing packages (Review Focus 2)", () => {
     beta.required = false;
     const k = await boot(fx);
     expect(k.port).toBeGreaterThan(0);
-    expect(k.host.current("alpha")).toBeDefined();
-    expect(await k.bootstrap.isDone(bootstrapManifestSha256(fx.manifest))).toBe(false);
+    expect(k.app.get(ExtensionHost).current("alpha")).toBeDefined();
+    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
+      false,
+    );
 
     // Fixed in a later image: the next start completes it
     await stopAll();
@@ -536,7 +556,9 @@ describe("tampered and missing packages (Review Focus 2)", () => {
     await writeFile(join(fx.dir, bootstrapFileName(beta)), fixed);
     beta.integrity = `sha512-${createHash("sha512").update(fixed).digest("base64")}`;
     const k2 = await boot(fx);
-    expect(await k2.bootstrap.isDone(bootstrapManifestSha256(fx.manifest))).toBe(true);
+    expect(await k2.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
+      true,
+    );
     expect((await installs()).map((r) => [r.name, r.version])).toEqual([
       ["alpha", "1.0.0"],
       ["beta", "1.0.0"],
@@ -581,7 +603,7 @@ describe("obtaining the packages: offline directory, else npm (startup bootstrap
       ["alpha", "1.0.0", "bootstrap"],
       ["beta", "1.0.0", "bootstrap"],
     ]);
-    expect(k.host.current("alpha")?.manifest.version).toBe("1.0.0");
+    expect(k.app.get(ExtensionHost).current("alpha")?.manifest.version).toBe("1.0.0");
     expect(tarballs()).toEqual([
       "/@test/plugin-alpha/-/plugin-alpha-1.0.0.tgz",
       "/@test/plugin-beta/-/plugin-beta-1.0.0.tgz",
@@ -677,10 +699,10 @@ describe("obtaining the packages: offline directory, else npm (startup bootstrap
     const k = await boot(fx, { packages: { npmRegistry: reg?.url } });
     expect(k.port).toBeGreaterThan(0);
     // The service itself checks "done" before touching anything
-    const r = await k.bootstrap.run({
+    const r = await k.app.get(BootstrapService).run({
       manifest: fx.manifest,
       dir: fx.dir,
-      imports: k.pluginImport,
+      imports: k.app.get(PluginImport),
     });
     expect(r.results.map((x) => x.action)).toEqual(["installed", "installed"]);
     expect(reg?.requests.length).toBe(before);
@@ -718,7 +740,7 @@ describe("a declarative entry", () => {
         "fake-bootstrap-b": { bucket: "bootstrap", secretKey: "s3cret" },
       },
     });
-    expect(k.storage.available).toBe(true);
+    expect(k.app.get(StorageService).available).toBe(true);
     expect((await installs()).map((r) => [r.name, r.source, r.required])).toEqual([
       ["fake-bootstrap-b", "bootstrap", true],
     ]);
@@ -735,7 +757,9 @@ describe("a declarative entry", () => {
     });
     // The first pass (before the extensions loaded) installed the object store; the pass after
     // the startup reconcile imported delta and completed the run, recording both passes' actions
-    expect(await k.bootstrap.isDone(bootstrapManifestSha256(fx.manifest))).toBe(true);
+    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
+      true,
+    );
     expect((await audits("bootstrap.completed")).at(-1)?.detail).toMatchObject({
       results: [
         { name: "fake-bootstrap-b", action: "installed", version: "0.1.0" },
@@ -751,7 +775,7 @@ describe("config-declared names and the lock", () => {
   it("an entry also declared in the config extensions list is kept: config wins, no install record", async () => {
     const fx = await fixture([{ bytes: await lifePkg({ name: "perm-a", version: "1.0.0" }) }]);
     const k = await boot(fx, { extensions: [MODEL_FAKE, PERM_A] });
-    expect(k.host.sourceOf("perm-a")).toBe("config");
+    expect(k.app.get(ExtensionHost).sourceOf("perm-a")).toBe("config");
     expect(await installs()).toEqual([]);
     expect((await audits("bootstrap.completed")).at(-1)?.detail).toMatchObject({
       results: [{ name: "perm-a", action: "kept", version: "1.0.0" }],
@@ -762,16 +786,17 @@ describe("config-declared names and the lock", () => {
     const fx = await fixture([{ bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) }]);
     const k = await boot(undefined);
     const probe = new Redis(rd.url);
-    const bootstrap = k.bootstrap;
+    const bootstrap = k.app.get(BootstrapService);
     bootstrap.lockTtlMs = 300;
     try {
       const imports = {
-        prepare: async (...a: Parameters<typeof k.pluginImport.prepare>) => {
+        prepare: async (...a: Parameters<PluginImport["prepare"]>) => {
           // the run outlives the TTL several times over
           await new Promise((r) => setTimeout(r, 1_200));
-          return k.pluginImport.prepare(...a);
+          return k.app.get(PluginImport).prepare(...a);
         },
-        confirm: (...a: Parameters<typeof k.pluginImport.confirm>) => k.pluginImport.confirm(...a),
+        confirm: (...a: Parameters<PluginImport["confirm"]>) =>
+          k.app.get(PluginImport).confirm(...a),
       };
       const running = bootstrap.run({ manifest: fx.manifest, dir: fx.dir, imports });
       await new Promise((r) => setTimeout(r, 900));
@@ -790,17 +815,18 @@ describe("config-declared names and the lock", () => {
     const fx = await fixture([{ bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) }]);
     const k = await boot(undefined);
     const probe = new Redis(rd.url);
-    const bootstrap = k.bootstrap;
+    const bootstrap = k.app.get(BootstrapService);
     bootstrap.lockTtlMs = 300;
     try {
       const imports = {
-        prepare: async (...a: Parameters<typeof k.pluginImport.prepare>) => {
+        prepare: async (...a: Parameters<PluginImport["prepare"]>) => {
           // another holder takes the key while the run is busy: the next renewal fails
           await probe.set("lock:bootstrap", "another-replica", "PX", 5_000);
           await new Promise((r) => setTimeout(r, 600));
-          return k.pluginImport.prepare(...a);
+          return k.app.get(PluginImport).prepare(...a);
         },
-        confirm: (...a: Parameters<typeof k.pluginImport.confirm>) => k.pluginImport.confirm(...a),
+        confirm: (...a: Parameters<PluginImport["confirm"]>) =>
+          k.app.get(PluginImport).confirm(...a),
       };
       await expect(bootstrap.run({ manifest: fx.manifest, dir: fx.dir, imports })).rejects.toThrow(
         "lock lost: lock:bootstrap",
@@ -828,10 +854,10 @@ describe("config-declared names and the lock", () => {
       // a holder that took the lock and died: nobody renews it
       await crashed.set("lock:bootstrap", "crashed-replica", "PX", 800);
       const t0 = Date.now();
-      const r = await k.bootstrap.run({
+      const r = await k.app.get(BootstrapService).run({
         manifest: fx.manifest,
         dir: fx.dir,
-        imports: k.pluginImport,
+        imports: k.app.get(PluginImport),
       });
       expect(Date.now() - t0).toBeGreaterThanOrEqual(500);
       expect(r.results).toEqual([{ name: "alpha", action: "installed", version: "1.0.0" }]);
@@ -850,7 +876,7 @@ describe("config-declared names and the lock", () => {
         { pg: pgc.url, redis: rd.url },
         { roles: ["api"], extensionHost: { dir: extensionsDir }, log: { level: "error" } },
       );
-      const k = await createKernel(config, {
+      const k = await buildKernel(config, {
         env: {},
         logger: createLogger("error"),
         bootstrap: { dir: fx.dir },
@@ -860,7 +886,7 @@ describe("config-declared names and the lock", () => {
       started.catch(() => {});
       await new Promise((r) => setTimeout(r, 500));
       const t0 = Date.now();
-      await k.stop();
+      await k.close();
       await expect(started).rejects.toThrow();
       expect(Date.now() - t0).toBeLessThan(5_000);
       expect(await installs()).toEqual([]);

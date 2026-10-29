@@ -13,8 +13,9 @@ import {
   resolveCandidate,
   type StepReplayDeps,
 } from "../../src/evals/step-replay.js";
-import type { Kernel } from "../../src/kernel.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import type { MediaSourceDeps } from "../../src/runtime/model-call.js";
+import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -28,6 +29,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitForTerminal,
 } from "../helpers/runs.js";
 
@@ -45,7 +47,7 @@ let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
-let k: Kernel;
+let k: TestKernel;
 let owner: Req;
 let orgId: string;
 let snap: CaseSnapshot;
@@ -75,7 +77,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
@@ -83,8 +85,8 @@ afterAll(async () => {
 beforeEach(() => resetEvalModel());
 
 const deps = (media?: MediaSourceDeps): StepReplayDeps => ({
-  registry: k.runs.registry,
-  config: { get: () => k.config },
+  registry: k.app.get(ProviderRegistry),
+  config: { get: () => k.app.get(KernelConfigService).get() },
   ...(media !== undefined && { media }),
 });
 

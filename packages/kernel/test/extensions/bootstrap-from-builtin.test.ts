@@ -8,12 +8,21 @@ import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { bootstrapManifestSha256 } from "../../src/extensions/bootstrap.js";
-import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
+import { BootstrapService, bootstrapManifestSha256 } from "../../src/extensions/bootstrap.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
+import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import { accountsFor } from "../helpers/identity.js";
 import { bootstrapFixture, packFake } from "../helpers/plugin-packages.js";
-import { createOrg, PW, runConfig, session } from "../helpers/runs.js";
+import {
+  createOrg,
+  PW,
+  runConfig,
+  session,
+  startKernel,
+  type TestKernel,
+} from "../helpers/runs.js";
 
 /**
  * Phase A acceptance (spec §12, §7 "Migration of existing deployments"): a deployment from before
@@ -36,7 +45,7 @@ let destroyDb: () => Promise<void>;
 let extensionsDir: string;
 let oldMigrations: string;
 let fx: Awaited<ReturnType<typeof bootstrapFixture>>;
-let k: Kernel | undefined;
+let k: TestKernel | undefined;
 let orgId: string;
 
 /** The object store's non-secret deployment config saved from the admin console before the upgrade. */
@@ -93,7 +102,7 @@ beforeAll(async () => {
 }, 300_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await fx?.cleanup();
   await destroyDb?.();
   for (const d of [extensionsDir, oldMigrations]) {
@@ -125,13 +134,12 @@ describe("a deployment from before bootstrap (built-in extensions, no install re
     // 0050 dropped the stale builtin status rows
     expect(await db.selectFrom("extension_replica_status").select("plugin").execute()).toEqual([]);
 
-    k = await createKernel(config, {
+    k = await startKernel(config, {
       env: {},
       logger: createLogger("error"),
       bootstrap: { dir: fx.dir },
       bootstrapManifest: fx.manifest,
     });
-    await k.start();
     const admin = await session(k, "root");
     orgId = await createOrg(admin, "Before");
 
@@ -178,12 +186,14 @@ describe("a deployment from before bootstrap (built-in extensions, no install re
       { plugin: "fake-bootstrap-a", source: "bootstrap" },
       { plugin: "fake-bootstrap-b", source: "bootstrap" },
     ]);
-    expect(await k.bootstrap.isDone(bootstrapManifestSha256(fx.manifest))).toBe(true);
+    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
+      true,
+    );
 
     // The object store loads with the config saved before the upgrade (approval is off, so this
     // also proves the bootstrap snapshot), and is usable
-    expect(k.host.sourceOf("fake-bootstrap-b")).toBe("install");
-    expect(k.storage.available).toBe(true);
+    expect(k.app.get(ExtensionHost).sourceOf("fake-bootstrap-b")).toBe("install");
+    expect(k.app.get(StorageService).available).toBe(true);
     const view = await admin({
       method: "GET",
       url: "/api/v1/admin/extensions/fake-bootstrap-b/config",

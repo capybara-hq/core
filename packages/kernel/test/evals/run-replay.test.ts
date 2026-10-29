@@ -14,7 +14,6 @@ import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.j
 import type { EvalSetView } from "../../src/evals/sets.service.js";
 import type { TrajectoryDetail, TrajectoryListItem } from "../../src/evals/trajectory.service.js";
 import { EVAL_REPLAY_HOOKS } from "../../src/evals/worker.js";
-import type { Kernel } from "../../src/kernel.js";
 import { readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
 import { toolsCountState } from "../fixtures/plugins/tools-count/index.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
@@ -31,6 +30,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -51,7 +51,7 @@ let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
-let k: Kernel;
+let k: TestKernel;
 let eventLog: EventLog;
 let root: string;
 /** 置为 true 时，下一个用例在种子写好之后、loop 开始之前模拟崩溃一次。 */
@@ -170,7 +170,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
   if (root) await rm(root, { recursive: true, force: true });

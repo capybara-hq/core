@@ -3,8 +3,10 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
 import { PLUGIN_UNLOADED_TOOL_ERROR } from "../../src/extensions/inflight.js";
-import type { Kernel } from "../../src/kernel.js";
+import { SsoFlow } from "../../src/identity/sso.js";
+import { DirectorySync } from "../../src/orgs/directory-sync.js";
 import { everythingProbe } from "../fixtures/plugins/everything/index.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -18,6 +20,7 @@ import {
   runsOf,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -37,7 +40,7 @@ const fx = (n: string) =>
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let owner: Req;
 let orgId: string;
@@ -96,7 +99,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
@@ -112,7 +115,7 @@ async function callTool(tool: string): Promise<string> {
   });
   expect(res.statusCode, res.body).toBe(202);
   await waitFor(
-    async () => (k.host.current("everything")?.inflight.size ?? 0) === 1,
+    async () => (k.app.get(ExtensionHost).current("everything")?.inflight.size ?? 0) === 1,
     15_000,
     `${tool} in flight`,
   );
@@ -130,7 +133,7 @@ describe("撤销时的在途工具调用", () => {
     const convId = await callTool("hang");
     expect(probe.hangStarted).toBeGreaterThanOrEqual(1);
     const started = Date.now();
-    await k.host.unload("everything", { drainMs: 500 });
+    await k.app.get(ExtensionHost).unload("everything", { drainMs: 500 });
     const took = Date.now() - started;
     expect(took).toBeGreaterThanOrEqual(450);
     expect(took).toBeLessThan(5_000);
@@ -142,24 +145,24 @@ describe("撤销时的在途工具调用", () => {
       isError: true,
     });
     expect((await runsOf(db(), convId)).map((r) => r.status)).toEqual(["completed"]);
-    await k.host.reload("everything");
+    await k.app.get(ExtensionHost).reload("everything");
   }, 60_000);
 
   it("理会 signal、在时限内结束的调用：结果照常写入", async () => {
     const probe = everythingProbe();
     const doneBefore = probe.politeDone;
     const convId = await callTool("polite");
-    await k.host.unload("everything", { drainMs: 5_000 });
+    await k.app.get(ExtensionHost).unload("everything", { drainMs: 5_000 });
     // 排空等到了调用结束：撤销返回时它已经正常完成
     expect(probe.politeDone).toBe(doneBefore + 1);
     await waitForTerminal(db(), convId, 1, 20_000);
     expect(await toolResult(convId)).toMatchObject({ content: "polite done", isError: false });
     expect((await runsOf(db(), convId)).map((r) => r.status)).toEqual(["completed"]);
-    await k.host.reload("everything");
+    await k.app.get(ExtensionHost).reload("everything");
   }, 60_000);
 
   it("撤销后新的调用：工具不可用（不调用旧实例）", async () => {
-    await k.host.unload("everything");
+    await k.app.get(ExtensionHost).unload("everything");
     const convId = await createConv(owner, orgId, agentId);
     const res = await owner({
       method: "POST",
@@ -169,8 +172,8 @@ describe("撤销时的在途工具调用", () => {
     expect(res.statusCode).toBe(202);
     await waitForTerminal(db(), convId, 1, 20_000);
     expect((await runsOf(db(), convId)).map((r) => r.status)).toEqual(["completed"]);
-    expect(k.host.current("everything")).toBeUndefined();
-    await k.host.reload("everything");
+    expect(k.app.get(ExtensionHost).current("everything")).toBeUndefined();
+    await k.app.get(ExtensionHost).reload("everything");
   }, 60_000);
 });
 
@@ -183,7 +186,7 @@ describe("模型供应商在流式输出途中被重新加载", () => {
       payload: { text: "slow:200:abcdefghijklmnopqrstuvwx" },
     });
     expect(res.statusCode, res.body).toBe(202);
-    const old = k.host.current("model-fake");
+    const old = k.app.get(ExtensionHost).current("model-fake");
     // this run's stream (a title call of an earlier conversation may be in flight too)
     await waitFor(
       async () =>
@@ -192,8 +195,8 @@ describe("模型供应商在流式输出途中被重新加载", () => {
       15_000,
       "model stream open",
     );
-    await k.host.reload("model-fake", { drainMs: 100 });
-    expect(k.host.current("model-fake")).not.toBe(old);
+    await k.app.get(ExtensionHost).reload("model-fake", { drainMs: 100 });
+    expect(k.app.get(ExtensionHost).current("model-fake")).not.toBe(old);
     const [term] = await waitForTerminal(db(), convId, 1, 30_000);
     expect(term?.payload).toMatchObject({ reason: "completed" });
     const calls = (await eventsOf(db(), convId)).filter((e) => e.type === "model_call");
@@ -207,7 +210,7 @@ describe("内核侧消费方实时向注册表取", () => {
     const ok = await k.http.inject({ method: "GET", url: "/plugins/everything/hello" });
     expect(ok.statusCode).toBe(200);
     expect(ok.body).toBe("hello");
-    await k.host.unload("everything");
+    await k.app.get(ExtensionHost).unload("everything");
     const gone = await k.http.inject({ method: "GET", url: "/plugins/everything/hello" });
     expect(gone.statusCode).toBe(503);
     expect((gone.json() as { error: { code: string } }).error.code).toBe("extension.unavailable");
@@ -215,7 +218,7 @@ describe("内核侧消费方实时向注册表取", () => {
     expect(other.statusCode).toBe(503);
     const unknown = await k.http.inject({ method: "GET", url: "/plugins/nobody/hello" });
     expect(unknown.statusCode).toBe(404);
-    await k.host.reload("everything");
+    await k.app.get(ExtensionHost).reload("everything");
     const back = await k.http.inject({ method: "GET", url: "/plugins/everything/hello" });
     expect(back.statusCode).toBe(200);
   }, 30_000);
@@ -227,26 +230,36 @@ describe("内核侧消费方实时向注册表取", () => {
       return (res.json() as { items: { plugin: string }[] }).items.map((c) => c.plugin);
     };
     expect(await list()).toContain("everything");
-    await k.host.unload("everything");
+    await k.app.get(ExtensionHost).unload("everything");
     expect(await list()).not.toContain("everything");
-    await k.host.reload("everything");
+    await k.app.get(ExtensionHost).reload("everything");
     expect(await list()).toContain("everything");
   }, 30_000);
 
   it("登录源（identity-source@1）：撤销后不再列出，重新加载后回来", async () => {
-    expect(k.identity.sso.sources().map((s) => s.plugin)).toEqual(["fake-idp"]);
-    await k.host.unload("fake-idp");
-    expect(k.identity.sso.sources()).toEqual([]);
-    await k.host.reload("fake-idp");
-    expect(k.identity.sso.sources().map((s) => s.plugin)).toEqual(["fake-idp"]);
+    expect(
+      k.app
+        .get(SsoFlow)
+        .sources()
+        .map((s) => s.plugin),
+    ).toEqual(["fake-idp"]);
+    await k.app.get(ExtensionHost).unload("fake-idp");
+    expect(k.app.get(SsoFlow).sources()).toEqual([]);
+    await k.app.get(ExtensionHost).reload("fake-idp");
+    expect(
+      k.app
+        .get(SsoFlow)
+        .sources()
+        .map((s) => s.plugin),
+    ).toEqual(["fake-idp"]);
   }, 30_000);
 
   it("通讯录（directory@1）：撤销后扫描不再投递，重新加载后恢复", async () => {
-    const plugins = async () => (await k.identity.directory.scan()).map((t) => t.plugin);
+    const plugins = async () => (await k.app.get(DirectorySync).scan()).map((t) => t.plugin);
     expect(await plugins()).toEqual(["dir-mini"]);
-    await k.host.unload("dir-mini");
+    await k.app.get(ExtensionHost).unload("dir-mini");
     expect(await plugins()).toEqual([]);
-    await k.host.reload("dir-mini");
+    await k.app.get(ExtensionHost).reload("dir-mini");
     expect(await plugins()).toEqual(["dir-mini"]);
   }, 30_000);
 
@@ -270,13 +283,13 @@ describe("内核侧消费方实时向注册表取", () => {
         }),
       ]);
     const a = await open();
-    await k.host.reload("sse-hold");
+    await k.app.get(ExtensionHost).reload("sse-hold");
     expect(await within(a.ended)).toBe(true);
     const b = await open();
-    await k.host.unload("sse-hold");
+    await k.app.get(ExtensionHost).unload("sse-hold");
     expect(await within(b.ended)).toBe(true);
     const gone = await k.http.inject({ method: "GET", url: "/plugins/sse-hold/hold" });
     expect(gone.statusCode).toBe(503);
-    await k.host.reload("sse-hold");
+    await k.app.get(ExtensionHost).reload("sse-hold");
   }, 30_000);
 });

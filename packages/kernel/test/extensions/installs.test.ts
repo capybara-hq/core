@@ -21,20 +21,28 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { blobKey, ExtensionBlobIntegrityError } from "../../src/extensions/blobs.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
+import { ExtensionLifecycle } from "../../src/extensions/lifecycle.js";
 import { permissionSetOfPackage, readExtensionPackage } from "../../src/extensions/package.js";
-import {
-  createKernel,
-  KERNEL_MIGRATIONS_DIR,
-  type Kernel,
-  type KernelOptions,
-} from "../../src/kernel.js";
+import { ReplicaStatusStore } from "../../src/extensions/sources.js";
+import { KERNEL_MIGRATIONS_DIR, type KernelOptions } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
+import { StorageService } from "../../src/storage/storage.service.js";
+import { ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
 import { approvalsFor, blobsFor } from "../helpers/extensions.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, legacyTgz, packFake, pluginTgz } from "../helpers/plugin-packages.js";
-import { createOrg, PW, type Req, runConfig, session } from "../helpers/runs.js";
+import {
+  buildKernel,
+  createOrg,
+  PW,
+  type Req,
+  runConfig,
+  session,
+  type TestKernel,
+} from "../helpers/runs.js";
 
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
 
@@ -74,11 +82,11 @@ const capture = () =>
     },
   });
 
-const kernels: Kernel[] = [];
+const kernels: TestKernel[] = [];
 async function boot(
   overrides: Record<string, unknown>,
   opts: Omit<KernelOptions, "env" | "logger"> = {},
-): Promise<Kernel> {
+): Promise<TestKernel> {
   const config: KernelConfig = runConfig(
     { pg: pgc.url, redis: rd.url },
     {
@@ -88,13 +96,13 @@ async function boot(
       ...overrides,
     },
   );
-  const k = await createKernel(config, { env: {}, logger: capture(), ...opts });
+  const k = await buildKernel(config, { env: {}, logger: capture(), ...opts });
   kernels.push(k);
   await k.start();
   return k;
 }
 async function stopAll(): Promise<void> {
-  while (kernels.length > 0) await kernels.pop()?.stop();
+  while (kernels.length > 0) await kernels.pop()?.close();
 }
 
 beforeAll(async () => {
@@ -144,7 +152,7 @@ async function resetData(): Promise<void> {
     "capybara.extension_replica_status, capybara.extension_installs, capybara.extension_blobs, capybara.extension_packages, capybara.extension_permission_snapshots, capybara.extension_org_configs, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
 }
-async function loginUsers(k: Kernel): Promise<void> {
+async function loginUsers(k: TestKernel): Promise<void> {
   const accounts = accountsFor(db);
   await accounts.createLocal({
     login: "root",
@@ -168,7 +176,7 @@ const fromNpm = (req: Req, body: Record<string, unknown>) =>
   req({ method: "POST", url: "/api/v1/admin/extensions/packages/npm", payload: body });
 
 describe("有对象存储：上传、npm 与包存储", () => {
-  let k: Kernel;
+  let k: TestKernel;
   beforeAll(async () => {
     await resetData();
     k = await boot({ extensions: [OBJECT_STORE, MODEL_FAKE], extensionConfig: s3Config() });
@@ -185,7 +193,7 @@ describe("有对象存储：上传、npm 与包存储", () => {
     expect(review.added).toContain("permissions.tools:write");
     expect(review.removed).toEqual([]);
     expect(review.permissions.map((g: { category: string }) => g.category)).toContain("tools");
-    expect(await k.storage.deployment().head(blobKey(toolsUiSha))).not.toBeNull();
+    expect(await k.app.get(StorageService).deployment().head(blobKey(toolsUiSha))).not.toBeNull();
     const row = await db
       .selectFrom("extension_packages")
       .selectAll()
@@ -212,9 +220,9 @@ describe("有对象存储：上传、npm 与包存储", () => {
   });
 
   it("get 校验 sha256：对象存储里的字节被篡改就抛错", async () => {
-    const blobs = blobsFor(db, { maxBytes: MAX_BYTES, storage: k.storage });
+    const blobs = blobsFor(db, { maxBytes: MAX_BYTES, storage: k.app.get(StorageService) });
     expect(Buffer.from(await blobs.get(toolsUiSha)).equals(Buffer.from(toolsUi))).toBe(true);
-    const d = k.storage.deployment();
+    const d = k.app.get(StorageService).deployment();
     await d.put(blobKey(toolsUiSha), new Uint8Array([1, 2, 3]), {
       contentType: "application/gzip",
     });
@@ -244,12 +252,12 @@ describe("有对象存储：上传、npm 与包存储", () => {
     expect((await upload(admin, toolsUi)).statusCode).toBe(200);
     const rows = await db.selectFrom("extension_packages").select("sha256").execute();
     expect(rows).toHaveLength(1);
-    const d = k.storage.deployment();
+    const d = k.app.get(StorageService).deployment();
     await d.delete(blobKey(toolsUiSha));
     expect(await d.head(blobKey(toolsUiSha))).toBeNull();
     // 对象没了（如换了桶）：报错点名缺的键与补救办法
     await expect(
-      blobsFor(db, { maxBytes: MAX_BYTES, storage: k.storage }).get(toolsUiSha),
+      blobsFor(db, { maxBytes: MAX_BYTES, storage: k.app.get(StorageService) }).get(toolsUiSha),
     ).rejects.toThrow(
       /deployment\/plugins\/blobs\/[0-9a-f]{64}\.tgz is missing there; if the object store's bucket/,
     );
@@ -402,7 +410,7 @@ describe("有对象存储：上传、npm 与包存储", () => {
 });
 
 describe("没有对象存储：包存 PG", () => {
-  let k: Kernel;
+  let k: TestKernel;
   beforeAll(async () => {
     await resetData();
     k = await boot({ extensions: [MODEL_FAKE] });
@@ -418,7 +426,7 @@ describe("没有对象存储：包存 PG", () => {
       .where("sha256", "=", toolsUiSha)
       .executeTakeFirstOrThrow();
     expect(row.blob_store).toBe("pg");
-    const blobs = blobsFor(db, { maxBytes: MAX_BYTES, storage: k.storage });
+    const blobs = blobsFor(db, { maxBytes: MAX_BYTES, storage: k.app.get(StorageService) });
     expect(Buffer.from(await blobs.get(toolsUiSha)).equals(Buffer.from(toolsUi))).toBe(true);
     await db
       .updateTable("extension_blobs")
@@ -471,8 +479,13 @@ describe("启动时加载安装记录", () => {
       extensions: [MODEL_FAKE],
       extensionPermissions: { autoApprove: false },
     });
-    expect(k.host.sourceOf("fake-tools-ui")).toBe("install");
-    expect(k.host.manifests().map((m) => m.name)).toContain("fake-tools-ui");
+    expect(k.app.get(ExtensionHost).sourceOf("fake-tools-ui")).toBe("install");
+    expect(
+      k.app
+        .get(ExtensionHost)
+        .manifests()
+        .map((m) => m.name),
+    ).toContain("fake-tools-ui");
     expect(await readdir(join(pluginsDir, "fake-tools-ui"))).toEqual([toolsUiSha.slice(0, 16)]);
     const inst = await db
       .selectFrom("extension_installs")
@@ -491,31 +504,31 @@ describe("启动时加载安装记录", () => {
       .where("plugin", "=", "fake-tools-ui")
       .executeTakeFirstOrThrow();
     expect(status).toMatchObject({
-      replica_id: k.replicaId,
+      replica_id: k.app.get(ReplicaStatusStore).replicaId,
       source: "install",
       sha256: toolsUiSha,
       state: "loaded",
       version: "0.1.0",
     });
-    expect(k.replicaId).toMatch(/^.+-\d+-[0-9a-f]{6}$/);
+    expect(k.app.get(ReplicaStatusStore).replicaId).toMatch(/^.+-\d+-[0-9a-f]{6}$/);
 
     await loginUsers(k);
     const orgId = await createOrg(admin);
     const ref = { kind: "plugin" as const, plugin: "fake-tools-ui", name: "write" };
-    expect((await k.tools.registry.forAgent(orgId, { tools: [ref] })).tools).toEqual([]);
+    expect((await k.app.get(ToolRegistry).forAgent(orgId, { tools: [ref] })).tools).toEqual([]);
     const put = await admin({
       method: "PUT",
       url: `/api/v1/orgs/${orgId}/extensions/fake-tools-ui`,
       payload: { enabled: true },
     });
     expect(put.statusCode, put.body).toBe(200);
-    const tools = (await k.tools.registry.forAgent(orgId, { tools: [ref] })).tools;
+    const tools = (await k.app.get(ToolRegistry).forAgent(orgId, { tools: [ref] })).tools;
     expect(tools.map((t) => t.key)).toEqual(["fake-tools-ui__write"]);
     await stopAll();
     const after = await db
       .selectFrom("extension_replica_status")
       .select(["state", "detail"])
-      .where("replica_id", "=", k.replicaId)
+      .where("replica_id", "=", k.app.get(ReplicaStatusStore).replicaId)
       .execute();
     // 正常停机删掉本副本的状态行（不再标 unloaded 留着，部署状态不必等心跳过期）
     expect(after).toEqual([]);
@@ -527,8 +540,13 @@ describe("启动时加载安装记录", () => {
       extensions: [MODEL_FAKE],
       extensionPermissions: { autoApprove: false },
     });
-    expect(k.host.sourceOf("fake-tools-ui")).toBe("install");
-    expect(k.host.tools().some((t) => t.plugin === "fake-tools-ui")).toBe(true);
+    expect(k.app.get(ExtensionHost).sourceOf("fake-tools-ui")).toBe("install");
+    expect(
+      k.app
+        .get(ExtensionHost)
+        .tools()
+        .some((t) => t.plugin === "fake-tools-ui"),
+    ).toBe(true);
     await stopAll();
   });
 
@@ -560,11 +578,16 @@ describe("启动时加载安装记录", () => {
       extensions: [MODEL_FAKE],
       extensionPermissions: { autoApprove: false },
     });
-    expect(k.host.manifests().map((m) => m.name)).not.toContain("fake-tools-ui");
+    expect(
+      k.app
+        .get(ExtensionHost)
+        .manifests()
+        .map((m) => m.name),
+    ).not.toContain("fake-tools-ui");
     const rows = await db
       .selectFrom("extension_replica_status")
       .select(["plugin", "state", "reason"])
-      .where("replica_id", "=", k.replicaId)
+      .where("replica_id", "=", k.app.get(ReplicaStatusStore).replicaId)
       .where("plugin", "in", ["fake-tools-ui", "ghost-pkg"])
       .orderBy("plugin")
       .execute();
@@ -650,11 +673,16 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
       }),
     );
     const k = await boot({ extensions: [MODEL_FAKE] });
-    expect(k.host.sourceOf("mig-dir")).toBe("install");
+    expect(k.app.get(ExtensionHost).sourceOf("mig-dir")).toBe("install");
     expect(await statusOf("mig-dir")).toEqual({ state: "loaded", reason: null });
     expect(await tablesOf("plugin_mig_dir")).toEqual(["reviewed"]);
 
-    expect(k.host.manifests().map((m) => m.name)).not.toContain("mig-mismatch");
+    expect(
+      k.app
+        .get(ExtensionHost)
+        .manifests()
+        .map((m) => m.name),
+    ).not.toContain("mig-mismatch");
     expect(await statusOf("mig-mismatch")).toEqual({
       state: "failed",
       reason: "manifest_mismatch",
@@ -691,9 +719,12 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
       }),
     );
     const k = await boot({ extensions: [MODEL_FAKE, DEPENDENT] });
-    expect(k.host.sourceOf("inst-counter")).toBe("install");
-    expect(k.host.sourceOf("everything-dependent")).toBe("config");
-    const names = k.host.manifests().map((m) => m.name);
+    expect(k.app.get(ExtensionHost).sourceOf("inst-counter")).toBe("install");
+    expect(k.app.get(ExtensionHost).sourceOf("everything-dependent")).toBe("config");
+    const names = k.app
+      .get(ExtensionHost)
+      .manifests()
+      .map((m) => m.name);
     expect(names).toContain("everything-dependent");
     expect(names.indexOf("inst-counter")).toBeLessThan(names.indexOf("everything-dependent"));
   });
@@ -722,7 +753,7 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
       db
         .selectFrom("extension_replica_status")
         .select(["state", "reason"])
-        .where("replica_id", "=", k.replicaId)
+        .where("replica_id", "=", k.app.get(ReplicaStatusStore).replicaId)
         .where("plugin", "=", plugin)
         .executeTakeFirst();
     expect(await status("bad-counter")).toEqual({ state: "failed", reason: "manifest_mismatch" });
@@ -730,7 +761,7 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
       state: "pending",
       reason: "dependency",
     });
-    expect(k.host.pending()).toContainEqual(
+    expect(k.app.get(ExtensionHost).pending()).toContainEqual(
       expect.objectContaining({
         plugin: "everything-dependent",
         reason: "dependency",
@@ -769,19 +800,19 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
       db
         .selectFrom("extension_replica_status")
         .select(["state", "reason"])
-        .where("replica_id", "=", k.replicaId)
+        .where("replica_id", "=", k.app.get(ReplicaStatusStore).replicaId)
         .where("plugin", "=", plugin)
         .executeTakeFirst();
-    expect(k.host.current("chain-counter")).toBeDefined();
+    expect(k.app.get(ExtensionHost).current("chain-counter")).toBeDefined();
     expect(await status("chain-mid")).toEqual({ state: "pending", reason: "config" });
     expect(await status("chain-top")).toEqual({ state: "pending", reason: "dependency" });
     await db
       .insertInto("extension_deployment_configs")
       .values({ plugin: "chain-mid", config: JSON.stringify({ port: 1 }) })
       .execute();
-    await k.extensionLifecycle.reconcile("test");
-    expect(k.host.current("chain-mid")?.config).toEqual({ port: 1 });
-    expect(k.host.current("chain-top")).toBeDefined();
+    await k.app.get(ExtensionLifecycle).reconcile("test");
+    expect(k.app.get(ExtensionHost).current("chain-mid")?.config).toEqual({ port: 1 });
+    expect(k.app.get(ExtensionHost).current("chain-top")).toBeDefined();
     await db.deleteFrom("extension_deployment_configs").where("plugin", "=", "chain-mid").execute();
   });
 });
@@ -806,8 +837,13 @@ describe("引导插件（取代内置插件）", () => {
       // fake-bootstrap-b 没有部署配置：待配置，内核照常启动
       { bootstrap: { dir: fx.dir }, bootstrapManifest: fx.manifest },
     );
-    expect(k.host.sourceOf("fake-tools-ui")).toBe("install");
-    expect(k.host.manifests().map((m) => m.name)).toContain("fake-tools-ui");
+    expect(k.app.get(ExtensionHost).sourceOf("fake-tools-ui")).toBe("install");
+    expect(
+      k.app
+        .get(ExtensionHost)
+        .manifests()
+        .map((m) => m.name),
+    ).toContain("fake-tools-ui");
     const toolsUiRow = await db
       .selectFrom("extension_replica_status")
       .select(["source", "state"])
@@ -830,7 +866,7 @@ describe("引导插件（取代内置插件）", () => {
       .where("plugin", "=", "fake-bootstrap-b")
       .executeTakeFirstOrThrow();
     expect(s3Row).toEqual({ source: "install", state: "pending", reason: "config" });
-    expect(k.storage.available).toBe(false);
+    expect(k.app.get(StorageService).available).toBe(false);
 
     await loginUsers(k);
     const orgId = await createOrg(admin);
@@ -847,9 +883,9 @@ describe("引导插件（取代内置插件）", () => {
     expect(put.statusCode).toBe(409);
     expect(put.json().error.code).toBe("extension.required");
     const ref = { kind: "plugin" as const, plugin: "fake-tools-ui", name: "write" };
-    const tools = (await k.tools.registry.forAgent(orgId, { tools: [ref] })).tools;
+    const tools = (await k.app.get(ToolRegistry).forAgent(orgId, { tools: [ref] })).tools;
     expect(tools.map((t) => t.key)).toEqual(["fake-tools-ui__write"]);
-    expect((await k.host.enabledPlugins(orgId)).has("fake-tools-ui")).toBe(true);
+    expect((await k.app.get(ExtensionHost).enabledPlugins(orgId)).has("fake-tools-ui")).toBe(true);
     // The same package uploaded again is just the installed package (nothing new to approve)
     const res = await upload(admin, toolsUi);
     expect(res.statusCode, res.body).toBe(200);

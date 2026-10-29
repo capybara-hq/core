@@ -6,7 +6,6 @@ import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
-import type { Kernel } from "../../src/kernel.js";
 import { EVAL_QUOTA_PREFIX } from "../../src/runtime/quota.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
@@ -22,6 +21,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
 
@@ -42,7 +42,7 @@ let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
-let kernels: Kernel[] = [];
+let kernels: TestKernel[] = [];
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -55,7 +55,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterEach(async () => {
-  for (const k of kernels) await k.stop();
+  for (const k of kernels) await k.close();
   kernels = [];
 });
 
@@ -64,7 +64,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
-async function bootPair(orgConcurrency: number, workerConcurrency: number): Promise<Kernel[]> {
+async function bootPair(orgConcurrency: number, workerConcurrency: number): Promise<TestKernel[]> {
   await truncateTables(
     raw,
     "capybara.eval_results, capybara.eval_runs, capybara.eval_cases, capybara.eval_sets, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
@@ -90,7 +90,7 @@ async function bootPair(orgConcurrency: number, workerConcurrency: number): Prom
 async function capScenario(
   cases: number,
 ): Promise<{ run: EvalRunView; results: EvalResultView[] }> {
-  const [a, b] = kernels as [Kernel, Kernel];
+  const [a, b] = kernels as [TestKernel, TestKernel];
   const eventLog = eventLogFor(db, { publish: async () => {} });
   const accounts = accountsFor(db);
   const ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "o" }))

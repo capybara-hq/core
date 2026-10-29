@@ -24,9 +24,10 @@ import {
   toEvents,
 } from "../../src/evals/snapshot.js";
 import type { TrajectoryDetail } from "../../src/evals/trajectory.service.js";
-import type { Kernel } from "../../src/kernel.js";
 import { BEHAVIOR_RULES } from "../../src/runtime/context/build.js";
+import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { SUBAGENT_PREAMBLE } from "../../src/runtime/subagents/preamble.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { seedForkedSkill } from "../helpers/forked-skills.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -44,6 +45,7 @@ import {
   runsOf,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -131,7 +133,7 @@ let rd: TestContainer;
 let s3: TestS3;
 let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 const capture = captureProviderRequests();
 
 let owner: Req;
@@ -230,7 +232,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   capture.restore();
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
 });
@@ -325,7 +327,7 @@ async function counts() {
 }
 
 async function modelInfo(): Promise<ModelInfo> {
-  return (await k.runs.registry.resolve(SCRIPT)).info;
+  return (await k.app.get(ProviderRegistry).resolve(SCRIPT)).info;
 }
 
 const snapshotOf = (conv: string, runId: string): Promise<CaseSnapshot> =>
@@ -756,7 +758,7 @@ describe("forked skills (phase D)", { timeout: 120_000 }, () => {
 
   beforeAll(async () => {
     const { id: skillId } = await seedForkedSkill(
-      { db, storage: k.storage, orgId, ownerId },
+      { db, storage: k.app.get(StorageService), orgId, ownerId },
       "review",
       "Review $ARGUMENTS.",
     );
