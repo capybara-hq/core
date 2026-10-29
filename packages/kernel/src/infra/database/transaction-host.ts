@@ -103,7 +103,7 @@ export class TransactionHost {
    * Runs `fn` in a transaction: a throw rolls back, a return commits. REQUIRED (default) joins the
    * transaction in context; `requires_new` always opens its own on the pool; `mandatory` joins the
    * one in context and throws when there is none. Hooks queued by `afterCommit` run after the
-   * root's COMMIT and are dropped on rollback.
+   * root's COMMIT, outside any transaction, and are dropped on rollback.
    */
   async run<T>(fn: () => Promise<T>, opts: TransactionOptions = {}): Promise<T> {
     const propagation = opts.propagation ?? "required";
@@ -134,7 +134,9 @@ export class TransactionHost {
     }
     for (const hook of hooks) {
       try {
-        await hook();
+        // outside any transaction: a requires_new nested in an outer one must not have its side
+        // effects join (and roll back with) the outer transaction
+        await runOutsideTransaction(hook);
       } catch (e) {
         this.log.error("afterCommit hook failed", { error: errMsg(e) });
       }

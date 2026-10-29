@@ -78,6 +78,20 @@ class Svc {
     if (throwAfter) throw new Error("outer failed");
   }
 
+  /** A requires_new decision whose afterCommit hook writes (REQUIRED) after it commits. */
+  @Transactional({ propagation: "requires_new" })
+  async decideWithHook(id: string) {
+    await insert(id);
+    afterCommit(() => this.inner(`${id}-hook`));
+  }
+
+  @Transactional()
+  async outerWithDecision(id: string) {
+    await this.decideWithHook(`${id}-decision`);
+    await insert(id);
+    throw new Error("outer failed");
+  }
+
   @Transactional()
   async withHook(id: string, order: string[], fail: boolean) {
     await insert(id);
@@ -109,6 +123,15 @@ describe("TransactionHost and @Transactional", () => {
     const got = await ids();
     expect(got).toContain("r1-independent");
     expect(got).not.toContain("r1");
+  });
+
+  it("the afterCommit hooks of a requires_new nested in an outer transaction run outside it", async () => {
+    await expect(svc().outerWithDecision("h1")).rejects.toThrow("outer failed");
+    const got = await ids();
+    expect(got).toContain("h1-decision");
+    // the hook's REQUIRED write opened its own transaction: the outer rollback does not undo it
+    expect(got).toContain("h1-decision-hook");
+    expect(got).not.toContain("h1");
   });
 
   it("mandatory throws outside a transaction and writes nothing", async () => {
