@@ -135,8 +135,8 @@ export function pipelineFor(d: PipelineTestDeps): ToolPipeline {
       : undefined,
     h.txHost,
     {
+      ...d.hooks,
       ...(d.decidePolicy !== undefined && { decidePolicy: d.decidePolicy }),
-      ...(d.hooks !== undefined && { hooks: d.hooks }),
     },
   );
 }

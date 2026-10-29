@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { ApiError } from "../errors.js";
 import {
@@ -203,26 +203,43 @@ export interface SandboxPathLease {
   release(): Promise<void>;
 }
 
+/** The timings of {@link SandboxLeases} (each defaults as documented). */
+export interface SandboxLeaseTimings {
+  /** Lease TTL (ms), default {@link SANDBOX_LOCK_TTL_MS}. */
+  ttlMs: number;
+  /** Poll interval while waiting (ms, jittered up to 2×), default 100. */
+  pollMs: number;
+  /** Path lease TTL (ms), default {@link PATH_LEASE_TTL_MS}. */
+  pathTtlMs: number;
+}
+
+/** Optional provider: {@link SandboxLeaseTimings} that replace some defaults (tests make them shorter). */
+export const SANDBOX_LEASE_TIMINGS = Symbol("SANDBOX_LEASE_TIMINGS");
+
 /**
  * The lease protocol over {@link LockService}'s shared leases; no state in process beyond the
- * leases this process holds. `ttlMs`, `pollMs` and `pathTtlMs` are fields (tests make them
- * shorter).
+ * leases this process holds.
  */
 @Injectable()
 export class SandboxLeases {
   /** Lease TTL (ms). */
-  ttlMs = SANDBOX_LOCK_TTL_MS;
+  readonly ttlMs: number;
   /** Poll interval while waiting (ms, jittered up to 2×). */
-  pollMs = 100;
+  readonly pollMs: number;
   /** Path lease TTL (ms). */
-  pathTtlMs = PATH_LEASE_TTL_MS;
+  readonly pathTtlMs: number;
 
   constructor(
     @Inject(LockService) private readonly locks: LockService,
     /** The holder records and the legacy busy marker (scripts of this file). */
     @Inject(REDIS) private readonly redis: Pick<Redis, "eval" | "get">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
-  ) {}
+    @Optional() @Inject(SANDBOX_LEASE_TIMINGS) timings: Partial<SandboxLeaseTimings> = {},
+  ) {
+    this.ttlMs = timings.ttlMs ?? SANDBOX_LOCK_TTL_MS;
+    this.pollMs = timings.pollMs ?? 100;
+    this.pathTtlMs = timings.pathTtlMs ?? PATH_LEASE_TTL_MS;
+  }
 
   /**
    * TTL of an intent (ms): 4 × the poll interval (a jittered wait is up to 2 × the interval plus

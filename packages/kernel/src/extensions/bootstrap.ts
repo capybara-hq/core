@@ -9,7 +9,7 @@ import {
   parseBootstrapManifest,
   SDK_VERSION,
 } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
 import semver from "semver";
 import { catalogPackageError, type PluginImport } from "../catalog/plugin-import.js";
@@ -290,6 +290,8 @@ async function scanOfflineDir(
 export const BOOTSTRAP_LOCK_KEY = "bootstrap";
 /** Its lifetime without renewal (R5); a run keeps it by renewal, a crashed holder's expires. */
 export const BOOTSTRAP_LOCK_TTL_MS = 120_000;
+/** Optional provider: the lock's lifetime (ms) instead of {@link BOOTSTRAP_LOCK_TTL_MS} (tests shorten it). */
+export const BOOTSTRAP_LOCK_TTL = Symbol("BOOTSTRAP_LOCK_TTL");
 /** The pause between attempts while another holder runs the step. */
 const LOCK_RETRY_MS = 500;
 
@@ -298,9 +300,6 @@ export type BootstrapImports = Pick<PluginImport, "prepare" | "confirm">;
 
 @Injectable()
 export class BootstrapService {
-  /** The lock's lifetime without renewal ({@link BOOTSTRAP_LOCK_TTL_MS}; tests shorten it). */
-  lockTtlMs = BOOTSTRAP_LOCK_TTL_MS;
-
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
@@ -316,6 +315,10 @@ export class BootstrapService {
     @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
     @Inject(KernelConfigService) private readonly configService: KernelConfigService,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+    /** The lock's lifetime without renewal. */
+    @Optional()
+    @Inject(BOOTSTRAP_LOCK_TTL)
+    private readonly lockTtlMs: number = BOOTSTRAP_LOCK_TTL_MS,
   ) {}
 
   private get db(): KernelSchemaDb {

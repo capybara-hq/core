@@ -7,7 +7,7 @@ import {
   type UiView,
   validateUiView,
 } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
 import { ConversationFiles } from "../conversations/files.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
@@ -95,6 +95,9 @@ async function readAtMost(body: ReadableStream<Uint8Array>, max: number): Promis
   return out;
 }
 
+/** Optional provider: a view previewer's render time limit (ms) instead of {@link FILE_PREVIEW_TIMEOUT_MS} (tests). */
+export const FILE_PREVIEW_TIMEOUT = Symbol("FILE_PREVIEW_TIMEOUT");
+
 /**
  * `file-preview@1` (UI refresh spec §5.8): which previewers take a file, in the org's order
  * (`capybara.file_previewers` rows first by position, then the rest in provider order; disabled ones
@@ -105,8 +108,6 @@ async function readAtMost(body: ReadableStream<Uint8Array>, max: number): Promis
  */
 @Injectable()
 export class PreviewerRegistry {
-  /** Default {@link FILE_PREVIEW_TIMEOUT_MS} (tests set less). */
-  timeoutMs = FILE_PREVIEW_TIMEOUT_MS;
   private readonly d: PreviewerRegistryDeps;
 
   constructor(
@@ -116,6 +117,9 @@ export class PreviewerRegistry {
     @Inject(StorageService) storage: Pick<StorageService, "kernel">,
     @Inject(KERNEL_LOGGER) log: Pick<Logger, "warn">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Optional()
+    @Inject(FILE_PREVIEW_TIMEOUT)
+    private readonly timeoutMs: number = FILE_PREVIEW_TIMEOUT_MS,
   ) {
     this.d = {
       get db(): KernelSchemaDb {

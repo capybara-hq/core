@@ -93,7 +93,7 @@ async function createOrg(req: Req): Promise<string> {
 const body = { enabled: true, config: { appId: "app-1", appSecret: SECRET } };
 
 describe("组织插件配置 HTTP", () => {
-  it("Kernel exposes orgExtensionConfigs; host.manifests() in load order", () => {
+  it("the application provides OrgExtensionConfigs; host.manifests() in load order", () => {
     expect(
       k.app
         .get(ExtensionHost)

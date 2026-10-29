@@ -33,9 +33,7 @@ export function providerRegistryFor(
   log?: Pick<Logger, "warn">,
   opts: { listTimeoutMs?: number } = {},
 ): ProviderRegistry {
-  const r = new ProviderRegistry(host, new CacheService(redis, quiet), redis, log);
-  if (opts.listTimeoutMs !== undefined) r.listTimeoutMs = opts.listTimeoutMs;
-  return r;
+  return new ProviderRegistry(host, new CacheService(redis, quiet), redis, log, opts.listTimeoutMs);
 }
 
 /** The LangGraph checkpoint saver over a test's pool. */
@@ -115,10 +113,10 @@ export function usageReporterFor(d: UsageReporterTestDeps): TestUsageReporter {
     { get: d.config },
     new LockService(conn(), quiet),
     d.log,
+    d.retry,
   );
   r.subscribers = d.subscribers;
   r.unservable = d.unservable ?? (async () => new Set());
-  if (d.retry) r.retry = d.retry;
   const start = r.startWorker.bind(r);
   const stop = r.stop.bind(r);
   return Object.assign(r, {

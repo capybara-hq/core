@@ -593,9 +593,6 @@ export async function loadMarketplaceEntry(
  */
 @Injectable()
 export class MarketplacesService {
-  /** The timeout of one manifest fetch (tests may shorten it). */
-  fetchTimeoutMs = MARKETPLACE_FETCH_TIMEOUT_MS;
-
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     /** The enterprise admin lock (identity/enterprise-admin.ts; R12): joins the caller's transaction. */
@@ -990,7 +987,7 @@ export class MarketplacesService {
           etag: row.etag,
           ...(token !== undefined && { token, tokenOrigin }),
           maxBytes: config.marketplaces.maxIndexBytes,
-          timeoutMs: this.fetchTimeoutMs,
+          timeoutMs: MARKETPLACE_FETCH_TIMEOUT_MS,
           net: marketplaceNetPolicy(config),
           signal,
         });
@@ -1241,7 +1238,7 @@ export class MarketplacesService {
       .where("i.name", "in", names)
       .execute();
     const todo = headsToResolve(listed, imported, config, MARKETPLACE_HEADS_MAX);
-    const timeoutMs = this.fetchTimeoutMs;
+    const timeoutMs = MARKETPLACE_FETCH_TIMEOUT_MS;
     const queue = [...todo];
     await Promise.all(
       Array.from({ length: Math.min(HEADS_CONCURRENCY, queue.length) }, async () => {

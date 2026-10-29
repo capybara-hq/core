@@ -144,6 +144,12 @@ class Jobs {
     await this.body(0);
   }
 
+  @counted
+  @LockedCron("0 0 1 1 *", { name: "test-gated", lockKey: "test-cron-gated", ttl: 5000 })
+  async gated() {
+    await this.body(0);
+  }
+
   /** Cooperative: ends (by throwing, as an aborted fetch would) once the stop signal aborts. */
   @LockedCron("0 0 1 1 *", { name: "test-stop", lockKey: "test-cron-stop", ttl: 5000 })
   async stoppable(signal?: AbortSignal) {
@@ -174,8 +180,11 @@ class Jobs {
   }
 }
 
-/** Boots one "replica"; only the cron jobs named in `keep` stay scheduled. */
-async function boot(keep: string[] = []) {
+/**
+ * Boots one "replica"; only the cron jobs named in `keep` stay scheduled. `open: false` leaves the
+ * start gate closed (as before the worker role's start).
+ */
+async function boot(keep: string[] = [], o: { open?: boolean } = {}) {
   const config = resolveConfig(
     {
       db: { url: pgc.url },
@@ -215,7 +224,7 @@ async function boot(keep: string[] = []) {
   );
   await app.init();
   // the start gate (R21): the kernel's worker role opens it after its start sequence
-  app.get(ScheduledRuns).open();
+  if (o.open !== false) app.get(ScheduledRuns).open();
   const reg = app.get(SchedulerRegistry);
   for (const name of [...reg.getCronJobs().keys()])
     if (!keep.includes(name)) reg.deleteCronJob(name);
@@ -391,6 +400,34 @@ describe("@LockedCron", () => {
         await a.jobs.m3();
       });
       expect(shared.tx).toEqual([false]);
+    } finally {
+      await shutDown(a);
+    }
+  });
+
+  it("before the start gate opens a tick runs nothing and claims neither its marker nor the run lock (R21)", async () => {
+    Object.assign(shared, {
+      active: 0,
+      inflight: 0,
+      maxActive: 0,
+      runs: 0,
+      tx: [],
+      perSecond: new Map(),
+    });
+    const a = await boot([], { open: false });
+    try {
+      await a.jobs.gated();
+      expect(shared.runs).toBe(0);
+      expect(a.info).toHaveBeenCalledWith("cron skipped: the scheduler is not started", {
+        cron: "test-gated",
+      });
+      expect(await redisOf(a).keys("cron:test-gated:*")).toEqual([]);
+      expect(await redisOf(a).exists("lock:test-cron-gated")).toBe(0);
+      // the contrast: once the gate is open the same call runs and claims its tick
+      a.app.get(ScheduledRuns).open();
+      await a.jobs.gated();
+      expect(shared.runs).toBe(1);
+      expect(await redisOf(a).keys("cron:test-gated:*")).toHaveLength(1);
     } finally {
       await shutDown(a);
     }

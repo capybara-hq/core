@@ -22,10 +22,10 @@ export function channelWebhooksFor(d: {
   handleTimeoutMs?: number;
   runtimeCacheMs?: number;
 }): ChannelWebhooks {
-  const w = new ChannelWebhooks(d.connections, d.inbound, d.log);
-  if (d.handleTimeoutMs !== undefined) w.handleTimeoutMs = d.handleTimeoutMs;
-  if (d.runtimeCacheMs !== undefined) w.runtimeCacheMs = d.runtimeCacheMs;
-  return w;
+  return new ChannelWebhooks(d.connections, d.inbound, d.log, {
+    ...(d.handleTimeoutMs !== undefined && { handleTimeoutMs: d.handleTimeoutMs }),
+    ...(d.runtimeCacheMs !== undefined && { runtimeCacheMs: d.runtimeCacheMs }),
+  });
 }
 
 /**

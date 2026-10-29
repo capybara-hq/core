@@ -5,7 +5,7 @@ import type {
   InboundEvent,
   Logger,
 } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { ApiError, type ErrorCode, errorBody } from "../errors.js";
 import { ExtensionUnloadedError, type InflightEntry } from "../extensions/inflight.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
@@ -19,6 +19,15 @@ import { ChannelInbound } from "./inbound.js";
 export const WEBHOOK_HANDLE_TIMEOUT_MS = 10_000;
 /** How long a connection's decrypted runtime (plugin + config) is reused across requests. */
 export const WEBHOOK_RUNTIME_CACHE_MS = 5_000;
+/** The timings of {@link ChannelWebhooks}. */
+export interface ChannelWebhookTimings {
+  /** The deadline of one request (ms), default {@link WEBHOOK_HANDLE_TIMEOUT_MS}. */
+  handleTimeoutMs: number;
+  /** How long a connection's runtime is reused (ms; 0 disables the cache), default {@link WEBHOOK_RUNTIME_CACHE_MS}. */
+  runtimeCacheMs: number;
+}
+/** Optional provider: {@link ChannelWebhookTimings} that replace some defaults (tests). */
+export const CHANNEL_WEBHOOK_TIMINGS = Symbol("CHANNEL_WEBHOOK_TIMINGS");
 /** Most connections whose runtime is cached in one process. */
 export const WEBHOOK_RUNTIME_CACHE_MAX = 1_000;
 
@@ -123,17 +132,21 @@ export class ChannelWebhooks {
   private readonly runtimes = new Map<string, { value: Runtime; expiresAt: number }>();
   /** Bumped by {@link invalidateAll}: a fetch started before the bump is not stored. */
   private generation = 0;
-  /** The deadline of one request (tests shorten it). */
-  handleTimeoutMs = WEBHOOK_HANDLE_TIMEOUT_MS;
-  /** How long a connection's runtime is reused; 0 disables the cache (tests). */
-  runtimeCacheMs = WEBHOOK_RUNTIME_CACHE_MS;
+  /** The deadline of one request. */
+  private readonly handleTimeoutMs: number;
+  /** How long a connection's runtime is reused; 0 disables the cache. */
+  private readonly runtimeCacheMs: number;
 
   constructor(
     @Inject(ChannelConnections)
     private readonly connections: Pick<ChannelConnections, "row" | "runtime">,
     @Inject(ChannelInbound) private readonly inbound: Pick<ChannelInbound, "onEvent">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "warn">,
-  ) {}
+    @Optional() @Inject(CHANNEL_WEBHOOK_TIMINGS) timings: Partial<ChannelWebhookTimings> = {},
+  ) {
+    this.handleTimeoutMs = timings.handleTimeoutMs ?? WEBHOOK_HANDLE_TIMEOUT_MS;
+    this.runtimeCacheMs = timings.runtimeCacheMs ?? WEBHOOK_RUNTIME_CACHE_MS;
+  }
 
   /** Drops the cached runtime of one connection (on `channel.changed`). */
   invalidate(connectionId: string): void {

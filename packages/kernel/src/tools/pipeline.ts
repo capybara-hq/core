@@ -197,27 +197,22 @@ export type DecidePolicy = (
 
 // ---- 管线 ----
 
-/** 测试钩子。 */
+/** The pipeline's test seams (`TOOL_PIPELINE_HOOKS`; the kernel never provides them). */
 export interface ToolPipelineHooks {
-  /** 工具执行返回之后、结果写入日志之前调用：抛错即模拟「工具已执行、结果未记录」时进程崩溃。 */
+  /**
+   * Called after a tool returned and before its result is logged: throwing simulates a crash
+   * between the execution and the record ("executed, result not recorded").
+   */
   afterExecute?(runId: string, callId: string): Promise<void>;
+  /** The policy decision; default {@link createDecidePolicy} (reads policies and grants live). */
+  decidePolicy?: DecidePolicy;
 }
 
 /** `tool_result.card`: an inline card under the call (display only). */
 type ToolCard = { plugin: string; view: string; key?: string };
 
-/**
- * The test seams of the pipeline (`TOOL_PIPELINE_TEST_HOOKS`, provided only by tests that build a
- * pipeline by hand; the kernel never provides it).
- */
-export interface ToolPipelineTestHooks {
-  /** 默认 {@link createDecidePolicy}（执行时实时读取策略与授权）。 */
-  decidePolicy?: DecidePolicy;
-  hooks?: ToolPipelineHooks;
-}
-
-/** The injection token of {@link ToolPipelineTestHooks} (optional; tests only). */
-export const TOOL_PIPELINE_TEST_HOOKS = Symbol("TOOL_PIPELINE_TEST_HOOKS");
+/** Optional provider: the pipeline's {@link ToolPipelineHooks} (tests). */
+export const TOOL_PIPELINE_HOOKS = Symbol("TOOL_PIPELINE_HOOKS");
 
 /** What the pipeline calls through (the sub-agent dispatch is read at call time: an R7 port). */
 interface PipelineDeps {
@@ -439,7 +434,7 @@ export class ToolPipeline {
     @Inject(ExtensionHost) host: Pick<ExtensionHost, "hooks" | "current"> | undefined,
     @Inject(ToolDrift) drift: Pick<ToolDrift, "onToolsChanged"> | undefined,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Optional() @Inject(TOOL_PIPELINE_TEST_HOOKS) testHooks?: ToolPipelineTestHooks,
+    @Optional() @Inject(TOOL_PIPELINE_HOOKS) hooks?: ToolPipelineHooks,
   ) {
     this.deps = {
       get db() {
@@ -453,7 +448,7 @@ export class ToolPipeline {
       approvals,
       questions,
       log,
-      hooks: testHooks?.hooks,
+      hooks,
       get pluginHooks() {
         return host?.hooks;
       },
@@ -470,7 +465,7 @@ export class ToolPipeline {
         return subagents ? { dispatch: (a: DispatchArgs) => subagents.dispatch(a) } : undefined;
       },
     };
-    const decide = testHooks?.decidePolicy;
+    const decide = hooks?.decidePolicy;
     // the default policy reads live, on the context's handle
     this.decide = decide ?? ((tool, def, c) => createDecidePolicy(kdb.db)(tool, def, c));
   }

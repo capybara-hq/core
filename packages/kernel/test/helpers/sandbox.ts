@@ -37,11 +37,11 @@ export function sandboxLeasesFor(
   Cls: typeof SandboxLeases = SandboxLeases,
 ): SandboxLeases {
   const log = kernelLog(d.log);
-  const leases = new Cls(new LockService(d.redis, log), d.redis, log);
-  if (d.ttlMs !== undefined) leases.ttlMs = d.ttlMs;
-  if (d.pollMs !== undefined) leases.pollMs = d.pollMs;
-  if (d.pathTtlMs !== undefined) leases.pathTtlMs = d.pathTtlMs;
-  return leases;
+  return new Cls(new LockService(d.redis, log), d.redis, log, {
+    ...(d.ttlMs !== undefined && { ttlMs: d.ttlMs }),
+    ...(d.pollMs !== undefined && { pollMs: d.pollMs }),
+    ...(d.pathTtlMs !== undefined && { pathTtlMs: d.pathTtlMs }),
+  });
 }
 
 /** What a test builds a {@link SandboxService} from (the old constructor's deps). */

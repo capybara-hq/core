@@ -20,6 +20,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import {
+  BOOTSTRAP_LOCK_TTL,
   BootstrapFailedError,
   BootstrapService,
   bootstrapManifestSha256,
@@ -28,6 +29,7 @@ import { enabledExtensionsByOrg, isExtensionEnabled } from "../../src/extensions
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
+import type { KernelOverride } from "../../src/overrides.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
@@ -65,6 +67,7 @@ async function boot(
   fx: { dir: string; manifest: BootstrapManifest } | undefined,
   overrides: Record<string, unknown> = {},
   logger: KernelLogger = createLogger("error"),
+  seams: KernelOverride[] = [],
 ): Promise<TestKernel> {
   const config: KernelConfig = runConfig(
     { pg: pgc.url, redis: rd.url },
@@ -80,11 +83,15 @@ async function boot(
     env: {},
     logger,
     ...(fx !== undefined && { bootstrap: { dir: fx.dir }, bootstrapManifest: fx.manifest }),
+    overrides: seams,
   });
   kernels.push(k);
   await k.start();
   return k;
 }
+/** A short `lock:bootstrap` TTL, so a run outlives it several times over. */
+const shortLock: KernelOverride[] = [{ provide: BOOTSTRAP_LOCK_TTL, useValue: 300 }];
+
 async function stopAll(): Promise<void> {
   while (kernels.length > 0) await kernels.pop()?.close();
 }
@@ -784,10 +791,10 @@ describe("config-declared names and the lock", () => {
 
   it("a run longer than the lock's TTL keeps lock:bootstrap by renewal; another holder cannot take it", async () => {
     const fx = await fixture([{ bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) }]);
-    const k = await boot(undefined);
+    // the lock's TTL is 300 ms (BOOTSTRAP_LOCK_TTL)
+    const k = await boot(undefined, {}, createLogger("error"), shortLock);
     const probe = new Redis(rd.url);
     const bootstrap = k.app.get(BootstrapService);
-    bootstrap.lockTtlMs = 300;
     try {
       const imports = {
         prepare: async (...a: Parameters<PluginImport["prepare"]>) => {
@@ -806,17 +813,16 @@ describe("config-declared names and the lock", () => {
       expect(r.results).toEqual([{ name: "alpha", action: "installed", version: "1.0.0" }]);
       expect(await probe.exists("lock:bootstrap")).toBe(0);
     } finally {
-      bootstrap.lockTtlMs = 120_000;
       probe.disconnect();
     }
   });
 
   it("a run that loses lock:bootstrap mid-run rejects naming the lock and records nothing as done", async () => {
     const fx = await fixture([{ bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) }]);
-    const k = await boot(undefined);
+    // the lock's TTL is 300 ms (BOOTSTRAP_LOCK_TTL)
+    const k = await boot(undefined, {}, createLogger("error"), shortLock);
     const probe = new Redis(rd.url);
     const bootstrap = k.app.get(BootstrapService);
-    bootstrap.lockTtlMs = 300;
     try {
       const imports = {
         prepare: async (...a: Parameters<PluginImport["prepare"]>) => {
@@ -840,7 +846,6 @@ describe("config-declared names and the lock", () => {
       // the other holder's key is left alone
       expect(await probe.get("lock:bootstrap")).toBe("another-replica");
     } finally {
-      bootstrap.lockTtlMs = 120_000;
       await probe.del("lock:bootstrap");
       probe.disconnect();
     }

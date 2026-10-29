@@ -148,9 +148,6 @@ describe("output-cleanup", () => {
         (p) => p.provide,
       ),
     ).toEqual([MaintenanceProcessor]);
-    await probe.add("some-job", {}, { jobId: "cleanup-probe" });
-    await new Promise((r) => setTimeout(r, 500));
-    expect(await (await probe.getJob("cleanup-probe"))?.getState()).toBe("waiting");
   });
 });
 

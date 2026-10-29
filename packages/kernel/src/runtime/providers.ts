@@ -12,7 +12,7 @@ import {
   type ModelRequestV1,
   parseExtensionPoint,
 } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable, Module } from "@nestjs/common";
+import { Inject, Injectable, Module, Optional } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import type { ModelRef } from "../agents/definition.js";
 import { ApiError } from "../errors.js";
@@ -25,6 +25,8 @@ import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 const MODELS_TTL_SECONDS = 600;
 /** 单个供应商 `listModels()` 的时限（毫秒）：一个卡住的供应商不拖住整个列表与解析。 */
 export const LIST_MODELS_TIMEOUT_MS = 10_000;
+/** Optional provider: the `listModels()` time limit (ms) instead of {@link LIST_MODELS_TIMEOUT_MS} (tests). */
+export const LIST_MODELS_TIMEOUT = Symbol("LIST_MODELS_TIMEOUT");
 /**
  * 列表视图（后台模型页、组织模型页）里列模型失败的供应商在这么多秒内直接标 error、不再请求（Redis，多副本共享）。
  * 只用于列表；`resolve`（运行时）照常每次请求，失败由降级梯子重试。
@@ -144,14 +146,15 @@ export function adaptModelProviderV1(impl: ModelProviderV1): ModelProvider {
  */
 @Injectable()
 export class ProviderRegistry {
-  /** The `listModels()` time limit (tests shorten it). */
-  listTimeoutMs = LIST_MODELS_TIMEOUT_MS;
-
   constructor(
     @Inject(ExtensionRegistry) private readonly host: ProviderHost,
     @Inject(CacheService) readonly cacheService: CacheService,
     @Inject(REDIS) private readonly kv: Redis,
     @Inject(KERNEL_LOGGER) private readonly log?: Pick<Logger, "warn">,
+    /** The `listModels()` time limit. */
+    @Optional()
+    @Inject(LIST_MODELS_TIMEOUT)
+    private readonly listTimeoutMs: number = LIST_MODELS_TIMEOUT_MS,
   ) {}
 
   /** `listModels()` 加时限（到时按失败处理，供应商的调用留在后台、结果丢弃）。 */

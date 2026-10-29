@@ -189,8 +189,6 @@ function actionResultProblems(r: unknown): string[] {
  */
 @Injectable()
 export class UiViews {
-  /** 默认 {@link UI_CALL_TIMEOUT_MS}（测试可调小）。 */
-  timeoutMs = UI_CALL_TIMEOUT_MS;
   private readonly d: UiViewsDeps;
 
   constructor(
@@ -420,7 +418,7 @@ export class UiViews {
       plugin: t.plugin,
       what,
       fields: { plugin: t.plugin, contribution: t.id, orgId: t.orgId },
-      timeoutMs: this.timeoutMs,
+      timeoutMs: UI_CALL_TIMEOUT_MS,
       failCode: what === "render" ? "ui.render_failed" : "ui.action_failed",
       failMessage: `Plugin ${t.plugin} failed to ${what} ${t.id}`,
       fn,

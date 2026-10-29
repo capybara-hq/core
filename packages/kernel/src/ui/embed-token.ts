@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { EmbedClaims } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable, Module } from "@nestjs/common";
+import { Inject, Injectable, Module, Optional } from "@nestjs/common";
 import type { Keyring } from "../ctx/secrets.js";
 import { KEYRING } from "../infra/tokens.js";
 import { ORG_ROLES } from "../orgs/roles.js";
@@ -73,14 +73,18 @@ function parseClaims(v: unknown): EmbedClaims | null {
  * 无状态（不落库、不进 Redis）：各副本用同一主密钥即可校验，不需要共享状态。One provider: the UI
  * routes issue tokens with it and every extension's `ctx` verifies them with it.
  */
+/** Optional provider: the clock {@link EmbedTokens} issues and checks with (default `Date.now`; tests). */
+export const EMBED_TOKEN_CLOCK = Symbol("EMBED_TOKEN_CLOCK");
+
 @Injectable()
 export class EmbedTokens {
   private readonly current: Buffer;
   private readonly keys: Buffer[];
-  /** The clock (tests set it). */
-  now: () => number = Date.now;
 
-  constructor(@Inject(KEYRING) keyring: Keyring) {
+  constructor(
+    @Inject(KEYRING) keyring: Keyring,
+    @Optional() @Inject(EMBED_TOKEN_CLOCK) private readonly now: () => number = Date.now,
+  ) {
     const derived = keyring.deriveKey(EMBED_KEY_INFO);
     const ids = [derived.currentId, ...keyring.toJSON().previousIds];
     this.current = derived.current;

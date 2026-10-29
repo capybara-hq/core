@@ -1,6 +1,6 @@
 import type { HookHandler, Logger, UsageReportPayload } from "@capybara-hq/plugin-sdk";
 import { getQueueToken } from "@nestjs/bullmq";
-import { Inject, Injectable, Module } from "@nestjs/common";
+import { Inject, Injectable, Module, Optional } from "@nestjs/common";
 import {
   DelayedError,
   Job,
@@ -49,6 +49,13 @@ export interface UsageReportJob {
 export const USAGE_REPORT_ATTEMPTS = 6;
 /** Retry backoff: 2 s, doubling (2, 4, 8, 16, 32 s). */
 export const USAGE_REPORT_BACKOFF_MS = 2000;
+/** The delivery retry policy of {@link UsageReporter}: attempts and the first exponential backoff. */
+export interface UsageReportRetry {
+  attempts: number;
+  backoffMs: number;
+}
+/** Optional provider: the {@link UsageReportRetry} instead of the defaults above (tests). */
+export const USAGE_REPORT_RETRY = Symbol("USAGE_REPORT_RETRY");
 /** Failed jobs (given up) are kept for inspection, at most {@link KEEP_FAILED_MAX} of them. */
 const KEEP_FAILED_S = 7 * 86_400;
 /** Upper bound on kept failed jobs (I-2): a long outage of a billing endpoint cannot grow Redis. */
@@ -204,8 +211,6 @@ export function narrowPending(stored: readonly string[] | undefined, failed: rea
  */
 @Injectable()
 export class UsageReporter {
-  /** The retry policy (tests shorten it). */
-  retry = { attempts: USAGE_REPORT_ATTEMPTS, backoffMs: USAGE_REPORT_BACKOFF_MS };
   private worker: Worker<UsageReportJob> | undefined;
   private closed = false;
   private readonly stopping = new AbortController();
@@ -223,6 +228,12 @@ export class UsageReporter {
     /** The warning throttle's markers (`capk:usage-warn:<plugin>:<kind>`, SET NX PX). */
     @Inject(LockService) private readonly locks: Pick<LockService, "lease">,
     @Inject(KERNEL_LOGGER) private readonly log: Logger,
+    @Optional()
+    @Inject(USAGE_REPORT_RETRY)
+    private readonly retry: UsageReportRetry = {
+      attempts: USAGE_REPORT_ATTEMPTS,
+      backoffMs: USAGE_REPORT_BACKOFF_MS,
+    },
   ) {
     queue.on("error", (err) => this.log.error("usage report queue error", { err }));
   }

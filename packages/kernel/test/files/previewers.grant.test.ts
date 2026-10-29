@@ -69,8 +69,8 @@ function setup(render: NonNullable<FilePreviewer["render"]>, timeoutMs = 50) {
     ignoringStore as never,
     { warn: () => {} },
     undefined as never,
+    timeoutMs,
   );
-  reg.timeoutMs = timeoutMs;
   const call = () =>
     reg.render({
       orgId: "o",

@@ -2,7 +2,12 @@ import { EventEmitter } from "node:events";
 import { createLogger } from "@capybara-hq/kernel";
 import { describe, expect, it, vi } from "vitest";
 
-const state = vi.hoisted(() => ({ stopDone: false, stopRequested: false }));
+const state = vi.hoisted(() => ({
+  stopDone: false,
+  stopRequested: false,
+  /** "fail": the fake start rejects at once, without any signal and without calling `exit`. */
+  mode: "signal" as "signal" | "fail",
+}));
 
 // Only startKernelApp and the config loading are replaced: a SIGTERM during the start. The fake
 // installs the signal handlers the way startKernelApp does; the start fails at its next
@@ -19,6 +24,7 @@ vi.mock("@capybara-hq/kernel", async (importOriginal) => {
       _options: unknown,
       signalOptions: import("@capybara-hq/kernel").ShutdownSignalOptions,
     ) => {
+      if (state.mode === "fail") throw new Error("kernel start failed");
       let release: () => void = () => {};
       const stopped = new Promise<void>((r) => {
         release = r;
@@ -58,5 +64,18 @@ describe("runStart", () => {
     expect(code).toBeUndefined();
     expect(state.stopDone).toBe(true);
     expect(exits).toEqual([{ code: 0, stopDone: true }]);
+  });
+
+  it("a start that fails without a signal returns 1 and never calls exit", async () => {
+    state.mode = "fail";
+    try {
+      const log = createLogger("error", { write: () => {} });
+      const exits: number[] = [];
+      const code = await runStart({}, log, {}, (c) => void exits.push(c), new EventEmitter());
+      expect(code).toBe(1);
+      expect(exits).toEqual([]);
+    } finally {
+      state.mode = "signal";
+    }
   });
 });

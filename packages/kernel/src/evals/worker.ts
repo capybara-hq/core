@@ -235,8 +235,6 @@ export class EvalWorker {
   private readonly active = new Set<AbortController>();
   private closing = false;
   private readonly d: EvalWorkerDeps;
-  /** 拿不到配额时的延后时长（测试可改小）。 */
-  quotaRetryMs = EVAL_QUOTA_RETRY_MS;
 
   constructor(
     @Inject(KernelDb) kdb: KernelDb,
@@ -380,7 +378,7 @@ export class EvalWorker {
     const slot = await this.d.quota.enter(orgId, member, limit, ORG_QUOTA_LEASE_MS);
     if (!slot) {
       // 配额满：固定 5 秒后再试，不按事件唤醒。评测是后台批任务，几秒空等可以接受，换来没有跨副本通知
-      await job.moveToDelayed(Date.now() + this.quotaRetryMs, token);
+      await job.moveToDelayed(Date.now() + EVAL_QUOTA_RETRY_MS, token);
       throw new DelayedError();
     }
     const ac = new AbortController();

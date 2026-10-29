@@ -347,7 +347,20 @@ kernel with `createKernelApp(config, options)` (started, not listening) or
 `closeKernelApp(app)`, reach its HTTP side with `kernelAppHttp(app)` / `kernelAppPort(app)` and a
 service with `app.get(Class)`; tests use `@capybara-hq/testing`'s `startTestKernel`.
 `KernelOptions` is `KernelAppOptions`. `KernelAppOptions.overrides` takes only the named test seams
-(`KernelOverride`: `AGENT_LOOP_FACTORY`, `RUN_HOOKS`, `EVAL_REPLAY_HOOKS`, `APP_INTERCEPTOR`); any
-other token is refused when the application is built. New exports: `KernelModule`, `KernelOverride`
+(`KernelOverride`: `AGENT_LOOP_FACTORY`, `RUN_HOOKS`, `EVAL_REPLAY_HOOKS`, `TOOL_PIPELINE_HOOKS`,
+`APP_INTERCEPTOR` and the timing tokens below); any other token is refused when the application is
+built. New exports: `KernelModule`, `KernelOverride`
 and the infra decorators `Transactional`, `afterCommit`, `WithLock`, `Cacheable`, `CacheEvict`,
 `LockedCron`, `LockedInterval`, `Throttled`, `createZodDto`, `ZBody`, `ZQuery`, `ZParam`.
+
+Test seams (nest kernel Task 5.3): no provider has a mutable public test knob any more. Each
+timing or clock tests shorten is an optional seam token the kernel never provides, set through
+`KernelAppOptions.overrides` (or the constructor in a unit test): `BOOTSTRAP_LOCK_TTL` (was
+`BootstrapService.lockTtlMs`), `FILE_PREVIEW_TIMEOUT` (`PreviewerRegistry.timeoutMs`),
+`LIST_MODELS_TIMEOUT` (`ProviderRegistry.listTimeoutMs`), `USAGE_REPORT_RETRY`
+(`UsageReporter.retry`), `SANDBOX_LEASE_TIMINGS` (`SandboxLeases.ttlMs` / `pollMs` / `pathTtlMs`,
+now read-only), `CHANNEL_WEBHOOK_TIMINGS` (`ChannelWebhooks.handleTimeoutMs` / `runtimeCacheMs`)
+and `EMBED_TOKEN_CLOCK` (`EmbedTokens.now`). `UiViews.timeoutMs`, `EvalWorker.quotaRetryMs` and
+`MarketplacesService.fetchTimeoutMs` are gone (their constants apply). The tool pipeline's seam
+`TOOL_PIPELINE_TEST_HOOKS` is now `TOOL_PIPELINE_HOOKS` (`ToolPipelineHooks` carries
+`afterExecute` and `decidePolicy`), one of the `KernelOverride` tokens.
