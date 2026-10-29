@@ -9,12 +9,14 @@ import { KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { AccountsService } from "../../src/identity/accounts.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
+import { IdentityBinding } from "../../src/identity/binding.js";
+import { ExternalIdentities } from "../../src/identity/external.js";
 import { createLogger } from "../../src/log.js";
 import { type FakeIdpCode, fakeIdpCode } from "../fixtures/plugins/fake-idp/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, type CookieJar, cookieJar, setCookies } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
+import { startKernel, type TestKernel } from "../helpers/runs.js";
 
 const FAKE_IDP = fileURLToPath(new URL("../fixtures/plugins/fake-idp/index.ts", import.meta.url));
 const PUBLIC = "https://cap.example";
@@ -22,7 +24,7 @@ const PW = "correct horse battery";
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
@@ -30,7 +32,7 @@ let accounts: AccountsService;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  k = await createKernel(
+  k = await startKernel(
     KernelConfigSchema.parse({
       db: { url: pgc.url, poolMax: 5 },
       redis: { url: rd.url },
@@ -44,14 +46,13 @@ beforeAll(async () => {
     }),
     { env: {}, logger: createLogger("error", { write: () => {} }) },
   );
-  await k.start();
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
   accounts = accountsFor(db);
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -309,7 +310,7 @@ describe("IM 身份绑定", () => {
   };
 
   it("令牌 15 分钟、单次有效；需登录；绑定到当前账号", async () => {
-    const url = await k.identity.binding.createBindToken({
+    const url = await k.app.get(IdentityBinding).createBindToken({
       connectionId: await newConnection("conn-1"),
       identity: imIdentity(),
     });
@@ -337,7 +338,9 @@ describe("IM 身份绑定", () => {
     });
     const ok = await alice.req({ method: "POST", url: `/api/v1/bind/${token}` });
     expect(ok.statusCode).toBe(200);
-    expect(await k.identity.external.findAccount("fake-idp:t1", "im-1")).toBe(alice.account.id);
+    expect(await k.app.get(ExternalIdentities).findAccount("fake-idp:t1", "im-1")).toBe(
+      alice.account.id,
+    );
 
     const again = await alice.req({ method: "POST", url: `/api/v1/bind/${token}` });
     expect(again.statusCode).toBe(404);
@@ -356,21 +359,21 @@ describe("IM 身份绑定", () => {
       url: `/api/v1/me/identities/${encodeURIComponent("fake-idp:t1")}/im-1`,
     });
     expect(del.statusCode).toBe(204);
-    expect(await k.identity.external.findAccount("fake-idp:t1", "im-1")).toBeUndefined();
+    expect(await k.app.get(ExternalIdentities).findAccount("fake-idp:t1", "im-1")).toBeUndefined();
   });
 
   it("身份已绑定他人 → 409 identity.taken", async () => {
     const alice = await localSession("alice");
     const bob = await localSession("bob");
     const t1 = tokenOf(
-      await k.identity.binding.createBindToken({
+      await k.app.get(IdentityBinding).createBindToken({
         connectionId: await newConnection(),
         identity: imIdentity(),
       }),
     );
     expect((await alice.req({ method: "POST", url: `/api/v1/bind/${t1}` })).statusCode).toBe(200);
     const t2 = tokenOf(
-      await k.identity.binding.createBindToken({
+      await k.app.get(IdentityBinding).createBindToken({
         connectionId: await newConnection(),
         identity: imIdentity(),
       }),
@@ -378,7 +381,9 @@ describe("IM 身份绑定", () => {
     const res = await bob.req({ method: "POST", url: `/api/v1/bind/${t2}` });
     expect(res.statusCode).toBe(409);
     expect(errCode(res)).toBe("identity.taken");
-    expect(await k.identity.external.findAccount("fake-idp:t1", "im-1")).toBe(alice.account.id);
+    expect(await k.app.get(ExternalIdentities).findAccount("fake-idp:t1", "im-1")).toBe(
+      alice.account.id,
+    );
   });
 
   it("无效 / 伪造的令牌 → 404 bind.invalid", async () => {
@@ -423,7 +428,7 @@ describe("修复轮 1", () => {
         })
       ).statusCode,
     ).toBe(200);
-    const url = await k.identity.binding.createBindToken({
+    const url = await k.app.get(IdentityBinding).createBindToken({
       connectionId: await newConnection(),
       identity: {
         source: "fake-idp:t1",
@@ -449,7 +454,9 @@ describe("修复轮 1", () => {
     });
     expect(res.statusCode).toBe(409);
     expect(errCode(res)).toBe("identity.last_login_method");
-    expect(await k.identity.external.findAccount("fake-idp:t1", "u-last")).not.toBeUndefined();
+    expect(
+      await k.app.get(ExternalIdentities).findAccount("fake-idp:t1", "u-last"),
+    ).not.toBeUndefined();
   });
 });
 
@@ -467,7 +474,7 @@ describe("修复波 W1", () => {
   }
 
   const bindTo = async (req: ReturnType<typeof asUser>, externalId: string) => {
-    const url = await k.identity.binding.createBindToken({
+    const url = await k.app.get(IdentityBinding).createBindToken({
       connectionId: await newConnection(),
       identity: {
         source: "fake-idp:t1",
@@ -591,7 +598,7 @@ describe("修复波 W1", () => {
     const bob = await loggedIn("bob");
     const mk = async (externalId: string) => {
       const connectionId = await newConnection();
-      const url = await k.identity.binding.createBindToken({
+      const url = await k.app.get(IdentityBinding).createBindToken({
         connectionId,
         identity: {
           source: "fake-idp:t1",
@@ -619,7 +626,7 @@ describe("修复波 W1", () => {
       expect(errCode(res)).toBe("bind.invalid");
     }
     for (const ext of ["im-del", "im-gone", "im-off"]) {
-      expect(await k.identity.external.findAccount("fake-idp:t1", ext)).toBeUndefined();
+      expect(await k.app.get(ExternalIdentities).findAccount("fake-idp:t1", ext)).toBeUndefined();
     }
   });
 });

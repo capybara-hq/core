@@ -11,10 +11,9 @@ import { ConfigModule } from "../../src/infra/config/config.module.js";
 import { LoggingModule } from "../../src/infra/logging/logging.module.js";
 import { RedisModule } from "../../src/infra/redis/redis.module.js";
 import { NAMED_THROTTLERS, throttlerKey } from "../../src/infra/throttler/named-throttlers.js";
-import { RedisThrottlerStorage } from "../../src/infra/throttler/redis-throttler-storage.js";
 import { Throttled } from "../../src/infra/throttler/throttler.guard.js";
 import { KernelThrottlerModule } from "../../src/infra/throttler/throttler.module.js";
-import { KERNEL_LOGGER, REDIS } from "../../src/infra/tokens.js";
+import { REDIS } from "../../src/infra/tokens.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
 
 let rd: TestContainer;

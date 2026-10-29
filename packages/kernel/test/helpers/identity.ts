@@ -29,7 +29,7 @@ import {
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { KernelEvents } from "../../src/infra/events/kernel-events.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
-import { REDIS } from "../../src/infra/tokens.js";
+import { KERNEL_LOGGER, REDIS } from "../../src/infra/tokens.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
 import { DirectorySync } from "../../src/orgs/directory-sync.js";
 import { InvitationsService } from "../../src/orgs/invitations.service.js";
@@ -250,7 +250,7 @@ export function kernelTransaction<T>(
  * org extension configs, offboarding or queue).
  */
 export function directorySyncFor(
-  k: { app: { get(c: unknown): unknown }; log: KernelLogger },
+  k: { app: { get(c: unknown): unknown } },
   o: {
     redis?: ConstructorParameters<typeof DirectorySync>[2];
     orgExtensionConfigs?: ConstructorParameters<typeof DirectorySync>[4];
@@ -270,6 +270,6 @@ export function directorySyncFor(
     get(OrgLock),
     o.queue ?? get(getQueueToken(MAINTENANCE_QUEUE_NAME)),
     get(LockService),
-    k.log,
+    get(KERNEL_LOGGER),
   );
 }

@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { startTestPostgres, startTestRedis } from "@capybara-hq/testing";
-import { Body, Controller, Get, Module, Param, Post, Query, Req } from "@nestjs/common";
+import { Body, Controller, Get, Module, Param, Post, Req } from "@nestjs/common";
 import { APP_FILTER, NestFactory } from "@nestjs/core";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 import { describe, expect, it } from "vitest";
@@ -14,8 +14,8 @@ import { KERNEL_LOGGER } from "../../src/infra/tokens.js";
 import { createZodDto } from "../../src/infra/validation/create-zod-dto.js";
 import { ValidationModule } from "../../src/infra/validation/validation.module.js";
 import { ZBody, ZParam, ZQuery } from "../../src/infra/validation/zod-params.js";
-import { createKernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
+import { startKernel } from "../helpers/runs.js";
 
 const BodySchema = z.object({
   name: z.string().min(2),
@@ -197,7 +197,7 @@ describe("http.swagger on the kernel", () => {
     const rd = await startTestRedis();
     const masterKey = Buffer.alloc(32, 7).toString("base64");
     const boot = async (swagger?: boolean) => {
-      const k = await createKernel(
+      const k = await startKernel(
         KernelConfigSchema.parse({
           roles: ["api"],
           db: { url: pgc.url, poolMax: 3 },
@@ -208,7 +208,6 @@ describe("http.swagger on the kernel", () => {
         }),
         { env: {}, logger: createLogger("error", { write: () => {} }) },
       );
-      await k.start();
       return k;
     };
     try {
@@ -216,14 +215,14 @@ describe("http.swagger on the kernel", () => {
       try {
         expect((await off.http.inject({ method: "GET", url: "/docs" })).statusCode).toBe(404);
       } finally {
-        await off.stop();
+        await off.close();
       }
       const on = await boot(true);
       try {
         expect((await on.http.inject({ method: "GET", url: "/docs" })).statusCode).toBe(200);
         expect((await on.http.inject({ method: "GET", url: "/docs-json" })).statusCode).toBe(200);
       } finally {
-        await on.stop();
+        await on.close();
       }
     } finally {
       await Promise.all([pgc.stop(), rd.stop()]);

@@ -9,11 +9,11 @@ import { createDb } from "../../src/db/pool.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import { credentialRedisKey } from "../../src/infra/throttler/credential-throttler.js";
 import { NAMED_THROTTLERS } from "../../src/infra/throttler/named-throttlers.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, type CookieJar, cookieJar, setCookies } from "../helpers/http.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
+import { buildKernel, startKernel, type TestKernel } from "../helpers/runs.js";
 
 /** The Redis key of the per-IP login counter (the `login-ip` credential throttler). */
 const loginIpKey = (ip: string) =>
@@ -21,7 +21,7 @@ const loginIpKey = (ip: string) =>
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
@@ -43,15 +43,14 @@ const cfg = (http: Record<string, unknown> = {}): KernelConfig =>
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  k = await createKernel(cfg(), { env: {}, logger: createLogger("error", { write: () => {} }) });
-  await k.start();
+  k = await startKernel(cfg(), { env: {}, logger: createLogger("error", { write: () => {} }) });
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
   accounts = accountsFor(db);
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -525,7 +524,7 @@ describe("http.trustProxy：客户端 IP", () => {
 
   /** 用给定 trustProxy 起一个内核，从 127.0.0.1 带 X-Forwarded-For 登录，返回会话记录的 ip。 */
   async function sessionIp(trustProxy: unknown): Promise<string | null> {
-    const kk = await createKernel(cfg({ trustProxy }), quiet);
+    const kk = await buildKernel(cfg({ trustProxy }), quiet);
     try {
       await kk.start();
       expect((await kk.http.inject(viaProxy(PW))).statusCode).toBe(200);
@@ -537,7 +536,7 @@ describe("http.trustProxy：客户端 IP", () => {
       await db.deleteFrom("sessions").execute();
       return row.ip;
     } finally {
-      await kk.stop();
+      await kk.close();
     }
   }
 
@@ -548,7 +547,7 @@ describe("http.trustProxy：客户端 IP", () => {
   });
 
   it("失败登录的 IP 限流键同样按解析出的客户端 IP", async () => {
-    const kk = await createKernel(cfg({ trustProxy: 1 }), quiet);
+    const kk = await buildKernel(cfg({ trustProxy: 1 }), quiet);
     try {
       await kk.start();
       await kk.http.inject(viaProxy("wrong password!!"));
@@ -556,7 +555,7 @@ describe("http.trustProxy：客户端 IP", () => {
       expect(await redis.exists(loginIpKey("127.0.0.1"))).toBe(0);
       expect(await redis.exists(loginIpKey("1.1.1.1"))).toBe(0);
     } finally {
-      await kk.stop();
+      await kk.close();
     }
   });
 });
@@ -654,7 +653,7 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
     const url = new URL(rd.url);
     url.username = "limited";
     url.password = "limited-pw";
-    const kk = await createKernel(
+    const kk = await buildKernel(
       KernelConfigSchema.parse({
         db: { url: pgc.url, poolMax: 3 },
         redis: { url: url.toString() },
@@ -708,7 +707,7 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
       );
       expect(await accounts.authenticateLocal("alice", "another long password")).not.toBeNull();
     } finally {
-      await kk.stop();
+      await kk.close();
       await redis.call("ACL", "DELUSER", "limited");
     }
   }, 60_000);
@@ -786,7 +785,7 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
     const url = new URL(pgc.url);
     url.pathname = `/${brkName}`;
     await sql`CREATE DATABASE ${brkDb}`.execute(adminDb);
-    const kk = await createKernel(
+    const kk = await buildKernel(
       KernelConfigSchema.parse({
         db: { url: url.toString(), poolMax: 2 },
         redis: { url: rd.url },
@@ -820,7 +819,7 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
       // 不带 Cookie 的公开路由不受影响
       expect((await kk.http.inject({ method: "GET", url: "/healthz" })).statusCode).toBe(200);
     } finally {
-      await kk.stop();
+      await kk.close();
       await brk.destroy().catch(() => {});
       await sql`DROP DATABASE IF EXISTS ${brkDb} WITH (FORCE)`.execute(adminDb);
       await adminDb.destroy();

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
@@ -10,11 +11,16 @@ import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import type { ApiTokenService } from "../../src/identity/api-tokens.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { KERNEL_BUS } from "../../src/infra/tokens.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
+import { Offboarding } from "../../src/orgs/offboarding.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { SANDBOX_DESTROY_FOR_JOB } from "../../src/sandbox/jobs.js";
+import { ApprovalsService } from "../../src/tools/approvals.service.js";
+import { Credentials } from "../../src/tools/credentials.js";
+import { QuestionsService } from "../../src/tools/questions.service.js";
 import { anonymousGuestsFor } from "../helpers/channels.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
@@ -27,13 +33,14 @@ import {
   testOffboarding,
 } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
+import { startKernel, type TestKernel } from "../helpers/runs.js";
 import { approvalsFor, credentialsFor, questionsFor } from "../helpers/tools.js";
 
 const PW = "correct horse battery";
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
@@ -43,7 +50,7 @@ let tokens: ApiTokenService;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  k = await createKernel(
+  k = await startKernel(
     KernelConfigSchema.parse({
       db: { url: pgc.url, poolMax: 5 },
       redis: { url: rd.url },
@@ -54,7 +61,6 @@ beforeAll(async () => {
     }),
     { env: {}, logger: createLogger("error", { write: () => {} }) },
   );
-  await k.start();
   raw = createDb(pgc.url, 5);
   db = legacyDbFor(raw);
   redis = new Redis(rd.url);
@@ -63,7 +69,7 @@ beforeAll(async () => {
   tokens = apiTokensFor(db);
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -170,7 +176,7 @@ beforeEach(async () => {
 
   const connectorId = await insertConnector(orgId, "docs", owner.id);
   const otherAppId = await insertConnector(otherOrgId, "docs", owner.id);
-  const creds = k.tools.credentials;
+  const creds = k.app.get(Credentials);
   await creds.setStatic(orgId, connectorId, AUTH, personal(leaver.id), { token: "leaver-token" });
   await creds.setStatic(orgId, connectorId, AUTH, personal(bystander.id), { token: "b-token" });
   await creds.setStatic(otherOrgId, otherAppId, AUTH, personal(leaver.id), { token: "other" });
@@ -194,20 +200,20 @@ beforeEach(async () => {
     connectorId,
     input: {},
   };
-  const approval = await k.tools.approvals.request({
+  const approval = await k.app.get(ApprovalsService).request({
     ...base,
     callId: "c1",
     requestedFor: leaver.id,
     approverRole: null,
   });
   // 按角色升级的审批不是「其作为 requested_for」的：事务内不取消，随运行中止才取消
-  const roleApproval = await k.tools.approvals.request({
+  const roleApproval = await k.app.get(ApprovalsService).request({
     ...base,
     callId: "c2",
     requestedFor: null,
     approverRole: "admin",
   });
-  const question = await k.tools.questions.ask({
+  const question = await k.app.get(QuestionsService).ask({
     orgId,
     conversationId,
     runId,
@@ -365,7 +371,11 @@ describe("离职处理", () => {
   it("原子：中途失败则什么都不变", async () => {
     const broken = testOffboarding(db, {
       credentials: credentialsFor(db, null as never),
-      approvals: approvalsFor(db, eventLogFor(db, k.bus), () => k.config),
+      approvals: approvalsFor(
+        db,
+        eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
+        () => k.app.get(KernelConfigService).get(),
+      ),
       questions: {
         cancelPendingFor: async () => {
           throw new Error("boom");
@@ -409,7 +419,7 @@ describe("离职处理", () => {
   });
 
   it("offboard：非成员 → member.not_found", async () => {
-    const off = k.identity.offboarding;
+    const off = k.app.get(Offboarding);
     expect(
       await codeOf(kernelTransaction(k, () => off.offboard(f.orgId, randomUUID(), "directory"))),
     ).toBe("member.not_found");
@@ -490,17 +500,17 @@ describe("修复轮 1：离职中止此人在该组织进行中的运行", () =>
 
   it("提交后的中止没做成（如进程崩溃）→ 兜底扫描中止该运行", async () => {
     await kernelTransaction(k, () =>
-      k.identity.offboarding.offboard(f.orgId, f.leaver.id, "directory"),
+      k.app.get(Offboarding).offboard(f.orgId, f.leaver.id, "directory"),
     );
     expect(await runStatus(f.runId)).toBe("waiting");
     // 事务内只取消其作为处理人的审批
     expect(await status("approvals", f.approvalId)).toBe("cancelled");
     expect(await status("approvals", f.roleApprovalId)).toBe("pending");
-    const n = await k.identity.offboarding.sweep();
+    const n = await k.app.get(Offboarding).sweep();
     expect(n).toBe(1);
     expect(await runStatus(f.runId)).toBe("aborted");
     expect(await runStatus(f.otherRunId)).toBe("waiting");
-    expect(await k.identity.offboarding.sweep()).toBe(0);
+    expect(await k.app.get(Offboarding).sweep()).toBe(0);
   });
 });
 
@@ -538,8 +548,16 @@ describe("兜底扫描：按创建时间分页、不碰现任成员的运行", (
       db,
       {
         credentials: credentialsFor(db, null as never),
-        approvals: approvalsFor(db, eventLogFor(db, k.bus), () => k.config),
-        questions: questionsFor(db, eventLogFor(db, k.bus), () => k.config),
+        approvals: approvalsFor(
+          db,
+          eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
+          () => k.app.get(KernelConfigService).get(),
+        ),
+        questions: questionsFor(
+          db,
+          eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
+          () => k.app.get(KernelConfigService).get(),
+        ),
         offboardRuns: {
           abortWaiting: async () => false,
           abortIfOrphaned: async () => false,
@@ -580,8 +598,16 @@ describe("兜底扫描：按创建时间分页、不碰现任成员的运行", (
       db,
       {
         credentials: credentialsFor(db, null as never),
-        approvals: approvalsFor(db, eventLogFor(db, k.bus), () => k.config),
-        questions: questionsFor(db, eventLogFor(db, k.bus), () => k.config),
+        approvals: approvalsFor(
+          db,
+          eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
+          () => k.app.get(KernelConfigService).get(),
+        ),
+        questions: questionsFor(
+          db,
+          eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
+          () => k.app.get(KernelConfigService).get(),
+        ),
         offboardRuns: {
           abortWaiting: async () => false,
           abortIfOrphaned: async () => false,
@@ -676,7 +702,7 @@ describe("修复波 W1：离职补漏", () => {
       VALUES (${f.orgId}, ${f.leaver.id}, ${f.agentId}, 'docs__create_doc', 'h')`.execute(raw);
     await expect(
       kernelTransaction(k, async () => {
-        await k.identity.offboarding.offboard(f.orgId, f.leaver.id, "removed");
+        await k.app.get(Offboarding).offboard(f.orgId, f.leaver.id, "removed");
         throw new Error("boom");
       }),
     ).rejects.toThrow("boom");
@@ -718,7 +744,7 @@ describe("修复波 W1：通讯录排除（Ruling A20）", () => {
   it("通讯录同步自己判定离职（reason = directory）不写排除", async () => {
     await fromDirectory(f.leaver.id);
     await kernelTransaction(k, () =>
-      k.identity.offboarding.offboard(f.orgId, f.leaver.id, "directory"),
+      k.app.get(Offboarding).offboard(f.orgId, f.leaver.id, "directory"),
     );
     expect(await exclusions(f.orgId)).toEqual([]);
   });
@@ -727,7 +753,7 @@ describe("修复波 W1：通讯录排除（Ruling A20）", () => {
     await fromDirectory(f.leaver.id);
     await expect(
       kernelTransaction(k, async () => {
-        await k.identity.offboarding.offboard(f.orgId, f.leaver.id, "removed", {
+        await k.app.get(Offboarding).offboard(f.orgId, f.leaver.id, "removed", {
           actorAccountId: f.owner.id,
         });
         throw new Error("boom");
@@ -841,8 +867,16 @@ describe("修复波 S2：离职销毁此人对话的沙箱", () => {
       const scheduled: string[][] = [];
       const off = testOffboarding(db, {
         credentials: credentialsFor(db, null as never),
-        approvals: approvalsFor(db, eventLogFor(db, k.bus), () => k.config),
-        questions: questionsFor(db, eventLogFor(db, k.bus), () => k.config),
+        approvals: approvalsFor(
+          db,
+          eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
+          () => k.app.get(KernelConfigService).get(),
+        ),
+        questions: questionsFor(
+          db,
+          eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
+          () => k.app.get(KernelConfigService).get(),
+        ),
         sandboxDestroy: {
           destroy: async (ids) => {
             scheduled.push(ids);
@@ -869,8 +903,16 @@ describe("修复波 S2：离职销毁此人对话的沙箱", () => {
         db,
         {
           credentials: credentialsFor(db, null as never),
-          approvals: approvalsFor(db, eventLogFor(db, k.bus), () => k.config),
-          questions: questionsFor(db, eventLogFor(db, k.bus), () => k.config),
+          approvals: approvalsFor(
+            db,
+            eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
+            () => k.app.get(KernelConfigService).get(),
+          ),
+          questions: questionsFor(
+            db,
+            eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
+            () => k.app.get(KernelConfigService).get(),
+          ),
           sandboxDestroy: {
             destroy: async () => {
               throw new Error("queue down");

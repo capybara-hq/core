@@ -1,8 +1,8 @@
 import { startTestPostgres, startTestRedis } from "@capybara-hq/testing";
 import { describe, expect, it } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
-import { createKernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
+import { startKernel } from "../helpers/runs.js";
 
 const masterKey = Buffer.alloc(32, 7).toString("base64");
 const ROLES = [["api"], ["worker"], ["gateway"]] as const;
@@ -21,11 +21,10 @@ describe.each(ROLES)("terminus health on roles %j", (...roles) => {
   async function boot() {
     const pgc = await startTestPostgres();
     const rd = await startTestRedis();
-    const k = await createKernel(cfg(roles, pgc.url, rd.url), {
+    const k = await startKernel(cfg(roles, pgc.url, rd.url), {
       env: {},
       logger: createLogger("error", { write: () => {} }),
     });
-    await k.start();
     const get = (url: string) => k.http.inject({ method: "GET", url });
     return { pgc, rd, k, get };
   }
@@ -40,7 +39,7 @@ describe.each(ROLES)("terminus health on roles %j", (...roles) => {
       expect(r.statusCode).toBe(200);
       expect(r.json()).toEqual({ ok: true, pg: "ok", redis: "ok" });
     } finally {
-      await k.stop();
+      await k.close();
       await Promise.all([pgc.stop(), rd.stop()]);
     }
   }, 120_000);
@@ -55,7 +54,7 @@ describe.each(ROLES)("terminus health on roles %j", (...roles) => {
       expect(r.body).not.toContain("postgres://");
       expect((await get("/healthz")).statusCode).toBe(200);
     } finally {
-      await k.stop().catch(() => {});
+      await k.close().catch(() => {});
       await rd.stop();
     }
   }, 120_000);
@@ -69,7 +68,7 @@ describe.each(ROLES)("terminus health on roles %j", (...roles) => {
       expect(r.json()).toEqual({ ok: false, pg: "ok", redis: "error" });
       expect(r.body).not.toContain("redis://");
     } finally {
-      await k.stop().catch(() => {});
+      await k.close().catch(() => {});
       await pgc.stop();
     }
   }, 120_000);
@@ -77,7 +76,7 @@ describe.each(ROLES)("terminus health on roles %j", (...roles) => {
   it("shutting down: readyz 503 { ok: false, stopping: true } at once", async () => {
     const { pgc, rd, k, get } = await boot();
     try {
-      const stopping = k.stop();
+      const stopping = k.close();
       const r = await get("/readyz");
       expect(r.statusCode).toBe(503);
       expect(r.json()).toEqual({ ok: false, stopping: true });
