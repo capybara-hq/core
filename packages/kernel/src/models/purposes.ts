@@ -18,11 +18,10 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
-import { LegacyPorts } from "../lifecycle/legacy-ports.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import { consumeModelStream } from "../runtime/model-call.js";
-import { ProviderListError, type ProviderRegistry } from "../runtime/providers.js";
+import { ProviderListError, ProviderRegistry } from "../runtime/providers.js";
 
 /**
  * 模型用途映射（C9）：内核与插件按「用途」取模型，不在代码里写死模型。
@@ -139,8 +138,7 @@ const targetOf = (r: Row | undefined): PurposeTarget | null =>
 
 /**
  * The model purposes (one provider). Extension-declared purposes come from the manifests in the
- * {@link ExtensionRegistry}; targets resolve through the model provider registry (a legacy port
- * until Task 3.6 converts it).
+ * {@link ExtensionRegistry}; targets resolve through the model provider registry.
  */
 @Injectable()
 export class ModelPurposesService {
@@ -148,7 +146,7 @@ export class ModelPurposesService {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(ExtensionRegistry) private readonly extensions: ExtensionRegistry,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
-    @Inject(LegacyPorts) private readonly ports: LegacyPorts,
+    @Inject(ProviderRegistry) private readonly providers: Pick<ProviderRegistry, "resolve">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
     @Inject(OrgLock) private readonly orgLock: OrgLock,
@@ -222,7 +220,7 @@ export class ModelPurposesService {
   private async check(target: PurposeTarget): Promise<void> {
     let info: Awaited<ReturnType<ProviderRegistry["resolve"]>>["info"];
     try {
-      ({ info } = await this.ports.providers.resolve(target.model));
+      ({ info } = await this.providers.resolve(target.model));
     } catch (e) {
       if (e instanceof ProviderListError) throw e;
       if (e instanceof ApiError && e.code === "agent.model_unavailable") {
@@ -356,7 +354,7 @@ export class ModelPurposesService {
       if (!(e instanceof ApiError && e.code === "model.unconfigured") || !opts.fallback) throw e;
       target = opts.fallback;
     }
-    const { provider, info } = await this.ports.providers.resolve(target.model);
+    const { provider, info } = await this.providers.resolve(target.model);
     const request: ModelRequest = {
       ...req,
       model: info.id,

@@ -12,7 +12,6 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { type AgentDefinition, normalizeStoredDefinition } from "../agents/definition.js";
-import type { KernelConfig } from "../config/schema.js";
 import { type AppendEvent, EventLog } from "../conversations/event-log.js";
 import { type ToolView, ToolViewSchema } from "../conversations/events.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
@@ -22,11 +21,9 @@ import { ExtensionUnloadedError, PLUGIN_UNLOADED_TOOL_ERROR } from "../extension
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { legacyCurrentTrx } from "../infra/database/legacy-view.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
-import { LegacyPorts } from "../lifecycle/legacy-ports.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { UNKNOWN_RESULT_TEXT } from "../runtime/context/pairing.js";
 import {
@@ -40,7 +37,7 @@ import {
 } from "../runtime/hook-calls.js";
 import {
   type SubagentParent,
-  subagentsWaitId,
+  subagentsWait,
   subagentWaitingIdemKey,
   type WaitingFor,
 } from "../runtime/loop.js";
@@ -52,8 +49,9 @@ import {
   dispatchOfCall,
   finishedEvent,
 } from "../runtime/subagents/child.js";
-import type { DispatchOutcome } from "../runtime/subagents/dispatch.js";
+import type { DispatchArgs, DispatchOutcome } from "../runtime/subagents/dispatch.js";
 import { forkSeqOfCall, pairStoppedForks } from "../runtime/subagents/skill-fork.js";
+import { SubagentsService } from "../runtime/subagents/subagents.service.js";
 import { skillLoadOfferedIn } from "../skills/catalog.js";
 import { type ApprovalRecord, type ApprovalScope, ApprovalsService } from "./approvals.service.js";
 import { Breaker, breakerOpenMessage } from "./breaker.js";
@@ -267,7 +265,7 @@ interface PipelineDeps {
     | undefined;
 }
 
-/** The sub-agent dispatch the pipeline calls (`LegacyPorts.subagentDispatch`, Task 3.6). */
+/** The sub-agent dispatch the pipeline calls (`SubagentsService.dispatch`). */
 export type SubagentDispatch = NonNullable<PipelineDeps["subagents"]>["dispatch"];
 
 /** tools 节点处理一步工具调用所需的上下文。 */
@@ -319,27 +317,6 @@ type StoppedAgentResult = { content: string; isError: boolean; durationMs: numbe
 
 /** `runCall` dispatched a sub-agent: the call stays open until the child run finishes. */
 const OPEN = "open" as const;
-
-/**
- * The wait of a step whose sub-agents still run (spec §7.2): id `sa-<runId>-<step>`, expiring after
- * the approval timeout plus one run's duration plus 10 minutes (a child may itself wait for an
- * approval); the timeout is a safety net.
- */
-export function subagentsWait(
-  runId: string,
-  step: number,
-  config: Pick<KernelConfig, "tools" | "runtime">,
-  now = Date.now(),
-): WaitingFor {
-  const ms =
-    config.tools.approvalTimeoutHours * 3_600_000 + config.runtime.maxRunSeconds * 1000 + 600_000;
-  return {
-    kind: "subagents",
-    id: subagentsWaitId(runId, step),
-    expiresAt: new Date(now + ms).toISOString(),
-    step,
-  };
-}
 
 /**
  * 审计链（spec 3.6 R6）里「凭什么放行」：在审批下执行（审批 id、批准人、范围）、记住的授权放行、或策略本身放行。
@@ -448,8 +425,8 @@ export class ToolPipeline {
   constructor(
     @Inject(KernelDb) kdb: KernelDb,
     @Inject(EventLog) eventLog: EventLog,
-    /** R7 (Task 3.6b): the `agent` tool's sub-agent dispatch. */
-    @Inject(LegacyPorts) ports: Partial<Pick<LegacyPorts, "subagentDispatch">>,
+    /** The `agent` tool's sub-agent dispatch; absent (tests): `agent` calls are refused. */
+    @Inject(SubagentsService) subagents: Pick<SubagentsService, "dispatch"> | undefined,
     @Inject(ToolRegistry) registry: Pick<ToolRegistry, "forAgent" | "findConnector" | "handler">,
     @Inject(Credentials) credentials: Pick<Credentials, "injection" | "onUnauthorized">,
     @Inject(Breaker) breaker: Pick<Breaker, "check" | "failure" | "success">,
@@ -490,8 +467,7 @@ export class ToolPipeline {
         void drift?.onToolsChanged(orgId, connectorId);
       },
       get subagents() {
-        const dispatch = ports.subagentDispatch;
-        return dispatch ? { dispatch } : undefined;
+        return subagents ? { dispatch: (a: DispatchArgs) => subagents.dispatch(a) } : undefined;
       },
     };
     const decide = testHooks?.decidePolicy;
@@ -665,7 +641,7 @@ export class ToolPipeline {
   ): Promise<{ steps: number[]; callIds: Set<string>; toSeq: number | null; fire: () => void }> {
     const t = this.deps.db;
     // phase D: the run's fork invocation without a report gets one (a fork has no tool call)
-    const forks = await pairStoppedForks(legacyCurrentTrx(), this.deps.eventLog, runId);
+    const forks = await pairStoppedForks(t, this.deps.eventLog, runId);
     const none = {
       steps: [],
       callIds: new Set<string>(forks.callIds),

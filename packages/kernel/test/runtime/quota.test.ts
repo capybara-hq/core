@@ -78,7 +78,7 @@ describe("OrgQuota", () => {
       .values({ key: "runConcurrencyOverrides", value: JSON.stringify({ oA: 1 }) })
       .execute();
     const settings = settingsFor(db);
-    const limitOf = (org: string) => orgRunLimit(settings, () => config, org);
+    const limitOf = (org: string) => orgRunLimit(settings, { get: () => config }, org);
     expect(await limitOf("oA")).toBe(1);
     expect(await limitOf("oB")).toBe(3);
 
@@ -99,6 +99,6 @@ describe("OrgQuota", () => {
       .execute();
     const settings = settingsFor(db);
     expect((await settings.get()).runConcurrencyOverrides).toEqual({});
-    expect(await orgRunLimit(settings, () => config, "oA")).toBe(3);
+    expect(await orgRunLimit(settings, { get: () => config }, "oA")).toBe(3);
   });
 });

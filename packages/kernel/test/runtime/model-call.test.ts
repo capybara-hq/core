@@ -33,12 +33,12 @@ import {
   TOOLS_UNSUPPORTED_REMINDER,
   WRAP_UP_REMINDER,
 } from "../../src/runtime/model-call.js";
-import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { toolSearchTool } from "../../src/tools/builtins/tool-search.js";
 import { type ResolvedTool, specHash } from "../../src/tools/registry.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { providerRegistryFor, stepLogFor } from "../helpers/runtime.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -144,7 +144,7 @@ beforeAll(async () => {
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
   eventLog = eventLogFor(db, createBus(redis, sub, "kernel"));
-  const registry = new ProviderRegistry(
+  const registry = providerRegistryFor(
     {
       list: (cap: string) => [
         ...k.host.list(cap),
@@ -156,8 +156,11 @@ beforeAll(async () => {
   deps = {
     db,
     eventLog,
+    stepLog: stepLogFor(db, eventLog),
     registry,
-    config: () => ({ ...baseConfig, runtime: { ...baseConfig.runtime, ...runtimeOverrides } }),
+    config: {
+      get: () => ({ ...baseConfig, runtime: { ...baseConfig.runtime, ...runtimeOverrides } }),
+    },
     tools: k.tools.registry,
     log: silent,
   };
@@ -597,7 +600,7 @@ describe("runModelStep", () => {
         throw new Error("unused");
       },
     };
-    const registry = new ProviderRegistry(
+    const registry = providerRegistryFor(
       {
         list: (cap: string) => [
           ...k.host.list(cap),
@@ -643,7 +646,7 @@ describe("runModelStep", () => {
         throw new Error("unused");
       },
     };
-    const registry = new ProviderRegistry(
+    const registry = providerRegistryFor(
       {
         list: (cap: string) => [
           ...k.host.list(cap),

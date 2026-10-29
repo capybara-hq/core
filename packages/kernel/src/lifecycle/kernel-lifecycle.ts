@@ -5,6 +5,7 @@ import {
   Injectable,
   type OnApplicationBootstrap,
   type OnApplicationShutdown,
+  Optional,
 } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { type Kysely, sql } from "kysely";
@@ -14,6 +15,7 @@ import { PluginImport } from "../catalog/plugin-import.js";
 import { CHANNEL_CHANGED_TOPIC } from "../channels/connections.service.js";
 import type { ChannelSupervisor } from "../channels/supervisor.js";
 import type { KernelConfig } from "../config/schema.js";
+import { TitleQueue } from "../conversations/titles.js";
 import { migrate } from "../db/migrator.js";
 import type { EvalWorker } from "../evals/worker.js";
 import { ExtensionBlobs } from "../extensions/blobs.js";
@@ -41,7 +43,14 @@ import { ScheduledRuns } from "../infra/schedule/scheduled-runs.js";
 import { KERNEL_BUS, KERNEL_LOGGER, KERNEL_POOL, REDIS } from "../infra/tokens.js";
 import { KERNEL_MIGRATIONS_DIR, KERNEL_SCHEMA, type LegacyGraph } from "../kernel.js";
 import type { KernelLogger } from "../log.js";
-import type { RunWorker } from "../runtime/run-worker.js";
+import {
+  RunsProcessor,
+  SubagentRunsProcessor,
+  TitleProcessor,
+  UsageReportProcessor,
+} from "../runtime/run-processors.js";
+import { RunWorker } from "../runtime/run-worker.js";
+import { UsageReporter } from "../runtime/usage-report.js";
 import { sandboxConfigWarnings } from "../sandbox/sandbox.service.js";
 import { KERNEL_APP_OPTIONS, LEGACY_GRAPH } from "./tokens.js";
 
@@ -107,7 +116,8 @@ export class KernelLifecycle
   private unwatchPlugins: (() => void) | undefined;
   private unwatchWebhooks: (() => void) | undefined;
   private unsubscribeWebhooks: (() => Promise<void>) | undefined;
-  private runWorker: RunWorker | undefined;
+  /** The run worker was started (worker role): the runs phase drains it. */
+  private runsStarted = false;
   private evalWorker: EvalWorker | undefined;
   private channelSupervisor: ChannelSupervisor | undefined;
   /** What the first bootstrap pass did, carried into the second one. */
@@ -136,6 +146,18 @@ export class KernelLifecycle
     @Inject(ScheduledRuns) private readonly scheduledRuns: ScheduledRuns,
     @Inject(KERNEL_BUS)
     private readonly bus: { publish(topic: string, payload: unknown): Promise<void> },
+    @Inject(RunWorker) private readonly runWorker: RunWorker,
+    @Inject(UsageReporter) private readonly usageReport: UsageReporter,
+    @Inject(TitleQueue) private readonly titles: TitleQueue,
+    // the consumers exist on the worker role only (`RuntimeWorkersModule`)
+    @Optional() @Inject(RunsProcessor) private readonly runsProcessor?: RunsProcessor,
+    @Optional()
+    @Inject(SubagentRunsProcessor)
+    private readonly subagentRunsProcessor?: SubagentRunsProcessor,
+    @Optional()
+    @Inject(UsageReportProcessor)
+    private readonly usageProcessor?: UsageReportProcessor,
+    @Optional() @Inject(TitleProcessor) private readonly titleProcessor?: TitleProcessor,
   ) {
     this.config = configService.get();
   }
@@ -248,22 +270,27 @@ export class KernelLifecycle
       }
     }
     if (config.roles.includes("worker")) {
-      this.runWorker = g.createRunWorker();
-      this.runWorker.start();
+      const { runsProcessor, subagentRunsProcessor, usageProcessor, titleProcessor } = this;
+      if (!runsProcessor || !subagentRunsProcessor || !usageProcessor || !titleProcessor) {
+        throw new Error("the worker role's queue processors are missing");
+      }
+      // both run queues' @Processor workers (built with the run config, never autorun)
+      this.runWorker.start([runsProcessor.worker, subagentRunsProcessor.worker]);
+      this.runsStarted = true;
       this.evalWorker = g.createEvalWorker();
       this.evalWorker.start();
       // 维护队列：周期任务的 scheduler（幂等，多副本重复登记无害）与唯一的 Worker。
       // 登记失败只记日志、不阻止启动（与 Worker 的连接错误同样处理）：任一 worker 副本下次启动时会再登记。
       try {
-        await g.runs.maintenance.ensureSchedules();
+        await g.maintenance.ensureSchedules();
       } catch (err) {
         this.log.error("cannot register maintenance job schedulers", { err });
       }
       this.checkpoint();
-      g.runs.maintenance.startWorker();
+      g.maintenance.startWorker();
       g.channels.outbound.startWorker();
-      g.usageReport.startWorker();
-      g.titles.startWorker();
+      this.usageReport.startWorker(usageProcessor.worker);
+      this.titles.startWorker(titleProcessor.worker);
       if (!config.roles.includes("gateway")) {
         this.log.info(
           "this process runs the worker role without gateway; channel long connections are held only by processes with the gateway role",
@@ -469,7 +496,7 @@ export class KernelLifecycle
     // 渠道长连接与之并行停止（中止 connect、释放租约），必须在插件关闭之前。
     const runsDeadline = Date.now() + STOP_BUDGET_MS.runs;
     const channelsStopped = this.channelSupervisor?.stop();
-    if (this.runWorker) {
+    if (this.runsStarted) {
       const budget = Math.min(STOP_BUDGET_MS.runs, shutdown.remainingMs()) - RUNS_FORCE_CLOSE_MS;
       await within("runs", this.runWorker.close(Math.max(0, budget)), STOP_BUDGET_MS.runs);
     }
@@ -489,18 +516,17 @@ export class KernelLifecycle
       );
     }
     await within("scheduled-jobs", scheduledStopped, Math.max(0, runsDeadline - Date.now()));
-    await within("maintenance", g.runs.maintenance.close(), Math.max(0, runsDeadline - Date.now()));
+    await within("maintenance", g.maintenance.close(), Math.max(0, runsDeadline - Date.now()));
     // titles before usage.report: a finishing title call enqueues its usage report
-    await within("titles", g.titles.stop(), Math.max(0, runsDeadline - Date.now()));
+    await within("titles", this.titles.stop(), Math.max(0, runsDeadline - Date.now()));
     // usage.report: in-flight deliveries are aborted and retried by any replica; before the plugins close
-    await within("usage-report", g.usageReport.stop(), Math.max(0, runsDeadline - Date.now()));
+    await within("usage-report", this.usageReport.stop(), Math.max(0, runsDeadline - Date.now()));
     // 出站投递：进行中的任务交还队列（由其他副本从 last_seq 续投），必须在插件关闭之前
     await within(
       "channel-outbound",
       g.channels.outbound.close(),
       Math.max(CHANNELS_STOP_MIN_MS, runsDeadline - Date.now()),
     );
-    await within("run-queue", g.runs.queue.close(), Math.max(0, runsDeadline - Date.now()));
     await within("eval-queue", g.evalQueue.close(), Math.max(0, runsDeadline - Date.now()));
     await within("plugins", this.host.close(), STOP_BUDGET_MS.plugins);
     // 删掉本副本的加载状态行（尽力而为；崩溃副本心跳过期的行由 reconcile 清理）

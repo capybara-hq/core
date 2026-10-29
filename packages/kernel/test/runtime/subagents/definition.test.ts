@@ -240,7 +240,7 @@ const deps = () => ({
   db,
   purposes: k.purposes,
   registry: k.runs.registry,
-  config: () => cfg,
+  config: { get: () => cfg },
 });
 
 const eff = async (parent: AgentDefinition, type: string, tier?: string) => {

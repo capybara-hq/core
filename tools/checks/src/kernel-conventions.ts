@@ -25,7 +25,8 @@ import {
  *   outside `infra/queue` (`@Processor`, `BullModule.registerQueue`, `@LockedCron`; the
  *   extensions' `ctx.queue` is an exception);
  * - kc-wiring: `useFactory` / `useValue` providers in `kernel.module.ts` and the role and domain
- *   modules (outside `infra/`; tokens in {@link KC_ALLOWED_FACTORY_TOKENS} aside); constructing
+ *   modules (outside `infra/`; the tokens of {@link KC_ALLOWED_FACTORY_TOKENS} in their own module
+ *   aside, and an allowance that matches nothing fails as `kc-stale-exception`); constructing
  *   a provider class (`new <Name>Service(` or any kernel `@Injectable` class) outside `infra/`,
  *   also in the CLI (`apps/capybara/src`) and `packages/testing/src`; and duplicate instances: a
  *   class in the `providers` of more than one module (`@Module({ … })` or a dynamic module
@@ -110,9 +111,20 @@ export interface KcPendingEntry {
 /** Rule → the directories and files not converted yet. */
 export type KcPending = Partial<Record<KcRule, readonly KcPendingEntry[]>>;
 
+/** A token one module may provide with `useFactory` / `useValue` (not a domain class). */
+export interface KcFactoryAllowance {
+  /** The token's identifier, exactly. */
+  token: string;
+  /** The module file that provides it (the allowance covers no other file). */
+  path: string;
+  reason: string;
+}
+
 export interface KcOptions {
   pending?: KcPending;
   exceptions?: readonly KcException[];
+  /** Defaults to {@link KC_ALLOWED_FACTORY_TOKENS}. */
+  factoryTokens?: readonly KcFactoryAllowance[];
 }
 
 export const KERNEL_SRC = "packages/kernel/src";
@@ -152,24 +164,37 @@ export const LEGACY_NAMES: ReadonlySet<string> = new Set([
   "legacyCurrentTrx",
 ]);
 
-/** Provider tokens a module may build with `useFactory` (not a domain class). */
-export const KC_ALLOWED_FACTORY_TOKENS: readonly { token: RegExp; reason: string }[] = [
+/**
+ * Provider tokens a module may build with `useFactory` / `useValue` (not a domain class), each in
+ * its one module. An allowance that matches no provider fails (`kc-stale-exception`): the list
+ * only shrinks.
+ */
+export const KC_ALLOWED_FACTORY_TOKENS: readonly KcFactoryAllowance[] = [
   {
-    token: /^HEALTH_CHECKS$/,
+    token: "HEALTH_CHECKS",
+    path: "packages/kernel/src/kernel.module.ts",
     reason: "the readiness checks are terminus indicators over the pool and Redis, not a class",
   },
   {
-    token: /^KERNEL_APP_OPTIONS$/,
+    token: "KERNEL_APP_OPTIONS",
+    path: "packages/kernel/src/kernel.module.ts",
     reason:
       "the options the application was created with (logger, env, overrides): a value from the " +
       "caller, not a domain class",
   },
   {
-    // TODO(3.6): stale-check these once the OrgQuota tokens exist.
-    token: /^(?:RUN_QUOTA|EVAL_QUOTA)$/,
+    token: "RUN_QUOTA",
+    path: "packages/kernel/src/runtime/runtime.module.ts",
     reason:
-      "OrgQuota is one instance per key prefix (RUN_QUOTA_PREFIX, EVAL_QUOTA_PREFIX; plan 3.6): " +
-      "the only domain factory, one token per prefix",
+      "OrgQuota is one instance per key prefix (the org run quota; plan 3.6): the only domain " +
+      "factory, one token per prefix",
+  },
+  {
+    token: "EVAL_QUOTA",
+    path: "packages/kernel/src/runtime/runtime.module.ts",
+    reason:
+      "OrgQuota is one instance per key prefix (the org eval quota; plan 3.6): the only domain " +
+      "factory, one token per prefix",
   },
 ];
 
@@ -240,28 +265,25 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
 export const KC_PENDING: KcPending = {
   "kc-transaction": [
     { path: "packages/kernel/src/channels/", max: 5 },
-    // titles.ts (TitleQueue: Task 3.6b)
-    { path: "packages/kernel/src/conversations/", max: 2 },
     { path: "packages/kernel/src/evals/", max: 19 },
     { path: "packages/kernel/src/files/", max: 1 },
-    { path: "packages/kernel/src/runtime/", max: 25 },
   ],
   "kc-lock": [
     { path: "packages/kernel/src/channels/", max: 4 },
     { path: "packages/kernel/src/evals/", max: 2 },
-    { path: "packages/kernel/src/runtime/", max: 2 },
     { path: "packages/kernel/src/sandbox/", max: 4 },
   ],
   "kc-queue": [
     { path: "packages/kernel/src/channels/", max: 2 },
-    { path: "packages/kernel/src/conversations/", max: 2 },
     { path: "packages/kernel/src/evals/", max: 2 },
-    { path: "packages/kernel/src/runtime/", max: 7 },
+    // R11: the maintenance queue keeps its one hand-made consumer until Task 3.9 builds its
+    // @Processor (the rest of runtime/ was converted in Task 3.6b)
+    { path: "packages/kernel/src/runtime/maintenance.ts", max: 3 },
   ],
   "kc-wiring": [
     { path: "apps/capybara/src/commands/admin-create.ts", max: 1 },
     { path: "apps/capybara/src/commands/admin-grant.ts", max: 1 },
-    { path: "packages/kernel/src/http/", max: 17 },
+    { path: "packages/kernel/src/http/", max: 16 },
     { path: "packages/kernel/src/kernel.module.ts", max: 5 },
     { path: "packages/kernel/src/kernel.ts", max: 1 },
     { path: "packages/testing/src/kernel-helpers.ts", max: 1 },
@@ -284,7 +306,7 @@ export const KC_PENDING: KcPending = {
     { path: "packages/testing/test/", max: 7 },
   ],
   "kc-legacy": [
-    { path: "packages/kernel/src/http/", max: 31 },
+    { path: "packages/kernel/src/http/", max: 29 },
     // R7 ports read by orgs (event log and run control: 3.6; sandbox: 3.8; Task 3.2)
     { path: "packages/kernel/src/orgs/", max: 2 },
     // R10: the standalone handles' legacy view, for the CLI until Task 5.2
@@ -295,35 +317,26 @@ export const KC_PENDING: KcPending = {
     { path: "packages/kernel/src/kernel.module.ts", max: 21 },
     { path: "packages/kernel/src/kernel.ts", max: 19 },
     { path: "packages/kernel/src/lifecycle/", max: 13 },
-    // R7 port ProviderRegistry (Task 3.6b)
-    { path: "packages/kernel/src/models/", max: 2 },
     // R7 ports (Task 3.6a): ProviderRegistry (3.6b) and the sandbox destruction (3.8) in
     // AgentsService (LegacyPorts ×2)
     { path: "packages/kernel/src/agents/", max: 2 },
-    // R7 ports (Task 3.6a): the run control and ProviderRegistry (3.6b) in ConversationsService and
-    // ConversationQueue, the sandbox (3.8) in ConversationSandboxStatus (LegacyPorts ×6)
-    { path: "packages/kernel/src/conversations/", max: 6 },
-    // R7 ports (SandboxService: 3.8; the sub-agent dispatch: 3.6b; LegacyPorts ×4) and R8
-    // legacyCurrentTrx for pairStoppedForks (×2); the event log is injected since Task 3.6a
-    { path: "packages/kernel/src/tools/", max: 6 },
+    // R7 port: the sandbox (3.8) in ConversationSandboxStatus (LegacyPorts ×2)
+    { path: "packages/kernel/src/conversations/", max: 2 },
+    // R7 port: SandboxService (3.8) in the builtin tools (LegacyPorts ×2)
+    { path: "packages/kernel/src/tools/", max: 2 },
     // the probe app re-provides LegacyPorts (R7) until Task 4.1 rebuilds it on createKernelApp
     { path: "packages/kernel/test/identity/public-routes.test.ts", max: 2 },
     // the R8 bridge's own test, deleted with legacy-view.ts
     { path: "packages/kernel/test/infra/legacy-transaction.test.ts", max: 4 },
     // R10: the identity / orgs providers over a test's own Kysely bind stub ports (until Task 5.1)
-    { path: "packages/kernel/test/helpers/identity.ts", max: 6 },
-    // R10: hand-built conversations services bind stub ports (run control; until Task 5.1)
-    { path: "packages/kernel/test/helpers/conversations.ts", max: 4 },
+    { path: "packages/kernel/test/helpers/identity.ts", max: 5 },
   ],
   "kc-config": [
     { path: "packages/kernel/src/channels/", max: 1 },
-    { path: "packages/kernel/src/conversations/", max: 1 },
     { path: "packages/kernel/src/evals/", max: 5 },
     { path: "packages/kernel/src/http/", max: 4 },
-    { path: "packages/kernel/src/runtime/", max: 6 },
     { path: "packages/kernel/src/ui/", max: 1 },
   ],
-  "kc-cache": [{ path: "packages/kernel/src/runtime/", max: 1 }],
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -573,6 +586,8 @@ const toPosix = (p: string) => p.split(sep).join("/");
 export function checkKernelConventions(root: string, opts: KcOptions = {}): Finding[] {
   const pending = opts.pending ?? KC_PENDING;
   const exceptions = opts.exceptions ?? KC_EXCEPTIONS;
+  const factoryTokens = opts.factoryTokens ?? KC_ALLOWED_FACTORY_TOKENS;
+  const usedFactoryTokens = new Set<KcFactoryAllowance>();
   const out: Finding[] = [];
   const files: FileInfo[] = [];
 
@@ -601,7 +616,7 @@ export function checkKernelConventions(root: string, opts: KcOptions = {}): Find
   const known = collectKnown(kernelFiles);
   const hits: Hit[] = [];
   for (const f of files) {
-    scanFile(f, known, hits);
+    scanFile(f, known, hits, { tokens: factoryTokens, used: usedFactoryTokens });
   }
   for (const f of kernelFiles) checkTransactionalMethods(f, known, hits);
   checkDuplicateProviders(kernelFiles, hits);
@@ -660,6 +675,15 @@ export function checkKernelConventions(root: string, opts: KcOptions = {}): Find
       }
     }
   }
+  for (const a of factoryTokens) {
+    if (usedFactoryTokens.has(a)) continue;
+    out.push({
+      file: join(root, a.path),
+      line: 1,
+      rule: "kc-stale-exception",
+      message: `the factory allowance for ${a.token} matches no useFactory / useValue provider here: remove it from KC_ALLOWED_FACTORY_TOKENS in tools/checks/src/kernel-conventions.ts`,
+    });
+  }
   for (const e of exceptions) {
     if (usedException.has(e)) continue;
     out.push({
@@ -716,7 +740,12 @@ function collectKnown(files: FileInfo[]): Known {
   return known;
 }
 
-function scanFile(f: FileInfo, known: Known, hits: Hit[]): void {
+function scanFile(
+  f: FileInfo,
+  known: Known,
+  hits: Hit[],
+  factory: { tokens: readonly KcFactoryAllowance[]; used: Set<KcFactoryAllowance> },
+): void {
   const { parsed, rel, k } = f;
   const hit = (rule: KcRule, at: Node | number, anc: readonly Node[], message = MESSAGES[rule]) => {
     const line = typeof at === "number" ? at : parsed.lineOf(at.start);
@@ -935,7 +964,11 @@ function scanFile(f: FileInfo, known: Known, hits: Hit[]): void {
           );
           if (!provide) break;
           const token = textOf(provide.value as Node);
-          if (KC_ALLOWED_FACTORY_TOKENS.some((t) => t.token.test(token))) break;
+          const allowed = factory.tokens.find((t) => t.token === token && t.path === f.rel);
+          if (allowed) {
+            factory.used.add(allowed);
+            break;
+          }
           hit("kc-wiring", n, anc, `${MESSAGES["kc-wiring"]} (${key} for ${token})`);
         }
         break;

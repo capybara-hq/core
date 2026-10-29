@@ -183,7 +183,7 @@ describe("model and effort switching", { timeout: 60_000 }, () => {
     expect((await send(conv, { text: "echo:one", model: FAKE_2 })).statusCode).toBe(202);
     await waitForTerminal(db, conv, 1, 20_000);
     // fake-2 leaves the provider's (cached) model list
-    const keys = await redis.keys("capk:models:model-fake:*");
+    const keys = await redis.keys("cache:capk:models:model-fake:*");
     expect(keys.length).toBeGreaterThan(0);
     try {
       for (const key of keys) {

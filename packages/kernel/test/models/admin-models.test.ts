@@ -54,7 +54,7 @@ beforeEach(async () => {
     "capybara.model_prices, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.deployment_settings, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
   // 模型列表缓存在 Redis：每条用例从头列
-  const keys = await redis.keys("capk:models:*");
+  const keys = await redis.keys("cache:capk:models:*");
   if (keys.length > 0) await redis.del(...keys);
   resetEvalModel();
   const accounts = accountsFor(db);

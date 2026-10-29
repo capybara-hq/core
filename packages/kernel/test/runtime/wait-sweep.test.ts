@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { SchedulerRegistry } from "@nestjs/schedule";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -10,10 +11,10 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
+import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/maintenance.js";
 import { RUN_QUEUE_NAME } from "../../src/runtime/run-queue.js";
 import {
   MAINTENANCE_QUEUE_NAME,
-  WAIT_SWEEP_EVERY_MS,
   WAIT_SWEEP_JOB,
   WAIT_SWEEP_SCHEDULER_ID,
   type WaitSweepResult,
@@ -221,13 +222,14 @@ const sum = (rs: WaitSweepResult[]): WaitSweepResult =>
   );
 
 describe("等待兜底扫描（单副本）", () => {
-  it("每 10 分钟的 job scheduler：id / 任务名不含冒号，两个副本启动后只有一个", async () => {
+  it("每 10 分钟一次的 @LockedCron（旧 job scheduler 已退役）：id / 任务名不含冒号", async () => {
     expect(WAIT_SWEEP_SCHEDULER_ID).not.toContain(":");
     expect(WAIT_SWEEP_JOB).not.toContain(":");
-    expect(WAIT_SWEEP_EVERY_MS).toBe(600_000);
+    expect(RETIRED_SCHEDULER_IDS).toContain(WAIT_SWEEP_SCHEDULER_ID);
     const s = (await maint.getJobSchedulers()).filter((x) => x.key === WAIT_SWEEP_SCHEDULER_ID);
-    expect(s).toHaveLength(1);
-    expect(s[0]).toMatchObject({ name: WAIT_SWEEP_JOB, every: WAIT_SWEEP_EVERY_MS });
+    expect(s).toHaveLength(0);
+    const cron = kA.app.get(SchedulerRegistry).getCronJob(WAIT_SWEEP_JOB);
+    expect(String(cron.cronTime.source)).toBe("*/10 * * * *");
   });
 
   it("超时任务丢失的过期审批 → 按超时处理（approval_decided{expired}）并续跑，模型拿到超时说明", async () => {

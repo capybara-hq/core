@@ -26,17 +26,17 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
-import { KyselyCheckpointSaver } from "../../src/runtime/checkpointer.js";
+import type { KyselyCheckpointSaver } from "../../src/runtime/checkpointer.js";
 import { LangGraphLoop, type LoopDeps } from "../../src/runtime/langgraph-loop.js";
 import type { LoopContext } from "../../src/runtime/loop.js";
 import type { StreamSink } from "../../src/runtime/model-call.js";
-import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { runJobId } from "../../src/runtime/run-queue.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, PW, sleep, waitFor, waitForTerminal } from "../helpers/runs.js";
+import { checkpointsFor, providerRegistryFor, stepLogFor } from "../helpers/runtime.js";
 import {
   approvalsFor,
   breakerFor,
@@ -139,12 +139,13 @@ beforeAll(async () => {
   deps = {
     db,
     eventLog,
-    registry: new ProviderRegistry(
+    stepLog: stepLogFor(db, eventLog),
+    registry: providerRegistryFor(
       { list: () => [{ plugin: "stub", capability: "model-provider@2", impl: stubProvider }] },
       redis,
     ),
     tools: noTools,
-    config,
+    config: { get: config },
     log: silent,
     toolPipeline: pipelineFor({
       db,
@@ -159,7 +160,7 @@ beforeAll(async () => {
       log: silent,
     }),
   };
-  saver = new KyselyCheckpointSaver(db);
+  saver = checkpointsFor(db);
 }, 120_000);
 
 afterAll(async () => {

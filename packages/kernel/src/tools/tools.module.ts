@@ -5,6 +5,7 @@ import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
+import { SubagentsModule } from "../runtime/subagents/subagents.service.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { ApprovalsService } from "./approvals.service.js";
@@ -36,6 +37,8 @@ import { ToolRegistry } from "./registry.js";
     StorageModule,
     SkillsModule,
     OrgLockModule,
+    // the `agent` tool's dispatch
+    SubagentsModule,
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
   providers: [

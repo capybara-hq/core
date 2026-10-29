@@ -11,7 +11,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { EventLog } from "../../src/conversations/event-log.js";
 import {
   cleanTitle,
-  runTitleJob,
   TITLE_MAX_ATTEMPTS,
   TITLE_PROMPT,
   titleAttemptDue,
@@ -43,6 +42,7 @@ import {
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { runTitleJob } from "../helpers/runtime.js";
 
 /** UI refresh B Task 7: model-generated titles through `cap-kernel-titles` and the `title` purpose. */
 

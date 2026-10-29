@@ -8,8 +8,7 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { Kernel } from "../../src/kernel.js";
-import { KyselyCheckpointSaver } from "../../src/runtime/checkpointer.js";
-import { LangGraphLoop, type LoopDeps } from "../../src/runtime/langgraph-loop.js";
+import { LangGraphLoop } from "../../src/runtime/langgraph-loop.js";
 import type { AgentLoop, LoopContext, LoopOutcome } from "../../src/runtime/loop.js";
 import {
   type ModelStepDeps,
@@ -19,7 +18,8 @@ import {
   WRAP_UP_REMINDER,
 } from "../../src/runtime/model-call.js";
 import { RUN_QUEUE_NAME, runJobId } from "../../src/runtime/run-queue.js";
-import type { RunHooks } from "../../src/runtime/run-worker.js";
+import { AGENT_LOOP_FACTORY, type AgentLoopFactory } from "../../src/runtime/run-steps.js";
+import { RUN_HOOKS, type RunHooks } from "../../src/runtime/run-worker.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -89,12 +89,11 @@ class SequentialLoop implements AgentLoop {
   }
 }
 
-const sequential = (deps: ModelStepDeps): AgentLoop => new SequentialLoop(deps);
-const langgraph = (deps: LoopDeps): AgentLoop =>
-  new LangGraphLoop(new KyselyCheckpointSaver(deps.db), deps);
+const sequential: AgentLoopFactory = (deps: ModelStepDeps): AgentLoop => new SequentialLoop(deps);
+const langgraph: AgentLoopFactory = (deps, checkpoints) => new LangGraphLoop(checkpoints, deps);
 
 /** 当前 describe 使用的 loop（同一组场景分别跑 SequentialLoop 与默认的 LangGraphLoop）。 */
-let defaultLoop: (deps: LoopDeps) => AgentLoop = sequential;
+let defaultLoop: AgentLoopFactory = sequential;
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -115,12 +114,15 @@ async function worker(
   opts: {
     hooks?: RunHooks;
     roles?: ("api" | "worker" | "gateway")[];
-    loop?: (deps: LoopDeps) => AgentLoop;
+    loop?: AgentLoopFactory;
   } = {},
 ): Promise<Kernel> {
   const k = await startKernel(runConfig(urls(), { roles: opts.roles ?? ["worker"], runtime }), {
-    loop: opts.loop ?? defaultLoop,
-    ...(opts.hooks && { runHooks: opts.hooks }),
+    // the run loop and the worker's hooks are provider overrides (R2)
+    overrides: [
+      { provide: AGENT_LOOP_FACTORY, useValue: opts.loop ?? defaultLoop },
+      ...(opts.hooks ? [{ provide: RUN_HOOKS, useValue: opts.hooks }] : []),
+    ],
   });
   extra.push(k);
   return k;
@@ -128,7 +130,9 @@ async function worker(
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  api = await startKernel(runConfig(urls(), { roles: ["api"] }), { loop: sequential });
+  api = await startKernel(runConfig(urls(), { roles: ["api"] }), {
+    overrides: [{ provide: AGENT_LOOP_FACTORY, useValue: sequential }],
+  });
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
@@ -168,7 +172,7 @@ const textOf = (e: ConversationEvent) =>
     ? e.payload.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("")
     : "";
 
-const LOOPS: [string, (deps: LoopDeps) => AgentLoop][] = [
+const LOOPS: [string, AgentLoopFactory][] = [
   ["SequentialLoop", sequential],
   ["LangGraphLoop", langgraph],
 ];
@@ -552,8 +556,8 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     await worker(
       {},
       {
-        loop: (deps) => {
-          const inner = loopFactory(deps);
+        loop: (deps, checkpoints) => {
+          const inner = loopFactory(deps, checkpoints);
           return {
             run: async (ctx) => {
               if (throwNext) {
@@ -594,8 +598,8 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     await worker(
       {},
       {
-        loop: (deps) => {
-          const inner = loopFactory(deps);
+        loop: (deps, checkpoints) => {
+          const inner = loopFactory(deps, checkpoints);
           return {
             run: (ctx) =>
               inner.run({
@@ -703,8 +707,8 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     await worker(
       {},
       {
-        loop: (deps) => {
-          const inner = loopFactory(deps);
+        loop: (deps, checkpoints) => {
+          const inner = loopFactory(deps, checkpoints);
           return {
             run: (ctx) => {
               firstRun ??= ctx.runId;

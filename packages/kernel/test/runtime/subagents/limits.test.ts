@@ -231,18 +231,18 @@ async function converse(text: string, timeoutMs = 30_000) {
 
 describe("subagentLimits", () => {
   it("the config values, then the organization's override value by value", async () => {
-    expect(await subagentLimits(db, () => k.config, orgId)).toEqual({
+    expect(await subagentLimits(db, { get: () => k.config }, orgId)).toEqual({
       maxConcurrentPerRun: 4,
       maxDispatchesPerRun: 50,
       maxTokensPerRun: 5_000_000,
     });
     await override({ maxTokensPerRun: 20_000 });
-    expect(await subagentLimits(db, () => k.config, orgId)).toEqual({
+    expect(await subagentLimits(db, { get: () => k.config }, orgId)).toEqual({
       maxConcurrentPerRun: 4,
       maxDispatchesPerRun: 50,
       maxTokensPerRun: 20_000,
     });
-    expect((await subagentLimits(db, () => k.config, "another-org")).maxTokensPerRun).toBe(
+    expect((await subagentLimits(db, { get: () => k.config }, "another-org")).maxTokensPerRun).toBe(
       5_000_000,
     );
     // out of bounds or unknown keys are refused; null removes the override
@@ -261,7 +261,9 @@ describe("subagentLimits", () => {
       expect(res.statusCode, JSON.stringify(bad)).toBe(400);
     }
     await override(null);
-    expect((await subagentLimits(db, () => k.config, orgId)).maxTokensPerRun).toBe(5_000_000);
+    expect((await subagentLimits(db, { get: () => k.config }, orgId)).maxTokensPerRun).toBe(
+      5_000_000,
+    );
   });
 });
 

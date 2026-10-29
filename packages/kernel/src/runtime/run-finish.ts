@@ -1,10 +1,11 @@
-import { sql, type Transaction } from "kysely";
-import type { AppendEvent, EventLog } from "../conversations/event-log.js";
+import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
+import { type AppendEvent, EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
 import { pauseQueueIn } from "../conversations/queue.js";
-import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
-
-type KernelTrx = Transaction<KernelDatabase>;
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
 
 /** 运行的终态。 */
 export type TerminalStatus = "completed" | "failed" | "aborted";
@@ -32,59 +33,82 @@ export interface FinishRunArgs {
    * Runs in the transaction once the run is known not to be terminal, before the terminal event:
    * a parent's open `agent` calls get their results here (sub-agents spec §12, review m1).
    */
-  beforeTerminal?: (t: KernelTrx) => Promise<void>;
+  beforeTerminal?: () => Promise<void>;
 }
 
 /**
- * 在事务 `t` 内写运行的终态：会话行锁 → 运行仍未结束才写终态事件、推进 `consumed_seq`、更新 `runs.status`。
- * 返回终态事件的 seq；运行已是终态（例如已被其他副本标记失败）→ 返回 null，什么都不写。
- *
- * `consumed_seq = GREATEST(consumed_seq, consumed, runs.trigger_seq)`：不回退，且失败 / 中止 / 完成都至少
- * 消费到触发该运行的消息——否则结束时的 ensureRun 会对同一条消息无限重试（失败）或卡住会话。
- * 超时（`floorToTrigger: false`）只取 `GREATEST(consumed_seq, consumed)`：没吸收的消息留给下一轮（R34）。
- * 加锁顺序与 `RunQueue.ensureRun` 一致（先会话行、后 runs 行），不会互相死锁。
- * 调用方在提交后对非 null 的返回值调用 `eventLog.notify`。
+ * Writes runs' terminal states (one instance; the run worker, the run queue's orphan repairs, the
+ * waits and the eval replays finish runs through it).
  */
-export async function finishRunIn(
-  t: KernelTrx,
-  eventLog: EventLog,
-  a: FinishRunArgs,
-): Promise<number | null> {
-  await t
-    .selectFrom("conversations")
-    .select("id")
-    .where("id", "=", a.conversationId)
-    .forUpdate()
-    .executeTakeFirst();
-  const run = await t
-    .selectFrom("runs")
-    .select("status")
-    .where("id", "=", a.runId)
-    .forUpdate()
-    .executeTakeFirst();
-  if (!run || TERMINAL_STATUSES.has(run.status)) return null;
-  await a.beforeTerminal?.(t);
-  const [ev] = await eventLog.appendIn(a.conversationId, [
-    { ...a.event, runId: a.runId, idemKey: `${a.event.type}:${a.runId}` },
-  ]);
-  await t
-    .updateTable("conversations")
-    .set({
-      consumed_seq:
-        a.floorToTrigger === false
-          ? sql`GREATEST(consumed_seq, ${a.consumed ?? 0}::bigint)`
-          : sql`GREATEST(consumed_seq, ${a.consumed ?? 0}::bigint, (SELECT r.trigger_seq FROM capybara.runs r WHERE r.id = ${a.runId}))`,
-    })
-    .where("id", "=", a.conversationId)
-    .execute();
-  await t
-    .updateTable("runs")
-    .set({ status: a.status, finished_at: sql`now()` })
-    .where("id", "=", a.runId)
-    .execute();
-  // a failed or stopped run pauses the queued messages until the person resumes (spec §5.7)
-  if (a.status !== "completed") await pauseQueueIn(t, a.conversationId);
-  return (ev as ConversationEvent).seq;
+@Injectable()
+export class RunFinish {
+  constructor(
+    @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(EventLog) private readonly eventLog: EventLog,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {}
+
+  /**
+   * 在调用方的事务内写运行的终态：会话行锁 → 运行仍未结束才写终态事件、推进 `consumed_seq`、更新 `runs.status`。
+   * 返回终态事件的 seq；运行已是终态（例如已被其他副本标记失败）→ 返回 null，什么都不写。
+   *
+   * `consumed_seq = GREATEST(consumed_seq, consumed, runs.trigger_seq)`：不回退，且失败 / 中止 / 完成都至少
+   * 消费到触发该运行的消息——否则结束时的 ensureRun 会对同一条消息无限重试（失败）或卡住会话。
+   * 超时（`floorToTrigger: false`）只取 `GREATEST(consumed_seq, consumed)`：没吸收的消息留给下一轮（R34）。
+   * 加锁顺序与 `RunQueue.ensureRun` 一致（先会话行、后 runs 行），不会互相死锁。
+   * 调用方在提交后对非 null 的返回值调用 {@link notifyFinished}。
+   */
+  @Transactional({ propagation: "mandatory" })
+  async finishIn(a: FinishRunArgs): Promise<number | null> {
+    const t = this.kdb.db;
+    await t
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", a.conversationId)
+      .forUpdate()
+      .executeTakeFirst();
+    const run = await t
+      .selectFrom("runs")
+      .select("status")
+      .where("id", "=", a.runId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!run || TERMINAL_STATUSES.has(run.status)) return null;
+    await a.beforeTerminal?.();
+    const [ev] = await this.eventLog.appendIn(a.conversationId, [
+      { ...a.event, runId: a.runId, idemKey: `${a.event.type}:${a.runId}` },
+    ]);
+    await t
+      .updateTable("conversations")
+      .set({
+        consumed_seq:
+          a.floorToTrigger === false
+            ? sql`GREATEST(consumed_seq, ${a.consumed ?? 0}::bigint)`
+            : sql`GREATEST(consumed_seq, ${a.consumed ?? 0}::bigint, (SELECT r.trigger_seq FROM capybara.runs r WHERE r.id = ${a.runId}))`,
+      })
+      .where("id", "=", a.conversationId)
+      .execute();
+    await t
+      .updateTable("runs")
+      .set({ status: a.status, finished_at: sql`now()` })
+      .where("id", "=", a.runId)
+      .execute();
+    // a failed or stopped run pauses the queued messages until the person resumes (spec §5.7)
+    if (a.status !== "completed") await pauseQueueIn(t, a.conversationId);
+    return (ev as ConversationEvent).seq;
+  }
+
+  /** 自开事务写终态并在提交后发布会话通知；返回值同 {@link finishIn}。 */
+  async finish(a: FinishRunArgs): Promise<number | null> {
+    const toSeq = await this.finishOwn(a);
+    if (toSeq !== null) await notifyFinished(this.eventLog, a.conversationId, toSeq, a.status);
+    return toSeq;
+  }
+
+  @Transactional({ propagation: "requires_new" })
+  private finishOwn(a: FinishRunArgs): Promise<number | null> {
+    return this.finishIn(a);
+  }
 }
 
 /**
@@ -99,15 +123,4 @@ export async function notifyFinished(
 ): Promise<void> {
   await eventLog.notify(conversationId, toSeq);
   if (status !== "completed") await eventLog.publishChanged(conversationId, "queue");
-}
-
-/** 自开事务写终态并在提交后发布会话通知；返回值同 {@link finishRunIn}。 */
-export async function finishRun(
-  db: KernelSchemaDb,
-  eventLog: EventLog,
-  a: FinishRunArgs,
-): Promise<number | null> {
-  const toSeq = await db.transaction().execute((t) => finishRunIn(t, eventLog, a));
-  if (toSeq !== null) await notifyFinished(eventLog, a.conversationId, toSeq, a.status);
-  return toSeq;
 }

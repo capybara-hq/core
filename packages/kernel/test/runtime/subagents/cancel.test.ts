@@ -11,7 +11,6 @@ import type { ConversationEvent, EventPayload } from "../../../src/conversations
 import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import type { Kernel } from "../../../src/kernel.js";
-import { finishRun } from "../../../src/runtime/run-finish.js";
 import { SUBAGENT_RUN_QUEUE_NAME } from "../../../src/runtime/run-queue.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
 import { setFakeSandboxDelays } from "../../fixtures/plugins/sandbox-fake/index.js";
@@ -34,7 +33,13 @@ import {
   waitForEvent,
   waitForTerminal,
 } from "../../helpers/runs.js";
-import { type ChildRun, childRunsOf, parentWaiting, runStatus } from "../../helpers/subagents.js";
+import {
+  type ChildRun,
+  childRunsOf,
+  finishRun,
+  parentWaiting,
+  runStatus,
+} from "../../helpers/subagents.js";
 
 /**
  * Phase C Task 13 (spec §12): stopping a parent stops its children and writes its open `agent`

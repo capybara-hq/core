@@ -22,7 +22,6 @@ import { ConversationQueue } from "../../src/conversations/queue.service.js";
 import type { KernelDb } from "../../src/infra/database/kernel-db.js";
 import type { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { KernelEvents } from "../../src/infra/events/kernel-events.js";
-import { LegacyPorts, type LegacyPortValues } from "../../src/lifecycle/legacy-ports.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
 import type { SkillInvoker } from "../../src/skills/invoke.js";
 import { handlesFor } from "./identity.js";
@@ -83,16 +82,9 @@ const noRuns: RunControl = {
   requestAbort: async () => {},
 };
 
-/** The legacy ports a hand-built conversations service reads (R7). */
-function portsWith(values: Partial<LegacyPortValues>): LegacyPorts {
-  const p = new LegacyPorts();
-  p.bind({ runs: noRuns, ...values } as LegacyPortValues);
-  return p;
-}
-
 /**
  * A conversations service over test doubles: what is left out refuses (`resolveAttachments`,
- * `bindFiles`, `invoker`) or does nothing (`runs`).
+ * `bindFiles`, `invoker`, the model `providers`) or does nothing (`runs`).
  */
 export function conversationsFor(
   h: DbHandles,
@@ -123,7 +115,8 @@ export function conversationsFor(
     d.eventLog,
     d.agents,
     { isAccessible: async () => true },
-    portsWith(d.runs ? { runs: d.runs } : {}),
+    d.runs ?? noRuns,
+    { resolve: refuse("providers") },
     quiet,
     { resolveAttachments: d.resolveAttachments ?? refuse("resolveAttachments") },
     { bindForMessage: d.bindFiles ?? refuse("bindFiles") },
@@ -137,11 +130,5 @@ export function queueFor(
   h: DbHandles,
   d: { eventLog: EventLog; conversations: ConversationsService; runs?: RunControl },
 ): ConversationQueue {
-  return new ConversationQueue(
-    h.db,
-    d.eventLog,
-    d.conversations,
-    portsWith(d.runs ? { runs: d.runs } : {}),
-    h.txHost,
-  );
+  return new ConversationQueue(h.db, d.eventLog, d.conversations, d.runs ?? noRuns, h.txHost);
 }

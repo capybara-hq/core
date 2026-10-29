@@ -21,11 +21,10 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
-import { KyselyCheckpointSaver } from "../../src/runtime/checkpointer.js";
+import type { KyselyCheckpointSaver } from "../../src/runtime/checkpointer.js";
 import { UNKNOWN_RESULT_TEXT } from "../../src/runtime/context/pairing.js";
 import { LangGraphLoop, type LoopDeps } from "../../src/runtime/langgraph-loop.js";
 import type { LoopContext } from "../../src/runtime/loop.js";
-import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { type ResolvedTool, specHash } from "../../src/tools/registry.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
@@ -43,6 +42,7 @@ import {
   startKernel,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { checkpointsFor, providerRegistryFor, stepLogFor } from "../helpers/runtime.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 import {
   approvalsFor,
@@ -171,12 +171,13 @@ describe("tools 节点（LangGraphLoop + 执行管线）", () => {
     deps = {
       db,
       eventLog,
-      registry: new ProviderRegistry(
+      stepLog: stepLogFor(db, eventLog),
+      registry: providerRegistryFor(
         { list: () => [{ plugin: "stub", capability: "model-provider@2", impl: stubProvider }] },
         redis,
       ),
       tools: registry,
-      config: () => config,
+      config: { get: () => config },
       log: silent,
       toolPipeline: pipelineFor({
         db,
@@ -199,7 +200,7 @@ describe("tools 节点（LangGraphLoop + 执行管线）", () => {
         },
       }),
     };
-    saver = new KyselyCheckpointSaver(db);
+    saver = checkpointsFor(db);
   }, 120_000);
 
   afterAll(async () => {

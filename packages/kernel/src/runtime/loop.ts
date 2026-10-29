@@ -1,4 +1,5 @@
 import type { AgentDefinition } from "../agents/definition.js";
+import type { KernelConfig } from "../config/schema.js";
 import type { ConversationEvent } from "../conversations/events.js";
 import type { StreamSink } from "./model-call.js";
 
@@ -86,4 +87,25 @@ export type LoopOutcome =
 
 export interface AgentLoop {
   run(ctx: LoopContext): Promise<LoopOutcome>;
+}
+
+/**
+ * The wait of a step whose sub-agents still run (spec §7.2): id `sa-<runId>-<step>`, expiring after
+ * the approval timeout plus one run's duration plus 10 minutes (a child may itself wait for an
+ * approval); the timeout is a safety net.
+ */
+export function subagentsWait(
+  runId: string,
+  step: number,
+  config: Pick<KernelConfig, "tools" | "runtime">,
+  now = Date.now(),
+): WaitingFor {
+  const ms =
+    config.tools.approvalTimeoutHours * 3_600_000 + config.runtime.maxRunSeconds * 1000 + 600_000;
+  return {
+    kind: "subagents",
+    id: subagentsWaitId(runId, step),
+    expiresAt: new Date(now + ms).toISOString(),
+    step,
+  };
 }

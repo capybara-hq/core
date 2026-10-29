@@ -7,10 +7,10 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import type { AgentDefinition, AgentToolRef, ModelRef } from "../../agents/definition.js";
 import { loadTemplates } from "../../agents/templates.js";
-import type { KernelConfig } from "../../config/schema.js";
 import type { EventPayload } from "../../conversations/events.js";
 import type { KernelSchemaDb } from "../../db/kernel-schema.js";
 import { ApiError } from "../../errors.js";
+import type { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import type { ModelPurposesService } from "../../models/purposes.js";
 import { PINNED_SKILLS_LIMITS } from "../../skills/catalog.js";
 import { toolKey } from "../../tools/naming.js";
@@ -49,7 +49,7 @@ export interface EffectiveDefinitionDeps {
   purposes: Pick<ModelPurposesService, "resolve">;
   /** Reads the resolved model's parameter declarations (a template `effort`). */
   registry: Pick<ProviderRegistry, "resolve">;
-  config: () => KernelConfig;
+  config: Pick<KernelConfigService, "get">;
 }
 
 type Policy = "ask" | "deny";
@@ -355,7 +355,7 @@ function orgAgentDefinition(
   return {
     definition,
     template: { source: "agent", id: agentId, version: a.orgAgent.version },
-    maxSteps: d.config().runtime.maxSteps,
+    maxSteps: d.config.get().runtime.maxSteps,
     warnings: [],
     model: own.model,
     tierFallback: false,
@@ -388,7 +388,7 @@ export async function effectiveDefinition(
   },
 ): Promise<EffectiveDefinition & { model: ModelRef; tierFallback: boolean }> {
   if (a.entry.source === "agent") return orgAgentDefinition(d, a);
-  const runtimeMax = d.config().runtime.maxSteps;
+  const runtimeMax = d.config.get().runtime.maxSteps;
   const { parent, entry } = a;
 
   let template: TemplateLike | null = null;

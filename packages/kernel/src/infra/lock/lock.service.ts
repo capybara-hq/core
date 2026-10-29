@@ -149,6 +149,28 @@ export class LockService {
 
   /** The renewal watchdog of a key we just took. */
   private watch(lockKey: string, token: string, ttlMs: number): LeaseHandle {
+    return this.keepAlive(lockKey, ttlMs, {
+      renew: () => this.renew(lockKey, token, ttlMs),
+      release: async () => {
+        if (!(await this.releaseIf(lockKey, token))) {
+          this.log.warn("lock was not ours at release (expired or taken)", { lockKey });
+        }
+      },
+    });
+  }
+
+  /**
+   * The renewal watchdog for a lease kept by other means than a `SET NX` key (e.g. an org quota
+   * slot, a member of a Redis sorted set): calls `ops.renew` every TTL/3 while held; `false`, or
+   * renewal errors until the next attempt would land past expiry, mark it lost (`lost` aborts, one
+   * WARN `lock lost` with `label`). `release` stops renewing and calls `ops.release` once.
+   */
+  keepAlive(
+    label: string,
+    ttlMs: number,
+    ops: { renew(): Promise<boolean>; release(): Promise<void> },
+  ): LeaseHandle {
+    const lockKey = label;
     const lost = new AbortController();
     let released = false;
     let stopped = false;
@@ -165,7 +187,7 @@ export class LockService {
     };
     const intervalMs = Math.max(1, Math.floor(ttlMs / 3));
     const timer = setInterval(() => {
-      this.renew(lockKey, token, ttlMs).then(
+      ops.renew().then(
         (ok) => {
           if (released || stopped) return;
           if (ok) lastOk = Date.now();
@@ -188,7 +210,7 @@ export class LockService {
       lost: lost.signal,
       renew: async () => {
         if (released || lost.signal.aborted) return false;
-        const ok = await this.renew(lockKey, token, ttlMs);
+        const ok = await ops.renew();
         if (ok) lastOk = Date.now();
         else lose("lock lost: the key is gone or taken");
         return ok;
@@ -199,9 +221,7 @@ export class LockService {
         released = true;
         stop();
         try {
-          if (!(await this.releaseIf(lockKey, token))) {
-            this.log.warn("lock was not ours at release (expired or taken)", { lockKey });
-          }
+          await ops.release();
         } catch (err) {
           this.log.error("lock release failed", { lockKey, err });
         }

@@ -13,19 +13,16 @@ import {
   type StopReason,
   sanitizeParams,
 } from "@capybara-hq/plugin-sdk";
-import { sql } from "kysely";
 import type { AgentDefinition, ModelRef } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import { type ConversationEvent, MEDIA_EXCLUDED_MAX_IDS } from "../conversations/events.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { usageTokens } from "../evals/budget.js";
 import { ExtensionUnloadedError } from "../extensions/inflight.js";
-import { audit } from "../identity/audit.js";
+import type { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { hasInvocation, skillLoadOffered } from "../skills/catalog.js";
 import type { ToolRegistry, UnavailableTool } from "../tools/registry.js";
-import { recordToolSpecs } from "../tools/specs.js";
 import {
   type BuildModelRequestInput,
   buildModelRequest,
@@ -60,6 +57,7 @@ import {
 import type { SubagentParent } from "./loop.js";
 import { MediaCache } from "./media-cache.js";
 import { ProviderListError, type ProviderRegistry } from "./providers.js";
+import type { StepLog } from "./step-log.js";
 import { subagentBudgetUsedUp } from "./subagents/limits.js";
 import type { UsageReporter } from "./usage-report.js";
 
@@ -109,10 +107,12 @@ export type StreamSink = (delta: {
 export interface ModelStepDeps {
   db: KernelSchemaDb;
   eventLog: EventLog;
+  /** The step's transactional writes (a model call with its tool specs, a denial with its audit row, a sub-agent's counted usage). */
+  stepLog: Pick<StepLog, "appendCounted" | "appendAudited" | "appendWithSpecs">;
   registry: Pick<ProviderRegistry, "resolve">;
   /** 工具注册表：每步开始时解析 agent 引用的工具（状态可能在步骤之间变化）。 */
   tools: Pick<ToolRegistry, "forAgent">;
-  config: () => KernelConfig;
+  config: Pick<KernelConfigService, "get">;
   log: Logger;
   /**
    * 会话附件（构建请求时解析日志里的媒体引用；见 AttachmentsService）。未提供时媒体引用一律按「不再可用」处理。
@@ -337,7 +337,7 @@ async function runStep(
     return existing;
   }
 
-  const runtime = deps.config().runtime;
+  const runtime = deps.config.get().runtime;
   /** 本次尝试已流出的文本；中止时写进 aborted 的 assistant_message。 */
   const streamed = { text: "" };
   try {
@@ -376,7 +376,7 @@ async function runStep(
         looked: new Set(),
         info: new Map(),
         bytes: new Map(),
-        run: input.mediaCache ?? new MediaCache(deps.config().attachments.requestMediaBytes),
+        run: input.mediaCache ?? new MediaCache(deps.config.get().attachments.requestMediaBytes),
       },
     };
     const beforeCompaction = events.length;
@@ -472,33 +472,13 @@ async function runStep(
  * exactly once.
  */
 async function appendCounted(
-  deps: Pick<ModelStepDeps, "db" | "eventLog">,
+  deps: Pick<ModelStepDeps, "eventLog" | "stepLog">,
   input: Pick<ModelStepInput, "conversationId" | "parentRunId">,
   events: AppendEvent[],
 ): Promise<ConversationEvent[]> {
   const { conversationId, parentRunId } = input;
   if (parentRunId === undefined) return deps.eventLog.append(conversationId, events);
-  const out = await deps.db.transaction().execute(async (t) => {
-    // the conversation row lock the append takes anyway, taken first to read the seq before it
-    const before = await t
-      .selectFrom("conversations")
-      .select("last_seq")
-      .where("id", "=", conversationId)
-      .forUpdate()
-      .executeTakeFirstOrThrow();
-    const written = await deps.eventLog.appendIn(conversationId, events);
-    const fresh = written.filter((e) => e.seq > Number(before.last_seq));
-    let tokens = 0;
-    for (const e of fresh) if (e.type === "usage") tokens += usageTokens(e.payload);
-    if (tokens > 0) {
-      await t
-        .updateTable("runs")
-        .set({ subagent_tokens_used: sql`subagent_tokens_used + ${tokens}` })
-        .where("id", "=", parentRunId)
-        .execute();
-    }
-    return { written, toSeq: fresh.length > 0 ? Math.max(...fresh.map((e) => e.seq)) : null };
-  });
+  const out = await deps.stepLog.appendCounted(conversationId, parentRunId, events);
   if (out.toSeq !== null) await deps.eventLog.notify(conversationId, out.toSeq);
   return out.written;
 }
@@ -692,7 +672,7 @@ function buildRequest(
     ...(wrapUp && { toolChoice: "none" as const }),
     mediaInfo: tools.media.info,
     media: tools.media.bytes,
-    mediaBudgetBytes: deps.config().attachments.requestMediaBytes,
+    mediaBudgetBytes: deps.config.get().attachments.requestMediaBytes,
     defaultMaxOutputTokens: runtime.maxOutputTokens,
   });
   return {
@@ -729,7 +709,7 @@ async function loadMedia(
     }
     for (const id of look) cache.looked.add(id);
   }
-  const budget = deps.config().attachments.requestMediaBytes;
+  const budget = deps.config.get().attachments.requestMediaBytes;
   const plan = planMedia(events, info, cache.info, budget);
   const runKey = (id: string) =>
     MediaCache.key(id, cache.info.get(id) as MediaInfo, plan.caps.get(id));
@@ -893,11 +873,7 @@ async function maybeCompact(
         plugin: verdict.plugin,
         cause: verdict.cause,
       });
-      const written = await deps.db.transaction().execute(async (t) => {
-        const out = await deps.eventLog.appendIn(conversationId, [failed]);
-        await audit(t, entry);
-        return out;
-      });
+      const written = await deps.stepLog.appendAudited(conversationId, [failed], entry);
       if (written.length > 0) {
         await deps.eventLog.notify(conversationId, Math.max(...written.map((e) => e.seq)));
       }
@@ -1135,12 +1111,10 @@ async function ladder(
       // 请求里的工具定义（含目录里的）按指纹存进 tool_specs，与 model_call 同一事务
       // （请求可由日志 + tool_specs 还原）
       const sent = new Set([...meta.tools, ...(meta.catalog ?? [])].map((t) => t.specHash));
-      const written = await deps.db.transaction().execute(async (t) => {
-        await recordToolSpecs(
-          t,
-          tools.list.filter((x) => sent.has(x.specHash)),
-        );
-        return deps.eventLog.appendIn(conversationId, [
+      const written = await deps.stepLog.appendWithSpecs(
+        conversationId,
+        tools.list.filter((x) => sent.has(x.specHash)),
+        [
           {
             type: "model_call",
             runId,
@@ -1159,8 +1133,8 @@ async function ladder(
               },
             },
           },
-        ]);
-      });
+        ],
+      );
       await deps.eventLog.notify(conversationId, Math.max(...written.map((e) => e.seq)));
       sentAt = Date.now();
       const outcome = await consumeModelStream(

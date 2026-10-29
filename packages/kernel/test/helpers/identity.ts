@@ -34,7 +34,7 @@ import { createLogger, type KernelLogger } from "../../src/log.js";
 import { DirectorySync } from "../../src/orgs/directory-sync.js";
 import { InvitationsService } from "../../src/orgs/invitations.service.js";
 import { MembersService } from "../../src/orgs/members.service.js";
-import { Offboarding } from "../../src/orgs/offboarding.js";
+import { Offboarding, type OffboardingRunControl } from "../../src/orgs/offboarding.js";
 import { OrgLock } from "../../src/orgs/org-lock.js";
 import { OrgsService } from "../../src/orgs/orgs.service.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
@@ -147,7 +147,7 @@ export function externalFor(db: Kysely<any>, config: () => unknown): ExternalIde
 }
 
 const noWaits = { cancelPendingFor: async () => ({ records: [], seqs: new Map() }) };
-const noRuns: LegacyPortValues["offboardRuns"] = {
+const noRuns: OffboardingRunControl = {
   abortWaiting: async () => false,
   abortIfOrphaned: async () => false,
   requestAbort: async () => {},
@@ -157,7 +157,6 @@ const noRuns: LegacyPortValues["offboardRuns"] = {
 export function testPorts(_db: Kysely<any>, ports: Partial<LegacyPortValues> = {}): LegacyPorts {
   const p = new LegacyPorts();
   p.bind({
-    offboardRuns: noRuns,
     sandboxDestroy: { destroy: async () => {} },
     ...ports,
   } as LegacyPortValues);
@@ -167,6 +166,8 @@ export function testPorts(_db: Kysely<any>, ports: Partial<LegacyPortValues> = {
 /** What offboarding reads besides the database: the legacy ports and the tools services. */
 export type OffboardingTestDeps = Partial<LegacyPortValues> & {
   eventLog?: ConstructorParameters<typeof Offboarding>[5];
+  /** Stops the member's runs (none by default). */
+  offboardRuns?: OffboardingRunControl;
   credentials?: Pick<Credentials, "clearAccount">;
   approvals?: Pick<ApprovalsService, "cancelPendingFor">;
   questions?: Pick<QuestionsService, "cancelPendingFor">;
@@ -187,7 +188,7 @@ export function testOffboarding(
   } = {},
 ): Offboarding {
   const h = handlesFor(db);
-  const { credentials, approvals, questions, eventLog, ...ports } = deps;
+  const { credentials, approvals, questions, eventLog, offboardRuns, ...ports } = deps;
   return new Offboarding(
     h.db,
     h.txHost,
@@ -196,6 +197,7 @@ export function testOffboarding(
     opts.registry ?? new ExtensionRegistry(),
     eventLog ?? { notify: async () => {}, publishChanged: async () => {} },
     testPorts(db, ports),
+    offboardRuns ?? noRuns,
     credentials ?? {
       clearAccount: (orgId, accountId) => clearAccountCredentials(h.db.db, orgId, accountId),
     },

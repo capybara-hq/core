@@ -6,6 +6,7 @@ import {
   type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import type { INestApplication } from "@nestjs/common";
+import type { Job } from "bullmq";
 import type { Redis } from "ioredis";
 import { buildKernelApp, closeKernelApp, type KernelAppOptions } from "./app.js";
 import { CatalogService } from "./catalog/catalog.service.js";
@@ -25,12 +26,7 @@ import { ChannelWebhooks } from "./channels/webhook.js";
 import type { KernelConfig } from "./config/schema.js";
 import { AttachmentsService } from "./conversations/attachments.service.js";
 import type { ConversationsService } from "./conversations/conversations.service.js";
-import {
-  type ConversationBusMessage,
-  conversationTopic,
-  type EventLog,
-} from "./conversations/event-log.js";
-import { TitleQueue } from "./conversations/titles.js";
+import { EventLog } from "./conversations/event-log.js";
 import { createKeyring } from "./ctx/secrets.js";
 import type { KernelSchemaDb } from "./db/kernel-schema.js";
 import { migrate } from "./db/migrator.js";
@@ -46,7 +42,6 @@ import { ExtensionDeploymentConfigService } from "./extensions/deployment-config
 import { ExtensionHost } from "./extensions/host.js";
 import { ExtensionInstalls } from "./extensions/installs.js";
 import { ExtensionLifecycle } from "./extensions/lifecycle.js";
-import { STALE_RECONCILE_PERIODS } from "./extensions/lifecycle-topics.js";
 import { OrgExtensionConfigs } from "./extensions/org-config.js";
 import type { ExtensionRegistry } from "./extensions/registry.js";
 import { ReplicaStatusStore } from "./extensions/sources.js";
@@ -72,29 +67,17 @@ import { DIRECTORY_SYNC_JOB, DirectorySync, type SyncJobData } from "./orgs/dire
 import { Offboarding } from "./orgs/offboarding.js";
 import type { OrgLock } from "./orgs/org-lock.js";
 import { RunAbort } from "./runtime/abort.js";
-import { KyselyCheckpointSaver } from "./runtime/checkpointer.js";
-import type { ConversationLock } from "./runtime/conversation-lock.js";
-import { LangGraphLoop, type LoopDeps } from "./runtime/langgraph-loop.js";
-import type { AgentLoop } from "./runtime/loop.js";
+import type { KyselyCheckpointSaver } from "./runtime/checkpointer.js";
+import { ConversationLock } from "./runtime/conversation-lock.js";
+import type { LoopDeps } from "./runtime/langgraph-loop.js";
 import { Maintenance } from "./runtime/maintenance.js";
-import type { StreamSink } from "./runtime/model-call.js";
 import { ProviderRegistry } from "./runtime/providers.js";
-import { EVAL_QUOTA_PREFIX, OrgQuota } from "./runtime/quota.js";
+import { type OrgQuota, RUN_QUOTA } from "./runtime/quota.js";
+import type { RunFinish } from "./runtime/run-finish.js";
 import { RunQueue } from "./runtime/run-queue.js";
-import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
-import { onChildFinished, type StopChildrenDeps, stopChildren } from "./runtime/subagents/child.js";
-import { dispatchSubagent } from "./runtime/subagents/dispatch.js";
-import { publishSubagentProgress } from "./runtime/subagents/progress.js";
-import { liveSkillForks } from "./runtime/subagents/skill-fork.js";
-import {
-  queryUnservable,
-  queryUsageSubscribers,
-  USAGE_SWEEP_EVERY_MS,
-  USAGE_SWEEP_JOB,
-  USAGE_SWEEP_SCHEDULER_ID,
-  UsageReporter,
-} from "./runtime/usage-report.js";
-import { Waits } from "./runtime/waits.js";
+import { type AgentLoops, RunSteps } from "./runtime/run-steps.js";
+import { UsageReporter } from "./runtime/usage-report.js";
+import { WAIT_TIMEOUT_JOB, Waits, type WaitTimeoutData } from "./runtime/waits.js";
 import { registerSandboxMaintenance, scheduleSandboxDestroy } from "./sandbox/lifecycle.js";
 import { SandboxService } from "./sandbox/sandbox.service.js";
 import type { SkillsCatalogService } from "./skills/catalog.js";
@@ -258,21 +241,21 @@ export interface Kernel {
   stop(): Promise<void>;
 }
 
-/** The test hooks of the legacy graph (ruling R2: provided as `KERNEL_TEST_HOOKS` until Task 3.6). */
+/**
+ * The test hooks of the legacy graph (ruling R2: provided as `KERNEL_TEST_HOOKS` until Task 3.9
+ * converts the evals). The run loop and the run worker's hooks are provider overrides
+ * (`AGENT_LOOP_FACTORY`, `RUN_HOOKS` in `overrides`).
+ */
 export interface KernelTestHooks {
-  /**
-   * 运行使用的 AgentLoop 工厂（测试用）。默认是 {@link LangGraphLoop}：checkpoint 存在内核的
-   * `KyselyCheckpointSaver`，worker 崩溃后其他副本从 checkpoint 续跑。
-   */
-  loop?: (deps: LoopDeps) => AgentLoop;
-  /** 运行 worker 的测试钩子。 */
-  runHooks?: RunHooks;
   /** 评测整轮回放的测试钩子。 */
   evalHooks?: EvalReplayHooks;
 }
 
-/** createKernel 的可选项：{@link KernelAppOptions} 加上测试钩子（临时 facade，见 `createKernel`）。 */
-export interface KernelOptions extends Omit<KernelAppOptions, "overrides">, KernelTestHooks {}
+/**
+ * createKernel 的可选项：{@link KernelAppOptions}（含 `overrides`：测试替换的 provider，如
+ * `AGENT_LOOP_FACTORY` / `RUN_HOOKS`）加上评测的测试钩子（临时 facade，见 `createKernel`）。
+ */
+export interface KernelOptions extends KernelAppOptions, KernelTestHooks {}
 
 /**
  * 运行内核迁移与所有已配置插件的迁移（不调用插件 setup，不连接 Redis）。
@@ -342,17 +325,19 @@ export interface LegacyGraph
     | "tools"
     // Task 3.6a
     | "attachments"
+    // Task 3.6b
+    | "usageReport"
+    | "runs"
   > {
   /** The kernel-schema view of the pool. */
   readonly kdb: KernelSchemaDb;
   readonly evalQueue: EvalQueue;
-  readonly titles: TitleQueue;
+  /** The maintenance queue (its one worker until Task 3.9). */
+  readonly maintenance: Maintenance;
   /** Channel webhook inbound (gateway role only). */
   readonly channelWebhooks: ChannelWebhooks | undefined;
   /** What the API module is built from (`ApiModule.registerFrom`). */
   readonly apiDeps: ApiDeps;
-  /** The run worker (worker role). */
-  createRunWorker(): RunWorker;
   /** The eval worker (worker role). */
   createEvalWorker(): EvalWorker;
   /** The channel long-connection supervisor (gateway role). */
@@ -400,6 +385,14 @@ export interface ConvertedProviders {
   attachments: AttachmentsService;
   /** The one conversations service (ChannelInbound posts IM messages and skill invocations). */
   conversations: ConversationsService;
+  // Task 3.6b
+  registry: ProviderRegistry;
+  waits: Waits;
+  runFinish: RunFinish;
+  checkpoints: KyselyCheckpointSaver;
+  steps: RunSteps;
+  loops: AgentLoops;
+  evalQuota: OrgQuota;
 }
 
 /**
@@ -416,7 +409,7 @@ export function createLegacyGraph(
   hooks: KernelTestHooks,
   converted: ConvertedProviders,
 ): LegacyGraph {
-  const { purposes, skillsCatalog, skillInvoker } = converted;
+  const { purposes, registry, waits, checkpoints, steps, loops } = converted;
   const config = configService.get();
   /** The current config (hot fields applied). */
   const cfg = (): KernelConfig => configService.get();
@@ -425,7 +418,7 @@ export function createLegacyGraph(
     config.masterKeyPrevious.map((k) => Buffer.from(k, "base64")),
   );
   const kdb = legacyKernelView(kernelDbHandle, converted.txHost);
-  const { host, replicaStatus, orgLock, eventLog, attachments } = converted;
+  const { host, replicaStatus, orgLock, eventLog } = converted;
   // EventAppended (spec §3 cycle "event log → channel outbound"): every published log advance
   // enqueues the conversation's IM delivery when it has a target (the job ends once idle after
   // catching up; later events start it again from here). Same replica, right after the bus
@@ -433,8 +426,11 @@ export function createLegacyGraph(
   converted.events.on("conversation.event-appended", ({ conversationId }) =>
     enqueueOutbound(conversationId),
   );
-  const registry = new ProviderRegistry(host, redis, log);
-  const { toolRegistry, approvals, questions, toolDrift, toolPipeline } = converted;
+  // A run started executing here (the run worker's old onRunStart hook): its IM delivery
+  converted.events.on("run.started", ({ conversationId }) => enqueueOutbound(conversationId));
+  // A stop of a waiting run: its approval / question cards change (the run control's old hook)
+  converted.events.on("run.wait-stopped", ({ conversationId }) => enqueueOutbound(conversationId));
+  const { approvals, questions, toolDrift } = converted;
   // A decided approval / answered question resumes the waiting run on this replica and enqueues
   // its IM delivery (domain events, spec §3b; the wait sweep resumes a run whose resume was lost)
   converted.events.on("approval.decided", async (a) => {
@@ -446,6 +442,11 @@ export function createLegacyGraph(
     enqueueOutbound(q.conversationId);
   });
   const maintenance = new Maintenance({ db: kdb, redisUrl: config.redis.url, log });
+  // wait-timeout jobs (Waits is their producer) stay on the maintenance worker until Task 3.9
+  // builds its @Processor (R11)
+  maintenance.handle(WAIT_TIMEOUT_JOB, (job, token) =>
+    waits.processTimeout(job as Job<WaitTimeoutData>, token),
+  );
   // 沙箱：提供方在 host.load() 之后才就绪，按调用时取；休眠与销毁由维护队列扫描
   const sandbox = new SandboxService({
     db: kdb,
@@ -471,58 +472,6 @@ export function createLegacyGraph(
     await toolDrift.check(orgId, connectorId, trigger);
   });
   const lock = converted.conversationLock;
-  const quota = new OrgQuota(redis);
-  const abort = new RunAbort(redis, bus);
-  const checkpoints = new KyselyCheckpointSaver(kdb);
-  const runQueue: RunQueue = new RunQueue(kdb, eventLog, lock, config.redis.url, log, checkpoints, {
-    stopOpenCalls: (_t, runId) => toolPipeline.stopOpenAgentCalls(runId),
-    stopChildren: (runId) => stopChildren(childDeps(), runId, null),
-  });
-  // sub-agents (spec §7.3, §12): reporting a finished child to its parent and stopping children
-  const childDeps = (): StopChildrenDeps => ({ db: kdb, eventLog, waits, runQueue, abort, log });
-  const reportChild = (runId: string): Promise<void> =>
-    onChildFinished(childDeps(), runId).catch((err) =>
-      log.error("cannot report finished sub-agent run to its parent", { runId, err }),
-    );
-  /** `abortIfOrphaned`, then a stopped sub-agent reports to its parent at once. */
-  const abortOrphan = async (c: string, runId: string, by: string | null): Promise<boolean> => {
-    const r = await runQueue.abortIfOrphaned(c, runId, by);
-    if (r) {
-      await reportChild(runId);
-      // a stopped parent stops its children (spec §12)
-      await stopChildren(childDeps(), runId, null).catch((err) =>
-        log.error("cannot stop the sub-agents of a run", { runId, err }),
-      );
-    }
-    return r;
-  };
-  const waits: Waits = new Waits({
-    db: kdb,
-    eventLog,
-    approvals,
-    questions,
-    runQueue,
-    checkpoints,
-    abortRequested: (runId) => abort.requested(runId),
-    maintenance,
-    log,
-    subagents: {
-      stop: (parentRunId, by, opts) => stopChildren(childDeps(), parentRunId, by, opts),
-      finished: (childRunId) => onChildFinished(childDeps(), childRunId),
-      stopOpenCalls: (_t, runId) => toolPipeline.stopOpenAgentCalls(runId),
-    },
-  });
-  const runControl = {
-    ensureRun: (id: string) => runQueue.ensureRun(id),
-    abortIfOrphaned: (id: string, runId: string, by: string) => abortOrphan(id, runId, by),
-    // 等待中被中止：审批 / 提问卡片变为已取消，排一个出站任务去更新
-    abortWaiting: async (id: string, runId: string, by: string) => {
-      const r = await waits.abortWaiting(id, runId, by);
-      enqueueOutbound(id);
-      return r;
-    },
-    requestAbort: (runId: string, by: string) => abort.request(runId, by),
-  };
   const channelConnections = new ChannelConnections({
     db: kdb,
     orgLock,
@@ -577,33 +526,7 @@ export function createLegacyGraph(
   };
   // R7: the legacy instances converted providers read at call time
   converted.ports.bind({
-    providers: registry,
-    runs: runControl,
     sandbox,
-    // sub-agents (phase C): `agent` calls dispatch child runs onto their own queue
-    subagentDispatch: (a) =>
-      dispatchSubagent(
-        {
-          db: kdb,
-          eventLog,
-          purposes,
-          registry,
-          config: cfg,
-          enqueue: (data, jobId, kind) => runQueue.enqueue(data, jobId, kind),
-          log,
-        },
-        a,
-      ),
-    // offboarding stops the member's runs (by: null, a system action)
-    offboardRuns: {
-      abortWaiting: async (c, runId, by) => {
-        const r = await waits.abortWaiting(c, runId, by);
-        enqueueOutbound(c);
-        return r;
-      },
-      abortIfOrphaned: abortOrphan,
-      requestAbort: (runId, by) => abort.request(runId, by),
-    },
     // the departed member's sandboxes: one-off maintenance jobs, destroyed one by one by a worker
     sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
   });
@@ -639,143 +562,14 @@ export function createLegacyGraph(
     name: GATEWAY_CHECK_JOB,
     everyMs: () => GATEWAY_CHECK_EVERY_MS,
   });
-  const loopFactory = hooks.loop ?? ((d: LoopDeps): AgentLoop => new LangGraphLoop(checkpoints, d));
-  /**
-   * 流式增量发布到会话频道（与 `{ kind: "events" }` 共用 `conv.<id>`），任意副本上的订阅方都能收到。
-   * 发布失败只记日志：增量只是草稿，最终内容以日志中的 assistant_message 为准。
-   */
-  const sinkFor = (conversationId: string): StreamSink => {
-    // 本次运行执行中推出的文本字符数（按步，step_reset 清零）：本进程正在执行的这次运行自己的计数
-    let at = { runId: "", step: -1, chars: 0 };
-    return (d) => {
-      if (at.runId !== d.runId || at.step !== d.step || d.kind === "step_reset") {
-        at = { runId: d.runId, step: d.step, chars: 0 };
-      }
-      const offset = at.chars;
-      if (d.kind === "text") at.chars += d.text?.length ?? 0;
-      const msg: ConversationBusMessage = {
-        kind: "delta",
-        runId: d.runId,
-        step: d.step,
-        delta: d.kind,
-        ...(d.text !== undefined && { text: d.text }),
-        ...(d.kind === "text" && { offset }),
-      };
-      bus
-        .publish(conversationTopic(conversationId), msg)
-        .catch((err) => log.warn("stream delta publish failed", { conversationId, err }));
-    };
-  };
-  // usage.report metering: producer on every role, worker on the worker role (P-17)
-  const usageReporter = new UsageReporter({
-    db: kdb,
-    redisUrl: config.redis.url,
-    hooks: host.hooks,
-    isActive: (plugin) => host.current(plugin) !== undefined,
-    unservable: (plugins) =>
-      queryUnservable(
-        kdb,
-        plugins,
-        STALE_RECONCILE_PERIODS * cfg().extensionHost.reconcileIntervalSeconds,
-      ),
-    // deployment state (approved manifests in PG)
-    subscribers: (orgId) => queryUsageSubscribers(kdb, orgId),
-    config: cfg,
-    log,
-  });
-  // Conversation titles (UI refresh B): enqueued after a completed run, worker on the worker role
-  const titles = new TitleQueue({
-    db: kdb,
-    eventLog,
-    purposes,
-    usageReport: usageReporter,
-    hooks: host.hooks,
-    redisUrl: config.redis.url,
-    config: cfg,
-    log,
-  });
-  // R13 sweeper: re-enqueue recent usage events (once across replicas through the maintenance queue)
-  maintenance.handle(USAGE_SWEEP_JOB, async () => {
-    await usageReporter.sweep();
-  });
-  maintenance.schedule({
-    id: USAGE_SWEEP_SCHEDULER_ID,
-    name: USAGE_SWEEP_JOB,
-    everyMs: () => USAGE_SWEEP_EVERY_MS,
-  });
-  const stepDeps: LoopDeps = {
-    db: kdb,
-    eventLog,
-    registry,
-    usageReport: usageReporter,
-    tools: toolRegistry,
-    config: cfg,
-    log,
-    toolPipeline,
-    // plugin hooks for chat runs; the full-run replay below drops them (P-18)
-    hooks: host.hooks,
-    // a sub-agent's steps on its parent's stream (sub-agents spec §14.2)
-    subagentProgress: (s) => publishSubagentProgress({ db: kdb, bus, log }, s),
-    // phase D: a person's fork invocation dispatches its sub-agent in the run's first prepare
-    skillForks: liveSkillForks({
-      db: kdb,
-      eventLog,
-      purposes,
-      registry,
-      config: cfg,
-      enqueue: (data, jobId, kind) => runQueue.enqueue(data, jobId, kind),
-      log,
-      invoker: skillInvoker,
-    }),
-    media: {
-      info: (orgId, conversationId, ids) => attachments.mediaInfo(orgId, conversationId, ids),
-      fetch: (orgId, conversationId, ids, caps) =>
-        attachments.fetchMedia(orgId, conversationId, ids, caps),
-    },
-  };
-  const runs: KernelRuns = {
-    eventLog,
-    registry,
-    queue: runQueue,
-    lock,
-    quota,
-    abort,
-    stepDeps,
-    waits,
-    maintenance,
-  };
+  const stepDeps: LoopDeps = steps.deps;
   /** 评测队列（生产方：API 启动运行时入队）与 worker（含 worker 角色时启动）。 */
   const evalQueue = new EvalQueue(config.redis.url, log);
-  const createRunWorker = (): RunWorker =>
-    new RunWorker({
-      db: kdb,
-      eventLog,
-      lock,
-      quota,
-      abort,
-      queue: runQueue,
-      settings: converted.settings,
-      loop: loopFactory(stepDeps),
-      config: cfg,
-      log,
-      redisUrl: config.redis.url,
-      sinkFor,
-      checkpoints,
-      waits,
-      onRunStart: enqueueOutbound,
-      onRunCompleted: (conversationId) => void titles.maybeEnqueue(conversationId),
-      models: registry,
-      skillsCatalog,
-      onChildFinished: (runId) => onChildFinished(childDeps(), runId),
-      stopChildren: (runId) => stopChildren(childDeps(), runId, null),
-      stopOpenCalls: (_t, runId) => toolPipeline.stopOpenAgentCalls(runId),
-      ...(hooks.runHooks !== undefined && { hooks: hooks.runHooks }),
-    });
   const createEvalWorker = (): EvalWorker =>
     new EvalWorker({
       db: kdb,
       redisUrl: config.redis.url,
-      quota: new OrgQuota(redis, EVAL_QUOTA_PREFIX),
+      quota: converted.evalQuota,
       config: cfg,
       log,
       purposes,
@@ -790,6 +584,7 @@ export function createLegacyGraph(
       runReplay: {
         db: kdb,
         eventLog,
+        runFinish: converted.runFinish,
         config: cfg,
         log,
         registry,
@@ -805,7 +600,7 @@ export function createLegacyGraph(
             skillForks: _noForks,
             ...replayDeps
           } = stepDeps;
-          return loopFactory({ ...replayDeps, ...d });
+          return loops.create({ ...replayDeps, ...d });
         },
         ...(hooks.evalHooks !== undefined && { hooks: hooks.evalHooks }),
       },
@@ -833,22 +628,18 @@ export function createLegacyGraph(
     keyring,
     config: cfg,
     log,
-    registry,
     channels: channelConnections,
     evalQueue,
   };
   return {
     kdb,
     evalQueue,
-    titles,
+    maintenance,
     channelWebhooks,
     apiDeps,
-    createRunWorker,
     createEvalWorker,
     createChannelSupervisor,
-    usageReport: usageReporter,
     bus,
-    runs,
     channels,
     sandbox,
     log,
@@ -866,15 +657,11 @@ export async function createKernel(
   config: KernelConfig,
   opts: KernelOptions = {},
 ): Promise<Kernel> {
-  const { loop, runHooks, evalHooks, ...appOptions } = opts;
-  const hooks: KernelTestHooks = {
-    ...(loop !== undefined && { loop }),
-    ...(runHooks !== undefined && { runHooks }),
-    ...(evalHooks !== undefined && { evalHooks }),
-  };
+  const { evalHooks, overrides, ...appOptions } = opts;
+  const hooks: KernelTestHooks = { ...(evalHooks !== undefined && { evalHooks }) };
   const app = await buildKernelApp(config, {
     ...appOptions,
-    overrides: [{ provide: KERNEL_TEST_HOOKS, useValue: hooks }],
+    overrides: [...(overrides ?? []), { provide: KERNEL_TEST_HOOKS, useValue: hooks }],
   });
   const g = app.get<LegacyGraph>(LEGACY_GRAPH);
   const lifecycle = app.get(KernelLifecycle);
@@ -886,7 +673,7 @@ export async function createKernel(
     app,
     http: lifecycle.http,
     host: app.get(ExtensionHost),
-    usageReport: g.usageReport,
+    usageReport: app.get(UsageReporter),
     replicaId: app.get(ReplicaStatusStore).replicaId,
     extensionInstalls: app.get(ExtensionInstalls),
     extensionAdmin: app.get(ExtensionAdmin),
@@ -900,7 +687,17 @@ export async function createKernel(
     extensionDeploymentConfigs: app.get(ExtensionDeploymentConfigService),
     orgExtensionConfigs: app.get(OrgExtensionConfigs),
     bus: g.bus,
-    runs: g.runs,
+    runs: {
+      eventLog: app.get(EventLog),
+      registry: app.get(ProviderRegistry),
+      queue: app.get(RunQueue),
+      lock: app.get(ConversationLock),
+      quota: app.get<OrgQuota>(RUN_QUOTA),
+      abort: app.get(RunAbort),
+      stepDeps: app.get(RunSteps).deps,
+      waits: app.get(Waits),
+      maintenance: g.maintenance,
+    },
     tools: {
       registry: app.get(ToolRegistry),
       credentials: app.get(Credentials),

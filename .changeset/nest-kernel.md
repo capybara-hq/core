@@ -183,3 +183,26 @@ until the key would expire now marks the lease lost (handled as when another hol
 instead of renewing on. The channel delivery lock is the same lease under its own prefix. The
 hourly `attachment-cleanup` is a `@LockedCron` (its first run moved to the next top of the hour);
 its old maintenance scheduler is removed when a worker starts.
+
+The run runtime is a Nest module too (Task 3.6b). `ProviderRegistry`, `RunAbort`,
+`KyselyCheckpointSaver`, `RunQueue`, `Waits`, `RunWorker`, `UsageReporter`, `TitleQueue` and the new
+`RunFinish`, `StepLog`, `RunControl`, `RunJobs`, `RunSteps`, `AgentLoops`, `TitleGenerator` and
+`SubagentsService` are injectable providers (their constructors take injected services, no deps
+objects); `OrgQuota` is provided once per key prefix (`RUN_QUOTA`, `EVAL_QUOTA`) and keeps a slot
+through `OrgQuota.enter` (a `LockService` lease handle, renewed every lease/3). The run queues,
+`cap-kernel-usage-report` and `cap-kernel-titles` are consumed by `@Processor` workers whose options
+come from the startup config (unchanged: `runtime.workerConcurrency`, `jobLockMs`,
+`stalledIntervalMs`, `hooks.usageReportConcurrency`), built and started on the worker role only,
+after the extensions loaded; queue names, job ids and job options are unchanged. At shutdown every
+BullMQ queue and worker closes within what is left of the stop budget; one that cannot (Redis
+down) is abandoned instead of holding the application's close. `wait-sweep` (every 10
+minutes) and `usage-report-sweep` (every minute) are `@LockedCron` jobs; their old maintenance
+schedulers are removed when a worker starts. `finishRun` / `finishRunIn` became
+`RunFinish.finish` / `finishIn`, `onChildFinished` / `stopChildren` became `Waits.childFinished` /
+`stopChildren`, `runTitleJob` takes the generator's writes, `recordHookDenial` and the model step's
+deps take a `stepLog`, step deps and the sub-agent limits read a `KernelConfigService`-like
+`config` (`get()`), and `pairStoppedForks` takes the context's handle. `KernelOptions` lost `loop`
+and `runHooks`: tests override `AGENT_LOOP_FACTORY` / `RUN_HOOKS` through `overrides`. The model
+list cache moved to `@Cacheable` (`cache:capk:models:…`; the old keys expire by TTL). A lost
+conversation lease logs one `lock lost` line (with its key); conversation writes the caller notifies
+after run in their own transaction.

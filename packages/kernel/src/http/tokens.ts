@@ -4,9 +4,6 @@ export const KERNEL_DB = Symbol("KERNEL_DB");
 /** 当前配置的取值函数（`() => KernelConfig`，热更新后返回新配置）的注入令牌。 */
 export const KERNEL_CONFIG = Symbol("KERNEL_CONFIG");
 
-/** `ProviderRegistry` 的注入令牌。 */
-export const PROVIDER_REGISTRY = Symbol("PROVIDER_REGISTRY");
-
 /** `InboxService`（收件箱汇总）的注入令牌。 */
 export const INBOX = Symbol("INBOX");
 

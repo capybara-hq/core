@@ -22,7 +22,7 @@ import type { LoopDeps } from "../runtime/langgraph-loop.js";
 import type { AgentLoop, LoopOutcome } from "../runtime/loop.js";
 import { type MediaSourceDeps, RunError } from "../runtime/model-call.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
-import { finishRun } from "../runtime/run-finish.js";
+import type { RunFinish } from "../runtime/run-finish.js";
 import { recordedSkillForks } from "../runtime/subagents/skill-fork.js";
 import { skillsCatalogIdemKey } from "../skills/catalog.js";
 import {
@@ -80,6 +80,8 @@ export interface EvalReplayHooks {
 export interface RunReplayDeps {
   db: KernelSchemaDb;
   eventLog: EventLog;
+  /** Writes the replayed run's terminal state. */
+  runFinish: Pick<RunFinish, "finish">;
   config: () => KernelConfig;
   log: Logger;
   registry: Pick<ProviderRegistry, "resolve">;
@@ -563,13 +565,15 @@ export async function replayRun(
   } catch (e) {
     const err =
       e instanceof RunError ? e : new RunError("run.internal", "The run failed unexpectedly");
-    await finishRun(db, eventLog, {
-      conversationId,
-      runId,
-      status: "failed",
-      consumed: null,
-      event: { type: "run_failed", payload: { error: { code: err.code, message: err.message } } },
-    }).catch((x) => d.log.warn("cannot finish eval replay run", { runId, err: x }));
+    await d.runFinish
+      .finish({
+        conversationId,
+        runId,
+        status: "failed",
+        consumed: null,
+        event: { type: "run_failed", payload: { error: { code: err.code, message: err.message } } },
+      })
+      .catch((x) => d.log.warn("cannot finish eval replay run", { runId, err: x }));
     await Promise.allSettled([...charges]);
     throw crash ?? e;
   } finally {
@@ -585,7 +589,7 @@ export async function replayRun(
   }
   if (outcome.kind === "aborted" && stopped === undefined && signal.aborted) stopped = "shutdown";
   const finalConsumed = Math.max(0, ...fed.values(), trigger);
-  await finishRun(db, eventLog, {
+  await d.runFinish.finish({
     conversationId,
     runId,
     status: outcome.kind === "aborted" ? "aborted" : "completed",

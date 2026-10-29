@@ -602,7 +602,7 @@ export class ToolRegistry {
    */
   private async maxConcurrentSubagents(orgId: string): Promise<number> {
     const cfg = this.config;
-    const config = cfg ? () => cfg.get() : () => ({ subagents: SUBAGENT_LIMIT_DEFAULTS });
+    const config = cfg ?? { get: () => ({ subagents: SUBAGENT_LIMIT_DEFAULTS }) };
     return (await subagentLimits(this.db.db, config, orgId)).maxConcurrentPerRun;
   }
 

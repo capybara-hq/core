@@ -14,6 +14,7 @@ import type { KernelLogger } from "../log.js";
 import { rejectAnonymousGuest } from "../orgs/members.service.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
+import { ProviderRegistry } from "../runtime/providers.js";
 import { SkillChangesService } from "../skills/changes.service.js";
 import { assertOrgSkills, assertPinnedSkills } from "../skills/skills.service.js";
 import { ToolRegistry } from "../tools/registry.js";
@@ -250,9 +251,11 @@ export class AgentsService {
     >,
     /** The org row lock (orgs/org-lock.ts; R12): joins the caller's transaction. */
     @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
+    /** Resolves the agent's models (and their parameter declarations) when it is saved. */
+    @Inject(ProviderRegistry) private readonly providers: Pick<ProviderRegistry, "resolve">,
     /**
-     * R7: the model provider registry (runtime, Task 3.6b) and the sandbox destruction after a
-     * delete (内核投递一次性维护任务 `sandbox-destroy-for`，worker 在锁内逐个销毁，幂等; Task 3.8).
+     * R7: the sandbox destruction after a delete (内核投递一次性维护任务 `sandbox-destroy-for`，worker
+     * 在锁内逐个销毁，幂等; Task 3.8).
      */
     @Inject(LegacyPorts) private readonly ports: LegacyPorts,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
@@ -286,7 +289,7 @@ export class AgentsService {
    * （没有兜底时 `fallbackParams` 必须为空）；不合法 → `validation_failed`，details 逐键点名。返回提示。
    */
   private async checkModels(def: AgentDefinition): Promise<AgentWarning[]> {
-    const registry = this.ports.providers;
+    const registry = this.providers;
     const main = await registry.resolve(def.model);
     const fallback = def.fallback === null ? null : await registry.resolve(def.fallback);
     const details = [

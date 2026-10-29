@@ -62,7 +62,7 @@ import { OrgLock } from "../orgs/org-lock.js";
 import { OrgsController } from "../orgs/orgs.controller.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
 import { OrgSettingsController } from "../orgs/settings.controller.js";
-import type { ProviderRegistry } from "../runtime/providers.js";
+import { ProviderRegistry } from "../runtime/providers.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
 import { ConversationStreamController } from "../runtime/stream.controller.js";
 import type { StreamBus } from "../runtime/stream.js";
@@ -104,7 +104,6 @@ import {
   KERNEL_CONFIG,
   KERNEL_DB,
   ORG_UI_STREAMS,
-  PROVIDER_REGISTRY,
   UI_VIEWS,
 } from "./tokens.js";
 
@@ -118,8 +117,6 @@ export interface ApiDeps {
   /** 取当前配置（热更新后返回新配置）。 */
   config: () => KernelConfig;
   log: Logger;
-  /** 模型供应商注册表（与运行 worker 共用同一实例）。 */
-  registry: ProviderRegistry;
   /** 渠道连接（与 `Kernel.channels.connections` 同一实例）。 */
   channels: ChannelConnections;
   /** 评测队列的生产方（与 worker 同一队列名）。 */
@@ -192,11 +189,6 @@ function serviceProviders(): Provider[] {
     { provide: KERNEL_DB, useFactory: (deps: ApiDeps) => deps.db, inject: [API_DEPS] },
     { provide: KERNEL_CONFIG, useFactory: (deps: ApiDeps) => deps.config, inject: [API_DEPS] },
     {
-      provide: PROVIDER_REGISTRY,
-      useFactory: (deps: ApiDeps) => deps.registry,
-      inject: [API_DEPS],
-    },
-    {
       provide: EVAL_SETS,
       useFactory: (
         db: KernelSchemaDb,
@@ -234,7 +226,7 @@ function serviceProviders(): Provider[] {
       inject: [
         KERNEL_DB,
         KERNEL_CONFIG,
-        PROVIDER_REGISTRY,
+        ProviderRegistry,
         PricesService,
         SettingsService,
         REDIS,

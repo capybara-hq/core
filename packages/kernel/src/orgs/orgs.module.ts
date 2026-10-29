@@ -4,6 +4,7 @@ import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { IdentityModule } from "../identity/identity.module.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
+import { RuntimeModule } from "../runtime/runtime.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { DirectorySync } from "./directory-sync.js";
 import { InvitationsService } from "./invitations.service.js";
@@ -26,6 +27,8 @@ import { OrgSettingsService } from "./settings.service.js";
     ExtensionsModule,
     // offboarding clears credentials and cancels approvals and questions
     ToolsModule,
+    // offboarding stops the member's runs
+    RuntimeModule,
     // the producer side of directory-sync jobs (the maintenance worker consumes until Task 3.9)
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],

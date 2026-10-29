@@ -8,7 +8,7 @@ import { EVAL_QUOTA, HEALTH_CHECKS } from "./tokens.js";
     { provide: "AGENTS", useFactory: () => new AgentsService() }, // expect: kc-wiring
     { provide: "OPTIONS", useValue: {} }, // expect: kc-wiring
     { provide: HEALTH_CHECKS, useFactory: () => ({}) },
-    { provide: EVAL_QUOTA, useFactory: () => ({}) },
+    { provide: EVAL_QUOTA, useFactory: () => ({}) }, // expect: kc-wiring
     { provide: KERNEL_APP_OPTIONS, useValue: {} },
     { provide: OTHER_QUOTA, useFactory: () => ({}) }, // expect: kc-wiring
   ],

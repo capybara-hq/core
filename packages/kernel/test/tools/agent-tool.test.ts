@@ -499,7 +499,7 @@ describe("tool resolution", { timeout: 60_000 }, () => {
     for (const type of ["general-purpose", "scout"]) {
       const entry = findType(roster, type) as RosterEntry;
       const child = await effectiveDefinition(
-        { db, purposes: k.purposes, registry: k.runs.registry, config: () => cfg },
+        { db, purposes: k.purposes, registry: k.runs.registry, config: { get: () => cfg } },
         { orgId, parent, parentAgentId, entry },
       );
       const { tools } = await k.tools.registry.forAgent(orgId, child.definition);

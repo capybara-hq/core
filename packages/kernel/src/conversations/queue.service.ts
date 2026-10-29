@@ -4,9 +4,13 @@ import { sql } from "kysely";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
-import { LegacyPorts } from "../lifecycle/legacy-ports.js";
+import { RunControl as RunControlService } from "../runtime/run-control.js";
 import { notInvocable, type RenderedInvocation } from "../skills/invoke.js";
-import { ConversationsService, type ResolvedExtra } from "./conversations.service.js";
+import {
+  ConversationsService,
+  type ResolvedExtra,
+  type RunControl,
+} from "./conversations.service.js";
 import { EventLog, payloadJson } from "./event-log.js";
 import type { ConversationEvent, LogContentBlock } from "./events.js";
 import { userMessageIdemKey } from "./idem-keys.js";
@@ -49,8 +53,8 @@ export class ConversationQueue {
       ConversationsService,
       "get" | "writable" | "resolveExtra" | "bindIn" | "checkPick" | "prepareQueuedSkill"
     >,
-    /** R7 (Task 3.6b): the run control's `ensureRun`. */
-    @Inject(LegacyPorts) private readonly ports: LegacyPorts,
+    /** Starts the conversation's next run (`ensureRun`). */
+    @Inject(RunControlService) private readonly runs: Pick<RunControl, "ensureRun">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
@@ -129,7 +133,7 @@ export class ConversationQueue {
     }
     if (out.created) {
       await this.eventLog.publishChanged(conversationId, "queue");
-      await this.ports.runs.ensureRun(conversationId);
+      await this.runs.ensureRun(conversationId);
     }
     return { item: toItem(out.row), created: out.created };
   }
@@ -316,7 +320,7 @@ export class ConversationQueue {
     if (fresh) await this.eventLog.notify(conversationId, event.seq);
     if (switched) await this.eventLog.publishChanged(conversationId, "selection");
     await this.eventLog.publishChanged(conversationId, "queue");
-    await this.ports.runs.ensureRun(conversationId);
+    await this.runs.ensureRun(conversationId);
     return event;
   }
 
@@ -364,7 +368,7 @@ export class ConversationQueue {
       .where("id", "=", conversationId)
       .execute();
     await this.eventLog.publishChanged(conversationId, "queue");
-    await this.ports.runs.ensureRun(conversationId);
+    await this.runs.ensureRun(conversationId);
   }
 
   /** A queued item or a sent message for this client id (outside any transaction). */

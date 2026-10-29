@@ -4,7 +4,6 @@ import { z } from "zod";
 import { CatalogRequestsService } from "../catalog/requests.service.js";
 import { ExtensionAdmin } from "../extensions/admin-view.js";
 import { extensionNeedsAction } from "../extensions/permission-view.js";
-import { PROVIDER_REGISTRY } from "../http/tokens.js";
 import { type Account, AccountsService } from "../identity/accounts.js";
 import { MAX_PASSWORD_LENGTH } from "../identity/login.js";
 import {
@@ -37,7 +36,7 @@ import {
   type PurposeView,
 } from "../models/purposes.js";
 import { type Org, OrgsService } from "../orgs/orgs.service.js";
-import type { ProviderRegistry, ProviderStatus } from "../runtime/providers.js";
+import { ProviderRegistry, type ProviderStatus } from "../runtime/providers.js";
 
 /** 后台概览（`GET /api/v1/admin/overview`）的计数。 */
 export interface AdminOverview {
@@ -98,7 +97,7 @@ export class AdminController {
     @Inject(PricesService) private readonly prices: PricesService,
     @Inject(ModelPurposesService) private readonly purposes: ModelPurposesService,
     @Inject(ExtensionAdmin) private readonly plugins: ExtensionAdmin,
-    @Inject(PROVIDER_REGISTRY) private readonly registry: ProviderRegistry,
+    @Inject(ProviderRegistry) private readonly registry: ProviderRegistry,
     @Inject(CatalogRequestsService) private readonly catalogRequests: CatalogRequestsService,
   ) {}
 

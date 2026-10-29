@@ -1,7 +1,9 @@
 import { BullModule } from "@nestjs/bullmq";
 import { type DynamicModule, Module } from "@nestjs/common";
+import { DiscoveryModule } from "@nestjs/core";
 import type { DefaultJobOptions } from "bullmq";
 import { KernelConfigService } from "../config/kernel-config.service.js";
+import { QueueShutdown } from "./queue-shutdown.js";
 import { bullConnectionOptions } from "./redis-connection.js";
 
 /** Defaults of every job a kernel queue adds (the values `ctx.queue` uses today). */
@@ -27,6 +29,7 @@ export class QueueModule {
       module: QueueModule,
       global: true,
       imports: [
+        DiscoveryModule,
         BullModule.forRootAsync({
           inject: [KernelConfigService],
           useFactory: (config: KernelConfigService) => ({
@@ -35,6 +38,8 @@ export class QueueModule {
           }),
         }),
       ],
+      // every queue and worker closes within the stop budget (before @nestjs/bullmq's own close)
+      providers: [QueueShutdown],
     };
   }
 

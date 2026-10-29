@@ -13,8 +13,9 @@ import { DIRECTORY_SCAN_SCHEDULER_ID } from "../orgs/directory-sync.js";
 import { OFFBOARD_SWEEP_SCHEDULER_ID } from "../orgs/offboarding.js";
 import { STORAGE_PURGE_SCHEDULER_ID } from "../storage/purge.js";
 import { DRIFT_SCHEDULER_ID, OUTPUT_CLEANUP_SCHEDULER_ID } from "../tools/job-ids.js";
+import { bullConnection } from "./bull-connection.js";
+import { USAGE_SWEEP_SCHEDULER_ID, WAIT_SWEEP_SCHEDULER_ID } from "./job-ids.js";
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
-import { bullConnection } from "./run-queue.js";
 
 export { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 
@@ -55,6 +56,9 @@ export const RETIRED_SCHEDULER_IDS: readonly string[] = [
   OUTPUT_CLEANUP_SCHEDULER_ID,
   // Task 3.6a
   ATTACHMENT_CLEANUP_SCHEDULER_ID,
+  // Task 3.6b
+  WAIT_SWEEP_SCHEDULER_ID,
+  USAGE_SWEEP_SCHEDULER_ID,
 ];
 
 /**

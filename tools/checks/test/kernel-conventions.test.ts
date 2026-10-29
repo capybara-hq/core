@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   checkKernelConventions,
+  KC_ALLOWED_FACTORY_TOKENS,
   KC_EXCEPTIONS,
   KC_PENDING,
   KC_RULES,
@@ -34,12 +35,16 @@ function expected(root: string): string[] {
   return out.sort();
 }
 
-/** Runs the check on a fixture with no pending entries and only the exceptions whose file it has. */
+/**
+ * Runs the check on a fixture with no pending entries and only the exceptions whose file it has
+ * (the factory allowances only on the kc-wiring fixture, which has their modules).
+ */
 function run(root: string, rule?: KcRule): string[] {
   const exceptions = KC_EXCEPTIONS.filter(
     (e) => (rule === undefined || e.rule === rule) && existsSync(join(root, e.path)),
   );
-  return checkKernelConventions(root, { pending: {}, exceptions })
+  const factoryTokens = rule === "kc-wiring" ? KC_ALLOWED_FACTORY_TOKENS : [];
+  return checkKernelConventions(root, { pending: {}, exceptions, factoryTokens })
     .map((f) => `${f.rule} ${relative(root, f.file)}:${f.line}`)
     .sort();
 }
@@ -64,6 +69,7 @@ describe("checkKernelConventions", () => {
     checkKernelConventions(queueRoot, {
       pending: { "kc-queue": [{ path: "packages/kernel/src/runtime/", max }, ...extra] },
       exceptions: [],
+      factoryTokens: [],
     }).map((x) => [x.rule, relative(queueRoot, x.file), x.line, x.message]);
 
   it("a pending entry hides exactly max violations under it", () => {
@@ -101,6 +107,7 @@ describe("checkKernelConventions", () => {
     const reason = "test";
     const f = checkKernelConventions(root, {
       pending: {},
+      factoryTokens: [],
       exceptions: [
         {
           rule: "kc-process",
@@ -122,14 +129,39 @@ describe("checkKernelConventions", () => {
     ]);
   });
 
+  it("a factory allowance covers only its own module, and one that matches nothing fails", () => {
+    const root = join(fixtures, "kc-wiring");
+    const reason = "test";
+    const f = checkKernelConventions(root, {
+      pending: {},
+      exceptions: [],
+      factoryTokens: [
+        ...KC_ALLOWED_FACTORY_TOKENS,
+        { token: "GONE_QUOTA", path: "packages/kernel/src/runtime/runtime.module.ts", reason },
+      ],
+    })
+      .filter((x) => x.rule === "kc-stale-exception")
+      .map((x) => [x.rule, relative(root, x.file), x.message]);
+    expect(f).toEqual([
+      [
+        "kc-stale-exception",
+        "packages/kernel/src/runtime/runtime.module.ts",
+        expect.stringContaining("the factory allowance for GONE_QUOTA matches no"),
+      ],
+    ]);
+  });
+
   it("every pending and exception path exists in the repository", () => {
     const paths = [
       ...Object.values(KC_PENDING)
         .flat()
         .map((p) => p?.path),
       ...KC_EXCEPTIONS.map((e) => e.path),
+      ...KC_ALLOWED_FACTORY_TOKENS.map((a) => a.path),
     ] as string[];
     expect(paths.filter((p) => !existsSync(join(repoRoot, p)))).toEqual([]);
-    for (const e of KC_EXCEPTIONS) expect(e.reason.length).toBeGreaterThan(20);
+    for (const e of [...KC_EXCEPTIONS, ...KC_ALLOWED_FACTORY_TOKENS]) {
+      expect(e.reason.length).toBeGreaterThan(20);
+    }
   });
 });

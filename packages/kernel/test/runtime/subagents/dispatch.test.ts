@@ -15,10 +15,11 @@ import type { Kernel } from "../../../src/kernel.js";
 import { BEHAVIOR_RULES } from "../../../src/runtime/context/build.js";
 import { type DispatchDeps, dispatchSubagent } from "../../../src/runtime/subagents/dispatch.js";
 import { SUBAGENT_PREAMBLE } from "../../../src/runtime/subagents/preamble.js";
+import { SubagentsService } from "../../../src/runtime/subagents/subagents.service.js";
 import { AGENT_REFUSALS } from "../../../src/tools/builtins/agent.js";
 import { hookDeniedText } from "../../../src/tools/pipeline.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
-import { eventLogFor, legacyDbFor } from "../../helpers/conversations.js";
+import { legacyDbFor } from "../../helpers/conversations.js";
 import { truncateTables } from "../../helpers/db.js";
 import { accountsFor } from "../../helpers/identity.js";
 import { testMembers } from "../../helpers/members.js";
@@ -736,15 +737,18 @@ describe("dispatch idempotency under the parent run lock", () => {
   const enqueued: string[] = [];
   const deps = (): DispatchDeps => ({
     db,
-    eventLog: eventLogFor(db, k.bus),
+    // the kernel's event log: the dispatch's writes run in the kernel's transaction
+    eventLog: k.runs.eventLog,
     purposes: k.purposes,
     registry: k.runs.registry,
-    config: () => k.config,
+    config: { get: () => k.config },
     // the child runs are not executed here
     enqueue: async (_data, jobId) => {
       enqueued.push(jobId);
     },
     log: { error: () => {}, warn: () => {} },
+    // the dispatch's writes in the kernel's own transaction (the same database)
+    commitDispatch: (a, plan, child) => k.app.get(SubagentsService).commitDispatch(a, plan, child),
   });
   const input = { description: "Task", prompt: "gp-task: twice" };
 

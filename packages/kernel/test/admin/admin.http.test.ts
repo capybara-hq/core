@@ -559,7 +559,7 @@ describe("企业管理员端点", () => {
 
     // 配额读取部署设置：orgA 上限 1，第二个运行进不去；未覆盖的组织用 runtime.orgConcurrency
     const settings = settingsFor(db);
-    const limit = (org: string) => orgRunLimit(settings, () => k.config, org);
+    const limit = (org: string) => orgRunLimit(settings, { get: () => k.config }, org);
     expect(await limit("orgA")).toBe(1);
     expect(await limit("orgC")).toBe(k.config.runtime.orgConcurrency);
     const quota = new OrgQuota(redis);

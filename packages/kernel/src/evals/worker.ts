@@ -12,10 +12,10 @@ import { ApiError } from "../errors.js";
 import { ExtensionUnloadedError } from "../extensions/inflight.js";
 import { withJobContext } from "../log-context.js";
 import { type ModelPurposesService, PurposeAttemptError } from "../models/purposes.js";
+import { bullConnection } from "../runtime/bull-connection.js";
 import { MediaUnavailableError, RunError } from "../runtime/model-call.js";
 import { ProviderListError } from "../runtime/providers.js";
 import { ORG_QUOTA_LEASE_MS, type OrgQuota } from "../runtime/quota.js";
-import { bullConnection } from "../runtime/run-queue.js";
 import {
   consumeTokens,
   recordOutcome,

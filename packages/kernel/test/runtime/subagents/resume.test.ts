@@ -13,9 +13,7 @@ import { createDb } from "../../../src/db/pool.js";
 import type { Kernel } from "../../../src/kernel.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../../src/runtime/maintenance.js";
 import { RUN_QUOTA_PREFIX } from "../../../src/runtime/quota.js";
-import { finishRun } from "../../../src/runtime/run-finish.js";
 import { RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME } from "../../../src/runtime/run-queue.js";
-import { onChildFinished } from "../../../src/runtime/subagents/child.js";
 import { resumeJobId, waitTimeoutJobId } from "../../../src/runtime/waits.js";
 import { AGENT_STOPPED_WITH_RUN_TEXT } from "../../../src/tools/builtins/agent.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
@@ -45,6 +43,7 @@ import {
   childRunsOf,
   dropChildJobs,
   finishChildByHand,
+  finishRun,
   parentWaiting,
   runStatus,
 } from "../../helpers/subagents.js";
@@ -237,13 +236,6 @@ async function waitTimeoutJobGone(waitId: string) {
   }
 }
 
-const childDeps = () => ({
-  db,
-  eventLog: eventLogFor(db, k.bus),
-  waits: k.runs.waits,
-  log: console,
-});
-
 describe("resume after sub-agents", () => {
   it.each([
     [0, 1, 2],
@@ -264,8 +256,8 @@ describe("resume after sub-agents", () => {
         await finishChildByHand(db, eventLogFor(db, k.bus), child, `reply ${idx}`);
         // every finisher tries (twice here, as a redelivery would); only the last one resumes
         await Promise.all([
-          onChildFinished(childDeps(), child.runId),
-          onChildFinished(childDeps(), child.runId),
+          k.runs.waits.childFinished(child.runId),
+          k.runs.waits.childFinished(child.runId),
         ]);
         if (i < 2) expect(await runStatus(db, runId)).toBe("waiting");
       }

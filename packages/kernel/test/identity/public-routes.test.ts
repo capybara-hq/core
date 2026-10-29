@@ -16,6 +16,7 @@ import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiModule } from "../../src/http/api.module.js";
 import { createHttpApp, type KernelHttpApp } from "../../src/http/app.js";
+import { CacheService } from "../../src/infra/cache/cache.service.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
@@ -124,6 +125,7 @@ beforeAll(async () => {
     LegacyPorts,
     KernelEvents,
     CredentialThrottler,
+    CacheService,
   ];
   Global()(ProbeModule);
   Module({
@@ -166,7 +168,6 @@ beforeAll(async () => {
           keyring: createKeyring(Buffer.from(masterKey, "base64"), []),
           config: () => k.config,
           log,
-          registry: k.runs.registry,
           channels: k.channels.connections,
           evalQueue: { enqueue: async () => {} },
         }),

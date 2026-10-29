@@ -16,6 +16,7 @@ import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import { LegacyPorts } from "../lifecycle/legacy-ports.js";
 import type { KernelLogger } from "../log.js";
+import { RunControl } from "../runtime/run-control.js";
 import { ApprovalsService } from "../tools/approvals.service.js";
 import { Credentials } from "../tools/credentials.js";
 import { QuestionsService } from "../tools/questions.service.js";
@@ -84,8 +85,7 @@ const DIRECTORY_SOURCE_PREFIX = "directory:";
  * 个人凭据重新写回（upsert）。凭据只在此人以成员身份调用工具时使用，而其运行已被中止、成员关系已删除，
  * 残留的凭据不会被使用；重新加入组织后会被新的连接覆盖。
  *
- * The collaborators of directories not converted yet (run control: Task 3.6b; sandbox
- * destruction: Task 3.8) are read from {@link LegacyPorts} at call time.
+ * The sandbox destruction (Task 3.8) is read from {@link LegacyPorts} at call time.
  */
 @Injectable()
 export class Offboarding {
@@ -97,6 +97,8 @@ export class Offboarding {
     @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "list">,
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "notify" | "publishChanged">,
     @Inject(LegacyPorts) private readonly ports: LegacyPorts,
+    /** Stops the departed member's runs (`by: null`, a system action). */
+    @Inject(RunControl) private readonly runs: OffboardingRunControl,
     @Inject(Credentials) private readonly credentials: Pick<Credentials, "clearAccount">,
     @Inject(ApprovalsService)
     private readonly approvals: Pick<ApprovalsService, "cancelPendingFor">,
@@ -414,7 +416,7 @@ export class Offboarding {
    * 不像会话中止那样随后起新一轮运行：离职者的待处理消息不再处理。
    */
   private async stopRun(run: InFlightRun): Promise<void> {
-    const ctl = this.ports.offboardRuns;
+    const ctl = this.runs;
     try {
       if (
         run.status === "waiting" &&

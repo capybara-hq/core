@@ -43,6 +43,23 @@ export interface KernelEventMap {
    * finished delivery job re-checks the log for content it has not delivered).
    */
   "conversation.event-appended": { conversationId: string; toSeq: number };
+  /**
+   * A run started executing on this replica (its first start, a resume, or a takeover after a
+   * stall), after it took the conversation lock and an org quota slot. The channel outbound
+   * enqueues the conversation's IM delivery; a lost event is re-derived by the run's next append.
+   */
+  "run.started": { conversationId: string; runId: string };
+  /**
+   * A stop of a run waiting on a person was handled (`RunControl.abortWaiting`, whether or not it
+   * still waited): its approval and question cards change, so the channel outbound enqueues the
+   * conversation's IM delivery (re-derived by the next append when lost).
+   */
+  "run.wait-stopped": { conversationId: string; runId: string };
+  /**
+   * `ensureRun` marked an orphaned run failed (after the commit): the waits stop its active
+   * sub-agents at once. A lost event is repaired by the wait sweep (children of finished runs).
+   */
+  "run.orphaned": { runId: string };
 }
 
 /** The payload's id for the failure log (`approvalId` / `questionId`, as the old hooks logged). */

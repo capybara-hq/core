@@ -53,8 +53,15 @@ import { ModelPurposesService } from "./models/purposes.js";
 import { DirectorySync } from "./orgs/directory-sync.js";
 import { OrgLock } from "./orgs/org-lock.js";
 import { OrgsModule } from "./orgs/orgs.module.js";
+import { KyselyCheckpointSaver } from "./runtime/checkpointer.js";
 import { ConversationLock } from "./runtime/conversation-lock.js";
+import { ProviderRegistry } from "./runtime/providers.js";
+import { EVAL_QUOTA, type OrgQuota } from "./runtime/quota.js";
+import { RunFinish } from "./runtime/run-finish.js";
+import { RuntimeWorkersModule } from "./runtime/run-processors.js";
+import { AgentLoops, RunSteps } from "./runtime/run-steps.js";
 import { RuntimeModule } from "./runtime/runtime.module.js";
+import { Waits } from "./runtime/waits.js";
 import { SkillsCatalogService } from "./skills/catalog.js";
 import { SkillChangesService } from "./skills/changes.service.js";
 import { SkillInvoker } from "./skills/invoke.js";
@@ -80,6 +87,7 @@ import { ToolsModule } from "./tools/tools.module.js";
 @Module({})
 class LegacyGraphModule {
   static forRoot(options: KernelAppOptions): DynamicModule {
+    const overridden = (options.overrides ?? []).map((o) => o.provide as symbol);
     return {
       module: LegacyGraphModule,
       global: true,
@@ -135,6 +143,13 @@ class LegacyGraphModule {
             ConversationLock,
             AttachmentsService,
             ConversationsService,
+            ProviderRegistry,
+            Waits,
+            RunFinish,
+            KyselyCheckpointSaver,
+            RunSteps,
+            AgentLoops,
+            EVAL_QUOTA,
           ],
           useFactory: (
             config: KernelConfigService,
@@ -171,6 +186,13 @@ class LegacyGraphModule {
             conversationLock: ConversationLock,
             attachments: AttachmentsService,
             conversations: ConversationsService,
+            registry: ProviderRegistry,
+            waits: Waits,
+            runFinish: RunFinish,
+            checkpoints: KyselyCheckpointSaver,
+            steps: RunSteps,
+            loops: AgentLoops,
+            evalQuota: OrgQuota,
           ): LegacyGraph =>
             createLegacyGraph(config, log, kdb, redis, bus, hooks, {
               txHost,
@@ -201,6 +223,13 @@ class LegacyGraphModule {
               conversationLock,
               attachments,
               conversations,
+              registry,
+              waits,
+              runFinish,
+              checkpoints,
+              steps,
+              loops,
+              evalQuota,
             }),
         },
         ...(options.overrides ?? []).map((o) => ({
@@ -208,7 +237,9 @@ class LegacyGraphModule {
           useValue: o.useValue,
         })),
       ],
-      exports: [LEGACY_GRAPH, KERNEL_APP_OPTIONS, KERNEL_TEST_HOOKS],
+      // the overrides are exported too: a converted module's optional provider (e.g. the run
+      // loop factory, `AGENT_LOOP_FACTORY`) resolves to them through this global module
+      exports: [LEGACY_GRAPH, KERNEL_APP_OPTIONS, KERNEL_TEST_HOOKS, ...overridden],
     };
   }
 }
@@ -248,6 +279,8 @@ export class KernelModule {
         IdentityModule,
         ExtensionsModule,
         CatalogModule,
+        // the run worker, usage.report and title consumers (started on the worker role)
+        RuntimeWorkersModule.forRoot(config),
         ...(config.roles.includes("api")
           ? [
               ApiModule.registerFrom({

@@ -1,6 +1,5 @@
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { runTitleJob } from "../../src/conversations/titles.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { Kernel } from "../../src/kernel.js";
@@ -22,6 +21,7 @@ import {
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { runTitleJob } from "../helpers/runtime.js";
 
 /**
  * UI refresh B Task 7, two replicas: a title attempt runs once across replicas (claimed in PG), so

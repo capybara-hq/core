@@ -9,8 +9,9 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
-import { LegacyPorts } from "../lifecycle/legacy-ports.js";
 import type { KernelLogger } from "../log.js";
+import { ProviderRegistry } from "../runtime/providers.js";
+import { RunControl as RunControlService } from "../runtime/run-control.js";
 import { type RenderedInvocation, SkillInvoker } from "../skills/invoke.js";
 import { ConnectorContent } from "../tools/connector-content.js";
 import { ConversationAccess, parentReachable } from "./access.js";
@@ -218,11 +219,10 @@ export class ConversationsService {
     @Inject(EventLog) private readonly eventLog: EventLog,
     @Inject(AgentLookup) private readonly agents: Pick<AgentLookup, "get">,
     @Inject(ConversationAccess) private readonly access: Pick<ConversationAccess, "isAccessible">,
-    /**
-     * R7 (Task 3.6b): `runs` (the run control: RunQueue, Waits, RunAbort) and `providers`
-     * (resolves a switched-to model and its declared parameters, UI refresh B).
-     */
-    @Inject(LegacyPorts) private readonly ports: LegacyPorts,
+    /** Starts and stops the conversation's runs. */
+    @Inject(RunControlService) private readonly runs: RunControl,
+    /** Resolves a switched-to model and its declared parameters (UI refresh B). */
+    @Inject(ProviderRegistry) private readonly providers: Pick<ProviderRegistry, "resolve">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     /** Reads `@` resources with the sender's credentials. */
     @Inject(ConnectorContent)
@@ -240,7 +240,7 @@ export class ConversationsService {
    * 会话不会因为某次运行结束后的投递失败而永远停在「运行中」。失败只记日志。
    */
   kickRun(conversationId: string): void {
-    this.ports.runs
+    this.runs
       .ensureRun(conversationId)
       .catch((err) =>
         this.log.warn("ensureRun on conversation open failed", { conversationId, err }),
@@ -285,7 +285,7 @@ export class ConversationsService {
       return raced;
     }
     await this.eventLog.notify(id, written.seq);
-    await this.ports.runs.ensureRun(id);
+    await this.runs.ensureRun(id);
     return { conversation: await this.rowView(id), event: written, created: true };
   }
 
@@ -353,7 +353,7 @@ export class ConversationsService {
     }
     const event = await this.eventLog.findByIdem(row.id, userMessageIdemKey(clientMessageId));
     if (!event) return null;
-    await this.ports.runs.ensureRun(row.id);
+    await this.runs.ensureRun(row.id);
     return { conversation: toView(row), event, created: false };
   }
 
@@ -761,7 +761,7 @@ export class ConversationsService {
         userMessageIdemKey(input.clientMessageId),
       );
       if (existing) {
-        await this.ports.runs.ensureRun(conversationId);
+        await this.runs.ensureRun(conversationId);
         return existing;
       }
     }
@@ -789,7 +789,7 @@ export class ConversationsService {
         this.userMessage(accountId, input, extra, [], invoked),
       ]);
     }
-    await this.ports.runs.ensureRun(conversationId);
+    await this.runs.ensureRun(conversationId);
     return event as ConversationEvent;
   }
 
@@ -825,7 +825,7 @@ export class ConversationsService {
     const next = planSelection(agent.model, current, input);
     if (next === null) return null;
     const { model, effort } = next;
-    const { info } = await this.ports.providers.resolve(model ?? agent.model);
+    const { info } = await this.providers.resolve(model ?? agent.model);
     if (effort !== null) {
       const knob = info.parameters.find((p) => p.key === "effort");
       const values = (knob?.schema as { enum?: unknown[] } | undefined)?.enum ?? [];
@@ -1002,7 +1002,7 @@ export class ConversationsService {
       .orderBy("created_at", "desc")
       .executeTakeFirst();
     if (!run) throw new ApiError("run.not_active", "No active run to abort");
-    const runs = this.ports.runs;
+    const runs = this.runs;
     // 等待中：直接结束；没成功（刚被续跑、已回到 queued）则按下面的常规路径中止。
     if (run.status === "waiting" && (await runs.abortWaiting(conversationId, run.id, accountId))) {
       this.kickRun(conversationId);

@@ -29,9 +29,9 @@ import {
 } from "../../src/runtime/context/build.js";
 import { MediaCache } from "../../src/runtime/media-cache.js";
 import { type ModelStepDeps, RunError, runModelStep } from "../../src/runtime/model-call.js";
-import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
+import { providerRegistryFor, stepLogFor } from "../helpers/runtime.js";
 
 /**
  * 运行一步模型调用时的附件解析（M5 T3 fix round 1）：存储暂时故障不变成占位（Ruling M4）、
@@ -126,15 +126,18 @@ beforeAll(async () => {
   deps = {
     db,
     eventLog,
-    registry: new ProviderRegistry(
+    stepLog: stepLogFor(db, eventLog),
+    registry: providerRegistryFor(
       { list: () => [{ plugin: "stub", capability: V2, impl: provider }] },
       redis,
     ),
     tools: { forAgent: async () => ({ tools: [], unavailable: [] }) },
-    config: () => ({
-      ...config,
-      attachments: { ...config.attachments, requestMediaBytes: budget },
-    }),
+    config: {
+      get: () => ({
+        ...config,
+        attachments: { ...config.attachments, requestMediaBytes: budget },
+      }),
+    },
     log: silent,
     media: {
       info: async (_o, _c, ids) =>

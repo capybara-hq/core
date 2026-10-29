@@ -2,8 +2,22 @@ import type { Queue } from "bullmq";
 import { sql } from "kysely";
 import type { EventLog } from "../../src/conversations/event-log.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
-import { finishRun } from "../../src/runtime/run-finish.js";
+import { type FinishRunArgs, RunFinish } from "../../src/runtime/run-finish.js";
+import { handlesFor } from "./identity.js";
 import { waitFor } from "./runs.js";
+
+/**
+ * Writes a run's terminal state over a test's pool (`RunFinish.finish`, its own transaction, then
+ * the notify): `eventLog` must be built over the same pool (`eventLogFor`).
+ */
+export function finishRun(
+  db: KernelSchemaDb,
+  eventLog: EventLog,
+  a: FinishRunArgs,
+): Promise<number | null> {
+  const h = handlesFor(db as never);
+  return new RunFinish(h.db, eventLog, h.txHost).finish(a);
+}
 
 /** A dispatched child run of a parent conversation, oldest first. */
 export interface ChildRun {
