@@ -273,7 +273,7 @@ export const KC_PENDING: KcPending = {
     // R10: createLocalAccount builds AccountsService by hand until Task 5.2
     { path: "packages/testing/src/kernel-helpers.ts", max: 1 },
   ],
-  // the createKernel facade and its Kernel type: Task 5.1 converts the tests, 5.3 deletes it
+  // the createKernel facade and its Kernel type: Task 5.2 moves `capybara start`, 5.3 deletes it
   "kc-facade": [
     { path: "apps/capybara/src/commands/start.ts", max: 3 },
     // start.test / start-bootstrap.test mock the `createKernel` export `capybara start` still
@@ -281,7 +281,6 @@ export const KC_PENDING: KcPending = {
     { path: "apps/capybara/test/", max: 2 },
     { path: "packages/kernel/src/index.ts", max: 2 },
     { path: "packages/kernel/src/kernel.ts", max: 4 },
-    { path: "packages/kernel/test/", max: 3 },
   ],
 };
 

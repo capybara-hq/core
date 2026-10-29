@@ -1,7 +1,13 @@
+import { EventEmitter } from "node:events";
 import { fileURLToPath } from "node:url";
 import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import { expect } from "vitest";
-import type { KernelAppOptions } from "../../src/app.js";
+import {
+  buildKernelApp,
+  closeKernelApp,
+  type KernelAppOptions,
+  startKernelApp,
+} from "../../src/app.js";
 import {
   type KernelConfig,
   KernelConfigSchema,
@@ -10,7 +16,8 @@ import {
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import type { KernelHttp } from "../../src/http/app.js";
-import { createKernel } from "../../src/kernel.js";
+import { GracefulShutdown } from "../../src/infra/lifecycle/graceful-shutdown.service.js";
+import { KernelLifecycle } from "../../src/lifecycle/kernel-lifecycle.js";
 import { createLogger } from "../../src/log.js";
 import { runJobId } from "../../src/runtime/run-queue.js";
 import { asUser, cookieJar } from "./http.js";
@@ -109,9 +116,6 @@ export interface TestKernel {
   close(): Promise<void>;
 }
 
-/** Transitional (nest kernel Task 5.1): the facade, until every test directory is converted. */
-type Facade = Awaited<ReturnType<typeof createKernel>>;
-
 /** A kernel built but not started ({@link buildKernel}). */
 export interface BuiltKernel extends TestKernel {
   /** Runs the start sequence and listens on `config.http.port`; a failure closes the kernel. */
@@ -139,28 +143,74 @@ function assertOffline(config: KernelConfig, allowOfficialMarketplace: boolean |
   }
 }
 
+/** The {@link TestKernel} view of a kernel application. */
+function testKernelOf(app: KernelApp): TestKernel {
+  const lifecycle = app.get(KernelLifecycle);
+  return {
+    app,
+    http: lifecycle.http,
+    get port() {
+      return lifecycle.port;
+    },
+    close: () => closeKernelApp(app),
+  };
+}
+
 /**
  * Builds a kernel without starting it (logs discarded unless `logger` is given): for tests that
- * reach the application before its start sequence, or that expect the start to fail.
+ * reach the application before its start sequence, or that expect the start to fail. `start()`
+ * runs the start sequence (`app.init()`) and listens; a failure closes the kernel (unless its stop
+ * already began) and is rethrown.
  */
 export async function buildKernel(
   config: KernelConfig,
   opts: TestKernelOptions = {},
-): Promise<Facade & BuiltKernel> {
+): Promise<BuiltKernel> {
   const { allowOfficialMarketplace, ...appOpts } = opts;
   assertOffline(config, allowOfficialMarketplace);
-  const k = await createKernel(config, { env: {}, logger: silent(), ...appOpts });
-  return Object.assign(k as Facade & { app: KernelApp }, { close: () => k.stop() });
+  const app = await buildKernelApp(config, { env: {}, logger: silent(), ...appOpts });
+  const lifecycle = app.get(KernelLifecycle);
+  const shutdown = app.get(GracefulShutdown);
+  let started = false;
+  return {
+    ...testKernelOf(app),
+    get port() {
+      return lifecycle.port;
+    },
+    async start() {
+      if (started) throw new Error("kernel already started; start() may be called once");
+      if (shutdown.isShuttingDown()) throw new Error("kernel is stopped");
+      started = true;
+      try {
+        await app.init();
+        await lifecycle.listen(config.http.port);
+      } catch (e) {
+        if (!shutdown.isShuttingDown()) {
+          lifecycle.log.error("kernel start failed", { err: e });
+          await closeKernelApp(app);
+        }
+        throw e;
+      }
+    },
+  };
 }
 
-/** Creates and starts a kernel (logs discarded unless `logger` is given). */
+/**
+ * Creates and starts a kernel with `startKernelApp` (logs discarded unless `logger` is given). It
+ * gets a signal source of its own, so it never handles the process's SIGTERM / SIGINT.
+ */
 export async function startKernel(
   config: KernelConfig,
   opts: TestKernelOptions = {},
-): Promise<Facade & TestKernel> {
-  const k = await buildKernel(config, opts);
-  await k.start();
-  return k;
+): Promise<TestKernel> {
+  const { allowOfficialMarketplace, ...appOpts } = opts;
+  assertOffline(config, allowOfficialMarketplace);
+  const app = await startKernelApp(
+    config,
+    { env: {}, logger: silent(), ...appOpts },
+    { signals: new EventEmitter() },
+  );
+  return testKernelOf(app);
 }
 
 export type Req = ReturnType<typeof asUser>;

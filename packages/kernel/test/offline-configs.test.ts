@@ -49,8 +49,9 @@ describe("kernels started by tests", () => {
         const text = readFileSync(f, "utf8");
         // Creates a kernel itself, or parses its own config and starts it through a helper.
         const starts =
-          /\bcreateKernel\(/.test(text) ||
-          (/KernelConfigSchema\.parse\(/.test(text) && /\bstart(?:Test)?Kernel\(/.test(text));
+          /\b(?:create|build|start)KernelApp\(/.test(text) ||
+          (/KernelConfigSchema\.parse\(/.test(text) &&
+            /\b(?:start(?:Test)?|build)Kernel\(/.test(text));
         return (
           starts &&
           !/official:\s*\{\s*enabled:/.test(text) &&
