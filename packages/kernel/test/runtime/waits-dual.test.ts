@@ -8,8 +8,7 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import type { Kernel } from "../../src/kernel.js";
-import { MAINTENANCE_QUEUE_NAME, waitTimeoutJobId } from "../../src/runtime/waits.js";
+import { MAINTENANCE_QUEUE_NAME, Waits, waitTimeoutJobId } from "../../src/runtime/waits.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
@@ -25,6 +24,7 @@ import {
   runConfig,
   sleep,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForEvent,
   waitForTerminal,
@@ -45,7 +45,7 @@ let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let maint: Queue;
-const kernels: Kernel[] = [];
+const kernels: TestKernel[] = [];
 
 const config = () =>
   runConfig({ pg: pgc.url, redis: rd.url }, { extensions: [MODEL_FAKE, MEM_CONNECTOR] });
@@ -53,7 +53,7 @@ const ECHO = 'tool:mem-connector__echo:{"text":"hi"}';
 const ofType = <T extends ConversationEvent["type"]>(evs: ConversationEvent[], type: T) =>
   evs.filter((e): e is Extract<ConversationEvent, { type: T }> => e.type === type);
 
-async function login(k: Kernel, jar = cookieJar()): Promise<Req> {
+async function login(k: TestKernel, jar = cookieJar()): Promise<Req> {
   const req = asUser(k.http, jar);
   const res = await req({
     method: "POST",
@@ -64,7 +64,7 @@ async function login(k: Kernel, jar = cookieJar()): Promise<Req> {
   return req;
 }
 
-async function boot(): Promise<Kernel> {
+async function boot(): Promise<TestKernel> {
   const k = await startKernel(config());
   kernels.push(k);
   return k;
@@ -83,7 +83,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await maint?.close();
-  for (const k of kernels) await k.stop();
+  for (const k of kernels) await k.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
@@ -92,7 +92,7 @@ let orgId: string;
 let agentId: string;
 
 beforeEach(async () => {
-  for (const k of kernels.splice(0)) await k.stop();
+  for (const k of kernels.splice(0)) await k.close();
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   memState().echoCalls = 0;
@@ -150,7 +150,7 @@ describe("双副本续跑", () => {
     const convId = await createConv(reqA, orgId, agentId);
     const { runId, id } = await waitingApproval(reqA, convId);
     // A 停机：之后只有 B 能执行续跑
-    await ka.stop();
+    await ka.close();
     kernels.splice(kernels.indexOf(ka), 1);
     const kb = await boot();
     const reqB = asUser(kb.http, jar);
@@ -193,8 +193,8 @@ describe("双副本续跑", () => {
           payload: { decision: "approve" },
         }),
         job.promote(),
-        kb.runs.waits.expire("approval", id),
-        ka.runs.waits.resume(runId, id),
+        kb.app.get(Waits).expire("approval", id),
+        ka.app.get(Waits).resume(runId, id),
       ]);
       expect([200, 409]).toContain(decision.statusCode);
       await waitForTerminal(db, convId, 1);

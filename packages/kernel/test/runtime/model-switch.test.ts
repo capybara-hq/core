@@ -1,10 +1,10 @@
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import type { Kernel } from "../../src/kernel.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import {
@@ -18,6 +18,7 @@ import {
   runsOf,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForEvent,
   waitForTerminal,
@@ -34,7 +35,7 @@ let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
-let k: Kernel;
+let k: TestKernel;
 let owner: Req;
 let ownerId: string;
 let orgId: string;
@@ -59,7 +60,7 @@ beforeAll(async () => {
   );
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -234,7 +235,7 @@ describe("model and effort switching", { timeout: 60_000 }, () => {
   });
   it("a switch publishes `changed: selection`; a retried old switch does not move the cache", async () => {
     const conv = await createConv(owner, orgId, agentId);
-    const spy = vi.spyOn(k.runs.eventLog, "publishChanged");
+    const spy = vi.spyOn(k.app.get(EventLog), "publishChanged");
     try {
       const r1 = await send(conv, { text: "echo:a", clientMessageId: "sw-1", model: FAKE_2 });
       expect(r1.statusCode).toBe(202);

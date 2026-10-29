@@ -6,8 +6,9 @@ import { type KernelConfig, KernelConfigSchema } from "../../../src/config/schem
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import type { Account } from "../../../src/identity/accounts.js";
-import { createKernel, type Kernel } from "../../../src/kernel.js";
 import { createLogger } from "../../../src/log.js";
+import { ModelPurposesService } from "../../../src/models/purposes.js";
+import { ProviderRegistry } from "../../../src/runtime/providers.js";
 import {
   CHILD_REMOVED_TOOLS,
   type CheckedOrgAgent,
@@ -26,12 +27,13 @@ import {
 import { truncateTables } from "../../helpers/db.js";
 import { accountsFor, orgsFor } from "../../helpers/identity.js";
 import { MODEL_PLUGINS_CONFIG } from "../../helpers/model-plugins.js";
+import { startKernel, type TestKernel } from "../../helpers/runs.js";
 
 /** Sub-agent roster and effective definitions (phase C, spec §4.3, §5.3–§5.5). */
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let cfg: KernelConfig;
@@ -50,14 +52,13 @@ beforeAll(async () => {
     runtime: { maxSteps: 30 },
     ...MODEL_PLUGINS_CONFIG,
   });
-  k = await createKernel(cfg, { env: {}, logger: createLogger("error", { write: () => {} }) });
-  await k.start();
+  k = await startKernel(cfg, { env: {}, logger: createLogger("error", { write: () => {} }) });
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
 }, 120_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
@@ -238,8 +239,8 @@ async function orgAgent(definition: AgentDefinition, versions = 1): Promise<stri
 
 const deps = () => ({
   db,
-  purposes: k.purposes,
-  registry: k.runs.registry,
+  purposes: k.app.get(ModelPurposesService),
+  registry: k.app.get(ProviderRegistry),
   config: { get: () => cfg },
 });
 
@@ -578,7 +579,9 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
 
   describe("model tiers", () => {
     const map = (tier: string, model = FAKE2, params: Record<string, unknown> = {}) =>
-      k.purposes.setOrg(orgId, `subagent_${tier}`, { model, params: params as never }, owner.id);
+      k.app
+        .get(ModelPurposesService)
+        .setOrg(orgId, `subagent_${tier}`, { model, params: params as never }, owner.id);
 
     it("the call's tier maps to its purpose; the target's params replace the parent's", async () => {
       await map("fast", FAKE2, { "model-fake.style": "shout" });
@@ -686,7 +689,9 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
         subagents: { dispatchable: true },
       });
       const a = await orgAgent(agentDef, 3);
-      await k.purposes.setOrg(orgId, "subagent_fast", { model: FAKE1, params: {} }, owner.id);
+      await k.app
+        .get(ModelPurposesService)
+        .setOrg(orgId, "subagent_fast", { model: FAKE1, params: {} }, owner.id);
       const parent = def({
         tools: [{ kind: "builtin", name: "read_tool_output" }],
         toolPolicies: { jira__search: "deny", sandbox_bash: "ask", read_tool_output: "ask" },

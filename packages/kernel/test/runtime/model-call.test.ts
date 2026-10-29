@@ -20,7 +20,7 @@ import type { ConversationEvent, EventPayload } from "../../src/conversations/ev
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
 import { createLogger } from "../../src/log.js";
 import { COMPACTION_MARKER } from "../../src/runtime/context/compaction.js";
 import { estimateTokens } from "../../src/runtime/context/tokens.js";
@@ -34,15 +34,16 @@ import {
   WRAP_UP_REMINDER,
 } from "../../src/runtime/model-call.js";
 import { toolSearchTool } from "../../src/tools/builtins/tool-search.js";
-import { type ResolvedTool, specHash } from "../../src/tools/registry.js";
+import { type ResolvedTool, specHash, ToolRegistry } from "../../src/tools/registry.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { startKernel, type TestKernel } from "../helpers/runs.js";
 import { providerRegistryFor, stepLogFor } from "../helpers/runtime.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
@@ -137,8 +138,7 @@ beforeAll(async () => {
       },
     },
   });
-  k = await createKernel(baseConfig, { env: {}, logger: silent });
-  await k.start();
+  k = await startKernel(baseConfig, { env: {}, logger: silent });
   raw = createDb(pgc.url, 10);
   db = legacyDbFor(raw);
   redis = new Redis(rd.url);
@@ -147,7 +147,7 @@ beforeAll(async () => {
   const registry = providerRegistryFor(
     {
       list: (cap: string) => [
-        ...k.host.list(cap),
+        ...k.app.get(ExtensionHost).list(cap),
         { plugin: "stub", capability: V2, impl: stubImpl },
       ],
     },
@@ -161,13 +161,13 @@ beforeAll(async () => {
     config: {
       get: () => ({ ...baseConfig, runtime: { ...baseConfig.runtime, ...runtimeOverrides } }),
     },
-    tools: k.tools.registry,
+    tools: k.app.get(ToolRegistry),
     log: silent,
   };
 }, 120_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await sub?.close();
   redis?.disconnect();
   await raw?.destroy();
@@ -603,7 +603,7 @@ describe("runModelStep", () => {
     const registry = providerRegistryFor(
       {
         list: (cap: string) => [
-          ...k.host.list(cap),
+          ...k.app.get(ExtensionHost).list(cap),
           { plugin: "flaky", capability: V2, impl: flaky },
           { plugin: "stub", capability: V2, impl: stubImpl },
         ],
@@ -649,7 +649,7 @@ describe("runModelStep", () => {
     const registry = providerRegistryFor(
       {
         list: (cap: string) => [
-          ...k.host.list(cap),
+          ...k.app.get(ExtensionHost).list(cap),
           { plugin: "broken", capability: V2, impl: broken },
         ],
       },

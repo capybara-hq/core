@@ -19,7 +19,6 @@ import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import type { Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import type { KyselyCheckpointSaver } from "../../src/runtime/checkpointer.js";
 import { UNKNOWN_RESULT_TEXT } from "../../src/runtime/context/pairing.js";
@@ -40,6 +39,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitForTerminal,
 } from "../helpers/runs.js";
 import { checkpointsFor, providerRegistryFor, stepLogFor } from "../helpers/runtime.js";
@@ -301,7 +301,7 @@ describe("tools 节点（LangGraphLoop + 执行管线）", () => {
 describe("端到端：model-fake 脚本工具调用 → 连接器工具与插件工具", () => {
   let pgc: TestContainer;
   let rd: TestContainer;
-  let k: Kernel;
+  let k: TestKernel;
   let req: Req;
   let orgId: string;
 
@@ -312,7 +312,7 @@ describe("端到端：model-fake 脚本工具调用 → 连接器工具与插件
     );
   }, 120_000);
   afterAll(async () => {
-    await k?.stop();
+    await k?.close();
     await Promise.all([pgc?.stop(), rd?.stop()]);
   });
 

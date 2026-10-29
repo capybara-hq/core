@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
@@ -7,12 +8,13 @@ import type { ConversationEvent, EventPayload } from "../../../src/conversations
 import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { migrate } from "../../../src/db/migrator.js";
 import { createDb } from "../../../src/db/pool.js";
-import type { Kernel } from "../../../src/kernel.js";
+import { KERNEL_BUS } from "../../../src/infra/tokens.js";
 import {
   RUN_QUEUE_NAME,
   runJobId,
   SUBAGENT_RUN_QUEUE_NAME,
 } from "../../../src/runtime/run-queue.js";
+import { Waits } from "../../../src/runtime/waits.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
 import { eventLogFor, legacyDbFor } from "../../helpers/conversations.js";
 import { truncateTables } from "../../helpers/db.js";
@@ -29,6 +31,7 @@ import {
   runConfig,
   sleep,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForRunJobDone,
   waitForTerminal,
@@ -95,7 +98,7 @@ let db: KernelSchemaDb;
 let redis: Redis;
 let subQueue: Queue;
 let runQueue: Queue;
-const kernels: Kernel[] = [];
+const kernels: TestKernel[] = [];
 
 const config = (roles: ("api" | "worker")[] = ["api", "worker"]) =>
   runConfig(
@@ -107,18 +110,18 @@ const config = (roles: ("api" | "worker")[] = ["api", "worker"]) =>
     },
   );
 
-async function boot(roles?: ("api" | "worker")[]): Promise<Kernel> {
+async function boot(roles?: ("api" | "worker")[]): Promise<TestKernel> {
   const k = await startKernel(config(roles));
   kernels.push(k);
   return k;
 }
 
-async function stopKernel(k: Kernel): Promise<void> {
+async function stopKernel(k: TestKernel): Promise<void> {
   kernels.splice(kernels.indexOf(k), 1);
-  await k.stop();
+  await k.close();
 }
 
-async function login(k: Kernel, jar = cookieJar()): Promise<Req> {
+async function login(k: TestKernel, jar = cookieJar()): Promise<Req> {
   const req = asUser(k.http, jar);
   const res = await req({
     method: "POST",
@@ -143,7 +146,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  for (const k of kernels.splice(0)) await k.stop();
+  for (const k of kernels.splice(0)) await k.close();
   await subQueue?.close();
   await runQueue?.close();
   redis?.disconnect();
@@ -155,7 +158,7 @@ let orgId: string;
 let agentId: string;
 
 beforeEach(async () => {
-  for (const k of kernels.splice(0)) await k.stop();
+  for (const k of kernels.splice(0)) await k.close();
   await subQueue.resume();
   scriptRules([]);
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
@@ -272,9 +275,14 @@ describe("sub-agents across two replicas", () => {
       children.map((c) => c.conversationId),
     );
     for (const c of children)
-      await finishChildByHand(db, eventLogFor(db, a.bus), c, `by hand ${c.runId}`);
+      await finishChildByHand(
+        db,
+        eventLogFor(db, a.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
+        c,
+        `by hand ${c.runId}`,
+      );
     await backdateRun(db, runId);
-    const [ra, rb] = await Promise.all([a.runs.waits.sweep(), b.runs.waits.sweep()]);
+    const [ra, rb] = await Promise.all([a.app.get(Waits).sweep(), b.app.get(Waits).sweep()]);
     expect(ra.resumed + rb.resumed).toBe(1);
     await waitForTerminal(db, conv, 1, 30_000);
     await sleep(500);
@@ -295,7 +303,7 @@ describe("sub-agents across two replicas", () => {
     await dropChildJobs(subQueue, [child.conversationId]);
     await backdateRun(db, child.runId);
     await subQueue.resume();
-    const [ra, rb] = await Promise.all([a.runs.waits.sweep(), b.runs.waits.sweep()]);
+    const [ra, rb] = await Promise.all([a.app.get(Waits).sweep(), b.app.get(Waits).sweep()]);
     // both may see the orphan; BullMQ keeps one job per id, so the child still runs once
     expect(ra.requeued + rb.requeued).toBeGreaterThanOrEqual(1);
     await waitForTerminal(db, conv, 1, 30_000);

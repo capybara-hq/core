@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ModelRequest } from "@capybara-hq/plugin-sdk";
+import type { ExtensionContext, ModelRequest } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
@@ -10,11 +10,12 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
-import type { Kernel } from "../../../src/kernel.js";
+import { KernelConfigService } from "../../../src/infra/config/kernel-config.service.js";
+import { KERNEL_BUS } from "../../../src/infra/tokens.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../../src/runtime/maintenance-queue.js";
 import { RUN_QUOTA_PREFIX } from "../../../src/runtime/quota.js";
 import { RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME } from "../../../src/runtime/run-queue.js";
-import { resumeJobId, waitTimeoutJobId } from "../../../src/runtime/waits.js";
+import { resumeJobId, Waits, waitTimeoutJobId } from "../../../src/runtime/waits.js";
 import { AGENT_STOPPED_WITH_RUN_TEXT } from "../../../src/tools/builtins/agent.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
 import { eventLogFor, legacyDbFor } from "../../helpers/conversations.js";
@@ -33,6 +34,7 @@ import {
   session,
   sleep,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForEvent,
   waitForRunJobDone,
@@ -104,7 +106,7 @@ let pgc: TestContainer;
 let rd: TestContainer;
 let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 let root: string;
 let subQueue: Queue;
 let runQueue: Queue;
@@ -137,7 +139,7 @@ afterAll(async () => {
   capture.restore();
   await subQueue?.close();
   await runQueue?.close();
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop()]);
   if (root) await rm(root, { recursive: true, force: true });
@@ -253,11 +255,16 @@ describe("resume after sub-agents", () => {
       ).toBe(3);
       for (const [i, idx] of order.entries()) {
         const child = children[idx] as (typeof children)[number];
-        await finishChildByHand(db, eventLogFor(db, k.bus), child, `reply ${idx}`);
+        await finishChildByHand(
+          db,
+          eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
+          child,
+          `reply ${idx}`,
+        );
         // every finisher tries (twice here, as a redelivery would); only the last one resumes
         await Promise.all([
-          k.runs.waits.childFinished(child.runId),
-          k.runs.waits.childFinished(child.runId),
+          k.app.get(Waits).childFinished(child.runId),
+          k.app.get(Waits).childFinished(child.runId),
         ]);
         if (i < 2) expect(await runStatus(db, runId)).toBe("waiting");
       }
@@ -423,9 +430,9 @@ describe("recovery by the wait sweep", () => {
     await sleep(300);
     expect(await runStatus(db, child.runId)).toBe("queued");
     // within the grace period nothing happens
-    expect((await k.runs.waits.sweep()).requeued).toBe(0);
+    expect((await k.app.get(Waits).sweep()).requeued).toBe(0);
     await backdateRun(db, child.runId);
-    const out = await k.runs.waits.sweep();
+    const out = await k.app.get(Waits).sweep();
     expect(out.requeued).toBe(1);
     await waitForTerminal(db, conv, 1, 20_000);
     const events = await eventsOf(db, conv);
@@ -445,7 +452,7 @@ describe("recovery by the wait sweep", () => {
       .where("id", "=", child.runId)
       .execute();
     await backdateRun(db, child.runId);
-    const out = await k.runs.waits.sweep();
+    const out = await k.app.get(Waits).sweep();
     expect(out.orphaned).toBe(1);
     await waitForTerminal(db, conv, 1, 20_000);
     const cev = await eventsOf(db, child.conversationId);
@@ -460,7 +467,12 @@ describe("recovery by the wait sweep", () => {
     const { conv, runId, children } = await startPaused("SCENARIO one");
     const child = children[0] as (typeof children)[number];
     await dropChildJobs(subQueue, [child.conversationId]);
-    await finishChildByHand(db, eventLogFor(db, k.bus), child, "finished alone");
+    await finishChildByHand(
+      db,
+      eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
+      child,
+      "finished alone",
+    );
     // Waits.resume's update committed, then its replica died before queue.add
     await db
       .updateTable("runs")
@@ -473,9 +485,9 @@ describe("recovery by the wait sweep", () => {
       })
       .where("id", "=", runId)
       .execute();
-    expect((await k.runs.waits.sweep()).requeued).toBe(0);
+    expect((await k.app.get(Waits).sweep()).requeued).toBe(0);
     await backdateRun(db, runId);
-    expect((await k.runs.waits.sweep()).requeued).toBe(1);
+    expect((await k.app.get(Waits).sweep()).requeued).toBe(1);
     await waitForTerminal(db, conv, 1, 20_000);
     const events = await eventsOf(db, conv);
     expect(finalText(events)).toBe("parent done");
@@ -486,13 +498,18 @@ describe("recovery by the wait sweep", () => {
     const { conv, runId, children } = await startPaused("SCENARIO one");
     const child = children[0] as (typeof children)[number];
     await dropChildJobs(subQueue, [child.conversationId]);
-    await finishChildByHand(db, eventLogFor(db, k.bus), child, "finished alone");
+    await finishChildByHand(
+      db,
+      eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
+      child,
+      "finished alone",
+    );
     await sleep(300);
     expect(await runStatus(db, runId)).toBe("waiting");
     expect(ofType(await eventsOf(db, conv), "subagent_finished")).toEqual([]);
-    expect((await k.runs.waits.sweep()).resumed).toBe(0);
+    expect((await k.app.get(Waits).sweep()).resumed).toBe(0);
     await backdateRun(db, runId);
-    expect((await k.runs.waits.sweep()).resumed).toBe(1);
+    expect((await k.app.get(Waits).sweep()).resumed).toBe(1);
     await waitForTerminal(db, conv, 1, 20_000);
     const events = await eventsOf(db, conv);
     expect(finalText(events)).toBe("parent done");
@@ -510,7 +527,7 @@ describe("recovery by the wait sweep", () => {
   it("the sweep leaves a parent alone while a child is still active", async () => {
     const { runId } = await startPaused("SCENARIO one");
     await backdateRun(db, runId);
-    const out = await k.runs.waits.sweep();
+    const out = await k.app.get(Waits).sweep();
     expect(out).toMatchObject({ resumed: 0, requeued: 0, orphaned: 0, stopped: 0 });
     expect(await runStatus(db, runId)).toBe("waiting");
   }, 60_000);
@@ -519,16 +536,16 @@ describe("recovery by the wait sweep", () => {
     const { conv, runId, children } = await startPaused("SCENARIO one");
     const child = children[0] as (typeof children)[number];
     // the parent ended without stopping its child (e.g. a crash between the two)
-    await finishRun(db, eventLogFor(db, k.bus), {
+    await finishRun(db, eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)), {
       conversationId: conv,
       runId,
       status: "aborted",
       consumed: null,
       event: { type: "run_aborted", payload: { byAccountId: null, reason: "user" } },
     });
-    expect((await k.runs.waits.sweep()).stopped).toBe(0);
+    expect((await k.app.get(Waits).sweep()).stopped).toBe(0);
     await backdateRun(db, runId);
-    expect((await k.runs.waits.sweep()).stopped).toBe(1);
+    expect((await k.app.get(Waits).sweep()).stopped).toBe(1);
     await subQueue.resume();
     await waitFor(
       async () => (await runStatus(db, child.runId)) === "aborted",
@@ -551,9 +568,14 @@ describe("recovery by the wait sweep", () => {
     const { conv, runId, children } = await startPaused("SCENARIO three", 3);
     const [done, active] = children as [(typeof children)[number], (typeof children)[number]];
     // one child ended (its finisher never reported), the others are still queued
-    await finishChildByHand(db, eventLogFor(db, k.bus), done, "child ok");
+    await finishChildByHand(
+      db,
+      eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
+      done,
+      "child ok",
+    );
     // the parent ended through a path that wrote no agent results (e.g. an old replica)
-    await finishRun(db, eventLogFor(db, k.bus), {
+    await finishRun(db, eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)), {
       conversationId: conv,
       runId,
       status: "aborted",
@@ -561,9 +583,9 @@ describe("recovery by the wait sweep", () => {
       event: { type: "run_aborted", payload: { byAccountId: null, reason: "user" } },
     });
     expect(agentResults(await eventsOf(db, conv))).toEqual([]);
-    expect((await k.runs.waits.sweep()).repaired).toBe(0);
+    expect((await k.app.get(Waits).sweep()).repaired).toBe(0);
     await backdateRun(db, runId);
-    expect((await k.runs.waits.sweep()).repaired).toBe(1);
+    expect((await k.app.get(Waits).sweep()).repaired).toBe(1);
     const events = await eventsOf(db, conv);
     const results = agentResults(events);
     expect(results).toHaveLength(3);
@@ -583,7 +605,7 @@ describe("recovery by the wait sweep", () => {
     );
     expect(await runStatus(db, runId)).toBe("aborted");
     // idempotent: a second sweep finds nothing to repair
-    expect((await k.runs.waits.sweep()).repaired).toBe(0);
+    expect((await k.app.get(Waits).sweep()).repaired).toBe(0);
     expect(agentResults(await eventsOf(db, conv))).toHaveLength(3);
   }, 60_000);
 
@@ -594,9 +616,9 @@ describe("recovery by the wait sweep", () => {
     const redis = new Redis(rd.url);
     const key = `${RUN_QUOTA_PREFIX}${orgId}`;
     try {
-      const n = k.config.runtime.orgConcurrency;
+      const n = k.app.get(KernelConfigService).get().runtime.orgConcurrency;
       for (let i = 0; i < n; i++) await redis.zadd(key, Date.now() + 600_000, `busy-${i}`);
-      await k.runs.waits.expire("subagents", `sa-${runId}-1`, { runId, step: 1 });
+      await k.app.get(Waits).expire("subagents", `sa-${runId}-1`, { runId, step: 1 });
       await subQueue.resume();
       await waitFor(
         async () => (await runStatus(db, child.runId)) === "aborted",
@@ -618,7 +640,7 @@ describe("recovery by the wait sweep", () => {
   it("a sub-agents wait timeout stops the remaining children and the parent goes on", async () => {
     const { conv, runId, children } = await startPaused("SCENARIO one");
     const child = children[0] as (typeof children)[number];
-    await k.runs.waits.expire("subagents", `sa-${runId}-1`, { runId, step: 1 });
+    await k.app.get(Waits).expire("subagents", `sa-${runId}-1`, { runId, step: 1 });
     await subQueue.resume();
     await waitForTerminal(db, conv, 1, 20_000);
     expect(await runStatus(db, child.runId)).toBe("aborted");
@@ -635,7 +657,7 @@ describe("recovery by the wait sweep", () => {
       20_000,
       "child waiting on its approval",
     );
-    await k.runs.waits.expire("subagents", `sa-${runId}-1`, { runId, step: 1 });
+    await k.app.get(Waits).expire("subagents", `sa-${runId}-1`, { runId, step: 1 });
     await waitForTerminal(db, conv, 1, 20_000);
     await expectTimedOut(conv, child.conversationId);
   }, 60_000);
@@ -651,7 +673,7 @@ describe("recovery by the wait sweep", () => {
     // approval timeout (24 h by default) + maxRunSeconds + 10 min from the suspend
     expect(before.wait_expires_at?.getTime()).toBeGreaterThan(Date.now() + 23 * 3_600_000);
     // not due yet: the sweep leaves it alone
-    expect((await k.runs.waits.sweep()).expired).toBe(0);
+    expect((await k.app.get(Waits).sweep()).expired).toBe(0);
     // the timeout job was lost and the expiry passed
     await waitTimeoutJobGone(`sa-${runId}-1`);
     await db
@@ -659,7 +681,7 @@ describe("recovery by the wait sweep", () => {
       .set({ wait_expires_at: new Date(Date.now() - 1000) })
       .where("id", "=", runId)
       .execute();
-    expect((await k.runs.waits.sweep()).expired).toBe(1);
+    expect((await k.app.get(Waits).sweep()).expired).toBe(1);
     await subQueue.resume();
     await waitForTerminal(db, conv, 1, 20_000);
     expect(await runStatus(db, child.runId)).toBe("aborted");
@@ -674,7 +696,7 @@ describe("recovery by the wait sweep", () => {
 
   it("a timeout of an earlier step's wait stops nothing", async () => {
     const { runId, children } = await startPaused("SCENARIO one");
-    await k.runs.waits.expire("subagents", `sa-${runId}-7`, { runId, step: 7 });
+    await k.app.get(Waits).expire("subagents", `sa-${runId}-7`, { runId, step: 7 });
     await sleep(300);
     expect(await runStatus(db, (children[0] as (typeof children)[number]).runId)).toBe("queued");
     expect(await runStatus(db, runId)).toBe("waiting");

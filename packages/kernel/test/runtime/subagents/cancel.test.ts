@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ToolPostHookPayload } from "@capybara-hq/plugin-sdk";
+import type { ExtensionContext, ToolPostHookPayload } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
@@ -10,7 +10,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
-import type { Kernel } from "../../../src/kernel.js";
+import { KERNEL_BUS } from "../../../src/infra/tokens.js";
+import { Offboarding } from "../../../src/orgs/offboarding.js";
 import { SUBAGENT_RUN_QUEUE_NAME } from "../../../src/runtime/run-queue.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
 import { setFakeSandboxDelays } from "../../fixtures/plugins/sandbox-fake/index.js";
@@ -29,6 +30,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForEvent,
   waitForTerminal,
@@ -106,7 +108,7 @@ let pgc: TestContainer;
 let rd: TestContainer;
 let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 let root: string;
 let subQueue: Queue;
 
@@ -133,7 +135,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await subQueue?.close();
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop()]);
   if (root) await rm(root, { recursive: true, force: true });
@@ -473,7 +475,7 @@ describe("offboarding", () => {
     const { runId, children } = await parentWaiting(db, conv, 1);
     // the parent ended without stopping its child, and the membership went away without the
     // offboarding steps (a crash between the two): only the offboarding sweep catches the child
-    await finishRun(db, eventLogFor(db, k.bus), {
+    await finishRun(db, eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)), {
       conversationId: conv,
       runId,
       status: "aborted",
@@ -481,7 +483,7 @@ describe("offboarding", () => {
       event: { type: "run_aborted", payload: { byAccountId: null, reason: "user" } },
     });
     await db.deleteFrom("memberships").where("account_id", "=", memberId).execute();
-    expect(await k.identity.offboarding.sweep()).toBe(1);
+    expect(await k.app.get(Offboarding).sweep()).toBe(1);
     await subQueue.resume();
     await allStopped(children.map((c) => c.runId));
     await waitForEvent(db, conv, (e) => e.type === "subagent_finished", 10_000);

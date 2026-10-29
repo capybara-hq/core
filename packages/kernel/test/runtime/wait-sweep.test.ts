@@ -9,7 +9,6 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
 import { RUN_QUEUE_NAME } from "../../src/runtime/run-queue.js";
@@ -18,6 +17,7 @@ import {
   WAIT_SWEEP_JOB,
   WAIT_SWEEP_SCHEDULER_ID,
   type WaitSweepResult,
+  Waits,
   waitTimeoutJobId,
 } from "../../src/runtime/waits.js";
 import { approvalExpiredText } from "../../src/tools/pipeline.js";
@@ -35,6 +35,8 @@ import {
   runConfig,
   runsOf,
   session,
+  startKernel,
+  type TestKernel,
   waitFor,
   waitForEvent,
   waitForRunJobDone,
@@ -59,8 +61,8 @@ let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let maint: Queue;
 let runQueue: Queue;
-let kA: Kernel;
-let kB: Kernel;
+let kA: TestKernel;
+let kB: TestKernel;
 /** 两个副本各自的 warn 日志（只收扫描写的行）。 */
 const logs: { A: Record<string, unknown>[]; B: Record<string, unknown>[] } = { A: [], B: [] };
 
@@ -74,18 +76,17 @@ const ASK = 'tool:mem-connector__ask:{"rounds":1}';
 const ofType = <T extends ConversationEvent["type"]>(evs: ConversationEvent[], type: T) =>
   evs.filter((e): e is Extract<ConversationEvent, { type: T }> => e.type === type);
 
-async function boot(name: "A" | "B"): Promise<Kernel> {
+async function boot(name: "A" | "B"): Promise<TestKernel> {
   const logger = createLogger("warn", {
     write: (line) => {
       const rec = JSON.parse(line) as Record<string, unknown>;
       if (String(rec.msg).startsWith("wait sweep")) logs[name].push(rec);
     },
   });
-  const k = await createKernel(
+  const k = await startKernel(
     runConfig({ pg: pgc.url, redis: rd.url }, { extensions: [MODEL_FAKE, MEM_CONNECTOR] }),
     { env: {}, logger },
   );
-  await k.start();
   return k;
 }
 
@@ -106,8 +107,8 @@ beforeAll(async () => {
 afterAll(async () => {
   await maint?.close();
   await runQueue?.close();
-  await kA?.stop();
-  await kB?.stop();
+  await kA?.close();
+  await kB?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
@@ -235,7 +236,7 @@ describe("等待兜底扫描（单副本）", () => {
   it("超时任务丢失的过期审批 → 按超时处理（approval_decided{expired}）并续跑，模型拿到超时说明", async () => {
     const { convId, runId, waitId } = await waiting(ECHO, "approval_requested");
     await loseTimeout("approvals", waitId);
-    expect(await kA.runs.waits.sweep()).toEqual({
+    expect(await kA.app.get(Waits).sweep()).toEqual({
       expired: 1,
       resumed: 0,
       cancelled: 0,
@@ -261,7 +262,7 @@ describe("等待兜底扫描（单副本）", () => {
       }),
     ]);
     // 再扫一次：无事可做
-    expect(await kA.runs.waits.sweep()).toEqual({
+    expect(await kA.app.get(Waits).sweep()).toEqual({
       expired: 0,
       resumed: 0,
       cancelled: 0,
@@ -272,7 +273,7 @@ describe("等待兜底扫描（单副本）", () => {
   it("超时任务丢失的过期输入请求 → question_answered{expired}，续跑后工具拿到 answer = null", async () => {
     const { convId, waitId } = await waiting(ASK, "question_asked");
     await loseTimeout("questions", waitId);
-    expect(await kA.runs.waits.sweep()).toEqual({
+    expect(await kA.app.get(Waits).sweep()).toEqual({
       expired: 1,
       resumed: 0,
       cancelled: 0,
@@ -290,8 +291,8 @@ describe("等待兜底扫描（单副本）", () => {
     const { convId, waitId } = await waiting(ECHO, "approval_requested");
     await loseTimeout("approvals", waitId);
     const [r] = await Promise.all([
-      kA.runs.waits.sweep(),
-      kB.runs.waits.expire("approval", waitId),
+      kA.app.get(Waits).sweep(),
+      kB.app.get(Waits).expire("approval", waitId),
     ]);
     expect(r.expired).toBeLessThanOrEqual(1);
     await waitForTerminal(db, convId, 1);
@@ -305,7 +306,7 @@ describe("等待兜底扫描（单副本）", () => {
     const { convId, runId, waitId } = await waiting(ECHO, "approval_requested");
     // 宽限期内（刚刚还在等待）：可能是正常续跑正在进行，不动
     await loseResume(waitId, runId, 0);
-    expect(await kA.runs.waits.sweep()).toEqual({
+    expect(await kA.app.get(Waits).sweep()).toEqual({
       expired: 0,
       resumed: 0,
       cancelled: 0,
@@ -313,7 +314,7 @@ describe("等待兜底扫描（单副本）", () => {
     });
     expect(await runStatus(runId)).toBe("waiting");
     await loseResume(waitId, runId, 2);
-    expect(await kA.runs.waits.sweep()).toEqual({
+    expect(await kA.app.get(Waits).sweep()).toEqual({
       expired: 0,
       resumed: 1,
       cancelled: 0,
@@ -325,7 +326,7 @@ describe("等待兜底扫描（单副本）", () => {
     expect(logs.A).toEqual([
       expect.objectContaining({ msg: "wait sweep: resumed stuck waiting run", runId }),
     ]);
-    expect(await kA.runs.waits.sweep()).toEqual({
+    expect(await kA.app.get(Waits).sweep()).toEqual({
       expired: 0,
       resumed: 0,
       cancelled: 0,
@@ -338,7 +339,7 @@ describe("等待兜底扫描（单副本）", () => {
     const q = await waiting(ASK, "question_asked");
     await sql`UPDATE capybara.runs SET status = 'failed', waiting_since = NULL
       WHERE id IN (${a.runId}, ${q.runId})`.execute(raw);
-    expect(await kA.runs.waits.sweep()).toEqual({
+    expect(await kA.app.get(Waits).sweep()).toEqual({
       expired: 0,
       resumed: 0,
       cancelled: 2,
@@ -372,7 +373,7 @@ describe("等待兜底扫描（单副本）", () => {
         ["wait sweep: cancelled waits of finished run", q.runId],
       ].sort(),
     );
-    expect(await kA.runs.waits.sweep()).toEqual({
+    expect(await kA.app.get(Waits).sweep()).toEqual({
       expired: 0,
       resumed: 0,
       cancelled: 0,
@@ -391,7 +392,7 @@ describe("等待兜底扫描（双副本）", () => {
     await sql`UPDATE capybara.runs SET status = 'failed', waiting_since = NULL
       WHERE id = ${finished.runId}`.execute(raw);
 
-    const results = await Promise.all([kA.runs.waits.sweep(), kB.runs.waits.sweep()]);
+    const results = await Promise.all([kA.app.get(Waits).sweep(), kB.app.get(Waits).sweep()]);
     expect(sum(results)).toEqual({ expired: 1, resumed: 1, cancelled: 1, ...NO_SUBAGENT_REPAIRS });
 
     await waitForTerminal(db, overdue.convId, 1);

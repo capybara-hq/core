@@ -8,7 +8,6 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import type { Kernel } from "../../src/kernel.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, type CookieJar, cookieJar } from "../helpers/http.js";
 import { accountsFor, apiTokensFor, sessionsFor } from "../helpers/identity.js";
@@ -23,6 +22,7 @@ import {
   runConfig,
   sleep,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -179,7 +179,7 @@ async function resetDb(): Promise<void> {
 
 /** 登录，返回请求函数与 SSE 用的 cookie 头。 */
 async function login(
-  k: Kernel,
+  k: TestKernel,
   name: string,
 ): Promise<{ req: Req; cookie: () => string; jar: CookieJar }> {
   const jar = cookieJar();
@@ -197,11 +197,11 @@ async function account(name: string): Promise<string> {
   return (await accountsFor(db).createLocal({ login: name, password: PW, displayName: name })).id;
 }
 
-const streamUrl = (k: Kernel, orgId: string, convId: string, query = "") =>
+const streamUrl = (k: TestKernel, orgId: string, convId: string, query = "") =>
   `http://127.0.0.1:${k.port}/api/v1/orgs/${orgId}/conversations/${convId}/stream${query}`;
 
 describe("会话 SSE（单副本 api+worker）", () => {
-  let k: Kernel;
+  let k: TestKernel;
   let owner: { req: Req; cookie: () => string };
   let orgId: string;
   let convId: string;
@@ -210,7 +210,7 @@ describe("会话 SSE（单副本 api+worker）", () => {
     k = await startKernel(runConfig(urls(), { roles: ["api", "worker"], runtime: STREAM_RUNTIME }));
   }, 60_000);
   afterAll(async () => {
-    await k?.stop();
+    await k?.close();
   });
   beforeEach(async () => {
     await resetDb();
@@ -375,8 +375,8 @@ describe("会话 SSE（单副本 api+worker）", () => {
 });
 
 describe("会话 SSE（跨副本：运行在 worker 副本，SSE 连在 api 副本）", () => {
-  let worker: Kernel;
-  let api: Kernel;
+  let worker: TestKernel;
+  let api: TestKernel;
 
   beforeAll(async () => {
     [worker, api] = await Promise.all([
@@ -385,7 +385,7 @@ describe("会话 SSE（跨副本：运行在 worker 副本，SSE 连在 api 副�
     ]);
   }, 60_000);
   afterAll(async () => {
-    await Promise.all([worker?.stop(), api?.stop()]);
+    await Promise.all([worker?.close(), api?.close()]);
   });
 
   it("api 副本收到 worker 副本运行的全部增量与事件；停机时关闭进行中的流", async () => {
@@ -411,7 +411,7 @@ describe("会话 SSE（跨副本：运行在 worker 副本，SSE 连在 api 副�
 
       // 停机：进行中的 SSE 连接被关闭，不拖满 HTTP 停机预算
       const t0 = Date.now();
-      await api.stop();
+      await api.close();
       await s.ended;
       expect(Date.now() - t0).toBeLessThan(3_000);
     } finally {
@@ -421,8 +421,8 @@ describe("会话 SSE（跨副本：运行在 worker 副本，SSE 连在 api 副�
 });
 
 describe("会话 SSE：凭据复核（R35）", () => {
-  let a: Kernel;
-  let b: Kernel;
+  let a: TestKernel;
+  let b: TestKernel;
 
   beforeAll(async () => {
     [a, b] = await Promise.all([
@@ -431,7 +431,7 @@ describe("会话 SSE：凭据复核（R35）", () => {
     ]);
   }, 60_000);
   afterAll(async () => {
-    await Promise.all([a?.stop(), b?.stop()]);
+    await Promise.all([a?.close(), b?.close()]);
   });
 
   async function setup() {
@@ -565,7 +565,7 @@ describe("会话 SSE：凭据复核（R35）", () => {
       );
     } finally {
       sock.destroy();
-      await c.stop();
+      await c.close();
     }
   }, 30_000);
 });

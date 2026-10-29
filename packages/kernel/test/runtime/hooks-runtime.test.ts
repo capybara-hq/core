@@ -15,7 +15,7 @@ import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.j
 import type { EvalSetView } from "../../src/evals/sets.service.js";
 import { takeSnapshot } from "../../src/evals/snapshot.js";
 import type { TrajectoryDetail } from "../../src/evals/trajectory.service.js";
-import type { Kernel } from "../../src/kernel.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { hookRequestOf } from "../../src/runtime/hook-calls.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { hookDeniedText } from "../../src/tools/pipeline.js";
@@ -33,6 +33,7 @@ import {
   session,
   sleep,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -57,7 +58,7 @@ let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
-let k: Kernel;
+let k: TestKernel;
 let owner: Req;
 let orgId: string;
 let agentId: string;
@@ -111,7 +112,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   ProviderRegistry.prototype.resolve = originalResolve;
-  await k?.stop();
+  await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
@@ -190,10 +191,12 @@ describe("model hooks", { timeout: 60_000 }, () => {
       model: "fake-1",
     });
     const snap = await takeSnapshot(db, orgId, conv, call?.runId as string, 4_194_304);
-    const info = (await k.runs.registry.resolve({ provider: "model-fake", model: "fake-1" })).info;
+    const info = (
+      await k.app.get(ProviderRegistry).resolve({ provider: "model-fake", model: "fake-1" })
+    ).info;
     const out = reconstructRequest(snap, call?.seq as number, {
       model: info,
-      mediaBudgetBytes: k.config.attachments.requestMediaBytes,
+      mediaBudgetBytes: k.app.get(KernelConfigService).get().attachments.requestMediaBytes,
     });
     expect(out.drift).toEqual([]);
     // the request sent, projected for hooks (I-3: media blocks become placeholders)

@@ -13,7 +13,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
-import type { Kernel } from "../../../src/kernel.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../../helpers/db.js";
 import { accountsFor } from "../../helpers/identity.js";
@@ -28,6 +27,7 @@ import {
   type Req,
   runConfig,
   session,
+  type TestKernel,
   waitFor,
   waitForEvent,
   waitForTerminal,
@@ -120,7 +120,7 @@ let pgc: TestContainer;
 let rd: TestContainer;
 let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 let root: string;
 
 beforeAll(async () => {
@@ -132,7 +132,7 @@ beforeAll(async () => {
   k = await startKernel();
 }, 180_000);
 
-async function startKernel(): Promise<Kernel> {
+async function startKernel(): Promise<TestKernel> {
   const { startKernel: start } = await import("../../helpers/runs.js");
   return start(
     runConfig(
@@ -147,7 +147,7 @@ async function startKernel(): Promise<Kernel> {
 }
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop()]);
   if (root) await rm(root, { recursive: true, force: true });

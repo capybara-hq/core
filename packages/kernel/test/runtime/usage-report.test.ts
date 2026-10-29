@@ -8,7 +8,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import type { Kernel } from "../../src/kernel.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { createLogger } from "../../src/log.js";
 import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
 import {
@@ -18,7 +19,7 @@ import {
   USAGE_REPORT_QUEUE,
   USAGE_SWEEP_JOB,
   USAGE_SWEEP_SCHEDULER_ID,
-  type UsageReporter,
+  UsageReporter,
   usageReportJobId,
 } from "../../src/runtime/usage-report.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -34,6 +35,7 @@ import {
   session,
   sleep,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -53,7 +55,7 @@ let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
-let k: Kernel;
+let k: TestKernel;
 let owner: Req;
 let orgId: string;
 let agentId: string;
@@ -107,7 +109,7 @@ afterAll(async () => {
   await queue2?.close();
   conn2?.disconnect();
   await rd2?.stop();
-  await k?.stop();
+  await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
@@ -249,9 +251,9 @@ describe("usage.report delivery", { timeout: 60_000 }, () => {
     const producer = usageReporterFor({
       pool: raw,
       redisUrl: rd.url,
-      hooks: k.host.hooks,
+      hooks: k.app.get(ExtensionHost).hooks,
       subscribers: async () => new Set(["hooks-probe", "usage-b"]),
-      config: () => k.config,
+      config: () => k.app.get(KernelConfigService).get(),
       log: createLogger("error", { write: () => {} }),
     });
     try {
@@ -290,7 +292,7 @@ describe("usage.report delivery", { timeout: 60_000 }, () => {
         looked++;
         return new Set(["hooks-probe"]);
       },
-      config: () => k.config,
+      config: () => k.app.get(KernelConfigService).get(),
       log: createLogger("error", { write: () => {} }),
     });
     try {
@@ -313,7 +315,7 @@ describe("sweeper (Ruling R13)", { timeout: 60_000 }, () => {
 
   it("a lost fast-path enqueue is caught up by the sweep, exactly once", async () => {
     await probe({});
-    const reporter = k.usageReport as unknown as { enqueue: UsageReporter["enqueue"] };
+    const reporter = k.app.get(UsageReporter) as unknown as { enqueue: UsageReporter["enqueue"] };
     const original = reporter.enqueue;
     // the fast path "fails" (as a Redis error would: logged, nothing enqueued)
     reporter.enqueue = async () => {};
@@ -332,11 +334,11 @@ describe("sweeper (Ruling R13)", { timeout: 60_000 }, () => {
     expect(await queue.getJob(usageReportJobId(conv, seq))).toBeUndefined();
     // the event is older than the 30 s lag at this "now"
     const now = Date.now() + 31_000;
-    expect(await k.usageReport.sweep({ now })).toBeGreaterThan(0);
+    expect(await k.app.get(UsageReporter).sweep({ now })).toBeGreaterThan(0);
     await waitFor(async () => (await probeUsage([id]))[id]?.calls === 1, 10_000, "swept");
     await waitFor(async () => (await seenB(id)) === 1, 10_000, "swept to usage-b");
     // sweeping again (overlap) dedupes on the kept job
-    await k.usageReport.sweep({ now: now + 1000 });
+    await k.app.get(UsageReporter).sweep({ now: now + 1000 });
     await sleep(1000);
     expect((await probeUsage([id]))[id]?.calls).toBe(1);
     expect(await seenB(id)).toBe(1);
@@ -390,7 +392,7 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
           new Set(ps.filter((p) => opts.unservable?.includes(p))),
       }),
       subscribers: async () => new Set(subscribers),
-      config: () => k.config,
+      config: () => k.app.get(KernelConfigService).get(),
       log: {
         ...silent,
         ...(opts.error && { error: opts.error }),
@@ -831,7 +833,7 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
         hooks: { handlers: () => [], has: () => true },
         subscribers: async (o) =>
           new Set([...(await queryUsageSubscribers(db, o))].filter((p) => only.has(p))),
-        config: () => k.config,
+        config: () => k.app.get(KernelConfigService).get(),
         log: { ...silent, error: (...a: unknown[]) => errors.push(a) },
         retry: { attempts: 2, backoffMs: 50 },
       });

@@ -8,11 +8,14 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { normalizeStoredDefinition } from "../../../src/agents/definition.js";
+import { EventLog } from "../../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
-import type { Kernel } from "../../../src/kernel.js";
+import { KernelConfigService } from "../../../src/infra/config/kernel-config.service.js";
+import { ModelPurposesService } from "../../../src/models/purposes.js";
 import { BEHAVIOR_RULES } from "../../../src/runtime/context/build.js";
+import { ProviderRegistry } from "../../../src/runtime/providers.js";
 import { type DispatchDeps, dispatchSubagent } from "../../../src/runtime/subagents/dispatch.js";
 import { SUBAGENT_PREAMBLE } from "../../../src/runtime/subagents/preamble.js";
 import { SubagentsService } from "../../../src/runtime/subagents/subagents.service.js";
@@ -35,6 +38,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitForTerminal,
 } from "../../helpers/runs.js";
 
@@ -163,7 +167,7 @@ let pgc: TestContainer;
 let rd: TestContainer;
 let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 let root: string;
 const capture = captureProviderRequests();
 
@@ -188,7 +192,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   capture.restore();
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop()]);
   if (root) await rm(root, { recursive: true, force: true });
@@ -738,10 +742,10 @@ describe("dispatch idempotency under the parent run lock", () => {
   const deps = (): DispatchDeps => ({
     db,
     // the kernel's event log: the dispatch's writes run in the kernel's transaction
-    eventLog: k.runs.eventLog,
-    purposes: k.purposes,
-    registry: k.runs.registry,
-    config: { get: () => k.config },
+    eventLog: k.app.get(EventLog),
+    purposes: k.app.get(ModelPurposesService),
+    registry: k.app.get(ProviderRegistry),
+    config: { get: () => k.app.get(KernelConfigService).get() },
     // the child runs are not executed here
     enqueue: async (_data, jobId) => {
       enqueued.push(jobId);
