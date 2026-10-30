@@ -1,8 +1,9 @@
 # Employee co-build
 
-- Date: 2026-10-29, written against `main` at `ae213182`.
-- Status: draft for review. Implementation waits for the Nest kernel refactor
-  (`2026-10-28-nest-kernel-design.md`) and the tool naming spec
+- Date: 2026-10-29, written against `main` at `ae213182`; re-checked 2026-10-30 against `main` at
+  `02b9634b` (the Nest kernel refactor, PR #55, merged): file references still hold, and §11.1
+  maps the design onto the Nest conventions (`writing-kernel-api`).
+- Status: draft for review. Implementation waits for the tool naming spec
   (`2026-10-29-tool-naming-claude-code-design.md`): tool names in this spec are the new ones
   (`Bash`, `Read`, `Skill`, `SkillWrite`, …).
 - Related specs: package ecosystem (`2026-10-22-package-ecosystem-design.md`: plugins, catalog,
@@ -165,10 +166,12 @@ be published **(designer's call)**.
 
 ### 3.3 Names and versions
 
-- Plugin names stay deployment-unique (the catalog owns names) **(decided, 2026-10-30)**, so an org item can later be
-  promoted without a rename. A submission whose name belongs to an item of another org or of the
-  deployment catalog is refused (`submission.name_taken`); a name owned by this org's item is a
-  new version of it.
+- Plugin names stay deployment-unique (the catalog owns names) **(decided, 2026-10-30)**, so an
+  org item can later be promoted without a rename. A submission whose name belongs to an item of
+  another org or of the deployment catalog is refused (`submission.name_taken`); a name owned by
+  this org's item is a new version of it. The check extends the catalog's existing ownership rule
+  (`assertPluginNameOwner`, `catalog/catalog-items.ts`) with the owning org, under
+  `CatalogItemLock`.
 - Versions are exact semver and must be greater than the item's highest published version
   (`submission.version_not_greater`).
 - Who may submit new versions of an org item: its original submitter and the org's admins
@@ -213,11 +216,13 @@ Table `capybara.submissions` **(designer's call)**:
 | `decided_by`, `decided_at`, `decision_reason`, `published_version` | |
 
 Submissions do not expire (unlike the 24 h import staging); a withdrawn, rejected or failed
-submission's files are deleted after 30 days by a queue job **(designer's call)**.
+submission's files are deleted after 30 days by an hourly `@LockedCron` job
+(`submission-cleanup`), like the import staging cleanup in `catalog/jobs.ts` **(designer's
+call)**.
 
 ### 5.2 Deterministic checks
 
-Run on queue `cap-kernel-submissions` right after intake; nothing is published until a person
+Run on queue `cap-kernel-submissions` (§11.1) right after intake; nothing is published until a person
 approves. The report has three parts:
 
 1. **Validity**: everything `readPluginFiles` and the import prepare already check (manifest,
@@ -300,8 +305,10 @@ template for it ("Plugin reviewer") with review instructions.
 ### 6.2 How it runs
 
 - When checks pass, the kernel starts a run of the reviewer agent in a new, read-only
-  **review conversation** owned by the submission (not by a person), on queue
-  `cap-kernel-submissions`.
+  **review conversation** owned by the submission (not by a person). The submissions processor
+  creates the conversation and enqueues the run through `RunJobs` (`runtime/run-jobs.ts`), so it
+  runs on the ordinary run queue under the org's run limits; the run's finish hook writes the
+  report back to the submission.
 - Its tools are fixed by the kernel for this run, whatever the agent definition says: `Read`,
   `Glob` and `Grep` over a read-only copy of the submission's files (mounted in a sandbox at
   `/submission`, when the deployment has a sandbox; otherwise a kernel-side read-only file tool
@@ -443,6 +450,24 @@ deterministic checks synchronously and returns the report without creating a sub
   `docs/config.md` regenerated.
 - Skills: `writing-plugins` (submissions, org items), `writing-tools` (`PlatformInfo`,
   `SubmitPlugin`), `writing-kernel-api` (new actions); AGENTS.md "Catalog and marketplaces".
+
+### 11.1 Kernel wiring (Nest conventions)
+
+How the pieces map onto the kernel as it is after the Nest refactor (`writing-kernel-api`, the
+`kc-*` rules of `check:kernel-conventions`):
+
+| Piece | Where and how |
+|---|---|
+| `SubmissionsModule` | new domain directory `src/submissions/`; imports `CatalogModule` (catalog writes, `CatalogItemLock`, `PluginInstaller`), `SkillsModule` (skill share), `OrgsModule` (`OrgLock`), `AttachmentsModule` and storage, `RunJobsModule` (reviewer runs), `InboxModule` |
+| `SubmissionsService` | `@Injectable`, `@Inject` on every constructor parameter; writes are `@Transactional()` methods that call `orgLock.lockAndAuthorize(orgId, actor, "submissions.create" \| "submissions.decide")` first, so the role is re-read inside the transaction; audit rows in the same transaction |
+| Publishing on approve | in the decide transaction: `CatalogItemLock`, the name owner check, `writeCatalogVersion` (`catalog/catalog-items.ts`), then, with `install: true`, `PluginInstaller` under the org lock; the stale check compares `reviewHash` and the item's latest version inside the lock |
+| Intake and checks | the intake transaction writes the row in `checking` and enqueues the check job with `afterCommit` (no enqueue inside a transaction: `kc-side-effect-in-tx`); job ids are the submission id (no `:`) |
+| Queue `cap-kernel-submissions` | `QueueModule.registerQueue`; one consumer `SubmissionsProcessor` (`@Processor`, every job inside `runJob`), provided only under `WorkerModule` (`kc-worker-only`); it runs the checks, then starts the reviewer run |
+| Cleanup | `SubmissionJobs` with `@LockedCron("0 * * * *", { name: "submission-cleanup" })`, under `WorkerModule` |
+| Controllers | `submissions.controller.ts` (org routes, `@OrgAction`) and, in phase 3, an `@EnterpriseAdmin()` controller under `/api/v1/admin/submissions`; both listed in `CONTROLLERS` of `src/http/api.module.ts`; bodies and queries are `createZodDto` DTOs with `@ZBody` / `@ZQuery` / `@ZParam`, every string bounded |
+| Phase 3 enterprise decide | `adminLock.lockAndAuthorize(actor)` (`EnterpriseAdminLock`) inside the transaction, like every enterprise admin write |
+| `SubmitPlugin`, `PlatformInfo` | builtins added to `BuiltinTools` (`tools/builtins/builtin-tools.ts`), their services injected there |
+| Org setting `coBuild` | `orgs/settings.service.ts`; deployment `coBuild.*` read with `KernelConfigService.get()` on every use |
 
 ## 12. Tasks (outline for the phase-1 plan)
 
