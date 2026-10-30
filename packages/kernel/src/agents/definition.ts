@@ -1,5 +1,11 @@
 import { type ModelParameter, validateParams } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
+import {
+  isLegacyBuiltinKey,
+  isLegacyPrefixedKey,
+  type LegacyScope,
+  legacyToolKey,
+} from "../tools/legacy-keys.js";
 
 /** 模型引用：供应商插件名 + 模型 id。 */
 export const ModelRef = z.object({ provider: z.string(), model: z.string() });
@@ -151,17 +157,133 @@ export const AgentDefinitionSchema = z.object({
 });
 export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>;
 
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** The current key of a stored key: mapped when it is an rc key `scope` can read, else as is. */
+const currentKey = (key: string, scope: LegacyScope | undefined): string =>
+  legacyToolKey(key, scope) ?? key;
+
+/** A list of tool keys (a template's `tools` / `disallowedTools`) in current keys, deduplicated. */
+function keyList(v: unknown, scope: LegacyScope | undefined): unknown {
+  if (!Array.isArray(v)) return v;
+  let changed = false;
+  const out: unknown[] = [];
+  for (const x of v) {
+    const next = typeof x === "string" ? currentKey(x, scope) : x;
+    if (next !== x) changed = true;
+    if (typeof next === "string" && out.includes(next)) {
+      changed = true;
+      continue;
+    }
+    out.push(next);
+  }
+  return changed ? out : v;
+}
+
+/** `toolPolicies` in current keys; two keys that become one keep the stricter policy. */
+function policyKeys(v: unknown, scope: LegacyScope | undefined): unknown {
+  if (!isRecord(v)) return v;
+  const keys = Object.keys(v);
+  if (!keys.some((k) => currentKey(k, scope) !== k)) return v;
+  const rank = (p: unknown) => (p === "deny" ? 2 : p === "ask" ? 1 : 0);
+  const out: Record<string, unknown> = {};
+  for (const [k, p] of Object.entries(v)) {
+    const next = currentKey(k, scope);
+    if (!Object.hasOwn(out, next) || rank(p) > rank(out[next])) out[next] = p;
+  }
+  return out;
+}
+
+/** An agent definition's `tools`: builtin refs by their current names (connector and plugin refs name tools, not keys). */
+function toolRefs(v: unknown, scope: LegacyScope | undefined): unknown {
+  if (!Array.isArray(v)) return v;
+  // template-shaped (`tools: string[]`)
+  if (v.some((x) => typeof x === "string")) return keyList(v, scope);
+  if (
+    !v.some(
+      (r) =>
+        isRecord(r) &&
+        r.kind === "builtin" &&
+        typeof r.name === "string" &&
+        isLegacyBuiltinKey(r.name),
+    )
+  ) {
+    return v;
+  }
+  return v.map((r) =>
+    isRecord(r) && r.kind === "builtin" && typeof r.name === "string"
+      ? { ...r, name: currentKey(r.name, undefined) }
+      : r,
+  );
+}
+
+/**
+ * Release-candidate tool keys in a stored definition, read as current keys (tool naming spec
+ * §8.3), the way {@link normalizeToolRef} reads the app -> connector rename: builtin refs in
+ * `tools`, the keys of `toolPolicies`, and the `tools` / `disallowedTools` / `toolPolicies` of a
+ * template, the agent's inline sub-agent templates included. Works on an agent definition and on
+ * an agent template alike. Old builtin names map without `scope`; an rc `<x>__<tool>` key maps
+ * only with one (the org's connector slugs, the deployment's extension names), and stays as it is
+ * when it is ambiguous or unknown (it then matches no tool and is inert). Keys in the current
+ * format are never touched. Returns the same object when nothing changes. Saving never goes
+ * through this: a new definition with an old key is refused (`AgentsService`).
+ */
+export function normalizeToolKeys(definition: unknown, scope?: LegacyScope): unknown {
+  if (!isRecord(definition)) return definition;
+  const next: Record<string, unknown> = { ...definition };
+  let changed = false;
+  const put = (field: string, value: unknown) => {
+    if (value === definition[field]) return;
+    next[field] = value;
+    changed = true;
+  };
+  if ("tools" in definition) put("tools", toolRefs(definition.tools, scope));
+  if ("disallowedTools" in definition) {
+    put("disallowedTools", keyList(definition.disallowedTools, scope));
+  }
+  if ("toolPolicies" in definition) put("toolPolicies", policyKeys(definition.toolPolicies, scope));
+  const sub = definition.subagents;
+  if (isRecord(sub) && Array.isArray(sub.inline)) {
+    const inline = sub.inline.map((t) => normalizeToolKeys(t, scope));
+    if (inline.some((t, i) => t !== (sub.inline as unknown[])[i]))
+      put("subagents", { ...sub, inline });
+  }
+  return changed ? next : definition;
+}
+
+/**
+ * Does a stored definition or template hold an rc `<x>__<tool>` key, which only a
+ * {@link LegacyScope} can map? (Callers load the scope only then.)
+ */
+export function needsLegacyScope(definition: unknown): boolean {
+  if (!isRecord(definition)) return false;
+  const lists = [definition.tools, definition.disallowedTools];
+  for (const l of lists) {
+    if (Array.isArray(l) && l.some((x) => typeof x === "string" && isLegacyPrefixedKey(x))) {
+      return true;
+    }
+  }
+  if (isRecord(definition.toolPolicies)) {
+    if (Object.keys(definition.toolPolicies).some(isLegacyPrefixedKey)) return true;
+  }
+  const sub = definition.subagents;
+  return isRecord(sub) && Array.isArray(sub.inline) && sub.inline.some(needsLegacyScope);
+}
+
 /**
  * 库里读出的定义（`agent_versions.definition`，不经 zod 解析）：把改名前的 `{ kind: "app" }` 工具引用规范化为
- * connector 形（C27）。其余字段原样保留；没有旧形引用时返回原对象。
+ * connector 形（C27），and rc tool keys to current keys ({@link normalizeToolKeys}: builtins
+ * always, `<x>__<tool>` keys with `scope`). Other fields are kept; without old forms the same
+ * object is returned.
  */
-export function normalizeStoredDefinition(def: unknown): AgentDefinition {
-  const d = def as AgentDefinition;
+export function normalizeStoredDefinition(def: unknown, scope?: LegacyScope): AgentDefinition {
+  let d = def as AgentDefinition;
   const tools = (d as { tools?: unknown }).tools;
-  if (!Array.isArray(tools) || !tools.some((t) => (t as { kind?: unknown })?.kind === "app")) {
-    return d;
+  if (Array.isArray(tools) && tools.some((t) => (t as { kind?: unknown })?.kind === "app")) {
+    d = { ...d, tools: tools.map(normalizeToolRef) as AgentToolRef[] };
   }
-  return { ...d, tools: tools.map(normalizeToolRef) as AgentToolRef[] };
+  return normalizeToolKeys(d, scope) as AgentDefinition;
 }
 
 /** 按模型声明严格校验一组参数，返回 `{ path: "<field>.<key>", message }[]`（评测候选也用它）。 */

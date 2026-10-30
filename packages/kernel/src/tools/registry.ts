@@ -24,6 +24,7 @@ import { AGENT_TOOL, BUILTIN_TOOL_NAMES, SKILL_LOAD, TOOL_SEARCH } from "./built
 import { agentToolSpec } from "./builtins/agent.js";
 import { BuiltinTools } from "./builtins/builtin-tools.js";
 import { canonicalJson } from "./canonical-json.js";
+import { legacyKeySaveText } from "./legacy-keys.js";
 import { toolKeyIssue } from "./naming.js";
 
 export { BUILTIN_TOOL_NAMES } from "./builtin-names.js";
@@ -322,7 +323,14 @@ export class ToolRegistry {
       const path = `tools.${i}`;
       if (ref.kind === "builtin") {
         if (!(BUILTIN_TOOL_NAMES as readonly string[]).includes(ref.name)) {
-          issues.push({ path, message: `Built-in tool "${ref.name}" does not exist` });
+          const renamed = legacyKeySaveText(ref.name);
+          issues.push({
+            path,
+            message:
+              renamed === null
+                ? `Built-in tool "${ref.name}" does not exist`
+                : `Built-in tool ${renamed}`,
+          });
           return;
         }
         claim(path, ref.name, `builtin:${ref.name}`);

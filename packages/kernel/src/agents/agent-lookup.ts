@@ -3,7 +3,9 @@ import { type ExpressionBuilder, sql } from "kysely";
 import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { type AgentDefinition, normalizeStoredDefinition } from "./definition.js";
+import { loadLegacyScope } from "../tools/legacy-data.js";
+import type { LegacyScope } from "../tools/legacy-keys.js";
+import { type AgentDefinition, needsLegacyScope, normalizeStoredDefinition } from "./definition.js";
 
 export const AGENT_VISIBILITIES = ["private", "org", "members"] as const;
 export type AgentVisibility = (typeof AGENT_VISIBILITIES)[number];
@@ -166,6 +168,13 @@ export class AgentLookup {
       .orderBy("account_id")
       .execute();
     const byId = new Map(rows.map((r) => [r.id, r]));
+    // rc `<x>__<tool>` keys read with their org's scope, loaded once per org that needs it
+    const scopes = new Map<string, LegacyScope>();
+    for (const r of rows) {
+      if (!scopes.has(r.org_id) && needsLegacyScope(r.definition)) {
+        scopes.set(r.org_id, await loadLegacyScope(this.db.db, r.org_id));
+      }
+    }
     return ids.flatMap((id) => {
       const r = byId.get(id);
       if (!r) return [];
@@ -176,7 +185,7 @@ export class AgentLookup {
           ownerAccountId: r.owner_account_id,
           visibility: r.visibility,
           currentVersion: r.current_version,
-          definition: normalizeStoredDefinition(r.definition),
+          definition: normalizeStoredDefinition(r.definition, scopes.get(r.org_id)),
           memberIds:
             r.visibility === "members"
               ? memberRows.filter((m) => m.agent_id === id).map((m) => m.account_id)

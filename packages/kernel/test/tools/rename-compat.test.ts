@@ -14,7 +14,7 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
-import { caseBase } from "../../src/evals/runs.service.js";
+import { caseBase, versionDefinition } from "../../src/evals/runs.service.js";
 import {
   type CaseSnapshot,
   readSnapshot,
@@ -248,5 +248,69 @@ describe("改名后的路由与旧 agent 版本", () => {
     expect(keys).toEqual(expect.arrayContaining(["mcp__fx_docs__search", "mcp__fx_priv__search"]));
     expect(JSON.stringify(resolved.unavailable)).not.toContain("undefined");
     expect(resolved.unavailable).toEqual([]);
+  }, 60_000);
+
+  it("a pre-rename (rc) agent version and eval case: old builtin names read as the new ones and resolve", async () => {
+    const created = await req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/agents`,
+      payload: {
+        definition: {
+          name: "Rc",
+          instructions: "Be helpful.",
+          model: { provider: "model-fake", model: "fake-1" },
+          tools: [{ kind: "builtin", name: "ToolSearch" }],
+        },
+        visibility: "org",
+      },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const agentId = (created.json() as { agent: { id: string } }).agent.id;
+    const stored = await db
+      .selectFrom("agent_versions")
+      .select("definition")
+      .where("agent_id", "=", agentId)
+      .executeTakeFirstOrThrow();
+    const rc = {
+      ...(stored.definition as Record<string, unknown>),
+      tools: [
+        { kind: "builtin", name: "tool_search" },
+        { kind: "builtin", name: "ask_user" },
+      ],
+      toolPolicies: { ask_user: "ask" },
+    };
+    await db
+      .updateTable("agent_versions")
+      .set({ definition: JSON.stringify(rc) })
+      .where("agent_id", "=", agentId)
+      .execute();
+
+    // the candidate agent version of an eval run
+    const candidate = await versionDefinition(db, agentId, 1);
+    expect(candidate?.tools).toEqual([
+      { kind: "builtin", name: "ToolSearch" },
+      { kind: "builtin", name: "AskUserQuestion" },
+    ]);
+    expect(candidate?.toolPolicies).toEqual({ AskUserQuestion: "ask" });
+    // an eval case whose snapshot recorded the rc definition
+    const snap = readSnapshot({
+      ...structuredClone(fixture.snapshot),
+      agentId,
+      agentVersion: 1,
+      definitions: { "1": rc },
+    });
+    const base = await caseBase(db, snap);
+    expect(base?.definition.tools).toEqual(candidate?.tools);
+    const resolved = await k.app
+      .get(ToolRegistry)
+      .forAgent(orgId, base?.definition ?? { tools: [] });
+    expect(resolved.tools.map((t) => t.key)).toContain("AskUserQuestion");
+    expect(resolved.unavailable).toEqual([]);
+
+    // and it runs: a plain message completes on the rc version
+    const convId = await createConv(req, orgId, agentId);
+    await postMessage(req, orgId, convId, "echo:hello");
+    const [end] = await waitForTerminal(db, convId, 1, 20_000);
+    expect(end?.type).toBe("run_finished");
   }, 60_000);
 });

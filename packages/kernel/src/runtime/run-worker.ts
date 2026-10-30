@@ -2,7 +2,7 @@ import type { ExtensionContext, Logger } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { DelayedError, type Job, type Worker } from "bullmq";
 import { sql } from "kysely";
-import { type AgentDefinition, normalizeStoredDefinition } from "../agents/definition.js";
+import type { AgentDefinition } from "../agents/definition.js";
 import {
   type ConversationBusMessage,
   conversationTopic,
@@ -30,6 +30,7 @@ import { KernelEvents } from "../infra/events/kernel-events.js";
 import type { LeaseHandle } from "../infra/lock/lock.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import { pinnedFailureText, SkillsCatalogService } from "../skills/catalog.js";
+import { normalizeStoredDefinitionIn } from "../tools/legacy-data.js";
 import { ToolPipeline } from "../tools/pipeline.js";
 import { RunAbort, type RunAbortBy, type RunAbortDetail } from "./abort.js";
 import { KyselyCheckpointSaver } from "./checkpointer.js";
@@ -597,7 +598,7 @@ export class RunWorker {
         await this.eventLog.readAfter(conversationId, Number(run.trigger_seq) - 1, 1)
       )[0];
       agent = childRunDefinition(
-        normalizeStoredDefinition(started.payload.definition),
+        await normalizeStoredDefinitionIn(this.db, conv.org_id, started.payload.definition),
         trigger?.type === "user_message" && trigger.seq === Number(run.trigger_seq)
           ? trigger.payload.dispatch?.narrowed
           : undefined,
@@ -625,7 +626,7 @@ export class RunWorker {
         .where("agent_id", "=", conv.agent_id)
         .where("version", "=", run.agent_version)
         .executeTakeFirstOrThrow();
-      saved = normalizeStoredDefinition(version.definition);
+      saved = await normalizeStoredDefinitionIn(this.db, conv.org_id, version.definition);
       agent = saved;
     }
 

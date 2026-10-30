@@ -51,14 +51,27 @@ export interface LegacyScope {
   extensionNames: ReadonlySet<string>;
 }
 
+/** A key in the current format for connector and extension tools (`mcp__…`, `plugin__…`). */
+const CURRENT_PREFIXED_RE = /^(mcp|plugin)__/;
+/** An rc connector or extension key `<x>__<tool>` (the SQL of migration 0063 uses the same test). */
+const LEGACY_PREFIXED_RE = /^[a-z0-9][a-z0-9_-]*__./;
+
+/**
+ * Is `key` an rc `<x>__<tool>` key, which only a {@link LegacyScope} can map? Keys in the current
+ * format (`mcp__…`, `plugin__…`) never are.
+ */
+export const isLegacyPrefixedKey = (key: string): boolean =>
+  LEGACY_PREFIXED_RE.test(key) && !CURRENT_PREFIXED_RE.test(key);
+
 /**
  * The current key of a release-candidate key: a builtin by the frozen map; `<x>__<tool>` becomes
  * `mcp__x__tool` when `x` is only a connector slug in `scope`, `plugin__x__tool` when only an
- * extension name, else null (ambiguous, unknown, or not an old key).
+ * extension name, else null (ambiguous, unknown, or not an old key; a key in the current format
+ * is never mapped again).
  */
 export function legacyToolKey(key: string, scope?: LegacyScope): string | null {
   if (isLegacyBuiltinKey(key)) return (LEGACY_BUILTINS[key] as LegacyBuiltin).name;
-  if (scope === undefined) return null;
+  if (scope === undefined || !isLegacyPrefixedKey(key)) return null;
   const i = key.indexOf("__");
   if (i <= 0 || i + 2 >= key.length) return null;
   const head = key.slice(0, i);
@@ -100,4 +113,24 @@ export function legacyHint(key: string): string | null {
   const { name } = LEGACY_BUILTINS[key] as LegacyBuiltin;
   const params = HINT_PARAMS[name];
   return `Tool "${key}" no longer exists; it is now "${name}"${params === undefined ? "" : ` (parameters: ${params})`}.`;
+}
+
+/**
+ * The current key(s) an rc key stands for, to name in a refusal when a definition is saved with
+ * it: a builtin's new name; for `<x>__<tool>`, the candidates among `known` (the agent's tool
+ * keys), else both `mcp__<x>__<tool>` and `plugin__<x>__<tool>`. Empty when `key` is no rc key.
+ */
+export function legacyKeyCandidates(key: string, known?: ReadonlySet<string>): string[] {
+  if (isLegacyBuiltinKey(key)) return [(LEGACY_BUILTINS[key] as LegacyBuiltin).name];
+  if (!isLegacyPrefixedKey(key)) return [];
+  const all = [`mcp__${key}`, `plugin__${key}`];
+  const hit = all.filter((k) => known?.has(k) === true);
+  return hit.length > 0 ? hit : all;
+}
+
+/** The refusal text for saving rc key `key` (null when it is none): names the new key(s). */
+export function legacyKeySaveText(key: string, known?: ReadonlySet<string>): string | null {
+  const c = legacyKeyCandidates(key, known);
+  if (c.length === 0) return null;
+  return `"${key}" is a release-candidate tool key; use ${c.map((x) => `"${x}"`).join(" or ")}`;
 }

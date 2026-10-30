@@ -17,6 +17,7 @@ import { ProviderRegistry } from "../runtime/providers.js";
 import { SandboxJobs } from "../sandbox/jobs.js";
 import { SkillChangesService } from "../skills/changes.service.js";
 import { assertOrgSkills, assertPinnedSkills } from "../skills/skills.service.js";
+import { legacyKeySaveText } from "../tools/legacy-keys.js";
 import { ToolRegistry } from "../tools/registry.js";
 import {
   AgentLookup,
@@ -112,9 +113,15 @@ export async function assertSubagents(
 ): Promise<void> {
   const sub = a.definition.subagents;
   if (sub === undefined) return;
-  const details: { reason: SubagentsProblem; path: string; value?: string }[] = [];
-  const add = (reason: SubagentsProblem, path: string, value?: string): void => {
-    details.push({ reason, path, ...(value !== undefined && { value }) });
+  const details: { reason: SubagentsProblem; path: string; value?: string; message?: string }[] =
+    [];
+  const add = (reason: SubagentsProblem, path: string, value?: string, message?: string): void => {
+    details.push({
+      reason,
+      path,
+      ...(value !== undefined && { value }),
+      ...(message !== undefined && { message }),
+    });
   };
   const types = new Set<string>(sub.general === false ? [] : ["general-purpose"]);
   const claim = (type: string, path: string) => {
@@ -181,7 +188,10 @@ export async function assertSubagents(
     const base = `subagents.inline.${i}`;
     name(x.name, `${base}.name`);
     const tool = (key: string, path: string) => {
-      if (!a.toolKeys.has(key)) add("tool_not_selected", path, key);
+      if (a.toolKeys.has(key)) return;
+      // an rc key names its current key(s) (tool naming spec §8.3)
+      const renamed = legacyKeySaveText(key, a.toolKeys);
+      add("tool_not_selected", path, key, renamed ?? undefined);
     };
     for (const [j, key] of (x.tools ?? []).entries()) tool(key, `${base}.tools.${j}`);
     for (const [j, key] of (x.disallowedTools ?? []).entries()) {
@@ -227,7 +237,9 @@ export async function assertSubagents(
   if (details.length > 0) {
     throw new ApiError(
       "agent.subagents_invalid",
-      `Invalid sub-agents: ${details.map((d) => `${d.path} (${d.reason})`).join(", ")}`,
+      `Invalid sub-agents: ${details
+        .map((d) => `${d.path} (${d.reason}${d.message === undefined ? "" : `: ${d.message}`})`)
+        .join(", ")}`,
       details,
     );
   }
@@ -274,9 +286,11 @@ export class AgentsService {
     const details = [...issues];
     for (const key of Object.keys(def.toolPolicies)) {
       if (!keys.has(key)) {
+        // an rc key (tool naming spec §8.3): saving writes current keys only, so name them
+        const renamed = legacyKeySaveText(key, keys);
         details.push({
           path: `toolPolicies.${key}`,
-          message: `"${key}" is not a tool of this agent`,
+          message: renamed ?? `"${key}" is not a tool of this agent`,
         });
       }
     }
