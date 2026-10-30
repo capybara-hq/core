@@ -13,7 +13,7 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { PW, sleep, waitFor } from "../helpers/runs.js";
 
@@ -83,7 +83,7 @@ describe("channel webhook inbound (dual replica, api+worker / gateway)", () => {
     };
 
     const ownerId = (
-      await new AccountsService(kernelDb(raw)).createLocal({
+      await accountsFor(kernelDb(raw)).createLocal({
         login: "owner",
         password: PW,
         displayName: "O",

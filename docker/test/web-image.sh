@@ -26,7 +26,8 @@ WEB_TRUST="$ID-web-trust"
 CLIENT="$ID-client"
 MASTER_KEY="$(head -c 32 /dev/urandom | base64)"
 FORGED_IP="1.2.3.4"
-# Per (login, IP) failed-login limit in the kernel (LOGIN_FAIL_LIMIT_PER_LOGIN_IP).
+# Failed-login limit of the kernel's `login` throttler (per login and IP: 10); the loop below stops
+# at it, so the client IP's `login-ip` counter also ends at this value.
 LOGIN_IP_LIMIT=10
 STARTED=()
 
@@ -184,17 +185,25 @@ out="$(request POST /api/v1/auth/login "$BAD")"
 echo "$out" | grep -q "auth.rate_limited" || fail "login $i: expected auth.rate_limited, got $out"
 echo "    login $i: 429 auth.rate_limited"
 
-# The kernel keys its per-IP counter by the client address it resolved (capk:login-fail:ip:<ip>).
-# This shows the kernel resolved the client and ignored the forged address; the echo upstream
-# below checks the raw header web forwards.
+# The kernel keys its per-IP login counter by the client address it resolved: the `login-ip`
+# credential throttler's key, throttler:{cred:login}:login-ip:<sha256("login-ip:<ip>")>
+# (credentialRedisKey / throttlerKey in packages/kernel/src/infra/throttler). This shows the kernel
+# resolved the client and ignored the forged address; the echo upstream below checks the raw
+# header web forwards.
 vk() { docker exec "$VALKEY" valkey-cli "$@"; }
-KEYS="$(vk --scan --pattern 'capk:login-fail:ip:*')"
+# sha256sum on Linux, shasum -a 256 on macOS (same output format).
+sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; }
+login_ip_key() {
+  printf 'throttler:{cred:login}:login-ip:%s' \
+    "$(printf 'login-ip:%s' "$1" | sha256 | cut -d' ' -f1)"
+}
+KEYS="$(vk --scan --pattern 'throttler:{cred:login}:login-ip:*')"
 echo "    kernel per-IP counters: $(echo $KEYS)"
-[ "$(vk GET "capk:login-fail:ip:$CLIENT_IP")" = "$LOGIN_IP_LIMIT" ] \
+[ "$(vk GET "$(login_ip_key "$CLIENT_IP")")" = "$LOGIN_IP_LIMIT" ] \
   || fail "the kernel did not count the failures against the client address $CLIENT_IP"
-[ -z "$(vk --scan --pattern "capk:login-fail:ip:$FORGED_IP")" ] \
+[ "$(vk EXISTS "$(login_ip_key "$FORGED_IP")")" = "0" ] \
   || fail "the kernel counted the failures against the forged address $FORGED_IP"
-[ -z "$(vk --scan --pattern "capk:login-fail:ip:$WEB_IP")" ] \
+[ "$(vk EXISTS "$(login_ip_key "$WEB_IP")")" = "0" ] \
   || fail "the kernel saw the web container ($WEB_IP), not the client"
 [ "$(echo "$KEYS" | grep -c .)" = "1" ] || fail "expected exactly one per-IP counter, got: $KEYS"
 

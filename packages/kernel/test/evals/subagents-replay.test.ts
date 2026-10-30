@@ -11,7 +11,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { normalizeStoredDefinition } from "../../src/agents/definition.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { reconstructRequest, subagentCaseChanged } from "../../src/evals/reconstruct.js";
 import type { RunReplayResult } from "../../src/evals/run-replay.js";
@@ -24,12 +24,13 @@ import {
   toEvents,
 } from "../../src/evals/snapshot.js";
 import type { TrajectoryDetail } from "../../src/evals/trajectory.service.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
 import { BEHAVIOR_RULES } from "../../src/runtime/context/build.js";
+import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { SUBAGENT_PREAMBLE } from "../../src/runtime/subagents/preamble.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { seedForkedSkill } from "../helpers/forked-skills.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
@@ -44,6 +45,7 @@ import {
   runsOf,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -129,9 +131,9 @@ const RULES: ScriptRule[] = [
 let pgc: TestContainer;
 let rd: TestContainer;
 let s3: TestS3;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 const capture = captureProviderRequests();
 
 let owner: Req;
@@ -175,7 +177,7 @@ beforeAll(async () => {
     ),
   );
   scriptRules([]);
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" })).id;
   const otherId = (await accounts.createLocal({ login: "other", password: PW, displayName: "X" }))
     .id;
@@ -230,7 +232,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   capture.restore();
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
 });
@@ -325,7 +327,7 @@ async function counts() {
 }
 
 async function modelInfo(): Promise<ModelInfo> {
-  return (await k.runs.registry.resolve(SCRIPT)).info;
+  return (await k.app.get(ProviderRegistry).resolve(SCRIPT)).info;
 }
 
 const snapshotOf = (conv: string, runId: string): Promise<CaseSnapshot> =>
@@ -756,7 +758,7 @@ describe("forked skills (phase D)", { timeout: 120_000 }, () => {
 
   beforeAll(async () => {
     const { id: skillId } = await seedForkedSkill(
-      { db, storage: k.storage, orgId, ownerId },
+      { db, storage: k.app.get(StorageService), orgId, ownerId },
       "review",
       "Review $ARGUMENTS.",
     );

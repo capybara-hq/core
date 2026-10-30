@@ -1,9 +1,16 @@
 import { type PluginExtensionSection, SDK_VERSION } from "@capybara-hq/plugin-sdk";
-import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import { Inject, Injectable } from "@nestjs/common";
+import type { core } from "zod";
+import { configFields } from "../config/fields.js";
+import type { Keyring } from "../ctx/secrets.js";
 import { ApiError, type ErrorCode } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
+import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KEYRING } from "../infra/tokens.js";
 import {
   fetchNpmPackage,
   IntegrityMismatchError,
@@ -17,7 +24,13 @@ import {
   type ProvenanceResult,
 } from "../packages/provenance.js";
 import { ExtensionApprovals } from "./approvals.js";
-import type { ExtensionBlobs } from "./blobs.js";
+import { ExtensionBlobs } from "./blobs.js";
+import {
+  mergeDeploymentConfig,
+  readStoredDeploymentConfig,
+  schemaFields,
+  secretPathsOf,
+} from "./deployment-config-store.js";
 import {
   ExtensionPackageError,
   extensionPackageApiError,
@@ -35,9 +48,9 @@ import {
   reviewHash,
 } from "./permission-view.js";
 
-export { migrationWarnings, type PackageWarning };
+import { ExtensionRegistry } from "./registry.js";
 
-import type { ExtensionSource } from "./sources.js";
+export { migrationWarnings, type PackageWarning };
 
 /** 上传 / 拉取一个包后的审阅结果（权限按静态清单与迁移 SQL 计算，不执行插件代码）。 */
 export interface PackageReview {
@@ -106,19 +119,52 @@ export interface IngestSource {
   ref: string;
 }
 
-export interface ExtensionInstallsDeps {
-  db: KernelDb;
-  blobs: ExtensionBlobs;
-  config: () => KernelConfig;
-  /** 配置声明的插件名 → 来源（安装包不能与它们重名，C15）。 */
-  declared: () => ReadonlyMap<string, ExtensionSource>;
-  /** npm 下载的总时限（毫秒），默认 120s。 */
-  npmTimeoutMs?: number;
-}
+/** The npm download time limit (ms). */
+const NPM_TIMEOUT_MS = 120_000;
 
-/** 插件安装记录与包的导入（上传文件、npm）。本身无状态，多副本共用。 */
+/**
+ * Extension install records and package imports (uploaded file, npm), and the deployment's desired
+ * state the replicas converge to: the install records desired enabled and each extension's
+ * effective deployment config (the startup config completed by the fields stored in PG). Stateless,
+ * shared by every replica; the extension host reads the desired state from here (one way).
+ */
+@Injectable()
 export class ExtensionInstalls {
-  constructor(private readonly d: ExtensionInstallsDeps) {}
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** The enterprise admin lock (identity/enterprise-admin.ts): joins the transaction. */
+    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    @Inject(ExtensionBlobs) private readonly blobs: ExtensionBlobs,
+    @Inject(ExtensionApprovals) private readonly approvals: ExtensionApprovals,
+    /** The config-declared extension names (an install cannot take them, C15). */
+    @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    @Inject(KEYRING) private readonly keyring: Keyring,
+  ) {}
+
+  /**
+   * An extension's effective deployment config, not validated yet (C10): the startup config
+   * (`fileValue`, file / Nacos merged with env) completed by the fields stored in PG; merged by
+   * the fields of `schema` when it is given.
+   */
+  async effectiveDeploymentConfig(
+    plugin: string,
+    fileValue: unknown,
+    schema?: core.$ZodType,
+  ): Promise<unknown> {
+    const stored = await readStoredDeploymentConfig(this.db.db, this.keyring, plugin, {
+      secretPaths: secretPathsOf(schemaFields(schema)),
+    });
+    const fields = schema ? configFields(schema).map((f) => f.path) : undefined;
+    return mergeDeploymentConfig(stored, fileValue, fields);
+  }
+
+  /** Every install record's extension name (any desired state). */
+  async installedNames(): Promise<string[]> {
+    const rows = await this.db.selectFrom("extension_installs").select("name").execute();
+    return rows.map((r) => r.name);
+  }
 
   /**
    * Validates and stores one package and returns the review; audits `extension.package_uploaded`.
@@ -136,7 +182,7 @@ export class ExtensionInstalls {
     src: IngestSource,
     opts: { actorTokenId?: string; store?: "object" | "pg"; expectPackageName?: string } = {},
   ): Promise<PackageReview> {
-    const maxBytes = this.d.config().packages.maxBytes;
+    const maxBytes = this.config.get().packages.maxBytes;
     if (bytes.byteLength > maxBytes) {
       throw new ApiError(
         "extension.package_too_large",
@@ -158,14 +204,14 @@ export class ExtensionInstalls {
         issue,
       ]);
     }
-    const declared = this.d.declared().get(m.name);
+    const declared = this.registry.declared().get(m.name);
     if (declared === "config") {
       throw new ApiError(
         "extension.config_declared",
         `Extension ${m.name} is declared in the startup config (extensions); remove it there before installing it as a package`,
       );
     }
-    const installed = await this.d.db
+    const installed = await this.db
       .selectFrom("extension_installs")
       .innerJoin("extension_packages", "extension_packages.sha256", "extension_installs.sha256")
       .select("extension_packages.package_name")
@@ -179,28 +225,22 @@ export class ExtensionInstalls {
     }
 
     // 写包之前在锁内复核发起人仍是企业管理员（守卫读到的身份可能已过期）；审计在写完后同样复核
-    if (actor !== null) {
-      await this.d.db.transaction().execute((trx) => lockEnterpriseAdminsAndAuthorize(trx, actor));
-    }
-    await this.d.blobs.put(pkg, bytes, {
+    if (actor !== null) await this.authorize(actor);
+    await this.blobs.put(pkg, bytes, {
       source: src.source,
       ref: src.ref,
       actor,
       ...(opts.store !== undefined && { store: opts.store }),
     });
-    await this.d.db.transaction().execute(async (trx) => {
-      if (actor !== null) await lockEnterpriseAdminsAndAuthorize(trx, actor);
-      await audit(trx, {
-        ...(actor !== null && { actorAccountId: actor }),
-        ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-        action: "extension.package_uploaded",
-        target: m.name,
-        detail: { name: m.name, version: m.version, sha256: pkg.sha256, source: src.source },
-      });
+    await this.auditUpload(actor, opts.actorTokenId, {
+      name: m.name,
+      version: m.version,
+      sha256: pkg.sha256,
+      source: src.source,
     });
 
     const set = permissionSetOfPackage(pkg);
-    const snapshot = (await new ExtensionApprovals(this.d.db).all()).get(m.name);
+    const snapshot = (await this.approvals.all()).get(m.name);
     const { added, removed } = diffPermissions(snapshot?.permissions, set);
     const warnings = migrationWarnings(pkg.migrationSql, m.name);
     return {
@@ -214,6 +254,36 @@ export class ExtensionInstalls {
       reviewHash: reviewHash(set, warnings),
       warnings,
     };
+  }
+
+  /**
+   * The enterprise admin re-check under its lock, in a transaction of its own (`requires_new`, as
+   * before the conversion): the package write that follows never runs inside a caller's
+   * transaction holding the lock.
+   */
+  @Transactional({ propagation: "requires_new" })
+  private async authorize(actor: string): Promise<void> {
+    await this.adminLock.lockAndAuthorize(actor);
+  }
+
+  /**
+   * The `extension.package_uploaded` audit, re-checking the actor under the lock, committed on its
+   * own (`requires_new`): the stored package it records is not rolled back by a caller either.
+   */
+  @Transactional({ propagation: "requires_new" })
+  private async auditUpload(
+    actor: string | null,
+    actorTokenId: string | undefined,
+    detail: { name: string; version: string; sha256: string; source: IngestSource["source"] },
+  ): Promise<void> {
+    if (actor !== null) await this.adminLock.lockAndAuthorize(actor);
+    await audit(this.db.db, {
+      ...(actor !== null && { actorAccountId: actor }),
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      action: "extension.package_uploaded",
+      target: detail.name,
+      detail,
+    });
   }
 
   /** 上传的 tgz（来源 `file`）。 */
@@ -235,13 +305,13 @@ export class ExtensionInstalls {
     input: { package: string; version?: string },
     signal?: AbortSignal,
   ): Promise<{ bytes: Uint8Array; version: string; integrity: string }> {
-    const c = this.d.config();
+    const c = this.config.get();
     const cfg: NpmFetchConfig = {
       registry: c.packages.npmRegistry,
       maxBytes: c.packages.maxBytes,
       ...(c.packages.npmToken !== undefined && { token: c.packages.npmToken }),
     };
-    const timeout = AbortSignal.timeout(this.d.npmTimeoutMs ?? 120_000);
+    const timeout = AbortSignal.timeout(NPM_TIMEOUT_MS);
     try {
       return await fetchNpmPackage(
         cfg,
@@ -287,7 +357,7 @@ export class ExtensionInstalls {
     input: { package: string; version: string; integrity?: string },
     signal?: AbortSignal,
   ): Promise<ProvenanceResult> {
-    const c = this.d.config();
+    const c = this.config.get();
     const cfg: NpmFetchConfig = {
       registry: c.packages.npmRegistry,
       maxBytes: c.packages.maxBytes,
@@ -308,14 +378,14 @@ export class ExtensionInstalls {
     signal: AbortSignal | undefined,
     codes: { mismatch: ErrorCode; failed: ErrorCode; against: string },
   ): Promise<{ bytes: Uint8Array; version: string; integrity: string }> {
-    const c = this.d.config();
+    const c = this.config.get();
     const cfg: NpmFetchConfig = {
       registry: c.packages.npmRegistry,
       maxBytes: c.packages.maxBytes,
       allowInsecureLoopback: c.marketplaces.allowInsecureLoopback,
       ...(c.packages.npmToken !== undefined && { token: c.packages.npmToken }),
     };
-    const timeout = AbortSignal.timeout(this.d.npmTimeoutMs ?? 120_000);
+    const timeout = AbortSignal.timeout(NPM_TIMEOUT_MS);
     try {
       return await fetchNpmPackage(
         cfg,
@@ -369,7 +439,7 @@ export class ExtensionInstalls {
 
   /** 全部安装记录（按名字）。 */
   async list(): Promise<ExtensionInstallRow[]> {
-    const rows = await this.d.db
+    const rows = await this.db
       .selectFrom("extension_installs")
       .innerJoin("extension_packages", "extension_packages.sha256", "extension_installs.sha256")
       .selectAll("extension_installs")
@@ -394,7 +464,7 @@ export class ExtensionInstalls {
 
   /** Install records desired enabled, with their reviewed extension sections (by name). */
   async desired(): Promise<DesiredExtension[]> {
-    const rows = await this.d.db
+    const rows = await this.db
       .selectFrom("extension_installs")
       .innerJoin("extension_packages", "extension_packages.sha256", "extension_installs.sha256")
       .select([

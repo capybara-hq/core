@@ -2,24 +2,24 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   type AgentTemplate,
   type AgentTemplateTier,
-  type Connector,
   type ConnectorTemplateSpec,
   type LocalizedName,
-  type Logger,
   PLUGIN_MANIFEST_FILE,
   type PluginManifest,
   parseSkillMd,
   SDK_VERSION,
   SKILL_ENTRY_FILE,
 } from "@capybara-hq/plugin-sdk";
-import { sql, type Transaction } from "kysely";
+import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
 import semver from "semver";
-import type { KernelConfig } from "../config/schema.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import type { ExtensionAdminOps } from "../extensions/admin-ops.js";
+import { ExtensionAdminOps } from "../extensions/admin-ops.js";
 import { writeSnapshot } from "../extensions/approvals.js";
-import type { ExtensionInstalls } from "../extensions/installs.js";
+import { ExtensionBlobs } from "../extensions/blobs.js";
+import { ExtensionInstalls } from "../extensions/installs.js";
+import { PluginApproveLock, PluginInstallLock } from "../extensions/locks.js";
 import { unrunMigrations } from "../extensions/migrate-lock.js";
 import {
   type ExtensionPackage,
@@ -42,32 +42,38 @@ import {
   permissionGroups,
   permissionKeyItems,
 } from "../extensions/permission-view.js";
-import type { ExtensionSource } from "../extensions/sources.js";
+import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
-import {
-  lockEnterpriseAdmins,
-  lockEnterpriseAdminsAndAuthorize,
-} from "../identity/enterprise-admin.js";
+import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 import type { ProvenanceResult } from "../packages/provenance.js";
 import { packPackageTgz } from "../packages/tgz.js";
 import { checkSkillFiles, SkillArchiveError, type SkillPackageFile } from "../skills/package.js";
-import type { StorageService } from "../storage/storage.service.js";
+import { type PrefixedStorage, StorageService } from "../storage/storage.service.js";
 import { endpointCredentialIssues } from "../tools/endpoint.js";
 import { canonicalJson } from "../tools/registry.js";
+import type {
+  ActorOpts,
+  CatalogItemView,
+  PermissionsMismatch,
+  SourceDetail,
+} from "./catalog.service.js";
+import { findConnectorIn } from "./catalog-content.js";
 import {
-  type ActorOpts,
   assertPluginNameOwner,
-  type CatalogItemView,
   catalogObjectPrefix,
   itemView,
-  type PermissionsMismatch,
   permissionsMismatch,
   precheckCatalogImport,
   putCatalogFiles,
-  type SourceDetail,
   templateProblems,
   writeCatalogVersion,
-} from "./catalog.service.js";
+} from "./catalog-items.js";
 import {
   CLAUDE_PLUGIN_FILE,
   type ClaudeEntryOverlay,
@@ -81,6 +87,7 @@ import {
   type TranslationReport,
 } from "./claude/report.js";
 import { isClaudePluginTree, translateClaudePlugin } from "./claude/translate.js";
+import { CatalogItemLock } from "./locks.js";
 import {
   type PluginContents,
   PluginPackageError,
@@ -368,29 +375,6 @@ interface StagedPlugin {
   licenseTruncated?: true;
 }
 
-export interface PluginImportDeps {
-  db: KernelDb;
-  config: () => KernelConfig;
-  storage: StorageService;
-  installs: Pick<ExtensionInstalls, "ingest" | "fetchNpm" | "fetchProvenance">;
-  ops: Pick<ExtensionAdminOps, "install" | "enable">;
-  /** Reads a package from the package store (confirm recomputes the permission set). */
-  blobs: { get(sha256: string): Promise<Uint8Array> };
-  /** Config-declared extension names -> source. */
-  declared: () => ReadonlyMap<string, ExtensionSource>;
-  /** The connector `kind` provided by extension `plugin` loaded on this replica. */
-  findConnector: (plugin: string, kind: string) => Connector | undefined;
-  /** The version of an extension loaded on this replica (templates' `pluginVersion` is checked). */
-  pluginVersion?: (plugin: string) => string | undefined;
-  /**
-   * false: this process loads no connectors (the CLI), so a template of an unknown connector gets
-   * only the static endpoint checks and `endpointChecked: false`; the org install re-checks it
-   * against the loaded connector. Default true (the HTTP path).
-   */
-  connectorsLoaded?: boolean;
-  log: Pick<Logger, "info" | "warn" | "error">;
-}
-
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const notFound = () =>
   new ApiError(
@@ -402,6 +386,11 @@ const invalid = (problems: string[]) =>
     "catalog.invalid_manifest",
     `Invalid plugin package: ${problems[0] ?? "unknown problem"}`,
     problems.slice(0, 50),
+  );
+const reviewStale = (review: { name: string; version: string }) =>
+  new ApiError(
+    "plugin.review_stale",
+    `The review of plugin ${review.name} ${review.version} is out of date (it changed, or its extension on this deployment changed since it was prepared); review it again`,
   );
 const mismatch = (what: string) =>
   new ApiError(
@@ -438,22 +427,74 @@ const fileOf = (path: string, data: Uint8Array): SkillPackageFile => ({
   data,
 });
 
-type Trx = Transaction<KernelDatabase>;
-
-/**
- * The enterprise-admin re-check under the lock. `actor` null is the CLI (the operator of the
- * deployment: no account to re-check, audits carry no actor), like `ExtensionInstalls.ingest`.
- */
-const authorizeActor = (trx: Trx, actor: string | null): Promise<void> =>
-  actor === null ? lockEnterpriseAdmins(trx) : lockEnterpriseAdminsAndAuthorize(trx, actor);
-
 /** The deployment state of the plugin's extension. */
 type ExtensionState =
   | { kind: "installed"; version: string; sha256: string; packageName: string }
   | { kind: "absent" };
 
+@Injectable()
 export class PluginImport {
-  constructor(private readonly d: PluginImportDeps) {}
+  /** Where plugin files go (the kernel's object storage; the CLI's own, see {@link useCliStorage}). */
+  private files: PrefixedStorage;
+  /**
+   * false: this process loads no connectors (the CLI), so a template of an unknown connector gets
+   * only the static endpoint checks and `endpointChecked: false`; the org install re-checks it
+   * against the loaded connector.
+   */
+  private connectorsLoaded = true;
+
+  constructor(
+    @Inject(KernelDb) private readonly kdb: KernelDb,
+    /** The enterprise admin lock (identity/enterprise-admin.ts): joins the caller's transaction. */
+    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    @Inject(PluginInstallLock) private readonly installLock: PluginInstallLock,
+    @Inject(PluginApproveLock) private readonly approveLock: PluginApproveLock,
+    @Inject(CatalogItemLock) private readonly itemLock: CatalogItemLock,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    @Inject(StorageService) storage: StorageService,
+    @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,
+    @Inject(ExtensionAdminOps) private readonly ops: ExtensionAdminOps,
+    /** Reads a package from the package store (confirm recomputes the permission set). */
+    @Inject(ExtensionBlobs) private readonly blobs: ExtensionBlobs,
+    /** Config-declared names, loaded connectors and extension versions (the extension registry). */
+    @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
+    @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {
+    this.files = storage;
+  }
+
+  /** The kernel-schema handle of the current context (the transaction, else the pool). */
+  private get db(): KernelSchemaDb {
+    return this.kdb.db;
+  }
+
+  /**
+   * CLI only (like `ExtensionHost.noteInspected`): plugin files go to the object store the CLI set
+   * up itself, and connector templates get static checks only (the CLI loads no connector). Called
+   * once, right after the command's context is created.
+   */
+  useCliStorage(storage: PrefixedStorage): void {
+    this.files = storage;
+    this.connectorsLoaded = false;
+  }
+
+  /**
+   * The enterprise-admin re-check under the lock, in the caller's transaction. `actor` null is the
+   * CLI (the operator of the deployment: no account to re-check, audits carry no actor), like
+   * `ExtensionInstalls.ingest`.
+   */
+  @Transactional({ propagation: "mandatory" })
+  private async authorizeActor(actor: string | null): Promise<void> {
+    if (actor === null) await this.adminLock.lock();
+    else await this.adminLock.lockAndAuthorize(actor);
+  }
+
+  /** The re-check alone, in a transaction of its own (before anything is written). */
+  @Transactional()
+  private async authorize(actor: string | null): Promise<void> {
+    await this.authorizeActor(actor);
+  }
 
   /**
    * Reads, checks and stages a plugin (see the file header). Returns the staging id and review.
@@ -476,7 +517,7 @@ export class PluginImport {
     permissionKeys: string[];
     permissionsMismatch: PermissionsMismatch;
   }> {
-    const maxBytes = this.d.config().packages.maxBytes;
+    const maxBytes = this.config.get().packages.maxBytes;
     const pkg = await readingPackage(() =>
       readPluginPackage(bytes, {
         maxBytes,
@@ -531,7 +572,7 @@ export class PluginImport {
             entryVersion: opts.fallback.entryVersion,
           }),
           ...(claude !== undefined && { overlay: claude }),
-          allowInsecureLoopback: this.d.config().marketplaces.allowInsecureLoopback,
+          allowInsecureLoopback: this.config.get().marketplaces.allowInsecureLoopback,
         }),
       );
       const translated = await readingPackage(async () =>
@@ -605,7 +646,7 @@ export class PluginImport {
     permissionKeys: string[];
     permissionsMismatch: PermissionsMismatch;
   }> {
-    const maxBytes = this.d.config().packages.maxBytes;
+    const maxBytes = this.config.get().packages.maxBytes;
 
     // 1. Every check (nothing written)
     const m = pkg.manifest;
@@ -623,7 +664,7 @@ export class PluginImport {
           )
         : undefined;
     const content = this.checkContent(pkg, format);
-    const { existing, version } = await precheckCatalogImport(this.d.db, m.name, {
+    const { existing, version } = await precheckCatalogImport(this.db, m.name, {
       packageName,
       version: m.version,
       contentDigest: pkg.contentDigest,
@@ -634,16 +675,16 @@ export class PluginImport {
     // The catalog name space is the extension name space: a declarative plugin cannot take a
     // config-declared or another package's extension name either
     this.assertNotDeclared(m.name);
-    await assertPluginNameOwner(this.d.db, m.name, packageName);
+    await assertPluginNameOwner(this.db, m.name, packageName);
     let extension: PluginReviewExtension | undefined;
     if (ext) {
       extension = await this.reviewExtension(
         ext,
         await this.extensionState(m.name, packageName as string),
       );
-      await assertDowngradable(this.d.db, extension, ext.migrationSql);
+      await assertDowngradable(this.db, extension, ext.migrationSql);
     }
-    if (content.files.length > 0) this.d.storage.assertAvailable();
+    if (content.files.length > 0) this.files.assertAvailable();
     const src: PluginImportSource = {
       kind: source.kind,
       ref: source.ref,
@@ -702,14 +743,14 @@ export class PluginImport {
     };
     review.reviewHash = pluginReviewHash(review, content.files);
     // Re-check under the lock that the actor is still an enterprise admin before writing
-    await this.d.db.transaction().execute((trx) => authorizeActor(trx, actor));
+    await this.authorize(actor);
 
     // 2. Write: the extension into the package store, files into object storage, the staging row
     const stagingId = randomUUID();
     const itemId = existing?.id ?? randomUUID();
     if (ext) {
       const bootstrap = src.kind === "bootstrap";
-      await this.d.installs.ingest(
+      await this.installs.ingest(
         actor,
         bytes as Uint8Array,
         bootstrap
@@ -727,7 +768,7 @@ export class PluginImport {
     let objectPrefix: string | null = null;
     if (content.files.length > 0) {
       objectPrefix = catalogObjectPrefix(itemId, version, stagingId);
-      await putCatalogFiles(this.d.storage, objectPrefix, content.files);
+      await putCatalogFiles(this.files, objectPrefix, content.files);
     }
     const keys = ext
       ? permissionKeys(permissionSetOfPackage(ext))
@@ -752,41 +793,55 @@ export class PluginImport {
       ...(license.text !== undefined && { licenseText: license.text }),
       ...(license.truncated && { licenseTruncated: true as const }),
     };
-    await this.d.db.transaction().execute(async (trx) => {
-      await authorizeActor(trx, actor);
-      await trx
-        .insertInto("plugin_import_staging")
-        .values({
-          id: stagingId,
-          review: JSON.stringify(review),
-          manifest: JSON.stringify(staged),
-          object_prefix: objectPrefix,
-          source: JSON.stringify(src),
-          created_by: actor,
-          expires_at: new Date(Date.now() + PLUGIN_STAGING_TTL_MS),
-        })
-        .execute();
-      await audit(trx, {
-        ...(actor !== null && { actorAccountId: actor }),
-        ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-        action: "catalog.plugin_staged",
-        target: stagingId,
-        detail: {
-          stagingId,
-          name: m.name,
-          version,
-          source: src.kind,
-          sourceRef: src.ref,
-          ...(src.integrity !== undefined && { integrity: src.integrity }),
-          ...(src.marketplaceId !== undefined && { marketplaceId: src.marketplaceId }),
-          reviewHash: review.reviewHash,
-          ...(extension && {
-            extension: { sha256: extension.sha256, action: extension.action },
-          }),
-        },
-      });
-    });
+    await this.writeStaging(actor, stagingId, review, staged, objectPrefix, src, opts);
     return { stagingId, review, permissionKeys: keys, permissionsMismatch: mismatch };
+  }
+
+  /** The staging row and the `catalog.plugin_staged` audit, the actor re-checked under the lock. */
+  @Transactional()
+  private async writeStaging(
+    actor: string | null,
+    stagingId: string,
+    review: PluginReview,
+    staged: StagedPlugin,
+    objectPrefix: string | null,
+    src: PluginImportSource,
+    opts: ActorOpts,
+  ): Promise<void> {
+    const { extension } = review;
+    const t = this.db;
+    await this.authorizeActor(actor);
+    await t
+      .insertInto("plugin_import_staging")
+      .values({
+        id: stagingId,
+        review: JSON.stringify(review),
+        manifest: JSON.stringify(staged),
+        object_prefix: objectPrefix,
+        source: JSON.stringify(src),
+        created_by: actor,
+        expires_at: new Date(Date.now() + PLUGIN_STAGING_TTL_MS),
+      })
+      .execute();
+    await audit(t, {
+      ...(actor !== null && { actorAccountId: actor }),
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      action: "catalog.plugin_staged",
+      target: stagingId,
+      detail: {
+        stagingId,
+        name: review.name,
+        version: staged.version,
+        source: src.kind,
+        sourceRef: src.ref,
+        ...(src.integrity !== undefined && { integrity: src.integrity }),
+        ...(src.marketplaceId !== undefined && { marketplaceId: src.marketplaceId }),
+        reviewHash: review.reviewHash,
+        ...(extension && {
+          extension: { sha256: extension.sha256, action: extension.action },
+        }),
+      },
+    });
   }
 
   /** Fetches a plugin from the configured npm registry (verified by `dist.integrity`), then prepares it. */
@@ -795,8 +850,8 @@ export class PluginImport {
     input: { package: string; version?: string },
     opts: ActorOpts = {},
   ): Promise<{ stagingId: string; review: PluginReview }> {
-    const got = await this.d.installs.fetchNpm(input);
-    const provenance = await this.d.installs.fetchProvenance({
+    const got = await this.installs.fetchNpm(input);
+    const provenance = await this.installs.fetchProvenance({
       package: input.package,
       version: got.version,
       integrity: got.integrity,
@@ -808,7 +863,7 @@ export class PluginImport {
         kind: "npm",
         ref: `${input.package}@${got.version}`,
         integrity: got.integrity,
-        detail: { registry: new URL(this.d.config().packages.npmRegistry).origin },
+        detail: { registry: new URL(this.config.get().packages.npmRegistry).origin },
       },
       { ...opts, expect: { packageName: input.package }, provenance: { provenance } },
     );
@@ -826,7 +881,7 @@ export class PluginImport {
     permissionsMismatch?: PermissionsMismatch;
   }> {
     if (!UUID_RE.test(stagingId)) throw notFound();
-    const row = await this.d.db
+    const row = await this.db
       .selectFrom("plugin_import_staging")
       .select(["id", "review", "manifest"])
       .where("id", "=", stagingId)
@@ -867,7 +922,7 @@ export class PluginImport {
     opts: ActorOpts = {},
   ): Promise<PluginConfirmResult> {
     if (!UUID_RE.test(stagingId)) throw notFound();
-    const row = await this.d.db
+    const row = await this.db
       .selectFrom("plugin_import_staging")
       .selectAll()
       .where("id", "=", stagingId)
@@ -877,102 +932,20 @@ export class PluginImport {
     const review = row.review as PluginReview;
     const staged = row.manifest as StagedPlugin;
     const src = row.source as PluginImportSource;
-    const stale = () =>
-      new ApiError(
-        "plugin.review_stale",
-        `The review of plugin ${review.name} ${review.version} is out of date (it changed, or its extension on this deployment changed since it was prepared); review it again`,
-      );
-    if (input.reviewHash !== review.reviewHash) throw stale();
+    if (input.reviewHash !== review.reviewHash) throw reviewStale(review);
     const manifest = withPinned(staged.manifest, review, input.pinnedSuggestions);
     const reviewed = review.extension;
     // Read the stored package outside the transaction (unless it was already installed as is)
     const stored =
       reviewed && reviewed.action !== "keep" ? await this.readStored(reviewed.sha256) : undefined;
 
-    const committed = await this.d.db.transaction().execute(async (trx) => {
-      await authorizeActor(trx, actor);
-      const used = await trx
-        .deleteFrom("plugin_import_staging")
-        .where("id", "=", stagingId)
-        .where("expires_at", ">", sql<Date>`now()`)
-        .returning("id")
-        .executeTakeFirst();
-      if (!used) throw notFound();
-      let now: PluginReviewExtension | undefined;
-      let previous: PreviousSnapshot | null | undefined;
-      if (reviewed) {
-        // The same per-name advisory lock as ExtensionAdminOps.install; under it the action is
-        // recomputed from the current deployment state (installed / upgraded / swapped since the
-        // review -> stale)
-        await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.plugin-install:${reviewed.name}`}))`.execute(
-          trx,
-        );
-        now = {
-          ...reviewed,
-          ...actionOf(
-            await this.extensionState(reviewed.name, staged.packageName as string, trx),
-            reviewed.sha256,
-          ),
-        };
-        if (pluginReviewHash({ ...review, extension: now }, staged.files) !== review.reviewHash) {
-          throw stale();
-        }
-        // A foreseeable deploy failure (a downgrade to a version with unrun migrations) is refused
-        // before anything is written
-        if (input.deployExtension && now.action === "upgrade" && stored) {
-          await assertDowngradable(trx, now, stored.migrationSql);
-        }
-        if (now.action === "install" || (now.action === "upgrade" && input.deployExtension)) {
-          previous = await this.approve(
-            trx,
-            actor,
-            review,
-            staged,
-            now,
-            stored as ExtensionPackage,
-            opts,
-          );
-        }
-      }
-      const m = manifest;
-      const itemId = await writeCatalogVersion(trx, {
-        actor,
-        ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-        name: m.name,
-        packageName: staged.packageName,
-        version: staged.version,
-        contentDigest: staged.contentDigest,
-        manifest: m,
-        listing: {
-          publisher: m.publisher,
-          description: m.description,
-          displayName: m.displayName ?? null,
-        },
-        newItemId: staged.itemId,
-        source: {
-          source: src.kind,
-          ref: src.ref,
-          ...(src.integrity !== undefined && { integrity: src.integrity }),
-          ...(src.detail !== undefined && { detail: src.detail }),
-        },
-        ...(src.marketplaceId !== undefined && { marketplaceId: src.marketplaceId }),
-        objectPrefix: row.object_prefix,
-        extensionSha256: reviewed?.sha256 ?? null,
-        files: staged.files,
-        size: staged.size,
-        sourceFormat: staged.sourceFormat ?? "capybara",
-        translation: staged.translation ?? null,
-        licenseText: staged.licenseText ?? null,
-        licenseTruncated: staged.licenseTruncated === true,
-        auditDetail: {
-          stagingId,
-          deployExtension: input.deployExtension,
-          suggestedPinned: pinnedNames(manifest, review),
-          ...(now && { extension: { name: now.name, version: now.version, action: now.action } }),
-        },
-      });
-      return { itemId, now, previous };
-    });
+    const committed = await this.commit(
+      actor,
+      { stagingId, review, staged, src, manifest, objectPrefix: row.object_prefix },
+      input,
+      stored,
+      opts,
+    );
 
     const { now } = committed;
     const deploy =
@@ -991,13 +964,116 @@ export class PluginImport {
   }
 
   /**
+   * The confirm's transaction: the staging row consumed, the extension's action recomputed under
+   * its install lock (stale -> `plugin.review_stale`), its snapshot approved, and the catalog
+   * version written under the item name's lock.
+   */
+  @Transactional()
+  private async commit(
+    actor: string | null,
+    c: {
+      stagingId: string;
+      review: PluginReview;
+      staged: StagedPlugin;
+      src: PluginImportSource;
+      manifest: StagedPlugin["manifest"];
+      objectPrefix: string | null;
+    },
+    input: { deployExtension: boolean },
+    stored: ExtensionPackage | undefined,
+    opts: ActorOpts,
+  ): Promise<{
+    itemId: string;
+    now: PluginReviewExtension | undefined;
+    previous: PreviousSnapshot | null | undefined;
+  }> {
+    const { stagingId, review, staged, src, manifest } = c;
+    const reviewed = review.extension;
+    const stale = () => reviewStale(review);
+    await this.authorizeActor(actor);
+    const t = this.db;
+    const used = await t
+      .deleteFrom("plugin_import_staging")
+      .where("id", "=", stagingId)
+      .where("expires_at", ">", sql<Date>`now()`)
+      .returning("id")
+      .executeTakeFirst();
+    if (!used) throw notFound();
+    let now: PluginReviewExtension | undefined;
+    let previous: PreviousSnapshot | null | undefined;
+    if (reviewed) {
+      // The same per-name advisory lock as ExtensionAdminOps.install; under it the action is
+      // recomputed from the current deployment state (installed / upgraded / swapped since the
+      // review -> stale)
+      await this.installLock.lock(reviewed.name);
+      now = {
+        ...reviewed,
+        ...actionOf(
+          await this.extensionState(reviewed.name, staged.packageName as string),
+          reviewed.sha256,
+        ),
+      };
+      if (pluginReviewHash({ ...review, extension: now }, staged.files) !== review.reviewHash) {
+        throw stale();
+      }
+      // A foreseeable deploy failure (a downgrade to a version with unrun migrations) is refused
+      // before anything is written
+      if (input.deployExtension && now.action === "upgrade" && stored) {
+        await assertDowngradable(t, now, stored.migrationSql);
+      }
+      if (now.action === "install" || (now.action === "upgrade" && input.deployExtension)) {
+        previous = await this.approve(actor, review, staged, now, stored as ExtensionPackage, opts);
+      }
+    }
+    const m = manifest;
+    await this.itemLock.lock(m.name);
+    const itemId = await writeCatalogVersion(t, {
+      actor,
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      name: m.name,
+      packageName: staged.packageName,
+      version: staged.version,
+      contentDigest: staged.contentDigest,
+      manifest: m,
+      listing: {
+        publisher: m.publisher,
+        description: m.description,
+        displayName: m.displayName ?? null,
+      },
+      newItemId: staged.itemId,
+      source: {
+        source: src.kind,
+        ref: src.ref,
+        ...(src.integrity !== undefined && { integrity: src.integrity }),
+        ...(src.detail !== undefined && { detail: src.detail }),
+      },
+      ...(src.marketplaceId !== undefined && { marketplaceId: src.marketplaceId }),
+      objectPrefix: c.objectPrefix,
+      extensionSha256: reviewed?.sha256 ?? null,
+      files: staged.files,
+      size: staged.size,
+      sourceFormat: staged.sourceFormat ?? "capybara",
+      translation: staged.translation ?? null,
+      licenseText: staged.licenseText ?? null,
+      licenseTruncated: staged.licenseTruncated === true,
+      auditDetail: {
+        stagingId,
+        deployExtension: input.deployExtension,
+        suggestedPinned: pinnedNames(manifest, review),
+        ...(now && { extension: { name: now.name, version: now.version, action: now.action } }),
+      },
+    });
+    return { itemId, now, previous };
+  }
+
+  /**
    * Writes the extension's permission snapshot for the version being imported (source web; cli
    * without an actor; bootstrap for the bootstrap step), after
    * registering the name owner like ExtensionAdminOps.install (Ruling P3). Returns the snapshot it
    * overwrote (null when there was none).
    */
+  @Transactional({ propagation: "mandatory" })
   private async approve(
-    trx: Trx,
     actor: string | null,
     review: PluginReview,
     staged: StagedPlugin,
@@ -1006,26 +1082,25 @@ export class PluginImport {
     opts: ActorOpts,
   ): Promise<PreviousSnapshot | null> {
     const set = permissionSetOfPackage(pkg);
-    await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.plugin-approve:${p.name}`}))`.execute(
-      trx,
-    );
-    const snapRow = await trx
+    await this.approveLock.lock(p.name);
+    const t = this.db;
+    const snapRow = await t
       .selectFrom("extension_permission_snapshots")
       .selectAll()
       .where("plugin", "=", p.name)
       .forUpdate()
       .executeTakeFirst();
-    await trx
+    await t
       .insertInto("extension_name_owners")
       .values({ name: p.name, package_name: staged.packageName as string })
       .onConflict((oc) => oc.column("name").doNothing())
       .execute();
-    await assertPluginNameOwner(trx, p.name, staged.packageName);
+    await assertPluginNameOwner(t, p.name, staged.packageName);
     const { added, removed } = diffPermissions(
       snapRow?.permissions as PermissionSet | undefined,
       set,
     );
-    await writeSnapshot(trx, p.name, p.version, set, {
+    await writeSnapshot(t, p.name, p.version, set, {
       source: review.source.kind === "bootstrap" ? "bootstrap" : actor === null ? "cli" : "web",
       approvedBy: actor,
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
@@ -1074,11 +1149,11 @@ export class PluginImport {
         ? { code: e.code as string, message: e.message }
         : { code: "internal", message: "Internal error" };
     try {
-      await this.d.ops.install(p.name, p.sha256, actor, opts.actorTokenId, {
+      await this.ops.install(p.name, p.sha256, actor, opts.actorTokenId, {
         catalogItemId: itemId,
       });
     } catch (e) {
-      this.d.log.warn("installing a plugin's extension on the deployment failed", {
+      this.log.warn("installing a plugin's extension on the deployment failed", {
         plugin: review.name,
         err: e,
       });
@@ -1090,7 +1165,7 @@ export class PluginImport {
               "snapshot_not_restored: the permission approval changed after the import was confirmed, so it was left as it is";
           }
         } catch (err) {
-          this.d.log.error("cannot restore the permission snapshot of a plugin's extension", {
+          this.log.error("cannot restore the permission snapshot of a plugin's extension", {
             plugin: p.name,
             err,
           });
@@ -1100,10 +1175,10 @@ export class PluginImport {
     }
     if (!enable) return { ...base, result: "installed" };
     try {
-      await this.d.ops.enable(p.name, actor, opts.actorTokenId);
+      await this.ops.enable(p.name, actor, opts.actorTokenId);
       return { ...base, result: "enabled" };
     } catch (e) {
-      this.d.log.warn("enabling a plugin's extension failed", { plugin: p.name, err: e });
+      this.log.warn("enabling a plugin's extension failed", { plugin: p.name, err: e });
       return { ...base, result: "failed", ...failure(e) };
     }
   }
@@ -1114,6 +1189,7 @@ export class PluginImport {
    * snapshot is still the one written at confirm (this version, approved by this actor); if someone
    * approved or changed it meanwhile it is left alone and false is returned.
    */
+  @Transactional()
   private async restoreSnapshot(
     actor: string | null,
     review: PluginReview,
@@ -1121,49 +1197,43 @@ export class PluginImport {
     prev: PreviousSnapshot | null,
     opts: ActorOpts,
   ): Promise<boolean> {
-    return this.d.db.transaction().execute(async (trx) => {
-      await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.plugin-approve:${p.name}`}))`.execute(
-        trx,
-      );
-      const current = await trx
-        .selectFrom("extension_permission_snapshots")
-        .select(["version", "approved_by"])
+    const t = this.db;
+    await this.approveLock.lock(p.name);
+    const current = await t
+      .selectFrom("extension_permission_snapshots")
+      .select(["version", "approved_by"])
+      .where("plugin", "=", p.name)
+      .forUpdate()
+      .executeTakeFirst();
+    if (current?.version !== p.version || current.approved_by !== actor) return false;
+    if (prev) {
+      await t
+        .updateTable("extension_permission_snapshots")
+        .set({
+          version: prev.version,
+          permissions: JSON.stringify(prev.permissions),
+          approved_by: prev.approvedBy,
+          approved_at: prev.approvedAt,
+          source: prev.source,
+        })
         .where("plugin", "=", p.name)
-        .forUpdate()
-        .executeTakeFirst();
-      if (current?.version !== p.version || current.approved_by !== actor) return false;
-      if (prev) {
-        await trx
-          .updateTable("extension_permission_snapshots")
-          .set({
-            version: prev.version,
-            permissions: JSON.stringify(prev.permissions),
-            approved_by: prev.approvedBy,
-            approved_at: prev.approvedAt,
-            source: prev.source,
-          })
-          .where("plugin", "=", p.name)
-          .execute();
-      } else {
-        await trx
-          .deleteFrom("extension_permission_snapshots")
-          .where("plugin", "=", p.name)
-          .execute();
-      }
-      await audit(trx, {
-        ...(actor !== null && { actorAccountId: actor }),
-        ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-        action: "extension.permissions_restored",
-        target: p.name,
-        detail: {
-          plugin: p.name,
-          restoredVersion: prev?.version ?? null,
-          reason: "plugin_deploy_failed",
-          app: { name: review.name, version: review.version },
-        },
-      });
-      return true;
+        .execute();
+    } else {
+      await t.deleteFrom("extension_permission_snapshots").where("plugin", "=", p.name).execute();
+    }
+    await audit(t, {
+      ...(actor !== null && { actorAccountId: actor }),
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      action: "extension.permissions_restored",
+      target: p.name,
+      detail: {
+        plugin: p.name,
+        restoredVersion: prev?.version ?? null,
+        reason: "plugin_deploy_failed",
+        app: { name: review.name, version: review.version },
+      },
     });
+    return true;
   }
 
   /**
@@ -1174,7 +1244,7 @@ export class PluginImport {
   async cleanupExpired(): Promise<number> {
     let total = 0;
     for (;;) {
-      const batch = await this.d.db
+      const batch = await this.db
         .selectFrom("plugin_import_staging")
         .select(["id", "object_prefix"])
         .where("expires_at", "<=", sql<Date>`now()`)
@@ -1185,30 +1255,38 @@ export class PluginImport {
       let progressed = 0;
       for (const r of batch) {
         try {
-          const done = await this.d.db.transaction().execute(async (trx) => {
-            const locked = await trx
-              .selectFrom("plugin_import_staging")
-              .select("id")
-              .where("id", "=", r.id)
-              .where("expires_at", "<=", sql<Date>`now()`)
-              .forUpdate()
-              .skipLocked()
-              .executeTakeFirst();
-            if (!locked) return false;
-            if (r.object_prefix) await this.d.storage.deployment().deletePrefix(r.object_prefix);
-            await trx.deleteFrom("plugin_import_staging").where("id", "=", r.id).execute();
-            return true;
-          });
+          const done = await this.cleanupOne(r);
           if (done) {
             total++;
             progressed++;
           }
         } catch (err) {
-          this.d.log.warn("cannot clean up an expired plugin import", { stagingId: r.id, err });
+          this.log.warn("cannot clean up an expired plugin import", { stagingId: r.id, err });
         }
       }
       if (progressed === 0 || batch.length < CLEANUP_BATCH) return total;
     }
+  }
+
+  /**
+   * One expired staging row (row lock, `SKIP LOCKED`): its objects, then the row; false when another
+   * replica has it or it is gone.
+   */
+  @Transactional()
+  private async cleanupOne(r: { id: string; object_prefix: string | null }): Promise<boolean> {
+    const t = this.db;
+    const locked = await t
+      .selectFrom("plugin_import_staging")
+      .select("id")
+      .where("id", "=", r.id)
+      .where("expires_at", "<=", sql<Date>`now()`)
+      .forUpdate()
+      .skipLocked()
+      .executeTakeFirst();
+    if (!locked) return false;
+    if (r.object_prefix) await this.files.deployment().deletePrefix(r.object_prefix);
+    await t.deleteFrom("plugin_import_staging").where("id", "=", r.id).execute();
+    return true;
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -1243,7 +1321,7 @@ export class PluginImport {
 
   /** A config-declared extension's name cannot be taken by an imported plugin. */
   private assertNotDeclared(name: string): void {
-    const declared = this.d.declared().get(name);
+    const declared = this.registry.declared().get(name);
     if (declared === "config") {
       throw new ApiError(
         "extension.config_declared",
@@ -1318,10 +1396,10 @@ export class PluginImport {
       // The result depends on which connectors the replica serving this request has loaded right
       // now: it is the import-time gate, not the last word (an org install checks again against the
       // connector of the moment)
-      const loaded = this.d.findConnector(t.plugin, t.connector);
+      const loaded = findConnectorIn(this.registry, t.plugin, t.connector);
       if (loaded) {
         problems.push(...templateProblems(loaded, t, at));
-        const v = this.d.pluginVersion?.(t.plugin);
+        const v = this.registry.manifests().find((x) => x.name === t.plugin)?.version;
         if (
           t.pluginVersion !== undefined &&
           v !== undefined &&
@@ -1333,7 +1411,7 @@ export class PluginImport {
         }
       } else if (
         local.has(t.plugin) ||
-        this.d.connectorsLoaded === false ||
+        !this.connectorsLoaded ||
         (format === "claude-code" && t.plugin === CLAUDE_MCP_CONNECTOR.plugin)
       ) {
         // The connector comes with this plugin or a dependency (or this process loads no
@@ -1386,7 +1464,7 @@ export class PluginImport {
   private async resolveDependencies(m: PluginManifest): Promise<PluginReview["dependencies"]> {
     const deps = m.dependencies ?? [];
     if (deps.length === 0) return [];
-    const rows = await this.d.db
+    const rows = await this.db
       .selectFrom("catalog_items as i")
       .innerJoin("catalog_item_versions as v", "v.item_id", "i.id")
       .select(["i.name", "v.version", "v.imported_at"])
@@ -1414,12 +1492,8 @@ export class PluginImport {
    * The extension's state on the deployment; installed from another npm package ->
    * `extension.name_conflict`.
    */
-  private async extensionState(
-    name: string,
-    packageName: string,
-    db: KernelDb | Trx = this.d.db,
-  ): Promise<ExtensionState> {
-    const r = await db
+  private async extensionState(name: string, packageName: string): Promise<ExtensionState> {
+    const r = await this.db
       .selectFrom("extension_installs")
       .innerJoin("extension_packages", "extension_packages.sha256", "extension_installs.sha256")
       .select([
@@ -1446,7 +1520,7 @@ export class PluginImport {
     state: ExtensionState,
   ): Promise<PluginReviewExtension> {
     const name = pkg.section.name;
-    const snap = await this.d.db
+    const snap = await this.db
       .selectFrom("extension_permission_snapshots")
       .select("permissions")
       .where("plugin", "=", name)
@@ -1471,22 +1545,22 @@ export class PluginImport {
   }
 
   private async readStored(sha256: string): Promise<ExtensionPackage> {
-    const bytes = await this.d.blobs.get(sha256);
+    const bytes = await this.blobs.get(sha256);
     return readingPackage(() =>
       readExtensionPackage(bytes, {
-        maxBytes: this.d.config().packages.maxBytes,
+        maxBytes: this.config.get().packages.maxBytes,
         hostSdkVersion: SDK_VERSION,
       }),
     );
   }
 
   private async itemView(itemId: string): Promise<CatalogItemView> {
-    const item = await this.d.db
+    const item = await this.db
       .selectFrom("catalog_items")
       .selectAll()
       .where("id", "=", itemId)
       .executeTakeFirstOrThrow();
-    const versions = await this.d.db
+    const versions = await this.db
       .selectFrom("catalog_item_versions")
       .select(["version", "source", "imported_at"])
       .where("item_id", "=", itemId)
@@ -1607,7 +1681,7 @@ export function pluginReviewHash(
  * back to a version whose migrations have all run).
  */
 async function assertDowngradable(
-  db: KernelDb | Trx,
+  db: KernelSchemaDb,
   p: Pick<PluginReviewExtension, "name" | "action" | "version" | "currentVersion">,
   migrationSql: { file: string; sql: string }[],
 ): Promise<void> {

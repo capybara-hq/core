@@ -16,14 +16,14 @@ import { claudeContentDigest } from "../../src/catalog/claude/manifest.js";
 import type { TranslationReport } from "../../src/catalog/claude/report.js";
 import { contentDigest } from "../../src/catalog/plugin-package.js";
 import type { KernelConfig } from "../../src/config/schema.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
+import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import { packPackageTgz } from "../../src/packages/tgz.js";
 import { truncateTables } from "../helpers/db.js";
-import { PW, type Req, runConfig, session } from "../helpers/runs.js";
+import { accountsFor } from "../helpers/identity.js";
+import { PW, type Req, runConfig, session, startKernel, type TestKernel } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import { loadFixture, loadFixtureAsStrings } from "./claude-fixtures.js";
 
@@ -34,11 +34,11 @@ const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
 let pgc: TestContainer;
 let rd: TestContainer;
 let s3: TestS3;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
 let srv: FakeGitServer;
 let pluginsDir: string;
-let k: Kernel;
+let k: TestKernel;
 let admin: Req;
 
 beforeAll(async () => {
@@ -68,9 +68,8 @@ beforeAll(async () => {
       },
     },
   );
-  k = await createKernel(config, { env: {} });
-  await k.start();
-  await new AccountsService(db).createLocal({
+  k = await startKernel(config, { env: {} });
+  await accountsFor(db).createLocal({
     login: "root",
     password: PW,
     displayName: "R",
@@ -80,7 +79,7 @@ beforeAll(async () => {
 }, 240_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await srv?.stop();
   if (pluginsDir) await rm(pluginsDir, { recursive: true, force: true });

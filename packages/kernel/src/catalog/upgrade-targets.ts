@@ -1,10 +1,7 @@
 import type { PluginManifest } from "@capybara-hq/plugin-sdk";
-import type { Transaction } from "kysely";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
-import type { ExtensionHost } from "../extensions/host.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import type { ExtensionRegistry } from "../extensions/registry.js";
 import { compareVersions } from "./versions.js";
-
-type Trx = Transaction<KernelDatabase>;
 
 /**
  * Which versions an org may upgrade an installed plugin to (package ecosystem spec §10, Decision
@@ -40,8 +37,8 @@ export interface TargetVersion {
  * upgrade target and no "upgrade pending").
  */
 export async function deployedExtension(
-  db: KernelDb | Trx,
-  host: Pick<ExtensionHost, "manifests">,
+  db: KernelSchemaDb,
+  host: Pick<ExtensionRegistry, "manifests">,
   name: string,
 ): Promise<DeployedExtension | undefined> {
   const row = await db
@@ -103,8 +100,8 @@ export interface UpgradeInfo {
  * the items' catalog versions and the deployment's extensions in a few queries.
  */
 export async function upgradeInfo(
-  db: KernelDb,
-  host: Pick<ExtensionHost, "manifests">,
+  db: KernelSchemaDb,
+  host: Pick<ExtensionRegistry, "manifests">,
   installs: readonly { itemId: string; name: string; version: string }[],
 ): Promise<Map<string, UpgradeInfo>> {
   const out = new Map<string, UpgradeInfo>();

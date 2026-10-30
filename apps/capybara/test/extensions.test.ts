@@ -4,19 +4,14 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  createDb,
-  createKernel,
-  createLogger,
-  type Kernel,
-  KernelConfigSchema,
-  kernelDb,
-} from "@capybara-hq/kernel";
+import { createDb, ExtensionHost, KernelConfigSchema, kernelDb } from "@capybara-hq/kernel";
 import {
   fakeExtensionEntry,
+  startTestKernel,
   startTestPostgres,
   startTestRedis,
   type TestContainer,
+  type TestKernel,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 // 内核测试的插件包夹具（生命周期用的 life 插件）
@@ -257,7 +252,7 @@ describe("parseInstallTarget", () => {
 /** Install records (C18, F-Q): the CLI writes PG (the package goes to extension_blobs) and publishes over Redis; a running kernel loads it without a restart. */
 describe("capybara extensions install / enable / disable / uninstall（运行中的内核经 bus 收敛）", () => {
   let rd: TestContainer;
-  let k: Kernel;
+  let k: TestKernel;
   let work: string;
   let tgzPath: string;
   const waitFor = async (fn: () => boolean | Promise<boolean>, label: string, ms = 20_000) => {
@@ -286,11 +281,10 @@ describe("capybara extensions install / enable / disable / uninstall（运行中
       extensionHost: { dir: join(work, "plugins"), reconcileIntervalSeconds: 3600 },
       log: { level: "error" },
     });
-    k = await createKernel(config, { env: {}, logger: createLogger("error", { write: () => {} }) });
-    await k.start();
+    k = await startTestKernel(config);
   }, 120_000);
   afterAll(async () => {
-    await k?.stop();
+    await k?.close();
     await rd?.stop();
     if (work) await rm(work, { recursive: true, force: true });
   });
@@ -351,7 +345,10 @@ describe("capybara extensions install / enable / disable / uninstall（运行中
     const approve = await cli(["extensions", "approve", "life", "--yes"]);
     expect(approve.code, approve.stderr).toBe(0);
     expect(approve.stdout).toMatch(/Running replicas load it without a restart/);
-    await waitFor(() => k.host.current("life")?.version === "1.0.0", "kernel loaded life");
+    await waitFor(
+      () => k.app.get(ExtensionHost).current("life")?.version === "1.0.0",
+      "kernel loaded life",
+    );
 
     const list = await cli(["extensions", "list"]);
     expect(list.code, list.stderr).toBe(0);
@@ -365,7 +362,10 @@ describe("capybara extensions install / enable / disable / uninstall（运行中
 
     const disable = await cli(["extensions", "disable", "life"]);
     expect(disable.code, disable.stderr).toBe(0);
-    await waitFor(() => k.host.current("life") === undefined, "kernel unloaded life");
+    await waitFor(
+      () => k.app.get(ExtensionHost).current("life") === undefined,
+      "kernel unloaded life",
+    );
     const uninstall = await cli(["extensions", "uninstall", "life"]);
     expect(uninstall.code, uninstall.stderr).toBe(0);
     expect(uninstall.stdout).toMatch(/data .* is kept/);

@@ -1,5 +1,5 @@
 import type { ChannelCard, FormAnswer, InputForm, OutboundMessage } from "@capybara-hq/plugin-sdk";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import type { ApprovalsService, ApprovalView } from "../tools/approvals.service.js";
 import { KEY_SEPARATOR } from "../tools/naming.js";
 import { type ChannelLocale, phrase } from "./phrases.js";
@@ -101,12 +101,15 @@ function shortToolName(v: ApprovalView): string {
 }
 
 export interface CardDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   approvals: Pick<ApprovalsService, "describe">;
 }
 
 /** 账号显示名；不存在返回 undefined。 */
-async function displayName(db: KernelDb, accountId: string | null): Promise<string | undefined> {
+async function displayName(
+  db: KernelSchemaDb,
+  accountId: string | null,
+): Promise<string | undefined> {
   if (accountId === null) return undefined;
   const r = await db
     .selectFrom("accounts")

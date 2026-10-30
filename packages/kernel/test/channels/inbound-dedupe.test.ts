@@ -3,12 +3,12 @@ import { fakeDm, startTestRedis, type TestContainer } from "@capybara-hq/testing
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
-  ChannelInbound,
+  type ChannelInbound,
   DEDUPE_DONE,
   DEDUPE_PENDING,
   messageDedupeKey,
 } from "../../src/channels/inbound.js";
-import { ChannelWebhooks } from "../../src/channels/webhook.js";
+import { channelInboundFor, channelWebhooksFor } from "../helpers/channels.js";
 
 /**
  * Two-state inbound dedupe: a redelivery that arrives while the first enqueue hangs is acked only
@@ -48,20 +48,7 @@ function manualQueue() {
 }
 
 const makeInbound = (queue: ReturnType<typeof manualQueue>, r: Redis = redis) =>
-  new ChannelInbound({
-    db: {} as never,
-    redis: r,
-    connections: {} as never,
-    conversations: {} as never,
-    external: {} as never,
-    binding: {} as never,
-    directorySync: {} as never,
-    outbound: {} as never,
-    queue,
-    approvals: {} as never,
-    questions: {} as never,
-    log: { warn: () => {}, info: () => {} },
-  });
+  channelInboundFor({ redis: r, jobs: queue });
 
 /** Tracks whether a promise settled, without unhandled rejections. */
 function track<T>(p: Promise<T>) {
@@ -208,7 +195,7 @@ describe("two-state inbound dedupe (webhook path)", () => {
     receivedAt: 0,
   };
   const makeWebhooks = (inbound: ChannelInbound) =>
-    new ChannelWebhooks({
+    channelWebhooksFor({
       connections: {
         row: async () => ({
           id: CONN,

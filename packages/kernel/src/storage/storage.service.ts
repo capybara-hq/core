@@ -1,11 +1,15 @@
 import {
   ExtensionPointUnavailableError,
   type ExtensionStorage,
+  OBJECT_STORE_EXTENSION_POINT,
   type ObjectHead,
   type ObjectStore,
   type PresignGetOptions,
 } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
 import { ApiError } from "../errors.js";
+import { ExtensionRegistry } from "../extensions/registry.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
 import { KeySpace, kernelPrefix, normalizeOrgId, pluginPrefix } from "./prefix.js";
 
 export { StorageKeyError } from "./prefix.js";
@@ -30,7 +34,8 @@ export function clampPresignTtl(ttlSeconds: number): number {
   return Math.min(MAX_PRESIGN_TTL_SECONDS, Math.max(1, Math.floor(ttlSeconds)));
 }
 
-export interface StorageServiceDeps {
+/** Where a {@link PrefixedStorage} gets its object store and the extensions that may hold data. */
+export interface StorageSource {
   /** 当前的 `object-store@1` 提供方；每次调用时取（提供方在插件加载过程中才就绪）。 */
   provider: () => ObjectStore | undefined;
   /** 可能存过数据的插件名（删除组织数据时逐个删 `plugins/<插件>/<orgId>/`）。 */
@@ -38,14 +43,16 @@ export interface StorageServiceDeps {
 }
 
 /**
- * 内核的对象存储服务（扩展模型 §5）：在 `object-store@1` 提供方之上加前缀隔离。
+ * 前缀隔离的对象存储（扩展模型 §5）：在 `object-store@1` 提供方之上加前缀隔离。A plain class over a
+ * {@link StorageSource}: the kernel's one instance is the {@link StorageService} provider; an
+ * extension's `ctx.storage` and the CLI build their own over their own source.
  * - 插件经 {@link forPlugin} 拿到 `ctx.storage`：键落在 `plugins/<插件>/<orgId>/` 下；
  * - 内核功能经 {@link kernel} 用 `kernel/<orgId>/`；
  * - 返回给调用方的键（`head` / `get` / `put` / `list`）都去掉前缀，列举结果只保留本前缀下的对象。
  * 没有提供方时各方法 reject `storage.unavailable`（{@link available} 为 false）。本身无状态，可多副本共用。
  */
-export class StorageService {
-  constructor(private readonly d: StorageServiceDeps) {}
+export class PrefixedStorage {
+  constructor(private readonly d: StorageSource) {}
 
   /** 是否有对象存储提供方。 */
   get available(): boolean {
@@ -125,6 +132,33 @@ export class StorageService {
     const store = this.d.provider();
     if (!store) throw storageUnavailable();
     return store;
+  }
+}
+
+/**
+ * The kernel's object storage (one provider): the object store is the first loaded `object-store@1`
+ * provider in the {@link ExtensionRegistry} (read per call: it is ready only after the extensions
+ * load); the extensions that may hold data are those ever approved (permission snapshots, including
+ * uninstalled ones) plus the loaded ones.
+ */
+@Injectable()
+export class StorageService extends PrefixedStorage {
+  constructor(
+    @Inject(ExtensionRegistry) registry: ExtensionRegistry,
+    @Inject(KernelDb) db: KernelDb,
+  ) {
+    super({
+      provider: () =>
+        registry.list("object-store").find((e) => e.capability === OBJECT_STORE_EXTENSION_POINT)
+          ?.impl as ObjectStore | undefined,
+      plugins: async () => {
+        const rows = await db
+          .selectFrom("extension_permission_snapshots")
+          .select("plugin")
+          .execute();
+        return [...rows.map((r) => r.plugin), ...registry.manifests().map((m) => m.name)];
+      },
+    });
   }
 }
 

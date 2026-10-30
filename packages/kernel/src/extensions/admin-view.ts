@@ -1,19 +1,26 @@
 import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
-import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
+import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 import {
   ExtensionApprovals,
   type PermissionSnapshot,
   snapshotCovers,
   writeSnapshot,
 } from "./approvals.js";
-import type { ExtensionBlobs } from "./blobs.js";
-import type { DeclaredExtensionInfo } from "./host.js";
-import type { ExtensionInstallRow, ExtensionInstalls } from "./installs.js";
-import { PLUGINS_CHANGED_TOPIC, STALE_RECONCILE_PERIODS } from "./lifecycle.js";
+import { ExtensionBlobs } from "./blobs.js";
+import { ExtensionHost } from "./host.js";
+import { type ExtensionInstallRow, ExtensionInstalls } from "./installs.js";
+import { ExtensionLifecycle, PLUGINS_CHANGED_TOPIC, STALE_RECONCILE_PERIODS } from "./lifecycle.js";
+import { PluginApproveLock } from "./locks.js";
 import { ExtensionPackageError, permissionSetOfPackage, readExtensionPackage } from "./package.js";
 import { buildPermissionSet, diffPermissions, type PermissionSet } from "./permission-set.js";
 import {
@@ -39,23 +46,9 @@ export interface ApproveBody {
   reviewHash: string;
 }
 
-export interface ExtensionAdminDeps {
-  db: KernelDb;
-  blobs: Pick<ExtensionBlobs, "get">;
-  installs: ExtensionInstalls;
-  config: () => KernelConfig;
-  host: {
-    declaredPlugins(): DeclaredExtensionInfo[];
-  };
-  /**
-   * 本副本 reconcile（批准后等它完成再返回视图；其他副本经 `kernel.plugins.changed` 收敛）。CLI 没有（只发布）。
-   */
-  reconcile?: (reason: string) => Promise<void>;
-  bus: { publish(topic: string, payload: unknown): Promise<void> };
-  log: {
-    warn(msg: string, fields?: Record<string, unknown>): void;
-    error(msg: string, fields?: Record<string, unknown>): void;
-  };
+/** The kernel bus as the admin operations use it (publish only). */
+export interface PublishBus {
+  publish(topic: string, payload: unknown): Promise<void>;
 }
 
 /** The raw material for one extension in the admin console (before building the {@link AdminExtensionView}). */
@@ -101,13 +94,34 @@ function assertReadable(s: Subject): void {
  * 部署级插件后台（企业管理员）：列表 / 详情与网页批准权限（D8）。无状态，多副本共用；
  * 状态由 PG（安装记录、快照、各副本状态行）与本副本宿主（配置声明插件的清单）推出。
  */
+@Injectable()
 export class ExtensionAdmin {
   private readonly packageSets = new Map<
     string,
     { set: PermissionSet; warnings: PackageWarning[] }
   >();
 
-  constructor(private readonly d: ExtensionAdminDeps) {}
+  constructor(
+    @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** The enterprise admin lock (identity/enterprise-admin.ts): joins the transaction. */
+    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    @Inject(PluginApproveLock) private readonly approveLock: PluginApproveLock,
+    @Inject(ExtensionBlobs) private readonly blobs: ExtensionBlobs,
+    @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,
+    @Inject(ExtensionApprovals) private readonly approvals: ExtensionApprovals,
+    /** The config-declared extensions (this replica's host; the CLI fills it from its inspection). */
+    @Inject(ExtensionHost) private readonly host: ExtensionHost,
+    /** This replica's reconcile after an approval (a no-op where the lifecycle never started: the CLI). */
+    @Inject(ExtensionLifecycle) private readonly lifecycle: ExtensionLifecycle,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    @Inject(KERNEL_BUS) private readonly bus: PublishBus,
+    @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+  ) {}
+
+  private get db(): KernelSchemaDb {
+    return this.kdb.db;
+  }
 
   /** 全部插件（配置声明 → 安装记录，各自按名字）。 */
   async list(): Promise<AdminExtensionView[]> {
@@ -174,66 +188,74 @@ export class ExtensionAdmin {
     if (s.install !== null && body.sha256 !== s.install.sha256) throw stale();
     if (body.reviewHash !== reviewHash(s.set, s.warnings)) throw stale();
 
-    await this.d.db.transaction().execute(async (trx) => {
-      await lockEnterpriseAdminsAndAuthorize(trx, actor);
-      await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.plugin-approve:${name}`}))`.execute(
-        trx,
-      );
-      if (s.install !== null) {
-        // 审阅之后安装记录可能已换包（T14 升级）：锁行复核
-        const row = await trx
-          .selectFrom("extension_installs")
-          .select("sha256")
-          .where("name", "=", name)
-          .forUpdate()
-          .executeTakeFirst();
-        if (row?.sha256 !== s.install.sha256) throw stale();
-      }
-      const snapRow = await trx
-        .selectFrom("extension_permission_snapshots")
-        .select(["version", "permissions"])
-        .where("plugin", "=", name)
-        .forUpdate()
-        .executeTakeFirst();
-      const snap = snapRow && {
-        version: snapRow.version,
-        permissions: snapRow.permissions as PermissionSet,
-      };
-      if (snapshotCovers(snap, s.set)) {
-        throw new ApiError(
-          "extension.not_pending",
-          `Extension ${name} ${s.version} has no new permissions awaiting approval`,
-        );
-      }
-      const { added, removed } = diffPermissions(snap?.permissions, s.set);
-      await writeSnapshot(trx, name, s.version, s.set, {
-        source: "web",
-        approvedBy: actor,
-        ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-        audit: { added, removed, sha256: s.install?.sha256 ?? null },
-      });
-    });
+    await this.writeApproval(actor, name, s, opts.actorTokenId, stale);
 
     try {
-      await this.d.bus.publish(PLUGINS_CHANGED_TOPIC, { plugin: name });
+      await this.bus.publish(PLUGINS_CHANGED_TOPIC, { plugin: name });
     } catch (err) {
       // 快照已写入；其他副本由周期 reconcile（T14）兜底
-      this.d.log.warn("cannot publish plugins.changed after approval", { plugin: name, err });
+      this.log.warn("cannot publish plugins.changed after approval", { plugin: name, err });
     }
     try {
-      await this.d.reconcile?.(`approved:${name}`);
+      await this.lifecycle.reconcile(`approved:${name}`);
     } catch (err) {
-      this.d.log.error("loading approved plugins on this replica failed", { plugin: name, err });
+      this.log.error("loading approved plugins on this replica failed", { plugin: name, err });
     }
     return this.get(name);
   }
 
+  @Transactional()
+  private async writeApproval(
+    actor: string,
+    name: string,
+    s: Subject,
+    actorTokenId: string | undefined,
+    stale: () => ApiError,
+  ): Promise<void> {
+    const db = this.db;
+    await this.adminLock.lockAndAuthorize(actor);
+    await this.approveLock.lock(name);
+    if (s.install !== null) {
+      // 审阅之后安装记录可能已换包（T14 升级）：锁行复核
+      const row = await db
+        .selectFrom("extension_installs")
+        .select("sha256")
+        .where("name", "=", name)
+        .forUpdate()
+        .executeTakeFirst();
+      if (row?.sha256 !== s.install.sha256) throw stale();
+    }
+    const snapRow = await db
+      .selectFrom("extension_permission_snapshots")
+      .select(["version", "permissions"])
+      .where("plugin", "=", name)
+      .forUpdate()
+      .executeTakeFirst();
+    const snap = snapRow && {
+      version: snapRow.version,
+      permissions: snapRow.permissions as PermissionSet,
+    };
+    if (snapshotCovers(snap, s.set)) {
+      throw new ApiError(
+        "extension.not_pending",
+        `Extension ${name} ${s.version} has no new permissions awaiting approval`,
+      );
+    }
+    const { added, removed } = diffPermissions(snap?.permissions, s.set);
+    await writeSnapshot(db, name, s.version, s.set, {
+      source: "web",
+      approvedBy: actor,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      audit: { added, removed, sha256: s.install?.sha256 ?? null },
+    });
+  }
+
   /** 配置声明 → 安装记录（与配置声明重名的安装记录不生效，不单列）。`only` 给出时只取这一个。 */
   private async subjects(only?: string): Promise<Subject[]> {
-    const declared = this.d.host
+    const declared = this.host
       .declaredPlugins()
       .filter((p) => only === undefined || p.name === only);
-    const taken = new Set(this.d.host.declaredPlugins().map((p) => p.name));
+    const taken = new Set(this.host.declaredPlugins().map((p) => p.name));
     const out: Subject[] = [...declared]
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((p) => ({
@@ -247,7 +269,7 @@ export class ExtensionAdmin {
         warnings: [],
       }));
     if (only !== undefined && out.length > 0) return out;
-    const rows = (await this.d.installs.list()).filter(
+    const rows = (await this.installs.list()).filter(
       (r) => !taken.has(r.name) && (only === undefined || r.name === only),
     );
     for (const r of rows) {
@@ -263,7 +285,7 @@ export class ExtensionAdmin {
           ? err.message
           : `package ${r.name} ${r.version} (${r.sha256}) cannot be read: ${err instanceof Error ? err.message : String(err)}`;
         // A pre-0.1.0 package is an expected state (repack needed), logged without a stack trace.
-        this.d.log.warn("plugin package unreadable for the admin view", {
+        this.log.warn("plugin package unreadable for the admin view", {
           plugin: r.name,
           sha256: r.sha256,
           ...(legacy ? { reason: detail } : { err }),
@@ -305,8 +327,8 @@ export class ExtensionAdmin {
   ): Promise<{ set: PermissionSet; configurable: boolean; warnings: PackageWarning[] }> {
     let cached = this.packageSets.get(sha256);
     if (!cached) {
-      const pkg = await readExtensionPackage(await this.d.blobs.get(sha256), {
-        maxBytes: this.d.config().packages.maxBytes,
+      const pkg = await readExtensionPackage(await this.blobs.get(sha256), {
+        maxBytes: this.config.get().packages.maxBytes,
         hostSdkVersion: SDK_VERSION,
       });
       cached = {
@@ -322,10 +344,10 @@ export class ExtensionAdmin {
   private async views(subjects: Subject[]): Promise<AdminExtensionView[]> {
     if (subjects.length === 0) return [];
     const names = subjects.map((s) => s.name);
-    const snapshots = await new ExtensionApprovals(this.d.db).all();
+    const snapshots = await this.approvals.all();
     const staleSeconds =
-      STALE_RECONCILE_PERIODS * this.d.config().extensionHost.reconcileIntervalSeconds;
-    const rows = await this.d.db
+      STALE_RECONCILE_PERIODS * this.config.get().extensionHost.reconcileIntervalSeconds;
+    const rows = await this.db
       .selectFrom("extension_replica_status")
       .selectAll()
       .where("plugin", "in", names)

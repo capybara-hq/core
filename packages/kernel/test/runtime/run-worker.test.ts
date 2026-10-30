@@ -4,13 +4,11 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { KernelConfig } from "../../src/config/schema.js";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
-import { KyselyCheckpointSaver } from "../../src/runtime/checkpointer.js";
-import { LangGraphLoop, type LoopDeps } from "../../src/runtime/langgraph-loop.js";
+import { LangGraphLoop } from "../../src/runtime/langgraph-loop.js";
 import type { AgentLoop, LoopContext, LoopOutcome } from "../../src/runtime/loop.js";
 import {
   type ModelStepDeps,
@@ -19,10 +17,12 @@ import {
   runModelStep,
   WRAP_UP_REMINDER,
 } from "../../src/runtime/model-call.js";
-import { RUN_QUEUE_NAME, runJobId } from "../../src/runtime/run-queue.js";
-import type { RunHooks } from "../../src/runtime/run-worker.js";
+import { RUN_QUEUE_NAME, RunQueue, runJobId } from "../../src/runtime/run-queue.js";
+import { AGENT_LOOP_FACTORY, type AgentLoopFactory } from "../../src/runtime/run-steps.js";
+import { RUN_HOOKS, type RunHooks } from "../../src/runtime/run-worker.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { accountsFor } from "../helpers/identity.js";
 import {
   consumedSeq,
   createAgent,
@@ -38,6 +38,7 @@ import {
   session,
   sleep,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForEvent,
   waitForTerminal,
@@ -89,22 +90,21 @@ class SequentialLoop implements AgentLoop {
   }
 }
 
-const sequential = (deps: ModelStepDeps): AgentLoop => new SequentialLoop(deps);
-const langgraph = (deps: LoopDeps): AgentLoop =>
-  new LangGraphLoop(new KyselyCheckpointSaver(deps.db), deps);
+const sequential: AgentLoopFactory = (deps: ModelStepDeps): AgentLoop => new SequentialLoop(deps);
+const langgraph: AgentLoopFactory = (deps, checkpoints) => new LangGraphLoop(checkpoints, deps);
 
 /** 当前 describe 使用的 loop（同一组场景分别跑 SequentialLoop 与默认的 LangGraphLoop）。 */
-let defaultLoop: (deps: LoopDeps) => AgentLoop = sequential;
+let defaultLoop: AgentLoopFactory = sequential;
 
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let redis: Redis;
 /** 常驻的 api 内核：处理 HTTP，不执行运行。 */
-let api: Kernel;
+let api: TestKernel;
 /** 每个测试自己启动的内核，afterEach 停掉。 */
-let extra: Kernel[] = [];
+let extra: TestKernel[] = [];
 let ownerId: string;
 let req: Req;
 
@@ -115,12 +115,15 @@ async function worker(
   opts: {
     hooks?: RunHooks;
     roles?: ("api" | "worker" | "gateway")[];
-    loop?: (deps: LoopDeps) => AgentLoop;
+    loop?: AgentLoopFactory;
   } = {},
-): Promise<Kernel> {
+): Promise<TestKernel> {
   const k = await startKernel(runConfig(urls(), { roles: opts.roles ?? ["worker"], runtime }), {
-    loop: opts.loop ?? defaultLoop,
-    ...(opts.hooks && { runHooks: opts.hooks }),
+    // the run loop and the worker's hooks are provider overrides (test seams)
+    overrides: [
+      { provide: AGENT_LOOP_FACTORY, useValue: opts.loop ?? defaultLoop },
+      ...(opts.hooks ? [{ provide: RUN_HOOKS, useValue: opts.hooks } as const] : []),
+    ],
   });
   extra.push(k);
   return k;
@@ -128,13 +131,15 @@ async function worker(
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  api = await startKernel(runConfig(urls(), { roles: ["api"] }), { loop: sequential });
+  api = await startKernel(runConfig(urls(), { roles: ["api"] }), {
+    overrides: [{ provide: AGENT_LOOP_FACTORY, useValue: sequential }],
+  });
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
 }, 120_000);
 afterAll(async () => {
-  await api?.stop();
+  await api?.close();
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -145,13 +150,12 @@ beforeEach(async () => {
     "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.deployment_settings",
   );
   await redis.flushdb();
-  ownerId = (
-    await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" })
-  ).id;
+  ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
+    .id;
   req = await session(api, "owner");
 });
 afterEach(async () => {
-  await Promise.all(extra.map((k) => k.stop()));
+  await Promise.all(extra.map((k) => k.close()));
   extra = [];
 });
 
@@ -169,7 +173,7 @@ const textOf = (e: ConversationEvent) =>
     ? e.payload.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("")
     : "";
 
-const LOOPS: [string, (deps: LoopDeps) => AgentLoop][] = [
+const LOOPS: [string, AgentLoopFactory][] = [
   ["SequentialLoop", sequential],
   ["LangGraphLoop", langgraph],
 ];
@@ -457,7 +461,7 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     await postMessage(req, orgId, convId, "loop:200");
     await waitForEvent(db, convId, (e) => e.type === "model_call");
     const t0 = Date.now();
-    await w1.stop();
+    await w1.close();
     expect(Date.now() - t0).toBeLessThan(3_000);
     const mid = await eventsOf(db, convId);
     expect(mid.some((e) => e.type === "run_finished")).toBe(false);
@@ -553,8 +557,8 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     await worker(
       {},
       {
-        loop: (deps) => {
-          const inner = loopFactory(deps);
+        loop: (deps, checkpoints) => {
+          const inner = loopFactory(deps, checkpoints);
           return {
             run: async (ctx) => {
               if (throwNext) {
@@ -595,8 +599,8 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     await worker(
       {},
       {
-        loop: (deps) => {
-          const inner = loopFactory(deps);
+        loop: (deps, checkpoints) => {
+          const inner = loopFactory(deps, checkpoints);
           return {
             run: (ctx) =>
               inner.run({
@@ -662,7 +666,7 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     await paused.promise;
     const late = await postMessage(req, orgId, convId, "echo:late");
     // 运行停在终态写入之后：此时开始停机，再放行让它完成
-    const stopping = w.stop();
+    const stopping = w.close();
     await sleep(100);
     resume.open();
     await stopping;
@@ -704,8 +708,8 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     await worker(
       {},
       {
-        loop: (deps) => {
-          const inner = loopFactory(deps);
+        loop: (deps, checkpoints) => {
+          const inner = loopFactory(deps, checkpoints);
           return {
             run: (ctx) => {
               firstRun ??= ctx.runId;
@@ -1049,7 +1053,7 @@ describe("RunWorker（默认 loop、R29 失败与孤儿运行）", () => {
 
   it("agent 已软删除的会话：ensureRun 不起运行", async () => {
     const { agentId, convId } = await setup();
-    await api.runs.eventLog.append(convId, [
+    await api.app.get(EventLog).append(convId, [
       {
         type: "user_message",
         payload: { content: [{ type: "text", text: "echo:x" }], authorAccountId: ownerId },
@@ -1060,7 +1064,7 @@ describe("RunWorker（默认 loop、R29 失败与孤儿运行）", () => {
       .set({ deleted_at: sql`now()` })
       .where("id", "=", agentId)
       .execute();
-    expect(await api.runs.queue.ensureRun(convId)).toBeNull();
+    expect(await api.app.get(RunQueue).ensureRun(convId)).toBeNull();
     expect(await runsOf(db, convId)).toEqual([]);
   });
 

@@ -1,7 +1,11 @@
-import type { Transaction } from "kysely";
 import { type KernelConfig, KernelConfigSchema } from "../../config/schema.js";
-import type { KernelDatabase, KernelDb } from "../../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../db/kernel-schema.js";
 import { readSubagentLimitOverride } from "../../identity/settings.js";
+
+/** The config the limits read (`KernelConfigService`, live: `subagents.*` is hot). */
+export interface SubagentsConfig {
+  get(): Pick<KernelConfig, "subagents">;
+}
 
 /** The sub-agent limits of one parent run (sub-agents spec §8.2). */
 export interface SubagentLimits {
@@ -20,11 +24,12 @@ export const SUBAGENT_LIMIT_DEFAULTS: SubagentLimits =
  * in the caller's transaction when one is given, so every replica applies a change at once.
  */
 export async function subagentLimits(
-  db: KernelDb | Transaction<KernelDatabase>,
-  config: () => Pick<KernelConfig, "subagents">,
+  /** The pool, or the context's handle (a `@Transactional` caller's transaction). */
+  db: KernelSchemaDb,
+  config: SubagentsConfig,
   orgId: string,
 ): Promise<SubagentLimits> {
-  const base = config().subagents;
+  const base = config.get().subagents;
   const over = await readSubagentLimitOverride(db, orgId);
   return {
     maxConcurrentPerRun: over?.maxConcurrentPerRun ?? base.maxConcurrentPerRun,
@@ -39,8 +44,8 @@ export async function subagentLimits(
  * before every model request and ends its run with `budget` when it is.
  */
 export async function subagentBudgetUsedUp(
-  db: KernelDb,
-  config: () => Pick<KernelConfig, "subagents">,
+  db: KernelSchemaDb,
+  config: SubagentsConfig,
   orgId: string,
   parentRunId: string,
 ): Promise<boolean> {

@@ -7,10 +7,10 @@ import {
   type TestContainer,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { ChannelConnections } from "../../src/channels/connections.service.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -21,6 +21,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
 
@@ -29,9 +30,9 @@ const SECRET = "app-secret-9f3c2a7e51d4";
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let im: FakeChannelServer;
 let owner: Req;
 let member: Req;
@@ -57,7 +58,7 @@ beforeAll(async () => {
   );
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   const o = await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" });
   const m = await accounts.createLocal({ login: "member", password: PW, displayName: "M" });
   owner = await session(k, "owner");
@@ -68,7 +69,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await im?.stop();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -306,7 +307,7 @@ describe("渠道连接 HTTP", () => {
       { path: "appSecret", set: true },
       { path: "webhookToken", set: true },
     ]);
-    const rt = await k.channels.connections.runtime(id);
+    const rt = await k.app.get(ChannelConnections).runtime(id);
     expect(rt.config).toMatchObject({
       appId: "cli_3b",
       appSecret: SECRET,
@@ -331,7 +332,9 @@ describe("渠道连接 HTTP", () => {
     });
     expect(bad.statusCode).toBe(400);
     expect(errCode(bad)).toBe("extension.config_invalid");
-    expect((await k.channels.connections.runtime(id)).config).toMatchObject({ appSecret: SECRET });
+    expect((await k.app.get(ChannelConnections).runtime(id)).config).toMatchObject({
+      appSecret: SECRET,
+    });
     expect((await owner({ method: "DELETE", url: `${base()}/${id}` })).statusCode).toBe(204);
   }, 30_000);
 

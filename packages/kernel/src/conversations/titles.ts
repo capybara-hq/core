@@ -6,26 +6,33 @@ import {
   type ModelRequest,
   type ModelUsage,
 } from "@capybara-hq/plugin-sdk";
-import { type Job, Queue, Worker } from "bullmq";
-import type { Redis } from "ioredis";
+import { getQueueToken } from "@nestjs/bullmq";
+import { Inject, Injectable, Module } from "@nestjs/common";
+import type { Job, Queue, Worker } from "bullmq";
 import { sql } from "kysely";
 import type { ModelRef } from "../agents/definition.js";
-import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import { ExtensionsModule } from "../extensions/extensions.module.js";
+import { ExtensionHost } from "../extensions/host.js";
 import { audit } from "../identity/audit.js";
-import { withJobContext } from "../log-context.js";
-import { type ModelPurposesService, PurposeAttemptError } from "../models/purposes.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { QueueModule } from "../infra/queue/queue.module.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import { ModelsModule } from "../models/models.module.js";
+import { ModelPurposesService, PurposeAttemptError } from "../models/purposes.js";
 import {
+  type AuditEntry,
   fireObserve,
   type HookRunner,
   hookDeniedAudit,
   hookDeniedEvent,
   hookRequestOf,
 } from "../runtime/hook-calls.js";
-import { bullConnection } from "../runtime/run-queue.js";
-import type { UsageReporter } from "../runtime/usage-report.js";
+import { UsageReporter, UsageReportModule } from "../runtime/usage-report.js";
 import { HIDDEN_FORMAT_RE } from "../text.js";
-import type { AppendEvent, EventLog } from "./event-log.js";
+import { type AppendEvent, EventLog, EventLogModule } from "./event-log.js";
 import { type ConversationEvent, typedInvocation } from "./events.js";
 
 /**
@@ -118,8 +125,11 @@ const typedText = (content: readonly ContentBlock[]): string => {
 };
 
 export interface TitleDeps {
-  db: KernelDb;
-  eventLog: Pick<EventLog, "append" | "readAfter" | "latestOfType" | "notify" | "publishChanged">;
+  db: KernelSchemaDb;
+  eventLog: Pick<
+    EventLog,
+    "append" | "appendIn" | "readAfter" | "latestOfType" | "notify" | "publishChanged"
+  >;
   purposes: Pick<ModelPurposesService, "chat">;
   log: Pick<Logger, "warn">;
   /**
@@ -130,11 +140,13 @@ export interface TitleDeps {
   usageReport?: Pick<UsageReporter, "enqueue">;
   /** Aborts the call (worker shutdown). */
   signal?: AbortSignal;
+  /** The job's transactional writes ({@link TitleGenerator}). */
+  writes: Pick<TitleGenerator, "writeResult" | "auditDenied">;
 }
 
 /** The attempt number to enqueue for this conversation, or null when no title job is due. */
 export async function titleAttemptDue(
-  db: KernelDb,
+  db: KernelSchemaDb,
   conversationId: string,
 ): Promise<number | null> {
   const row = await db
@@ -289,24 +301,7 @@ export async function runTitleJob(
   }
   if (sent && d.hooks) observeTitle(d, scope, sent, out, null, signal);
   const title = cleanTitle(textOf(out.content));
-  const { written, usage } = await d.db.transaction().execute(async (t) => {
-    // Append first: it locks the conversation row FOR UPDATE before this transaction touches it.
-    // Updating the title first held the row FOR NO KEY UPDATE, which lets in another
-    // transaction's foreign key check (FOR KEY SHARE, e.g. inserting an approval); the append's
-    // FOR UPDATE then waited for that one while it waited for the title row: 40P01
-    const [ev] = await d.eventLog.append(conversationId, [usageEvent(attempt, out)], t);
-    const row =
-      title === null
-        ? undefined
-        : await t
-            .updateTable("conversations")
-            .set({ title, title_source: "generated" })
-            .where("id", "=", conversationId)
-            .where("title_source", "is", null)
-            .returning("id")
-            .executeTakeFirst();
-    return { written: row !== undefined, usage: ev };
-  });
+  const { written, usage } = await d.writes.writeResult(conversationId, attempt, out, title);
   if (usage) {
     await d.eventLog.notify(conversationId, usage.seq);
     void d.usageReport?.enqueue(conversationId, usage.seq);
@@ -337,7 +332,11 @@ async function logUsage(
 }
 
 /** Returns a claimed attempt (shutdown before the call was sent). */
-async function giveBack(db: KernelDb, conversationId: string, attempt: number): Promise<void> {
+async function giveBack(
+  db: KernelSchemaDb,
+  conversationId: string,
+  attempt: number,
+): Promise<void> {
   await db
     .updateTable("conversations")
     .set({ title_attempts: attempt })
@@ -347,7 +346,7 @@ async function giveBack(db: KernelDb, conversationId: string, attempt: number): 
     .execute();
 }
 
-async function agentVersionOf(db: KernelDb, agentId: string): Promise<number> {
+async function agentVersionOf(db: KernelSchemaDb, agentId: string): Promise<number> {
   const row = await db
     .selectFrom("agents")
     .select("current_version")
@@ -398,7 +397,7 @@ async function checkTitleHooks(
     verdict,
   );
   entry.detail = { ...entry.detail, purpose: "title" };
-  await d.db.transaction().execute((t) => audit(t, entry));
+  await d.writes.auditDenied(entry);
   d.log.warn("conversation title blocked by a policy hook", {
     conversationId: scope.conversationId,
     plugin: verdict.plugin,
@@ -444,39 +443,113 @@ function observeTitle(
   );
 }
 
-export interface TitleQueueDeps extends Omit<TitleDeps, "signal"> {
-  redisUrl: string;
-  config: () => KernelConfig;
-  log: Logger;
-}
-
 interface TitleJob {
   conversationId: string;
   attempt: number;
 }
 
 /**
- * The title queue: `maybeEnqueue` on any role (called by the run worker after a completed run),
- * the worker on the `worker` role. One attempt per job, no BullMQ retries: the next completed run
- * enqueues the next attempt.
+ * One title attempt's work ({@link runTitleJob}) over the injected services, with its writes in
+ * transactions of their own: the title with the call's usage event, and a policy denial's audit row.
  */
+@Injectable()
+export class TitleGenerator {
+  constructor(
+    @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(EventLog) private readonly eventLog: TitleDeps["eventLog"],
+    @Inject(ModelPurposesService) private readonly purposes: Pick<ModelPurposesService, "chat">,
+    /** The title call fires the plugin hooks (`model.request`, `model.response`). */
+    @Inject(ExtensionHost) private readonly host: { readonly hooks?: HookRunner } | undefined,
+    @Inject(UsageReporter) private readonly usageReport: Pick<UsageReporter, "enqueue"> | undefined,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "warn">,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {}
+
+  /** One attempt ({@link runTitleJob}); `signal` aborts the call (the worker stopping). */
+  run(conversationId: string, attempt: number, signal?: AbortSignal): Promise<void> {
+    const kdb = this.kdb;
+    const hooks = this.host?.hooks;
+    return runTitleJob(
+      {
+        get db(): KernelSchemaDb {
+          return kdb.db;
+        },
+        eventLog: this.eventLog,
+        purposes: this.purposes,
+        log: this.log,
+        ...(hooks !== undefined && { hooks }),
+        ...(this.usageReport !== undefined && { usageReport: this.usageReport }),
+        ...(signal !== undefined && { signal }),
+        writes: this,
+      },
+      conversationId,
+      attempt,
+    );
+  }
+
+  /**
+   * Appends the call's `usage` event and writes the title while `title_source IS NULL` (a rename
+   * wins), in one transaction.
+   */
+  @Transactional({ propagation: "requires_new" })
+  async writeResult(
+    conversationId: string,
+    attempt: number,
+    out: { provider: string; model: string; usage: ModelUsage },
+    title: string | null,
+  ): Promise<{ written: boolean; usage: ConversationEvent | undefined }> {
+    // Append first: it locks the conversation row FOR UPDATE before this transaction touches it.
+    // Updating the title first held the row FOR NO KEY UPDATE, which lets in another
+    // transaction's foreign key check (FOR KEY SHARE, e.g. inserting an approval); the append's
+    // FOR UPDATE then waited for that one while it waited for the title row: 40P01
+    const [ev] = await this.eventLog.appendIn(conversationId, [usageEvent(attempt, out)]);
+    const row =
+      title === null
+        ? undefined
+        : await this.kdb.db
+            .updateTable("conversations")
+            .set({ title, title_source: "generated" })
+            .where("id", "=", conversationId)
+            .where("title_source", "is", null)
+            .returning("id")
+            .executeTakeFirst();
+    return { written: row !== undefined, usage: ev };
+  }
+
+  /** The `hook.denied` audit row of a denied title call. */
+  @Transactional({ propagation: "requires_new" })
+  async auditDenied(entry: AuditEntry): Promise<void> {
+    await audit(this.kdb.db, entry);
+  }
+}
+
+/**
+ * The title queue: `maybeEnqueue` on any role (called by the run worker after a completed run),
+ * consumed on the `worker` role by its `@Processor`. One attempt per job, no BullMQ retries: the
+ * next completed run enqueues the next attempt.
+ */
+@Injectable()
 export class TitleQueue {
-  private queue: Queue<TitleJob> | undefined;
-  private queueConn: Redis | undefined;
   private worker: Worker<TitleJob> | undefined;
-  private workerConn: Redis | undefined;
   private closed = false;
   private readonly stopping = new AbortController();
 
-  constructor(private readonly d: TitleQueueDeps) {}
+  constructor(
+    @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(getQueueToken(TITLE_QUEUE)) private readonly queue: Queue<TitleJob>,
+    @Inject(TitleGenerator) private readonly generator: Pick<TitleGenerator, "run">,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "warn" | "error">,
+  ) {
+    queue.on("error", (err) => this.log.error("title queue error", { err }));
+  }
 
   /** Enqueues the next title attempt when one is due. Never throws (logs instead). */
   async maybeEnqueue(conversationId: string): Promise<void> {
     if (this.closed) return;
     try {
-      const attempt = await titleAttemptDue(this.d.db, conversationId);
+      const attempt = await titleAttemptDue(this.kdb.db, conversationId);
       if (attempt === null) return;
-      await this.getQueue().add(
+      await this.queue.add(
         JOB,
         { conversationId, attempt },
         {
@@ -487,58 +560,47 @@ export class TitleQueue {
         },
       );
     } catch (err) {
-      this.d.log.warn("cannot enqueue conversation title", { conversationId, err });
+      this.log.warn("cannot enqueue conversation title", { conversationId, err });
     }
   }
 
-  startWorker(): void {
+  /** Starts consuming (worker role only): `worker` is the `@Processor` worker of {@link TITLE_QUEUE}. */
+  startWorker(worker: Worker<TitleJob>): void {
     if (this.worker || this.closed) return;
-    const { jobLockMs, stalledIntervalMs } = this.d.config().runtime;
-    this.workerConn = bullConnection(this.d.redisUrl, this.d.log);
-    this.worker = new Worker<TitleJob>(
-      TITLE_QUEUE,
-      (j: Job<TitleJob>) => withJobContext(TITLE_QUEUE, j, () => this.process(j)),
-      {
-        connection: this.workerConn,
-        concurrency: 4,
-        lockDuration: jobLockMs,
-        stalledInterval: stalledIntervalMs,
-        maxStalledCount: 1,
-      },
-    );
-    this.worker.on("error", (err) => this.d.log.error("title worker error", { err }));
+    this.worker = worker;
+    void worker.run().catch((err) => this.log.error("title worker error", { err }));
   }
 
-  private async process(j: Job<TitleJob>): Promise<void> {
-    await runTitleJob(
-      { ...this.d, signal: this.stopping.signal },
-      j.data.conversationId,
-      j.data.attempt,
-    );
+  /** The worker's `error` event. */
+  onError(err: Error): void {
+    this.log.error("title worker error", { err });
   }
 
+  /** One title job (the `@Processor` calls it). */
+  async process(j: Job<TitleJob>): Promise<void> {
+    await this.generator.run(j.data.conversationId, j.data.attempt, this.stopping.signal);
+  }
+
+  /** Stops: no more enqueues, the call in flight is aborted, the worker closes. */
   async stop(): Promise<void> {
     this.closed = true;
     this.stopping.abort();
     const w = this.worker;
     this.worker = undefined;
     await w?.close().catch(() => {});
-    const q = this.queue;
-    this.queue = undefined;
-    await q?.close().catch(() => {});
-    for (const c of [this.workerConn, this.queueConn]) {
-      if (c) await c.quit().catch(() => c.disconnect());
-    }
-    this.workerConn = undefined;
-    this.queueConn = undefined;
-  }
-
-  private getQueue(): Queue<TitleJob> {
-    if (!this.queue) {
-      this.queueConn = bullConnection(this.d.redisUrl, this.d.log);
-      this.queue = new Queue<TitleJob>(TITLE_QUEUE, { connection: this.queueConn });
-      this.queue.on("error", (err) => this.d.log.error("title queue error", { err }));
-    }
-    return this.queue;
   }
 }
+
+/** Conversation titles: the queue and the job (consumed on the worker role). */
+@Module({
+  imports: [
+    EventLogModule,
+    ModelsModule,
+    ExtensionsModule,
+    UsageReportModule,
+    QueueModule.registerQueue(TITLE_QUEUE),
+  ],
+  providers: [TitleGenerator, TitleQueue],
+  exports: [TitleQueue],
+})
+export class TitlesModule {}

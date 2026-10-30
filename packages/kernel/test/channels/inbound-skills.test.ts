@@ -19,11 +19,11 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { CHANNEL_QUEUE_NAME, inboundJobId } from "../../src/channels/outbound.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import { seedForkedSkill } from "../helpers/forked-skills.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createOrg,
@@ -33,6 +33,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
 
@@ -50,9 +51,9 @@ const SOURCE = "chan-mini:t1";
 let pgc: TestContainer;
 let rd: TestContainer;
 let s3: TestS3;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let im: FakeChannelServer;
 let owner: Req;
 let ownerId: string;
@@ -73,7 +74,7 @@ async function seedSkill(
   const data = new TextEncoder().encode(
     `---\nname: ${name}\ndescription: Use for ${name} work.\n---\n${body}`,
   );
-  await k.storage.kernel(orgId).put(`${prefix}SKILL.md`, data, {
+  await k.app.get(StorageService).kernel(orgId).put(`${prefix}SKILL.md`, data, {
     contentType: "application/octet-stream",
     size: data.byteLength,
   });
@@ -137,7 +138,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   queue = new Queue(CHANNEL_QUEUE_NAME, { connection: new Redis(rd.url) });
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" })).id;
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
@@ -149,7 +150,7 @@ beforeAll(async () => {
   skillIds.gone = await seedSkill("gone", "Soon deselected.");
   skillIds.review = (
     await seedForkedSkill(
-      { db, storage: k.storage, orgId, ownerId },
+      { db, storage: k.app.get(StorageService), orgId, ownerId },
       "review",
       "Review $ARGUMENTS.",
     )
@@ -193,7 +194,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await queue?.close();
-  await k?.stop();
+  await k?.close();
   await im?.stop();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);

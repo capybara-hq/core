@@ -4,28 +4,33 @@ import {
   type Channel,
   type ChannelTarget,
   type ExtensionContext,
-  type Logger,
   type OutboundMessage,
 } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable, type OnApplicationShutdown } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
 import type { z } from "zod";
 import { configFields, getPath, secretValues } from "../config/fields.js";
-import type { KernelConfig } from "../config/schema.js";
 import { queryEnabledPlugins } from "../ctx/create-ctx.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
-import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { toIssues } from "../extensions/config-issues.js";
 import { configToJsonSchema, type JsonSchema } from "../extensions/config-json-schema.js";
 import { enabledExtensionsByOrg } from "../extensions/enabled.js";
-import type { ExtensionHost } from "../extensions/host.js";
 import type { InflightTracker } from "../extensions/inflight.js";
-import { toIssues } from "../extensions/org-config.js";
+import { type ExtensionPointEntry, ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
-import { createRedactor } from "../log.js";
-import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KernelEvents } from "../infra/events/kernel-events.js";
+import { KERNEL_BUS, KERNEL_LOGGER, KEYRING, REDIS } from "../infra/tokens.js";
+import { createRedactor, type KernelLogger } from "../log.js";
+import { OrgLock } from "../orgs/org-lock.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import { adaptToFeatures } from "./features.js";
+import { ChannelJobs } from "./jobs.js";
 import { webhookBase, webhookUrlOf } from "./webhook-url.js";
 
 /** 内核 secrets 命名空间（插件名不能取 `kernel`）。 */
@@ -172,37 +177,56 @@ const COLUMNS = [
   "updated_at",
 ] as const;
 
-export interface ChannelConnectionsDeps {
-  db: KernelDb;
-  keyring: Keyring;
-  host: Pick<ExtensionHost, "list">;
-  bus: ExtensionContext["bus"];
-  redis: Redis;
-  log: Pick<Logger, "warn">;
-  /** 连接重新可投递（轮换凭据 / 重新启用）后调用；内核传出站的 `resumeConnection`（补投落下的会话）。 */
-  onResume?: (connectionId: string) => Promise<void>;
-  /** 经手（写入或解密读出）的密钥值；内核传 `log.addOrgSecrets` 使其在日志中打码。 */
-  onSecrets?: (values: string[]) => void;
-  /** Current config (`channels.webhookBaseUrl`); without it webhook mode is unavailable. */
-  config?: () => Pick<KernelConfig, "channels" | "tools">;
-}
-
 /**
  * 组织的渠道连接（spec：渠道连接属于组织，bot 凭据 + 绑定的 agent）。框架无关。
  * 非密钥配置存 `channel_connections.config`；密钥字段整体加密存 `capybara.secrets`
  * （命名空间 `kernel`，键 `channels:<id>:config`）。写操作在组织行锁内实时复核 `channels.manage`，写审计；
  * 改动提交后经内核 bus 广播 `channel.changed`，持有该连接的副本据此断开（下一轮扫描按新配置重连）。
  */
-export class ChannelConnections {
-  constructor(private readonly deps: ChannelConnectionsDeps) {}
+@Injectable()
+export class ChannelConnections implements OnApplicationShutdown {
+  private readonly unsubscribe: (() => void)[];
+
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    /** The org row lock (orgs/org-lock.ts): joins the transaction of the write. */
+    @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
+    @Inject(KEYRING) private readonly keyring: Keyring,
+    @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "list">,
+    @Inject(KERNEL_BUS) private readonly bus: ExtensionContext["bus"],
+    @Inject(REDIS) private readonly redis: Pick<Redis, "del">,
+    /** A connection that can deliver again catches up its conversations (`resumeConnection`). */
+    @Inject(ChannelJobs) private readonly jobs: Pick<ChannelJobs, "resumeConnection">,
+    /** `channels.webhookBaseUrl`: without it webhook mode is unavailable. */
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Inject(KernelEvents) events: Pick<KernelEvents, "on">,
+    /** Secret values handled here (written or decrypted) are redacted from the logs (`addOrgSecrets`). */
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn" | "addOrgSecrets">,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {
+    this.unsubscribe = [
+      // a deleted org's channel connections drop their long connections at once
+      events.on("org.deleted", ({ orgId }) => this.notifyOrgChanged(orgId)),
+      // an org disabling an extension drops that extension's channel connections at once (the
+      // supervisor's periodic re-check is the fallback)
+      events.on("extension.org-disabled", ({ orgId, plugin }) =>
+        this.notifyOrgChanged(orgId, plugin),
+      ),
+    ];
+  }
+
+  /** Unsubscribes after the stop phases: events emitted while they drain are still handled. */
+  onApplicationShutdown(): void {
+    for (const off of this.unsubscribe) off();
+  }
 
   /** The extension's `channel@1`; not loaded or not provided -> `extension.not_found`. */
   channel(plugin: string): Channel {
     return this.channelEntry(plugin).impl as Channel;
   }
 
-  private channelEntry(plugin: string): ReturnType<ExtensionHost["list"]>[number] {
-    const e = this.deps.host
+  private channelEntry(plugin: string): ExtensionPointEntry {
+    const e = this.registry
       .list("channel")
       .find((x) => x.plugin === plugin && x.capability === CHANNEL_EXTENSION_POINT);
     if (!e)
@@ -212,7 +236,7 @@ export class ChannelConnections {
 
   /** The extension is not enabled in this organization -> `extension.not_enabled`. */
   private async assertEnabled(orgId: string, plugin: string): Promise<void> {
-    if (!(await queryEnabledPlugins(this.deps.db, orgId)).has(plugin)) {
+    if (!(await queryEnabledPlugins(this.db.db, orgId)).has(plugin)) {
       throw new ApiError(
         "extension.not_enabled",
         `Extension ${plugin} is not enabled for this organization`,
@@ -258,15 +282,11 @@ export class ChannelConnections {
 
   private reportSecrets(schema: z.ZodTypeAny, config: unknown): void {
     const values = secretValues(schema, config);
-    if (values.length > 0) this.deps.onSecrets?.(values);
+    if (values.length > 0) this.log.addOrgSecrets(values);
   }
 
-  private async assertAgent(
-    t: Pick<KernelDb, "selectFrom">,
-    orgId: string,
-    agentId: string,
-  ): Promise<void> {
-    const a = await t
+  private async assertAgent(orgId: string, agentId: string): Promise<void> {
+    const a = await this.db
       .selectFrom("agents")
       .select("id")
       .where("id", "=", agentId)
@@ -277,7 +297,7 @@ export class ChannelConnections {
   }
 
   private async readSecrets(orgId: string, id: string): Promise<Obj> {
-    const raw = await createSecrets(this.deps.db, this.deps.keyring, SECRETS_NAMESPACE).get(
+    const raw = await createSecrets(this.db.db, this.keyring, SECRETS_NAMESPACE).get(
       orgId,
       connectionSecretKey(id),
     );
@@ -338,8 +358,7 @@ export class ChannelConnections {
   }
 
   private webhookBase(): string | undefined {
-    const config = this.deps.config?.();
-    return config === undefined ? undefined : webhookBase(config);
+    return webhookBase(this.config.get());
   }
 
   /**
@@ -366,7 +385,7 @@ export class ChannelConnections {
   }
 
   private live(orgId: string) {
-    return this.deps.db
+    return this.db
       .selectFrom("channel_connections")
       .select(COLUMNS)
       .where("org_id", "=", orgId)
@@ -395,49 +414,72 @@ export class ChannelConnections {
     await this.assertEnabled(orgId, input.plugin);
     const schema = channel.connectionSchema;
     const full = this.parse(input.plugin, schema, input.config);
-    await this.assertAgent(this.deps.db, orgId, input.agentId);
+    await this.assertAgent(orgId, input.agentId);
     const verified = await this.verify(channel, full);
     const id = randomUUID();
     const { plain, secrets } = split(schema, full);
-    const row = await this.deps.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "channels.manage");
-      await this.assertAgent(t, orgId, input.agentId);
-      if (Object.keys(secrets).length > 0) {
-        await createSecrets(t, this.deps.keyring, SECRETS_NAMESPACE).set(
-          orgId,
-          connectionSecretKey(id),
-          JSON.stringify(secrets),
-        );
-      }
-      const inserted = await t
-        .insertInto("channel_connections")
-        .values({
-          id,
-          org_id: orgId,
-          plugin: input.plugin,
-          name: input.name,
-          agent_id: input.agentId,
-          config: JSON.stringify(plain),
-          unbound_policy: input.unboundPolicy ?? "bind",
-          bot_user_id: verified.botUserId,
-          tenant_id: verified.tenantId,
-          created_by: actorAccountId,
-        })
-        .returning(COLUMNS)
-        .executeTakeFirstOrThrow();
-      await audit(t, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "channel.created",
-        target: id,
-        detail: { plugin: input.plugin, agentId: input.agentId },
-      });
-      return inserted;
+    const row = await this.insertIn({
+      orgId,
+      id,
+      input,
+      plain,
+      secrets,
+      verified,
+      actorAccountId,
+      actorTokenId,
     });
     this.reportSecrets(schema, full);
     await this.changed(id, false);
     return this.view(row, new Set(Object.keys(secrets)));
+  }
+
+  /** The rows of {@link create}, in their own transaction (the caller publishes after the commit). */
+  @Transactional({ propagation: "requires_new" })
+  private async insertIn(a: {
+    orgId: string;
+    id: string;
+    input: CreateChannelInput;
+    plain: Obj;
+    secrets: Obj;
+    verified: { botUserId: string; tenantId: string };
+    actorAccountId: string;
+    actorTokenId: string | undefined;
+  }) {
+    const { orgId, id, input, actorAccountId, actorTokenId } = a;
+    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "channels.manage");
+    await this.assertAgent(orgId, input.agentId);
+    if (Object.keys(a.secrets).length > 0) {
+      await createSecrets(this.db.db, this.keyring, SECRETS_NAMESPACE).set(
+        orgId,
+        connectionSecretKey(id),
+        JSON.stringify(a.secrets),
+      );
+    }
+    const inserted = await this.db
+      .insertInto("channel_connections")
+      .values({
+        id,
+        org_id: orgId,
+        plugin: input.plugin,
+        name: input.name,
+        agent_id: input.agentId,
+        config: JSON.stringify(a.plain),
+        unbound_policy: input.unboundPolicy ?? "bind",
+        bot_user_id: a.verified.botUserId,
+        tenant_id: a.verified.tenantId,
+        created_by: actorAccountId,
+      })
+      .returning(COLUMNS)
+      .executeTakeFirstOrThrow();
+    await audit(this.db.db, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "channel.created",
+      target: id,
+      detail: { plugin: input.plugin, agentId: input.agentId },
+    });
+    return inserted;
   }
 
   /**
@@ -459,7 +501,7 @@ export class ChannelConnections {
     if (patch.config !== undefined) {
       const channel = this.channel(current.plugin);
       // 插件在该组织停用时也允许轮换（泄露的密钥要能立刻换掉），但不调用插件 verify：重新启用后长连接按新凭据连接
-      const enabled = (await queryEnabledPlugins(this.deps.db, orgId)).has(current.plugin);
+      const enabled = (await queryEnabledPlugins(this.db.db, orgId)).has(current.plugin);
       const schema = channel.connectionSchema;
       const before = await this.readSecrets(orgId, id);
       const next = structuredClone(patch.config);
@@ -476,54 +518,15 @@ export class ChannelConnections {
     const modeChanged =
       patch.inboundMode !== undefined && patch.inboundMode !== current.inbound_mode;
     if (modeChanged && patch.inboundMode === "webhook") this.assertWebhookAvailable(current.plugin);
-    if (patch.agentId !== undefined) await this.assertAgent(this.deps.db, orgId, patch.agentId);
-    const row = await this.deps.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "channels.manage");
-      if (patch.agentId !== undefined) await this.assertAgent(t, orgId, patch.agentId);
-      if (rotated) {
-        const secrets = createSecrets(t, this.deps.keyring, SECRETS_NAMESPACE);
-        if (Object.keys(rotated.secrets).length > 0) {
-          await secrets.set(orgId, connectionSecretKey(id), JSON.stringify(rotated.secrets));
-        } else {
-          await secrets.delete(orgId, connectionSecretKey(id));
-        }
-      }
-      const updated = await t
-        .updateTable("channel_connections")
-        .set({
-          ...(patch.name !== undefined && { name: patch.name }),
-          ...(patch.agentId !== undefined && { agent_id: patch.agentId }),
-          ...(patch.unboundPolicy !== undefined && { unbound_policy: patch.unboundPolicy }),
-          ...(patch.status !== undefined && { status: patch.status }),
-          ...(patch.inboundMode !== undefined && { inbound_mode: patch.inboundMode }),
-          ...(rotated && { config: JSON.stringify(rotated.plain) }),
-          // 跳过了 verify：机器人 id 与租户保留原值（重新启用后插件按新凭据连接，入站以连接行的租户判断外部人员）
-          ...(verified && { bot_user_id: verified.botUserId, tenant_id: verified.tenantId }),
-          ...((rotated || patch.status === "active") && { last_error: null }),
-          updated_at: sql<Date>`now()`,
-        })
-        .where("id", "=", id)
-        .where("org_id", "=", orgId)
-        .where("deleted_at", "is", null)
-        .returning(COLUMNS)
-        .executeTakeFirst();
-      if (!updated) throw notFound();
-      await audit(t, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "channel.updated",
-        target: id,
-        detail: {
-          changed: [
-            ...Object.keys(patch).filter(
-              (k) => k !== "config" && patch[k as keyof UpdateChannelInput] !== undefined,
-            ),
-            ...(rotated ? ["config"] : []),
-          ],
-        },
-      });
-      return updated;
+    if (patch.agentId !== undefined) await this.assertAgent(orgId, patch.agentId);
+    const row = await this.updateIn({
+      orgId,
+      id,
+      patch,
+      rotated,
+      verified,
+      actorAccountId,
+      actorTokenId,
     });
     if (rotated) this.reportSecrets(rotated.schema, rotated.full);
     // New config, re-enabled or back to long connection: clear the backoff so the next scan connects
@@ -532,18 +535,78 @@ export class ChannelConnections {
       patch.status === "active" ||
       (modeChanged && patch.inboundMode === "long_connection")
     ) {
-      await this.deps.redis
+      await this.redis
         .del(channelBackoffKey(id), channelFailsKey(id))
-        .catch((err: unknown) => this.deps.log.warn("cannot clear channel backoff", { err }));
+        .catch((err: unknown) => this.log.warn("cannot clear channel backoff", { err }));
     }
     // A mode switch also reconnects: the holder drops the long connection when going to webhook (F9)
     await this.changed(id, rotated !== undefined || patch.status !== undefined || modeChanged);
     if ((rotated || patch.status === "active") && row.status === "active") {
-      await this.deps
-        .onResume?.(id)
-        .catch((err: unknown) => this.deps.log.warn("cannot resume channel deliveries", { err }));
+      await this.jobs
+        .resumeConnection(id)
+        .catch((err: unknown) => this.log.warn("cannot resume channel deliveries", { err }));
     }
     return { channel: await this.viewOf(row), verifySkipped };
+  }
+
+  /** The rows of {@link update}, in their own transaction (the caller publishes after the commit). */
+  @Transactional({ propagation: "requires_new" })
+  private async updateIn(a: {
+    orgId: string;
+    id: string;
+    patch: UpdateChannelInput;
+    rotated: { plain: Obj; secrets: Obj } | undefined;
+    verified: { botUserId: string; tenantId: string } | undefined;
+    actorAccountId: string;
+    actorTokenId: string | undefined;
+  }) {
+    const { orgId, id, patch, rotated, verified, actorAccountId, actorTokenId } = a;
+    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "channels.manage");
+    if (patch.agentId !== undefined) await this.assertAgent(orgId, patch.agentId);
+    if (rotated) {
+      const secrets = createSecrets(this.db.db, this.keyring, SECRETS_NAMESPACE);
+      if (Object.keys(rotated.secrets).length > 0) {
+        await secrets.set(orgId, connectionSecretKey(id), JSON.stringify(rotated.secrets));
+      } else {
+        await secrets.delete(orgId, connectionSecretKey(id));
+      }
+    }
+    const updated = await this.db
+      .updateTable("channel_connections")
+      .set({
+        ...(patch.name !== undefined && { name: patch.name }),
+        ...(patch.agentId !== undefined && { agent_id: patch.agentId }),
+        ...(patch.unboundPolicy !== undefined && { unbound_policy: patch.unboundPolicy }),
+        ...(patch.status !== undefined && { status: patch.status }),
+        ...(patch.inboundMode !== undefined && { inbound_mode: patch.inboundMode }),
+        ...(rotated && { config: JSON.stringify(rotated.plain) }),
+        // 跳过了 verify：机器人 id 与租户保留原值（重新启用后插件按新凭据连接，入站以连接行的租户判断外部人员）
+        ...(verified && { bot_user_id: verified.botUserId, tenant_id: verified.tenantId }),
+        ...((rotated || patch.status === "active") && { last_error: null }),
+        updated_at: sql<Date>`now()`,
+      })
+      .where("id", "=", id)
+      .where("org_id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .returning(COLUMNS)
+      .executeTakeFirst();
+    if (!updated) throw notFound();
+    await audit(this.db.db, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "channel.updated",
+      target: id,
+      detail: {
+        changed: [
+          ...Object.keys(patch).filter(
+            (k) => k !== "config" && patch[k as keyof UpdateChannelInput] !== undefined,
+          ),
+          ...(rotated ? ["config"] : []),
+        ],
+      },
+    });
+    return updated;
   }
 
   /** 删除（软删除，同一事务删掉密钥）；持有长连接的副本收到广播后断开。 */
@@ -553,37 +616,46 @@ export class ChannelConnections {
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<void> {
-    await this.deps.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "channels.manage");
-      const r = await t
-        .updateTable("channel_connections")
-        .set({ deleted_at: sql<Date>`now()`, updated_at: sql<Date>`now()` })
-        .where("id", "=", id)
-        .where("org_id", "=", orgId)
-        .where("deleted_at", "is", null)
-        .executeTakeFirst();
-      if (r.numUpdatedRows === 0n) throw notFound();
-      await createSecrets(t, this.deps.keyring, SECRETS_NAMESPACE).delete(
-        orgId,
-        connectionSecretKey(id),
-      );
-      await audit(t, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "channel.deleted",
-        target: id,
-      });
-    });
+    await this.removeIn(orgId, id, actorAccountId, actorTokenId);
     await this.changed(id, true);
+  }
+
+  /** The rows of {@link remove}, in their own transaction (the caller publishes after the commit). */
+  @Transactional({ propagation: "requires_new" })
+  private async removeIn(
+    orgId: string,
+    id: string,
+    actorAccountId: string,
+    actorTokenId: string | undefined,
+  ): Promise<void> {
+    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "channels.manage");
+    const r = await this.db
+      .updateTable("channel_connections")
+      .set({ deleted_at: sql<Date>`now()`, updated_at: sql<Date>`now()` })
+      .where("id", "=", id)
+      .where("org_id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (r.numUpdatedRows === 0n) throw notFound();
+    await createSecrets(this.db.db, this.keyring, SECRETS_NAMESPACE).delete(
+      orgId,
+      connectionSecretKey(id),
+    );
+    await audit(this.db.db, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "channel.deleted",
+      target: id,
+    });
   }
 
   /** 提交后广播；失败只记日志（持有方每轮续租时也会复核连接状态）。 */
   private async changed(connectionId: string, reconnect: boolean): Promise<void> {
     try {
-      await this.deps.bus.publish(CHANNEL_CHANGED_TOPIC, { connectionId, reconnect });
+      await this.bus.publish(CHANNEL_CHANGED_TOPIC, { connectionId, reconnect });
     } catch (err) {
-      this.deps.log.warn("channel.changed publish failed", { connectionId, err });
+      this.log.warn("channel.changed publish failed", { connectionId, err });
     }
   }
 
@@ -592,10 +664,10 @@ export class ChannelConnections {
    * `pluginEnabled` 为插件此刻是否在该组织启用（入站与卡片操作每次都实时复核）。
    */
   async row(id: string): Promise<ChannelConnectionRow | undefined> {
-    const r = await this.deps.db
+    const r = await this.db
       .selectFrom("channel_connections as c")
       .innerJoin("orgs", "orgs.id", "c.org_id")
-      .leftJoin(enabledExtensionsByOrg(this.deps.db).as("p"), (j) =>
+      .leftJoin(enabledExtensionsByOrg(this.db.db).as("p"), (j) =>
         j.onRef("p.plugin", "=", "c.plugin").onRef("p.org_id", "=", "c.org_id"),
       )
       .select([
@@ -633,7 +705,7 @@ export class ChannelConnections {
    * 持有长连接的副本立即断开（扫描复核只是兜底）。只广播，失败只记日志。
    */
   async notifyOrgChanged(orgId: string, plugin?: string): Promise<void> {
-    let q = this.deps.db
+    let q = this.db.db
       .selectFrom("channel_connections")
       .select("id")
       .where("org_id", "=", orgId)
@@ -643,7 +715,7 @@ export class ChannelConnections {
     try {
       rows = await q.execute();
     } catch (err) {
-      this.deps.log.warn("cannot list channel connections to notify", { orgId, err });
+      this.log.warn("cannot list channel connections to notify", { orgId, err });
       return;
     }
     for (const r of rows) await this.changed(r.id, true);
@@ -668,7 +740,7 @@ export class ChannelConnections {
     const entry = this.channelEntry(row.plugin);
     const channel = entry.impl as Channel;
     await this.assertEnabled(row.orgId, row.plugin);
-    const stored = await this.deps.db
+    const stored = await this.db
       .selectFrom("channel_connections")
       .select("config")
       .where("id", "=", id)
@@ -688,7 +760,7 @@ export class ChannelConnections {
   async outbound(connectionId: string): Promise<ChannelOutboundSession> {
     const { row, channel, config } = await this.runtime(connectionId);
     // 组织语言随每次发送 / 更新交给插件（Ruling A22）；本次会话内不变
-    const { locale } = await readOrgSettings(this.deps.db, row.orgId);
+    const { locale } = await readOrgSettings(this.db.db, row.orgId);
     return {
       row,
       features: channel.features,

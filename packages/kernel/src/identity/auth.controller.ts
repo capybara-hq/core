@@ -1,11 +1,12 @@
-import { Body, Controller, HttpCode, Inject, Post, Req, Res } from "@nestjs/common";
+import { Controller, HttpCode, Inject, Post, Req, Res } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import type { KernelConfig } from "../config/schema.js";
 import { ApiError } from "../errors.js";
-import { ACCOUNTS, KERNEL_CONFIG, RATE_LIMITER, SESSIONS } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
-import type { Account, AccountsService } from "./accounts.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { CredentialThrottler } from "../infra/throttler/credential-throttler.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody } from "../infra/validation/zod-params.js";
+import { type Account, AccountsService } from "./accounts.js";
 import {
   ACCESS_COOKIE,
   clearSessionCookies,
@@ -13,10 +14,13 @@ import {
   setSessionCookies,
 } from "./cookies.js";
 import { Public } from "./principal.js";
-import type { LoginRateLimiter } from "./rate-limit.js";
-import type { SessionService } from "./sessions.js";
+import { SessionService } from "./sessions.js";
 
-const LoginBody = z.object({ login: z.string().max(256), password: z.string() });
+const LoginBodySchema = z.object({ login: z.string().max(256), password: z.string() });
+class LoginBody extends createZodDto(LoginBodySchema, "LoginBody") {}
+
+/** The credential throttlers of a login attempt (R25: per (login, IP), per IP, per login). */
+const LOGIN_THROTTLERS = ["login", "login-ip", "login-account"] as const;
 
 /** 会话的客户端信息（记入 sessions 表）。`req.ip` 在 `http.trustProxy` 时取自 X-Forwarded-For。 */
 export function clientMeta(req: FastifyRequest): { userAgent?: string; ip: string } {
@@ -28,45 +32,43 @@ export function clientMeta(req: FastifyRequest): { userAgent?: string; ip: strin
 @Controller("api/v1/auth")
 export class AuthController {
   constructor(
-    @Inject(ACCOUNTS) private readonly accounts: AccountsService,
-    @Inject(SESSIONS) private readonly sessions: SessionService,
-    @Inject(RATE_LIMITER) private readonly limiter: LoginRateLimiter,
-    @Inject(KERNEL_CONFIG) private readonly config: () => KernelConfig,
+    @Inject(AccountsService) private readonly accounts: AccountsService,
+    @Inject(SessionService) private readonly sessions: SessionService,
+    @Inject(CredentialThrottler) private readonly throttler: CredentialThrottler,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
   ) {}
 
   /**
-   * 登录名不存在与密码错误返回同一错误；每次尝试先按（登录名, IP）、IP、登录名三个计数原子占用限流额度，
-   * 成功后清零登录名计数并退还 IP 额度（见 LoginRateLimiter）。
+   * An unknown login and a wrong password answer the same error. Every attempt first reserves one
+   * attempt on the (login, IP), IP and login counters atomically; success clears the login
+   * counters and gives the IP attempt back (`CredentialThrottler`).
    */
   @Post("login")
   @Public()
   @HttpCode(200)
   async login(
-    @Body(new ZodPipe(LoginBody)) body: z.infer<typeof LoginBody>,
+    @ZBody(LoginBody) body: z.infer<typeof LoginBodySchema>,
     @Req() req: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<{ account: Account }> {
     const meta = clientMeta(req);
-    // 校验密码之前先原子地占用一次尝试额度：并发请求也无法绕过上限
-    const rl = await this.limiter.reserve(body.login, meta.ip);
-    if (!rl.allowed) {
-      reply.header("retry-after", String(rl.retryAfterSeconds));
-      throw new ApiError("auth.rate_limited", "Too many failed login attempts; try again later");
-    }
+    // reserve before checking the password, atomically: concurrent requests cannot pass the limit
+    await this.throttler.reserve(LOGIN_THROTTLERS, req, reply);
     let account: Account | null;
     try {
       account = await this.accounts.authenticateLocal(body.login, body.password);
     } catch (e) {
-      // 停用账号的密码是对的（authenticateLocal 先核对密码再看状态）：不算失败尝试，退还占用的额度
+      // a disabled account's password is right (authenticateLocal checks it before the status):
+      // not a failed attempt, the reservation is given back
       if (e instanceof ApiError && e.code === "auth.account_disabled") {
-        await this.limiter.succeeded(body.login, meta.ip);
+        await this.throttler.succeeded(LOGIN_THROTTLERS, req);
       }
       throw e;
     }
     if (!account) throw new ApiError("auth.invalid_credentials", "Invalid login or password");
-    await this.limiter.succeeded(body.login, meta.ip);
+    await this.throttler.succeeded(LOGIN_THROTTLERS, req);
     const session = await this.sessions.create(account.id, meta);
-    setSessionCookies(reply, session, this.config());
+    setSessionCookies(reply, session, this.config.get());
     return { account };
   }
 
@@ -87,7 +89,7 @@ export class AuthController {
       const session = await this.sessions.refresh(rt, clientMeta(req));
       const account = await this.accounts.get(session.accountId);
       if (!account) throw new ApiError("auth.refresh_invalid", "Refresh token is invalid");
-      setSessionCookies(reply, session, this.config());
+      setSessionCookies(reply, session, this.config.get());
       return { account };
     } catch (e) {
       if (!(e instanceof ApiError && e.code === "auth.refresh_race")) clearSessionCookies(reply);

@@ -1,3 +1,4 @@
+import { type ModelParameter, validateParams } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
 /** 模型引用：供应商插件名 + 模型 id。 */
@@ -169,3 +170,16 @@ export function normalizeStoredDefinition(def: unknown): AgentDefinition {
   }
   return { ...d, tools: tools.map(normalizeToolRef) as AgentToolRef[] };
 }
+
+/** 按模型声明严格校验一组参数，返回 `{ path: "<field>.<key>", message }[]`（评测候选也用它）。 */
+export function paramIssues(
+  field: string,
+  decl: ModelParameter[],
+  params: Record<string, unknown>,
+): { path: string; message: string }[] {
+  const r = validateParams(decl, params);
+  return r.ok ? [] : r.issues.map((i) => ({ path: `${field}.${i.key}`, message: i.message }));
+}
+
+/** Roster entries an agent may list (spec §4.3), general-purpose included. */
+export const SUBAGENT_ROSTER_MAX = 20;

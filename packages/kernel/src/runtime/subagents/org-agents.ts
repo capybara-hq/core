@@ -1,6 +1,6 @@
-import { isAgentVisibleTo } from "../../agents/agents.service.js";
+import { isAgentVisibleTo } from "../../agents/agent-lookup.js";
 import { type AgentDefinition, normalizeStoredDefinition } from "../../agents/definition.js";
-import type { KernelDb } from "../../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../db/kernel-schema.js";
 import { audit } from "../../identity/audit.js";
 
 /**
@@ -23,7 +23,7 @@ export type OrgAgentCheck =
  * caller freezes as is (never read again, so the frozen version is the one the gates saw).
  */
 export async function checkOrgAgent(
-  db: KernelDb,
+  db: KernelSchemaDb,
   a: {
     orgId: string;
     parentDefinition: Pick<AgentDefinition, "subagents">;
@@ -60,7 +60,7 @@ export async function checkOrgAgent(
  * null when the agent no longer exists or is deleted.
  */
 export async function currentAgentDefinition(
-  db: KernelDb,
+  db: KernelSchemaDb,
   agentId: string,
 ): Promise<AgentDefinition | null> {
   const row = await db
@@ -83,7 +83,7 @@ export async function currentAgentDefinition(
  * started the parent run, target the refused agent, so its owner can see attempts to use it.
  */
 export async function auditRefusal(
-  db: KernelDb,
+  db: KernelSchemaDb,
   a: {
     orgId: string;
     triggerAccountId: string;

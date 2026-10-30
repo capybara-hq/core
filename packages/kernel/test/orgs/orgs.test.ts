@@ -1,19 +1,28 @@
 import { fileURLToPath } from "node:url";
 import { startTestPostgres } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
-import { type Account, AccountsService } from "../../src/identity/accounts.js";
-import { ApiTokenService } from "../../src/identity/api-tokens.js";
-import { SettingsService } from "../../src/identity/settings.js";
-import { OrgsService } from "../../src/orgs/orgs.service.js";
+import type { Account, AccountsService } from "../../src/identity/accounts.js";
+import type { ApiTokenService } from "../../src/identity/api-tokens.js";
+import type { SettingsService } from "../../src/identity/settings.js";
+import { KernelEvents } from "../../src/infra/events/kernel-events.js";
+import { createLogger } from "../../src/log.js";
+import type { OrgsService } from "../../src/orgs/orgs.service.js";
 import { truncateTables } from "../helpers/db.js";
+import {
+  accountsFor,
+  apiTokensFor,
+  inTransaction,
+  orgsFor,
+  settingsFor,
+} from "../helpers/identity.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let accounts: AccountsService;
 let settings: SettingsService;
 let tokens: ApiTokenService;
@@ -32,10 +41,10 @@ beforeAll(async () => {
   });
   raw = createDb(pg.url, 5);
   db = kernelDb(raw);
-  accounts = new AccountsService(db);
-  settings = new SettingsService(db);
-  tokens = new ApiTokenService(db);
-  orgs = new OrgsService(db, settings, tokens);
+  accounts = accountsFor(db);
+  settings = settingsFor(db);
+  tokens = apiTokensFor(db);
+  orgs = orgsFor(db, settings, tokens);
 }, 120_000);
 afterAll(async () => {
   await raw.destroy();
@@ -157,5 +166,42 @@ describe("OrgsService", () => {
       .execute();
     expect(ev.length).toBe(1);
     expect(await codeOf(orgs.softDelete(org.id, alice))).toBe("org.not_found");
+  });
+});
+
+describe("org.deleted after the commit", () => {
+  const withEvents = () => {
+    const events = new KernelEvents(createLogger("error", { write: () => {} }));
+    const seen: string[] = [];
+    events.on("org.deleted", ({ orgId }) => {
+      seen.push(orgId);
+    });
+    return { svc: orgsFor(db, settingsFor(db), apiTokensFor(db), events), seen };
+  };
+
+  it("a soft delete emits org.deleted once, after it committed", async () => {
+    const { svc, seen } = withEvents();
+    const org = await svc.create({ name: "Events" }, alice);
+    await svc.softDelete(org.id, alice);
+    expect(seen).toEqual([org.id]);
+  });
+
+  it("inside an outer transaction: nothing before its commit, nothing after its rollback", async () => {
+    const { svc, seen } = withEvents();
+    const org = await svc.create({ name: "Outer" }, alice);
+    await expect(
+      inTransaction(db, async () => {
+        await svc.softDelete(org.id, alice);
+        expect(seen).toEqual([]);
+        throw new Error("outer rollback");
+      }),
+    ).rejects.toThrow("outer rollback");
+    expect(seen).toEqual([]);
+    expect(await svc.get(org.id)).toBeDefined();
+    await inTransaction(db, async () => {
+      await svc.softDelete(org.id, alice);
+      expect(seen).toEqual([]);
+    });
+    expect(seen).toEqual([org.id]);
   });
 });

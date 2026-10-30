@@ -8,8 +8,8 @@ import {
   POLICY_HOOKS,
   type PolicyHook,
 } from "@capybara-hq/plugin-sdk";
-import type { Redis } from "ioredis";
 import type { KernelConfig } from "../config/schema.js";
+import type { LockService } from "../infra/lock/lock.service.js";
 import { ExtensionUnloadedError, type InflightTracker } from "./inflight.js";
 
 /** Default of `hooks.timeoutMs` (used when a host is built without kernel config, e.g. in tests). */
@@ -216,7 +216,8 @@ export class HookRegistry {
        */
       expectedPolicy?(mount: PolicyHook): readonly string[];
       enabledPlugins(orgId: string): Promise<Set<string>>;
-      redis: Redis;
+      /** The warn-once markers (`lease`: set unless present, with a TTL). */
+      locks: Pick<LockService, "lease">;
       config: () => { hooks: Pick<KernelConfig["hooks"], "timeoutMs"> };
       log: Logger;
     },
@@ -550,7 +551,7 @@ export class HookRegistry {
     const key = `capk:hook-warn:${plugin}:${mount}:${kind}`;
     let first = true;
     try {
-      first = (await this.d.redis.set(key, "1", "PX", WARN_WINDOW_MS, "NX")) === "OK";
+      first = await this.d.locks.lease(key, "1", WARN_WINDOW_MS);
     } catch {
       // Redis unavailable: log anyway rather than hiding the failure
     }

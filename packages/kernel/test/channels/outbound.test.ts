@@ -16,11 +16,10 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { CHANNEL_QUEUE_NAME, idempotencyKey } from "../../src/channels/outbound.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
 import { COLOR_FORM } from "../fixtures/plugins/mem-connector/index.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -33,6 +32,7 @@ import {
   session,
   sleep,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForEvent,
 } from "../helpers/runs.js";
@@ -60,9 +60,9 @@ const ASK = "tool:mem-connector__ask:{}";
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let im: FakeChannelServer;
 let owner: Req;
 let ownerId: string;
@@ -101,7 +101,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" })).id;
   const member = await accounts.createLocal({ login: "mem", password: PW, displayName: "Mem" });
   owner = await session(k, "owner");
@@ -197,7 +197,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   redis?.disconnect();
-  await k?.stop();
+  await k?.close();
   await im?.stop();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);

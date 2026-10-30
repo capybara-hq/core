@@ -17,21 +17,21 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { AgentTemplatesService } from "../../src/agents/templates.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { usageTokens } from "../../src/evals/budget.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
 import type { RunReplayResult } from "../../src/evals/run-replay.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import { takeSnapshot, toEvents } from "../../src/evals/snapshot.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
 import { BEHAVIOR_RULES } from "../../src/runtime/context/build.js";
+import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { SUBAGENT_PREAMBLE } from "../../src/runtime/subagents/preamble.js";
 import { loadFixtureAsStrings } from "../catalog/claude-fixtures.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
+import { agentTemplatesFor } from "../helpers/conversations.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
@@ -45,6 +45,7 @@ import {
   runsOf,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -80,12 +81,12 @@ const { sent } = capture;
 let pgc: TestContainer;
 let rd: TestContainer;
 let s3: TestS3;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
 let srv: FakeGitServer;
 let pluginsDir: string;
 let sandboxRoot: string;
-let k: Kernel;
+let k: TestKernel;
 let admin: Req;
 let orgId: string;
 
@@ -128,7 +129,7 @@ beforeAll(async () => {
       },
     ),
   );
-  await new AccountsService(db).createLocal({
+  await accountsFor(db).createLocal({
     login: "root",
     password: PW,
     displayName: "R",
@@ -140,7 +141,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   capture.restore();
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await srv?.stop();
   for (const d of [pluginsDir, sandboxRoot]) if (d) await rm(d, { recursive: true, force: true });
@@ -244,7 +245,7 @@ describe("phase C acceptance: superpowers subagent-driven-development", {
     expect(listed.statusCode, listed.body).toBe(200);
     const skills = listed.json().skills as { id: string; name: string }[];
     const skillId = (n: string) => skills.find((s) => s.name === n)?.id as string;
-    const [reviewer] = await new AgentTemplatesService(db).listForOrg(orgId);
+    const [reviewer] = await agentTemplatesFor(db).listForOrg(orgId);
     expect(reviewer?.type).toBe("superpowers:code-reviewer");
 
     // the fast tier is mapped (to model-script); capable stays unmapped and falls back
@@ -386,7 +387,7 @@ describe("phase C acceptance: superpowers subagent-driven-development", {
     });
     const fresh = prompts.filter((p) => !p.resumed);
     expect(fresh).toHaveLength(7);
-    const reviewerBody = (await new AgentTemplatesService(db).listForOrg(orgId))[0];
+    const reviewerBody = (await agentTemplatesFor(db).listForOrg(orgId))[0];
     for (const p of fresh) {
       const first = original.find(
         (r) => isChildRequest(r) && r.messages.length === 1 && textOf(r, 0) === p.prompt,
@@ -481,8 +482,9 @@ describe("phase C acceptance: superpowers subagent-driven-development", {
         const calls = toEvents(snap).filter((e) => e.type === "model_call");
         for (const call of calls) {
           const p = call.payload as EventPayload<"model_call">;
-          const info = (await k.runs.registry.resolve({ provider: p.provider, model: p.model }))
-            .info;
+          const info = (
+            await k.app.get(ProviderRegistry).resolve({ provider: p.provider, model: p.model })
+          ).info;
           const r = reconstructRequest(snap, call.seq, { model: info });
           expect(r.drift, `${c.id} seq ${call.seq}`).toEqual([]);
           expect(

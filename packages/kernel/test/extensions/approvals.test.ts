@@ -9,8 +9,12 @@ import { createKeyring } from "../../src/ctx/secrets.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { ExtensionApprovals } from "../../src/extensions/approvals.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
+import { ExtensionRegistry } from "../../src/extensions/registry.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
+import { createLogger } from "../../src/log.js";
+import { EmbedTokens } from "../../src/ui/embed-token.js";
+import { approvalsFor, testHost } from "../helpers/extensions.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let rd: Awaited<ReturnType<typeof startTestRedis>>;
@@ -28,11 +32,11 @@ const log = {
 const fx = (n: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${n}/index.ts`, import.meta.url));
 const host = (opts: { autoApprove?: boolean } = {}) => {
-  const h = new ExtensionHost(deps, {}, opts);
+  const h = testHost(deps, {}, { registry: new ExtensionRegistry(), ...opts });
   hosts.push(h);
   return h;
 };
-const approvals = () => new ExtensionApprovals(kernelDb(deps.db));
+const approvals = () => approvalsFor(deps.db);
 const snapshot = async (plugin: string) =>
   kernelDb(deps.db)
     .selectFrom("extension_permission_snapshots")
@@ -67,9 +71,11 @@ beforeAll(async () => {
     db: createDb(pg.url, 5),
     dbUrl: pg.url,
     redis,
+    locks: new LockService(redis, createLogger("error")),
     busSubscriber: sub,
     redisUrl: rd.url,
     keyring: createKeyring(Buffer.alloc(32, 1), []),
+    embedTokens: new EmbedTokens(createKeyring(Buffer.alloc(32, 1), [])),
     runWorkers: false,
     log,
   };

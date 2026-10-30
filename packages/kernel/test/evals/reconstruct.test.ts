@@ -13,8 +13,10 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { AttachmentsService } from "../../src/conversations/attachments.service.js";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { reconstructRequest, snapshotMediaRefs } from "../../src/evals/reconstruct.js";
@@ -25,13 +27,15 @@ import {
   toEvents,
 } from "../../src/evals/snapshot.js";
 import { buildTrajectory } from "../../src/evals/trajectory.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import type { MediaInfo } from "../../src/runtime/context/build.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import { WRAP_UP_REMINDER } from "../../src/runtime/model-call.js";
+import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import { hookDeniedText } from "../../src/tools/pipeline.js";
 import { specHash } from "../../src/tools/registry.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
@@ -46,6 +50,7 @@ import {
   runsOf,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForEvent,
   waitForTerminal,
@@ -80,9 +85,9 @@ const { sent, compactions } = capture;
 let pgc: TestContainer;
 let rd: TestContainer;
 let s3: TestS3;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 let owner: Req;
 let ownerId: string;
 let orgId: string;
@@ -131,9 +136,8 @@ beforeAll(async () => {
       },
     ),
   );
-  ownerId = (
-    await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" })
-  ).id;
+  ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
+    .id;
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
   await enableProbe(true);
@@ -141,7 +145,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   capture.restore();
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
   if (sandboxRoot) await rm(sandboxRoot, { recursive: true, force: true });
@@ -197,7 +201,7 @@ async function seedSkill(
   const files: { path: string; size: number; sha256: string }[] = [];
   for (const [path, content] of Object.entries({ "SKILL.md": text, ...opts.files })) {
     const data = new TextEncoder().encode(content);
-    await k.storage.kernel(orgId).put(`${prefix}${path}`, data, {
+    await k.app.get(StorageService).kernel(orgId).put(`${prefix}${path}`, data, {
       contentType: "application/octet-stream",
       size: data.byteLength,
     });
@@ -329,15 +333,17 @@ async function lastRunId(convId: string): Promise<string> {
 }
 
 async function modelInfo(provider: string, model: string): Promise<ModelInfo> {
-  return (await k.runs.registry.resolve({ provider, model })).info;
+  return (await k.app.get(ProviderRegistry).resolve({ provider, model })).info;
 }
 
 /** 还原用的媒体：按快照里的引用取当前的附件行与字节（与运行时一样，只取该模型用得到的）。 */
 async function mediaFor(convId: string, snap: CaseSnapshot, seq: number, info: ModelInfo) {
   const ids = snapshotMediaRefs(snap, seq, info);
   if (ids.length === 0) return {};
-  const mediaInfo = await k.attachments.mediaInfo(orgId, convId, ids);
-  const media = await k.attachments.fetchMedia(orgId, convId, [...mediaInfo.keys()]);
+  const mediaInfo = await k.app.get(AttachmentsService).mediaInfo(orgId, convId, ids);
+  const media = await k.app
+    .get(AttachmentsService)
+    .fetchMedia(orgId, convId, [...mediaInfo.keys()]);
   return { mediaInfo, media };
 }
 
@@ -352,7 +358,7 @@ async function expectZeroDrift(convId: string, snap: CaseSnapshot, upTo = sent.l
     const info = await modelInfo(c.payload.provider, c.payload.model);
     const out = reconstructRequest(snap, c.seq, {
       model: info,
-      mediaBudgetBytes: k.config.attachments.requestMediaBytes,
+      mediaBudgetBytes: k.app.get(KernelConfigService).get().attachments.requestMediaBytes,
       ...(await mediaFor(convId, snap, c.seq, info)),
     });
     expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
@@ -554,7 +560,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     await waitForTerminal(db, conv, 3, 30_000);
     // 发送前对象就不在了：记录的就是「不再可用」
     const gone = await attach("gone.png", PNG);
-    await k.storage.kernel(orgId).delete(`attachments/${gone}`);
+    await k.app.get(StorageService).kernel(orgId).delete(`attachments/${gone}`);
     await postWithFiles(conv, "media: again", [gone]);
     await waitForTerminal(db, conv, 4, 30_000);
 
@@ -576,7 +582,9 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
 
     // 基线里媒体结果与记录不同 → media_changed（按附件 id 比 outcome 与 etag）
     const head = modelCalls(toEvents(snap))[0] as ModelCallEvent;
-    expect(head.payload.request.mediaBudgetBytes).toBe(k.config.attachments.requestMediaBytes);
+    expect(head.payload.request.mediaBudgetBytes).toBe(
+      k.app.get(KernelConfigService).get().attachments.requestMediaBytes,
+    );
     const headMedia = await mediaFor(conv, snap, head.seq, info);
     const swapped = new Map(headMedia.mediaInfo);
     swapped.set(keep, { ...(swapped.get(keep) as MediaInfo), etag: "replaced-object" });
@@ -605,7 +613,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     }
 
     // 附件对象被删：带过字节的请求还原时只能给占位，记 media_missing
-    await k.storage.kernel(orgId).delete(`attachments/${keep}`);
+    await k.app.get(StorageService).kernel(orgId).delete(`attachments/${keep}`);
     const first = modelCalls(toEvents(snap))[0] as ModelCallEvent;
     expect(first.payload.request.media?.map((m) => m.outcome)).toEqual(["bytes"]);
     const out = reconstructRequest(snap, first.seq, {
@@ -742,9 +750,11 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     );
     expect(written?.payload.toolMap).toBe(CLAUDE_CODE_TOOL_MAP);
     const conv = await createConv(owner, orgId, agentId);
-    await k.runs.eventLog.append(conv, [
-      { type: "skills_catalog", payload: { ...written?.payload, toolMap: OLD_MAP } },
-    ]);
+    await k.app
+      .get(EventLog)
+      .append(conv, [
+        { type: "skills_catalog", payload: { ...written?.payload, toolMap: OLD_MAP } },
+      ]);
     reset();
     await postMessage(owner, orgId, conv, "echo:hello");
     await waitForTerminal(db, conv, 1, 30_000);
@@ -908,7 +918,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
       const info = await modelInfo(c.payload.provider, c.payload.model);
       const out = reconstructRequest(snap, c.seq, {
         model: info,
-        mediaBudgetBytes: k.config.attachments.requestMediaBytes,
+        mediaBudgetBytes: k.app.get(KernelConfigService).get().attachments.requestMediaBytes,
       });
       expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
       expect(out.request, `model_call seq ${c.seq}`).toEqual(parent[i]);
@@ -998,7 +1008,10 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     if (!def) throw new Error("definition missing");
     for (const [i, c] of calls.entries()) {
       const info = await modelInfo(c.payload.provider, c.payload.model);
-      const opts = { model: info, mediaBudgetBytes: k.config.attachments.requestMediaBytes };
+      const opts = {
+        model: info,
+        mediaBudgetBytes: k.app.get(KernelConfigService).get().attachments.requestMediaBytes,
+      };
       const out = reconstructRequest(snap, c.seq, opts);
       expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
       expect(out.request, `model_call seq ${c.seq}`).toEqual(parent[i]);

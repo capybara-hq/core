@@ -8,18 +8,18 @@ import type {
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import type { EvalSetView } from "../../src/evals/sets.service.js";
 import { takeSnapshot } from "../../src/evals/snapshot.js";
 import type { TrajectoryDetail } from "../../src/evals/trajectory.service.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { hookRequestOf } from "../../src/runtime/hook-calls.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { hookDeniedText } from "../../src/tools/pipeline.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -33,6 +33,7 @@ import {
   session,
   sleep,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -56,8 +57,8 @@ const originalResolve = ProviderRegistry.prototype.resolve;
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
-let k: Kernel;
+let db: KernelSchemaDb;
+let k: TestKernel;
 let owner: Req;
 let orgId: string;
 let agentId: string;
@@ -88,7 +89,7 @@ beforeAll(async () => {
       },
     ),
   );
-  await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+  await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
   await enableProbe(true);
@@ -111,7 +112,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   ProviderRegistry.prototype.resolve = originalResolve;
-  await k?.stop();
+  await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
@@ -190,10 +191,12 @@ describe("model hooks", { timeout: 60_000 }, () => {
       model: "fake-1",
     });
     const snap = await takeSnapshot(db, orgId, conv, call?.runId as string, 4_194_304);
-    const info = (await k.runs.registry.resolve({ provider: "model-fake", model: "fake-1" })).info;
+    const info = (
+      await k.app.get(ProviderRegistry).resolve({ provider: "model-fake", model: "fake-1" })
+    ).info;
     const out = reconstructRequest(snap, call?.seq as number, {
       model: info,
-      mediaBudgetBytes: k.config.attachments.requestMediaBytes,
+      mediaBudgetBytes: k.app.get(KernelConfigService).get().attachments.requestMediaBytes,
     });
     expect(out.drift).toEqual([]);
     // the request sent, projected for hooks (I-3: media blocks become placeholders)

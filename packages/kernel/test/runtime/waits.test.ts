@@ -5,13 +5,13 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
+import { RunAbort } from "../../src/runtime/abort.js";
+import { ConversationLock } from "../../src/runtime/conversation-lock.js";
 import { RUN_QUEUE_NAME } from "../../src/runtime/run-queue.js";
-import { MAINTENANCE_QUEUE_NAME, waitTimeoutJobId } from "../../src/runtime/waits.js";
+import { MAINTENANCE_QUEUE_NAME, Waits, waitTimeoutJobId } from "../../src/runtime/waits.js";
 import {
   APPROVAL_CANCELLED_TEXT,
   APPROVAL_DENIED_TEXT,
@@ -19,8 +19,10 @@ import {
   INPUT_CANCELLED_TEXT,
   TOO_MANY_INPUT_REQUESTS_TEXT,
 } from "../../src/tools/pipeline.js";
+import { QuestionsService } from "../../src/tools/questions.service.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -35,6 +37,7 @@ import {
   session,
   sleep,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForEvent,
   waitForTerminal,
@@ -51,9 +54,9 @@ const MEM_CONNECTOR = fileURLToPath(
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let redis: Redis;
 let maint: Queue;
 let runQueue: Queue;
@@ -88,7 +91,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await maint?.close();
   await runQueue?.close();
-  await k?.stop();
+  await k?.close();
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -96,7 +99,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
-  const owner = await new AccountsService(db).createLocal({
+  const owner = await accountsFor(db).createLocal({
     login: "owner",
     password: PW,
     displayName: "O",
@@ -210,7 +213,7 @@ describe("审批等待", () => {
     expect(ofType(evs, "tool_call_started")).toEqual([]);
     expect(resultsOf(evs)).toEqual([]);
     expect(memState().echoCalls).toBe(0);
-    expect(await k.runs.lock.holder(convA)).toBeNull();
+    expect(await k.app.get(ConversationLock).holder(convA)).toBeNull();
     expect(await checkpointCount(runId)).toBeGreaterThan(0);
     const approval = await db
       .selectFrom("approvals")
@@ -365,7 +368,7 @@ describe("审批等待", () => {
     // 决定的续跑落空：运行仍是 running，没有续跑
     expect(await runStatus(runId)).toBe("running");
     expect(memState().echoCalls).toBe(0);
-    await k.runs.waits.suspend(runId, convId, {
+    await k.app.get(Waits).suspend(runId, convId, {
       kind: "approval",
       id,
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
@@ -388,11 +391,11 @@ describe("审批等待", () => {
     await sql`UPDATE capybara.runs SET status = 'running', waiting_since = NULL WHERE id = ${runId}`.execute(
       raw,
     );
-    await k.tools.questions.answer(qid, ownerId, { color: "blue" });
+    await k.app.get(QuestionsService).answer(qid, ownerId, { color: "blue" });
     await sleep(200);
     expect(await runStatus(runId)).toBe("running");
     expect(memState().askCalls).toHaveLength(1);
-    await k.runs.waits.suspend(runId, convId, {
+    await k.app.get(Waits).suspend(runId, convId, {
       kind: "input",
       id: qid,
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
@@ -426,8 +429,8 @@ describe("审批等待", () => {
     const { runId, event } = await startAndWait(convId, ECHO, "approval_requested");
     // 构造「worker 刚暂停、尚未置 waiting」的时刻：运行退回 running，此时的中止没有订阅者
     await sql`UPDATE capybara.runs SET status = 'running' WHERE id = ${runId}`.execute(raw);
-    await k.runs.abort.request(runId, ownerId);
-    await k.runs.waits.suspend(runId, convId, {
+    await k.app.get(RunAbort).request(runId, ownerId);
+    await k.app.get(Waits).suspend(runId, convId, {
       kind: "approval",
       id: approvalIdOf(event),
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
@@ -443,11 +446,11 @@ describe("审批等待", () => {
     const { runId, event } = await startAndWait(convId, ECHO, "approval_requested");
     const id = approvalIdOf(event);
     // 审批仍 pending：续跑不生效
-    expect(await k.runs.waits.resume(runId, id)).toBe(false);
+    expect(await k.app.get(Waits).resume(runId, id)).toBe(false);
     expect((await decide(id, "approve")).statusCode).toBe(200);
     await waitForTerminal(db, convId, 1);
     // 运行已结束：再续跑也不生效
-    const again = await Promise.all([1, 2, 3].map(() => k.runs.waits.resume(runId, id)));
+    const again = await Promise.all([1, 2, 3].map(() => k.app.get(Waits).resume(runId, id)));
     expect(again).toEqual([false, false, false]);
     expect(memState().echoCalls).toBe(1);
     expect(ofType(await eventsOf(db, convId), "run_finished")).toHaveLength(1);
@@ -478,22 +481,29 @@ describe("输入请求等待", () => {
     expect(memState().askCalls).toHaveLength(1);
 
     // 校验：不合规的答案 → validation_failed；非发起人 → forbidden
-    await expect(k.tools.questions.answer(qid, ownerId, { color: "green" })).rejects.toMatchObject({
+    await expect(
+      k.app.get(QuestionsService).answer(qid, ownerId, { color: "green" }),
+    ).rejects.toMatchObject({
       code: "validation_failed",
     });
-    const other = await new AccountsService(db).createLocal({
+    const other = await accountsFor(db).createLocal({
       login: "other",
       password: PW,
       displayName: "X",
     });
     await testMembers(db).add(orgId, other.id, "member", ownerId);
-    await expect(k.tools.questions.answer(qid, other.id, { color: "red" })).rejects.toMatchObject({
+    await expect(
+      k.app.get(QuestionsService).answer(qid, other.id, { color: "red" }),
+    ).rejects.toMatchObject({
       code: "forbidden",
     });
 
-    await k.tools.questions.answer(qid, ownerId, { color: "red" });
+    await k.app.get(QuestionsService).answer(qid, ownerId, { color: "red" });
     // 第二次回答 → 409
-    const dup = await k.tools.questions.answer(qid, ownerId, { color: "blue" }).catch((e) => e);
+    const dup = await k.app
+      .get(QuestionsService)
+      .answer(qid, ownerId, { color: "blue" })
+      .catch((e) => e);
     expect(dup).toBeInstanceOf(ApiError);
     expect((dup as ApiError).code).toBe("question.already_answered");
 
@@ -559,7 +569,9 @@ describe("输入请求等待", () => {
         10_000,
         "waiting",
       );
-      await k.tools.questions.answer(asked.payload.questionId, ownerId, { color: "blue" });
+      await k.app
+        .get(QuestionsService)
+        .answer(asked.payload.questionId, ownerId, { color: "blue" });
     }
     await waitForTerminal(db, convId, 1);
     const evs = await eventsOf(db, convId);
@@ -609,7 +621,7 @@ describe("输入请求等待", () => {
     expect(resultsOf(evs)).toMatchObject([{ content: INPUT_CANCELLED_TEXT, isError: true }]);
     expect(await runStatus(runId)).toBe("aborted");
     await expect(
-      k.tools.questions.answer(questionIdOf(event), ownerId, { color: "red" }),
+      k.app.get(QuestionsService).answer(questionIdOf(event), ownerId, { color: "red" }),
     ).rejects.toMatchObject({ code: "question.already_answered" });
   });
 });

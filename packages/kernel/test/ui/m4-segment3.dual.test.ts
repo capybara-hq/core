@@ -14,11 +14,16 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createBusSubscriber } from "../../src/ctx/bus.js";
 import type { KernelDeps } from "../../src/ctx/create-ctx.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { ExtensionHost } from "../../src/extensions/host.js";
+import type { ExtensionHost } from "../../src/extensions/host.js";
 import { type PermissionSet, permissionKeys } from "../../src/extensions/permission-set.js";
-import { AccountsService } from "../../src/identity/accounts.js";
+import { ExtensionRegistry } from "../../src/extensions/registry.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
+import { createLogger } from "../../src/log.js";
+import { EmbedTokens } from "../../src/ui/embed-token.js";
+import { testHost } from "../helpers/extensions.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { PW, waitForTerminal } from "../helpers/runs.js";
 import { openSse, type SseClient, uiFrames } from "../helpers/sse.js";
@@ -51,7 +56,7 @@ let pgc: TestContainer;
 let rdc: TestContainer;
 let h: Harness;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let cookie = "";
 let orgId = "";
 let base = "";
@@ -101,7 +106,7 @@ beforeAll(async () => {
   raw = createDb(h.dbUrl, 3);
   db = kernelDb(raw);
 
-  await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "o" });
+  await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "o" });
   const login = await h.request("/api/v1/auth/login", {
     method: "POST",
     headers: { "x-capybara-csrf": "1", "content-type": "application/json" },
@@ -250,15 +255,17 @@ describe("M4 第三段验收（双副本）", () => {
       db: createDb(h.dbUrl, 2),
       dbUrl: h.dbUrl,
       redis,
+      locks: new LockService(redis, createLogger("error")),
       busSubscriber: sub,
       redisUrl: rdc.url,
       keyring: createKeyring(Buffer.alloc(32, 9), []),
+      embedTokens: new EmbedTokens(createKeyring(Buffer.alloc(32, 9), [])),
       runWorkers: false,
       log: { info: () => {}, warn: () => {}, error: () => {} },
     };
     const hosts: ExtensionHost[] = [];
     const boot = async (plugin: string) => {
-      const host = new ExtensionHost(deps, {}, { autoApprove: false });
+      const host = testHost(deps, {}, { registry: new ExtensionRegistry(), autoApprove: false });
       hosts.push(host);
       await host.load([plugin]);
       return host;

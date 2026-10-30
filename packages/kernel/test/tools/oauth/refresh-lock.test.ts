@@ -16,12 +16,14 @@ import { createKeyring } from "../../../src/ctx/secrets.js";
 import { kernelDb } from "../../../src/db/kernel-schema.js";
 import { migrate } from "../../../src/db/migrator.js";
 import { createDb } from "../../../src/db/pool.js";
+import { LockService } from "../../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../../src/log.js";
 import {
   type ConnectorAuth,
   CredentialMissing,
-  Credentials,
+  type Credentials,
 } from "../../../src/tools/credentials.js";
+import { credentialsFor } from "../../helpers/tools.js";
 
 /**
  * Task 15 Review 重点：两个「副本」（各自的 PG 连接池、Redis 连接与 Credentials 实例，没有任何进程内共享）
@@ -80,7 +82,11 @@ function replica(log = createLogger("info", { write: (l) => lines.push(l) })): C
   pools.push(pool);
   const redis = new Redis(rdc.url);
   redises.push(redis);
-  return new Credentials(kernelDb(pool), ring, log, { redis, config: () => config });
+  return credentialsFor(kernelDb(pool), ring, log, {
+    config: () => config,
+    locks: new LockService(redis, log),
+    redis,
+  });
 }
 
 const pub = { clientId: "pub-client" };

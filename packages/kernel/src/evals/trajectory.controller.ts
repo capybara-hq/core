@@ -1,20 +1,20 @@
-import { Controller, Get, Inject, Param, Query } from "@nestjs/common";
+import { Controller, Get, Inject, Param } from "@nestjs/common";
 import { z } from "zod";
-import { TRAJECTORIES } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
 import {
   CurrentPrincipal,
   type Principal,
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import {
   RUN_STATUSES,
   type RunWindow,
   type TrajectoryDetail,
   type TrajectoryListItem,
-  type TrajectoryService,
+  TrajectoryService,
 } from "./trajectory.service.js";
 
 const ListQuery = z.object({
@@ -40,20 +40,23 @@ const DetailQuery = z
 /** 只给 `before` 时的页大小。 */
 const DEFAULT_RUN_PAGE = 20;
 
+class TrajectoryListQueryDto extends createZodDto(ListQuery, "TrajectoryListQuery") {}
+class TrajectoryDetailQueryDto extends createZodDto(DetailQuery, "TrajectoryDetailQuery") {}
+
 /**
  * 轨迹查看器（`/api/v1/orgs/:orgId/trajectories`）：`trajectories.read`（member 起、只给人），
  * 服务里再判定「组织管理员或 agent 负责人」；无权一律 404 `trajectory.not_found`。
  */
 @Controller("api/v1/orgs/:orgId/trajectories")
 export class TrajectoryController {
-  constructor(@Inject(TRAJECTORIES) private readonly trajectories: TrajectoryService) {}
+  constructor(@Inject(TrajectoryService) private readonly trajectories: TrajectoryService) {}
 
   @Get()
   @OrgAction("trajectories.read")
   async list(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Query(new ZodPipe(ListQuery)) q: z.infer<typeof ListQuery>,
+    @ZQuery(TrajectoryListQueryDto) q: z.infer<typeof ListQuery>,
   ): Promise<{ items: TrajectoryListItem[]; next: string | null }> {
     const user = requireUser(principal);
     return this.trajectories.list(org.orgId, user.account.id, {
@@ -71,7 +74,7 @@ export class TrajectoryController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("conversationId") conversationId: string,
-    @Query(new ZodPipe(DetailQuery)) q: z.infer<typeof DetailQuery>,
+    @ZQuery(TrajectoryDetailQueryDto) q: z.infer<typeof DetailQuery>,
   ): Promise<TrajectoryDetail> {
     const user = requireUser(principal);
     const window: RunWindow | undefined =

@@ -9,15 +9,11 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { SandboxLeases, SandboxLockLostError } from "../../src/sandbox/leases.js";
-import {
-  SandboxService,
-  type SandboxServiceDeps,
-  sandboxConfigWarnings,
-} from "../../src/sandbox/sandbox.service.js";
+import { type SandboxService, sandboxConfigWarnings } from "../../src/sandbox/sandbox.service.js";
 import { sandboxTools } from "../../src/tools/builtins/sandbox/index.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
 import {
@@ -27,6 +23,11 @@ import {
   setFakeSandboxDelays,
 } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
+import {
+  type SandboxServiceDeps,
+  sandboxLeasesFor,
+  sandboxServiceFor,
+} from "../helpers/sandbox.js";
 
 /**
  * Concurrent commands in one sandbox under shared leases (sub-agents spec §10, Task 4), on the
@@ -40,7 +41,7 @@ vi.setConfig({ testTimeout: 30_000 });
 let pgc: TestContainer;
 let rdc: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let redis: Redis;
 let config: KernelConfig;
 let root: string;
@@ -54,7 +55,7 @@ const service = (
   p: () => SandboxProvider = () => provider,
   extra: Partial<SandboxServiceDeps> = {},
 ) =>
-  new SandboxService({
+  sandboxServiceFor({
     db,
     redis,
     provider: () => ({ plugin: "sandbox-fake", impl: p() }),
@@ -453,7 +454,7 @@ describe("concurrent commands (fake sandbox)", () => {
     }
     const s2 = service(() => noTag, {
       log: quiet,
-      leases: new SiblingArrives({ redis, log: quiet, pollMs: 20 }),
+      leases: sandboxLeasesFor({ redis, log: quiet, pollMs: 20 }, SiblingArrives),
     });
     await run(s, "true");
     await redis.hset(`capk:sandbox-holders:${conversationId}`, randomUUID(), Date.now() + 600_000);
@@ -517,7 +518,7 @@ describe("path leases in the sandbox tools", () => {
       storage: {} as any,
       // biome-ignore lint/suspicious/noExplicitAny: not called
       eventLog: {} as any,
-      config: () => config,
+      config: { get: () => config },
     });
   const tool = (s: SandboxService, name: string) =>
     tools(s).find((t) => t.spec.name === name) as BuiltinTool;
@@ -571,7 +572,7 @@ describe("path leases in the sandbox tools", () => {
       storage: {} as any,
       // biome-ignore lint/suspicious/noExplicitAny: not called
       eventLog: {} as any,
-      config: () => config,
+      config: { get: () => config },
     }).find((x) => x.spec.name === "sandbox_bash") as BuiltinTool;
     await t.run({ command: "true" }, callCtx());
     expect(leased).toEqual(["/workspace/attachments/.capybara-sync.json"]);

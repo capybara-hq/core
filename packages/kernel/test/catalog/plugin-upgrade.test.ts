@@ -2,6 +2,7 @@ import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PluginInstaller } from "../../src/catalog/plugin-install.js";
 import type { UpgradePreview } from "../../src/catalog/plugin-upgrade.js";
+import { SkillsService } from "../../src/skills/skills.service.js";
 import { ConnectorsService } from "../../src/tools/connectors.service.js";
 import { SKILL_MD } from "../skills/zip.js";
 import {
@@ -234,7 +235,7 @@ const backdateUpgrade = (installId: string) =>
 /** An org's own skill (no provenance). */
 const ownSkill = (name: string) => {
   const md = new TextEncoder().encode(SKILL_MD(name));
-  return env.k.skills.createVersionFromFiles(env.orgId, env.bossId, {
+  return env.k.app.get(SkillsService).createVersionFromFiles(env.orgId, env.bossId, {
     name,
     description: "Mine.",
     files: [{ path: "SKILL.md", size: md.byteLength, sha256: "x".repeat(64), data: md }],
@@ -901,7 +902,7 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
       this: PluginInstaller,
       ...a: Parameters<PluginInstaller["decideRemovalIn"]>
     ) {
-      if (a[3].kind === "extension") return "used_by_connectors";
+      if (a[2].kind === "extension") return "used_by_connectors";
       return real.apply(this, a);
     });
     const back = await previewOk(installId, "0.0.1");
@@ -1200,7 +1201,7 @@ describe("org plugin upgrade: concurrency (Review Focus 4)", { timeout: 90_000 }
     const at = new Promise<void>((r) => {
       reached = r;
     });
-    const skills = env.k.skills;
+    const skills = env.k.app.get(SkillsService);
     const real = skills.createVersionFromFiles.bind(skills);
     vi.spyOn(skills, "createVersionFromFiles").mockImplementation(async (...a) => {
       if (a[2].name === skill) {

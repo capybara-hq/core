@@ -6,12 +6,16 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConfigSource } from "../src/config/load.js";
 import { type KernelConfig, KernelConfigSchema } from "../src/config/schema.js";
-import { createKernel, type Kernel, migrateAll } from "../src/kernel.js";
-import { createLogger } from "../src/log.js";
+import { ExtensionHost } from "../src/extensions/host.js";
+import { KernelConfigService } from "../src/infra/config/kernel-config.service.js";
+import { KERNEL_LOGGER } from "../src/infra/tokens.js";
+import { migrateAll } from "../src/kernel.js";
+import { createLogger, type KernelLogger } from "../src/log.js";
+import { buildKernel, type TestKernel, type TestKernelOptions } from "./helpers/runs.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
-const kernels: Kernel[] = [];
+const kernels: TestKernel[] = [];
 const masterKey = Buffer.alloc(32, 7).toString("base64");
 const fx = (n: string) =>
   fileURLToPath(new URL(`./fixtures/plugins/${n}/index.ts`, import.meta.url));
@@ -58,8 +62,8 @@ function manualSource() {
   };
 }
 
-async function kernel(config: KernelConfig, opts?: Parameters<typeof createKernel>[1]) {
-  const k = await createKernel(config, {
+async function kernel(config: KernelConfig, opts?: TestKernelOptions) {
+  const k = await buildKernel(config, {
     env: {},
     logger: createLogger("info", { write: () => {} }),
     ...opts,
@@ -94,7 +98,7 @@ beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
 });
 afterAll(async () => {
-  await Promise.all(kernels.map((k) => k.stop()));
+  await Promise.all(kernels.map((k) => k.close()));
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
@@ -129,7 +133,7 @@ describe("HTTP 健康检查", () => {
 
   it("关闭 Redis 容器后 /readyz 503，body 标出 redis", async () => {
     const own = await startTestRedis();
-    const k = await createKernel(cfg({}, own.url), {
+    const k = await buildKernel(cfg({}, own.url), {
       env: {},
       logger: createLogger("error", { write: () => {} }),
     });
@@ -141,7 +145,7 @@ describe("HTTP 健康检查", () => {
       expect(r.statusCode).toBe(503);
       expect(r.json()).toMatchObject({ pg: "ok", redis: "error" });
     } finally {
-      await k.stop();
+      await k.close();
     }
   }, 60_000);
 
@@ -149,13 +153,13 @@ describe("HTTP 健康检查", () => {
     const k = await kernel(cfg());
     await k.start();
     expect((await k.http.inject({ method: "GET", url: "/readyz" })).statusCode).toBe(200);
-    const stopping = k.stop();
+    const stopping = k.close();
     const r = await k.http.inject({ method: "GET", url: "/readyz" });
     expect(r.statusCode).toBe(503);
     await stopping;
     // 停机完成后 HTTP 应用已关闭，不再接受请求（进程内注入同样拒绝）
     await expect(k.http.inject({ method: "GET", url: "/readyz" })).rejects.toThrow();
-    await k.stop(); // 幂等
+    await k.close(); // 幂等
   });
 });
 
@@ -190,27 +194,27 @@ describe("配置热更新", () => {
     const src = manualSource();
     const k = await kernel(cfg(), { source: src.source, logger });
     await k.start();
-    expect(k.log.level).toBe("info");
+    expect(k.app.get<KernelLogger>(KERNEL_LOGGER).level).toBe("info");
 
     src.push(raw({ log: { level: "debug" } }));
-    expect(k.log.level).toBe("debug");
-    expect(k.config.log.level).toBe("debug");
+    expect(k.app.get<KernelLogger>(KERNEL_LOGGER).level).toBe("debug");
+    expect(k.app.get(KernelConfigService).get().log.level).toBe("debug");
 
     src.push(raw({ log: { level: "debug" }, http: { port: 9999 } }));
-    expect(k.config.http.port).toBe(0);
+    expect(k.app.get(KernelConfigService).get().http.port).toBe(0);
     const warn = lines.find((l) => l.level === "warn" && JSON.stringify(l).includes("http.port"));
     expect(warn).toBeDefined();
     expect(JSON.stringify(lines)).not.toContain(pgc.url);
 
-    const before = k.config;
+    const before = k.app.get(KernelConfigService).get();
     src.push({ ...raw(), masterKey: "not-a-key", log: { level: "error" } });
-    expect(k.config).toEqual(before);
-    expect(k.log.level).toBe("debug");
+    expect(k.app.get(KernelConfigService).get()).toEqual(before);
+    expect(k.app.get<KernelLogger>(KERNEL_LOGGER).level).toBe("debug");
     expect(lines.some((l) => l.level === "error" && JSON.stringify(l).includes("masterKey"))).toBe(
       true,
     );
 
-    await k.stop();
+    await k.close();
     expect(src.stopped).toBe(true);
   });
 });
@@ -243,7 +247,7 @@ describe("角色", () => {
     expect(port).toBeGreaterThan(0);
     const res = await fetch(`http://127.0.0.1:${port}/healthz`);
     expect(res.status).toBe(200);
-    await k.stop();
+    await k.close();
     expect(k.port).toBeUndefined();
     expect(await canConnect(port)).toBe(false);
   });
@@ -273,8 +277,13 @@ describe("插件权限待批准（autoApprove 关闭）", () => {
       }),
     );
     await k.start();
-    expect(k.host.manifests()).toEqual([]);
-    expect(k.host.pending().map((p) => [p.plugin, p.reason])).toEqual([
+    expect(k.app.get(ExtensionHost).manifests()).toEqual([]);
+    expect(
+      k.app
+        .get(ExtensionHost)
+        .pending()
+        .map((p) => [p.plugin, p.reason]),
+    ).toEqual([
       ["perm-a", "new"],
       ["fixture", "new"],
     ]);

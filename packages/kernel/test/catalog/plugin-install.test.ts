@@ -1,5 +1,8 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PluginInstaller } from "../../src/catalog/plugin-install.js";
+import { runOutsideTransaction } from "../../src/infra/database/transaction-host.js";
+import { SkillsService } from "../../src/skills/skills.service.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import { SKILL_MD } from "../skills/zip.js";
 import {
   auditActions,
@@ -98,7 +101,8 @@ async function tamper(itemId: string, version: string, path: string): Promise<vo
     .where("item_id", "=", itemId)
     .where("version", "=", version)
     .executeTakeFirstOrThrow();
-  await env.k.storage
+  await env.k.app
+    .get(StorageService)
     .deployment()
     .put(`${v.object_prefix}${path}`, new TextEncoder().encode("tampered"), {
       contentType: "application/octet-stream",
@@ -355,7 +359,8 @@ describe("org plugin uninstall", { timeout: 60_000 }, () => {
       .select("object_prefix")
       .where("item_id", "=", appId)
       .executeTakeFirstOrThrow();
-    await env.k.storage
+    await env.k.app
+      .get(StorageService)
       .deployment()
       .put(`${v.object_prefix}skills/broken/run.py`, new TextEncoder().encode("tampered"), {
         contentType: "application/octet-stream",
@@ -382,7 +387,7 @@ describe("org plugin uninstall", { timeout: 60_000 }, () => {
     const md = new TextEncoder().encode(
       "---\nname: pdf-tools\ndescription: Mine.\n---\n# pdf-tools\n\nMine.\n",
     );
-    const up = await env.k.skills.createVersionFromFiles(env.orgId, env.bossId, {
+    const up = await env.k.app.get(SkillsService).createVersionFromFiles(env.orgId, env.bossId, {
       name: "pdf-tools",
       description: "Mine.",
       files: [{ path: "SKILL.md", size: md.byteLength, sha256: "x".repeat(64), data: md }],
@@ -496,7 +501,7 @@ describe("org plugin install: skill name conflicts (spec §9.2)", { timeout: 60_
   });
   const ownSkill = (name: string) => {
     const md = new TextEncoder().encode(SKILL_MD(name));
-    return env.k.skills.createVersionFromFiles(env.orgId, env.bossId, {
+    return env.k.app.get(SkillsService).createVersionFromFiles(env.orgId, env.bossId, {
       name,
       description: "Mine.",
       files: [{ path: "SKILL.md", size: md.byteLength, sha256: "x".repeat(64), data: md }],
@@ -600,7 +605,7 @@ describe("org plugin install: skill name conflicts (spec §9.2)", { timeout: 60_
 
   it("a skill created between planning and the skills step: the install fails at the skills step and rolls back", async () => {
     const appId = await seedPlugin(env, { name: "notes", templates: false, skills: ["notes"] });
-    const skills = env.k.skills;
+    const skills = env.k.app.get(SkillsService);
     const real = skills.createVersionFromFiles.bind(skills);
     const spy = vi.spyOn(skills, "createVersionFromFiles").mockImplementationOnce(async (...a) => {
       await ownSkill("notes");
@@ -930,7 +935,8 @@ describe("org plugin install: dependencies", { timeout: 60_000 }, () => {
       .select("object_prefix")
       .where("item_id", "=", broken)
       .executeTakeFirstOrThrow();
-    await env.k.storage
+    await env.k.app
+      .get(StorageService)
       .deployment()
       .put(`${v.object_prefix}skills/broken/run.py`, new TextEncoder().encode("tampered"), {
         contentType: "application/octet-stream",
@@ -1025,11 +1031,14 @@ describe("org plugin install: dependency races", { timeout: 60_000 }, () => {
     ) {
       const found = await original.apply(this, args);
       if (args[3] === true && del === undefined) {
-        // Inside the record transaction (org row locked): the uninstall starts and must wait
-        del = env.boss({
-          method: "DELETE",
-          url: `/api/v1/orgs/${env.orgId}/plugin-installs/${depId}`,
-        });
+        // Inside the record transaction (org row locked): the uninstall starts and must wait (a
+        // request of its own: outside this transaction's context, as a real concurrent request)
+        del = runOutsideTransaction(() =>
+          env.boss({
+            method: "DELETE",
+            url: `/api/v1/orgs/${env.orgId}/plugin-installs/${depId}`,
+          }),
+        );
         await new Promise((r) => setTimeout(r, 300));
       }
       return found;

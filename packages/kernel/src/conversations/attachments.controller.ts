@@ -1,15 +1,15 @@
 import { hasControlChars, MEDIA_NAME_MAX_CHARS } from "@capybara-hq/plugin-sdk";
-import { Body, Controller, Get, HttpCode, Inject, Param, Post, Res } from "@nestjs/common";
+import { Controller, Get, HttpCode, Inject, Param, Post, Res } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
-import { ATTACHMENTS } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import {
   ATTACHMENT_DOWNLOAD_CACHE_SECONDS,
   type AttachmentLimits,
-  type AttachmentsService,
+  AttachmentsService,
   type AttachmentView,
   type CreatedAttachment,
 } from "./attachments.service.js";
@@ -26,6 +26,8 @@ const CreateBody = z
   })
   .strict();
 
+class AttachmentCreateBodyDto extends createZodDto(CreateBody, "AttachmentCreateBody") {}
+
 /**
  * 对话附件（`/api/v1/orgs/:orgId/attachments`，`agents.use`，只接受人类用户）：
  * 1. `POST /` 登记并取预签名上传（`upload.method` 为 `POST` 时按 multipart 表单：先放 `fields`，最后放 `file`）；
@@ -37,7 +39,7 @@ const CreateBody = z
  */
 @Controller("api/v1/orgs/:orgId/attachments")
 export class AttachmentsController {
-  constructor(@Inject(ATTACHMENTS) private readonly attachments: AttachmentsService) {}
+  constructor(@Inject(AttachmentsService) private readonly attachments: AttachmentsService) {}
 
   @Get("limits")
   @OrgAction("agents.use")
@@ -51,7 +53,7 @@ export class AttachmentsController {
   async create(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Body(new ZodPipe(CreateBody)) body: z.infer<typeof CreateBody>,
+    @ZBody(AttachmentCreateBodyDto) body: z.infer<typeof CreateBody>,
   ): Promise<CreatedAttachment> {
     const p = requireUser(principal);
     return this.attachments.create(org.orgId, p.account.id, body);

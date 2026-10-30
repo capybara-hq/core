@@ -1,5 +1,7 @@
 import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
+import { KERNEL_BUS, REDIS } from "../infra/tokens.js";
 
 /** 中止广播的内核 bus 主题。 */
 export const RUN_ABORT_TOPIC = "run.abort";
@@ -40,10 +42,11 @@ const parseStored = (stored: string): RunAbortBy => {
  * 跨副本中止（spec 4.3「中止信号经 Redis 广播」）：`request` 先写标记键再广播；
  * `watch` 先订阅、再检查一次标记键，订阅之前发出的中止也不会丢。
  */
+@Injectable()
 export class RunAbort {
   constructor(
-    private readonly redis: Redis,
-    private readonly bus: ExtensionContext["bus"],
+    @Inject(REDIS) private readonly redis: Redis,
+    @Inject(KERNEL_BUS) private readonly bus: ExtensionContext["bus"],
   ) {}
 
   async request(runId: string, byAccountId: string | null, detail?: RunAbortDetail): Promise<void> {

@@ -2,18 +2,18 @@ import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import { takeSnapshot, toEvents } from "../../src/evals/snapshot.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
+import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { checkOrgAgent, currentAgentDefinition } from "../../src/runtime/subagents/org-agents.js";
 import { AGENT_REFUSALS } from "../../src/tools/builtins/agent.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -25,6 +25,7 @@ import {
   type Req,
   runConfig,
   session,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -119,9 +120,9 @@ const RULES: ScriptRule[] = [
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -142,7 +143,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
@@ -189,7 +190,7 @@ beforeEach(async () => {
       annotations: { readOnlyHint: true },
     })),
   };
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   for (const login of ["owner", "ana", "member", "outsider"] as const) {
     ids[login] = (await accounts.createLocal({ login, password: PW, displayName: login })).id;
   }
@@ -743,7 +744,7 @@ describe("replay (spec §15.3)", () => {
     const call = toEvents(snap)
       .filter((e) => e.type === "model_call")
       .at(-1) as ConversationEvent;
-    const info = (await k.runs.registry.resolve(SCRIPT)).info;
+    const info = (await k.app.get(ProviderRegistry).resolve(SCRIPT)).info;
     const base = reconstructRequest(snap, call.seq, { model: info });
     expect(base.drift).toEqual([]);
     const v2 = await db

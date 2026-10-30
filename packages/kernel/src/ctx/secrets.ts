@@ -1,6 +1,8 @@
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
 import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
 import type { Kysely } from "kysely";
+import type { KernelDb } from "../infra/database/kernel-db.js";
+import type { TransactionHost } from "../infra/database/transaction-host.js";
 import { assertNamespace } from "./namespace.js";
 
 const IV_LEN = 12;
@@ -184,9 +186,16 @@ export function createSecrets(db: AnyDb, keyring: Keyring, namespace: string): K
   };
 }
 
-/** 把非当前主密钥包装的数据密钥改用当前主密钥重新包装，返回处理条数。 */
-export async function rewrapDataKeys(db: AnyDb, keyring: Keyring): Promise<number> {
-  return db.transaction().execute(async (trx) => {
+/**
+ * 把非当前主密钥包装的数据密钥改用当前主密钥重新包装，返回处理条数。One transaction over the given
+ * handles (`KernelDb` + its `TransactionHost`, as `DatabaseModule` provides them).
+ */
+export async function rewrapDataKeys(
+  handles: { db: Pick<KernelDb, "db">; txHost: Pick<TransactionHost, "run"> },
+  keyring: Keyring,
+): Promise<number> {
+  return handles.txHost.run(async () => {
+    const trx: AnyDb = handles.db.db;
     const rows = await trx
       .withSchema("capybara")
       .selectFrom("org_data_keys")

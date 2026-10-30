@@ -22,11 +22,9 @@ import {
   type TestContainer,
   type TestS3,
 } from "@capybara-hq/testing";
-import { Queue } from "bullmq";
-import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { casePlans } from "../../src/evals/plan.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
@@ -38,8 +36,7 @@ import {
   replayableCalls,
   toEvents,
 } from "../../src/evals/snapshot.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import { MAINTENANCE_QUEUE_NAME, MARKETPLACES_REFRESH_JOB } from "../../src/runtime/maintenance.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, packFake } from "../helpers/plugin-packages.js";
@@ -54,15 +51,15 @@ import { bundlePlugin, mcpTemplate, SVG_ICON, skillPlugin, templatePlugin } from
  * official plugins: bootstrap fake-object-store (SeaweedFS), config-declared model-fake and
  * fake-connector (an MCP client, kind `fake`); a fake npm registry, a fake official marketplace
  * (`marketplaces.official.url` points at it) plus one enterprise marketplace, and a fake MCP server.
- * Everything goes through HTTP ("the maintenance job refreshes the enterprise marketplace" enqueues
- * a real `catalogs-refresh` job on the maintenance queue; in the rename regression the "old agent
- * version" and the "snapshot case" have no HTTP write path and are written to the DB directly, as
- * in the T22 / T3 tests).
+ * Everything goes through HTTP (the enterprise marketplace is refreshed on B through its refresh
+ * route, the same `MarketplacesService.refresh` the periodic `catalogs-refresh` job runs; in the
+ * rename regression the "old agent version" and the "snapshot case" have no HTTP write path and are
+ * written to the DB directly, as in the T22 / T3 tests).
  *
  * 1. Import (every plugin through prepare -> confirm): on A, a templates-only plugin from npm and a
  *    skills-only plugin from a file; on B, refresh the official marketplace and import an entry
- *    (fake-dep-provider, extension only); after the maintenance job refreshes the enterprise
- *    marketplace, A sees the new entries; importing an entry with a tampered integrity -> 502
+ *    (fake-dep-provider, extension only); after B refreshes the enterprise marketplace, A sees
+ *    the new entries; importing an entry with a tampered integrity -> 502
  *    `marketplace.integrity_mismatch`, nothing written;
  * 2. A plugin with every component: on A, import `fake-tools-ui` (its extension + a connector
  *    template + a skill, depending on fake-dep-provider already in the catalog) from the enterprise
@@ -168,7 +165,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
   let s3: TestS3;
   let h: Harness;
   let raw: ReturnType<typeof createDb>;
-  let db: KernelDb;
+  let db: KernelSchemaDb;
   let mcp: FakeMcpServer;
   let reg: FakeNpmRegistry;
   let official: FakeMarketplace;
@@ -337,7 +334,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     });
     raw = createDb(h.dbUrl, 3);
     db = kernelDb(raw);
-    const accounts = new AccountsService(db);
+    const accounts = accountsFor(db);
     ids.root = (
       await accounts.createLocal({
         login: "root",
@@ -469,7 +466,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
   const itemCount = async () =>
     (await db.selectFrom("catalog_items").select("id").execute()).length;
 
-  it("1. 导入：npm 模板、文件技能、官方清单插件、维护任务刷新企业清单；integrity 篡改被拒且什么都没写", async () => {
+  it("1. 导入：npm 模板、文件技能、官方清单插件、B 刷新企业清单；integrity 篡改被拒且什么都没写", async () => {
     // 配置声明的插件待批准（autoApprove 关闭），先批准
     await approve(0, "model-fake");
     await approve(1, "fake-connector");
@@ -521,7 +518,8 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     await ok("root", 1, "POST", "/api/v1/admin/extensions/fake-dep-provider/enable");
     await waitFor(() => loadedOnBoth("fake-dep-provider", "0.1.0"), 30_000, "counter on both", 100);
 
-    // 企业清单：加上后没刷新过、没有条目；维护任务刷新后 A 上能看到；清单再加条目，维护任务再刷新，A 上看到新条目
+    // An enterprise marketplace: no entries before its first refresh; after a refresh on B, A sees
+    // them; a new entry in the manifest shows on A after the next refresh
     const added = await ok("root", 1, "POST", "/api/v1/admin/marketplaces", {
       name: "Acme",
       url: acme.url,
@@ -535,30 +533,26 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
         }[]
       ).map((e) => e.name);
     expect(await entriesOnA()).toEqual([]);
-    const conn = new Redis(rdc.url, { maxRetriesPerRequest: null });
-    const maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: conn });
-    try {
-      const before = acme.requests.length;
-      await maint.add(MARKETPLACES_REFRESH_JOB, {});
-      await waitFor(
-        async () => (await entriesOnA()).includes("fake-tools-ui"),
-        30_000,
-        "maintenance refreshed the enterprise catalog",
-        200,
-      );
-      expect(acme.requests.length).toBeGreaterThan(before);
-      acme.setManifest(acmeManifest(true));
-      await maint.add(MARKETPLACES_REFRESH_JOB, {});
-      await waitFor(
-        async () => (await entriesOnA()).includes("tampered"),
-        30_000,
-        "new entry visible on A",
-        200,
-      );
-    } finally {
-      await maint.close();
-      conn.disconnect();
-    }
+    // The periodic refresh (`catalogs-refresh`, a @LockedInterval every refreshIntervalMinutes)
+    // runs MarketplacesService.refresh on one replica; B refreshes, A sees the result
+    const refreshOnB = () => ok("root", 1, "POST", `/api/v1/admin/marketplaces/${acmeId}/refresh`);
+    const before = acme.requests.length;
+    await refreshOnB();
+    await waitFor(
+      async () => (await entriesOnA()).includes("fake-tools-ui"),
+      30_000,
+      "a refresh on B updated the enterprise catalog",
+      200,
+    );
+    expect(acme.requests.length).toBeGreaterThan(before);
+    acme.setManifest(acmeManifest(true));
+    await refreshOnB();
+    await waitFor(
+      async () => (await entriesOnA()).includes("tampered"),
+      30_000,
+      "new entry visible on A",
+      200,
+    );
 
     // Tampered integrity: 502 marketplace.integrity_mismatch, nothing written
     const itemsBefore = await itemCount();

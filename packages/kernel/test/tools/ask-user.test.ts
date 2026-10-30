@@ -9,15 +9,14 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
 import { TOOLS_UNAVAILABLE_PREFIX } from "../../src/runtime/model-call.js";
 import { askUserTool } from "../../src/tools/builtins/ask-user.js";
 import { validateInput } from "../../src/tools/validate.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -30,10 +29,12 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForEvent,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { configFrom } from "../helpers/tools.js";
 
 /**
  * Task 10：内置工具 `ask_user`（用通用的输入请求机制实现）与输入请求 HTTP 接口。
@@ -51,7 +52,7 @@ const base = KernelConfigSchema.parse({
   marketplaces: { official: { enabled: false } },
 });
 const config = (): KernelConfig => base;
-const tool = () => askUserTool({ config });
+const tool = () => askUserTool({ config: configFrom(config) });
 
 const ctx = (resume?: ToolCallContext["resume"]): ToolCallContext => ({
   orgId: "o",
@@ -182,10 +183,10 @@ describe("ask_user（单元）", () => {
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let ka: Kernel;
-let kb: Kernel;
+let ka: TestKernel;
+let kb: TestKernel;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let reqA: Req;
 let reqB: Req;
 let orgId: string;
@@ -207,15 +208,15 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await kb?.stop();
-  await ka?.stop();
+  await kb?.close();
+  await ka?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
-  const owner = await new AccountsService(db).createLocal({
+  const owner = await accountsFor(db).createLocal({
     login: "owner",
     password: PW,
     displayName: "O",
@@ -344,7 +345,7 @@ describe("ask_user 端到端", () => {
     const agentId = await createDefaultAgent();
     const convId = await createConv(reqA, orgId, agentId);
     const { questionId } = await askedQuestion(convId, ASK);
-    const other = await new AccountsService(db).createLocal({
+    const other = await accountsFor(db).createLocal({
       login: "other",
       password: PW,
       displayName: "X",

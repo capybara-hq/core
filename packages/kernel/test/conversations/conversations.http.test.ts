@@ -4,19 +4,21 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { type Account, AccountsService } from "../../src/identity/accounts.js";
-import { ApiTokenService } from "../../src/identity/api-tokens.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
+import type { Account, AccountsService } from "../../src/identity/accounts.js";
+import type { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
+import { ToolOutputs } from "../../src/tools/outputs.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
+import { startKernel, type TestKernel } from "../helpers/runs.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let redis: Redis;
 let accounts: AccountsService;
@@ -28,7 +30,7 @@ const PW = "correct horse battery";
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  k = await createKernel(
+  k = await startKernel(
     KernelConfigSchema.parse({
       db: { url: pgc.url, poolMax: 5 },
       redis: { url: rd.url },
@@ -41,16 +43,15 @@ beforeAll(async () => {
     }),
     { env: {}, logger: createLogger("error", { write: () => {} }) },
   );
-  await k.start();
   raw = createDb(pgc.url, 5);
   const db = kernelDb(raw);
   redis = new Redis(rd.url);
-  accounts = new AccountsService(db);
+  accounts = accountsFor(db);
   members = testMembers(db);
-  tokens = new ApiTokenService(db);
+  tokens = apiTokensFor(db);
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -386,7 +387,7 @@ describe("工具输出存档（GET .../conversations/:id/outputs/:outputId）", 
     const agentId = await createAgent(req, orgId);
     const conv = await createConv(req, orgId, agentId);
     const content = Array.from({ length: 50 }, (_, i) => `line ${i}`).join("\n");
-    const saved = await k.tools.outputs.save({
+    const saved = await k.app.get(ToolOutputs).save({
       orgId,
       conversationId: conv.id,
       callId: "call_1",
@@ -435,7 +436,7 @@ describe("工具输出存档（GET .../conversations/:id/outputs/:outputId）", 
     const orgId = await createOrg(req);
     const agentId = await createAgent(req, orgId);
     const conv = await createConv(req, orgId, agentId);
-    const saved = await k.tools.outputs.save({
+    const saved = await k.app.get(ToolOutputs).save({
       orgId,
       conversationId: conv.id,
       callId: "call_1",
@@ -458,7 +459,7 @@ describe("工具输出存档（GET .../conversations/:id/outputs/:outputId）", 
     const agentId = await createAgent(ownerReq, orgId);
     const conv = await createConv(ownerReq, orgId, agentId);
     const otherConv = await createConv(ownerReq, orgId, agentId);
-    const saved = await k.tools.outputs.save({
+    const saved = await k.app.get(ToolOutputs).save({
       orgId,
       conversationId: conv.id,
       callId: "call_1",

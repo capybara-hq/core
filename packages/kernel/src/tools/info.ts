@@ -1,9 +1,12 @@
 import type { ToolSpec } from "@capybara-hq/plugin-sdk";
-import type { KernelDb } from "../db/kernel-schema.js";
+import { Inject, Injectable } from "@nestjs/common";
+import { ConversationAccess } from "../conversations/access.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
 import { UUID_RE } from "../ui/registry.js";
 import { KEY_SEPARATOR, toolKey } from "./naming.js";
-import type { ToolRegistry } from "./registry.js";
+import { ToolRegistry } from "./registry.js";
 
 /**
  * Tool presentation metadata for the conversation page (UI refresh B, design spec §6.16.9): the
@@ -49,7 +52,7 @@ export const TOOL_INFO_MAX_KEYS = 100;
 export const TOOL_INFO_KEY_MAX = 200;
 
 export interface ToolInfoDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   registry: Pick<ToolRegistry, "builtinSpecs" | "extensionToolSpecs">;
 }
 
@@ -142,14 +145,16 @@ export async function toolInfo(
   });
 }
 
-export interface ConversationToolInfoDeps extends ToolInfoDeps {
-  /** Conversation visibility (the same rule as the events API: `ConversationsService.isAccessible`). */
-  isAccessible(orgId: string, conversationId: string, viewerAccountId: string): Promise<boolean>;
-}
-
 /** `GET /conversations/:id/tools`: {@link toolInfo} for a conversation the viewer can read. */
+@Injectable()
 export class ConversationToolInfo {
-  constructor(private readonly d: ConversationToolInfoDeps) {}
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(ToolRegistry)
+    private readonly registry: Pick<ToolRegistry, "builtinSpecs" | "extensionToolSpecs">,
+    /** Conversation visibility (the same rule as the events API). */
+    @Inject(ConversationAccess) private readonly access: Pick<ConversationAccess, "isAccessible">,
+  ) {}
 
   async get(
     orgId: string,
@@ -159,10 +164,10 @@ export class ConversationToolInfo {
   ): Promise<ToolInfo[]> {
     if (
       !UUID_RE.test(conversationId) ||
-      !(await this.d.isAccessible(orgId, conversationId, viewerAccountId))
+      !(await this.access.isAccessible(orgId, conversationId, viewerAccountId))
     ) {
       throw new ApiError("conversation.not_found", "Conversation not found");
     }
-    return toolInfo(this.d, orgId, keys);
+    return toolInfo({ db: this.db.db, registry: this.registry }, orgId, keys);
   }
 }

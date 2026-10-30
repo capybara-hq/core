@@ -3,14 +3,12 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type AgentDefinition, AgentDefinitionSchema } from "../../src/agents/definition.js";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { type Account, AccountsService } from "../../src/identity/accounts.js";
-import { ApiTokenService } from "../../src/identity/api-tokens.js";
-import { SettingsService } from "../../src/identity/settings.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
+import type { Account } from "../../src/identity/accounts.js";
 import { createLogger } from "../../src/log.js";
-import { OrgsService } from "../../src/orgs/orgs.service.js";
+import { ModelPurposesService } from "../../src/models/purposes.js";
+import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { effectiveDefinition } from "../../src/runtime/subagents/definition.js";
 import { findType, type RosterEntry, resolveRoster } from "../../src/runtime/subagents/roster.js";
 import {
@@ -22,9 +20,11 @@ import {
   agentToolSpec,
 } from "../../src/tools/builtins/agent.js";
 import { isAlwaysLoaded } from "../../src/tools/builtins/tool-search.js";
-import { BUILTIN_TOOL_NAMES } from "../../src/tools/registry.js";
+import { BUILTIN_TOOL_NAMES, ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor, orgsFor } from "../helpers/identity.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
+import { startKernel, type TestKernel } from "../helpers/runs.js";
 
 /** The `agent` builtin tool: spec, description, results and refusals (sub-agents spec §4). */
 
@@ -353,9 +353,9 @@ describe("AGENT_REFUSALS (§4.5)", () => {
 describe("tool resolution", { timeout: 60_000 }, () => {
   let pgc: TestContainer;
   let rd: TestContainer;
-  let k: Kernel;
+  let k: TestKernel;
   let raw: ReturnType<typeof createDb>;
-  let db: KernelDb;
+  let db: KernelSchemaDb;
   let cfg: KernelConfig;
   let orgId: string;
   let owner: Account;
@@ -371,14 +371,13 @@ describe("tool resolution", { timeout: 60_000 }, () => {
       http: { port: 0 },
       ...MODEL_PLUGINS_CONFIG,
     });
-    k = await createKernel(cfg, { env: {}, logger: createLogger("error", { write: () => {} }) });
-    await k.start();
+    k = await startKernel(cfg, { env: {}, logger: createLogger("error", { write: () => {} }) });
     raw = createDb(pgc.url, 5);
     db = kernelDb(raw);
   }, 120_000);
 
   afterAll(async () => {
-    await k?.stop();
+    await k?.close();
     await raw?.destroy();
     await Promise.all([pgc?.stop(), rd?.stop()]);
   });
@@ -386,17 +385,12 @@ describe("tool resolution", { timeout: 60_000 }, () => {
   beforeEach(async () => {
     await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
     n++;
-    owner = await new AccountsService(db).createLocal({
+    owner = await accountsFor(db).createLocal({
       login: `owner${n}`,
       password: "correct horse battery",
       displayName: "O",
     });
-    orgId = (
-      await new OrgsService(db, new SettingsService(db), new ApiTokenService(db)).create(
-        { name: "Acme", slug: `acme-${n}` },
-        owner,
-      )
-    ).id;
+    orgId = (await orgsFor(db).create({ name: "Acme", slug: `acme-${n}` }, owner)).id;
   });
 
   const def = (over: Record<string, unknown> = {}): AgentDefinition =>
@@ -461,7 +455,7 @@ describe("tool resolution", { timeout: 60_000 }, () => {
         agents: [{ agentId: a, as: "analyst", description: "Data questions." }],
       },
     });
-    const { tools } = await k.tools.registry.forAgent(orgId, parent);
+    const { tools } = await k.app.get(ToolRegistry).forAgent(orgId, parent);
     const tool = tools.find((x) => x.key === "agent");
     expect(tool?.defaultPolicy).toBe("allow");
     expect(tool?.spec).toEqual(agentToolSpec(await resolveRoster(db, orgId, parent), 4));
@@ -474,7 +468,7 @@ describe("tool resolution", { timeout: 60_000 }, () => {
       ),
     ).toBe(true);
     // without subagents the tool lists general-purpose only
-    const plain = await k.tools.registry.forAgent(orgId, {
+    const plain = await k.app.get(ToolRegistry).forAgent(orgId, {
       tools: [{ kind: "builtin", name: "agent" }],
     });
     expect(plain.tools.map((x) => x.key)).toEqual(["agent"]);
@@ -482,7 +476,7 @@ describe("tool resolution", { timeout: 60_000 }, () => {
   });
 
   it("an empty roster offers no agent tool at all", async () => {
-    const r = await k.tools.registry.forAgent(orgId, {
+    const r = await k.app.get(ToolRegistry).forAgent(orgId, {
       tools: [
         { kind: "builtin", name: "read_tool_output" },
         { kind: "builtin", name: "agent" },
@@ -506,10 +500,15 @@ describe("tool resolution", { timeout: 60_000 }, () => {
     for (const type of ["general-purpose", "scout"]) {
       const entry = findType(roster, type) as RosterEntry;
       const child = await effectiveDefinition(
-        { db, purposes: k.purposes, registry: k.runs.registry, config: () => cfg },
+        {
+          db,
+          purposes: k.app.get(ModelPurposesService),
+          registry: k.app.get(ProviderRegistry),
+          config: { get: () => cfg },
+        },
         { orgId, parent, parentAgentId, entry },
       );
-      const { tools } = await k.tools.registry.forAgent(orgId, child.definition);
+      const { tools } = await k.app.get(ToolRegistry).forAgent(orgId, child.definition);
       expect(tools.map((x) => x.key)).toEqual(["read_tool_output"]);
     }
   });

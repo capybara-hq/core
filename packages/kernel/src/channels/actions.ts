@@ -4,14 +4,13 @@ import type {
   InboundEvent,
   InboundSender,
 } from "@capybara-hq/plugin-sdk";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError, type ErrorCode } from "../errors.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import type { ApprovalsService } from "../tools/approvals.service.js";
 import type { QuestionsService } from "../tools/questions.service.js";
 import type { ChannelConnectionRow, ChannelConnections } from "./connections.service.js";
-import type { ChannelOutboundScheduler } from "./inbound.js";
-import { idempotencyKey } from "./outbound.js";
+import { type ChannelJobs, idempotencyKey } from "./jobs.js";
 import { type ChannelLocale, type ChannelPhrase, phrase } from "./phrases.js";
 import { findThread, threadKeyOf } from "./threads.js";
 
@@ -28,11 +27,13 @@ export type SpeakerResolver = (
 ) => Promise<{ accountId: string; threadAccount: string | null } | undefined>;
 
 export interface ChannelCardActionsDeps {
-  db: KernelDb;
+  /** The context-aware kernel-schema handle (read at call time). */
+  readonly db: KernelSchemaDb;
   connections: Pick<ChannelConnections, "row" | "send">;
   approvals: Pick<ApprovalsService, "decide">;
   questions: Pick<QuestionsService, "answer">;
-  outbound: ChannelOutboundScheduler;
+  /** The delivery of the card's conversation. */
+  outbound: Pick<ChannelJobs, "enqueue">;
   resolveSpeaker: SpeakerResolver;
 }
 

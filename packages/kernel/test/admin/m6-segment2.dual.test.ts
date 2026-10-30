@@ -16,13 +16,13 @@ import {
 import { sql } from "kysely";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ensureAnonymousGuest } from "../../src/channels/threads.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { PLUGIN_UNLOADED_TOOL_ERROR } from "../../src/extensions/inflight.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { fakeSandboxMeta } from "../fixtures/plugins/sandbox-fake/index.js";
+import { anonymousGuestsFor } from "../helpers/channels.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, packFake, sandboxFakePkg } from "../helpers/plugin-packages.js";
 import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
@@ -83,7 +83,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
   let s3: TestS3;
   let h: Harness;
   let raw: ReturnType<typeof createDb>;
-  let db: KernelDb;
+  let db: KernelSchemaDb;
   let pluginsDir: string;
   let bootstrap: Awaited<ReturnType<typeof bootstrapFixture>>;
   let sandboxRoot: string;
@@ -235,7 +235,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     });
     raw = createDb(h.dbUrl, 3);
     db = kernelDb(raw);
-    await new AccountsService(db).createLocal({
+    await accountsFor(db).createLocal({
       login: "root",
       password: PW,
       displayName: "Root",
@@ -652,7 +652,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
   });
 
   it("7. 访客行改角色：409 member.anonymous_guest", async () => {
-    const guestId = await ensureAnonymousGuest(db, orgId);
+    const guestId = await anonymousGuestsFor(raw).ensure(orgId);
     for (const i of [0, 1] as const) {
       const r = await at(i, "PATCH", `${base}/members/${guestId}`, { role: "member" });
       expect(r.status, JSON.stringify(r.json)).toBe(409);

@@ -1,5 +1,4 @@
 import {
-  Body,
   Controller,
   Delete,
   Get,
@@ -9,28 +8,19 @@ import {
   Param,
   Patch,
   Post,
-  Query,
   Res,
 } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import { ModelRef } from "../agents/definition.js";
-import {
-  CONVERSATION_ARTIFACTS,
-  CONVERSATION_FILES,
-  CONVERSATION_OUTPUTS,
-  CONVERSATION_QUEUE,
-  CONVERSATION_SANDBOX,
-  CONVERSATION_TOOLS,
-  CONVERSATIONS,
-} from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { CONTROL_OR_HIDDEN_RE } from "../text.js";
 import { MAX_ATTACHMENTS } from "../tools/connector-content.js";
 import {
-  type ConversationToolInfo,
+  ConversationToolInfo,
   TOOL_INFO_KEY_MAX,
   TOOL_INFO_MAX_KEYS,
   type ToolInfo,
@@ -38,30 +28,27 @@ import {
 import {
   ARTIFACT_DOWNLOAD_CACHE_SECONDS,
   type ArtifactPreview,
-  type ConversationArtifacts,
+  ConversationArtifacts,
 } from "./artifacts.js";
 import {
   CONVERSATION_TITLE_MAX_CHARS,
   type ConversationGroup,
-  type ConversationsService,
+  ConversationsService,
   type ConversationView,
   type SubagentView,
   type UsageTotals,
 } from "./conversations.service.js";
 import type { ConversationEvent } from "./events.js";
 import {
-  type ConversationFiles,
+  ConversationFiles,
   FILE_CONTENT_MAX_BYTES,
   FILES_PAGE_MAX,
   type FileOutput,
 } from "./files.js";
-import {
-  type ConversationOutputs,
-  OUTPUT_PAGE_MAX_CHARS,
-  type OutputPage,
-} from "./outputs-read.js";
-import type { ConversationQueue, QueueItem, QueuePauseReason } from "./queue.js";
-import type { ConversationSandboxStatus, SandboxStatusView } from "./sandbox-status.js";
+import { ConversationOutputs, OUTPUT_PAGE_MAX_CHARS, type OutputPage } from "./outputs-read.js";
+import type { QueueItem, QueuePauseReason } from "./queue.js";
+import { ConversationQueue } from "./queue.service.js";
+import { ConversationSandboxStatus, type SandboxStatusView } from "./sandbox-status.js";
 
 const ListQuery = z.object({
   after: z.string().min(1).max(100).optional(),
@@ -226,6 +213,33 @@ const RenameBody = z
   })
   .strict();
 
+class ConversationCreateBodyDto extends createZodDto(CreateBody, "ConversationCreateBody") {}
+class ConversationRenameBodyDto extends createZodDto(RenameBody, "ConversationRenameBody") {}
+class ConversationListQueryDto extends createZodDto(ListQuery, "ConversationListQuery") {}
+class ConversationGroupsQueryDto extends createZodDto(GroupsQuery, "ConversationGroupsQuery") {}
+class ConversationEventsQueryDto extends createZodDto(EventsQuery, "ConversationEventsQuery") {}
+class ConversationSubagentsQueryDto extends createZodDto(
+  SubagentsQuery,
+  "ConversationSubagentsQuery",
+) {}
+class ConversationOutputQueryDto extends createZodDto(OutputQuery, "ConversationOutputQuery") {}
+class ConversationDownloadQueryDto extends createZodDto(
+  DownloadQuery,
+  "ConversationDownloadQuery",
+) {}
+class ConversationFilesQueryDto extends createZodDto(FilesQuery, "ConversationFilesQuery") {}
+class ConversationFileContentQueryDto extends createZodDto(
+  FileContentQuery,
+  "ConversationFileContentQuery",
+) {}
+class ConversationToolsQueryDto extends createZodDto(ToolsQuery, "ConversationToolsQuery") {}
+class ConversationMessageBodyDto extends createZodDto(MessageBody, "ConversationMessageBody") {}
+class ConversationQueueBodyDto extends createZodDto(QueueBody, "ConversationQueueBody") {}
+class ConversationQueueEditBodyDto extends createZodDto(
+  QueueEditBody,
+  "ConversationQueueEditBody",
+) {}
+
 /**
  * 会话（`/api/v1/orgs/:orgId/conversations`）：`agents.use`（访客以上），只接受人类用户；
  * 服务令牌 → 403 `forbidden`。只有会话所有者可见，其他人一律 `conversation.not_found`。
@@ -233,13 +247,13 @@ const RenameBody = z
 @Controller("api/v1/orgs/:orgId/conversations")
 export class ConversationsController {
   constructor(
-    @Inject(CONVERSATIONS) private readonly conversations: ConversationsService,
-    @Inject(CONVERSATION_OUTPUTS) private readonly outputs: ConversationOutputs,
-    @Inject(CONVERSATION_ARTIFACTS) private readonly artifacts: ConversationArtifacts,
-    @Inject(CONVERSATION_SANDBOX) private readonly sandboxStatus: ConversationSandboxStatus,
-    @Inject(CONVERSATION_TOOLS) private readonly toolInfo: ConversationToolInfo,
-    @Inject(CONVERSATION_QUEUE) private readonly queue: ConversationQueue,
-    @Inject(CONVERSATION_FILES) private readonly files: ConversationFiles,
+    @Inject(ConversationsService) private readonly conversations: ConversationsService,
+    @Inject(ConversationOutputs) private readonly outputs: ConversationOutputs,
+    @Inject(ConversationArtifacts) private readonly artifacts: ConversationArtifacts,
+    @Inject(ConversationSandboxStatus) private readonly sandboxStatus: ConversationSandboxStatus,
+    @Inject(ConversationToolInfo) private readonly toolInfo: ConversationToolInfo,
+    @Inject(ConversationQueue) private readonly queue: ConversationQueue,
+    @Inject(ConversationFiles) private readonly files: ConversationFiles,
   ) {}
 
   /** 201 when created; 200 when `message.clientMessageId` repeats an earlier first send. */
@@ -248,7 +262,7 @@ export class ConversationsController {
   async create(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Body(new ZodPipe(CreateBody)) body: z.infer<typeof CreateBody>,
+    @ZBody(ConversationCreateBodyDto) body: z.infer<typeof CreateBody>,
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<{ conversation: ConversationView; event?: ConversationEvent }> {
     const p = requireUser(principal);
@@ -278,7 +292,7 @@ export class ConversationsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
-    @Body(new ZodPipe(RenameBody)) body: z.infer<typeof RenameBody>,
+    @ZBody(ConversationRenameBodyDto) body: z.infer<typeof RenameBody>,
   ): Promise<{ conversation: ConversationView }> {
     const p = requireUser(principal);
     return {
@@ -292,7 +306,7 @@ export class ConversationsController {
   async list(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Query(new ZodPipe(ListQuery)) q: z.infer<typeof ListQuery>,
+    @ZQuery(ConversationListQueryDto) q: z.infer<typeof ListQuery>,
   ): Promise<{ conversations: ConversationView[]; next: string | null }> {
     const p = requireUser(principal);
     const rows = await this.conversations.listMine(org.orgId, p.account.id, {
@@ -315,7 +329,7 @@ export class ConversationsController {
   async groups(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Query(new ZodPipe(GroupsQuery)) q: z.infer<typeof GroupsQuery>,
+    @ZQuery(ConversationGroupsQueryDto) q: z.infer<typeof GroupsQuery>,
   ): Promise<{ groups: ConversationGroup[]; next: string | null }> {
     const p = requireUser(principal);
     return this.conversations.listGroups(org.orgId, p.account.id, {
@@ -343,7 +357,7 @@ export class ConversationsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
-    @Query(new ZodPipe(EventsQuery)) q: z.infer<typeof EventsQuery>,
+    @ZQuery(ConversationEventsQueryDto) q: z.infer<typeof EventsQuery>,
   ): Promise<{ events: ConversationEvent[] }> {
     const p = requireUser(principal);
     return {
@@ -363,7 +377,7 @@ export class ConversationsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
-    @Query(new ZodPipe(SubagentsQuery)) q: z.infer<typeof SubagentsQuery>,
+    @ZQuery(ConversationSubagentsQueryDto) q: z.infer<typeof SubagentsQuery>,
   ): Promise<{ subagents: SubagentView[]; next: string | null }> {
     const p = requireUser(principal);
     return this.conversations.listSubagents(org.orgId, id, p.account.id, {
@@ -399,7 +413,7 @@ export class ConversationsController {
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
     @Param("outputId") outputId: string,
-    @Query(new ZodPipe(OutputQuery)) q: z.infer<typeof OutputQuery>,
+    @ZQuery(ConversationOutputQueryDto) q: z.infer<typeof OutputQuery>,
   ): Promise<{ output: OutputPage }> {
     const p = requireUser(principal);
     return { output: await this.outputs.read(org.orgId, id, p.account.id, outputId, q) };
@@ -416,7 +430,7 @@ export class ConversationsController {
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
     @Param("artifactId") artifactId: string,
-    @Query(new ZodPipe(DownloadQuery)) q: z.infer<typeof DownloadQuery>,
+    @ZQuery(ConversationDownloadQueryDto) q: z.infer<typeof DownloadQuery>,
     @Res() reply: FastifyReply,
   ): Promise<void> {
     const p = requireUser(principal);
@@ -456,7 +470,7 @@ export class ConversationsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
-    @Query(new ZodPipe(FilesQuery)) q: z.infer<typeof FilesQuery>,
+    @ZQuery(ConversationFilesQueryDto) q: z.infer<typeof FilesQuery>,
   ): Promise<{ files: FileOutput[]; next: string | null }> {
     const p = requireUser(principal);
     return this.files.list(org.orgId, id, p.account.id, {
@@ -478,7 +492,7 @@ export class ConversationsController {
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
     @Param("fileId") fileId: string,
-    @Query(new ZodPipe(FileContentQuery)) q: z.infer<typeof FileContentQuery>,
+    @ZQuery(ConversationFileContentQueryDto) q: z.infer<typeof FileContentQuery>,
     @Res() reply: FastifyReply,
   ): Promise<void> {
     const p = requireUser(principal);
@@ -521,7 +535,7 @@ export class ConversationsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
-    @Query(new ZodPipe(ToolsQuery)) q: z.infer<typeof ToolsQuery>,
+    @ZQuery(ConversationToolsQueryDto) q: z.infer<typeof ToolsQuery>,
   ): Promise<{ tools: ToolInfo[] }> {
     const p = requireUser(principal);
     return { tools: await this.toolInfo.get(org.orgId, id, p.account.id, q.keys) };
@@ -534,7 +548,7 @@ export class ConversationsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
-    @Body(new ZodPipe(MessageBody)) body: z.infer<typeof MessageBody>,
+    @ZBody(ConversationMessageBodyDto) body: z.infer<typeof MessageBody>,
   ): Promise<{ event: ConversationEvent }> {
     const p = requireUser(principal);
     return {
@@ -577,7 +591,7 @@ export class ConversationsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
-    @Body(new ZodPipe(QueueBody)) body: z.infer<typeof QueueBody>,
+    @ZBody(ConversationQueueBodyDto) body: z.infer<typeof QueueBody>,
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<{ item: QueueItem | null; event?: ConversationEvent }> {
     const p = requireUser(principal);
@@ -615,7 +629,7 @@ export class ConversationsController {
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
     @Param("itemId") itemId: string,
-    @Body(new ZodPipe(QueueEditBody)) body: z.infer<typeof QueueEditBody>,
+    @ZBody(ConversationQueueEditBodyDto) body: z.infer<typeof QueueEditBody>,
   ): Promise<{ item: QueueItem }> {
     const p = requireUser(principal);
     return { item: await this.queue.edit(org.orgId, id, p.account.id, itemId, body.text) };

@@ -1,12 +1,10 @@
-import type { Transaction } from "kysely";
 import type { AppendEvent, EventLog } from "../../conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
-import type { KernelDatabase } from "../../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../db/kernel-schema.js";
 import { ApiError } from "../../errors.js";
 import type { SkillInvoker } from "../../skills/invoke.js";
 import { AGENT_STOPPED_WITH_RUN_TEXT } from "../../tools/builtins/agent.js";
-import { subagentsWait } from "../../tools/pipeline.js";
-import type { LoopContext, WaitingFor } from "../loop.js";
+import { type LoopContext, subagentsWait, type WaitingFor } from "../loop.js";
 import { TERMINAL_STATUSES } from "../run-finish.js";
 import { childResult, type DispatchRow, dispatchOfCall, finishedEvent } from "./child.js";
 import { type DispatchDeps, dispatchSubagent } from "./dispatch.js";
@@ -20,8 +18,6 @@ import { type DispatchDeps, dispatchSubagent } from "./dispatch.js";
  * sweep) pairs a fork invocation without a report ({@link pairStoppedForks}), so the log never holds
  * a fork lead whose report is missing before the next model call.
  */
-
-type KernelTrx = Transaction<KernelDatabase>;
 
 /** The dispatch's parent call id (no `:`; there is no tool call). */
 export const skillCallId = (seq: number): string => `skill-${seq}`;
@@ -219,7 +215,7 @@ export async function advanceSkillForks(
 
 const suspend = (d: Pick<DispatchDeps, "config">, ctx: LoopContext): SkillForkStep => ({
   kind: "suspend",
-  waitingFor: subagentsWait(ctx.runId, FORK_STEP, d.config()),
+  waitingFor: subagentsWait(ctx.runId, FORK_STEP, d.config.get()),
 });
 
 /** The live handler for the loop (`LoopDeps.skillForks`). */
@@ -259,7 +255,7 @@ export const recordedSkillForks = (
 });
 
 /**
- * In the transaction `t` of a run's terminal path (or the wait sweep): the run's fork invocation
+ * In the transaction of a run's terminal path (or the wait sweep): the run's fork invocation
  * (its trigger message, by the run boundary) without a report gets one now: the ended child's
  * result (and the parent's missing `subagent_finished`), {@link AGENT_STOPPED_WITH_RUN_TEXT} for a
  * child still active (the caller stops it after its commit, as for `agent` calls), or
@@ -267,7 +263,8 @@ export const recordedSkillForks = (
  * (`skill-<seq>`) and the highest seq; the caller notifies after its commit.
  */
 export async function pairStoppedForks(
-  t: KernelTrx,
+  /** The caller's transaction (the context's handle). */
+  t: KernelSchemaDb,
   eventLog: EventLog,
   runId: string,
 ): Promise<{ callIds: string[]; toSeq: number | null }> {
@@ -343,6 +340,6 @@ export async function pairStoppedForks(
       ),
     );
   }
-  const out = await eventLog.append(conversationId, events, t);
+  const out = await eventLog.appendIn(conversationId, events);
   return { callIds: [callId], toSeq: Math.max(...out.map((e) => e.seq)) };
 }

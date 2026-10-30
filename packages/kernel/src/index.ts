@@ -1,4 +1,12 @@
 export { SetupService } from "./admin/setup.service.js";
+export {
+  closeKernelApp,
+  createKernelApp,
+  type KernelAppOptions,
+  kernelAppHttp,
+  kernelAppPort,
+  startKernelApp,
+} from "./app.js";
 export { type CatalogCli, openCatalogCli } from "./catalog/cli.js";
 // The git reader marketplaces use; core's check:bootstrap reads the official marketplace with it.
 export {
@@ -59,7 +67,7 @@ export {
   type Keyring,
   rewrapDataKeys,
 } from "./ctx/secrets.js";
-export { type KernelDatabase, type KernelDb, kernelDb } from "./db/kernel-schema.js";
+export { type KernelDatabase, type KernelSchemaDb, kernelDb } from "./db/kernel-schema.js";
 export { type MigrationOwner, migrate } from "./db/migrator.js";
 export { createDb } from "./db/pool.js";
 export {
@@ -70,7 +78,7 @@ export {
   splitSqlStatements,
 } from "./db/sql-statements.js";
 export { ApiError, ERROR_CODES, type ErrorCode } from "./errors.js";
-export { ExtensionAdminOps, type ExtensionAdminOpsDeps } from "./extensions/admin-ops.js";
+export { ExtensionAdminOps } from "./extensions/admin-ops.js";
 export { ExtensionAdmin, PLUGINS_CHANGED_TOPIC } from "./extensions/admin-view.js";
 export {
   type ApprovalDecision,
@@ -95,7 +103,6 @@ export {
   type BootstrapResolveOptions,
   type BootstrapResult,
   BootstrapService,
-  type BootstrapServiceDeps,
   bootstrapManifestSha256,
   readBootstrapManifest,
   resolveBootstrapPackages,
@@ -147,8 +154,6 @@ export {
 } from "./extensions/instance.js";
 export {
   ExtensionLifecycle,
-  type ExtensionLifecycleDeps,
-  type LifecycleHost,
   PLUGINS_RECONCILE_JOB,
   PLUGINS_RECONCILE_TOPIC,
 } from "./extensions/lifecycle.js";
@@ -201,14 +206,8 @@ export {
   ReplicaStatusStore,
 } from "./extensions/sources.js";
 export { syncPackage } from "./extensions/sync.js";
-export {
-  type CreateHttpAppOptions,
-  createHttpApp,
-  type HealthOptions,
-  type KernelHttp,
-  type KernelHttpApp,
-} from "./http/app.js";
-export { type Account, AccountsService } from "./identity/accounts.js";
+export type { KernelHttp, KernelHttpApp } from "./http/app.js";
+export { type Account, AccountsModule, AccountsService } from "./identity/accounts.js";
 export { type ApiTokenRecord, ApiTokenService } from "./identity/api-tokens.js";
 export { audit } from "./identity/audit.js";
 export { normalizeLogin, validatePassword } from "./identity/login.js";
@@ -224,14 +223,22 @@ export {
   SettingsService,
 } from "./identity/settings.js";
 export {
-  createKernel,
-  KERNEL_MIGRATIONS_DIR,
-  KERNEL_SCHEMA,
-  type Kernel,
-  type KernelOptions,
-  type KernelRuns,
-  migrateAll,
-} from "./kernel.js";
+  type KernelCliOptions,
+  openKernelCli,
+  openKernelCliOverPool,
+} from "./infra/cli/kernel-cli.module.js";
+export {
+  GUARD_CIRCUIT_LIMIT,
+  GUARD_CIRCUIT_WINDOW_MS,
+  installProcessGuards,
+  type ProcessGuardDeps,
+} from "./infra/lifecycle/process-guards.js";
+export {
+  handleShutdownSignals,
+  type ShutdownSignalHandle,
+  type ShutdownSignalOptions,
+} from "./infra/lifecycle/shutdown-signals.js";
+export { KERNEL_MIGRATIONS_DIR, KERNEL_SCHEMA, migrateAll } from "./kernel.js";
 export {
   createLogger,
   type KernelLogger,
@@ -254,6 +261,7 @@ export {
   withLogContext,
 } from "./log-context.js";
 export { type Org, OrgsService } from "./orgs/orgs.service.js";
+export type { KernelOverride } from "./overrides.js";
 export {
   fetchNpmPackage,
   IntegrityMismatchError,
@@ -263,23 +271,26 @@ export {
 } from "./packages/npm.js";
 export { UNKNOWN_RESULT_TEXT } from "./runtime/context/pairing.js";
 export type { AgentLoop, LoopContext, LoopOutcome } from "./runtime/loop.js";
-export { MAINTENANCE_QUEUE_NAME } from "./runtime/maintenance.js";
+export { MAINTENANCE_QUEUE_NAME } from "./runtime/maintenance-queue.js";
 export { runJobId } from "./runtime/run-queue.js";
 export {
   SANDBOX_DESTROY_JOB,
   SANDBOX_SUSPEND_JOB,
-} from "./sandbox/lifecycle.js";
+} from "./sandbox/jobs.js";
 export {
   SANDBOX_LOCK_TTL_MS,
   SandboxService,
-  type SandboxServiceDeps,
   type SandboxUseInfo,
 } from "./sandbox/sandbox.service.js";
 export {
   MAX_STORAGE_KEY_BYTES,
   StorageKeyError,
 } from "./storage/prefix.js";
-export { StorageService, type StorageServiceDeps } from "./storage/storage.service.js";
+export {
+  PrefixedStorage,
+  StorageService,
+  type StorageSource,
+} from "./storage/storage.service.js";
 export {
   SANDBOX_RECREATED_NOTICE,
   SANDBOX_STARTED_NOTICE,

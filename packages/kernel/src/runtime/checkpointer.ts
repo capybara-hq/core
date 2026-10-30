@@ -16,8 +16,11 @@ import {
   WRITES_IDX_MAP,
   writesSortKey,
 } from "@langchain/langgraph-checkpoint";
+import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
-import type { KernelDb } from "../db/kernel-schema.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
 
 interface CheckpointRow {
   thread_id: string;
@@ -28,6 +31,19 @@ interface CheckpointRow {
   checkpoint: Uint8Array;
   metadata_type: string;
   metadata: Uint8Array;
+}
+
+/** A `lg_checkpoint_writes` row. */
+interface WriteRow {
+  thread_id: string;
+  checkpoint_ns: string;
+  checkpoint_id: string;
+  task_id: string;
+  idx: number;
+  channel: string;
+  value_type: string;
+  value: Buffer;
+  task_path: string;
 }
 
 const CHECKPOINT_COLUMNS = [
@@ -52,9 +68,18 @@ const idC = sql<string>`checkpoint_id collate "C"`;
  * - thread_id 约定为 runId。
  * - 所有状态都在 PG 里，不持有进程内状态，任意副本都能续跑。
  */
+@Injectable()
 export class KyselyCheckpointSaver extends BaseCheckpointSaver {
-  constructor(private readonly db: KernelDb) {
+  constructor(
+    @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {
     super();
+  }
+
+  /** The context's handle (the transaction of a `@Transactional` method, else the pool). */
+  private get db() {
+    return this.kdb.db;
   }
 
   async getTuple(config: RunnableConfig): Promise<CheckpointTuple | undefined> {
@@ -184,37 +209,39 @@ export class KyselyCheckpointSaver extends BaseCheckpointSaver {
     // 特殊 channel（错误、中断等，idx < 0）以最后一次为准；普通 write 已存在则保留先写入的。
     const special = rows.filter((r) => r.idx < 0);
     const regular = rows.filter((r) => r.idx >= 0);
-    const key = ["thread_id", "checkpoint_ns", "checkpoint_id", "task_id", "idx"] as const;
-    await this.db.transaction().execute(async (trx) => {
-      if (regular.length > 0) {
-        await trx
-          .insertInto("lg_checkpoint_writes")
-          .values(regular)
-          .onConflict((oc) => oc.columns(key).doNothing())
-          .execute();
-      }
-      if (special.length > 0) {
-        await trx
-          .insertInto("lg_checkpoint_writes")
-          .values(special)
-          .onConflict((oc) =>
-            oc.columns(key).doUpdateSet((eb) => ({
-              channel: eb.ref("excluded.channel"),
-              value_type: eb.ref("excluded.value_type"),
-              value: eb.ref("excluded.value"),
-              task_path: eb.ref("excluded.task_path"),
-            })),
-          )
-          .execute();
-      }
-    });
+    await this.insertWrites(regular, special);
   }
 
+  @Transactional({ propagation: "requires_new" })
+  private async insertWrites(regular: WriteRow[], special: WriteRow[]): Promise<void> {
+    const key = ["thread_id", "checkpoint_ns", "checkpoint_id", "task_id", "idx"] as const;
+    if (regular.length > 0) {
+      await this.db
+        .insertInto("lg_checkpoint_writes")
+        .values(regular)
+        .onConflict((oc) => oc.columns(key).doNothing())
+        .execute();
+    }
+    if (special.length > 0) {
+      await this.db
+        .insertInto("lg_checkpoint_writes")
+        .values(special)
+        .onConflict((oc) =>
+          oc.columns(key).doUpdateSet((eb) => ({
+            channel: eb.ref("excluded.channel"),
+            value_type: eb.ref("excluded.value_type"),
+            value: eb.ref("excluded.value"),
+            task_path: eb.ref("excluded.task_path"),
+          })),
+        )
+        .execute();
+    }
+  }
+
+  @Transactional({ propagation: "requires_new" })
   async deleteThread(threadId: string): Promise<void> {
-    await this.db.transaction().execute(async (trx) => {
-      await trx.deleteFrom("lg_checkpoint_writes").where("thread_id", "=", threadId).execute();
-      await trx.deleteFrom("lg_checkpoints").where("thread_id", "=", threadId).execute();
-    });
+    await this.db.deleteFrom("lg_checkpoint_writes").where("thread_id", "=", threadId).execute();
+    await this.db.deleteFrom("lg_checkpoints").where("thread_id", "=", threadId).execute();
   }
 
   /**
@@ -223,31 +250,31 @@ export class KyselyCheckpointSaver extends BaseCheckpointSaver {
    * 读出最新与删除之间并发写入的更新 checkpoint 不会被误删（R20）。返回删除的 checkpoint 条数。其他命名空间（子图）不动。
    * 保留下来的 checkpoint 的 parent_checkpoint_id 原样保留（父 checkpoint 已不存在）。
    */
+  @Transactional({ propagation: "requires_new" })
   async pruneToLatest(threadId: string): Promise<number> {
-    return this.db.transaction().execute(async (trx) => {
-      const latest = await trx
-        .selectFrom("lg_checkpoints")
-        .select("checkpoint_id")
-        .where("thread_id", "=", threadId)
-        .where("checkpoint_ns", "=", "")
-        .orderBy(sql`${idC} desc`)
-        .limit(1)
-        .executeTakeFirst();
-      if (!latest) return 0;
-      await trx
-        .deleteFrom("lg_checkpoint_writes")
-        .where("thread_id", "=", threadId)
-        .where("checkpoint_ns", "=", "")
-        .where(idC, "<", latest.checkpoint_id)
-        .execute();
-      const res = await trx
-        .deleteFrom("lg_checkpoints")
-        .where("thread_id", "=", threadId)
-        .where("checkpoint_ns", "=", "")
-        .where(idC, "<", latest.checkpoint_id)
-        .executeTakeFirst();
-      return Number(res.numDeletedRows);
-    });
+    const db = this.db;
+    const latest = await db
+      .selectFrom("lg_checkpoints")
+      .select("checkpoint_id")
+      .where("thread_id", "=", threadId)
+      .where("checkpoint_ns", "=", "")
+      .orderBy(sql`${idC} desc`)
+      .limit(1)
+      .executeTakeFirst();
+    if (!latest) return 0;
+    await db
+      .deleteFrom("lg_checkpoint_writes")
+      .where("thread_id", "=", threadId)
+      .where("checkpoint_ns", "=", "")
+      .where(idC, "<", latest.checkpoint_id)
+      .execute();
+    const res = await db
+      .deleteFrom("lg_checkpoints")
+      .where("thread_id", "=", threadId)
+      .where("checkpoint_ns", "=", "")
+      .where(idC, "<", latest.checkpoint_id)
+      .executeTakeFirst();
+    return Number(res.numDeletedRows);
   }
 
   private async toTuple(

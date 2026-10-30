@@ -1,14 +1,14 @@
-import { Body, Controller, Get, HttpCode, Inject, Param, Post, Query } from "@nestjs/common";
+import { Controller, Get, HttpCode, Inject, Param, Post } from "@nestjs/common";
 import { z } from "zod";
-import { CONNECTOR_CONTENT } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import type {
+import {
   ConnectorContent,
-  ConnectorPromptView,
-  ConnectorResourceView,
-  ConnectorUnavailable,
+  type ConnectorPromptView,
+  type ConnectorResourceView,
+  type ConnectorUnavailable,
 } from "./connector-content.js";
 
 const PromptBody = z
@@ -22,6 +22,9 @@ const PromptBody = z
 
 const ResourcesQuery = z.object({ query: z.string().max(200).optional() });
 
+class ConnectorPromptBody extends createZodDto(PromptBody, "ConnectorPromptBody") {}
+class ConnectorResourcesQuery extends createZodDto(ResourcesQuery, "ConnectorResourcesQuery") {}
+
 /**
  * 连接器内容（`/api/v1/orgs/:orgId/connectors/...`）：网页输入框的 `/` 斜杠命令（prompts）与 `@` 资源引用。
  * 都是 `connectors.use`、仅限用户主体，以发起人自己的凭据访问连接器（个人连接器须已连接）。
@@ -29,7 +32,7 @@ const ResourcesQuery = z.object({ query: z.string().max(200).optional() });
  */
 @Controller("api/v1/orgs/:orgId/connectors")
 export class ConnectorContentController {
-  constructor(@Inject(CONNECTOR_CONTENT) private readonly content: ConnectorContent) {}
+  constructor(@Inject(ConnectorContent) private readonly content: ConnectorContent) {}
 
   /** 发起人可用的提示模板；缺凭据 / 连不上的连接器列在 `unavailable`。 */
   @Get("prompts")
@@ -48,7 +51,7 @@ export class ConnectorContentController {
   async resources(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Query(new ZodPipe(ResourcesQuery)) q: z.infer<typeof ResourcesQuery>,
+    @ZQuery(ConnectorResourcesQuery) q: z.infer<typeof ResourcesQuery>,
   ): Promise<{ resources: ConnectorResourceView[]; unavailable: ConnectorUnavailable[] }> {
     const p = requireUser(principal);
     return this.content.listResources(org.orgId, p.account.id, q.query);
@@ -63,7 +66,7 @@ export class ConnectorContentController {
     @CurrentOrg() org: OrgContext,
     @Param("connectorId") connectorId: string,
     @Param("name") name: string,
-    @Body(new ZodPipe(PromptBody)) body: z.infer<typeof PromptBody>,
+    @ZBody(ConnectorPromptBody) body: z.infer<typeof PromptBody>,
   ): Promise<{ text: string }> {
     const p = requireUser(principal);
     return this.content.getPrompt(org.orgId, connectorId, name, body.arguments, p.account.id);

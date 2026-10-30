@@ -1,15 +1,17 @@
 import { randomUUID } from "node:crypto";
-import type { Logger } from "@capybara-hq/plugin-sdk";
-import { type Selectable, sql, type Transaction } from "kysely";
-import type { KernelConfig } from "../config/schema.js";
-import type { EventLog } from "../conversations/event-log.js";
-import type { ApprovalsTable, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import { Inject, Injectable } from "@nestjs/common";
+import { type Selectable, sql } from "kysely";
+import { EventLog } from "../conversations/event-log.js";
+import type { ApprovalsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KernelEvents } from "../infra/events/kernel-events.js";
 import { ORG_ROLES, type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import type { ApprovalPolicySource } from "./pipeline.js";
-
-type Trx = Transaction<KernelDatabase>;
 
 export { APPROVAL_DENY_REASON_MAX_CHARS } from "../conversations/events.js";
 
@@ -100,18 +102,6 @@ export interface ToolGrantView {
   createdAt: string;
 }
 
-export interface ApprovalsServiceDeps {
-  db: KernelDb;
-  eventLog: EventLog;
-  config: () => KernelConfig;
-  log: Pick<Logger, "warn">;
-  /**
-   * 决定提交之后调用（恰好一次：只有赢得行锁、把 pending 改掉的那次决定会调用），内核接入续跑。
-   * 默认空操作；失败只记日志（决定已生效，超时任务到点时会再尝试续跑）。
-   */
-  onDecided?: (approval: ApprovalRecord) => Promise<void>;
-}
-
 const notFound = () => new ApiError("approval.not_found", "Approval not found");
 const iso = (v: Date | string): string => new Date(v).toISOString();
 const isRole = (v: string | null): v is OrgRole =>
@@ -165,9 +155,21 @@ function canHandle(
 /**
  * 工具调用审批：新建（loop 调用）、列出 / 查看 / 处理（HTTP），以及「以后都允许」授权的查看与撤销。
  * 状态全部在 PG：处理决定在事务里 `SELECT … FOR UPDATE` 审批行，多副本并发处理同一审批时恰好一个生效。
+ *
+ * A decision is announced after the commit as the domain event `approval.decided` (exactly once:
+ * only the decision that changed the row from pending), which the run's waits follow to resume it
+ * (spec §3b; the wait sweep resumes a run whose resume was lost). Events are appended in the
+ * context's transaction (`EventLog.appendIn`) and published after the commit.
  */
+@Injectable()
 export class ApprovalsService {
-  constructor(private readonly deps: ApprovalsServiceDeps) {}
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Inject(EventLog) private readonly eventLog: Pick<EventLog, "appendIn" | "notify">,
+    @Inject(KernelEvents) private readonly events: Pick<KernelEvents, "emit">,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {}
 
   /**
    * 新建 pending 审批（`expires_at` = 现在 + `tools.approvalTimeoutHours`）并写 `approval_requested`，同一事务。
@@ -177,77 +179,78 @@ export class ApprovalsService {
     if (input.requestedFor === null && input.approverRole === null) {
       throw new Error("approval requires requestedFor or approverRole");
     }
-    const { db, eventLog, config } = this.deps;
-    const hours = config().tools.approvalTimeoutHours;
-    const { record, toSeq } = await db.transaction().execute(async (t) => {
-      // Lock the conversation row (the append's lock) before inserting the approval: the insert's
-      // foreign key check takes FOR KEY SHARE on that row, and two requests that each held it and
-      // then asked for the append's FOR UPDATE waited for each other (40P01)
-      await t
-        .selectFrom("conversations")
-        .select("id")
-        .where("id", "=", input.conversationId)
-        .forUpdate()
-        .execute();
-      await t
-        .insertInto("approvals")
-        .values({
-          id: randomUUID(),
-          org_id: input.orgId,
-          conversation_id: input.conversationId,
-          run_id: input.runId,
-          call_id: input.callId,
-          attempt: input.attempt ?? 1,
-          tool_key: input.toolKey,
-          spec_hash: input.specHash,
-          connector_id: input.connectorId,
-          input: JSON.stringify(input.input ?? {}),
-          requested_for: input.requestedFor,
-          approver_role: input.approverRole,
-          scope: null,
-          decided_by: null,
-          expires_at: sql<Date>`now() + ${hours}::integer * interval '1 hour'`,
-        })
-        .onConflict((oc) => oc.columns(["run_id", "call_id", "attempt"]).doNothing())
-        .execute();
-      const row = await t
-        .selectFrom("approvals")
-        .selectAll()
-        .where("run_id", "=", input.runId)
-        .where("call_id", "=", input.callId)
-        .where("attempt", "=", input.attempt ?? 1)
-        .executeTakeFirstOrThrow();
-      const rec = toRecord(row);
-      const written = await eventLog.append(
-        rec.conversationId,
-        [
-          {
-            type: "approval_requested",
-            runId: rec.runId,
-            idemKey: `approval_requested:${rec.id}`,
-            payload: {
-              step: input.step,
-              callId: rec.callId,
-              approvalId: rec.id,
-              toolKey: rec.toolKey,
-              expiresAt: rec.expiresAt,
-              ...(input.policy !== undefined && { policy: input.policy }),
-            },
-          },
-        ],
-        t,
-      );
-      return { record: rec, toSeq: Math.max(...written.map((e) => e.seq)) };
-    });
-    await eventLog.notify(record.conversationId, toSeq);
+    const { record, toSeq } = await this.requestIn(input);
+    await this.eventLog.notify(record.conversationId, toSeq);
     return record;
+  }
+
+  @Transactional()
+  private async requestIn(
+    input: ApprovalRequestInput,
+  ): Promise<{ record: ApprovalRecord; toSeq: number }> {
+    const hours = this.config.get().tools.approvalTimeoutHours;
+    const t = this.db.db;
+    // Lock the conversation row (the append's lock) before inserting the approval: the insert's
+    // foreign key check takes FOR KEY SHARE on that row, and two requests that each held it and
+    // then asked for the append's FOR UPDATE waited for each other (40P01)
+    await t
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", input.conversationId)
+      .forUpdate()
+      .execute();
+    await t
+      .insertInto("approvals")
+      .values({
+        id: randomUUID(),
+        org_id: input.orgId,
+        conversation_id: input.conversationId,
+        run_id: input.runId,
+        call_id: input.callId,
+        attempt: input.attempt ?? 1,
+        tool_key: input.toolKey,
+        spec_hash: input.specHash,
+        connector_id: input.connectorId,
+        input: JSON.stringify(input.input ?? {}),
+        requested_for: input.requestedFor,
+        approver_role: input.approverRole,
+        scope: null,
+        decided_by: null,
+        expires_at: sql<Date>`now() + ${hours}::integer * interval '1 hour'`,
+      })
+      .onConflict((oc) => oc.columns(["run_id", "call_id", "attempt"]).doNothing())
+      .execute();
+    const row = await t
+      .selectFrom("approvals")
+      .selectAll()
+      .where("run_id", "=", input.runId)
+      .where("call_id", "=", input.callId)
+      .where("attempt", "=", input.attempt ?? 1)
+      .executeTakeFirstOrThrow();
+    const rec = toRecord(row);
+    const written = await this.eventLog.appendIn(rec.conversationId, [
+      {
+        type: "approval_requested",
+        runId: rec.runId,
+        idemKey: `approval_requested:${rec.id}`,
+        payload: {
+          step: input.step,
+          callId: rec.callId,
+          approvalId: rec.id,
+          toolKey: rec.toolKey,
+          expiresAt: rec.expiresAt,
+          ...(input.policy !== undefined && { policy: input.policy }),
+        },
+      },
+    ]);
+    return { record: rec, toSeq: Math.max(...written.map((e) => e.seq)) };
   }
 
   /** 当前用户能处理的审批（新的在前，最多 {@link APPROVALS_LIST_MAX} 条）；`status` 缺省为全部。 */
   async list(orgId: string, accountId: string, status?: ApprovalStatus): Promise<ApprovalView[]> {
-    const role = await this.roleOf(this.deps.db, orgId, accountId);
+    const role = await this.roleOf(orgId, accountId);
     const roles = role === null ? [] : ORG_ROLES.filter((r) => roleAtLeast(role, r));
-    let q = this.deps.db
+    let q = this.db
       .selectFrom("approvals")
       .innerJoin("runs", "runs.id", "approvals.run_id")
       .selectAll("approvals")
@@ -274,7 +277,7 @@ export class ApprovalsService {
 
   /** 详情；当前用户不能处理的一律 `approval.not_found`（不泄露存在）。 */
   async get(orgId: string, id: string, accountId: string): Promise<ApprovalView> {
-    const row = await this.deps.db
+    const row = await this.db
       .selectFrom("approvals")
       .innerJoin("runs", "runs.id", "approvals.run_id")
       .selectAll("approvals")
@@ -283,7 +286,7 @@ export class ApprovalsService {
       .where("approvals.org_id", "=", orgId)
       .executeTakeFirst();
     if (!row) throw notFound();
-    const role = await this.roleOf(this.deps.db, orgId, accountId);
+    const role = await this.roleOf(orgId, accountId);
     const rec = toRecord(row);
     if (!canHandle(rec, row.trigger_account_id, accountId, role)) throw notFound();
     const [view] = await this.views([rec]);
@@ -304,147 +307,155 @@ export class ApprovalsService {
     body: DecisionInput,
     actorTokenId?: string,
   ): Promise<ApprovalRecord> {
-    const { db, eventLog } = this.deps;
-    const { record, toSeq } = await db.transaction().execute(async (t) => {
-      const locked = await t
-        .selectFrom("approvals")
-        .selectAll()
-        .select(sql<boolean>`expires_at <= now()`.as("expired"))
-        .where("id", "=", id)
-        .where("org_id", "=", orgId)
-        .forUpdate()
-        .executeTakeFirst();
-      if (!locked) throw notFound();
-      const ctx = await t
-        .selectFrom("runs")
-        .innerJoin("conversations", "conversations.id", "runs.conversation_id")
-        .select([
-          "runs.trigger_account_id",
-          "conversations.agent_id",
-          "conversations.parent_conversation_id",
-        ])
-        .where("runs.id", "=", locked.run_id)
-        .executeTakeFirstOrThrow();
-      const before = toRecord(locked);
-      const role = await this.roleOf(t, orgId, accountId);
-      if (!canHandle(before, ctx.trigger_account_id, accountId, role)) throw notFound();
-      if (before.status !== "pending") {
-        throw new ApiError("approval.already_decided", "Approval has already been decided");
-      }
-      if (locked.expired) {
-        throw new ApiError("approval.already_decided", "Approval has expired");
-      }
-      const approved = body.decision === "approve";
-      const reason = approved ? undefined : body.reason?.trim() || undefined;
-      const scope: ApprovalScope | null = approved ? (body.scope ?? "once") : null;
-      // 按角色升级的批准只对这一次有效：授权记在发起人名下会让其以后绕过角色要求
-      if (scope !== null && scope !== "once" && before.requestedFor === null) {
-        throw new ApiError(
-          "validation_failed",
-          'Only scope "once" is allowed for role-escalated approvals',
-          [{ path: "scope", message: 'Only "once" is allowed for role-escalated approvals' }],
-        );
-      }
-      const updated = await t
-        .updateTable("approvals")
-        .set({
-          status: approved ? "approved" : "denied",
-          scope,
-          decided_by: accountId,
-          decided_at: sql<Date>`now()`,
-          deny_reason: reason ?? null,
-        })
-        .where("id", "=", id)
-        .returningAll()
-        .executeTakeFirstOrThrow();
-      // 授权绑定所批准的定义指纹与来源连接器（同 slug 重新安装的连接器 id 不同，不继承）
-      const hash = before.specHash;
-      const connectorId = before.connectorId;
-      if (scope === "session") {
-        // a sub-agent's grant is its parent conversation's (sub-agents spec §9): its siblings and
-        // the parent itself are not asked again for the same call
-        await t
-          .insertInto("conversation_tool_grants")
-          .values({
-            conversation_id: ctx.parent_conversation_id ?? before.conversationId,
-            tool_key: before.toolKey,
-            spec_hash: hash,
-            connector_id: connectorId,
-          })
-          .onConflict((oc) =>
-            oc
-              .columns(["conversation_id", "tool_key"])
-              .doUpdateSet({ spec_hash: hash, connector_id: connectorId }),
-          )
-          .execute();
-      } else if (scope === "always" && before.requestedFor !== null) {
-        await t
-          .insertInto("tool_grants")
-          .values({
-            org_id: orgId,
-            account_id: before.requestedFor,
-            agent_id: ctx.agent_id,
-            tool_key: before.toolKey,
-            spec_hash: hash,
-            connector_id: connectorId,
-          })
-          .onConflict((oc) =>
-            oc.columns(["org_id", "account_id", "agent_id", "tool_key"]).doUpdateSet({
-              spec_hash: hash,
-              connector_id: connectorId,
-              created_at: sql<Date>`now()`,
-            }),
-          )
-          .execute();
-      }
-      const written = await eventLog.append(
-        before.conversationId,
-        [
-          {
-            type: "approval_decided",
-            runId: before.runId,
-            idemKey: `approval_decided:${id}`,
-            payload: {
-              approvalId: id,
-              callId: before.callId,
-              decision: approved ? "approved" : "denied",
-              ...(scope !== null && { scope }),
-              byAccountId: accountId,
-              ...(reason !== undefined && { reason }),
-            },
-          },
-        ],
-        t,
+    const { record, toSeq } = await this.decideIn(orgId, id, accountId, body, actorTokenId);
+    await this.eventLog.notify(record.conversationId, toSeq);
+    // waits resume the run and its IM delivery is enqueued (handler failures are logged)
+    await this.events.emit("approval.decided", {
+      id: record.id,
+      orgId: record.orgId,
+      conversationId: record.conversationId,
+      runId: record.runId,
+      status: record.status === "approved" ? "approved" : "denied",
+    });
+    return record;
+  }
+
+  // its own transaction (as the legacy one was): `approval.decided` is emitted only after the
+  // decision committed, even when a caller has a transaction open
+  @Transactional({ propagation: "requires_new" })
+  private async decideIn(
+    orgId: string,
+    id: string,
+    accountId: string,
+    body: DecisionInput,
+    actorTokenId: string | undefined,
+  ): Promise<{ record: ApprovalRecord; toSeq: number }> {
+    const t = this.db.db;
+    const locked = await t
+      .selectFrom("approvals")
+      .selectAll()
+      .select(sql<boolean>`expires_at <= now()`.as("expired"))
+      .where("id", "=", id)
+      .where("org_id", "=", orgId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!locked) throw notFound();
+    const ctx = await t
+      .selectFrom("runs")
+      .innerJoin("conversations", "conversations.id", "runs.conversation_id")
+      .select([
+        "runs.trigger_account_id",
+        "conversations.agent_id",
+        "conversations.parent_conversation_id",
+      ])
+      .where("runs.id", "=", locked.run_id)
+      .executeTakeFirstOrThrow();
+    const before = toRecord(locked);
+    const role = await this.roleOf(orgId, accountId);
+    if (!canHandle(before, ctx.trigger_account_id, accountId, role)) throw notFound();
+    if (before.status !== "pending") {
+      throw new ApiError("approval.already_decided", "Approval has already been decided");
+    }
+    if (locked.expired) {
+      throw new ApiError("approval.already_decided", "Approval has expired");
+    }
+    const approved = body.decision === "approve";
+    const reason = approved ? undefined : body.reason?.trim() || undefined;
+    const scope: ApprovalScope | null = approved ? (body.scope ?? "once") : null;
+    // 按角色升级的批准只对这一次有效：授权记在发起人名下会让其以后绕过角色要求
+    if (scope !== null && scope !== "once" && before.requestedFor === null) {
+      throw new ApiError(
+        "validation_failed",
+        'Only scope "once" is allowed for role-escalated approvals',
+        [{ path: "scope", message: 'Only "once" is allowed for role-escalated approvals' }],
       );
-      await audit(t, {
-        actorAccountId: accountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "approval.decided",
-        target: id,
-        detail: {
-          toolKey: before.toolKey,
-          conversationId: before.conversationId,
-          runId: before.runId,
-          agentId: ctx.agent_id,
-          initiatorAccountId: ctx.trigger_account_id,
+    }
+    const updated = await t
+      .updateTable("approvals")
+      .set({
+        status: approved ? "approved" : "denied",
+        scope,
+        decided_by: accountId,
+        decided_at: sql<Date>`now()`,
+        deny_reason: reason ?? null,
+      })
+      .where("id", "=", id)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    // 授权绑定所批准的定义指纹与来源连接器（同 slug 重新安装的连接器 id 不同，不继承）
+    const hash = before.specHash;
+    const connectorId = before.connectorId;
+    if (scope === "session") {
+      // a sub-agent's grant is its parent conversation's (sub-agents spec §9): its siblings and
+      // the parent itself are not asked again for the same call
+      await t
+        .insertInto("conversation_tool_grants")
+        .values({
+          conversation_id: ctx.parent_conversation_id ?? before.conversationId,
+          tool_key: before.toolKey,
+          spec_hash: hash,
+          connector_id: connectorId,
+        })
+        .onConflict((oc) =>
+          oc
+            .columns(["conversation_id", "tool_key"])
+            .doUpdateSet({ spec_hash: hash, connector_id: connectorId }),
+        )
+        .execute();
+    } else if (scope === "always" && before.requestedFor !== null) {
+      await t
+        .insertInto("tool_grants")
+        .values({
+          org_id: orgId,
+          account_id: before.requestedFor,
+          agent_id: ctx.agent_id,
+          tool_key: before.toolKey,
+          spec_hash: hash,
+          connector_id: connectorId,
+        })
+        .onConflict((oc) =>
+          oc.columns(["org_id", "account_id", "agent_id", "tool_key"]).doUpdateSet({
+            spec_hash: hash,
+            connector_id: connectorId,
+            created_at: sql<Date>`now()`,
+          }),
+        )
+        .execute();
+    }
+    const written = await this.eventLog.appendIn(before.conversationId, [
+      {
+        type: "approval_decided",
+        runId: before.runId,
+        idemKey: `approval_decided:${id}`,
+        payload: {
+          approvalId: id,
+          callId: before.callId,
           decision: approved ? "approved" : "denied",
-          scope,
-          ...(body.note !== undefined && { note: body.note }),
+          ...(scope !== null && { scope }),
+          byAccountId: accountId,
           ...(reason !== undefined && { reason }),
         },
-      });
-      return { record: toRecord(updated), toSeq: Math.max(...written.map((e) => e.seq)) };
+      },
+    ]);
+    await audit(t, {
+      actorAccountId: accountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "approval.decided",
+      target: id,
+      detail: {
+        toolKey: before.toolKey,
+        conversationId: before.conversationId,
+        runId: before.runId,
+        agentId: ctx.agent_id,
+        initiatorAccountId: ctx.trigger_account_id,
+        decision: approved ? "approved" : "denied",
+        scope,
+        ...(body.note !== undefined && { note: body.note }),
+        ...(reason !== undefined && { reason }),
+      },
     });
-    await eventLog.notify(record.conversationId, toSeq);
-    if (this.deps.onDecided) {
-      try {
-        await this.deps.onDecided(record);
-      } catch (err) {
-        this.deps.log.warn("approval onDecided hook failed", { approvalId: record.id, err });
-      }
-    }
-    return record;
+    return { record: toRecord(updated), toSeq: Math.max(...written.map((e) => e.seq)) };
   }
 
   /**
@@ -452,7 +463,7 @@ export class ApprovalsService {
    * 不得直接回给请求方——HTTP 接口用 {@link get}。
    */
   async describe(id: string): Promise<ApprovalView | null> {
-    const row = await this.deps.db
+    const row = await this.db
       .selectFrom("approvals")
       .selectAll()
       .where("id", "=", id)
@@ -464,7 +475,7 @@ export class ApprovalsService {
 
   /** 某个工具调用最近一次的审批（attempt 最大者）；没有则返回 null。 */
   async forCall(runId: string, callId: string): Promise<ApprovalRecord | null> {
-    const row = await this.deps.db
+    const row = await this.db
       .selectFrom("approvals")
       .selectAll()
       .where("run_id", "=", runId)
@@ -484,39 +495,48 @@ export class ApprovalsService {
     outcome: "expired" | "not_due" | "settled";
     record?: ApprovalRecord;
   }> {
-    const { db, eventLog } = this.deps;
-    const r = await db.transaction().execute(async (t) => {
-      const locked = await t
-        .selectFrom("approvals")
-        .selectAll()
-        .select(sql<boolean>`expires_at <= now()`.as("expired"))
-        .where("id", "=", id)
-        .forUpdate()
-        .executeTakeFirst();
-      if (!locked) return { outcome: "settled" as const };
-      const before = toRecord(locked);
-      if (before.status !== "pending") return { outcome: "settled" as const, record: before };
-      if (!locked.expired) return { outcome: "not_due" as const, record: before };
-      const updated = await t
-        .updateTable("approvals")
-        .set({ status: "expired", decided_at: sql<Date>`now()` })
-        .where("id", "=", id)
-        .returningAll()
-        .executeTakeFirstOrThrow();
-      const toSeq = await this.decidedEvent(t, before, "expired");
-      return { outcome: "expired" as const, record: toRecord(updated), toSeq };
-    });
+    const r = await this.expireIn(id);
     if ("toSeq" in r && r.toSeq !== undefined && r.record) {
-      await eventLog.notify(r.record.conversationId, r.toSeq);
+      await this.eventLog.notify(r.record.conversationId, r.toSeq);
     }
     return r.record ? { outcome: r.outcome, record: r.record } : { outcome: r.outcome };
   }
 
+  @Transactional()
+  private async expireIn(id: string): Promise<{
+    outcome: "expired" | "not_due" | "settled";
+    record?: ApprovalRecord;
+    toSeq?: number;
+  }> {
+    const t = this.db.db;
+    const locked = await t
+      .selectFrom("approvals")
+      .selectAll()
+      .select(sql<boolean>`expires_at <= now()`.as("expired"))
+      .where("id", "=", id)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!locked) return { outcome: "settled" as const };
+    const before = toRecord(locked);
+    if (before.status !== "pending") return { outcome: "settled" as const, record: before };
+    if (!locked.expired) return { outcome: "not_due" as const, record: before };
+    const updated = await t
+      .updateTable("approvals")
+      .set({ status: "expired", decided_at: sql<Date>`now()` })
+      .where("id", "=", id)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    const toSeq = await this.decidedEvent(before, "expired");
+    return { outcome: "expired" as const, record: toRecord(updated), toSeq };
+  }
+
   /**
-   * 在事务 `t` 内取消运行的全部 pending 审批（运行在等待中被中止），各写 `approval_decided{cancelled}`
-   * （处理人为 null）。返回被取消的记录；调用方提交后发布事件。
+   * 在调用方的事务内（`mandatory`）取消运行的全部 pending 审批（运行在等待中被中止），各写
+   * `approval_decided{cancelled}`（处理人为 null）。返回被取消的记录；调用方提交后发布事件。
    */
-  async cancelPendingIn(t: Trx, runId: string): Promise<ApprovalRecord[]> {
+  @Transactional({ propagation: "mandatory" })
+  async cancelPendingIn(runId: string): Promise<ApprovalRecord[]> {
+    const t = this.db.db;
     const rows = await t
       .selectFrom("approvals")
       .selectAll()
@@ -533,22 +553,23 @@ export class ApprovalsService {
         .where("id", "=", row.id)
         .returningAll()
         .executeTakeFirstOrThrow();
-      await this.decidedEvent(t, toRecord(row), "cancelled");
+      await this.decidedEvent(toRecord(row), "cancelled");
       out.push(toRecord(updated));
     }
     return out;
   }
 
   /**
-   * 在事务 `t` 内取消某组织里指定由 `accountId` 处理（`requested_for`）的全部 pending 审批（成员离职），
+   * 在调用方的事务内（`mandatory`）取消某组织里指定由 `accountId` 处理（`requested_for`）的全部 pending 审批（成员离职），
    * 走与 {@link cancelPendingIn} 相同的取消路径：置 cancelled、写 `approval_decided{cancelled}`（处理人为 null）。
    * 返回被取消的记录与各会话写到的最大 seq；调用方提交后发布事件（并可续跑对应运行）。
    */
+  @Transactional({ propagation: "mandatory" })
   async cancelPendingFor(
-    t: Trx,
     orgId: string,
     accountId: string,
   ): Promise<{ records: ApprovalRecord[]; seqs: Map<string, number> }> {
+    const t = this.db.db;
     const rows = await t
       .selectFrom("approvals")
       .selectAll()
@@ -567,37 +588,32 @@ export class ApprovalsService {
         .where("id", "=", row.id)
         .returningAll()
         .executeTakeFirstOrThrow();
-      const seq = await this.decidedEvent(t, toRecord(row), "cancelled");
+      const seq = await this.decidedEvent(toRecord(row), "cancelled");
       seqs.set(row.conversation_id, Math.max(seqs.get(row.conversation_id) ?? 0, seq));
       records.push(toRecord(updated));
     }
     return { records, seqs };
   }
 
-  /** 系统写的 `approval_decided`（超时 / 取消，处理人为 null），返回事件 seq。 */
+  /** 系统写的 `approval_decided`（超时 / 取消，处理人为 null），在当前事务内；返回事件 seq。 */
   private async decidedEvent(
-    t: Trx,
     a: ApprovalRecord,
     decision: "expired" | "cancelled",
   ): Promise<number> {
-    const written = await this.deps.eventLog.append(
-      a.conversationId,
-      [
-        {
-          type: "approval_decided",
-          runId: a.runId,
-          idemKey: `approval_decided:${a.id}`,
-          payload: { approvalId: a.id, callId: a.callId, decision, byAccountId: null },
-        },
-      ],
-      t,
-    );
+    const written = await this.eventLog.appendIn(a.conversationId, [
+      {
+        type: "approval_decided",
+        runId: a.runId,
+        idemKey: `approval_decided:${a.id}`,
+        payload: { approvalId: a.id, callId: a.callId, decision, byAccountId: null },
+      },
+    ]);
     return Math.max(...written.map((e) => e.seq));
   }
 
   /** 本人在该组织的「以后都允许」授权。 */
   async listGrants(orgId: string, accountId: string): Promise<ToolGrantView[]> {
-    const rows = await this.deps.db
+    const rows = await this.db
       .selectFrom("tool_grants")
       .select(["agent_id", "tool_key", "spec_hash", "created_at"])
       .where("org_id", "=", orgId)
@@ -622,32 +638,39 @@ export class ApprovalsService {
     toolKey: string,
     actorTokenId?: string,
   ): Promise<void> {
-    await this.deps.db.transaction().execute(async (t) => {
-      const res = await t
-        .deleteFrom("tool_grants")
-        .where("org_id", "=", orgId)
-        .where("account_id", "=", accountId)
-        .where("agent_id", "=", agentId)
-        .where("tool_key", "=", toolKey)
-        .executeTakeFirst();
-      if (Number(res.numDeletedRows) === 0) return;
-      await audit(t, {
-        actorAccountId: accountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "tool_grant.revoked",
-        target: agentId,
-        detail: { toolKey },
-      });
+    await this.revokeGrantIn(orgId, accountId, agentId, toolKey, actorTokenId);
+  }
+
+  @Transactional()
+  private async revokeGrantIn(
+    orgId: string,
+    accountId: string,
+    agentId: string,
+    toolKey: string,
+    actorTokenId: string | undefined,
+  ): Promise<void> {
+    const t = this.db.db;
+    const res = await t
+      .deleteFrom("tool_grants")
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .where("agent_id", "=", agentId)
+      .where("tool_key", "=", toolKey)
+      .executeTakeFirst();
+    if (Number(res.numDeletedRows) === 0) return;
+    await audit(t, {
+      actorAccountId: accountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "tool_grant.revoked",
+      target: agentId,
+      detail: { toolKey },
     });
   }
 
-  private async roleOf(
-    db: KernelDb | Trx,
-    orgId: string,
-    accountId: string,
-  ): Promise<OrgRole | null> {
-    const m = await db
+  /** The member's current role, read in the context's transaction when there is one. */
+  private async roleOf(orgId: string, accountId: string): Promise<OrgRole | null> {
+    const m = await this.db
       .selectFrom("memberships")
       .select("role")
       .where("org_id", "=", orgId)
@@ -659,7 +682,7 @@ export class ApprovalsService {
   /** agent id → 当前版本定义里的名字。 */
   private async agentNames(ids: string[]): Promise<Map<string, string>> {
     if (ids.length === 0) return new Map();
-    const rows = await this.deps.db
+    const rows = await this.db
       .selectFrom("agents")
       .innerJoin("agent_versions", (j) =>
         j
@@ -680,7 +703,7 @@ export class ApprovalsService {
   /** 补齐详情字段（批量读会话、运行、agent 名与连接器）。 */
   private async views(recs: ApprovalRecord[]): Promise<ApprovalView[]> {
     if (recs.length === 0) return [];
-    const { db } = this.deps;
+    const db = this.db;
     const ctxRows = await db
       .selectFrom("runs")
       .innerJoin("conversations", "conversations.id", "runs.conversation_id")

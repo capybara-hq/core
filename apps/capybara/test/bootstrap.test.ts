@@ -7,6 +7,7 @@ import {
   type FakeNpmRegistry,
   startFakeNpmRegistry,
   startTestPostgres,
+  startTestRedis,
   startTestS3,
   type TestContainer,
   type TestS3,
@@ -25,6 +26,8 @@ import {
 } from "./support/cli.js";
 
 let pg: TestContainer;
+/** The bootstrap step runs under the Redis lock `lock:bootstrap` (shared with starting kernels). */
+let rd: TestContainer;
 let boot: FakeBootstrapDir;
 let dir: string;
 /** A registry URL nothing listens on: any download fails (core tests never reach npm). */
@@ -42,7 +45,11 @@ let B_V: string;
 const re = (v: string) => v.replaceAll(".", "\\.");
 
 beforeAll(async () => {
-  [pg, boot] = await Promise.all([startTestPostgres(), packFakeBootstrapDir()]);
+  [pg, rd, boot] = await Promise.all([
+    startTestPostgres(),
+    startTestRedis(),
+    packFakeBootstrapDir(),
+  ]);
   dir = boot.dir;
   const down = await startFakeNpmRegistry({ packages: [] });
   await down.stop();
@@ -51,13 +58,13 @@ beforeAll(async () => {
   [A_V, B_V] = [version(A), version(B)];
 }, 180_000);
 afterAll(async () => {
-  await Promise.all([pg?.stop(), dir ? rm(dir, { recursive: true, force: true }) : 0]);
+  await Promise.all([pg?.stop(), rd?.stop(), dir ? rm(dir, { recursive: true, force: true }) : 0]);
 });
 
 const env = (): NodeJS.ProcessEnv => ({
   ...cleanEnv(),
   CAPYBARA_DB__URL: pg.url,
-  CAPYBARA_REDIS__URL: "redis://127.0.0.1:1",
+  CAPYBARA_REDIS__URL: rd.url,
   CAPYBARA_MASTER_KEY: Buffer.alloc(32, 7).toString("base64"),
   CAPYBARA_PACKAGES__NPM_REGISTRY: downRegistry,
 });

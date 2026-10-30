@@ -2,6 +2,9 @@ import { startTestRedis } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
+import { currentStore, TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { createLogger } from "../../src/log.js";
+import { logContext, withLogContext } from "../../src/log-context.js";
 
 let box: Awaited<ReturnType<typeof startTestRedis>>;
 let admin: Redis;
@@ -173,6 +176,37 @@ describe("ctx.bus", () => {
     const a = replica("bus-closed");
     await a.sub.close();
     await expect(a.bus.subscribe("t", () => {})).rejects.toThrow(/closed/);
+  });
+
+  it("handlers run outside the transaction and log context of the first subscriber", async () => {
+    const r = replica("ctxiso");
+    const seen: { tx: boolean; reqId: string | undefined }[] = [];
+    // a transaction host on a stub pool: the first subscribe happens inside an open transaction
+    // and a request's log context, which stay open while the message arrives
+    const trx = {};
+    const pool = {
+      transaction: () => ({ execute: (fn: (t: unknown) => Promise<unknown>) => fn(trx) }),
+    };
+    const host = new TransactionHost(pool as never, createLogger("error", { write: () => {} }));
+    let close!: () => void;
+    const open = new Promise<void>((resolve) => {
+      close = resolve;
+    });
+    const subscribed = withLogContext({ reqId: "req-1" }, () =>
+      host.run(async () => {
+        await r.bus.subscribe("t", () => {
+          seen.push({ tx: currentStore() !== undefined, reqId: logContext()?.reqId });
+        });
+        await open;
+      }),
+    );
+    await until(async () => (await numsub("cap:ctxiso:t")) === 1);
+    await r.bus.publish("t", { n: 1 });
+    await until(() => seen.length === 1);
+    close();
+    await subscribed;
+    expect(seen).toEqual([{ tx: false, reqId: undefined }]);
+    await r.sub.close();
   });
 
   it("非法 namespace 抛 TypeError", () => {

@@ -13,17 +13,17 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { AgentTemplatesService } from "../../src/agents/templates.js";
 import type { TranslationReport } from "../../src/catalog/claude/report.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
 import { takeSnapshot, toEvents } from "../../src/evals/snapshot.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
+import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { loadFixtureAsStrings } from "../catalog/claude-fixtures.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
+import { agentTemplatesFor } from "../helpers/conversations.js";
+import { accountsFor } from "../helpers/identity.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
   createConv,
@@ -35,6 +35,7 @@ import {
   runsOf,
   session,
   startKernel,
+  type TestKernel,
   waitForTerminal,
 } from "../helpers/runs.js";
 
@@ -85,12 +86,12 @@ const { sent } = capture;
 let pgc: TestContainer;
 let rd: TestContainer;
 let s3: TestS3;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
 let srv: FakeGitServer;
 let pluginsDir: string;
 let root: string;
-let k: Kernel;
+let k: TestKernel;
 let admin: Req;
 let orgId: string;
 
@@ -128,7 +129,7 @@ beforeAll(async () => {
       },
     ),
   );
-  await new AccountsService(db).createLocal({
+  await accountsFor(db).createLocal({
     login: "root",
     password: PW,
     displayName: "R",
@@ -140,7 +141,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   capture.restore();
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await srv?.stop();
   if (pluginsDir) await rm(pluginsDir, { recursive: true, force: true });
@@ -241,7 +242,7 @@ describe("phase D acceptance: commands, manual-only and forked skills", {
       ["manual-script", "commands-demo", true, false],
       ["review", "commands-demo", false, true],
     ]);
-    const templates = await new AgentTemplatesService(db).listForOrg(orgId);
+    const templates = await agentTemplatesFor(db).listForOrg(orgId);
     expect(templates.map((t) => t.type)).toEqual(["commands-demo:code-reviewer"]);
     const created = await admin({
       method: "POST",
@@ -377,7 +378,7 @@ describe("phase D acceptance: commands, manual-only and forked skills", {
     const calls = ofType(toEvents(snap), "model_call");
     const parentSent = sent.filter((r) => !isChild(r));
     expect(calls).toHaveLength(parentSent.length);
-    const info = (await k.runs.registry.resolve(SCRIPT)).info;
+    const info = (await k.app.get(ProviderRegistry).resolve(SCRIPT)).info;
     for (const [i, c] of calls.entries()) {
       const out = reconstructRequest(snap, c.seq, { model: info });
       expect(out.drift, `parent model_call seq ${c.seq}`).toEqual([]);

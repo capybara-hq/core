@@ -1,19 +1,26 @@
-import type { Logger } from "@capybara-hq/plugin-sdk";
+import { DIRECTORY_EXTENSION_POINT } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
-import { sql, type Transaction } from "kysely";
-import type { EventLog } from "../conversations/event-log.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import { sql } from "kysely";
+import { EventLog } from "../conversations/event-log.js";
 import { ApiError } from "../errors.js";
 import { enabledExtensionsQuery } from "../extensions/enabled.js";
+import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
-import type { SessionService } from "../identity/sessions.js";
-import type { Maintenance } from "../runtime/maintenance.js";
-import type { ApprovalsService } from "../tools/approvals.service.js";
-import type { Credentials } from "../tools/credentials.js";
-import type { QuestionsService } from "../tools/questions.service.js";
+import { SessionService } from "../identity/sessions.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { LockService } from "../infra/lock/lock.service.js";
+import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
+import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
+import { RunControl } from "../runtime/run-control.js";
+import { SandboxJobs } from "../sandbox/jobs.js";
+import { ApprovalsService } from "../tools/approvals.service.js";
+import { Credentials } from "../tools/credentials.js";
+import { QuestionsService } from "../tools/questions.service.js";
 import type { OrgRole } from "./roles.js";
-
-type Trx = Transaction<KernelDatabase>;
 
 /** 离职原因：管理员移出、本人离开、通讯录同步判定离职。 */
 export type OffboardReason = "removed" | "left" | "directory";
@@ -25,7 +32,7 @@ export interface InFlightRun {
   status: "queued" | "running" | "waiting";
 }
 
-/** 一次离职处理的结果；调用方提交事务后交给 {@link Offboarding.afterCommit}。 */
+/** The result of one offboarding; the caller registers {@link Offboarding.afterOffboard} with the infra `afterCommit`. */
 export interface OffboardResult {
   role: OrgRole;
   /** 在 PG 中被吊销的会话（提交后写 Redis 吊销标记）。 */
@@ -36,7 +43,7 @@ export interface OffboardResult {
   runs: InFlightRun[];
   /** 负责的 agent 转交给的所有者；没有转交时为 null。 */
   newOwnerId: string | null;
-  /** 此人在该组织的对话里还没销毁的沙箱（按对话 id），提交后交给 {@link OffboardingDeps.sandboxes} 销毁。 */
+  /** 此人在该组织的对话里还没销毁的沙箱（按对话 id），提交后投递销毁。 */
   sandboxConversations: string[];
   /** Conversations whose queued messages were deleted (`changed: queue` after commit). */
   queueConversations: string[];
@@ -53,10 +60,8 @@ export interface OffboardingRunControl {
   requestAbort(runId: string, byAccountId: string | null): Promise<void>;
 }
 
-/** 兜底扫描：维护队列任务名、job scheduler id（不含 `:`）、周期与每次条数。 */
+/** The safety-net sweep: cron job name (no `:`), every 10 minutes, and the rows per page. */
 export const OFFBOARD_SWEEP_JOB = "offboard-sweep";
-export const OFFBOARD_SWEEP_SCHEDULER_ID = "offboard-sweep-every-10m";
-export const OFFBOARD_SWEEP_EVERY_MS = 600_000;
 export const OFFBOARD_SWEEP_BATCH = 500;
 /** 一次兜底扫描最多翻的页数（每页 {@link OFFBOARD_SWEEP_BATCH} 条），防止单次任务无限长。 */
 export const OFFBOARD_SWEEP_MAX_PAGES = 20;
@@ -69,60 +74,39 @@ const ACTIVE = ["queued", "running", "waiting"] as const;
 /** 通讯录同步加入的成员关系的 `source` 前缀（`directory:<插件名>`）。 */
 const DIRECTORY_SOURCE_PREFIX = "directory:";
 
-export interface OffboardingDeps {
-  credentials: Pick<Credentials, "clearAccount">;
-  approvals: Pick<ApprovalsService, "cancelPendingFor">;
-  questions: Pick<QuestionsService, "cancelPendingFor">;
-  /** 提交后写会话吊销标记（快速路径；鉴权以 PG `revoked_at` 为准）。 */
-  sessions?: Pick<SessionService, "markRevoked">;
-  /** 提交后发布 cancelled 事件。 */
-  eventLog?: Pick<EventLog, "notify"> & Partial<Pick<EventLog, "publishChanged">>;
-  /** 提交后中止此人在该组织进行中的运行（Ruling A7）。 */
-  runs?: OffboardingRunControl;
-  /** 兜底扫描用：读「发起人已不是成员」的进行中运行。 */
-  db?: KernelDb;
-  /** 给了就登记兜底扫描（每 10 分钟，worker 角色执行）。 */
-  maintenance?: Pick<Maintenance, "handle" | "schedule">;
-  log?: Pick<Logger, "warn">;
-  /** 记「已请求中止」标记（提交后的中止与兜底扫描都写；扫描跳过仍带标记的运行）。 */
-  redis?: Pick<Redis, "set" | "exists">;
-  /**
-   * 已加载、提供 `directory@1` 的插件名（Ruling A24：手动移出 / 离开时对其中在该组织启用的每一个写通讯录排除）。
-   * 不给时只按成员关系自身的 `directory:<插件>` 来源写。
-   */
-  directoryPlugins?: () => string[];
-  /** 兜底扫描每页条数（默认 {@link OFFBOARD_SWEEP_BATCH}，测试用）。 */
-  sweepBatch?: number;
-  /**
-   * 提交后销毁此人对话的沙箱（内核投递维护任务，由 worker 逐个 `SandboxService.destroyFor`）。不给时不销毁，
-   * 留给不活跃销毁扫描（`sandbox.limits.destroyAfterInactiveDays`）。
-   */
-  sandboxes?: { destroy(conversationIds: string[]): Promise<void> };
-}
-
 /**
  * 成员离职（spec 3.3）：管理员移出、本人离开与通讯录同步共用这一条路径，全部写入在调用方的同一个事务内，
- * 要么都生效要么都不生效。Redis 吊销标记、事件发布与中止进行中的运行是提交后的尽力而为（{@link afterCommit}），
+ * 要么都生效要么都不生效。Redis 吊销标记、事件发布与中止进行中的运行是提交后的尽力而为（{@link afterOffboard}），
  * 漏掉的运行由兜底扫描（{@link sweep}：发起人已不是该组织成员的进行中运行）中止。框架无关。
  *
  * 已接受的窄窗口：离职提交时正在进行的 OAuth token 刷新（`Credentials` 刷新锁内）可能在提交之后把此人的
  * 个人凭据重新写回（upsert）。凭据只在此人以成员身份调用工具时使用，而其运行已被中止、成员关系已删除，
  * 残留的凭据不会被使用；重新加入组织后会被新的连接覆盖。
  */
+@Injectable()
 export class Offboarding {
-  constructor(private readonly deps: OffboardingDeps) {
-    deps.maintenance?.schedule({
-      id: OFFBOARD_SWEEP_SCHEDULER_ID,
-      name: OFFBOARD_SWEEP_JOB,
-      everyMs: () => OFFBOARD_SWEEP_EVERY_MS,
-    });
-    deps.maintenance?.handle(OFFBOARD_SWEEP_JOB, async () => {
-      await this.sweep();
-    });
-  }
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(SessionService) private readonly sessions: Pick<SessionService, "markRevoked">,
+    @Inject(REDIS) private readonly redis: Pick<Redis, "set" | "exists">,
+    @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "list">,
+    @Inject(EventLog) private readonly eventLog: Pick<EventLog, "notify" | "publishChanged">,
+    /** The departed member's sandboxes: one-off maintenance jobs, destroyed one by one by a worker. */
+    @Inject(SandboxJobs) private readonly sandboxJobs: Pick<SandboxJobs, "destroy">,
+    /** Stops the departed member's runs (`by: null`, a system action). */
+    @Inject(RunControl) private readonly runs: OffboardingRunControl,
+    @Inject(Credentials) private readonly credentials: Pick<Credentials, "clearAccount">,
+    @Inject(ApprovalsService)
+    private readonly approvals: Pick<ApprovalsService, "cancelPendingFor">,
+    @Inject(QuestionsService)
+    private readonly questions: Pick<QuestionsService, "cancelPendingFor">,
+    @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
+  ) {}
 
   /**
-   * 在事务 `t` 内（调用方应已锁组织行——顺序：组织行 → 成员关系，并完成「最后一个 owner」等前置检查）：
+   * In the caller's transaction (`mandatory`: the caller holds the org row lock, order org row →
+   * membership, and did the "last owner" checks)：
    * 1. 删除成员关系（非成员 → `member.not_found`；删后组织没有 owner → `org.last_owner`），清空指向该组织的会话当前组织；
    * 2. 吊销该账号**全部**会话与个人令牌（令牌与会话是账号级的，无法只吊销「该组织下」的，按保守处理）；
    * 3. 删除其在该组织所有连接器上的个人凭据；
@@ -136,14 +120,14 @@ export class Offboarding {
    * 8. 审计 `org.member.offboarded`；
    * 9. 记下此人在该组织对话里还没销毁的沙箱（提交后销毁，尽力而为）。
    */
+  @Transactional({ propagation: "mandatory" })
   async offboard(
-    t: Trx,
     orgId: string,
     accountId: string,
     reason: OffboardReason,
     actor: { actorAccountId?: string; actorTokenId?: string } = {},
   ): Promise<OffboardResult> {
-    const deleted = await t
+    const deleted = await this.db
       .deleteFrom("memberships")
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
@@ -158,7 +142,7 @@ export class Offboarding {
     // deleted or re-keyed, so NO KEY UPDATE: it still excludes FOR SHARE and other writers, but not
     // the foreign key checks (FOR KEY SHARE) of a transaction that writes rows referencing them,
     // which may already hold a conversation row this transaction waits for (40P01)
-    await t
+    await this.db
       .selectFrom("agents")
       .select("id")
       .where("org_id", "=", orgId)
@@ -170,7 +154,7 @@ export class Offboarding {
     // then the member's conversations in id order, before any of their queue rows (final review
     // m2): queue dispatch, send-now and remove lock a conversation, then its queue rows; deleting
     // the rows first and updating the conversations after could deadlock with them (40P01)
-    await t
+    await this.db
       .selectFrom("conversations")
       .select("id")
       .where("org_id", "=", orgId)
@@ -178,7 +162,7 @@ export class Offboarding {
       .orderBy("id")
       .forNoKeyUpdate()
       .execute();
-    const owner = await t
+    const owner = await this.db
       .selectFrom("memberships")
       .select("account_id")
       .where("org_id", "=", orgId)
@@ -190,21 +174,21 @@ export class Offboarding {
     if (!owner) {
       throw new ApiError("org.last_owner", "An organization must keep at least one owner");
     }
-    await t
+    await this.db
       .updateTable("sessions")
       .set({ current_org_id: null })
       .where("account_id", "=", accountId)
       .where("current_org_id", "=", orgId)
       .execute();
 
-    const sessions = await t
+    const sessions = await this.db
       .updateTable("sessions")
       .set({ revoked_at: sql<Date>`now()` })
       .where("account_id", "=", accountId)
       .where("revoked_at", "is", null)
       .returning("id")
       .execute();
-    const tokens = await t
+    const tokens = await this.db
       .updateTable("api_tokens")
       .set({ revoked_at: sql<Date>`now()` })
       .where("kind", "=", "personal")
@@ -213,21 +197,21 @@ export class Offboarding {
       .returning("id")
       .execute();
 
-    const credentials = await this.deps.credentials.clearAccount(orgId, accountId, t);
-
-    const approvals = await this.deps.approvals.cancelPendingFor(t, orgId, accountId);
-    const questions = await this.deps.questions.cancelPendingFor(t, orgId, accountId);
+    // in this transaction (the approvals and questions services join it: `mandatory`)
+    const credentials = await this.credentials.clearAccount(orgId, accountId);
+    const approvals = await this.approvals.cancelPendingFor(orgId, accountId);
+    const questions = await this.questions.cancelPendingFor(orgId, accountId);
     const notify = new Map(approvals.seqs);
     for (const [c, seq] of questions.seqs) notify.set(c, Math.max(notify.get(c) ?? 0, seq));
 
-    const runs = await t
+    const runs = await this.db
       .selectFrom("runs")
       .innerJoin("conversations", "conversations.id", "runs.conversation_id")
       .select(["runs.id", "runs.conversation_id", "runs.status"])
       .where("conversations.org_id", "=", orgId)
       // 评测回放的隐藏对话由评测 worker 驱动（不执行工具），随评测运行停下，不在这里中止。
       // 评测运行的创建者离开组织也不取消评测运行（Ruling S1-b）：管理员发起的评测运行是组织的工作，
-      // 只有取消、删除评测集、删除组织或 agent 才会停下（见 evals/budget.ts cancelEvalRuns）
+      // 只有取消、删除评测集、删除组织或 agent 才会停下（见 evals/budget.ts `EvalBudget.cancelRuns`）
       // a removed member's sub-agents run with their identity and credentials: stopped too
       .where("conversations.kind", "in", ["chat", "subagent"])
       .where("runs.status", "in", ACTIVE)
@@ -239,7 +223,7 @@ export class Offboarding {
       )
       .execute();
 
-    const agents = await t
+    const agents = await this.db
       .updateTable("agents")
       .set({
         owner_account_id: owner.account_id,
@@ -252,7 +236,7 @@ export class Offboarding {
       .returning("id")
       .execute();
 
-    const threads = await t
+    const threads = await this.db
       .updateTable("channel_threads")
       .set({ archived_at: sql<Date>`now()` })
       .where("account_id", "=", accountId)
@@ -261,16 +245,16 @@ export class Offboarding {
         eb.selectFrom("channel_connections").select("id").where("org_id", "=", orgId),
       )
       .executeTakeFirst();
-    const grants = await t
+    const grants = await this.db
       .deleteFrom("tool_grants")
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
       .executeTakeFirst();
 
     const excluded =
-      reason === "directory" ? [] : await this.exclusionPlugins(t, orgId, deleted.source);
+      reason === "directory" ? [] : await this.exclusionPlugins(orgId, deleted.source);
     if (excluded.length > 0) {
-      await t
+      await this.db
         .insertInto("directory_exclusions")
         .values(
           excluded.map((plugin) => ({
@@ -286,7 +270,7 @@ export class Offboarding {
 
     // Queued messages never go out after their author leaves (they also hold `@` resource bodies
     // read with the person's credentials): deleted here, so no dispatch can pick them up.
-    const queued = await t
+    const queued = await this.db
       .deleteFrom("conversation_queue")
       .where("conversation_id", "in", (eb) =>
         eb
@@ -299,14 +283,14 @@ export class Offboarding {
       .execute();
     const queueConversations = [...new Set(queued.map((r) => r.conversation_id))];
     if (queueConversations.length > 0) {
-      await t
+      await this.db
         .updateTable("conversations")
         .set({ queue_paused: false, queue_pause_reason: null })
         .where("id", "in", queueConversations)
         .execute();
     }
 
-    const sandboxes = await t
+    const sandboxes = await this.db
       .selectFrom("sandboxes")
       .innerJoin("conversations", "conversations.id", "sandboxes.conversation_id")
       .select("sandboxes.conversation_id")
@@ -315,7 +299,7 @@ export class Offboarding {
       .where("sandboxes.status", "<>", "destroyed")
       .execute();
 
-    await audit(t, {
+    await audit(this.db.db, {
       ...(actor.actorAccountId !== undefined && { actorAccountId: actor.actorAccountId }),
       ...(actor.actorTokenId !== undefined && { actorTokenId: actor.actorTokenId }),
       orgId,
@@ -355,15 +339,19 @@ export class Offboarding {
   }
 
   /** 要写排除的通讯录插件：该组织启用的已加载通讯录插件 ∪ 成员关系自身的 `directory:<插件>` 来源，去重排序。 */
-  private async exclusionPlugins(t: Trx, orgId: string, source: string | null): Promise<string[]> {
+  private async exclusionPlugins(orgId: string, source: string | null): Promise<string[]> {
     const out = new Set<string>();
     if (source?.startsWith(DIRECTORY_SOURCE_PREFIX)) {
       out.add(source.slice(DIRECTORY_SOURCE_PREFIX.length));
     }
-    const loaded = this.deps.directoryPlugins?.() ?? [];
+    // Ruling A24: every loaded directory extension enabled in the org
+    const loaded = this.registry
+      .list("directory")
+      .filter((e) => e.capability === DIRECTORY_EXTENSION_POINT)
+      .map((e) => e.plugin);
     if (loaded.length > 0) {
-      const rows = await t
-        .selectFrom(enabledExtensionsQuery(t, orgId).as("en"))
+      const rows = await this.db
+        .selectFrom(enabledExtensionsQuery(this.db.db, orgId).as("en"))
         .select("en.plugin")
         .where("en.plugin", "in", loaded)
         .execute();
@@ -373,36 +361,38 @@ export class Offboarding {
   }
 
   /**
-   * 提交之后：写会话吊销标记、发布 cancelled 事件、中止此人在该组织进行中的运行、投递销毁其对话沙箱的任务。
-   * 每步失败只记 warn。
+   * After the commit (callers register it with the infra `afterCommit` inside their transaction):
+   * writes the session revocation markers, publishes the cancelled events, stops the person's
+   * runs in the org and schedules destroying their conversations' sandboxes. A failing step only
+   * logs a warning.
    */
-  async afterCommit(r: OffboardResult): Promise<void> {
-    const { sessions, eventLog, log } = this.deps;
+  async afterOffboard(r: OffboardResult): Promise<void> {
+    const { sessions, log, eventLog } = this;
     try {
-      await sessions?.markRevoked(r.revokedSessionIds);
+      await sessions.markRevoked(r.revokedSessionIds);
     } catch (err) {
-      log?.warn("offboarding: cannot write session revocation markers", { err });
+      log.warn("offboarding: cannot write session revocation markers", { err });
     }
     for (const [conversationId, seq] of r.notify) {
       try {
-        await eventLog?.notify(conversationId, seq);
+        await eventLog.notify(conversationId, seq);
       } catch (err) {
-        log?.warn("offboarding: event notify failed", { conversationId, err });
+        log.warn("offboarding: event notify failed", { conversationId, err });
       }
     }
     for (const conversationId of r.queueConversations) {
       try {
-        await eventLog?.publishChanged?.(conversationId, "queue");
+        await eventLog.publishChanged(conversationId, "queue");
       } catch (err) {
-        log?.warn("offboarding: queue change notify failed", { conversationId, err });
+        log.warn("offboarding: queue change notify failed", { conversationId, err });
       }
     }
     for (const run of r.runs) await this.stopRun(run);
-    if (r.sandboxConversations.length > 0 && this.deps.sandboxes) {
+    if (r.sandboxConversations.length > 0) {
       try {
-        await this.deps.sandboxes.destroy(r.sandboxConversations);
+        await this.sandboxJobs.destroy(r.sandboxConversations);
       } catch (err) {
-        log?.warn("offboarding: cannot schedule sandbox destruction", {
+        log.warn("offboarding: cannot schedule sandbox destruction", {
           count: r.sandboxConversations.length,
           err,
         });
@@ -416,8 +406,7 @@ export class Offboarding {
    * 不像会话中止那样随后起新一轮运行：离职者的待处理消息不再处理。
    */
   private async stopRun(run: InFlightRun): Promise<void> {
-    const ctl = this.deps.runs;
-    if (!ctl) return;
+    const ctl = this.runs;
     try {
       if (
         run.status === "waiting" &&
@@ -429,11 +418,11 @@ export class Offboarding {
       await ctl.requestAbort(run.runId, null);
       // 广播中止的运行要等所在副本到达步骤边界才真正结束：广播成功后记标记，扫描在其有效期内不再重复广播
       // （广播失败不记，下一轮扫描重试）
-      await this.deps.redis
-        ?.set(offboardAbortKey(run.runId), "1", "EX", OFFBOARD_ABORT_MARK_TTL_SECONDS)
-        .catch((err: unknown) => this.deps.log?.warn("offboarding: cannot mark abort", { err }));
+      await this.redis
+        .set(offboardAbortKey(run.runId), "1", "EX", OFFBOARD_ABORT_MARK_TTL_SECONDS)
+        .catch((err: unknown) => this.log.warn("offboarding: cannot mark abort", { err }));
     } catch (err) {
-      this.deps.log?.warn("offboarding: cannot stop run", { runId: run.runId, err });
+      this.log.warn("offboarding: cannot stop run", { runId: run.runId, err });
     }
   }
 
@@ -445,10 +434,8 @@ export class Offboarding {
    * 不每轮重复广播；标记过期仍未结束的再处理一次。返回本次处理（未跳过）的运行数。
    * 现任成员（含匿名访客这样的 guest 成员）发起的运行不受影响。
    */
-  async sweep(): Promise<number> {
-    const { db } = this.deps;
-    if (!db || !this.deps.runs) return 0;
-    const batch = this.deps.sweepBatch ?? OFFBOARD_SWEEP_BATCH;
+  async sweep(batch = OFFBOARD_SWEEP_BATCH): Promise<number> {
+    const db = this.db;
     // 游标的时间用文本保存完整的微秒精度（JS Date 只有毫秒，会让同一行再被取到）
     let after: { createdAt: string; id: string } | undefined;
     let total = 0;
@@ -484,7 +471,7 @@ export class Offboarding {
       for (const r of rows) {
         if (await this.recentlyAborted(r.id)) continue;
         total++;
-        this.deps.log?.warn("offboard sweep: stopping run of a former member", { runId: r.id });
+        this.log.warn("offboard sweep: stopping run of a former member", { runId: r.id });
         await this.stopRun({
           conversationId: r.conversation_id,
           runId: r.id,
@@ -500,9 +487,27 @@ export class Offboarding {
 
   private async recentlyAborted(runId: string): Promise<boolean> {
     try {
-      return (await this.deps.redis?.exists(offboardAbortKey(runId))) === 1;
+      return (await this.redis.exists(offboardAbortKey(runId))) === 1;
     } catch {
       return false;
     }
+  }
+}
+
+/**
+ * The offboarding safety-net sweep ({@link Offboarding.sweep}) every 10 minutes, once per tick
+ * across replicas; a worker-role job (`WorkerModule`).
+ */
+@Injectable()
+export class OffboardSweepJob {
+  constructor(
+    @Inject(Offboarding) private readonly offboarding: Pick<Offboarding, "sweep">,
+    @Inject(LockService) readonly lockService: LockService,
+    @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
+  ) {}
+
+  @LockedCron("*/10 * * * *", { name: OFFBOARD_SWEEP_JOB })
+  async run(): Promise<void> {
+    await this.offboarding.sweep();
   }
 }

@@ -7,14 +7,14 @@ import pg from "pg";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../src/config/schema.js";
 import type { KernelHttpApp } from "../src/http/app.js";
-import { createKernel, type Kernel } from "../src/kernel.js";
 import { createLogger, type KernelLogger } from "../src/log.js";
 import { SLOW_GATES_KEY, type SlowGates } from "./fixtures/plugins/slow/index.js";
 import { SSE_HOLD_KEY } from "./fixtures/plugins/sse-hold/index.js";
+import { buildKernel, type TestKernel, type TestKernelOptions } from "./helpers/runs.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let kernels: Kernel[] = [];
+let kernels: TestKernel[] = [];
 const masterKey = Buffer.alloc(32, 7).toString("base64");
 const fx = (n: string) =>
   fileURLToPath(new URL(`./fixtures/plugins/${n}/index.ts`, import.meta.url));
@@ -46,15 +46,11 @@ const silent = (): KernelLogger => createLogger("error", { write: () => {} });
  * times out): a body that is still running after its test timed out (vitest does not cancel it)
  * creates no kernel after afterEach has run, so it cannot leak connections into the next test.
  */
-async function kernel(
-  config: KernelConfig,
-  opts?: Parameters<typeof createKernel>[1],
-  signal?: AbortSignal,
-) {
+async function kernel(config: KernelConfig, opts?: TestKernelOptions, signal?: AbortSignal) {
   signal?.throwIfAborted();
-  const k = await createKernel(config, { env: {}, logger: silent(), ...opts });
+  const k = await buildKernel(config, { env: {}, logger: silent(), ...opts });
   if (signal?.aborted) {
-    await k.stop();
+    await k.close();
     signal.throwIfAborted();
   }
   kernels.push(k);
@@ -133,7 +129,7 @@ async function stopDuringMigration(schema: string, config: KernelConfig): Promis
       return (r.rows[0]?.n ?? 0) > 0;
     });
     expect(waiting).toBe(true);
-    await k.stop();
+    await k.close();
     expect(await waitFor(async () => (await pgKernelConnections()) === 0, 1_000, 20)).toBe(true);
     await expect(starting).rejects.toThrow();
   } finally {
@@ -147,7 +143,7 @@ beforeAll(async () => {
 afterEach(async () => {
   const ks = kernels;
   kernels = [];
-  await Promise.all(ks.map((k) => k.stop()));
+  await Promise.all(ks.map((k) => k.close()));
 });
 afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -184,7 +180,7 @@ describe("插件生命周期", () => {
     // 故意把 dep-b 写在前面：拓扑序仍是 dep-a → dep-b
     const k = await kernel(cfg({ extensions: [fx("dep-b"), fx("dep-a")] }), { logger });
     await k.start();
-    await k.stop();
+    await k.close();
     const closed = lines.filter((l) => l.msg === "plugin closed").map((l) => l.plugin);
     expect(closed).toEqual(["dep-b", "dep-a"]);
   });
@@ -217,7 +213,7 @@ describe("插件生命周期", () => {
       starting.catch(() => {});
       // 等 setup 卡在 gate 上再停机（此时 slow 的 BullMQ Worker 连接已建立）
       await entered.promise;
-      await k.stop();
+      await k.close();
       // setup 仍挂在 gate 上：stop() 返回时 slow 的 BullMQ 连接必须已经关闭（连接关闭在服务端生效有微小延迟，短轮询）
       await waitFor(async () => (await clientCount(r)) === baseline, 1_000, 20);
       expect(await clientCount(r)).toBe(baseline);
@@ -244,7 +240,7 @@ describe("插件生命周期", () => {
     const ok = await kernel(cfg());
     await ok.start();
     expect(await pgKernelConnections()).toBeGreaterThan(0);
-    await ok.stop();
+    await ok.close();
     expect(await waitFor(async () => (await pgKernelConnections()) === 0)).toBe(true);
 
     // 部署配置不合法不再让启动失败（C10：待配置）；用 setup 抛错的插件
@@ -287,7 +283,7 @@ describe("队列", () => {
       await k.start();
       await enqueueJobber({ key: "inflight", delayMs: 800 });
       expect(await waitFor(() => r.get("cap:jobber:kv:inflight.started"))).toBe("1");
-      await k.stop();
+      await k.close();
       expect(await r.get("cap:jobber:kv:inflight")).not.toBeNull();
     } finally {
       r.disconnect();
@@ -374,7 +370,7 @@ describe("超时", () => {
       await new Promise<void>((resolve) => sock?.once("connect", () => resolve()));
       sock.write("GET /healthz HTTP/1.1\r\nHost: localhost\r\n");
       const t0 = Date.now();
-      await k.stop();
+      await k.close();
       const elapsed = Date.now() - t0;
       expect(elapsed).toBeLessThanOrEqual(10_500);
       expect(elapsed).toBeGreaterThanOrEqual(9_500);
@@ -393,7 +389,7 @@ describe("超时", () => {
     const reader = res.body?.getReader();
     await reader?.read();
     const t0 = Date.now();
-    await k.stop();
+    await k.close();
     expect(Date.now() - t0).toBeLessThan(3_000);
     expect(g[SSE_HOLD_KEY]).toBe(1);
     await reader?.cancel().catch(() => {});
@@ -413,7 +409,7 @@ describe("超时", () => {
       await enqueueJobber({ key: "drain", delayMs: 2_000 });
       expect(await waitFor(() => r.get("cap:jobber:kv:drain.started"))).toBe("1");
       const t0 = Date.now();
-      await k.stop();
+      await k.close();
       expect(Date.now() - t0).toBeLessThan(30_000);
       expect(await r.get("cap:jobber:kv:drain")).not.toBeNull();
     } finally {

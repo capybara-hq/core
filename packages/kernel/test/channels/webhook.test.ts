@@ -3,6 +3,7 @@ import type {
   ChannelWebhook,
   ChannelWebhookRequest,
   ChannelWebhookResult,
+  ExtensionContext,
   InboundEvent,
 } from "@capybara-hq/plugin-sdk";
 import {
@@ -23,13 +24,13 @@ import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { CHANNEL_CHANGED_TOPIC } from "../../src/channels/connections.service.js";
 import { CHANNEL_QUEUE_NAME } from "../../src/channels/outbound.js";
-import { ChannelWebhooks } from "../../src/channels/webhook.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { InflightTracker } from "../../src/extensions/inflight.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
+import { KERNEL_BUS } from "../../src/infra/tokens.js";
+import { channelWebhooksFor } from "../helpers/channels.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
@@ -39,6 +40,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
 
@@ -57,7 +59,7 @@ const MAX_BODY = 1_048_576;
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let im: FakeChannelServer;
 let raw: ReturnType<typeof createDb>;
 let queue: Queue;
@@ -93,7 +95,7 @@ beforeAll(async () => {
   );
   raw = createDb(pgc.url, 3);
   queue = new Queue(CHANNEL_QUEUE_NAME, { connection: new Redis(rd.url) });
-  await new AccountsService(kernelDb(raw)).createLocal({
+  await accountsFor(kernelDb(raw)).createLocal({
     login: "owner",
     password: PW,
     displayName: "Owner",
@@ -115,7 +117,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await queue?.close();
   await im?.stop();
   await raw?.destroy();
@@ -183,7 +185,9 @@ describe("channel webhook route (single replica, api + gateway)", () => {
     expect(before.webhookUrl).toBe(`${BASE_URL}/channels/webhook/${webhookConn}`);
 
     const seen: unknown[] = [];
-    const unsubscribe = await k.bus.subscribe(CHANNEL_CHANGED_TOPIC, (p) => seen.push(p));
+    const unsubscribe = await k.app
+      .get<ExtensionContext["bus"]>(KERNEL_BUS)
+      .subscribe(CHANNEL_CHANGED_TOPIC, (p) => seen.push(p));
     try {
       const res = await patch(webhookConn, { inboundMode: "webhook" });
       expect(res.statusCode, res.body).toBe(200);
@@ -368,7 +372,7 @@ describe("channel webhook route (single replica, api + gateway)", () => {
       });
       expect(off.statusCode).toBe(404);
     } finally {
-      await k2.stop();
+      await k2.close();
     }
   });
 });
@@ -396,7 +400,7 @@ describe("ChannelWebhooks.handle", () => {
     } = {},
   ) => {
     let runtimeCalls = 0;
-    const webhooks = new ChannelWebhooks({
+    const webhooks = channelWebhooksFor({
       connections: {
         row: async () => ({
           id: ID,
@@ -638,7 +642,7 @@ describe("ChannelWebhooks.handle", () => {
   });
 
   it("a slow connection row lookup → 503 at the deadline", async () => {
-    const webhooks = new ChannelWebhooks({
+    const webhooks = channelWebhooksFor({
       connections: { row: () => new Promise(() => {}), runtime: (async () => ({})) as never },
       inbound: { onEvent: async () => {} },
       log: { warn: () => {} },

@@ -13,9 +13,9 @@ import type {
 } from "@capybara-hq/plugin-sdk";
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import type { EventPayload } from "../conversations/events.js";
-import type { KernelDb } from "../db/kernel-schema.js";
 import type { HookOutcome, HookRegistry } from "../extensions/hooks.js";
-import { audit } from "../identity/audit.js";
+import type { audit } from "../identity/audit.js";
+import type { StepLog } from "./step-log.js";
 
 /** What the runtime needs from the host's hook registry (absent in eval replays). */
 export type HookRunner = Pick<HookRegistry, "run" | "has">;
@@ -195,7 +195,7 @@ export type AuditEntry = Parameters<typeof audit>[1];
  * denial rethrows it before running the hooks again, so no second audit entry is written.
  */
 export async function recordHookDenial(
-  d: { db: KernelDb; eventLog: EventLog },
+  d: { eventLog: EventLog; stepLog: Pick<StepLog, "appendAudited"> },
   at: DenialSite,
   mount: Extract<AvailableHook, "model.request" | "tool.preExecute">,
   denial: HookDenial,
@@ -203,11 +203,11 @@ export async function recordHookDenial(
 ): Promise<void> {
   if (await d.eventLog.findByIdem(at.conversationId, at.idemKey)) return;
   const event = hookDeniedEvent(at, mount, denial, where);
-  const written = await d.db.transaction().execute(async (t) => {
-    const out = await d.eventLog.append(at.conversationId, [event], t);
-    await audit(t, hookDeniedAudit(at, event.payload, denial));
-    return out;
-  });
+  const written = await d.stepLog.appendAudited(
+    at.conversationId,
+    [event],
+    hookDeniedAudit(at, event.payload, denial),
+  );
   if (written.length > 0) {
     await d.eventLog.notify(at.conversationId, Math.max(...written.map((e) => e.seq)));
   }

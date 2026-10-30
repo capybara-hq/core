@@ -1,42 +1,49 @@
 import { randomUUID } from "node:crypto";
-import { type Logger, type ModelParameter, validateParams } from "@capybara-hq/plugin-sdk";
-import { type ExpressionBuilder, sql, type Transaction } from "kysely";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { cancelEvalRuns } from "../evals/budget.js";
+import { EvalBudget } from "../evals/budget.js";
 import { audit } from "../identity/audit.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 import { rejectAnonymousGuest } from "../orgs/members.service.js";
-import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
+import { OrgLock } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
-import type { ProviderRegistry } from "../runtime/providers.js";
-import type { SkillChangesService } from "../skills/changes.service.js";
+import { ProviderRegistry } from "../runtime/providers.js";
+import { SandboxJobs } from "../sandbox/jobs.js";
+import { SkillChangesService } from "../skills/changes.service.js";
 import { assertOrgSkills, assertPinnedSkills } from "../skills/skills.service.js";
-import type { ToolRegistry } from "../tools/registry.js";
-import { type AgentDefinition, normalizeStoredDefinition, SUBAGENT_NAME_RE } from "./definition.js";
+import { ToolRegistry } from "../tools/registry.js";
+import {
+  AgentLookup,
+  type AgentView,
+  type AgentVisibility,
+  isAgentVisibleTo,
+  visibleTo,
+} from "./agent-lookup.js";
+import {
+  type AgentDefinition,
+  normalizeStoredDefinition,
+  paramIssues,
+  SUBAGENT_NAME_RE,
+  SUBAGENT_ROSTER_MAX,
+} from "./definition.js";
 
-type Trx = Transaction<KernelDatabase>;
-
-export const AGENT_VISIBILITIES = ["private", "org", "members"] as const;
+export {
+  AGENT_VISIBILITIES,
+  type AgentView,
+  type AgentVisibility,
+  isAgentVisibleTo,
+  visibleTo,
+} from "./agent-lookup.js";
+export { paramIssues, SUBAGENT_ROSTER_MAX } from "./definition.js";
 
 /** 删除 agent 时每个销毁任务带的对话数。 */
 const SANDBOX_DESTROY_BATCH = 500;
-export type AgentVisibility = (typeof AGENT_VISIBILITIES)[number];
-
-/** 对外的 agent 视图：当前版本的定义 + 元数据；`memberIds` 只在 visibility='members' 时为数组。 */
-export interface AgentView {
-  id: string;
-  orgId: string;
-  ownerAccountId: string;
-  visibility: AgentVisibility;
-  currentVersion: number;
-  definition: AgentDefinition;
-  memberIds: string[] | null;
-  /** 负责人离职后被转给组织所有者、等待管理员重新指派。 */
-  needsReassignment: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
 export interface AgentVersion {
   version: number;
   definition: AgentDefinition;
@@ -51,16 +58,6 @@ export type AgentWarning = "fallback_same_provider";
 
 const notFound = () => new ApiError("agent.not_found", "Agent not found");
 
-/** 按模型声明严格校验一组参数，返回 `{ path: "<field>.<key>", message }[]`（评测候选也用它）。 */
-export function paramIssues(
-  field: string,
-  decl: ModelParameter[],
-  params: Record<string, unknown>,
-): { path: string; message: string }[] {
-  const r = validateParams(decl, params);
-  return r.ok ? [] : r.issues.map((i) => ({ path: `${field}.${i.key}`, message: i.message }));
-}
-
 /** 键排序后的 JSON：jsonb 不保留键顺序，比较定义是否变化时用。 */
 function canonical(v: unknown): string {
   if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
@@ -73,70 +70,6 @@ function canonical(v: unknown): string {
   return JSON.stringify(v);
 }
 
-/**
- * 可见性判定（`canUse`）的 SQL 条件：agent 未删除、所属组织未删除，且
- * - viewer 为账号：仍是该组织成员（含访客），并且是负责人 / visibility='org' / 在 agent_members 名单中；
- * - viewer 为 null（该组织的服务令牌）：只认 visibility='org'。
- */
-export function visibleTo(viewerAccountId: string | null) {
-  return (eb: ExpressionBuilder<KernelDatabase, "agents">) => {
-    const orgLive = eb.exists(
-      eb
-        .selectFrom("orgs")
-        .select(sql`1`.as("one"))
-        .whereRef("orgs.id", "=", "agents.org_id")
-        .where("orgs.deleted_at", "is", null),
-    );
-    if (viewerAccountId === null) {
-      return eb.and([orgLive, eb("agents.visibility", "=", "org")]);
-    }
-    return eb.and([
-      orgLive,
-      eb.exists(
-        eb
-          .selectFrom("memberships")
-          .select(sql`1`.as("one"))
-          .whereRef("memberships.org_id", "=", "agents.org_id")
-          .where("memberships.account_id", "=", viewerAccountId),
-      ),
-      eb.or([
-        eb("agents.owner_account_id", "=", viewerAccountId),
-        eb("agents.visibility", "=", "org"),
-        eb.and([
-          eb("agents.visibility", "=", "members"),
-          eb.exists(
-            eb
-              .selectFrom("agent_members")
-              .select(sql`1`.as("one"))
-              .whereRef("agent_members.agent_id", "=", "agents.id")
-              .where("agent_members.account_id", "=", viewerAccountId),
-          ),
-        ]),
-      ]),
-    ]);
-  };
-}
-
-/**
- * Whether the live agent `agentId` is visible to `accountId` under the normal visibility rule
- * ({@link visibleTo}: owner, `visibility = 'org'`, or listed in `agent_members`, while a member of
- * the live org). Deleted agents are never visible.
- */
-export async function isAgentVisibleTo(
-  db: KernelDb | Trx,
-  agentId: string,
-  accountId: string,
-): Promise<boolean> {
-  const row = await db
-    .selectFrom("agents")
-    .select("id")
-    .where("id", "=", agentId)
-    .where("deleted_at", "is", null)
-    .where(visibleTo(accountId))
-    .executeTakeFirst();
-  return row !== undefined;
-}
-
 /** Why a `subagents` block is refused (`agent.subagents_invalid` details). */
 export type SubagentsProblem =
   | "not_found"
@@ -147,9 +80,6 @@ export type SubagentsProblem =
   | "agent_not_available"
   | "self"
   | "too_many";
-
-/** Roster entries an agent may list (spec §4.3), general-purpose included. */
-export const SUBAGENT_ROSTER_MAX = 20;
 
 /**
  * Checks `subagents` of an agent definition in the caller's transaction (spec §5.2); throws 400
@@ -170,7 +100,7 @@ export const SUBAGENT_ROSTER_MAX = 20;
  * does not block other edits (the dispatch refuses it at run time).
  */
 export async function assertSubagents(
-  t: Trx,
+  t: KernelSchemaDb,
   a: {
     orgId: string;
     agentId: string | null;
@@ -307,22 +237,31 @@ export async function assertSubagents(
  * Agent 定义、版本与可见范围。写操作都在组织行锁内实时复核发起人角色（spec 3.6 R5）；
  * 服务只接收发起人账号 id。不可见的 agent 一律 `agent.not_found`。
  */
+@Injectable()
 export class AgentsService {
   constructor(
-    private readonly db: KernelDb,
-    private readonly registry: ProviderRegistry,
-    private readonly tools: Pick<ToolRegistry, "checkRefs">,
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(AgentLookup) private readonly lookup: AgentLookup,
+    @Inject(ToolRegistry) private readonly tools: Pick<ToolRegistry, "checkRefs">,
     /** 删除 agent 时取消它待处理的技能改动（T15）。 */
+    @Inject(SkillChangesService)
     private readonly skillChanges: Pick<
       SkillChangesService,
       "cancelPendingForAgent" | "finishCancel"
     >,
+    /** The org row lock (orgs/org-lock.ts): joins the caller's transaction. */
+    @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
+    /** Resolves the agent's models (and their parameter declarations) when it is saved. */
+    @Inject(ProviderRegistry) private readonly providers: Pick<ProviderRegistry, "resolve">,
     /**
-     * 删除 agent 后销毁它各对话的沙箱（内核投递一次性维护任务 `sandbox-destroy-for`，worker 在锁内逐个销毁，
-     * 幂等）。不给时留给不活跃销毁扫描。
+     * The sandbox destruction after a delete (内核投递一次性维护任务 `sandbox-destroy-for`，worker
+     * 在锁内逐个销毁，幂等).
      */
-    private readonly sandboxes?: { destroy(conversationIds: string[]): Promise<void> },
-    private readonly log?: Pick<Logger, "warn">,
+    @Inject(SandboxJobs) private readonly sandboxJobs: Pick<SandboxJobs, "destroy">,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** Cancels the deleted agent's running eval runs (in the delete's transaction). */
+    @Inject(EvalBudget) private readonly evalBudget: Pick<EvalBudget, "cancelRuns">,
   ) {}
 
   /**
@@ -352,8 +291,9 @@ export class AgentsService {
    * （没有兜底时 `fallbackParams` 必须为空）；不合法 → `validation_failed`，details 逐键点名。返回提示。
    */
   private async checkModels(def: AgentDefinition): Promise<AgentWarning[]> {
-    const main = await this.registry.resolve(def.model);
-    const fallback = def.fallback === null ? null : await this.registry.resolve(def.fallback);
+    const registry = this.providers;
+    const main = await registry.resolve(def.model);
+    const fallback = def.fallback === null ? null : await registry.resolve(def.fallback);
     const details = [
       ...paramIssues("modelParams", main.info.parameters, def.modelParams),
       ...paramIssues("fallbackParams", fallback?.info.parameters ?? [], def.fallbackParams),
@@ -366,7 +306,7 @@ export class AgentsService {
   }
 
   /** 名单里的账号必须都是该组织当前成员，否则 `member.not_found`；返回去重后的 id。 */
-  private async checkMembers(t: Trx, orgId: string, ids: string[]): Promise<string[]> {
+  private async checkMembers(t: KernelSchemaDb, orgId: string, ids: string[]): Promise<string[]> {
     const unique = [...new Set(ids)];
     if (unique.length === 0) return unique;
     const found = await t
@@ -381,7 +321,7 @@ export class AgentsService {
     return unique;
   }
 
-  private async setMembers(t: Trx, agentId: string, ids: string[]): Promise<void> {
+  private async setMembers(t: KernelSchemaDb, agentId: string, ids: string[]): Promise<void> {
     await t.deleteFrom("agent_members").where("agent_id", "=", agentId).execute();
     if (ids.length > 0) {
       await t
@@ -389,66 +329,6 @@ export class AgentsService {
         .values(ids.map((account_id) => ({ agent_id: agentId, account_id })))
         .execute();
     }
-  }
-
-  private async view(db: KernelDb | Trx, agentId: string): Promise<AgentView> {
-    const views = await this.views(db, [agentId]);
-    const v = views[0];
-    if (!v) throw notFound();
-    return v;
-  }
-
-  /** 按给定 id 顺序组装视图（调用方已完成可见性判定）。 */
-  private async views(db: KernelDb | Trx, ids: string[]): Promise<AgentView[]> {
-    if (ids.length === 0) return [];
-    const rows = await db
-      .selectFrom("agents")
-      .innerJoin("agent_versions", (j) =>
-        j
-          .onRef("agent_versions.agent_id", "=", "agents.id")
-          .onRef("agent_versions.version", "=", "agents.current_version"),
-      )
-      .select([
-        "agents.id",
-        "agents.org_id",
-        "agents.owner_account_id",
-        "agents.visibility",
-        "agents.current_version",
-        "agents.needs_reassignment",
-        "agents.created_at",
-        "agents.updated_at",
-        "agent_versions.definition",
-      ])
-      .where("agents.id", "in", ids)
-      .execute();
-    const memberRows = await db
-      .selectFrom("agent_members")
-      .select(["agent_id", "account_id"])
-      .where("agent_id", "in", ids)
-      .orderBy("account_id")
-      .execute();
-    const byId = new Map(rows.map((r) => [r.id, r]));
-    return ids.flatMap((id) => {
-      const r = byId.get(id);
-      if (!r) return [];
-      return [
-        {
-          id: r.id,
-          orgId: r.org_id,
-          ownerAccountId: r.owner_account_id,
-          visibility: r.visibility,
-          currentVersion: r.current_version,
-          definition: normalizeStoredDefinition(r.definition),
-          memberIds:
-            r.visibility === "members"
-              ? memberRows.filter((m) => m.agent_id === id).map((m) => m.account_id)
-              : null,
-          needsReassignment: r.needs_reassignment,
-          createdAt: r.created_at,
-          updatedAt: r.updated_at,
-        },
-      ];
-    });
   }
 
   /**
@@ -467,66 +347,77 @@ export class AgentsService {
     if (input.visibility !== "members" && (input.memberIds?.length ?? 0) > 0) {
       throw new ApiError("validation_failed", "memberIds requires visibility 'members'");
     }
-    const agent = await this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "agents.create");
-      await assertOrgSkills(t, orgId, input.definition.skills?.orgSkills ?? []);
-      await assertPinnedSkills(t, orgId, null, input.definition.skills);
-      await assertSubagents(t, {
-        orgId,
-        agentId: null,
-        actorAccountId,
-        definition: input.definition,
-        toolKeys,
-      });
-      const memberIds =
-        input.visibility === "members"
-          ? await this.checkMembers(t, orgId, input.memberIds ?? [])
-          : [];
-      const id = randomUUID();
-      await t
-        .insertInto("agents")
-        .values({
-          id,
-          org_id: orgId,
-          owner_account_id: actorAccountId,
-          visibility: input.visibility,
-          current_version: 1,
-        })
-        .execute();
-      await t
-        .insertInto("agent_versions")
-        .values({
-          agent_id: id,
-          version: 1,
-          definition: JSON.stringify(input.definition),
-          created_by: actorAccountId,
-        })
-        .execute();
-      await this.setMembers(t, id, memberIds);
-      await audit(t, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "agent.created",
-        target: id,
-        detail: { version: 1, visibility: input.visibility },
-      });
-      return this.view(t, id);
-    });
+    const agent = await this.createIn(orgId, actorAccountId, input, toolKeys, actorTokenId);
     return { agent, warnings };
+  }
+
+  @Transactional()
+  private async createIn(
+    orgId: string,
+    actorAccountId: string,
+    input: { definition: AgentDefinition; visibility: AgentVisibility; memberIds?: string[] },
+    toolKeys: Set<string>,
+    actorTokenId: string | undefined,
+  ): Promise<AgentView> {
+    const t = this.db.db;
+    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "agents.create");
+    await assertOrgSkills(t, orgId, input.definition.skills?.orgSkills ?? []);
+    await assertPinnedSkills(t, orgId, null, input.definition.skills);
+    await assertSubagents(t, {
+      orgId,
+      agentId: null,
+      actorAccountId,
+      definition: input.definition,
+      toolKeys,
+    });
+    const memberIds =
+      input.visibility === "members"
+        ? await this.checkMembers(t, orgId, input.memberIds ?? [])
+        : [];
+    const id = randomUUID();
+    await t
+      .insertInto("agents")
+      .values({
+        id,
+        org_id: orgId,
+        owner_account_id: actorAccountId,
+        visibility: input.visibility,
+        current_version: 1,
+      })
+      .execute();
+    await t
+      .insertInto("agent_versions")
+      .values({
+        agent_id: id,
+        version: 1,
+        definition: JSON.stringify(input.definition),
+        created_by: actorAccountId,
+      })
+      .execute();
+    await this.setMembers(t, id, memberIds);
+    await audit(t, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "agent.created",
+      target: id,
+      detail: { version: 1, visibility: input.visibility },
+    });
+    return this.lookup.view(id);
   }
 
   /**
    * 锁组织行并复核发起人，再锁 agent 行：发起人须仍具备 `agents.create`（member 以上），且是负责人或组织管理员以上；
    * 对发起人不可见的 agent（非管理员）→ `agent.not_found`，可见但无权 → `forbidden`。
    */
+  @Transactional({ propagation: "mandatory" })
   private async lockForWrite(
-    t: Trx,
     orgId: string,
     agentId: string,
     actorAccountId: string,
   ): Promise<{ visibility: AgentVisibility; current_version: number }> {
-    const { role } = await lockOrgAndAuthorize(t, orgId, actorAccountId, "agents.create");
+    const t = this.db.db;
+    const { role } = await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "agents.create");
     // NO KEY UPDATE: a soft delete then appends revert snapshots to conversations; FOR UPDATE would
     // block the agent foreign key check of an append already holding one of them (40P01)
     const agent = await t
@@ -571,87 +462,110 @@ export class AgentsService {
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
     const warnings = patch.definition ? await this.checkModels(patch.definition) : [];
     const toolKeys = patch.definition ? await this.checkTools(orgId, patch.definition) : null;
-    const agent = await this.db.transaction().execute(async (t) => {
-      const before = await this.lockForWrite(t, orgId, agentId, actorAccountId);
-      if (patch.expectedVersion !== undefined && patch.expectedVersion !== before.current_version) {
-        throw new ApiError(
-          "agent.version_conflict",
-          `The agent was changed by someone else (now version ${before.current_version}, expected ${patch.expectedVersion}); reload it and apply your changes again`,
-        );
-      }
-      const visibility = patch.visibility ?? before.visibility;
-      if (visibility !== "members" && (patch.memberIds?.length ?? 0) > 0) {
-        throw new ApiError("validation_failed", "memberIds requires visibility 'members'");
-      }
-
-      let toVersion = before.current_version;
-      if (patch.definition) {
-        const current = await t
-          .selectFrom("agent_versions")
-          .select("definition")
-          .where("agent_id", "=", agentId)
-          .where("version", "=", before.current_version)
-          .executeTakeFirstOrThrow();
-        // 当前版本已有的技能引用保存时合法，不再核对（被删的技能不挡住其他改动）；新加的照常核对
-        const kept = new Set((current.definition as AgentDefinition).skills?.orgSkills ?? []);
-        await assertOrgSkills(t, orgId, patch.definition.skills?.orgSkills ?? [], kept);
-        await assertPinnedSkills(
-          t,
-          orgId,
-          agentId,
-          patch.definition.skills,
-          (current.definition as AgentDefinition).skills?.pinned ?? [],
-        );
-        await assertSubagents(t, {
-          orgId,
-          agentId,
-          actorAccountId,
-          definition: patch.definition,
-          toolKeys: toolKeys ?? new Set(),
-          kept: (current.definition as AgentDefinition).subagents,
-        });
-        if (canonical(current.definition) !== canonical(patch.definition)) {
-          toVersion = before.current_version + 1;
-          await t
-            .insertInto("agent_versions")
-            .values({
-              agent_id: agentId,
-              version: toVersion,
-              definition: JSON.stringify(patch.definition),
-              created_by: actorAccountId,
-            })
-            .execute();
-        }
-      }
-
-      if (visibility !== "members") {
-        await this.setMembers(t, agentId, []);
-      } else if (patch.memberIds !== undefined) {
-        await this.setMembers(t, agentId, await this.checkMembers(t, orgId, patch.memberIds));
-      }
-
-      await t
-        .updateTable("agents")
-        .set({ visibility, current_version: toVersion, updated_at: sql`now()` })
-        .where("id", "=", agentId)
-        .execute();
-      await audit(t, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "agent.updated",
-        target: agentId,
-        detail: {
-          fromVersion: before.current_version,
-          toVersion,
-          ...(visibility !== before.visibility && {
-            visibility: { from: before.visibility, to: visibility },
-          }),
-        },
-      });
-      return this.view(t, agentId);
-    });
+    const agent = await this.updateIn(
+      orgId,
+      agentId,
+      actorAccountId,
+      patch,
+      toolKeys,
+      actorTokenId,
+    );
     return { agent, warnings };
+  }
+
+  @Transactional()
+  private async updateIn(
+    orgId: string,
+    agentId: string,
+    actorAccountId: string,
+    patch: {
+      definition?: AgentDefinition | undefined;
+      visibility?: AgentVisibility | undefined;
+      memberIds?: string[] | undefined;
+      expectedVersion?: number | undefined;
+    },
+    toolKeys: Set<string> | null,
+    actorTokenId: string | undefined,
+  ): Promise<AgentView> {
+    const t = this.db.db;
+    const before = await this.lockForWrite(orgId, agentId, actorAccountId);
+    if (patch.expectedVersion !== undefined && patch.expectedVersion !== before.current_version) {
+      throw new ApiError(
+        "agent.version_conflict",
+        `The agent was changed by someone else (now version ${before.current_version}, expected ${patch.expectedVersion}); reload it and apply your changes again`,
+      );
+    }
+    const visibility = patch.visibility ?? before.visibility;
+    if (visibility !== "members" && (patch.memberIds?.length ?? 0) > 0) {
+      throw new ApiError("validation_failed", "memberIds requires visibility 'members'");
+    }
+
+    let toVersion = before.current_version;
+    if (patch.definition) {
+      const current = await t
+        .selectFrom("agent_versions")
+        .select("definition")
+        .where("agent_id", "=", agentId)
+        .where("version", "=", before.current_version)
+        .executeTakeFirstOrThrow();
+      // 当前版本已有的技能引用保存时合法，不再核对（被删的技能不挡住其他改动）；新加的照常核对
+      const kept = new Set((current.definition as AgentDefinition).skills?.orgSkills ?? []);
+      await assertOrgSkills(t, orgId, patch.definition.skills?.orgSkills ?? [], kept);
+      await assertPinnedSkills(
+        t,
+        orgId,
+        agentId,
+        patch.definition.skills,
+        (current.definition as AgentDefinition).skills?.pinned ?? [],
+      );
+      await assertSubagents(t, {
+        orgId,
+        agentId,
+        actorAccountId,
+        definition: patch.definition,
+        toolKeys: toolKeys ?? new Set(),
+        kept: (current.definition as AgentDefinition).subagents,
+      });
+      if (canonical(current.definition) !== canonical(patch.definition)) {
+        toVersion = before.current_version + 1;
+        await t
+          .insertInto("agent_versions")
+          .values({
+            agent_id: agentId,
+            version: toVersion,
+            definition: JSON.stringify(patch.definition),
+            created_by: actorAccountId,
+          })
+          .execute();
+      }
+    }
+
+    if (visibility !== "members") {
+      await this.setMembers(t, agentId, []);
+    } else if (patch.memberIds !== undefined) {
+      await this.setMembers(t, agentId, await this.checkMembers(t, orgId, patch.memberIds));
+    }
+
+    await t
+      .updateTable("agents")
+      .set({ visibility, current_version: toVersion, updated_at: sql`now()` })
+      .where("id", "=", agentId)
+      .execute();
+    await audit(t, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "agent.updated",
+      target: agentId,
+      detail: {
+        fromVersion: before.current_version,
+        toVersion,
+        ...(visibility !== before.visibility && {
+          visibility: { from: before.visibility, to: visibility },
+        }),
+      },
+    });
+    return this.lookup.view(agentId);
   }
 
   /** 软删除：权限同 update。待处理的技能改动与该 agent 评测集在执行的评测运行一并取消，提交后删除草稿（T15）。 */
@@ -661,43 +575,50 @@ export class AgentsService {
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<void> {
-    const cancelled = await this.db.transaction().execute(async (t) => {
-      await this.lockForWrite(t, orgId, agentId, actorAccountId);
-      await t
-        .updateTable("agents")
-        .set({ deleted_at: sql`now()`, updated_at: sql`now()` })
-        .where("id", "=", agentId)
-        .execute();
-      await audit(t, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "agent.deleted",
-        target: agentId,
-      });
-      // 评测集的 agent 删除后其评测运行不再花钱：显式取消（审计带原因）
-      await cancelEvalRuns(
-        t,
-        { orgId, agentId },
-        { accountId: actorAccountId, ...(actorTokenId !== undefined && { tokenId: actorTokenId }) },
-        "agent_deleted",
-      );
-      return this.skillChanges.cancelPendingForAgent(
-        t,
-        orgId,
-        agentId,
-        actorAccountId,
-        "agent_deleted",
-        actorTokenId,
-      );
-    });
+    const cancelled = await this.softDeleteIn(orgId, agentId, actorAccountId, actorTokenId);
     await this.skillChanges.finishCancel(orgId, cancelled);
     await this.destroySandboxes(orgId, agentId);
   }
 
+  @Transactional()
+  private async softDeleteIn(
+    orgId: string,
+    agentId: string,
+    actorAccountId: string,
+    actorTokenId: string | undefined,
+  ) {
+    const t = this.db.db;
+    await this.lockForWrite(orgId, agentId, actorAccountId);
+    await t
+      .updateTable("agents")
+      .set({ deleted_at: sql`now()`, updated_at: sql`now()` })
+      .where("id", "=", agentId)
+      .execute();
+    await audit(t, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "agent.deleted",
+      target: agentId,
+    });
+    // 评测集的 agent 删除后其评测运行不再花钱：显式取消（审计带原因）
+    await this.evalBudget.cancelRuns(
+      { orgId, agentId },
+      { accountId: actorAccountId, ...(actorTokenId !== undefined && { tokenId: actorTokenId }) },
+      "agent_deleted",
+    );
+    // joins this transaction (mandatory: it relies on the agent row lock taken above)
+    return this.skillChanges.cancelPendingForAgent(
+      orgId,
+      agentId,
+      actorAccountId,
+      "agent_deleted",
+      actorTokenId,
+    );
+  }
+
   /** 提交后尽力而为：投递销毁这个 agent 各对话还没销毁的沙箱（失败只记日志，留给不活跃销毁扫描）。 */
   private async destroySandboxes(orgId: string, agentId: string): Promise<void> {
-    if (!this.sandboxes) return;
     try {
       const rows = await this.db
         .selectFrom("sandboxes as s")
@@ -709,10 +630,10 @@ export class AgentsService {
         .execute();
       const ids = rows.map((r) => r.conversation_id);
       for (let i = 0; i < ids.length; i += SANDBOX_DESTROY_BATCH) {
-        await this.sandboxes.destroy(ids.slice(i, i + SANDBOX_DESTROY_BATCH));
+        await this.sandboxJobs.destroy(ids.slice(i, i + SANDBOX_DESTROY_BATCH));
       }
     } catch (err) {
-      this.log?.warn("cannot schedule sandbox destruction for a deleted agent", { agentId, err });
+      this.log.warn("cannot schedule sandbox destruction for a deleted agent", { agentId, err });
     }
   }
 
@@ -721,6 +642,7 @@ export class AgentsService {
    * 新负责人不是该组织成员 → `member.not_found`；是匿名访客 → `member.anonymous_guest`。
    * 清除 `needs_reassignment`，审计 `agent.owner_changed`。
    */
+  @Transactional()
   async reassignOwner(
     orgId: string,
     agentId: string,
@@ -728,75 +650,53 @@ export class AgentsService {
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<AgentView> {
-    return this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "agents.manage");
-      const agent = await t
-        .selectFrom("agents")
-        .select(["owner_account_id", "needs_reassignment"])
-        .where("id", "=", agentId)
-        .where("org_id", "=", orgId)
-        .where("deleted_at", "is", null)
-        .forUpdate()
-        .executeTakeFirst();
-      if (!agent) throw notFound();
-      const member = await t
-        .selectFrom("memberships")
-        .select("role")
-        .where("org_id", "=", orgId)
-        .where("account_id", "=", newOwnerId)
-        .executeTakeFirst();
-      if (!member) throw new ApiError("member.not_found", "Member not found");
-      await rejectAnonymousGuest(t, newOwnerId);
-      await t
-        .updateTable("agents")
-        .set({ owner_account_id: newOwnerId, needs_reassignment: false, updated_at: sql`now()` })
-        .where("id", "=", agentId)
-        .execute();
-      await audit(t, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "agent.owner_changed",
-        target: agentId,
-        detail: {
-          from: agent.owner_account_id,
-          to: newOwnerId,
-          neededReassignment: agent.needs_reassignment,
-        },
-      });
-      return this.view(t, agentId);
-    });
-  }
-
-  /** 取对 viewer 可见的 agent；`viewerAccountId = null` 表示该组织的服务令牌。不可见 → `agent.not_found`。 */
-  async get(orgId: string, agentId: string, viewerAccountId: string | null): Promise<AgentView> {
-    const row = await this.db
+    const t = this.db.db;
+    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "agents.manage");
+    const agent = await t
       .selectFrom("agents")
-      .select("id")
+      .select(["owner_account_id", "needs_reassignment"])
       .where("id", "=", agentId)
       .where("org_id", "=", orgId)
       .where("deleted_at", "is", null)
-      .where(visibleTo(viewerAccountId))
+      .forUpdate()
       .executeTakeFirst();
-    if (!row) throw notFound();
-    return this.view(this.db, agentId);
+    if (!agent) throw notFound();
+    const member = await t
+      .selectFrom("memberships")
+      .select("role")
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", newOwnerId)
+      .executeTakeFirst();
+    if (!member) throw new ApiError("member.not_found", "Member not found");
+    await rejectAnonymousGuest(t, newOwnerId);
+    await t
+      .updateTable("agents")
+      .set({ owner_account_id: newOwnerId, needs_reassignment: false, updated_at: sql`now()` })
+      .where("id", "=", agentId)
+      .execute();
+    await audit(t, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "agent.owner_changed",
+      target: agentId,
+      detail: {
+        from: agent.owner_account_id,
+        to: newOwnerId,
+        neededReassignment: agent.needs_reassignment,
+      },
+    });
+    return this.lookup.view(agentId);
+  }
+
+  /** 取对 viewer 可见的 agent；`viewerAccountId = null` 表示该组织的服务令牌。不可见 → `agent.not_found`。 */
+  get(orgId: string, agentId: string, viewerAccountId: string | null): Promise<AgentView> {
+    return this.lookup.get(orgId, agentId, viewerAccountId);
   }
 
   /** 组织内对 viewer 可见的全部 agent（按创建时间）。 */
-  async listVisible(orgId: string, viewerAccountId: string | null): Promise<AgentView[]> {
-    const rows = await this.db
-      .selectFrom("agents")
-      .select("id")
-      .where("org_id", "=", orgId)
-      .where("deleted_at", "is", null)
-      .where(visibleTo(viewerAccountId))
-      .orderBy("created_at")
-      .orderBy("id")
-      .execute();
-    return this.views(
-      this.db,
-      rows.map((r) => r.id),
-    );
+  listVisible(orgId: string, viewerAccountId: string | null): Promise<AgentView[]> {
+    return this.lookup.listVisible(orgId, viewerAccountId);
   }
 
   /** 读某个版本（不做可见性判定，调用方负责）；不存在 → `agent.not_found`。 */

@@ -2,31 +2,36 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SDK_VERSION, type ToolHandler } from "@capybara-hq/plugin-sdk";
+import { type ExtensionContext, SDK_VERSION, type ToolHandler } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { ExtensionBlobs } from "../../src/extensions/blobs.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
 import type { ExtensionInstance } from "../../src/extensions/instance.js";
 import { readExtensionPackage } from "../../src/extensions/package.js";
 import { ReplicaStatusStore } from "../../src/extensions/sources.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
+import { KERNEL_BUS } from "../../src/infra/tokens.js";
+import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
+import { blobsFor, replicaStatusFor } from "../helpers/extensions.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, lifePkg, packFake, pluginTgz } from "../helpers/plugin-packages.js";
 import {
+  type BuiltKernel,
+  buildKernel,
   createOrg,
   PW,
   type Req,
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
 
@@ -47,10 +52,10 @@ const NOTES = {
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
 let pluginsDir: string;
-let k: Kernel;
+let k: TestKernel;
 let admin: Req;
 let orgId: string;
 
@@ -117,14 +122,17 @@ const setState = async (name: string, state: "enable" | "disable") => {
 };
 /** 直接经实例的在途计数调用工具（与 ToolRegistry.handler 相同的路径）。 */
 const callTool = (plugin: string) => {
-  const t = k.host.tools().find((x) => x.plugin === plugin && x.spec.name === "wait");
+  const t = k.app
+    .get(ExtensionHost)
+    .tools()
+    .find((x) => x.plugin === plugin && x.spec.name === "wait");
   if (!t) throw new Error(`tool ${plugin}__wait is not available`);
   const signal = new AbortController().signal;
   return t.inflight.run(signal, (s) =>
     t.handler({}, { signal: s } as unknown as Parameters<ToolHandler>[1]),
   ) as Promise<{ content: { text: string }[] }>;
 };
-const loadedVersion = (name: string) => k.host.current(name)?.version;
+const loadedVersion = (name: string) => k.app.get(ExtensionHost).current(name)?.version;
 const audits = (action: string, target: string) =>
   db
     .selectFrom("audit_events")
@@ -159,7 +167,7 @@ beforeAll(async () => {
     ),
     { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest },
   );
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   await accounts.createLocal({
     login: "root",
     password: PW,
@@ -170,7 +178,7 @@ beforeAll(async () => {
   orgId = await createOrg(admin);
 }, 240_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await rm(pluginsDir, { recursive: true, force: true });
   await bootstrap?.cleanup();
@@ -231,7 +239,12 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
 
     await setState("life", "disable");
     await waitFor(async () => loadedVersion("life") === undefined, 15_000, "life unloaded");
-    expect(k.host.tools().some((t) => t.plugin === "life")).toBe(false);
+    expect(
+      k.app
+        .get(ExtensionHost)
+        .tools()
+        .some((t) => t.plugin === "life"),
+    ).toBe(false);
     await waitFor(async () => (await view("life")).status === "disabled", 10_000, "disabled");
     expect((await audits("extension.disabled", "life")).length).toBe(1);
   });
@@ -270,7 +283,7 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
     g.__lifeGate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const old = k.host.current("life") as ExtensionInstance;
+    const old = k.app.get(ExtensionHost).current("life") as ExtensionInstance;
     const inflight = callTool("life");
     await waitFor(async () => old.inflight.size === 1, 5_000, "v1 call in flight");
 
@@ -419,8 +432,11 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
     await approve("conn");
     await setState("conn", "enable");
     await waitFor(async () => loadedVersion("conn") === "1.0.0", 15_000, "conn loaded");
-    const inst = k.host.current("conn") as ExtensionInstance;
-    const entry = k.host.list("connector").find((e) => e.plugin === "conn");
+    const inst = k.app.get(ExtensionHost).current("conn") as ExtensionInstance;
+    const entry = k.app
+      .get(ExtensionHost)
+      .list("connector")
+      .find((e) => e.plugin === "conn");
     expect(entry?.inflight).toBe(inst.inflight);
     type Session = { callTool(): Promise<{ content: { text: string }[] }>; close(): Promise<void> };
     const impl = entry?.impl as { kind: string; open(): Promise<Session> };
@@ -462,7 +478,7 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
       ).heartbeat_at.getTime();
     const before = await hb();
     await new Promise((r) => setTimeout(r, 20));
-    await k.bus.publish("plugins.reconcile", {});
+    await k.app.get<ExtensionContext["bus"]>(KERNEL_BUS).publish("plugins.reconcile", {});
     await waitFor(async () => (await hb()) > before, 10_000, "heartbeat refreshed");
   });
 
@@ -600,7 +616,7 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
 
 describe("policy hooks across upgrade and disable (M-1, N-2)", { timeout: 90_000 }, () => {
   const run = (input: Record<string, unknown>) =>
-    k.host.hooks.run(
+    k.app.get(ExtensionHost).hooks.run(
       "tool.preExecute",
       {
         orgId,
@@ -636,13 +652,13 @@ describe("policy hooks across upgrade and disable (M-1, N-2)", { timeout: 90_000
       payload: { enabled: true },
     });
     expect(res.statusCode, res.body).toBe(200);
-    expect(k.host.expectedPolicy("tool.preExecute")).toEqual(["guard"]);
+    expect(k.app.get(ExtensionHost).expectedPolicy("tool.preExecute")).toEqual(["guard"]);
     expect(await run({ deny: true })).toMatchObject({ reason: "guard 1.0.0 denies" });
 
     // upgrade while a v1 policy call is in flight: every call in the window is decided by a loaded
     // generation (never "not loaded")
     let release = gate();
-    const v1 = k.host.current("guard") as ExtensionInstance;
+    const v1 = k.app.get(ExtensionHost).current("guard") as ExtensionInstance;
     const held = run({ hold: true, deny: true });
     await waitFor(async () => v1.inflight.size === 1, 5_000, "v1 policy call in flight");
     await install("guard", await lifePkg({ name: "guard", version: "2.0.0", policy: true }));
@@ -660,13 +676,17 @@ describe("policy hooks across upgrade and disable (M-1, N-2)", { timeout: 90_000
     // disable while a v2 policy call is in flight: during the drain the plugin is no longer
     // expected, so new calls are allowed (not denied as "not loaded", nothing sticky to record)
     release = gate();
-    const v2 = k.host.current("guard") as ExtensionInstance;
+    const v2 = k.app.get(ExtensionHost).current("guard") as ExtensionInstance;
     const held2 = run({ hold: true });
     await waitFor(async () => v2.inflight.size === 1, 5_000, "v2 policy call in flight");
     await setState("guard", "disable");
-    await waitFor(async () => k.host.current("guard") === undefined, 15_000, "guard deactivated");
+    await waitFor(
+      async () => k.app.get(ExtensionHost).current("guard") === undefined,
+      15_000,
+      "guard deactivated",
+    );
     expect(v2.inflight.size).toBe(1);
-    expect(k.host.expectedPolicy("tool.preExecute")).toEqual([]);
+    expect(k.app.get(ExtensionHost).expectedPolicy("tool.preExecute")).toEqual([]);
     expect(await run({ deny: true })).toEqual({ allowed: true });
     release();
     expect(await held2).toEqual({ allowed: true });
@@ -679,7 +699,7 @@ describe("停机：后台排空中的旧实例在 lifecycleWaitMs 后强制撤�
     await setState("life", "enable");
     await waitFor(async () => loadedVersion("life") === "2.0.0", 15_000, "life 2.0.0 loaded");
     g.__lifeGate = new Promise<void>(() => {});
-    const old = k.host.current("life") as ExtensionInstance;
+    const old = k.app.get(ExtensionHost).current("life") as ExtensionInstance;
     const pending = callTool("life");
     pending.catch(() => {});
     await waitFor(async () => old.inflight.size === 1, 5_000, "call in flight");
@@ -690,7 +710,7 @@ describe("停机：后台排空中的旧实例在 lifecycleWaitMs 后强制撤�
     expect(old.disposed).toBe(true);
     expect(old.registrations().length).toBeGreaterThan(0);
     const started = Date.now();
-    await k.stop();
+    await k.close();
     expect(Date.now() - started).toBeLessThan(15_000);
     // 停机返回时旧实例已撤销完：在途调用已中止（不等 30 秒的排空时限）
     expect(old.inflight.signal.aborted).toBe(true);
@@ -711,7 +731,7 @@ describe("启动中止：host.load 里进行中的插件迁移随停机中止", 
       maxBytes: MAX_BYTES,
       hostSdkVersion: SDK_VERSION,
     });
-    await new ExtensionBlobs({ db, maxBytes: () => MAX_BYTES }).put(pkg, pkgBytes, {
+    await blobsFor(db, { maxBytes: MAX_BYTES }).put(pkg, pkgBytes, {
       source: "file",
       ref: "upload",
       actor: null,
@@ -733,7 +753,7 @@ describe("启动中止：host.load 里进行中的插件迁移随停机中止", 
       "capybara-migrate:plugin_slowmig",
     ]);
     try {
-      const k2 = await createKernel(
+      const k2 = await buildKernel(
         runConfig(
           { pg: pgc.url, redis: rd.url },
           {
@@ -761,7 +781,7 @@ describe("启动中止：host.load 里进行中的插件迁移随停机中止", 
         "plugin migration waiting on the schema lock",
       );
       const t0 = Date.now();
-      await k2.stop();
+      await k2.close();
       expect(Date.now() - t0).toBeLessThan(10_000);
       await expect(starting).rejects.toThrow();
       expect(
@@ -786,7 +806,7 @@ describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3�
       maxBytes: MAX_BYTES,
       hostSdkVersion: SDK_VERSION,
     });
-    await new ExtensionBlobs({ db, maxBytes: () => MAX_BYTES }).put(pkg, bytes, {
+    await blobsFor(db, { maxBytes: MAX_BYTES }).put(pkg, bytes, {
       source: "file",
       ref: "upload",
       actor: null,
@@ -804,7 +824,7 @@ describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3�
       .execute();
   };
   /** start() 在 `ms` 内返回 → started；否则 hung（不等它）。 */
-  const startWithin = async (k2: Kernel, ms: number) => {
+  const startWithin = async (k2: BuiltKernel, ms: number) => {
     const starting = k2.start();
     starting.catch(() => {});
     let timer: NodeJS.Timeout | undefined;
@@ -824,7 +844,7 @@ describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3�
       .where("plugin", "=", plugin)
       .execute();
   const kernelWith = (extensionHost: Record<string, unknown>) =>
-    createKernel(
+    buildKernel(
       runConfig(
         { pg: pgc.url, redis: rd.url },
         {
@@ -854,12 +874,12 @@ describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3�
     const k2 = await kernelWith({ reloadSetupTimeoutSeconds: 1 });
     try {
       expect(await startWithin(k2, 15_000)).toBe("started");
-      expect(k2.host.current("hangsetup")).toBeUndefined();
+      expect(k2.app.get(ExtensionHost).current("hangsetup")).toBeUndefined();
       expect(await statusOf("hangsetup")).toEqual([
         expect.objectContaining({ state: "failed", reason: "setup_failed" }),
       ]);
     } finally {
-      await k2.stop();
+      await k2.close();
       await db.deleteFrom("extension_installs").where("name", "=", "hangsetup").execute();
     }
   });
@@ -881,12 +901,12 @@ describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3�
     const k2 = await kernelWith({ reloadSetupTimeoutSeconds: 1 });
     try {
       expect(await startWithin(k2, 15_000)).toBe("started");
-      expect(k2.host.current("hangimport")).toBeUndefined();
+      expect(k2.app.get(ExtensionHost).current("hangimport")).toBeUndefined();
       const [row] = await statusOf("hangimport");
       expect(row).toMatchObject({ state: "failed", reason: "import_failed" });
       expect(row?.detail).toMatch(/importing its module did not finish within 1s/);
     } finally {
-      await k2.stop();
+      await k2.close();
       await db.deleteFrom("extension_installs").where("name", "=", "hangimport").execute();
     }
   });
@@ -903,7 +923,7 @@ describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3�
     const k2 = await kernelWith({ migrationTimeoutSeconds: 1 });
     try {
       expect(await startWithin(k2, 20_000)).toBe("started");
-      expect(k2.host.current("sleepmig")).toBeUndefined();
+      expect(k2.app.get(ExtensionHost).current("sleepmig")).toBeUndefined();
       const [row] = await statusOf("sleepmig");
       expect(row).toMatchObject({ state: "failed", reason: "migration_failed" });
       expect(row?.detail).toMatch(/did not finish within 1s/);
@@ -942,7 +962,7 @@ describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3�
         .executeTakeFirstOrThrow();
       expect(migrated.migrated_sha).toBeNull();
     } finally {
-      await k2.stop();
+      await k2.close();
       await db.deleteFrom("extension_installs").where("name", "=", "sleepmig").execute();
     }
   });
@@ -1017,7 +1037,7 @@ describe("插件名归属：配置声明的插件也占名字（I4）", { timeou
           .execute(),
       ).toEqual([]);
     } finally {
-      await k3.stop();
+      await k3.close();
     }
   });
 });
@@ -1029,7 +1049,7 @@ describe("停机：本副本的状态行删除（I6）", { timeout: 90_000 }, ()
       maxBytes: MAX_BYTES,
       hostSdkVersion: SDK_VERSION,
     });
-    await new ExtensionBlobs({ db, maxBytes: () => MAX_BYTES }).put(pkg, bytes, {
+    await blobsFor(db, { maxBytes: MAX_BYTES }).put(pkg, bytes, {
       source: "file",
       ref: "upload",
       actor: null,
@@ -1056,9 +1076,9 @@ describe("停机：本副本的状态行删除（I6）", { timeout: 90_000 }, ()
       },
     );
     const a = await startKernel(cfg);
-    let b: Kernel | undefined = await startKernel(cfg);
-    const aId = a.replicaId;
-    const bId = b.replicaId;
+    let b: TestKernel | undefined = await startKernel(cfg);
+    const aId = a.app.get(ReplicaStatusStore).replicaId;
+    const bId = b.app.get(ReplicaStatusStore).replicaId;
     try {
       const root = await session(a, "root");
       const status = async () => {
@@ -1080,15 +1100,15 @@ describe("停机：本副本的状态行删除（I6）", { timeout: 90_000 }, ()
       const before = await status();
       expect(before.status).toBe("enabled");
       expect(before.replicas.every((r) => r.state === "loaded")).toBe(true);
-      await b.stop();
+      await b.close();
       b = undefined;
       const after = await status();
       expect(after.replicas.map((r) => r.replicaId)).not.toContain(bId);
       expect(after.replicas).toHaveLength(before.replicas.length - 1);
       expect(after.status).toBe("enabled");
     } finally {
-      await b?.stop();
-      await a.stop();
+      await b?.close();
+      await a.close();
       await db.deleteFrom("extension_installs").where("name", "=", "twin").execute();
     }
   });
@@ -1098,9 +1118,7 @@ describe("副本状态行的 detail 写入前打码（M2）", () => {
   it("write / note 的 detail 经 redact 处理", async () => {
     const log = createLogger("error", { write: () => {} });
     log.addSecrets(["sup3r-s3cret-token"]);
-    const store = new ReplicaStatusStore(db, "redact-test-replica", undefined, (t) =>
-      log.redact(t),
-    );
+    const store = replicaStatusFor(db, "redact-test-replica", (t) => log.redact(t));
     try {
       await store.write({
         plugin: "leaky",

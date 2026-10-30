@@ -2,20 +2,16 @@ import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { type Readable, Writable } from "node:stream";
 import {
+  AccountsModule,
   AccountsService,
   ApiError,
-  ApiTokenService,
-  createDb,
   KERNEL_MIGRATIONS_DIR,
   KERNEL_SCHEMA,
   KernelConfigSchema,
   type KernelLogger,
-  kernelDb,
   loadConfig,
   migrate,
-  OrgsService,
-  SettingsService,
-  SetupService,
+  openKernelCli,
   secretValues,
 } from "@capybara-hq/kernel";
 
@@ -155,7 +151,7 @@ export async function runAdminCreate(
     if (err !== undefined) return fail(err);
   }
 
-  let raw: ReturnType<typeof createDb> | undefined;
+  let app: Awaited<ReturnType<typeof openKernelCli>> | undefined;
   try {
     const config = await loadConfig(env);
     log.addSecrets(secretValues(KernelConfigSchema, config));
@@ -166,20 +162,13 @@ export async function runAdminCreate(
       { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR },
       { connectTimeoutMs },
     );
-    raw = createDb(config.db.url, 2, (err) => log.error("pg idle client error", { err }), {
-      connectTimeoutMs,
-    });
-    const db = kernelDb(raw);
-    const accounts = new AccountsService(db);
+    // PostgreSQL only: the context has no Redis
+    app = await openKernelCli(config, { logger: log, modules: [AccountsModule], redis: false });
+    const accounts = app.get(AccountsService);
     const skipped = (msg: string): number => {
       (io.stdout ?? process.stdout).write(`${msg}; skipped\n`);
       return 0;
     };
-    const setup = new SetupService(
-      db,
-      accounts,
-      new OrgsService(db, new SettingsService(db, log), new ApiTokenService(db)),
-    );
     const input = {
       login: opts.login,
       displayName: opts.displayName,
@@ -194,7 +183,7 @@ export async function runAdminCreate(
       const err = await obtainPassword();
       if (err !== undefined) return fail(err);
       try {
-        const account = await setup.createEnterpriseAdminIfNone({
+        const account = await accounts.createEnterpriseAdminIfNone({
           ...input,
           password: password as string,
         });
@@ -213,13 +202,16 @@ export async function runAdminCreate(
         throw e;
       }
     }
-    const account = await setup.createEnterpriseAdmin({ ...input, password: password as string });
+    const account = await accounts.createEnterpriseAdmin({
+      ...input,
+      password: password as string,
+    });
     log.info("enterprise admin created", { accountId: account.id, login: opts.login });
     return 0;
   } catch (e) {
     if (e instanceof ApiError) return fail(`${e.code}: ${e.message}`);
     return fail(e instanceof Error ? e.message : String(e));
   } finally {
-    await raw?.destroy().catch(() => {});
+    await app?.close().catch(() => {});
   }
 }

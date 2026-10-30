@@ -9,28 +9,35 @@ import {
   parseBootstrapManifest,
   SDK_VERSION,
 } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
-import pg from "pg";
 import semver from "semver";
 import { catalogPackageError, type PluginImport } from "../catalog/plugin-import.js";
 import { PluginPackageError, readPluginPackage } from "../catalog/plugin-package.js";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
-import { pgConnectOptions } from "../db/pool.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError, type ErrorCode } from "../errors.js";
 import { audit } from "../identity/audit.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { LockService } from "../infra/lock/lock.service.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 import {
   fetchNpmPackage,
   IntegrityMismatchError,
   NpmFetchError,
   PackageTooLargeError,
 } from "../packages/npm.js";
-import type { ExtensionAdminOps } from "./admin-ops.js";
+import { ExtensionAdminOps } from "./admin-ops.js";
 import { writeSnapshot } from "./approvals.js";
-import type { ExtensionInstalls } from "./installs.js";
+import { ExtensionInstalls } from "./installs.js";
+import { PluginApproveLock } from "./locks.js";
 import { ExtensionPackageError, permissionSetOfPackage, readExtensionPackage } from "./package.js";
 import { diffPermissions, type PermissionSet } from "./permission-set.js";
-import type { ExtensionSource } from "./sources.js";
+import { ExtensionRegistry } from "./registry.js";
 
 /**
  * The bootstrap step (package ecosystem spec §7, startup bootstrap spec): installs the plugins
@@ -47,15 +54,14 @@ import type { ExtensionSource } from "./sources.js";
  *   download `bootstrap.download_failed`, a download that differs from the pin
  *   `bootstrap.integrity_mismatch` (all name the plugin), and then nothing is written. Downloading
  *   inside the lock means a fleet starting together downloads once.
- * - The whole run holds the session advisory lock `capybara.bootstrap` on a connection of its own
- *   (taken with `pg_try_advisory_lock` in a backoff loop that observes the signal, and closed
- *   afterwards, so the lock never outlives the run): when several replicas start together only one
- *   runs it; the others wait, then find it done. "Done" is a `bootstrap_runs` row for the
+ * - The whole run holds the Redis lock `lock:bootstrap` (`LockService`, decision R5 of the Nest
+ *   kernel spec: TTL {@link BOOTSTRAP_LOCK_TTL_MS}, renewed every third of it, so a run longer than the TTL keeps
+ *   it and a crashed holder's lock expires within it), taken by an unbounded wait that observes
+ *   the signal: when several replicas (or `capybara bootstrap` and a starting kernel) run it
+ *   together only one runs it; the others wait, then find it done. A lost lock (renewal failed
+ *   until expiry) aborts the run at its next step. "Done" is a `bootstrap_runs` row for the
  *   manifest's sha256 (written with the audit `bootstrap.completed` only when every entry
- *   succeeded; otherwise the next start runs it again, which is idempotent). A lock connection
- *   that drops mid-run is not detected (its errors are swallowed) and the run goes on without the
- *   lock, so a second replica could run concurrently: accepted, since a concurrent import or
- *   install degrades to `catalog.version_exists` and a deploy from the package store.
+ *   succeeded; otherwise the next start runs it again, which is idempotent).
  * - Only entries new to the manifest are installed (Ruling 5): an optional entry that the last
  *   completed run already handled and that is not installed now (an enterprise admin uninstalled
  *   it) stays uninstalled -> `kept`. A required entry is always installed.
@@ -280,32 +286,52 @@ async function scanOfflineDir(
   return out;
 }
 
-/** The advisory lock around a whole run. */
-const LOCK_KEY = "capybara.bootstrap";
+/** The lock around a whole run (`lock:bootstrap`). */
+export const BOOTSTRAP_LOCK_KEY = "bootstrap";
+/** Its lifetime without renewal; a run keeps it by renewal, a crashed holder's expires. */
+export const BOOTSTRAP_LOCK_TTL_MS = 120_000;
+/** Optional provider: the lock's lifetime (ms) instead of {@link BOOTSTRAP_LOCK_TTL_MS} (tests shorten it). */
+export const BOOTSTRAP_LOCK_TTL = Symbol("BOOTSTRAP_LOCK_TTL");
+/** The pause between attempts while another holder runs the step. */
+const LOCK_RETRY_MS = 500;
 
-export interface BootstrapServiceDeps {
-  db: KernelDb;
-  /** The lock connection is opened separately (and closed after every run). */
-  dbUrl: string;
-  connectTimeoutMs?: number;
-  config: () => KernelConfig;
-  imports: Pick<PluginImport, "prepare" | "confirm">;
-  installs: Pick<ExtensionInstalls, "ingest">;
-  ops: Pick<ExtensionAdminOps, "install" | "enable">;
-  /**
-   * Config-declared extension names (an entry of the same name is kept, config wins, and no
-   * install record is created). The kernel resolves them from `extensions` before loading.
-   */
-  declared?: () => ReadonlySet<string> | ReadonlyMap<string, ExtensionSource>;
-  log: Pick<Logger, "info" | "warn" | "error">;
-}
+/** What a run imports a declarative entry or an entry's catalog version with. */
+export type BootstrapImports = Pick<PluginImport, "prepare" | "confirm">;
 
+@Injectable()
 export class BootstrapService {
-  constructor(private readonly d: BootstrapServiceDeps) {}
+  constructor(
+    @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(LockService) private readonly locks: LockService,
+    @Inject(PluginApproveLock) private readonly approveLock: PluginApproveLock,
+    @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,
+    @Inject(ExtensionAdminOps) private readonly ops: ExtensionAdminOps,
+    /**
+     * Config-declared extension names (an entry of the same name is kept, config wins, and no
+     * install record is created): the start sequence records them before the bootstrap step, the
+     * CLI from its inspection.
+     */
+    @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
+    @Inject(KernelConfigService) private readonly configService: KernelConfigService,
+    @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+    /** The lock's lifetime without renewal. */
+    @Optional()
+    @Inject(BOOTSTRAP_LOCK_TTL)
+    private readonly lockTtlMs: number = BOOTSTRAP_LOCK_TTL_MS,
+  ) {}
+
+  private get db(): KernelSchemaDb {
+    return this.kdb.db;
+  }
+
+  private config(): KernelConfig {
+    return this.configService.get();
+  }
 
   /** Whether the bootstrap step completed for the manifest with this sha256. */
   async isDone(manifestSha256: string): Promise<boolean> {
-    const row = await this.d.db
+    const row = await this.db
       .selectFrom("bootstrap_runs")
       .select("manifest_sha256")
       .where("manifest_sha256", "=", manifestSha256)
@@ -326,10 +352,12 @@ export class BootstrapService {
     dir?: string;
     signal?: AbortSignal;
     carry?: readonly BootstrapEntryResult[];
+    /** The plugin import a declarative entry (or an entry's catalog version) goes through. */
+    imports: BootstrapImports;
   }): Promise<BootstrapResult> {
     const manifestSha256 = bootstrapManifestSha256(o.manifest);
     const recorded = async () => {
-      const done = await this.d.db
+      const done = await this.db
         .selectFrom("bootstrap_runs")
         .select("results")
         .where("manifest_sha256", "=", manifestSha256)
@@ -339,27 +367,27 @@ export class BootstrapService {
     // Done: no lock, no directory, no network
     const before = await recorded();
     if (before) return before;
-    return this.locked(o.signal, async () => {
+    return this.locked(o.signal, async (signal) => {
       // Another replica may have finished it while this one waited for the lock
       const done = await recorded();
       if (done) return done;
       // Every package is obtained and checked before the first write
       const files = await resolveBootstrapPackages(o.manifest, {
         ...(o.dir !== undefined && { dir: o.dir }),
-        config: this.d.config(),
-        ...(o.signal !== undefined && { signal: o.signal }),
-        log: this.d.log,
+        config: this.config(),
+        signal,
+        log: this.log,
       });
       const handled = await this.lastRunNames();
       const results: BootstrapEntryResult[] = [];
       const failures: BootstrapFailure[] = [];
       for (const e of o.manifest.plugins) {
-        o.signal?.throwIfAborted();
+        signal.throwIfAborted();
         try {
-          const r = await this.entry(e, files.get(e.name) as Uint8Array, handled);
+          const r = await this.entry(e, files.get(e.name) as Uint8Array, handled, o.imports);
           results.push(carried(r, o.carry));
         } catch (err) {
-          this.d.log.error("bootstrap: a plugin could not be installed", {
+          this.log.error("bootstrap: a plugin could not be installed", {
             plugin: e.name,
             version: e.version,
             required: e.required,
@@ -375,67 +403,58 @@ export class BootstrapService {
       }
       results.push(...(await this.clearRemoved(o.manifest)));
       if (failures.length > 0) throw new BootstrapFailedError(failures, results);
-      await this.d.db.transaction().execute(async (trx) => {
-        await trx
-          .insertInto("bootstrap_runs")
-          .values({
-            manifest_sha256: manifestSha256,
-            completed_at: sql<Date>`now()` as unknown as Date,
-            results: JSON.stringify(results),
-          })
-          .execute();
-        await audit(trx, {
-          action: "bootstrap.completed",
-          target: manifestSha256,
-          detail: { manifestSha256, results },
-        });
-      });
-      this.d.log.info("bootstrap completed", { manifestSha256, results });
+      signal.throwIfAborted();
+      await this.recordDone(manifestSha256, results);
+      this.log.info("bootstrap completed", { manifestSha256, results });
       return { manifestSha256, results };
     });
   }
 
-  /**
-   * Runs `fn` holding the session advisory lock on a connection of its own: `pg_try_advisory_lock`
-   * retried with a backoff (100 ms doubling to 1 s) that stops when `signal` aborts. The connection
-   * is closed afterwards in every case, which releases the lock even when the unlock failed.
-   */
-  private async locked<T>(signal: AbortSignal | undefined, fn: () => Promise<T>): Promise<T> {
-    const client = new pg.Client({
-      connectionString: this.d.dbUrl,
-      ...pgConnectOptions({ connectTimeoutMs: this.d.connectTimeoutMs }),
+  /** The `bootstrap_runs` row and the `bootstrap.completed` audit, in one transaction. */
+  @Transactional()
+  private async recordDone(manifestSha256: string, results: BootstrapEntryResult[]): Promise<void> {
+    await this.db
+      .insertInto("bootstrap_runs")
+      .values({
+        manifest_sha256: manifestSha256,
+        completed_at: sql<Date>`now()` as unknown as Date,
+        results: JSON.stringify(results),
+      })
+      .execute();
+    await audit(this.db, {
+      action: "bootstrap.completed",
+      target: manifestSha256,
+      detail: { manifestSha256, results },
     });
-    client.on("error", () => {});
+  }
+
+  /**
+   * Runs `fn` holding `lock:bootstrap`: waits without bound while another replica holds it
+   * (until `signal` aborts), renews it while `fn` runs and releases it afterwards. `fn` gets a
+   * signal that also aborts when the lock is lost.
+   */
+  private async locked<T>(
+    signal: AbortSignal | undefined,
+    fn: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
+    const handle = await this.locks.acquire(BOOTSTRAP_LOCK_KEY, {
+      ttlMs: this.lockTtlMs,
+      waitMs: Number.POSITIVE_INFINITY,
+      retryMs: LOCK_RETRY_MS,
+      ...(signal !== undefined && { signal }),
+    });
+    // An unbounded wait returns a handle or throws the abort reason
+    if (!handle) throw new Error("bootstrap: the lock could not be taken");
     try {
-      await client.connect();
-      for (let wait = 100; ; wait = Math.min(wait * 2, 1_000)) {
-        signal?.throwIfAborted();
-        const r = await client.query<{ ok: boolean }>(
-          "SELECT pg_try_advisory_lock(hashtext($1)) AS ok",
-          [LOCK_KEY],
-        );
-        if (r.rows[0]?.ok === true) break;
-        await sleep(wait, signal);
-      }
-      try {
-        return await fn();
-      } finally {
-        await client
-          .query("SELECT pg_advisory_unlock(hashtext($1))", [LOCK_KEY])
-          .catch((err: unknown) =>
-            this.d.log.warn("bootstrap: cannot release the advisory lock; closing its connection", {
-              err,
-            }),
-          );
-      }
+      return await fn(signal ? AbortSignal.any([signal, handle.lost]) : handle.lost);
     } finally {
-      await client.end().catch(() => {});
+      await handle.release();
     }
   }
 
   /** The entry names the last completed run handled (undefined before any run completed). */
   private async lastRunNames(): Promise<Set<string> | undefined> {
-    const row = await this.d.db
+    const row = await this.db
       .selectFrom("bootstrap_runs")
       .select("results")
       .orderBy("completed_at", "desc")
@@ -453,9 +472,10 @@ export class BootstrapService {
     e: BootstrapEntry,
     bytes: Uint8Array,
     handled: ReadonlySet<string> | undefined,
+    imports: BootstrapImports,
   ): Promise<BootstrapEntryResult> {
     const pkg = await readPluginPackage(bytes, {
-      maxBytes: this.d.config().packages.maxBytes,
+      maxBytes: this.config().packages.maxBytes,
       hostSdkVersion: SDK_VERSION,
     }).catch((err: unknown) => {
       throw err instanceof PluginPackageError ? catalogPackageError(err) : err;
@@ -471,34 +491,34 @@ export class BootstrapService {
     const isNew = handled === undefined || !handled.has(e.name);
     if (!pkg.manifest.extension) {
       if (!isNew) return { name: e.name, action: "kept", version: e.version };
-      const imported = await this.importOnly(e, bytes, ref);
+      const imported = await this.importOnly(e, bytes, ref, imports);
       return { name: e.name, action: imported ? "imported" : "kept", version: e.version };
     }
-    if (this.d.declared?.().has(e.name)) {
-      this.d.log.warn(
+    if (this.registry.declared().has(e.name)) {
+      this.log.warn(
         "bootstrap: the plugin is declared in the extensions config list; the config plugin is used",
         { plugin: e.name },
       );
       return { name: e.name, action: "kept", version: e.version };
     }
-    const row = await this.d.db
+    const row = await this.db
       .selectFrom("extension_installs")
       .select(["version", "source", "required", "desired_state", "sha256"])
       .where("name", "=", e.name)
       .executeTakeFirst();
     if (!row && !isNew && !e.required) {
-      this.d.log.info("bootstrap: an optional plugin that is not installed stays uninstalled", {
+      this.log.info("bootstrap: an optional plugin that is not installed stays uninstalled", {
         plugin: e.name,
       });
       return { name: e.name, action: "kept", version: e.version };
     }
     let result: BootstrapEntryResult;
     if (!row) {
-      await this.deploy(e, bytes, ref, true);
+      await this.deploy(e, bytes, ref, true, imports);
       result = { name: e.name, action: "installed", version: e.version };
     } else if (row.source === "bootstrap" && isLower(row.version, e.version)) {
       // The desired state the admin chose is kept; a required plugin is enabled below anyway
-      await this.deploy(e, bytes, ref, row.desired_state === "enabled");
+      await this.deploy(e, bytes, ref, row.desired_state === "enabled", imports);
       result = { name: e.name, action: "upgraded", version: e.version };
     } else {
       if (
@@ -508,7 +528,7 @@ export class BootstrapService {
       ) {
         // The pin changed bytes without a version bump (an image built from main between
         // releases): the installed package stays, so say so instead of keeping it silently
-        this.d.log.warn(
+        this.log.warn(
           "bootstrap: the image's package differs from the installed one at the same version; the installed package is kept (bump the version to roll it out)",
           { plugin: e.name, version: e.version },
         );
@@ -516,7 +536,7 @@ export class BootstrapService {
       result = { name: e.name, action: "kept", version: row.version };
     }
     if (row?.required !== e.required) {
-      await this.d.db
+      await this.db
         .updateTable("extension_installs")
         .set({ required: e.required })
         .where("name", "=", e.name)
@@ -524,20 +544,25 @@ export class BootstrapService {
     }
     // A required install must run on the deployment (an org cannot use it otherwise)
     if (e.required && row?.desired_state === "disabled") {
-      await this.d.ops.enable(e.name, null);
+      await this.ops.enable(e.name, null);
     }
     return result;
   }
 
   /** A declarative plugin: catalog only. Returns false when that version is already imported. */
-  private async importOnly(e: BootstrapEntry, bytes: Uint8Array, ref: string): Promise<boolean> {
+  private async importOnly(
+    e: BootstrapEntry,
+    bytes: Uint8Array,
+    ref: string,
+    imports: BootstrapImports,
+  ): Promise<boolean> {
     try {
-      const { stagingId, review } = await this.d.imports.prepare(null, bytes, {
+      const { stagingId, review } = await imports.prepare(null, bytes, {
         kind: "bootstrap",
         ref,
         integrity: e.integrity,
       });
-      await this.d.imports.confirm(null, stagingId, {
+      await imports.confirm(null, stagingId, {
         reviewHash: review.reviewHash,
         deployExtension: false,
       });
@@ -558,10 +583,11 @@ export class BootstrapService {
     bytes: Uint8Array,
     ref: string,
     enable: boolean,
+    imports: BootstrapImports,
   ): Promise<void> {
-    let staged: Awaited<ReturnType<BootstrapServiceDeps["imports"]["prepare"]>>;
+    let staged: Awaited<ReturnType<BootstrapImports["prepare"]>>;
     try {
-      staged = await this.d.imports.prepare(null, bytes, {
+      staged = await imports.prepare(null, bytes, {
         kind: "bootstrap",
         ref,
         integrity: e.integrity,
@@ -573,7 +599,7 @@ export class BootstrapService {
       }
       throw err;
     }
-    const r = await this.d.imports.confirm(null, staged.stagingId, {
+    const r = await imports.confirm(null, staged.stagingId, {
       reviewHash: staged.review.reviewHash,
       deployExtension: true,
       enable,
@@ -593,7 +619,7 @@ export class BootstrapService {
     ref: string,
     enable: boolean,
   ): Promise<void> {
-    const review = await this.d.installs.ingest(
+    const review = await this.installs.ingest(
       null,
       bytes,
       { source: "bootstrap", ref },
@@ -603,52 +629,55 @@ export class BootstrapService {
     try {
       set = permissionSetOfPackage(
         await readExtensionPackage(bytes, {
-          maxBytes: this.d.config().packages.maxBytes,
+          maxBytes: this.config().packages.maxBytes,
           hostSdkVersion: SDK_VERSION,
         }),
       );
     } catch (err) {
       throw err instanceof ExtensionPackageError ? catalogPackageError(err) : err;
     }
-    await this.d.db.transaction().execute(async (trx) => {
-      await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.plugin-approve:${e.name}`}))`.execute(
-        trx,
-      );
-      const snap = await trx
-        .selectFrom("extension_permission_snapshots")
-        .select("permissions")
-        .where("plugin", "=", e.name)
-        .forUpdate()
-        .executeTakeFirst();
-      const { added, removed } = diffPermissions(
-        snap?.permissions as PermissionSet | undefined,
-        set,
-      );
-      await writeSnapshot(trx, e.name, e.version, set, {
-        source: "bootstrap",
-        audit: { added, removed, sha256: review.sha256 },
-      });
-    });
-    const item = await this.d.db
+    await this.approveStored(e, set, review.sha256);
+    const item = await this.db
       .selectFrom("catalog_items")
       .select("id")
       .where("name", "=", e.name)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
-    await this.d.ops.install(
+    await this.ops.install(
       e.name,
       review.sha256,
       null,
       undefined,
       item ? { catalogItemId: item.id } : {},
     );
-    if (enable) await this.d.ops.enable(e.name, null);
+    if (enable) await this.ops.enable(e.name, null);
+  }
+
+  /** The permission snapshot of a stored package (source `bootstrap`), under the approve lock. */
+  @Transactional()
+  private async approveStored(
+    e: BootstrapEntry,
+    set: PermissionSet,
+    sha256: string,
+  ): Promise<void> {
+    await this.approveLock.lock(e.name);
+    const snap = await this.db
+      .selectFrom("extension_permission_snapshots")
+      .select("permissions")
+      .where("plugin", "=", e.name)
+      .forUpdate()
+      .executeTakeFirst();
+    const { added, removed } = diffPermissions(snap?.permissions as PermissionSet | undefined, set);
+    await writeSnapshot(this.db, e.name, e.version, set, {
+      source: "bootstrap",
+      audit: { added, removed, sha256 },
+    });
   }
 
   /** Install records still `required` whose entry left the manifest lose `required`. */
   private async clearRemoved(manifest: BootstrapManifest): Promise<BootstrapEntryResult[]> {
     const names = manifest.plugins.map((p) => p.name);
-    let q = this.d.db
+    let q = this.db
       .updateTable("extension_installs")
       .set({ required: false })
       .where("required", "=", true);
@@ -668,21 +697,6 @@ function carried(
   return before !== undefined && before.action !== "kept" && before.action !== "required_cleared"
     ? before
     : r;
-}
-
-/** Resolves after `ms`; rejects with the abort reason when `signal` aborts first. */
-function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(signal?.reason);
-    };
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
 }
 
 /** `installed` is below `pinned` (a version that is not semver is never upgraded). */

@@ -1,9 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { type Selectable, sql, type Transaction, type Updateable } from "kysely";
-import type { AccountsTable, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import { Inject, Injectable, Module } from "@nestjs/common";
+import { type Selectable, sql, type Updateable } from "kysely";
+import { SetupLock, SetupLockModule } from "../admin/setup-lock.js";
+import type { AccountsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
 import { audit } from "./audit.js";
-import { lockEnterpriseAdmins, lockEnterpriseAdminsAndAuthorize } from "./enterprise-admin.js";
+import { EnterpriseAdminLock, EnterpriseAdminLockModule } from "./enterprise-admin.js";
 import { MAX_PASSWORD_LENGTH, normalizeLogin, validatePassword } from "./login.js";
 import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from "./passwords.js";
 
@@ -15,8 +20,6 @@ export interface Account {
   isEnterpriseAdmin: boolean;
   createdAt: Date;
 }
-
-type Trx = Transaction<KernelDatabase>;
 
 /** 企业管理员可改的账号字段。 */
 export type AccountPatch = {
@@ -84,103 +87,117 @@ async function prepareLocal(
   return { input, login, passwordHash: passwordHash ?? (await hashPassword(input.password)) };
 }
 
-/** 在事务内插入账号、本地身份与密码；登录名已占用 → `account.login_taken`。 */
-async function insertLocal(t: Trx, p: PreparedLocal): Promise<Account> {
-  const { input, login, passwordHash } = p;
-  const id = randomUUID();
-  const row = await t
-    .insertInto("accounts")
-    .values({
-      id,
-      display_name: input.displayName,
-      email: input.email ?? null,
-      is_enterprise_admin: input.enterpriseAdmin ?? false,
-    })
-    .returningAll()
-    .executeTakeFirstOrThrow();
-  try {
-    await t
-      .insertInto("identities")
-      .values({
-        source: "local",
-        external_id: login,
-        account_id: id,
-        email: input.email ?? null,
-        linked_via: "local",
-      })
-      .execute();
-  } catch (e) {
-    if (isLoginTaken(e)) {
-      throw new ApiError("account.login_taken", "Login is already taken");
-    }
-    throw e;
-  }
-  await t
-    .insertInto("local_passwords")
-    .values({ account_id: id, password_hash: passwordHash })
-    .execute();
-  return toAccount(row);
-}
-
-/** 在事务内写入（或覆盖）本地密码哈希；账号不存在 → `account.not_found`。 */
-async function writePassword(t: Trx, accountId: string, passwordHash: string): Promise<void> {
-  const exists = await t
-    .selectFrom("accounts")
-    .select("id")
-    .where("id", "=", accountId)
-    .executeTakeFirst();
-  if (!exists) throw new ApiError("account.not_found", "Account not found");
-  await t
-    .insertInto("local_passwords")
-    .values({ account_id: accountId, password_hash: passwordHash })
-    .onConflict((oc) =>
-      oc.column("account_id").doUpdateSet({ password_hash: passwordHash, updated_at: new Date() }),
-    )
-    .execute();
-}
-
-/** 账号服务：本地账号的创建、认证与管理。框架无关，由调用方注入 db。 */
+/**
+ * Accounts: local account creation, authentication and administration. Every write is
+ * `@Transactional` (joining the caller's transaction when there is one); scrypt runs before any
+ * transaction opens.
+ */
+@Injectable()
 export class AccountsService {
-  constructor(private readonly db: KernelDb) {}
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    @Inject(SetupLock) private readonly setupLock: SetupLock,
+  ) {}
 
-  /** 校验密码长度并算出哈希（scrypt，较慢）：供需要在事务之外先算好哈希的调用方使用。 */
+  /** Checks the password length and hashes it (scrypt, slow): for callers that hash before their transaction opens. */
   async hashNewPassword(password: string): Promise<string> {
     validatePassword(password);
     return hashPassword(password);
   }
 
   /**
-   * 建本地账号。传 `trx` 时在调用方的事务内插入；在事务内调用时应先在事务**之外**用 `hashNewPassword`
-   * 算好 `passwordHash` 传进来，避免 scrypt 期间连接处于 idle in transaction。
+   * Creates a local account, in the caller's transaction when there is one. A caller inside a
+   * transaction hashes first with {@link hashNewPassword} and passes `passwordHash`, so the
+   * connection is never idle in transaction during scrypt.
    */
-  async createLocal(input: LocalAccountInput, trx?: Trx, passwordHash?: string): Promise<Account> {
-    const prepared = await prepareLocal(input, passwordHash);
-    const run = (t: Trx) => insertLocal(t, prepared);
-    return trx ? run(trx) : this.db.transaction().execute(run);
+  async createLocal(input: LocalAccountInput, passwordHash?: string): Promise<Account> {
+    return this.insertLocal(await prepareLocal(input, passwordHash));
   }
 
   /**
-   * 企业管理员建本地账号（可同时设为企业管理员）：事务内取企业管理员锁并复核发起人仍是活跃企业管理员
-   * （否则 `forbidden`），建号并写审计 `account.created`。密码哈希在取锁之前算好，不在锁内跑 scrypt。
+   * An enterprise admin creates a local account (optionally an enterprise admin): under the
+   * enterprise admin lock, re-checks that the actor is still an active enterprise admin (else
+   * `forbidden`), creates the account and audits `account.created`. The hash is computed before
+   * the lock.
    */
   async createByAdmin(
     input: LocalAccountInput,
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<Account> {
-    const prepared = await prepareLocal(input);
-    return this.db.transaction().execute(async (trx) => {
-      await lockEnterpriseAdminsAndAuthorize(trx, actorAccountId);
-      const a = await insertLocal(trx, prepared);
-      await audit(trx, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        action: "account.created",
-        target: a.id,
-        detail: { enterpriseAdmin: a.isEnterpriseAdmin },
-      });
-      return a;
+    return this.createByAdminIn(await prepareLocal(input), actorAccountId, actorTokenId);
+  }
+
+  @Transactional()
+  private async createByAdminIn(
+    prepared: PreparedLocal,
+    actorAccountId: string,
+    actorTokenId: string | undefined,
+  ): Promise<Account> {
+    await this.adminLock.lockAndAuthorize(actorAccountId);
+    const a = await this.insertLocal(prepared);
+    await audit(this.db.db, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      action: "account.created",
+      target: a.id,
+      detail: { enterpriseAdmin: a.isEnterpriseAdmin },
     });
+    return a;
+  }
+
+  /**
+   * CLI: creates an enterprise admin without checking whether the deployment is set up; a taken
+   * login → `account.login_taken`.
+   */
+  async createEnterpriseAdmin(input: EnterpriseAdminInput): Promise<Account> {
+    return this.insertEnterpriseAdmin(input, await this.hashNewPassword(input.password));
+  }
+
+  /**
+   * CLI `admin create --if-none`: creates an enterprise admin only when no active one exists. The
+   * check and the insert run in one transaction under {@link SetupLock}, the lock the web setup
+   * takes, so concurrent runs (and a concurrent web setup) create exactly one. Returns undefined
+   * when an active enterprise admin already exists; a taken login still throws
+   * `account.login_taken`.
+   */
+  async createEnterpriseAdminIfNone(input: EnterpriseAdminInput): Promise<Account | undefined> {
+    return this.createEnterpriseAdminIfNoneIn(input, await this.hashNewPassword(input.password));
+  }
+
+  @Transactional()
+  private async createEnterpriseAdminIfNoneIn(
+    input: EnterpriseAdminInput,
+    passwordHash: string,
+  ): Promise<Account | undefined> {
+    await this.setupLock.lock();
+    if ((await this.countEnterpriseAdmins()) > 0) return undefined;
+    return this.insertEnterpriseAdmin(input, passwordHash);
+  }
+
+  @Transactional()
+  private async insertEnterpriseAdmin(
+    input: EnterpriseAdminInput,
+    passwordHash: string,
+  ): Promise<Account> {
+    const account = await this.createLocal(
+      {
+        login: input.login,
+        password: input.password,
+        displayName: input.displayName,
+        enterpriseAdmin: true,
+        ...(input.email !== undefined && { email: input.email }),
+      },
+      passwordHash,
+    );
+    await audit(this.db.db, {
+      action: "account.created",
+      target: account.id,
+      detail: { enterpriseAdmin: true, via: "cli" },
+    });
+    return account;
   }
 
   async authenticateLocal(login: string, password: string): Promise<Account | null> {
@@ -252,41 +269,47 @@ export class AccountsService {
 
   async setPassword(accountId: string, password: string): Promise<void> {
     validatePassword(password);
-    const passwordHash = await hashPassword(password);
-    await this.db.transaction().execute((trx) => writePassword(trx, accountId, passwordHash));
+    await this.writePassword(accountId, await hashPassword(password));
   }
 
   /**
-   * 用户改密码（R24）：同一个 PG 事务里写新密码、吊销该账号除 `exceptSessionId` 外的全部会话
-   * （`sessions.revoked_at`）与全部个人访问令牌，要么全部生效要么都不生效。scrypt 在 BEGIN 之前算好。
-   * 返回被吊销的会话 id，调用方随后写 Redis 吊销标记（快速路径；鉴权以 PG `revoked_at` 为准，
-   * 标记写失败也不会让这些会话继续可用）。
+   * A person changes their password (R24): one PG transaction writes the new password and revokes
+   * the account's sessions except `exceptSessionId` (`sessions.revoked_at`) and all its personal
+   * access tokens; all or nothing. scrypt runs before BEGIN. Returns the revoked session ids; the
+   * caller then writes the Redis revocation markers (the fast path: auth reads PG `revoked_at`,
+   * so a failed marker never keeps a session usable).
    */
   async changePassword(
     accountId: string,
     password: string,
     exceptSessionId: string,
   ): Promise<string[]> {
-    const passwordHash = await this.hashNewPassword(password);
-    return this.db.transaction().execute(async (trx) => {
-      await writePassword(trx, accountId, passwordHash);
-      const sessions = await trx
-        .updateTable("sessions")
-        .set({ revoked_at: sql<Date>`now()` })
-        .where("account_id", "=", accountId)
-        .where("revoked_at", "is", null)
-        .where("id", "!=", exceptSessionId)
-        .returning("id")
-        .execute();
-      await trx
-        .updateTable("api_tokens")
-        .set({ revoked_at: sql<Date>`now()` })
-        .where("kind", "=", "personal")
-        .where("account_id", "=", accountId)
-        .where("revoked_at", "is", null)
-        .execute();
-      return sessions.map((r) => r.id);
-    });
+    return this.changePasswordIn(accountId, await this.hashNewPassword(password), exceptSessionId);
+  }
+
+  @Transactional()
+  private async changePasswordIn(
+    accountId: string,
+    passwordHash: string,
+    exceptSessionId: string,
+  ): Promise<string[]> {
+    await this.writePassword(accountId, passwordHash);
+    const sessions = await this.db
+      .updateTable("sessions")
+      .set({ revoked_at: sql<Date>`now()` })
+      .where("account_id", "=", accountId)
+      .where("revoked_at", "is", null)
+      .where("id", "!=", exceptSessionId)
+      .returning("id")
+      .execute();
+    await this.db
+      .updateTable("api_tokens")
+      .set({ revoked_at: sql<Date>`now()` })
+      .where("kind", "=", "personal")
+      .where("account_id", "=", accountId)
+      .where("revoked_at", "is", null)
+      .execute();
+    return sessions.map((r) => r.id);
   }
 
   async update(
@@ -299,40 +322,42 @@ export class AccountsService {
   }
 
   /**
-   * 企业管理员改账号。停用（`status: "disabled"`）时在**同一个 PG 事务**里吊销该账号的全部会话
-   * （`sessions.revoked_at`）与个人访问令牌，要么都生效要么都不生效；返回被吊销的会话 id，
-   * 调用方在提交后写 Redis 吊销标记（快速路径，失败只记 warn：鉴权以 PG 为准）。
+   * An enterprise admin changes an account. Disabling (`status: "disabled"`) revokes the
+   * account's sessions (`sessions.revoked_at`) and personal tokens in **the same PG transaction**,
+   * all or nothing; returns the revoked session ids, whose Redis markers the caller writes after
+   * the commit (the fast path; a failure is only a warning: auth reads PG).
    */
+  @Transactional()
   async updateAccount(
     id: string,
     patch: AccountPatch,
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<{ account: Account; revokedSessionIds: string[] }> {
-    return this.db.transaction().execute(async (trx) => {
-      // 所有企业管理员写操作在同一把锁下串行，并在锁内复核发起人仍是活跃企业管理员：
-      // 既避免两个管理员并发互相撤销后一个都不剩，也让刚被撤销的管理员的在途请求失效
-      await lockEnterpriseAdminsAndAuthorize(trx, actorAccountId);
-      const before = await trx
-        .selectFrom("accounts")
-        .selectAll()
-        .where("id", "=", id)
-        .executeTakeFirst();
-      if (!before) throw new ApiError("account.not_found", "Account not found");
-      return this.applyUpdate(trx, before, patch, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        detail: patch,
-      });
+    // Every enterprise admin write is serialized by one lock and re-checks the actor under it: two
+    // admins revoking each other concurrently cannot leave none, and a just-revoked admin's
+    // request in flight fails
+    await this.adminLock.lockAndAuthorize(actorAccountId);
+    const before = await this.db
+      .selectFrom("accounts")
+      .selectAll()
+      .where("id", "=", id)
+      .executeTakeFirst();
+    if (!before) throw new ApiError("account.not_found", "Account not found");
+    return this.applyUpdate(before, patch, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      detail: patch,
     });
   }
 
   /**
-   * CLI 的 `capybara admin grant|revoke <login>`（没有发起账号）：按本地登录名在 {@link lockEnterpriseAdmins}
-   * 的事务里改企业管理员标记；撤销沿用 {@link updateAccount} 的「最后一个活跃企业管理员」复核
-   * （`account.last_enterprise_admin`），在锁内判定，与网页撤销并发也不会一个都不剩。审计 `account.updated`
-   * 不带发起账号，`detail.via = "cli"`。已是目标状态时不改、不写审计（`changed: false`）。
-   * 登录名不存在 → `account.not_found`。
+   * The CLI's `capybara admin grant|revoke <login>` (no actor account): changes the enterprise
+   * admin flag by local login under the enterprise admin lock; revoking keeps the
+   * {@link updateAccount} "last active enterprise admin" check (`account.last_enterprise_admin`),
+   * decided under the lock, so it cannot race a web revoke into none. Audit `account.updated`
+   * without an actor, `detail.via = "cli"`. Already in the target state → no change and no audit
+   * (`changed: false`). Unknown login → `account.not_found`.
    */
   async setEnterpriseAdminByLogin(
     login: string,
@@ -344,83 +369,31 @@ export class AccountsService {
     } catch {
       throw new ApiError("account.not_found", "Account not found");
     }
-    return this.db.transaction().execute(async (trx) => {
-      await lockEnterpriseAdmins(trx);
-      const before = await trx
-        .selectFrom("identities")
-        .innerJoin("accounts", "accounts.id", "identities.account_id")
-        .selectAll("accounts")
-        .where("identities.source", "=", "local")
-        .where("identities.external_id", "=", external)
-        .executeTakeFirst();
-      if (!before) throw new ApiError("account.not_found", "Account not found");
-      if (before.is_enterprise_admin === isEnterpriseAdmin) {
-        return { account: toAccount(before), changed: false };
-      }
-      const patch = { isEnterpriseAdmin };
-      const { account } = await this.applyUpdate(trx, before, patch, {
-        detail: { ...patch, via: "cli" },
-      });
-      return { account, changed: true };
-    });
+    return this.setEnterpriseAdminIn(external, isEnterpriseAdmin);
   }
 
-  /**
-   * 已持企业管理员锁的事务内改账号：改行、复核「最后一个活跃企业管理员」、写审计 `account.updated`；
-   * 停用时吊销该账号的全部会话与个人令牌。
-   */
-  private async applyUpdate(
-    trx: Trx,
-    before: Selectable<AccountsTable>,
-    patch: AccountPatch,
-    auditAs: { actorAccountId?: string; actorTokenId?: string; detail: Record<string, unknown> },
-  ): Promise<{ account: Account; revokedSessionIds: string[] }> {
-    const id = before.id;
-    const values: Updateable<AccountsTable> = { updated_at: new Date() };
-    if (patch.displayName !== undefined) values.display_name = patch.displayName;
-    if (patch.status !== undefined) values.status = patch.status;
-    if (patch.isEnterpriseAdmin !== undefined) values.is_enterprise_admin = patch.isEnterpriseAdmin;
-    const row = await trx
-      .updateTable("accounts")
-      .set(values)
-      .where("id", "=", id)
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    const wasActiveAdmin = before.is_enterprise_admin && before.status === "active";
-    const isActiveAdmin = row.is_enterprise_admin && row.status === "active";
-    if (wasActiveAdmin && !isActiveAdmin && (await this.countEnterpriseAdmins(trx)) === 0) {
-      throw new ApiError(
-        "account.last_enterprise_admin",
-        "Cannot remove the last active enterprise admin",
-      );
+  @Transactional()
+  private async setEnterpriseAdminIn(
+    external: string,
+    isEnterpriseAdmin: boolean,
+  ): Promise<{ account: Account; changed: boolean }> {
+    await this.adminLock.lock();
+    const before = await this.db
+      .selectFrom("identities")
+      .innerJoin("accounts", "accounts.id", "identities.account_id")
+      .selectAll("accounts")
+      .where("identities.source", "=", "local")
+      .where("identities.external_id", "=", external)
+      .executeTakeFirst();
+    if (!before) throw new ApiError("account.not_found", "Account not found");
+    if (before.is_enterprise_admin === isEnterpriseAdmin) {
+      return { account: toAccount(before), changed: false };
     }
-    await audit(trx, {
-      ...(auditAs.actorAccountId !== undefined && { actorAccountId: auditAs.actorAccountId }),
-      ...(auditAs.actorTokenId !== undefined && { actorTokenId: auditAs.actorTokenId }),
-      action: "account.updated",
-      target: id,
-      detail: auditAs.detail,
+    const patch = { isEnterpriseAdmin };
+    const { account } = await this.applyUpdate(before, patch, {
+      detail: { ...patch, via: "cli" },
     });
-    let revokedSessionIds: string[] = [];
-    if (patch.status === "disabled") {
-      // 鉴权每次请求实时读账号状态，停用已立即生效；这里再吊销凭据，重新启用后旧凭据也不复活
-      const sessions = await trx
-        .updateTable("sessions")
-        .set({ revoked_at: sql<Date>`now()` })
-        .where("account_id", "=", id)
-        .where("revoked_at", "is", null)
-        .returning("id")
-        .execute();
-      await trx
-        .updateTable("api_tokens")
-        .set({ revoked_at: sql<Date>`now()` })
-        .where("kind", "=", "personal")
-        .where("account_id", "=", id)
-        .where("revoked_at", "is", null)
-        .execute();
-      revokedSessionIds = sessions.map((r) => r.id);
-    }
-    return { account: toAccount(row), revokedSessionIds };
+    return { account, changed: true };
   }
 
   /** 全部账号数（含停用的；后台概览）。 */
@@ -432,9 +405,9 @@ export class AccountsService {
     return Number(r.n);
   }
 
-  /** 活跃（status = active）的企业管理员数量。 */
-  async countEnterpriseAdmins(trx?: Trx): Promise<number> {
-    const r = await (trx ?? this.db)
+  /** Active (status = active) enterprise admins, in the context's transaction when there is one. */
+  async countEnterpriseAdmins(): Promise<number> {
+    const r = await this.db
       .selectFrom("accounts")
       .select((eb) => eb.fn.countAll<string>().as("n"))
       .where("is_enterprise_admin", "=", true)
@@ -442,4 +415,143 @@ export class AccountsService {
       .executeTakeFirstOrThrow();
     return Number(r.n);
   }
+
+  /** Inserts the account, its local identity and password; a taken login → `account.login_taken`. */
+  @Transactional()
+  private async insertLocal(p: PreparedLocal): Promise<Account> {
+    const { input, login, passwordHash } = p;
+    const id = randomUUID();
+    const row = await this.db
+      .insertInto("accounts")
+      .values({
+        id,
+        display_name: input.displayName,
+        email: input.email ?? null,
+        is_enterprise_admin: input.enterpriseAdmin ?? false,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    try {
+      await this.db
+        .insertInto("identities")
+        .values({
+          source: "local",
+          external_id: login,
+          account_id: id,
+          email: input.email ?? null,
+          linked_via: "local",
+        })
+        .execute();
+    } catch (e) {
+      if (isLoginTaken(e)) {
+        throw new ApiError("account.login_taken", "Login is already taken");
+      }
+      throw e;
+    }
+    await this.db
+      .insertInto("local_passwords")
+      .values({ account_id: id, password_hash: passwordHash })
+      .execute();
+    return toAccount(row);
+  }
+
+  /** Writes (or replaces) the local password hash; a missing account → `account.not_found`. */
+  @Transactional()
+  private async writePassword(accountId: string, passwordHash: string): Promise<void> {
+    const exists = await this.db
+      .selectFrom("accounts")
+      .select("id")
+      .where("id", "=", accountId)
+      .executeTakeFirst();
+    if (!exists) throw new ApiError("account.not_found", "Account not found");
+    await this.db
+      .insertInto("local_passwords")
+      .values({ account_id: accountId, password_hash: passwordHash })
+      .onConflict((oc) =>
+        oc
+          .column("account_id")
+          .doUpdateSet({ password_hash: passwordHash, updated_at: new Date() }),
+      )
+      .execute();
+  }
+
+  /**
+   * Changes the account under the enterprise admin lock the caller holds: updates the row,
+   * re-checks "the last active enterprise admin", audits `account.updated`; disabling revokes the
+   * account's sessions and personal tokens.
+   */
+  @Transactional({ propagation: "mandatory" })
+  private async applyUpdate(
+    before: Selectable<AccountsTable>,
+    patch: AccountPatch,
+    auditAs: { actorAccountId?: string; actorTokenId?: string; detail: Record<string, unknown> },
+  ): Promise<{ account: Account; revokedSessionIds: string[] }> {
+    const id = before.id;
+    const values: Updateable<AccountsTable> = { updated_at: new Date() };
+    if (patch.displayName !== undefined) values.display_name = patch.displayName;
+    if (patch.status !== undefined) values.status = patch.status;
+    if (patch.isEnterpriseAdmin !== undefined) values.is_enterprise_admin = patch.isEnterpriseAdmin;
+    const row = await this.db
+      .updateTable("accounts")
+      .set(values)
+      .where("id", "=", id)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    const wasActiveAdmin = before.is_enterprise_admin && before.status === "active";
+    const isActiveAdmin = row.is_enterprise_admin && row.status === "active";
+    if (wasActiveAdmin && !isActiveAdmin && (await this.countEnterpriseAdmins()) === 0) {
+      throw new ApiError(
+        "account.last_enterprise_admin",
+        "Cannot remove the last active enterprise admin",
+      );
+    }
+    await audit(this.db.db, {
+      ...(auditAs.actorAccountId !== undefined && { actorAccountId: auditAs.actorAccountId }),
+      ...(auditAs.actorTokenId !== undefined && { actorTokenId: auditAs.actorTokenId }),
+      action: "account.updated",
+      target: id,
+      detail: auditAs.detail,
+    });
+    let revokedSessionIds: string[] = [];
+    if (patch.status === "disabled") {
+      // Auth reads the account status on every request, so disabling is effective at once; the
+      // credentials are revoked too, so re-enabling does not bring old ones back
+      const sessions = await this.db
+        .updateTable("sessions")
+        .set({ revoked_at: sql<Date>`now()` })
+        .where("account_id", "=", id)
+        .where("revoked_at", "is", null)
+        .returning("id")
+        .execute();
+      await this.db
+        .updateTable("api_tokens")
+        .set({ revoked_at: sql<Date>`now()` })
+        .where("kind", "=", "personal")
+        .where("account_id", "=", id)
+        .where("revoked_at", "is", null)
+        .execute();
+      revokedSessionIds = sessions.map((r) => r.id);
+    }
+    return { account: toAccount(row), revokedSessionIds };
+  }
 }
+
+/** Input of the CLI enterprise admin creation. */
+export interface EnterpriseAdminInput {
+  login: string;
+  password: string;
+  displayName: string;
+  email?: string | undefined;
+}
+
+/**
+ * {@link AccountsService} with the locks it takes; needs only the database. Part of
+ * `IdentityModule`; the CLI's `admin create` / `admin grant` contexts and `@capybara-hq/testing`'s
+ * `createLocalAccount` import it alone.
+ */
+@Module({
+  imports: [SetupLockModule, EnterpriseAdminLockModule],
+  providers: [AccountsService],
+  exports: [AccountsService],
+})
+export class AccountsModule {}

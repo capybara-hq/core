@@ -1,11 +1,16 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { type JWSHeaderParameters, errors as joseErrors, jwtVerify, SignJWT } from "jose";
 import { sql } from "kysely";
 import { ACCESS_TOKEN_TTL_MAX_SECONDS } from "../config/schema.js";
 import type { DerivedKeys, Keyring } from "../ctx/secrets.js";
-import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KEYRING, REDIS } from "../infra/tokens.js";
 import { ACCOUNT_COLUMNS, type Account, toAccount } from "./accounts.js";
 import { sha256Hex } from "./hash.js";
 
@@ -39,32 +44,35 @@ class UnknownKidError extends Error {}
  * Web 会话服务：短期 access token（HS256 JWT，密钥由主密钥环派生）+ PG 中可吊销、一次一换的 refresh token。
  * 吊销会在 Redis 写 `capk:revoked-sid:<sid>`（TTL 覆盖任何配置下 access token 的最长剩余寿命），使所有副本立即拒绝该会话的 access token；
  * 验证 access token 时还会读 PG 的 `sessions.revoked_at`，Redis 丢数据也不会让已吊销的会话复活。
- * 框架无关，由调用方注入依赖。
+ * Token lifetimes are `auth.accessTokenTtlSeconds` / `auth.refreshTokenTtlDays`, read per session.
  */
+@Injectable()
 export class SessionService {
   private readonly keys: DerivedKeys;
 
   constructor(
-    private readonly db: KernelDb,
-    private readonly redis: Redis,
-    keyring: Keyring,
-    private readonly opts: { accessTtlSeconds: number; refreshTtlDays: number },
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(REDIS) private readonly redis: Redis,
+    @Inject(KEYRING) keyring: Keyring,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
   ) {
     this.keys = keyring.deriveKey(ACCESS_KEY_INFO);
   }
 
   /**
-   * 新建会话。传入 `trx` 时会话行在调用方的事务里写入（如初始化、凭邀请注册：与账号同一事务，
-   * 失败整体回滚）；Cookie 由调用方在提交之后再设置。
+   * Creates a session, in the context's transaction when there is one (setup and invitation
+   * signup write it with the account, rolled back together); the caller sets the cookies after the
+   * commit.
    */
   async create(
     accountId: string,
     meta: { userAgent?: string; ip?: string },
-    trx?: KernelDb,
   ): Promise<IssuedSession> {
     const id = randomUUID();
     const refreshToken = newRefreshToken();
-    const row = await (trx ?? this.db)
+    const refreshTtlDays = this.config.get().auth.refreshTokenTtlDays;
+    const row = await this.db
       .insertInto("sessions")
       .values({
         id,
@@ -72,7 +80,7 @@ export class SessionService {
         refresh_hash: sha256Hex(refreshToken),
         user_agent: meta.userAgent ?? null,
         ip: meta.ip ?? null,
-        expires_at: sql<Date>`now() + make_interval(days => ${this.opts.refreshTtlDays})`,
+        expires_at: sql<Date>`now() + make_interval(days => ${refreshTtlDays})`,
       })
       .returning(["expires_at"])
       .executeTakeFirstOrThrow();
@@ -267,37 +275,40 @@ export class SessionService {
     orgId: string | null,
   ): Promise<void> {
     if (orgId === null) return this.setCurrentOrg(sessionId, null);
-    await this.db.transaction().execute(async (t) => {
-      // 加锁顺序与移出成员一致：先组织行、再成员关系行（sessions.current_org_id 的外键检查也会锁组织行，
-      // 若先锁成员关系，会与持有组织行锁的移出成员互相等待而死锁）
-      const org = await t
-        .selectFrom("orgs")
-        .select("id")
-        .where("id", "=", orgId)
-        .where("deleted_at", "is", null)
+    await this.switchIn(sessionId, accountId, orgId);
+  }
+
+  @Transactional()
+  private async switchIn(sessionId: string, accountId: string, orgId: string): Promise<void> {
+    // 加锁顺序与移出成员一致：先组织行、再成员关系行（sessions.current_org_id 的外键检查也会锁组织行，
+    // 若先锁成员关系，会与持有组织行锁的移出成员互相等待而死锁）
+    const org = await this.db
+      .selectFrom("orgs")
+      .select("id")
+      .where("id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .forShare()
+      .executeTakeFirst();
+    const m =
+      org &&
+      (await this.db
+        .selectFrom("memberships")
+        .select("role")
+        .where("org_id", "=", orgId)
+        .where("account_id", "=", accountId)
         .forShare()
-        .executeTakeFirst();
-      const m =
-        org &&
-        (await t
-          .selectFrom("memberships")
-          .select("role")
-          .where("org_id", "=", orgId)
-          .where("account_id", "=", accountId)
-          .forShare()
-          .executeTakeFirst());
-      if (!m) throw new ApiError("org.not_found", "Organization not found");
-      const r = await t
-        .updateTable("sessions")
-        .set({ current_org_id: orgId })
-        .where("id", "=", sessionId)
-        .where("revoked_at", "is", null)
-        .where("expires_at", ">", sql<Date>`now()`)
-        .executeTakeFirst();
-      if (r.numUpdatedRows === 0n) {
-        throw new ApiError("auth.session_revoked", "Session has been revoked");
-      }
-    });
+        .executeTakeFirst());
+    if (!m) throw new ApiError("org.not_found", "Organization not found");
+    const r = await this.db
+      .updateTable("sessions")
+      .set({ current_org_id: orgId })
+      .where("id", "=", sessionId)
+      .where("revoked_at", "is", null)
+      .where("expires_at", ">", sql<Date>`now()`)
+      .executeTakeFirst();
+    if (r.numUpdatedRows === 0n) {
+      throw new ApiError("auth.session_revoked", "Session has been revoked");
+    }
   }
 
   /** 有效（未吊销且未过期）的会话；否则返回 undefined。 */
@@ -327,7 +338,7 @@ export class SessionService {
     refreshExpiresAt: Date,
   ): Promise<IssuedSession> {
     const iat = Math.floor(Date.now() / 1000);
-    const exp = iat + this.opts.accessTtlSeconds;
+    const exp = iat + this.config.get().auth.accessTokenTtlSeconds;
     const accessToken = await new SignJWT({ sid: sessionId })
       .setProtectedHeader({ alg: "HS256", kid: this.keys.currentId })
       .setSubject(accountId)

@@ -1,35 +1,35 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { Body, Controller, Get, HttpCode, Inject, Post, Req, Res } from "@nestjs/common";
+import { Controller, Get, HttpCode, Inject, Post, Req, Res } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import type { KernelConfig } from "../config/schema.js";
 import { ApiError } from "../errors.js";
-import { KERNEL_CONFIG, RATE_LIMITER, SESSIONS, SETUP } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
 import type { Account } from "../identity/accounts.js";
 import { clientMeta } from "../identity/auth.controller.js";
 import { setSessionCookies } from "../identity/cookies.js";
 import { MAX_PASSWORD_LENGTH } from "../identity/login.js";
 import { Public } from "../identity/principal.js";
-import type { LoginRateLimiter } from "../identity/rate-limit.js";
-import type { SessionService } from "../identity/sessions.js";
+import { SessionService } from "../identity/sessions.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { CredentialThrottler } from "../infra/throttler/credential-throttler.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody } from "../infra/validation/zod-params.js";
 import type { Org } from "../orgs/orgs.service.js";
-import type { SetupService } from "./setup.service.js";
+import { SetupService } from "./setup.service.js";
 
-const SetupBody = z.object({
+const SetupSchema = z.object({
   login: z.string().min(1).max(64),
   password: z.string().min(1).max(MAX_PASSWORD_LENGTH),
   displayName: z.string().trim().min(1).max(100),
   orgName: z.string().max(100).optional(),
   setupToken: z.string().max(1024).optional(),
 });
+class SetupBody extends createZodDto(SetupSchema, "SetupBody") {}
 
 /**
- * 初始化令牌的限流（scope `setup`）：同一客户端 IP 10 次、全部署合计 100 次 / 900s
- * （合计上限防换 IP 爆破；令牌本身应足够长，正常情况下打不满）。
+ * The setup token's credential throttlers: 10 per client IP, 100 for the whole deployment per
+ * 900 s (the total stops guessing from many IPs; a long token never hits it in normal use).
  */
-const SETUP_TOKEN_LIMIT_TOTAL = 100;
-const SETUP_TOKEN_LIMIT_PER_IP = 10;
+const SETUP_THROTTLERS = ["setup-token", "setup-ip"] as const;
 
 const sha256 = (s: string): Buffer => createHash("sha256").update(s, "utf8").digest();
 
@@ -42,10 +42,10 @@ function tokenMatches(given: string | undefined, expected: string): boolean {
 @Controller("api/v1/setup")
 export class SetupController {
   constructor(
-    @Inject(SETUP) private readonly setup: SetupService,
-    @Inject(SESSIONS) private readonly sessions: SessionService,
-    @Inject(KERNEL_CONFIG) private readonly config: () => KernelConfig,
-    @Inject(RATE_LIMITER) private readonly limiter: LoginRateLimiter,
+    @Inject(SetupService) private readonly setup: SetupService,
+    @Inject(SessionService) private readonly sessions: SessionService,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    @Inject(CredentialThrottler) private readonly throttler: CredentialThrottler,
   ) {}
 
   @Get()
@@ -63,29 +63,18 @@ export class SetupController {
   @Public()
   @HttpCode(201)
   async complete(
-    @Body(new ZodPipe(SetupBody)) body: z.infer<typeof SetupBody>,
+    @ZBody(SetupBody) body: z.infer<typeof SetupSchema>,
     @Req() req: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<{ account: Account; org?: Org }> {
-    const cfg = this.config();
+    const cfg = this.config.get();
     const expected = cfg.auth.setupToken;
     if (expected !== undefined) {
-      const { ip } = clientMeta(req);
-      const rl = await this.limiter.reserveScoped(
-        "setup",
-        "token",
-        ip,
-        SETUP_TOKEN_LIMIT_TOTAL,
-        SETUP_TOKEN_LIMIT_PER_IP,
-      );
-      if (!rl.allowed) {
-        reply.header("retry-after", String(rl.retryAfterSeconds));
-        throw new ApiError("auth.rate_limited", "Too many setup attempts; try again later");
-      }
+      await this.throttler.reserve(SETUP_THROTTLERS, req, reply);
       if (!tokenMatches(body.setupToken, expected)) {
         throw new ApiError("setup.token_invalid", "Setup token is missing or invalid");
       }
-      await this.limiter.succeededScoped("setup", "token", ip);
+      await this.throttler.succeeded(SETUP_THROTTLERS, req);
     }
     // 会话行与账号 / 组织在同一事务里写入；Cookie 在提交之后才设置
     const meta = clientMeta(req);
@@ -96,7 +85,8 @@ export class SetupController {
         displayName: body.displayName,
         orgName: body.orgName,
       },
-      (trx, account) => this.sessions.create(account.id, meta, trx),
+      // runs in the setup's transaction
+      (account) => this.sessions.create(account.id, meta),
     );
     if (!session) throw new Error("setup completed without a session");
     setSessionCookies(reply, session, cfg);

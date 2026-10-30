@@ -5,12 +5,18 @@ import {
   SKILL_ENTRY_FILE,
   type SkillInvocation,
 } from "@capybara-hq/plugin-sdk";
-import { sql, type Transaction } from "kysely";
+import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
-import type { EventLog } from "../conversations/event-log.js";
+import { EventLog } from "../conversations/event-log.js";
 import { type ConversationEvent, SKILLS_CATALOG_MAX } from "../conversations/events.js";
-import type { KernelDatabase, KernelDb, SkillManifest, SourceFormat } from "../db/kernel-schema.js";
+import type { KernelSchemaDb, SkillManifest, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../runtime/context/claude-tools.js";
 import {
   type CatalogSkill,
@@ -18,7 +24,7 @@ import {
   type SkillsSnapshot,
   sameSnapshot,
 } from "../runtime/context/skills.js";
-import type { StorageService } from "../storage/storage.service.js";
+import { type PrefixedStorage, StorageService } from "../storage/storage.service.js";
 
 /**
  * 技能目录快照（M5 T14，Ruling M17）：运行开始时解析「此刻对这个对话生效的技能」，与日志里最新一份快照不同才写
@@ -58,7 +64,7 @@ export interface EffectiveSkillsInput {
  * 批准后版本成为当前版本，各对话下一次运行开始时由快照差异得到提醒；拒绝 / 取消后发起对话回到当前版本。
  */
 export async function resolveEffectiveSkills(
-  db: KernelDb,
+  db: KernelSchemaDb,
   input: EffectiveSkillsInput,
   log?: Pick<Logger, "warn">,
 ): Promise<CatalogSkill[]> {
@@ -108,7 +114,7 @@ export interface ResolvedSkill {
  * `conversationId` (a conversation not created yet) no trial draft applies.
  */
 export async function resolveSkills(
-  db: KernelDb,
+  db: KernelSchemaDb,
   input: Omit<EffectiveSkillsInput, "conversationId"> & { conversationId?: string },
 ): Promise<ResolvedSkill[]> {
   const orgSkills = [...new Set(input.agent.skills?.orgSkills ?? [])];
@@ -262,7 +268,7 @@ const PINNED_READ_ATTEMPTS = 2;
 
 /**
  * The `run_failed` message (shown to the user, English like the other run texts) for a
- * `storage.unavailable` from {@link recordSkillsCatalog}: a pinned SKILL.md that is missing,
+ * `storage.unavailable` from {@link SkillsCatalogService.record}: a pinned SKILL.md that is missing,
  * corrupt or unparsable points at the agent's owner, since sending again cannot help; anything
  * else is a transient storage failure.
  */
@@ -286,7 +292,7 @@ export function pinnedFailureText(e: ApiError): string {
  *   ({@link pinnedFailureText} turns it into an owner-facing message).
  */
 export async function loadPinnedBodies(
-  storage: StorageService,
+  storage: PrefixedStorage,
   orgId: string,
   pinned: readonly PinnedCandidate[],
   opts: { signal?: AbortSignal; log?: Pick<Logger, "error"> } = {},
@@ -399,7 +405,7 @@ export const hasInvocation = (events: readonly ConversationEvent[]): boolean =>
 
 /** {@link skillLoadOffered} for a conversation, read from the database. */
 export async function skillLoadOfferedIn(
-  db: KernelDb,
+  db: KernelSchemaDb,
   eventLog: Pick<EventLog, "latestOfType">,
   conversationId: string,
 ): Promise<boolean> {
@@ -418,20 +424,21 @@ export async function skillLoadOfferedIn(
 export const skillsCatalogIdemKey = (runId: string): string => `skills_catalog:${runId}`;
 
 /**
- * 在事务 `t` 里锁会话行（与 `EventLog.append` 同一把锁）并读最新一份技能目录快照（没有为 undefined）。
+ * 在调用方事务里锁会话行（与 `EventLog.append` 同一把锁）并读最新一份技能目录快照（没有为 undefined）。
+ * `db` is the caller's transaction handle (`KernelDb.db` inside `@Transactional`).
  * 「读最新 → 推出下一份 → 追加」都在这把锁内，别的写快照的事务（运行开始、skill_write、拒绝时的回退）插不进来。
  */
 export async function lockLatestCatalog(
-  t: Transaction<KernelDatabase>,
+  db: KernelSchemaDb,
   conversationId: string,
 ): Promise<SkillsSnapshot | undefined> {
-  await t
+  await db
     .selectFrom("conversations")
     .select("id")
     .where("id", "=", conversationId)
     .forUpdate()
     .executeTakeFirst();
-  const last = await t
+  const last = await db
     .selectFrom("conversation_events")
     .select("payload")
     .where("conversation_id", "=", conversationId)
@@ -458,78 +465,86 @@ const RECORD_ATTEMPTS = 3;
  * whole thing starts over (at most {@link RECORD_ATTEMPTS} times, then `conflict`). A read failure
  * throws `storage.unavailable` before anything is written. Writes only when `!sameSnapshot`.
  */
-export async function recordSkillsCatalog(
-  deps: {
-    db: KernelDb;
-    eventLog: Pick<EventLog, "append" | "notify">;
-    log?: Pick<Logger, "warn" | "error">;
-    /** Reads pinned bodies; without it an agent with pinned skills fails `storage.unavailable`. */
-    storage?: StorageService;
-  },
-  input: EffectiveSkillsInput & { runId: string },
-): Promise<void> {
-  for (let attempt = 1; attempt <= RECORD_ATTEMPTS; attempt++) {
-    const all = await resolveSkills(deps.db, input);
-    // Warn about manual-only pins once, on the first attempt
-    const first = pinnedCandidates(
-      forModel(all, input),
-      input.agent,
-      input,
-      all,
-      attempt === 1 ? deps.log : undefined,
-    );
-    if (first.length > 0 && !deps.storage) {
-      throw storageUnavailable("No object storage to read pinned skills from");
-    }
-    const pinned = fitPinned(
-      deps.storage
-        ? await loadPinnedBodies(deps.storage, input.orgId, first, {
-            ...(deps.log && { log: deps.log }),
-          })
-        : [],
-      deps.log,
-      input,
-    );
-    const toSeq = await deps.db.transaction().execute(async (t) => {
-      const last = await lockLatestCatalog(t, input.conversationId);
-      const all = await resolveSkills(t, input);
-      const resolved = forModel(all, input, deps.log);
-      if (!sameCandidates(first, pinnedCandidates(resolved, input.agent, input, all))) {
-        return "retry" as const;
-      }
-      const skills = resolved.map((r) => r.skill);
-      const next: SkillsSnapshot = {
-        skills,
-        ...(pinned.length > 0 && { pinned }),
-        // The model's (truncated) skills as before phase D, plus manual-only ones: a person can
-        // invoke one whose body names Claude tools (batch 1 review M8)
-        ...([...resolved, ...all.filter((r) => !invocationOf(r.manifest).model)].some(
-          (r) => r.format === "claude-code",
-        ) && {
-          toolMap: CLAUDE_CODE_TOOL_MAP,
-        }),
-      };
-      if (last ? sameSnapshot(last, next) : skills.length === 0) return null;
-      const written = await deps.eventLog.append(
-        input.conversationId,
-        [
-          {
-            type: "skills_catalog",
-            runId: input.runId,
-            idemKey: skillsCatalogIdemKey(input.runId),
-            payload: next,
-          },
-        ],
-        t,
+@Injectable()
+export class SkillsCatalogService {
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(StorageService) private readonly storage: StorageService,
+    @Inject(EventLog) private readonly eventLog: EventLog,
+    @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {}
+
+  /**
+   * Records the run start's snapshot (see the class comment). `opts.log`: the run's logger
+   * (default the kernel logger).
+   */
+  async record(
+    input: EffectiveSkillsInput & { runId: string },
+    opts: { log?: Pick<Logger, "warn" | "error"> } = {},
+  ): Promise<void> {
+    const log = opts.log ?? this.log;
+    for (let attempt = 1; attempt <= RECORD_ATTEMPTS; attempt++) {
+      const all = await resolveSkills(this.db.db, input);
+      // Warn about manual-only pins once, on the first attempt
+      const first = pinnedCandidates(
+        forModel(all, input),
+        input.agent,
+        input,
+        all,
+        attempt === 1 ? log : undefined,
       );
-      return Math.max(...written.map((e) => e.seq));
-    });
-    if (toSeq === "retry") continue;
-    if (toSeq !== null) await deps.eventLog.notify(input.conversationId, toSeq);
-    return;
+      const pinned = fitPinned(
+        await loadPinnedBodies(this.storage, input.orgId, first, { log }),
+        log,
+        input,
+      );
+      const toSeq = await this.append(input, first, pinned, log);
+      if (toSeq === "retry") continue;
+      if (toSeq !== null) await this.eventLog.notify(input.conversationId, toSeq);
+      return;
+    }
+    throw new ApiError(
+      "conflict",
+      "The pinned skills kept changing while the run started; send the message again.",
+    );
   }
-  throw new ApiError(
-    "conflict",
-    "The pinned skills kept changing while the run started; send the message again.",
-  );
+
+  /** Step (2) of {@link record}: under the conversation row lock, resolve again and append. */
+  @Transactional()
+  private async append(
+    input: EffectiveSkillsInput & { runId: string },
+    first: readonly PinnedCandidate[],
+    pinned: PinnedSkill[],
+    log: Pick<Logger, "warn" | "error">,
+  ): Promise<number | null | "retry"> {
+    const last = await lockLatestCatalog(this.db.db, input.conversationId);
+    const all = await resolveSkills(this.db.db, input);
+    const resolved = forModel(all, input, log);
+    if (!sameCandidates(first, pinnedCandidates(resolved, input.agent, input, all))) {
+      return "retry";
+    }
+    const skills = resolved.map((r) => r.skill);
+    const next: SkillsSnapshot = {
+      skills,
+      ...(pinned.length > 0 && { pinned }),
+      // The model's (truncated) skills as before phase D, plus manual-only ones: a person can
+      // invoke one whose body names Claude tools (batch 1 review M8)
+      ...([...resolved, ...all.filter((r) => !invocationOf(r.manifest).model)].some(
+        (r) => r.format === "claude-code",
+      ) && {
+        toolMap: CLAUDE_CODE_TOOL_MAP,
+      }),
+    };
+    if (last ? sameSnapshot(last, next) : skills.length === 0) return null;
+    const written = await this.eventLog.appendIn(input.conversationId, [
+      {
+        type: "skills_catalog",
+        runId: input.runId,
+        idemKey: skillsCatalogIdemKey(input.runId),
+        payload: next,
+      },
+    ]);
+    return Math.max(...written.map((e) => e.seq));
+  }
 }

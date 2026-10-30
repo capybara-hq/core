@@ -1,18 +1,18 @@
 import { randomUUID } from "node:crypto";
 import type { Logger } from "@capybara-hq/plugin-sdk";
-import { sql, type Transaction } from "kysely";
+import { sql } from "kysely";
 import { type AgentDefinition, normalizeStoredDefinition } from "../../agents/definition.js";
-import type { KernelConfig } from "../../config/schema.js";
 import type { EventLog } from "../../conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
-import type { ConversationKind, KernelDatabase, KernelDb } from "../../db/kernel-schema.js";
+import type { ConversationKind, KernelSchemaDb } from "../../db/kernel-schema.js";
 import { audit } from "../../identity/audit.js";
+import type { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import type { ModelPurposesService } from "../../models/purposes.js";
 import { forkAgentUnknownText } from "../../skills/invoke.js";
 import { AGENT_REFUSALS, type AgentToolInputT } from "../../tools/builtins/agent.js";
 import type { ToolStepContext } from "../../tools/pipeline.js";
 import type { ProviderRegistry } from "../providers.js";
-import { ACTIVE_RUN_STATUSES, type RunJobData, runJobId } from "../run-queue.js";
+import { ACTIVE_RUN_STATUSES, type RunJobData, runJobId } from "../run-jobs.js";
 import {
   type CheckedOrgAgent,
   effectiveDefinition,
@@ -30,18 +30,43 @@ import {
   resolveRoster,
 } from "./roster.js";
 
-type KernelTrx = Transaction<KernelDatabase>;
-
 export interface DispatchDeps {
-  db: KernelDb;
+  /** The context's handle: inside {@link commitDispatchIn} it is the dispatch's transaction. */
+  db: KernelSchemaDb;
   eventLog: EventLog;
   purposes: Pick<ModelPurposesService, "resolve">;
   registry: Pick<ProviderRegistry, "resolve">;
-  config: () => KernelConfig;
+  config: Pick<KernelConfigService, "get">;
   /** Enqueues a child run (on the sub-agent run queue: `kind` is always `subagent`). */
   enqueue: (data: RunJobData, jobId: string, kind: ConversationKind) => Promise<void>;
   log: Pick<Logger, "error" | "warn">;
+  /**
+   * Runs {@link commitDispatchIn} in a transaction of its own (`SubagentsService.commitDispatch`,
+   * a `@Transactional` method).
+   */
+  commitDispatch: (
+    a: DispatchArgs,
+    plan: DispatchPlan,
+    child: ChildWriter,
+  ) => Promise<DispatchCommit | null>;
 }
+
+/** One dispatch's call. */
+export interface DispatchArgs {
+  ctx: ToolStepContext;
+  callId: string;
+  input: AgentToolInputT;
+  forSkill?: SkillForkDispatch;
+}
+
+/**
+ * Writes the child's events in the dispatch's transaction (`db` is its handle); `checked` is the
+ * org agent version the in-lock gates passed. Null refuses.
+ */
+export type ChildWriter = (
+  db: KernelSchemaDb,
+  checked?: CheckedOrgAgent,
+) => Promise<ConversationEvent | null>;
 
 export type DispatchOutcome =
   | { kind: "dispatched"; childRunId: string }
@@ -78,7 +103,7 @@ export const dispatchedIdemKey = (runId: string, callId: string) =>
   `subagent_dispatched:${runId}:${callId}`;
 
 /** What one dispatch writes, decided before its transaction. */
-interface Plan {
+export interface DispatchPlan {
   childConversationId: string;
   agentType: string;
   source: RosterEntry["source"];
@@ -175,7 +200,7 @@ export async function dispatchSubagent(
     throw e;
   }
   const childId = randomUUID();
-  const plan: Plan = {
+  const plan: DispatchPlan = {
     childConversationId: childId,
     agentType: entry.type,
     source: entry.source,
@@ -204,49 +229,45 @@ export async function dispatchSubagent(
         subagent_type: entry.type,
       })
       .execute();
-    const [, task] = await d.eventLog.append(
-      childId,
-      [
-        {
-          type: "subagent_started",
-          idemKey: "subagent_started",
-          payload: {
-            parent: {
-              conversationId: ctx.conversationId,
-              runId: ctx.runId,
-              callId: a.callId,
-              step: ctx.step,
-            },
-            agentType: entry.type,
-            template:
-              fork === undefined
-                ? eff.template
-                : {
-                    ...eff.template,
-                    invokedSkill: {
-                      id: fork.skill.id,
-                      version: fork.skill.version,
-                      name: fork.skill.name,
-                    },
-                  },
-            definition: eff.definition,
-            preamble: SUBAGENT_PREAMBLE,
-            maxSteps: eff.maxSteps,
-            ...([...eff.warnings, ...warnings].length > 0 && {
-              warnings: [...eff.warnings, ...warnings],
-            }),
+    const [, task] = await d.eventLog.appendIn(childId, [
+      {
+        type: "subagent_started",
+        idemKey: "subagent_started",
+        payload: {
+          parent: {
+            conversationId: ctx.conversationId,
+            runId: ctx.runId,
+            callId: a.callId,
+            step: ctx.step,
           },
+          agentType: entry.type,
+          template:
+            fork === undefined
+              ? eff.template
+              : {
+                  ...eff.template,
+                  invokedSkill: {
+                    id: fork.skill.id,
+                    version: fork.skill.version,
+                    name: fork.skill.name,
+                  },
+                },
+          definition: eff.definition,
+          preamble: SUBAGENT_PREAMBLE,
+          maxSteps: eff.maxSteps,
+          ...([...eff.warnings, ...warnings].length > 0 && {
+            warnings: [...eff.warnings, ...warnings],
+          }),
         },
-        taskMessage(
-          ctx,
-          a.callId,
-          fork === undefined ? input.prompt : fork.task(eff.definition),
-          undefined,
-          fork?.skill,
-        ),
-      ],
-      t,
-    );
+      },
+      taskMessage(
+        ctx,
+        a.callId,
+        fork === undefined ? input.prompt : fork.task(eff.definition),
+        undefined,
+        fork?.skill,
+      ),
+    ]);
     return task as ConversationEvent;
   });
   // a new sub-agent's writer never refuses
@@ -301,7 +322,7 @@ async function resume(
     }
   }
   const frozen = normalizeStoredDefinition(started.payload.definition);
-  const plan: Plan = {
+  const plan: DispatchPlan = {
     childConversationId: child.id,
     agentType,
     source: template.source,
@@ -336,11 +357,9 @@ async function resume(
       .forUpdate()
       .executeTakeFirst();
     if (await activeRun()) return null;
-    const [task] = await d.eventLog.append(
-      child.id,
-      [taskMessage(ctx, a.callId, a.input.prompt, narrowFollowUp(frozen, current))],
-      t,
-    );
+    const [task] = await d.eventLog.appendIn(child.id, [
+      taskMessage(ctx, a.callId, a.input.prompt, narrowFollowUp(frozen, current)),
+    ]);
     return task as ConversationEvent;
   }).then((r) => r ?? refused(AGENT_REFUSALS.stillRunning(a.id)));
 }
@@ -354,7 +373,7 @@ async function resume(
  * ({@link commit}), so a gate revoked in between refuses (batch 9 review M1).
  */
 async function orgAgentGates(
-  db: KernelDb,
+  db: KernelSchemaDb,
   a: { ctx: ToolStepContext; callId: string },
   agentId: string,
   agentType: string,
@@ -424,143 +443,165 @@ const taskMessage = (
  * included) at the cap, or as many active children as may run at once each refuse with the §4.5
  * text. The lock serializes the dispatches of one run, so the counts cannot race.
  */
-async function commit(
-  d: DispatchDeps,
-  a: { ctx: ToolStepContext; callId: string; input: AgentToolInputT; forSkill?: SkillForkDispatch },
-  plan: Plan,
-  /** Writes the child's events; `checked` is the org agent version the in-lock gates passed. */
-  child: (t: KernelTrx, checked?: CheckedOrgAgent) => Promise<ConversationEvent | null>,
-): Promise<DispatchOutcome | null> {
+/** What the dispatch transaction did. */
+export type DispatchCommit =
+  | {
+      kind: "existing";
+      childRunId: string;
+      requeue: { conversationId: string; seq: number } | null;
+    }
+  | { kind: "stopped" }
+  | { kind: "limit"; content: string }
+  | { kind: "gate"; outcome: DispatchOutcome }
+  | { kind: "written"; childRunId: string; childSeq: number; parentSeq: number };
+
+/**
+ * {@link commit}'s transaction (run by `SubagentsService.commitDispatch`, `d.db` its handle).
+ * Null when `child` refused.
+ */
+export async function commitDispatchIn(
+  d: Pick<DispatchDeps, "db" | "eventLog" | "config">,
+  a: DispatchArgs,
+  plan: DispatchPlan,
+  child: ChildWriter,
+): Promise<DispatchCommit | null> {
   const { ctx, callId, input } = a;
   const childRunId = randomUUID();
-  const out = await d.db.transaction().execute(async (t) => {
-    // the documented order, conversation row then run row (run-finish.ts, abortWaiting): the
-    // append to the parent below takes the conversation row, so it is taken first here, or a stop
-    // racing this commit could deadlock (final review m2); the child's row comes last
-    await t
-      .selectFrom("conversations")
-      .select("id")
-      .where("id", "=", ctx.conversationId)
-      .forUpdate()
-      .executeTakeFirst();
-    const parent = await t
-      .selectFrom("runs")
-      .select(["status", "subagent_tokens_used"])
-      .where("id", "=", ctx.runId)
-      .forUpdate()
-      .executeTakeFirst();
-    const existing = await t
-      .selectFrom("subagent_dispatches as sd")
-      .leftJoin("runs as cr", "cr.id", "sd.child_run_id")
-      .select(["sd.child_run_id", "sd.child_conversation_id", "cr.status", "cr.trigger_seq"])
-      .where("sd.parent_run_id", "=", ctx.runId)
-      .where("sd.parent_call_id", "=", callId)
-      .executeTakeFirst();
-    if (existing) {
-      return {
-        kind: "existing" as const,
-        childRunId: existing.child_run_id,
-        // still queued: the first holder may have died before its enqueue (review M4)
-        requeue:
-          existing.status === "queued" && existing.trigger_seq !== null
-            ? {
-                conversationId: existing.child_conversation_id,
-                seq: Number(existing.trigger_seq),
-              }
-            : null,
-      };
-    }
-    if (parent?.status !== "running") return { kind: "stopped" as const };
-    const limit = await limitRefusal(t, d, ctx, parent.subagent_tokens_used);
-    if (limit !== null) return { kind: "limit" as const, content: limit };
-    let checked: CheckedOrgAgent | undefined;
-    if (plan.source === "agent") {
-      // the org agent's gates again, under the parent run's lock, with both agents' rows held
-      // FOR SHARE (in id order) so a concurrent save of either serializes with this dispatch
-      await t
-        .selectFrom("agents")
-        .select("id")
-        .where("id", "in", [ctx.agentId, plan.agentId])
-        .orderBy("id")
-        .forShare()
-        .execute();
-      const gates = await orgAgentGates(t, a, plan.agentId, plan.agentType, plan.resumed);
-      if ("refused" in gates) return { kind: "gate" as const, outcome: gates.refused };
-      checked = gates.checked;
-    }
-    const task = await child(t, checked);
-    if (task === null) return null;
-    await t
-      .insertInto("runs")
-      .values({
-        id: childRunId,
-        conversation_id: plan.childConversationId,
-        status: "queued",
-        agent_version: plan.agentVersion,
-        trigger_account_id: ctx.accountId,
-        trigger_seq: task.seq,
-      })
-      .execute();
-    await t
-      .insertInto("subagent_dispatches")
-      .values({
-        parent_run_id: ctx.runId,
-        parent_call_id: callId,
-        parent_conversation_id: ctx.conversationId,
-        step: ctx.step,
-        child_conversation_id: plan.childConversationId,
-        child_run_id: childRunId,
-        resumed: plan.resumed,
-      })
-      .execute();
-    const [dispatched] = await d.eventLog.append(
-      ctx.conversationId,
-      [
-        {
-          type: "subagent_dispatched",
-          runId: ctx.runId,
-          idemKey: dispatchedIdemKey(ctx.runId, callId),
-          payload: {
-            step: ctx.step,
-            callId,
-            subagentId: plan.childConversationId,
-            childRunId,
-            agentType: plan.agentType,
-            description: input.description,
-            resumed: plan.resumed,
-            model: { provider: plan.model.provider, model: plan.model.model },
-            ...(plan.tierFallback && { tierFallback: true }),
-            ...(a.forSkill !== undefined && { invokedSeq: a.forSkill.seq }),
-          },
-        },
-      ],
-      t,
-    );
-    await audit(t, {
-      actorAccountId: ctx.accountId,
-      orgId: ctx.orgId,
-      action: "subagent.dispatched",
-      target: plan.childConversationId,
-      detail: {
-        parentConversationId: ctx.conversationId,
-        parentRunId: ctx.runId,
-        callId,
-        agentType: plan.agentType,
-        source: plan.source,
-        ...(plan.source === "agent" && {
-          agentId: plan.agentId,
-          agentVersion: plan.agentVersion,
-        }),
-        resumed: plan.resumed,
-        childRunId,
-      },
-    });
+  const t = d.db;
+  // the documented order, conversation row then run row (run-finish.ts, abortWaiting): the
+  // append to the parent below takes the conversation row, so it is taken first here, or a stop
+  // racing this commit could deadlock (final review m2); the child's row comes last
+  await t
+    .selectFrom("conversations")
+    .select("id")
+    .where("id", "=", ctx.conversationId)
+    .forUpdate()
+    .executeTakeFirst();
+  const parent = await t
+    .selectFrom("runs")
+    .select(["status", "subagent_tokens_used"])
+    .where("id", "=", ctx.runId)
+    .forUpdate()
+    .executeTakeFirst();
+  const existing = await t
+    .selectFrom("subagent_dispatches as sd")
+    .leftJoin("runs as cr", "cr.id", "sd.child_run_id")
+    .select(["sd.child_run_id", "sd.child_conversation_id", "cr.status", "cr.trigger_seq"])
+    .where("sd.parent_run_id", "=", ctx.runId)
+    .where("sd.parent_call_id", "=", callId)
+    .executeTakeFirst();
+  if (existing) {
     return {
-      kind: "written" as const,
-      childSeq: task.seq,
-      parentSeq: (dispatched as ConversationEvent).seq,
+      kind: "existing" as const,
+      childRunId: existing.child_run_id,
+      // still queued: the first holder may have died before its enqueue (review M4)
+      requeue:
+        existing.status === "queued" && existing.trigger_seq !== null
+          ? {
+              conversationId: existing.child_conversation_id,
+              seq: Number(existing.trigger_seq),
+            }
+          : null,
     };
+  }
+  if (parent?.status !== "running") return { kind: "stopped" as const };
+  const limit = await limitRefusal(t, d, ctx, parent.subagent_tokens_used);
+  if (limit !== null) return { kind: "limit" as const, content: limit };
+  let checked: CheckedOrgAgent | undefined;
+  if (plan.source === "agent") {
+    // the org agent's gates again, under the parent run's lock, with both agents' rows held
+    // FOR SHARE (in id order) so a concurrent save of either serializes with this dispatch
+    await t
+      .selectFrom("agents")
+      .select("id")
+      .where("id", "in", [ctx.agentId, plan.agentId])
+      .orderBy("id")
+      .forShare()
+      .execute();
+    const gates = await orgAgentGates(t, a, plan.agentId, plan.agentType, plan.resumed);
+    if ("refused" in gates) return { kind: "gate" as const, outcome: gates.refused };
+    checked = gates.checked;
+  }
+  const task = await child(t, checked);
+  if (task === null) return null;
+  await t
+    .insertInto("runs")
+    .values({
+      id: childRunId,
+      conversation_id: plan.childConversationId,
+      status: "queued",
+      agent_version: plan.agentVersion,
+      trigger_account_id: ctx.accountId,
+      trigger_seq: task.seq,
+    })
+    .execute();
+  await t
+    .insertInto("subagent_dispatches")
+    .values({
+      parent_run_id: ctx.runId,
+      parent_call_id: callId,
+      parent_conversation_id: ctx.conversationId,
+      step: ctx.step,
+      child_conversation_id: plan.childConversationId,
+      child_run_id: childRunId,
+      resumed: plan.resumed,
+    })
+    .execute();
+  const [dispatched] = await d.eventLog.appendIn(ctx.conversationId, [
+    {
+      type: "subagent_dispatched",
+      runId: ctx.runId,
+      idemKey: dispatchedIdemKey(ctx.runId, callId),
+      payload: {
+        step: ctx.step,
+        callId,
+        subagentId: plan.childConversationId,
+        childRunId,
+        agentType: plan.agentType,
+        description: input.description,
+        resumed: plan.resumed,
+        model: { provider: plan.model.provider, model: plan.model.model },
+        ...(plan.tierFallback && { tierFallback: true }),
+        ...(a.forSkill !== undefined && { invokedSeq: a.forSkill.seq }),
+      },
+    },
+  ]);
+  await audit(t, {
+    actorAccountId: ctx.accountId,
+    orgId: ctx.orgId,
+    action: "subagent.dispatched",
+    target: plan.childConversationId,
+    detail: {
+      parentConversationId: ctx.conversationId,
+      parentRunId: ctx.runId,
+      callId,
+      agentType: plan.agentType,
+      source: plan.source,
+      ...(plan.source === "agent" && {
+        agentId: plan.agentId,
+        agentVersion: plan.agentVersion,
+      }),
+      resumed: plan.resumed,
+      childRunId,
+    },
   });
+  return {
+    kind: "written" as const,
+    childRunId,
+    childSeq: task.seq,
+    parentSeq: (dispatched as ConversationEvent).seq,
+  };
+}
+
+async function commit(
+  d: DispatchDeps,
+  a: DispatchArgs,
+  plan: DispatchPlan,
+  /** Writes the child's events; `checked` is the org agent version the in-lock gates passed. */
+  child: ChildWriter,
+): Promise<DispatchOutcome | null> {
+  const { ctx } = a;
+  const out = await d.commitDispatch(a, plan, child);
   if (out === null) return null;
   if (out.kind === "existing") {
     // a child still queued is enqueued again under the first dispatch's job id (BullMQ dedupes
@@ -590,6 +631,7 @@ async function commit(
   if (out.kind === "gate") return out.outcome;
   await d.eventLog.notify(plan.childConversationId, out.childSeq);
   await d.eventLog.notify(ctx.conversationId, out.parentSeq);
+  const childRunId = out.childRunId;
   const jobId = runJobId(plan.childConversationId, out.childSeq);
   try {
     await d.enqueue(
@@ -609,8 +651,8 @@ async function commit(
  * run's row lock; `tokensUsed` is the counter read with that lock.
  */
 async function limitRefusal(
-  t: KernelTrx,
-  d: DispatchDeps,
+  t: KernelSchemaDb,
+  d: Pick<DispatchDeps, "config">,
   ctx: ToolStepContext,
   tokensUsed: string | number | bigint,
 ): Promise<string | null> {

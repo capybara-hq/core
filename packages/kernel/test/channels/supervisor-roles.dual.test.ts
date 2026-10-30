@@ -10,9 +10,9 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { channelLeaseKey } from "../../src/channels/supervisor.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { PW, sleep, waitFor } from "../helpers/runs.js";
 
@@ -60,7 +60,7 @@ async function setup(roles: [string[], string[]], appId: string) {
   const harness = h;
   const raw = createDb(harness.dbUrl, 3);
   cleanups.push(() => raw.destroy());
-  const db: KernelDb = kernelDb(raw);
+  const db: KernelSchemaDb = kernelDb(raw);
 
   let cookie = "";
   const call = async (method: string, path: string, body?: unknown) => {
@@ -84,7 +84,7 @@ async function setup(roles: [string[], string[]], appId: string) {
   };
 
   const ownerId = (
-    await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" })
+    await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" })
   ).id;
   expect((await call("POST", "/api/v1/auth/login", { login: "owner", password: PW })).status).toBe(
     200,

@@ -30,9 +30,14 @@ import {
   type RegisteredHook,
   sanitizeDenyReason,
 } from "../../src/extensions/hooks.js";
-import { ExtensionHost } from "../../src/extensions/host.js";
+import type { ExtensionHost } from "../../src/extensions/host.js";
 import { InflightTracker } from "../../src/extensions/inflight.js";
+import { ExtensionRegistry } from "../../src/extensions/registry.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
+import { createLogger } from "../../src/log.js";
+import { EmbedTokens } from "../../src/ui/embed-token.js";
 import type { HooksDrainState } from "../fixtures/plugins/hooks-drain/index.js";
+import { testHost } from "../helpers/extensions.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let rd: Awaited<ReturnType<typeof startTestRedis>>;
@@ -56,9 +61,11 @@ beforeAll(async () => {
     db: createDb(pg.url, 5),
     dbUrl: pg.url,
     redis,
+    locks: new LockService(redis, createLogger("error")),
     busSubscriber: sub,
     redisUrl: rd.url,
     keyring: createKeyring(Buffer.alloc(32, 1), []),
+    embedTokens: new EmbedTokens(createKeyring(Buffer.alloc(32, 1), [])),
     runWorkers: false,
     log: quiet,
   };
@@ -134,7 +141,7 @@ function setup(
       typeof enabled === "function"
         ? enabled
         : async () => new Set(enabled ?? ["alpha", "beta", "zeta"]),
-    redis,
+    locks: new LockService(redis, createLogger("error")),
     config: () => ({ hooks: { timeoutMs: opts.timeoutMs ?? 1000 } }),
     log: opts.log ?? quiet,
   });
@@ -719,7 +726,7 @@ describe("plugin host", () => {
   };
 
   it("unload and reload revoke the instance's hooks through the ledger", async () => {
-    const h = new ExtensionHost(deps, {}, { autoApprove: true });
+    const h = testHost(deps, {}, { registry: new ExtensionRegistry(), autoApprove: true });
     hosts.push(h);
     await h.load([fx("hooks-a")]);
     vi.spyOn(h, "enabledPlugins").mockResolvedValue(new Set(["hooks-a"]));
@@ -754,7 +761,7 @@ describe("plugin host", () => {
 
   it("during an upgrade's drain window each hook fires exactly once, and the old call is drained", async () => {
     const { s, release } = drainState();
-    const h = new ExtensionHost(deps, {}, { autoApprove: true });
+    const h = testHost(deps, {}, { registry: new ExtensionRegistry(), autoApprove: true });
     hosts.push(h);
     await h.load([fx("hooks-drain")]);
     vi.spyOn(h, "enabledPlugins").mockResolvedValue(new Set(["hooks-drain"]));
@@ -779,7 +786,7 @@ describe("plugin host", () => {
 
   it("a policy hook cut off at the end of the drain reruns on the new generation", async () => {
     const { s, release } = drainState();
-    const h = new ExtensionHost(deps, {}, { autoApprove: true });
+    const h = testHost(deps, {}, { registry: new ExtensionRegistry(), autoApprove: true });
     hosts.push(h);
     await h.load([fx("hooks-drain")]);
     vi.spyOn(h, "enabledPlugins").mockResolvedValue(new Set(["hooks-drain"]));

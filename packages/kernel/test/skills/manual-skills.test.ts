@@ -10,13 +10,13 @@ import {
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import { type ConversationEvent, SKILLS_CATALOG_MAX } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
 import { type SkillsSnapshot, snapshotChangeText } from "../../src/runtime/context/skills.js";
-import { invocationOf, recordSkillsCatalog } from "../../src/skills/catalog.js";
+import { invocationOf, SkillsCatalogService } from "../../src/skills/catalog.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -28,6 +28,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitForTerminal,
 } from "../helpers/runs.js";
 import { makeZip } from "./zip.js";
@@ -43,9 +44,9 @@ const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
 let pgc: TestContainer;
 let rd: TestContainer;
 let s3: TestS3;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 
 beforeAll(async () => {
   [pgc, rd, s3] = await Promise.all([startTestPostgres(), startTestRedis(), startTestS3()]);
@@ -74,7 +75,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
 });
@@ -88,7 +89,7 @@ beforeEach(async () => {
     db,
     "capybara.skill_change_requests, capybara.skill_versions, capybara.skills, capybara.attachments, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" })).id;
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
@@ -159,7 +160,7 @@ async function seedSkill(opts: {
 }): Promise<{ id: string; version: number }> {
   const prefix = `skills/${randomUUID()}/`;
   const data = new TextEncoder().encode(opts.text);
-  await k.storage.kernel(orgId).put(`${prefix}SKILL.md`, data, {
+  await k.app.get(StorageService).kernel(orgId).put(`${prefix}SKILL.md`, data, {
     contentType: "application/octet-stream",
     size: data.byteLength,
   });
@@ -246,10 +247,12 @@ const record = (
   runId: string,
   log?: { warn: (...a: unknown[]) => void; error: (...a: unknown[]) => void },
 ) =>
-  recordSkillsCatalog(
-    { db, eventLog: k.runs.eventLog, storage: k.storage, ...(log && { log }) },
-    { orgId, agentId: agent, conversationId: conv, runId, agent: def as AgentDefinition },
-  );
+  k.app
+    .get(SkillsCatalogService)
+    .record(
+      { orgId, agentId: agent, conversationId: conv, runId, agent: def as AgentDefinition },
+      log && { log },
+    );
 
 describe("manifest.invocation", { timeout: 60_000 }, () => {
   it("an upload with disable-model-invocation: true stores a manual-only version", async () => {

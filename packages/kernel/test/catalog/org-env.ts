@@ -15,15 +15,26 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { expect } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
+import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
-import { createOrg, PW, type Req, runConfig, session, waitFor } from "../helpers/runs.js";
+import {
+  createOrg,
+  PW,
+  type Req,
+  runConfig,
+  session,
+  startKernel,
+  type TestKernel,
+  waitFor,
+} from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import { mcpTemplate, skillPlugin, templatePlugin } from "./packages.js";
 
@@ -43,8 +54,8 @@ export const MCP_TOKEN = "tok-123";
 
 /** The org catalog test environment: PG + Redis + SeaweedFS + a fake MCP; the kernel loads fake-connector, fake-tools-ui, fake-dep-provider. */
 export interface OrgEnv {
-  k: Kernel;
-  db: KernelDb;
+  k: TestKernel;
+  db: KernelSchemaDb;
   mcp: FakeMcpServer;
   /** 企业管理员（也是组织所有者）。 */
   root: Req;
@@ -116,9 +127,8 @@ export async function startOrgEnv(): Promise<OrgEnv> {
       http: { port: 0, publicUrl: "https://capybara.example.com" },
     },
   );
-  const k = await createKernel(config, { env: {} });
-  await k.start();
-  const accounts = new AccountsService(db);
+  const k = await startKernel(config, { env: {} });
+  const accounts = accountsFor(db);
   const rootId = (
     await accounts.createLocal({
       login: "root",
@@ -152,7 +162,7 @@ export async function startOrgEnv(): Promise<OrgEnv> {
     memId,
     orgId,
     async stop() {
-      await k.stop();
+      await k.close();
       await raw.destroy();
       await mcp.stop();
       await rm(pluginsDir, { recursive: true, force: true });
@@ -169,7 +179,7 @@ export async function resetOrgCatalog(env: OrgEnv): Promise<void> {
     env.db,
     "capybara.plugin_install_components, capybara.plugin_installs, capybara.agent_template_versions, capybara.agent_templates, capybara.extension_catalog_sources, capybara.catalog_requests, capybara.catalog_org_grants, capybara.plugin_import_staging, capybara.catalog_item_versions, capybara.catalog_items, capybara.skill_versions, capybara.skills, capybara.connector_tools, capybara.connectors, capybara.extension_org_configs, capybara.deployment_settings, capybara.audit_events",
   );
-  await env.k.storage.deployment().deletePrefix("directory/");
+  await env.k.app.get(StorageService).deployment().deletePrefix("directory/");
 }
 
 /** Imports a plugin tgz as the enterprise admin (prepare -> confirm); returns the item id. */
@@ -263,7 +273,7 @@ export async function importDeployedPlugin(
   expect(inst.statusCode, inst.body).toBe(200);
   const en = await env.root({ method: "POST", url: `/api/v1/admin/extensions/${name}/enable` });
   expect(en.statusCode, en.body).toBe(200);
-  await waitFor(async () => env.k.host.current(name) !== undefined, 15_000, name);
+  await waitFor(async () => env.k.app.get(ExtensionHost).current(name) !== undefined, 15_000, name);
   return { itemId, sha256: createHash("sha256").update(bytes).digest("hex") };
 }
 
@@ -359,7 +369,7 @@ export async function seedPlugin(
   ];
   const prefix = files.length > 0 ? `directory/${id}/${version}/${randomUUID()}/` : null;
   for (const f of files) {
-    await env.k.storage.deployment().put(`${prefix}${f.path}`, f.data, {
+    await env.k.app.get(StorageService).deployment().put(`${prefix}${f.path}`, f.data, {
       contentType: "application/octet-stream",
       size: f.data.byteLength,
     });

@@ -1,18 +1,23 @@
 import { execFile } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { readdir, readFile, readlink } from "node:fs/promises";
 import { promisify } from "node:util";
 import {
+  AccountsModule,
   AccountsService,
   type ConversationEvent,
-  createKernel,
+  closeKernelApp,
   createLogger,
-  type Kernel,
   type KernelConfig,
   KernelConfigSchema,
-  type KernelDb,
   type KernelHttp,
+  type KernelSchemaDb,
+  kernelAppHttp,
+  kernelAppPort,
   type LogLevel,
   MARKETPLACE_OFFICIAL_URL_DEFAULT,
+  openKernelCliOverPool,
+  startKernelApp,
 } from "@capybara-hq/kernel";
 import { type Kysely, sql } from "kysely";
 
@@ -89,11 +94,34 @@ export function assertOfflineOfficialMarketplace(config: KernelConfig, allow = f
   );
 }
 
+/** The kernel's Nest application (what `createKernelApp` / `startKernelApp` return). */
+export type KernelApp = Awaited<ReturnType<typeof startKernelApp>>;
+
+/** A running in-process kernel ({@link startTestKernel}). */
+export interface TestKernel {
+  /**
+   * The kernel's Nest application. Core's own tests reach a kernel service with `app.get(Class)`;
+   * a plugin test cannot import kernel classes (`plugin-test-imports`), so it drives the kernel
+   * through `http` and the helpers of this package.
+   */
+  readonly app: KernelApp;
+  /** In-process HTTP: `inject` requests, list the routes. */
+  readonly http: KernelHttp;
+  /**
+   * The port the kernel listens on (an ephemeral one with `http.port: 0`); undefined after
+   * `close()`.
+   */
+  readonly port: number | undefined;
+  /** Stops the kernel (the stop phases within their budgets, then Redis and the pool); idempotent. */
+  close(): Promise<void>;
+}
+
 /**
- * Creates and starts an in-process kernel. Logs are discarded unless `log` is given (JSON lines at
- * `log.level` and above go to `log.write`, e.g. to assert a secret never reaches the log).
- * Extensions named by package resolve from `resolveFrom` (default `process.cwd()`). Stop it with
- * `stop()`.
+ * Creates and starts an in-process kernel (`startKernelApp`; it listens on `config.http.port`).
+ * The kernel gets no process-wide signal handlers: a test stops it with `close()`. Logs are
+ * discarded unless `log` is given (JSON lines at `log.level` and above go to `log.write`, e.g. to
+ * assert a secret never reaches the log). Extensions named by package resolve from `resolveFrom`
+ * (default `process.cwd()`).
  */
 export async function startTestKernel(
   config: KernelConfig,
@@ -103,15 +131,31 @@ export async function startTestKernel(
     /** Only for a test about the real default: allow the official marketplace at its real URL. */
     allowOfficialMarketplace?: boolean;
   } = {},
-): Promise<Kernel> {
+): Promise<TestKernel> {
   assertOfflineOfficialMarketplace(config, opts.allowOfficialMarketplace);
-  const k = await createKernel(config, {
-    env: {},
-    logger: createLogger(opts.log?.level ?? "error", { write: opts.log?.write ?? (() => {}) }),
-    ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
-  });
-  await k.start();
-  return k;
+  const app = await startKernelApp(
+    config,
+    {
+      env: {},
+      logger: createLogger(opts.log?.level ?? "error", { write: opts.log?.write ?? (() => {}) }),
+      ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
+    },
+    // A signal source of its own: a test kernel never handles the process's SIGTERM / SIGINT
+    { signals: new EventEmitter() },
+  );
+  return testKernelOf(app);
+}
+
+/** The {@link TestKernel} view of a started kernel application. */
+function testKernelOf(app: KernelApp): TestKernel {
+  return {
+    app,
+    http: kernelAppHttp(app),
+    get port() {
+      return kernelAppPort(app);
+    },
+    close: () => closeKernelApp(app),
+  };
 }
 
 /** Options of a {@link KernelRequest} call (`http.inject` options; `csrf: false` drops the header). */
@@ -159,18 +203,31 @@ function expectStatus(res: KernelResponse, status: number, what: string): void {
 
 /** Creates a local account with {@link TEST_PASSWORD}; returns its id. */
 export async function createLocalAccount(
-  db: KernelDb,
+  db: KernelSchemaDb,
   login: string,
   displayName = login,
 ): Promise<string> {
-  return (
-    await new AccountsService(db).createLocal({ login, password: TEST_PASSWORD, displayName })
-  ).id;
+  // the accounts module over the caller's Kysely; closing the context leaves it open
+  const app = await openKernelCliOverPool(db, {
+    logger: createLogger("error"),
+    modules: [AccountsModule],
+  });
+  try {
+    return (
+      await app.get(AccountsService).createLocal({
+        login,
+        password: TEST_PASSWORD,
+        displayName,
+      })
+    ).id;
+  } finally {
+    await app.close();
+  }
 }
 
 /** Signs in over HTTP and returns the user's request function. */
 export async function login(
-  k: Pick<Kernel, "http">,
+  k: Pick<TestKernel, "http">,
   name: string,
   password = TEST_PASSWORD,
 ): Promise<KernelRequest> {
@@ -196,7 +253,7 @@ export async function createOrg(req: KernelRequest, name = "Acme"): Promise<stri
  * and {@link TEST_PASSWORD}); returns the account id and its signed-in request function.
  */
 export async function joinOrg(
-  k: Pick<Kernel, "http">,
+  k: Pick<TestKernel, "http">,
   owner: KernelRequest,
   orgId: string,
   name: string,
@@ -276,7 +333,10 @@ export async function postMessage(
 }
 
 /** Every event of a conversation, in seq order (read from the database). */
-export async function eventsOf(db: KernelDb, conversationId: string): Promise<ConversationEvent[]> {
+export async function eventsOf(
+  db: KernelSchemaDb,
+  conversationId: string,
+): Promise<ConversationEvent[]> {
   const rows = await db
     .selectFrom("conversation_events")
     .select(["conversation_id", "seq", "type", "run_id", "payload", "created_at"])
@@ -298,7 +358,7 @@ export async function eventsOf(db: KernelDb, conversationId: string): Promise<Co
 
 /** Waits for the first event matching `pred` and returns it. */
 export function waitForEvent(
-  db: KernelDb,
+  db: KernelSchemaDb,
   conversationId: string,
   pred: (e: ConversationEvent) => boolean,
   timeoutMs = 10_000,
@@ -309,7 +369,7 @@ export function waitForEvent(
 
 /** Waits for the conversation's `n`-th terminal event (run_finished / run_failed / run_aborted). */
 export function waitForTerminal(
-  db: KernelDb,
+  db: KernelSchemaDb,
   conversationId: string,
   n = 1,
   timeoutMs = 15_000,
@@ -332,7 +392,7 @@ export function waitForTerminal(
  * conversation", so a test waits for this before it clicks, not only for the platform to get it.
  */
 export async function cardRecorded(
-  db: KernelDb,
+  db: KernelSchemaDb,
   card: { messageId: string } | { kind: "approval" | "question" },
   timeoutMs = 20_000,
 ): Promise<void> {

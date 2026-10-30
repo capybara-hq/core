@@ -1,34 +1,10 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
-import {
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  Inject,
-  Param,
-  Patch,
-  Post,
-  Put,
-  Query,
-} from "@nestjs/common";
+import { Controller, Get, HttpCode, Inject, Param, Patch, Post, Put } from "@nestjs/common";
 import { z } from "zod";
-import type { CatalogRequestsService } from "../catalog/requests.service.js";
-import type { ExtensionAdmin } from "../extensions/admin-view.js";
+import { CatalogRequestsService } from "../catalog/requests.service.js";
+import { ExtensionAdmin } from "../extensions/admin-view.js";
 import { extensionNeedsAction } from "../extensions/permission-view.js";
-import {
-  ACCOUNTS,
-  CATALOG_REQUESTS,
-  EXTENSION_ADMIN,
-  KERNEL_LOG,
-  MODEL_PURPOSES,
-  ORGS,
-  PRICES,
-  PROVIDER_REGISTRY,
-  SESSIONS,
-  SETTINGS,
-} from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
-import type { Account, AccountsService } from "../identity/accounts.js";
+import { type Account, AccountsService } from "../identity/accounts.js";
 import { MAX_PASSWORD_LENGTH } from "../identity/login.js";
 import {
   CurrentPrincipal,
@@ -37,27 +13,30 @@ import {
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
-import type { SessionService } from "../identity/sessions.js";
+import { SessionService } from "../identity/sessions.js";
 import {
   DEPLOYMENT_SETTINGS_PATCH,
   type DeploymentSettings,
-  type SettingsService,
+  SettingsService,
 } from "../identity/settings.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
 import {
   MODEL_PRICE_PUT,
   type ModelPrice,
   type ModelPricePut,
-  type PricesService,
+  PricesService,
 } from "../models/prices.js";
 import { purposeTargetOf } from "../models/purposes.controller.js";
 import {
-  type ModelPurposesService,
-  PURPOSE_PUT,
+  ModelPurposesService,
   type PurposePut,
+  PurposePutDto,
   type PurposeView,
 } from "../models/purposes.js";
-import type { Org, OrgsService } from "../orgs/orgs.service.js";
-import type { ProviderRegistry, ProviderStatus } from "../runtime/providers.js";
+import { type Org, OrgsService } from "../orgs/orgs.service.js";
+import { ProviderRegistry, type ProviderStatus } from "../runtime/providers.js";
 
 /** 后台概览（`GET /api/v1/admin/overview`）的计数。 */
 export interface AdminOverview {
@@ -72,29 +51,35 @@ export interface AdminOverview {
   accounts: number;
 }
 
-const ListQuery = z.object({
+const ListQuerySchema = z.object({
   after: z.string().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
+class AccountListQuery extends createZodDto(ListQuerySchema, "AccountListQuery") {}
 
-const CreateAccountBody = z.object({
+const CreateAccountSchema = z.object({
   login: z.string().min(1).max(64),
   password: z.string().min(1).max(MAX_PASSWORD_LENGTH),
   displayName: z.string().trim().min(1).max(100),
   email: z.email().max(254).optional(),
   enterpriseAdmin: z.boolean().optional(),
 });
+class CreateAccountBody extends createZodDto(CreateAccountSchema, "CreateAccountBody") {}
 
-const UpdateAccountBody = z.object({
+const UpdateAccountSchema = z.object({
   displayName: z.string().trim().min(1).max(100).optional(),
   status: z.enum(["active", "disabled"]).optional(),
   isEnterpriseAdmin: z.boolean().optional(),
 });
+class UpdateAccountBody extends createZodDto(UpdateAccountSchema, "UpdateAccountBody") {}
 
 /** 至少给出一个键；`runConcurrencyOverrides` 按组织合并，值为 null 删除该组织的覆盖。 */
-const SettingsBody = DEPLOYMENT_SETTINGS_PATCH.refine((b) => Object.keys(b).length > 0, {
+const SettingsSchema = DEPLOYMENT_SETTINGS_PATCH.refine((b) => Object.keys(b).length > 0, {
   message: "at least one setting is required",
 });
+class DeploymentSettingsBody extends createZodDto(SettingsSchema, "DeploymentSettingsPatch") {}
+// a union schema: a DTO value rather than a class (a class cannot extend a union instance type)
+const ModelPriceBody = createZodDto(MODEL_PRICE_PUT, "ModelPricePut");
 
 /**
  * 企业管理员端点（`/api/v1/admin/*`）：只接受企业管理员的 Web 会话或个人令牌；
@@ -104,16 +89,16 @@ const SettingsBody = DEPLOYMENT_SETTINGS_PATCH.refine((b) => Object.keys(b).leng
 @EnterpriseAdmin()
 export class AdminController {
   constructor(
-    @Inject(ACCOUNTS) private readonly accounts: AccountsService,
-    @Inject(SESSIONS) private readonly sessions: SessionService,
-    @Inject(KERNEL_LOG) private readonly log: Logger,
-    @Inject(ORGS) private readonly orgs: OrgsService,
-    @Inject(SETTINGS) private readonly settings: SettingsService,
-    @Inject(PRICES) private readonly prices: PricesService,
-    @Inject(MODEL_PURPOSES) private readonly purposes: ModelPurposesService,
-    @Inject(EXTENSION_ADMIN) private readonly plugins: ExtensionAdmin,
-    @Inject(PROVIDER_REGISTRY) private readonly registry: ProviderRegistry,
-    @Inject(CATALOG_REQUESTS) private readonly catalogRequests: CatalogRequestsService,
+    @Inject(AccountsService) private readonly accounts: AccountsService,
+    @Inject(SessionService) private readonly sessions: SessionService,
+    @Inject(KERNEL_LOGGER) private readonly log: Logger,
+    @Inject(OrgsService) private readonly orgs: OrgsService,
+    @Inject(SettingsService) private readonly settings: SettingsService,
+    @Inject(PricesService) private readonly prices: PricesService,
+    @Inject(ModelPurposesService) private readonly purposes: ModelPurposesService,
+    @Inject(ExtensionAdmin) private readonly plugins: ExtensionAdmin,
+    @Inject(ProviderRegistry) private readonly registry: ProviderRegistry,
+    @Inject(CatalogRequestsService) private readonly catalogRequests: CatalogRequestsService,
   ) {}
 
   /** 后台概览的四个数字（只读计数，不含任何对话内容）。 */
@@ -139,7 +124,7 @@ export class AdminController {
    */
   @Get("accounts")
   async listAccounts(
-    @Query(new ZodPipe(ListQuery)) q: z.infer<typeof ListQuery>,
+    @ZQuery(AccountListQuery) q: z.infer<typeof ListQuerySchema>,
   ): Promise<{ accounts: Account[]; next: string | null }> {
     const rows = await this.accounts.list({
       limit: q.limit + 1,
@@ -154,7 +139,7 @@ export class AdminController {
   @HttpCode(201)
   async createAccount(
     @CurrentPrincipal() principal: Principal,
-    @Body(new ZodPipe(CreateAccountBody)) body: z.infer<typeof CreateAccountBody>,
+    @ZBody(CreateAccountBody) body: z.infer<typeof CreateAccountSchema>,
   ): Promise<{ account: Account }> {
     const actor = requireUser(principal);
     const account = await this.accounts.createByAdmin(
@@ -176,7 +161,7 @@ export class AdminController {
   async updateAccount(
     @CurrentPrincipal() principal: Principal,
     @Param("accountId") accountId: string,
-    @Body(new ZodPipe(UpdateAccountBody)) body: z.infer<typeof UpdateAccountBody>,
+    @ZBody(UpdateAccountBody) body: z.infer<typeof UpdateAccountSchema>,
   ): Promise<{ account: Account }> {
     const actor = requireUser(principal);
     const patch: Parameters<AccountsService["update"]>[1] = {
@@ -217,7 +202,7 @@ export class AdminController {
   @Put("settings")
   async putSettings(
     @CurrentPrincipal() principal: Principal,
-    @Body(new ZodPipe(SettingsBody)) body: z.infer<typeof SettingsBody>,
+    @ZBody(DeploymentSettingsBody) body: z.infer<typeof SettingsSchema>,
   ): Promise<DeploymentSettings> {
     const actor = requireUser(principal);
     return this.settings.update(body, actor.account.id, patTokenId(actor));
@@ -251,7 +236,7 @@ export class AdminController {
   @Put("model-prices")
   async putModelPrice(
     @CurrentPrincipal() principal: Principal,
-    @Body(new ZodPipe(MODEL_PRICE_PUT)) body: ModelPricePut,
+    @ZBody(ModelPriceBody) body: ModelPricePut,
   ): Promise<{ prices: ModelPrice[]; currency: string }> {
     const actor = requireUser(principal);
     await this.prices.put(body, actor.account.id, patTokenId(actor));
@@ -269,7 +254,7 @@ export class AdminController {
   async putModelPurpose(
     @CurrentPrincipal() principal: Principal,
     @Param("purpose") purpose: string,
-    @Body(new ZodPipe(PURPOSE_PUT)) body: PurposePut,
+    @ZBody(PurposePutDto) body: PurposePut,
   ): Promise<{ purpose: PurposeView }> {
     const actor = requireUser(principal);
     return {

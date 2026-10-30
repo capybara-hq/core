@@ -14,20 +14,22 @@ import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { ApiError } from "../../src/errors.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
 import { createLogger } from "../../src/log.js";
-import { ProviderListError, ProviderRegistry } from "../../src/runtime/providers.js";
+import { ProviderListError, type ProviderRegistry } from "../../src/runtime/providers.js";
 import { fakeBCalls, MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
+import { startKernel, type TestKernel } from "../helpers/runs.js";
+import { providerRegistryFor } from "../helpers/runtime.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let redis: Redis;
 let registry: ProviderRegistry;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  k = await createKernel(
+  k = await startKernel(
     KernelConfigSchema.parse({
       db: { url: pgc.url, poolMax: 5 },
       redis: { url: rd.url },
@@ -38,12 +40,11 @@ beforeAll(async () => {
     }),
     { env: {}, logger: createLogger("error", { write: () => {} }) },
   );
-  await k.start();
   redis = new Redis(rd.url);
-  registry = new ProviderRegistry(k.host, redis);
+  registry = providerRegistryFor(k.app.get(ExtensionHost), redis);
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   redis?.disconnect();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
@@ -70,26 +71,29 @@ describe("ProviderRegistry", () => {
     ]);
   });
 
-  it("listModels 结果缓存在 Redis capk:models:<provider>:v<契约主版本>，EX 600；第二次不再访问供应商", async () => {
-    const before = fakeBCalls(k.host);
+  it("listModels 结果缓存在 Redis cache:capk:models:<provider>:v<契约主版本>，EX 600；第二次不再访问供应商", async () => {
+    const before = fakeBCalls(k.app.get(ExtensionHost));
     await registry.list();
     await registry.list();
-    expect(fakeBCalls(k.host) - before).toBe(1);
-    const [keyB] = await redis.keys("capk:models:model-fake-b:v2:*");
-    const [keyA] = await redis.keys("capk:models:model-fake:v2:*");
+    expect(fakeBCalls(k.app.get(ExtensionHost)) - before).toBe(1);
+    const [keyB] = await redis.keys("cache:capk:models:model-fake-b:v2:*");
+    const [keyA] = await redis.keys("cache:capk:models:model-fake:v2:*");
     const ttl = await redis.ttl(keyB as string);
     expect(ttl).toBeGreaterThan(590);
     expect(ttl).toBeLessThanOrEqual(600);
     expect(await redis.ttl(keyA as string)).toBeGreaterThan(590);
   });
 
-  it("缓存键带插件版本与部署配置摘要（capk:models:<provider>:v<主版本>:<版本>:<摘要>），不含配置明文", async () => {
+  it("缓存键带插件版本与部署配置摘要（cache:capk:models:<provider>:v<主版本>:<版本>:<摘要>），不含配置明文", async () => {
     await registry.list();
-    const entry = k.host.list("model-provider").find((p) => p.plugin === "model-fake-b");
+    const entry = k.app
+      .get(ExtensionHost)
+      .list("model-provider")
+      .find((p) => p.plugin === "model-fake-b");
     expect(entry?.version).toMatch(/^\d+\.\d+\.\d+/);
     expect(entry?.configHash).toMatch(/^[0-9a-f]{16}$/);
-    expect(await redis.keys("capk:models:model-fake-b:*")).toEqual([
-      `capk:models:model-fake-b:v2:${entry?.version}:${entry?.configHash}`,
+    expect(await redis.keys("cache:capk:models:model-fake-b:*")).toEqual([
+      `cache:capk:models:model-fake-b:v2:${entry?.version}:${entry?.configHash}`,
     ]);
   });
 
@@ -119,10 +123,10 @@ describe("ProviderRegistry", () => {
     };
     const warns: { msg: string; fields: unknown }[] = [];
     const withBroken = () =>
-      new ProviderRegistry(
+      providerRegistryFor(
         {
           list: (cap: string) => [
-            ...k.host.list(cap),
+            ...k.app.get(ExtensionHost).list(cap),
             { plugin: "broken", capability: "model-provider@2" as const, impl: broken },
           ],
         },
@@ -164,10 +168,10 @@ describe("ProviderRegistry", () => {
           throw new Error("unused");
         },
       };
-      const reg = new ProviderRegistry(
+      const reg = providerRegistryFor(
         {
           list: (cap: string) => [
-            ...k.host.list(cap),
+            ...k.app.get(ExtensionHost).list(cap),
             { plugin: "hung", capability: "model-provider@2" as const, impl: hung },
           ],
         },
@@ -265,7 +269,7 @@ describe("model-provider@1 / @2", () => {
     }[],
     warns: unknown[] = [],
   ) =>
-    new ProviderRegistry({ list: () => entries }, redis, {
+    providerRegistryFor({ list: () => entries }, redis, {
       warn: (msg: string) => {
         warns.push(msg);
       },
@@ -284,7 +288,7 @@ describe("model-provider@1 / @2", () => {
   };
 
   it("ExtensionHost.list carries the extension point ref (with major version)", () => {
-    const entries = k.host.list("model-provider");
+    const entries = k.app.get(ExtensionHost).list("model-provider");
     expect(entries.map((e) => [e.plugin, e.capability])).toEqual([
       ["model-fake", "model-provider@2"],
       ["model-fake-b", "model-provider@2"],
@@ -373,18 +377,27 @@ describe("model-provider@1 / @2", () => {
     expect(err).not.toBeInstanceOf(ProviderListError);
     expect((err as ApiError).code).toBe("agent.model_unavailable");
     expect(((err as ApiError).cause as Error).message).toMatch(/"style"/);
-    expect(await redis.exists("capk:models:p2:v2:-:-")).toBe(0);
+    expect(await redis.exists("cache:capk:models:p2:v2:-:-")).toBe(0);
   });
 
-  it("缓存中缺少 parameters 的旧条目视为未命中，重新列模型", async () => {
+  it("an older kernel's entry under the pre-@Cacheable key is ignored: the list is cached under the new key", async () => {
+    // what an older kernel wrote (a raw `@1` shape, under its old key)
     await redis.set("capk:models:p2:v2:-:-", JSON.stringify([{ id: "stale" }]), "EX", 600);
     const p = v2();
     const r = reg([{ plugin: "p2", capability: "model-provider@2", impl: p.impl }]);
     const [entry] = await r.list();
     expect(entry?.models.map((m) => m.id)).toEqual(["v2-model"]);
     expect(p.calls()).toBe(1);
+    // cached under the new key (`@Cacheable`), which the next list reads
+    const cached = JSON.parse((await redis.get("cache:capk:models:p2:v2:-:-")) ?? "null");
+    expect(cached.map((m: { id: string }) => m.id)).toEqual(["v2-model"]);
+    expect(await redis.ttl("cache:capk:models:p2:v2:-:-")).toBeGreaterThan(0);
     await r.list();
     expect(p.calls()).toBe(1);
+    // the old key is neither read nor rewritten
+    expect(JSON.parse((await redis.get("capk:models:p2:v2:-:-")) ?? "null")).toEqual([
+      { id: "stale" },
+    ]);
   });
 
   it("插件从 @1 升级到 @2：不读 @1 时写入的缓存（键带契约主版本）", async () => {
@@ -393,7 +406,7 @@ describe("model-provider@1 / @2", () => {
     ]);
     const [before] = await old.list();
     expect(before?.models[0]?.parameters.map((d) => d.key)).toEqual(["effort"]);
-    expect(await redis.exists("capk:models:p2:v1:-:-")).toBe(1);
+    expect(await redis.exists("cache:capk:models:p2:v1:-:-")).toBe(1);
     const p = v2();
     const upgraded = reg([{ plugin: "p2", capability: "model-provider@2", impl: p.impl }]);
     const [after] = await upgraded.list();

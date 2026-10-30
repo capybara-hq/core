@@ -1,18 +1,17 @@
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
 import { PricesService, priceKey } from "../../src/models/prices.js";
 import { truncateTables } from "../helpers/db.js";
-import { PW, type Req, runConfig, session, startKernel } from "../helpers/runs.js";
+import { accountsFor } from "../helpers/identity.js";
+import { PW, type Req, runConfig, session, startKernel, type TestKernel } from "../helpers/runs.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
-let k: Kernel;
+let db: KernelSchemaDb;
+let k: TestKernel;
 let adminId: string;
 let admin: Req;
 let user: Req;
@@ -24,7 +23,7 @@ beforeAll(async () => {
   k = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api"] }));
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
@@ -33,7 +32,7 @@ beforeEach(async () => {
     raw,
     "capybara.model_prices, capybara.deployment_settings, capybara.audit_events, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   adminId = (
     await accounts.createLocal({
       login: "admin",
@@ -111,7 +110,7 @@ describe("/api/v1/admin/model-prices", () => {
     expect(actions.every((a) => a.actor_account_id === adminId)).toBe(true);
 
     // 服务层：table() 按 provider + model 取价
-    const table = await new PricesService(db).table();
+    const table = await k.app.get(PricesService).table();
     expect(table.get(priceKey("anthropic", "claude-y"))).toEqual(m2);
     expect(table.get(priceKey("anthropic", "claude-x"))).toBeUndefined();
   });
@@ -167,7 +166,7 @@ describe("/api/v1/admin/model-prices", () => {
       .set({ is_enterprise_admin: false })
       .where("id", "=", adminId)
       .execute();
-    await expect(new PricesService(db).put(M1, adminId)).rejects.toMatchObject({
+    await expect(k.app.get(PricesService).put(M1, adminId)).rejects.toMatchObject({
       code: "forbidden",
     });
   });

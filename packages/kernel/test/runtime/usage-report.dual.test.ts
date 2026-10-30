@@ -2,12 +2,11 @@ import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -18,6 +17,7 @@ import {
   type Req,
   runConfig,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -36,10 +36,10 @@ const TOOL = "hooks-probe__probe_echo";
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
-const kernels: Kernel[] = [];
-let a: Kernel;
-let b: Kernel;
+let db: KernelSchemaDb;
+const kernels: TestKernel[] = [];
+let a: TestKernel;
+let b: TestKernel;
 let reqA: Req;
 let reqB: Req;
 let orgId: string;
@@ -56,7 +56,7 @@ const config = () =>
     },
   );
 
-async function login(k: Kernel): Promise<Req> {
+async function login(k: TestKernel): Promise<Req> {
   const req = asUser(k.http, cookieJar());
   const res = await req({
     method: "POST",
@@ -75,7 +75,7 @@ beforeAll(async () => {
   });
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
-  await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+  await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   a = await startKernel(config());
   b = await startKernel(config());
   kernels.push(a, b);
@@ -106,7 +106,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await Promise.all(kernels.map((k) => k.stop().catch(() => {})));
+  await Promise.all(kernels.map((k) => k.close().catch(() => {})));
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
@@ -187,7 +187,7 @@ describe("usage.report across two replicas", { timeout: 90_000 }, () => {
     expect([idA, idB]).toContain(holder);
     const victim = holder === idA ? a : b;
     const survivor = holder === idA ? reqB : reqA;
-    await victim.stop();
+    await victim.close();
     // the job is retried (2 s backoff) and finished by the surviving replica
     const done = await waitFor(
       async () => {

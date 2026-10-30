@@ -1,51 +1,58 @@
-import { hostname } from "node:os";
-import type { Logger } from "@capybara-hq/plugin-sdk";
-import { DelayedError, type Job, Worker } from "bullmq";
-import type { Redis } from "ioredis";
-import { sql, type Transaction } from "kysely";
+import type { ExtensionContext, Logger } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable, Optional } from "@nestjs/common";
+import { DelayedError, type Job, type Worker } from "bullmq";
+import { sql } from "kysely";
 import { type AgentDefinition, normalizeStoredDefinition } from "../agents/definition.js";
-import type { KernelConfig } from "../config/schema.js";
-import type { EventLog } from "../conversations/event-log.js";
+import {
+  type ConversationBusMessage,
+  conversationTopic,
+  EventLog,
+} from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
 import {
   effectiveDefinition,
   NO_SELECTION,
   readSelection,
+  type Selection,
   sameModel,
   sameSelection,
 } from "../conversations/selection.js";
-import type { ConversationKind, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import { TitleQueue } from "../conversations/titles.js";
+import type { ConversationKind, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import type { SettingsService } from "../identity/settings.js";
-import { withJobContext } from "../log-context.js";
-import { pinnedFailureText, recordSkillsCatalog } from "../skills/catalog.js";
-import type { StorageService } from "../storage/storage.service.js";
-import type { RunAbort, RunAbortBy, RunAbortDetail } from "./abort.js";
-import type { KyselyCheckpointSaver } from "./checkpointer.js";
-import type { ConversationLock, Lease } from "./conversation-lock.js";
+import { SettingsService } from "../identity/settings.js";
+import { waitWithin } from "../infra/close-within.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KernelEvents } from "../infra/events/kernel-events.js";
+import type { LeaseHandle } from "../infra/lock/lock.service.js";
+import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
+import { pinnedFailureText, SkillsCatalogService } from "../skills/catalog.js";
+import { ToolPipeline } from "../tools/pipeline.js";
+import { RunAbort, type RunAbortBy, type RunAbortDetail } from "./abort.js";
+import { KyselyCheckpointSaver } from "./checkpointer.js";
+import { ConversationLock, type Lease } from "./conversation-lock.js";
 import type { AgentLoop, LoopOutcome, SubagentParent, WaitingFor } from "./loop.js";
 import { RunError, type StreamSink } from "./model-call.js";
-import { ProviderListError, type ProviderRegistry } from "./providers.js";
-import { ORG_QUOTA_LEASE_MS, type OrgQuota, orgRunLimit } from "./quota.js";
-import { type FinishRunArgs, finishRun, TERMINAL_STATUSES } from "./run-finish.js";
-import {
-  bullConnection,
-  RUN_QUEUE_NAME,
-  type RunJobData,
-  type RunQueue,
-  SUBAGENT_RUN_QUEUE_NAME,
-} from "./run-queue.js";
+import { ProviderListError, ProviderRegistry } from "./providers.js";
+import { ORG_QUOTA_LEASE_MS, type OrgQuota, orgRunLimit, RUN_QUOTA } from "./quota.js";
+import { type FinishRunArgs, RunFinish, TERMINAL_STATUSES } from "./run-finish.js";
+import type { RunJobData } from "./run-jobs.js";
+import { RunQueue } from "./run-queue.js";
+import { AgentLoops, RunSteps } from "./run-steps.js";
 import { dispatchOfChildRun } from "./subagents/child.js";
 import { childRunDefinition } from "./subagents/definition.js";
 import { forkBoundary } from "./subagents/skill-fork.js";
-import type { Waits } from "./waits.js";
+import { Waits } from "./waits.js";
 
 /** 会话锁被占用时任务延后的时间。 */
 const LOCK_BUSY_DELAY_MS = 1000;
 /** 组织配额已满时任务延后的时间。 */
 const QUOTA_FULL_DELAY_MS = 2000;
 /** BullMQ stalled 检测允许的最大次数（超过则任务失败）。 */
-const MAX_STALLED_COUNT = 3;
+export const MAX_STALLED_COUNT = 3;
 /** 停机时等待任务结束后处理（ensureRun 等）的最短时间。 */
 const FOLLOW_UP_MIN_WAIT_MS = 250;
 /** 读插话的分页大小。 */
@@ -55,6 +62,9 @@ const READ_PAGE = 500;
  * 后续处理，由 close() 跟踪并限时；全部失败也不会让会话永远卡住——打开 SSE / 读事件时会再次 ensureRun。
  */
 const ENSURE_RETRY_DELAYS_MS = [200, 1000, 3000] as const;
+
+/** Optional provider: the run worker's {@link RunHooks} (tests). */
+export const RUN_HOOKS = Symbol("RUN_HOOKS");
 
 /** 测试钩子与参数。 */
 export interface RunHooks {
@@ -66,55 +76,6 @@ export interface RunHooks {
   beforeEnsureRun?(conversationId: string, attempt: number): Promise<void>;
 }
 
-export interface RunWorkerDeps {
-  db: KernelDb;
-  eventLog: EventLog;
-  lock: ConversationLock;
-  quota: OrgQuota;
-  abort: RunAbort;
-  queue: Pick<RunQueue, "ensureRun">;
-  settings: Pick<SettingsService, "get">;
-  loop: AgentLoop;
-  config: () => KernelConfig;
-  log: Logger;
-  redisUrl: string;
-  /** 按会话取流式增量出口；默认丢弃。 */
-  sinkFor?: (conversationId: string) => StreamSink;
-  /** 运行到达终态后删除该运行（thread_id = runId）的 checkpoint thread（只用于续跑，结束后无用）。 */
-  checkpoints?: Pick<KyselyCheckpointSaver, "deleteThread">;
-  /** loop 返回 `suspended` 后把运行置为 waiting（释放会话锁与配额之后）。 */
-  waits: Pick<Waits, "suspend">;
-  /** 取得会话锁与配额、开始执行运行时调用（同步、不等待；渠道出站投递用它排投递任务）。 */
-  onRunStart?: (conversationId: string) => void;
-  /**
-   * A run reached `completed` (`run_finished`, any reason): called after the terminal event is
-   * written (sync, not awaited). The kernel enqueues the conversation's title job with it.
-   */
-  onRunCompleted?: (conversationId: string) => void;
-  hooks?: RunHooks;
-  /** Resolves a switched-to model at run start (fallback when it is gone; UI refresh B). */
-  models?: Pick<ProviderRegistry, "resolve">;
-  /** Object storage: run start reads the pinned skills' bodies from it (phase B). */
-  storage?: StorageService;
-  /**
-   * After a sub-agent run's terminal state committed (sub-agents spec §7.3; `onChildFinished`):
-   * reports it to the parent. Called with any run id whose conversation may be a child; it ignores
-   * runs that were not dispatched. Errors are logged (the wait sweep repairs a missed call).
-   */
-  onChildFinished?: (runId: string) => Promise<void>;
-  /**
-   * After any terminal commit of a run that is not a sub-agent's (sub-agents spec §12): stops its
-   * active children on its behalf (`stopChildren` with no account). The wait sweep is the backstop.
-   */
-  stopChildren?: (runId: string) => Promise<number>;
-  /**
-   * In the terminal transaction of every run: writes its open `agent` call results
-   * (`ToolPipeline.stopOpenAgentCalls`; a no-op without dispatches); `fire` runs their observe
-   * hooks after the commit (sub-agents spec §12, review m1: a failed or stalled parent too).
-   */
-  stopOpenCalls?: (t: Transaction<KernelDatabase>, runId: string) => Promise<{ fire: () => void }>;
-}
-
 /** 本进程正在执行的运行（本进程持有的资源）。 */
 interface ActiveRun {
   shutdown: AbortController;
@@ -123,7 +84,9 @@ interface ActiveRun {
   /** 会话锁已丢失（续租发现被他人持有）：按停机处理，不写终态、不释放锁，任务回到队列。 */
   leaseLost: boolean;
   lease: Lease;
-  /** 清除本运行的定时器（截止时间、配额续期）。 */
+  /** The org quota slot (renewed by the lock service's watchdog while held). */
+  quota?: LeaseHandle;
+  /** 清除本运行的定时器（截止时间）。 */
   stopTimers: () => void;
   done: Promise<void>;
   /** loop 返回 `suspended`：等待对象，以及暂停时是否已收到用户中止。 */
@@ -131,7 +94,7 @@ interface ActiveRun {
 }
 
 /** 处理函数的返回值：`ensure` 表示任务完成后再调用一次 ensureRun。 */
-type ProcessResult = "ensure" | undefined;
+export type ProcessResult = "ensure" | undefined;
 
 /**
  * `broken`：编排自身出错，已尽力标记失败。之后仍 ensureRun：标记成功时触发消息已被消费，只有更新的消息才起新一轮；
@@ -139,8 +102,6 @@ type ProcessResult = "ensure" | undefined;
  * 每一轮都要有新的用户消息，不会形成无限重试。
  */
 type ExecResult = "finished" | "interrupted" | "abandoned" | "broken" | "suspended";
-
-const noopSink: StreamSink = () => {};
 
 /** 任务回到队列：延后 delayMs 再处理（不计入 attempts）。 */
 async function requeue(
@@ -153,84 +114,159 @@ async function requeue(
 }
 
 /**
- * 运行 worker（只在含 `worker` 角色的进程启动）：领取 `cap-kernel-runs` 的任务，取会话锁与组织配额，
- * 调用 AgentLoop，按结果写终态事件并推进 `consumed_seq`；结束后再调用一次 `ensureRun` 处理
- * 运行期间到达但没被吸收的消息（Review Focus 2）。
+ * 运行 worker（只在含 `worker` 角色的进程消费）：领取 `cap-kernel-runs` 与 `cap-kernel-subagent-runs` 的任务
+ * （两个 `@Processor`，见 run-processors.ts），取会话锁与组织配额，调用 AgentLoop，按结果写终态事件并推进
+ * `consumed_seq`；结束后再调用一次 `ensureRun` 处理运行期间到达但没被吸收的消息（Review Focus 2）。
  */
+@Injectable()
 export class RunWorker {
-  /** One BullMQ worker per run queue: conversation runs and sub-agent runs (spec §7.4). */
+  /** The two run queues' BullMQ workers (spec §7.4), once {@link start}ed on the worker role. */
   private workers: Worker<RunJobData, ProcessResult>[] = [];
-  /** 传给 Worker 的连接：BullMQ 不关闭调用方传入的连接，close() 时自己关。 */
-  private conn: Redis | undefined;
   private readonly active = new Map<string, ActiveRun>();
   /** 进行中的「任务结束后」处理（完成后的 ensureRun、失败标记）：停机时等它们做完再关闭队列。 */
   private readonly followUps = new Set<Promise<unknown>>();
   private closing = false;
   /** close() 开始时触发：ensureRun 重试不再等待退避间隔。 */
   private readonly closingSignal = new AbortController();
+  private readonly loop: AgentLoop;
 
-  constructor(private readonly d: RunWorkerDeps) {}
+  constructor(
+    @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(EventLog) private readonly eventLog: EventLog,
+    @Inject(ConversationLock) private readonly lock: ConversationLock,
+    @Inject(RUN_QUOTA) private readonly quota: OrgQuota,
+    @Inject(RunAbort) private readonly abort: RunAbort,
+    @Inject(RunQueue) private readonly queue: Pick<RunQueue, "ensureRun">,
+    @Inject(SettingsService) private readonly settings: Pick<SettingsService, "get">,
+    @Inject(AgentLoops) loops: AgentLoops,
+    @Inject(RunSteps) steps: RunSteps,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    @Inject(KERNEL_LOGGER) private readonly log: Logger,
+    @Inject(KERNEL_BUS) private readonly bus: ExtensionContext["bus"],
+    /** 运行到达终态后删除该运行（thread_id = runId）的 checkpoint thread（只用于续跑，结束后无用）。 */
+    @Inject(KyselyCheckpointSaver)
+    private readonly checkpoints: Pick<KyselyCheckpointSaver, "deleteThread">,
+    /** loop 返回 `suspended` 后把运行置为 waiting（释放会话锁与配额之后）; the child lifecycle. */
+    @Inject(Waits)
+    private readonly waits: Pick<Waits, "suspend" | "childFinished" | "stopChildren">,
+    /** `run.started` (the channel outbound enqueues the conversation's IM delivery). */
+    @Inject(KernelEvents) private readonly events: KernelEvents,
+    /** A completed run enqueues the conversation's title job. */
+    @Inject(TitleQueue) private readonly titles: Pick<TitleQueue, "maybeEnqueue">,
+    /** Resolves a switched-to model at run start (fallback when it is gone; UI refresh B). */
+    @Inject(ProviderRegistry) private readonly models: Pick<ProviderRegistry, "resolve">,
+    /** Run start's skills catalog snapshot (reads the pinned skills' bodies, phase B). */
+    @Inject(SkillsCatalogService)
+    private readonly skillsCatalog: Pick<SkillsCatalogService, "record">,
+    /**
+     * In the terminal transaction of every run: writes its open `agent` call results
+     * (`stopOpenAgentCalls`; a no-op without dispatches); `fire` runs their observe hooks after the
+     * commit (sub-agents spec §12, review m1: a failed or stalled parent too).
+     */
+    @Inject(ToolPipeline) private readonly pipeline: Pick<ToolPipeline, "stopOpenAgentCalls">,
+    @Inject(RunFinish) private readonly finisher: Pick<RunFinish, "finish">,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Optional() @Inject(RUN_HOOKS) private readonly hooks?: RunHooks,
+  ) {
+    this.loop = loops.create(steps.deps);
+  }
 
-  start(): void {
-    if (this.workers.length > 0) return;
-    const runtime = this.d.config().runtime;
-    this.conn = bullConnection(this.d.redisUrl, this.d.log);
-    for (const queue of [RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME]) {
-      const worker = new Worker<RunJobData, ProcessResult>(
-        queue,
-        (job, token) => withJobContext(queue, job, () => this.process(job, token)),
-        {
-          // the worker name is recorded on the job (BullMQ processedBy): which replica ran it
-          name: `${hostname()}-${process.pid}`,
-          connection: this.conn,
-          concurrency: runtime.workerConcurrency,
-          lockDuration: runtime.jobLockMs,
-          stalledInterval: runtime.stalledIntervalMs,
-          maxStalledCount: MAX_STALLED_COUNT,
-        },
+  private get db(): KernelSchemaDb {
+    return this.kdb.db;
+  }
+
+  /**
+   * Starts consuming (worker role only): `workers` are the `@Processor` workers of both run queues
+   * (built with `runtime.workerConcurrency`, `jobLockMs`, `stalledIntervalMs`; never autorun).
+   */
+  start(workers: Worker<RunJobData, ProcessResult>[]): void {
+    if (this.workers.length > 0 || this.closing) return;
+    this.workers = workers;
+    for (const w of workers) {
+      void w.run().catch((err) => this.onError(err, w.name));
+    }
+  }
+
+  /** A worker's `error` event. */
+  onError(err: Error, queue: string): void {
+    this.log.error("run worker error", { err, queue });
+  }
+
+  /**
+   * A job completed (the worker's `completed` event). ensureRun after a run goes after its job
+   * completed and left the queue: when the latest unconsumed message is this run's own trigger
+   * (e.g. a run ended by its deadline without absorbing it, R34), the new job has this job's id
+   * and would be dropped as a duplicate while this one is still active. Relies on BullMQ moving
+   * the job to completed (deleted by removeOnComplete) before emitting "completed" (pinned by the
+   * R34 test).
+   */
+  onCompleted(job: Job<RunJobData>, result: ProcessResult): void {
+    if (result !== "ensure") return;
+    const { conversationId, runId } = job.data;
+    this.track(this.ensureAfterRun(conversationId, runId));
+  }
+
+  /** A job failed (the worker's `failed` event). */
+  onFailed(job: Job<RunJobData> | undefined, err: Error): void {
+    this.log.error("run job failed", { jobId: job?.id, runId: job?.data.runId, err });
+    if (job) {
+      this.track(
+        this.onJobFailed(job.data, err).catch((e) =>
+          this.log.error("cannot mark failed run job", { runId: job.data.runId, err: e }),
+        ),
       );
-      // ensureRun after a run goes after its job completed and left the queue: when the latest
-      // unconsumed message is this run's own trigger (e.g. a run ended by its deadline without
-      // absorbing it, R34), the new job has this job's id and would be dropped as a duplicate
-      // while this one is still active. Relies on BullMQ moving the job to completed (deleted by
-      // removeOnComplete) before emitting "completed" (pinned by the R34 test).
-      worker.on("completed", (job, result) => {
-        if (result !== "ensure") return;
-        const { conversationId, runId } = job.data;
-        this.track(this.ensureAfterRun(conversationId, runId));
-      });
-      worker.on("error", (err) => this.d.log.error("run worker error", { err, queue }));
-      worker.on("failed", (job, err) => {
-        this.d.log.error("run job failed", { jobId: job?.id, runId: job?.data.runId, err });
-        if (job) {
-          this.track(
-            this.onJobFailed(job.data, err).catch((e) =>
-              this.d.log.error("cannot mark failed run job", { runId: job.data.runId, err: e }),
-            ),
-          );
-        }
-      });
-      this.workers.push(worker);
     }
   }
 
-  /** Stops the active children of a finished run (see {@link RunWorkerDeps.stopChildren}). */
+  /**
+   * 流式增量发布到会话频道（与 `{ kind: "events" }` 共用 `conv.<id>`），任意副本上的订阅方都能收到。
+   * 发布失败只记日志：增量只是草稿，最终内容以日志中的 assistant_message 为准。
+   */
+  private sinkFor(conversationId: string): StreamSink {
+    // 本次运行执行中推出的文本字符数（按步，step_reset 清零）：本进程正在执行的这次运行自己的计数
+    let at = { runId: "", step: -1, chars: 0 };
+    return (d) => {
+      if (at.runId !== d.runId || at.step !== d.step || d.kind === "step_reset") {
+        at = { runId: d.runId, step: d.step, chars: 0 };
+      }
+      const offset = at.chars;
+      if (d.kind === "text") at.chars += d.text?.length ?? 0;
+      const msg: ConversationBusMessage = {
+        kind: "delta",
+        runId: d.runId,
+        step: d.step,
+        delta: d.kind,
+        ...(d.text !== undefined && { text: d.text }),
+        ...(d.kind === "text" && { offset }),
+      };
+      this.bus
+        .publish(conversationTopic(conversationId), msg)
+        .catch((err) => this.log.warn("stream delta publish failed", { conversationId, err }));
+    };
+  }
+
+  /**
+   * After any terminal commit of a run that is not a sub-agent's (sub-agents spec §12): stops its
+   * active children on its behalf (no account). The wait sweep is the backstop.
+   */
   private async stopChildren(runId: string): Promise<void> {
-    if (!this.d.stopChildren) return;
     try {
-      await this.d.stopChildren(runId);
+      await this.waits.stopChildren(runId, null);
     } catch (err) {
-      this.d.log.error("cannot stop the sub-agents of a finished run", { runId, err });
+      this.log.error("cannot stop the sub-agents of a finished run", { runId, err });
     }
   }
 
-  /** Reports a finished sub-agent run to its parent (see {@link RunWorkerDeps.onChildFinished}). */
+  /**
+   * After a sub-agent run's terminal state committed (sub-agents spec §7.3): reports it to the
+   * parent. Called with any run id whose conversation may be a child; runs that were not
+   * dispatched are ignored. Errors are logged (the wait sweep repairs a missed call).
+   */
   private async childFinished(runId: string): Promise<void> {
-    if (!this.d.onChildFinished) return;
     try {
-      await this.d.onChildFinished(runId);
+      await this.waits.childFinished(runId);
     } catch (err) {
-      this.d.log.error("cannot report finished sub-agent run to its parent", { runId, err });
+      this.log.error("cannot report finished sub-agent run to its parent", { runId, err });
     }
   }
 
@@ -241,13 +277,13 @@ export class RunWorker {
   private async ensureAfterRun(conversationId: string, runId: string): Promise<void> {
     for (let attempt = 0; ; attempt++) {
       try {
-        await this.d.hooks?.beforeEnsureRun?.(conversationId, attempt);
-        await this.d.queue.ensureRun(conversationId);
+        await this.hooks?.beforeEnsureRun?.(conversationId, attempt);
+        await this.queue.ensureRun(conversationId);
         return;
       } catch (err) {
         const delay = ENSURE_RETRY_DELAYS_MS[attempt];
         if (delay === undefined) {
-          this.d.log.error("ensureRun after run failed; giving up", {
+          this.log.error("ensureRun after run failed; giving up", {
             conversationId,
             runId,
             attempts: attempt + 1,
@@ -255,7 +291,7 @@ export class RunWorker {
           });
           return;
         }
-        this.d.log.warn("ensureRun after run failed; retrying", {
+        this.log.warn("ensureRun after run failed; retrying", {
           conversationId,
           runId,
           attempt,
@@ -296,15 +332,15 @@ export class RunWorker {
   private async onJobFailed(data: RunJobData, err: Error): Promise<void> {
     const { runId, conversationId } = data;
     const stalled = /stalled/i.test(err.message);
-    await this.d.lock.releaseFor(conversationId, runId);
+    await this.lock.releaseFor(conversationId, runId);
     // 运行已进入 waiting（暂停后任务才失败）：它有自己的续跑路径（人工决定 / 超时任务），不标记失败。
-    const cur = await this.d.db
+    const cur = await this.db
       .selectFrom("runs")
       .select("status")
       .where("id", "=", runId)
       .executeTakeFirst();
     if (cur?.status === "waiting") {
-      this.d.log.warn("run job failed after the run was suspended; leaving it waiting", { runId });
+      this.log.warn("run job failed after the run was suspended; leaving it waiting", { runId });
       return;
     }
     await this.finish(
@@ -346,26 +382,19 @@ export class RunWorker {
     this.closingSignal.abort();
     await Promise.all(
       workers.map((w) =>
-        w.pause(true).catch((err) => this.d.log.warn("run worker pause failed", { err })),
+        w.pause(true).catch((err) => this.log.warn("run worker pause failed", { err })),
       ),
     );
     for (const a of this.active.values()) a.shutdown.abort();
     const all = Promise.all([...this.active.values()].map((a) => a.done));
-    let timer: NodeJS.Timeout | undefined;
-    const finished = await Promise.race([
-      all.then(() => true),
-      new Promise<false>((resolve) => {
-        timer = setTimeout(() => resolve(false), Math.max(0, budgetMs));
-        timer.unref();
-      }),
-    ]);
-    clearTimeout(timer);
+    const finished = await waitWithin(all, budgetMs);
     if (!finished) {
       for (const [runId, a] of this.active) {
         a.abandoned = true;
         a.lease.abandon();
+        a.quota?.abandon();
         a.stopTimers();
-        this.d.log.warn(
+        this.log.warn(
           "run did not reach a step boundary before shutdown; leaving it to another worker",
           {
             runId,
@@ -377,25 +406,18 @@ export class RunWorker {
     // 关闭期间完成 / 失败的任务登记的后续处理（ensureRun 等）要在调用方关闭运行队列之前做完，
     // 否则投递半途被打断，待处理的消息无人处理。以剩余预算为限（至少留一点时间）。
     if (this.followUps.size > 0) {
-      let t: NodeJS.Timeout | undefined;
-      await Promise.race([
+      await waitWithin(
         Promise.allSettled([...this.followUps]),
-        new Promise<void>((resolve) => {
-          t = setTimeout(resolve, Math.max(FOLLOW_UP_MIN_WAIT_MS, deadline - Date.now()));
-          t.unref();
-        }),
-      ]);
-      clearTimeout(t);
+        Math.max(FOLLOW_UP_MIN_WAIT_MS, deadline - Date.now()),
+      );
     }
-    const conn = this.conn;
-    this.conn = undefined;
-    if (conn) await conn.quit().catch(() => conn.disconnect());
   }
 
-  private async process(job: Job<RunJobData>, token: string | undefined): Promise<ProcessResult> {
+  /** One run job (the `@Processor`s of both run queues call it). */
+  async process(job: Job<RunJobData>, token: string | undefined): Promise<ProcessResult> {
     const { runId, conversationId } = job.data;
     if (this.closing) return requeue(job, token, 0);
-    const run = await this.d.db
+    const run = await this.db
       .selectFrom("runs")
       .select([
         "id",
@@ -418,7 +440,7 @@ export class RunWorker {
     }
     // 运行在等人处理（例如暂停后本任务被 stalled 机制重新投递）：不执行，续跑由处理 / 超时发起的新任务负责。
     if (run.status === "waiting") return;
-    const conv = await this.d.db
+    const conv = await this.db
       .selectFrom("conversations")
       .select(["org_id", "agent_id", "kind"])
       .where("id", "=", conversationId)
@@ -426,10 +448,10 @@ export class RunWorker {
     if (!conv) return;
 
     // 会话锁 TTL 与任务锁一致：持有者崩溃后，任务被判定 stalled 时会话锁也差不多同时过期。
-    const lease = await this.d.lock.acquire(
+    const lease = await this.lock.acquire(
       conversationId,
       runId,
-      this.d.hooks?.lockTtlMs ?? this.d.config().runtime.jobLockMs,
+      this.hooks?.lockTtlMs ?? this.config.get().runtime.jobLockMs,
     );
     if (!lease) return requeue(job, token, LOCK_BUSY_DELAY_MS);
 
@@ -437,7 +459,7 @@ export class RunWorker {
     // taking an org run slot: under a full quota it would otherwise wait for a slot only to be
     // aborted, and its parent would stay waiting meanwhile (final review m7)
     if (conv.kind === "subagent" && run.status === "queued") {
-      const stop = await this.d.abort.requested(runId);
+      const stop = await this.abort.requested(runId);
       if (stop !== null) {
         try {
           await this.finish(conversationId, runId, "aborted", null, {
@@ -451,7 +473,7 @@ export class RunWorker {
         } finally {
           await lease
             .release()
-            .catch((err) => this.d.log.warn("conversation lock release failed", { runId, err }));
+            .catch((err) => this.log.warn("conversation lock release failed", { runId, err }));
         }
         await this.dropCheckpoints(runId);
         await this.childFinished(runId);
@@ -481,27 +503,25 @@ export class RunWorker {
     let entered = false;
     let delayMs: number | null = null;
     try {
-      const limit = await orgRunLimit(this.d.settings, this.d.config, conv.org_id);
-      entered = await this.d.quota.tryEnter(conv.org_id, runId, limit, ORG_QUOTA_LEASE_MS);
+      const limit = await orgRunLimit(this.settings, this.config, conv.org_id);
+      const slot = await this.quota.enter(conv.org_id, runId, limit, ORG_QUOTA_LEASE_MS);
+      if (slot !== undefined) state.quota = slot;
+      entered = slot !== undefined;
       if (!entered) {
         delayMs = QUOTA_FULL_DELAY_MS;
       } else {
         // 运行开始执行（含续跑、stalled 后接手）：通知旁路（渠道出站投递据此把输出投到 IM），失败不影响运行
-        try {
-          this.d.onRunStart?.(conversationId);
-        } catch (err) {
-          this.d.log.warn("onRunStart hook failed", { conversationId, err });
-        }
+        void this.events.emit("run.started", { conversationId, runId });
         const r = await this.execute(run, { id: conversationId, ...conv }, state).catch(
           async (err: unknown): Promise<ExecResult> => {
             if (state.abandoned) return "abandoned";
             if (state.leaseLost) return "interrupted";
             // 编排自身出错（如写事件失败）：尽力把运行标记为失败，避免会话卡在 running。
-            this.d.log.error("run orchestration failed", { conversationId, runId, err });
+            this.log.error("run orchestration failed", { conversationId, runId, err });
             await this.finish(conversationId, runId, "failed", null, {
               type: "run_failed",
               payload: { error: { code: "run.internal", message: "The run failed unexpectedly" } },
-            }).catch((e) => this.d.log.error("cannot mark run as failed", { runId, err: e }));
+            }).catch((e) => this.log.error("cannot mark run as failed", { runId, err: e }));
             return "broken";
           },
         );
@@ -510,16 +530,13 @@ export class RunWorker {
     } finally {
       state.stopTimers();
       if (!state.abandoned) {
-        if (entered) {
-          await this.d.quota
-            .leave(conv.org_id, runId)
-            .catch((err) => this.d.log.warn("org quota leave failed", { runId, err }));
-        }
+        // releasing the slot stops its renewal and leaves (a failure is logged by the lock service)
+        if (entered) await state.quota?.release();
         // 锁已丢失时不释放（已不属于本运行；RELEASE 虽比对 runId，这里也不再触碰）。
         if (!state.leaseLost) {
           await lease
             .release()
-            .catch((err) => this.d.log.warn("conversation lock release failed", { runId, err }));
+            .catch((err) => this.log.warn("conversation lock release failed", { runId, err }));
         }
       }
       this.active.delete(runId);
@@ -530,7 +547,7 @@ export class RunWorker {
     // 暂停：会话锁与配额已释放，checkpoint 保留；置 waiting 并投递超时任务。任务就此完成，不 ensureRun
     // （等待期间的新消息在续跑后作为插话吸收）。
     if (state.suspended) {
-      await this.d.waits.suspend(
+      await this.waits.suspend(
         runId,
         conversationId,
         state.suspended.waitingFor,
@@ -560,7 +577,7 @@ export class RunWorker {
   ): Promise<ExecResult> {
     const runId = run.id;
     const conversationId = conv.id;
-    const runtime = this.d.config().runtime;
+    const runtime = this.config.get().runtime;
     let agent: AgentDefinition;
     // a chat run's saved agent version, under the conversation's model switch (UI refresh B); a
     // sub-agent has none: it never takes a selection
@@ -570,14 +587,14 @@ export class RunWorker {
     if (conv.kind === "subagent") {
       // a sub-agent runs its effective definition frozen at dispatch, never agent_versions
       // (spec §6.3), and works for the parent call that dispatched this run
-      const started = await this.d.eventLog.findByIdem(conversationId, "subagent_started");
+      const started = await this.eventLog.findByIdem(conversationId, "subagent_started");
       if (started?.type !== "subagent_started") {
         throw new Error(`sub-agent conversation ${conversationId} has no subagent_started`);
       }
       // a follow-up runs with its task message's narrowing (final review I1): the frozen tools
       // and org skills the current version still allows, recorded at its dispatch
       const trigger = (
-        await this.d.eventLog.readAfter(conversationId, Number(run.trigger_seq) - 1, 1)
+        await this.eventLog.readAfter(conversationId, Number(run.trigger_seq) - 1, 1)
       )[0];
       agent = childRunDefinition(
         normalizeStoredDefinition(started.payload.definition),
@@ -586,7 +603,7 @@ export class RunWorker {
           : undefined,
       );
       maxSteps = Math.min(started.payload.maxSteps, runtime.maxSteps);
-      const row = await dispatchOfChildRun(this.d.db, runId);
+      const row = await dispatchOfChildRun(this.db, runId);
       const otherAgent = started.payload.template.source === "agent";
       parent = row
         ? {
@@ -602,7 +619,7 @@ export class RunWorker {
             otherAgent,
           };
     } else {
-      const version = await this.d.db
+      const version = await this.db
         .selectFrom("agent_versions")
         .select("definition")
         .where("agent_id", "=", conv.agent_id)
@@ -617,55 +634,24 @@ export class RunWorker {
     // run's `run_started`, read under the conversation lock when the run starts, so a replay
     // (`selectionAt`) sees exactly what the run used.
     // A sub-agent (no `saved`) runs its frozen definition as is.
-    const existingStart = await this.d.eventLog.findByIdem(conversationId, `run_started:${runId}`);
+    const existingStart = await this.eventLog.findByIdem(conversationId, `run_started:${runId}`);
     if (existingStart && saved !== undefined) {
       agent = effectiveDefinition(
         saved,
-        await readSelection(this.d.db, conversationId, existingStart.seq),
+        await readSelection(this.db, conversationId, existingStart.seq),
       );
     }
     if (run.status === "queued" || startedAt === null) {
       if (!existingStart) {
         if (saved !== undefined) await this.fallBackIfUnavailable(conversationId, runId, saved);
-        const toSeq = await this.d.db.transaction().execute(async (t) => {
-          await t
-            .selectFrom("conversations")
-            .select("id")
-            .where("id", "=", conversationId)
-            .forUpdate()
-            .execute();
-          if (saved !== undefined) {
-            agent = effectiveDefinition(saved, await readSelection(t, conversationId));
-          }
-          const [ev] = await this.d.eventLog.append(
-            conversationId,
-            [
-              {
-                type: "run_started",
-                runId,
-                idemKey: `run_started:${runId}`,
-                payload: {
-                  agentVersion: run.agent_version,
-                  model: agent.model,
-                  triggerAccountId: run.trigger_account_id,
-                },
-              },
-            ],
-            t,
-          );
-          return ev?.seq;
-        });
-        if (toSeq !== undefined) await this.d.eventLog.notify(conversationId, toSeq);
+        const started = await this.appendRunStarted(conversationId, run, agent, saved);
+        agent = started.agent;
+        const toSeq = started.toSeq;
+        if (toSeq !== undefined) await this.eventLog.notify(conversationId, toSeq);
       }
       // 技能目录快照（Ruling M17）：在置为 running 之前写，崩溃重试时仍走这里（幂等键去重）
       try {
-        await recordSkillsCatalog(
-          {
-            db: this.d.db,
-            eventLog: this.d.eventLog,
-            log: this.d.log,
-            ...(this.d.storage !== undefined && { storage: this.d.storage }),
-          },
+        await this.skillsCatalog.record(
           {
             orgId: conv.org_id,
             agentId: conv.agent_id,
@@ -673,19 +659,20 @@ export class RunWorker {
             runId,
             agent,
           },
+          { log: this.log },
         );
       } catch (e) {
         // Pinned skill bodies could not be read (Decision 9), or the pinned skills kept changing
         // while they were read (`conflict`): fail before any model request. A transient failure
         // or a conflict is fixed by sending again; a permanent one names the skill for the owner
-        // (`recordSkillsCatalog` already logged it at error). Other errors take the generic path.
+        // (`SkillsCatalogService.record` already logged it at error). Other errors take the generic path.
         if (
           !(e instanceof ApiError) ||
           (e.code !== "storage.unavailable" && e.code !== "conflict")
         ) {
           throw e;
         }
-        this.d.log.warn("skills catalog not recorded at run start", {
+        this.log.warn("skills catalog not recorded at run start", {
           conversationId,
           runId,
           code: e.code,
@@ -698,7 +685,7 @@ export class RunWorker {
         });
         return "finished";
       }
-      const updated = await this.d.db
+      const updated = await this.db
         .updateTable("runs")
         .set({ status: "running", started_at: sql<Date>`COALESCE(started_at, now())` })
         .where("id", "=", runId)
@@ -720,30 +707,20 @@ export class RunWorker {
       },
       Math.max(0, deadline - Date.now()),
     );
-    const quotaTimer = setInterval(() => {
-      this.d.quota
-        .renew(conv.org_id, runId, ORG_QUOTA_LEASE_MS)
-        .then((ok) => {
-          if (!ok) this.d.log.warn("org quota lease lost", { runId, orgId: conv.org_id });
-        })
-        .catch((err) => this.d.log.warn("org quota renew failed", { runId, err }));
-    }, ORG_QUOTA_LEASE_MS / 3);
-    quotaTimer.unref();
     state.stopTimers = () => {
       clearTimeout(deadlineTimer);
-      clearInterval(quotaTimer);
     };
 
     let unwatch: (() => Promise<void>) | undefined;
     try {
-      unwatch = await this.d.abort.watch(runId, (by, detail) => {
+      unwatch = await this.abort.watch(runId, (by, detail) => {
         abortedBy = by;
         abortDetail = detail;
         ac.abort();
       });
 
       // 取得会话锁之后再读 consumed_seq（锁内不会有别的运行推进它）。
-      const { consumed_seq } = await this.d.db
+      const { consumed_seq } = await this.db
         .selectFrom("conversations")
         .select("consumed_seq")
         .where("id", "=", conversationId)
@@ -756,7 +733,7 @@ export class RunWorker {
         const out: ConversationEvent[] = [];
         let after = Math.max(afterSeq, startConsumed);
         for (;;) {
-          const page = await this.d.eventLog.readAfter(conversationId, after, READ_PAGE);
+          const page = await this.eventLog.readAfter(conversationId, after, READ_PAGE);
           for (const e of page) if (e.type === "user_message") out.push(e);
           const last = page.at(-1);
           if (page.length < READ_PAGE || !last) break;
@@ -771,7 +748,7 @@ export class RunWorker {
 
       let outcome: LoopOutcome;
       try {
-        outcome = await this.d.loop.run({
+        outcome = await this.loop.run({
           orgId: conv.org_id,
           conversationId,
           runId,
@@ -781,7 +758,7 @@ export class RunWorker {
           agentVersion: run.agent_version,
           signal: ac.signal,
           shutdown: state.shutdown.signal,
-          sink: this.d.sinkFor?.(conversationId) ?? noopSink,
+          sink: this.sinkFor(conversationId),
           pendingUserMessages,
           limits: { maxSteps, deadline },
           // a sub-agent's conversation fires hooks like a chat, with `parent` set (spec §11)
@@ -795,7 +772,7 @@ export class RunWorker {
         const err =
           e instanceof RunError ? e : new RunError("run.internal", "The run failed unexpectedly");
         if (!(e instanceof RunError)) {
-          this.d.log.error("agent loop threw", { conversationId, runId, err: e });
+          this.log.error("agent loop threw", { conversationId, runId, err: e });
         }
         // 失败也推进 consumed_seq 到已吸收的位置：否则结束时的 ensureRun 会对同一条消息无限重试；
         // 用户看到 run_failed 后可以重发。
@@ -868,16 +845,13 @@ export class RunWorker {
       return "finished";
     } finally {
       state.stopTimers();
-      await unwatch?.().catch((err) => this.d.log.warn("abort unwatch failed", { runId, err }));
+      await unwatch?.().catch((err) => this.log.warn("abort unwatch failed", { runId, err }));
     }
   }
 
   private completed(conversationId: string): void {
-    try {
-      this.d.onRunCompleted?.(conversationId);
-    } catch (err) {
-      this.d.log.warn("onRunCompleted hook failed", { conversationId, err });
-    }
+    // a completed run enqueues the conversation's title job (never throws)
+    void this.titles.maybeEnqueue(conversationId);
   }
 
   /**
@@ -892,59 +866,101 @@ export class RunWorker {
     runId: string,
     agent: AgentDefinition,
   ): Promise<void> {
-    if (!this.d.models) return;
-    const sel = await readSelection(this.d.db, conversationId);
+    const sel = await readSelection(this.db, conversationId);
     if (sel.model === null || sameModel(sel.model, agent.model)) return;
     try {
-      await this.d.models.resolve(sel.model);
+      await this.models.resolve(sel.model);
       return;
     } catch (e) {
       if (e instanceof ProviderListError) return;
       if (!(e instanceof ApiError && e.code === "agent.model_unavailable")) throw e;
     }
-    this.d.log.warn("switched-to model unavailable; falling back to the agent's model", {
+    this.log.warn("switched-to model unavailable; falling back to the agent's model", {
       conversationId,
       runId,
       model: sel.model,
     });
-    const ev = await this.d.db.transaction().execute(async (t) => {
-      // re-check under the row lock: a person who switched again since the read above wins
-      await t
-        .selectFrom("conversations")
-        .select("id")
-        .where("id", "=", conversationId)
-        .forUpdate()
-        .executeTakeFirst();
-      if (!sameSelection(await readSelection(t, conversationId), sel)) return null;
-      const [written] = await this.d.eventLog.append(
-        conversationId,
-        [
-          {
-            type: "model_switched",
-            runId,
-            idemKey: `model_fallback:${runId}`,
-            payload: { model: null, effort: null, byAccountId: null, reason: "unavailable" },
-          },
-        ],
-        t,
-      );
-      await t
-        .updateTable("conversations")
-        .set({ selection: JSON.stringify(NO_SELECTION) })
-        .where("id", "=", conversationId)
-        .execute();
-      return written ?? null;
-    });
+    const ev = await this.fallBackIn(conversationId, runId, sel);
     if (ev === null) return;
-    await this.d.eventLog.notify(conversationId, ev.seq);
-    await this.d.eventLog.publishChanged(conversationId, "selection");
+    await this.eventLog.notify(conversationId, ev.seq);
+    await this.eventLog.publishChanged(conversationId, "selection");
+  }
+
+  /**
+   * `run_started` under the conversation row lock, with the model / effort switch in effect then
+   * (a chat run's `saved` version under the conversation's selection): what the run uses.
+   */
+  @Transactional({ propagation: "requires_new" })
+  private async appendRunStarted(
+    conversationId: string,
+    run: { id: string; agent_version: number; trigger_account_id: string },
+    /** The definition so far (a sub-agent's frozen one is final). */
+    current: AgentDefinition,
+    saved: AgentDefinition | undefined,
+  ): Promise<{ toSeq: number | undefined; agent: AgentDefinition }> {
+    const t = this.db;
+    await t
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", conversationId)
+      .forUpdate()
+      .execute();
+    const agent =
+      saved !== undefined
+        ? effectiveDefinition(saved, await readSelection(t, conversationId))
+        : current;
+    const [ev] = await this.eventLog.appendIn(conversationId, [
+      {
+        type: "run_started",
+        runId: run.id,
+        idemKey: `run_started:${run.id}`,
+        payload: {
+          agentVersion: run.agent_version,
+          model: agent.model,
+          triggerAccountId: run.trigger_account_id,
+        },
+      },
+    ]);
+    return { toSeq: ev?.seq, agent };
+  }
+
+  /** {@link fallBackIfUnavailable}'s write: null when the person switched again meanwhile. */
+  @Transactional({ propagation: "requires_new" })
+  private async fallBackIn(
+    conversationId: string,
+    runId: string,
+    sel: Selection,
+  ): Promise<ConversationEvent | null> {
+    const t = this.db;
+    // re-check under the row lock: a person who switched again since the read above wins
+    await t
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", conversationId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!sameSelection(await readSelection(t, conversationId), sel)) return null;
+    const [written] = await this.eventLog.appendIn(conversationId, [
+      {
+        type: "model_switched",
+        runId,
+        idemKey: `model_fallback:${runId}`,
+        payload: { model: null, effort: null, byAccountId: null, reason: "unavailable" },
+      },
+    ]);
+    await t
+      .updateTable("conversations")
+      .set({ selection: JSON.stringify(NO_SELECTION) })
+      .where("id", "=", conversationId)
+      .execute();
+    return written ?? null;
   }
 
   /** 删除已结束运行的 checkpoint thread（失败只记日志）。 */
   private async dropCheckpoints(runId: string): Promise<void> {
-    await this.d.checkpoints
-      ?.deleteThread(runId)
-      .catch((err) => this.d.log.warn("checkpoint delete failed", { runId, err }));
+    await this.checkpoints
+      .deleteThread(runId)
+      .catch((err) => this.log.warn("checkpoint delete failed", { runId, err }));
   }
 
   /**
@@ -960,23 +976,20 @@ export class RunWorker {
     hook = true,
     floorToTrigger = true,
   ): Promise<number | null> {
-    const stopOpen = this.d.stopOpenCalls;
     let fire = () => {};
-    const toSeq = await finishRun(this.d.db, this.d.eventLog, {
+    const toSeq = await this.finisher.finish({
       conversationId,
       runId,
       status,
       consumed,
       event,
       floorToTrigger,
-      ...(stopOpen !== undefined && {
-        beforeTerminal: async (t) => {
-          fire = (await stopOpen(t, runId)).fire;
-        },
-      }),
+      beforeTerminal: async () => {
+        fire = (await this.pipeline.stopOpenAgentCalls(runId)).fire;
+      },
     });
     if (toSeq !== null) fire();
-    if (hook) await this.d.hooks?.beforeRelease?.(runId, conversationId);
+    if (hook) await this.hooks?.beforeRelease?.(runId, conversationId);
     return toSeq;
   }
 }

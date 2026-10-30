@@ -1,11 +1,15 @@
 import { type SandboxLimits, validateAllowHost } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
 import { z } from "zod";
-import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { readSandboxLimitOverride, type SandboxLimitOverride } from "../identity/settings.js";
-import { lockOrgAndAuthorize } from "./org-lock.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { OrgLock } from "./org-lock.js";
 
 /**
  * 组织设置（`capybara.orgs.settings` jsonb）。读取宽松：缺失或非法的字段按默认值，未知键保留不动
@@ -128,7 +132,7 @@ export function parseOrgSettings(raw: unknown): OrgSettings {
 }
 
 /** 读组织设置（每次实时读 PG，多副本下改动立即生效）；组织不存在或已删除按默认值。 */
-export async function readOrgSettings(db: KernelDb, orgId: string): Promise<OrgSettings> {
+export async function readOrgSettings(db: KernelSchemaDb, orgId: string): Promise<OrgSettings> {
   const row = await db
     .selectFrom("orgs")
     .select("settings")
@@ -139,32 +143,34 @@ export async function readOrgSettings(db: KernelDb, orgId: string): Promise<OrgS
 }
 
 /** 组织设置服务：读取与修改（修改需 `org.update`，锁内实时复核角色，写审计）。 */
+@Injectable()
 export class OrgSettingsService {
   constructor(
-    private readonly db: KernelDb,
-    /** 部署配置（校验 `sandboxEgress` 不超出部署）；省略视为部署出站 `allowlist` + 空白名单。 */
-    private readonly config?: () => Pick<KernelConfig, "sandbox">,
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(OrgLock) private readonly orgLock: OrgLock,
+    /** The deployment config (`sandboxEgress` may not exceed the deployment's). */
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
   ) {}
 
   /** 部署默认值（设置页展示「跟随部署」时的实际取值）。 */
   deployment(): OrgSettingsDeployment {
-    const lim = this.config?.().sandbox.limits;
+    const lim = this.config.get().sandbox.limits;
     return {
-      sandboxEgress: { mode: lim?.egress ?? "allowlist", allowHosts: [...(lim?.allowHosts ?? [])] },
+      sandboxEgress: { mode: lim.egress, allowHosts: [...lim.allowHosts] },
     };
   }
 
   /** 组织实际生效的沙箱 cpu / 内存（只读；由企业管理员在部署设置里覆盖）。 */
   async sandboxLimits(orgId: string): Promise<OrgSandboxLimits> {
-    const lim = this.config?.().sandbox.limits;
+    const lim = this.config.get().sandbox.limits;
     const override: SandboxLimitOverride | undefined = await readSandboxLimitOverride(
-      this.db,
+      this.db.db,
       orgId,
     );
     return {
-      // 没有部署配置（测试构造）时用 schema 默认值 1 核 / 2048 MiB
-      cpu: override?.cpu ?? lim?.cpu ?? 1,
-      memoryMb: override?.memoryMb ?? lim?.memoryMb ?? 2048,
+      cpu: override?.cpu ?? lim.cpu,
+      memoryMb: override?.memoryMb ?? lim.memoryMb,
       source: override === undefined ? "deployment" : "override",
     };
   }
@@ -195,40 +201,48 @@ export class OrgSettingsService {
         "This deployment disables sandbox network access (sandbox.limits.egress is none); an organization can only set sandboxEgress to none",
       );
     }
-    return this.db.transaction().execute(async (trx) => {
-      await lockOrgAndAuthorize(trx, orgId, actorAccountId, "org.update");
-      const row = await trx
-        .selectFrom("orgs")
-        .select("settings")
-        .where("id", "=", orgId)
-        .executeTakeFirstOrThrow();
-      const stored = asObject(row.settings);
-      const before = parseOrgSettings(stored);
-      const changes = Object.fromEntries(
-        Object.entries(patch)
-          .filter(([, v]) => v !== undefined)
-          // null 清除 sandboxEgress：恢复跟随部署默认
-          .map(([k, v]) => [k, v === null ? undefined : v]),
-      ) as Partial<OrgSettings>;
-      const after: OrgSettings = { ...before, ...changes };
-      if (after.sandboxEgress === undefined) delete after.sandboxEgress;
-      if (sameSettings(before, after)) return before;
-      // 与存量合并：保留本版本不认识的键（清除的 sandboxEgress 不留在存量里）
-      const { sandboxEgress: _old, ...rest } = stored;
-      await trx
-        .updateTable("orgs")
-        .set({ settings: JSON.stringify({ ...rest, ...after }) })
-        .where("id", "=", orgId)
-        .execute();
-      await audit(trx, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "org.settings_updated",
-        target: orgId,
-        detail: { before, after },
-      });
-      return after;
+    return this.updateIn(orgId, patch, actorAccountId, actorTokenId);
+  }
+
+  @Transactional()
+  private async updateIn(
+    orgId: string,
+    patch: OrgSettingsPatch,
+    actorAccountId: string,
+    actorTokenId: string | undefined,
+  ): Promise<OrgSettings> {
+    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "org.update");
+    const row = await this.db
+      .selectFrom("orgs")
+      .select("settings")
+      .where("id", "=", orgId)
+      .executeTakeFirstOrThrow();
+    const stored = asObject(row.settings);
+    const before = parseOrgSettings(stored);
+    const changes = Object.fromEntries(
+      Object.entries(patch)
+        .filter(([, v]) => v !== undefined)
+        // null 清除 sandboxEgress：恢复跟随部署默认
+        .map(([k, v]) => [k, v === null ? undefined : v]),
+    ) as Partial<OrgSettings>;
+    const after: OrgSettings = { ...before, ...changes };
+    if (after.sandboxEgress === undefined) delete after.sandboxEgress;
+    if (sameSettings(before, after)) return before;
+    // 与存量合并：保留本版本不认识的键（清除的 sandboxEgress 不留在存量里）
+    const { sandboxEgress: _old, ...rest } = stored;
+    await this.db
+      .updateTable("orgs")
+      .set({ settings: JSON.stringify({ ...rest, ...after }) })
+      .where("id", "=", orgId)
+      .execute();
+    await audit(this.db.db, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "org.settings_updated",
+      target: orgId,
+      detail: { before, after },
     });
+    return after;
   }
 }

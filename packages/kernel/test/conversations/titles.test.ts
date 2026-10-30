@@ -8,24 +8,25 @@ import {
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { EventLog } from "../../src/conversations/event-log.js";
+import type { EventLog } from "../../src/conversations/event-log.js";
 import {
   cleanTitle,
-  runTitleJob,
   TITLE_MAX_ATTEMPTS,
   TITLE_PROMPT,
   titleAttemptDue,
   titleExcerpt,
 } from "../../src/conversations/titles.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { HookRegistry } from "../../src/extensions/hooks.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
+import { createLogger } from "../../src/log.js";
 import { type ModelPurposesService, PurposeAttemptError } from "../../src/models/purposes.js";
 import type { HookRunner } from "../../src/runtime/hook-calls.js";
+import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { accountsFor, handlesFor } from "../helpers/identity.js";
 import {
   createAgent,
   createConv,
@@ -37,17 +38,19 @@ import {
   runConfig,
   sleep,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { runTitleJob } from "../helpers/runtime.js";
 
 /** UI refresh B Task 7: model-generated titles through `cap-kernel-titles` and the `title` purpose. */
 
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
-let k: Kernel;
+let db: KernelSchemaDb;
+let k: TestKernel;
 let owner: { req: Req; cookie: () => string };
 let orgId: string;
 let agentId: string;
@@ -56,7 +59,7 @@ let ownerId: string;
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   raw = createDb(pgc.url, 3);
-  db = kernelDb(raw);
+  db = legacyDbFor(raw);
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
@@ -68,15 +71,14 @@ beforeAll(async () => {
   );
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.model_purpose_mappings");
-  ownerId = (
-    await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" })
-  ).id;
+  ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
+    .id;
   const jar = cookieJar();
   const req = asUser(k.http, jar);
   const res = await req({
@@ -241,7 +243,7 @@ describe("runTitleJob (direct)", { timeout: 60_000 }, () => {
     const conv = await createConv(owner.req, orgId, agentId);
     // a conversation whose run has not started a title attempt: write the exchange directly
     const published: unknown[] = [];
-    const log = new EventLog(db, {
+    const log = eventLogFor(db, {
       publish: async (_t, p) => {
         published.push(p);
       },
@@ -324,21 +326,19 @@ describe("runTitleJob (direct)", { timeout: 60_000 }, () => {
     const rowLocked = new Promise<void>((r) => {
       locked = r;
     });
-    const writer = db.transaction().execute(async (t) => {
+    // the writer's transaction in the async context, which appendIn joins
+    const writer = handlesFor(db).txHost.run(async () => {
+      const t = handlesFor(db).db.db;
       await sql`SELECT 1 FROM capybara.conversations WHERE id = ${id} FOR KEY SHARE`.execute(t);
       locked();
       await released;
-      await log.append(
-        id,
-        [
-          {
-            type: "usage",
-            idemKey: "other-writer",
-            payload: { step: 0, provider: "model-fake", model: "fake-1", ...usage },
-          },
-        ],
-        t,
-      );
+      await log.appendIn(id, [
+        {
+          type: "usage",
+          idemKey: "other-writer",
+          payload: { step: 0, provider: "model-fake", model: "fake-1", ...usage },
+        },
+      ]);
     });
     await rowLocked;
     const purposes: Pick<ModelPurposesService, "chat"> = {
@@ -500,7 +500,7 @@ describe("runTitleJob (direct)", { timeout: 60_000 }, () => {
         current: () => undefined,
         expectedPolicy: (mount) => (mount === "model.request" ? ["dlp"] : []),
         enabledPlugins: async () => new Set(["dlp"]),
-        redis,
+        locks: new LockService(redis, createLogger("error")),
         config: () => ({ hooks: { timeoutMs: 1000 } }),
         log: console,
       });
@@ -541,7 +541,7 @@ describe("runTitleJob (direct)", { timeout: 60_000 }, () => {
 
   it("no exchange yet: the attempt is not used", async () => {
     const conv = await createConv(owner.req, orgId, agentId);
-    const log = new EventLog(db, { publish: async () => {} });
+    const log = eventLogFor(db, { publish: async () => {} });
     const seen = { sent: 0 };
     await runTitleJob({ db, eventLog: log, purposes: sending(seen, ok), log: console }, conv, 0);
     expect(seen.sent).toBe(0);

@@ -1,4 +1,5 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: Claude Code variables such as ${CLAUDE_SKILL_DIR} are plain text here
+
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,16 +15,21 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { AgentsService } from "../../src/agents/agents.service.js";
-import { ConversationsService } from "../../src/conversations/conversations.service.js";
+import { AgentLookup } from "../../src/agents/agent-lookup.js";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { KERNEL_LOGGER } from "../../src/infra/tokens.js";
+import type { KernelLogger } from "../../src/log.js";
 import { parseSlashCommand, SkillInvoker } from "../../src/skills/invoke.js";
+import { StorageService } from "../../src/storage/storage.service.js";
+import { conversationsFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -35,6 +41,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitForTerminal,
 } from "../helpers/runs.js";
 
@@ -53,9 +60,9 @@ const SANDBOX_FAKE = fileURLToPath(
 let pgc: TestContainer;
 let rd: TestContainer;
 let s3: TestS3;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 let root: string;
 
 beforeAll(async () => {
@@ -87,7 +94,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
   if (root) await rm(root, { recursive: true, force: true });
@@ -103,7 +110,7 @@ beforeEach(async () => {
     db,
     "capybara.skill_change_requests, capybara.skill_versions, capybara.skills, capybara.catalog_items, capybara.sandboxes, capybara.attachments, capybara.approvals, capybara.tool_outputs, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" })).id;
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
@@ -125,7 +132,7 @@ async function seedSkill(opts: {
   plugin?: string;
 }): Promise<{ id: string; version: number; prefix: string }> {
   const prefix = `skills/${randomUUID()}/`;
-  const store = k.storage.kernel(orgId);
+  const store = k.app.get(StorageService).kernel(orgId);
   const files: SkillManifest["files"] = [];
   for (const [path, text] of Object.entries({
     "SKILL.md": skillMd(opts.name, opts.body),
@@ -280,7 +287,7 @@ const list = (agentId: string, conversationId?: string, req: Req = owner) =>
   });
 
 /** Only `get` is used here (reads the agent row and version). */
-const agentsService = () => new AgentsService(db, {} as never, {} as never, {} as never);
+const agentsService = () => k.app.get(AgentLookup);
 
 const FIX_ISSUE = "Fix GitHub issue $ARGUMENTS following our coding standards.";
 
@@ -378,7 +385,7 @@ describe("GET …/agents/:agentId/invocable-skills", { timeout: 60_000 }, () => 
     const conv2 = await createConv(owner, orgId, agentId);
     const prefix = `skill-changes/${randomUUID()}/`;
     const data = new TextEncoder().encode(skillMd("draft", "D."));
-    await k.storage.kernel(orgId).put(`${prefix}SKILL.md`, data, {
+    await k.app.get(StorageService).kernel(orgId).put(`${prefix}SKILL.md`, data, {
       contentType: "application/octet-stream",
       size: data.byteLength,
     });
@@ -419,7 +426,7 @@ describe("GET …/agents/:agentId/invocable-skills", { timeout: 60_000 }, () => 
 
   it("is 404 for a non-member and for another person's conversation", async () => {
     const agentId = await createAgent([], [], "org");
-    const accounts = new AccountsService(db);
+    const accounts = accountsFor(db);
     const memberId = (await accounts.createLocal({ login: "mem", password: PW, displayName: "M" }))
       .id;
     await accounts.createLocal({ login: "out", password: PW, displayName: "X" });
@@ -614,25 +621,24 @@ describe("POST …/messages with skill", { timeout: 60_000 }, () => {
     const s = await seedSkill({ name: "fix-issue", body: FIX_ISSUE });
     const agentId = await createAgent([s.id]);
     const conv = await createConv(owner, orgId, agentId);
-    const svc = new ConversationsService(
-      db,
-      k.runs.eventLog,
-      agentsService(),
-      undefined,
-      undefined,
-      async (_o, _a, refs) => ({
-        blocks: refs.map((r) => ({ type: "text" as const, text: `resource ${r.uri}` })),
-        attachments: refs.map((r) => ({
-          appId: r.connectorId,
-          appName: "c",
-          uri: r.uri,
-          name: "n",
-        })),
-      }),
-      async (_t, _o, _c, _a, ids) =>
-        ids.map((id) => ({ type: "text" as const, text: `file ${id}` })),
-      undefined,
-      new SkillInvoker({ db, storage: k.storage }),
+    const svc = conversationsFor(
+      { db: k.app.get(KernelDb), txHost: k.app.get(TransactionHost) },
+      {
+        eventLog: k.app.get(EventLog),
+        agents: agentsService(),
+        resolveAttachments: async (_o, _a, refs) => ({
+          blocks: refs.map((r) => ({ type: "text" as const, text: `resource ${r.uri}` })),
+          attachments: refs.map((r) => ({
+            appId: r.connectorId,
+            appName: "c",
+            uri: r.uri,
+            name: "n",
+          })),
+        }),
+        bindFiles: async (_o, _c, _a, ids) =>
+          ids.map((id) => ({ type: "text" as const, text: `file ${id}` })),
+        invoker: k.app.get(SkillInvoker),
+      },
     );
     const connectorId = randomUUID();
     const fileId = randomUUID();
@@ -709,7 +715,7 @@ describe("POST …/messages with skill", { timeout: 60_000 }, () => {
       invocation: { model: false, user: true, fork: { agent: "nobody" } },
     });
     const agentId = await createAgent([s.id, missing.id]);
-    const invoker = new SkillInvoker({ db, storage: k.storage });
+    const invoker = k.app.get(SkillInvoker);
     const agent = (await agentsService().get(orgId, agentId, ownerId)).definition;
     const r = await invoker.prepare({ orgId, agentId, agent, name: "review", args: "PR 4" });
     expect(r.skill).toMatchObject({
@@ -773,8 +779,8 @@ describe("Review Focus 2: the skill changes between listing and sending", {
     const s = await seedSkill({ name: "fix-issue", body: FIX_ISSUE });
     const agentId = await createAgent([s.id]);
     const conv = await createConv(owner, orgId, agentId);
-    const original = k.storage.kernel.bind(k.storage);
-    vi.spyOn(k.storage, "kernel").mockImplementation((id: string) => {
+    const original = k.app.get(StorageService).kernel.bind(k.app.get(StorageService));
+    vi.spyOn(k.app.get(StorageService), "kernel").mockImplementation((id: string) => {
       const store = original(id);
       return new Proxy(store, {
         get(target, prop, receiver) {
@@ -796,7 +802,7 @@ describe("Review Focus 2: the skill changes between listing and sending", {
     const agentId = await createAgent([s.id]);
     const conv = await createConv(owner, orgId, agentId);
     const evil = new TextEncoder().encode(skillMd("fix-issue", "tampered"));
-    await k.storage.kernel(orgId).put(`${s.prefix}SKILL.md`, evil, {
+    await k.app.get(StorageService).kernel(orgId).put(`${s.prefix}SKILL.md`, evil, {
       contentType: "application/octet-stream",
       size: evil.byteLength,
     });
@@ -815,27 +821,28 @@ describe("SkillInvoker logging", { timeout: 60_000 }, () => {
     const s = await seedSkill({ name: "fix-issue", body: FIX_ISSUE });
     const agentId = await createAgent([s.id]);
     const evil = new TextEncoder().encode(skillMd("fix-issue", "tampered"));
-    await k.storage.kernel(orgId).put(`${s.prefix}SKILL.md`, evil, {
+    await k.app.get(StorageService).kernel(orgId).put(`${s.prefix}SKILL.md`, evil, {
       contentType: "application/octet-stream",
       size: evil.byteLength,
     });
-    const error = vi.fn();
-    const invoker = new SkillInvoker({
-      db,
-      storage: k.storage,
-      log: { error },
-    });
+    // the one SkillInvoker logs through the kernel logger
+    const error = vi.spyOn(k.app.get<KernelLogger>(KERNEL_LOGGER), "error");
+    const invoker = k.app.get(SkillInvoker);
     const agent = (await agentsService().get(orgId, agentId, ownerId)).definition;
-    await expect(
-      invoker.prepare({ orgId, agentId, agent, name: "fix-issue", args: "1" }),
-    ).rejects.toMatchObject({ code: "storage.unavailable" });
-    expect(error).toHaveBeenCalledWith("invoked skill unreadable", {
-      orgId,
-      skillId: s.id,
-      version: s.version,
-      source: s.prefix,
-      problem: "failed its integrity check",
-    });
+    try {
+      await expect(
+        invoker.prepare({ orgId, agentId, agent, name: "fix-issue", args: "1" }),
+      ).rejects.toMatchObject({ code: "storage.unavailable" });
+      expect(error).toHaveBeenCalledWith("invoked skill unreadable", {
+        orgId,
+        skillId: s.id,
+        version: s.version,
+        source: s.prefix,
+        problem: "failed its integrity check",
+      });
+    } finally {
+      error.mockRestore();
+    }
   });
 });
 

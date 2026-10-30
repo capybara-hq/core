@@ -7,13 +7,12 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
-import { EventLog } from "../../src/conversations/event-log.js";
+import type { EventLog } from "../../src/conversations/event-log.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
-import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import type { PolicyContext } from "../../src/tools/pipeline.js";
 import {
   createDecidePolicy,
@@ -23,9 +22,11 @@ import {
   R3_FIXED_ASK_TOOL_KEYS,
 } from "../../src/tools/policy.js";
 import { type ResolvedTool, specHash } from "../../src/tools/registry.js";
+import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { eventsOf } from "../helpers/runs.js";
 import { seedConnector, seedConversation } from "../helpers/tool-fixtures.js";
+import { approvalsFor } from "../helpers/tools.js";
 
 // ---- decide 真值表（纯函数） ----
 
@@ -125,7 +126,7 @@ describe("decide", () => {
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let redis: Redis;
 let sub: ReturnType<typeof createBusSubscriber>;
 let eventLog: EventLog;
@@ -144,10 +145,10 @@ beforeAll(async () => {
     dir: fileURLToPath(new URL("../../src/migrations", import.meta.url)),
   });
   raw = createDb(pgc.url, 5);
-  db = kernelDb(raw);
+  db = legacyDbFor(raw);
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
-  eventLog = new EventLog(db, createBus(redis, sub, "kernel"));
+  eventLog = eventLogFor(db, createBus(redis, sub, "kernel"));
 }, 120_000);
 
 afterAll(async () => {
@@ -563,7 +564,7 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
 
 describe("ApprovalsService.request", () => {
   it("插入 pending 审批（expires_at = now + approvalTimeoutHours）并写 approval_requested；按 (run, call) 幂等", async () => {
-    const approvals = new ApprovalsService({ db, eventLog, config, log: silent });
+    const approvals = approvalsFor(db, eventLog, config);
     const input = {
       orgId: seed.orgId,
       conversationId: seed.conversationId,
@@ -615,7 +616,7 @@ describe("ApprovalsService.request", () => {
   });
 
   it("requestedFor 与 approverRole 都为空 → 拒绝创建", async () => {
-    const approvals = new ApprovalsService({ db, eventLog, config, log: silent });
+    const approvals = approvalsFor(db, eventLog, config);
     await expect(
       approvals.request({
         orgId: seed.orgId,

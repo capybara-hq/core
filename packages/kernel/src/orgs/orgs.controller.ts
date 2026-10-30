@@ -1,23 +1,7 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  HttpCode,
-  Inject,
-  Param,
-  Patch,
-  Post,
-} from "@nestjs/common";
+import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post } from "@nestjs/common";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
-import { API_TOKENS, MEMBERS, ORGS } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
-import {
-  type ApiTokenRecord,
-  type ApiTokenService,
-  FutureIsoDate,
-} from "../identity/api-tokens.js";
+import { type ApiTokenRecord, ApiTokenService, FutureIsoDate } from "../identity/api-tokens.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -25,40 +9,47 @@ import {
   requireUser,
   SessionOnly,
 } from "../identity/principal.js";
-import type { Member, MembersService } from "./members.service.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody } from "../infra/validation/zod-params.js";
+import { type Member, MembersService } from "./members.service.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "./org.guard.js";
-import type { Org, OrgsService } from "./orgs.service.js";
+import { type Org, OrgsService } from "./orgs.service.js";
 import { ORG_ROLES, type OrgRole } from "./roles.js";
 
-const CreateBody = z.object({
+const CreateSchema = z.object({
   name: z.string().min(1).max(100),
   slug: z.string().min(1).max(40).optional(),
 });
-const UpdateBody = z.object({
+class OrgCreateBody extends createZodDto(CreateSchema, "OrgCreateBody") {}
+const UpdateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   slug: z.string().min(1).max(40).optional(),
 });
-const TransferBody = z.object({ toAccountId: z.string().min(1) });
-const ServiceTokenBody = z.object({
+class OrgUpdateBody extends createZodDto(UpdateSchema, "OrgUpdateBody") {}
+const TransferSchema = z.object({ toAccountId: z.string().min(1) });
+class OrgTransferBody extends createZodDto(TransferSchema, "OrgTransferBody") {}
+const ServiceTokenSchema = z.object({
   name: z.string().min(1).max(100),
   role: z.enum(["admin", "member", "guest"]),
   expiresAt: FutureIsoDate.optional(),
 });
-const RoleBody = z.object({ role: z.enum(ORG_ROLES) });
+class ServiceTokenBody extends createZodDto(ServiceTokenSchema, "ServiceTokenBody") {}
+const RoleSchema = z.object({ role: z.enum(ORG_ROLES) });
+class MemberRoleBody extends createZodDto(RoleSchema, "MemberRoleBody") {}
 
 /** 组织与成员（`/api/v1/orgs`）。组织级路由由 `@OrgAction` + OrgGuard 每请求实时鉴权。 */
 @Controller("api/v1/orgs")
 export class OrgsController {
   constructor(
-    @Inject(ORGS) private readonly orgs: OrgsService,
-    @Inject(MEMBERS) private readonly members: MembersService,
-    @Inject(API_TOKENS) private readonly tokens: ApiTokenService,
+    @Inject(OrgsService) private readonly orgs: OrgsService,
+    @Inject(MembersService) private readonly members: MembersService,
+    @Inject(ApiTokenService) private readonly tokens: ApiTokenService,
   ) {}
 
   @Post()
   async create(
     @CurrentPrincipal() principal: Principal,
-    @Body(new ZodPipe(CreateBody)) body: z.infer<typeof CreateBody>,
+    @ZBody(OrgCreateBody) body: z.infer<typeof CreateSchema>,
   ): Promise<{ org: Org; role: "owner" }> {
     const p = requireUser(principal);
     const org = await this.orgs.create(body, p.account, { actorTokenId: patTokenId(p) });
@@ -86,7 +77,7 @@ export class OrgsController {
   async update(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Body(new ZodPipe(UpdateBody)) body: z.infer<typeof UpdateBody>,
+    @ZBody(OrgUpdateBody) body: z.infer<typeof UpdateSchema>,
   ): Promise<{ org: Org }> {
     const p = requireUser(principal);
     return { org: await this.orgs.update(org.orgId, body, p.account, patTokenId(p)) };
@@ -109,7 +100,7 @@ export class OrgsController {
   async transfer(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Body(new ZodPipe(TransferBody)) body: z.infer<typeof TransferBody>,
+    @ZBody(OrgTransferBody) body: z.infer<typeof TransferSchema>,
   ): Promise<void> {
     const p = requireUser(principal);
     await this.members.transferOwnership(org.orgId, p.account.id, body.toAccountId, patTokenId(p));
@@ -138,7 +129,7 @@ export class OrgsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("accountId") accountId: string,
-    @Body(new ZodPipe(RoleBody)) body: z.infer<typeof RoleBody>,
+    @ZBody(MemberRoleBody) body: z.infer<typeof RoleSchema>,
   ): Promise<{ accountId: string; role: OrgRole }> {
     const p = requireUser(principal);
     await this.members.changeRole(org.orgId, accountId, body.role, p.account.id, patTokenId(p));
@@ -163,7 +154,7 @@ export class OrgsController {
   async createServiceToken(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Body(new ZodPipe(ServiceTokenBody)) body: z.infer<typeof ServiceTokenBody>,
+    @ZBody(ServiceTokenBody) body: z.infer<typeof ServiceTokenSchema>,
   ): Promise<{ token: string; record: ApiTokenRecord }> {
     const p = requireUser(principal);
     return this.tokens.createServiceAs(org.orgId, p.account.id, body);

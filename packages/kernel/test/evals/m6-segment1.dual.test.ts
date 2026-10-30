@@ -16,7 +16,7 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { usageTokens } from "../../src/evals/budget.js";
 import {
@@ -26,12 +26,12 @@ import {
   evalJobId,
 } from "../../src/evals/runs.service.js";
 import type { TrajectoryDetail, TrajectoryListItem } from "../../src/evals/trajectory.service.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import {
   INFLIGHT_PREFIX,
   JUDGE_GATE_TOKENS,
   RELEASE_FILE,
 } from "../fixtures/plugins/judge-gate/index.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
@@ -75,7 +75,7 @@ describe("M6 第一段双副本验收（轨迹、评测集、单步 / 整轮回�
   let rdc: TestContainer;
   let h: Harness;
   let raw: ReturnType<typeof createDb>;
-  let db: KernelDb;
+  let db: KernelSchemaDb;
   let redis: Redis;
   /** judge-gate 的共享目录：在途标记 `inflight-<pid>-<uuid>` 与放行文件 `release`。 */
   let gateDir: string;
@@ -139,7 +139,7 @@ describe("M6 第一段双副本验收（轨迹、评测集、单步 / 整轮回�
     });
     raw = createDb(h.dbUrl, 3);
     db = kernelDb(raw);
-    const accounts = new AccountsService(db);
+    const accounts = accountsFor(db);
     for (const u of Object.keys(jars) as User[]) {
       ids[u] = (await accounts.createLocal({ login: u, password: PW, displayName: u })).id;
     }

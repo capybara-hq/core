@@ -1,19 +1,6 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  HttpCode,
-  Inject,
-  Param,
-  Patch,
-  Post,
-  Query,
-} from "@nestjs/common";
+import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post } from "@nestjs/common";
 import { z } from "zod";
-import { type KernelConfig, MARKETPLACE_MAX_MIRRORS } from "../config/schema.js";
-import { CATALOG, KERNEL_CONFIG, MARKETPLACES } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
+import { MARKETPLACE_MAX_MIRRORS } from "../config/schema.js";
 import {
   CurrentPrincipal,
   EnterpriseAdmin,
@@ -21,12 +8,15 @@ import {
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
-import type { CatalogService, MarketplaceImportResult } from "./catalog.service.js";
-import type {
-  ActorOpts,
-  MarketplaceEntryView,
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
+import { CatalogService, type MarketplaceImportResult } from "./catalog.service.js";
+import {
+  type ActorOpts,
+  type MarketplaceEntryView,
   MarketplacesService,
-  MarketplaceView,
+  type MarketplaceView,
 } from "./marketplaces.service.js";
 
 const Url = z.string().min(1).max(2000);
@@ -70,6 +60,11 @@ const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
   return tokenId !== undefined ? { actorTokenId: tokenId } : {};
 };
 
+class MarketplaceAddBody extends createZodDto(AddBody, "MarketplaceAddBody") {}
+class MarketplaceEntriesQuery extends createZodDto(EntriesQuery, "MarketplaceEntriesQuery") {}
+class MarketplaceImportBody extends createZodDto(ImportBody, "MarketplaceImportBody") {}
+class MarketplacePatchBody extends createZodDto(PatchBody, "MarketplacePatchBody") {}
+
 /**
  * Marketplaces (`/api/v1/admin/marketplaces/*`, enterprise admins): create, update, delete and
  * refresh the official and enterprise marketplaces, browse entries, import from a marketplace.
@@ -79,9 +74,9 @@ const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
 @EnterpriseAdmin()
 export class MarketplacesController {
   constructor(
-    @Inject(MARKETPLACES) private readonly marketplaces: MarketplacesService,
-    @Inject(CATALOG) private readonly catalog: CatalogService,
-    @Inject(KERNEL_CONFIG) private readonly config: () => KernelConfig,
+    @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
+    @Inject(CatalogService) private readonly catalog: CatalogService,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
   ) {}
 
   /** 全部来源；`offline` 为 true 表示 `marketplaces.official.enabled` 为 false（界面显示「离线模式」）。 */
@@ -89,7 +84,7 @@ export class MarketplacesController {
   async list(): Promise<{ items: MarketplaceView[]; offline: boolean }> {
     return {
       items: await this.marketplaces.list(),
-      offline: !this.config().marketplaces.official.enabled,
+      offline: !this.config.get().marketplaces.official.enabled,
     };
   }
 
@@ -102,7 +97,7 @@ export class MarketplacesController {
   @HttpCode(201)
   add(
     @CurrentPrincipal() principal: Principal,
-    @Body(new ZodPipe(AddBody)) body: z.infer<typeof AddBody>,
+    @ZBody(MarketplaceAddBody) body: z.infer<typeof AddBody>,
   ): Promise<MarketplaceView> {
     const actor = requireUser(principal);
     return this.marketplaces.add(
@@ -128,7 +123,7 @@ export class MarketplacesController {
    */
   @Get("entries")
   entries(
-    @Query(new ZodPipe(EntriesQuery)) q: z.infer<typeof EntriesQuery>,
+    @ZQuery(MarketplaceEntriesQuery) q: z.infer<typeof EntriesQuery>,
   ): Promise<{ items: MarketplaceEntryView[]; truncated: boolean }> {
     return this.marketplaces.entries({
       ...(q.sourceId !== undefined && { marketplaceId: q.sourceId }),
@@ -144,7 +139,7 @@ export class MarketplacesController {
   update(
     @CurrentPrincipal() principal: Principal,
     @Param("id") id: string,
-    @Body(new ZodPipe(PatchBody)) body: z.infer<typeof PatchBody>,
+    @ZBody(MarketplacePatchBody) body: z.infer<typeof PatchBody>,
   ): Promise<MarketplaceView> {
     const actor = requireUser(principal);
     return this.marketplaces.update(
@@ -214,7 +209,7 @@ export class MarketplacesController {
     @CurrentPrincipal() principal: Principal,
     @Param("id") id: string,
     @Param("name") name: string,
-    @Body(new ZodPipe(ImportBody)) body: z.infer<typeof ImportBody>,
+    @ZBody(MarketplaceImportBody) body: z.infer<typeof ImportBody>,
   ): Promise<MarketplaceImportResult> {
     const actor = requireUser(principal);
     return this.catalog.importFromMarketplace(

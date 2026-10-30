@@ -5,14 +5,14 @@ import { emptyCheckpoint, uuid6 } from "@langchain/langgraph-checkpoint";
 import { validate } from "@langchain/langgraph-checkpoint-validation";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { KyselyCheckpointSaver } from "../../src/runtime/checkpointer.js";
+import { checkpointsFor } from "../helpers/runtime.js";
 
 let box: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 
 const clearTables = async () => {
   await sql`TRUNCATE capybara.lg_checkpoints, capybara.lg_checkpoint_writes`.execute(raw);
@@ -66,14 +66,14 @@ validate({
   async createCheckpointer() {
     // 测试库独占：每个新建的 checkpointer 都从空表开始，满足套件的状态隔离要求。
     await clearTables();
-    return new KyselyCheckpointSaver(db);
+    return checkpointsFor(db);
   },
 });
 
 describe("KyselyCheckpointSaver#pruneToLatest", () => {
   it("keeps only the latest root checkpoint and its writes", async () => {
     await clearTables();
-    const saver = new KyselyCheckpointSaver(db);
+    const saver = checkpointsFor(db);
     const threadId = "run-prune";
     let config = { configurable: { thread_id: threadId, checkpoint_ns: "" } };
     const ids: string[] = [];
@@ -126,7 +126,7 @@ describe("KyselyCheckpointSaver#pruneToLatest", () => {
 describe("KyselyCheckpointSaver with StateGraph", () => {
   it("resumes from the failed node after an error", async () => {
     await clearTables();
-    const saver = new KyselyCheckpointSaver(db);
+    const saver = checkpointsFor(db);
     const State = Annotation.Root({
       log: Annotation<string[]>({ reducer: (a, b) => a.concat(b), default: () => [] }),
     });
@@ -164,7 +164,7 @@ describe("KyselyCheckpointSaver with StateGraph", () => {
       .addEdge(START, "a")
       .addEdge("a", "b")
       .addEdge("b", END)
-      .compile({ checkpointer: new KyselyCheckpointSaver(db) });
+      .compile({ checkpointer: checkpointsFor(db) });
     const out = await resumed.invoke(null, config);
     expect(out.log).toEqual(["start", "a", "b"]);
     expect(aCalls).toBe(1);

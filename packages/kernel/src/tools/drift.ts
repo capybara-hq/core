@@ -7,17 +7,23 @@ import {
   type ToolSpec,
   validateToolPresentation,
 } from "@capybara-hq/plugin-sdk";
-import { sql, type Transaction } from "kysely";
-import type { KernelConfig } from "../config/schema.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import { getQueueToken } from "@nestjs/bullmq";
+import { Inject, Injectable } from "@nestjs/common";
+import type { Queue } from "bullmq";
+import { sql } from "kysely";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import type { Maintenance } from "../runtime/maintenance.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { HIDDEN_FORMAT_RE } from "../text.js";
-import { type ConnectorAuth, CredentialMissing, type Credentials, isOAuth } from "./credentials.js";
+import { type ConnectorAuth, CredentialMissing, Credentials, isOAuth } from "./credentials.js";
 import { toolKey, toolKeyIssue } from "./naming.js";
 import { redactDeep, redactorFor } from "./redact.js";
-import { canonicalJson, policyFromAnnotations, specHash, type ToolRegistry } from "./registry.js";
+import { canonicalJson, policyFromAnnotations, specHash, ToolRegistry } from "./registry.js";
 import { resourceToolSpecs } from "./resources.js";
 import { recordToolSpecs } from "./specs.js";
 
@@ -32,16 +38,14 @@ import { recordToolSpecs } from "./specs.js";
  * 连接器从未拍过快照（`tools_synced_at` 为空且没有工具行，即 OAuth 授权码连接器安装时不 listTools，A16）时，
  * 首个快照按安装处理（直接启用）。
  *
- * 触发：维护队列的周期扫描（`tools.driftIntervalHours`）、连接器在会话中报告工具清单变了（MCP
+ * 触发：周期扫描（`drift-scan`，每 `tools.driftIntervalHours` 一次的 `@LockedInterval`，见 jobs.ts）、连接器在会话中报告工具清单变了（MCP
  * `notifications/tools/list_changed`）、管理员手动刷新（`ConnectorsService.refresh`，走同一套比对）。
  * 授权（`tool_grants` / `conversation_tool_grants`）按 spec_hash 比对（D8），复核通过采用新指纹后旧授权自然失效。
  */
 
-/** 周期扫描：任务名与 job scheduler id（不含 `:`）。 */
-export const DRIFT_SCAN_JOB = "drift-scan";
-export const DRIFT_SCHEDULER_ID = "drift-scan-interval";
-/** 单个连接器的漂移检查任务名。 */
-export const DRIFT_CONNECTOR_JOB = "drift-connector";
+import { DRIFT_CONNECTOR_JOB } from "./job-ids.js";
+
+export { DRIFT_CONNECTOR_JOB, DRIFT_SCAN_JOB, DRIFT_SCHEDULER_ID } from "./job-ids.js";
 
 /**
  * list_changed 触发的检查：jobId 按连接器与分钟桶去重（同一分钟内多次通知只检查一次；connectorId 为 UUID，不含 `:`）。
@@ -71,7 +75,6 @@ export type DriftCheckResult =
       reason: "not_found" | "inactive" | "no_connector" | "no_credential" | "connect_failed";
     };
 
-type Trx = Transaction<KernelDatabase>;
 type ToolSource = "connector" | "resources";
 
 /** 快照中被停用 / 跳过的工具及英文原因。 */
@@ -228,16 +231,6 @@ export function toolIssue(slug: string, spec: ToolSpec): string | null {
   return null;
 }
 
-export interface ToolDriftDeps {
-  db: KernelDb;
-  registry: Pick<ToolRegistry, "findConnector">;
-  credentials: Pick<Credentials, "injection" | "onUnauthorized" | "personalHolders">;
-  config: () => KernelConfig;
-  log: Logger;
-  /** 维护队列（登记周期扫描与检查任务的处理函数；不给时只能同步调用 `check`）。 */
-  maintenance?: Pick<Maintenance, "add" | "handle" | "schedule">;
-}
-
 interface ConnectorRow {
   id: string;
   org_id: string;
@@ -253,32 +246,33 @@ interface ConnectorRow {
 /** 任务保留时长：完成的 jobId 留一段时间，同一桶内的重复投递被 BullMQ 按 jobId 去重。 */
 const KEEP_FAILED = { age: 86_400 };
 
-export class ToolDrift {
-  constructor(private readonly d: ToolDriftDeps) {
-    const m = d.maintenance;
-    if (m) {
-      m.schedule({
-        id: DRIFT_SCHEDULER_ID,
-        name: DRIFT_SCAN_JOB,
-        everyMs: () => this.intervalMs(),
-      });
-      m.handle(DRIFT_SCAN_JOB, async () => {
-        const n = await this.scan();
-        if (n > 0) d.log.info("tool drift checks enqueued", { count: n });
-      });
-      m.handle(DRIFT_CONNECTOR_JOB, async (job) => {
-        const { orgId, connectorId, trigger } = job.data as {
-          orgId: string;
-          connectorId: string;
-          trigger: DriftTrigger;
-        };
-        await this.check(orgId, connectorId, trigger);
-      });
-    }
-  }
+/** The data of a `drift-connector` job. */
+export interface DriftConnectorJobData {
+  orgId: string;
+  connectorId: string;
+  trigger: DriftTrigger;
+}
 
-  private intervalMs(): number {
-    return this.d.config().tools.driftIntervalHours * 3_600_000;
+@Injectable()
+export class ToolDrift {
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(ToolRegistry) private readonly registry: Pick<ToolRegistry, "findConnector">,
+    @Inject(Credentials)
+    private readonly credentials: Pick<
+      Credentials,
+      "injection" | "onUnauthorized" | "personalHolders"
+    >,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Inject(KERNEL_LOGGER) private readonly log: Logger,
+    /** The maintenance queue's producer (`drift-connector` jobs). */
+    @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly queue: Pick<Queue, "add">,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {}
+
+  /** The scan period (`tools.driftIntervalHours`). */
+  intervalMs(): number {
+    return this.config.get().tools.driftIntervalHours * 3_600_000;
   }
 
   /**
@@ -294,11 +288,11 @@ export class ToolDrift {
     /** 收到 401：OAuth 连接器在刷新锁内刷新（参数为最后一次注入的鉴权）。 */
     onUnauthorized: (last: AuthInjection | undefined) => Promise<void> = async () => {},
   ): Promise<{ specs: unknown; resources: boolean }> {
-    const c = this.d.registry.findConnector(connector);
+    const c = this.registry.findConnector(connector);
     if (!c) {
       throw new ApiError("connector.connect_failed", `The connector ${connector} is not installed`);
     }
-    const signal = AbortSignal.timeout(this.d.config().tools.timeoutMs);
+    const signal = AbortSignal.timeout(this.config.get().tools.timeoutMs);
     const injected: AuthInjection[] = [];
     const tracked = async () => {
       const inj = await auth();
@@ -322,27 +316,28 @@ export class ToolDrift {
     } catch (e) {
       if (e instanceof CredentialMissing) throw e;
       // 日志经 logger 打码（凭据值已在构造注入时登记）
-      this.d.log.warn("connector listTools failed", { ...logCtx, connector, err: e });
+      this.log.warn("connector listTools failed", { ...logCtx, connector, err: e });
       throw new ApiError(
         "connector.connect_failed",
         connectFailedMessage(e, redactorFor(injected)),
       );
     } finally {
       await session?.close().catch((e: unknown) => {
-        this.d.log.warn("connector session close failed", { ...logCtx, connector, err: e });
+        this.log.warn("connector session close failed", { ...logCtx, connector, err: e });
       });
     }
   }
 
   /**
-   * 把新快照与当前工具行比对并写入（调用方已在事务内锁住连接器行）；返回按名排序的变化。
+   * 把新快照与当前工具行比对并写入（调用方已在事务内锁住连接器行：`mandatory`）；返回按名排序的变化。
    * 规则见文件头。待复核的新定义也写进 `tool_specs`（内容寻址，只增不改）。
    */
+  @Transactional({ propagation: "mandatory" })
   async apply(
-    t: Trx,
     app: { id: string; tools_synced_at: Date | null },
     rows: SnapshotRow[],
   ): Promise<DriftChanges> {
+    const t = this.db.db;
     const current = await t
       .selectFrom("connector_tools")
       .select([
@@ -444,7 +439,7 @@ export class ToolDrift {
               .where("name", "=", r.name)
               .execute();
             // No audit row (the model sees nothing new), but leave a trace for operators.
-            this.d.log.info("connector tool display updated", {
+            this.log.info("connector tool display updated", {
               event: "connector.tool_display_updated",
               connectorId: app.id,
               tool: r.name,
@@ -503,8 +498,8 @@ export class ToolDrift {
     connectorId: string,
     trigger: DriftTrigger,
   ): Promise<DriftCheckResult> {
-    const { db, log } = this.d;
-    const app = (await db
+    const log = this.log;
+    const app = (await this.db
       .selectFrom("connectors")
       .select([
         "id",
@@ -523,7 +518,7 @@ export class ToolDrift {
       .executeTakeFirst()) as ConnectorRow | undefined;
     if (!app) return { status: "skipped", reason: "not_found" };
     if (app.status !== "active") return { status: "skipped", reason: "inactive" };
-    if (!this.d.registry.findConnector(app.connector)) {
+    if (!this.registry.findConnector(app.connector)) {
       log.warn("tool drift check skipped: connector not installed", {
         orgId,
         connectorId,
@@ -536,7 +531,7 @@ export class ToolDrift {
     const personalOAuth = auth.type === "oauth_code";
     const accounts =
       personal || personalOAuth
-        ? await this.d.credentials.personalHolders(orgId, connectorId, PERSONAL_CANDIDATES)
+        ? await this.credentials.personalHolders(orgId, connectorId, PERSONAL_CANDIDATES)
         : [app.created_by];
     if (accounts.length === 0) {
       log.info("tool drift check skipped: no member credential", { orgId, connectorId });
@@ -550,9 +545,9 @@ export class ToolDrift {
         listed = await this.listTools(
           app.connector,
           app.endpoint,
-          () => this.d.credentials.injection(orgId, connectorId, auth, accountId),
+          () => this.credentials.injection(orgId, connectorId, auth, accountId),
           { orgId, connectorId, trigger },
-          (last) => this.d.credentials.onUnauthorized(orgId, connectorId, auth, accountId, last),
+          (last) => this.credentials.onUnauthorized(orgId, connectorId, auth, accountId, last),
         );
         break;
       } catch (e) {
@@ -570,54 +565,65 @@ export class ToolDrift {
     }
     const { rows } = snapshot(app.slug, listed.specs, listed.resources);
 
-    const changes = await db.transaction().execute(async (t) => {
-      const locked = await t
-        .selectFrom("connectors")
-        .select(["id", "tools_synced_at"])
-        .where("id", "=", connectorId)
-        .where("deleted_at", "is", null)
-        .where("status", "=", "active")
-        .forUpdate()
-        .executeTakeFirst();
-      if (!locked) return null;
-      const c = await this.apply(t, locked, rows);
-      if (c.added.length + c.changed.length + c.removed.length > 0) {
-        await audit(t, {
-          orgId,
-          action: "connector.tools_drifted",
-          target: connectorId,
-          detail: {
-            added: c.added.length,
-            changed: c.changed.length,
-            removed: c.removed.length,
-            trigger,
-          },
-        });
-      }
-      return c;
-    });
+    const changes = await this.applyChecked(orgId, connectorId, trigger, rows);
     if (!changes) return { status: "skipped", reason: "inactive" };
     return { status: "checked", changes };
+  }
+
+  /** The locked compare-and-write of {@link check}, audited when something changed. */
+  @Transactional()
+  private async applyChecked(
+    orgId: string,
+    connectorId: string,
+    trigger: DriftTrigger,
+    rows: SnapshotRow[],
+  ): Promise<DriftChanges | null> {
+    const t = this.db.db;
+    const locked = await t
+      .selectFrom("connectors")
+      .select(["id", "tools_synced_at"])
+      .where("id", "=", connectorId)
+      .where("deleted_at", "is", null)
+      .where("status", "=", "active")
+      .forUpdate()
+      .executeTakeFirst();
+    if (!locked) return null;
+    const c = await this.apply(locked, rows);
+    if (c.added.length + c.changed.length + c.removed.length > 0) {
+      await audit(t, {
+        orgId,
+        action: "connector.tools_drifted",
+        target: connectorId,
+        detail: {
+          added: c.added.length,
+          changed: c.changed.length,
+          removed: c.removed.length,
+          trigger,
+        },
+      });
+    }
+    return c;
   }
 
   /**
    * 连接器在会话中报告工具清单变了：投递一次该连接器的检查（jobId 按分钟桶去重）。投递失败只记日志。
    */
   async onToolsChanged(orgId: string, connectorId: string): Promise<void> {
-    const m = this.d.maintenance;
-    if (!m || connectorId.includes(":")) return;
+    if (connectorId.includes(":")) return;
     try {
-      await m.add(
+      await this.queue.add(
         DRIFT_CONNECTOR_JOB,
-        { orgId, connectorId, trigger: "list_changed" },
+        { orgId, connectorId, trigger: "list_changed" } satisfies DriftConnectorJobData,
         {
           jobId: listChangedJobId(connectorId),
+          // a check runs once: a failure waits for the next trigger (the queue default retries)
+          attempts: 1,
           removeOnComplete: { age: 3_600 },
           removeOnFail: KEEP_FAILED,
         },
       );
     } catch (err) {
-      this.d.log.warn("cannot enqueue tool drift check", { orgId, connectorId, err });
+      this.log.warn("cannot enqueue tool drift check", { orgId, connectorId, err });
     }
   }
 
@@ -626,11 +632,9 @@ export class ToolDrift {
    * jobId 按周期桶去重——即使扫描在多个副本上重复执行，每个连接器每周期也只检查一次。返回投递数。
    */
   async scan(): Promise<number> {
-    const m = this.d.maintenance;
-    if (!m) return 0;
     const interval = this.intervalMs();
     const bucket = Math.floor(Date.now() / interval);
-    const apps = await this.d.db
+    const apps = await this.db
       .selectFrom("connectors")
       .select(["id", "org_id"])
       .where("deleted_at", "is", null)
@@ -649,11 +653,12 @@ export class ToolDrift {
       .execute();
     for (const a of apps) {
       if (a.id.includes(":")) continue;
-      await m.add(
+      await this.queue.add(
         DRIFT_CONNECTOR_JOB,
-        { orgId: a.org_id, connectorId: a.id, trigger: "schedule" },
+        { orgId: a.org_id, connectorId: a.id, trigger: "schedule" } satisfies DriftConnectorJobData,
         {
           jobId: driftScanJobId(a.id, bucket),
+          attempts: 1,
           removeOnComplete: { age: Math.ceil(interval / 1000) },
           removeOnFail: KEEP_FAILED,
         },

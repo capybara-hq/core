@@ -1,8 +1,10 @@
+import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
-import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import type { StorageService } from "../storage/storage.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { StorageService } from "../storage/storage.service.js";
 import { UUID_RE } from "../ui/registry.js";
+import { ConversationAccess } from "./access.js";
 import type { EventPayload } from "./events.js";
 
 /** 产物下载跳转的预签名有效期（秒）。 */
@@ -42,13 +44,6 @@ export interface ArtifactPreview {
   truncated: boolean;
 }
 
-export interface ConversationArtifactsDeps {
-  db: KernelDb;
-  storage: Pick<StorageService, "kernel">;
-  /** 会话可见性（与会话 SSE 流同一判定：`ConversationsService.isAccessible`）。 */
-  isAccessible(orgId: string, conversationId: string, viewerAccountId: string): Promise<boolean>;
-}
-
 const conversationNotFound = () => new ApiError("conversation.not_found", "Conversation not found");
 const artifactNotFound = () =>
   new ApiError("conversation.artifact_not_found", "Artifact not found");
@@ -86,8 +81,14 @@ async function readPrefix(body: ReadableStream<Uint8Array>, max: number): Promis
  * 查找走 `conversation_events` 的主键 `(conversation_id, seq)` 前缀，在 SQL 里按 `type` 与
  * `payload->>'artifactId'` 过滤、`LIMIT 1`（只扫这一个会话的事件，不在 JS 里扫日志；不加迁移）。
  */
+@Injectable()
 export class ConversationArtifacts {
-  constructor(private readonly d: ConversationArtifactsDeps) {}
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(StorageService) private readonly storage: Pick<StorageService, "kernel">,
+    /** 会话可见性（与会话 SSE 流同一判定）。 */
+    @Inject(ConversationAccess) private readonly access: Pick<ConversationAccess, "isAccessible">,
+  ) {}
 
   private async find(
     orgId: string,
@@ -96,11 +97,11 @@ export class ConversationArtifacts {
     artifactId: string,
   ): Promise<EventPayload<"artifact_created">> {
     if (!UUID_RE.test(conversationId)) throw conversationNotFound();
-    if (!(await this.d.isAccessible(orgId, conversationId, viewerAccountId))) {
+    if (!(await this.access.isAccessible(orgId, conversationId, viewerAccountId))) {
       throw conversationNotFound();
     }
     if (!UUID_RE.test(artifactId)) throw artifactNotFound();
-    const row = await this.d.db
+    const row = await this.db
       .selectFrom("conversation_events")
       .select("payload")
       .where("conversation_id", "=", conversationId)
@@ -120,7 +121,7 @@ export class ConversationArtifacts {
     opts: { inline?: boolean } = {},
   ): Promise<{ url: string; name: string }> {
     const a = await this.find(orgId, conversationId, viewerAccountId, artifactId);
-    const store = this.d.storage.kernel(orgId);
+    const store = this.storage.kernel(orgId);
     if (!(await store.head(a.objectKey))) throw artifactNotFound();
     const inline = opts.inline === true && isInlineArtifactType(a.contentType);
     const url = await store.presignGet(a.objectKey, {
@@ -145,7 +146,7 @@ export class ConversationArtifacts {
         "Only text artifacts have a preview",
       );
     }
-    const got = await this.d.storage
+    const got = await this.storage
       .kernel(orgId)
       .get(a.objectKey, { range: { start: 0, end: ARTIFACT_PREVIEW_MAX_BYTES - 1 } });
     if (!got) throw artifactNotFound();

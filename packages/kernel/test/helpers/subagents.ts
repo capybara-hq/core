@@ -1,9 +1,23 @@
 import type { Queue } from "bullmq";
 import { sql } from "kysely";
 import type { EventLog } from "../../src/conversations/event-log.js";
-import type { KernelDb } from "../../src/db/kernel-schema.js";
-import { finishRun } from "../../src/runtime/run-finish.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
+import { type FinishRunArgs, RunFinish } from "../../src/runtime/run-finish.js";
+import { handlesFor } from "./identity.js";
 import { waitFor } from "./runs.js";
+
+/**
+ * Writes a run's terminal state over a test's pool (`RunFinish.finish`, its own transaction, then
+ * the notify): `eventLog` must be built over the same pool (`eventLogFor`).
+ */
+export function finishRun(
+  db: KernelSchemaDb,
+  eventLog: EventLog,
+  a: FinishRunArgs,
+): Promise<number | null> {
+  const h = handlesFor(db as never);
+  return new RunFinish(h.db, eventLog, h.txHost).finish(a);
+}
 
 /** A dispatched child run of a parent conversation, oldest first. */
 export interface ChildRun {
@@ -13,7 +27,7 @@ export interface ChildRun {
   status: string;
 }
 
-export async function childRunsOf(db: KernelDb, parentConv: string): Promise<ChildRun[]> {
+export async function childRunsOf(db: KernelSchemaDb, parentConv: string): Promise<ChildRun[]> {
   const rows = await db
     .selectFrom("subagent_dispatches as sd")
     .innerJoin("runs as r", "r.id", "sd.child_run_id")
@@ -31,14 +45,14 @@ export async function childRunsOf(db: KernelDb, parentConv: string): Promise<Chi
 }
 
 /** The status of a run. */
-export async function runStatus(db: KernelDb, runId: string): Promise<string | undefined> {
+export async function runStatus(db: KernelSchemaDb, runId: string): Promise<string | undefined> {
   return (await db.selectFrom("runs").select("status").where("id", "=", runId).executeTakeFirst())
     ?.status;
 }
 
 /** Waits until the parent conversation's only run is `waiting` and `n` children are dispatched. */
 export async function parentWaiting(
-  db: KernelDb,
+  db: KernelSchemaDb,
   parentConv: string,
   n: number,
   timeoutMs = 20_000,
@@ -76,7 +90,7 @@ export async function dropChildJobs(queue: Queue, childConvs: string[]): Promise
 }
 
 /** Moves a run's queued / created time back past the sweeps' grace periods. */
-export async function backdateRun(db: KernelDb, runId: string): Promise<void> {
+export async function backdateRun(db: KernelSchemaDb, runId: string): Promise<void> {
   await db
     .updateTable("runs")
     .set({
@@ -94,7 +108,7 @@ export async function backdateRun(db: KernelDb, runId: string): Promise<void> {
  * reporting to the parent: the finisher "crashed" before `onChildFinished`.
  */
 export async function finishChildByHand(
-  db: KernelDb,
+  db: KernelSchemaDb,
   eventLog: EventLog,
   child: { conversationId: string; runId: string },
   text: string,

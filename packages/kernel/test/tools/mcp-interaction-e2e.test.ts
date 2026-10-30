@@ -9,13 +9,12 @@ import {
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { UNSUPPORTED_ELICITATION_NOTE } from "../../src/tools/elicitation.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -26,6 +25,8 @@ import {
   type Req,
   runConfig,
   session,
+  startKernel,
+  type TestKernel,
   waitFor,
   waitForEvent,
   waitForTerminal,
@@ -48,9 +49,9 @@ const TOKEN = "mcp-elicit-token-5c2e8a71d94b";
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let mcp: FakeMcpServer;
 let req: Req;
 let orgId: string;
@@ -170,7 +171,7 @@ beforeAll(async () => {
     ],
   });
   const logger = createLogger("info", { write: () => {} });
-  k = await createKernel(
+  k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
@@ -184,13 +185,12 @@ beforeAll(async () => {
     ),
     { env: {}, logger },
   );
-  await k.start();
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
 }, 120_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await mcp?.stop();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -198,7 +198,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
-  await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+  await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   req = await session(k, "owner");
   orgId = await createOrg(req);
   payCalls = 0;

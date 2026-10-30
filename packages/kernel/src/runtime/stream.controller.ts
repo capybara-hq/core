@@ -1,26 +1,16 @@
-import {
-  Controller,
-  Get,
-  Headers,
-  Inject,
-  type OnModuleDestroy,
-  Param,
-  Query,
-  Req,
-  Res,
-} from "@nestjs/common";
+import { Controller, Get, Headers, Inject, Param, Req, Res } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import type { ConversationsService } from "../conversations/conversations.service.js";
+import { ConversationsService } from "../conversations/conversations.service.js";
 import { ApiError } from "../errors.js";
-import { API_TOKENS, CONVERSATION_STREAMS, CONVERSATIONS, SESSIONS } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
-import type { ApiTokenService } from "../identity/api-tokens.js";
+import { ApiTokenService } from "../identity/api-tokens.js";
 import { credentialCheck } from "../identity/credential-check.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
-import type { SessionService } from "../identity/sessions.js";
+import { SessionService } from "../identity/sessions.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import type { ConversationStreams } from "./stream.js";
+import { ConversationStreams } from "./stream.js";
 
 const BEARER_RE = /^Bearer\s+(\S+)$/i;
 
@@ -38,6 +28,8 @@ function parseLastEventId(v: string): number {
   return n;
 }
 
+class ConversationStreamQueryDto extends createZodDto(StreamQuery, "ConversationStreamQuery") {}
+
 /**
  * 会话事件流（SSE）：`GET /api/v1/orgs/:orgId/conversations/:id/stream?after=<seq>`，`agents.use`，只有会话所有者可用。
  * - 打开时不阻塞地调用一次 ensureRun（`ConversationsService.kickRun`），停在「运行中」的孤儿运行由此被清理；
@@ -50,12 +42,12 @@ function parseLastEventId(v: string): number {
  *   代理（Web 层）需透传 `x-accel-buffering: no`、`cache-control: no-cache`。
  */
 @Controller("api/v1/orgs/:orgId/conversations")
-export class ConversationStreamController implements OnModuleDestroy {
+export class ConversationStreamController {
   constructor(
-    @Inject(CONVERSATION_STREAMS) private readonly streams: ConversationStreams,
-    @Inject(SESSIONS) private readonly sessions: SessionService,
-    @Inject(API_TOKENS) private readonly tokens: ApiTokenService,
-    @Inject(CONVERSATIONS) private readonly conversations: ConversationsService,
+    @Inject(ConversationStreams) private readonly streams: ConversationStreams,
+    @Inject(SessionService) private readonly sessions: SessionService,
+    @Inject(ApiTokenService) private readonly tokens: ApiTokenService,
+    @Inject(ConversationsService) private readonly conversations: ConversationsService,
   ) {}
 
   @Get(":id/stream")
@@ -64,7 +56,7 @@ export class ConversationStreamController implements OnModuleDestroy {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
-    @Query(new ZodPipe(StreamQuery)) q: z.infer<typeof StreamQuery>,
+    @ZQuery(ConversationStreamQueryDto) q: z.infer<typeof StreamQuery>,
     @Headers("last-event-id") lastEventId: string | undefined,
     @Req() req: FastifyRequest,
     @Res() reply: FastifyReply,
@@ -116,10 +108,5 @@ export class ConversationStreamController implements OnModuleDestroy {
     });
     res.flushHeaders();
     handle.begin();
-  }
-
-  /** 停机：关闭本进程的全部流，否则 HTTP 关闭要等到这些长连接超时。 */
-  onModuleDestroy(): void {
-    this.streams.closeAll();
   }
 }

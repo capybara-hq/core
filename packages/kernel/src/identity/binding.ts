@@ -1,11 +1,13 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { ExternalIdentity } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
-import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { enabledExtensionsByOrg } from "../extensions/enabled.js";
-import type { ExternalIdentities } from "./external.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { REDIS } from "../infra/tokens.js";
+import { ExternalIdentities } from "./external.js";
 
 /** 绑定令牌的有效期（秒）。 */
 export const BIND_TOKEN_TTL_SECONDS = 900;
@@ -48,16 +50,15 @@ const view = (r: BindRecord): PendingBinding => ({
 /**
  * IM 里识别不出的人：内核发一个一次性绑定链接，本人登录网页后确认，把该 IM 身份绑到当前账号。
  * 令牌 `cap_bind_<32 字节>`，Redis `capk:bind:<sha256>` 15 分钟、单次有效（确认时 GETDEL）。
- * 查看与确认时都复核发出链接的渠道连接仍可用（存在、未删除、其插件仍在该组织启用），否则 `bind.invalid`。框架无关。
+ * 查看与确认时都复核发出链接的渠道连接仍可用（存在、未删除、其插件仍在该组织启用），否则 `bind.invalid`。
  */
+@Injectable()
 export class IdentityBinding {
   constructor(
-    private readonly deps: {
-      db: KernelDb;
-      redis: Redis;
-      config: () => KernelConfig;
-      external: ExternalIdentities;
-    },
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(REDIS) private readonly redis: Redis,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Inject(ExternalIdentities) private readonly external: ExternalIdentities,
   ) {}
 
   /** 生成绑定链接（渠道运行时在回绑定卡片时调用）；需要 `http.publicUrl`。 */
@@ -65,18 +66,18 @@ export class IdentityBinding {
     connectionId: string;
     identity: ExternalIdentity;
   }): Promise<string> {
-    const publicUrl = this.deps.config().http.publicUrl;
+    const publicUrl = this.config.get().http.publicUrl;
     if (!publicUrl) throw new Error("binding links require http.publicUrl to be configured");
     const token = TOKEN_PREFIX + randomBytes(32).toString("base64url");
     const rec: BindRecord = { connectionId: args.connectionId, identity: args.identity };
-    await this.deps.redis.set(tokenKey(token), JSON.stringify(rec), "EX", BIND_TOKEN_TTL_SECONDS);
+    await this.redis.set(tokenKey(token), JSON.stringify(rec), "EX", BIND_TOKEN_TTL_SECONDS);
     return `${publicUrl.replace(/\/+$/, "")}${BIND_PAGE_PATH}${token}`;
   }
 
   /** 查看待绑定的身份（不消耗令牌）；无效 / 过期 / 已用 → `bind.invalid`。 */
   async peek(token: string): Promise<PendingBinding> {
     if (!TOKEN_RE.test(token)) throw invalid();
-    const raw = await this.deps.redis.get(tokenKey(token));
+    const raw = await this.redis.get(tokenKey(token));
     if (raw === null) throw invalid();
     const rec = JSON.parse(raw) as BindRecord;
     if (!(await this.connectionUsable(rec.connectionId))) throw invalid();
@@ -90,19 +91,19 @@ export class IdentityBinding {
    */
   async bind(token: string, accountId: string): Promise<PendingBinding> {
     if (!TOKEN_RE.test(token)) throw invalid();
-    const raw = await this.deps.redis.getdel(tokenKey(token));
+    const raw = await this.redis.getdel(tokenKey(token));
     if (raw === null) throw invalid();
     const rec = JSON.parse(raw) as BindRecord;
     if (!(await this.connectionUsable(rec.connectionId))) throw invalid();
-    await this.deps.external.link(accountId, rec.identity);
+    await this.external.link(accountId, rec.identity);
     return view(rec);
   }
 
   /** 渠道连接存在、未软删除，且其插件在连接所属组织启用。 */
   private async connectionUsable(connectionId: string): Promise<boolean> {
-    const row = await this.deps.db
+    const row = await this.db
       .selectFrom("channel_connections")
-      .innerJoin(enabledExtensionsByOrg(this.deps.db).as("en"), (j) =>
+      .innerJoin(enabledExtensionsByOrg(this.db.db).as("en"), (j) =>
         j
           .onRef("en.org_id", "=", "channel_connections.org_id")
           .onRef("en.plugin", "=", "channel_connections.plugin"),

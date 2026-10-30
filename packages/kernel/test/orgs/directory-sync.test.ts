@@ -12,22 +12,26 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ensureAnonymousGuest } from "../../src/channels/threads.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { type Account, AccountsService } from "../../src/identity/accounts.js";
-import { ApiTokenService } from "../../src/identity/api-tokens.js";
-import type { Kernel } from "../../src/kernel.js";
+import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
+import type { Account, AccountsService } from "../../src/identity/accounts.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
 import {
-  DIRECTORY_SYNC_LOCK_PREFIX,
+  DIRECTORY_SYNC_LOCK_TTL_MS,
   DirectorySync,
   directorySyncDirtyKey,
   directorySyncJobId,
+  directorySyncLockKey,
   hourBucket,
   minuteBucket,
 } from "../../src/orgs/directory-sync.js";
-import { ConversationLock } from "../../src/runtime/conversation-lock.js";
-import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
+import type { OffboardResult } from "../../src/orgs/offboarding.js";
+import { Offboarding } from "../../src/orgs/offboarding.js";
+import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
+import { Credentials } from "../../src/tools/credentials.js";
+import { anonymousGuestsFor } from "../helpers/channels.js";
+import { accountsFor, apiTokensFor, directorySyncFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createOrg,
@@ -36,6 +40,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
 
@@ -51,9 +56,9 @@ const DIR_SOURCE = "directory:dir-mini";
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let redis: Redis;
 let fd: FakeChannelServer;
 let accounts: AccountsService;
@@ -76,14 +81,14 @@ beforeAll(async () => {
   queue = new Queue(MAINTENANCE_QUEUE_NAME, {
     connection: new Redis(rd.url, { maxRetriesPerRequest: null }),
   });
-  accounts = new AccountsService(db);
+  accounts = accountsFor(db);
   owner = await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" });
   ownerReq = await session(k, "owner");
 }, 120_000);
 
 afterAll(async () => {
   await queue?.close();
-  await k?.stop();
+  await k?.close();
   redis?.disconnect();
   await raw?.destroy();
   await fd?.stop();
@@ -105,7 +110,7 @@ async function setupOrg(): Promise<{ orgId: string; book: ReturnType<FakeChannel
   return { orgId, book };
 }
 
-const sync = (orgId: string) => k.identity.directory.sync(orgId, "dir-mini");
+const sync = (orgId: string) => k.app.get(DirectorySync).sync(orgId, "dir-mini");
 
 interface MemberRow {
   account_id: string;
@@ -163,7 +168,7 @@ describe("通讯录同步", () => {
     await linkIdentity(dave.id, "u-dave");
     await addManual(orgId, dave.id);
     // T10 的匿名访客（source = "anonymous"）：同步永远不碰
-    const guestId = await ensureAnonymousGuest(db, orgId);
+    const guestId = await anonymousGuestsFor(raw).ensure(orgId);
 
     book.members = [person("u-alice"), person("u-bob"), person("u-carol"), person("u-dave")];
     const r1 = await sync(orgId);
@@ -359,10 +364,10 @@ describe("通讯录同步", () => {
       await addManual(otherOrgId, leaver.id);
       const req1 = await session(k, login);
       await session(k, login);
-      const pat = (await new ApiTokenService(db).createPersonal(leaver.id, { name: "cli" })).token;
+      const pat = (await apiTokensFor(db).createPersonal(leaver.id, { name: "cli" })).token;
       const connectorId = await insertConnector(orgId, `docs-${login}`);
       const otherAppId = await insertConnector(otherOrgId, `docs-${login}`);
-      const creds = k.tools.credentials;
+      const creds = k.app.get(Credentials);
       await creds.setStatic(orgId, connectorId, AUTH, personal(leaver.id), { token: "mine" });
       await creds.setStatic(orgId, connectorId, AUTH, personal(owner.id), { token: "owners" });
       await creds.setStatic(otherOrgId, otherAppId, AUTH, personal(leaver.id), { token: "other" });
@@ -479,20 +484,15 @@ describe("通讯录同步", () => {
 
     it("离职处理在一个事务内：事务中途失败则全部不生效，计入 failed", async () => {
       const f = await leaverFixture("leaver2");
-      const ds = new DirectorySync({
-        db,
+      const ds = directorySyncFor(k, {
         redis,
-        host: k.host,
-        orgExtensionConfigs: k.orgExtensionConfigs,
-        external: k.identity.external,
         offboarding: {
-          offboard: async (...args) => {
-            await k.identity.offboarding.offboard(...args);
+          offboard: async (...args: Parameters<Offboarding["offboard"]>) => {
+            await k.app.get(Offboarding).offboard(...args);
             throw new Error("boom after offboard");
           },
-          afterCommit: (r) => k.identity.offboarding.afterCommit(r),
+          afterOffboard: (r: OffboardResult) => k.app.get(Offboarding).afterOffboard(r),
         },
-        log: k.log,
       });
       f.book.members = [];
       expect(await ds.sync(f.orgId, "dir-mini")).toMatchObject({
@@ -528,7 +528,7 @@ describe("通讯录同步", () => {
     });
     expect(off.statusCode).toBe(200);
     expect(await sync(orgId)).toEqual({ status: "skipped", reason: "not_enabled" });
-    expect(await k.identity.directory.sync(orgId, "model-fake")).toEqual({
+    expect(await k.app.get(DirectorySync).sync(orgId, "model-fake")).toEqual({
       status: "skipped",
       reason: "plugin_unavailable",
     });
@@ -539,8 +539,10 @@ describe("通讯录同步", () => {
   it("同一 (组织, 插件) 已有同步在跑（锁被占）：本次结束并记下脏标记；持有者跑完后补一轮", async () => {
     const { orgId, book } = await setupOrg();
     book.members = [person("l-1")];
-    const lock = new ConversationLock(redis, undefined, DIRECTORY_SYNC_LOCK_PREFIX);
-    const lease = await lock.acquire(`${orgId}:dir-mini`, "other-replica");
+    // another replica holds the sync lock
+    const lease = await k.app
+      .get(LockService)
+      .acquire(directorySyncLockKey(orgId, "dir-mini"), { ttlMs: DIRECTORY_SYNC_LOCK_TTL_MS });
     expect(lease).not.toBeNull();
     expect(await sync(orgId)).toEqual({ status: "skipped", reason: "locked" });
     expect(book.requests).toEqual([]);
@@ -569,8 +571,10 @@ describe("通讯录同步", () => {
     const { orgId, book } = await setupOrg();
     book.members = [person("h-1")];
     const dirty = directorySyncDirtyKey(orgId, "dir-mini");
-    const lock = new ConversationLock(redis, undefined, DIRECTORY_SYNC_LOCK_PREFIX);
-    const lease = await lock.acquire(`${orgId}:dir-mini`, "other-replica");
+    // another replica holds the sync lock
+    const lease = await k.app
+      .get(LockService)
+      .acquire(directorySyncLockKey(orgId, "dir-mini"), { ttlMs: DIRECTORY_SYNC_LOCK_TTL_MS });
     expect(lease).not.toBeNull();
     // The holder releases its lock and takes the flag (finding none) right before this sync writes
     // it: without a second lock attempt the flag would be left for an hour with nobody to rerun,
@@ -579,7 +583,7 @@ describe("通讯录同步", () => {
       get(target, prop) {
         if (prop === "set") {
           return async (...args: Parameters<Redis["set"]>) => {
-            if (args[0] === dirty && lease && !lease.lost) {
+            if (args[0] === dirty && lease && !lease.lost.aborted) {
               await lease.release();
               expect(await target.getdel(dirty)).toBeNull();
             }
@@ -590,15 +594,7 @@ describe("通讯录同步", () => {
         return typeof v === "function" ? v.bind(target) : v;
       },
     });
-    const ds = new DirectorySync({
-      db,
-      redis: racing,
-      host: k.host,
-      orgExtensionConfigs: k.orgExtensionConfigs,
-      external: k.identity.external,
-      offboarding: k.identity.offboarding,
-      log: k.log,
-    });
+    const ds = directorySyncFor(k, { redis: racing });
     expect(await ds.sync(orgId, "dir-mini", { trigger: "changed" })).toMatchObject({
       status: "synced",
       added: 1,
@@ -620,7 +616,7 @@ describe("通讯录同步", () => {
       book.members = all;
       expect(await sync(orgId)).toMatchObject({ added: 10 });
       book.members = all.slice(0, 4); // 计划移除 6 > max(5, 2)
-      const r = await k.identity.directory.sync(orgId, "dir-mini", { trigger: "schedule" });
+      const r = await k.app.get(DirectorySync).sync(orgId, "dir-mini", { trigger: "schedule" });
       expect(r).toMatchObject({ removed: 0, partial: true, removalBlocked: true });
       expect((await membersOf(orgId)).filter((m) => m.source === DIR_SOURCE)).toHaveLength(10);
       const b = await blocked(orgId);
@@ -640,11 +636,11 @@ describe("通讯录同步", () => {
       });
       // changed 同样受限
       expect(
-        await k.identity.directory.sync(orgId, "dir-mini", { trigger: "changed" }),
+        await k.app.get(DirectorySync).sync(orgId, "dir-mini", { trigger: "changed" }),
       ).toMatchObject({ removed: 0, removalBlocked: true });
       // 手动触发：照常移除
       expect(
-        await k.identity.directory.sync(orgId, "dir-mini", { trigger: "manual" }),
+        await k.app.get(DirectorySync).sync(orgId, "dir-mini", { trigger: "manual" }),
       ).toMatchObject({ removed: 6, partial: false, removalBlocked: false });
     });
 
@@ -655,7 +651,7 @@ describe("通讯录同步", () => {
       expect(await sync(orgId)).toMatchObject({ added: 10 });
       book.members = all.slice(0, 5); // 计划移除 5 = max(5, 2)
       expect(
-        await k.identity.directory.sync(orgId, "dir-mini", { trigger: "schedule" }),
+        await k.app.get(DirectorySync).sync(orgId, "dir-mini", { trigger: "schedule" }),
       ).toMatchObject({ removed: 5, partial: false, removalBlocked: false });
       expect(await blocked(orgId)).toEqual([]);
     });
@@ -666,11 +662,11 @@ describe("通讯录同步", () => {
       expect(await sync(orgId)).toMatchObject({ added: 2 });
       book.members = [person("z-1", { active: false })];
       expect(
-        await k.identity.directory.sync(orgId, "dir-mini", { trigger: "schedule" }),
+        await k.app.get(DirectorySync).sync(orgId, "dir-mini", { trigger: "schedule" }),
       ).toMatchObject({ removed: 0, partial: true, removalBlocked: true });
       book.members = [];
       expect(
-        await k.identity.directory.sync(orgId, "dir-mini", { trigger: "changed" }),
+        await k.app.get(DirectorySync).sync(orgId, "dir-mini", { trigger: "changed" }),
       ).toMatchObject({ removed: 0, partial: true, removalBlocked: true });
       const b = await blocked(orgId);
       expect(b).toHaveLength(2);
@@ -724,7 +720,7 @@ describe("通讯录同步", () => {
       const plainReq = await session(k, "plain-h");
       const r403 = await plainReq({ method: "POST", url: path(orgId) });
       expect([r403.statusCode, code(r403)]).toEqual([403, "forbidden"]);
-      const svc = await new ApiTokenService(db).createService(orgId, {
+      const svc = await apiTokensFor(db).createService(orgId, {
         name: "svc",
         role: "admin",
         createdBy: owner.id,
@@ -794,7 +790,7 @@ describe("通讯录同步", () => {
     await sql`INSERT INTO capybara.extension_org_configs (plugin, org_id, enabled)
       VALUES ('model-fake', ${unconfigured}, true)`.execute(raw);
 
-    const first = await k.identity.directory.scan();
+    const first = await k.app.get(DirectorySync).scan();
     const mine = (orgId: string) => first.filter((t) => t.orgId === orgId);
     expect(mine(ok.orgId)).toEqual([
       {
@@ -807,7 +803,7 @@ describe("通讯录同步", () => {
       expect(mine(o), o).toEqual([]);
     }
     // 另一副本同一小时再扫一次：同一个 job id，队列里只有一个任务
-    const second = await k.identity.directory.scan();
+    const second = await k.app.get(DirectorySync).scan();
     const jobId = mine(ok.orgId)[0]?.jobId as string;
     expect(second.find((t) => t.orgId === ok.orgId)?.jobId).toBe(jobId);
     await waitFor(async () => ok.book.starts() === 1, 10_000, "scheduled sync started");
@@ -820,7 +816,7 @@ describe("通讯录同步", () => {
     );
     expect(synced.detail).toMatchObject({ trigger: "schedule", added: 1 });
     // 同一小时的第三次扫描也不会再跑一轮（完成的任务按 job id 保留，重复投递被去重）
-    await k.identity.directory.scan();
+    await k.app.get(DirectorySync).scan();
     await new Promise((r) => setTimeout(r, 500));
     expect(ok.book.starts()).toBe(1);
     expect(await audits(ok.orgId, "org.directory.synced")).toHaveLength(1);
@@ -913,7 +909,7 @@ describe("修复波 W1", () => {
     expect(await memberOf(orgId, "u-re")).toBeUndefined();
 
     // 本人离开同样写排除：手动重新加入（清除排除）后离开
-    await k.identity.directory.sync(orgId, "dir-mini");
+    await k.app.get(DirectorySync).sync(orgId, "dir-mini");
     const inv = await ownerReq({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/invitations`,
@@ -940,21 +936,16 @@ describe("修复波 W1", () => {
     expect(await sync(orgId)).toMatchObject({ added: 2 });
     book.members = [person("rc-1")];
     let calls = 0;
-    const ds = new DirectorySync({
-      db,
+    const ds = directorySyncFor(k, {
       redis,
-      host: k.host,
       orgExtensionConfigs: {
         // 第一次（开始时）照常；之后（移除阶段前的复核）返回已停用
-        get: async (o, p) => {
+        get: async (o: string, p: string) => {
           calls++;
-          const cfg = await k.orgExtensionConfigs.get(o, p);
+          const cfg = await k.app.get(OrgExtensionConfigs).get(o, p);
           return calls === 1 || cfg === undefined ? cfg : { ...cfg, enabled: false };
         },
       },
-      external: k.identity.external,
-      offboarding: k.identity.offboarding,
-      log: k.log,
     });
     const r = await ds.sync(orgId, "dir-mini", { trigger: "manual" });
     expect(r).toMatchObject({ status: "synced", removed: 0, partial: true });
@@ -974,31 +965,20 @@ describe("修复波 W1", () => {
     const dirty = directorySyncDirtyKey(orgId, "dir-mini");
     let calls = 0;
     let midSync: unknown;
-    const ds = new DirectorySync({
-      db,
+    const ds = directorySyncFor(k, {
       redis,
-      host: k.host,
       orgExtensionConfigs: {
         // 第二次（移除阶段前的复核）时：通讯录变更事件到达，另一个同步任务因锁被占而记下脏标记
-        get: async (o, p) => {
+        get: async (o: string, p: string) => {
           calls++;
           if (calls === 2) {
-            midSync = await k.identity.directory.sync(o, p, { trigger: "changed" });
+            midSync = await k.app.get(DirectorySync).sync(o, p, { trigger: "changed" });
           }
-          return k.orgExtensionConfigs.get(o, p);
+          return k.app.get(OrgExtensionConfigs).get(o, p);
         },
       },
-      external: k.identity.external,
-      offboarding: k.identity.offboarding,
-      log: k.log,
       // 补跑任务投到真实的维护队列，由内核的 worker 执行（不在这里注册处理函数）
-      maintenance: {
-        add: async (name, data, o) => {
-          await queue.add(name, data, o);
-        },
-        handle: () => {},
-        schedule: () => {},
-      },
+      queue: { add: (name, data, o) => queue.add(name, data, o) },
     });
     const r = await ds.sync(orgId, "dir-mini", { trigger: "changed" });
     expect(midSync).toEqual({ status: "skipped", reason: "locked" });
@@ -1027,20 +1007,15 @@ describe("修复波 W1", () => {
     expect(await sync(orgId)).toMatchObject({ added: 2 });
     book.members = [person("ci-1")];
     let calls = 0;
-    const ds = new DirectorySync({
-      db,
+    const ds = directorySyncFor(k, {
       redis,
-      host: k.host,
       orgExtensionConfigs: {
-        get: async (o, p) => {
+        get: async (o: string, p: string) => {
           calls++;
           if (calls > 1) throw new Error("stored config no longer matches the schema");
-          return k.orgExtensionConfigs.get(o, p);
+          return k.app.get(OrgExtensionConfigs).get(o, p);
         },
       },
-      external: k.identity.external,
-      offboarding: k.identity.offboarding,
-      log: k.log,
     });
     expect(await ds.sync(orgId, "dir-mini", { trigger: "manual" })).toMatchObject({
       removed: 0,
@@ -1063,13 +1038,13 @@ describe("Ruling A28：directory.configured", () => {
   it("未配置的通讯录：扫描不投递、同步静默跳过、changed 不投递任务、无审计", async () => {
     const orgId = await createOrg(ownerReq, "Opt unconfigured");
     await enableOpt(orgId, {});
-    const targets = await k.identity.directory.scan();
+    const targets = await k.app.get(DirectorySync).scan();
     expect(targets.filter((t) => t.orgId === orgId)).toEqual([]);
-    expect(await k.identity.directory.sync(orgId, "dir-opt")).toEqual({
+    expect(await k.app.get(DirectorySync).sync(orgId, "dir-opt")).toEqual({
       status: "skipped",
       reason: "not_configured",
     });
-    expect(await k.identity.directory.enqueue(orgId, "dir-opt")).toBeUndefined();
+    expect(await k.app.get(DirectorySync).enqueue(orgId, "dir-opt")).toBeUndefined();
     expect(
       await queue.getJob(directorySyncJobId(orgId, "dir-opt", "changed", new Date())),
     ).toBeUndefined();
@@ -1089,7 +1064,7 @@ describe("Ruling A28：directory.configured", () => {
     const book = fd.book(`opt-${orgId}`);
     book.members = [person("opt-1")];
     await enableOpt(orgId, { url: book.url });
-    const targets = await k.identity.directory.scan();
+    const targets = await k.app.get(DirectorySync).scan();
     expect(targets.filter((t) => t.orgId === orgId).map((t) => t.plugin)).toEqual(["dir-opt"]);
     // 扫描投递的任务在 worker 上同步
     const synced = await waitFor(

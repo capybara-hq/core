@@ -1,12 +1,10 @@
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { EventLog } from "../../src/conversations/event-log.js";
-import { runTitleJob } from "../../src/conversations/titles.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
 import type { ModelPurposesService } from "../../src/models/purposes.js";
+import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
+import { accountsFor } from "../helpers/identity.js";
 import {
   createAgent,
   createConv,
@@ -19,9 +17,11 @@ import {
   session,
   sleep,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { runTitleJob } from "../helpers/runtime.js";
 
 /**
  * UI refresh B Task 7, two replicas: a title attempt runs once across replicas (claimed in PG), so
@@ -32,10 +32,10 @@ let pgc: TestContainer;
 let rd: TestContainer;
 let rawA: ReturnType<typeof createDb>;
 let rawB: ReturnType<typeof createDb>;
-let dbA: KernelDb;
-let dbB: KernelDb;
-let a: Kernel;
-let b: Kernel;
+let dbA: KernelSchemaDb;
+let dbB: KernelSchemaDb;
+let a: TestKernel;
+let b: TestKernel;
 let owner: Req;
 let orgId: string;
 let agentId: string;
@@ -45,20 +45,19 @@ beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   rawA = createDb(pgc.url, 3);
   rawB = createDb(pgc.url, 3);
-  dbA = kernelDb(rawA);
-  dbB = kernelDb(rawB);
+  dbA = legacyDbFor(rawA);
+  dbB = legacyDbFor(rawB);
   const cfg = runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] });
   a = await startKernel(cfg);
   b = await startKernel(cfg);
-  ownerId = (
-    await new AccountsService(dbA).createLocal({ login: "owner", password: PW, displayName: "O" })
-  ).id;
+  ownerId = (await accountsFor(dbA).createLocal({ login: "owner", password: PW, displayName: "O" }))
+    .id;
   owner = await session(a, "owner");
   orgId = await createOrg(owner);
   agentId = await createAgent(owner, orgId);
 }, 180_000);
 afterAll(async () => {
-  await Promise.all([a?.stop(), b?.stop()]);
+  await Promise.all([a?.close(), b?.close()]);
   await Promise.all([rawA?.destroy(), rawB?.destroy()]);
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
@@ -93,7 +92,7 @@ describe("titles on two replicas", { timeout: 90_000 }, () => {
 
   it("the same attempt executed concurrently by two replicas: one call, one title, one usage", async () => {
     const conv = await createConv(owner, orgId, agentId);
-    const seed = new EventLog(dbA, { publish: async () => {} });
+    const seed = eventLogFor(dbA, { publish: async () => {} });
     await seed.append(conv, [
       {
         type: "user_message",
@@ -118,11 +117,11 @@ describe("titles on two replicas", { timeout: 90_000 }, () => {
         };
       },
     });
-    const replica = (db: KernelDb, name: string) =>
+    const replica = (db: KernelSchemaDb, name: string) =>
       runTitleJob(
         {
           db,
-          eventLog: new EventLog(db, { publish: async () => {} }),
+          eventLog: eventLogFor(db, { publish: async () => {} }),
           purposes: purposes(name),
           log: console,
         },

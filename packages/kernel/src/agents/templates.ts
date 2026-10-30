@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { AgentTemplate, AgentTemplateTier } from "@capybara-hq/plugin-sdk";
-import type { Transaction } from "kysely";
-import type { KernelDatabase, KernelDb, SourceFormat } from "../db/kernel-schema.js";
+import { Inject, Injectable } from "@nestjs/common";
+import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
 import { canonicalJson } from "../tools/registry.js";
-
-type Trx = Transaction<KernelDatabase>;
 
 /**
  * Agent templates installed in an org from plugins (sub-agents spec §16): `agent_templates` (one
@@ -41,7 +40,7 @@ export interface TemplateRow {
   catalogVersion: string | null;
 }
 
-const baseQuery = (db: KernelDb | Trx, orgId: string) =>
+const baseQuery = (db: KernelSchemaDb, orgId: string) =>
   db
     .selectFrom("agent_templates as t")
     .innerJoin("agent_template_versions as v", (j) =>
@@ -75,7 +74,7 @@ const rowOf = (r: RawRow): TemplateRow => ({
 
 /** The live templates of `ids` in the org (deleted and foreign ids are left out), by id. */
 export async function loadTemplates(
-  db: KernelDb | Trx,
+  db: KernelSchemaDb,
   orgId: string,
   ids: readonly string[],
 ): Promise<Map<string, TemplateRow>> {
@@ -87,12 +86,13 @@ export async function loadTemplates(
 }
 
 /** Reads the org's agent templates (consumed by the roster, the agent page and Task 19's API). */
+@Injectable()
 export class AgentTemplatesService {
-  constructor(private readonly db: KernelDb) {}
+  constructor(@Inject(KernelDb) private readonly db: KernelDb) {}
 
   /** Every live template of the org, by plugin then name. */
   async listForOrg(orgId: string): Promise<AgentTemplateView[]> {
-    const rows = await baseQuery(this.db, orgId)
+    const rows = await baseQuery(this.db.db, orgId)
       .orderBy("t.plugin_name")
       .orderBy("t.name")
       .execute();
@@ -119,7 +119,7 @@ export class AgentTemplatesService {
     ref: string,
   ): Promise<{ id: string; version: number; plugin: string; template: AgentTemplate } | null> {
     const i = ref.indexOf(":");
-    let q = baseQuery(this.db, orgId);
+    let q = baseQuery(this.db.db, orgId);
     q =
       i < 0
         ? q.where("t.id", "=", ref)
@@ -146,7 +146,7 @@ export interface TemplateSource {
  * one when its definition differs (`changed`, the version added), or nothing when it is equal.
  */
 export async function putTemplateVersionIn(
-  t: Trx,
+  t: KernelSchemaDb,
   s: TemplateSource,
   template: AgentTemplate,
 ): Promise<{ id: string; version: number; created: boolean; changed: boolean }> {
@@ -206,7 +206,7 @@ export async function putTemplateVersionIn(
  * whether anything changed.
  */
 export async function revertTemplateVersionIn(
-  t: Trx,
+  t: KernelSchemaDb,
   orgId: string,
   id: string,
   version: number,
@@ -235,7 +235,11 @@ export async function revertTemplateVersionIn(
  * Removes a template (soft delete: sub-agents already started keep their frozen definition, and
  * the roster skips it). Returns whether it was live.
  */
-export async function softDeleteTemplateIn(t: Trx, orgId: string, id: string): Promise<boolean> {
+export async function softDeleteTemplateIn(
+  t: KernelSchemaDb,
+  orgId: string,
+  id: string,
+): Promise<boolean> {
   const r = await t
     .updateTable("agent_templates")
     .set({ deleted_at: new Date(), updated_at: new Date() })

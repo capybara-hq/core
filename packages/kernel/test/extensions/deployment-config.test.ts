@@ -2,28 +2,35 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type ExtensionManifest, staticManifestOf } from "@capybara-hq/plugin-sdk";
+import {
+  type ExtensionContext,
+  type ExtensionManifest,
+  staticManifestOf,
+} from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { stringify } from "yaml";
 import { loadConfigWithSources, resolveConfig } from "../../src/config/load.js";
 import { extensionConfigSources } from "../../src/config/sources.js";
 import { createKeyring, createSecrets } from "../../src/ctx/secrets.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import {
   DEPLOYMENT_SECRETS_ORG,
+  type DeploymentSchemaInfo,
   ExtensionDeploymentConfigService,
 } from "../../src/extensions/deployment-config.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
+import { KERNEL_BUS } from "../../src/infra/tokens.js";
+import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { deploycfgProbe } from "../fixtures/plugins/deploycfg/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, pluginTgz } from "../helpers/plugin-packages.js";
-import { PW, type Req, session, waitFor } from "../helpers/runs.js";
+import { PW, type Req, session, startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
 
 const DEPLOYCFG = fileURLToPath(new URL("../fixtures/plugins/deploycfg/index.ts", import.meta.url));
 const BADCONFIG = fileURLToPath(new URL("../fixtures/plugins/badconfig/index.ts", import.meta.url));
@@ -109,9 +116,19 @@ describe("配置来源标注（extensionConfigSources / loadConfigWithSources）
 describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }, () => {
   let pgc: TestContainer;
   let rd: TestContainer;
-  let db: KernelDb;
+  let db: KernelSchemaDb;
   let destroyDb: () => Promise<void>;
-  let k: Kernel | undefined;
+  let k: TestKernel | undefined;
+  /** The kernel's service with a fixed extension schema description (no module for it on this replica). */
+  const schemaOverride = (
+    schemaOf: () => Promise<DeploymentSchemaInfo | undefined>,
+  ): ExtensionDeploymentConfigService =>
+    Object.assign(
+      Object.create((k as NonNullable<typeof k>).app.get(ExtensionDeploymentConfigService)),
+      {
+        schemaOf,
+      },
+    );
   let admin: Req;
   let member: Req;
   const lines: string[] = [];
@@ -120,7 +137,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
   let extDir: string;
 
   /** 文件来源（region）与环境变量（poolSize）各占一个字段；endpoint 必填但没配。 */
-  async function boot(fileCfg: Record<string, unknown>): Promise<Kernel> {
+  async function boot(fileCfg: Record<string, unknown>): Promise<TestKernel> {
     const env = {
       CAPYBARA_EXTENSION_CONFIG__DEPLOYCFG__POOL_SIZE: "3",
       CAPYBARA_EXTENSION_CONFIG__DEPLOYCFG__HEADERS__X: "v1",
@@ -137,7 +154,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
       extensionHost: { dir: extDir },
       extensionConfig: { deploycfg: fileCfg },
     };
-    const kernel = await createKernel(resolveConfig(raw, env), {
+    const kernel = await startKernel(resolveConfig(raw, env), {
       env,
       logger: createLogger("info", { write: (l) => lines.push(l) }),
       extensionConfigSources: extensionConfigSources(raw, env, "file"),
@@ -145,7 +162,6 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
       bootstrap: { dir: bootstrap.dir },
       bootstrapManifest: bootstrap.manifest,
     });
-    await kernel.start();
     return kernel;
   }
 
@@ -201,7 +217,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
       db,
       "capybara.extension_deployment_configs, capybara.secrets, capybara.audit_events, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
     );
-    const accounts = new AccountsService(db);
+    const accounts = accountsFor(db);
     await accounts.createLocal({
       login: "root",
       password: PW,
@@ -215,7 +231,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
   }, 240_000);
 
   afterAll(async () => {
-    await k?.stop();
+    await k?.close();
     await destroyDb?.();
     await bootstrap?.cleanup();
     if (extDir) await rm(extDir, { recursive: true, force: true });
@@ -251,7 +267,9 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
       .where("display_name", "=", "M")
       .executeTakeFirstOrThrow();
     await expect(
-      k?.extensionDeploymentConfigs.put("deploycfg", { endpoint: "https://x" }, mem.id),
+      k?.app
+        .get(ExtensionDeploymentConfigService)
+        .put("deploycfg", { endpoint: "https://x" }, mem.id),
     ).rejects.toMatchObject({ code: "forbidden" });
     expect(await db.selectFrom("extension_deployment_configs").selectAll().execute()).toEqual([]);
   });
@@ -423,9 +441,9 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
     expect(live()?.failSetup).toBe(false);
     const back = await put({ failSetup: null });
     expect(back.statusCode, back.body).toBe(200);
-    expect(await k?.host.applyDeploymentConfig("deploycfg")).toBe("unchanged");
+    expect(await k?.app.get(ExtensionHost).applyDeploymentConfig("deploycfg")).toBe("unchanged");
     // 加载参数若还是失败的那份，这里会抛 setup failed
-    await k?.host.reload("deploycfg");
+    await k?.app.get(ExtensionHost).reload("deploycfg");
     expect(deploycfgProbe().setups).toBe(before + 1);
     expect(live()?.failSetup).toBe(false);
   });
@@ -450,17 +468,10 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
   });
 
   it("本副本拿不到模块（静态清单）：validated false、schema null", async () => {
-    const svc = new ExtensionDeploymentConfigService({
-      db,
-      keyring: createKeyring(Buffer.alloc(32, 7), []),
-      fileConfig: () => ({}),
-      sources: {},
-      schemaOf: async () => ({
-        version: "1.0.0",
-        fields: [{ path: "a", secret: false, hot: false }],
-      }),
-      log: { warn() {}, error() {} },
-    });
+    const svc = schemaOverride(async () => ({
+      version: "1.0.0",
+      fields: [{ path: "a", secret: false, hot: false }],
+    }));
     expect(await svc.view("static-only")).toMatchObject({
       validated: false,
       valid: true,
@@ -487,21 +498,14 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
       );
     }
     const schema = z.object({ a: z.string().optional(), b: secret(z.string()).optional() });
-    const svc = new ExtensionDeploymentConfigService({
-      db,
-      keyring,
-      fileConfig: () => ({}),
-      sources: {},
-      schemaOf: async () => ({
-        version: "2.0.0",
-        schema,
-        fields: [
-          { path: "a", secret: false, hot: false },
-          { path: "b", secret: true, hot: false },
-        ],
-      }),
-      log: { warn() {}, error() {} },
-    });
+    const svc = schemaOverride(async () => ({
+      version: "2.0.0",
+      schema,
+      fields: [
+        { path: "a", secret: false, hot: false },
+        { path: "b", secret: true, hot: false },
+      ],
+    }));
     expect(await svc.effective("stale", undefined, schema)).toEqual({ b: "still-secret-b" });
     const v = await svc.view("stale");
     expect(JSON.stringify(v)).not.toContain("old-secret");
@@ -515,15 +519,19 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
       installSource: "bootstrap",
       status: "pending_config",
     });
-    expect(k?.host.current("badconfig")).toBeUndefined();
+    expect(k?.app.get(ExtensionHost).current("badconfig")).toBeUndefined();
     const res = await admin({
       method: "PUT",
       url: "/api/v1/admin/extensions/badconfig/config",
       payload: { values: { port: 8080 } },
     });
     expect(res.statusCode, res.body).toBe(200);
-    await waitFor(async () => k?.host.current("badconfig"), 10_000, "bootstrap plugin loaded");
-    expect(k?.host.current("badconfig")?.config).toEqual({ port: 8080 });
+    await waitFor(
+      async () => k?.app.get(ExtensionHost).current("badconfig"),
+      10_000,
+      "bootstrap plugin loaded",
+    );
+    expect(k?.app.get(ExtensionHost).current("badconfig")?.config).toEqual({ port: 8080 });
     const after = await admin({ method: "GET", url: "/api/v1/admin/extensions/badconfig" });
     expect(after.json()).toMatchObject({ status: "enabled", configValid: true });
   });
@@ -542,13 +550,13 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
       })
       .where("plugin", "=", "deploycfg")
       .execute();
-    await k?.bus.publish("plugins.reconcile", {});
+    await k?.app.get<ExtensionContext["bus"]>(KERNEL_BUS).publish("plugins.reconcile", {});
     await waitFor(async () => live()?.greeting === "from-pg", 10_000, "periodic picks it up");
     expect(deploycfgProbe().setups).toBe(before);
   });
 
   it("文件后来加了 PG 里已有的字段：以文件为准并显示为只读；PUT 该字段 409", async () => {
-    await k?.stop();
+    await k?.close();
     k = undefined;
     k = await boot({ region: "eu-file", mode: "auto", endpoint: "https://file.example" });
     admin = await session(k, "root");

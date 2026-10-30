@@ -1,20 +1,30 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { AgentTemplate, ConnectorTemplateFile, PluginManifest } from "@capybara-hq/plugin-sdk";
-import { sql, type Transaction } from "kysely";
+import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
 import { putTemplateVersionIn } from "../agents/templates.js";
-import type { KernelDatabase, KernelDb, SourceFormat } from "../db/kernel-schema.js";
+import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { isExtensionEnabled } from "../extensions/enabled.js";
+import { OrgExtensionConfigs } from "../extensions/org-config.js";
+import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
-import { lockOrg } from "../orgs/org-lock.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
+import { OrgLock } from "../orgs/org-lock.js";
 import type { OrgAction } from "../orgs/roles.js";
 import { packagePath } from "../packages/tgz.js";
-import { skillConflictError } from "../skills/skills.service.js";
+import { SkillsService, skillConflictError } from "../skills/skills.service.js";
+import { StorageService } from "../storage/storage.service.js";
 import type {
   CreateConnectorInput,
   PreparedTemplateUpdate,
   TemplateUpdateInput,
 } from "../tools/connectors.service.js";
+import { ConnectorsService } from "../tools/connectors.service.js";
 import type { ConnectorAuth } from "../tools/credentials.js";
 import { canonicalJson } from "../tools/registry.js";
 import {
@@ -30,7 +40,7 @@ import {
   setPath,
   skillOf,
   templatePluginProblem,
-} from "./org-catalog.service.js";
+} from "./catalog-content.js";
 import {
   type ComponentKind,
   catalogSkillNames,
@@ -38,8 +48,7 @@ import {
   type InstallPlan,
   journalEntries,
   missingTemplateInput,
-  type PluginInstaller,
-  type PluginInstallerDeps,
+  PluginInstaller,
   type PluginInstallInput,
   type PluginInstallView,
   planActions,
@@ -50,11 +59,18 @@ import {
   type UpgradeStep,
   under,
 } from "./plugin-install.js";
-import { assertItemInstallable } from "./requests.service.js";
+import { assertItemInstallable, CatalogRequestsService } from "./requests.service.js";
 import { deployedExtension, deploymentTarget } from "./upgrade-targets.js";
 import { satisfiesRange } from "./versions.js";
 
-type Trx = Transaction<KernelDatabase>;
+/** A component as the upgrade records it in the ledger (and journals it). */
+interface LedgerRecord {
+  kind: ComponentKind;
+  ref: string;
+  created: boolean;
+  skillVersion: number | null;
+  templateId?: string;
+}
 
 /** How a component differs between the installed and the target version. */
 export type UpgradeChange = "added" | "changed" | "removed" | "unchanged";
@@ -275,11 +291,28 @@ function dirDigest(row: CatalogVersionFiles, dir: string): string {
  * Approval follows the item's policy (the org catalog service creates the request). No in-process
  * state.
  */
+@Injectable()
 export class PluginUpgrader {
-  private readonly d: PluginInstallerDeps;
+  constructor(
+    /** Planning, installs, the ledger and the uninstall rules are the installer's. */
+    @Inject(PluginInstaller) private readonly installer: PluginInstaller,
+    @Inject(KernelDb) private readonly kdb: KernelDb,
+    /** The org row lock (orgs/org-lock.ts): joins the caller's transaction. */
+    @Inject(OrgLock) private readonly orgLock: OrgLock,
+    @Inject(StorageService) private readonly storage: StorageService,
+    @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
+    @Inject(SkillsService) private readonly skills: SkillsService,
+    @Inject(OrgExtensionConfigs) private readonly orgConfigs: OrgExtensionConfigs,
+    @Inject(CatalogRequestsService) private readonly requests: CatalogRequestsService,
+    /** Org connectors: installs create, upgrade and remove them. */
+    @Inject(ConnectorsService) private readonly connectors: ConnectorsService,
+    @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {}
 
-  constructor(private readonly installer: PluginInstaller) {
-    this.d = installer.deps;
+  /** The kernel-schema handle of the current context (the transaction, else the pool). */
+  private get db(): KernelSchemaDb {
+    return this.kdb.db;
   }
 
   /** The upgrade preview (see the class comment). */
@@ -291,7 +324,7 @@ export class PluginUpgrader {
   ): Promise<UpgradePreview> {
     await this.recoverInterrupted(orgId, actor, installId);
     const diff = await this.diff(orgId, actor, installId, version, null);
-    await this.d.db.transaction().execute((t) => lockOrgForActions(t, orgId, actor, diff.actions));
+    await this.authorizeActions(orgId, actor, diff.actions);
     return {
       from: diff.from.version,
       to: diff.to.version,
@@ -305,6 +338,16 @@ export class PluginUpgrader {
           : [],
       ),
     };
+  }
+
+  /** Re-checks the actor's org actions under the org row lock (a transaction of its own). */
+  @Transactional()
+  private async authorizeActions(
+    orgId: string,
+    actor: string,
+    actions: OrgAction[],
+  ): Promise<void> {
+    await lockOrgForActions(this.orgLock, orgId, actor, actions);
   }
 
   /**
@@ -354,42 +397,17 @@ export class PluginUpgrader {
     const upgradeId = randomUUID();
 
     // Start: the install `upgrading`, under the org lock (one upgrade or uninstall at a time)
-    await this.d.db.transaction().execute(async (t) => {
-      await lockOrgForActions(t, orgId, actor, diff.actions);
-      const row = await t
-        .selectFrom("plugin_installs")
-        .select(["status", "version"])
-        .where("id", "=", installId)
-        .where("org_id", "=", orgId)
-        .forUpdate()
-        .executeTakeFirst();
-      if (!row || row.status === "failed") throw installNotFound();
-      if (row.status !== "installed") throw inProgress();
-      if (
-        row.version !== diff.from.version ||
-        ledgerHash(await ledgerOf(t, installId)) !== diff.ledgerHash
-      ) {
-        throw stale();
-      }
-      await assertItemInstallable(t, orgId, itemId);
-      await t
-        .updateTable("plugin_installs")
-        .set({
-          status: "upgrading",
-          upgrade: sql<string>`jsonb_build_object('id', ${upgradeId}::text, 'from', ${diff.from.version}::text, 'to', ${diff.to.version}::text, 'startedAt', now(), 'done', '[]'::jsonb)`,
-        })
-        .where("id", "=", installId)
-        .execute();
-    });
+    await this.start(orgId, actor, installId, diff, upgradeId);
 
     const done: UpgradeStep[] = [];
     /** The step whose journal write found the journal gone (cleaned up as interrupted meanwhile). */
     let unjournaled: UpgradeStep | undefined;
-    // Appends a step to the journal (the journal gone: the upgrade was cleaned up as interrupted)
-    const journal = async (s: UpgradeStep, t: Trx | KernelDb) => {
+    // Appends a step to the journal in the transaction of the context (the journal gone: the
+    // upgrade was cleaned up as interrupted)
+    const journal = async (s: UpgradeStep) => {
       done.push(s);
       unjournaled = s;
-      const r = await t
+      const r = await this.db
         .updateTable("plugin_installs")
         .set({
           upgrade: sql<string>`jsonb_set(upgrade, '{done}', (upgrade->'done') || ${JSON.stringify([s])}::jsonb)`,
@@ -400,40 +418,15 @@ export class PluginUpgrader {
       if (r.numUpdatedRows === 0n) throw cleanedUp();
       unjournaled = undefined;
     };
-    // Records a component in the ledger and the journal, in the given transaction
-    const record = async (
-      c: {
-        kind: ComponentKind;
-        ref: string;
-        created: boolean;
-        skillVersion: number | null;
-        templateId?: string;
-      },
-      t: Trx,
-    ) => {
-      const inserted = await t
-        .insertInto("plugin_install_components")
-        .values({
-          install_id: installId,
-          kind: c.kind,
-          ref: c.ref,
-          created: c.created,
-          skill_version: c.skillVersion,
-          template_id: c.templateId ?? null,
-        })
-        .onConflict((oc) => oc.columns(["install_id", "kind", "ref"]).doNothing())
-        .returning("ref")
-        .executeTakeFirst();
-      if (c.created) await journal({ op: "created", kind: c.kind, ref: c.ref }, t);
-      else if (inserted) await journal({ op: "recorded", kind: c.kind, ref: c.ref }, t);
-    };
+    // Records a component in the ledger and the journal, in the transaction of the context
+    const record = (c: LedgerRecord) => this.recordIn(installId, journal, c);
 
     let step: UpgradeStepName = "dependencies";
     const disabled: string[] = [];
     try {
       for (const dep of diff.dependencies.filter((x) => x.change === "added")) {
         const resolved = dep.resolved as ResolvedDependency;
-        const rec = (c: Parameters<typeof record>[0], t: Trx) => record(c, t);
+        const rec = (c: LedgerRecord) => record(c);
         if ((await this.installer.recordDependency(orgId, resolved, rec)) !== undefined) continue;
         if (!dep.plan) {
           throw new ApiError(
@@ -467,22 +460,17 @@ export class PluginUpgrader {
 
       step = "extension";
       if (diff.extension?.change === "added") {
-        const name = diff.extension.name;
-        await this.d.orgConfigs.put(
+        await this.installer.enableExtension(
           orgId,
-          name,
+          diff.extension.name,
           {
             enabled: true,
             ...(input.extensionConfig !== undefined && { config: input.extensionConfig }),
           },
           actor,
           opts.actorTokenId,
-          {
-            viaItem: itemId,
-            ifDisabled: { skipped: false },
-            inTransaction: (t, skipped) =>
-              record({ kind: "extension", ref: name, created: !skipped, skillVersion: null }, t),
-          },
+          { viaItem: itemId },
+          record,
         );
       }
 
@@ -490,12 +478,12 @@ export class PluginUpgrader {
       for (const s of diff.skills) {
         if (s.change !== "added" && s.change !== "changed") continue;
         const files = await readCatalogFiles(
-          this.d.storage,
+          this.storage,
           diff.to.object_prefix,
           diff.to.files,
           s.dir as string,
         );
-        const r = await this.d.skills.createVersionFromFiles(
+        const r = await this.skills.createVersionFromFiles(
           orgId,
           actor,
           { ...skillOf(files), files },
@@ -509,71 +497,25 @@ export class PluginUpgrader {
             ...opts,
           },
         );
-        await this.d.db.transaction().execute(async (t) => {
-          if (r.created) {
-            await record({ kind: "skill", ref: r.skill.id, created: true, skillVersion: null }, t);
-            return;
-          }
-          await journal({ op: "skill_version", ref: r.skill.id, version: r.version }, t);
-          await record(
-            { kind: "skill", ref: r.skill.id, created: false, skillVersion: r.version },
-            t,
-          );
-        });
+        await this.journalSkill(r, record, journal);
       }
 
       step = "agent_templates";
       for (const a of diff.agentTemplates) {
         if (a.change !== "added" && a.change !== "changed") continue;
-        await this.d.db.transaction().execute(async (t) => {
-          await lockOrg(t, orgId);
-          const r = await putTemplateVersionIn(
-            t,
-            {
-              orgId,
-              plugin: diff.name,
-              catalogItemId: itemId,
-              catalogVersion: diff.to.version,
-              sourceFormat: diff.to.source_format,
-            },
-            a.template as AgentTemplate,
-          );
-          if (r.created) {
-            await record(
-              { kind: "agent_template", ref: r.id, created: true, skillVersion: null },
-              t,
-            );
-            return;
-          }
-          if (r.changed)
-            await journal({ op: "template_version", ref: r.id, version: r.version }, t);
-          await record(
-            {
-              kind: "agent_template",
-              ref: r.id,
-              created: false,
-              skillVersion: r.changed ? r.version : null,
-            },
-            t,
-          );
-        });
+        await this.upgradeAgentTemplate(orgId, diff, a.template as AgentTemplate, record, journal);
       }
 
       step = "connectors";
       for (const [templateId, ci] of diff.creates) {
-        const r = await this.d.connectors.create(orgId, actor, ci, opts.actorTokenId);
-        await this.d.db.transaction().execute((t) =>
-          record(
-            {
-              kind: "connector",
-              ref: r.connector.id,
-              created: true,
-              skillVersion: null,
-              templateId,
-            },
-            t,
-          ),
-        );
+        const r = await this.connectors.create(orgId, actor, ci, opts.actorTokenId);
+        await this.recordStep(installId, journal, {
+          kind: "connector",
+          ref: r.connector.id,
+          created: true,
+          skillVersion: null,
+          templateId,
+        });
       }
       const prepared: { connectorId: string; p: PreparedTemplateUpdate }[] = [];
       for (const tpl of diff.templates) {
@@ -582,11 +524,7 @@ export class PluginUpgrader {
         try {
           prepared.push({
             connectorId: tpl.connector.id,
-            p: await this.d.connectors.prepareTemplateUpdate(
-              actor,
-              tpl.connector.connector,
-              update,
-            ),
+            p: await this.connectors.prepareTemplateUpdate(actor, tpl.connector.connector, update),
           });
         } catch (e) {
           throw under(e, `connectors.${tpl.id}`);
@@ -594,82 +532,8 @@ export class PluginUpgrader {
       }
 
       // Finish, in one transaction: changed connectors, removals, the version switch
-      await this.d.db.transaction().execute(async (t) => {
-        await lockOrgForActions(t, orgId, actor, diff.actions);
-        const row = await t
-          .selectFrom("plugin_installs")
-          .select(["status", sql<string | null>`upgrade->>'id'`.as("upgradeId")])
-          .where("id", "=", installId)
-          .forUpdate()
-          .executeTakeFirst();
-        if (row?.status !== "upgrading" || row.upgradeId !== upgradeId) throw cleanedUp();
-        await assertItemInstallable(t, orgId, itemId);
-        for (const c of prepared) {
-          await this.d.connectors.applyTemplateIn(
-            t,
-            orgId,
-            c.connectorId,
-            actor,
-            c.p,
-            opts.actorTokenId,
-          );
-        }
+      await this.finish(orgId, actor, installId, upgradeId, diff, prepared, disabled, opts, () => {
         step = "finish";
-        for (const dep of diff.dependencies) {
-          if (dep.change !== "changed" || !dep.child) continue;
-          const live = await t
-            .selectFrom("plugin_installs")
-            .select("version")
-            .where("id", "=", dep.child.installId)
-            .forShare()
-            .executeTakeFirst();
-          if (!live || !satisfiesRange(live.version, dep.range as string)) {
-            throw new ApiError(
-              "catalog.dependency_unresolved",
-              `Dependency ${dep.name}@${dep.range} cannot be resolved: its install in this organization changed meanwhile; preview the upgrade again`,
-              [{ dependency: dep.name, range: dep.range }],
-            );
-          }
-        }
-        const report = await this.removeIn(t, orgId, actor, diff, disabled);
-        // An unchanged skill gets no new version, so the target's pinned suggestion goes onto its
-        // current version (when that version is this plugin's) here, with the version switch.
-        for (const sk of diff.skills) {
-          if (sk.change !== "unchanged" || !sk.ledger) continue;
-          await t
-            .updateTable("skill_versions as v")
-            .set({ suggest_pinned: sk.suggestPinned === true })
-            .from("skills as s")
-            .whereRef("s.id", "=", "v.skill_id")
-            .whereRef("s.current_version", "=", "v.version")
-            .where("s.id", "=", sk.ledger.ref)
-            .where("s.org_id", "=", orgId)
-            .where("v.catalog_item_id", "=", itemId)
-            .where("v.suggest_pinned", "<>", sk.suggestPinned === true)
-            .execute();
-        }
-        await t
-          .updateTable("plugin_installs")
-          .set({ version: diff.to.version, status: "installed", upgrade: null, error: null })
-          .where("id", "=", installId)
-          .execute();
-        await this.d.requests.resolveByInstall(t, orgId, itemId, actor, opts);
-        await audit(t, {
-          actorAccountId: actor,
-          ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-          orgId,
-          action: "plugin.org_upgraded",
-          target: installId,
-          detail: {
-            itemId,
-            name: diff.name,
-            from: diff.from.version,
-            to: diff.to.version,
-            components: diff.components,
-            removed: report.removed,
-            kept: report.kept,
-          },
-        });
       });
     } catch (e) {
       throw await this.failed(
@@ -684,7 +548,7 @@ export class PluginUpgrader {
         opts,
       );
     }
-    for (const p of disabled) await this.d.orgConfigs.afterDisable(orgId, p);
+    for (const p of disabled) await this.orgConfigs.afterDisable(orgId, p);
     const [view] = await this.installer.list(orgId, installId);
     if (!view) throw installNotFound();
     return view;
@@ -715,60 +579,23 @@ export class PluginUpgrader {
     const at = failure ? failure.step : step;
     let rolledBack = failure?.rolledBack ?? true;
     try {
-      const removed = await this.d.db.transaction().execute(async (t) => {
-        await lockOrg(t, orgId);
-        const row = await t
-          .selectFrom("plugin_installs")
-          .select(sql<string | null>`upgrade->>'id'`.as("upgradeId"))
-          .where("id", "=", installId)
-          .forUpdate()
-          .executeTakeFirst();
-        const ours = row?.upgradeId === upgradeId;
-        // Cleaned up meanwhile: only the step whose journal write found the journal gone is ours to
-        // undo. When that step ran in the same transaction as its journal write (the extension
-        // enable, the ledger rows), the transaction rolled back with the failed write, so undoing
-        // it is a no-op (a never-enabled extension, a never-inserted row); undoing is still safe.
-        const undo = ours ? steps.done : steps.unjournaled ? [steps.unjournaled] : [];
-        const out = await this.installer.undoUpgradeIn(
-          t,
-          orgId,
-          actor,
-          installId,
-          undo,
-          "plugin_upgrade_rollback",
-        );
-        await t
-          .updateTable("plugin_installs")
-          .set({ status: "installed", upgrade: null, error: JSON.stringify({ step: at, code }) })
-          .where("id", "=", installId)
-          .where(sql<string>`upgrade->>'id'`, "=", upgradeId)
-          .execute();
-        await audit(t, {
-          actorAccountId: actor,
-          ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-          orgId,
-          action: "plugin.org_upgrade_failed",
-          target: installId,
-          detail: {
-            itemId: diff.itemId,
-            name: diff.name,
-            from: diff.from.version,
-            to: diff.to.version,
-            step: at,
-            code,
-            rolledBack: undo,
-            ...(!ours && { cleanedUpMeanwhile: true }),
-          },
-        });
-        return out;
-      });
+      const removed = await this.undoFailed(
+        orgId,
+        actor,
+        installId,
+        upgradeId,
+        diff,
+        steps,
+        { at, code },
+        opts,
+      );
       for (const r of removed) {
-        if (r.kind === "extension") await this.d.orgConfigs.afterDisable(orgId, r.ref);
+        if (r.kind === "extension") await this.orgConfigs.afterDisable(orgId, r.ref);
       }
     } catch (u) {
       // Left `upgrading` with its journal: undone once it is older than catalog.staleInstallMinutes
       rolledBack = false;
-      this.d.log?.warn("plugin upgrade rollback failed", {
+      this.log.warn("plugin upgrade rollback failed", {
         orgId,
         installId,
         error: u instanceof Error ? u.message : String(u),
@@ -805,72 +632,354 @@ export class PluginUpgrader {
    */
   private async recoverInterrupted(orgId: string, actor: string, installId: string): Promise<void> {
     if (!UUID_RE.test(installId)) throw installNotFound();
-    const staleMinutes = this.d.staleInstallMinutes();
-    const removed = await this.d.db.transaction().execute(async (t) => {
-      const peek = await t
-        .selectFrom("plugin_installs")
-        .select("status")
-        .where("id", "=", installId)
-        .where("org_id", "=", orgId)
-        .executeTakeFirst();
-      if (peek?.status !== "upgrading") return [];
-      await lockOrg(t, orgId);
-      const row = await t
-        .selectFrom("plugin_installs as a")
-        .innerJoin("catalog_items as i", "i.id", "a.item_id")
-        .select([
-          "a.status",
-          "a.upgrade",
-          "a.item_id",
-          "i.name",
-          sql<boolean>`coalesce((a.upgrade->>'startedAt')::timestamptz < now() - make_interval(mins => ${staleMinutes}), false)`.as(
-            "stale",
-          ),
-        ])
-        .where("a.id", "=", installId)
-        .where("a.org_id", "=", orgId)
-        .forUpdate("a")
-        .executeTakeFirst();
-      if (row?.status !== "upgrading" || !row.stale) return [];
-      const steps = journalEntries(row.upgrade);
-      const out = await this.installer.undoUpgradeIn(
-        t,
-        orgId,
-        actor,
-        installId,
-        steps,
-        "plugin_upgrade_cleanup",
-      );
-      await t
-        .updateTable("plugin_installs")
-        .set({
-          status: "installed",
-          upgrade: null,
-          error: JSON.stringify({ step: "interrupted", code: "internal" }),
-        })
-        .where("id", "=", installId)
-        .execute();
-      const j = row.upgrade as { from?: unknown; to?: unknown } | null;
-      await audit(t, {
-        actorAccountId: actor,
-        orgId,
-        action: "plugin.org_upgrade_failed",
-        target: installId,
-        detail: {
-          itemId: row.item_id,
-          name: row.name,
-          from: j?.from ?? null,
-          to: j?.to ?? null,
-          step: "interrupted",
-          code: "internal",
-          rolledBack: steps,
-        },
-      });
-      return out;
-    });
+    const removed = await this.undoInterrupted(orgId, actor, installId);
     for (const r of removed) {
-      if (r.kind === "extension") await this.d.orgConfigs.afterDisable(orgId, r.ref);
+      if (r.kind === "extension") await this.orgConfigs.afterDisable(orgId, r.ref);
     }
+  }
+
+  /** The upgrade's start: the install `upgrading` with an empty journal (a transaction of its own). */
+  @Transactional({ propagation: "requires_new" })
+  private async start(
+    orgId: string,
+    actor: string,
+    installId: string,
+    diff: UpgradeDiff,
+    upgradeId: string,
+  ): Promise<void> {
+    const { itemId } = diff;
+    const t = this.db;
+    await lockOrgForActions(this.orgLock, orgId, actor, diff.actions);
+    const row = await t
+      .selectFrom("plugin_installs")
+      .select(["status", "version"])
+      .where("id", "=", installId)
+      .where("org_id", "=", orgId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row || row.status === "failed") throw installNotFound();
+    if (row.status !== "installed") throw inProgress();
+    if (
+      row.version !== diff.from.version ||
+      ledgerHash(await ledgerOf(t, installId)) !== diff.ledgerHash
+    ) {
+      throw stale();
+    }
+    await assertItemInstallable(t, orgId, itemId);
+    await t
+      .updateTable("plugin_installs")
+      .set({
+        status: "upgrading",
+        upgrade: sql<string>`jsonb_build_object('id', ${upgradeId}::text, 'from', ${diff.from.version}::text, 'to', ${diff.to.version}::text, 'startedAt', now(), 'done', '[]'::jsonb)`,
+      })
+      .where("id", "=", installId)
+      .execute();
+  }
+
+  /** A skill step's ledger and journal rows, in a transaction of their own. */
+  @Transactional({ propagation: "requires_new" })
+  private async journalSkill(
+    r: { created: boolean; skill: { id: string }; version: number },
+    record: (c: LedgerRecord) => Promise<void>,
+    journal: (s: UpgradeStep) => Promise<void>,
+  ): Promise<void> {
+    if (r.created) {
+      await record({ kind: "skill", ref: r.skill.id, created: true, skillVersion: null });
+      return;
+    }
+    await journal({ op: "skill_version", ref: r.skill.id, version: r.version });
+    await record({ kind: "skill", ref: r.skill.id, created: false, skillVersion: r.version });
+  }
+
+  /**
+   * An agent template step: the new version (or template) and its ledger and journal rows, under
+   * the org row lock, in a transaction of their own.
+   */
+  @Transactional({ propagation: "requires_new" })
+  private async upgradeAgentTemplate(
+    orgId: string,
+    diff: UpgradeDiff,
+    template: AgentTemplate,
+    record: (c: LedgerRecord) => Promise<void>,
+    journal: (s: UpgradeStep) => Promise<void>,
+  ): Promise<void> {
+    const { itemId } = diff;
+    const t = this.db;
+    await this.orgLock.lock(orgId);
+    const r = await putTemplateVersionIn(
+      t,
+      {
+        orgId,
+        plugin: diff.name,
+        catalogItemId: itemId,
+        catalogVersion: diff.to.version,
+        sourceFormat: diff.to.source_format,
+      },
+      template,
+    );
+    if (r.created) {
+      await record({ kind: "agent_template", ref: r.id, created: true, skillVersion: null });
+      return;
+    }
+    if (r.changed) await journal({ op: "template_version", ref: r.id, version: r.version });
+    await record({
+      kind: "agent_template",
+      ref: r.id,
+      created: false,
+      skillVersion: r.changed ? r.version : null,
+    });
+  }
+
+  /** One ledger record (and its journal row) in a transaction of its own. */
+  @Transactional({ propagation: "requires_new" })
+  private async recordStep(
+    installId: string,
+    journal: (s: UpgradeStep) => Promise<void>,
+    c: LedgerRecord,
+  ): Promise<void> {
+    await this.recordIn(installId, journal, c);
+  }
+
+  /** A component's ledger row and its journal step, in the transaction of the context. */
+  private async recordIn(
+    installId: string,
+    journal: (s: UpgradeStep) => Promise<void>,
+    c: LedgerRecord,
+  ): Promise<void> {
+    const inserted = await this.db
+      .insertInto("plugin_install_components")
+      .values({
+        install_id: installId,
+        kind: c.kind,
+        ref: c.ref,
+        created: c.created,
+        skill_version: c.skillVersion,
+        template_id: c.templateId ?? null,
+      })
+      .onConflict((oc) => oc.columns(["install_id", "kind", "ref"]).doNothing())
+      .returning("ref")
+      .executeTakeFirst();
+    if (c.created) await journal({ op: "created", kind: c.kind, ref: c.ref });
+    else if (inserted) await journal({ op: "recorded", kind: c.kind, ref: c.ref });
+  }
+
+  /**
+   * The upgrade's last transaction (under the org row lock): the changed connectors, the removals,
+   * the pinned suggestions and the version switch, `plugin.org_upgraded`. `onFinish` marks the step
+   * once the connectors are applied.
+   */
+  @Transactional({ propagation: "requires_new" })
+  private async finish(
+    orgId: string,
+    actor: string,
+    installId: string,
+    upgradeId: string,
+    diff: UpgradeDiff,
+    prepared: { connectorId: string; p: PreparedTemplateUpdate }[],
+    disabled: string[],
+    opts: { actorTokenId?: string },
+    onFinish: () => void,
+  ): Promise<void> {
+    const { itemId } = diff;
+    const t = this.db;
+    await lockOrgForActions(this.orgLock, orgId, actor, diff.actions);
+    const row = await t
+      .selectFrom("plugin_installs")
+      .select(["status", sql<string | null>`upgrade->>'id'`.as("upgradeId")])
+      .where("id", "=", installId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (row?.status !== "upgrading" || row.upgradeId !== upgradeId) throw cleanedUp();
+    await assertItemInstallable(t, orgId, itemId);
+    for (const c of prepared) {
+      await this.connectors.applyTemplateIn(orgId, c.connectorId, actor, c.p, opts.actorTokenId);
+    }
+    onFinish();
+    for (const dep of diff.dependencies) {
+      if (dep.change !== "changed" || !dep.child) continue;
+      const live = await t
+        .selectFrom("plugin_installs")
+        .select("version")
+        .where("id", "=", dep.child.installId)
+        .forShare()
+        .executeTakeFirst();
+      if (!live || !satisfiesRange(live.version, dep.range as string)) {
+        throw new ApiError(
+          "catalog.dependency_unresolved",
+          `Dependency ${dep.name}@${dep.range} cannot be resolved: its install in this organization changed meanwhile; preview the upgrade again`,
+          [{ dependency: dep.name, range: dep.range }],
+        );
+      }
+    }
+    const report = await this.removeIn(orgId, actor, diff, disabled);
+    // An unchanged skill gets no new version, so the target's pinned suggestion goes onto its
+    // current version (when that version is this plugin's) here, with the version switch.
+    for (const sk of diff.skills) {
+      if (sk.change !== "unchanged" || !sk.ledger) continue;
+      await t
+        .updateTable("skill_versions as v")
+        .set({ suggest_pinned: sk.suggestPinned === true })
+        .from("skills as s")
+        .whereRef("s.id", "=", "v.skill_id")
+        .whereRef("s.current_version", "=", "v.version")
+        .where("s.id", "=", sk.ledger.ref)
+        .where("s.org_id", "=", orgId)
+        .where("v.catalog_item_id", "=", itemId)
+        .where("v.suggest_pinned", "<>", sk.suggestPinned === true)
+        .execute();
+    }
+    await t
+      .updateTable("plugin_installs")
+      .set({ version: diff.to.version, status: "installed", upgrade: null, error: null })
+      .where("id", "=", installId)
+      .execute();
+    await this.requests.resolveByInstall(orgId, itemId, actor, opts);
+    await audit(t, {
+      actorAccountId: actor,
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      orgId,
+      action: "plugin.org_upgraded",
+      target: installId,
+      detail: {
+        itemId,
+        name: diff.name,
+        from: diff.from.version,
+        to: diff.to.version,
+        components: diff.components,
+        removed: report.removed,
+        kept: report.kept,
+      },
+    });
+  }
+
+  /** Undoes a failed upgrade's journal (see {@link failed}) in a transaction of its own. */
+  @Transactional({ propagation: "requires_new" })
+  private async undoFailed(
+    orgId: string,
+    actor: string,
+    installId: string,
+    upgradeId: string,
+    diff: UpgradeDiff,
+    steps: { done: UpgradeStep[]; unjournaled: UpgradeStep | undefined },
+    f: { at: UpgradeStepName; code: string },
+    opts: { actorTokenId?: string },
+  ): Promise<{ kind: ComponentKind; ref: string }[]> {
+    const { at, code } = f;
+    const t = this.db;
+    await this.orgLock.lock(orgId);
+    const row = await t
+      .selectFrom("plugin_installs")
+      .select(sql<string | null>`upgrade->>'id'`.as("upgradeId"))
+      .where("id", "=", installId)
+      .forUpdate()
+      .executeTakeFirst();
+    const ours = row?.upgradeId === upgradeId;
+    // Cleaned up meanwhile: only the step whose journal write found the journal gone is ours to
+    // undo. When that step ran in the same transaction as its journal write (the extension
+    // enable, the ledger rows), the transaction rolled back with the failed write, so undoing
+    // it is a no-op (a never-enabled extension, a never-inserted row); undoing is still safe.
+    const undo = ours ? steps.done : steps.unjournaled ? [steps.unjournaled] : [];
+    const out = await this.installer.undoUpgradeIn(
+      orgId,
+      actor,
+      installId,
+      undo,
+      "plugin_upgrade_rollback",
+    );
+    await t
+      .updateTable("plugin_installs")
+      .set({ status: "installed", upgrade: null, error: JSON.stringify({ step: at, code }) })
+      .where("id", "=", installId)
+      .where(sql<string>`upgrade->>'id'`, "=", upgradeId)
+      .execute();
+    await audit(t, {
+      actorAccountId: actor,
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      orgId,
+      action: "plugin.org_upgrade_failed",
+      target: installId,
+      detail: {
+        itemId: diff.itemId,
+        name: diff.name,
+        from: diff.from.version,
+        to: diff.to.version,
+        step: at,
+        code,
+        rolledBack: undo,
+        ...(!ours && { cleanedUpMeanwhile: true }),
+      },
+    });
+    return out;
+  }
+
+  /** Undoes an interrupted upgrade (see {@link recoverInterrupted}) in a transaction of its own. */
+  @Transactional({ propagation: "requires_new" })
+  private async undoInterrupted(
+    orgId: string,
+    actor: string,
+    installId: string,
+  ): Promise<{ kind: ComponentKind; ref: string }[]> {
+    const staleMinutes = this.installer.staleInstallMinutes();
+    const t = this.db;
+    const peek = await t
+      .selectFrom("plugin_installs")
+      .select("status")
+      .where("id", "=", installId)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    if (peek?.status !== "upgrading") return [];
+    await this.orgLock.lock(orgId);
+    const row = await t
+      .selectFrom("plugin_installs as a")
+      .innerJoin("catalog_items as i", "i.id", "a.item_id")
+      .select([
+        "a.status",
+        "a.upgrade",
+        "a.item_id",
+        "i.name",
+        sql<boolean>`coalesce((a.upgrade->>'startedAt')::timestamptz < now() - make_interval(mins => ${staleMinutes}), false)`.as(
+          "stale",
+        ),
+      ])
+      .where("a.id", "=", installId)
+      .where("a.org_id", "=", orgId)
+      .forUpdate("a")
+      .executeTakeFirst();
+    if (row?.status !== "upgrading" || !row.stale) return [];
+    const steps = journalEntries(row.upgrade);
+    const out = await this.installer.undoUpgradeIn(
+      orgId,
+      actor,
+      installId,
+      steps,
+      "plugin_upgrade_cleanup",
+    );
+    await t
+      .updateTable("plugin_installs")
+      .set({
+        status: "installed",
+        upgrade: null,
+        error: JSON.stringify({ step: "interrupted", code: "internal" }),
+      })
+      .where("id", "=", installId)
+      .execute();
+    const j = row.upgrade as { from?: unknown; to?: unknown } | null;
+    await audit(t, {
+      actorAccountId: actor,
+      orgId,
+      action: "plugin.org_upgrade_failed",
+      target: installId,
+      detail: {
+        itemId: row.item_id,
+        name: row.name,
+        from: j?.from ?? null,
+        to: j?.to ?? null,
+        step: "interrupted",
+        code: "internal",
+        rolledBack: steps,
+      },
+    });
+    return out;
   }
 
   /**
@@ -882,8 +991,8 @@ export class PluginUpgrader {
    * install is uninstalled by the same rules (another install using it takes it over). Skills ->
    * connectors -> extension -> dependencies.
    */
+  @Transactional({ propagation: "mandatory" })
   private async removeIn(
-    t: Trx,
     orgId: string,
     actor: string,
     diff: UpgradeDiff,
@@ -891,6 +1000,7 @@ export class PluginUpgrader {
   ): Promise<UninstallReport> {
     const report: UninstallReport = { removed: [], kept: [] };
     const reason = "plugin_upgrade";
+    const t = this.db;
     const keep = (
       kind: ComponentKind,
       ref: string,
@@ -917,7 +1027,7 @@ export class PluginUpgrader {
         ? diff.ledger.filter((l) => l.kind === "extension" && l.ref === diff.extension?.name)
         : []),
     ];
-    const agentRefs = await this.installer.agentRefs(t, orgId);
+    const agentRefs = await this.installer.agentRefs(orgId);
     const self = new Set([diff.installId]);
     for (const l of removed) {
       if (!l.created) {
@@ -926,7 +1036,6 @@ export class PluginUpgrader {
         continue;
       }
       const outcome = await this.installer.decideRemovalIn(
-        t,
         orgId,
         actor,
         { kind: l.kind, ref: l.ref, created: true, skillVersion: null },
@@ -984,7 +1093,7 @@ export class PluginUpgrader {
         continue;
       }
       const sub: UninstallReport = { removed: [], kept: [] };
-      const outcome = await this.installer.uninstallIn(t, orgId, actor, ref, {
+      const outcome = await this.installer.uninstallIn(orgId, actor, ref, {
         report: sub,
         removing: new Set(),
         from: diff.installId,
@@ -1010,7 +1119,7 @@ export class PluginUpgrader {
     version: string,
     input: PluginInstallInput | null,
   ): Promise<UpgradeDiff> {
-    const db = this.d.db;
+    const db = this.db;
     if (!UUID_RE.test(installId)) throw installNotFound();
     const install = await db
       .selectFrom("plugin_installs as a")
@@ -1070,7 +1179,7 @@ export class PluginUpgrader {
 
     // Target rules (Decision 10)
     if (to.manifest.extension) {
-      const deployed = await deployedExtension(db, this.d.host, name);
+      const deployed = await deployedExtension(db, this.registry, name);
       const allowed = deploymentTarget(versions, deployed);
       if (allowed?.version !== to.version) {
         throw targetInvalid(
@@ -1228,8 +1337,8 @@ export class PluginUpgrader {
     }
 
     // Skills (by name)
-    const fromNames = await catalogSkillNames(this.d.storage, from, from.manifest);
-    const toNames = await catalogSkillNames(this.d.storage, to, to.manifest);
+    const fromNames = await catalogSkillNames(this.storage, from, from.manifest);
+    const toNames = await catalogSkillNames(this.storage, to, to.manifest);
     const dirOf = (m: PluginManifest, i: number) =>
       packagePath((m.skills ?? [])[i]?.path as string);
     const fromSkills = new Map(fromNames.map((n, i) => [n, dirOf(from.manifest, i)]));
@@ -1290,8 +1399,8 @@ export class PluginUpgrader {
     if (conflicts.length > 0) throw skillConflictError(conflicts);
 
     // Agent templates (by name; phase C)
-    const fromAgents = await readCatalogAgentTemplates(this.d.storage, from);
-    const toAgents = await readCatalogAgentTemplates(this.d.storage, to);
+    const fromAgents = await readCatalogAgentTemplates(this.storage, from);
+    const toAgents = await readCatalogAgentTemplates(this.storage, to);
     const templateRefs = ledger.filter((l) => l.kind === "agent_template").map((l) => l.ref);
     const liveTemplates =
       templateRefs.length === 0
@@ -1331,8 +1440,8 @@ export class PluginUpgrader {
     }
 
     // Connector templates (by id)
-    const fromTemplates = await readCatalogTemplates(this.d.storage, from);
-    const toTemplates = await readCatalogTemplates(this.d.storage, to);
+    const fromTemplates = await readCatalogTemplates(this.storage, from);
+    const toTemplates = await readCatalogTemplates(this.storage, to);
     // The install's connectors by template; a dropped one (kept only for the agents using it) counts
     // only while its connector is live, so a template the target brings back maps onto it
     const connectorRows = ledger.filter((l) => l.kind === "connector" && l.template_id !== null);
@@ -1634,7 +1743,7 @@ const cleanedUp = () =>
   );
 
 /** The install's ledger rows. */
-function ledgerOf(db: KernelDb | Trx, installId: string): Promise<LedgerRow[]> {
+function ledgerOf(db: KernelSchemaDb, installId: string): Promise<LedgerRow[]> {
   return db
     .selectFrom("plugin_install_components")
     .select(["kind", "ref", "created", "skill_version", "template_id", "dropped"])

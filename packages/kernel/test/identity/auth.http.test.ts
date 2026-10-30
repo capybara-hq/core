@@ -4,20 +4,26 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { type Account, AccountsService } from "../../src/identity/accounts.js";
-import { ApiTokenService } from "../../src/identity/api-tokens.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
+import type { Account, AccountsService } from "../../src/identity/accounts.js";
+import { credentialRedisKey } from "../../src/infra/throttler/credential-throttler.js";
+import { NAMED_THROTTLERS } from "../../src/infra/throttler/named-throttlers.js";
 import { createLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, type CookieJar, cookieJar, setCookies } from "../helpers/http.js";
+import { accountsFor, apiTokensFor } from "../helpers/identity.js";
+import { buildKernel, startKernel, type TestKernel } from "../helpers/runs.js";
+
+/** The Redis key of the per-IP login counter (the `login-ip` credential throttler). */
+const loginIpKey = (ip: string) =>
+  credentialRedisKey(NAMED_THROTTLERS.find((t) => t.name === "login-ip") as never, ip);
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let redis: Redis;
 let accounts: AccountsService;
 let alice: Account;
@@ -37,15 +43,14 @@ const cfg = (http: Record<string, unknown> = {}): KernelConfig =>
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  k = await createKernel(cfg(), { env: {}, logger: createLogger("error", { write: () => {} }) });
-  await k.start();
+  k = await startKernel(cfg(), { env: {}, logger: createLogger("error", { write: () => {} }) });
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
-  accounts = new AccountsService(db);
+  accounts = accountsFor(db);
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -222,7 +227,7 @@ describe("GET /api/v1/me 与 CSRF", () => {
     expect(noCsrf.statusCode).toBe(403);
     expect(errCode(noCsrf)).toBe("auth.csrf");
 
-    const { token } = await new ApiTokenService(db).createPersonal(alice.id, { name: "ci" });
+    const { token } = await apiTokensFor(db).createPersonal(alice.id, { name: "ci" });
     const pat = await k.http.inject({
       method: "PUT",
       url: "/api/v1/me/password",
@@ -236,7 +241,7 @@ describe("GET /api/v1/me 与 CSRF", () => {
   });
 
   it("Bearer PAT：GET /me 200（via: pat）；未知令牌 401；停用账号后 401/403 auth.account_disabled", async () => {
-    const { token } = await new ApiTokenService(db).createPersonal(alice.id, { name: "ci" });
+    const { token } = await apiTokensFor(db).createPersonal(alice.id, { name: "ci" });
     const me = await k.http.inject({
       method: "GET",
       url: "/api/v1/me",
@@ -271,7 +276,7 @@ describe("GET /api/v1/me 与 CSRF", () => {
       .insertInto("orgs")
       .values({ id: orgId, slug: "acme", name: "Acme", created_by: admin.id })
       .execute();
-    const { token } = await new ApiTokenService(db).createService(orgId, {
+    const { token } = await apiTokensFor(db).createService(orgId, {
       name: "bot",
       role: "admin",
       createdBy: admin.id,
@@ -519,7 +524,7 @@ describe("http.trustProxy：客户端 IP", () => {
 
   /** 用给定 trustProxy 起一个内核，从 127.0.0.1 带 X-Forwarded-For 登录，返回会话记录的 ip。 */
   async function sessionIp(trustProxy: unknown): Promise<string | null> {
-    const kk = await createKernel(cfg({ trustProxy }), quiet);
+    const kk = await buildKernel(cfg({ trustProxy }), quiet);
     try {
       await kk.start();
       expect((await kk.http.inject(viaProxy(PW))).statusCode).toBe(200);
@@ -531,7 +536,7 @@ describe("http.trustProxy：客户端 IP", () => {
       await db.deleteFrom("sessions").execute();
       return row.ip;
     } finally {
-      await kk.stop();
+      await kk.close();
     }
   }
 
@@ -542,15 +547,15 @@ describe("http.trustProxy：客户端 IP", () => {
   });
 
   it("失败登录的 IP 限流键同样按解析出的客户端 IP", async () => {
-    const kk = await createKernel(cfg({ trustProxy: 1 }), quiet);
+    const kk = await buildKernel(cfg({ trustProxy: 1 }), quiet);
     try {
       await kk.start();
       await kk.http.inject(viaProxy("wrong password!!"));
-      expect(await redis.exists("capk:login-fail:ip:2.2.2.2")).toBe(1);
-      expect(await redis.exists("capk:login-fail:ip:127.0.0.1")).toBe(0);
-      expect(await redis.exists("capk:login-fail:ip:1.1.1.1")).toBe(0);
+      expect(await redis.exists(loginIpKey("2.2.2.2"))).toBe(1);
+      expect(await redis.exists(loginIpKey("127.0.0.1"))).toBe(0);
+      expect(await redis.exists(loginIpKey("1.1.1.1"))).toBe(0);
     } finally {
-      await kk.stop();
+      await kk.close();
     }
   });
 });
@@ -586,12 +591,12 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
       expect(r.statusCode).toBe(403);
       expect(errCode(r)).toBe("auth.account_disabled");
     }
-    expect(await redis.keys("capk:login-fail:li:*")).toEqual([]);
-    expect(await redis.keys("capk:login-fail:l:*")).toEqual([]);
-    expect(await redis.exists("capk:login-fail:ip:198.51.100.30")).toBe(0);
+    expect(await redis.keys("throttler:{cred:login}:login:*")).toEqual([]);
+    expect(await redis.keys("throttler:{cred:login}:login-account:*")).toEqual([]);
+    expect(await redis.exists(loginIpKey("198.51.100.30"))).toBe(0);
     // 错误密码仍照常计数
     expect((await loginFrom("198.51.100.30", "alice", "wrong password!!")).statusCode).toBe(401);
-    expect(await redis.get("capk:login-fail:ip:198.51.100.30")).toBe("1");
+    expect(await redis.get(loginIpKey("198.51.100.30"))).toBe("1");
   });
 
   it("R25：攻击者从一个 IP 对 admin 连错 150 次，admin 从另一个 IP 用正确密码仍能登录", async () => {
@@ -610,7 +615,7 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
   });
 
   it("R24：改密码后，该账号的个人访问令牌 401 auth.required", async () => {
-    const { token } = await new ApiTokenService(db).createPersonal(alice.id, { name: "ci" });
+    const { token } = await apiTokensFor(db).createPersonal(alice.id, { name: "ci" });
     const bearer = { authorization: `Bearer ${token}` };
     const before = await k.http.inject({ method: "GET", url: "/api/v1/me", headers: bearer });
     expect(before.statusCode).toBe(200);
@@ -641,14 +646,14 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
       ">limited-pw",
       "+@all",
       "&*",
-      "~capk:login-fail:*",
-      "~capk:rl:*",
+      // the credential throttlers' counters (CredentialThrottler)
+      "~throttler:*",
       "%R~capk:revoked-sid:*",
     );
     const url = new URL(rd.url);
     url.username = "limited";
     url.password = "limited-pw";
-    const kk = await createKernel(
+    const kk = await buildKernel(
       KernelConfigSchema.parse({
         db: { url: pgc.url, poolMax: 3 },
         redis: { url: url.toString() },
@@ -660,7 +665,7 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
     );
     try {
       await kk.start();
-      const { token } = await new ApiTokenService(db).createPersonal(alice.id, { name: "ci" });
+      const { token } = await apiTokensFor(db).createPersonal(alice.id, { name: "ci" });
       const cur = cookieJar();
       const other = cookieJar();
       for (const jar of [cur, other]) {
@@ -702,7 +707,7 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
       );
       expect(await accounts.authenticateLocal("alice", "another long password")).not.toBeNull();
     } finally {
-      await kk.stop();
+      await kk.close();
       await redis.call("ACL", "DELUSER", "limited");
     }
   }, 60_000);
@@ -733,7 +738,7 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
   });
 
   it("Bearer 与 Cookie 同时出现时以 Bearer 为准，且仍不检查 CSRF", async () => {
-    const { token } = await new ApiTokenService(db).createPersonal(alice.id, { name: "ci" });
+    const { token } = await apiTokensFor(db).createPersonal(alice.id, { name: "ci" });
     const jar = cookieJar();
     await login(jar, "admin");
     const cookie = jar.header() as string;
@@ -780,7 +785,7 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
     const url = new URL(pgc.url);
     url.pathname = `/${brkName}`;
     await sql`CREATE DATABASE ${brkDb}`.execute(adminDb);
-    const kk = await createKernel(
+    const kk = await buildKernel(
       KernelConfigSchema.parse({
         db: { url: url.toString(), poolMax: 2 },
         redis: { url: rd.url },
@@ -793,7 +798,7 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
     const brk = createDb(url.toString(), 1);
     try {
       await kk.start();
-      await new AccountsService(kernelDb(brk)).createLocal({
+      await accountsFor(kernelDb(brk)).createLocal({
         login: "bob",
         password: PW,
         displayName: "Bob",
@@ -814,7 +819,7 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
       // 不带 Cookie 的公开路由不受影响
       expect((await kk.http.inject({ method: "GET", url: "/healthz" })).statusCode).toBe(200);
     } finally {
-      await kk.stop();
+      await kk.close();
       await brk.destroy().catch(() => {});
       await sql`DROP DATABASE IF EXISTS ${brkDb} WITH (FORCE)`.execute(adminDb);
       await adminDb.destroy();

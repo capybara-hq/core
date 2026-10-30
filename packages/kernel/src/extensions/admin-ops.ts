@@ -1,13 +1,23 @@
 import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
-import { sql, type Transaction } from "kysely";
+import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
 import semver from "semver";
-import type { KernelConfig } from "../config/schema.js";
 import { pluginSchemaName } from "../ctx/create-ctx.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
-import { PLUGINS_CHANGED_TOPIC } from "./lifecycle.js";
+import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { afterCommit } from "../infra/database/after-commit.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
+import { ExtensionAdmin, type PublishBus } from "./admin-view.js";
+import { ExtensionBlobs } from "./blobs.js";
+import { ExtensionLifecycle, PLUGINS_CHANGED_TOPIC } from "./lifecycle.js";
+import { PluginInstallLock } from "./locks.js";
 import { unrunMigrations } from "./migrate-lock.js";
 import {
   ExtensionPackageError,
@@ -15,33 +25,7 @@ import {
   readExtensionPackage,
 } from "./package.js";
 import type { AdminExtensionView } from "./permission-view.js";
-import type { ExtensionSource } from "./sources.js";
-
-export interface ExtensionAdminOpsDeps {
-  db: KernelDb;
-  /**
-   * Returns the admin view after the operation; when the package cannot be read it should return the
-   * degraded item (`ExtensionAdmin.get(name, { allowUnreadable: true })`). If it throws, the operation
-   * has already committed: ops logs an error and returns {@link fallbackView}, so an operation that
-   * took effect is not reported as failed.
-   */
-  view(name: string): Promise<AdminExtensionView>;
-  /** 配置声明的插件名 → 来源（这些插件不能安装 / 停用 / 卸载，C15）。 */
-  declared(): ReadonlyMap<string, ExtensionSource>;
-  /** 读包（降级时核对目标版本的迁移文件）。 */
-  blobs: { get(sha256: string): Promise<Uint8Array> };
-  config: () => KernelConfig;
-  /** 发布 `kernel.plugins.changed`。 */
-  bus: { publish(topic: string, payload: unknown): Promise<void> };
-  /** 发布失败时本副本自己 reconcile（不等待；其他副本靠周期任务兜底）。CLI 没有。 */
-  reconcile?: (reason: string) => Promise<void>;
-  log: {
-    warn(msg: string, fields?: Record<string, unknown>): void;
-    error(msg: string, fields?: Record<string, unknown>): void;
-  };
-}
-
-type Trx = Transaction<KernelDatabase>;
+import { ExtensionRegistry } from "./registry.js";
 
 /**
  * Deployment-level extension install / enable / disable / uninstall (C16 / D15): writes only the PG
@@ -52,8 +36,39 @@ type Trx = Transaction<KernelDatabase>;
  * Every write runs in a transaction: first `lockEnterpriseAdminsAndAuthorize` (skipped by the CLI),
  * then an advisory lock by extension name and a lock on the install record row.
  */
+@Injectable()
 export class ExtensionAdminOps {
-  constructor(private readonly d: ExtensionAdminOpsDeps) {}
+  constructor(
+    @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** The enterprise admin lock (identity/enterprise-admin.ts): joins the transaction. */
+    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    @Inject(PluginInstallLock) private readonly installLock: PluginInstallLock,
+    /**
+     * The admin view after the operation, degraded when the package cannot be read
+     * (`get(name, { allowUnreadable: true })`). If it throws, the operation has already committed:
+     * ops logs an error and returns {@link fallbackView}, so an operation that took effect is not
+     * reported as failed.
+     */
+    @Inject(ExtensionAdmin) private readonly admin: ExtensionAdmin,
+    /** The config-declared extension names (they cannot be installed / disabled / uninstalled, C15). */
+    @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
+    /** Reads packages (a downgrade checks the target version's migration files). */
+    @Inject(ExtensionBlobs) private readonly blobs: ExtensionBlobs,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    /** Publishes `kernel.plugins.changed`. */
+    @Inject(KERNEL_BUS) private readonly bus: PublishBus,
+    /**
+     * When the publish fails this replica reconciles itself (not awaited; other replicas catch up
+     * periodically). A no-op where the lifecycle never started (the CLI).
+     */
+    @Inject(ExtensionLifecycle) private readonly lifecycle: ExtensionLifecycle,
+    @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+  ) {}
+
+  private get db(): KernelSchemaDb {
+    return this.kdb.db;
+  }
 
   /**
    * New install or version change (upgrade / downgrade): the install record points at package
@@ -91,7 +106,7 @@ export class ExtensionAdminOps {
     opts: { catalogItemId?: string } = {},
   ): Promise<AdminExtensionView> {
     this.assertInstallable(name);
-    const pkg = await this.d.db
+    const pkg = await this.db
       .selectFrom("extension_packages")
       .select(["sha256", "name", "package_name", "version", "source"])
       .where("sha256", "=", sha256)
@@ -111,122 +126,137 @@ export class ExtensionAdminOps {
     // The downgrade check needs the target package's migration files: read and parse the package
     // outside the transaction (inside it only _migrations is compared). A stored package in the
     // pre-0.1.0 format -> extension.legacy_format.
-    const target = await readExtensionPackage(await this.d.blobs.get(sha256), {
-      maxBytes: this.d.config().packages.maxBytes,
+    const target = await readExtensionPackage(await this.blobs.get(sha256), {
+      maxBytes: this.config.get().packages.maxBytes,
       hostSdkVersion: SDK_VERSION,
     }).catch((e: unknown) => {
       throw e instanceof ExtensionPackageError ? extensionPackageApiError(e) : e;
     });
-    const changed = await this.d.db.transaction().execute(async (trx) => {
-      if (actor !== null) await lockEnterpriseAdminsAndAuthorize(trx, actor);
-      const row = await this.lockRow(trx, name);
-      // 不经目录重装时保留原来的来源条目（不清空，C22）
-      const catalogItemId = opts.catalogItemId ?? row?.catalog_item_id ?? null;
-      if (opts.catalogItemId !== undefined) {
-        await trx
-          .insertInto("extension_catalog_sources")
-          .values({ plugin: name, item_id: opts.catalogItemId })
-          .onConflict((oc) => oc.columns(["plugin", "item_id"]).doNothing())
-          .execute();
-      }
-      if (row && row.package_name !== pkg.package_name) {
-        throw new ApiError(
-          "extension.name_conflict",
-          `Extension ${name} is already installed from package ${row.package_name}; package ${pkg.package_name} uses the same extension name`,
-        );
-      }
-      // Ruling P3：插件名归第一次安装它的 npm 包（卸载不删），别的包不能接手（数据、密钥与批准都还在）。
-      // 还没有归属、却已有这个名字留下的快照 / 部署配置 / 组织配置（I4：如归属表之前就有的配置声明插件）：
-      // 不知道它们属于哪个包，同样拒绝
-      const owned = await trx
-        .selectFrom("extension_name_owners")
-        .select("package_name")
-        .where("name", "=", name)
-        .executeTakeFirst();
-      if (!owned && (await hasRetainedData(trx, name))) {
-        throw new ApiError(
-          "extension.name_conflict",
-          `Extension name ${name} already has retained data (permission approval, deployment config or organization settings) from an extension that is not installed here, and no package owns the name; package ${pkg.package_name} cannot take it over. Remove that data or use a different extension name`,
-        );
-      }
-      await trx
-        .insertInto("extension_name_owners")
-        .values({ name, package_name: pkg.package_name })
-        .onConflict((oc) => oc.column("name").doNothing())
+    const changed = await this.writeInstall(name, sha256, pkg, target, actor, actorTokenId, opts);
+    return this.viewAfterCommit(name, { version: pkg.version, sha256, state: changed.state });
+  }
+
+  @Transactional()
+  private async writeInstall(
+    name: string,
+    sha256: string,
+    pkg: {
+      package_name: string;
+      version: string;
+      source: "npm" | "file" | "catalog" | "bootstrap";
+    },
+    target: { migrationSql: { file: string; sql: string }[] },
+    actor: string | null,
+    actorTokenId: string | undefined,
+    opts: { catalogItemId?: string },
+  ): Promise<{ changed: boolean; state: "enabled" | "disabled" }> {
+    const db = this.db;
+    if (actor !== null) await this.adminLock.lockAndAuthorize(actor);
+    const row = await this.lockRow(name);
+    // 不经目录重装时保留原来的来源条目（不清空，C22）
+    const catalogItemId = opts.catalogItemId ?? row?.catalog_item_id ?? null;
+    if (opts.catalogItemId !== undefined) {
+      await db
+        .insertInto("extension_catalog_sources")
+        .values({ plugin: name, item_id: opts.catalogItemId })
+        .onConflict((oc) => oc.columns(["plugin", "item_id"]).doNothing())
         .execute();
-      const owner = await trx
-        .selectFrom("extension_name_owners")
-        .select("package_name")
-        .where("name", "=", name)
-        .executeTakeFirstOrThrow();
-      if (owner.package_name !== pkg.package_name) {
-        throw new ApiError(
-          "extension.name_conflict",
-          `Extension name ${name} was previously used by package ${owner.package_name}; its data, secrets and permission approval are retained for that package, so package ${pkg.package_name} cannot take over the name`,
+    }
+    if (row && row.package_name !== pkg.package_name) {
+      throw new ApiError(
+        "extension.name_conflict",
+        `Extension ${name} is already installed from package ${row.package_name}; package ${pkg.package_name} uses the same extension name`,
+      );
+    }
+    // Ruling P3：插件名归第一次安装它的 npm 包（卸载不删），别的包不能接手（数据、密钥与批准都还在）。
+    // 还没有归属、却已有这个名字留下的快照 / 部署配置 / 组织配置（I4：如归属表之前就有的配置声明插件）：
+    // 不知道它们属于哪个包，同样拒绝
+    const owned = await db
+      .selectFrom("extension_name_owners")
+      .select("package_name")
+      .where("name", "=", name)
+      .executeTakeFirst();
+    if (!owned && (await hasRetainedData(db, name))) {
+      throw new ApiError(
+        "extension.name_conflict",
+        `Extension name ${name} already has retained data (permission approval, deployment config or organization settings) from an extension that is not installed here, and no package owns the name; package ${pkg.package_name} cannot take it over. Remove that data or use a different extension name`,
+      );
+    }
+    await db
+      .insertInto("extension_name_owners")
+      .values({ name, package_name: pkg.package_name })
+      .onConflict((oc) => oc.column("name").doNothing())
+      .execute();
+    const owner = await db
+      .selectFrom("extension_name_owners")
+      .select("package_name")
+      .where("name", "=", name)
+      .executeTakeFirstOrThrow();
+    if (owner.package_name !== pkg.package_name) {
+      throw new ApiError(
+        "extension.name_conflict",
+        `Extension name ${name} was previously used by package ${owner.package_name}; its data, secrets and permission approval are retained for that package, so package ${pkg.package_name} cannot take over the name`,
+      );
+    }
+    // 已指向同一个包：什么都不改，降级视图仍给出真实的期望状态
+    if (row?.sha256 === sha256) {
+      if (row.catalog_item_id !== catalogItemId) {
+        // 包没变、只有来源条目变了：照样留审计（来源变化影响 T26 的目录策略约束）
+        await db
+          .updateTable("extension_installs")
+          .set({ catalog_item_id: catalogItemId })
+          .where("name", "=", name)
+          .execute();
+        await this.audit(
+          actor,
+          actorTokenId,
+          "extension.install_source_changed",
+          name,
+          pkg.version,
+          sha256,
+          { catalogItemId, previousCatalogItemId: row.catalog_item_id },
         );
       }
-      // 已指向同一个包：什么都不改，降级视图仍给出真实的期望状态
-      if (row?.sha256 === sha256) {
-        if (row.catalog_item_id !== catalogItemId) {
-          // 包没变、只有来源条目变了：照样留审计（来源变化影响 T26 的目录策略约束）
-          await trx
-            .updateTable("extension_installs")
-            .set({ catalog_item_id: catalogItemId })
-            .where("name", "=", name)
-            .execute();
-          await this.audit(
-            trx,
-            actor,
-            actorTokenId,
-            "extension.install_source_changed",
-            name,
-            pkg.version,
-            sha256,
-            { catalogItemId, previousCatalogItemId: row.catalog_item_id },
-          );
-        }
-        return { changed: false, state: row.desired_state };
+      return { changed: false, state: row.desired_state };
+    }
+    if (row && isDowngrade(pkg.version, row.version)) {
+      const unrun = await unrunMigrations(db, name, target.migrationSql);
+      if (unrun.length > 0) {
+        throw new ApiError(
+          "extension.downgrade_unsupported",
+          `Extension ${name} ${pkg.version} has migrations that were never run here (${unrun.join(", ")}); extension migrations only expand, so downgrade only to a version whose migrations have all been applied`,
+          unrun.map((file) => ({ file })),
+        );
       }
-      if (row && isDowngrade(pkg.version, row.version)) {
-        const unrun = await unrunMigrations(trx, name, target.migrationSql);
-        if (unrun.length > 0) {
-          throw new ApiError(
-            "extension.downgrade_unsupported",
-            `Extension ${name} ${pkg.version} has migrations that were never run here (${unrun.join(", ")}); extension migrations only expand, so downgrade only to a version whose migrations have all been applied`,
-            unrun.map((file) => ({ file })),
-          );
-        }
-      }
-      await trx
-        .insertInto("extension_installs")
-        .values({
-          name,
+    }
+    await db
+      .insertInto("extension_installs")
+      .values({
+        name,
+        sha256,
+        version: pkg.version,
+        source: pkg.source,
+        desired_state: "disabled",
+        installed_by: actor,
+        updated_by: actor,
+        catalog_item_id: catalogItemId,
+      })
+      .onConflict((oc) =>
+        oc.column("name").doUpdateSet({
           sha256,
           version: pkg.version,
           source: pkg.source,
-          desired_state: "disabled",
-          installed_by: actor,
           updated_by: actor,
           catalog_item_id: catalogItemId,
-        })
-        .onConflict((oc) =>
-          oc.column("name").doUpdateSet({
-            sha256,
-            version: pkg.version,
-            source: pkg.source,
-            updated_by: actor,
-            catalog_item_id: catalogItemId,
-            updated_at: sql<Date>`now()` as unknown as Date,
-          }),
-        )
-        .execute();
-      await this.audit(trx, actor, actorTokenId, "extension.installed", name, pkg.version, sha256, {
-        catalogItemId,
-      });
-      return { changed: true, state: row?.desired_state ?? "disabled" };
+          updated_at: sql<Date>`now()` as unknown as Date,
+        }),
+      )
+      .execute();
+    await this.audit(actor, actorTokenId, "extension.installed", name, pkg.version, sha256, {
+      catalogItemId,
     });
-    if (changed.changed) await this.notify(name);
-    return this.viewAfterCommit(name, { version: pkg.version, sha256, state: changed.state });
+    afterCommit(() => this.notify(name));
+    return { changed: true, state: row?.desired_state ?? "disabled" };
   }
 
   /** Enable on the deployment (audit `extension.enabled`); no change when already enabled. Org enablement is unchanged. */
@@ -254,31 +284,31 @@ export class ExtensionAdminOps {
    */
   async uninstall(name: string, actor: string | null, actorTokenId?: string): Promise<void> {
     this.assertInstallable(name);
-    await this.d.db.transaction().execute(async (trx) => {
-      if (actor !== null) await lockEnterpriseAdminsAndAuthorize(trx, actor);
-      const row = await this.lockRow(trx, name);
-      if (!row) throw notFound(name);
-      if (row.required) throw required(name);
-      if (row.desired_state !== "disabled") {
-        throw new ApiError(
-          "extension.not_disabled",
-          `Extension ${name} is enabled; disable it before uninstalling`,
-        );
-      }
-      await trx.deleteFrom("extension_installs").where("name", "=", name).execute();
-      // 来源条目随安装记录一起删：之后不经目录重新安装时不再受旧条目的策略约束（T26 裁决）
-      await trx.deleteFrom("extension_catalog_sources").where("plugin", "=", name).execute();
-      await this.audit(
-        trx,
-        actor,
-        actorTokenId,
-        "extension.uninstalled",
-        name,
-        row.version,
-        row.sha256,
+    await this.writeUninstall(name, actor, actorTokenId);
+  }
+
+  @Transactional()
+  private async writeUninstall(
+    name: string,
+    actor: string | null,
+    actorTokenId: string | undefined,
+  ): Promise<void> {
+    const db = this.db;
+    if (actor !== null) await this.adminLock.lockAndAuthorize(actor);
+    const row = await this.lockRow(name);
+    if (!row) throw notFound(name);
+    if (row.required) throw required(name);
+    if (row.desired_state !== "disabled") {
+      throw new ApiError(
+        "extension.not_disabled",
+        `Extension ${name} is enabled; disable it before uninstalling`,
       );
-    });
-    await this.notify(name);
+    }
+    await db.deleteFrom("extension_installs").where("name", "=", name).execute();
+    // 来源条目随安装记录一起删：之后不经目录重新安装时不再受旧条目的策略约束（T26 裁决）
+    await db.deleteFrom("extension_catalog_sources").where("plugin", "=", name).execute();
+    await this.audit(actor, actorTokenId, "extension.uninstalled", name, row.version, row.sha256);
+    afterCommit(() => this.notify(name));
   }
 
   private async setState(
@@ -288,38 +318,46 @@ export class ExtensionAdminOps {
     actorTokenId: string | undefined,
   ): Promise<AdminExtensionView> {
     this.assertInstallable(name);
-    const result = await this.d.db.transaction().execute(async (trx) => {
-      if (actor !== null) await lockEnterpriseAdminsAndAuthorize(trx, actor);
-      const row = await this.lockRow(trx, name);
-      if (!row) throw notFound(name);
-      if (state === "disabled" && row.required) throw required(name);
-      if (row.desired_state === state) return { row, changed: false };
-      await trx
-        .updateTable("extension_installs")
-        .set({
-          desired_state: state,
-          updated_by: actor,
-          updated_at: sql<Date>`now()` as unknown as Date,
-        })
-        .where("name", "=", name)
-        .execute();
-      await this.audit(
-        trx,
-        actor,
-        actorTokenId,
-        state === "enabled" ? "extension.enabled" : "extension.disabled",
-        name,
-        row.version,
-        row.sha256,
-      );
-      return { row, changed: true };
-    });
-    if (result.changed) await this.notify(name);
+    const result = await this.writeState(name, state, actor, actorTokenId);
     return this.viewAfterCommit(name, {
       version: result.row.version,
       sha256: result.row.sha256,
       state,
     });
+  }
+
+  @Transactional()
+  private async writeState(
+    name: string,
+    state: "enabled" | "disabled",
+    actor: string | null,
+    actorTokenId: string | undefined,
+  ) {
+    const db = this.db;
+    if (actor !== null) await this.adminLock.lockAndAuthorize(actor);
+    const row = await this.lockRow(name);
+    if (!row) throw notFound(name);
+    if (state === "disabled" && row.required) throw required(name);
+    if (row.desired_state === state) return { row, changed: false };
+    await db
+      .updateTable("extension_installs")
+      .set({
+        desired_state: state,
+        updated_by: actor,
+        updated_at: sql<Date>`now()` as unknown as Date,
+      })
+      .where("name", "=", name)
+      .execute();
+    await this.audit(
+      actor,
+      actorTokenId,
+      state === "enabled" ? "extension.enabled" : "extension.disabled",
+      name,
+      row.version,
+      row.sha256,
+    );
+    afterCommit(() => this.notify(name));
+    return { row, changed: true };
   }
 
   /**
@@ -330,9 +368,9 @@ export class ExtensionAdminOps {
     known: { version: string; sha256: string; state: "enabled" | "disabled" | undefined },
   ): Promise<AdminExtensionView> {
     try {
-      return await this.d.view(name);
+      return await this.admin.get(name, { allowUnreadable: true });
     } catch (err) {
-      this.d.log.error("plugin change committed, but its admin view cannot be built", {
+      this.log.error("plugin change committed, but its admin view cannot be built", {
         plugin: name,
         err,
       });
@@ -342,7 +380,7 @@ export class ExtensionAdminOps {
 
   /** 配置声明的插件不经安装记录管理。 */
   private assertInstallable(name: string): void {
-    const declared = this.d.declared().get(name);
+    const declared = this.registry.declared().get(name);
     if (declared === "config") {
       throw new ApiError(
         "extension.config_declared",
@@ -351,12 +389,11 @@ export class ExtensionAdminOps {
     }
   }
 
-  /** 按插件名串行（咨询锁，覆盖「还没有行」的新装），再锁住已有的安装记录行。 */
-  private async lockRow(trx: Trx, name: string) {
-    await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.plugin-install:${name}`}))`.execute(
-      trx,
-    );
-    return trx
+  /** 按插件名串行（`PluginInstallLock`，覆盖「还没有行」的新装），再锁住已有的安装记录行。 */
+  @Transactional({ propagation: "mandatory" })
+  private async lockRow(name: string) {
+    await this.installLock.lock(name);
+    return this.db
       .selectFrom("extension_installs")
       .innerJoin("extension_packages", "extension_packages.sha256", "extension_installs.sha256")
       .select([
@@ -373,7 +410,6 @@ export class ExtensionAdminOps {
   }
 
   private async audit(
-    trx: Trx,
     actor: string | null,
     actorTokenId: string | undefined,
     action: string,
@@ -382,7 +418,7 @@ export class ExtensionAdminOps {
     sha256: string,
     extra: Record<string, unknown> = {},
   ): Promise<void> {
-    await audit(trx, {
+    await audit(this.db, {
       ...(actor !== null && { actorAccountId: actor }),
       ...(actorTokenId !== undefined && { actorTokenId }),
       action,
@@ -394,17 +430,15 @@ export class ExtensionAdminOps {
   /** 提交后通知各副本；发布失败只告警（周期 reconcile 兜底），本副本自己先 reconcile。 */
   private async notify(name: string): Promise<void> {
     try {
-      await this.d.bus.publish(PLUGINS_CHANGED_TOPIC, { plugin: name });
+      await this.bus.publish(PLUGINS_CHANGED_TOPIC, { plugin: name });
     } catch (err) {
-      this.d.log.warn(
+      this.log.warn(
         "cannot publish plugins.changed; replicas converge on the next periodic reconcile",
         { plugin: name, err },
       );
-      this.d
-        .reconcile?.(`changed:${name}`)
-        .catch((e: unknown) =>
-          this.d.log.error("plugin reconcile failed", { plugin: name, err: e }),
-        );
+      this.lifecycle
+        .reconcile(`changed:${name}`)
+        .catch((e: unknown) => this.log.error("plugin reconcile failed", { plugin: name, err: e }));
     }
   }
 }
@@ -446,23 +480,23 @@ function fallbackView(
 }
 
 /** 插件名已留下的数据：权限快照、部署配置、任一组织的配置，或插件 schema（`plugin_<name>`）。 */
-async function hasRetainedData(trx: Trx, name: string): Promise<boolean> {
+async function hasRetainedData(db: KernelSchemaDb, name: string): Promise<boolean> {
   const schema = await sql<{
     x: number;
-  }>`SELECT 1 AS x FROM pg_namespace WHERE nspname = ${pluginSchemaName(name)}`.execute(trx);
+  }>`SELECT 1 AS x FROM pg_namespace WHERE nspname = ${pluginSchemaName(name)}`.execute(db);
   if (schema.rows.length > 0) return true;
-  const hit = await trx
+  const hit = await db
     .selectFrom("extension_permission_snapshots")
     .select(sql<number>`1`.as("x"))
     .where("plugin", "=", name)
     .union(
-      trx
+      db
         .selectFrom("extension_deployment_configs")
         .select(sql<number>`1`.as("x"))
         .where("plugin", "=", name),
     )
     .union(
-      trx
+      db
         .selectFrom("extension_org_configs")
         .select(sql<number>`1`.as("x"))
         .where("plugin", "=", name),

@@ -4,15 +4,11 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
-import { createKeyring } from "../../src/ctx/secrets.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
 import { createLogger } from "../../src/log.js";
-import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { toolSearchTool } from "../../src/tools/builtins/tool-search.js";
-import { Credentials } from "../../src/tools/credentials.js";
 import {
   canonicalJson,
   DISPLAY_ONLY_SPEC_FIELDS,
@@ -22,6 +18,9 @@ import {
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { accountsFor, orgSettingsFor } from "../helpers/identity.js";
+import { startKernel, type TestKernel } from "../helpers/runs.js";
+import { kernelDbFor } from "../helpers/tools.js";
 
 const MEM_CONNECTOR = fileURLToPath(
   new URL("../fixtures/plugins/mem-connector/index.ts", import.meta.url),
@@ -29,9 +28,9 @@ const MEM_CONNECTOR = fileURLToPath(
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let redis: Redis;
 let registry: ToolRegistry;
 let req: ReturnType<typeof asUser>;
@@ -52,7 +51,7 @@ const askUser = {
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  k = await createKernel(
+  k = await startKernel(
     KernelConfigSchema.parse({
       db: { url: pgc.url, poolMax: 5 },
       redis: { url: rd.url },
@@ -64,20 +63,15 @@ beforeAll(async () => {
     }),
     { env: {}, logger: log },
   );
-  await k.start();
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
-  registry = new ToolRegistry({
-    db,
-    host: k.host,
-    credentials: new Credentials(db, createKeyring(Buffer.alloc(32, 7), []), log),
-    log,
-    builtins: [askUser],
+  registry = new ToolRegistry(kernelDbFor(db), k.app.get(ExtensionHost), k.app.get(ExtensionHost), {
+    list: () => [askUser],
   });
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -85,7 +79,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   await redis.flushdb();
-  await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+  await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   memState().servers = {
     open: {
       tools: [
@@ -346,14 +340,13 @@ describe("组织设置与 tool_search 启用条件", () => {
   let thresholds = { searchThresholdTools: 30, searchThresholdTokens: 8000 };
   const cfg = (): KernelConfig => ({ ...baseCfg, tools: { ...baseCfg.tools, ...thresholds } });
   const searchRegistry = () =>
-    new ToolRegistry({
-      db,
-      host: k.host,
-      credentials: new Credentials(db, createKeyring(Buffer.alloc(32, 7), []), log),
-      log,
-      builtins: [askUser, toolSearchTool()],
-      config: cfg,
-    });
+    new ToolRegistry(
+      kernelDbFor(db),
+      k.app.get(ExtensionHost),
+      k.app.get(ExtensionHost),
+      { list: () => [askUser, toolSearchTool()] },
+      { get: cfg },
+    );
   const settingsUrl = () => `/api/v1/orgs/${orgId}/settings`;
 
   beforeEach(() => {
@@ -480,7 +473,7 @@ describe("组织设置与 tool_search 启用条件", () => {
 
     // 部署 egress none：组织只能设 none
     const ownerId = (await db.selectFrom("accounts").select("id").executeTakeFirstOrThrow()).id;
-    const none = new OrgSettingsService(db, () => ({
+    const none = orgSettingsFor(db, () => ({
       sandbox: { ...baseCfg.sandbox, limits: { ...baseCfg.sandbox.limits, egress: "none" } },
     }));
     const err = await none

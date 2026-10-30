@@ -19,33 +19,36 @@ import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
-import { EventLog } from "../../src/conversations/event-log.js";
+import type { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { createLogger } from "../../src/log.js";
-import { KyselyCheckpointSaver } from "../../src/runtime/checkpointer.js";
+import type { KyselyCheckpointSaver } from "../../src/runtime/checkpointer.js";
 import { LangGraphLoop, type LoopDeps } from "../../src/runtime/langgraph-loop.js";
 import type { LoopContext } from "../../src/runtime/loop.js";
 import type { StreamSink } from "../../src/runtime/model-call.js";
-import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { runJobId } from "../../src/runtime/run-queue.js";
-import { ApprovalsService } from "../../src/tools/approvals.service.js";
-import { Breaker } from "../../src/tools/breaker.js";
-import { ToolOutputs } from "../../src/tools/outputs.js";
-import { ToolPipeline } from "../../src/tools/pipeline.js";
-import { QuestionsService } from "../../src/tools/questions.service.js";
+import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, PW, sleep, waitFor, waitForTerminal } from "../helpers/runs.js";
+import { checkpointsFor, providerRegistryFor, stepLogFor } from "../helpers/runtime.js";
+import {
+  approvalsFor,
+  breakerFor,
+  outputsFor,
+  pipelineFor,
+  questionsFor,
+} from "../helpers/tools.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let redis: Redis;
 let sub: ReturnType<typeof createBusSubscriber>;
 let eventLog: EventLog;
@@ -118,10 +121,10 @@ beforeAll(async () => {
     dir: fileURLToPath(new URL("../../src/migrations", import.meta.url)),
   });
   raw = createDb(pgc.url, 10);
-  db = kernelDb(raw);
+  db = legacyDbFor(raw);
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
-  eventLog = new EventLog(db, createBus(redis, sub, "kernel"));
+  eventLog = eventLogFor(db, createBus(redis, sub, "kernel"));
   const base = KernelConfigSchema.parse({
     db: { url: pgc.url },
     redis: { url: rd.url },
@@ -136,27 +139,28 @@ beforeAll(async () => {
   deps = {
     db,
     eventLog,
-    registry: new ProviderRegistry(
+    stepLog: stepLogFor(db, eventLog),
+    registry: providerRegistryFor(
       { list: () => [{ plugin: "stub", capability: "model-provider@2", impl: stubProvider }] },
       redis,
     ),
     tools: noTools,
-    config,
+    config: { get: config },
     log: silent,
-    toolPipeline: new ToolPipeline({
+    toolPipeline: pipelineFor({
       db,
       eventLog,
       registry: noTools,
       credentials: { injection: async () => ({ headers: {} }), onUnauthorized: async () => {} },
-      breaker: new Breaker(redis, config),
-      outputs: new ToolOutputs(db, config),
-      approvals: new ApprovalsService({ db, eventLog, config, log: silent }),
-      questions: new QuestionsService({ db, eventLog, config, log: silent }),
+      breaker: breakerFor(redis, config),
+      outputs: outputsFor(db, config),
+      approvals: approvalsFor(db, eventLog, config),
+      questions: questionsFor(db, eventLog, config),
       config,
       log: silent,
     }),
   };
-  saver = new KyselyCheckpointSaver(db);
+  saver = checkpointsFor(db);
 }, 120_000);
 
 afterAll(async () => {
@@ -428,7 +432,7 @@ describe("LangGraphLoop crash resume (dual replica)", () => {
     const hraw = createDb(h.dbUrl, 3);
     const hdb = kernelDb(hraw);
     try {
-      await new AccountsService(hdb).createLocal({
+      await accountsFor(hdb).createLocal({
         login: "owner",
         password: PW,
         displayName: "O",

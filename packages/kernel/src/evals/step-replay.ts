@@ -6,13 +6,13 @@ import {
   sanitizeParams,
 } from "@capybara-hq/plugin-sdk";
 import type { AgentDefinition, ModelRef } from "../agents/definition.js";
-import type { KernelConfig } from "../config/schema.js";
 import {
   effectiveDefinition,
   NO_SELECTION,
   type Selection,
   sameModel,
 } from "../conversations/selection.js";
+import type { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import {
   consumeModelStream,
@@ -75,7 +75,7 @@ export interface ReplayOutput {
 
 export interface StepReplayDeps {
   registry: Pick<ProviderRegistry, "resolve">;
-  config: () => KernelConfig;
+  config: Pick<KernelConfigService, "get">;
   /** 附件来源（与运行时同一个，按组织 + 对话取）；不给时媒体一律按「不再可用」占位。 */
   media?: MediaSourceDeps;
 }
@@ -274,7 +274,7 @@ export async function replayStep(
     }),
     ...(media !== undefined && { mediaInfo: media.mediaInfo, media: media.media }),
   });
-  const idleMs = info.streamIdleTimeoutMs ?? d.config().runtime.streamIdleMs;
+  const idleMs = info.streamIdleTimeoutMs ?? d.config.get().runtime.streamIdleMs;
   const started = Date.now();
   let streamedChars = 0;
   let out: Awaited<ReturnType<typeof consumeModelStream>>;

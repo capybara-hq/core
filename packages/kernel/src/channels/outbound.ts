@@ -1,32 +1,37 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
   type ChannelTarget,
   type FormAnswer,
-  type InboundEvent,
   type InputForm,
   isChannelSendError,
   type Logger,
   type OutboundMessage,
 } from "@capybara-hq/plugin-sdk";
-import { DelayedError, type Job, Queue, UnrecoverableError, Worker } from "bullmq";
-import type { Redis } from "ioredis";
+import { Inject, Injectable } from "@nestjs/common";
+import { DelayedError, type Job, UnrecoverableError, type Worker } from "bullmq";
 import { sql } from "kysely";
-import type { KernelConfig } from "../config/schema.js";
 import {
   type ConversationBusMessage,
   conversationTopic,
-  type EventLog,
+  EventLog,
 } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { withJobContext } from "../log-context.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
-import { ConversationLock, type Lease } from "../runtime/conversation-lock.js";
-import { bullConnection } from "../runtime/run-queue.js";
+import {
+  type ConversationLeases,
+  ConversationLock,
+  type Lease,
+} from "../runtime/conversation-lock.js";
 import type { StreamBus } from "../runtime/stream.js";
-import type { ApprovalsService } from "../tools/approvals.service.js";
-import type { QuestionsService } from "../tools/questions.service.js";
+import { ApprovalsService } from "../tools/approvals.service.js";
+import { QuestionsService } from "../tools/questions.service.js";
 import {
   approvalCard,
   cardMessage,
@@ -35,31 +40,32 @@ import {
   questionCard,
   webBase,
 } from "./cards.js";
-import type { ChannelConnections, ChannelOutboundSession } from "./connections.service.js";
-import type { ChannelOutboundScheduler } from "./inbound.js";
+import { ChannelConnections, type ChannelOutboundSession } from "./connections.service.js";
+import { ChannelInbound } from "./inbound.js";
+import {
+  type ChannelJobData,
+  ChannelJobs,
+  type DeliverJobData,
+  INBOUND_JOB,
+  type InboundJobData,
+  idempotencyKey,
+} from "./jobs.js";
 import { type ChannelLocale, phrase } from "./phrases.js";
 
-/** 渠道队列（出站投递与入站任务，不含 `:`），只在 worker 角色上消费。 */
-export const CHANNEL_QUEUE_NAME = "cap-kernel-channels";
-/** 投递任务名。 */
-export const DELIVER_JOB = "deliver";
-/** 投递任务 id（不含 `:`）：同一会话、同一日志位置只排一个任务。 */
-export const deliverJobId = (conversationId: string, seq: number) =>
-  `deliver-${conversationId}-${seq}`;
-/**
- * 结束后复核排的任务 id：每次唯一（带随机后缀，不含 `:`）。不能复用 `deliver-<会话>-<seq>`——同 id 的任务
- * 可能正因锁被占而即将直接结束，BullMQ 会把新任务去重进它，于是没人投递。
- */
-export const followUpJobId = (conversationId: string, seq: number) =>
-  `deliver-${conversationId}-${seq}-f${randomUUID().slice(0, 8)}`;
-
-/**
- * 发给插件的幂等键（Ruling A15）：把逻辑键（如 `<会话>-<seq>`）做 sha256，取 base64url 的前 32 个字符——
- * 稳定、只含 `[A-Za-z0-9_-]`，满足常见平台的长度限制。
- */
-export function idempotencyKey(raw: string): string {
-  return createHash("sha256").update(raw).digest("base64url").slice(0, 32);
-}
+// The queue, job names, ids and priorities live with the producer (jobs.ts)
+export {
+  CHANNEL_QUEUE_NAME,
+  DELIVER_ATTEMPTS,
+  DELIVER_JOB,
+  DELIVER_PRIORITY,
+  deliverJobId,
+  followUpJobId,
+  INBOUND_ATTEMPTS,
+  INBOUND_JOB,
+  INBOUND_PRIORITY,
+  idempotencyKey,
+  inboundJobId,
+} from "./jobs.js";
 
 /**
  * 投递锁被占时怎么办：读不到持有者（刚被释放）→ 再取一次；是自己上一次（已崩溃、被 stalled 重新投递）的尝试 →
@@ -100,8 +106,6 @@ const LOCK_BUSY_DELAY_MS = 1000;
 const PLUGIN_PENDING_DELAY_MS = 5000;
 /** 插件一直没有在任何副本上加载：任务排进队列这么久之后放弃（之后的新事件会再排任务）。 */
 const PLUGIN_PENDING_MAX_MS = 3_600_000;
-/** 可重试失败（限流、5xx、网络、超时）的总尝试次数。 */
-export const DELIVER_ATTEMPTS = 8;
 /** 同一事件不可重试地失败这么多次后跳过它（Ruling A14）。 */
 export const POISON_FAILURES = 3;
 /** 退避：未给出建议等待时长时 `min(上限, 基数 · 2^(n-1))`。 */
@@ -111,37 +115,6 @@ const BACKOFF_MAX_MS = 60_000;
 const PAGE = 200;
 /** `last_error` 的最大长度（同渠道选主）。 */
 const MAX_ERROR_CHARS = 1000;
-
-interface DeliverJobData {
-  conversationId: string;
-}
-
-/** 入站任务（Ruling A21）：插件 `onEvent` 收到的事件，原样排进队列由 worker 处理。 */
-interface InboundJobData {
-  connectionId: string;
-  event: InboundEvent;
-}
-
-type ChannelJobData = DeliverJobData | InboundJobData;
-
-/** 入站任务名。 */
-export const INBOUND_JOB = "inbound";
-/**
- * BullMQ 优先级（数字越小越先）：入站任务先于出站投递任务——投递任务可能占着并发槽等输出，
- * 用户发来的消息不能排在它们后面。
- */
-export const INBOUND_PRIORITY = 1;
-export const DELIVER_PRIORITY = 10;
-/** 入站任务的总尝试次数（处理失败由 BullMQ 指数退避重试：1s、2s、4s、8s）。 */
-export const INBOUND_ATTEMPTS = 5;
-const INBOUND_BACKOFF_MS = 1000;
-
-/**
- * 入站消息的任务 id（不含 `:`）：`inbound-<连接>-<sha256(消息 id) 的 base64url 前 22 位>`。同一条消息只排一个任务
- * （已完成的任务保留一段时间，期间重复入队被 BullMQ 忽略）。
- */
-export const inboundJobId = (connectionId: string, messageId: string) =>
-  `inbound-${connectionId}-${createHash("sha256").update(messageId).digest("base64url").slice(0, 22)}`;
 
 /** 可重试的投递失败：带已打码的说明与平台建议的等待时长，供退避策略与最后一次失败时记录。 */
 class RetryableDeliveryError extends Error {
@@ -181,26 +154,41 @@ export function deliverBackoff(attemptsMade: number, err?: Error): number {
   return Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** Math.max(0, attemptsMade - 1));
 }
 
-export interface ChannelOutboundDeps {
-  db: KernelDb;
-  redis: Redis;
-  redisUrl: string;
+/** What one delivery job ({@link Delivery}) reads and writes through. */
+interface DeliveryDeps {
+  /** The context-aware kernel-schema handle (read at call time). */
+  readonly db: KernelSchemaDb;
   bus: StreamBus;
   eventLog: Pick<EventLog, "readAfter">;
   connections: Pick<ChannelConnections, "outbound">;
   approvals: Pick<ApprovalsService, "describe">;
   questions: Pick<QuestionsService, "forCall">;
-  config: () => KernelConfig;
+  config: Pick<KernelConfigService, "get">;
   log: Pick<Logger, "error" | "warn" | "info">;
-  /** 入站任务的处理（worker 上执行 `ChannelInbound.handle`）；失败抛错由 BullMQ 重试。 */
-  inbound?: (connectionId: string, e: InboundEvent) => Promise<void>;
+  /** The conditional `last_seq` advance ({@link ChannelOutbound.advanceIn}). */
+  writes: Pick<ChannelOutbound, "advanceIn">;
+}
+
+/** One `last_seq` advance of a delivery (see {@link ChannelOutbound.advanceIn}). */
+export interface DeliveryAdvance {
+  conversationId: string;
+  /** The `last_seq` this delivery wrote last: the update applies only while it is still there. */
+  persisted: number;
+  seq: number;
+  draft?: string | null;
+  card?: {
+    kind: "approval" | "question";
+    id: string;
+    messageId: string;
+    connectionId: string;
+    target: ChannelTarget;
+  };
 }
 
 /**
  * 渠道出站投递：把会话日志里 `channel_deliveries.last_seq` 之后的内容按序投到 IM。
- * - 生产方（任意角色）：`enqueue(conversationId)` 投递 `deliver-<会话>-<当前 seq>` 任务（会话没有投递目标时什么都不做）。
- *   内核在会话每次追加事件后都调用它（事件日志的 notify 钩子），运行开始时也调用。
- * - Worker（只在 worker 角色）：每个任务先取按会话互斥的投递锁，订阅 `conv.<id>` 后补读日志；运行进入 waiting /
+ * - 生产方（任意角色）：{@link ChannelJobs}（`deliver-<会话>-<当前 seq>` 任务；会话没有投递目标时什么都不做）。
+ * - Worker（只在 worker 角色，经 `@Processor`）：每个任务先取按会话互斥的投递锁，订阅 `conv.<id>` 后补读日志；运行进入 waiting /
  *   终态且日志读完，或追上后 `channels.deliveryIdleMs` 内没有新的总线消息，任务就结束（不长期占并发槽）。
  *   锁被别的任务持有 → 本任务直接结束：持有者会读到新事件，且它结束时（释放锁之后）复核日志是否有新内容，有就再排一个任务；
  *   锁被自己上一次（已崩溃的）尝试占着 → 推迟重试，等锁过期。
@@ -208,132 +196,79 @@ export interface ChannelOutboundDeps {
  *   并记下 IM 消息 id（草稿 id、卡片消息 id），已投递的不会重发。
  *   审批 / 提问卡片在发送之前先记一行 `pending`（T5a），卡片一出现就被点击也能通过 Ruling A13 的核对；
  *   推进 `last_seq` 的事务再补上消息 id、改为 `sent`。崩溃后续投的副本用同一个幂等键重发。
- * 同一队列还承载入站任务（`inbound`，Ruling A21）：由 `enqueueInbound` 排入，worker 调用 `deps.inbound` 处理，
- * 失败按 BullMQ 指数退避重试。
+ * 同一队列还承载入站任务（`inbound`，Ruling A21）：由 {@link ChannelJobs.enqueueInbound} 排入，worker 调用
+ * {@link ChannelInbound.handle} 处理，失败按 BullMQ 指数退避重试。
  * 状态全部在 PG / Redis；进程内只有本任务自己的订阅、草稿节流时刻与等待定时器（本进程持有的资源）。
  */
-export class ChannelOutbound implements ChannelOutboundScheduler {
-  private queue: Queue<ChannelJobData> | undefined;
-  private queueConn: Redis | undefined;
+@Injectable()
+export class ChannelOutbound {
   private worker: Worker<ChannelJobData> | undefined;
-  private workerConn: Redis | undefined;
   private closed = false;
   /** 停机：进行中的任务在下一个检查点交还队列（由其他副本续投）。 */
   private readonly stopping = new AbortController();
-  private readonly lock: ConversationLock;
+  private readonly lock: ConversationLeases;
+  private readonly d: DeliveryDeps;
 
-  constructor(private readonly d: ChannelOutboundDeps) {
-    this.lock = new ConversationLock(d.redis, d.log, DELIVER_LOCK_PREFIX);
-  }
-
-  /** 会话有 IM 投递目标时投递一个出站任务（同一日志位置重复调用只排一个）；已关闭时什么都不做。 */
-  async enqueue(conversationId: string, opts: { followUp?: boolean } = {}): Promise<void> {
-    if (this.closed) return;
-    const row = await this.d.db
-      .selectFrom("channel_deliveries")
-      .innerJoin("conversations", "conversations.id", "channel_deliveries.conversation_id")
-      .select("conversations.last_seq")
-      .where("channel_deliveries.conversation_id", "=", conversationId)
-      .executeTakeFirst();
-    if (!row || this.closed) return;
-    await this.getQueue().add(
-      DELIVER_JOB,
-      { conversationId },
-      {
-        jobId: opts.followUp
-          ? followUpJobId(conversationId, Number(row.last_seq))
-          : deliverJobId(conversationId, Number(row.last_seq)),
-        attempts: DELIVER_ATTEMPTS,
-        backoff: { type: "deliver" },
-        priority: DELIVER_PRIORITY,
-        removeOnComplete: true,
-        removeOnFail: true,
+  constructor(
+    @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(KERNEL_BUS) bus: StreamBus,
+    @Inject(EventLog) eventLog: Pick<EventLog, "readAfter">,
+    /** The conversation lock provider; delivery takes it under its own key prefix. */
+    @Inject(ConversationLock) lock: Pick<ConversationLock, "scoped">,
+    @Inject(ChannelConnections) connections: Pick<ChannelConnections, "outbound">,
+    @Inject(ApprovalsService) approvals: Pick<ApprovalsService, "describe">,
+    @Inject(QuestionsService) questions: Pick<QuestionsService, "forCall">,
+    /** 入站任务的处理（worker 上执行 `ChannelInbound.handle`）；失败抛错由 BullMQ 重试。 */
+    @Inject(ChannelInbound) private readonly inbound: Pick<ChannelInbound, "handle">,
+    @Inject(ChannelJobs) private readonly jobs: Pick<ChannelJobs, "enqueue">,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "error" | "warn" | "info">,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {
+    this.lock = lock.scoped(DELIVER_LOCK_PREFIX);
+    this.d = {
+      get db() {
+        return kdb.db;
       },
-    );
+      bus,
+      eventLog,
+      connections,
+      approvals,
+      questions,
+      config,
+      log,
+      writes: this,
+    };
   }
 
   /**
-   * 排一个入站任务（Ruling A21，同一队列 `cap-kernel-channels`）：处理失败按 {@link INBOUND_ATTEMPTS} 次指数退避重试。
-   * 已关闭时抛错（调用方据此让插件不确认、由平台重投）。
+   * Starts consuming (worker role only): `worker` is the `@Processor` worker of the channel queue
+   * (its job lock and stalled detection follow the run queue's config).
    */
-  async enqueueInbound(connectionId: string, event: InboundEvent, jobId: string): Promise<void> {
-    await this.getQueue().add(
-      INBOUND_JOB,
-      { connectionId, event },
-      {
-        jobId,
-        attempts: INBOUND_ATTEMPTS,
-        priority: INBOUND_PRIORITY,
-        backoff: { type: "exponential", delay: INBOUND_BACKOFF_MS },
-        removeOnComplete: { age: 3600, count: 1000 },
-        removeOnFail: { age: 86_400 },
-      },
-    );
-  }
-
-  /**
-   * 连接重新可投递（轮换了凭据 / 重新启用）：给该连接投递进度落后于会话日志的会话各排一个出站任务，
-   * 补投停用或凭据失效期间落下的内容（不必等下一条消息）。
-   */
-  async resumeConnection(connectionId: string): Promise<void> {
-    const rows = await this.d.db
-      .selectFrom("channel_deliveries")
-      .innerJoin("conversations", "conversations.id", "channel_deliveries.conversation_id")
-      .select("channel_deliveries.conversation_id")
-      .where("channel_deliveries.connection_id", "=", connectionId)
-      .whereRef("channel_deliveries.last_seq", "<", "conversations.last_seq")
-      .execute();
-    for (const r of rows) await this.enqueue(r.conversation_id, { followUp: true });
-  }
-
-  /** 启动 Worker（只在含 `worker` 角色的进程）。任务锁与 stalled 检测沿用运行队列的配置。 */
-  startWorker(): void {
+  startWorker(worker: Worker<ChannelJobData>): void {
     if (this.worker || this.closed) return;
-    const { jobLockMs, stalledIntervalMs } = this.d.config().runtime;
-    this.workerConn = bullConnection(this.d.redisUrl, this.d.log);
-    this.worker = new Worker<ChannelJobData>(
-      CHANNEL_QUEUE_NAME,
-      (job, token) => withJobContext(CHANNEL_QUEUE_NAME, job, () => this.process(job, token)),
-      {
-        connection: this.workerConn,
-        concurrency: this.d.config().channels.deliveryConcurrency,
-        lockDuration: jobLockMs,
-        stalledInterval: stalledIntervalMs,
-        maxStalledCount: 3,
-        settings: { backoffStrategy: (n, _type, err) => deliverBackoff(n, err) },
-      },
-    );
-    this.worker.on("error", (err) => this.d.log.error("channel outbound worker error", { err }));
-    this.worker.on("failed", (job, err) => {
-      if (err instanceof DelayedError || err.name === "DelayedError") return;
-      this.d.log.warn("channel delivery attempt failed", { jobId: job?.id, error: err.message });
-    });
+    this.worker = worker;
+    void worker.run().catch((err) => this.onError(err));
   }
 
+  /** The worker's `error` event. */
+  onError(err: Error): void {
+    this.log.error("channel outbound worker error", { err });
+  }
+
+  /** The worker's `failed` event (a requeue for later is not a failure). */
+  onFailed(job: Job<ChannelJobData> | undefined, err: Error): void {
+    if (err instanceof DelayedError || err.name === "DelayedError") return;
+    this.log.warn("channel delivery attempt failed", { jobId: job?.id, error: err.message });
+  }
+
+  /** Stops: the jobs in flight are handed back at their next checkpoint, the worker closes. */
   async close(): Promise<void> {
     this.closed = true;
     this.stopping.abort();
     const w = this.worker;
-    const q = this.queue;
     this.worker = undefined;
-    this.queue = undefined;
     await w?.close().catch(() => {});
-    await q?.close().catch(() => {});
-    for (const c of [this.workerConn, this.queueConn]) {
-      if (c) await c.quit().catch(() => c.disconnect());
-    }
-    this.workerConn = undefined;
-    this.queueConn = undefined;
-  }
-
-  private getQueue(): Queue<ChannelJobData> {
-    if (this.closed) throw new Error("channel outbound queue is closed");
-    if (!this.queue) {
-      this.queueConn = bullConnection(this.d.redisUrl, this.d.log);
-      this.queue = new Queue<ChannelJobData>(CHANNEL_QUEUE_NAME, { connection: this.queueConn });
-      this.queue.on("error", (err) => this.d.log.error("channel outbound queue error", { err }));
-    }
-    return this.queue;
   }
 
   private async requeue(job: Job, token: string | undefined, delayMs: number): Promise<never> {
@@ -341,7 +276,8 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
     throw new DelayedError();
   }
 
-  private async process(job: Job<ChannelJobData>, token: string | undefined): Promise<void> {
+  /** One job of the channel queue (the `@Processor` calls it): a delivery or an inbound event. */
+  async process(job: Job<ChannelJobData>, token: string | undefined): Promise<void> {
     if (this.stopping.signal.aborted) return this.requeue(job, token, 0);
     if (job.name === INBOUND_JOB) return this.processInbound(job as Job<InboundJobData>, token);
     return this.deliver(job as Job<DeliverJobData>, token);
@@ -350,7 +286,7 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
   /** 本副本没有加载连接的插件：推迟重试（不消耗重试次数），排队超过上限才放弃。 */
   private async pluginPending(job: Job, token: string | undefined, what: string): Promise<void> {
     if (Date.now() - job.timestamp > PLUGIN_PENDING_MAX_MS) {
-      this.d.log.warn(`channel ${what} dropped: extension not loaded on any replica in time`, {
+      this.log.warn(`channel ${what} dropped: extension not loaded on any replica in time`, {
         jobId: job.id,
       });
       return;
@@ -364,9 +300,8 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
    */
   private async processInbound(job: Job<InboundJobData>, token: string | undefined): Promise<void> {
     const { connectionId, event } = job.data;
-    if (!this.d.inbound) throw new Error("channel inbound handler is not configured");
     try {
-      await this.d.inbound(connectionId, event);
+      await this.inbound.handle(connectionId, event);
     } catch (err) {
       if (err instanceof ApiError && err.code === "extension.not_found") {
         return this.pluginPending(job, token, "inbound event");
@@ -376,7 +311,7 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
         !err.retryable &&
         (err.reason === "auth" || err.reason === "target_gone")
       ) {
-        this.d.log.warn("channel inbound reply failed permanently", {
+        this.log.warn("channel inbound reply failed permanently", {
           connectionId,
           type: event.type,
           reason: err.reason,
@@ -384,7 +319,7 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
         throw new UnrecoverableError(`inbound reply failed: ${err.reason}`);
       }
       if (job.attemptsMade + 1 >= (job.opts.attempts ?? 1)) {
-        this.d.log.error("channel inbound event dropped after retries", {
+        this.log.error("channel inbound event dropped after retries", {
           connectionId,
           type: event.type,
           err,
@@ -401,7 +336,7 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
       this.lock.acquire(
         conversationId,
         `${owner}${randomUUID()}`,
-        this.d.config().runtime.jobLockMs,
+        this.config.get().runtime.jobLockMs,
       );
     let lease = await acquire();
     if (!lease) {
@@ -427,7 +362,7 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
       await lease
         .release()
         .catch((err) =>
-          this.d.log.warn("cannot release channel delivery lock", { conversationId, err }),
+          this.log.warn("cannot release channel delivery lock", { conversationId, err }),
         );
     }
     if (outcome.error) await this.recordError(outcome.error.connectionId, outcome.error.message);
@@ -448,7 +383,7 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
         return;
       case "changed":
         // 连接改过（轮换凭据等）：释放锁之后排新任务，用新的出站会话从 last_seq 接着投
-        await this.enqueue(conversationId, { followUp: true });
+        await this.jobs.enqueue(conversationId, { followUp: true });
         return;
       case "pending":
         return this.pluginPending(job, token, "delivery");
@@ -457,7 +392,7 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
 
   /** 会话日志当前的最后位置（会话不存在时 undefined）。 */
   private async lastSeq(conversationId: string): Promise<number | undefined> {
-    const conv = await this.d.db
+    const conv = await this.kdb
       .selectFrom("conversations")
       .select("last_seq")
       .where("id", "=", conversationId)
@@ -468,19 +403,65 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
   /** 日志比 `seen` 更新时再排一个任务。 */
   private async followUp(conversationId: string, seen: number): Promise<void> {
     const last = await this.lastSeq(conversationId);
-    if (last !== undefined && last > seen) await this.enqueue(conversationId, { followUp: true });
+    if (last !== undefined && last > seen)
+      await this.jobs.enqueue(conversationId, { followUp: true });
   }
 
   /** 不可重试（或重试用尽）的发送失败：记连接 `last_error`（已打码）。 */
   private async recordError(connectionId: string, message: string): Promise<void> {
     const text = `delivery failed: ${message}`.slice(0, MAX_ERROR_CHARS);
-    this.d.log.warn("channel delivery failed", { connectionId, error: text });
-    await this.d.db
+    this.log.warn("channel delivery failed", { connectionId, error: text });
+    await this.kdb
       .updateTable("channel_connections")
       .set({ last_error: text })
       .where("id", "=", connectionId)
       .execute()
-      .catch((err) => this.d.log.warn("cannot record channel delivery error", { err }));
+      .catch((err) => this.log.warn("cannot record channel delivery error", { err }));
+  }
+
+  /**
+   * 推进 `last_seq`（同一事务记下草稿 / 卡片消息 id，清零失败计数）。以「仍是 `persisted`」为条件：
+   * 被别人推进过（投递锁丢失后另一实例接手）返回 false，什么都不写。
+   */
+  @Transactional()
+  async advanceIn(a: DeliveryAdvance): Promise<boolean> {
+    const r = await this.kdb
+      .updateTable("channel_deliveries")
+      .set({
+        last_seq: String(a.seq),
+        fail_seq: null,
+        fail_count: 0,
+        ...(a.draft !== undefined && { draft_message_id: a.draft }),
+        updated_at: new Date(),
+      })
+      .where("conversation_id", "=", a.conversationId)
+      .where("last_seq", "=", String(a.persisted))
+      .executeTakeFirst();
+    if (r.numUpdatedRows === 0n) return false;
+    if (a.card) {
+      // The row was recorded as `pending` before the send (recordCard); fill in the message id
+      const { messageId, target } = a.card;
+      await this.kdb
+        .insertInto("channel_card_messages")
+        .values({
+          conversation_id: a.conversationId,
+          connection_id: a.card.connectionId,
+          card_kind: a.card.kind,
+          card_id: a.card.id,
+          message_id: messageId,
+          status: "sent",
+          target: JSON.stringify(target),
+        })
+        .onConflict((oc) =>
+          oc.columns(["conversation_id", "connection_id", "card_kind", "card_id"]).doUpdateSet({
+            message_id: messageId,
+            status: "sent",
+            target: JSON.stringify(target),
+          }),
+        )
+        .execute();
+    }
+    return true;
   }
 }
 
@@ -538,7 +519,7 @@ class Delivery {
   private readonly finalized = new Set<string>();
 
   constructor(
-    private readonly d: ChannelOutboundDeps,
+    private readonly d: DeliveryDeps,
     private readonly conversationId: string,
     private readonly lease: Lease,
     private readonly stopping: AbortSignal,
@@ -592,7 +573,7 @@ class Delivery {
       this.persisted = this.seen;
       this.draftId = row.draft_message_id;
       this.locale = (await readOrgSettings(this.d.db, this.s.row.orgId)).locale;
-      this.base = webBase(this.d.config().http.publicUrl);
+      this.base = webBase(this.d.config.get().http.publicUrl);
       return await this.loop();
     } catch (err) {
       if (err instanceof DeliveryLostError) return { kind: "lost" };
@@ -696,7 +677,7 @@ class Delivery {
   }
 
   private async loop(): Promise<DeliveryOutcome> {
-    const idleMs = this.d.config().channels.deliveryIdleMs;
+    const idleMs = this.d.config.get().channels.deliveryIdleMs;
     let lastMessageAt = Date.now();
     let needCatchUp = true;
     this.checkedAt = Date.now();
@@ -796,44 +777,16 @@ class Delivery {
       card?: { kind: "approval" | "question"; id: string; messageId: string };
     } = {},
   ): Promise<void> {
-    await this.d.db.transaction().execute(async (t) => {
-      const r = await t
-        .updateTable("channel_deliveries")
-        .set({
-          last_seq: String(seq),
-          fail_seq: null,
-          fail_count: 0,
-          ...(opts.draft !== undefined && { draft_message_id: opts.draft }),
-          updated_at: new Date(),
-        })
-        .where("conversation_id", "=", this.conversationId)
-        .where("last_seq", "=", String(this.persisted))
-        .executeTakeFirst();
-      if (r.numUpdatedRows === 0n) throw new DeliveryLostError();
-      if (opts.card) {
-        // The row was recorded as `pending` before the send (recordCard); fill in the message id
-        const messageId = opts.card.messageId;
-        await t
-          .insertInto("channel_card_messages")
-          .values({
-            conversation_id: this.conversationId,
-            connection_id: this.s.row.id,
-            card_kind: opts.card.kind,
-            card_id: opts.card.id,
-            message_id: messageId,
-            status: "sent",
-            target: JSON.stringify(this.target),
-          })
-          .onConflict((oc) =>
-            oc.columns(["conversation_id", "connection_id", "card_kind", "card_id"]).doUpdateSet({
-              message_id: messageId,
-              status: "sent",
-              target: JSON.stringify(this.target),
-            }),
-          )
-          .execute();
-      }
+    const advanced = await this.d.writes.advanceIn({
+      conversationId: this.conversationId,
+      persisted: this.persisted,
+      seq,
+      ...(opts.draft !== undefined && { draft: opts.draft }),
+      ...(opts.card && {
+        card: { ...opts.card, connectionId: this.s.row.id, target: this.target },
+      }),
     });
+    if (!advanced) throw new DeliveryLostError();
     this.persisted = seq;
     if (opts.draft !== undefined) {
       this.draftId = opts.draft;

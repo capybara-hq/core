@@ -1,21 +1,13 @@
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
-import {
-  type CallHandler,
-  type ExecutionContext,
-  Module,
-  type NestInterceptor,
-} from "@nestjs/common";
+import type { CallHandler, ExecutionContext, NestInterceptor } from "@nestjs/common";
 import { APP_INTERCEPTOR } from "@nestjs/core";
+import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import type { FastifyRequest } from "fastify";
-import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { closeKernelApp, createKernelApp } from "../../src/app.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
-import { createKeyring } from "../../src/ctx/secrets.js";
-import { kernelDb } from "../../src/db/kernel-schema.js";
-import { createDb } from "../../src/db/pool.js";
-import { ApiModule } from "../../src/http/api.module.js";
-import { createHttpApp, type KernelHttpApp } from "../../src/http/app.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
+import type { KernelHttpApp } from "../../src/http/app.js";
+import { KernelLifecycle } from "../../src/lifecycle/kernel-lifecycle.js";
 import { createLogger } from "../../src/log.js";
 
 /**
@@ -70,16 +62,15 @@ const probe: NestInterceptor = {
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let app: NestFastifyApplication;
 let probed: KernelHttpApp;
-let raw: ReturnType<typeof createDb>;
-let redis: Redis;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   const masterKey = Buffer.alloc(32, 7).toString("base64");
-  const log = createLogger("error", { write: () => {} });
-  k = await createKernel(
+  // The kernel application itself (every role: the API, and the gateway's webhook route), with the
+  // probe as an application interceptor
+  app = await createKernelApp(
     KernelConfigSchema.parse({
       db: { url: pgc.url },
       redis: { url: rd.url },
@@ -87,79 +78,16 @@ beforeAll(async () => {
       marketplaces: { official: { enabled: false } },
       http: { port: 0 },
     }),
-    { env: {}, logger: log },
+    {
+      env: {},
+      logger: createLogger("error", { write: () => {} }),
+      overrides: [{ provide: APP_INTERCEPTOR, useValue: probe }],
+    },
   );
-  await k.start();
-  // 同一套 ApiModule 再起一个带探针拦截器的 HTTP 应用（内核已完成迁移，共用插件宿主与组织插件配置）
-  raw = createDb(pgc.url, 5);
-  redis = new Redis(rd.url);
-  class ProbeModule {}
-  Module({})(ProbeModule);
-  probed = await createHttpApp({
-    log,
-    health: { isStopping: () => false, log, checks: {} },
-    serveApi: true,
-    servePlugins: false,
-    gateway: {
-      webhooks: { handle: async () => ({ status: 404, body: "" }) },
-      webhookMaxBodyBytes: 1024,
-    },
-    apiModule: {
-      module: ProbeModule,
-      imports: [
-        ApiModule.register({
-          db: kernelDb(raw),
-          redis,
-          keyring: createKeyring(Buffer.from(masterKey, "base64"), []),
-          config: () => k.config,
-          log,
-          host: k.host,
-          orgExtensionConfigs: k.orgExtensionConfigs,
-          // 探针请求都不带凭据，不会写事件日志
-          bus: { publish: async () => {} },
-          eventLog: k.runs.eventLog,
-          registry: k.runs.registry,
-          credentials: k.tools.credentials,
-          toolRegistry: k.tools.registry,
-          approvals: k.tools.approvals,
-          questions: k.tools.questions,
-          drift: k.tools.drift,
-          outputs: k.tools.outputs,
-          connectorContent: k.tools.connectorContent,
-          identity: k.identity,
-          channels: k.channels.connections,
-          attachments: k.attachments,
-          skills: k.skills,
-          skillChanges: k.skillChanges,
-          prices: k.prices,
-          purposes: k.purposes,
-          extensionInstalls: k.extensionInstalls,
-          extensionAdmin: k.extensionAdmin,
-          extensionAdminOps: k.extensionAdminOps,
-          extensionDeploymentConfigs: k.extensionDeploymentConfigs,
-          catalog: k.catalog,
-          pluginImport: k.pluginImport,
-          marketplaces: k.marketplaces,
-          evalQueue: { enqueue: async () => {} },
-          storage: k.storage,
-          sandbox: k.sandbox,
-          runs: {
-            ensureRun: async () => null,
-            abortIfOrphaned: async () => false,
-            abortWaiting: async () => false,
-            requestAbort: async () => {},
-          },
-        }),
-      ],
-      providers: [{ provide: APP_INTERCEPTOR, useValue: probe }],
-    },
-  });
+  probed = app.get(KernelLifecycle).http;
 }, 120_000);
 afterAll(async () => {
-  await probed?.close();
-  redis?.disconnect();
-  await raw?.destroy();
-  await k?.stop();
+  if (app) await closeKernelApp(app);
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
@@ -170,8 +98,10 @@ const apiRoutes = (routes: { method: string; url: string }[]) =>
     .sort();
 
 describe("默认拒绝：公开路由清单", () => {
-  it("探针应用与内核的路由集合一致", () => {
-    expect(apiRoutes(probed.routes())).toEqual(apiRoutes(k.http.routes()));
+  it("内核注册了 API 与网关的 webhook 路由", () => {
+    const routes = apiRoutes(probed.routes());
+    expect(routes).toContain("GET /api/v1/setup");
+    expect(routes).toContain("POST /channels/webhook/:connectionId");
   });
 
   it("清单外的路由不带凭据 → 守卫拒绝（401 auth.required 且 handler 未执行）；清单内的不是 401", async () => {

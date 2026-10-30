@@ -9,7 +9,7 @@ import type { KernelDeps } from "../../src/ctx/create-ctx.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { ExtensionHost } from "../../src/extensions/host.js";
+import type { ExtensionHost } from "../../src/extensions/host.js";
 import {
   ImportTracker,
   loadInstance,
@@ -17,11 +17,16 @@ import {
   UPGRADE_WARN_THRESHOLD,
 } from "../../src/extensions/instance.js";
 import type { PermissionSet } from "../../src/extensions/permission-set.js";
+import { ExtensionRegistry } from "../../src/extensions/registry.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
+import { createLogger } from "../../src/log.js";
+import { EmbedTokens } from "../../src/ui/embed-token.js";
 import { diamondD } from "../fixtures/plugins/diamond-d/index.js";
 import everythingModule, { everythingProbe } from "../fixtures/plugins/everything/index.js";
 import { consumerProbe } from "../fixtures/plugins/everything-consumer/index.js";
 import { dependentProbe } from "../fixtures/plugins/everything-dependent/index.js";
 import { hangReload } from "../fixtures/plugins/hang-reload/index.js";
+import { type TestHostOptions, testHost } from "../helpers/extensions.js";
 
 /**
  * 注册追踪与撤销（T12，C17）的单副本测试：everything 插件把每一种登记都做一遍，
@@ -44,11 +49,13 @@ const EVERYTHING = fx("everything");
 const CONSUMER = fx("everything-consumer");
 const DEPENDENT = fx("everything-dependent");
 
-const host = (
-  cfg: Record<string, unknown> = {},
-  opts: ConstructorParameters<typeof ExtensionHost>[2] = {},
-) => {
-  const h = new ExtensionHost(deps, cfg, { autoApprove: true, drainMs: () => 1_000, ...opts });
+const host = (cfg: Record<string, unknown> = {}, opts: TestHostOptions = {}) => {
+  const h = testHost(deps, cfg, {
+    registry: new ExtensionRegistry(),
+    autoApprove: true,
+    drainMs: () => 1_000,
+    ...opts,
+  });
   hosts.push(h);
   return h;
 };
@@ -78,9 +85,11 @@ beforeAll(async () => {
     db: createDb(pg.url, 5),
     dbUrl: pg.url,
     redis,
+    locks: new LockService(redis, createLogger("error")),
     busSubscriber: sub,
     redisUrl: rd.url,
     keyring: createKeyring(Buffer.alloc(32, 1), []),
+    embedTokens: new EmbedTokens(createKeyring(Buffer.alloc(32, 1), [])),
     runWorkers: true,
     log: {
       info() {},

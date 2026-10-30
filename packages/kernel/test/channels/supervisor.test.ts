@@ -13,8 +13,8 @@ import { channelLeaseKey } from "../../src/channels/supervisor.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
@@ -25,6 +25,7 @@ import {
   session,
   sleep,
   startKernel,
+  type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
 
@@ -40,8 +41,8 @@ const SCAN = 100;
 let pgc: TestContainer;
 let rd: TestContainer;
 let im: FakeChannelServer;
-let a: Kernel;
-let b: Kernel | undefined;
+let a: TestKernel;
+let b: TestKernel | undefined;
 let raw: ReturnType<typeof createDb>;
 let redis: Redis;
 let owner: Req;
@@ -65,7 +66,7 @@ beforeAll(async () => {
   a = await startKernel(cfg());
   raw = createDb(pgc.url, 3);
   redis = new Redis(rd.url);
-  await new AccountsService(kernelDb(raw)).createLocal({
+  await accountsFor(kernelDb(raw)).createLocal({
     login: "owner",
     password: PW,
     displayName: "O",
@@ -82,8 +83,8 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await b?.stop();
-  await a?.stop();
+  await b?.close();
+  await a?.close();
   await im?.stop();
   redis?.disconnect();
   await raw?.destroy();
@@ -174,7 +175,7 @@ describe("渠道长连接选主（单进程）", () => {
   it("插件撤销 → 长连接断开、租约交还；重新加载后按新实例重新选主连上", async () => {
     const id = await newConnection("plugin-unload");
     const before = streamsOf(id).length;
-    await a.host.unload("chan-mini");
+    await a.app.get(ExtensionHost).unload("chan-mini");
     await waitFor(async () => im.active(id).length === 0, 5_000, "closed after plugin unloaded");
     await waitFor(
       async () => (await redis.exists(channelLeaseKey(id))) === 0,
@@ -183,7 +184,7 @@ describe("渠道长连接选主（单进程）", () => {
     );
     await sleep(SCAN * 5);
     expect(im.active(id)).toHaveLength(0);
-    await a.host.reload("chan-mini");
+    await a.app.get(ExtensionHost).reload("chan-mini");
     await waitFor(async () => im.active(id).length === 1, 5_000, "reconnected after reload");
     expect(streamsOf(id).length).toBe(before + 1);
     expect(im.maxConcurrent(id)).toBe(1);
@@ -192,7 +193,7 @@ describe("渠道长连接选主（单进程）", () => {
   it("插件实例替换（同进程重新加载）→ 旧连接断开、新实例接上", async () => {
     const id = await newConnection("plugin-swap");
     const before = streamsOf(id).length;
-    await a.host.reload("chan-mini");
+    await a.app.get(ExtensionHost).reload("chan-mini");
     await waitFor(
       async () => streamsOf(id).length === before + 1 && im.active(id).length === 1,
       5_000,
@@ -203,7 +204,7 @@ describe("渠道长连接选主（单进程）", () => {
 
   it("优雅停机释放租约：另一实例远早于 TTL 接管", async () => {
     // 换成长 TTL 的一对实例：a 持有全部连接，b 后启动
-    await a.stop();
+    await a.close();
     for (const id of await activeIds()) {
       await waitFor(async () => im.active(id).length === 0, 10_000, "closed on stop");
     }
@@ -219,7 +220,7 @@ describe("渠道长连接选主（单进程）", () => {
     expect(im.active(id)).toHaveLength(1);
     const before = streamsOf(id).length;
     const stoppedAt = Date.now();
-    await a.stop();
+    await a.close();
     await waitFor(
       async () => streamsOf(id).length > before && im.active(id).length === 1,
       5_000,

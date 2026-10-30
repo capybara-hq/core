@@ -15,21 +15,34 @@ import {
 } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { KernelConfig } from "../../src/config/schema.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
-import { migrate } from "../../src/db/migrator.js";
-import { createDb } from "../../src/db/pool.js";
-import { ApiError } from "../../src/errors.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import {
   PLUGIN_STAGING_CLEANUP_JOB,
   PLUGIN_STAGING_CLEANUP_SCHEDULER_ID,
-} from "../../src/runtime/maintenance.js";
+} from "../../src/catalog/job-ids.js";
+import { PluginImport } from "../../src/catalog/plugin-import.js";
+import type { KernelConfig } from "../../src/config/schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { migrate } from "../../src/db/migrator.js";
+import { createDb } from "../../src/db/pool.js";
+import { ApiError } from "../../src/errors.js";
+import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
+import { ExtensionInstalls } from "../../src/extensions/installs.js";
+import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { legacyTgz, lifePkg, pluginTgz } from "../helpers/plugin-packages.js";
-import { PW, type Req, runConfig, session, waitFor } from "../helpers/runs.js";
+import {
+  PW,
+  type Req,
+  runConfig,
+  session,
+  startKernel,
+  type TestKernel,
+  waitFor,
+} from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import {
   bundlePlugin,
@@ -56,11 +69,11 @@ const sri = (b: Uint8Array) => `sha512-${createHash("sha512").update(b).digest("
 let pgc: TestContainer;
 let rd: TestContainer;
 let s3: TestS3;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
 let reg: FakeNpmRegistry;
 let pluginsDir: string;
-let k: Kernel;
+let k: TestKernel;
 let admin: Req;
 let member: Req;
 let adminId: string;
@@ -144,9 +157,8 @@ beforeAll(async () => {
       },
     },
   );
-  k = await createKernel(config, { env: {} });
-  await k.start();
-  const accounts = new AccountsService(db);
+  k = await startKernel(config, { env: {} });
+  const accounts = accountsFor(db);
   adminId = (
     await accounts.createLocal({
       login: "root",
@@ -161,7 +173,7 @@ beforeAll(async () => {
 }, 240_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await reg?.stop();
   await rm(pluginsDir, { recursive: true, force: true });
@@ -172,14 +184,14 @@ async function reset(): Promise<void> {
   // Disable and uninstall what earlier cases put on the deployment (every replica unloads), then
   // clear the tables
   for (const r of await db.selectFrom("extension_installs").select("name").execute()) {
-    await k.extensionAdminOps.disable(r.name, null);
-    await k.extensionAdminOps.uninstall(r.name, null);
+    await k.app.get(ExtensionAdminOps).disable(r.name, null);
+    await k.app.get(ExtensionAdminOps).uninstall(r.name, null);
   }
   await truncateTables(
     db,
     "capybara.plugin_import_staging, capybara.catalog_item_versions, capybara.catalog_items, capybara.extension_installs, capybara.extension_permission_snapshots, capybara.extension_name_owners, capybara.extension_blobs, capybara.extension_packages, capybara.audit_events",
   );
-  await k.storage.deployment().deletePrefix("directory/");
+  await k.app.get(StorageService).deployment().deletePrefix("directory/");
 }
 
 const prepareFile = (req: Req, bytes: Uint8Array) =>
@@ -244,7 +256,7 @@ async function nothingStored(): Promise<void> {
   expect(await db.selectFrom("extension_permission_snapshots").select("plugin").execute()).toEqual(
     [],
   );
-  expect((await k.storage.deployment().list("directory/")).items).toEqual([]);
+  expect((await k.app.get(StorageService).deployment().list("directory/")).items).toEqual([]);
 }
 
 describe("one import flow for every plugin", { timeout: 60_000 }, () => {
@@ -301,7 +313,7 @@ describe("one import flow for every plugin", { timeout: 60_000 }, () => {
       "skills/pdf-tools/SKILL.md",
       "skills/pdf-tools/scripts/run.py",
     ]);
-    const d = k.storage.deployment();
+    const d = k.app.get(StorageService).deployment();
     expect(await d.head(`${v.object_prefix}skills/pdf-tools/SKILL.md`)).not.toBeNull();
   });
 
@@ -402,7 +414,7 @@ describe("one import flow for every plugin", { timeout: 60_000 }, () => {
     expect(Math.abs(ttl - 24 * 3600_000)).toBeLessThan(60_000);
     const prefix = row.object_prefix as string;
     expect(prefix).toMatch(/^directory\/[0-9a-f-]{36}\/1\.0\.0\/[0-9a-f-]{36}\/$/);
-    const d = k.storage.deployment();
+    const d = k.app.get(StorageService).deployment();
     for (const f of ["icon.svg", "connectors/crm-mcp.json", "skills/crm-notes/SKILL.md"]) {
       expect(await d.head(`${prefix}${f}`), f).not.toBeNull();
     }
@@ -612,12 +624,18 @@ describe("deployExtension", { timeout: 60_000 }, () => {
     expect(
       await db.selectFrom("extension_catalog_sources").select(["plugin", "item_id"]).execute(),
     ).toEqual([{ plugin: "crm", item_id: r.item.id }]);
-    await waitFor(async () => k.host.current("crm")?.version === "1.0.0", 15_000, "crm");
+    await waitFor(
+      async () => k.app.get(ExtensionHost).current("crm")?.version === "1.0.0",
+      15_000,
+      "crm",
+    );
   });
 
   it("an installed extension at another version is an upgrade; the same package is keep (no snapshot, no deploy)", async () => {
-    const rv = await k.extensionInstalls.ingestFile(adminId, pkgs["eps@1.0.0"] as Uint8Array);
-    await k.extensionAdminOps.install("eps", rv.sha256, adminId);
+    const rv = await k.app
+      .get(ExtensionInstalls)
+      .ingestFile(adminId, pkgs["eps@1.0.0"] as Uint8Array);
+    await k.app.get(ExtensionAdminOps).install("eps", rv.sha256, adminId);
     const keep = await prepared(pkgs["eps@1.0.0"] as Uint8Array);
     expect(keep.review.extension).toMatchObject({
       action: "keep",
@@ -642,12 +660,18 @@ describe("deployExtension", { timeout: 60_000 }, () => {
     expect(res.statusCode, res.body).toBe(201);
     expect(res.json().deploy).toMatchObject({ name: "eps", action: "upgrade", result: "enabled" });
     expect(res.json().item.versions).toEqual(["1.1.0", "1.0.0"]);
-    await waitFor(async () => k.host.current("eps")?.version === "1.1.0", 15_000, "eps");
+    await waitFor(
+      async () => k.app.get(ExtensionHost).current("eps")?.version === "1.1.0",
+      15_000,
+      "eps",
+    );
   });
 
   it("an upgrade that fails to install: the item is committed, the result says failed, the snapshot is restored", async () => {
-    const rv = await k.extensionInstalls.ingestFile(adminId, pkgs["eps@1.0.0"] as Uint8Array);
-    await k.extensionAdminOps.install("eps", rv.sha256, adminId);
+    const rv = await k.app
+      .get(ExtensionInstalls)
+      .ingestFile(adminId, pkgs["eps@1.0.0"] as Uint8Array);
+    await k.app.get(ExtensionAdminOps).install("eps", rv.sha256, adminId);
     const view = await admin({ method: "GET", url: "/api/v1/admin/extensions/eps" });
     const approved = await admin({
       method: "POST",
@@ -661,7 +685,7 @@ describe("deployExtension", { timeout: 60_000 }, () => {
       .where("plugin", "=", "eps")
       .executeTakeFirstOrThrow();
     const s = await prepared(pkgs["eps@1.1.0"] as Uint8Array);
-    const spy = vi.spyOn(k.extensionAdminOps, "install").mockImplementation(async () => {
+    const spy = vi.spyOn(k.app.get(ExtensionAdminOps), "install").mockImplementation(async () => {
       throw new ApiError("extension.package_not_found", "simulated failure");
     });
     try {
@@ -698,8 +722,10 @@ describe("deployExtension", { timeout: 60_000 }, () => {
   });
 
   it("a downgrade to a version with unrun migrations is refused at prepare (409 extension.downgrade_unsupported), nothing written", async () => {
-    const rv = await k.extensionInstalls.ingestFile(adminId, pkgs["zeta@2.0.0"] as Uint8Array);
-    await k.extensionAdminOps.install("zeta", rv.sha256, adminId);
+    const rv = await k.app
+      .get(ExtensionInstalls)
+      .ingestFile(adminId, pkgs["zeta@2.0.0"] as Uint8Array);
+    await k.app.get(ExtensionAdminOps).install("zeta", rv.sha256, adminId);
     const res = await prepareFile(admin, pkgs["zeta@1.0.0"] as Uint8Array);
     expect(res.statusCode, res.body).toBe(409);
     expect(res.json().error.code).toBe("extension.downgrade_unsupported");
@@ -710,8 +736,10 @@ describe("deployExtension", { timeout: 60_000 }, () => {
   });
 
   it("the migration state changes after prepare: confirm refuses the downgrade before writing", async () => {
-    const rv = await k.extensionInstalls.ingestFile(adminId, pkgs["zeta@2.0.0"] as Uint8Array);
-    await k.extensionAdminOps.install("zeta", rv.sha256, adminId);
+    const rv = await k.app
+      .get(ExtensionInstalls)
+      .ingestFile(adminId, pkgs["zeta@2.0.0"] as Uint8Array);
+    await k.app.get(ExtensionAdminOps).install("zeta", rv.sha256, adminId);
     const migrationSql = "CREATE TABLE IF NOT EXISTS notes (id int);\n";
     await sql`CREATE SCHEMA IF NOT EXISTS plugin_zeta`.execute(db);
     await sql`CREATE TABLE IF NOT EXISTS plugin_zeta._migrations (name text PRIMARY KEY, checksum text NOT NULL)`.execute(
@@ -740,8 +768,10 @@ describe("deployExtension", { timeout: 60_000 }, () => {
   it("the extension gets installed by someone else after the review -> plugin.review_stale", async () => {
     const s = await prepared(pkgs["beta@1.0.0"] as Uint8Array);
     expect(s.review.extension?.action).toBe("install");
-    const rv = await k.extensionInstalls.ingestFile(adminId, pkgs["beta@1.0.0"] as Uint8Array);
-    await k.extensionAdminOps.install("beta", rv.sha256, adminId);
+    const rv = await k.app
+      .get(ExtensionInstalls)
+      .ingestFile(adminId, pkgs["beta@1.0.0"] as Uint8Array);
+    await k.app.get(ExtensionAdminOps).install("beta", rv.sha256, adminId);
     const res = await confirm(admin, s.stagingId, {
       reviewHash: s.review.reviewHash,
       deployExtension: false,
@@ -961,7 +991,7 @@ describe("staging cleanup (maintenance job app-staging-cleanup)", { timeout: 60_
     expect(expired.statusCode).toBe(404);
     expect(expired.json().error.code).toBe("plugin.staging_not_found");
     // Leave nothing for the cleanup case below
-    expect(await k.pluginImport.cleanupExpired()).toBe(1);
+    expect(await k.app.get(PluginImport).cleanupExpired()).toBe(1);
   });
 
   it("an expired staging is 404 on confirm; cleanup deletes the row and the object prefix", async () => {
@@ -972,7 +1002,9 @@ describe("staging cleanup (maintenance job app-staging-cleanup)", { timeout: 60_
       .where("id", "=", s.stagingId)
       .executeTakeFirstOrThrow();
     const prefix = row.object_prefix as string;
-    expect((await k.storage.deployment().list(prefix)).items.length).toBeGreaterThan(0);
+    expect(
+      (await k.app.get(StorageService).deployment().list(prefix)).items.length,
+    ).toBeGreaterThan(0);
     await db
       .updateTable("plugin_import_staging")
       .set({ expires_at: sql<Date>`now() - interval '1 minute'` as unknown as Date })
@@ -983,9 +1015,9 @@ describe("staging cleanup (maintenance job app-staging-cleanup)", { timeout: 60_
     });
     expect(res.statusCode).toBe(404);
     expect(res.json().error.code).toBe("plugin.staging_not_found");
-    expect(await k.pluginImport.cleanupExpired()).toBe(1);
+    expect(await k.app.get(PluginImport).cleanupExpired()).toBe(1);
     expect(await db.selectFrom("plugin_import_staging").select("id").execute()).toEqual([]);
-    expect((await k.storage.deployment().list(prefix)).items).toEqual([]);
+    expect((await k.app.get(StorageService).deployment().list(prefix)).items).toEqual([]);
   });
 
   it("the job name and scheduler id contain no colon", () => {

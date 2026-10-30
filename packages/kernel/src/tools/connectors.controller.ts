@@ -1,33 +1,22 @@
 import { ConnectorAuthSchema } from "@capybara-hq/plugin-sdk";
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  HttpCode,
-  Inject,
-  Param,
-  Patch,
-  Post,
-  Put,
-} from "@nestjs/common";
+import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post, Put } from "@nestjs/common";
 import { z } from "zod";
-import { CONNECTORS } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
 import {
   CurrentPrincipal,
   type Principal,
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { can } from "../orgs/roles.js";
-import type {
-  ConnectorDetail,
-  ConnectorPreview,
-  ConnectorSummary,
+import {
+  type ConnectorDetail,
+  type ConnectorPreview,
+  type ConnectorSummary,
   ConnectorsService,
-  ToolIssue,
+  type ToolIssue,
 } from "./connectors.service.js";
 import { publicEndpoint } from "./endpoint.js";
 
@@ -99,13 +88,19 @@ const UpdateBody = z
   })
   .strict();
 
+class ConnectorCreateBody extends createZodDto(CreateBody, "ConnectorCreateBody") {}
+class ConnectorPreviewBody extends createZodDto(PreviewBody, "ConnectorPreviewBody") {}
+class ConnectorUpdateBody extends createZodDto(UpdateBody, "ConnectorUpdateBody") {}
+class ConnectorToolReviewBody extends createZodDto(ReviewBody, "ConnectorToolReviewBody") {}
+class ConnectorCredentialBody extends createZodDto(CredentialValue, "ConnectorCredentialBody") {}
+
 /**
  * 连接器（`/api/v1/orgs/:orgId/connectors`）：读与个人凭据用 `connectors.use`（访客起），安装 / 修改 / 删除 / 刷新 /
  * 组织凭据用 `connectors.manage`（管理员起）；两者都仅限用户主体。
  */
 @Controller("api/v1/orgs/:orgId/connectors")
 export class ConnectorsController {
-  constructor(@Inject(CONNECTORS) private readonly connectors: ConnectorsService) {}
+  constructor(@Inject(ConnectorsService) private readonly connectors: ConnectorsService) {}
 
   @Get()
   @OrgAction("connectors.use")
@@ -118,7 +113,7 @@ export class ConnectorsController {
   async create(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Body(new ZodPipe(CreateBody)) body: z.infer<typeof CreateBody>,
+    @ZBody(ConnectorCreateBody) body: z.infer<typeof CreateBody>,
   ): Promise<{ connector: ConnectorDetail; issues: ToolIssue[] }> {
     const p = requireUser(principal);
     return this.connectors.create(org.orgId, p.account.id, body, patTokenId(p));
@@ -134,7 +129,7 @@ export class ConnectorsController {
   async preview(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Body(new ZodPipe(PreviewBody)) body: z.infer<typeof PreviewBody>,
+    @ZBody(ConnectorPreviewBody) body: z.infer<typeof PreviewBody>,
   ): Promise<ConnectorPreview> {
     requireUser(principal);
     return this.connectors.preview(org.orgId, body);
@@ -159,7 +154,7 @@ export class ConnectorsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("connectorId") connectorId: string,
-    @Body(new ZodPipe(UpdateBody)) body: z.infer<typeof UpdateBody>,
+    @ZBody(ConnectorUpdateBody) body: z.infer<typeof UpdateBody>,
   ): Promise<{ connector: ConnectorDetail }> {
     const p = requireUser(principal);
     return {
@@ -210,7 +205,7 @@ export class ConnectorsController {
     @CurrentOrg() org: OrgContext,
     @Param("connectorId") connectorId: string,
     @Param("name") name: string,
-    @Body(new ZodPipe(ReviewBody)) body: z.infer<typeof ReviewBody>,
+    @ZBody(ConnectorToolReviewBody) body: z.infer<typeof ReviewBody>,
   ): Promise<{ connector: ConnectorDetail }> {
     const p = requireUser(principal);
     return {
@@ -232,7 +227,7 @@ export class ConnectorsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("connectorId") connectorId: string,
-    @Body(new ZodPipe(CredentialValue)) body: z.infer<typeof CredentialValue>,
+    @ZBody(ConnectorCredentialBody) body: z.infer<typeof CredentialValue>,
   ): Promise<void> {
     const p = requireUser(principal);
     await this.connectors.setCredential(
@@ -252,7 +247,7 @@ export class ConnectorsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("connectorId") connectorId: string,
-    @Body(new ZodPipe(CredentialValue)) body: z.infer<typeof CredentialValue>,
+    @ZBody(ConnectorCredentialBody) body: z.infer<typeof CredentialValue>,
   ): Promise<void> {
     const p = requireUser(principal);
     await this.connectors.setCredential(

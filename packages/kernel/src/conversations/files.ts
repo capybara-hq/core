@@ -1,8 +1,10 @@
+import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
-import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import type { StorageService } from "../storage/storage.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { StorageService } from "../storage/storage.service.js";
 import { UUID_RE } from "../ui/registry.js";
+import { ConversationAccess } from "./access.js";
 import { isInlineArtifactType, isTextArtifactType } from "./artifacts.js";
 import type { EventPayload } from "./events.js";
 
@@ -48,13 +50,6 @@ export interface FileContent {
   /** The stored type without parameters (sent as `X-Content-Original-Type`). */
   originalType: string;
   truncated: boolean;
-}
-
-export interface ConversationFilesDeps {
-  db: KernelDb;
-  storage: Pick<StorageService, "kernel">;
-  /** Same visibility as the event stream (`ConversationsService.isAccessible`). */
-  isAccessible(orgId: string, conversationId: string, viewerAccountId: string): Promise<boolean>;
 }
 
 const conversationNotFound = () => new ApiError("conversation.not_found", "Conversation not found");
@@ -113,17 +108,24 @@ async function mapLimit<T, R>(xs: T[], limit: number, fn: (x: T) => Promise<R>):
   return out;
 }
 
+@Injectable()
 export class ConversationFiles {
-  constructor(private readonly d: ConversationFilesDeps) {}
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(StorageService) private readonly storage: Pick<StorageService, "kernel">,
+    /** Same visibility as the event stream. */
+    @Inject(ConversationAccess) private readonly access: Pick<ConversationAccess, "isAccessible">,
+  ) {}
 
   private async checkAccess(orgId: string, conversationId: string, viewer: string) {
     if (!UUID_RE.test(conversationId)) throw conversationNotFound();
-    if (!(await this.d.isAccessible(orgId, conversationId, viewer))) throw conversationNotFound();
+    if (!(await this.access.isAccessible(orgId, conversationId, viewer)))
+      throw conversationNotFound();
   }
 
   /** Every delivery of the conversation in log order. */
   private async deliveries(conversationId: string): Promise<Delivery[]> {
-    const rows = await this.d.db
+    const rows = await this.db
       .selectFrom("conversation_events")
       .select(["payload", "created_at"])
       .where("conversation_id", "=", conversationId)
@@ -165,7 +167,7 @@ export class ConversationFiles {
       start = at + 1;
     }
     const page = ordered.slice(start, start + opts.limit);
-    const store = this.d.storage.kernel(orgId);
+    const store = this.storage.kernel(orgId);
     const files = await mapLimit(page, HEAD_CONCURRENCY, async (g): Promise<FileOutput> => {
       const latest = g.at(-1) as Delivery;
       const head = await store.head(latest.objectKey);
@@ -207,7 +209,7 @@ export class ConversationFiles {
   ): Promise<{ id: string; name: string; contentType: string; size: number; objectKey: string }> {
     await this.checkAccess(orgId, conversationId, viewer);
     if (!UUID_RE.test(fileId)) throw artifactNotFound();
-    const row = await this.d.db
+    const row = await this.db
       .selectFrom("conversation_events")
       .select("payload")
       .where("conversation_id", "=", conversationId)
@@ -240,7 +242,7 @@ export class ConversationFiles {
   ): Promise<FileContent> {
     await this.checkAccess(orgId, conversationId, viewer);
     if (!UUID_RE.test(fileId)) throw artifactNotFound();
-    const row = await this.d.db
+    const row = await this.db
       .selectFrom("conversation_events")
       .select("payload")
       .where("conversation_id", "=", conversationId)
@@ -254,7 +256,7 @@ export class ConversationFiles {
       throw new ApiError("conversation.artifact_not_previewable", "Only text files have content");
     }
     const max = Math.min(limit, FILE_CONTENT_MAX_BYTES);
-    const got = await this.d.storage
+    const got = await this.storage
       .kernel(orgId)
       .get(a.objectKey, { range: { start: 0, end: max - 1 } });
     if (!got)

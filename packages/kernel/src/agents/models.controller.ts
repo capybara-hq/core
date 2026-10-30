@@ -1,13 +1,12 @@
 import type { ModelInfo } from "@capybara-hq/plugin-sdk";
 import { Controller, Get, Inject } from "@nestjs/common";
-import { PROVIDER_REGISTRY } from "../http/tokens.js";
 import { OrgAction } from "../orgs/org.guard.js";
-import type { ProviderRegistry } from "../runtime/providers.js";
+import { ProviderRegistry } from "../runtime/providers.js";
 
 /** 可选模型（`/api/v1/orgs/:orgId/models`）：已安装的模型供应商及其模型，列表缓存在 Redis。 */
 @Controller("api/v1/orgs/:orgId/models")
 export class ModelsController {
-  constructor(@Inject(PROVIDER_REGISTRY) private readonly registry: ProviderRegistry) {}
+  constructor(@Inject(ProviderRegistry) private readonly registry: ProviderRegistry) {}
 
   @Get()
   @OrgAction("agents.use")

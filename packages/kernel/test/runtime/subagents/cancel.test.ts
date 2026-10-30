@@ -2,21 +2,22 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ToolPostHookPayload } from "@capybara-hq/plugin-sdk";
+import type { ExtensionContext, ToolPostHookPayload } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
-import { AccountsService } from "../../../src/identity/accounts.js";
-import type { Kernel } from "../../../src/kernel.js";
-import { finishRun } from "../../../src/runtime/run-finish.js";
+import { KERNEL_BUS } from "../../../src/infra/tokens.js";
+import { Offboarding } from "../../../src/orgs/offboarding.js";
 import { SUBAGENT_RUN_QUEUE_NAME } from "../../../src/runtime/run-queue.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
 import { setFakeSandboxDelays } from "../../fixtures/plugins/sandbox-fake/index.js";
+import { eventLogFor, legacyDbFor } from "../../helpers/conversations.js";
 import { truncateTables } from "../../helpers/db.js";
+import { accountsFor } from "../../helpers/identity.js";
 import { testMembers } from "../../helpers/members.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import {
@@ -29,11 +30,18 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForEvent,
   waitForTerminal,
 } from "../../helpers/runs.js";
-import { type ChildRun, childRunsOf, parentWaiting, runStatus } from "../../helpers/subagents.js";
+import {
+  type ChildRun,
+  childRunsOf,
+  finishRun,
+  parentWaiting,
+  runStatus,
+} from "../../helpers/subagents.js";
 
 /**
  * Phase C Task 13 (spec §12): stopping a parent stops its children and writes its open `agent`
@@ -98,16 +106,16 @@ const RULES: ScriptRule[] = [
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 let root: string;
 let subQueue: Queue;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   const raw = createDb(pgc.url, 3);
-  db = kernelDb(raw);
+  db = legacyDbFor(raw);
   destroyDb = () => raw.destroy();
   root = await mkdtemp(join(tmpdir(), "cap-subagents-cancel-"));
   k = await startKernel(
@@ -127,7 +135,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await subQueue?.close();
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop()]);
   if (root) await rm(root, { recursive: true, force: true });
@@ -147,7 +155,7 @@ beforeEach(async () => {
     "capybara.audit_events, capybara.subagent_dispatches, capybara.sandboxes, capybara.approvals, capybara.tool_outputs, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
   scriptRules([]);
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" })).id;
   memberId = (await accounts.createLocal({ login: "member", password: PW, displayName: "M" })).id;
   owner = await session(k, "owner");
@@ -467,7 +475,7 @@ describe("offboarding", () => {
     const { runId, children } = await parentWaiting(db, conv, 1);
     // the parent ended without stopping its child, and the membership went away without the
     // offboarding steps (a crash between the two): only the offboarding sweep catches the child
-    await finishRun(db, k.runs.eventLog, {
+    await finishRun(db, eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)), {
       conversationId: conv,
       runId,
       status: "aborted",
@@ -475,7 +483,7 @@ describe("offboarding", () => {
       event: { type: "run_aborted", payload: { byAccountId: null, reason: "user" } },
     });
     await db.deleteFrom("memberships").where("account_id", "=", memberId).execute();
-    expect(await k.identity.offboarding.sweep()).toBe(1);
+    expect(await k.app.get(Offboarding).sweep()).toBe(1);
     await subQueue.resume();
     await allStopped(children.map((c) => c.runId));
     await waitForEvent(db, conv, (e) => e.type === "subagent_finished", 10_000);
