@@ -117,6 +117,17 @@ const seqNo = z.number().int().nonnegative();
 const count = z.number().int().nonnegative();
 
 /**
+ * The state of a file a `Read` / `Write` / `Edit` saw or left (display only, but the kernel reads it
+ * back from the log to decide read-before-write): the full normalized path, the file's full size and
+ * the sha256 of the bytes handled (the first bytes only for a file over `Read`'s byte limit).
+ */
+const FileStateViewSchema = z.object({
+  path: z.string().max(4096),
+  size: count,
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
+/**
  * Structured view of a builtin tool's result (UI refresh B, spec §5.5 / §5.9): display only, like
  * `display`. `command`: `Bash` (the model's `description`, the exit code, null when the
  * command was stopped, and whether it timed out; the web shows "Failed" for a non-zero exit even
@@ -137,6 +148,7 @@ export const ToolViewSchema = z.discriminatedUnion("kind", [
     added: count,
     removed: count,
     truncated: z.boolean(),
+    file: FileStateViewSchema.optional(),
     hunks: z
       .array(
         z.object({
@@ -159,6 +171,7 @@ export const ToolViewSchema = z.discriminatedUnion("kind", [
     path: z.string().max(TOOL_VIEW_PATH_MAX_CHARS),
     fromLine: count.optional(),
     toLine: count.optional(),
+    file: FileStateViewSchema.optional(),
   }),
 ]);
 export type ToolView = z.infer<typeof ToolViewSchema>;

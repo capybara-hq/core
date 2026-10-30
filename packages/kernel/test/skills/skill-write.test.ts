@@ -938,6 +938,7 @@ describe("SkillWrite on a shared agent (R4)", { timeout: 180_000 }, () => {
       storage: k.app.get(StorageService),
       eventLog: {
         append: async () => [],
+        latestFileState: async () => null,
         latestOfType: async () =>
           ({
             conversationId: convA,

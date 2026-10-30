@@ -275,6 +275,28 @@ export class EventLog {
     return r && (toEvent(r) as Extract<ConversationEvent, { type: T }>);
   }
 
+  /**
+   * The file state (`tool_result.view.file`) the latest `Read` / `Write` / `Edit` result of this
+   * conversation recorded for `path` (a normalized sandbox path); null when none did. One lookup
+   * per call: it walks the conversation's events backwards on the primary key
+   * (conversation_id, seq) and stops at the first match, so a path never read scans them all.
+   */
+  async latestFileState(
+    conversationId: string,
+    path: string,
+  ): Promise<{ size: number; sha256: string } | null> {
+    const r = await this.db
+      .selectFrom("conversation_events")
+      .select(sql<{ size: number; sha256: string }>`payload->'view'->'file'`.as("file"))
+      .where("conversation_id", "=", conversationId)
+      .where("type", "=", "tool_result")
+      .where(sql<boolean>`payload->'view'->'file'->>'path' = ${path}`)
+      .orderBy("seq", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    return r ? { size: r.file.size, sha256: r.file.sha256 } : null;
+  }
+
   private validate(e: AppendEvent): ConversationEventBody {
     const r = ConversationEventSchema.safeParse({ type: e.type, payload: e.payload });
     if (!r.success) {

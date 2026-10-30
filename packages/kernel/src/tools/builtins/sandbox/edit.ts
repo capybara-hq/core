@@ -2,6 +2,7 @@ import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import type { BuiltinTool } from "../../registry.js";
 import { lineDiff, viewPath } from "../../view.js";
 import {
+  assertReadAndUnchanged,
   checkWritable,
   clip,
   display,
@@ -13,6 +14,7 @@ import {
   withNotices,
   withPathLease,
 } from "./common.js";
+import { fileStateOf, normalizeSandboxPath, recordedFile } from "./file-state.js";
 
 /** 可编辑的最大文件（字节）：更大的用 Bash 处理。 */
 const EDIT_MAX_BYTES = 10 * 1024 * 1024;
@@ -24,8 +26,8 @@ const SPEC: ToolSpec = {
   description:
     "Edit a text file in this conversation's sandbox by replacing exact text. old_string must match " +
     "the file exactly (including whitespace and indentation) and, unless replace_all is true, occur " +
-    "exactly once; include enough surrounding lines to make it unique. Read the file with " +
-    "Read first. Use Write to create a file or replace all of it.",
+    "exactly once; include enough surrounding lines to make it unique. Read the file first; " +
+    "editing a file you have not read, or one changed since you read it, fails. Use Write to create a file or replace all of it.",
   inputSchema: {
     type: "object",
     properties: {
@@ -92,6 +94,12 @@ export function sandboxEditTool(deps: SandboxToolDeps): BuiltinTool {
           const got = await p.readFile(h, path, { maxBytes: EDIT_MAX_BYTES, signal });
           if (got === null) throw new ToolError(notFound(path));
           if (got.truncated || looksBinary(got.data)) throw new ToolError(notText(path));
+          await assertReadAndUnchanged(
+            deps,
+            ctx.conversationId,
+            path,
+            fileStateOf(got.data, st.size),
+          );
           const text = new TextDecoder().decode(got.data);
           const count = occurrences(text, old_string);
           if (count === 0) throw new ToolError(noMatch(path));
@@ -100,8 +108,14 @@ export function sandboxEditTool(deps: SandboxToolDeps): BuiltinTool {
           const next = replace_all
             ? text.split(old_string).join(new_string)
             : text.replace(old_string, () => new_string);
-          await p.writeFile(h, path, new TextEncoder().encode(next), signal);
-          return { n: replace_all ? count : 1, before: text, after: next };
+          const nextBytes = new TextEncoder().encode(next);
+          await p.writeFile(h, path, nextBytes, signal);
+          return {
+            n: replace_all ? count : 1,
+            before: text,
+            after: next,
+            file: recordedFile(normalizeSandboxPath(path), nextBytes, nextBytes.byteLength),
+          };
         }),
       );
       const { n } = edit;
@@ -115,6 +129,7 @@ export function sandboxEditTool(deps: SandboxToolDeps): BuiltinTool {
           path: viewPath(path),
           created: false,
           ...lineDiff(edit.before, edit.after),
+          file: edit.file,
         },
       };
     },

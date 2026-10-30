@@ -12,6 +12,7 @@ import {
   unavailableWhenNoSandbox,
   withNotices,
 } from "./common.js";
+import { normalizeSandboxPath, recordedFile } from "./file-state.js";
 
 /** 不给 `limit` 时一次读的行数。 */
 const DEFAULT_LIMIT = 2000;
@@ -29,7 +30,8 @@ const SPEC: ToolSpec = {
     "source code, data files, logs and files the user attached (under /workspace/attachments). " +
     "Paths are absolute, under /workspace, /skills or /tmp. Lines are numbered from 1; pass " +
     "offset and limit to read part of a long file. Binary files are not shown; use Bash " +
-    "to inspect them. Do not use it to list directories; use Glob instead.",
+    "to inspect them. Do not use it to list directories; use Glob instead. Read a file before you " +
+    "write it: Write and Edit fail on a file you have not read, or one changed since you read it.",
   inputSchema: {
     type: "object",
     properties: {
@@ -134,7 +136,12 @@ export function sandboxReadTool(deps: SandboxToolDeps): BuiltinTool {
       return {
         content: [{ type: "text", text: withNotices(notices, text) }],
         display: display(`读取 ${clip(path, 180)}`, `Read ${clip(path, 180)}`),
-        view: { kind: "read", path: viewPath(path), ...range },
+        view: {
+          kind: "read",
+          path: viewPath(path),
+          ...range,
+          file: recordedFile(normalizeSandboxPath(path), value.data, value.size),
+        },
       };
     },
   };

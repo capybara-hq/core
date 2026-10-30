@@ -308,7 +308,13 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
       removed: 1,
     });
     const rd = await call(conv, "Read", { file_path: "/workspace/v.txt", offset: 2 }, 4);
-    expect(rd.view).toEqual({ kind: "read", path: "/workspace/v.txt", fromLine: 2, toLine: 4 });
+    expect(rd.view).toMatchObject({
+      kind: "read",
+      path: "/workspace/v.txt",
+      fromLine: 2,
+      toLine: 4,
+      file: { path: "/workspace/v.txt", sha256: expect.stringMatching(/^[0-9a-f]{64}$/) },
+    });
     const failed = await call(conv, "Read", { file_path: "/workspace/none.txt" }, 5);
     expect(failed.isError).toBe(true);
     expect(failed.view).toBeUndefined();
@@ -321,25 +327,27 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
       "head -c 9000 /dev/zero | tr '\\000' a > /workspace/nul.txt && printf '\\nx\\000y\\nz\\n' >> /workspace/nul.txt";
     const b1 = await call(conv, "Bash", { description: "Make file", command: make }, 1);
     expect(b1.content).toContain("[exit code: 0]");
-    // write over it: the old content has a NUL, so no diff view, but the write completes
-    const w = await call(conv, "Write", { file_path: "/workspace/nul.txt", content: "new\n" }, 2);
+    await call(conv, "Read", { file_path: "/workspace/nul.txt" }, 2);
+    // write over it: the old content has a NUL, so no diff hunks, but the write completes
+    const w = await call(conv, "Write", { file_path: "/workspace/nul.txt", content: "new\n" }, 3);
     expect(w.isError).toBe(false);
     expect(w.content).toContain("Overwrote /workspace/nul.txt");
-    expect(w.view).toBeUndefined();
+    expect(w.view).toMatchObject({ kind: "edit", truncated: true, hunks: [] });
     // edit with the NUL line in the hunk context: the view shows it as U+FFFD
-    await call(conv, "Bash", { description: "Make file", command: make }, 3);
+    await call(conv, "Bash", { description: "Make file", command: make }, 4);
+    await call(conv, "Read", { file_path: "/workspace/nul.txt" }, 5);
     const e = await call(
       conv,
       "Edit",
       { file_path: "/workspace/nul.txt", old_string: "z\n", new_string: "Z\n" },
-      4,
+      6,
     );
     expect(e.isError).toBe(false);
     expect(e.view?.kind === "edit" && e.view.hunks[0]?.lines.map((l) => l.text)).toContain(
       "x\uFFFDy",
     );
     // read (a bug from before B): the NUL reaches the model as U+FFFD instead of failing the run
-    const r = await call(conv, "Read", { file_path: "/workspace/nul.txt", offset: 2 }, 5);
+    const r = await call(conv, "Read", { file_path: "/workspace/nul.txt", offset: 2 }, 7);
     expect(r.isError).toBe(false);
     expect(r.content).toContain("x\uFFFDy");
   });

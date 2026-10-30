@@ -14,6 +14,7 @@ import { SandboxPathBusyError } from "../../../sandbox/leases.js";
 import { SandboxLockLostError, type SandboxService } from "../../../sandbox/sandbox.service.js";
 import type { StorageService } from "../../../storage/storage.service.js";
 import type { BuiltinCallContext } from "../../registry.js";
+import { type FileState, lastFileState, MODIFIED_TEXT, NOT_READ_TEXT } from "./file-state.js";
 
 /** 沙箱工具的依赖（都按调用时取，多副本下无进程内状态）。 */
 export interface SandboxToolDeps {
@@ -23,7 +24,8 @@ export interface SandboxToolDeps {
   attachments: Pick<AttachmentsService, "listForConversation" | "openForConversation">;
   storage: Pick<StorageService, "kernel" | "available">;
   /** `publishChanged`: `Deliver` announces `changed: files` (UI refresh B). */
-  eventLog: Pick<EventLog, "append"> & Partial<Pick<EventLog, "publishChanged">>;
+  eventLog: Pick<EventLog, "append" | "latestFileState"> &
+    Partial<Pick<EventLog, "publishChanged">>;
   config: Pick<KernelConfigService, "get">;
 }
 
@@ -399,4 +401,23 @@ export const unavailableWhenNoSandbox =
 /** 读出的字节是否像二进制（开头 8 KB 里有 NUL）。 */
 export function looksBinary(data: Uint8Array): boolean {
   return data.subarray(0, 8192).includes(0);
+}
+
+/**
+ * Throws the model-visible error unless the conversation read (or wrote) the file and it is
+ * unchanged: `current` is the state of the content the caller just read. The two texts are the
+ * spec's wording (tool naming spec 4.5); they sit in file-state.ts, so the tool-design check does
+ * not look for an action verb in them.
+ */
+export async function assertReadAndUnchanged(
+  deps: Pick<SandboxToolDeps, "eventLog">,
+  conversationId: string,
+  path: string,
+  current: FileState,
+): Promise<void> {
+  const seen = await lastFileState(deps.eventLog, conversationId, path);
+  if (seen === null) throw new ToolError(NOT_READ_TEXT);
+  if (seen.size !== current.size || seen.sha256 !== current.sha256) {
+    throw new ToolError(MODIFIED_TEXT);
+  }
 }

@@ -470,6 +470,7 @@ describe("Skill handler", { timeout: 60_000 }, () => {
       storage: k.app.get(StorageService),
       eventLog: {
         append: async () => [],
+        latestFileState: async () => null,
         latestOfType: async () =>
           snapshot === null
             ? undefined

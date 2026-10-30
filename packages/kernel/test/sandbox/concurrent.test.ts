@@ -14,6 +14,7 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { SandboxLeases, SandboxLockLostError } from "../../src/sandbox/leases.js";
 import { type SandboxService, sandboxConfigWarnings } from "../../src/sandbox/sandbox.service.js";
+import { fileStateOf } from "../../src/tools/builtins/sandbox/file-state.js";
 import { sandboxTools } from "../../src/tools/builtins/sandbox/index.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
 import {
@@ -516,8 +517,21 @@ describe("path leases in the sandbox tools", () => {
       attachments: { listForConversation: async () => [] } as any,
       // biome-ignore lint/suspicious/noExplicitAny: not called
       storage: {} as any,
-      // biome-ignore lint/suspicious/noExplicitAny: not called
-      eventLog: {} as any,
+      // The log is not under test here (path leases are): report the file as read and unchanged by
+      // returning its live state. read-before-write.test.ts covers the rule itself.
+      // biome-ignore lint/suspicious/noExplicitAny: only latestFileState is called
+      eventLog: {
+        latestFileState: async (_conv: string, path: string) =>
+          s.withSandbox(
+            ctx(),
+            async (h, p, _i, sig) => {
+              const st = await p.stat(h, path, sig);
+              const got = await p.readFile(h, path, { maxBytes: 1 << 20, signal: sig });
+              return st && got ? fileStateOf(got.data, st.size) : null;
+            },
+            signal(),
+          ),
+      } as any,
       config: { get: () => config },
     });
   const tool = (s: SandboxService, name: string) =>
