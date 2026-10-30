@@ -308,19 +308,24 @@ export class ConversationsController {
     @ZBody(ConversationPatchBodyDto) body: z.infer<typeof PatchBody>,
   ): Promise<{ conversation: ConversationView }> {
     const p = requireUser(principal);
-    let conversation: ConversationView | undefined;
-    if (body.title !== undefined) {
-      conversation = await this.conversations.rename(org.orgId, id, p.account.id, body.title);
+    const renamed =
+      body.title === undefined
+        ? undefined
+        : await this.conversations.rename(org.orgId, id, p.account.id, body.title);
+    if (body.archived === undefined) {
+      // The refine guarantees a title when there is no `archived`
+      return {
+        conversation: renamed ?? (await this.conversations.get(org.orgId, id, p.account.id)),
+      };
     }
-    if (body.archived !== undefined) {
-      conversation = await this.conversations.setArchived(
+    return {
+      conversation: await this.conversations.setArchived(
         org.orgId,
         id,
         p.account.id,
         body.archived,
-      );
-    }
-    return { conversation: conversation as ConversationView };
+      ),
+    };
   }
 
   /** Soft delete (owner only): stops an active run and hides the conversation everywhere. */

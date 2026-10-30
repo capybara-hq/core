@@ -180,12 +180,14 @@ export class RunQueue {
     const t = this.db;
     const conv = await t
       .selectFrom("conversations")
-      .select(["consumed_seq", "agent_id", "kind", "queue_paused", "account_id"])
+      .select(["consumed_seq", "agent_id", "kind", "queue_paused", "account_id", "deleted_at"])
       .where("id", "=", conversationId)
       .forUpdate()
       .executeTakeFirst();
     // 评测回放的隐藏对话：运行由评测 worker 在里面直接驱动（工具只回放记录），绝不为它起真实运行
     if (conv?.kind !== "chat") return null;
+    // A deleted conversation starts no run, whatever is still unconsumed or queued
+    if (conv.deleted_at !== null) return null;
     let last = await t
       .selectFrom("conversation_events")
       .select(["seq", "payload"])

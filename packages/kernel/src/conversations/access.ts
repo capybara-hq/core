@@ -23,6 +23,7 @@ export const parentReachable =
           .whereRef("p.org_id", "=", "conversations.org_id")
           .where("p.account_id", "=", viewerAccountId)
           .where("p.kind", "=", "chat")
+          .where("p.deleted_at", "is", null)
           .where("agents.deleted_at", "is", null)
           .where(visibleTo(viewerAccountId)),
       ),

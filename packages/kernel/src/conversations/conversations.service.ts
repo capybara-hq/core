@@ -439,6 +439,11 @@ export class ConversationsService {
       .set({ deleted_at: sql<Date>`now()` })
       .where("id", "=", conversationId)
       .execute();
+    // Queued messages must not start a run on a deleted conversation
+    await this.db
+      .deleteFrom("conversation_queue")
+      .where("conversation_id", "=", conversationId)
+      .execute();
     await unbindConversation(this.db.db, conversationId);
   }
 
@@ -813,15 +818,6 @@ export class ConversationsService {
     input: UserMessageInput,
   ): Promise<ConversationEvent> {
     const conv = await this.writable(orgId, conversationId, accountId);
-    // A message brings an archived conversation back into the default lists
-    if (conv.archivedAt !== null) {
-      await this.db
-        .updateTable("conversations")
-        .set({ archived_at: null })
-        .where("id", "=", conversationId)
-        .execute();
-      await this.eventLog.publishChanged(conversationId, "archived");
-    }
     const refs = input.attachments ?? [];
     const files = input.files ?? [];
     // A retry returns the written event (no resource read, no file check, no skill resolution)
@@ -861,6 +857,15 @@ export class ConversationsService {
       [event] = await this.eventLog.append(conversationId, [
         this.userMessage(accountId, input, extra, [], invoked),
       ]);
+    }
+    // The message is written: it brings an archived conversation back into the default lists
+    if (conv.archivedAt !== null) {
+      await this.db
+        .updateTable("conversations")
+        .set({ archived_at: null })
+        .where("id", "=", conversationId)
+        .execute();
+      await this.eventLog.publishChanged(conversationId, "archived");
     }
     await this.runs.ensureRun(conversationId);
     return event as ConversationEvent;

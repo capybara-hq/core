@@ -175,9 +175,8 @@ describe("archive and soft delete", { timeout: 60_000 }, () => {
       method: "GET",
       url: `/api/v1/orgs/${orgId}/questions/${asked.payload.questionId}`,
     });
-    if (q.statusCode === 200) {
-      expect((q.json() as { question: { status: string } }).question.status).not.toBe("pending");
-    }
+    expect(q.statusCode, q.body).toBe(200);
+    expect((q.json() as { question: { status: string } }).question.status).not.toBe("pending");
   });
 
   it("delete keeps the trajectory for the org owner (trajectory viewers)", async () => {
@@ -220,5 +219,63 @@ describe("archive and soft delete", { timeout: 60_000 }, () => {
     const r = await owner({ method: "DELETE", url: `${base()}/${child}` });
     expect(r.statusCode).toBe(409);
     expect((r.json() as { error: { code: string } }).error.code).toBe("conversation.read_only");
+  });
+
+  it("a rejected message leaves the conversation archived", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    expect((await patch(conv, { archived: true })).statusCode).toBe(200);
+    const r = await owner({
+      method: "POST",
+      url: `${base()}/${conv}/messages`,
+      payload: { text: "x", skill: { name: "no-such-skill" } },
+    });
+    expect(r.statusCode, r.body).toBe(400);
+    const got = await owner({ method: "GET", url: `${base()}/${conv}` });
+    expect(
+      (got.json() as { conversation: { archivedAt: string | null } }).conversation.archivedAt,
+    ).not.toBeNull();
+  });
+
+  it("a deleted parent hides its sub-agent conversations", async () => {
+    const parent = await createConv(owner, orgId, agentId);
+    const child = randomUUID();
+    await sql`INSERT INTO capybara.conversations
+        (id, org_id, agent_id, account_id, kind, parent_conversation_id, subagent_type)
+      VALUES (${child}, ${orgId}, ${agentId}, ${ownerId}, 'subagent', ${parent}, 'general')`.execute(
+      raw,
+    );
+    expect((await owner({ method: "GET", url: `${base()}/${child}` })).statusCode).toBe(200);
+    expect((await owner({ method: "DELETE", url: `${base()}/${parent}` })).statusCode).toBe(204);
+    expect((await owner({ method: "GET", url: `${base()}/${child}` })).statusCode).toBe(404);
+    expect((await owner({ method: "GET", url: `${base()}/${child}/events` })).statusCode).toBe(404);
+  });
+
+  it("queued messages start no run after a delete", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, `slow:60:${"x".repeat(60)}`);
+    await waitFor(
+      async () => (await runsOf(db, conv)).some((r) => r.status === "running"),
+      15_000,
+      "running",
+    );
+    const q = await owner({
+      method: "POST",
+      url: `${base()}/${conv}/queue`,
+      payload: { text: "echo:later", clientMessageId: randomUUID() },
+    });
+    expect(q.statusCode, q.body).toBe(201);
+    expect((await owner({ method: "DELETE", url: `${base()}/${conv}` })).statusCode).toBe(204);
+    await waitFor(
+      async () => (await runsOf(db, conv)).every((r) => r.status === "aborted"),
+      15_000,
+      "aborted",
+    );
+    await new Promise((r) => setTimeout(r, 2000));
+    expect(await runsOf(db, conv)).toHaveLength(1);
+    const left =
+      await sql`SELECT 1 FROM capybara.conversation_queue WHERE conversation_id = ${conv}`.execute(
+        raw,
+      );
+    expect(left.rows).toHaveLength(0);
   });
 });
