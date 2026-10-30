@@ -212,7 +212,7 @@ export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
           mode === "files_with_matches"
             ? ["-rlIE", "--null"]
             : mode === "count"
-              ? ["-rcIE", "--null"]
+              ? ["-rcHIE", "--null"]
               : [numbered ? "-rnHIE" : "-rHIE", "--null"];
         const context =
           mode === "content"

@@ -385,6 +385,25 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     expect(bad.content).toContain("file_path");
   });
 
+  it("grep: count and files_with_matches on a single-file path", async () => {
+    const conv = await sandboxConversation();
+    await call(
+      conv,
+      "Write",
+      { file_path: "/workspace/one.txt", content: "hit\nno\nhit\nhit\n" },
+      1,
+    );
+    const count = await call(
+      conv,
+      "Grep",
+      { pattern: "hit", path: "/workspace/one.txt", output_mode: "count" },
+      2,
+    );
+    expect(count.content).toBe("/workspace/one.txt:3");
+    const files = await call(conv, "Grep", { pattern: "hit", path: "/workspace/one.txt" }, 3);
+    expect(files.content).toBe("/workspace/one.txt");
+  });
+
   it("grep: output modes, context, head_limit and offset", async () => {
     const conv = await sandboxConversation();
     await call(
