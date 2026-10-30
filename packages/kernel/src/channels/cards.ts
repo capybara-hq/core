@@ -98,11 +98,21 @@ export const conversationUrl = (base: string, conversationId: string) =>
 export const connectUrl = (base: string, connectorId: string) =>
   `${base}/settings/connections#connector-${encodeURIComponent(connectorId)}`;
 
-/** The tool name within its source: the approval view already strips a connector's prefix; an extension key loses `plugin__<plugin>__`. */
-function shortToolName(v: ApprovalView): string {
-  if (v.connector) return v.toolName;
+/**
+ * The tool as the card names it (tool naming spec §7): a builtin by its name; a connector or
+ * extension tool as `<display name> [<tool>]` (the connector's name, the plugin's display name in
+ * the card's language), the way the web labels it.
+ */
+export function approvalToolName(
+  v: Pick<ApprovalView, "toolKey" | "toolName" | "connector" | "extension">,
+  locale: ChannelLocale,
+): string {
+  // `toolName` is already the connector's own name for its tool
+  if (v.connector) return `${v.connector.name} [${v.toolName}]`;
   const parsed = parseToolKey(v.toolKey);
-  return parsed && parsed.kind !== "builtin" ? parsed.tool : v.toolKey;
+  const tool = parsed && parsed.kind !== "builtin" ? parsed.tool : v.toolName;
+  if (v.extension) return `${v.extension.displayName[locale]} [${tool}]`;
+  return v.toolKey;
 }
 
 export interface CardDeps {
@@ -142,8 +152,8 @@ export async function approvalCard(
     kind: "approval",
     id: v.id,
     title: phrase("approvalTitle", locale),
-    toolName: shortToolName(v),
-    ...(v.connector && { appName: v.connector.name }),
+    // the label carries the source, so no separate appName (renderers would repeat it)
+    toolName: approvalToolName(v, locale),
     agentName: v.agent.name || "Agent",
     inputPreview: inputPreview(v.input, redact),
     scopes: v.requestedFor === null ? ["once"] : ["once", "session", "always"],

@@ -5,20 +5,25 @@ import { useDesignLocale, useDesignT } from "../provider";
 import { useClock } from "./clock";
 import { DiffBlock, type DiffData } from "./diff-block";
 import { Spinner } from "./prose";
-import { elapsed, fillCopy, rowVerb, type ToolKind } from "./tool-copy";
+import { elapsed, fillCopy, type ToolKind } from "./tool-copy";
 
 export type ToolRowData = {
   id: string;
   kind: ToolKind;
-  /** The connector's or extension's name ("Acme 工单"); builtins have none. */
-  source?: string;
-  /** The declared title, else the key; empty for builtins whose verb says it (read, edit). */
-  title: string;
-  /** The key arguments, in body color. */
+  /**
+   * The bold name (§6.16.9): a builtin's tool name as is ("Bash", "Read"), or the connector's /
+   * plugin's display name ("Acme 工单") of a connector or extension tool.
+   */
+  name: string;
+  /** The local tool name of a connector or extension tool, shown in brackets after the name. */
+  tool?: string;
+  /** The declared title, shown as the row's tooltip (never in the brackets). */
+  tooltip?: string;
+  /** The key argument preview (first line, cut at {@link KEY_ARG_MAX} with "…"). */
   keyArg?: string;
   /** Extra information after " · " ("42 条", "第 1–120 行"). */
   extra?: string;
-  /** A shell row's `description` from the model, shown instead of verb and title. */
+  /** A shell row's `description` from the model, shown instead of the key argument. */
   description?: string;
   status: "pending" | "running" | "done" | "failed" | "cancelled";
   startedAt?: number;
@@ -47,16 +52,27 @@ export type ToolRowData = {
 
 const utf8 = (s: string) => new TextEncoder().encode(s).length;
 
-/** "verb source: title key · extra" plus the failure, one line with an ellipsis. */
+/** The key argument preview's length before it is cut with "…". */
+export const KEY_ARG_MAX = 80;
+
+/** The key argument as the row previews it: its first line, at most {@link KEY_ARG_MAX} characters. */
+export function keyArgPreview(s: string): string {
+  const lines = s.split("\n");
+  const first = lines[0] ?? "";
+  const chars = [...first];
+  if (chars.length > KEY_ARG_MAX) return `${chars.slice(0, KEY_ARG_MAX).join("")}…`;
+  return lines.length > 1 ? `${first}…` : first;
+}
+
+/** "**name [tool]** preview · extra" plus the failure, one line with an ellipsis (§6.16.9). */
 export function ToolLabel({ row }: { row: ToolRowData }): JSX.Element {
   const t = useDesignT();
-  const locale = useDesignLocale();
-  const lead =
+  const preview =
     row.kind === "command" && row.description
       ? row.description
-      : [rowVerb(row.kind, locale), row.source ? `${row.source}: ${row.title}` : row.title]
-          .filter((s) => s !== "")
-          .join(" ");
+      : row.keyArg
+        ? keyArgPreview(row.keyArg)
+        : undefined;
   const extra =
     row.added !== undefined || row.removed !== undefined
       ? `+${row.added ?? 0} −${row.removed ?? 0}`
@@ -65,14 +81,18 @@ export function ToolLabel({ row }: { row: ToolRowData }): JSX.Element {
     ? fillCopy(t("tool.blockedBy"), { name: row.blockedBy })
     : row.error?.split("\n")[0]?.trim();
   return (
-    <span className="cb-tool-label" data-part="tool-label">
-      {lead}
-      {row.keyArg ? (
+    <span
+      className="cb-tool-label"
+      data-part="tool-label"
+      {...(row.tooltip ? { title: row.tooltip } : {})}
+    >
+      <span className="cb-tool-name" data-part="tool-name">
+        {row.tool ? `${row.name} [${row.tool}]` : row.name}
+      </span>
+      {preview ? (
         <>
           {" "}
-          <span className="cb-ink" data-part="key-arg">
-            {row.keyArg}
-          </span>
+          <span data-part="key-arg">{preview}</span>
         </>
       ) : null}
       {extra ? <span className="cb-faint">{` · ${extra}`}</span> : null}
@@ -166,6 +186,8 @@ export function ToolDetail({
       }
     }
   }
+  const hasIn = d.command !== undefined || (d.input !== undefined && d.input.length > 0);
+  const hasOut = out !== undefined || foot.length > 0;
   return (
     <div
       id={id}
@@ -173,36 +195,63 @@ export function ToolDetail({
       data-part="tool-detail"
       data-animate={animate ? "true" : undefined}
     >
-      {d.input && d.input.length > 0 ? (
-        <div className="cb-kv" data-part="kv">
-          {d.input.map(([k, v], i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: input keys may repeat; order is stable
-            <span key={i} className="cb-kv-pair">
-              <span className="cb-kv-key" data-part="kv-key">
-                {k}
-              </span>
-              <span className="cb-kv-value" data-part="kv-value">
-                {v}
-              </span>
-            </span>
-          ))}
-        </div>
+      {hasIn ? (
+        <IoSection label={t("tool.in")} which="in">
+          {d.command !== undefined ? (
+            <div className="cb-tool-command" data-part="tool-command">
+              <span className="cb-faint">$</span> {d.command}
+            </div>
+          ) : (
+            <div className="cb-kv" data-part="kv">
+              {(d.input ?? []).map(([k, v], i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: input keys may repeat; order is stable
+                <span key={i} className="cb-kv-pair">
+                  <span className="cb-kv-key" data-part="kv-key">
+                    {k}
+                  </span>
+                  <span className="cb-kv-value" data-part="kv-value">
+                    {v}
+                  </span>
+                </span>
+              ))}
+            </div>
+          )}
+        </IoSection>
       ) : null}
-      {d.command !== undefined ? (
-        <div className="cb-tool-command" data-part="tool-command">
-          <span className="cb-faint">$</span> {d.command}
-        </div>
+      {hasOut ? (
+        <IoSection label={t("tool.out")} which="out">
+          {out !== undefined ? (
+            <pre className="cb-tool-output" data-part="tool-output">
+              {out}
+            </pre>
+          ) : null}
+          {foot.length > 0 ? (
+            <div className="cb-tool-footer" data-part="tool-footer">
+              {foot}
+            </div>
+          ) : null}
+        </IoSection>
       ) : null}
-      {out !== undefined ? (
-        <pre className="cb-tool-output" data-part="tool-output">
-          {out}
-        </pre>
-      ) : null}
-      {foot.length > 0 ? (
-        <div className="cb-tool-footer" data-part="tool-footer">
-          {foot}
-        </div>
-      ) : null}
+    </div>
+  );
+}
+
+/** One labelled block of the expanded detail: "IN" / "OUT" beside its body (§6.16.9). */
+function IoSection({
+  label,
+  which,
+  children,
+}: {
+  label: string;
+  which: "in" | "out";
+  children: ReactNode;
+}): JSX.Element {
+  return (
+    <div className="cb-tool-io" data-part="tool-io" data-io={which}>
+      <span className="cb-tool-io-label" data-part="tool-io-label">
+        {label}
+      </span>
+      <div className="cb-tool-io-body">{children}</div>
     </div>
   );
 }

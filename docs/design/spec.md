@@ -1110,12 +1110,15 @@ States: `single`, `running`, `collapsed`, `collapsed-failed`, `one-object`, `exp
 #### 6.16.9 Tool row
 
 - `row.dense` minimum height, padding `pad.default`, gap `space.2`, `small` `muted`; `hover` ground on hover (over `motion.hover`), a 1px `accent` outline at -1px on focus. A row with detail is a `button` with `aria-expanded` and a chevron at its end.
-- **Label** (one line, ellipsis): verb + source: title (`muted`), then the key arguments (`ink`), then extra information after " · " (`faint`). The title is the tool's declared `title` (e.g. the MCP `title`), else its key; the source is the connector's or the extension's name (builtins have none); the key arguments are the tool's declared `keyArgs` (else the first string argument). A shell row (`sandbox_bash`) shows the `description` the model wrote instead of verb and title. Edits add "+a −b" as the extra.
+- **Label** (one line, ellipsis), as the Claude Code VS Code extension draws it: the **name** in bold (700), then the key-argument preview (`muted`), then extra information after " · " (`faint`).
+  - **Name**: a builtin's tool name as is (`Bash`, `Read`, `Edit`, `Grep` …), untranslated, as a proper noun; a connector tool's connector display name, or an extension tool's plugin display name, followed by its local tool name in brackets (`Acme 工单 [search_tickets]`). The brackets show the local name, never the declared `title`: the title is the row's tooltip (`title` attribute).
+  - **Preview**: a shell row (`Bash`) shows the `description` the model wrote; every other row its key argument: the tool's declared `keyArgs` (else the first string argument; Read / Write / Edit the path, Glob / Grep the pattern, Skill the skill). The preview is its first line, cut at 80 characters with "…".
+  - Edits add "+a −b" as the extra, unless the edit could not be diffed (a `Write` over a binary or very large file: `truncated` without hunks), which shows no line counts and no diff.
 - **Status**: running — a `spinner` before the label, the label `ink`, the elapsed time in `faint` at the end ("12 秒" / "12s", "1 分 03 秒" / "1m 03s"); done — no mark; failed — "失败" in `fail` and " · <the error's first line>" in `muted` (a shell command with a non-zero exit or a timeout is a failure); blocked by a policy hook — failed, "被扩展「<extension>」拒绝" / `Denied by extension "<extension>"`.
-- **Expanded detail**: padding 0 `space.3` `space.3`, gap `space.2`, no IN / OUT labels:
-  - inputs as a key / value grid (columns `max-content` and the rest, gap `space.1` × `space.3`, keys `faint`, values `ink`, breaking anywhere); a command as `$ <command>` (the `$` `faint`, the command `ink`);
-  - the output: `bg` ground, radius `sm`, padding `pad.default`, `small` `ink`, wrapped, at most `layout.tool-output` high and scrolling; for a failure the full error text;
-  - a footer (`micro` `faint`, gap `space.3`): the duration ("2.1 秒" / "2.1s") and "复制输出" / "Copy output"; for a large output instead "输出 82 KB，已显示前 4 KB" / "Output 82 KB, showing first 4 KB" and "查看全文" / "View full text", which reads the archive (`GET …/outputs/:outputId`).
+- **Expanded detail**: padding 0 `space.3` `space.3`, gap `space.2`, two labelled blocks, each a label column (`micro` 700 `faint`, "IN" / "OUT" in English, "输入" / "输出" in Chinese, `4ch` wide, gap `space.2`) beside its body:
+  - **IN**: the command for a shell row as `$ <command>` (the `$` `faint`, the command `ink`); else the inputs as a key / value grid (columns `max-content` and the rest, gap `space.1` × `space.3`, keys `faint`, values `ink`, breaking anywhere). Omitted when there is no input;
+  - **OUT**: the output: `bg` ground, radius `sm`, padding `pad.default`, `small` `ink`, wrapped, folded at `layout.tool-output` high and scrolling; for a failure the full error text; then a footer (`micro` `faint`, gap `space.3`): the duration ("2.1 秒" / "2.1s") and "复制输出" / "Copy output"; for a large output instead "输出 82 KB，已显示前 4 KB" / "Output 82 KB, showing first 4 KB" and "查看全文" / "View full text", which reads the archive (`GET …/outputs/:outputId`). Omitted while there is no output yet.
+  - An edit's expanded form stays its diff (§6.16.10), without labels.
 
 <!-- states: tool-row -->
 States: `default`, `hover`, `focus`, `running`, `failed`, `expanded-command`, `expanded-connector`, `expanded-failed`, `large-output`, `hook-denied`
@@ -1129,6 +1132,8 @@ States: `default`, `hover`, `focus`, `running`, `failed`, `expanded-command`, `e
 | tool-row | default | column-gap | space.2 |
 | tool-row | default | font-size | type.small |
 | tool-row | default | color | color.muted |
+| tool-name | default | font-weight | 700 |
+| tool-name | default | color | color.ink |
 | tool-row[data-ref-forced=true] | hover | background-color | color.hover |
 | tool-row[data-ref-forced=true] | focus | outline-color | color.accent |
 | tool-row[data-ref-forced=true] | focus | outline-width | 1 |
@@ -1147,6 +1152,9 @@ States: `default`, `hover`, `focus`, `running`, `failed`, `expanded-command`, `e
 | kv | expanded-connector | row-gap | space.1 |
 | kv-key | expanded-connector | color | color.faint |
 | kv-value | expanded-connector | color | color.ink |
+| tool-io-label | expanded-connector | color | color.faint |
+| tool-io-label | expanded-connector | font-size | type.micro |
+| tool-io-label | expanded-connector | font-weight | 700 |
 | fail-word | expanded-failed | color | color.fail |
 | tool-output | expanded-failed | background-color | color.bg |
 | tool-footer | large-output | color | color.faint |
@@ -1509,11 +1517,11 @@ States: `image`, `text`, `markdown`, `csv`, `none`, `failed`
 - Error messages state the cause and give an actionable next step; include the error code and request ID for troubleshooting.
 - **Files, not artifacts**: what an agent delivers from its sandbox is "文件" / "files" in UI copy, never "产出物" / "artifacts" (reserved for project C's Artifacts). The kernel identifiers (`artifact_created`, `/artifacts/:id/download`) stay as they are.
 - **Untitled conversations** read "未命名会话 · MM-DD HH:mm" / "Untitled conversation · MM-DD HH:mm" (the start time) until a title exists.
-- **Tool verbs** (§6.16.8, §6.16.9), as the signed reference set B draws them. Counts are Arabic numerals; failures append "（N 个失败）" / " (N failed)" in `fail`; mixed kinds join with "，" / ", " in the fixed order command, tools (connector, tool, search, meta), read, edit:
+- **Tool verbs** (§6.16.8; rows name the tool instead, §6.16.9), as the signed reference set B draws them. Counts are Arabic numerals; failures append "（N 个失败）" / " (N failed)" in `fail`; mixed kinds join with "，" / ", " in the fixed order command, tools (connector, tool, search, meta), read, edit:
 
   | Kind | Row verb zh / en | Group count zh / en | Running header zh / en |
   |---|---|---|---|
-  | command | 已运行 / Ran (a shell row shows the model's `description` instead) | 已运行 N 个命令 / Ran N commands | 正在运行命令 / Running command |
+  | command | 已运行 / Ran | 已运行 N 个命令 / Ran N commands | 正在运行命令 / Running command |
   | read | 已读取 / Read | 已读取 N 个文件 / Read N files (one path: 已读取 <path> / Read <path>) | 正在读取文件 / Reading file |
   | edit | 已修改 / Edited | 已修改 N 个文件 · +a −b / Edited N files · +a −b (one path: 已修改 <path>) | 正在修改文件 / Editing file |
   | search | 已搜索 / Searched | counted with tools | 正在使用工具 / Using tool |

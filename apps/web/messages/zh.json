@@ -924,7 +924,7 @@
       "nameLabel": "名称",
       "nameRequired": "请填写名称。",
       "slugLabel": "Slug",
-      "slugHelp": "小写字母、数字与下划线，最长 24 位；留空则由名称推导。",
+      "slugHelp": "小写字母、数字与下划线，最长 24 位；留空则由名称推导。slug 越短，工具名可用的长度越长；工具键最长 64 个字符。",
       "urlLabel": "端点 URL",
       "urlHelp": "MCP 端点，例如 https://example.com/mcp",
       "urlRequired": "请填写端点 URL。",
@@ -1169,6 +1169,7 @@
       "columns": {
         "agent": "Agent",
         "tool": "工具",
+        "key": "工具键",
         "created": "授权时间",
         "actions": "操作"
       },
@@ -1571,6 +1572,7 @@
       },
       "tool": {
         "title": "工具调用 · {name}",
+        "key": "工具键",
         "result": "结果",
         "noResult": "（没有结果）",
         "error": "出错",
@@ -2914,7 +2916,7 @@
         "confirmStep": "确认",
         "name": "连接器名称",
         "slug": "标识（slug）",
-        "slugHelp": "工具名的前缀：小写字母开头，小写字母、数字与下划线，最长 24 位；留空则由名称推导。",
+        "slugHelp": "工具名的前缀：小写字母开头，小写字母、数字与下划线，最长 24 位；留空则由名称推导。slug 越短，工具名可用的长度越长；工具键最长 64 个字符。",
         "endpoint": "端点",
         "endpointHint": "只读的字段由模板决定，不能修改。",
         "credential": "凭据",

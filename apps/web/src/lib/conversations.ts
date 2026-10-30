@@ -620,9 +620,11 @@ export interface ToolInfo {
   /** True exactly for the builtin tools that run in the conversation's sandbox. */
   sandbox: boolean;
   keyArgs: string[];
+  /** A connector or extension tool's local name (`mcp__crm__delete` -> `delete`); else null. */
+  tool: string | null;
   source:
     | { kind: "builtin" }
-    | { kind: "extension"; name: string }
+    | { kind: "extension"; name: string; displayName: { zh: string; en: string } }
     | { kind: "connector"; id: string; name: string }
     | { kind: "unknown" };
 }

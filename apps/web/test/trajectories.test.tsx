@@ -229,7 +229,7 @@ describe("trajectorySpans", () => {
       startMs: 4000,
       durationMs: 250,
       status: "ok",
-      label: "mcp__fixture__delete_item",
+      label: "fixture [delete_item]",
     });
     // 审批等待 = decidedAt − requestedAt
     expect(by.get("approval:r1:ap1")).toMatchObject({
@@ -376,7 +376,7 @@ describe("轨迹详情（TracePage）", () => {
       expect(within(d).getByText("mcp__fixture__delete_item, AskUserQuestion")).toBeTruthy();
 
       // 工具调用：参数、结果、耗时、审批链
-      await user.click(within(list).getByText("mcp__fixture__delete_item"));
+      await user.click(within(list).getByText("fixture [delete_item]"));
       const tool = detail();
       expect(within(tool).getByText(/"id": "x1"/)).toBeTruthy();
       expect(within(tool).getByText("deleted x1")).toBeTruthy();
@@ -429,7 +429,7 @@ describe("轨迹详情（TracePage）", () => {
       const list = await screen.findByRole("tree", { name: m.detail.waterfall });
       const detail = () => screen.getByRole("region", { name: m.detail.region });
       const user = userEvent.setup();
-      await user.click(within(list).getByText("mcp__fixture__delete_item"));
+      await user.click(within(list).getByText("fixture [delete_item]"));
       expect(within(detail()).getByText(m.detail.hook.title)).toBeTruthy();
       expect(within(detail()).getByText("guard")).toBeTruthy();
       expect(within(detail()).getByText(m.detail.hook.causes.deny)).toBeTruthy();

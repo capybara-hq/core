@@ -281,7 +281,7 @@ describe("sub-agent cards in an IM thread", { timeout: 60_000 }, () => {
     expect(approval).toEqual({ id: card.id, conversation_id: child, requested_for: ownerId });
     expect(card).toMatchObject({
       kind: "approval",
-      toolName: "echo",
+      toolName: "mem-connector [echo]",
       state: "pending",
       webUrl: `https://cap.example/chat/${conv}?subagent=${child}`,
     });

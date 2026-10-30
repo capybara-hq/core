@@ -1,6 +1,7 @@
 import {
   connectorToolKey,
   extensionToolKey,
+  type LocalizedName,
   parseToolKey,
   type ToolSpec,
 } from "@capybara-hq/plugin-sdk";
@@ -11,6 +12,7 @@ import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { UUID_RE } from "../ui/registry.js";
 import { BUILTIN_TOOL_KINDS, SANDBOX_TOOL_NAMES } from "./builtin-names.js";
+import { pluginDisplayNames } from "./display-names.js";
 import { ToolRegistry } from "./registry.js";
 
 /**
@@ -30,9 +32,15 @@ export interface ToolInfo {
   sandbox: boolean;
   /** The declared key arguments (`ToolSpec.keyArgs`), or []. */
   keyArgs: string[];
+  /**
+   * The local tool name parsed from a connector or extension key (`mcp__crm__delete` -> `delete`),
+   * shown in brackets after the source's display name; null for builtins and unparsable keys.
+   */
+  tool: string | null;
   source:
     | { kind: "builtin" }
-    | { kind: "extension"; name: string }
+    /** `displayName`: the plugin's catalog display name, else its name. */
+    | { kind: "extension"; name: string; displayName: LocalizedName }
     | { kind: "connector"; id: string; name: string }
     /** No tool with this key exists now (removed connector, unloaded extension, …). */
     | { kind: "unknown" };
@@ -101,6 +109,17 @@ export async function toolInfo(
           .where("c.slug", "in", slugs)
           .execute();
   const connectorTools = new Map(connectorRows.map((r) => [connectorToolKey(r.slug, r.tool), r]));
+  const displayNames = await pluginDisplayNames(
+    deps.db,
+    unique.flatMap((k) => {
+      const e = extensions.get(k);
+      return e ? [e.plugin] : [];
+    }),
+  );
+  const localTool = (key: string): string | null => {
+    const p = parseToolKey(key);
+    return p && p.kind !== "builtin" ? p.tool : null;
+  };
 
   return unique.map((key): ToolInfo => {
     const b = builtins.get(key);
@@ -110,6 +129,7 @@ export async function toolInfo(
         ...display(b),
         kind: BUILTIN_TOOL_KINDS[key] ?? "tool",
         sandbox: (SANDBOX_TOOL_NAMES as readonly string[]).includes(key),
+        tool: null,
         source: { kind: "builtin" },
       };
     }
@@ -120,7 +140,12 @@ export async function toolInfo(
         ...display(e.spec),
         kind: "tool",
         sandbox: false,
-        source: { kind: "extension", name: e.plugin },
+        tool: e.spec.name,
+        source: {
+          kind: "extension",
+          name: e.plugin,
+          displayName: displayNames.get(e.plugin) ?? { zh: e.plugin, en: e.plugin },
+        },
       };
     const c = connectorTools.get(key);
     if (c) {
@@ -130,6 +155,7 @@ export async function toolInfo(
         ...display(c.spec as ToolSpec),
         kind: "connector",
         sandbox: false,
+        tool: c.tool,
         source: { kind: "connector", id: c.id, name: c.name },
       };
     }
@@ -139,6 +165,7 @@ export async function toolInfo(
       kind: "tool",
       sandbox: false,
       keyArgs: [],
+      tool: localTool(key),
       source: { kind: "unknown" },
     };
   });

@@ -19,10 +19,16 @@ let seq = 0;
 const row = (over: Partial<ToolRowData> = {}): ToolRowData => ({
   id: `t${++seq}`,
   kind: "connector",
-  title: "搜索工单",
+  name: "Acme",
+  tool: "search_tickets",
   status: "done",
   ...over,
 });
+/** A builtin row: its name, no brackets. */
+const builtin = (name: string, over: Partial<ToolRowData> = {}): ToolRowData => {
+  const { tool: _, ...r } = row(over);
+  return { ...r, name };
+};
 const many = (n: number, over: Partial<ToolRowData> = {}) =>
   Array.from({ length: n }, () => row(over));
 
@@ -93,10 +99,44 @@ describe("summarizeTools (spec §7 verb table)", () => {
 });
 
 describe("ToolRow (§6.16.9)", () => {
-  it("a done row has no status mark", () => {
-    const { container } = wrap(<ToolRow row={row({ source: "Acme", keyArg: "#反馈" })} />);
+  it("a connector row: bold display name and [tool], the title as tooltip, then the key argument", () => {
+    const { container } = wrap(<ToolRow row={row({ tooltip: "搜索工单", keyArg: "#反馈" })} />);
     const r = container.querySelector('[data-part="tool-row"]') as HTMLElement;
-    expect(r.textContent).toBe("已使用 Acme: 搜索工单 #反馈");
+    expect(r.textContent).toBe("Acme [search_tickets] #反馈");
+    const name = container.querySelector('[data-part="tool-name"]') as HTMLElement;
+    expect(name.textContent).toBe("Acme [search_tickets]");
+    expect(container.querySelector('[data-part="tool-label"]')?.getAttribute("title")).toBe(
+      "搜索工单",
+    );
+    // the title never takes the brackets' place
+    expect(r.textContent).not.toContain("搜索工单");
+  });
+
+  it("a builtin row names the tool untranslated, in both locales", () => {
+    for (const locale of ["zh", "en"] as const) {
+      const { container } = wrap(
+        <ToolRow row={builtin("Read", { kind: "read", keyArg: "a.md" })} />,
+        locale,
+      );
+      expect(container.querySelector('[data-part="tool-name"]')?.textContent).toBe("Read");
+      expect(container.textContent).toBe("Read a.md");
+      cleanup();
+    }
+  });
+
+  it("the key argument preview is its first line, cut at 80 characters with …", () => {
+    const long = "x".repeat(120);
+    const { container } = wrap(<ToolRow row={row({ keyArg: long })} />);
+    expect(container.querySelector('[data-part="key-arg"]')?.textContent).toBe(
+      `${"x".repeat(80)}…`,
+    );
+    cleanup();
+    const multi = wrap(<ToolRow row={row({ keyArg: "first line\nsecond" })} />).container;
+    expect(multi.querySelector('[data-part="key-arg"]')?.textContent).toBe("first line…");
+  });
+
+  it("a done row has no status mark", () => {
+    const { container } = wrap(<ToolRow row={row({ keyArg: "#反馈" })} />);
     expect(container.querySelector('[data-part="fail-word"]')).toBeNull();
     expect(container.querySelector('[data-part="spinner"]')).toBeNull();
     expect(container.querySelector('[data-part="key-arg"]')?.textContent).toBe("#反馈");
@@ -104,10 +144,12 @@ describe("ToolRow (§6.16.9)", () => {
     expect(screen.queryByRole("button")).toBeNull();
   });
 
-  it("a shell row shows the description instead of verb and title", () => {
-    wrap(<ToolRow row={row({ kind: "command", title: "Bash", description: "检查配置" })} />);
-    expect(screen.getByText("检查配置")).toBeTruthy();
-    expect(screen.queryByText(/Bash/)).toBeNull();
+  it("a shell row shows Bash in bold, then the description", () => {
+    const { container } = wrap(
+      <ToolRow row={builtin("Bash", { kind: "command", description: "检查配置" })} />,
+    );
+    expect(container.querySelector('[data-part="tool-name"]')?.textContent).toBe("Bash");
+    expect(container.textContent).toBe("Bash 检查配置");
   });
 
   it("failed shows 失败 and the error's first line", () => {
@@ -189,11 +231,34 @@ describe("ToolRow (§6.16.9)", () => {
     expect(container.querySelector('[data-part="tool-command"]')?.textContent).toBe(
       "$ python a.py",
     );
+    // IN holds the command, OUT the output
+    const labels = [...container.querySelectorAll('[data-part="tool-io-label"]')].map(
+      (l) => l.textContent,
+    );
+    expect(labels).toEqual(["输入", "输出"]);
+    const io = [...container.querySelectorAll('[data-part="tool-io"]')];
+    expect(io[0]?.querySelector('[data-part="tool-command"]')).not.toBeNull();
+    expect(io[1]?.querySelector('[data-part="tool-output"]')).not.toBeNull();
     expect(container.querySelector('[data-part="tool-output"]')?.textContent).toBe("done");
     const footer = container.querySelector('[data-part="tool-footer"]');
     expect(footer?.textContent).toContain("2.1 秒");
     await userEvent.click(screen.getByRole("button", { name: "复制输出" }));
     expect(copy).toHaveBeenCalled();
+  });
+
+  it("IN / OUT read IN and OUT in English; IN is omitted without input", () => {
+    const { container } = wrap(
+      <ToolRow row={row({ detail: { input: [["id", "7"]], output: "{}" } })} open />,
+      "en",
+    );
+    expect(
+      [...container.querySelectorAll('[data-part="tool-io-label"]')].map((l) => l.textContent),
+    ).toEqual(["IN", "OUT"]);
+    cleanup();
+    const outOnly = wrap(<ToolRow row={row({ detail: { output: "{}" } })} open />, "en").container;
+    expect(
+      [...outOnly.querySelectorAll('[data-part="tool-io-label"]')].map((l) => l.textContent),
+    ).toEqual(["OUT"]);
   });
 
   it("uncontrolled rows toggle themselves", async () => {
@@ -253,9 +318,9 @@ describe("ToolRow (§6.16.9)", () => {
 
   it("edits show +a −b as the extra", () => {
     const { container } = wrap(
-      <ToolRow row={row({ kind: "edit", title: "", keyArg: "a.py", added: 2, removed: 1 })} />,
+      <ToolRow row={builtin("Edit", { kind: "edit", keyArg: "a.py", added: 2, removed: 1 })} />,
     );
-    expect(container.textContent).toBe("已修改 a.py · +2 −1");
+    expect(container.textContent).toBe("Edit a.py · +2 −1");
   });
 });
 
@@ -263,11 +328,11 @@ describe("ToolGroup (§6.16.8)", () => {
   it("a single-row group renders one line with no box", async () => {
     const { container } = wrap(
       <ToolGroup
-        rows={[row({ kind: "read", title: "", keyArg: "a.md", detail: { output: "x" } })]}
+        rows={[builtin("Read", { kind: "read", keyArg: "a.md", detail: { output: "x" } })]}
       />,
     );
     const line = container.querySelector('[data-part="tool-line"]') as HTMLElement;
-    expect(line.textContent).toBe("已读取 a.md");
+    expect(line.textContent).toBe("Read a.md");
     expect(container.querySelector('[data-part="tool-box"]')).toBeNull();
     await userEvent.click(line);
     expect(container.querySelector('[data-part="tool-box"]')).not.toBeNull();

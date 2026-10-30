@@ -101,8 +101,8 @@ describe("收件箱（InboxPage）", () => {
       const { container } = renderPage(<InboxRoute />, { locale });
       expect(container.querySelector('[data-template="InboxPage"]')).not.toBeNull();
       const table = await screen.findByRole("table", { name: m.inbox.listLabel });
-      expect(within(table).getByText("Fixture · tool_a")).toBeTruthy();
-      expect(within(table).getByText("Fixture · tool_b")).toBeTruthy();
+      expect(within(table).getByText("Fixture [tool_a]")).toBeTruthy();
+      expect(within(table).getByText("Fixture [tool_b]")).toBeTruthy();
       // 默认选中第一条
       const detail = container.querySelector('[data-approval-id="a"]') as HTMLElement;
       expect(detail).not.toBeNull();
@@ -142,7 +142,7 @@ describe("收件箱（InboxPage）", () => {
     const { container } = renderPage(<InboxRoute />, { locale, session: { refreshPending } });
     const user = userEvent.setup();
     const table = await screen.findByRole("table", { name: m.inbox.listLabel });
-    await user.click(within(table).getByText("Fixture · tool_b"));
+    await user.click(within(table).getByText("Fixture [tool_b]"));
     expect(container.querySelector('[data-approval-id="b"]')).not.toBeNull();
     await user.click(screen.getByLabelText(new RegExp(m.approval.scope.always)));
     const row = screen.getByRole("region", {
@@ -153,7 +153,7 @@ describe("收件箱（InboxPage）", () => {
       decision: "approve",
       scope: "always",
     });
-    await vi.waitFor(() => expect(screen.queryByText("Fixture · tool_b")).toBeNull());
+    await vi.waitFor(() => expect(screen.queryByText("Fixture [tool_b]")).toBeNull());
     expect(calls.filter((c) => c.url.endsWith("/inbox"))).toHaveLength(2);
     expect(await screen.findByText(m.inbox.approved)).toBeTruthy();
     // 顶栏的待处理数立即重读，不等 30 秒轮询
@@ -220,7 +220,7 @@ describe("收件箱：技能变更", () => {
       });
       const { container } = renderPage(<InboxRoute />, { locale });
       const table = await screen.findByRole("table", { name: m.inbox.listLabel });
-      expect(within(table).getByText("Fixture · tool_a")).toBeTruthy();
+      expect(within(table).getByText("Fixture [tool_a]")).toBeTruthy();
       await userEvent
         .setup()
         .click(within(table).getByText(`${m.inbox.skillChange.label} · notes-style`));
@@ -344,11 +344,13 @@ describe("已记住的授权（SettingsPage）", () => {
     expect(
       screen.getByRole("link", { name: m.connections.nav.grants }).getAttribute("aria-current"),
     ).toBe("page");
-    expect(await screen.findByText("mcp__fixture__delete_item")).toBeTruthy();
+    // the label, with the raw key kept as secondary text
+    expect(await screen.findByText("fixture [delete_item]")).toBeTruthy();
+    expect(screen.getByText("mcp__fixture__delete_item")).toBeTruthy();
     await userEvent.setup().click(
       screen.getByRole("button", {
         name: m.connections.grants.revokeLabel
-          .replace("{tool}", "mcp__fixture__delete_item")
+          .replace("{tool}", "fixture [delete_item]")
           .replace("{agent}", "Echo agent"),
       }),
     );

@@ -45,6 +45,7 @@ const INFO: ToolInfo = {
   kind: "connector",
   sandbox: false,
   keyArgs: ["id"],
+  tool: "delete_item",
   source: { kind: "connector", id: "app1", name: "Fixture" },
 };
 
@@ -72,7 +73,7 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
       locale: "zh",
     });
     await screen.findByRole("button", { name: "本会话内都批准" });
-    expect(screen.getByText("Fixture: Delete item")).toBeTruthy();
+    expect(screen.getByText("Fixture [delete_item]")).toBeTruthy();
     expect(screen.getByText("mcp__fixture__delete_item")).toBeTruthy();
     const keys = [...container.querySelectorAll('[data-part="kv-key"]')].map((k) => k.textContent);
     expect(keys).toEqual(["id", "reason"]);
@@ -94,7 +95,7 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
     renderPage(<ApprovalCard orgId="o1" item={item()} info={INFO} />, { locale: "zh" });
     await userEvent.setup().click(await screen.findByRole("button", { name: label }));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ decision: "approve", scope });
-    expect(await screen.findByText(/你 批准了 Fixture: Delete item/)).toBeTruthy();
+    expect(await screen.findByText(/你 批准了 Fixture \[delete_item\]/)).toBeTruthy();
   });
 
   it("a role escalation offers only once; deny sends the reason", async () => {
@@ -130,7 +131,7 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
       expect(
         await screen.findByText(
           m.approval.otherApproverFor
-            .replace("{tool}", "Fixture: Delete item")
+            .replace("{tool}", "Fixture [delete_item]")
             .replace("{key}", "mcp__fixture__delete_item"),
         ),
       ).toBeTruthy();
@@ -154,7 +155,7 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
       />,
       { locale: "zh", me: ME },
     );
-    expect(screen.getByText(/someone 拒绝了 Fixture: Delete item/)).toBeTruthy();
+    expect(screen.getByText(/someone 拒绝了 Fixture \[delete_item\]/)).toBeTruthy();
     expect(screen.getByText(/「too risky」/)).toBeTruthy();
     expect(calls).toHaveLength(0);
   });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   answerSummary,
+  approvalToolName,
   connectUrl,
   INPUT_PREVIEW_MAX,
   inputPreview,
@@ -17,6 +18,31 @@ import {
 } from "../../src/channels/outbound.js";
 
 describe("IM 卡片内容", () => {
+  it("an approval card names the tool like the web: <display name> [<tool>], builtins by name", () => {
+    const connector = { id: "c1", name: "CRM", slug: "crm" };
+    expect(
+      approvalToolName(
+        { toolKey: "mcp__crm__delete", toolName: "delete", connector, extension: null },
+        "en",
+      ),
+    ).toBe("CRM [delete]");
+    const extension = { name: "todo", displayName: { zh: "待办", en: "Todo" } };
+    const ext = {
+      toolKey: "plugin__todo__write",
+      toolName: "plugin__todo__write",
+      connector: null,
+      extension,
+    };
+    expect(approvalToolName(ext, "zh")).toBe("待办 [write]");
+    expect(approvalToolName(ext, "en")).toBe("Todo [write]");
+    expect(
+      approvalToolName(
+        { toolKey: "Bash", toolName: "Bash", connector: null, extension: null },
+        "zh",
+      ),
+    ).toBe("Bash");
+  });
+
   it("参数预览：凭据样式的键（任意层级）打码，截断到 500 字符", () => {
     const masked = maskSecrets({
       q: "weather",

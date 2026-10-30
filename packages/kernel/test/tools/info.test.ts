@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -188,6 +189,7 @@ describe("GET /conversations/:id/tools", () => {
       kind: "command",
       sandbox: true,
       keyArgs: ["command"],
+      tool: null,
       source: { kind: "builtin" },
     });
     expect(t.Read?.keyArgs).toEqual(["file_path"]);
@@ -231,6 +233,7 @@ describe("GET /conversations/:id/tools", () => {
         kind: "connector",
         sandbox: false,
         keyArgs: ["query", "channel"],
+        tool: "search",
         source: { kind: "connector", id: connectorId, name: "Acme Chat" },
       },
       {
@@ -239,6 +242,7 @@ describe("GET /conversations/:id/tools", () => {
         kind: "connector",
         sandbox: false,
         keyArgs: [],
+        tool: "post",
         source: { kind: "connector", id: connectorId, name: "Acme Chat" },
       },
     ]);
@@ -287,8 +291,42 @@ describe("GET /conversations/:id/tools", () => {
       kind: "tool",
       sandbox: false,
       keyArgs: ["text"],
-      source: { kind: "extension", name: "mem-connector" },
+      tool: "echo",
+      // no catalog item: the plugin name stands in for its display name
+      source: {
+        kind: "extension",
+        name: "mem-connector",
+        displayName: { zh: "mem-connector", en: "mem-connector" },
+      },
     });
+  });
+
+  it("an extension tool is named by its plugin's catalog display name", async () => {
+    const { req, orgId, conversationId } = await setup();
+    await db
+      .insertInto("catalog_items")
+      .values({
+        id: randomUUID(),
+        name: "mem-connector",
+        package_name: "@acme/plugin-mem-connector",
+        publisher: "Acme",
+        display_name: JSON.stringify({ zh: "内存连接器", en: "Mem Connector" }),
+        description: "d",
+        latest_version: "1.0.0",
+        policy: "allow",
+      })
+      .execute();
+    try {
+      const res = await tools(req, orgId, conversationId, ["plugin__mem-connector__echo"]);
+      expect(res.statusCode, res.body).toBe(200);
+      expect(byKey(res)["plugin__mem-connector__echo"]?.source).toEqual({
+        kind: "extension",
+        name: "mem-connector",
+        displayName: { zh: "内存连接器", en: "Mem Connector" },
+      });
+    } finally {
+      await db.deleteFrom("catalog_items").where("name", "=", "mem-connector").execute();
+    }
   });
 
   it("an unknown key comes back as a plain tool; repeated keys once, in request order", async () => {
@@ -307,6 +345,7 @@ describe("GET /conversations/:id/tools", () => {
         kind: "tool",
         sandbox: false,
         keyArgs: [],
+        tool: "x",
         source: { kind: "unknown" },
       },
       {
@@ -315,6 +354,7 @@ describe("GET /conversations/:id/tools", () => {
         kind: "tool",
         sandbox: false,
         keyArgs: [],
+        tool: null,
         source: { kind: "unknown" },
       },
       expect.objectContaining({ key: "AskUserQuestion", kind: "meta" }),

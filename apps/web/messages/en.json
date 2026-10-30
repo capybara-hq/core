@@ -924,7 +924,7 @@
       "nameLabel": "Name",
       "nameRequired": "Enter a name.",
       "slugLabel": "Slug",
-      "slugHelp": "Lowercase letters, digits and underscores, up to 24 characters. Leave empty to derive it from the name.",
+      "slugHelp": "Lowercase letters, digits and underscores, up to 24 characters. Leave empty to derive it from the name. A shorter slug leaves room for longer tool names; a tool key is at most 64 characters.",
       "urlLabel": "Endpoint URL",
       "urlHelp": "The MCP endpoint, for example https://example.com/mcp",
       "urlRequired": "Enter the endpoint URL.",
@@ -1169,6 +1169,7 @@
       "columns": {
         "agent": "Agent",
         "tool": "Tool",
+        "key": "Tool key",
         "created": "Since",
         "actions": "Actions"
       },
@@ -1571,6 +1572,7 @@
       },
       "tool": {
         "title": "Tool call · {name}",
+        "key": "Tool key",
         "result": "Result",
         "noResult": "(no result)",
         "error": "Error",
@@ -2914,7 +2916,7 @@
         "confirmStep": "Confirm",
         "name": "Connector name",
         "slug": "Slug",
-        "slugHelp": "Prefix of the tool names: starts with a lowercase letter, lowercase letters, digits and underscores, at most 24 characters; empty derives it from the name.",
+        "slugHelp": "Prefix of the tool names: starts with a lowercase letter, lowercase letters, digits and underscores, at most 24 characters; empty derives it from the name. A shorter slug leaves room for longer tool names; a tool key is at most 64 characters.",
         "endpoint": "Endpoint",
         "endpointHint": "Read-only fields are set by the template and cannot be changed.",
         "credential": "Credentials",

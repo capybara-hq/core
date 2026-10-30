@@ -348,7 +348,7 @@ describe("M4 第一段验收（双副本）", () => {
     );
     expect(cardMsg.target).toEqual({ chatId: "grp-ops", chatType: "group", threadId: "g1" });
     const card = cardOf(cardMsg) as Json;
-    expect(card).toMatchObject({ state: "pending", toolName: "post_announcement" });
+    expect(card).toMatchObject({ state: "pending", toolName: "fake-im [post_announcement]" });
     expect(String(card.inputPreview)).toContain("Office closed on Friday");
     const approvalId = card.id as string;
     const approval = () =>

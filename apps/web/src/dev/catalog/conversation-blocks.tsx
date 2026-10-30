@@ -225,7 +225,6 @@ export function toRow(
   t: FixtureTool,
   o: { truncated?: boolean; blockedBy?: string } = {},
 ): ToolRowData {
-  const shell = t.kind === "command" && t.title !== "";
   const diff = fixtureDiff(t, o.truncated);
   const detail: NonNullable<ToolRowData["detail"]> = {
     ...(t.input ? { input: t.input } : {}),
@@ -237,10 +236,11 @@ export function toRow(
   return {
     id: t.id,
     kind: t.kind,
-    title: shell ? "" : t.title,
+    name: t.name,
     status: t.status,
-    ...(shell ? { description: t.title } : {}),
-    ...(t.source ? { source: t.source } : {}),
+    ...(t.tool ? { tool: t.tool } : {}),
+    ...(t.tooltip ? { tooltip: t.tooltip } : {}),
+    ...(t.description ? { description: t.description } : {}),
     ...(t.keyArg ? { keyArg: t.keyArg } : {}),
     ...(t.extra ? { extra: t.extra } : {}),
     ...(t.status === "running" ? { startedAt: NOW - 12_000 } : {}),

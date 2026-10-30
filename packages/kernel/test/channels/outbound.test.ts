@@ -452,7 +452,7 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
     expect(card).toMatchObject({
       kind: "approval",
       id: approvalId,
-      toolName: "echo",
+      toolName: "mem-connector [echo]",
       agentName: "Helper",
       state: "pending",
       scopes: ["once", "session", "always"],

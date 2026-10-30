@@ -576,8 +576,9 @@ function SubagentPanel() {
           {
             id: "sub_current",
             kind: "connector",
-            source: "Acme 文档",
-            title: "搜索文件",
+            name: "Acme 文档",
+            tool: "search_files",
+            tooltip: "搜索文件",
             keyArg: SP.current,
             status: "running",
           },
@@ -664,7 +665,7 @@ function thread(kind: "main" | "file" | "subagent"): ReactNode {
           {
             id: "main_current",
             kind: "command",
-            title: "",
+            name: "Bash",
             description: "正在核对总账",
             status: "running",
             startedAt: NOW - ms(C.stats.elapsed),

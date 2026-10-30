@@ -19,6 +19,8 @@ export interface Approval {
   /** 来源内的工具原名（连接器工具为连接器里的名字）。 */
   toolName: string;
   connector: { id: string; name: string; slug: string } | null;
+  /** An extension tool's plugin and its display name. */
+  extension?: { name: string; displayName: { zh: string; en: string } } | null;
   agent: { id: string; name: string };
   input: unknown;
   /** 指定处理人；为 null 时按角色升级（只能「仅本次」）。 */
@@ -75,7 +77,7 @@ export const decideApproval = (
   id: string,
   body: { decision: "approve" | "deny"; scope?: ApprovalScope; note?: string; reason?: string },
 ) =>
-  apiFetch<{ approval: Omit<Approval, "toolName" | "connector" | "agent"> }>(
+  apiFetch<{ approval: Omit<Approval, "toolName" | "connector" | "extension" | "agent"> }>(
     `${base(orgId)}/approvals/${encodeURIComponent(id)}/decision`,
     { method: "POST", body: JSON.stringify(body) },
   );

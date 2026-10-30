@@ -55,6 +55,7 @@ const INFO = new Map<string, ToolInfo>([
       kind: "command",
       sandbox: true,
       keyArgs: ["command"],
+      tool: null,
       source: { kind: "builtin" },
     },
   ],
@@ -66,6 +67,7 @@ const INFO = new Map<string, ToolInfo>([
       kind: "connector",
       sandbox: false,
       keyArgs: ["query"],
+      tool: "search",
       source: { kind: "connector", id: "k1", name: "Slack" },
     },
   ],
@@ -95,7 +97,7 @@ describe("buildTimeline", () => {
     expect(kinds(out)).toEqual(["user", "tools"]);
     const row = tools(out)[0]?.rows[0]?.row;
     expect(row).toMatchObject({
-      title: "Bash",
+      name: "Bash",
       keyArg: "ls -la",
       status: "done",
       kind: "tool",
@@ -127,11 +129,37 @@ describe("buildTimeline", () => {
     expect(summarizeTools(rows, "zh")).toBe("已运行 2 个命令，已使用 1 个工具（1 个失败）");
     expect(rows[0]).toMatchObject({ description: "List files", detail: { command: "ls" } });
     expect(rows[1]).toMatchObject({ status: "failed", error: "boom" });
+    expect(rows[0]).toMatchObject({ name: "Bash" });
+    expect(rows[0]).not.toHaveProperty("tool");
     expect(rows[2]).toMatchObject({
-      title: "Search messages",
-      source: "Slack",
+      name: "Slack",
+      tool: "search",
+      tooltip: "Search messages",
       keyArg: "#feedback",
     });
+  });
+
+  it("a Write that could not be diffed (truncated, no hunks) has no +0 −0 and no diff", () => {
+    const events = [
+      user(1, "go"),
+      calls(2, [{ id: "w", name: "Write", input: { file_path: "/w/big.bin", content: "x" } }]),
+      result(3, "w", "Write", {
+        view: {
+          kind: "edit",
+          path: "/w/big.bin",
+          created: false,
+          added: 0,
+          removed: 0,
+          hunks: [],
+          truncated: true,
+        },
+      }),
+    ];
+    const row = tools(buildTimeline(events, [], new Map(), "en"))[0]?.rows[0]?.row;
+    expect(row).toMatchObject({ name: "Write", keyArg: "/w/big.bin" });
+    expect(row?.added).toBeUndefined();
+    expect(row?.removed).toBeUndefined();
+    expect(row?.detail?.diff).toBeUndefined();
   });
 
   it("prose between calls and an approval split groups; prose is never folded", () => {

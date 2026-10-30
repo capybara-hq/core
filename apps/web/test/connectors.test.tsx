@@ -626,7 +626,7 @@ describe("新建 agent：工具选择与策略收紧", () => {
         name: m.agents.form.connectorTools.replace("{name}", "Fixture"),
       }),
     );
-    const policy = await screen.findByRole("combobox", { name: "mcp__fixture__delete_item" });
+    const policy = await screen.findByRole("combobox", { name: "Fixture [delete_item]" });
     await user.selectOptions(policy, "deny");
     await user.click(screen.getByRole("button", { name: m.agents.form.submit }));
     expect(posts[0]).toMatchObject({

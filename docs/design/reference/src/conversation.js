@@ -96,12 +96,11 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
 
   // ── Tool rows and groups ───────────────────────────────────────────────
 
-  /** "verb source: title key · extra" with the key arguments in body color. */
+  /** "**name [tool]** preview · extra" (design spec §6.16.9: the Claude Code look). */
   function toolLabel(t) {
-    let lead;
-    if (t.kind === "command" && t.title) lead = t.title;
-    else lead = [t.verb, t.source ? `${t.source}: ${t.title}` : t.title].filter(Boolean).join(" ");
-    const key = t.keyArg ? ` <span class="r-em">${esc(t.keyArg)}</span>` : "";
+    const name = `<b class="r-em">${esc(t.tool ? `${t.name} [${t.tool}]` : t.name)}</b>`;
+    const preview = t.kind === "command" && t.description ? t.description : t.keyArg;
+    const key = preview ? ` ${esc(preview)}` : "";
     const extra =
       t.kind === "edit" && t.added !== undefined
         ? ` <span class="r-faint">· +${t.added} −${t.removed}</span>`
@@ -109,7 +108,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
           ? ` <span class="r-faint">· ${esc(t.extra)}</span>`
           : "";
     const fail = t.status === "failed" ? ` ${failWord}<span class="r-muted"> · ${esc(t.error)}</span>` : "";
-    return `<span class="r-tlabel">${esc(lead)}${key}${extra}${fail}</span>`;
+    return `<span class="r-tlabel"${t.tooltip ? ` title="${esc(t.tooltip)}"` : ""}>${name}${key}${extra}${fail}</span>`;
   }
 
   function toolDetail(t, o = {}) {

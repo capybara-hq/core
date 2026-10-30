@@ -15,6 +15,7 @@ import type {
   ModelRef,
   ToolInfo,
 } from "./conversations";
+import { toolLabel, toolLabelOfKey } from "./tool-label";
 
 /**
  * The conversation timeline (UI refresh B, spec §5.5–§5.8): the one pure builder that turns the
@@ -535,19 +536,18 @@ export function buildEventTimeline(
           const input = b.input;
           const rec = asRecord(input);
           const group = openGroup();
-          const builtinVerb =
-            ti?.source.kind === "builtin" && (ti.kind === "read" || ti.kind === "edit");
           const keyArg = keyArgOf(input, ti);
           const kind = ti?.kind ?? "tool";
           const command = kind === "command" && typeof rec.command === "string";
+          // Claude Code's look: "Bash", "CRM [search]"; before the info arrives, from the key
+          const label = ti ? toolLabel(ti, locale) : toolLabelOfKey(b.name);
           const row: ToolRowData = {
             id: callKey(e.runId, b.id),
             kind,
-            title: builtinVerb ? "" : (ti?.title ?? b.name),
+            name: label.name,
             status: "pending",
-            ...(ti?.source.kind === "connector" || ti?.source.kind === "extension"
-              ? { source: ti.source.name }
-              : {}),
+            ...(label.tool !== undefined ? { tool: label.tool } : {}),
+            ...(label.tooltip !== undefined ? { tooltip: label.tooltip } : {}),
             ...(keyArg !== undefined && keyArg !== "" ? { keyArg } : {}),
             ...(typeof rec.description === "string" && rec.description !== ""
               ? { description: rec.description }
@@ -612,11 +612,14 @@ export function buildEventTimeline(
         if (c.started !== null && !Number.isNaN(end)) row.durationMs = Math.max(0, end - c.started);
         if (view?.kind === "command" && view.description) row.description = view.description;
         if (view?.kind === "edit") {
-          row.added = view.added;
-          row.removed = view.removed;
           row.keyArg = view.path;
-          const diff: DiffData = { hunks: view.hunks, truncated: view.truncated };
-          row.detail = { ...row.detail, diff };
+          // A Write over a binary or very large file has no diff: no "+0 −0", no empty diff block
+          if (!(view.truncated && view.hunks.length === 0)) {
+            row.added = view.added;
+            row.removed = view.removed;
+            const diff: DiffData = { hunks: view.hunks, truncated: view.truncated };
+            row.detail = { ...row.detail, diff };
+          }
         }
         if (view?.kind === "read") {
           row.keyArg = view.path;

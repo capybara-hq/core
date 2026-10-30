@@ -13,6 +13,7 @@ import {
 import { type FileOutput, listFiles } from "../../lib/files";
 import { formatRightHash, parseRightHash, type RightTarget } from "../../lib/right-area";
 import type { TimelineEntry, TimelineTool } from "../../lib/timeline";
+import { toolLabelText } from "../../lib/tool-label";
 import {
   listUiContributions,
   type UiContributionItem,
@@ -181,7 +182,10 @@ function OutputPanel({
   return (
     <RightPanel
       title={title}
-      meta={tool.toolKey}
+      meta={toolLabelText({
+        name: tool.row.name,
+        ...(tool.row.tool !== undefined ? { tool: tool.row.tool } : {}),
+      })}
       body="flush"
       onClose={onClose}
       onFullscreen={onFullscreen}

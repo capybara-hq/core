@@ -854,13 +854,17 @@ describe("tool rows read the tool info API", () => {
               kind: "connector",
               sandbox: false,
               keyArgs: ["query"],
+              tool: "search",
               source: { kind: "connector", id: "k1", name: "Slack" },
             },
           ],
         }),
     });
     renderChat("en");
-    expect(await screen.findByText(/Slack: Search messages/)).toBeTruthy();
+    // Claude Code's look: the connector's name and the local tool, the title as the tooltip
+    const name = await screen.findByText("Slack [search]");
+    expect(name.closest('[data-part="tool-label"]')?.getAttribute("title")).toBe("Search messages");
+    expect(screen.queryByText(/Slack: Search messages/)).toBeNull();
     expect(calls.some((c) => c.url.endsWith("/tools?keys=plugin__slack__search"))).toBe(true);
   });
 });

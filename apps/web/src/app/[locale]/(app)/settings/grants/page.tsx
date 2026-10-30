@@ -7,6 +7,7 @@ import { formatTime } from "../../../../../components/ApprovalCard";
 import { OrgGate } from "../../../../../components/OrgGate";
 import { useSettingsNav } from "../../../../../components/settings-nav";
 import { listToolGrants, revokeToolGrant, type ToolGrant } from "../../../../../lib/approvals";
+import { toolLabelOfKey, toolLabelText } from "../../../../../lib/tool-label";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../lib/use-load";
 
@@ -16,6 +17,7 @@ export default function GrantsPage() {
 }
 
 const keyOf = (g: ToolGrant) => `${g.agentId}/${g.toolKey}`;
+const labelOf = (g: ToolGrant) => toolLabelText(toolLabelOfKey(g.toolKey));
 
 function Grants({ orgId }: { orgId: string }) {
   const t = useTranslations("connections");
@@ -30,7 +32,7 @@ function Grants({ orgId }: { orgId: string }) {
     setRevoking(keyOf(g));
     try {
       await revokeToolGrant(orgId, g.agentId, g.toolKey);
-      toast.success(t("grants.revoked", { tool: g.toolKey }));
+      toast.success(t("grants.revoked", { tool: labelOf(g) }));
       reload();
     } catch (e) {
       toast.error(errorMessage(e));
@@ -41,7 +43,9 @@ function Grants({ orgId }: { orgId: string }) {
 
   const columns: Column<ToolGrant>[] = [
     { key: "agent", header: t("grants.columns.agent"), cell: (g) => g.agentName },
-    { key: "tool", header: t("grants.columns.tool"), cell: (g) => g.toolKey },
+    { key: "tool", header: t("grants.columns.tool"), cell: labelOf },
+    // the raw key stays as secondary text
+    { key: "key", header: t("grants.columns.key"), tone: "muted", cell: (g) => g.toolKey },
     {
       key: "created",
       header: t("grants.columns.created"),
@@ -58,7 +62,7 @@ function Grants({ orgId }: { orgId: string }) {
           variant="danger"
           loading={revoking === keyOf(g)}
           disabled={revoking !== undefined}
-          aria-label={t("grants.revokeLabel", { tool: g.toolKey, agent: g.agentName })}
+          aria-label={t("grants.revokeLabel", { tool: labelOf(g), agent: g.agentName })}
           onClick={() => void revoke(g)}
         >
           {t("grants.revoke")}
