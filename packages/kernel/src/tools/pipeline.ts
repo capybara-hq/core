@@ -66,6 +66,7 @@ import { isAlwaysLoaded, notLoadedText } from "./builtins/tool-search.js";
 import { type ConnectorAuth, CredentialMissing, Credentials } from "./credentials.js";
 import { ToolDrift } from "./drift.js";
 import { ElicitationSession } from "./elicitation.js";
+import { legacyHint, legacyToolInput, legacyToolKey } from "./legacy-keys.js";
 import { renderResult, resolveOutputRefs, spillIfLarge, ToolOutputs } from "./outputs.js";
 import { createDecidePolicy } from "./policy.js";
 import { type QuestionRecord, QuestionsService } from "./questions.service.js";
@@ -110,9 +111,15 @@ const timeoutText = (key: string, ms: number) =>
   `Tool ${key} timed out after ${ms / 1000}s. The operation may or may not have completed; verify before retrying.`;
 const failedText = (key: string, errName: string) =>
   `Tool ${key} failed (${errName}). The operation may not have completed; check before retrying or try another approach.`;
-const unknownToolText = (name: string, keys: string[], toolSearch: boolean) =>
+const unknownToolText = (
+  name: string,
+  keys: string[],
+  toolSearch: boolean,
+  hint: string | null = null,
+) =>
   `Unknown tool "${name}". Available tools: ${keys.length === 0 ? "(none)" : keys.join(", ")}.` +
-  (toolSearch ? " Use ToolSearch to load other tools." : "");
+  (toolSearch ? " Use ToolSearch to load other tools." : "") +
+  (hint === null ? "" : ` ${hint}`);
 const unavailableText = (name: string, reason: string) =>
   `Tool "${name}" is unavailable: ${reason}.`;
 const deniedText = (key: string) => `Tool ${key} is denied by policy.`;
@@ -918,7 +925,18 @@ export class ToolPipeline {
       return undefined;
     };
 
-    const tool = resolved.tools.find((t) => t.key === call.name);
+    let tool = resolved.tools.find((t) => t.key === call.name);
+    // A call logged before the tool keys were renamed (spec 8.1): the request that issued it offered
+    // the old key. It runs as the current tool with translated input; the result keeps the logged key.
+    let legacy = false;
+    if (!tool) {
+      const next = legacyToolKey(call.name);
+      const current = next === null ? undefined : resolved.tools.find((t) => t.key === next);
+      if (current && (await this.requestToolKeys(ctx))?.has(call.name) === true) {
+        tool = current;
+        legacy = true;
+      }
+    }
     if (!tool) {
       const why =
         resolved.unavailable.find((u) => u.ref === call.name) ??
@@ -931,22 +949,27 @@ export class ToolPipeline {
         if (sent !== null) keys = keys.filter((k) => isAlwaysLoaded(k) || sent.has(k));
       }
       keys.sort();
-      return fail(unknownToolText(call.name, keys, keys.includes(TOOL_SEARCH)));
+      return fail(
+        unknownToolText(call.name, keys, keys.includes(TOOL_SEARCH), legacyHint(call.name)),
+      );
     }
+    const outKey = legacy ? call.name : tool.key;
     // ToolSearch 模式下，模型只能调用请求里带了完整定义的工具：目录里有、但发出本次调用的请求没加载 →
     // 明确错误，不自动加载（spec 5.5 / 6.3）。同一步里先 ToolSearch 再调用刚加载的工具同样报错。
-    if (resolved.toolSearch === true && !isAlwaysLoaded(tool.key)) {
+    if (!legacy && resolved.toolSearch === true && !isAlwaysLoaded(tool.key)) {
       const sent = await this.sentTools(ctx);
-      if (sent !== null && !sent.has(tool.key)) return fail(notLoadedText(tool.key), tool.key);
+      if (sent !== null && !sent.has(tool.key)) return fail(notLoadedText(tool.key), outKey);
     }
 
     let input: unknown;
     try {
-      input = await resolveOutputRefs(call.input, (id) =>
-        this.deps.outputs.load({ orgId: ctx.orgId, conversationId: ctx.conversationId }, id),
+      input = await resolveOutputRefs(
+        legacy ? legacyToolInput(call.name, call.input) : call.input,
+        (id) =>
+          this.deps.outputs.load({ orgId: ctx.orgId, conversationId: ctx.conversationId }, id),
       );
     } catch (e) {
-      if (e instanceof ToolError) return fail(e.message, tool.key);
+      if (e instanceof ToolError) return fail(e.message, outKey);
       throw e;
     }
     // 连接器工具的 schema 来自连接器（不受信任）：去掉有风险的关键字并限制大小 / 层数
@@ -954,7 +977,7 @@ export class ToolPipeline {
       untrusted: tool.source.kind === "connector",
       log: this.deps.log,
     });
-    if (invalid !== null) return fail(invalid, tool.key);
+    if (invalid !== null) return fail(invalid, outKey);
 
     const decision = await this.decide(tool, ctx.agent, {
       orgId: ctx.orgId,
@@ -967,9 +990,9 @@ export class ToolPipeline {
         ...(ctx.parent.otherAgent !== undefined && { parentAgentDiffers: ctx.parent.otherAgent }),
       }),
     });
-    if (decision === "deny") return fail(deniedText(tool.key), tool.key);
+    if (decision === "deny") return fail(deniedText(tool.key), outKey);
     if (typeof decision === "object" && "unavailable" in decision) {
-      return fail(unavailableText(tool.key, decision.unavailable), tool.key);
+      return fail(unavailableText(tool.key, decision.unavailable), outKey);
     }
     // 该调用已有审批（续跑）→ 按审批结果；没有且策略为 ask → 建审批并等待
     // （不写 tool_call_started：此时尚未开始执行）。
@@ -995,7 +1018,7 @@ export class ToolPipeline {
     }
     if (approval && approval.status !== "approved") {
       const refused = this.refusalText(approval);
-      return refused === null ? approvalWait(approval) : fail(refused, tool.key);
+      return refused === null ? approvalWait(approval) : fail(refused, outKey);
     }
     // 走到这里即放行：在（与当前定义一致的）审批下执行，否则是授权或策略放行
     const authorization: Authorization =
@@ -1018,7 +1041,7 @@ export class ToolPipeline {
         idem.hookDenied(ctx.runId, call.id),
       );
       if (prior?.type === "hook_denied") {
-        return fail(hookDeniedText(prior.payload.plugin, prior.payload.reason), tool.key);
+        return fail(hookDeniedText(prior.payload.plugin, prior.payload.reason), outKey);
       }
     }
     // payload only built when a tool hook is registered (zero overhead otherwise)
@@ -1039,7 +1062,7 @@ export class ToolPipeline {
         verdict = await hooks.run("tool.preExecute", hookBase, ctx.signal);
       } catch (e) {
         // run() rejects only when the run's signal aborted: an abort, never a deny
-        if (ctx.signal.aborted) return fail(RUN_STOPPED_TEXT, tool.key);
+        if (ctx.signal.aborted) return fail(RUN_STOPPED_TEXT, outKey);
         throw e;
       }
       if (!verdict.allowed) {
@@ -1060,7 +1083,7 @@ export class ToolPipeline {
         await this.writeResult(
           ctx,
           call.id,
-          tool.key,
+          outKey,
           { content: hookDeniedText(verdict.plugin, verdict.reason), isError: true },
           [event],
           undefined,
@@ -1078,11 +1101,11 @@ export class ToolPipeline {
       if (!parsed.success) {
         return fail(
           "Invalid agent call: pass description and prompt, and optionally subagent_type, model or resume.",
-          tool.key,
+          outKey,
         );
       }
       const r = await dispatcher.dispatch({ ctx, callId: call.id, input: parsed.data });
-      return r.kind === "refused" ? fail(r.content, tool.key) : OPEN;
+      return r.kind === "refused" ? fail(r.content, outKey) : OPEN;
     }
 
     await this.deps.eventLog.append(ctx.conversationId, [
@@ -1165,7 +1188,7 @@ export class ToolPipeline {
     await this.writeResult(
       ctx,
       call.id,
-      tool.key,
+      outKey,
       {
         content: spilled.content,
         isError: rendered.isError,
@@ -1217,6 +1240,24 @@ export class ToolPipeline {
       );
     }
     return undefined;
+  }
+
+  /**
+   * Every tool key the request that issued this step's calls offered (`request.tools` plus the
+   * `catalog` keys), in any mode; null when its model_call is not found. Used to tell a call to an
+   * old key that was offered (in flight across the rename) from one that never was.
+   */
+  private async requestToolKeys(ctx: ToolStepContext): Promise<Set<string> | null> {
+    for (let attempt = MAX_MODEL_ATTEMPTS; attempt >= 1; attempt--) {
+      const e = await this.deps.eventLog.findByIdem(
+        ctx.conversationId,
+        modelCallIdemKey(ctx.runId, ctx.step, attempt),
+      );
+      if (e?.type !== "model_call") continue;
+      const { tools, catalog } = e.payload.request;
+      return new Set([...(tools ?? []), ...(catalog ?? [])].map((t) => t.key));
+    }
+    return null;
   }
 
   /**
