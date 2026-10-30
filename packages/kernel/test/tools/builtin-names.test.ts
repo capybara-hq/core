@@ -11,7 +11,14 @@ import {
   LEGACY_SKILL_TEXTS,
   usesLegacyToolNames,
 } from "../../src/runtime/context/legacy-text.js";
-import { SKILL_TEXTS } from "../../src/runtime/context/skills.js";
+import {
+  invokedSkillsText,
+  pinnedSystemText,
+  SKILL_TEXTS,
+  skillsCatalogText,
+  skillsChangeText,
+  skillsCurrentText,
+} from "../../src/runtime/context/skills.js";
 import {
   AGENT_TOOL,
   BUILTIN,
@@ -22,7 +29,7 @@ import {
 } from "../../src/tools/builtin-names.js";
 import { agentToolSpec } from "../../src/tools/builtins/agent.js";
 import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
-import { CATALOG_HEADER } from "../../src/tools/builtins/tool-search.js";
+import { CATALOG_HEADER, catalogText } from "../../src/tools/builtins/tool-search.js";
 import { LEGACY_BUILTINS } from "../../src/tools/legacy-keys.js";
 import { AGENT, Log, MODEL } from "../runtime/context/fixtures.js";
 
@@ -235,5 +242,67 @@ describe("system texts naming builtins (tool naming spec §10)", () => {
       }
     }
     expect(sawCatalog).toBe(true);
+  });
+});
+
+/**
+ * The frozen pre-rename texts, guarded independently of the constants: the expected strings are
+ * literals copied byte for byte from `main` at 02b9634b (`runtime/context/skills.ts`,
+ * `tools/builtins/tool-search.ts`). Editing a legacy text breaks old recordings' system hash.
+ */
+describe("legacy texts are the 02b9634b texts, byte for byte", () => {
+  const s = (name: string, version = 1) => ({
+    id: `id-${name}`,
+    name,
+    description: `Use for ${name}.`,
+    version,
+    source: `skills/${name}-v${version}/`,
+  });
+  const L = LEGACY_SKILL_TEXTS;
+
+  it("skills catalog text", () => {
+    expect(skillsCatalogText([s("beta"), s("alpha")], L)).toBe(
+      "Skills are available in this conversation. A skill is a set of instructions, sometimes with scripts or other files, for a specific kind of task. When a task matches a skill's description, call skill_load with the skill's name to read its instructions before you start; do not guess what a skill says. Available skills:\n- alpha: Use for alpha.\n- beta: Use for beta.",
+    );
+  });
+
+  it("change notices: new, updated, removed", () => {
+    expect(
+      skillsChangeText([s("alpha"), s("gone")], [s("alpha", 2), s("beta")], undefined, L),
+    ).toBe(
+      "The skills available in this conversation have changed.\n\nNew skills (call skill_load with the name to use one):\n- beta: Use for beta.\n\nUpdated skills (call skill_load again before relying on earlier instructions):\n- alpha: Use for alpha.\n\nRemoved skills (no longer available; do not use them): gone",
+    );
+  });
+
+  it("current text after a compaction", () => {
+    expect(skillsCurrentText([s("alpha")], L)).toBe(
+      "Skills available in this conversation now (this replaces any earlier list of skills; call skill_load with a name to read a skill's instructions):\n- alpha: Use for alpha.",
+    );
+  });
+
+  it("invoked skills line", () => {
+    expect(invokedSkillsText(["brainstorm", "fix-issue"], L)).toBe(
+      "Skills the user invoked earlier in this conversation: brainstorm, fix-issue. Call skill_load with a name to read its instructions again.",
+    );
+  });
+
+  it("pinned system text", () => {
+    const pinned = [
+      { id: "id-a", name: "alpha", version: 3, source: "skills/a/", body: "Do X.\n" },
+    ];
+    expect(pinnedSystemText(pinned, L)).toBe(
+      "Pinned skills: the owner of this agent pinned these skills, so their instructions apply throughout this conversation. Follow them without calling skill_load; call skill_load only to copy a pinned skill's files into the sandbox.\n\n" +
+        '<pinned_skill name="alpha" version="3">\nDo X.\n</pinned_skill>',
+    );
+  });
+
+  it("tool catalog header", () => {
+    const t = {
+      key: "mcp__docs__search",
+      spec: { name: "x", description: "Search docs.\nMore.", inputSchema: {} },
+    };
+    expect(catalogText([t], LEGACY_CATALOG_HEADER)).toBe(
+      "More tools are available but not loaded. To use one, first call tool_search with keywords; it returns the full definitions and loads the matching tools for your next step. Calling a tool that is not loaded returns an error. Tool catalog:\n- mcp__docs__search: Search docs.",
+    );
   });
 });
