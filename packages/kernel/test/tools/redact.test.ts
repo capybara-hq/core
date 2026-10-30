@@ -48,7 +48,14 @@ describe("工具结果打码", () => {
   it("Credentials.injectionFor 把同一套展开（含编码形式）登记进 logger（≥ 12）", () => {
     const lines: string[] = [];
     const log = createLogger("info", { write: (l) => lines.push(l) });
-    const creds = new Credentials(null as never, null as never, log);
+    const creds = new Credentials(
+      null as never,
+      null as never,
+      log,
+      null as never,
+      null as never,
+      null as never,
+    );
     const token = "tok/with+special=chars&more";
     creds.injectionFor(
       "app1",

@@ -96,7 +96,7 @@ export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
     spec: SPEC,
     defaultPolicy: "allow",
     unavailable: unavailableWhenNoSandbox(deps),
-    timeoutMs: () => sandboxBaseTimeoutMs(deps.config()),
+    timeoutMs: () => sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx) {
       const startedAt = Date.now();
       const { pattern, glob, ignoreCase = false } = input as GrepInput;
@@ -121,7 +121,7 @@ export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
         const r = await p.exec(h, {
           command,
           cwd,
-          timeoutMs: searchTimeoutMs(deps.config(), startedAt, Date.now(), ctx.runDeadline),
+          timeoutMs: searchTimeoutMs(deps.config.get(), startedAt, Date.now(), ctx.runDeadline),
           maxOutputBytes: MAX_GREP_BYTES,
           signal,
         });

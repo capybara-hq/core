@@ -6,14 +6,16 @@ import type {
   ToolResult,
 } from "@capybara-hq/plugin-sdk";
 import { ToolError } from "@capybara-hq/plugin-sdk";
-import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import { Inject, Injectable } from "@nestjs/common";
 import { ApiError } from "../errors.js";
-import type { Breaker } from "./breaker.js";
-import { type ConnectorAuth, CredentialMissing, type Credentials } from "./credentials.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import { Breaker } from "./breaker.js";
+import { type ConnectorAuth, CredentialMissing, Credentials } from "./credentials.js";
 import { renderResult } from "./outputs.js";
 import { redactDeep, redactorFor } from "./redact.js";
-import type { ToolRegistry } from "./registry.js";
+import { ToolRegistry } from "./registry.js";
 import { READ_RESOURCE } from "./resources.js";
 
 /**
@@ -90,20 +92,20 @@ interface ConnectorRow {
 const errName = (e: unknown): string =>
   e instanceof Error && typeof e.name === "string" && e.name !== "" ? e.name : "Error";
 
-export interface ConnectorContentDeps {
-  db: KernelDb;
-  registry: Pick<ToolRegistry, "findConnector">;
-  credentials: Pick<Credentials, "injection" | "onUnauthorized">;
-  breaker: Pick<Breaker, "check">;
-  config: () => KernelConfig;
-  log: Logger;
-}
-
+@Injectable()
 export class ConnectorContent {
-  constructor(private readonly d: ConnectorContentDeps) {}
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(ToolRegistry) private readonly registry: Pick<ToolRegistry, "findConnector">,
+    @Inject(Credentials)
+    private readonly credentials: Pick<Credentials, "injection" | "onUnauthorized">,
+    @Inject(Breaker) private readonly breaker: Pick<Breaker, "check">,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Inject(KERNEL_LOGGER) private readonly log: Logger,
+  ) {}
 
   private async activeConnectors(orgId: string): Promise<ConnectorRow[]> {
-    return this.d.db
+    return this.db
       .selectFrom("connectors")
       .select(["id", "slug", "name", "connector", "endpoint", "auth"])
       .where("org_id", "=", orgId)
@@ -115,7 +117,7 @@ export class ConnectorContent {
   }
 
   private async connectorRow(orgId: string, connectorId: string): Promise<ConnectorRow> {
-    const r = await this.d.db
+    const r = await this.db
       .selectFrom("connectors")
       .select(["id", "slug", "name", "connector", "endpoint", "auth"])
       .where("org_id", "=", orgId)
@@ -133,7 +135,7 @@ export class ConnectorContent {
    */
   private async resourcesEnabled(connectorIds: string[]): Promise<Set<string>> {
     if (connectorIds.length === 0) return new Set();
-    const rows = await this.d.db
+    const rows = await this.db
       .selectFrom("connector_tools")
       .select("connector_id")
       .where("connector_id", "in", connectorIds)
@@ -156,14 +158,14 @@ export class ConnectorContent {
     timeoutMs: number,
     work: (s: ConnectorSession) => Promise<T>,
   ): Promise<T> {
-    const connector = this.d.registry.findConnector(app.connector);
+    const connector = this.registry.findConnector(app.connector);
     if (!connector) {
       throw new ApiError(
         "connector.connect_failed",
         `The connector ${app.connector} is not installed`,
       );
     }
-    const breaker = await this.d.breaker.check(orgId, app.id);
+    const breaker = await this.breaker.check(orgId, app.id);
     if (breaker.open) {
       throw new ApiError(
         "connector.connect_failed",
@@ -174,7 +176,7 @@ export class ConnectorContent {
     const injected: AuthInjection[] = [];
     let cached: Promise<AuthInjection> | undefined;
     const getAuth = () => {
-      cached ??= this.d.credentials.injection(orgId, app.id, auth, accountId).then((inj) => {
+      cached ??= this.credentials.injection(orgId, app.id, auth, accountId).then((inj) => {
         injected.push(inj);
         return inj;
       });
@@ -190,14 +192,14 @@ export class ConnectorContent {
         onUnauthorized: async () => {
           const stale = injected.at(-1);
           cached = undefined;
-          await this.d.credentials.onUnauthorized(orgId, app.id, auth, accountId, stale);
+          await this.credentials.onUnauthorized(orgId, app.id, auth, accountId, stale);
         },
         signal: AbortSignal.timeout(timeoutMs),
       });
       return redactDeep(await work(session), redact()) as T;
     } catch (e) {
       if (e instanceof ApiError) throw e;
-      this.d.log.warn("connector content request failed", { orgId, connectorId: app.id, err: e });
+      this.log.warn("connector content request failed", { orgId, connectorId: app.id, err: e });
       const detail =
         e instanceof ToolError
           ? `: ${redact()(e.message).slice(0, MAX_DETAIL)}`
@@ -205,7 +207,7 @@ export class ConnectorContent {
       throw new ApiError("connector.connect_failed", `The connector request failed${detail}`);
     } finally {
       await session?.close().catch((err: unknown) => {
-        this.d.log.warn("connector session close failed", { orgId, connectorId: app.id, err });
+        this.log.warn("connector session close failed", { orgId, connectorId: app.id, err });
       });
     }
   }
@@ -219,7 +221,7 @@ export class ConnectorContent {
   ): Promise<{ items: T[]; unavailable: ConnectorUnavailable[] }> {
     const all = await this.activeConnectors(orgId);
     const apps = only ? await only(all) : all;
-    const timeoutMs = Math.min(this.d.config().tools.timeoutMs, LIST_TIMEOUT_MS);
+    const timeoutMs = Math.min(this.config.get().tools.timeoutMs, LIST_TIMEOUT_MS);
     const results = await Promise.all(
       apps.map(async (app) => {
         try {
@@ -281,7 +283,7 @@ export class ConnectorContent {
       orgId,
       app,
       accountId,
-      this.d.config().tools.timeoutMs,
+      this.config.get().tools.timeoutMs,
       async (s) => (s.getPrompt ? s.getPrompt(name, args) : undefined),
     );
     if (!rendered)
@@ -358,7 +360,7 @@ export class ConnectorContent {
         );
       }
     }
-    const timeoutMs = Math.min(this.d.config().tools.timeoutMs, ATTACHMENTS_TIMEOUT_MS);
+    const timeoutMs = Math.min(this.config.get().tools.timeoutMs, ATTACHMENTS_TIMEOUT_MS);
     const read = await Promise.all(
       refs.map(async (ref) => {
         const app = apps.get(ref.connectorId) as ConnectorRow;

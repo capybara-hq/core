@@ -49,7 +49,9 @@ function selfSigned(dns: string[], ips: string[]): { cert: string; key: string }
   const ecdsaSha256 = seq(oid("1.2.840.10045.4.3.2"));
   const name = seq(tlv(0x31, seq(oid("2.5.4.3"), tlv(0x0c, Buffer.from(dns[0] ?? "test")))));
   const serial = randomBytes(8);
-  serial[0] = (serial[0] as number) & 0x7f;
+  // positive (top bit clear) and minimal (byte 0 non-zero): a DER INTEGER with a leading zero
+  // byte followed by a byte < 0x80 is rejected by OpenSSL ("illegal padding")
+  serial[0] = ((serial[0] as number) & 0x7f) | 0x40;
   const san = seq(
     ...dns.map((d) => tlv(0x82, Buffer.from(d))),
     ...ips.map((ip) => tlv(0x87, Buffer.from(ip.split(".").map(Number)))),

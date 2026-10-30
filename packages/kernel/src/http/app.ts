@@ -1,29 +1,23 @@
 import "reflect-metadata";
-import { randomUUID } from "node:crypto";
-import type { IncomingHttpHeaders } from "node:http";
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import fastifyCookie from "@fastify/cookie";
-import { type DynamicModule, Module } from "@nestjs/common";
-import { APP_FILTER, NestFactory } from "@nestjs/core";
-import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
+import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import type { FastifyInstance, FastifyReply, InjectOptions, LightMyRequestResponse } from "fastify";
 import type { Route } from "../ctx/create-ctx.js";
 import { ApiError, errorBody } from "../errors.js";
+import { AccountsService } from "../identity/accounts.js";
+import { ApiTokenService } from "../identity/api-tokens.js";
 import { type AuthServices, authorizeEnterpriseAdmin } from "../identity/auth.guard.js";
+import { SessionService } from "../identity/sessions.js";
 import { withLogContext } from "../log-context.js";
-import { ErrorFilter, redactPath } from "./error.filter.js";
-import { type GatewayRoutes, registerGatewayRoutes } from "./gateway.module.js";
-import { HealthController, type HealthOptions } from "./health.controller.js";
-import { NestLogAdapter } from "./nest-logger.js";
+import { redactPath } from "./error.filter.js";
+import { type GatewayRoutes, registerGatewayRoutes } from "./gateway-routes.js";
 import {
   createPluginRouter,
   type PluginRouteTable,
   registerPluginDispatch,
   staticRouteTable,
 } from "./plugin-dispatch.js";
-import { ACCOUNTS, API_TOKENS, HEALTH_OPTIONS, KERNEL_LOG, SESSIONS } from "./tokens.js";
-
-export type { HealthOptions } from "./health.controller.js";
 
 /** 内核 HTTP 的只读视图：进程内注入请求与列出路由（测试与元测试用）。 */
 export interface KernelHttp {
@@ -53,19 +47,13 @@ export interface KernelHttpApp extends KernelHttp {
 
 export interface CreateHttpAppOptions {
   log: Logger;
-  health: HealthOptions;
-  /** 是否提供内核 API（`apiModule`）。 */
-  serveApi: boolean;
-  /** 是否转发 `/plugins/*` 到插件路由。 */
+  /** Whether `/plugins/*` is dispatched to extension routes. */
   servePlugins: boolean;
   /**
    * Gateway-role routes (the channel webhook), registered only when given: the kernel passes them
    * when `roles` includes `gateway` (`serveGateway`).
    */
   gateway?: GatewayRoutes;
-  apiModule?: DynamicModule;
-  /** 信任哪些代理跳：false、跳数，或受信代理 IP / CIDR 列表（见 `http.trustProxy` 配置）。 */
-  trustProxy?: boolean | number | string[];
   /** 副本标识（`http.replicaId`）：设置时每个响应带 `x-capybara-replica` 头。 */
   replicaId?: string | undefined;
   /**
@@ -91,26 +79,8 @@ export const PACKAGE_UPLOAD_ROUTES: ReadonlySet<string> = new Set([
   CATALOG_UPLOAD_ROUTE,
 ]);
 
-/**
- * 把 `http.trustProxy` 配置转成 Fastify 的 trustProxy。布尔与 IP / CIDR 列表原样传入；
- * 跳数转成 `(addr, hop) => hop < n`：Fastify 5.12 起对 number 一律 fail closed（不信任任何一跳），
- * 所以由这里实现跳数语义——前提是服务只能经由这 n 层代理访问（配置说明里已写明，并推荐 CIDR 列表）。
- */
-function fastifyTrustProxy(
-  tp: boolean | number | string[],
-): boolean | string[] | ((addr: string, hop: number) => boolean) {
-  return typeof tp === "number" ? (_addr, hop) => hop < tp : tp;
-}
-
-const REQUEST_ID = /^[A-Za-z0-9._-]{1,128}$/;
 /** Paths without an access log line (probes). */
 const QUIET_PATHS = new Set(["/healthz", "/readyz"]);
-
-/** The request id: a valid incoming `x-request-id`, else a random one. */
-function requestId(req: { headers: IncomingHttpHeaders }): string {
-  const h = req.headers["x-request-id"];
-  return typeof h === "string" && REQUEST_ID.test(h) ? h : randomUUID();
-}
 
 /**
  * Request ids and the access log. Every request runs in a log context with its `reqId` (records
@@ -151,38 +121,19 @@ const LARGE_BODY_ROUTES = new Set([
 ]);
 const LARGE_BODY_LIMIT = 6 * 1024 * 1024;
 
-/** 根模块：总是含健康检查；`serveApi` 时 import `apiModule`；全局错误过滤器。 */
-function rootModule(opts: CreateHttpAppOptions): DynamicModule {
-  @Module({})
-  class RootModule {}
-  return {
-    module: RootModule,
-    imports: opts.serveApi && opts.apiModule ? [opts.apiModule] : [],
-    controllers: [HealthController],
-    providers: [
-      { provide: KERNEL_LOG, useValue: opts.log },
-      { provide: HEALTH_OPTIONS, useValue: opts.health },
-      { provide: APP_FILTER, useClass: ErrorFilter },
-    ],
-  };
-}
-
 /**
- * 创建并初始化内核 HTTP 应用（NestJS + Fastify），不连接任何外部资源。
- * 插件路由不经过 Nest：在 Fastify 的独立作用域里统一转发 `/plugins/*`（见 plugin-dispatch.ts）；
- * 插件加载前 `/plugins/*` 一律 404。未匹配的内核路由同样返回 404 错误信封。
+ * Sets up the Fastify side of the kernel's Nest application (built by `buildKernelApp` from
+ * `KernelModule`, which provides the health endpoints and the API) without connecting to anything,
+ * and returns it uninitialized: `init()` is the caller's (it runs the start sequence), `close()`
+ * closes only the HTTP server (the rest of the application is closed by the caller's shutdown).
+ * Extension routes do not go through Nest: `/plugins/*` is dispatched in its own Fastify scope
+ * (see plugin-dispatch.ts) and answers 404 until extensions are loaded. Unmatched kernel routes
+ * answer the 404 error envelope as well.
  */
-export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelHttpApp> {
-  const app = await NestFactory.create<NestFastifyApplication>(
-    rootModule(opts),
-    new FastifyAdapter({
-      trustProxy: fastifyTrustProxy(opts.trustProxy ?? false),
-      // x-request-id is read by requestId() (validated), never trusted as is
-      requestIdHeader: false,
-      genReqId: requestId,
-    }),
-    { logger: new NestLogAdapter(opts.log), abortOnError: false },
-  );
+export async function createHttpApp(
+  opts: CreateHttpAppOptions,
+  app: NestFastifyApplication,
+): Promise<KernelHttpApp> {
   // Cookie 解析（会话 Cookie）；必须在 init 之前注册
   await app.register(fastifyCookie);
   const fastify = app.getHttpAdapter().getInstance();
@@ -210,9 +161,9 @@ export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelH
   let authServices: AuthServices | undefined;
   const services = (): AuthServices => {
     authServices ??= {
-      accounts: app.get(ACCOUNTS, { strict: false }),
-      sessions: app.get(SESSIONS, { strict: false }),
-      tokens: app.get(API_TOKENS, { strict: false }),
+      accounts: app.get(AccountsService, { strict: false }),
+      sessions: app.get(SessionService, { strict: false }),
+      tokens: app.get(ApiTokenService, { strict: false }),
     };
     return authServices;
   };
@@ -261,7 +212,6 @@ export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelH
     ? await registerPluginDispatch(fastify, () => table, opts.log)
     : undefined;
   if (opts.gateway) await registerGatewayRoutes(fastify, opts.gateway, opts.log);
-  await app.init();
 
   return {
     inject: (o) => fastify.inject(o),
@@ -287,7 +237,7 @@ export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelH
     close: () => {
       unwatch?.();
       dispatch?.abortAll();
-      return app.close();
+      return fastify.close();
     },
     abortPluginRequests: () => dispatch?.abortAll(),
     closeAllConnections: () => fastify.server.closeAllConnections(),

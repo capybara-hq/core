@@ -7,20 +7,21 @@ import { Kysely, PostgresDialect, sql } from "kysely";
 import pg from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createKeyring, type Keyring } from "../../src/ctx/secrets.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
-import { REFRESH_RACE_GRACE_MS, SessionService } from "../../src/identity/sessions.js";
+import { REFRESH_RACE_GRACE_MS } from "../../src/identity/sessions.js";
 import { truncateTables } from "../helpers/db.js";
+import { sessionsFor } from "../helpers/identity.js";
 
 let pgBox: Awaited<ReturnType<typeof startTestPostgres>>;
 let pgUrl: string;
 let rd: Awaited<ReturnType<typeof startTestRedis>>;
 let raw: ReturnType<typeof createDb>;
 let raw2: ReturnType<typeof createDb>;
-let db: KernelDb;
-let db2: KernelDb;
+let db: KernelSchemaDb;
+let db2: KernelSchemaDb;
 let redis: Redis;
 let redis2: Redis;
 const k1 = randomBytes(32);
@@ -30,9 +31,7 @@ const OPTS = { accessTtlSeconds: 900, refreshTtlDays: 30 };
 
 /** 模拟一个副本：独立的 Kysely 与 Redis 连接。 */
 const replica = (keyring: Keyring = ring, opts = OPTS, which: 1 | 2 = 1) =>
-  which === 1
-    ? new SessionService(db, redis, keyring, opts)
-    : new SessionService(db2, redis2, keyring, opts);
+  which === 1 ? sessionsFor(db, redis, keyring, opts) : sessionsFor(db2, redis2, keyring, opts);
 
 beforeAll(async () => {
   [pgBox, rd] = await Promise.all([startTestPostgres(), startTestRedis({ shared: true })]);
@@ -323,7 +322,7 @@ describe("SessionService 其他", () => {
       },
     });
     try {
-      const svc = new SessionService(kernelDb(counted), redis, ring, OPTS);
+      const svc = sessionsFor(kernelDb(counted), redis, ring, OPTS);
       const r = await svc.verifyAccess(s.accessToken);
       expect(r.account.id).toBe(acc);
       expect(queries).toBe(1);

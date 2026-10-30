@@ -4,7 +4,7 @@ import { startTestPostgres, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import {
@@ -12,14 +12,15 @@ import {
   renderResult,
   resolveOutputRefs,
   spillIfLarge,
-  ToolOutputs,
+  type ToolOutputs,
 } from "../../src/tools/outputs.js";
 import { truncateTables } from "../helpers/db.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
+import { outputsFor } from "../helpers/tools.js";
 
 let pgc: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let outputs: ToolOutputs;
 let seed: Awaited<ReturnType<typeof seedConversation>>;
 let other: Awaited<ReturnType<typeof seedConversation>>;
@@ -39,7 +40,7 @@ beforeAll(async () => {
   });
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
-  outputs = new ToolOutputs(db, config);
+  outputs = outputsFor(db, config);
 }, 120_000);
 afterAll(async () => {
   await raw?.destroy();

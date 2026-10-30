@@ -8,6 +8,7 @@ export const ERROR_CODES = {
   validation_failed: 400,
   forbidden: 403,
   conflict: 409,
+  "lock.acquire_failed": 409,
   payload_too_large: 413,
   unsupported_media_type: 415,
   rate_limited: 429,

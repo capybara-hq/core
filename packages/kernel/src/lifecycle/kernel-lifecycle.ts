@@ -1,0 +1,476 @@
+import {
+  type ExtensionContext,
+  SANDBOX_EXTENSION_POINT,
+  type SandboxProvider,
+} from "@capybara-hq/plugin-sdk";
+import {
+  type BeforeApplicationShutdown,
+  Inject,
+  Injectable,
+  type OnApplicationBootstrap,
+  type OnApplicationShutdown,
+  Optional,
+} from "@nestjs/common";
+import type { Redis } from "ioredis";
+import { type Kysely, sql } from "kysely";
+import type { KernelAppOptions } from "../app.js";
+import { MarketplacesService } from "../catalog/marketplaces.service.js";
+import { PluginImport } from "../catalog/plugin-import.js";
+import { ChannelJobs } from "../channels/jobs.js";
+import { ChannelOutbound } from "../channels/outbound.js";
+import type { KernelConfig } from "../config/schema.js";
+import { TitleQueue } from "../conversations/titles.js";
+import { migrate } from "../db/migrator.js";
+import { ExtensionBlobs } from "../extensions/blobs.js";
+import {
+  type BootstrapEntryResult,
+  BootstrapFailedError,
+  BootstrapService,
+  bootstrapManifestSha256,
+  readBootstrapManifest,
+} from "../extensions/bootstrap.js";
+import { ExtensionHost } from "../extensions/host.js";
+import { ExtensionInstalls } from "../extensions/installs.js";
+import { ExtensionLifecycle } from "../extensions/lifecycle.js";
+import { ensureMigrated } from "../extensions/migrate-lock.js";
+import { ExtensionRegistry } from "../extensions/registry.js";
+import { ReplicaStatusStore } from "../extensions/sources.js";
+import { syncPackage } from "../extensions/sync.js";
+import type { KernelHttpApp } from "../http/app.js";
+import type { GatewayRoutes } from "../http/gateway-routes.js";
+import { AccountsService } from "../identity/accounts.js";
+import { waitWithin } from "../infra/close-within.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { GracefulShutdown } from "../infra/lifecycle/graceful-shutdown.service.js";
+import { KERNEL_BUS, KERNEL_LOGGER, KERNEL_POOL, REDIS } from "../infra/tokens.js";
+import { KERNEL_MIGRATIONS_DIR, KERNEL_SCHEMA } from "../kernel.js";
+import type { KernelLogger } from "../log.js";
+import { GatewayRole } from "../roles/gateway-role.js";
+import { WorkerRole } from "../roles/worker-role.js";
+import { UsageReporter } from "../runtime/usage-report.js";
+import { sandboxConfigWarnings } from "../sandbox/sandbox.service.js";
+import { KERNEL_APP_OPTIONS } from "./tokens.js";
+
+/**
+ * The stop phase budgets. Each phase waits `min(its budget, what is left of the total)`, where the
+ * total is `STOP_TIMEOUT_MS` (30 s, `GracefulShutdown`) counted from the moment the shutdown
+ * began, in this order: migrate 2 s (the start's in-flight kernel migration, aborted, until its
+ * session ended) → http 10 s → runs 10 s → plugins 5 s, 27 s in all. The bus subscriber, Redis and
+ * the pool are closed after the phases by the infra modules (`onApplicationShutdown`) within what
+ * is left of the same 30 s, so the whole stop never takes longer than 30 s.
+ * The http phase is one deadline: first the listen in progress finishes (closing while listening
+ * would leave the port open), then HTTP closes, both within these 10 s; whatever is still open at
+ * the deadline is disconnected.
+ * The runs phase: this process's runs get the stop signal, stop at their next step boundary and
+ * their jobs go back to the queue; runs over the budget are left to BullMQ's stalled-job handling
+ * on another worker (spec 8.5). So when an earlier phase hangs, the extension queues still get at
+ * least 5 s to drain.
+ */
+export const STOP_BUDGET_MS = {
+  migrate: 2_000,
+  http: 10_000,
+  runs: 10_000,
+  plugins: 5_000,
+} as const;
+
+/** 停机时留给渠道长连接交还租约的最少时间（与 runs 阶段并行开始，runs 用尽预算时仍保底）。 */
+const CHANNELS_STOP_MIN_MS = 2_000;
+
+/** runs 阶段里留给强制关闭 worker 的余量（预算的其余部分用于等运行到达步骤边界）。 */
+const RUNS_FORCE_CLOSE_MS = 500;
+
+const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/**
+ * The kernel's start order and stop phases on Nest's hooks (nest kernel spec §4).
+ *
+ * Start (`onApplicationBootstrap`, run by `app.init()`): Redis ready → kernel migrations → official
+ * marketplace sync → bootstrap → extension host load → role parts (workers, schedules, gateway) →
+ * mount extension routes → extension lifecycle reconcile → (second bootstrap pass) → config watch.
+ * {@link listen} runs only after that resolved, so nothing is served before the extensions are
+ * loaded. A stop requested meanwhile makes the sequence throw at its next checkpoint.
+ *
+ * Stop (`beforeApplicationShutdown`, or {@link stop} directly): readiness answers 503, the start is
+ * aborted, then today's phases with {@link STOP_BUDGET_MS} (HTTP, runs, channels, queues, the
+ * extension host). Redis and the pool are closed after this by the infra modules
+ * (`onApplicationShutdown`, global modules run last).
+ */
+@Injectable()
+export class KernelLifecycle
+  implements OnApplicationBootstrap, BeforeApplicationShutdown, OnApplicationShutdown
+{
+  /** The startup config (hot fields are read through the config service). */
+  private readonly config: KernelConfig;
+  /** Set when the application was never set up completely: shutdown only releases connections. */
+  private onlyRelease = false;
+  private stopPromise: Promise<void> | undefined;
+  /** {@link listen} was called: the start work in flight is the listen, not the start sequence. */
+  private listenStarted = false;
+  private listening: number | undefined;
+  private httpApp: KernelHttpApp | undefined;
+  private unwatchConfig: (() => void) | undefined;
+  /** What the first bootstrap pass did, carried into the second one. */
+  private bootstrapCarry: BootstrapEntryResult[] | undefined;
+
+  constructor(
+    @Inject(AccountsService) private readonly accounts: AccountsService,
+    @Inject(KernelConfigService) private readonly configService: KernelConfigService,
+    @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
+    @Inject(KERNEL_APP_OPTIONS) private readonly options: KernelAppOptions,
+    // biome-ignore lint/suspicious/noExplicitAny: the pool carries no schema types
+    @Inject(KERNEL_POOL) private readonly pool: Kysely<any>,
+    @Inject(REDIS) private readonly redis: Redis,
+    @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(GracefulShutdown) private readonly shutdown: GracefulShutdown,
+    @Inject(ExtensionHost) private readonly host: ExtensionHost,
+    @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
+    @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,
+    @Inject(ExtensionBlobs) private readonly blobs: ExtensionBlobs,
+    @Inject(ExtensionLifecycle) private readonly extensionLifecycle: ExtensionLifecycle,
+    @Inject(ReplicaStatusStore) private readonly replicaStatus: ReplicaStatusStore,
+    @Inject(BootstrapService) private readonly bootstrap: BootstrapService,
+    @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
+    @Inject(PluginImport) private readonly pluginImport: PluginImport,
+    @Inject(KERNEL_BUS)
+    private readonly bus: Pick<ExtensionContext["bus"], "publish" | "subscribe">,
+    // the producers closed on every role (their consumers are the worker role's)
+    @Inject(UsageReporter) private readonly usageReport: UsageReporter,
+    @Inject(TitleQueue) private readonly titles: TitleQueue,
+    @Inject(ChannelJobs) private readonly channelJobs: ChannelJobs,
+    @Inject(ChannelOutbound) private readonly channelOutbound: ChannelOutbound,
+    // The role modules' parts: a role module is imported only when `roles` names it, so each is
+    // present exactly when its role is (checked at the start)
+    @Optional() @Inject(WorkerRole) private readonly worker?: WorkerRole,
+    @Optional() @Inject(GatewayRole) private readonly gateway?: GatewayRole,
+  ) {
+    this.config = configService.get();
+  }
+
+  /** The kernel HTTP application (set up by `buildKernelApp` before `init()`). */
+  get http(): KernelHttpApp {
+    if (!this.httpApp) throw new Error("kernel HTTP application is not set up");
+    return this.httpApp;
+  }
+
+  attachHttp(http: KernelHttpApp): void {
+    this.httpApp = http;
+  }
+
+  /** The gateway role's HTTP routes (the channel webhook), when the roles include `gateway`. */
+  gatewayRoutes(): GatewayRoutes | undefined {
+    return this.gateway?.routes();
+  }
+
+  /** The port listened on; undefined before {@link listen} resolves and after the stop. */
+  get port(): number | undefined {
+    return this.listening;
+  }
+
+  /** The application was not set up completely: its shutdown only releases connections. */
+  releaseOnly(): void {
+    this.onlyRelease = true;
+    this.shutdown.begin();
+  }
+
+  private checkpoint(): void {
+    if (this.shutdown.isShuttingDown()) throw new Error("kernel stopped during start");
+  }
+
+  async onApplicationBootstrap(): Promise<void> {
+    if (this.shutdown.isShuttingDown()) throw new Error("kernel is stopped");
+    const { config, options: opts } = this;
+    const { worker, gateway } = this;
+    if (config.roles.includes("worker") !== (worker !== undefined)) {
+      throw new Error("the worker role's module does not match the roles");
+    }
+    if (config.roles.includes("gateway") !== (gateway !== undefined)) {
+      throw new Error("the gateway role's module does not match the roles");
+    }
+    const cfg = () => this.configService.get();
+    await this.redis.connect();
+    this.checkpoint();
+    await sql`select 1`.execute(this.pool);
+    this.checkpoint();
+    // In flight for the stop: aborted when the shutdown begins, which then waits for its session to end
+    await this.shutdown.trackInFlight(
+      migrate(
+        config.db.url,
+        { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR },
+        { connectTimeoutMs: config.db.connectTimeoutMs, signal: this.shutdown.signal },
+      ),
+    );
+    this.checkpoint();
+    // official 清单来源按配置同步（幂等；每个副本启动时都做）
+    await this.marketplaces.syncOfficialFromConfig();
+    // The bootstrap plugins (spec §7), once per manifest across replicas (the Redis lock
+    // `lock:bootstrap`); a bootstrap entry named like a config-declared extension is kept
+    if (opts.bootstrap !== undefined) {
+      this.registry.declare(
+        await ExtensionHost.declaredNames(config.extensions, {
+          ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
+        }),
+      );
+    }
+    const bootstrapAgain =
+      opts.bootstrap !== undefined && (await this.runBootstrap(opts.bootstrap.dir));
+    this.checkpoint();
+    // 配置声明 → 安装记录（C15 / C13）。安装记录的包在本副本同步到 extensionHost.dir 后导入，
+    // 与运行中的 reconcile 走同一条路径；迁移由一个副本持锁执行（ensureMigrated，C16）
+    await this.host.load({
+      config: config.extensions,
+      installs: {
+        desired: () => this.installs.desired(),
+        sync: (d) =>
+          syncPackage(cfg().extensionHost.dir, d.name, d.sha256, this.blobs, {
+            maxBytes: cfg().packages.maxBytes,
+          }),
+        migrate: async (d, dir, signal) =>
+          d.migratedSha === d.sha256
+            ? "migrated"
+            : ensureMigrated(
+                {
+                  db: this.kdb.db,
+                  dbUrl: config.db.url,
+                  connectTimeoutMs: config.db.connectTimeoutMs,
+                  bus: this.bus,
+                  log: this.log,
+                  // 宿主关闭时中止（运行中 reconcile 的迁移）；停机一开始就中止（启动加载中的迁移不等宿主关闭）
+                  signal: AbortSignal.any([signal, this.shutdown.signal]),
+                  timeoutMs: cfg().extensionHost.migrationTimeoutSeconds * 1000,
+                },
+                d.name,
+                d.sha256,
+                dir,
+              ),
+      },
+    });
+    this.checkpoint();
+    const sandboxEntry = this.host
+      .list("sandbox")
+      .find((x) => x.capability === SANDBOX_EXTENSION_POINT);
+    if (sandboxEntry !== undefined) {
+      for (const w of sandboxConfigWarnings(
+        cfg(),
+        sandboxEntry.plugin,
+        sandboxEntry.impl as SandboxProvider,
+      )) {
+        this.log[w.level](w.message);
+      }
+    }
+    // The role parts (nest kernel spec §4): the worker role's queue consumers and schedules (the
+    // start gate: their timers are armed at application bootstrap, but no tick runs before the
+    // worker role opens the start gate here; the runOnStart jobs run then), the gateway role's
+    // supervisor and webhook inbound
+    if (worker) await worker.start(() => this.checkpoint());
+    if (gateway) await gateway.start(() => this.checkpoint());
+    // Routes stay mounted and are resolved live: 503 extension.unavailable after an extension is revoked, back after it reloads (C17)
+    this.http.mountPlugins(this.host.routeTable());
+    // 订阅插件生命周期主题后补一次 reconcile（启动加载期间错过的消息，并写下第一轮心跳）
+    await this.extensionLifecycle.start();
+    this.checkpoint();
+    await this.extensionLifecycle.reconcile("startup");
+    this.checkpoint();
+    if (bootstrapAgain && opts.bootstrap !== undefined) {
+      await this.runBootstrap(opts.bootstrap.dir, true);
+      this.checkpoint();
+    }
+    if (opts.source?.watch) {
+      // 热更新：重新校验；只应用 hot 字段，其余变化 warn 并列出需重启的键；校验失败保持原配置
+      this.unwatchConfig = opts.source.watch(
+        (raw) => this.configService.apply(raw),
+        (err) => this.log.error("config watch error", { error: err.message }),
+      );
+    }
+  }
+
+  /**
+   * Listens on `port` (0.0.0.0; every role listens: worker-only serves only `/healthz` and
+   * `/readyz`) after the start sequence; returns the actual port.
+   */
+  async listen(port: number): Promise<number> {
+    // A shutdown already past the http phase must never open the port afterwards
+    this.checkpoint();
+    this.listenStarted = true;
+    // In flight for the stop: closing HTTP while it listens would leave the port open
+    this.listening = await this.shutdown.trackInFlight(this.http.listen(port));
+    this.checkpoint();
+    this.log.info("kernel started", { roles: this.config.roles, port: this.listening });
+    await this.warnIfSetupPending();
+    return this.listening;
+  }
+
+  /**
+   * Runs the bootstrap step unless it is done for the manifest. A required entry that cannot be
+   * completed (or a missing / tampered package: then nothing was installed) stops the start, so the
+   * kernel never serves without a required plugin. A failed optional entry is logged and returns
+   * true: the start runs the step once more after the extensions loaded (a declarative entry's
+   * catalog files need the object store, which on a fresh deployment is itself a bootstrap plugin),
+   * and the next start tries again while it stays incomplete.
+   */
+  private async runBootstrap(dir: string | undefined, final = false): Promise<boolean> {
+    const manifest = this.options.bootstrapManifest ?? (await readBootstrapManifest());
+    const bootstrap = this.bootstrap;
+    if (await bootstrap.isDone(bootstrapManifestSha256(manifest))) return false;
+    try {
+      // The second pass records what the first one did (not `kept` for what it installed)
+      await bootstrap.run({
+        manifest,
+        imports: this.pluginImport,
+        ...(dir !== undefined && { dir }),
+        signal: this.shutdown.signal,
+        ...(this.bootstrapCarry !== undefined && { carry: this.bootstrapCarry }),
+      });
+      return false;
+    } catch (e) {
+      if (e instanceof BootstrapFailedError && !e.requiredFailed) {
+        this.bootstrapCarry = e.results;
+        if (final) {
+          this.log.error(
+            "bootstrap: optional plugins could not be installed; retried on the next start",
+            { failures: e.failures },
+          );
+        } else {
+          this.log.warn(
+            "bootstrap: optional plugins could not be installed yet; retried once the extensions have loaded",
+            { failures: e.failures },
+          );
+        }
+        return true;
+      }
+      throw e;
+    }
+  }
+
+  /** 部署尚无活跃企业管理员时提示去初始化；查询失败只记日志，不影响启动。 */
+  private async warnIfSetupPending(): Promise<void> {
+    try {
+      if ((await this.accounts.countEnterpriseAdmins()) === 0) {
+        this.log.warn(
+          "deployment is not set up; open the setup wizard or run `capybara admin create`",
+        );
+      }
+    } catch (e) {
+      this.log.warn("cannot check whether the deployment is set up", { error: errMsg(e) });
+    }
+  }
+
+  async beforeApplicationShutdown(): Promise<void> {
+    await this.stop();
+  }
+
+  /** Logs the end of the stop phases (Redis and the pool close right after, in the infra modules). */
+  onApplicationShutdown(): void {
+    if (!this.onlyRelease) this.log.info("kernel stopped");
+  }
+
+  /**
+   * Runs the stop phases once (idempotent): the shutdown begins at once (`GracefulShutdown.begin`:
+   * readiness answers 503, the start is aborted, the SSE streams close). Closing the application
+   * calls this from `beforeApplicationShutdown`; `closeKernelApp` (the tests, the signal handlers
+   * of `startKernelApp`) calls it directly next to `app.close()`, so the shutdown
+   * begins before any module's `onModuleDestroy` runs (Nest runs those first).
+   */
+  stop(): Promise<void> {
+    this.shutdown.begin();
+    this.stopPromise ??= this.onlyRelease ? Promise.resolve() : this.runStopPhases();
+    return this.stopPromise;
+  }
+
+  private async runStopPhases(): Promise<void> {
+    const log = this.log;
+    const shutdown = this.shutdown;
+    /** Waits for p within `min(budgetMs, what is left of the total)`; a timeout warns and returns false. */
+    const within = async (
+      label: string,
+      p: Promise<unknown>,
+      budgetMs = Number.POSITIVE_INFINITY,
+    ): Promise<boolean> => {
+      try {
+        const done = await waitWithin(p, Math.min(budgetMs, shutdown.remainingMs()));
+        if (!done) log.warn("shutdown step timed out", { step: label });
+        return done;
+      } catch (e) {
+        log.error("shutdown step failed", { step: label, err: e });
+        return false;
+      }
+    };
+
+    // The start is not waited for (an extension setup can be arbitrarily slow): `begin()` aborted
+    // the start's kernel migration, whose session the migrate phase waits for (the in-flight work
+    // of the start sequence); the host close aborts extension migrations and closes the ctx of a
+    // setup in progress; the other start steps exit at their checkpoints. A listen in progress is
+    // waited for in the http phase (closing while listening would leave the port open).
+    // Extension requests in progress (SSE and other long requests end on req.signal) are aborted
+    // first, otherwise they would use up the http phase
+    this.httpApp?.abortPluginRequests();
+    // Scheduled jobs (worker role): no new tick, the runs in progress get the stop signal; awaited
+    // in the runs phase (before the extension host closes: a job may call an extension)
+    const { worker, gateway } = this;
+    const scheduledStopped = worker?.stopSchedules(STOP_BUDGET_MS.http + STOP_BUDGET_MS.runs);
+    if (!this.listenStarted) await shutdown.drain(STOP_BUDGET_MS.migrate);
+    this.unwatchConfig?.();
+    this.unwatchConfig = undefined;
+    gateway?.unwatch();
+    await within(
+      "webhooks-unsubscribe",
+      (gateway?.unsubscribe() ?? Promise.resolve()).catch(() => {}),
+      1_000,
+    );
+    // 不再接 reconcile（进行中的那次由宿主关闭收尾）
+    await within("plugin-lifecycle", this.extensionLifecycle.stop(), 1_000);
+    // http 阶段：等 listen 与关闭 HTTP 共用一个截止时间；listen 卡满预算时关闭只剩 0ms，直接强制断开
+    const httpDeadline = Date.now() + STOP_BUDGET_MS.http;
+    if (this.listenStarted) await shutdown.drain(STOP_BUDGET_MS.http);
+    const http = this.httpApp;
+    if (http && !(await within("http", http.close(), Math.max(0, httpDeadline - Date.now())))) {
+      http.closeAllConnections();
+    }
+    this.listening = undefined;
+    // runs 阶段：停止领取运行、让本进程的运行在步骤边界停下并回到队列；再关闭运行队列的生产方连接。
+    // 渠道长连接与之并行停止（中止 connect、释放租约），必须在插件关闭之前。
+    const runsDeadline = Date.now() + STOP_BUDGET_MS.runs;
+    const channelsStopped = gateway?.stopSupervisor();
+    const runsBudget = Math.min(STOP_BUDGET_MS.runs, shutdown.remainingMs()) - RUNS_FORCE_CLOSE_MS;
+    const runsDrained = worker?.drainRuns(Math.max(0, runsBudget));
+    if (runsDrained) await within("runs", runsDrained, STOP_BUDGET_MS.runs);
+    const evalsDrained = worker?.drainEvals(
+      Math.max(0, runsDeadline - Date.now() - RUNS_FORCE_CLOSE_MS),
+    );
+    if (evalsDrained) {
+      await within("evals", evalsDrained, Math.max(0, runsDeadline - Date.now()));
+    }
+    if (channelsStopped) {
+      // 至少留 2s 交还租约：否则其他副本要等租约过期（默认 30s）才能接管
+      await within(
+        "channels",
+        channelsStopped,
+        Math.max(CHANNELS_STOP_MIN_MS, runsDeadline - Date.now()),
+      );
+    }
+    await within(
+      "scheduled-jobs",
+      scheduledStopped ?? Promise.resolve(),
+      Math.max(0, runsDeadline - Date.now()),
+    );
+    await within(
+      "maintenance",
+      worker?.closeMaintenance() ?? Promise.resolve(),
+      Math.max(0, runsDeadline - Date.now()),
+    );
+    // titles before usage.report: a finishing title call enqueues its usage report
+    await within("titles", this.titles.stop(), Math.max(0, runsDeadline - Date.now()));
+    // usage.report: in-flight deliveries are aborted and retried by any replica; before the plugins close
+    await within("usage-report", this.usageReport.stop(), Math.max(0, runsDeadline - Date.now()));
+    // 出站投递：进行中的任务交还队列（由其他副本从 last_seq 续投），必须在插件关闭之前
+    this.channelJobs.close();
+    await within(
+      "channel-outbound",
+      this.channelOutbound.close(),
+      Math.max(CHANNELS_STOP_MIN_MS, runsDeadline - Date.now()),
+    );
+    await within("plugins", this.host.close(), STOP_BUDGET_MS.plugins);
+    // 删掉本副本的加载状态行（尽力而为；崩溃副本心跳过期的行由 reconcile 清理）
+    await within("plugin-status", this.replicaStatus.removeAll(), 1_000);
+  }
+}

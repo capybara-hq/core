@@ -27,7 +27,14 @@ export function createDb(
   url: string,
   poolMax: number,
   onError: (err: Error) => void = (err) => console.error("[db] idle client error:", err),
-  opts: { connectTimeoutMs?: number | undefined } = {},
+  opts: {
+    connectTimeoutMs?: number | undefined;
+    /**
+     * Error of a client while it is checked out: pg-pool drops its own listener on checkout, so
+     * without this a backend killed between two statements is an uncaught exception.
+     */
+    onClientError?: ((err: Error) => void) | undefined;
+  } = {},
   // biome-ignore lint/suspicious/noExplicitAny: 内核不持有表结构类型，由调用方自行收窄
 ): Kysely<any> {
   const pool = new pg.Pool({
@@ -36,5 +43,6 @@ export function createDb(
     ...pgConnectOptions(opts),
   });
   pool.on("error", onError);
+  pool.on("connect", (client) => client.on("error", opts.onClientError ?? onError));
   return new Kysely({ dialect: new PostgresDialect({ pool }) });
 }

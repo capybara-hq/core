@@ -1,27 +1,28 @@
 import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
-import { Redis } from "ioredis";
+import type { DynamicModule, INestApplicationContext, Type } from "@nestjs/common";
 import type { z } from "zod";
 import type { KernelConfig } from "../config/schema.js";
-import { createBus } from "../ctx/bus.js";
-import { createKeyring } from "../ctx/secrets.js";
-import { type KernelDb, kernelDb } from "../db/kernel-schema.js";
-import { createDb } from "../db/pool.js";
+import type { Keyring } from "../ctx/secrets.js";
+import { openKernelCli } from "../infra/cli/kernel-cli.module.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { KERNEL_BUS, KEYRING } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { ExtensionAdminOps } from "./admin-ops.js";
-import { ExtensionAdmin } from "./admin-view.js";
+import { ExtensionAdmin, type PublishBus } from "./admin-view.js";
 import { ExtensionApprovals } from "./approvals.js";
 import { ExtensionBlobs } from "./blobs.js";
+import { BootstrapService } from "./bootstrap.js";
+import { type ConfigIssue, toIssues } from "./config-issues.js";
 import {
-  type ConfigIssue,
   mergeDeploymentConfig,
   readStoredDeploymentConfig,
   schemaFields,
   secretPathsOf,
-} from "./deployment-config.js";
-import { type DeclaredExtensionInfo, ExtensionHost, type InspectedExtension } from "./host.js";
+} from "./deployment-config-store.js";
+import { ExtensionsModule } from "./extensions.module.js";
+import { ExtensionHost, type InspectedExtension } from "./host.js";
 import { ExtensionInstalls } from "./installs.js";
-import { PLUGINS_CHANGED_TOPIC } from "./lifecycle.js";
-import { toIssues } from "./org-config.js";
+import { PLUGINS_CHANGED_TOPIC } from "./lifecycle-topics.js";
 import {
   ExtensionPackageError,
   extensionPackageApiError,
@@ -30,13 +31,14 @@ import {
 } from "./package.js";
 import type { PermissionSet } from "./permission-set.js";
 
-/** CLI 发布 bus 消息时连 Redis 的时限（连不上只告警）。 */
-const CLI_REDIS_CONNECT_TIMEOUT_MS = 3_000;
-
 /** {@link openExtensionCli} 的结果：CLI 的 `capybara extensions *` 共用。 */
 export interface ExtensionCli {
   config: KernelConfig;
-  db: KernelDb;
+  /**
+   * The command's Nest application context: the extension providers, the database
+   * and the CLI's Redis. Closed by {@link close}.
+   */
+  app: INestApplicationContext;
   /** 配置声明的插件（导入、按依赖排序，不 setup）。 */
   inspected: InspectedExtension[];
   /**
@@ -58,6 +60,8 @@ export interface ExtensionCli {
   admin: ExtensionAdmin;
   ops: ExtensionAdminOps;
   approvals: ExtensionApprovals;
+  /** The bootstrap step (`capybara bootstrap`), under the same `lock:bootstrap` as the kernel. */
+  bootstrap: BootstrapService;
   /** CLI 本次刚导入的包字节（降级判断等读包时优先用它：包可能存在 CLI 读不到的对象存储里）。 */
   remember(sha256: string, bytes: Uint8Array): void;
   /** 安装记录包的权限集合（与后台审阅相同）；包在对象存储里时 CLI 读不到，抛错。 */
@@ -70,40 +74,40 @@ export interface ExtensionCli {
 }
 
 /**
- * The CLI's extension management context (C18, F-Q): connects only to PG (and Redis for publishing),
- * starts no extension host and runs no extension's `setup` (a catalog import sets up the declared
- * object-store extension itself, see `openCatalogCli`). Packages the CLI imports are always
- * stored in PG (`blob_store = 'pg'`); replicas read by `blob_store`. Install / enable / disable /
- * uninstall share {@link ExtensionAdminOps} with the admin console (actor null, audits without an
- * actor); after writing PG it publishes `kernel.plugins.changed` and running replicas reconcile; a
- * failed publish only warns (the periodic reconcile catches up).
+ * The CLI's extension management context (C18, F-Q): a Nest application context with
+ * the extensions module over the database and a lazy Redis connection used only for publishing
+ * and the bootstrap lock. It loads no extension and runs no extension's `setup` (a catalog import
+ * sets up the declared object-store extension itself, see `openCatalogCli`). Packages the CLI
+ * imports are always stored in PG (`blob_store = 'pg'`); replicas read by `blob_store`. Install /
+ * enable / disable / uninstall share {@link ExtensionAdminOps} with the admin console (actor null,
+ * audits without an actor); after writing PG it publishes `kernel.plugins.changed` and running
+ * replicas reconcile; a failed publish only warns (the periodic reconcile catches up).
  */
 export async function openExtensionCli(
   config: KernelConfig,
   log: KernelLogger,
-  opts: { resolveFrom?: string } = {},
+  opts: {
+    resolveFrom?: string;
+    /** More domain modules for the context (the catalog CLI adds its import module). */
+    modules?: (Type | DynamicModule)[];
+  } = {},
 ): Promise<ExtensionCli> {
   const inspected = await ExtensionHost.inspect(config.extensions, {
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
   });
-  const raw = createDb(config.db.url, 2, (err) => log.error("pg idle client error", { err }), {
-    connectTimeoutMs: config.db.connectTimeoutMs,
+  const app = await openKernelCli(config, {
+    logger: log,
+    ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
+    modules: [ExtensionsModule, ...(opts.modules ?? [])],
   });
-  const db = kernelDb(raw);
-  const local = new Map<string, Uint8Array>();
-  const stored = new ExtensionBlobs({ db, maxBytes: () => config.packages.maxBytes });
-  const blobs = {
-    get: async (sha256: string) => local.get(sha256) ?? stored.get(sha256),
-  };
-  const declared = new Map(inspected.map((p) => [p.manifest.name, p.source] as [string, "config"]));
+  const close = () => app.close().catch(() => {});
+  const db = app.get(KernelDb);
+  const keyring = app.get<Keyring>(KEYRING);
+  const blobs = app.get(ExtensionBlobs);
   // 部署配置 = 启动配置补上后台保存在 PG 的字段（C10）；不合法的插件内核不加载（待配置）
-  const keyring = createKeyring(
-    Buffer.from(config.masterKey, "base64"),
-    config.masterKeyPrevious.map((k) => Buffer.from(k, "base64")),
-  );
   const deploymentConfigOf: ExtensionCli["deploymentConfigOf"] = async (name, schema) => {
     if (!schema) return { ok: true, value: {} };
-    const stored = await readStoredDeploymentConfig(db, keyring, name, {
+    const stored = await readStoredDeploymentConfig(db.db, keyring, name, {
       secretPaths: secretPathsOf(schemaFields(schema)),
     });
     const r = schema.safeParse(
@@ -126,81 +130,31 @@ export async function openExtensionCli(
       else configIssues.set(p.manifest.name, r.issues);
     }
   } catch (e) {
-    await raw.destroy().catch(() => {});
+    await close();
     throw e;
   }
-  const declaredInfo: DeclaredExtensionInfo[] = inspected.map((p) => ({
-    name: p.manifest.name,
-    source: p.source,
-    version: p.manifest.version,
-    permissions: p.permissions,
-    configurable: p.manifest.config?.deployment !== undefined,
-    configValid: !configIssues.has(p.manifest.name),
-  }));
-  let redis: Redis | undefined;
-  const publisher = {
-    async publish(topic: string, payload: unknown): Promise<void> {
-      if (!redis) {
-        redis = new Redis(config.redis.url, {
-          lazyConnect: true,
-          enableOfflineQueue: false,
-          maxRetriesPerRequest: 0,
-          connectTimeout: CLI_REDIS_CONNECT_TIMEOUT_MS,
-          retryStrategy: () => null,
-        });
-        redis.on("error", () => {});
-      }
-      if (redis.status !== "ready") await redis.connect();
-      // 与内核 bus 同一个频道命名（cap:kernel:<topic>）；CLI 只发布，不订阅
-      const bus = createBus(
-        redis,
-        {
-          subscribe: () => Promise.reject(new Error("the CLI does not subscribe")),
-        },
-        "kernel",
-        log,
-      );
-      await bus.publish(topic, payload);
-    },
-  };
-  const installs = new ExtensionInstalls({
-    db,
-    blobs: stored,
-    config: () => config,
-    declared: () => declared,
-  });
-  const admin = new ExtensionAdmin({
-    db,
-    blobs,
-    installs,
-    config: () => config,
-    host: { declaredPlugins: () => declaredInfo },
-    bus: publisher,
-    log,
-  });
-  const ops = new ExtensionAdminOps({
-    db,
-    view: (name) => admin.get(name, { allowUnreadable: true }),
-    declared: () => declared,
-    blobs,
-    config: () => config,
-    bus: publisher,
-    log,
-  });
+  // The admin view, the operations and the bootstrap step see the declared extensions as a
+  // replica would (the CLI checked their deployment config above)
+  app
+    .get(ExtensionHost)
+    .noteInspected(
+      inspected,
+      new Map(inspected.map((p) => [p.manifest.name, !configIssues.has(p.manifest.name)])),
+    );
+  const bus = app.get<PublishBus>(KERNEL_BUS);
   return {
     config,
-    db,
+    app,
     inspected,
     configIssues,
     deploymentConfigs,
     deploymentConfigOf,
-    installs,
-    admin,
-    ops,
-    approvals: new ExtensionApprovals(db),
-    remember: (sha256, bytes) => {
-      local.set(sha256, bytes);
-    },
+    installs: app.get(ExtensionInstalls),
+    admin: app.get(ExtensionAdmin),
+    ops: app.get(ExtensionAdminOps),
+    approvals: app.get(ExtensionApprovals),
+    bootstrap: app.get(BootstrapService),
+    remember: (sha256, bytes) => blobs.remember(sha256, bytes),
     readPackage: (sha256) => blobs.get(sha256),
     async packageSet(sha256) {
       // a stored package in the pre-0.1.0 format -> extension.legacy_format
@@ -214,7 +168,7 @@ export async function openExtensionCli(
     },
     async publishChanged(plugin) {
       try {
-        await publisher.publish(PLUGINS_CHANGED_TOPIC, { plugin });
+        await bus.publish(PLUGINS_CHANGED_TOPIC, { plugin });
         return true;
       } catch (err) {
         log.warn(
@@ -224,9 +178,6 @@ export async function openExtensionCli(
         return false;
       }
     },
-    async close() {
-      redis?.disconnect();
-      await raw.destroy().catch(() => {});
-    },
+    close,
   };
 }

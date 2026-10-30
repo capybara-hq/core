@@ -5,6 +5,7 @@ import { askUserTool } from "../../src/tools/builtins/ask-user.js";
 import { readToolOutputTool } from "../../src/tools/builtins/read-tool-output.js";
 import { toolSearchTool } from "../../src/tools/builtins/tool-search.js";
 import type { ResolvedTool } from "../../src/tools/registry.js";
+import { configFrom } from "../helpers/tools.js";
 
 /** 内核内置工具的显示摘要（中英文；只给界面看，不进模型上下文）。 */
 
@@ -30,14 +31,17 @@ const summaryOf = (r: unknown) => (r as WithDisplay).display?.summary;
 
 describe("内置工具的显示摘要", () => {
   it("read_tool_output：已读取输出 {id}", async () => {
-    const t = readToolOutputTool({ outputs: { load: async () => "a\nb\nc" }, config });
+    const t = readToolOutputTool({
+      outputs: { load: async () => "a\nb\nc" },
+      config: configFrom(config),
+    });
     const r = await t.run({ id: "out_1" }, ctx());
     expect(summaryOf(r)).toEqual({ zh: "已读取输出 out_1", en: "Read output out_1" });
     expect(validateToolDisplay((r as WithDisplay).display)).toEqual([]);
   });
 
   it("ask_user：回答 / 超时 / 关闭各有摘要；首次调用（等待回答）没有", async () => {
-    const t = askUserTool({ config });
+    const t = askUserTool({ config: configFrom(config) });
     const questions = [
       {
         question: "Which?",

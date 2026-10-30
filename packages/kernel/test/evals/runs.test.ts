@@ -2,17 +2,17 @@ import { fileURLToPath } from "node:url";
 import { ModelError } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { EventLog } from "../../src/conversations/event-log.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import type { EventLog } from "../../src/conversations/event-log.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { runActive } from "../../src/evals/budget.js";
 import type { EvalEstimate, EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import type { EvalSetView } from "../../src/evals/sets.service.js";
 import { ExtensionUnloadedError } from "../../src/extensions/inflight.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
+import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -25,6 +25,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -44,15 +45,15 @@ const MAX_CONSECUTIVE_ERRORS = 3;
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
-let k: Kernel;
+let db: KernelSchemaDb;
+let k: TestKernel;
 let eventLog: EventLog;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   raw = createDb(pgc.url, 3);
-  db = kernelDb(raw);
-  eventLog = new EventLog(db, { publish: async () => {} });
+  db = legacyDbFor(raw);
+  eventLog = eventLogFor(db, { publish: async () => {} });
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
@@ -69,7 +70,7 @@ beforeAll(async () => {
   );
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
@@ -190,7 +191,7 @@ beforeEach(async () => {
     "capybara.eval_results, capybara.eval_runs, capybara.eval_cases, capybara.eval_sets, capybara.model_prices, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.deployment_settings, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
   resetEvalModel();
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   const mk = async (login: string) =>
     (await accounts.createLocal({ login, password: PW, displayName: login })).id;
   const ownerId = await mk("owner");
@@ -1028,7 +1029,7 @@ describe("校验与权限", () => {
     const setId = await seededSet(1);
     const run = await startRun(setId, { mode: "step", candidate: {} });
     const bobId = (
-      await new AccountsService(db).createLocal({ login: "bob", password: PW, displayName: "bob" })
+      await accountsFor(db).createLocal({ login: "bob", password: PW, displayName: "bob" })
     ).id;
     expect(bobId).toBeTruthy();
     const bob = await session(k, "bob");

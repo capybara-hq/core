@@ -1,13 +1,28 @@
 import type { HookHandler, Logger, UsageReportPayload } from "@capybara-hq/plugin-sdk";
-import { DelayedError, Job, type JobsOptions, Queue, UnrecoverableError, Worker } from "bullmq";
-import type { Redis } from "ioredis";
+import { getQueueToken } from "@nestjs/bullmq";
+import { Inject, Injectable, Module, Optional } from "@nestjs/common";
+import {
+  DelayedError,
+  Job,
+  type JobsOptions,
+  type Queue,
+  UnrecoverableError,
+  type Worker,
+} from "bullmq";
 import { sql } from "kysely";
-import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { enabledExtensionsQuery } from "../extensions/enabled.js";
+import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { deepFreeze, errMsg, type HookRegistry } from "../extensions/hooks.js";
-import { withJobContext } from "../log-context.js";
-import { bullConnection } from "./run-queue.js";
+import { ExtensionHost } from "../extensions/host.js";
+import { STALE_RECONCILE_PERIODS } from "../extensions/lifecycle-topics.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { LockService } from "../infra/lock/lock.service.js";
+import { QueueModule } from "../infra/queue/queue.module.js";
+import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 
 /** Queue of `usage.report` deliveries (no `:` in the name). */
 export const USAGE_REPORT_QUEUE = "cap-kernel-usage-report";
@@ -34,6 +49,13 @@ export interface UsageReportJob {
 export const USAGE_REPORT_ATTEMPTS = 6;
 /** Retry backoff: 2 s, doubling (2, 4, 8, 16, 32 s). */
 export const USAGE_REPORT_BACKOFF_MS = 2000;
+/** The delivery retry policy of {@link UsageReporter}: attempts and the first exponential backoff. */
+export interface UsageReportRetry {
+  attempts: number;
+  backoffMs: number;
+}
+/** Optional provider: the {@link UsageReportRetry} instead of the defaults above (tests). */
+export const USAGE_REPORT_RETRY = Symbol("USAGE_REPORT_RETRY");
 /** Failed jobs (given up) are kept for inspection, at most {@link KEEP_FAILED_MAX} of them. */
 const KEEP_FAILED_S = 7 * 86_400;
 /** Upper bound on kept failed jobs (I-2): a long outage of a billing endpoint cannot grow Redis. */
@@ -46,10 +68,10 @@ const WARN_WINDOW_MS = 60_000;
  */
 const KEEP_COMPLETED_MAX = 100_000;
 
-/** Maintenance job of the sweeper (no `:`), its scheduler id and period. */
+/** The sweeper's cron job name (no `:`; every minute, once across replicas). */
 export const USAGE_SWEEP_JOB = "usage-report-sweep";
-export const USAGE_SWEEP_SCHEDULER_ID = "usage-report-sweep-every";
-export const USAGE_SWEEP_EVERY_MS = 60_000;
+/** The maintenance scheduler the sweep ran on before it became a `@LockedCron` (retired). */
+export { USAGE_SWEEP_SCHEDULER_ID } from "./job-ids.js";
 /** The sweep leaves the newest events to the fast path (and to transactions still committing). */
 export const USAGE_SWEEP_LAG_MS = 30_000;
 /**
@@ -62,43 +84,16 @@ const SWEEP_PAGE = 500;
 
 const JOB = "usage-report";
 
-export interface UsageReporterDeps {
-  db: KernelDb;
-  redisUrl: string;
-  /**
-   * The host's registry: handlers of the current local plugin generations (through inflight.run), and
-   * `has("usage.report")`, the in-process check that lets `enqueue` skip all I/O without handlers.
-   */
-  hooks: Pick<HookRegistry, "handlers" | "has">;
-  /**
-   * Whether the plugin's current instance is active on this replica (I-2): an active instance that
-   * registered no `usage.report` handler is not a subscriber, and its target is dropped. Absent: never.
-   */
-  isActive?(plugin: string): boolean;
-  /**
-   * Of these plugins, the ones no replica can serve right now (I-2): replicas report them (live
-   * `extension_replica_status` rows) and none has them loaded. Their targets are dropped at once instead
-   * of failing every attempt. See {@link queryUnservable}. Absent: none.
-   */
-  unservable?(plugins: readonly string[]): Promise<Set<string>>;
-  /**
-   * Plugins that subscribe to `usage.report`, from deployment state (approved manifests in PG), not from this replica's loaded handlers. With `orgId`: only those the
-   * organization enabled. See {@link queryUsageSubscribers}.
-   */
-  subscribers(orgId?: string): Promise<Set<string>>;
-  config: () => KernelConfig;
-  log: Logger;
-  /** Tests: retry policy (defaults {@link USAGE_REPORT_ATTEMPTS} / {@link USAGE_REPORT_BACKOFF_MS}). */
-  retry?: { attempts: number; backoffMs: number };
-}
-
 /**
  * Plugins that subscribe to `usage.report` according to deployment state: an approved permission
  * snapshot that declares the `usage.report` hook, for a plugin the deployment still knows: an enabled
  * install, or a config-declared plugin with a replica status row that is not `unloaded`. With `orgId`, only plugins
  * the organization enabled (org config rows and required bootstrap plugins).
  */
-export async function queryUsageSubscribers(db: KernelDb, orgId?: string): Promise<Set<string>> {
+export async function queryUsageSubscribers(
+  db: KernelSchemaDb,
+  orgId?: string,
+): Promise<Set<string>> {
   let q = db
     .selectFrom("extension_permission_snapshots as s")
     .select("s.plugin")
@@ -139,7 +134,7 @@ export async function queryUsageSubscribers(db: KernelDb, orgId?: string): Promi
  * status store). Unknown plugins are never listed.
  */
 export async function queryUnservable(
-  db: KernelDb,
+  db: KernelSchemaDb,
   plugins: readonly string[],
   staleSeconds: number,
 ): Promise<Set<string>> {
@@ -214,23 +209,80 @@ export function narrowPending(stored: readonly string[] | undefined, failed: rea
  * as are conversation title calls (`purpose: "title"`, no run: `runId` is "").
  * Single-step eval replays and judge requests log no usage: not reported (M7).
  */
+@Injectable()
 export class UsageReporter {
-  private queue: Queue<UsageReportJob> | undefined;
-  private queueConn: Redis | undefined;
   private worker: Worker<UsageReportJob> | undefined;
-  private workerConn: Redis | undefined;
   private closed = false;
   private readonly stopping = new AbortController();
 
-  constructor(private readonly d: UsageReporterDeps) {}
+  constructor(
+    @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(getQueueToken(USAGE_REPORT_QUEUE)) private readonly queue: Queue<UsageReportJob>,
+    /**
+     * The host's hook registry: handlers of the current local plugin generations (through
+     * inflight.run), and `has("usage.report")`, the in-process check that lets `enqueue` skip all
+     * I/O without handlers; and whether a plugin's current instance is active here.
+     */
+    @Inject(ExtensionHost) private readonly host: Pick<ExtensionHost, "hooks" | "current">,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    /** The warning throttle's markers (`capk:usage-warn:<plugin>:<kind>`, SET NX PX). */
+    @Inject(LockService) private readonly locks: Pick<LockService, "lease">,
+    @Inject(KERNEL_LOGGER) private readonly log: Logger,
+    @Optional()
+    @Inject(USAGE_REPORT_RETRY)
+    private readonly retry: UsageReportRetry = {
+      attempts: USAGE_REPORT_ATTEMPTS,
+      backoffMs: USAGE_REPORT_BACKOFF_MS,
+    },
+  ) {
+    queue.on("error", (err) => this.log.error("usage report queue error", { err }));
+  }
+
+  private get db(): KernelSchemaDb {
+    return this.kdb.db;
+  }
+
+  private get hooks(): Pick<HookRegistry, "handlers" | "has"> {
+    return this.host.hooks;
+  }
+
+  /**
+   * Whether the plugin's current instance is active on this replica (I-2): an active instance that
+   * registered no `usage.report` handler is not a subscriber, and its target is dropped.
+   */
+  isActive(plugin: string): boolean {
+    return this.host.current(plugin) !== undefined;
+  }
+
+  /**
+   * Of these plugins, the ones no replica can serve right now (I-2): replicas report them (live
+   * `extension_replica_status` rows) and none has them loaded. Their targets are dropped at once
+   * instead of failing every attempt. See {@link queryUnservable}.
+   */
+  unservable(plugins: readonly string[]): Promise<Set<string>> {
+    return queryUnservable(
+      this.db,
+      plugins,
+      STALE_RECONCILE_PERIODS * this.config.get().extensionHost.reconcileIntervalSeconds,
+    );
+  }
+
+  /**
+   * Plugins that subscribe to `usage.report`, from deployment state (approved manifests in PG),
+   * not from this replica's loaded handlers. With `orgId`: only those the organization enabled.
+   * See {@link queryUsageSubscribers}.
+   */
+  subscribers(orgId?: string): Promise<Set<string>> {
+    return queryUsageSubscribers(this.db, orgId);
+  }
 
   private jobOpts(conversationId: string, seq: number): JobsOptions {
     return {
       jobId: usageReportJobId(conversationId, seq),
-      attempts: this.d.retry?.attempts ?? USAGE_REPORT_ATTEMPTS,
-      backoff: { type: "exponential", delay: this.d.retry?.backoffMs ?? USAGE_REPORT_BACKOFF_MS },
+      attempts: this.retry.attempts,
+      backoff: { type: "exponential", delay: this.retry.backoffMs },
       removeOnComplete: {
-        age: this.d.config().hooks.usageReportKeepHours * 3600,
+        age: this.config.get().hooks.usageReportKeepHours * 3600,
         count: KEEP_COMPLETED_MAX,
       },
       removeOnFail: { age: KEEP_FAILED_S, count: KEEP_FAILED_MAX },
@@ -245,12 +297,12 @@ export class UsageReporter {
     if (this.closed) return;
     // M-2: no usage.report handler on this replica → no I/O at all. A plugin loaded only on other
     // replicas still gets the event: the sweeper re-offers it within about a minute and a half.
-    if (!this.d.hooks.has("usage.report")) return;
+    if (!this.hooks.has("usage.report")) return;
     try {
-      if ((await this.d.subscribers()).size === 0) return;
-      await this.getQueue().add(JOB, { conversationId, seq }, this.jobOpts(conversationId, seq));
+      if ((await this.subscribers()).size === 0) return;
+      await this.queue.add(JOB, { conversationId, seq }, this.jobOpts(conversationId, seq));
     } catch (err) {
-      this.d.log.warn("cannot enqueue usage report", { conversationId, seq, err });
+      this.log.warn("cannot enqueue usage report", { conversationId, seq, err });
     }
   }
 
@@ -268,20 +320,20 @@ export class UsageReporter {
         : (
             await sql<{ to: string }>`SELECT (now() - make_interval(secs => ${
               USAGE_SWEEP_LAG_MS / 1000
-            }))::text AS to`.execute(this.d.db)
+            }))::text AS to`.execute(this.db)
           ).rows[0]?.to;
     if (to === undefined) return 0;
-    const row = await this.d.db
+    const row = await this.db
       .selectFrom("usage_report_sweep")
       .select(sql<string>`watermark::text`.as("watermark"))
       .where("id", "=", 1)
       .executeTakeFirst();
     const watermark = row?.watermark ?? to;
     let offered = 0;
-    if ((await this.d.subscribers()).size > 0) {
+    if ((await this.subscribers()).size > 0) {
       let after: { at: string; conv: string; seq: string } | undefined;
       for (;;) {
-        let q = this.d.db
+        let q = this.db
           .selectFrom("conversation_events")
           .select(["conversation_id", "seq", sql<string>`created_at::text`.as("at")])
           .where("type", "=", "usage")
@@ -303,7 +355,7 @@ export class UsageReporter {
           .limit(SWEEP_PAGE)
           .execute();
         if (page.length > 0) {
-          await this.getQueue().addBulk(
+          await this.queue.addBulk(
             page.map((r) => ({
               name: JOB,
               data: { conversationId: r.conversation_id, seq: Number(r.seq) },
@@ -317,7 +369,7 @@ export class UsageReporter {
         after = { at: last.at, conv: last.conversation_id, seq: String(last.seq) };
       }
     }
-    await this.d.db
+    await this.db
       .insertInto("usage_report_sweep")
       .values({ id: 1, watermark: sql<Date>`${to}::timestamptz` as unknown as Date })
       .onConflict((oc) =>
@@ -330,75 +382,54 @@ export class UsageReporter {
     return offered;
   }
 
-  /** Starts the worker (worker role only). Job lock and stalled detection follow the run queue. */
-  startWorker(): void {
+  /**
+   * Starts consuming (worker role only): `worker` is the `@Processor` worker of
+   * {@link USAGE_REPORT_QUEUE} (built with the run queue's job lock and stalled detection).
+   */
+  startWorker(worker: Worker<UsageReportJob>): void {
     if (this.worker || this.closed) return;
-    const { jobLockMs, stalledIntervalMs } = this.d.config().runtime;
-    // the queue exists before any job runs: in-flight jobs fence and requeue through it, even on a
-    // replica that never enqueued (m-b)
-    this.getQueue();
-    this.workerConn = bullConnection(this.d.redisUrl, this.d.log);
-    this.worker = new Worker<UsageReportJob>(
-      USAGE_REPORT_QUEUE,
-      (j, t) => withJobContext(USAGE_REPORT_QUEUE, j, () => this.process(j, t)),
-      {
-        connection: this.workerConn,
-        concurrency: this.d.config().hooks.usageReportConcurrency,
-        lockDuration: jobLockMs,
-        stalledInterval: stalledIntervalMs,
-        maxStalledCount: 3,
-      },
-    );
-    this.worker.on("error", (err) => this.d.log.error("usage report worker error", { err }));
-    this.worker.on("failed", (j, err) => {
-      if (!j || err instanceof DelayedError || err.name === "DelayedError") return;
-      // a definite drop (N-3) was already warned about (throttled); the failed job is the trace
-      if (err instanceof UnrecoverableError || err.name === "UnrecoverableError") return;
-      const final = j.attemptsMade >= (j.opts.attempts ?? 1);
-      const fields = {
-        jobId: j.id,
-        conversationId: j.data.conversationId,
-        seq: j.data.seq,
-        pending: j.data.pending,
-        attempt: j.attemptsMade,
-        error: err.message,
-      };
-      if (final) this.d.log.error("usage report given up after retries", fields);
-      else this.d.log.warn("usage report attempt failed; retrying", fields);
-    });
+    this.worker = worker;
+    void worker.run().catch((err) => this.log.error("usage report worker error", { err }));
   }
 
-  /** Stops the worker (in-flight calls are aborted, their jobs requeued) and the queue. */
+  /** The worker's `error` event. */
+  onError(err: Error): void {
+    this.log.error("usage report worker error", { err });
+  }
+
+  /** A job failed (the worker's `failed` event): logs retries and the final failure. */
+  onFailed(j: Job<UsageReportJob> | undefined, err: Error): void {
+    if (!j || err instanceof DelayedError || err.name === "DelayedError") return;
+    // a definite drop (N-3) was already warned about (throttled); the failed job is the trace
+    if (err instanceof UnrecoverableError || err.name === "UnrecoverableError") return;
+    const final = j.attemptsMade >= (j.opts.attempts ?? 1);
+    const fields = {
+      jobId: j.id,
+      conversationId: j.data.conversationId,
+      seq: j.data.seq,
+      pending: j.data.pending,
+      attempt: j.attemptsMade,
+      error: err.message,
+    };
+    if (final) this.log.error("usage report given up after retries", fields);
+    else this.log.warn("usage report attempt failed; retrying", fields);
+  }
+
+  /**
+   * Stops: no more enqueues, in-flight calls are aborted (their jobs requeued) and the worker
+   * closes. The queue itself closes with the application.
+   */
   async stop(): Promise<void> {
     this.closed = true;
     this.stopping.abort();
     const w = this.worker;
     this.worker = undefined;
-    // the worker first: its in-flight jobs still use the queue to fence and requeue
     await w?.close().catch(() => {});
-    const q = this.queue;
-    this.queue = undefined;
-    await q?.close().catch(() => {});
-    for (const c of [this.workerConn, this.queueConn]) {
-      if (c) await c.quit().catch(() => c.disconnect());
-    }
-    this.workerConn = undefined;
-    this.queueConn = undefined;
-  }
-
-  private getQueue(): Queue<UsageReportJob> {
-    if (!this.queue) {
-      if (this.closed) throw new Error("usage report queue is closed");
-      this.queueConn = bullConnection(this.d.redisUrl, this.d.log);
-      this.queue = new Queue<UsageReportJob>(USAGE_REPORT_QUEUE, { connection: this.queueConn });
-      this.queue.on("error", (err) => this.d.log.error("usage report queue error", { err }));
-    }
-    return this.queue;
   }
 
   /** The payload of one usage event, read from the log; null when the event no longer exists. */
   private async payloadOf(conversationId: string, seq: number): Promise<UsageReportPayload | null> {
-    const row = await this.d.db
+    const row = await this.db
       .selectFrom("conversation_events as e")
       .innerJoin("conversations as c", "c.id", "e.conversation_id")
       .leftJoin("runs as r", "r.id", "e.run_id")
@@ -472,7 +503,7 @@ export class UsageReporter {
     next: string[],
     dropped: ReadonlyMap<string, string>,
   ): Promise<void> {
-    const fresh = j.id === undefined ? undefined : await Job.fromId(this.getQueue(), j.id);
+    const fresh = j.id === undefined ? undefined : await Job.fromId(this.queue, j.id);
     const data = fresh?.data as UsageReportJob | undefined;
     const stored = data?.pending ?? j.data.pending;
     const storedDropped = data?.dropped ?? j.data.dropped ?? {};
@@ -488,11 +519,12 @@ export class UsageReporter {
     j.data = out;
   }
 
-  private async process(j: Job<UsageReportJob>, token: string | undefined): Promise<void> {
+  /** One delivery job (the `@Processor` of {@link USAGE_REPORT_QUEUE} calls it). */
+  async process(j: Job<UsageReportJob>, token: string | undefined): Promise<void> {
     const { conversationId, seq } = j.data;
     const payload = await this.payloadOf(conversationId, seq);
     if (payload === null) return; // conversation deleted meanwhile: nothing to report
-    const subscribers = await this.d.subscribers(payload.orgId);
+    const subscribers = await this.subscribers(payload.orgId);
     if (j.data.pending === undefined) {
       // first attempt: the targets come from deployment state, recorded so later attempts (on any
       // replica) deliver exactly the plugins that have not succeeded yet
@@ -504,16 +536,16 @@ export class UsageReporter {
     const targets = (j.data.pending ?? []).filter((p) => subscribers.has(p));
     if (targets.length === 0) return;
     const byPlugin = new Map<string, HookHandler<"usage.report">[]>();
-    for (const h of this.d.hooks.handlers("usage.report")) {
+    for (const h of this.hooks.handlers("usage.report")) {
       byPlugin.set(h.plugin, [...(byPlugin.get(h.plugin) ?? []), h.handler]);
     }
     const frozen = deepFreeze(structuredClone(payload));
-    const timeoutMs = this.d.config().hooks.timeoutMs;
+    const timeoutMs = this.config.get().hooks.timeoutMs;
     const results = await Promise.allSettled(
       targets.map(async (plugin) => {
         const handlers = byPlugin.get(plugin);
         if (!handlers || handlers.length === 0) {
-          throw new Undeliverable(plugin, this.d.isActive?.(plugin) ? "no_handler" : "not_loaded");
+          throw new Undeliverable(plugin, this.isActive(plugin) ? "no_handler" : "not_loaded");
         }
         for (const h of handlers) await this.call(h, frozen, timeoutMs);
       }),
@@ -535,7 +567,7 @@ export class UsageReporter {
       }
       failed.push(plugin);
       if (!this.stopping.signal.aborted) {
-        this.d.log.warn("usage.report delivery to a plugin failed", {
+        this.log.warn("usage.report delivery to a plugin failed", {
           plugin,
           eventId: payload.eventId,
           error: errMsg(r.reason),
@@ -547,7 +579,7 @@ export class UsageReporter {
     const final = j.attemptsMade + 1 >= (j.opts.attempts ?? 1);
     const gone =
       final && notHere.length > 0 && !this.stopping.signal.aborted
-        ? await this.unservable(notHere)
+        ? await this.unservableOrNone(notHere)
         : new Set<string>();
     for (const plugin of notHere) {
       if (gone.has(plugin)) dropped.set(plugin, "no replica has it loaded");
@@ -587,13 +619,12 @@ export class UsageReporter {
     throw new UnrecoverableError(`usage.report delivered to the rest;${droppedNote(traced)}`);
   }
 
-  /** {@link UsageReporterDeps.unservable}; a lookup failure counts as "unknown" (keep retrying). */
-  private async unservable(plugins: string[]): Promise<Set<string>> {
-    if (!this.d.unservable) return new Set();
+  /** {@link unservable}; a lookup failure counts as "unknown" (keep retrying). */
+  private async unservableOrNone(plugins: string[]): Promise<Set<string>> {
     try {
-      return await this.d.unservable(plugins);
+      return await this.unservable(plugins);
     } catch (err) {
-      this.d.log.warn("cannot read plugin replica status for usage.report", { err });
+      this.log.warn("cannot read plugin replica status for usage.report", { err });
       return new Set();
     }
   }
@@ -607,13 +638,11 @@ export class UsageReporter {
   ): Promise<void> {
     let first = true;
     try {
-      this.getQueue();
-      const key = `capk:usage-warn:${plugin}:${kind}`;
-      first = (await this.queueConn?.set(key, "1", "PX", WARN_WINDOW_MS, "NX")) !== null;
+      first = await this.locks.lease(`capk:usage-warn:${plugin}:${kind}`, "1", WARN_WINDOW_MS);
     } catch {
       // Redis unavailable: log anyway rather than hiding it
     }
-    if (first) this.d.log.warn(msg, fields);
+    if (first) this.log.warn(msg, fields);
   }
 
   /** One handler call with its own signal (timeout or replica stop aborts it); rejects on either. */
@@ -644,3 +673,32 @@ export class UsageReporter {
     }
   }
 }
+
+/**
+ * The usage sweeper (R13), every minute, once across replicas: {@link UsageReporter.sweep}.
+ * Replaces the maintenance scheduler `usage-report-sweep-every` (retired at worker start).
+ */
+@Injectable()
+export class UsageSweepJob {
+  constructor(
+    @Inject(UsageReporter) private readonly reporter: Pick<UsageReporter, "sweep">,
+    @Inject(LockService) readonly lockService: LockService,
+    @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
+  ) {}
+
+  @LockedCron("* * * * *", { name: USAGE_SWEEP_JOB })
+  async run(): Promise<void> {
+    await this.reporter.sweep();
+  }
+}
+
+/**
+ * `usage.report` delivery: the producer on every role; the consumer and the sweep ({@link UsageSweepJob})
+ * on the worker role (`WorkerModule`).
+ */
+@Module({
+  imports: [ExtensionsModule, QueueModule.registerQueue(USAGE_REPORT_QUEUE)],
+  providers: [UsageReporter],
+  exports: [UsageReporter],
+})
+export class UsageReportModule {}

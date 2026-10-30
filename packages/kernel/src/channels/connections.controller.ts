@@ -1,26 +1,16 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  HttpCode,
-  Inject,
-  Param,
-  Patch,
-  Post,
-} from "@nestjs/common";
+import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post } from "@nestjs/common";
 import { z } from "zod";
 import type { JsonSchema } from "../extensions/config-json-schema.js";
-import { CHANNEL_CONNECTIONS } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
 import {
   CurrentPrincipal,
   type Principal,
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import type { ChannelConnections, ChannelConnectionView } from "./connections.service.js";
+import { ChannelConnections, type ChannelConnectionView } from "./connections.service.js";
 
 const Config = z.record(z.string().max(200), z.unknown());
 const Policy = z.enum(["bind", "anonymous"]);
@@ -47,13 +37,16 @@ const PatchBody = z
   })
   .strict();
 
+class ChannelCreateBody extends createZodDto(CreateBody, "ChannelCreateBody") {}
+class ChannelPatchBody extends createZodDto(PatchBody, "ChannelPatchBody") {}
+
 /**
  * 组织的渠道连接（`/api/v1/orgs/:orgId/channels`），全部需要 `channels.manage`（admin，仅限人）。
  * 响应只回显非密钥配置与密钥是否已设置。
  */
 @Controller("api/v1/orgs/:orgId/channels")
 export class ChannelConnectionsController {
-  constructor(@Inject(CHANNEL_CONNECTIONS) private readonly channels: ChannelConnections) {}
+  constructor(@Inject(ChannelConnections) private readonly channels: ChannelConnections) {}
 
   @Get()
   @OrgAction("channels.manage")
@@ -72,7 +65,7 @@ export class ChannelConnectionsController {
   async create(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Body(new ZodPipe(CreateBody)) body: z.infer<typeof CreateBody>,
+    @ZBody(ChannelCreateBody) body: z.infer<typeof CreateBody>,
   ): Promise<{ channel: ChannelConnectionView }> {
     const p = requireUser(principal);
     return {
@@ -95,7 +88,7 @@ export class ChannelConnectionsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("connectionId") id: string,
-    @Body(new ZodPipe(PatchBody)) body: z.infer<typeof PatchBody>,
+    @ZBody(ChannelPatchBody) body: z.infer<typeof PatchBody>,
   ): Promise<{ channel: ChannelConnectionView; verifySkipped: boolean }> {
     const p = requireUser(principal);
     // verifySkipped：插件在该组织停用时轮换凭据不调用插件校验（重新启用后按新凭据连接）

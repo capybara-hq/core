@@ -1,34 +1,14 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  HttpCode,
-  Inject,
-  Param,
-  Post,
-  Put,
-  Req,
-} from "@nestjs/common";
+import { Controller, Delete, Get, HttpCode, Inject, Param, Post, Put, Req } from "@nestjs/common";
 import { z } from "zod";
-import type { KernelConfig } from "../config/schema.js";
 import { ApiError } from "../errors.js";
-import type { ExtensionAdminOps } from "../extensions/admin-ops.js";
-import type { ExtensionAdmin } from "../extensions/admin-view.js";
-import type {
-  DeploymentConfigView,
+import { ExtensionAdminOps } from "../extensions/admin-ops.js";
+import { ExtensionAdmin } from "../extensions/admin-view.js";
+import {
+  type DeploymentConfigView,
   ExtensionDeploymentConfigService,
 } from "../extensions/deployment-config.js";
-import type { ExtensionInstalls, PackageReview } from "../extensions/installs.js";
+import { ExtensionInstalls, type PackageReview } from "../extensions/installs.js";
 import type { AdminExtensionView } from "../extensions/permission-view.js";
-import {
-  EXTENSION_ADMIN,
-  EXTENSION_ADMIN_OPS,
-  EXTENSION_DEPLOYMENT_CONFIGS,
-  EXTENSION_INSTALLS,
-  KERNEL_CONFIG,
-} from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
 import {
   CurrentPrincipal,
   EnterpriseAdmin,
@@ -36,8 +16,11 @@ import {
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody } from "../infra/validation/zod-params.js";
 
-const ApproveBody = z.object({
+const ApproveSchema = z.object({
   /** 安装记录的包（审阅时的 sha256）；配置声明的插件为 null。 */
   sha256: z
     .string()
@@ -46,20 +29,25 @@ const ApproveBody = z.object({
   reviewHash: z.string().regex(/^[0-9a-f]{16}$/),
 });
 
-const InstallBody = z.object({
+const InstallSchema = z.object({
   /** 包存储里的包（上传 / npm 导入返回的 sha256）。 */
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
 });
 
-const ConfigBody = z.object({
+const ConfigSchema = z.object({
   /** 字段点路径 → 新值（`null` 清除）。 */
   values: z.record(z.string().min(1).max(256), z.unknown()),
 });
 
-const NpmBody = z.object({
+const NpmSchema = z.object({
   package: z.string().min(1).max(214),
   version: z.string().min(1).max(256).optional(),
 });
+
+class ExtensionApproveBody extends createZodDto(ApproveSchema, "ExtensionApproveBody") {}
+class ExtensionInstallBody extends createZodDto(InstallSchema, "ExtensionInstallBody") {}
+class ExtensionConfigBody extends createZodDto(ConfigSchema, "ExtensionConfigBody") {}
+class ExtensionNpmImportBody extends createZodDto(NpmSchema, "ExtensionNpmImportBody") {}
 
 /**
  * Deployment-level extension management (`/api/v1/admin/extensions/*`, enterprise admins): package
@@ -72,13 +60,13 @@ const NpmBody = z.object({
 @EnterpriseAdmin()
 export class AdminExtensionsController {
   constructor(
-    @Inject(EXTENSION_INSTALLS) private readonly installs: ExtensionInstalls,
-    @Inject(EXTENSION_ADMIN) private readonly admin: ExtensionAdmin,
-    @Inject(EXTENSION_ADMIN_OPS) private readonly ops: ExtensionAdminOps,
-    @Inject(EXTENSION_DEPLOYMENT_CONFIGS)
+    @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,
+    @Inject(ExtensionAdmin) private readonly admin: ExtensionAdmin,
+    @Inject(ExtensionAdminOps) private readonly ops: ExtensionAdminOps,
+    @Inject(ExtensionDeploymentConfigService)
     private readonly deploymentConfigs: ExtensionDeploymentConfigService,
     // 字段名不能与路由方法同名（如 `config`）：实例字段会遮住原型上的处理函数
-    @Inject(KERNEL_CONFIG) private readonly kernelConfig: () => KernelConfig,
+    @Inject(KernelConfigService) private readonly kernelConfig: KernelConfigService,
   ) {}
 
   /**
@@ -89,7 +77,7 @@ export class AdminExtensionsController {
   async list(): Promise<{ extensions: AdminExtensionView[]; drainSeconds: number }> {
     return {
       extensions: await this.admin.list(),
-      drainSeconds: this.kernelConfig().extensionHost.drainSeconds,
+      drainSeconds: this.kernelConfig.get().extensionHost.drainSeconds,
     };
   }
 
@@ -122,7 +110,7 @@ export class AdminExtensionsController {
   putConfig(
     @CurrentPrincipal() principal: Principal,
     @Param("name") name: string,
-    @Body(new ZodPipe(ConfigBody)) body: z.infer<typeof ConfigBody>,
+    @ZBody(ExtensionConfigBody) body: z.infer<typeof ConfigSchema>,
   ): Promise<DeploymentConfigView> {
     const actor = requireUser(principal);
     return this.deploymentConfigs.put(name, body.values, actor.account.id, patTokenId(actor));
@@ -139,7 +127,7 @@ export class AdminExtensionsController {
   async approve(
     @CurrentPrincipal() principal: Principal,
     @Param("name") name: string,
-    @Body(new ZodPipe(ApproveBody)) body: z.infer<typeof ApproveBody>,
+    @ZBody(ExtensionApproveBody) body: z.infer<typeof ApproveSchema>,
   ): Promise<AdminExtensionView> {
     const actor = requireUser(principal);
     const tokenId = patTokenId(actor);
@@ -165,7 +153,7 @@ export class AdminExtensionsController {
   install(
     @CurrentPrincipal() principal: Principal,
     @Param("name") name: string,
-    @Body(new ZodPipe(InstallBody)) body: z.infer<typeof InstallBody>,
+    @ZBody(ExtensionInstallBody) body: z.infer<typeof InstallSchema>,
   ): Promise<AdminExtensionView> {
     const actor = requireUser(principal);
     return this.ops.install(name, body.sha256, actor.account.id, patTokenId(actor));
@@ -239,7 +227,7 @@ export class AdminExtensionsController {
   @HttpCode(200)
   async fromNpm(
     @CurrentPrincipal() principal: Principal,
-    @Body(new ZodPipe(NpmBody)) body: z.infer<typeof NpmBody>,
+    @ZBody(ExtensionNpmImportBody) body: z.infer<typeof NpmSchema>,
   ): Promise<PackageReview> {
     const actor = requireUser(principal);
     const tokenId = patTokenId(actor);

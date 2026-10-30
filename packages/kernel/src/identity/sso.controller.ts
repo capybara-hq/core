@@ -11,27 +11,19 @@ import {
   Res,
 } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
-import type { KernelConfig } from "../config/schema.js";
-import {
-  ACCOUNTS,
-  EXTERNAL_IDENTITIES,
-  IDENTITY_BINDING,
-  KERNEL_CONFIG,
-  SESSIONS,
-  SSO_FLOW,
-} from "../http/tokens.js";
-import type { AccountsService } from "./accounts.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { AccountsService } from "./accounts.js";
 import { clientMeta } from "./auth.controller.js";
-import type { IdentityBinding, PendingBinding } from "./binding.js";
+import { IdentityBinding, type PendingBinding } from "./binding.js";
 import { setSessionCookies } from "./cookies.js";
-import type { ExternalIdentities, LinkedIdentity } from "./external.js";
+import { ExternalIdentities, type LinkedIdentity } from "./external.js";
 import { CurrentPrincipal, type Principal, Public, requireUser, SessionOnly } from "./principal.js";
-import type { SessionService } from "./sessions.js";
+import { SessionService } from "./sessions.js";
 import {
   SSO_BINDING_COOKIE,
   SSO_COOKIE_PATH,
   SSO_STATE_TTL_SECONDS,
-  type SsoFlow,
+  SsoFlow,
   ssoBrowserBinding,
 } from "./sso.js";
 
@@ -54,10 +46,10 @@ function stringQuery(q: Record<string, unknown>): Record<string, string> {
 @Controller("api/v1/auth")
 export class SsoController {
   constructor(
-    @Inject(SSO_FLOW) private readonly flow: SsoFlow,
-    @Inject(SESSIONS) private readonly sessions: SessionService,
-    @Inject(ACCOUNTS) private readonly accounts: AccountsService,
-    @Inject(KERNEL_CONFIG) private readonly config: () => KernelConfig,
+    @Inject(SsoFlow) private readonly flow: SsoFlow,
+    @Inject(SessionService) private readonly sessions: SessionService,
+    @Inject(AccountsService) private readonly accounts: AccountsService,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
   ) {}
 
   @Get("sources")
@@ -127,7 +119,7 @@ export class SsoController {
         location = this.flow.loginError("auth.account_disabled");
       } else {
         const session = await this.sessions.create(account.id, clientMeta(req));
-        setSessionCookies(reply, session, this.config());
+        setSessionCookies(reply, session, this.config.get());
         location = this.flow.webUrl(r.returnTo);
       }
     }
@@ -149,7 +141,7 @@ function sessionAccount(principal: Principal | undefined): string | undefined {
 
 @Controller("api/v1/bind")
 export class BindController {
-  constructor(@Inject(IDENTITY_BINDING) private readonly binding: IdentityBinding) {}
+  constructor(@Inject(IdentityBinding) private readonly binding: IdentityBinding) {}
 
   @Get(":token")
   @SessionOnly()
@@ -176,7 +168,7 @@ export class BindController {
 /** 本人绑定的外部身份（`/api/v1/me/identities`）：列出、解除。 */
 @Controller("api/v1/me/identities")
 export class MeIdentitiesController {
-  constructor(@Inject(EXTERNAL_IDENTITIES) private readonly external: ExternalIdentities) {}
+  constructor(@Inject(ExternalIdentities) private readonly external: ExternalIdentities) {}
 
   @Get()
   async list(@CurrentPrincipal() principal: Principal): Promise<{ identities: LinkedIdentity[] }> {

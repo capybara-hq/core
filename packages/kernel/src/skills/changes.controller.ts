@@ -1,18 +1,22 @@
-import { Body, Controller, Delete, Get, HttpCode, Inject, Param, Post } from "@nestjs/common";
+import { Controller, Delete, Get, HttpCode, Inject, Param, Post } from "@nestjs/common";
 import { z } from "zod";
-import type { AgentsService } from "../agents/agents.service.js";
-import { AGENTS, INBOX, SKILL_CHANGES, SKILLS } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
+import { AgentsService } from "../agents/agents.service.js";
 import {
   CurrentPrincipal,
   type Principal,
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
-import type { InboxService, InboxView } from "../inbox/inbox.service.js";
+import { InboxService, type InboxView } from "../inbox/inbox.service.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import type { SkillChangeDetail, SkillChangesService, SkillChangeView } from "./changes.service.js";
-import type { SkillSummary, SkillsService } from "./skills.service.js";
+import {
+  type SkillChangeDetail,
+  SkillChangesService,
+  type SkillChangeView,
+} from "./changes.service.js";
+import { type SkillSummary, SkillsService } from "./skills.service.js";
 
 const DecideBody = z
   .object({
@@ -20,6 +24,7 @@ const DecideBody = z
     note: z.string().max(1000).optional(),
   })
   .strict();
+class SkillChangeDecideBody extends createZodDto(DecideBody, "SkillChangeDecideBody") {}
 
 /**
  * 共享 agent 的技能变更申请（`/api/v1/orgs/:orgId/skill-changes`，M5 T15，R4）。动作 `approvals.decide`
@@ -28,7 +33,7 @@ const DecideBody = z
  */
 @Controller("api/v1/orgs/:orgId/skill-changes")
 export class SkillChangesController {
-  constructor(@Inject(SKILL_CHANGES) private readonly changes: SkillChangesService) {}
+  constructor(@Inject(SkillChangesService) private readonly changes: SkillChangesService) {}
 
   @Get(":id")
   @OrgAction("approvals.decide")
@@ -48,7 +53,7 @@ export class SkillChangesController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
-    @Body(new ZodPipe(DecideBody)) body: z.infer<typeof DecideBody>,
+    @ZBody(SkillChangeDecideBody) body: z.infer<typeof DecideBody>,
   ): Promise<{ skillChange: SkillChangeView }> {
     const p = requireUser(principal);
     return {
@@ -67,9 +72,9 @@ export class SkillChangesController {
 @Controller("api/v1/orgs/:orgId/agents/:agentId/skills")
 export class AgentSkillsController {
   constructor(
-    @Inject(SKILL_CHANGES) private readonly changes: SkillChangesService,
-    @Inject(AGENTS) private readonly agents: AgentsService,
-    @Inject(SKILLS) private readonly skills: SkillsService,
+    @Inject(SkillChangesService) private readonly changes: SkillChangesService,
+    @Inject(AgentsService) private readonly agents: AgentsService,
+    @Inject(SkillsService) private readonly skills: SkillsService,
   ) {}
 
   @Get()
@@ -107,7 +112,7 @@ export class AgentSkillsController {
  */
 @Controller("api/v1/orgs/:orgId/inbox")
 export class InboxController {
-  constructor(@Inject(INBOX) private readonly inbox: InboxService) {}
+  constructor(@Inject(InboxService) private readonly inbox: InboxService) {}
 
   @Get()
   @OrgAction("approvals.decide")

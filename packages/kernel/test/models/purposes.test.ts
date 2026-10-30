@@ -1,17 +1,28 @@
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
-import { KERNEL_PURPOSES, type PurposeView } from "../../src/models/purposes.js";
+import {
+  KERNEL_PURPOSES,
+  ModelPurposesService,
+  type PurposeView,
+} from "../../src/models/purposes.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { createOrg, PW, type Req, runConfig, session, startKernel } from "../helpers/runs.js";
+import {
+  createOrg,
+  PW,
+  type Req,
+  runConfig,
+  session,
+  startKernel,
+  type TestKernel,
+} from "../helpers/runs.js";
 
 /**
  * 模型用途映射（T6 / C9）：内核用途 `eval` 与插件 `permissions.models` 声明的用途；部署默认（企业管理员）+
@@ -25,8 +36,8 @@ const MODEL_EVAL = fileURLToPath(
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
-let k: Kernel;
+let db: KernelSchemaDb;
+let k: TestKernel;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -40,7 +51,7 @@ beforeAll(async () => {
   );
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
@@ -59,7 +70,7 @@ beforeEach(async () => {
     "capybara.model_purpose_mappings, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.deployment_settings, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
   resetEvalModel();
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   entId = (
     await accounts.createLocal({
       login: "ent",
@@ -159,7 +170,7 @@ describe("purpose list", () => {
 
 describe("effective 与解析", () => {
   it("先取组织覆盖、再取部署默认；清掉后回落；都没有 → model.unconfigured 409", async () => {
-    await expect(k.purposes.resolve(orgId, "eval")).rejects.toMatchObject({
+    await expect(k.app.get(ModelPurposesService).resolve(orgId, "eval")).rejects.toMatchObject({
       code: "model.unconfigured",
     });
 
@@ -170,11 +181,11 @@ describe("effective 与解析", () => {
       override: null,
       effective: J,
     });
-    expect(await k.purposes.resolve(orgId, "eval")).toEqual(J);
+    expect(await k.app.get(ModelPurposesService).resolve(orgId, "eval")).toEqual(J);
 
     const o = await put(admin, orgUrl("eval"), E1);
     expect(o).toMatchObject({ default: J, override: E1, effective: E1 });
-    expect(await k.purposes.resolve(orgId, "eval")).toEqual(E1);
+    expect(await k.app.get(ModelPurposesService).resolve(orgId, "eval")).toEqual(E1);
     // 部署级视图不显示组织覆盖
     expect(find(await list(ent, adminUrl()), "eval")).toMatchObject({
       override: null,
@@ -187,15 +198,19 @@ describe("effective 与解析", () => {
       default: null,
       effective: null,
     });
-    await expect(k.purposes.resolve(orgId, "eval")).rejects.toMatchObject({
+    await expect(k.app.get(ModelPurposesService).resolve(orgId, "eval")).rejects.toMatchObject({
       code: "model.unconfigured",
     });
 
     // 只有组织覆盖也行；部署默认改了不影响已覆盖的组织
     await put(admin, orgUrl("model-eval.summarize"), E1);
-    expect(await k.purposes.resolve(orgId, "model-eval.summarize")).toEqual(E1);
+    expect(await k.app.get(ModelPurposesService).resolve(orgId, "model-eval.summarize")).toEqual(
+      E1,
+    );
     await put(ent, adminUrl("model-eval.summarize"), J);
-    expect(await k.purposes.resolve(orgId, "model-eval.summarize")).toEqual(E1);
+    expect(await k.app.get(ModelPurposesService).resolve(orgId, "model-eval.summarize")).toEqual(
+      E1,
+    );
 
     // 审计：每次映射 / 清除一条 model.purpose_mapped
     const rows = await db
@@ -223,7 +238,10 @@ describe("effective 与解析", () => {
     const o = await admin({ method: "PUT", url: orgUrl("other.x"), payload: { target: J } });
     expect(o.statusCode).toBe(404);
     expect(errCode(o)).toBe("model.purpose_unknown");
-    const err = await k.purposes.resolve(orgId, "nope").catch((e: unknown) => e);
+    const err = await k.app
+      .get(ModelPurposesService)
+      .resolve(orgId, "nope")
+      .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).code).toBe("model.purpose_unknown");
   });
@@ -260,7 +278,7 @@ describe("effective 与解析", () => {
 describe("chat", () => {
   it("按映射的模型发请求，参数按它的声明补默认值", async () => {
     await put(ent, adminUrl("eval"), J);
-    const out = await k.purposes.chat(
+    const out = await k.app.get(ModelPurposesService).chat(
       orgId,
       "eval",
       {
@@ -282,7 +300,7 @@ describe("chat", () => {
 
   it("输出上限不超过目标模型的 maxOutputTokens（eval-j 为 2000）", async () => {
     await put(ent, adminUrl("eval"), J);
-    await k.purposes.chat(
+    await k.app.get(ModelPurposesService).chat(
       orgId,
       "eval",
       {

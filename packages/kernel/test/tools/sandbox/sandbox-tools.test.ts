@@ -13,13 +13,15 @@ import {
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ARTIFACT_PREVIEW_MAX_LINES } from "../../../src/conversations/artifacts.js";
+import { EventLog } from "../../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
-import { AccountsService } from "../../../src/identity/accounts.js";
-import type { Kernel } from "../../../src/kernel.js";
+import { SandboxService } from "../../../src/sandbox/sandbox.service.js";
+import { StorageService } from "../../../src/storage/storage.service.js";
 import { removeFakeSandbox } from "../../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../../helpers/db.js";
+import { accountsFor } from "../../helpers/identity.js";
 import { testMembers } from "../../helpers/members.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import {
@@ -32,6 +34,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitForEvent,
   waitForTerminal,
 } from "../../helpers/runs.js";
@@ -59,9 +62,9 @@ const SANDBOX_TOOLS = [
 let pgc: TestContainer;
 let rd: TestContainer;
 let s3: TestS3;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 let root: string;
 
 beforeAll(async () => {
@@ -94,7 +97,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
   if (root) await rm(root, { recursive: true, force: true });
@@ -109,7 +112,7 @@ beforeEach(async () => {
     db,
     "capybara.sandboxes, capybara.attachments, capybara.approvals, capybara.tool_outputs, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   const ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   const otherId = (await accounts.createLocal({ login: "other", password: PW, displayName: "X" }))
@@ -483,7 +486,7 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     });
     expect(a.objectKey).toBe(`artifacts/${conv}/${a.artifactId}`);
     expect(r.content).toContain(a.artifactId);
-    const got = await k.storage.kernel(orgId).get(a.objectKey);
+    const got = await k.app.get(StorageService).kernel(orgId).get(a.objectKey);
     expect(got).not.toBeNull();
     expect(Buffer.from(await new Response(got?.body).arrayBuffer()).toString()).toBe("a,b\n1,2\n");
 
@@ -612,7 +615,7 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
 
   it("preview: a text file over 8 KB is cut at a UTF-8 boundary / a line; NUL bytes → not previewable", async () => {
     const conv = await sandboxConversation();
-    const store = k.storage.kernel(orgId);
+    const store = k.app.get(StorageService).kernel(orgId);
     const put = async (name: string, bytes: Buffer, contentType = "text/plain") => {
       const artifactId = randomUUID();
       const objectKey = `artifacts/${conv}/${artifactId}`;
@@ -621,7 +624,7 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
         size: bytes.byteLength,
         signal: AbortSignal.timeout(10_000),
       });
-      await k.runs.eventLog.append(conv, [
+      await k.app.get(EventLog).append(conv, [
         {
           type: "artifact_created",
           payload: {
@@ -675,11 +678,13 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     expect((denied.json() as { error: { code: string } }).error.code).toBe(
       "conversation.not_found",
     );
-    expect(await k.sandbox.suspendIdle(new Date(Date.now() + 24 * 3600_000))).toBeGreaterThan(0);
+    expect(
+      await k.app.get(SandboxService).suspendIdle(new Date(Date.now() + 24 * 3600_000)),
+    ).toBeGreaterThan(0);
     const suspended = await owner({ method: "GET", url });
     expect((suspended.json() as { status: string }).status).toBe("suspended");
     // 已销毁的：与未创建一样（文件已不在），404
-    await k.sandbox.destroyFor(conv);
+    await k.app.get(SandboxService).destroyFor(conv);
     expect((await owner({ method: "GET", url })).statusCode).toBe(404);
   });
 

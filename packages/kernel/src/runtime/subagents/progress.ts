@@ -1,7 +1,7 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
 import { type ConversationBusMessage, conversationTopic } from "../../conversations/event-log.js";
-import type { KernelDb } from "../../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../db/kernel-schema.js";
 
 /** A finished step of a sub-agent run, as the loop reports it. */
 export interface SubagentStep {
@@ -14,7 +14,7 @@ export interface SubagentStep {
 }
 
 export interface SubagentProgressDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   bus: { publish(topic: string, payload: unknown): Promise<void> };
   log: Pick<Logger, "warn">;
 }

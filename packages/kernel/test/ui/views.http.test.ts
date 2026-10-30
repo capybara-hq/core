@@ -8,17 +8,16 @@ import {
 } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import { ApiTokenService } from "../../src/identity/api-tokens.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { buildModelRequest } from "../../src/runtime/context/build.js";
 import { compactionPlan } from "../../src/runtime/context/compaction.js";
 import type { UiProbeState } from "../fixtures/plugins/ui-probe/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createConv,
@@ -28,6 +27,8 @@ import {
   type Req,
   runConfig,
   session,
+  startKernel,
+  type TestKernel,
   waitForTerminal,
 } from "../helpers/runs.js";
 import { AGENT, MODEL } from "../runtime/context/fixtures.js";
@@ -50,9 +51,9 @@ const probe = (): UiProbeState => {
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let redis: Redis;
-let k: Kernel;
+let k: TestKernel;
 const lines: string[] = [];
 
 beforeAll(async () => {
@@ -61,14 +62,13 @@ beforeAll(async () => {
   db = kernelDb(raw);
   redis = new Redis(rd.url);
   const base = runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] });
-  k = await createKernel(
+  k = await startKernel(
     { ...base, extensions: [...base.extensions, UI_PROBE, TOOLS_UI] },
     { env: {}, logger: createLogger("warn", { write: (l) => lines.push(l) }) },
   );
-  await k.start();
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -77,9 +77,7 @@ afterAll(async () => {
 const errCode = (r: { json(): unknown }) => (r.json() as { error?: { code?: string } }).error?.code;
 
 async function account(name: string): Promise<string> {
-  return (
-    await new AccountsService(db).createLocal({ login: name, password: PW, displayName: name })
-  ).id;
+  return (await accountsFor(db).createLocal({ login: name, password: PW, displayName: name })).id;
 }
 
 async function createToolAgent(req: Req, orgId: string): Promise<string> {
@@ -539,7 +537,7 @@ describe("插件视图接口", () => {
   it("an inline card gets callId / key as args.card, a panel gets item; the old alias renders its target", async () => {
     await enable(owner, orgId, "ui-probe");
     // the card is attested by the log: a tool_result of this conversation recorded it (review I2)
-    await k.runs.eventLog.append(convId, [
+    await k.app.get(EventLog).append(convId, [
       {
         type: "tool_result",
         payload: {
@@ -624,7 +622,7 @@ describe("插件视图接口", () => {
 
   it("服务令牌 → 403（HUMAN_ONLY）", async () => {
     await enable(owner, orgId, "ui-probe");
-    const { token } = await new ApiTokenService(db).createService(orgId, {
+    const { token } = await apiTokensFor(db).createService(orgId, {
       name: "bot",
       role: "admin",
       createdBy: ownerId,

@@ -6,10 +6,10 @@ import {
   SANDBOX_BUSY_PREFIX,
   SANDBOX_LOCK_PREFIX,
   type SandboxLease,
-  SandboxLeases,
   SandboxLockLostError,
   SandboxPathBusyError,
 } from "../../src/sandbox/leases.js";
+import { sandboxLeasesFor } from "../helpers/sandbox.js";
 
 /**
  * Shared and exclusive sandbox leases (sub-agents spec §10.3): Redis protocol only, against a real
@@ -37,8 +37,8 @@ beforeEach(async () => {
 });
 
 type LeaseOpts = { ttlMs?: number; pollMs?: number; pathTtlMs?: number };
-const leasesA = (o: LeaseOpts = {}) => new SandboxLeases({ redis: redisA, log, pollMs: 10, ...o });
-const leasesB = (o: LeaseOpts = {}) => new SandboxLeases({ redis: redisB, log, pollMs: 10, ...o });
+const leasesA = (o: LeaseOpts = {}) => sandboxLeasesFor({ redis: redisA, log, pollMs: 10, ...o });
+const leasesB = (o: LeaseOpts = {}) => sandboxLeasesFor({ redis: redisB, log, pollMs: 10, ...o });
 
 /** Resolves to the settled state of `p` after `ms` without waiting for it. */
 async function settledWithin<T>(p: Promise<T>, ms: number): Promise<"pending" | "done"> {
@@ -353,7 +353,7 @@ describe("SandboxLeases", () => {
       const stub = {
         eval: () => (immediate ? Promise.resolve(1) : new Promise<number>((r) => replies.push(r))),
       } as unknown as Redis;
-      const l = await new SandboxLeases({ redis: stub, log, ttlMs: 300 }).acquireShared(
+      const l = await sandboxLeasesFor({ redis: stub, log, ttlMs: 300 }).acquireShared(
         "c1",
         4,
         never(),

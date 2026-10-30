@@ -1,17 +1,16 @@
-import { Body, Controller, Get, Inject, Param, Put } from "@nestjs/common";
-import { MODEL_PURPOSES } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
+import { Controller, Get, Inject, Param, Put } from "@nestjs/common";
 import {
   CurrentPrincipal,
   type Principal,
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
+import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import {
-  type ModelPurposesService,
-  PURPOSE_PUT,
+  ModelPurposesService,
   type PurposePut,
+  PurposePutDto,
   type PurposeTarget,
   type PurposeView,
 } from "./purposes.js";
@@ -26,7 +25,7 @@ export const purposeTargetOf = (b: PurposePut): PurposeTarget | null =>
  */
 @Controller("api/v1/orgs/:orgId/model-purposes")
 export class ModelPurposesController {
-  constructor(@Inject(MODEL_PURPOSES) private readonly purposes: ModelPurposesService) {}
+  constructor(@Inject(ModelPurposesService) private readonly purposes: ModelPurposesService) {}
 
   @Get()
   @OrgAction("org.models.manage")
@@ -44,7 +43,7 @@ export class ModelPurposesController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("purpose") purpose: string,
-    @Body(new ZodPipe(PURPOSE_PUT)) body: PurposePut,
+    @ZBody(PurposePutDto) body: PurposePut,
   ): Promise<{ purpose: PurposeView }> {
     const p = requireUser(principal);
     return {

@@ -8,6 +8,8 @@ apps/web/visual/**/*-win32.png
 artifacts
 # Offline bootstrap plugin packages (config bootstrap.dir, default ./bootstrap)
 /bootstrap/
+# Unpacked extension packages of a source-checkout kernel (extensionHost.dir default)
+/.capybara/
 .capybara-pack-*
 # 本地工作区与流程工具的临时文件（.claude/skills 软链要跟踪，只忽略 worktrees）
 .claude/worktrees/

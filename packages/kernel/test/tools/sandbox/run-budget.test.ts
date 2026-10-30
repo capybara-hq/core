@@ -6,16 +6,15 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../../src/config/schema.js";
 import type { ConversationEvent } from "../../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
-import { AccountsService } from "../../../src/identity/accounts.js";
-import type { Kernel } from "../../../src/kernel.js";
 import { sandboxConfigWarnings } from "../../../src/sandbox/sandbox.service.js";
 import {
   RUN_DEADLINE_MARGIN_MS,
   runTimeLeftMs,
   searchTimeoutMs,
 } from "../../../src/tools/builtins/sandbox/index.js";
+import { accountsFor } from "../../helpers/identity.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import {
   createConv,
@@ -26,6 +25,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitForTerminal,
 } from "../../helpers/runs.js";
 
@@ -97,9 +97,9 @@ describe("运行时限与命令超时（纯函数）", () => {
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 let root: string;
 
 beforeAll(async () => {
@@ -122,7 +122,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop()]);
   if (root) await rm(root, { recursive: true, force: true });
@@ -132,7 +132,7 @@ type ToolResultEvent = Extract<ConversationEvent, { type: "tool_result" }>;
 
 describe("sandbox_bash 按运行剩下的时间收紧超时", { timeout: 90_000 }, () => {
   it("请求的 timeoutSeconds 超过运行剩余：命令在截止前超时，结果说明运行时限（不是结果未知）", async () => {
-    await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+    await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
     const owner = await session(k, "owner");
     const orgId = await createOrg(owner);
     const res = await owner({

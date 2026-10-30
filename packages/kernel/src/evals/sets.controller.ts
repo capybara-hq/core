@@ -1,30 +1,20 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  HttpCode,
-  Inject,
-  Param,
-  Patch,
-  Post,
-} from "@nestjs/common";
+import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post } from "@nestjs/common";
 import { z } from "zod";
-import { EVAL_SETS } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
 import {
   CurrentPrincipal,
   type Principal,
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import type {
-  EvalCaseDetail,
-  EvalCaseView,
-  EvalSetDetail,
+import {
+  type EvalCaseDetail,
+  type EvalCaseView,
+  type EvalSetDetail,
   EvalSetsService,
-  EvalSetView,
+  type EvalSetView,
 } from "./sets.service.js";
 
 const NAME = z.string().trim().min(1).max(200);
@@ -62,20 +52,25 @@ const SampleBody = z
   })
   .strict();
 
+class CreateBodyDto extends createZodDto(CreateBody, "EvalSetCreateBody") {}
+class PatchBodyDto extends createZodDto(PatchBody, "EvalSetPatchBody") {}
+class AddCaseBodyDto extends createZodDto(AddCaseBody, "EvalSetAddCaseBody") {}
+class SampleBodyDto extends createZodDto(SampleBody, "EvalSetSampleBody") {}
+
 /**
  * 评测集与用例（`/api/v1/orgs/:orgId/eval-sets`）：全部 `evals.manage`（admin 起、只给人）。
  * 用例详情返回快照还原的轨迹，每次写审计 `trajectory.viewed`。
  */
 @Controller("api/v1/orgs/:orgId/eval-sets")
 export class EvalSetsController {
-  constructor(@Inject(EVAL_SETS) private readonly sets: EvalSetsService) {}
+  constructor(@Inject(EvalSetsService) private readonly sets: EvalSetsService) {}
 
   @Post()
   @OrgAction("evals.manage")
   async create(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Body(new ZodPipe(CreateBody)) body: z.infer<typeof CreateBody>,
+    @ZBody(CreateBodyDto) body: z.infer<typeof CreateBody>,
   ): Promise<{ set: EvalSetView }> {
     const p = requireUser(principal);
     const set = await this.sets.create(
@@ -119,7 +114,7 @@ export class EvalSetsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("setId") setId: string,
-    @Body(new ZodPipe(PatchBody)) body: z.infer<typeof PatchBody>,
+    @ZBody(PatchBodyDto) body: z.infer<typeof PatchBody>,
   ): Promise<{ set: EvalSetView }> {
     const p = requireUser(principal);
     const set = await this.sets.update(
@@ -154,7 +149,7 @@ export class EvalSetsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("setId") setId: string,
-    @Body(new ZodPipe(AddCaseBody)) body: z.infer<typeof AddCaseBody>,
+    @ZBody(AddCaseBodyDto) body: z.infer<typeof AddCaseBody>,
   ): Promise<{ case: EvalCaseView }> {
     const p = requireUser(principal);
     return { case: await this.sets.addCase(org.orgId, p.account.id, setId, body, patTokenId(p)) };
@@ -167,7 +162,7 @@ export class EvalSetsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("setId") setId: string,
-    @Body(new ZodPipe(SampleBody)) body: z.infer<typeof SampleBody>,
+    @ZBody(SampleBodyDto) body: z.infer<typeof SampleBody>,
   ): Promise<{ added: number; skipped: number }> {
     const p = requireUser(principal);
     return this.sets.sample(

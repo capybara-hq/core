@@ -1,19 +1,6 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  HttpCode,
-  Inject,
-  Param,
-  Post,
-  Query,
-  Res,
-} from "@nestjs/common";
+import { Controller, Delete, Get, HttpCode, Inject, Param, Post, Res } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
-import { CATALOG_REQUESTS, ORG_CATALOG, PLUGIN_INSTALLER } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
 import {
   CurrentPrincipal,
   EnterpriseAdmin,
@@ -21,6 +8,8 @@ import {
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { roleAtLeast } from "../orgs/roles.js";
 import { CredentialValue } from "../tools/connectors.controller.js";
@@ -28,13 +17,13 @@ import type {
   CatalogIcon,
   OrgCatalogDetail,
   OrgCatalogItem,
-  OrgCatalogService,
   OrgInstallResult,
   OrgUpgradeResult,
-} from "./org-catalog.service.js";
-import type { PluginInstaller, PluginInstallView, UninstallReport } from "./plugin-install.js";
+} from "./catalog-content.js";
+import { OrgCatalogService } from "./org-catalog.service.js";
+import { PluginInstaller, type PluginInstallView, type UninstallReport } from "./plugin-install.js";
 import type { PluginUpgradeInput, UpgradePreview } from "./plugin-upgrade.js";
-import type { CatalogRequestsService, CatalogRequestView } from "./requests.service.js";
+import { CatalogRequestsService, type CatalogRequestView } from "./requests.service.js";
 
 const RequestBody = z
   .object({
@@ -100,6 +89,16 @@ const AdminListQuery = z.object({
   status: z.enum(["pending", "approved", "rejected", "cancelled"]).optional(),
 });
 
+class CatalogRequestsQuery extends createZodDto(AdminListQuery, "CatalogRequestsQuery") {}
+class CatalogDecideBody extends createZodDto(DecideBody, "CatalogDecideBody") {}
+class OrgPluginInstallBody extends createZodDto(InstallBody, "OrgPluginInstallBody") {}
+class CatalogRequestBody extends createZodDto(RequestBody, "CatalogRequestBody") {}
+class OrgPluginUpgradeBody extends createZodDto(UpgradeBody, "OrgPluginUpgradeBody") {}
+class OrgPluginUpgradePreviewBody extends createZodDto(
+  UpgradePreviewBody,
+  "OrgPluginUpgradePreviewBody",
+) {}
+
 /**
  * The enterprise catalog from an organization's view (`/api/v1/orgs/:orgId/...`, human users only):
  * - `GET catalog` (`catalog.read`, member and up; members do not see disabled items);
@@ -120,9 +119,9 @@ const AdminListQuery = z.object({
 @Controller("api/v1/orgs/:orgId")
 export class OrgCatalogController {
   constructor(
-    @Inject(ORG_CATALOG) private readonly catalog: OrgCatalogService,
-    @Inject(CATALOG_REQUESTS) private readonly requests: CatalogRequestsService,
-    @Inject(PLUGIN_INSTALLER) private readonly pluginInstaller: PluginInstaller,
+    @Inject(OrgCatalogService) private readonly catalog: OrgCatalogService,
+    @Inject(CatalogRequestsService) private readonly requests: CatalogRequestsService,
+    @Inject(PluginInstaller) private readonly pluginInstaller: PluginInstaller,
   ) {}
 
   @Get("catalog")
@@ -171,7 +170,7 @@ export class OrgCatalogController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("itemId") itemId: string,
-    @Body(new ZodPipe(RequestBody)) body: z.infer<typeof RequestBody>,
+    @ZBody(CatalogRequestBody) body: z.infer<typeof RequestBody>,
   ): Promise<{ request: CatalogRequestView; created: boolean }> {
     const p = requireUser(principal);
     const tokenId = patTokenId(p);
@@ -190,7 +189,7 @@ export class OrgCatalogController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("itemId") itemId: string,
-    @Body(new ZodPipe(InstallBody)) body: z.infer<typeof InstallBody>,
+    @ZBody(OrgPluginInstallBody) body: z.infer<typeof InstallBody>,
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<Omit<OrgInstallResult, "status">> {
     const p = requireUser(principal);
@@ -236,7 +235,7 @@ export class OrgCatalogController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("installId") installId: string,
-    @Body(new ZodPipe(UpgradePreviewBody)) body: z.infer<typeof UpgradePreviewBody>,
+    @ZBody(OrgPluginUpgradePreviewBody) body: z.infer<typeof UpgradePreviewBody>,
   ): Promise<UpgradePreview> {
     const p = requireUser(principal);
     return this.catalog.upgradePreview(org.orgId, p.account.id, installId, body.version);
@@ -248,7 +247,7 @@ export class OrgCatalogController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("installId") installId: string,
-    @Body(new ZodPipe(UpgradeBody)) body: z.infer<typeof UpgradeBody>,
+    @ZBody(OrgPluginUpgradeBody) body: z.infer<typeof UpgradeBody>,
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<Omit<OrgUpgradeResult, "status">> {
     const p = requireUser(principal);
@@ -271,7 +270,7 @@ export class OrgCatalogController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
-    @Body(new ZodPipe(DecideBody)) body: z.infer<typeof DecideBody>,
+    @ZBody(CatalogDecideBody) body: z.infer<typeof DecideBody>,
   ): Promise<{ request: CatalogRequestView }> {
     const p = requireUser(principal);
     const tokenId = patTokenId(p);
@@ -291,11 +290,11 @@ export class OrgCatalogController {
 @Controller("api/v1/admin/catalog/requests")
 @EnterpriseAdmin()
 export class AdminCatalogRequestsController {
-  constructor(@Inject(CATALOG_REQUESTS) private readonly requests: CatalogRequestsService) {}
+  constructor(@Inject(CatalogRequestsService) private readonly requests: CatalogRequestsService) {}
 
   @Get()
   async list(
-    @Query(new ZodPipe(AdminListQuery)) q: z.infer<typeof AdminListQuery>,
+    @ZQuery(CatalogRequestsQuery) q: z.infer<typeof AdminListQuery>,
   ): Promise<{ requests: CatalogRequestView[] }> {
     return {
       requests: await this.requests.listDeployment(
@@ -309,7 +308,7 @@ export class AdminCatalogRequestsController {
   async decide(
     @CurrentPrincipal() principal: Principal,
     @Param("id") id: string,
-    @Body(new ZodPipe(DecideBody)) body: z.infer<typeof DecideBody>,
+    @ZBody(CatalogDecideBody) body: z.infer<typeof DecideBody>,
   ): Promise<{ request: CatalogRequestView }> {
     const p = requireUser(principal);
     const tokenId = patTokenId(p);

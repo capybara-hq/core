@@ -1,21 +1,28 @@
 import { randomUUID } from "node:crypto";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { createOrg, PW, type Req, runConfig, session, startKernel } from "../helpers/runs.js";
+import {
+  createOrg,
+  PW,
+  type Req,
+  runConfig,
+  session,
+  startKernel,
+  type TestKernel,
+} from "../helpers/runs.js";
 
 /** Agent definitions pin up to three skills (`skills.pinned`, spec §9.1). */
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 let admin: Req;
 let adminId: string;
 let orgId: string;
@@ -31,7 +38,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
@@ -41,9 +48,8 @@ beforeEach(async () => {
     db,
     "capybara.skill_change_requests, capybara.skill_versions, capybara.skills, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
-  adminId = (
-    await new AccountsService(db).createLocal({ login: "admin", password: PW, displayName: "A" })
-  ).id;
+  adminId = (await accountsFor(db).createLocal({ login: "admin", password: PW, displayName: "A" }))
+    .id;
   admin = await session(k, "admin");
   orgId = await createOrg(admin);
 });

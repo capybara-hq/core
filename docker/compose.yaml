@@ -182,11 +182,14 @@ services:
     init: true
     restart: "no"
     # Root, so a 0600 password file owned by the host user is readable (compose bind-mounts
-    # file secrets with their host owner and mode). init talks to PostgreSQL and, on the first
-    # bootstrap, the npm registry.
+    # file secrets with their host owner and mode). init talks to PostgreSQL, to valkey (the
+    # bootstrap step runs under the Redis lock lock:bootstrap that starting kernels share) and, on
+    # the first bootstrap, the npm registry.
     user: "0"
     depends_on:
       postgres:
+        condition: service_healthy
+      valkey:
         condition: service_healthy
     environment:
       <<: *kernel-env

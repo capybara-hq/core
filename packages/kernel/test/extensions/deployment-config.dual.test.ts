@@ -8,9 +8,9 @@ import {
   type TestContainer,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
+import { accountsFor } from "../helpers/identity.js";
 import { PW, waitFor } from "../helpers/runs.js";
 
 const DEPLOYCFG = fileURLToPath(new URL("../fixtures/plugins/deploycfg/index.ts", import.meta.url));
@@ -34,7 +34,7 @@ describe("部署级插件配置双副本", { timeout: 120_000 }, () => {
   let rdc: TestContainer;
   let h: Harness;
   let raw: ReturnType<typeof createDb>;
-  let db: KernelDb;
+  let db: KernelSchemaDb;
   const jar = new Map<string, string>();
 
   async function at(i: 0 | 1, method: string, path: string, body?: unknown) {
@@ -88,7 +88,7 @@ describe("部署级插件配置双副本", { timeout: 120_000 }, () => {
     });
     raw = createDb(h.dbUrl, 3);
     db = kernelDb(raw);
-    await new AccountsService(db).createLocal({
+    await accountsFor(db).createLocal({
       login: "root",
       password: PW,
       displayName: "Root",

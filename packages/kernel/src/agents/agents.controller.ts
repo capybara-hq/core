@@ -1,27 +1,17 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  HttpCode,
-  Inject,
-  Param,
-  Patch,
-  Post,
-} from "@nestjs/common";
+import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post } from "@nestjs/common";
 import { z } from "zod";
-import { AGENTS } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
 import {
   CurrentPrincipal,
   type Principal,
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import {
   AGENT_VISIBILITIES,
-  type AgentsService,
+  AgentsService,
   type AgentVersionSummary,
   type AgentView,
   type AgentWarning,
@@ -59,20 +49,24 @@ const UpdateBody = z
 /** 服务令牌没有账号：以 null 作为 viewer，只看到 visibility='org' 的 agent。 */
 const viewerOf = (p: Principal): string | null => (p.kind === "user" ? p.account.id : null);
 
+class AgentCreateBodyDto extends createZodDto(CreateBody, "AgentCreateBody") {}
+class AgentUpdateBodyDto extends createZodDto(UpdateBody, "AgentUpdateBody") {}
+class AgentOwnerBodyDto extends createZodDto(OwnerBody, "AgentOwnerBody") {}
+
 /**
  * Agent 定义（`/api/v1/orgs/:orgId/agents`）。读用 `agents.use`（访客与服务令牌可用），
  * 写用 `agents.create`（member 以上、HUMAN_ONLY），修改 / 删除的负责人或管理员判定在服务的组织行锁内完成。
  */
 @Controller("api/v1/orgs/:orgId/agents")
 export class AgentsController {
-  constructor(@Inject(AGENTS) private readonly agents: AgentsService) {}
+  constructor(@Inject(AgentsService) private readonly agents: AgentsService) {}
 
   @Post()
   @OrgAction("agents.create")
   async create(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Body(new ZodPipe(CreateBody)) body: z.infer<typeof CreateBody>,
+    @ZBody(AgentCreateBodyDto) body: z.infer<typeof CreateBody>,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
     const p = requireUser(principal);
     return this.agents.create(
@@ -112,7 +106,7 @@ export class AgentsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("agentId") agentId: string,
-    @Body(new ZodPipe(UpdateBody)) body: z.infer<typeof UpdateBody>,
+    @ZBody(AgentUpdateBodyDto) body: z.infer<typeof UpdateBody>,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
     const p = requireUser(principal);
     return this.agents.update(org.orgId, agentId, p.account.id, body, patTokenId(p));
@@ -138,7 +132,7 @@ export class AgentsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("agentId") agentId: string,
-    @Body(new ZodPipe(OwnerBody)) body: z.infer<typeof OwnerBody>,
+    @ZBody(AgentOwnerBodyDto) body: z.infer<typeof OwnerBody>,
   ): Promise<{ agent: AgentView }> {
     const p = requireUser(principal);
     return {

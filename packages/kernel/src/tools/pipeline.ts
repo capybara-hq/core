@@ -10,15 +10,20 @@ import {
   validateInputForm,
   validateToolDisplay,
 } from "@capybara-hq/plugin-sdk";
-import type { Transaction } from "kysely";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { type AgentDefinition, normalizeStoredDefinition } from "../agents/definition.js";
-import type { KernelConfig } from "../config/schema.js";
-import type { AppendEvent, EventLog } from "../conversations/event-log.js";
+import { type AppendEvent, EventLog } from "../conversations/event-log.js";
 import { type ToolView, ToolViewSchema } from "../conversations/events.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { clipText } from "../extensions/hooks.js";
+import { ExtensionHost } from "../extensions/host.js";
 import { ExtensionUnloadedError, PLUGIN_UNLOADED_TOOL_ERROR } from "../extensions/inflight.js";
 import { audit } from "../identity/audit.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { UNKNOWN_RESULT_TEXT } from "../runtime/context/pairing.js";
 import {
@@ -32,7 +37,7 @@ import {
 } from "../runtime/hook-calls.js";
 import {
   type SubagentParent,
-  subagentsWaitId,
+  subagentsWait,
   subagentWaitingIdemKey,
   type WaitingFor,
 } from "../runtime/loop.js";
@@ -44,11 +49,12 @@ import {
   dispatchOfCall,
   finishedEvent,
 } from "../runtime/subagents/child.js";
-import type { DispatchOutcome } from "../runtime/subagents/dispatch.js";
+import type { DispatchArgs, DispatchOutcome } from "../runtime/subagents/dispatch.js";
 import { forkSeqOfCall, pairStoppedForks } from "../runtime/subagents/skill-fork.js";
+import { SubagentsService } from "../runtime/subagents/subagents.service.js";
 import { skillLoadOfferedIn } from "../skills/catalog.js";
-import type { ApprovalRecord, ApprovalScope, ApprovalsService } from "./approvals.service.js";
-import { type Breaker, breakerOpenMessage } from "./breaker.js";
+import { type ApprovalRecord, type ApprovalScope, ApprovalsService } from "./approvals.service.js";
+import { Breaker, breakerOpenMessage } from "./breaker.js";
 import {
   AGENT_STOPPED_WITH_RUN_TEXT,
   AGENT_TOOL,
@@ -56,13 +62,19 @@ import {
   type AgentToolInputT,
 } from "./builtins/agent.js";
 import { isAlwaysLoaded, notLoadedText } from "./builtins/tool-search.js";
-import { type ConnectorAuth, CredentialMissing, type Credentials } from "./credentials.js";
+import { type ConnectorAuth, CredentialMissing, Credentials } from "./credentials.js";
+import { ToolDrift } from "./drift.js";
 import { ElicitationSession } from "./elicitation.js";
-import { renderResult, resolveOutputRefs, spillIfLarge, type ToolOutputs } from "./outputs.js";
+import { renderResult, resolveOutputRefs, spillIfLarge, ToolOutputs } from "./outputs.js";
 import { createDecidePolicy } from "./policy.js";
-import type { QuestionRecord, QuestionsService } from "./questions.service.js";
+import { type QuestionRecord, QuestionsService } from "./questions.service.js";
 import { redactDeep, redactorFor } from "./redact.js";
-import type { AgentTools, BuiltinCallContext, ResolvedTool, ToolRegistry } from "./registry.js";
+import {
+  type AgentTools,
+  type BuiltinCallContext,
+  type ResolvedTool,
+  ToolRegistry,
+} from "./registry.js";
 import { runResourceTool } from "./resources.js";
 import { validateInput } from "./validate.js";
 
@@ -185,59 +197,71 @@ export type DecidePolicy = (
 
 // ---- 管线 ----
 
-/** 测试钩子。 */
+/** The pipeline's test seams (`TOOL_PIPELINE_HOOKS`; the kernel never provides them). */
 export interface ToolPipelineHooks {
-  /** 工具执行返回之后、结果写入日志之前调用：抛错即模拟「工具已执行、结果未记录」时进程崩溃。 */
+  /**
+   * Called after a tool returned and before its result is logged: throwing simulates a crash
+   * between the execution and the record ("executed, result not recorded").
+   */
   afterExecute?(runId: string, callId: string): Promise<void>;
+  /** The policy decision; default {@link createDecidePolicy} (reads policies and grants live). */
+  decidePolicy?: DecidePolicy;
 }
 
 /** `tool_result.card`: an inline card under the call (display only). */
 type ToolCard = { plugin: string; view: string; key?: string };
 
-export interface ToolPipelineDeps {
-  db: KernelDb;
-  eventLog: EventLog;
-  registry: Pick<ToolRegistry, "forAgent" | "findConnector" | "handler">;
-  credentials: Pick<Credentials, "injection" | "onUnauthorized">;
-  breaker: Pick<Breaker, "check" | "failure" | "success">;
-  outputs: Pick<ToolOutputs, "save" | "load">;
+/** Optional provider: the pipeline's {@link ToolPipelineHooks} (tests). */
+export const TOOL_PIPELINE_HOOKS = Symbol("TOOL_PIPELINE_HOOKS");
+
+/** What the pipeline calls through (the sub-agent dispatch is read at call time). */
+interface PipelineDeps {
+  /** The kernel-schema handle of the current context (its transaction, else the pool). */
+  readonly db: KernelSchemaDb;
+  readonly eventLog: EventLog;
+  readonly registry: Pick<ToolRegistry, "forAgent" | "findConnector" | "handler">;
+  readonly credentials: Pick<Credentials, "injection" | "onUnauthorized">;
+  readonly breaker: Pick<Breaker, "check" | "failure" | "success">;
+  readonly outputs: Pick<ToolOutputs, "save" | "load">;
   /** 策略为 `ask` 时建审批；续跑时读该调用的审批结果。 */
-  approvals: Pick<ApprovalsService, "request" | "forCall">;
+  readonly approvals: Pick<ApprovalsService, "request" | "forCall">;
   /** 处理函数返回 `input_required` 时建输入请求；续跑时读该调用的各轮输入请求。 */
-  questions: Pick<QuestionsService, "ask" | "forCall">;
-  config: () => KernelConfig;
-  log: Logger;
-  /** 默认 {@link createDecidePolicy}（执行时实时读取策略与授权）。 */
-  decidePolicy?: DecidePolicy;
-  hooks?: ToolPipelineHooks;
+  readonly questions: Pick<QuestionsService, "ask" | "forCall">;
+  readonly log: Logger;
+  readonly hooks: ToolPipelineHooks | undefined;
   /**
    * Plugin hooks (`tool.preExecute` policy / observe after policy and approval, `tool.postExecute`
-   * observe after the result). Only the chat pipeline gets it; the eval replay uses
+   * observe after the result). Only the chat pipeline has them; the eval replay uses
    * `RecordedToolPipeline`, which never runs hooks. Also needs `conversationKind: "chat"` (P-18).
    */
-  pluginHooks?: HookRunner;
+  readonly pluginHooks: HookRunner | undefined;
   /**
-   * Ids of an extension's `inline` ui contributions (read live): a plugin tool's `ToolResult.card`
-   * must name one of them, otherwise it is dropped with a warning. Absent: cards are dropped.
+   * Ids of an extension's `inline` ui contributions (read live, no alias): a plugin tool's
+   * `ToolResult.card` must name one of them, otherwise it is dropped with a warning.
    */
-  inlineViews?: (plugin: string) => ReadonlySet<string>;
+  inlineViews(plugin: string): ReadonlySet<string>;
   /**
    * 连接器在调用途中报告工具清单变了（MCP `notifications/tools/list_changed`）：内核安排一次该连接器的漂移检查。
    * 不等待、不抛错（实现自己吞掉错误）。
    */
-  onToolsChanged?: (orgId: string, connectorId: string) => void;
+  onToolsChanged(orgId: string, connectorId: string): void;
   /**
    * Dispatches the sub-agent of an `agent` call (sub-agents spec §7.1; `dispatchSubagent`). Without
    * it, `agent` calls reach the builtin's guard, which refuses them.
    */
-  subagents?: {
-    dispatch(a: {
-      ctx: ToolStepContext;
-      callId: string;
-      input: AgentToolInputT;
-    }): Promise<DispatchOutcome>;
-  };
+  readonly subagents:
+    | {
+        dispatch(a: {
+          ctx: ToolStepContext;
+          callId: string;
+          input: AgentToolInputT;
+        }): Promise<DispatchOutcome>;
+      }
+    | undefined;
 }
+
+/** The sub-agent dispatch the pipeline calls (`SubagentsService.dispatch`). */
+export type SubagentDispatch = NonNullable<PipelineDeps["subagents"]>["dispatch"];
 
 /** tools 节点处理一步工具调用所需的上下文。 */
 export interface ToolStepContext {
@@ -283,34 +307,11 @@ export type ExecOutcome =
 
 type ToolCall = { id: string; name: string; input: unknown };
 
-type KernelTrx = Transaction<KernelDatabase>;
-
 /** The result written for an open `agent` call of a stopped run. */
 type StoppedAgentResult = { content: string; isError: boolean; durationMs: number };
 
 /** `runCall` dispatched a sub-agent: the call stays open until the child run finishes. */
 const OPEN = "open" as const;
-
-/**
- * The wait of a step whose sub-agents still run (spec §7.2): id `sa-<runId>-<step>`, expiring after
- * the approval timeout plus one run's duration plus 10 minutes (a child may itself wait for an
- * approval); the timeout is a safety net.
- */
-export function subagentsWait(
-  runId: string,
-  step: number,
-  config: Pick<KernelConfig, "tools" | "runtime">,
-  now = Date.now(),
-): WaitingFor {
-  const ms =
-    config.tools.approvalTimeoutHours * 3_600_000 + config.runtime.maxRunSeconds * 1000 + 600_000;
-  return {
-    kind: "subagents",
-    id: subagentsWaitId(runId, step),
-    expiresAt: new Date(now + ms).toISOString(),
-    step,
-  };
-}
 
 /**
  * 审计链（spec 3.6 R6）里「凭什么放行」：在审批下执行（审批 id、批准人、范围）、记住的授权放行、或策略本身放行。
@@ -411,11 +412,62 @@ const inputWait = (q: QuestionRecord): WaitingFor => ({
  *
  * 有副作用不盲目重跑（spec 4.3）：执行前写 `tool_call_started`；续跑时「有开始无结果」的调用记为结果未知，不再执行。
  */
+@Injectable()
 export class ToolPipeline {
   private readonly decide: DecidePolicy;
+  private readonly deps: PipelineDeps;
 
-  constructor(private readonly deps: ToolPipelineDeps) {
-    this.decide = deps.decidePolicy ?? createDecidePolicy(deps.db);
+  constructor(
+    @Inject(KernelDb) kdb: KernelDb,
+    @Inject(EventLog) eventLog: EventLog,
+    /** The `agent` tool's sub-agent dispatch; absent (tests): `agent` calls are refused. */
+    @Inject(SubagentsService) subagents: Pick<SubagentsService, "dispatch"> | undefined,
+    @Inject(ToolRegistry) registry: Pick<ToolRegistry, "forAgent" | "findConnector" | "handler">,
+    @Inject(Credentials) credentials: Pick<Credentials, "injection" | "onUnauthorized">,
+    @Inject(Breaker) breaker: Pick<Breaker, "check" | "failure" | "success">,
+    @Inject(ToolOutputs) outputs: Pick<ToolOutputs, "save" | "load">,
+    @Inject(ApprovalsService) approvals: Pick<ApprovalsService, "request" | "forCall">,
+    @Inject(QuestionsService) questions: Pick<QuestionsService, "ask" | "forCall">,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Inject(KERNEL_LOGGER) log: Logger,
+    /** Plugin hooks and inline ui contributions; absent (tests): no hooks, cards dropped. */
+    @Inject(ExtensionHost) host: Pick<ExtensionHost, "hooks" | "current"> | undefined,
+    @Inject(ToolDrift) drift: Pick<ToolDrift, "onToolsChanged"> | undefined,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Optional() @Inject(TOOL_PIPELINE_HOOKS) hooks?: ToolPipelineHooks,
+  ) {
+    this.deps = {
+      get db() {
+        return kdb.db;
+      },
+      eventLog,
+      registry,
+      credentials,
+      breaker,
+      outputs,
+      approvals,
+      questions,
+      log,
+      hooks,
+      get pluginHooks() {
+        return host?.hooks;
+      },
+      inlineViews: (plugin) =>
+        new Set(
+          (host?.current(plugin)?.manifest.ui ?? [])
+            .filter((c) => c.place === "inline" && c.aliasOf === undefined)
+            .map((c) => c.id),
+        ),
+      onToolsChanged: (orgId, connectorId) => {
+        void drift?.onToolsChanged(orgId, connectorId);
+      },
+      get subagents() {
+        return subagents ? { dispatch: (a: DispatchArgs) => subagents.dispatch(a) } : undefined;
+      },
+    };
+    const decide = hooks?.decidePolicy;
+    // the default policy reads live, on the context's handle
+    this.decide = decide ?? ((tool, def, c) => createDecidePolicy(kdb.db)(tool, def, c));
   }
 
   /**
@@ -475,9 +527,7 @@ export class ToolPipeline {
       // their calls get their results now, and the children are stopped after the run's terminal
       // commit (spec §12)
       if (ctx.signal.aborted) {
-        const stopped = await this.deps.db
-          .transaction()
-          .execute((t) => this.stopOpenAgentCalls(t, ctx.runId, ctx.agent));
+        const stopped = await this.stopOpenAgentCallsNow(ctx.runId, ctx.agent);
         if (stopped.toSeq !== null) {
           await eventLog.notify(ctx.conversationId, stopped.toSeq);
         }
@@ -486,7 +536,7 @@ export class ToolPipeline {
       }
       return {
         kind: "suspended",
-        waitingFor: subagentsWait(ctx.runId, ctx.step, this.deps.config()),
+        waitingFor: subagentsWait(ctx.runId, ctx.step, this.config.get()),
       };
     }
     return { kind: "done" };
@@ -560,23 +610,31 @@ export class ToolPipeline {
     return true;
   }
 
+  /** {@link stopOpenAgentCalls} in a transaction of its own (a stop seen by the tools node). */
+  @Transactional()
+  private async stopOpenAgentCallsNow(runId: string, agent: AgentDefinition) {
+    return this.stopOpenAgentCalls(runId, agent);
+  }
+
   /**
-   * Writes, in `t`, the `tool_result` of every open `agent` call of a run that is being stopped
+   * Writes, in the caller's transaction (`mandatory`), the `tool_result` of every open `agent` call
+   * of a run that is being stopped
    * (sub-agents spec §12: a person stopped it while it waited on sub-agents, or its deadline or a
    * stop hit its tools node after a dispatch). A call whose child already ended gets the child's
    * result (and the missing `subagent_finished`); one whose child is still active gets
    * {@link AGENT_STOPPED_WITH_RUN_TEXT}. The caller stops those children after its commit.
    *
-   * Like every `agent` result (see {@link finishAgentCall}), each is audited `tool.called` in `t`
+   * Like every `agent` result (see {@link finishAgentCall}), each is audited `tool.called` in it
    * (duration: the child's, or the time since the dispatch) and fires `tool.postExecute`, through
    * `fire()`, which the caller runs after its commit. Returns the steps and calls written (the
    * caller must not write a "not executed" result for them) and the highest seq written.
    */
+  @Transactional({ propagation: "mandatory" })
   async stopOpenAgentCalls(
-    t: KernelTrx,
     runId: string,
     agent?: AgentDefinition,
   ): Promise<{ steps: number[]; callIds: Set<string>; toSeq: number | null; fire: () => void }> {
+    const t = this.deps.db;
     // phase D: the run's fork invocation without a report gets one (a fork has no tool call)
     const forks = await pairStoppedForks(t, this.deps.eventLog, runId);
     const none = {
@@ -687,7 +745,7 @@ export class ToolPipeline {
       calls.push({ step: d.step, callId: d.parent_call_id, input, r });
     }
     if (calls.length === 0) return none;
-    const written = await this.deps.eventLog.append(conversationId, events, t);
+    const written = await this.deps.eventLog.appendIn(conversationId, events);
     for (const c of calls) {
       const approval = await t
         .selectFrom("approvals")
@@ -1070,7 +1128,7 @@ export class ToolPipeline {
       outcome.kind === "result" && tool.source.kind === "plugin"
         ? this.cardOf(outcome.result, tool.source.plugin, tool.key)
         : undefined;
-    const cfg = this.deps.config().tools;
+    const cfg = this.config.get().tools;
     const spilled = await spillIfLarge(
       rendered.text,
       {
@@ -1266,7 +1324,7 @@ export class ToolPipeline {
         ctx.parent !== undefined && { sandboxConversationId: ctx.parent.conversationId }),
     };
     // 内置工具可按输入给自己的时限（沙箱 bash 按命令超时加余量）；缺省 tools.timeoutMs
-    const timeoutMs = tool.timeoutMs?.(input) ?? this.deps.config().tools.timeoutMs;
+    const timeoutMs = tool.timeoutMs?.(input) ?? this.config.get().tools.timeoutMs;
     try {
       const r = await this.bounded(
         ctx.signal,
@@ -1294,7 +1352,7 @@ export class ToolPipeline {
     ctx: ToolStepContext,
     resume?: ToolResume,
   ): Promise<ExecOutcome> {
-    const { db, registry, breaker, credentials, config } = this.deps;
+    const { db, registry, breaker, credentials } = this.deps;
     const { orgId } = ctx;
     const connectorId = source.connectorId;
     const app = await db
@@ -1408,7 +1466,7 @@ export class ToolPipeline {
             onElicit: elicit.handle,
             onToolsChanged: () => {
               try {
-                this.deps.onToolsChanged?.(orgId, connectorId);
+                this.deps.onToolsChanged(orgId, connectorId);
               } catch (err) {
                 this.deps.log.warn("tools changed notification failed", {
                   orgId,
@@ -1433,7 +1491,7 @@ export class ToolPipeline {
       if (ask) return ask;
       if (r === "timeout") {
         await breaker.failure(orgId, connectorId);
-        return { kind: "error", message: timeoutText(tool.key, config().tools.timeoutMs) };
+        return { kind: "error", message: timeoutText(tool.key, this.config.get().tools.timeoutMs) };
       }
       // 工具自己报告的错误（isError）说明服务可用，也算成功。
       await breaker.success(orgId, connectorId);
@@ -1477,7 +1535,7 @@ export class ToolPipeline {
     /** 额外参与竞速的信号（不传给 work）：中止时以 `Stopped` 抛出，由调用方判断原因。 */
     interrupt?: AbortSignal,
     /** 时限（毫秒），缺省 `tools.timeoutMs`。 */
-    timeoutMs: number = this.deps.config().tools.timeoutMs,
+    timeoutMs: number = this.config.get().tools.timeoutMs,
   ): Promise<{ value: T } | "timeout" | "aborted"> {
     if (runSignal.aborted) return "aborted";
     const timeout = new AbortController();
@@ -1550,7 +1608,7 @@ export class ToolPipeline {
     const c = (result as { card?: unknown } | null)?.card;
     if (c === undefined) return undefined;
     const x = (typeof c === "object" && c !== null ? c : {}) as Record<string, unknown>;
-    const views = this.deps.inlineViews?.(plugin);
+    const views = this.deps.inlineViews(plugin);
     const keyOk =
       x.key === undefined || (typeof x.key === "string" && x.key !== "" && x.key.length <= 200);
     if (typeof x.view !== "string" || !views?.has(x.view) || !keyOk) {
@@ -1619,30 +1677,43 @@ export class ToolPipeline {
       await this.deps.eventLog.append(ctx.conversationId, events);
       return;
     }
-    const written = await this.deps.db.transaction().execute(async (t) => {
-      const out = await this.deps.eventLog.append(ctx.conversationId, events, t);
-      for (const a of audits) await audit(t, a);
-      if (callAudit === undefined) return out;
-      await audit(t, {
-        actorAccountId: ctx.accountId,
-        orgId: ctx.orgId,
-        action: "tool.called",
-        target: ctx.conversationId,
-        detail: {
-          toolKey,
-          isError: r.isError,
-          durationMs: callAudit.durationMs,
-          agentId: ctx.agentId,
-          agentVersion: ctx.agentVersion,
-          conversationId: ctx.conversationId,
-          runId: ctx.runId,
-          callId,
-          ...(callAudit.connectorId !== null && { connectorId: callAudit.connectorId }),
-          ...callAudit.authorization,
-        },
-      });
-      return out;
-    });
+    const written = await this.writeResultIn(ctx, callId, toolKey, r, events, callAudit, audits);
     await this.deps.eventLog.notify(ctx.conversationId, Math.max(...written.map((e) => e.seq)));
+  }
+
+  /** The result's events and audit rows in one transaction (see {@link writeResult}). */
+  @Transactional()
+  private async writeResultIn(
+    ctx: ToolStepContext,
+    callId: string,
+    toolKey: string,
+    r: { isError: boolean },
+    events: AppendEvent[],
+    callAudit: CallAudit | undefined,
+    audits: AuditEntry[],
+  ) {
+    const t = this.deps.db;
+    const out = await this.deps.eventLog.appendIn(ctx.conversationId, events);
+    for (const a of audits) await audit(t, a);
+    if (callAudit === undefined) return out;
+    await audit(t, {
+      actorAccountId: ctx.accountId,
+      orgId: ctx.orgId,
+      action: "tool.called",
+      target: ctx.conversationId,
+      detail: {
+        toolKey,
+        isError: r.isError,
+        durationMs: callAudit.durationMs,
+        agentId: ctx.agentId,
+        agentVersion: ctx.agentVersion,
+        conversationId: ctx.conversationId,
+        runId: ctx.runId,
+        callId,
+        ...(callAudit.connectorId !== null && { connectorId: callAudit.connectorId }),
+        ...callAudit.authorization,
+      },
+    });
+    return out;
   }
 }

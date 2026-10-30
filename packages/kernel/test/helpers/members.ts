@@ -1,25 +1,18 @@
-import type { KernelDb } from "../../src/db/kernel-schema.js";
-import { MembersService } from "../../src/orgs/members.service.js";
-import { Offboarding } from "../../src/orgs/offboarding.js";
-import { clearAccountCredentials } from "../../src/tools/credentials.js";
-
-const noWaits = { cancelPendingFor: async () => ({ records: [], seqs: new Map() }) };
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
+import type { MembersService } from "../../src/orgs/members.service.js";
+import type { Offboarding } from "../../src/orgs/offboarding.js";
+import { membersFor, testOffboarding } from "./identity.js";
 
 /**
- * 只依赖 db 的离职处理（测试用）：删凭据、吊销会话与令牌、转交 agent，但不取消审批 / 提问、不中止运行、
- * 不写 Redis 标记。需要完整行为的测试用 `Kernel.identity.offboarding`。
+ * Offboarding over the database only (tests): deletes credentials, revokes sessions and tokens and
+ * hands agents over, but cancels no approval / question, aborts no run and writes no Redis marker.
+ * Tests that need the full behaviour use `k.app.get(Offboarding)`.
  */
-export function dbOnlyOffboarding(db: KernelDb): Offboarding {
-  return new Offboarding({
-    credentials: {
-      clearAccount: (orgId, accountId, t) => clearAccountCredentials(t ?? db, orgId, accountId),
-    },
-    approvals: noWaits,
-    questions: noWaits,
-  });
+export function dbOnlyOffboarding(db: KernelSchemaDb): Offboarding {
+  return testOffboarding(db);
 }
 
 /** 测试用的成员服务（离职处理见 {@link dbOnlyOffboarding}）。 */
-export function testMembers(db: KernelDb): MembersService {
-  return new MembersService(db, dbOnlyOffboarding(db));
+export function testMembers(db: KernelSchemaDb): MembersService {
+  return membersFor(db);
 }

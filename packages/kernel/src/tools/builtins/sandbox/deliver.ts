@@ -130,7 +130,7 @@ export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
     // 没有沙箱或没有对象存储都交付不了（先报沙箱的原因）
     unavailable: () =>
       unavailableWhenNoSandbox(deps)() ?? (deps.storage.available ? null : NO_STORAGE_REASON),
-    timeoutMs: () => 2 * sandboxBaseTimeoutMs(deps.config()),
+    timeoutMs: () => 2 * sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx) {
       // 存储在调用前就核对：不为一个交付不了的文件去 stat / 读沙箱
       if (!deps.storage.available) throw new ToolError(NO_STORAGE);
@@ -141,7 +141,7 @@ export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
         throw new ToolError(BAD_NAME);
       }
       const name = given ?? defaultName(path);
-      const max = deps.config().sandbox.deliverMaxBytes;
+      const max = deps.config.get().sandbox.deliverMaxBytes;
       const { value: data, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
         const st = await p.stat(h, path, signal);
         if (st === null) throw new ToolError(notFound(path));

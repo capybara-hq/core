@@ -1,5 +1,4 @@
 import {
-  Body,
   Controller,
   Delete,
   Get,
@@ -8,7 +7,6 @@ import {
   Param,
   Post,
   Put,
-  Query,
   Req,
   Res,
 } from "@nestjs/common";
@@ -16,8 +14,6 @@ import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
 import type { AdminExtensionView } from "../extensions/permission-view.js";
-import { CATALOG, ORG_CATALOG, PLUGIN_IMPORT } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
 import {
   CurrentPrincipal,
   EnterpriseAdmin,
@@ -25,17 +21,19 @@ import {
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
 import {
   type ActorOpts,
   CATALOG_LIST_MAX_LIMIT,
   type CatalogItemDetail,
   type CatalogItemView,
-  type CatalogService,
+  CatalogService,
   type PermissionsMismatch,
 } from "./catalog.service.js";
 import { sendCatalogIcon } from "./org-catalog.controller.js";
-import type { OrgCatalogService } from "./org-catalog.service.js";
-import type { PluginConfirmResult, PluginImport, PluginReview } from "./plugin-import.js";
+import { OrgCatalogService } from "./org-catalog.service.js";
+import { type PluginConfirmResult, PluginImport, type PluginReview } from "./plugin-import.js";
 
 const NpmBody = z.object({
   package: z.string().min(1).max(214),
@@ -72,6 +70,16 @@ const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
   return tokenId !== undefined ? { actorTokenId: tokenId } : {};
 };
 
+class CatalogImportConfirmBody extends createZodDto(ConfirmBody, "CatalogImportConfirmBody") {}
+class CatalogGitImportBody extends createZodDto(GitBody, "CatalogGitImportBody") {}
+class CatalogDeploymentInstallBody extends createZodDto(
+  InstallBody,
+  "CatalogDeploymentInstallBody",
+) {}
+class CatalogItemsQuery extends createZodDto(ListQuery, "CatalogItemsQuery") {}
+class CatalogNpmImportBody extends createZodDto(NpmBody, "CatalogNpmImportBody") {}
+class CatalogPolicyBody extends createZodDto(PolicyBody, "CatalogPolicyBody") {}
+
 /**
  * The enterprise catalog (`/api/v1/admin/catalog/*`, enterprise admins): plugin import (upload / npm
  * prepare, then confirm), the item list and detail, policy, delete, and installing an item's
@@ -82,9 +90,9 @@ const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
 @EnterpriseAdmin()
 export class AdminCatalogController {
   constructor(
-    @Inject(CATALOG) private readonly catalog: CatalogService,
-    @Inject(PLUGIN_IMPORT) private readonly pluginImport: PluginImport,
-    @Inject(ORG_CATALOG) private readonly orgCatalog: OrgCatalogService,
+    @Inject(CatalogService) private readonly catalog: CatalogService,
+    @Inject(PluginImport) private readonly pluginImport: PluginImport,
+    @Inject(OrgCatalogService) private readonly orgCatalog: OrgCatalogService,
   ) {}
 
   /**
@@ -129,7 +137,7 @@ export class AdminCatalogController {
   @HttpCode(200)
   importNpm(
     @CurrentPrincipal() principal: Principal,
-    @Body(new ZodPipe(NpmBody)) body: z.infer<typeof NpmBody>,
+    @ZBody(CatalogNpmImportBody) body: z.infer<typeof NpmBody>,
   ): Promise<{ stagingId: string; review: PluginReview }> {
     const actor = requireUser(principal);
     return this.pluginImport.prepareNpm(
@@ -151,7 +159,7 @@ export class AdminCatalogController {
   @HttpCode(200)
   importGit(
     @CurrentPrincipal() principal: Principal,
-    @Body(new ZodPipe(GitBody)) body: z.infer<typeof GitBody>,
+    @ZBody(CatalogGitImportBody) body: z.infer<typeof GitBody>,
   ): Promise<{ stagingId: string; review: PluginReview }> {
     const actor = requireUser(principal);
     return this.catalog.importFromGit(
@@ -197,7 +205,7 @@ export class AdminCatalogController {
   confirm(
     @CurrentPrincipal() principal: Principal,
     @Param("stagingId") stagingId: string,
-    @Body(new ZodPipe(ConfirmBody)) body: z.infer<typeof ConfirmBody>,
+    @ZBody(CatalogImportConfirmBody) body: z.infer<typeof ConfirmBody>,
   ): Promise<PluginConfirmResult> {
     const actor = requireUser(principal);
     const { pinnedSuggestions, ...rest } = body;
@@ -215,7 +223,7 @@ export class AdminCatalogController {
    */
   @Get("items")
   list(
-    @Query(new ZodPipe(ListQuery)) q: z.infer<typeof ListQuery>,
+    @ZQuery(CatalogItemsQuery) q: z.infer<typeof ListQuery>,
   ): Promise<{ items: CatalogItemView[]; nextOffset: number | null }> {
     return this.catalog.page({
       includeDeleted: q.includeDeleted === "true",
@@ -248,7 +256,7 @@ export class AdminCatalogController {
   setPolicy(
     @CurrentPrincipal() principal: Principal,
     @Param("id") id: string,
-    @Body(new ZodPipe(PolicyBody)) body: z.infer<typeof PolicyBody>,
+    @ZBody(CatalogPolicyBody) body: z.infer<typeof PolicyBody>,
   ): Promise<CatalogItemView> {
     const actor = requireUser(principal);
     return this.catalog.setPolicy(actor.account.id, id, body.policy, actorOpts(actor));
@@ -272,7 +280,7 @@ export class AdminCatalogController {
   installToDeployment(
     @CurrentPrincipal() principal: Principal,
     @Param("id") id: string,
-    @Body(new ZodPipe(InstallBody)) body: z.infer<typeof InstallBody>,
+    @ZBody(CatalogDeploymentInstallBody) body: z.infer<typeof InstallBody>,
   ): Promise<AdminExtensionView> {
     const actor = requireUser(principal);
     return this.catalog.installToDeployment(actor.account.id, id, body.version, actorOpts(actor));

@@ -12,13 +12,15 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { AttachmentsService } from "../../src/conversations/attachments.service.js";
 import { TITLE_PROMPT } from "../../src/conversations/titles.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
-import { StorageService } from "../../src/storage/storage.service.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { PrefixedStorage, StorageService } from "../../src/storage/storage.service.js";
 import type { MediaProvider } from "../fixtures/plugins/model-media/index.js";
+import { attachmentsFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createAgent,
@@ -30,6 +32,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitForTerminal,
 } from "../helpers/runs.js";
 
@@ -60,9 +63,9 @@ const TEXT = Buffer.from("name,qty\napple,3\n");
 let pgc: TestContainer;
 let rd: TestContainer;
 let s3: TestS3;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 
 beforeAll(async () => {
   [pgc, rd, s3] = await Promise.all([startTestPostgres(), startTestRedis(), startTestS3()]);
@@ -90,13 +93,16 @@ beforeAll(async () => {
   );
 }, 180_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
 });
 
 const provider = (): MediaProvider => {
-  const e = k.host.list("model-provider").find((p) => p.plugin === "model-media");
+  const e = k.app
+    .get(ExtensionHost)
+    .list("model-provider")
+    .find((p) => p.plugin === "model-media");
   if (!e) throw new Error("model-media not loaded");
   return e.impl as MediaProvider;
 };
@@ -117,7 +123,7 @@ beforeEach(async () => {
     "capybara.attachments, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
   provider().requests.length = 0;
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" })).id;
   otherId = (await accounts.createLocal({ login: "other", password: PW, displayName: "Other" })).id;
   owner = await session(k, "owner");
@@ -267,7 +273,7 @@ describe("上传 → finalize → 发消息 → 模型请求", { timeout: 30_000
   it("对象被删掉后，模型收到「不再可用」占位", async () => {
     const convId = await conversationWith("see-1");
     const img = await ready(owner, "gone.png", "image/png", PNG);
-    await k.storage.kernel(orgId).delete(`attachments/${img}`);
+    await k.app.get(StorageService).kernel(orgId).delete(`attachments/${img}`);
     expect((await post(owner, convId, { text: "x", files: [img] })).statusCode).toBe(202);
     await waitForTerminal(db, convId);
     const texts = userBlocks(agentRequests()[0] as ModelRequest).map((b) =>
@@ -307,7 +313,10 @@ describe("上传 → finalize → 发消息 → 模型请求", { timeout: 30_000
     const convId = await conversationWith("see-1");
     const img = await ready(owner, "swap.png", "image/png", PNG);
     const swapped = Buffer.concat([PNG, Buffer.from("extra")]);
-    await k.storage.kernel(orgId).put(`attachments/${img}`, swapped, { contentType: "image/png" });
+    await k.app
+      .get(StorageService)
+      .kernel(orgId)
+      .put(`attachments/${img}`, swapped, { contentType: "image/png" });
     expect((await post(owner, convId, { text: "x", files: [img] })).statusCode).toBe(202);
     await waitForTerminal(db, convId);
     const req = agentRequests()[0] as ModelRequest;
@@ -562,9 +571,11 @@ describe("大文本附件（Ruling M8）", { timeout: 30_000 }, () => {
     expect((await post(owner, convId, { text: "read", files: [id] })).statusCode).toBe(202);
     await waitForTerminal(db, convId);
 
-    const got = await k.attachments.fetchMedia(orgId, convId, [id], new Map([[id, 1000]]));
+    const got = await k.app
+      .get(AttachmentsService)
+      .fetchMedia(orgId, convId, [id], new Map([[id, 1000]]));
     expect(got.get(id)?.data.byteLength).toBe(1000);
-    const info = await k.attachments.mediaInfo(orgId, convId, [id]);
+    const info = await k.app.get(AttachmentsService).mediaInfo(orgId, convId, [id]);
     expect(info.get(id)).toMatchObject({ size: big.length, pages: null });
     expect(typeof info.get(id)?.etag).toBe("string");
 
@@ -577,16 +588,16 @@ describe("大文本附件（Ruling M8）", { timeout: 30_000 }, () => {
     expect(sent).toContain(`characters of a ${big.length}-byte file.]`);
 
     // 提供方不支持按范围读（给了整个对象）：同样只留开头
-    const real = k.host.list("object-store")[0]?.impl as ObjectStore;
+    const real = k.app.get(ExtensionHost).list("object-store")[0]?.impl as ObjectStore;
     const noRange: ObjectStore = {
       ...real,
       head: (key) => real.head(key),
       get: (key) => real.get(key),
     };
-    const svc = new AttachmentsService({
+    const svc = attachmentsFor({
       db,
-      storage: new StorageService({ provider: () => noRange, plugins: async () => [] }),
-      config: () => k.config,
+      storage: new PrefixedStorage({ provider: () => noRange, plugins: async () => [] }),
+      config: () => k.app.get(KernelConfigService).get(),
       canAccessConversation: async () => true,
       log: { info() {}, warn() {} },
     });
@@ -600,29 +611,28 @@ describe("openForConversation（沙箱同步用）", { timeout: 30_000 }, () => 
     const id = await ready(owner, "notes.txt", "text/plain", TEXT);
     const convId = await conversationWith("see-1");
     // 未绑定 → null
-    expect(await k.attachments.openForConversation(orgId, convId, id)).toBeNull();
+    expect(await k.app.get(AttachmentsService).openForConversation(orgId, convId, id)).toBeNull();
     expect((await post(owner, convId, { text: "x", files: [id] })).statusCode).toBe(202);
     await waitForTerminal(db, convId);
-    const got = await k.attachments.openForConversation(orgId, convId, id);
+    const got = await k.app.get(AttachmentsService).openForConversation(orgId, convId, id);
     expect(got).toMatchObject({ name: "notes.txt", contentType: "text/plain", size: TEXT.length });
     expect(Buffer.from(await new Response(got?.body).arrayBuffer()).equals(TEXT)).toBe(true);
     // 别的会话、别的组织、不存在的 id → null
     const conv2 = await conversationWith("see-1");
-    expect(await k.attachments.openForConversation(orgId, conv2, id)).toBeNull();
+    expect(await k.app.get(AttachmentsService).openForConversation(orgId, conv2, id)).toBeNull();
     const org2 = await createOrg(owner, "Other org");
-    expect(await k.attachments.openForConversation(org2, convId, id)).toBeNull();
+    expect(await k.app.get(AttachmentsService).openForConversation(org2, convId, id)).toBeNull();
     expect(
-      await k.attachments.openForConversation(
-        orgId,
-        convId,
-        "00000000-0000-4000-8000-000000000000",
-      ),
+      await k.app
+        .get(AttachmentsService)
+        .openForConversation(orgId, convId, "00000000-0000-4000-8000-000000000000"),
     ).toBeNull();
     // 内容被替换（etag 不符）→ null
-    await k.storage
+    await k.app
+      .get(StorageService)
       .kernel(orgId)
       .put(`attachments/${id}`, Buffer.from("name,qty\npear,9\n"), { contentType: "text/plain" });
-    expect(await k.attachments.openForConversation(orgId, convId, id)).toBeNull();
+    expect(await k.app.get(AttachmentsService).openForConversation(orgId, convId, id)).toBeNull();
   });
 });
 
@@ -684,10 +694,10 @@ describe("清理", { timeout: 30_000 }, () => {
       .where("id", "in", [stale, pending.id, bound])
       .execute();
 
-    expect(await k.attachments.deleteExpired()).toBe(2);
+    expect(await k.app.get(AttachmentsService).deleteExpired()).toBe(2);
     const left = await db.selectFrom("attachments").select("id").execute();
     expect(left.map((r) => r.id).sort()).toEqual([bound, fresh].sort());
-    const store = k.storage.kernel(orgId);
+    const store = k.app.get(StorageService).kernel(orgId);
     expect(await store.head(`attachments/${stale}`)).toBeNull();
     expect(await store.head(`attachments/${pending.id}`)).toBeNull();
     expect(await store.head(`attachments/${bound}`)).not.toBeNull();
@@ -700,7 +710,7 @@ describe("清理", { timeout: 30_000 }, () => {
       .set({ expires_at: sql<Date>`now() - interval '1 hour'` })
       .where("id", "=", id)
       .execute();
-    const real = k.host.list("object-store")[0]?.impl as ObjectStore;
+    const real = k.app.get(ExtensionHost).list("object-store")[0]?.impl as ObjectStore;
     let failDeletes = 1;
     const flaky: ObjectStore = {
       ...real,
@@ -711,10 +721,10 @@ describe("清理", { timeout: 30_000 }, () => {
         return real.delete(key);
       },
     };
-    const svc = new AttachmentsService({
+    const svc = attachmentsFor({
       db,
-      storage: new StorageService({ provider: () => flaky, plugins: async () => [] }),
-      config: () => k.config,
+      storage: new PrefixedStorage({ provider: () => flaky, plugins: async () => [] }),
+      config: () => k.app.get(KernelConfigService).get(),
       canAccessConversation: async () => false,
       log: { info() {}, warn() {} },
     });
@@ -725,12 +735,12 @@ describe("清理", { timeout: 30_000 }, () => {
       .where("id", "=", id)
       .executeTakeFirst();
     expect(row?.status).toBe("deleting");
-    expect(await k.storage.kernel(orgId).head(`attachments/${id}`)).not.toBeNull();
+    expect(await k.app.get(StorageService).kernel(orgId).head(`attachments/${id}`)).not.toBeNull();
 
     expect(await svc.deleteExpired()).toBe(1);
     expect(
       await db.selectFrom("attachments").select("id").where("id", "=", id).executeTakeFirst(),
     ).toBeUndefined();
-    expect(await k.storage.kernel(orgId).head(`attachments/${id}`)).toBeNull();
+    expect(await k.app.get(StorageService).kernel(orgId).head(`attachments/${id}`)).toBeNull();
   });
 });

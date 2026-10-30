@@ -36,6 +36,11 @@ export function withLogContext<T>(fields: Record<string, string | undefined>, fn
   return storage.run(next, fn);
 }
 
+/** Runs `fn` with no log context (a handler that must not carry its registrant's fields). */
+export function withoutLogContext<T>(fn: () => T): T {
+  return storage.exit(fn);
+}
+
 /** The part of a BullMQ job the context reads. */
 export interface ContextJob {
   id?: string | undefined;

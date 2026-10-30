@@ -60,7 +60,7 @@ export function sandboxWriteTool(deps: SandboxToolDeps): BuiltinTool {
     spec: SPEC,
     defaultPolicy: "allow",
     unavailable: unavailableWhenNoSandbox(deps),
-    timeoutMs: () => sandboxBaseTimeoutMs(deps.config()),
+    timeoutMs: () => sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx) {
       const path = checkWritable((input as WriteInput).path);
       const data = new TextEncoder().encode((input as WriteInput).content);

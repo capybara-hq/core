@@ -12,10 +12,7 @@ import {
 } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import type { KernelConfig } from "../config/schema.js";
 import { ApiError } from "../errors.js";
-import { INVITATIONS, KERNEL_CONFIG, RATE_LIMITER, SESSIONS } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
 import type { Account } from "../identity/accounts.js";
 import { clientMeta } from "../identity/auth.controller.js";
 import { setSessionCookies } from "../identity/cookies.js";
@@ -26,42 +23,46 @@ import {
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
-import type { LoginRateLimiter } from "../identity/rate-limit.js";
-import type { SessionService } from "../identity/sessions.js";
+import { SessionService } from "../identity/sessions.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { CredentialThrottler } from "../infra/throttler/credential-throttler.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { parseWithZod } from "../infra/validation/parse-with-zod.js";
+import { ZBody } from "../infra/validation/zod-params.js";
 import {
   INVITABLE_ROLES,
   type InvitableRole,
   type Invitation,
   type InvitationStatus,
-  type InvitationsService,
+  InvitationsService,
   MAX_INVITATION_HOURS,
 } from "./invitations.service.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "./org.guard.js";
 import type { OrgRole } from "./roles.js";
 
-const CreateBody = z.object({
+const CreateSchema = z.object({
   role: z.enum(INVITABLE_ROLES),
   expiresInHours: z.number().int().min(1).max(MAX_INVITATION_HOURS).optional(),
 });
+class InvitationCreateBody extends createZodDto(CreateSchema, "InvitationCreateBody") {}
+/** Validated inside the handler, after the attempt is reserved (a signed-in principal sends none). */
 const SignupBody = z.object({
   login: z.string(),
   password: z.string(),
   displayName: z.string().min(1).max(100),
 });
-const signupPipe = new ZodPipe(SignupBody);
 
-/** 接受邀请的限流（scope `inv`）：同一令牌 10 次、同一客户端 IP 20 次 / 900s。 */
-const ACCEPT_LIMIT_PER_TOKEN = 10;
-const ACCEPT_LIMIT_PER_IP = 20;
+/** Accepting an invitation is throttled per token (10) and per client IP (20) every 900 s. */
+const ACCEPT_THROTTLERS = ["invitation", "invitation-ip"] as const;
 
 /** 组织邀请：组织内管理（`/api/v1/orgs/:orgId/invitations`）与凭令牌预览 / 接受（`/api/v1/invitations/:token`，公开）。 */
 @Controller("api/v1")
 export class InvitationsController {
   constructor(
-    @Inject(INVITATIONS) private readonly invitations: InvitationsService,
-    @Inject(SESSIONS) private readonly sessions: SessionService,
-    @Inject(KERNEL_CONFIG) private readonly config: () => KernelConfig,
-    @Inject(RATE_LIMITER) private readonly limiter: LoginRateLimiter,
+    @Inject(InvitationsService) private readonly invitations: InvitationsService,
+    @Inject(SessionService) private readonly sessions: SessionService,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    @Inject(CredentialThrottler) private readonly throttler: CredentialThrottler,
   ) {}
 
   /** 令牌只在此返回一次。 */
@@ -70,7 +71,7 @@ export class InvitationsController {
   async create(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Body(new ZodPipe(CreateBody)) body: z.infer<typeof CreateBody>,
+    @ZBody(InvitationCreateBody) body: z.infer<typeof CreateSchema>,
   ): Promise<{ invitation: Invitation; token: string }> {
     const p = requireUser(principal);
     return this.invitations.create(org.orgId, body, p.account.id, patTokenId(p));
@@ -125,33 +126,23 @@ export class InvitationsController {
       throw new ApiError("forbidden", "Service tokens cannot accept invitations");
     }
     const meta = clientMeta(req);
-    const rl = await this.limiter.reserveScoped(
-      "inv",
-      token,
-      meta.ip,
-      ACCEPT_LIMIT_PER_TOKEN,
-      ACCEPT_LIMIT_PER_IP,
-    );
-    if (!rl.allowed) {
-      reply.header("retry-after", String(rl.retryAfterSeconds));
-      throw new ApiError("auth.rate_limited", "Too many invitation attempts; try again later");
-    }
+    await this.throttler.reserve(ACCEPT_THROTTLERS, req, reply);
     let result: { account: Account; orgId: string; role: OrgRole };
     if (principal) {
       result = await this.invitations.accept(token, { accountId: principal.account.id });
-      await this.limiter.succeededScoped("inv", token, meta.ip);
+      await this.throttler.succeeded(ACCEPT_THROTTLERS, req);
     } else {
-      const signup = signupPipe.transform(body);
+      const signup = parseWithZod(SignupBody, body);
       // 新账号、成员关系与会话行在同一事务里写入；Cookie 在提交之后才设置
       const { extra: session, ...rest } = await this.invitations.accept(
         token,
         { signup },
-        (t, account) => this.sessions.create(account.id, meta, t),
+        (account) => this.sessions.create(account.id, meta),
       );
       if (!session) throw new Error("signup completed without a session");
       result = rest;
-      await this.limiter.succeededScoped("inv", token, meta.ip);
-      setSessionCookies(reply, session, this.config());
+      await this.throttler.succeeded(ACCEPT_THROTTLERS, req);
+      setSessionCookies(reply, session, this.config.get());
     }
     return result;
   }

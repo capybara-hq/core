@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { ToolError } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
+import type { LockService } from "../../infra/lock/lock.service.js";
 import { type OAuthHttpOptions, OAuthSetupError, oauthFetch } from "./discovery.js";
 
 export type TokenAuthMethod = "client_secret_basic" | "client_secret_post" | "none";
@@ -164,13 +165,6 @@ export type TokenAuth =
   | { type: "oauth_code" }
   | { type: "oauth_client"; scopes?: string[] | undefined };
 
-const RELEASE = `
-if redis.call('GET', KEYS[1]) == ARGV[1] then
-  return redis.call('DEL', KEYS[1])
-end
-return 0
-`;
-
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
@@ -178,15 +172,18 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  *
  * - 调用前：未过期（距过期 > 60 秒或未告知过期时间）直接用；否则刷新（授权码流用 refresh token，客户端凭据流重新取）。
  * - 收到 401：`forceRefresh(stale)`——只要库里的 token 仍是收到 401 的那个就刷新。
- * - 刷新一律在 Redis 锁 `capk:oauth-refresh:<orgId>:<connectorId>:<owner>` 内进行（SET NX PX，值为本次随机 id，
- *   只删除自己持有的锁）；拿不到锁的轮询等锁消失后重读凭据，库里已是别的 token 就直接用（不并发刷新——授权服务器
+ * - 刷新一律在 Redis 锁 `capk:oauth-refresh:<orgId>:<connectorId>:<owner>` 内进行（`LockService.lease`，值为
+ *   本次随机 id，`releaseIf` 只删除自己持有的锁）；拿不到锁的轮询等锁消失后重读凭据，库里已是别的 token 就直接用（不并发刷新——授权服务器
  *   轮换 refresh token 时，并发刷新的第二个必然失败）。
  * - 令牌端点明确拒绝 → 删除该凭据并抛 OAuthReconnectRequired（需要重新连接）；暂时不可用 → OAuthUnavailable，凭据保留。
  */
 export class OAuthTokens {
   constructor(
     private readonly store: OAuthStore,
-    private readonly redis: Redis,
+    /** The lease primitives of `LockService` (the key is used as is: no `lock:` prefix). */
+    private readonly locks: Pick<LockService, "lease" | "releaseIf" | "renew">,
+    /** Polls whether another holder still has the lock. */
+    private readonly redis: Pick<Redis, "exists">,
     private readonly http: () => OAuthHttpOptions,
     private readonly log: Logger,
   ) {}
@@ -246,15 +243,15 @@ export class OAuthTokens {
       rec !== null && rec.access_token !== stale ? rec.access_token : undefined;
     for (;;) {
       const id = randomUUID();
-      if ((await this.redis.set(key, id, "PX", ttlMs, "NX")) === "OK") {
+      if (await this.locks.lease(key, id, ttlMs)) {
         try {
           const rec = await this.store.readTokens(orgId, connectorId, owner);
           const done = replaced(rec);
           if (done !== undefined) return done;
           if (rec === null && auth.type === "oauth_code") throw new OAuthReconnectRequired(owner);
-          return await this.obtain(orgId, connectorId, auth, owner, rec, key, id);
+          return await this.obtain(orgId, connectorId, auth, owner, rec, key, id, ttlMs);
         } finally {
-          await this.redis.eval(RELEASE, 1, key, id).catch((err: unknown) => {
+          await this.locks.releaseIf(key, id).catch((err: unknown) => {
             this.log.warn("oauth refresh lock release failed", { connectorId, err });
           });
         }
@@ -282,6 +279,7 @@ export class OAuthTokens {
     rec: OAuthTokenRecord | null,
     lockKey: string,
     lockId: string,
+    lockTtlMs: number,
   ): Promise<string> {
     const client = await this.store.readClient(orgId, connectorId);
     if (!client) throw new OAuthReconnectRequired({ kind: "org" });
@@ -293,7 +291,8 @@ export class OAuthTokens {
         current.access_token === rec.access_token &&
         current.refresh_token === rec.refresh_token;
       if (current !== null && !unchanged) return current.access_token;
-      if (current !== null && (await this.redis.get(lockKey)) !== lockId) {
+      // still ours (renewing a held lease is harmless right before the delete)
+      if (current !== null && !(await this.locks.renew(lockKey, lockId, lockTtlMs))) {
         // 锁已不归自己（过期）：不删，交给持锁者；这次按暂时不可用处理
         throw new OAuthUnavailable();
       }

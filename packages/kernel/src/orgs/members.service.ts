@@ -1,13 +1,15 @@
-import type { Transaction } from "kysely";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import { Inject, Injectable } from "@nestjs/common";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { Account } from "../identity/accounts.js";
 import { audit } from "../identity/audit.js";
-import type { Offboarding, OffboardResult } from "./offboarding.js";
-import { lockOrg, lockOrgAndAuthorize } from "./org-lock.js";
+import { afterCommit } from "../infra/database/after-commit.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { Offboarding, type OffboardResult } from "./offboarding.js";
+import { OrgLock } from "./org-lock.js";
 import type { OrgRole } from "./roles.js";
-
-type Trx = Transaction<KernelDatabase>;
 
 export interface Member {
   account: Pick<Account, "id" | "displayName" | "email">;
@@ -21,7 +23,7 @@ export interface Member {
  * 账号是不是某个组织的匿名访客（`org_anonymous_accounts`）。匿名访客没有登录方式，只能以 guest 身份
  * 代表 IM 里未绑定的人：不能被授予别的角色、成为 owner、指派为 agent 负责人、加入别的组织或被移出。
  */
-export async function isAnonymousGuest(db: KernelDb | Trx, accountId: string): Promise<boolean> {
+export async function isAnonymousGuest(db: KernelSchemaDb, accountId: string): Promise<boolean> {
   const row = await db
     .selectFrom("org_anonymous_accounts")
     .select("account_id")
@@ -31,7 +33,7 @@ export async function isAnonymousGuest(db: KernelDb | Trx, accountId: string): P
 }
 
 /** 目标是匿名访客 → `409 member.anonymous_guest`。 */
-export async function rejectAnonymousGuest(db: KernelDb | Trx, accountId: string): Promise<void> {
+export async function rejectAnonymousGuest(db: KernelSchemaDb, accountId: string): Promise<void> {
   if (await isAnonymousGuest(db, accountId)) {
     throw new ApiError(
       "member.anonymous_guest",
@@ -43,13 +45,15 @@ export async function rejectAnonymousGuest(db: KernelDb | Trx, accountId: string
 /**
  * 成员服务。发起人只传账号 id，角色由服务在组织行锁内实时读取，调用方无法传入过期角色。所有写操作在事务内先 `SELECT … FROM orgs WHERE id = $1 FOR NO KEY UPDATE`，
  * 把同一组织的成员变更串行化（多副本下两个 owner 并发互相降级也恰好剩一个 owner）。
- * 框架无关，由调用方注入 db。
  */
+@Injectable()
 export class MembersService {
-  /** `offboarding`：移出与离开走的离职处理（内核用 `Kernel.identity.offboarding`）。 */
   constructor(
-    private readonly db: KernelDb,
-    private readonly offboarding: Offboarding,
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(OrgLock) private readonly orgLock: OrgLock,
+    /** Removing and leaving go through offboarding. */
+    @Inject(Offboarding) private readonly offboarding: Offboarding,
   ) {}
 
   async list(orgId: string): Promise<Member[]> {
@@ -84,39 +88,36 @@ export class MembersService {
   /**
    * 加入成员（邀请接受等，手动加入的唯一入口）；已是成员 → `member.already_exists`；匿名访客 → `member.anonymous_guest`。
    * 同一事务删除此人在该组织的通讯录排除（Ruling A20：手动重新加入后，通讯录同步恢复照常管理此人）。
-   * `actorAccountId` 仅用于审计。
+   * `actorAccountId` 仅用于审计。In the caller's transaction when there is one.
    */
+  @Transactional()
   async add(
     orgId: string,
     accountId: string,
     role: OrgRole,
     actorAccountId: string,
-    trx?: Trx,
   ): Promise<void> {
-    const run = async (t: Trx): Promise<void> => {
-      await lockOrg(t, orgId);
-      await rejectAnonymousGuest(t, accountId);
-      if (await this.roleIn(t, orgId, accountId)) {
-        throw new ApiError("member.already_exists", "Account is already a member");
-      }
-      await t
-        .insertInto("memberships")
-        .values({ org_id: orgId, account_id: accountId, role })
-        .execute();
-      await t
-        .deleteFrom("directory_exclusions")
-        .where("org_id", "=", orgId)
-        .where("account_id", "=", accountId)
-        .execute();
-      await audit(t, {
-        actorAccountId,
-        orgId,
-        action: "org.member.added",
-        target: accountId,
-        detail: { role },
-      });
-    };
-    return trx ? run(trx) : this.db.transaction().execute(run);
+    await this.orgLock.lock(orgId);
+    await rejectAnonymousGuest(this.db.db, accountId);
+    if (await this.roleIn(orgId, accountId)) {
+      throw new ApiError("member.already_exists", "Account is already a member");
+    }
+    await this.db
+      .insertInto("memberships")
+      .values({ org_id: orgId, account_id: accountId, role })
+      .execute();
+    await this.db
+      .deleteFrom("directory_exclusions")
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .execute();
+    await audit(this.db.db, {
+      actorAccountId,
+      orgId,
+      action: "org.member.added",
+      target: accountId,
+      detail: { role },
+    });
   }
 
   /**
@@ -132,29 +133,37 @@ export class MembersService {
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<void> {
-    await this.db.transaction().execute(async (t) => {
-      const { role: actorRole } = await lockOrgAndAuthorize(
-        t,
-        orgId,
-        actorAccountId,
-        "org.members.manage",
-      );
-      const before = await this.requireMember(t, orgId, targetId);
-      await rejectAnonymousGuest(t, targetId);
-      if ((role === "owner" || before === "owner") && actorRole !== "owner") {
-        throw new ApiError("org.owner_required", "Only an owner can change owner roles");
-      }
-      if (before === role) return;
-      await this.setRole(t, orgId, targetId, role);
-      await this.assertHasOwner(t, orgId);
-      await audit(t, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "org.member.role_changed",
-        target: targetId,
-        detail: { from: before, to: role },
-      });
+    await this.changeRoleIn(orgId, targetId, role, actorAccountId, actorTokenId);
+  }
+
+  @Transactional()
+  private async changeRoleIn(
+    orgId: string,
+    targetId: string,
+    role: OrgRole,
+    actorAccountId: string,
+    actorTokenId: string | undefined,
+  ): Promise<void> {
+    const { role: actorRole } = await this.orgLock.lockAndAuthorize(
+      orgId,
+      actorAccountId,
+      "org.members.manage",
+    );
+    const before = await this.requireMember(orgId, targetId);
+    await rejectAnonymousGuest(this.db.db, targetId);
+    if ((role === "owner" || before === "owner") && actorRole !== "owner") {
+      throw new ApiError("org.owner_required", "Only an owner can change owner roles");
+    }
+    if (before === role) return;
+    await this.setRole(orgId, targetId, role);
+    await this.assertHasOwner(orgId);
+    await audit(this.db.db, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "org.member.role_changed",
+      target: targetId,
+      detail: { from: before, to: role },
     });
   }
 
@@ -169,52 +178,67 @@ export class MembersService {
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<void> {
-    const r = await this.db.transaction().execute(async (t) => {
-      const { role: actorRole } = await lockOrgAndAuthorize(
-        t,
-        orgId,
-        actorAccountId,
-        "org.members.manage",
-      );
-      const before = await this.requireMember(t, orgId, targetId);
-      await rejectAnonymousGuest(t, targetId);
-      if (before === "owner" && actorRole !== "owner") {
-        throw new ApiError("org.owner_required", "Only an owner can remove an owner");
-      }
-      const actor = { actorAccountId, ...(actorTokenId !== undefined && { actorTokenId }) };
-      const res = await this.offboarding.offboard(t, orgId, targetId, "removed", actor);
-      await audit(t, {
-        ...actor,
-        orgId,
-        action: "org.member.removed",
-        target: targetId,
-        detail: { role: before },
-      });
-      return res;
+    await this.removeIn(orgId, targetId, actorAccountId, actorTokenId);
+  }
+
+  @Transactional()
+  private async removeIn(
+    orgId: string,
+    targetId: string,
+    actorAccountId: string,
+    actorTokenId: string | undefined,
+  ): Promise<OffboardResult> {
+    const { role: actorRole } = await this.orgLock.lockAndAuthorize(
+      orgId,
+      actorAccountId,
+      "org.members.manage",
+    );
+    const before = await this.requireMember(orgId, targetId);
+    await rejectAnonymousGuest(this.db.db, targetId);
+    if (before === "owner" && actorRole !== "owner") {
+      throw new ApiError("org.owner_required", "Only an owner can remove an owner");
+    }
+    const actor = { actorAccountId, ...(actorTokenId !== undefined && { actorTokenId }) };
+    const res = await this.offboarding.offboard(orgId, targetId, "removed", actor);
+    // the markers, events and run stops follow the root commit (none after a rollback)
+    afterCommit(() => this.offboarding.afterOffboard(res));
+    await audit(this.db.db, {
+      ...actor,
+      orgId,
+      action: "org.member.removed",
+      target: targetId,
+      detail: { role: before },
     });
-    await this.offboarding.afterCommit(r);
+    return res;
   }
 
   /** 主动离开：走离职处理（原因 `left`）；最后一个 owner → `org.last_owner`。 */
   async leave(orgId: string, accountId: string, actorTokenId?: string): Promise<void> {
-    const r: OffboardResult = await this.db.transaction().execute(async (t) => {
-      await lockOrg(t, orgId);
-      const before = await this.requireMember(t, orgId, accountId);
-      const actor = {
-        actorAccountId: accountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-      };
-      const res = await this.offboarding.offboard(t, orgId, accountId, "left", actor);
-      await audit(t, {
-        ...actor,
-        orgId,
-        action: "org.member.left",
-        target: accountId,
-        detail: { role: before },
-      });
-      return res;
+    await this.leaveIn(orgId, accountId, actorTokenId);
+  }
+
+  @Transactional()
+  private async leaveIn(
+    orgId: string,
+    accountId: string,
+    actorTokenId: string | undefined,
+  ): Promise<OffboardResult> {
+    await this.orgLock.lock(orgId);
+    const before = await this.requireMember(orgId, accountId);
+    const actor = {
+      actorAccountId: accountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+    };
+    const res = await this.offboarding.offboard(orgId, accountId, "left", actor);
+    afterCommit(() => this.offboarding.afterOffboard(res));
+    await audit(this.db.db, {
+      ...actor,
+      orgId,
+      action: "org.member.left",
+      target: accountId,
+      detail: { role: before },
     });
-    await this.offboarding.afterCommit(r);
+    return res;
   }
 
   /**
@@ -230,34 +254,42 @@ export class MembersService {
     if (fromAccountId === toAccountId) {
       throw new ApiError("validation_failed", "Cannot transfer ownership to yourself");
     }
-    await this.db.transaction().execute(async (t) => {
-      await lockOrg(t, orgId);
-      const fromRole = await this.roleIn(t, orgId, fromAccountId);
-      if (fromRole !== "owner") {
-        throw new ApiError("org.owner_required", "Only an owner can transfer ownership");
-      }
-      const toRole = await this.requireMember(t, orgId, toAccountId);
-      await rejectAnonymousGuest(t, toAccountId);
-      await this.setRole(t, orgId, toAccountId, "owner");
-      await this.setRole(t, orgId, fromAccountId, "admin");
-      await audit(t, {
-        actorAccountId: fromAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "org.ownership_transferred",
-        target: toAccountId,
-        detail: {
-          from: fromAccountId,
-          to: toAccountId,
-          fromRole: { before: fromRole, after: "admin" },
-          toRole: { before: toRole, after: "owner" },
-        },
-      });
+    await this.transferIn(orgId, fromAccountId, toAccountId, actorTokenId);
+  }
+
+  @Transactional()
+  private async transferIn(
+    orgId: string,
+    fromAccountId: string,
+    toAccountId: string,
+    actorTokenId: string | undefined,
+  ): Promise<void> {
+    await this.orgLock.lock(orgId);
+    const fromRole = await this.roleIn(orgId, fromAccountId);
+    if (fromRole !== "owner") {
+      throw new ApiError("org.owner_required", "Only an owner can transfer ownership");
+    }
+    const toRole = await this.requireMember(orgId, toAccountId);
+    await rejectAnonymousGuest(this.db.db, toAccountId);
+    await this.setRole(orgId, toAccountId, "owner");
+    await this.setRole(orgId, fromAccountId, "admin");
+    await audit(this.db.db, {
+      actorAccountId: fromAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "org.ownership_transferred",
+      target: toAccountId,
+      detail: {
+        from: fromAccountId,
+        to: toAccountId,
+        fromRole: { before: fromRole, after: "admin" },
+        toRole: { before: toRole, after: "owner" },
+      },
     });
   }
 
-  private async roleIn(t: Trx, orgId: string, accountId: string): Promise<OrgRole | undefined> {
-    const r = await t
+  private async roleIn(orgId: string, accountId: string): Promise<OrgRole | undefined> {
+    const r = await this.db
       .selectFrom("memberships")
       .select("role")
       .where("org_id", "=", orgId)
@@ -266,14 +298,14 @@ export class MembersService {
     return r?.role;
   }
 
-  private async requireMember(t: Trx, orgId: string, accountId: string): Promise<OrgRole> {
-    const role = await this.roleIn(t, orgId, accountId);
+  private async requireMember(orgId: string, accountId: string): Promise<OrgRole> {
+    const role = await this.roleIn(orgId, accountId);
     if (!role) throw new ApiError("member.not_found", "Member not found");
     return role;
   }
 
-  private async setRole(t: Trx, orgId: string, accountId: string, role: OrgRole): Promise<void> {
-    await t
+  private async setRole(orgId: string, accountId: string, role: OrgRole): Promise<void> {
+    await this.db
       .updateTable("memberships")
       .set({ role, updated_at: new Date() })
       .where("org_id", "=", orgId)
@@ -281,8 +313,8 @@ export class MembersService {
       .execute();
   }
 
-  private async assertHasOwner(t: Trx, orgId: string): Promise<void> {
-    const r = await t
+  private async assertHasOwner(orgId: string): Promise<void> {
+    const r = await this.db
       .selectFrom("memberships")
       .select((eb) => eb.fn.countAll<string>().as("n"))
       .where("org_id", "=", orgId)

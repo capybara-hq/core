@@ -4,7 +4,7 @@ import {
   type FilePreviewProvider,
 } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
-import type { KernelDb } from "../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { InflightTracker } from "../../src/extensions/inflight.js";
 import { PreviewerRegistry } from "../../src/files/previewers.js";
 
@@ -27,7 +27,7 @@ const db = {
   selectFrom: () => ({
     select: () => ({ where: () => ({ execute: async () => [] }) }),
   }),
-} as unknown as KernelDb;
+} as unknown as KernelSchemaDb;
 
 /** An object store that ignores the abort signal and always returns the bytes. */
 const ignoringStore = {
@@ -56,20 +56,21 @@ function setup(render: NonNullable<FilePreviewer["render"]>, timeoutMs = 50) {
       },
     ],
   };
-  const reg = new PreviewerRegistry({
-    db,
-    host: {
+  const reg = new PreviewerRegistry(
+    { db },
+    {
       list: () =>
         [
           { plugin: "late", capability: FILE_PREVIEW_EXTENSION_POINT, impl: provider, inflight },
         ] as never,
+      enabledPlugins: async () => new Set(["late"]),
     },
-    enabledPlugins: async () => new Set(["late"]),
-    files: { file: async () => FILE } as never,
-    storage: ignoringStore as never,
-    log: { warn: () => {} },
+    { file: async () => FILE } as never,
+    ignoringStore as never,
+    { warn: () => {} },
+    undefined as never,
     timeoutMs,
-  });
+  );
   const call = () =>
     reg.render({
       orgId: "o",

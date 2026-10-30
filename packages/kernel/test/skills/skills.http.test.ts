@@ -9,12 +9,16 @@ import {
 } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { MAX_PENDING_SKILL_PACKAGES } from "../../src/conversations/attachments.service.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import {
+  AttachmentsService,
+  MAX_PENDING_SKILL_PACKAGES,
+} from "../../src/conversations/attachments.service.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
+import { SkillsService } from "../../src/skills/skills.service.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -26,6 +30,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
 } from "../helpers/runs.js";
 import { makeZip, SKILL_MD } from "./zip.js";
 
@@ -34,9 +39,9 @@ const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
 let pgc: TestContainer;
 let rd: TestContainer;
 let s3: TestS3;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 
 beforeAll(async () => {
   [pgc, rd, s3] = await Promise.all([startTestPostgres(), startTestRedis(), startTestS3()]);
@@ -64,7 +69,7 @@ beforeAll(async () => {
   );
 }, 180_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
 });
@@ -79,7 +84,7 @@ beforeEach(async () => {
     db,
     "capybara.skill_versions, capybara.skills, capybara.attachments, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   adminId = (await accounts.createLocal({ login: "admin", password: PW, displayName: "A" })).id;
   const memberId = (await accounts.createLocal({ login: "mem", password: PW, displayName: "M" }))
     .id;
@@ -174,7 +179,7 @@ describe("上传技能包", { timeout: 60_000 }, () => {
         { path: "scripts/run.py", size: 9, sha256: sha("print(1)\n") },
       ],
     });
-    const store = k.storage.kernel(orgId);
+    const store = k.app.get(StorageService).kernel(orgId);
     const obj = await store.get(`skills/${up1}/scripts/run.py`);
     expect(obj && Buffer.from(await new Response(obj.body).arrayBuffer()).toString()).toBe(
       "print(1)\n",
@@ -225,7 +230,7 @@ describe("上传技能包", { timeout: 60_000 }, () => {
     expect(await db.selectFrom("skill_versions").select("version").execute()).toHaveLength(1);
     // 别的管理员拿同一 id 不行（上传只认上传者）
     const adm2 = (
-      await new AccountsService(db).createLocal({ login: "adm2", password: PW, displayName: "B" })
+      await accountsFor(db).createLocal({ login: "adm2", password: PW, displayName: "B" })
     ).id;
     await testMembers(db).add(orgId, adm2, "admin", adminId);
     const other = await createSkill(await session(k, "adm2"), up);
@@ -522,8 +527,10 @@ describe("删除与 agent 引用", { timeout: 60_000 }, () => {
         created_by: adminId,
       })
       .execute();
-    expect(await k.skills.list(orgId)).toEqual([]);
-    expect((await k.skills.listForAgent(orgId, agentId)).map((s) => s.name)).toEqual(["mine"]);
+    expect(await k.app.get(SkillsService).list(orgId)).toEqual([]);
+    expect(
+      (await k.app.get(SkillsService).listForAgent(orgId, agentId)).map((s) => s.name),
+    ).toEqual(["mine"]);
 
     // GET /agents/:agentId/skills：能看到该 agent 的人都能读；看不到的 agent → 404 agent.not_found
     const url = `/api/v1/orgs/${orgId}/agents/${agentId}/skills`;
@@ -626,7 +633,7 @@ describe("skill list fields (phase B)", { timeout: 60_000 }, () => {
 
 describe("清理", { timeout: 60_000 }, () => {
   it("过期未用掉的技能包：删 zip 与已写的文件；用掉的：删 zip、保留版本引用的文件", async () => {
-    const store = k.storage.kernel(orgId);
+    const store = k.app.get(StorageService).kernel(orgId);
     // 用掉的
     const used = await uploadZip(admin, zipOf("kept"));
     expect((await createSkill(admin, used)).statusCode).toBe(201);
@@ -642,7 +649,7 @@ describe("清理", { timeout: 60_000 }, () => {
       .where("id", "in", [used, orphan])
       .execute();
 
-    expect(await k.attachments.deleteExpired()).toBe(2);
+    expect(await k.app.get(AttachmentsService).deleteExpired()).toBe(2);
     expect(await store.head(`skill-packages/${used}`)).toBeNull();
     expect(await store.head(`skill-packages/${orphan}`)).toBeNull();
     expect(await store.head(`skills/${used}/SKILL.md`)).not.toBeNull();

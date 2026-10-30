@@ -1,14 +1,14 @@
 import {
+  AccountsModule,
   AccountsService,
   ApiError,
-  createDb,
   KERNEL_MIGRATIONS_DIR,
   KERNEL_SCHEMA,
   KernelConfigSchema,
   type KernelLogger,
-  kernelDb,
   loadConfig,
   migrate,
+  openKernelCli,
   secretValues,
 } from "@capybara-hq/kernel";
 
@@ -32,7 +32,7 @@ export async function runAdminGrant(
   io: AdminGrantIo = { stdout: process.stdout, stderr: process.stderr },
 ): Promise<number> {
   const verb = opts.grant ? "grant" : "revoke";
-  let raw: ReturnType<typeof createDb> | undefined;
+  let app: Awaited<ReturnType<typeof openKernelCli>> | undefined;
   try {
     const config = await loadConfig(env);
     log.addSecrets(secretValues(KernelConfigSchema, config));
@@ -43,13 +43,11 @@ export async function runAdminGrant(
       { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR },
       { connectTimeoutMs },
     );
-    raw = createDb(config.db.url, 2, (err) => log.error("pg idle client error", { err }), {
-      connectTimeoutMs,
-    });
-    const { account, changed } = await new AccountsService(kernelDb(raw)).setEnterpriseAdminByLogin(
-      opts.login,
-      opts.grant,
-    );
+    // PostgreSQL only: the context has no Redis
+    app = await openKernelCli(config, { logger: log, modules: [AccountsModule], redis: false });
+    const { account, changed } = await app
+      .get(AccountsService)
+      .setEnterpriseAdminByLogin(opts.login, opts.grant);
     const state = opts.grant ? "is now an enterprise admin" : "is no longer an enterprise admin";
     const already = opts.grant ? "is already an enterprise admin" : "is not an enterprise admin";
     io.stdout.write(`${opts.login} ${changed ? state : already}\n`);
@@ -70,6 +68,6 @@ export async function runAdminGrant(
     io.stderr.write(`capybara: admin ${verb} failed: ${msg}\n`);
     return 1;
   } finally {
-    await raw?.destroy().catch(() => {});
+    await app?.close().catch(() => {});
   }
 }

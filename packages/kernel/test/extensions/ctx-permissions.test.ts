@@ -15,6 +15,9 @@ import { createKeyring } from "../../src/ctx/secrets.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
+import { createLogger } from "../../src/log.js";
+import { EmbedTokens } from "../../src/ui/embed-token.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let rd: Awaited<ReturnType<typeof startTestRedis>>;
@@ -35,9 +38,11 @@ beforeAll(async () => {
     db: createDb(pg.url, 5),
     dbUrl: pg.url,
     redis,
+    locks: new LockService(redis, createLogger("error")),
     busSubscriber: sub,
     redisUrl: rd.url,
     keyring: createKeyring(Buffer.alloc(32, 1), []),
+    embedTokens: new EmbedTokens(createKeyring(Buffer.alloc(32, 1), [])),
     runWorkers: false,
     log: quiet,
   };

@@ -150,7 +150,7 @@ export class LangGraphLoop implements AgentLoop {
   private build(ctx: LoopContext) {
     const timedOut = () => Date.now() >= ctx.limits.deadline;
     // 本次运行的附件字节缓存：各步共用，运行结束即丢弃（只是优化，见 MediaCache）
-    const mediaCache = new MediaCache(this.stepDeps.config().attachments.requestMediaBytes);
+    const mediaCache = new MediaCache(this.stepDeps.config.get().attachments.requestMediaBytes);
     const input = (step: number, absorbedUpToSeq: number): ModelStepInput => ({
       orgId: ctx.orgId,
       conversationId: ctx.conversationId,

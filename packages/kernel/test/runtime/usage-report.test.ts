@@ -1,23 +1,28 @@
 import { fileURLToPath } from "node:url";
 import type { UsageReportPayload } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { SchedulerRegistry } from "@nestjs/schedule";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { createLogger } from "../../src/log.js";
+import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
 import {
   narrowPending,
   queryUnservable,
   queryUsageSubscribers,
   USAGE_REPORT_QUEUE,
+  USAGE_SWEEP_JOB,
+  USAGE_SWEEP_SCHEDULER_ID,
   UsageReporter,
   usageReportJobId,
 } from "../../src/runtime/usage-report.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -30,9 +35,11 @@ import {
   session,
   sleep,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { type TestUsageReporter, usageReporterFor } from "../helpers/runtime.js";
 
 /**
  * T16: `usage.report` metering through queue `cap-kernel-usage-report` (F11, P-17): one job per `usage`
@@ -47,8 +54,8 @@ const TOOL = "hooks-probe__probe_echo";
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
-let k: Kernel;
+let db: KernelSchemaDb;
+let k: TestKernel;
 let owner: Req;
 let orgId: string;
 let agentId: string;
@@ -69,7 +76,7 @@ beforeAll(async () => {
       { roles: ["api", "worker"], extensions: [MODEL_FAKE, fx("hooks-probe"), fx("usage-b")] },
     ),
   );
-  await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+  await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
   await enable("hooks-probe", true);
@@ -102,7 +109,7 @@ afterAll(async () => {
   await queue2?.close();
   conn2?.disconnect();
   await rd2?.stop();
-  await k?.stop();
+  await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
@@ -159,7 +166,7 @@ describe("usage.report delivery", { timeout: 60_000 }, () => {
     const got = await waitFor(
       async () => {
         const d = await probeUsage(ids);
-        return ids.every((id) => d[id]?.calls === 1) ? d : null;
+        return ids.every((id) => d[id]?.calls === 1 && d[id]?.last != null) ? d : null;
       },
       10_000,
       "probe deliveries",
@@ -220,7 +227,7 @@ describe("usage.report delivery", { timeout: 60_000 }, () => {
     const got = await waitFor(
       async () => {
         const d = await probeUsage([id]);
-        return d[id]?.calls === 1 ? d : null;
+        return d[id]?.calls === 1 && d[id]?.last != null ? d : null;
       },
       10_000,
       "title usage delivered",
@@ -241,12 +248,12 @@ describe("usage.report delivery", { timeout: 60_000 }, () => {
     const e = usage[0] as ConversationEvent;
     const id = idOf(e);
     await waitFor(async () => (await probeUsage([id]))[id]?.calls === 1, 10_000, "delivered");
-    const producer = new UsageReporter({
-      db,
+    const producer = usageReporterFor({
+      pool: raw,
       redisUrl: rd.url,
-      hooks: k.host.hooks,
+      hooks: k.app.get(ExtensionHost).hooks,
       subscribers: async () => new Set(["hooks-probe", "usage-b"]),
-      config: () => k.config,
+      config: () => k.app.get(KernelConfigService).get(),
       log: createLogger("error", { write: () => {} }),
     });
     try {
@@ -277,15 +284,15 @@ describe("usage.report delivery", { timeout: 60_000 }, () => {
   it("with no usage.report handler nothing is enqueued, without any query (M-2)", async () => {
     const conversationId = "00000000-0000-4000-8000-000000000001";
     let looked = 0;
-    const producer = new UsageReporter({
-      db,
+    const producer = usageReporterFor({
+      pool: raw,
       redisUrl: rd.url,
       hooks: { handlers: () => [], has: () => false },
       subscribers: async () => {
         looked++;
         return new Set(["hooks-probe"]);
       },
-      config: () => k.config,
+      config: () => k.app.get(KernelConfigService).get(),
       log: createLogger("error", { write: () => {} }),
     });
     try {
@@ -299,9 +306,16 @@ describe("usage.report delivery", { timeout: 60_000 }, () => {
 });
 
 describe("sweeper (Ruling R13)", { timeout: 60_000 }, () => {
+  it("runs every minute as a @LockedCron; its old maintenance scheduler is retired", () => {
+    expect(USAGE_SWEEP_JOB).not.toContain(":");
+    expect(RETIRED_SCHEDULER_IDS).toContain(USAGE_SWEEP_SCHEDULER_ID);
+    const cron = k.app.get(SchedulerRegistry).getCronJob(USAGE_SWEEP_JOB);
+    expect(String(cron.cronTime.source)).toBe("* * * * *");
+  });
+
   it("a lost fast-path enqueue is caught up by the sweep, exactly once", async () => {
     await probe({});
-    const reporter = k.usageReport as unknown as { enqueue: UsageReporter["enqueue"] };
+    const reporter = k.app.get(UsageReporter) as unknown as { enqueue: UsageReporter["enqueue"] };
     const original = reporter.enqueue;
     // the fast path "fails" (as a Redis error would: logged, nothing enqueued)
     reporter.enqueue = async () => {};
@@ -320,11 +334,11 @@ describe("sweeper (Ruling R13)", { timeout: 60_000 }, () => {
     expect(await queue.getJob(usageReportJobId(conv, seq))).toBeUndefined();
     // the event is older than the 30 s lag at this "now"
     const now = Date.now() + 31_000;
-    expect(await k.usageReport.sweep({ now })).toBeGreaterThan(0);
+    expect(await k.app.get(UsageReporter).sweep({ now })).toBeGreaterThan(0);
     await waitFor(async () => (await probeUsage([id]))[id]?.calls === 1, 10_000, "swept");
     await waitFor(async () => (await seenB(id)) === 1, 10_000, "swept to usage-b");
     // sweeping again (overlap) dedupes on the kept job
-    await k.usageReport.sweep({ now: now + 1000 });
+    await k.app.get(UsageReporter).sweep({ now: now + 1000 });
     await sleep(1000);
     expect((await probeUsage([id]))[id]?.calls).toBe(1);
     expect(await seenB(id)).toBe(1);
@@ -335,7 +349,7 @@ describe("sweeper (Ruling R13)", { timeout: 60_000 }, () => {
 
 describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
   const silent = createLogger("error", { write: () => {} });
-  const reporters: UsageReporter[] = [];
+  const reporters: TestUsageReporter[] = [];
   let ev: { conv: string; seq: number };
 
   beforeAll(async () => {
@@ -359,9 +373,9 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
       active?: string[];
       unservable?: string[];
     } = {},
-  ): UsageReporter {
-    const r = new UsageReporter({
-      db,
+  ): TestUsageReporter {
+    const r = usageReporterFor({
+      pool: raw,
       redisUrl: rd2.url,
       hooks: {
         handlers: () =>
@@ -378,7 +392,7 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
           new Set(ps.filter((p) => opts.unservable?.includes(p))),
       }),
       subscribers: async () => new Set(subscribers),
-      config: () => k.config,
+      config: () => k.app.get(KernelConfigService).get(),
       log: {
         ...silent,
         ...(opts.error && { error: opts.error }),
@@ -813,13 +827,13 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
       expect(subs.has("hooks-probe")).toBe(true);
       const errors: unknown[] = [];
       const only = new Set(["gone", "gone-cfg"]);
-      const r = new UsageReporter({
-        db,
+      const r = usageReporterFor({
+        pool: raw,
         redisUrl: rd2.url,
         hooks: { handlers: () => [], has: () => true },
         subscribers: async (o) =>
           new Set([...(await queryUsageSubscribers(db, o))].filter((p) => only.has(p))),
-        config: () => k.config,
+        config: () => k.app.get(KernelConfigService).get(),
         log: { ...silent, error: (...a: unknown[]) => errors.push(a) },
         retry: { attempts: 2, backoffMs: 50 },
       });

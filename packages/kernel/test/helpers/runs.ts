@@ -1,13 +1,24 @@
+import { EventEmitter } from "node:events";
 import { fileURLToPath } from "node:url";
+import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import { expect } from "vitest";
+import {
+  buildKernelApp,
+  closeKernelApp,
+  type KernelAppOptions,
+  kernelAppHttp,
+  kernelAppPort,
+  startBuiltKernelApp,
+  startKernelApp,
+} from "../../src/app.js";
 import {
   type KernelConfig,
   KernelConfigSchema,
   MARKETPLACE_OFFICIAL_URL_DEFAULT,
 } from "../../src/config/schema.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import type { KernelDb } from "../../src/db/kernel-schema.js";
-import { createKernel, type Kernel, type KernelOptions } from "../../src/kernel.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
+import type { KernelHttp } from "../../src/http/app.js";
 import { createLogger } from "../../src/log.js";
 import { runJobId } from "../../src/runtime/run-queue.js";
 import { asUser, cookieJar } from "./http.js";
@@ -47,7 +58,7 @@ export async function waitFor<T>(
  * 「卡片不在这个会话」处理（只回「不能处理」）——测试点卡片之前要等到这一步，不能只看平台收到了卡片。
  */
 export async function cardRecorded(
-  db: KernelDb,
+  db: KernelSchemaDb,
   card: { messageId: string } | { kind: "approval" | "question" },
   timeoutMs = 20_000,
 ): Promise<void> {
@@ -91,15 +102,34 @@ export function runConfig(
 
 const silent = () => createLogger("error", { write: () => {} });
 
-/** 创建并启动内核（日志静默）。 */
-export async function startKernel(
-  config: KernelConfig,
-  opts: Omit<KernelOptions, "env" | "logger"> & {
-    /** Only for a test about the real default: allow the official marketplace at its real URL. */
-    allowOfficialMarketplace?: boolean;
-  } = {},
-): Promise<Kernel> {
-  const { allowOfficialMarketplace, ...kernelOpts } = opts;
+/** The kernel's Nest application. */
+export type KernelApp = NestFastifyApplication;
+
+/** A kernel a test started ({@link startKernel}); reach its services with `app.get(Class)`. */
+export interface TestKernel {
+  /** The kernel's Nest application. */
+  readonly app: KernelApp;
+  /** In-process HTTP: `inject` requests, list the routes. */
+  readonly http: KernelHttp;
+  /** The port listened on; undefined before the start finished and after the stop. */
+  readonly port: number | undefined;
+  /** Stops the kernel (the stop phases within their budgets, then Redis and the pool); idempotent. */
+  close(): Promise<void>;
+}
+
+/** A kernel built but not started ({@link buildKernel}). */
+export interface BuiltKernel extends TestKernel {
+  /** Runs the start sequence and listens on `config.http.port`; a failure closes the kernel. */
+  start(): Promise<void>;
+}
+
+/** What the kernel test helpers take: the application options; `env` / `logger` have defaults. */
+export type TestKernelOptions = KernelAppOptions & {
+  /** Only for a test about the real default: allow the official marketplace at its real URL. */
+  allowOfficialMarketplace?: boolean;
+};
+
+function assertOffline(config: KernelConfig, allowOfficialMarketplace: boolean | undefined): void {
   const o = config.marketplaces.official;
   if (
     allowOfficialMarketplace !== true &&
@@ -112,14 +142,68 @@ export async function startKernel(
         "(runConfig does the first)",
     );
   }
-  const k = await createKernel(config, { env: {}, logger: silent(), ...kernelOpts });
-  await k.start();
-  return k;
+}
+
+/** The {@link TestKernel} view of a kernel application. */
+function testKernelOf(app: KernelApp): TestKernel {
+  return {
+    app,
+    http: kernelAppHttp(app),
+    get port() {
+      return kernelAppPort(app);
+    },
+    close: () => closeKernelApp(app),
+  };
+}
+
+/**
+ * Builds a kernel without starting it (logs discarded unless `logger` is given): for tests that
+ * reach the application before its start sequence, or that expect the start to fail. `start()`
+ * runs the production start (`startBuiltKernelApp`, with a signal source of its own): the start
+ * sequence, then listen; a failure closes the kernel and is rethrown. It may be called once.
+ */
+export async function buildKernel(
+  config: KernelConfig,
+  opts: TestKernelOptions = {},
+): Promise<BuiltKernel> {
+  const { allowOfficialMarketplace, ...appOpts } = opts;
+  assertOffline(config, allowOfficialMarketplace);
+  const app = await buildKernelApp(config, { env: {}, logger: silent(), ...appOpts });
+  let started = false;
+  return {
+    ...testKernelOf(app),
+    get port() {
+      return kernelAppPort(app);
+    },
+    async start() {
+      if (started) throw new Error("kernel already started; start() may be called once");
+      started = true;
+      await startBuiltKernelApp(app, config, { signals: new EventEmitter() });
+    },
+  };
+}
+
+/**
+ * Creates and starts a kernel with `startKernelApp` (logs discarded unless `logger` is given). It
+ * gets a signal source of its own, so it never handles the process's SIGTERM / SIGINT.
+ */
+export async function startKernel(
+  config: KernelConfig,
+  opts: TestKernelOptions = {},
+): Promise<TestKernel> {
+  const { allowOfficialMarketplace, ...appOpts } = opts;
+  assertOffline(config, allowOfficialMarketplace);
+  const app = await startKernelApp(
+    config,
+    { env: {}, logger: silent(), ...appOpts },
+    { signals: new EventEmitter() },
+  );
+  return testKernelOf(app);
 }
 
 export type Req = ReturnType<typeof asUser>;
 
-export async function session(k: Kernel, login: string): Promise<Req> {
+export async function session(k: Pick<TestKernel, "http">, login: string): Promise<Req> {
   const req = asUser(k.http, cookieJar());
   const res = await req({
     method: "POST",
@@ -182,7 +266,7 @@ export async function postMessage(
 }
 
 /** 读会话全部事件（直接查库）。 */
-export async function eventsOf(db: KernelDb, convId: string): Promise<ConversationEvent[]> {
+export async function eventsOf(db: KernelSchemaDb, convId: string): Promise<ConversationEvent[]> {
   const rows = await db
     .selectFrom("conversation_events")
     .select(["conversation_id", "seq", "type", "run_id", "payload", "created_at"])
@@ -204,7 +288,7 @@ export async function eventsOf(db: KernelDb, convId: string): Promise<Conversati
 
 /** 等到会话里出现满足条件的事件，返回该事件。 */
 export function waitForEvent(
-  db: KernelDb,
+  db: KernelSchemaDb,
   convId: string,
   pred: (e: ConversationEvent) => boolean,
   timeoutMs = 10_000,
@@ -215,7 +299,7 @@ export function waitForEvent(
 
 /** 等到会话的第 n 个终态事件（run_finished / run_failed / run_aborted）出现。 */
 export function waitForTerminal(
-  db: KernelDb,
+  db: KernelSchemaDb,
   convId: string,
   n = 1,
   timeoutMs = 15_000,
@@ -232,7 +316,7 @@ export function waitForTerminal(
   );
 }
 
-export async function consumedSeq(db: KernelDb, convId: string): Promise<number> {
+export async function consumedSeq(db: KernelSchemaDb, convId: string): Promise<number> {
   const r = await db
     .selectFrom("conversations")
     .select("consumed_seq")
@@ -242,7 +326,7 @@ export async function consumedSeq(db: KernelDb, convId: string): Promise<number>
 }
 
 export async function runsOf(
-  db: KernelDb,
+  db: KernelSchemaDb,
   convId: string,
 ): Promise<{ id: string; status: string }[]> {
   return db
@@ -261,7 +345,7 @@ export async function runsOf(
  * so), all inside the job. Only once the job is gone is the run idle in `waiting`.
  */
 export async function waitForRunJobDone(
-  db: KernelDb,
+  db: KernelSchemaDb,
   queue: { getJob(id: string): Promise<unknown> },
   runId: string,
   timeoutMs = 10_000,

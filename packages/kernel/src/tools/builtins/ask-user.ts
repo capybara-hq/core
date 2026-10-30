@@ -1,5 +1,5 @@
 import { type FormAnswer, type InputForm, ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
-import type { KernelConfig } from "../../config/schema.js";
+import type { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import type { BuiltinTool } from "../registry.js";
 
 const SPEC: ToolSpec = {
@@ -130,7 +130,7 @@ const text = (t: string, zh: string, en: string) => ({
  * 内核暂停运行并展示表单；用户回答（或超时）后用同一 input 再次调用，按 `ctx.resume` 生成结果。
  * 默认 allow（提问本身就是让用户参与，不再审批）。
  */
-export function askUserTool(deps: { config: () => KernelConfig }): BuiltinTool {
+export function askUserTool(deps: { config: Pick<KernelConfigService, "get"> }): BuiltinTool {
   return {
     spec: SPEC,
     defaultPolicy: "allow",
@@ -169,7 +169,7 @@ export function askUserTool(deps: { config: () => KernelConfig }): BuiltinTool {
           );
         }
       }
-      const state: AskState = { hours: deps.config().tools.approvalTimeoutHours };
+      const state: AskState = { hours: deps.config.get().tools.approvalTimeoutHours };
       return { kind: "input_required", form: questionsForm(questions), state };
     },
   };

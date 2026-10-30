@@ -1,4 +1,10 @@
-import { createLogger, LOG_FORMATS, type LogFormat } from "@capybara-hq/kernel";
+import {
+  createLogger,
+  installProcessGuards,
+  type KernelLogger,
+  LOG_FORMATS,
+  type LogFormat,
+} from "@capybara-hq/kernel";
 import { parseCli, USAGE, UsageError } from "./args.js";
 import { runAdminCreate } from "./commands/admin-create.js";
 import { runAdminGrant } from "./commands/admin-grant.js";
@@ -14,7 +20,7 @@ import { runMigrate } from "./commands/migrate.js";
 import { runPluginsImport, runPluginsList } from "./commands/plugins.js";
 import { runStart } from "./commands/start.js";
 import { loadEnvFile, takeEnvFileOption } from "./env-file.js";
-import { runShutdownHooks } from "./shutdown.js";
+import { exitAfterShutdown, runShutdownHooks } from "./shutdown.js";
 
 // The logger before any config is read; `capybara start` switches to the configured one. It
 // honors CAPYBARA_LOG__FORMAT already (the dev:kernel script sets pretty under tee).
@@ -25,14 +31,37 @@ const log = createLogger("info", {
   }),
 });
 
-process.on("unhandledRejection", (reason) => {
-  log.error("unhandled promise rejection; exiting", { err: reason });
-  process.exit(1);
-});
-process.on("uncaughtException", (err) => {
-  log.error("uncaught exception; exiting", { err });
-  process.exit(1);
-});
+/**
+ * The process-wide handlers: `capybara start` (a long-running kernel) gets the process guards (an
+ * unhandled rejection or uncaught exception is logged through the kernel logger; more than 5 within
+ * 60 s exit with 1); every other command is short-lived and exits with 1 on the first one.
+ */
+function installFatalHandlers(command: string): (log: KernelLogger) => void {
+  if (command === "start") {
+    let current: KernelLogger = log;
+    installProcessGuards({
+      log: () => current,
+      exit: (code) => {
+        void current
+          .flush()
+          .catch(() => {})
+          .then(() => exitAfterShutdown(code));
+      },
+    });
+    return (l) => {
+      current = l;
+    };
+  }
+  process.on("unhandledRejection", (reason) => {
+    log.error("unhandled promise rejection; exiting", { err: reason });
+    process.exit(1);
+  });
+  process.on("uncaughtException", (err) => {
+    log.error("uncaught exception; exiting", { err });
+    process.exit(1);
+  });
+  return () => {};
+}
 
 async function main(argv: string[]): Promise<number | undefined> {
   let cmd: ReturnType<typeof parseCli>;
@@ -46,6 +75,7 @@ async function main(argv: string[]): Promise<number | undefined> {
     process.stderr.write(`capybara: ${e.message}\n\n${USAGE}\n`);
     return 2;
   }
+  const useLogger = installFatalHandlers(cmd.command);
   switch (cmd.command) {
     case "help":
       process.stdout.write(`${USAGE}\n`);
@@ -95,7 +125,14 @@ async function main(argv: string[]): Promise<number | undefined> {
       );
     case "start":
       if (envFile !== undefined) log.info("loaded env file", { path: envFile });
-      return runStart({ ...(cmd.roles !== undefined && { roles: cmd.roles }) }, log, process.env);
+      return runStart(
+        { ...(cmd.roles !== undefined && { roles: cmd.roles }) },
+        log,
+        process.env,
+        exitAfterShutdown,
+        process,
+        useLogger,
+      );
   }
 }
 

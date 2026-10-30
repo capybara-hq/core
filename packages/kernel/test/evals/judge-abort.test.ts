@@ -1,14 +1,13 @@
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { usageTokens } from "../../src/evals/budget.js";
 import type { EvalRunView } from "../../src/evals/runs.service.js";
 import type { EvalSetView } from "../../src/evals/sets.service.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -20,6 +19,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -36,8 +36,8 @@ const MODEL_EVAL = fileURLToPath(
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
-let k: Kernel | undefined;
+let db: KernelSchemaDb;
+let k: TestKernel | undefined;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -48,15 +48,15 @@ beforeAll(async () => {
   );
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
 it("停机中止在途的评委请求：按估算计费", async () => {
   resetEvalModel();
-  const kernel = k as Kernel;
-  const accounts = new AccountsService(db);
+  const kernel = k as TestKernel;
+  const accounts = accountsFor(db);
   await accounts.createLocal({
     login: "ent",
     password: PW,
@@ -127,7 +127,7 @@ it("停机中止在途的评委请求：按估算计费", async () => {
     .executeTakeFirstOrThrow();
   expect(Number(before.tokens_used)).toBe(candidateTokens);
 
-  await kernel.stop();
+  await kernel.close();
   k = undefined;
   const after = await db
     .selectFrom("eval_runs")

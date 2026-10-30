@@ -8,6 +8,7 @@ import {
   type FakeGitServer,
   startFakeGitServer,
   startTestPostgres,
+  startTestRedis,
   startTestS3,
   type TestContainer,
   type TestS3,
@@ -27,11 +28,14 @@ let git: FakeGitServer;
 let work: string;
 
 let s3: TestS3;
+/** `capybara bootstrap` runs under the Redis lock `lock:bootstrap`. */
+let rd: TestContainer;
 let boot: FakeBootstrapDir;
 
 beforeAll(async () => {
-  [pg, s3, git, boot] = await Promise.all([
+  [pg, rd, s3, git, boot] = await Promise.all([
     startTestPostgres(),
+    startTestRedis(),
     startTestS3(),
     startFakeGitServer(),
     packFakeBootstrapDir(),
@@ -49,6 +53,7 @@ afterAll(async () => {
   await Promise.all([
     boot ? rm(boot.dir, { recursive: true, force: true }) : 0,
     pg?.stop(),
+    rd?.stop(),
     s3?.stop(),
     git?.stop(),
     work ? rm(work, { recursive: true, force: true }) : 0,
@@ -67,7 +72,7 @@ function testEnv(withStore: boolean, extensions: string[]): NodeJS.ProcessEnv {
   return {
     ...env,
     CAPYBARA_DB__URL: pg.url,
-    CAPYBARA_REDIS__URL: "redis://127.0.0.1:1",
+    CAPYBARA_REDIS__URL: rd.url,
     CAPYBARA_MASTER_KEY: Buffer.alloc(32, 7).toString("base64"),
     CAPYBARA_EXTENSIONS: JSON.stringify(extensions),
     // The fake git server is plain http on 127.0.0.1

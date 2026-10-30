@@ -1,12 +1,11 @@
 import { Controller, HttpCode, Inject, Param, Post } from "@nestjs/common";
-import { DIRECTORY_SYNC } from "../http/tokens.js";
 import {
   CurrentPrincipal,
   type Principal,
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
-import type { DirectorySync } from "./directory-sync.js";
+import { DirectorySync } from "./directory-sync.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "./org.guard.js";
 
 /**
@@ -15,7 +14,7 @@ import { CurrentOrg, OrgAction, type OrgContext } from "./org.guard.js";
  */
 @Controller("api/v1/orgs/:orgId/extensions/:extension/directory")
 export class DirectorySyncController {
-  constructor(@Inject(DIRECTORY_SYNC) private readonly directory: DirectorySync) {}
+  constructor(@Inject(DirectorySync) private readonly directory: DirectorySync) {}
 
   @Post("sync")
   @HttpCode(202)

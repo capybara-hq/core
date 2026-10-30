@@ -1,12 +1,12 @@
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import {
   createAgent,
   createConv,
@@ -18,6 +18,7 @@ import {
   runsOf,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForEvent,
   waitForTerminal,
@@ -32,9 +33,9 @@ import {
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let redis: Redis;
-let k: Kernel;
+let k: TestKernel;
 let owner: Req;
 let ownerId: string;
 let orgId: string;
@@ -59,16 +60,15 @@ beforeAll(async () => {
   );
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs");
-  ownerId = (
-    await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" })
-  ).id;
+  ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
+    .id;
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
   agentId = await createAgent(owner, orgId, FAKE_1);
@@ -184,7 +184,7 @@ describe("model and effort switching", { timeout: 60_000 }, () => {
     expect((await send(conv, { text: "echo:one", model: FAKE_2 })).statusCode).toBe(202);
     await waitForTerminal(db, conv, 1, 20_000);
     // fake-2 leaves the provider's (cached) model list
-    const keys = await redis.keys("capk:models:model-fake:*");
+    const keys = await redis.keys("cache:capk:models:model-fake:*");
     expect(keys.length).toBeGreaterThan(0);
     try {
       for (const key of keys) {
@@ -235,7 +235,7 @@ describe("model and effort switching", { timeout: 60_000 }, () => {
   });
   it("a switch publishes `changed: selection`; a retried old switch does not move the cache", async () => {
     const conv = await createConv(owner, orgId, agentId);
-    const spy = vi.spyOn(k.runs.eventLog, "publishChanged");
+    const spy = vi.spyOn(k.app.get(EventLog), "publishChanged");
     try {
       const r1 = await send(conv, { text: "echo:a", clientMessageId: "sw-1", model: FAKE_2 });
       expect(r1.statusCode).toBe(202);

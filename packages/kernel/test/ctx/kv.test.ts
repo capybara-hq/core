@@ -3,6 +3,8 @@ import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createKv } from "../../src/ctx/kv.js";
 import { createLock } from "../../src/ctx/lock.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
+import { createLogger } from "../../src/log.js";
 
 let box: Awaited<ReturnType<typeof startTestRedis>>;
 let redis: Redis;
@@ -72,7 +74,7 @@ describe("ctx.kv", () => {
 
   it("kv 的 lock:x 键与持有中的锁 x 互不影响", async () => {
     const kv = createKv(redis, "kv-f");
-    const lock = createLock(redis, "kv-f");
+    const lock = createLock(new LockService(redis, createLogger("error")), "kv-f");
     const held = await lock.acquire("x", { ttlMs: 10_000 });
     expect(held).not.toBeNull();
     await kv.set("lock:x", "hijack", { ttlSeconds: 60 });

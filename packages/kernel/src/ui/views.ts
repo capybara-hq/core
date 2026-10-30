@@ -10,12 +10,20 @@ import {
   type UiView,
   validateUiView,
 } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
-import type { KernelDb } from "../db/kernel-schema.js";
+import { ConversationsService } from "../conversations/conversations.service.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import type { ExtensionHost, LoadedUiContribution } from "../extensions/host.js";
+import { ExtensionHost, type LoadedUiContribution } from "../extensions/host.js";
+import { PreviewerRegistry } from "../files/previewers.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { OrgRole } from "../orgs/roles.js";
+import { callExtension } from "./call-extension.js";
 import { canUsePlace, isConversationPlace, UUID_RE } from "./registry.js";
+
+export { callExtension } from "./call-extension.js";
 
 /** 插件 render / action 的时限（spec §4.2：慢的插件只让那个标签失败）。 */
 export const UI_CALL_TIMEOUT_MS = 5_000;
@@ -47,7 +55,7 @@ export interface UiEmbedTarget {
   fileId?: string;
 }
 
-export interface UiViewsDeps {
+interface UiViewsDeps {
   host: Pick<ExtensionHost, "uiContributions">;
   /** Names of the extensions enabled in the organization (`extension_org_configs.enabled` plus required bootstrap plugins, `enabled.ts`), queried every time, not cached. */
   enabledPlugins(orgId: string): Promise<Set<string>>;
@@ -79,8 +87,6 @@ export interface UiViewsDeps {
     callId: string,
   ): Promise<{ plugin: string; view: string; key?: string } | null>;
   log: Pick<Logger, "warn">;
-  /** 默认 {@link UI_CALL_TIMEOUT_MS}（测试可调小）。 */
-  timeoutMs?: number;
 }
 
 /** 取视图 / 执行动作的调用者与目标（身份来自内核鉴权）。 */
@@ -104,7 +110,7 @@ export interface UiTarget {
  * attestation of {@link UiViewsDeps.recordedCard}). Scans one conversation's tool results.
  */
 export async function recordedCard(
-  db: KernelDb,
+  db: KernelSchemaDb,
   conversationId: string,
   callId: string,
 ): Promise<{ plugin: string; view: string; key?: string } | null> {
@@ -179,13 +185,32 @@ function actionResultProblems(r: unknown): string[] {
  * - 调用带 5 秒时限与中止信号：render 抛错 502 `ui.render_failed`、action 抛错 502 `ui.action_failed`、
  *   超时 504 `ui.timeout`、返回非法视图 502
  *   `ui.invalid_view`，都记告警日志、不写对话日志（这些不是模型可见的内容）。
- * 不依赖 Nest；不保存跨请求状态。
+ * 不保存跨请求状态。
  */
+@Injectable()
 export class UiViews {
-  private readonly timeoutMs: number;
+  private readonly d: UiViewsDeps;
 
-  constructor(private readonly d: UiViewsDeps) {
-    this.timeoutMs = d.timeoutMs ?? UI_CALL_TIMEOUT_MS;
+  constructor(
+    @Inject(ExtensionHost) host: ExtensionHost,
+    @Inject(ConversationsService) conversations: ConversationsService,
+    @Inject(PreviewerRegistry) previewers: PreviewerRegistry,
+    @Inject(KernelDb) db: KernelDb,
+    @Inject(KERNEL_LOGGER) log: Pick<Logger, "warn">,
+  ) {
+    this.d = {
+      host,
+      // org config rows plus the required bootstrap plugins
+      enabledPlugins: (orgId) => host.enabledPlugins(orgId),
+      canAccessConversation: (orgId, id, accountId) =>
+        conversations.isAccessible(orgId, id, accountId),
+      checkWritable: async (orgId, id, accountId) => {
+        await conversations.writable(orgId, id, accountId);
+      },
+      previewEmbedAllowed: (t) => previewers.embedAllowed(t),
+      recordedCard: (conversationId, callId) => recordedCard(db.db, conversationId, callId),
+      log,
+    };
   }
 
   /** 该组织、该角色可见的界面贡献：插件已启用且已加载；kind view 的要求插件注册了 render；组织页面要 member 以上。 */
@@ -393,7 +418,7 @@ export class UiViews {
       plugin: t.plugin,
       what,
       fields: { plugin: t.plugin, contribution: t.id, orgId: t.orgId },
-      timeoutMs: this.timeoutMs,
+      timeoutMs: UI_CALL_TIMEOUT_MS,
       failCode: what === "render" ? "ui.render_failed" : "ui.action_failed",
       failMessage: `Plugin ${t.plugin} failed to ${what} ${t.id}`,
       fn,
@@ -410,52 +435,5 @@ export class UiViews {
       problems: problems.slice(0, MAX_LOGGED_PROBLEMS),
     });
     throw new ApiError("ui.invalid_view", `Plugin ${t.plugin} returned an invalid view`);
-  }
-}
-
-/**
- * Calls an extension with a time limit and an abort signal (plugin views, actions and file
- * previewers): over the limit the signal aborts and the call is 504 `ui.timeout`; a throw is
- * `failCode` (502) without echoing the extension's message. An `ApiError` thrown by `fn` passes.
- */
-export async function callExtension<T>(o: {
-  log: Pick<Logger, "warn">;
-  plugin: string;
-  what: string;
-  fields: Record<string, unknown>;
-  timeoutMs: number;
-  failCode: "ui.render_failed" | "ui.action_failed";
-  failMessage: string;
-  fn: (signal: AbortSignal) => Promise<T>;
-}): Promise<T> {
-  const ac = new AbortController();
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<"timeout">((resolve) => {
-    timer = setTimeout(() => {
-      ac.abort(new Error(`plugin ui ${o.what} timed out`));
-      resolve("timeout");
-    }, o.timeoutMs);
-  });
-  try {
-    const r = await Promise.race([
-      Promise.resolve()
-        .then(() => o.fn(ac.signal))
-        .then((value) => ({ value })),
-      timeout,
-    ]);
-    if (r === "timeout") {
-      o.log.warn(`plugin ui ${o.what} timed out`, { ...o.fields, timeoutMs: o.timeoutMs });
-      throw new ApiError(
-        "ui.timeout",
-        `Plugin ${o.plugin} did not respond within ${o.timeoutMs / 1000}s`,
-      );
-    }
-    return r.value;
-  } catch (e) {
-    if (e instanceof ApiError) throw e;
-    o.log.warn(`plugin ui ${o.what} failed`, { ...o.fields, err: e });
-    throw new ApiError(o.failCode, o.failMessage);
-  } finally {
-    clearTimeout(timer);
   }
 }

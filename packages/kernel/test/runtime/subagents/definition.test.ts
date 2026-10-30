@@ -3,14 +3,12 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type AgentDefinition, AgentDefinitionSchema } from "../../../src/agents/definition.js";
 import { type KernelConfig, KernelConfigSchema } from "../../../src/config/schema.js";
-import { type KernelDb, kernelDb } from "../../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
-import { type Account, AccountsService } from "../../../src/identity/accounts.js";
-import { ApiTokenService } from "../../../src/identity/api-tokens.js";
-import { SettingsService } from "../../../src/identity/settings.js";
-import { createKernel, type Kernel } from "../../../src/kernel.js";
+import type { Account } from "../../../src/identity/accounts.js";
 import { createLogger } from "../../../src/log.js";
-import { OrgsService } from "../../../src/orgs/orgs.service.js";
+import { ModelPurposesService } from "../../../src/models/purposes.js";
+import { ProviderRegistry } from "../../../src/runtime/providers.js";
 import {
   CHILD_REMOVED_TOOLS,
   type CheckedOrgAgent,
@@ -27,15 +25,17 @@ import {
   resolveRoster,
 } from "../../../src/runtime/subagents/roster.js";
 import { truncateTables } from "../../helpers/db.js";
+import { accountsFor, orgsFor } from "../../helpers/identity.js";
 import { MODEL_PLUGINS_CONFIG } from "../../helpers/model-plugins.js";
+import { startKernel, type TestKernel } from "../../helpers/runs.js";
 
 /** Sub-agent roster and effective definitions (phase C, spec §4.3, §5.3–§5.5). */
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let cfg: KernelConfig;
 let orgId: string;
 let owner: Account;
@@ -52,14 +52,13 @@ beforeAll(async () => {
     runtime: { maxSteps: 30 },
     ...MODEL_PLUGINS_CONFIG,
   });
-  k = await createKernel(cfg, { env: {}, logger: createLogger("error", { write: () => {} }) });
-  await k.start();
+  k = await startKernel(cfg, { env: {}, logger: createLogger("error", { write: () => {} }) });
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
 }, 120_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
@@ -68,17 +67,12 @@ let n = 0;
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   n++;
-  owner = await new AccountsService(db).createLocal({
+  owner = await accountsFor(db).createLocal({
     login: `owner${n}`,
     password: "correct horse battery",
     displayName: "O",
   });
-  orgId = (
-    await new OrgsService(db, new SettingsService(db), new ApiTokenService(db)).create(
-      { name: "Acme", slug: `acme-${n}` },
-      owner,
-    )
-  ).id;
+  orgId = (await orgsFor(db).create({ name: "Acme", slug: `acme-${n}` }, owner)).id;
   parentAgentId = await orgAgent(def());
 });
 
@@ -245,9 +239,9 @@ async function orgAgent(definition: AgentDefinition, versions = 1): Promise<stri
 
 const deps = () => ({
   db,
-  purposes: k.purposes,
-  registry: k.runs.registry,
-  config: () => cfg,
+  purposes: k.app.get(ModelPurposesService),
+  registry: k.app.get(ProviderRegistry),
+  config: { get: () => cfg },
 });
 
 const eff = async (parent: AgentDefinition, type: string, tier?: string) => {
@@ -585,7 +579,9 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
 
   describe("model tiers", () => {
     const map = (tier: string, model = FAKE2, params: Record<string, unknown> = {}) =>
-      k.purposes.setOrg(orgId, `subagent_${tier}`, { model, params: params as never }, owner.id);
+      k.app
+        .get(ModelPurposesService)
+        .setOrg(orgId, `subagent_${tier}`, { model, params: params as never }, owner.id);
 
     it("the call's tier maps to its purpose; the target's params replace the parent's", async () => {
       await map("fast", FAKE2, { "model-fake.style": "shout" });
@@ -650,7 +646,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       expect(await check({ parentDefinition: def() })).toEqual({ ok: false, gate: "allowlist" });
       // another org's agent is never available
       expect(await check({ orgId: "other-org" })).toEqual({ ok: false, gate: "deleted" });
-      const stranger = await new AccountsService(db).createLocal({
+      const stranger = await accountsFor(db).createLocal({
         login: `s-${randomUUID().slice(0, 8)}`,
         password: "correct horse battery",
         displayName: "S",
@@ -693,7 +689,9 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
         subagents: { dispatchable: true },
       });
       const a = await orgAgent(agentDef, 3);
-      await k.purposes.setOrg(orgId, "subagent_fast", { model: FAKE1, params: {} }, owner.id);
+      await k.app
+        .get(ModelPurposesService)
+        .setOrg(orgId, "subagent_fast", { model: FAKE1, params: {} }, owner.id);
       const parent = def({
         tools: [{ kind: "builtin", name: "read_tool_output" }],
         toolPolicies: { jira__search: "deny", sandbox_bash: "ask", read_tool_output: "ask" },

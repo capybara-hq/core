@@ -1,6 +1,6 @@
 import { sql } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import { SANDBOX_ASK_TOOL_NAMES } from "./builtins/sandbox/names.js";
@@ -92,7 +92,7 @@ const asOverride = (v: unknown): "ask" | "deny" | undefined =>
  *
  * 结果为 `ask` 时返回审批请求，默认指向发起人本人；记住的授权把 `ask` 放行时返回 `{ grant }`（按 allow 执行）。
  */
-export function createDecidePolicy(db: KernelDb): DecidePolicy {
+export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
   return async (tool, agentDef, ctx) => {
     let connectorDefault: ToolPolicy = tool.defaultPolicy;
     let connectorId: string | null = null;
@@ -222,7 +222,7 @@ export function createDecidePolicy(db: KernelDb): DecidePolicy {
  * For a template or general-purpose child the parent conversation has the same agent, already read.
  */
 async function parentAgentOverride(
-  db: KernelDb,
+  db: KernelSchemaDb,
   toolKey: string,
   ctx: { agentId: string; parentConversationId?: string },
 ): Promise<"ask" | "deny" | undefined> {
@@ -247,7 +247,7 @@ async function parentAgentOverride(
  * its parent conversation (sub-agents spec §9), so parallel children are approved once.
  */
 async function findGrant(
-  db: KernelDb,
+  db: KernelSchemaDb,
   tool: ResolvedTool,
   connectorId: string | null,
   ctx: {

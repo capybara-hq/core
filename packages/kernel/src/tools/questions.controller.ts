@@ -1,13 +1,15 @@
-import { Body, Controller, Get, HttpCode, Inject, Param, Post } from "@nestjs/common";
+import { Controller, Get, HttpCode, Inject, Param, Post } from "@nestjs/common";
 import { z } from "zod";
-import { QUESTIONS } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import type { QuestionsService, QuestionView } from "./questions.service.js";
+import { QuestionsService, type QuestionView } from "./questions.service.js";
 
 /** 回答体：`answer` 的形状由服务按表单校验（`validateAnswer`，不符 → `validation_failed`）。 */
 const AnswerBody = z.object({ answer: z.record(z.string().max(200), z.unknown()) }).strict();
+
+class QuestionAnswerBody extends createZodDto(AnswerBody, "QuestionAnswerBody") {}
 
 /**
  * 输入请求（`ask_user`、插件工具的 `input_required`）：`/api/v1/orgs/:orgId/questions`。
@@ -16,7 +18,7 @@ const AnswerBody = z.object({ answer: z.record(z.string().max(200), z.unknown())
  */
 @Controller("api/v1/orgs/:orgId/questions")
 export class QuestionsController {
-  constructor(@Inject(QUESTIONS) private readonly questions: QuestionsService) {}
+  constructor(@Inject(QuestionsService) private readonly questions: QuestionsService) {}
 
   @Get(":id")
   @OrgAction("approvals.decide")
@@ -36,7 +38,7 @@ export class QuestionsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
-    @Body(new ZodPipe(AnswerBody)) body: z.infer<typeof AnswerBody>,
+    @ZBody(QuestionAnswerBody) body: z.infer<typeof AnswerBody>,
   ): Promise<{ question: QuestionView }> {
     const p = requireUser(principal);
     const { state: _state, ...view } = await this.questions.answer(

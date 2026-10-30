@@ -1,9 +1,12 @@
-import type { Transaction } from "kysely";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 
-/** 写一条审计事件；`action` 用点分英文小写，如 `org.member.role_changed`。 */
+/**
+ * Writes one audit event (`action` is dotted lower-case English, e.g. `org.member.role_changed`)
+ * through `db`: a service passes `this.db.db` (`KernelDb`: the context's transaction or the pool),
+ * so the event commits or rolls back with the write it records.
+ */
 export async function audit(
-  db: KernelDb | Transaction<KernelDatabase>,
+  db: KernelSchemaDb,
   e: {
     actorAccountId?: string;
     actorTokenId?: string;

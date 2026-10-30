@@ -1,21 +1,10 @@
-import {
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  Inject,
-  Param,
-  Post,
-  Query,
-  Req,
-  Res,
-} from "@nestjs/common";
+import { Controller, Get, HttpCode, Inject, Param, Post, Query, Req, Res } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import type { KernelConfig } from "../../config/schema.js";
-import { KERNEL_CONFIG, OAUTH_FLOW } from "../../http/tokens.js";
-import { ZodPipe } from "../../http/zod.pipe.js";
 import { CurrentPrincipal, type Principal, Public, requireUser } from "../../identity/principal.js";
+import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
+import { createZodDto } from "../../infra/validation/create-zod-dto.js";
+import { ZBody } from "../../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../../orgs/org.guard.js";
 import {
   browserBinding,
@@ -23,7 +12,7 @@ import {
   OAUTH_BINDING_COOKIE,
   OAUTH_CALLBACK_PATH,
   OAUTH_STATE_TTL_SECONDS,
-  type OAuthFlow,
+  OAuthFlow,
 } from "./flow.js";
 
 const ConnectBody = z
@@ -36,6 +25,8 @@ const ConnectBody = z
   })
   .strict();
 
+class OAuthConnectBody extends createZodDto(ConnectBody, "OAuthConnectBody") {}
+
 /** 查询参数只取单值字符串（重复参数 / 数组按缺失处理）。 */
 const one = (v: unknown): string | undefined =>
   typeof v === "string" && v.length <= 4096 ? v : undefined;
@@ -47,8 +38,8 @@ const one = (v: unknown): string | undefined =>
 @Controller("api/v1/orgs/:orgId/connectors")
 export class OAuthConnectController {
   constructor(
-    @Inject(OAUTH_FLOW) private readonly flow: OAuthFlow,
-    @Inject(KERNEL_CONFIG) private readonly config: () => KernelConfig,
+    @Inject(OAuthFlow) private readonly flow: OAuthFlow,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
   ) {}
 
   @Post(":connectorId/connect")
@@ -58,7 +49,7 @@ export class OAuthConnectController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("connectorId") connectorId: string,
-    @Body(new ZodPipe(ConnectBody)) body: z.infer<typeof ConnectBody>,
+    @ZBody(OAuthConnectBody) body: z.infer<typeof ConnectBody>,
     @Req() req: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<{ authorizationUrl: string }> {
@@ -69,7 +60,7 @@ export class OAuthConnectController {
       path: OAUTH_CALLBACK_PATH,
       httpOnly: true,
       sameSite: "lax",
-      secure: this.config().auth.cookieSecure,
+      secure: this.config.get().auth.cookieSecure,
       maxAge: OAUTH_STATE_TTL_SECONDS,
     });
     return out;
@@ -82,7 +73,7 @@ export class OAuthConnectController {
  */
 @Controller("api/v1/oauth")
 export class OAuthCallbackController {
-  constructor(@Inject(OAUTH_FLOW) private readonly flow: OAuthFlow) {}
+  constructor(@Inject(OAuthFlow) private readonly flow: OAuthFlow) {}
 
   @Get("callback")
   @Public()

@@ -1,5 +1,5 @@
-import type { Logger } from "@capybara-hq/plugin-sdk";
-import type { Redis } from "ioredis";
+import { Inject, Injectable } from "@nestjs/common";
+import { type LeaseHandle, LockService } from "../infra/lock/lock.service.js";
 
 /** 会话运行锁的默认 TTL（毫秒）：持有方每 `ttlMs / 3` 续租一次。 */
 export const CONVERSATION_LOCK_TTL_MS = 30_000;
@@ -7,25 +7,11 @@ export const CONVERSATION_LOCK_TTL_MS = 30_000;
 /** 会话运行锁的键前缀。 */
 const RUN_LOCK_PREFIX = "capk:conv-run:";
 
-const RENEW = `
-if redis.call('GET', KEYS[1]) == ARGV[1] then
-  return redis.call('PEXPIRE', KEYS[1], ARGV[2])
-end
-return 0
-`;
-
-const RELEASE = `
-if redis.call('GET', KEYS[1]) == ARGV[1] then
-  return redis.call('DEL', KEYS[1])
-end
-return 0
-`;
-
 /** 本进程持有的会话运行锁。 */
 export interface Lease {
   readonly conversationId: string;
   readonly runId: string;
-  /** 续租时发现锁已不属于自己（过期后被他人取得）；此后不再续租。 */
+  /** 续租时发现锁已不属于自己（过期后被他人取得，或续租一直失败到过期）；此后不再续租。 */
   readonly lost: boolean;
   /** 立即续租一次；锁已不属于自己 → false（并标记 lost）。 */
   renew(): Promise<boolean>;
@@ -38,16 +24,17 @@ export interface Lease {
 }
 
 /**
- * 会话级运行锁（spec 4.3「同一会话同一时刻只跑一轮」）：Redis 键 `capk:conv-run:<id>`，值为 runId，
- * 带 TTL；持有期间由本进程的定时器每 `ttlMs / 3` 续租（本进程持有的锁的续租，允许的进程内定时器）。
- * 持有方崩溃时停止续租，锁在 TTL 后过期，其他副本可以取得。
+ * A per-conversation lease on {@link LockService.hold}: key `<prefix><conversationId>`, value the
+ * holder's run id (other replicas read it with {@link holder}), renewed every TTL/3 by the lock
+ * service while held; a crashed holder's key expires within the TTL and another replica can take
+ * it. Built by {@link ConversationLock} (the run lock) and its {@link ConversationLock.scoped}
+ * views (the same lock for another purpose, e.g. the channel delivery `capk:channel-deliver:`).
+ * A loss is logged once, by the lock service (`lock lost`, with the key).
  */
-export class ConversationLock {
-  /** `keyPrefix`：同样语义、按会话互斥的其他用途用别的前缀（如渠道出站投递 `capk:channel-deliver:`）。 */
+export class ConversationLeases {
   constructor(
-    private readonly redis: Redis,
-    private readonly log?: Pick<Logger, "warn">,
-    private readonly keyPrefix: string = RUN_LOCK_PREFIX,
+    protected readonly locks: LockService,
+    private readonly keyPrefix: string,
   ) {}
 
   private lockKey(conversationId: string): string {
@@ -59,53 +46,9 @@ export class ConversationLock {
     runId: string,
     ttlMs = CONVERSATION_LOCK_TTL_MS,
   ): Promise<Lease | null> {
-    const key = this.lockKey(conversationId);
-    const ok = await this.redis.set(key, runId, "PX", ttlMs, "NX");
-    if (ok !== "OK") return null;
-    const redis = this.redis;
-    const log = this.log;
-    let lost = false;
-    let timer: NodeJS.Timeout | undefined;
-    const lostCallbacks: (() => void)[] = [];
-    const stop = () => {
-      clearInterval(timer);
-      timer = undefined;
-    };
-    const lease: Lease = {
-      conversationId,
-      runId,
-      get lost() {
-        return lost;
-      },
-      async renew() {
-        if (lost) return false;
-        const r = Number(await redis.eval(RENEW, 1, key, runId, ttlMs));
-        if (r !== 1) {
-          lost = true;
-          stop();
-          log?.warn("conversation run lock lost", { conversationId, runId });
-          for (const cb of lostCallbacks.splice(0)) cb();
-        }
-        return r === 1;
-      },
-      async release() {
-        stop();
-        await redis.eval(RELEASE, 1, key, runId);
-      },
-      abandon: stop,
-      onLost(cb) {
-        if (lost) cb();
-        else lostCallbacks.push(cb);
-      },
-    };
-    timer = setInterval(
-      () => {
-        lease.renew().catch((err) => log?.warn("conversation run lock renew failed", { err }));
-      },
-      Math.max(1, Math.floor(ttlMs / 3)),
-    );
-    timer.unref();
-    return lease;
+    const held = await this.locks.hold(this.lockKey(conversationId), runId, ttlMs);
+    if (!held) return null;
+    return toLease(held, conversationId, runId);
   }
 
   /**
@@ -113,11 +56,44 @@ export class ConversationLock {
    * （例如持有者崩溃、stalled 次数超限）后清理死去持有者留下的锁，不必等 TTL 过期。
    */
   async releaseFor(conversationId: string, runId: string): Promise<void> {
-    await this.redis.eval(RELEASE, 1, this.lockKey(conversationId), runId);
+    await this.locks.releaseIf(this.lockKey(conversationId), runId);
   }
 
   /** 当前持有者的 runId；无人持有 → null。 */
   holder(conversationId: string): Promise<string | null> {
-    return this.redis.get(this.lockKey(conversationId));
+    return this.locks.holderOf(this.lockKey(conversationId));
+  }
+}
+
+function toLease(held: LeaseHandle, conversationId: string, runId: string): Lease {
+  return {
+    conversationId,
+    runId,
+    get lost() {
+      return held.lost.aborted;
+    },
+    renew: () => held.renew(),
+    release: () => held.release(),
+    abandon: () => held.abandon(),
+    onLost(cb) {
+      if (held.lost.aborted) cb();
+      else held.lost.addEventListener("abort", () => cb(), { once: true });
+    },
+  };
+}
+
+/**
+ * 会话级运行锁（spec 4.3「同一会话同一时刻只跑一轮」）：Redis 键 `capk:conv-run:<id>`，值为 runId，
+ * 带 TTL，由 {@link LockService} 每 TTL/3 续租。持有方崩溃时停止续租，锁在 TTL 后过期，其他副本可以取得。
+ */
+@Injectable()
+export class ConversationLock extends ConversationLeases {
+  constructor(@Inject(LockService) locks: LockService) {
+    super(locks, RUN_LOCK_PREFIX);
+  }
+
+  /** The same per-conversation lease under another key prefix (another purpose). */
+  scoped(keyPrefix: string): ConversationLeases {
+    return new ConversationLeases(this.locks, keyPrefix);
   }
 }

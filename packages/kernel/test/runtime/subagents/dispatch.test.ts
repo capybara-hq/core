@@ -8,18 +8,23 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { normalizeStoredDefinition } from "../../../src/agents/definition.js";
+import { EventLog } from "../../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
-import { AccountsService } from "../../../src/identity/accounts.js";
-import type { Kernel } from "../../../src/kernel.js";
+import { KernelConfigService } from "../../../src/infra/config/kernel-config.service.js";
+import { ModelPurposesService } from "../../../src/models/purposes.js";
 import { BEHAVIOR_RULES } from "../../../src/runtime/context/build.js";
+import { ProviderRegistry } from "../../../src/runtime/providers.js";
 import { type DispatchDeps, dispatchSubagent } from "../../../src/runtime/subagents/dispatch.js";
 import { SUBAGENT_PREAMBLE } from "../../../src/runtime/subagents/preamble.js";
+import { SubagentsService } from "../../../src/runtime/subagents/subagents.service.js";
 import { AGENT_REFUSALS } from "../../../src/tools/builtins/agent.js";
 import { hookDeniedText } from "../../../src/tools/pipeline.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
+import { legacyDbFor } from "../../helpers/conversations.js";
 import { truncateTables } from "../../helpers/db.js";
+import { accountsFor } from "../../helpers/identity.js";
 import { testMembers } from "../../helpers/members.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import { captureProviderRequests } from "../../helpers/provider-capture.js";
@@ -33,6 +38,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitForTerminal,
 } from "../../helpers/runs.js";
 
@@ -159,9 +165,9 @@ const RULES: ScriptRule[] = [
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 let root: string;
 const capture = captureProviderRequests();
 
@@ -169,7 +175,7 @@ beforeAll(async () => {
   capture.install();
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   const raw = createDb(pgc.url, 3);
-  db = kernelDb(raw);
+  db = legacyDbFor(raw);
   destroyDb = () => raw.destroy();
   root = await mkdtemp(join(tmpdir(), "cap-subagents-"));
   k = await startKernel(
@@ -186,7 +192,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   capture.restore();
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop()]);
   if (root) await rm(root, { recursive: true, force: true });
@@ -205,7 +211,7 @@ beforeEach(async () => {
   );
   capture.reset();
   scriptRules([]);
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" })).id;
   otherId = (await accounts.createLocal({ login: "other", password: PW, displayName: "X" })).id;
   owner = await session(k, "owner");
@@ -735,15 +741,18 @@ describe("dispatch idempotency under the parent run lock", () => {
   const enqueued: string[] = [];
   const deps = (): DispatchDeps => ({
     db,
-    eventLog: k.runs.eventLog,
-    purposes: k.purposes,
-    registry: k.runs.registry,
-    config: () => k.config,
+    // the kernel's event log: the dispatch's writes run in the kernel's transaction
+    eventLog: k.app.get(EventLog),
+    purposes: k.app.get(ModelPurposesService),
+    registry: k.app.get(ProviderRegistry),
+    config: { get: () => k.app.get(KernelConfigService).get() },
     // the child runs are not executed here
     enqueue: async (_data, jobId) => {
       enqueued.push(jobId);
     },
     log: { error: () => {}, warn: () => {} },
+    // the dispatch's writes in the kernel's own transaction (the same database)
+    commitDispatch: (a, plan, child) => k.app.get(SubagentsService).commitDispatch(a, plan, child),
   });
   const input = { description: "Task", prompt: "gp-task: twice" };
 

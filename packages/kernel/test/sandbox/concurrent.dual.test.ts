@@ -12,9 +12,10 @@ import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.j
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { createFakeSandbox, readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { sandboxServiceFor } from "../helpers/sandbox.js";
 
 /**
  * Concurrent sandbox holders on two replicas (sub-agents spec §10.5, §10.9, Task 4). Each replica
@@ -53,7 +54,7 @@ const replica = (impl: SandboxProvider, o: { ttlMs?: number } = {}) => {
   const redis = new Redis(rdc.url);
   pools.push(pool);
   clients.push(redis);
-  const s = new SandboxService({
+  const s = sandboxServiceFor({
     db: kernelDb(pool),
     redis,
     provider: () => ({ plugin: "sandbox-fake", impl }),

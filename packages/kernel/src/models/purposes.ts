@@ -1,24 +1,27 @@
 import {
   type ContentBlock,
-  type ExtensionManifest,
   type ModelRequest,
   type ModelUsage,
   type ParamValue,
   type StopReason,
   sanitizeParams,
 } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
 import { z } from "zod";
-import { paramIssues } from "../agents/agents.service.js";
-import { ModelRef } from "../agents/definition.js";
-import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import { ModelRef, paramIssues } from "../agents/definition.js";
 import { ApiError } from "../errors.js";
+import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
-import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
-import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
+import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { OrgLock } from "../orgs/org-lock.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import { consumeModelStream } from "../runtime/model-call.js";
-import { ProviderListError, type ProviderRegistry } from "../runtime/providers.js";
+import { ProviderListError, ProviderRegistry } from "../runtime/providers.js";
 
 /**
  * 模型用途映射（C9）：内核与插件按「用途」取模型，不在代码里写死模型。
@@ -85,6 +88,8 @@ export const PURPOSE_PUT = z
   })
   .strict();
 export type PurposePut = z.infer<typeof PURPOSE_PUT>;
+/** {@link PURPOSE_PUT} as a DTO (`@ZBody(PurposePutDto)`). */
+export class PurposePutDto extends createZodDto(PURPOSE_PUT, "ModelPurposePut") {}
 
 /**
  * 用途请求已经发出、但没有正常收完（出错、超时、中止）：`tokens` 是应计入预算的估算用量（输入估算 + 已流出字符 / 4，
@@ -100,14 +105,6 @@ export class PurposeAttemptError extends Error {
     super(cause instanceof Error ? cause.message : String(cause), { cause });
     this.name = "PurposeAttemptError";
   }
-}
-
-export interface ModelPurposesDeps {
-  db: KernelDb;
-  registry: Pick<ProviderRegistry, "resolve">;
-  config: () => KernelConfig;
-  /** 已加载插件的清单（取 `permissions.models`）。 */
-  manifests: () => readonly ExtensionManifest[];
 }
 
 interface Declared {
@@ -139,8 +136,21 @@ const targetOf = (r: Row | undefined): PurposeTarget | null =>
         params: (r.params ?? {}) as Record<string, ParamValue>,
       };
 
+/**
+ * The model purposes (one provider). Extension-declared purposes come from the manifests in the
+ * {@link ExtensionRegistry}; targets resolve through the model provider registry.
+ */
+@Injectable()
 export class ModelPurposesService {
-  constructor(private readonly d: ModelPurposesDeps) {}
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(ExtensionRegistry) private readonly extensions: ExtensionRegistry,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    @Inject(ProviderRegistry) private readonly providers: Pick<ProviderRegistry, "resolve">,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    @Inject(OrgLock) private readonly orgLock: OrgLock,
+  ) {}
 
   /** 全部已声明的用途：内核的在前，其后按插件加载顺序。 */
   private declared(): Declared[] {
@@ -151,7 +161,7 @@ export class ModelPurposesService {
       declaredBy: "kernel",
     }));
     const seen = new Set(out.map((p) => p.purpose));
-    for (const m of this.d.manifests()) {
+    for (const m of this.extensions.manifests()) {
       for (const p of m.permissions?.models ?? []) {
         if (seen.has(p.purpose)) continue;
         seen.add(p.purpose);
@@ -174,7 +184,7 @@ export class ModelPurposesService {
 
   private async rows(purposes: string[], orgId: string | undefined): Promise<Row[]> {
     if (purposes.length === 0) return [];
-    return this.d.db
+    return this.db
       .selectFrom("model_purpose_mappings")
       .select(["org_id", "purpose", "provider", "model", "params"])
       .where("purpose", "in", purposes)
@@ -210,7 +220,7 @@ export class ModelPurposesService {
   private async check(target: PurposeTarget): Promise<void> {
     let info: Awaited<ReturnType<ProviderRegistry["resolve"]>>["info"];
     try {
-      ({ info } = await this.d.registry.resolve(target.model));
+      ({ info } = await this.providers.resolve(target.model));
     } catch (e) {
       if (e instanceof ProviderListError) throw e;
       if (e instanceof ApiError && e.code === "agent.model_unavailable") {
@@ -231,43 +241,53 @@ export class ModelPurposesService {
   ): Promise<PurposeView> {
     const decl = this.find(purpose);
     if (target) await this.check(target);
-    await this.d.db.transaction().execute(async (trx) => {
-      if (orgId === null) await lockEnterpriseAdminsAndAuthorize(trx, actor);
-      else await lockOrgAndAuthorize(trx, orgId, actor, "org.models.manage");
-      if (target === null) {
-        await trx
-          .deleteFrom("model_purpose_mappings")
-          .where("purpose", "=", purpose)
-          .where((eb) => (orgId === null ? eb("org_id", "is", null) : eb("org_id", "=", orgId)))
-          .execute();
-      } else {
-        const values = {
-          provider: target.model.provider,
-          model: target.model.model,
-          params: JSON.stringify(target.params),
-          updated_by: actor,
-        };
-        await trx
-          .insertInto("model_purpose_mappings")
-          .values({ org_id: orgId, purpose, ...values })
-          .onConflict((oc) =>
-            oc
-              .constraint("model_purpose_mappings_scope_key")
-              .doUpdateSet({ ...values, updated_at: new Date() }),
-          )
-          .execute();
-      }
-      await audit(trx, {
-        actorAccountId: actor,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        ...(orgId !== null && { orgId }),
-        action: "model.purpose_mapped",
-        target: purpose,
-        detail: { scope: orgId === null ? "deployment" : "org", target },
-      });
-    });
+    await this.write(orgId, purpose, target, actor, actorTokenId);
     const [view] = await this.views([decl], orgId ?? undefined);
     return view as PurposeView;
+  }
+
+  /** The mapping write of {@link set}, under the enterprise admin or org lock. */
+  @Transactional()
+  private async write(
+    orgId: string | null,
+    purpose: string,
+    target: PurposeTarget | null,
+    actor: string,
+    actorTokenId: string | undefined,
+  ): Promise<void> {
+    if (orgId === null) await this.adminLock.lockAndAuthorize(actor);
+    else await this.orgLock.lockAndAuthorize(orgId, actor, "org.models.manage");
+    if (target === null) {
+      await this.db
+        .deleteFrom("model_purpose_mappings")
+        .where("purpose", "=", purpose)
+        .where((eb) => (orgId === null ? eb("org_id", "is", null) : eb("org_id", "=", orgId)))
+        .execute();
+    } else {
+      const values = {
+        provider: target.model.provider,
+        model: target.model.model,
+        params: JSON.stringify(target.params),
+        updated_by: actor,
+      };
+      await this.db
+        .insertInto("model_purpose_mappings")
+        .values({ org_id: orgId, purpose, ...values })
+        .onConflict((oc) =>
+          oc
+            .constraint("model_purpose_mappings_scope_key")
+            .doUpdateSet({ ...values, updated_at: new Date() }),
+        )
+        .execute();
+    }
+    await audit(this.db.db, {
+      actorAccountId: actor,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      ...(orgId !== null && { orgId }),
+      action: "model.purpose_mapped",
+      target: purpose,
+      detail: { scope: orgId === null ? "deployment" : "org", target },
+    });
   }
 
   /** 设置（或 `null` 清除）部署默认；只有企业管理员（事务内复核）。 */
@@ -334,7 +354,7 @@ export class ModelPurposesService {
       if (!(e instanceof ApiError && e.code === "model.unconfigured") || !opts.fallback) throw e;
       target = opts.fallback;
     }
-    const { provider, info } = await this.d.registry.resolve(target.model);
+    const { provider, info } = await this.providers.resolve(target.model);
     const request: ModelRequest = {
       ...req,
       model: info.id,
@@ -342,7 +362,7 @@ export class ModelPurposesService {
       // 输出上限不超过目标模型自己的上限（与运行时 assembleModelRequest 一致）
       maxOutputTokens: Math.min(req.maxOutputTokens, info.maxOutputTokens),
     };
-    const idleMs = info.streamIdleTimeoutMs ?? this.d.config().runtime.streamIdleMs;
+    const idleMs = info.streamIdleTimeoutMs ?? this.config.get().runtime.streamIdleMs;
     await opts.beforeSend?.(target.model, request);
     let chars = 0;
     try {

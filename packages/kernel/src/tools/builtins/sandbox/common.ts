@@ -9,6 +9,7 @@ import type { KernelConfig } from "../../../config/schema.js";
 import type { AttachmentsService } from "../../../conversations/attachments.service.js";
 import type { EventLog } from "../../../conversations/event-log.js";
 import { ApiError } from "../../../errors.js";
+import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
 import { SandboxPathBusyError } from "../../../sandbox/leases.js";
 import { SandboxLockLostError, type SandboxService } from "../../../sandbox/sandbox.service.js";
 import type { StorageService } from "../../../storage/storage.service.js";
@@ -23,7 +24,7 @@ export interface SandboxToolDeps {
   storage: Pick<StorageService, "kernel" | "available">;
   /** `publishChanged`: `sandbox_deliver` announces `changed: files` (UI refresh B). */
   eventLog: Pick<EventLog, "append"> & Partial<Pick<EventLog, "publishChanged">>;
-  config: () => KernelConfig;
+  config: Pick<KernelConfigService, "get">;
 }
 
 /** 回调拿到的沙箱：句柄、提供方与「调用 signal + 锁丢失」合并后的 signal（每个提供方调用都传它）。 */

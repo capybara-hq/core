@@ -1,23 +1,15 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Route } from "../../src/ctx/create-ctx.js";
-import { createHttpApp, type KernelHttpApp } from "../../src/http/app.js";
+import type { KernelHttpApp } from "../../src/http/app.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
+import { testHttpApp } from "../helpers/http-app.js";
 
 const apps: KernelHttpApp[] = [];
 
 async function app(
   log: KernelLogger = createLogger("info", { write: () => {} }),
 ): Promise<KernelHttpApp> {
-  const a = await createHttpApp({
-    log,
-    health: {
-      checks: { pg: async () => {}, redis: async () => {} },
-      isStopping: () => false,
-      log,
-    },
-    serveApi: true,
-    servePlugins: true,
-  });
+  const a = await testHttpApp({ log, servePlugins: true });
   apps.push(a);
   return a;
 }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { createHttpApp, type KernelHttpApp } from "../../src/http/app.js";
+import type { KernelHttpApp } from "../../src/http/app.js";
 import { createLogger } from "../../src/log.js";
 import {
   logContext,
@@ -8,22 +8,14 @@ import {
   withJobContext,
   withLogContext,
 } from "../../src/log-context.js";
+import { testHttpApp } from "../helpers/http-app.js";
 
 const apps: KernelHttpApp[] = [];
 
 async function app(pg: () => Promise<void> = async () => {}) {
   const lines: string[] = [];
   const log = createLogger("debug", { write: (l) => lines.push(l) });
-  const a = await createHttpApp({
-    log,
-    health: {
-      checks: { pg, redis: async () => {} },
-      isStopping: () => false,
-      log,
-    },
-    serveApi: true,
-    servePlugins: true,
-  });
+  const a = await testHttpApp({ log, checks: { pg, redis: async () => {} }, servePlugins: true });
   apps.push(a);
   a.mountPlugins([
     {

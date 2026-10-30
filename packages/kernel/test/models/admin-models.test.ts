@@ -2,14 +2,21 @@ import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE_B } from "../helpers/model-plugins.js";
-import { createOrg, PW, type Req, runConfig, session, startKernel } from "../helpers/runs.js";
+import {
+  createOrg,
+  PW,
+  type Req,
+  runConfig,
+  session,
+  startKernel,
+  type TestKernel,
+} from "../helpers/runs.js";
 
 /**
  * `GET /api/v1/admin/models`（T18）：每个模型供应商一项（状态、模型），外加价格表与币种。
@@ -23,9 +30,9 @@ const MODEL_EVAL = fileURLToPath(
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let redis: Redis;
-let k: Kernel;
+let k: TestKernel;
 let ent: Req;
 let owner: Req;
 
@@ -42,7 +49,7 @@ beforeAll(async () => {
   );
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -54,10 +61,10 @@ beforeEach(async () => {
     "capybara.model_prices, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.deployment_settings, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
   // 模型列表缓存在 Redis：每条用例从头列
-  const keys = await redis.keys("capk:models:*");
+  const keys = await redis.keys("cache:capk:models:*");
   if (keys.length > 0) await redis.del(...keys);
   resetEvalModel();
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   await accounts.createLocal({
     login: "ent",
     password: PW,

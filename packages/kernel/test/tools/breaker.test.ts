@@ -2,8 +2,9 @@ import { startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
-import { Breaker, breakerKey, breakerOpenMessage } from "../../src/tools/breaker.js";
+import { breakerKey, breakerOpenMessage } from "../../src/tools/breaker.js";
 import { sleep } from "../helpers/runs.js";
+import { breakerFor } from "../helpers/tools.js";
 
 let rd: TestContainer;
 let redis: Redis;
@@ -35,7 +36,7 @@ describe("Breaker", () => {
 
   it("连续第 5 次失败后打开；打开状态带 TTL；到期后恢复（允许探测）", async () => {
     tools = { breakerFailures: 5, breakerOpenSeconds: 1 };
-    const b = new Breaker(redis, config);
+    const b = breakerFor(redis, config);
     for (let i = 1; i <= 4; i++) {
       expect(await b.failure("o1", "a1")).toBe(i);
       expect((await b.check("o1", "a1")).open).toBe(false);
@@ -55,7 +56,7 @@ describe("Breaker", () => {
 
   it("半开时探测失败立即重新打开；成功清零", async () => {
     tools = { breakerFailures: 2, breakerOpenSeconds: 1 };
-    const b = new Breaker(redis, config);
+    const b = breakerFor(redis, config);
     await b.failure("o1", "a1");
     await b.failure("o1", "a1");
     expect((await b.check("o1", "a1")).open).toBe(true);
@@ -69,7 +70,7 @@ describe("Breaker", () => {
   });
 
   it("成功调用清零连续失败计数", async () => {
-    const b = new Breaker(redis, config);
+    const b = breakerFor(redis, config);
     await b.failure("o1", "a1");
     await b.failure("o1", "a1");
     await b.success("o1", "a1");

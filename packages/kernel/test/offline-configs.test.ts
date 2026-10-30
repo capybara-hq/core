@@ -42,15 +42,21 @@ function walk(dir: string, out: string[] = []): string[] {
 
 describe("kernels started by tests", () => {
   it("every file that creates a kernel sets the official marketplace or uses a test config helper", () => {
-    const roots = ["packages/kernel/test", "packages/testing/src", "apps/capybara/test"];
+    const roots = [
+      "packages/kernel/test",
+      "packages/testing/src",
+      "packages/testing/test",
+      "apps/capybara/test",
+    ];
     const offenders = roots
       .flatMap((r) => walk(join(REPO, r)))
       .filter((f) => {
         const text = readFileSync(f, "utf8");
         // Creates a kernel itself, or parses its own config and starts it through a helper.
         const starts =
-          /\bcreateKernel\(/.test(text) ||
-          (/KernelConfigSchema\.parse\(/.test(text) && /\bstart(?:Test)?Kernel\(/.test(text));
+          /\b(?:create|build|start)KernelApp\(/.test(text) ||
+          (/KernelConfigSchema\.parse\(/.test(text) &&
+            /\b(?:start(?:Test)?|build)Kernel\(/.test(text));
         return (
           starts &&
           !/official:\s*\{\s*enabled:/.test(text) &&

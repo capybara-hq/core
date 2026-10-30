@@ -4,19 +4,20 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { EventLog } from "../../src/conversations/event-log.js";
+import type { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { REPLAY_NO_RECORDING } from "../../src/evals/recorded-tools.js";
-import type { RunReplayResult } from "../../src/evals/run-replay.js";
+import type { EvalReplayHooks, RunReplayResult } from "../../src/evals/run-replay.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import type { EvalSetView } from "../../src/evals/sets.service.js";
 import type { TrajectoryDetail, TrajectoryListItem } from "../../src/evals/trajectory.service.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
+import { EVAL_REPLAY_HOOKS } from "../../src/evals/worker.js";
 import { readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
 import { toolsCountState } from "../fixtures/plugins/tools-count/index.js";
+import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -29,6 +30,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -48,8 +50,8 @@ const SANDBOX_FAKE = fileURLToPath(
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
-let k: Kernel;
+let db: KernelSchemaDb;
+let k: TestKernel;
 let eventLog: EventLog;
 let root: string;
 /** 置为 true 时，下一个用例在种子写好之后、loop 开始之前模拟崩溃一次。 */
@@ -74,8 +76,8 @@ let agentId: string;
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   raw = createDb(pgc.url, 3);
-  db = kernelDb(raw);
-  eventLog = new EventLog(db, { publish: async () => {} });
+  db = legacyDbFor(raw);
+  eventLog = eventLogFor(db, { publish: async () => {} });
   root = await mkdtemp(join(tmpdir(), "cap-run-replay-"));
   k = await startKernel(
     runConfig(
@@ -91,42 +93,48 @@ beforeAll(async () => {
       },
     ),
     {
-      evalHooks: {
-        async afterRunSeeded(evalRunId) {
-          if (cancelThenCrash) {
-            cancelThenCrash = false;
-            await db
-              .updateTable("eval_runs")
-              .set({ status: "cancelled", finished_at: new Date() })
-              .where("id", "=", evalRunId)
-              .execute();
-            throw new Error("simulated crash after seeding (run cancelled meanwhile)");
-          }
-          if (!crashOnce) return;
-          crashOnce = false;
-          crashes++;
-          throw new Error("simulated crash after seeding");
+      // the replay and judge test hooks are a provider override (a test seam)
+      overrides: [
+        {
+          provide: EVAL_REPLAY_HOOKS,
+          useValue: {
+            async afterRunSeeded(evalRunId) {
+              if (cancelThenCrash) {
+                cancelThenCrash = false;
+                await db
+                  .updateTable("eval_runs")
+                  .set({ status: "cancelled", finished_at: new Date() })
+                  .where("id", "=", evalRunId)
+                  .execute();
+                throw new Error("simulated crash after seeding (run cancelled meanwhile)");
+              }
+              if (!crashOnce) return;
+              crashOnce = false;
+              crashes++;
+              throw new Error("simulated crash after seeding");
+            },
+            async beforeCheck() {
+              if (checkFailures === 0) return;
+              if (checkFailures > 0) checkFailures--;
+              checkFailed++;
+              throw new Error("simulated PG error in the request check");
+            },
+            async beforeDeleteConversation() {
+              if (deleteFails)
+                throw new Error("simulated PG error while deleting the eval conversation");
+            },
+            async beforeCharge() {
+              if (chargeFailures === 0) return;
+              if (chargeFailures > 0) chargeFailures--;
+              chargeFailed++;
+              throw new Error("simulated PG error while charging");
+            },
+          } satisfies EvalReplayHooks,
         },
-        async beforeCheck() {
-          if (checkFailures === 0) return;
-          if (checkFailures > 0) checkFailures--;
-          checkFailed++;
-          throw new Error("simulated PG error in the request check");
-        },
-        async beforeDeleteConversation() {
-          if (deleteFails)
-            throw new Error("simulated PG error while deleting the eval conversation");
-        },
-        async beforeCharge() {
-          if (chargeFailures === 0) return;
-          if (chargeFailures > 0) chargeFailures--;
-          chargeFailed++;
-          throw new Error("simulated PG error while charging");
-        },
-      },
+      ],
     },
   );
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   const ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   adminId = (await accounts.createLocal({ login: "admin", password: PW, displayName: "A" })).id;
@@ -162,7 +170,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
   if (root) await rm(root, { recursive: true, force: true });

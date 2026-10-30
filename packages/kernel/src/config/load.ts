@@ -97,8 +97,9 @@ export async function loadConfig(env: NodeJS.ProcessEnv): Promise<KernelConfig> 
 }
 
 /**
- * 与 {@link loadConfig} 相同，另给出各插件部署配置字段的来源（文件 / Nacos / 环境变量，见
- * {@link extensionConfigSources}）：传给 `createKernel` 的 `extensionConfigSources`，后台据此把这些字段标为只读（D8）。
+ * Like {@link loadConfig}, and also where each extension deployment config field comes from (file
+ * / Nacos / environment, see {@link extensionConfigSources}): the `extensionConfigSources` option of
+ * `startKernelApp` / `createKernelApp`, by which the admin console marks these fields read-only (D8).
  */
 export async function loadConfigWithSources(env: NodeJS.ProcessEnv): Promise<{
   config: KernelConfig;

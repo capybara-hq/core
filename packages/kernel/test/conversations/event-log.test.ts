@@ -4,21 +4,23 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
-import { EventLog, payloadJson } from "../../src/conversations/event-log.js";
+import { type EventLog, payloadJson } from "../../src/conversations/event-log.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
+import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
+import { handlesFor } from "../helpers/identity.js";
+import { startKernel, type TestKernel } from "../helpers/runs.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let rawA: ReturnType<typeof createDb>;
 let rawB: ReturnType<typeof createDb>;
-let dbA: KernelDb;
-let dbB: KernelDb;
+let dbA: KernelSchemaDb;
+let dbB: KernelSchemaDb;
 let redis: Redis;
 let sub: ReturnType<typeof createBusSubscriber>;
 let bus: ReturnType<typeof createBus>;
@@ -27,7 +29,7 @@ let logB: EventLog;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  k = await createKernel(
+  k = await startKernel(
     KernelConfigSchema.parse({
       db: { url: pgc.url, poolMax: 5 },
       redis: { url: rd.url },
@@ -37,20 +39,19 @@ beforeAll(async () => {
     }),
     { env: {}, logger: createLogger("error", { write: () => {} }) },
   );
-  await k.start();
   // 两个独立连接池，模拟两个副本并发写同一会话。
   rawA = createDb(pgc.url, 10);
   rawB = createDb(pgc.url, 10);
-  dbA = kernelDb(rawA);
-  dbB = kernelDb(rawB);
+  dbA = legacyDbFor(rawA);
+  dbB = legacyDbFor(rawB);
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
   bus = createBus(redis, sub, "kernel");
-  logA = new EventLog(dbA, bus);
-  logB = new EventLog(dbB, bus);
+  logA = eventLogFor(dbA, bus);
+  logB = eventLogFor(dbB, bus);
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await sub?.close();
   redis?.disconnect();
   await rawA?.destroy();
@@ -173,8 +174,9 @@ describe("EventLog", () => {
     });
     try {
       await expect(
-        dbA.transaction().execute(async (trx) => {
-          const out = await logA.append(conversationId, [userMsg("a")], trx);
+        // the caller's transaction in the async context, which appendIn joins
+        handlesFor(dbA).txHost.run(async () => {
+          const out = await logA.appendIn(conversationId, [userMsg("a")]);
           expect(out[0]?.seq).toBe(1);
           throw new Error("rollback");
         }),
