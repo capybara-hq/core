@@ -730,6 +730,20 @@ describe("the new conversation before anything is set up", () => {
     expect(step(m.agent.label).getAttribute("data-state")).toBe("todo");
   });
 
+  it("while agents and models load: a skeleton, never a composer of placeholders", async () => {
+    resetNavigation("/chat");
+    stubApi({
+      "GET /api/v1/orgs/o1/agents": () => json(200, AGENTS),
+      "GET /api/v1/orgs/o1/models": () => new Promise<Response>(() => {}) as unknown as Response,
+      "GET /api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
+    });
+    renderPage(<NewChatPage />, { locale: "en" });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByRole("textbox", { name: en.chat.inputLabel, hidden: true })).toBeNull();
+    expect(screen.queryByText("—")).toBeNull();
+    expect(document.querySelector('[data-template="OnboardingPage"]')).toBeNull();
+  });
+
   it("with a model and an agent the composer shows as before", async () => {
     setup(AGENTS, MODELS);
     const { container } = renderPage(<NewChatPage />, { locale: "en" });

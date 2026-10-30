@@ -1,6 +1,6 @@
 "use client";
 
-import { type ConversationPageProps, Stack } from "@capybara-hq/design";
+import { type ConversationPageProps, Skeleton, Stack } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 import { useRouter } from "../../i18n/navigation";
@@ -77,6 +77,25 @@ export function useNewConversationPage(
   };
 
   const name = agent?.definition.name ?? "—";
+  // Until the agents, the models and the recent agent are known, the page shows a skeleton, never a
+  // composer of placeholders (the new-conversation page may still turn into the setup checklist).
+  const loading = agents === undefined || providers === undefined || recent === undefined;
+  if (loading) {
+    return {
+      titleBar: {
+        title: null,
+        untitled: "",
+        menu: [],
+        properties: { pressed: false, onToggle: () => {} },
+        panels: [],
+      },
+      newConversation: { agentName: "" },
+      composer: <Skeleton rows={3} />,
+      status: { context: `${who}:/chat`, version: session.version ?? "" },
+      right: "none",
+      onCloseRight: () => {},
+    };
+  }
   return {
     titleBar: {
       title: null,
