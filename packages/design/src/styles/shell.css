@@ -109,22 +109,35 @@
 }
 .cb-pageheader-search {
   flex: none;
+  margin-left: auto;
   width: 240px;
   max-width: 100%;
   padding: var(--cb-space-1) 0;
 }
 
 /* Template head: the PageHeader in the content width, fixed above the body. */
+.cb-template {
+  --cb-content-pad: var(--cb-layout-content-pad);
+}
+@media (max-width: 639px) {
+  .cb-template {
+    --cb-content-pad: 16px;
+  }
+}
 .cb-template-head {
   flex: none;
   padding: var(--cb-space-6) var(--cb-layout-gutter) var(--cb-space-3);
+}
+/* Frame templates: side padding 32 (16 below 640), top 20 (spec §2.3). */
+.cb-template-head[data-width="content"] {
+  padding: var(--cb-space-5) var(--cb-content-pad) var(--cb-space-3);
 }
 /* A form's first section sits space.6 below the header, as sections sit apart (spec §5.3). */
 .cb-template-head[data-gap="loose"] {
   padding-bottom: var(--cb-space-6);
 }
 /* One content width for every frame (spec §4.3). */
-.cb-template-head-frame,
+.cb-template-head-frame[data-width="content"],
 .cb-body-frame[data-width="content"] {
   max-width: var(--cb-layout-content);
   margin: 0 auto;
@@ -329,10 +342,16 @@ a.cb-pageheader-path-seg:hover {
   box-sizing: border-box;
   padding: var(--cb-space-4) var(--cb-layout-gutter);
 }
-/* The content width: the gutter on both sides, the frame centered, space at the bottom. */
+.cb-body-content[data-padded="true"]:has(> .cb-body-frame[data-width="content"]) {
+  padding: var(--cb-space-4) var(--cb-content-pad) var(--cb-space-6);
+}
+/* The content width: the side padding on both sides, the frame centered, space at the bottom. */
 .cb-body-content:not([data-padded="true"]):has(> .cb-body-frame[data-width="content"]) {
   box-sizing: border-box;
-  padding: 0 var(--cb-layout-gutter) var(--cb-space-6);
+  padding: 0 var(--cb-content-pad) var(--cb-space-6);
+}
+.cb-body-frame[data-width="full"] {
+  height: 100%;
 }
 .cb-body-frame[data-width="content"] {
   display: flex;
@@ -473,6 +492,11 @@ a.cb-pageheader-path-seg:hover {
   .cb-body [data-responsive="below-1280"] {
     display: none;
   }
+}
+
+/* PageTabs inside the head frame line up with the frame. */
+.cb-template-head-frame .cb-pagetabs {
+  padding: 0;
 }
 
 /* Templates that draw the StatCards under the header, inside the fixed head. */

@@ -46,6 +46,7 @@ export function SettingsPage({
         railCollapsible={false}
         head={<TemplateHead header={header} loose />}
         loose
+        width="content"
       >
         {children}
       </Body>

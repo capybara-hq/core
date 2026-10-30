@@ -83,6 +83,8 @@ type Loaded = {
   /** 下一次轮询的 `updatedSince`（内核没给时为 null：每次读全部）。 */
   asOf: string | null;
   titles: Map<string, string>;
+  /** The set's name for the path line (null when it could not be read). */
+  setName: string | null;
 };
 
 function EvalRunInOrg({ orgId, runId }: { orgId: string; runId: string }) {
@@ -104,6 +106,7 @@ function EvalRunInOrg({ orgId, runId }: { orgId: string; runId: string }) {
       rows: page.rows,
       asOf: page.asOf,
       titles: new Map((setDetail?.cases ?? []).map((c) => [c.id, c.title])),
+      setName: setDetail?.name ?? null,
     };
   }, [orgId, runId]);
   const data = state.kind === "ready" ? state.data : null;
@@ -182,7 +185,7 @@ function EvalRunInOrg({ orgId, runId }: { orgId: string; runId: string }) {
   return (
     <DetailPage
       header={{
-        path: [...scope, { label: "evals", href: "/evals" }, { label: "runs" }],
+        path: [...scope, { label: "evals", href: "/evals" }, { label: "…" }, { label: "…" }],
         title: t("title"),
       }}
       tabs={{
@@ -355,7 +358,7 @@ function EvalRunView({
         path: [
           ...scope,
           { label: "evals", href: "/evals" },
-          { label: t("title"), href: `/evals/${encodeURIComponent(run.setId)}` },
+          { label: data.setName ?? run.setId, href: `/evals/${encodeURIComponent(run.setId)}` },
           { label: formatTime(run.createdAt, locale) },
         ],
         title: t("run.title", { time: formatTime(run.createdAt, locale) }),

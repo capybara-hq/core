@@ -473,7 +473,7 @@ describe("Body", () => {
 
   it("centered: no anchor navigation; content at the content width", () => {
     zh(
-      <Body layout="centered" loose>
+      <Body layout="centered" loose width="content">
         <div>表单</div>
       </Body>,
     );
@@ -497,14 +497,14 @@ describe("Body", () => {
     }
   });
 
-  it("every body is the content width", () => {
+  it("a body is the whole width unless a frame template asks for the content width", () => {
     zh(
       <Body layout="single">
         <div>主内容</div>
       </Body>,
     );
     expect(document.querySelector('[data-part="content"]')?.getAttribute("data-width")).toBe(
-      "content",
+      "full",
     );
   });
 

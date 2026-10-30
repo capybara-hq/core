@@ -22,7 +22,7 @@ export function WizardPage({
   return (
     <div className="cb-template" data-template="WizardPage" data-width="content">
       <TemplateHead header={header} loose />
-      <Body layout="centered" loose>
+      <Body layout="centered" loose width="content">
         <ol className="cb-steps" aria-label={t("shell.steps")}>
           {steps.map((label, i) => {
             const state = i < current ? "done" : i === current ? "current" : "todo";

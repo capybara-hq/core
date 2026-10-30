@@ -217,9 +217,7 @@ export function PageHeader(p: PageHeaderProps) {
               value={p.activeTab ?? tabItems[0]?.id ?? ""}
               onChange={(id) => tabItems.find((x) => x.id === id)?.onSelect?.()}
             />
-          ) : (
-            <span />
-          )}
+          ) : null}
           {p.search ? (
             <div className="cb-pageheader-search">
               <Input

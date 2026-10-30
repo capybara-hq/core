@@ -30,7 +30,7 @@ export function FormPage({
   return (
     <div className="cb-template" data-template="FormPage" data-width="content">
       <TemplateHead header={header} loose />
-      <Body layout="centered" loose>
+      <Body layout="centered" loose width="content">
         {children}
       </Body>
       <ActionRow {...actionRow} />

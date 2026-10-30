@@ -16,6 +16,8 @@ export type BodyProps = {
    * one content width (`layout.content`, spec §4.3), centered.
    */
   loose?: boolean;
+  /** `content` (default for frame templates): the one content width; `full`: the whole width. */
+  width?: "content" | "full";
   /** Content inner padding (detail sections, cards); without it the content sits flush. */
   contentPadded?: boolean;
   /** Rail 内容贴边（自带内边距或本身是列表 / 表格时）；缺省内边距 12 16。 */
@@ -37,6 +39,7 @@ export function Body({
   inspectorTitle,
   onInspectorClose,
   loose,
+  width = "full",
   contentPadded,
   railFlush,
   railCollapsible = true,
@@ -69,7 +72,7 @@ export function Body({
           <div
             className="cb-body-frame"
             data-part="content"
-            data-width="content"
+            data-width={width}
             data-gap={loose ? "loose" : undefined}
           >
             {children}
@@ -84,7 +87,7 @@ export function Body({
       <div
         className="cb-body-frame"
         data-part="content"
-        data-width="content"
+        data-width={width}
         data-gap={loose ? "loose" : undefined}
       >
         {children}

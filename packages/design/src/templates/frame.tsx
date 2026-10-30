@@ -4,8 +4,8 @@ import { PageHeader, type PageHeaderProps } from "../shell/index";
 
 /**
  * The fixed header area of a template (spec §4.2): the PageHeader in a frame of the content width
- * (`layout.content`), so it lines up with the body below it. Templates without a list body (detail,
- * trace, inbox, onboarding, status) draw the header's metrics here as StatCards (`statsInHead`);
+ * (`layout.content`), so it lines up with the body below it; the special templates (trace, inbox,
+ * onboarding, status) use `width="full"`. Templates without a list body (detail, those four) draw the header's metrics here as StatCards (`statsInHead`);
  * list and overview pages draw them at the top of the body (WithStats). `loose` leaves space.6
  * below the header for forms.
  */
@@ -13,21 +13,28 @@ export function TemplateHead({
   header,
   statsInHead,
   loose,
+  width = "content",
+  children,
 }: {
   header: PageHeaderProps;
   statsInHead?: boolean;
   loose?: boolean;
+  /** `content`: the one content width; `full`: the special templates (trace, inbox, onboarding, status). */
+  width?: "content" | "full";
+  /** Drawn under the header inside the same frame (DetailPage's tabs). */
+  children?: ReactNode;
 }) {
   const metrics = statsInHead ? (header.metrics ?? []) : [];
   return (
-    <div className="cb-template-head" data-width="content" data-gap={loose ? "loose" : undefined}>
+    <div className="cb-template-head" data-width={width} data-gap={loose ? "loose" : undefined}>
       <div
         className="cb-template-head-frame"
-        data-width="content"
+        data-width={width}
         data-stats={statsInHead ? "head" : undefined}
       >
         <PageHeader {...header} />
         {metrics.length > 0 ? <StatCards metrics={metrics} /> : null}
+        {children}
       </div>
     </div>
   );

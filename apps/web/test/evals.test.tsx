@@ -396,6 +396,7 @@ describe("用例快照轨迹（TracePage）", () => {
       },
     };
     stubApi({
+      [`GET ${SETS}/s1`]: () => json(200, { set: { ...SET, cases: CASES } }),
       [`GET ${SETS}/s1/cases/k1`]: () =>
         json(200, { case: CASES[0], trajectory: [run], currency: "USD" }),
     });
@@ -404,11 +405,11 @@ describe("用例快照轨迹（TracePage）", () => {
     const tree = await screen.findByRole("tree", { name: en.trajectories.detail.waterfall });
     expect(within(tree).getByText("run · v2")).toBeTruthy();
     expect(screen.getByText(en.trajectories.detail.audited)).toBeTruthy();
-    expect(
-      within(screen.getByRole("navigation", { name: "Path" }))
-        .getByRole("link", { name: E.title })
-        .getAttribute("href"),
-    ).toBe("/evals/s1");
+    // the set's name, not the page title, sits in the path
+    const link = await within(screen.getByRole("navigation", { name: "Path" })).findByRole("link", {
+      name: SET.name,
+    });
+    expect(link.getAttribute("href")).toBe("/evals/s1");
   });
 });
 

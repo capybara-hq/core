@@ -14,7 +14,7 @@ import {
   useTrajectoryMetrics,
 } from "../../../../../../components/TrajectoryParts";
 import { ApiClientError } from "../../../../../../lib/api";
-import { type EvalCaseDetail, getEvalCase } from "../../../../../../lib/evals";
+import { type EvalCaseDetail, getEvalCase, getEvalSet } from "../../../../../../lib/evals";
 import { indexTrajectory } from "../../../../../../lib/trajectories";
 import { useErrorMessage } from "../../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../../lib/use-load";
@@ -39,7 +39,19 @@ function CaseInOrg({ orgId, setId, id }: { orgId: string; setId: string; id: str
   const t = useTranslations("evals");
   const errorMessage = useErrorMessage();
   const { state } = useLoad(() => getEvalCase(orgId, setId, id), [orgId, setId, id]);
-  const parent = { label: t("title"), href: `/evals/${encodeURIComponent(setId)}` };
+  // The set's name for the path line; its id when it cannot be read.
+  const setName = useLoad(
+    () =>
+      getEvalSet(orgId, setId).then(
+        (r) => r.set.name,
+        () => setId,
+      ),
+    [orgId, setId],
+  );
+  const parent = {
+    label: setName.state.kind === "ready" ? setName.state.data : "…",
+    href: `/evals/${encodeURIComponent(setId)}`,
+  };
   if (state.kind === "ready") return <CaseTrajectory parent={parent} detail={state.data} />;
   return (
     <TracePage

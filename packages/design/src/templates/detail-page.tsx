@@ -21,11 +21,15 @@ export function DetailPage({
 }) {
   return (
     <div className="cb-template" data-template="DetailPage" data-width="content">
-      <TemplateHead header={header} statsInHead />
-      <PageTabs {...tabs} />
       <Body
         layout={inspector != null ? "inspector" : "single"}
         contentPadded
+        width="content"
+        head={
+          <TemplateHead header={header} statsInHead>
+            <PageTabs {...tabs} />
+          </TemplateHead>
+        }
         inspector={inspector}
         {...(inspectorTitle !== undefined ? { inspectorTitle } : {})}
         {...(onInspectorClose ? { onInspectorClose } : {})}

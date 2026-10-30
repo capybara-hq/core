@@ -13,8 +13,8 @@ export function TracePage({
   detail: ReactNode;
 }) {
   return (
-    <div className="cb-template" data-template="TracePage" data-width="content">
-      <TemplateHead header={header} statsInHead />
+    <div className="cb-template" data-template="TracePage" data-width="full">
+      <TemplateHead header={header} statsInHead width="full" />
       <Body layout="single">
         <div className="cb-trace">
           <div className="cb-trace-waterfall">{waterfall}</div>

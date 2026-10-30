@@ -21,8 +21,8 @@ export function InboxPage({
   children?: ReactNode;
 }) {
   return (
-    <div className="cb-template" data-template="InboxPage" data-width="content">
-      <TemplateHead header={header} statsInHead />
+    <div className="cb-template" data-template="InboxPage" data-width="full">
+      <TemplateHead header={header} statsInHead width="full" />
       <Body
         layout={inspector != null ? "rail-inspector" : "rail"}
         rail={list}

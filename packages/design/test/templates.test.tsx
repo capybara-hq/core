@@ -231,20 +231,38 @@ describe("widths, stat cards and the form without anchors", () => {
       <InboxPage header={header} list={<div>l</div>}>
         x
       </InboxPage>,
-      "content",
+      "full",
     ],
     [
       "TracePage",
       <TracePage header={header} waterfall={<div>w</div>} detail={<div>d</div>} />,
-      "content",
+      "full",
     ],
   ];
   for (const [name, el, w] of widths) {
-    it(`${name} uses the content width: data-width="${w}"`, () => {
+    it(`${name} is data-width="${w}" (frame templates share the content width)`, () => {
       zh(el);
       expect(width()).toBe(w);
     });
   }
+
+  it("DetailPage: the head and the content share one width container", () => {
+    zh(
+      <DetailPage
+        header={header}
+        tabs={{ items: [{ id: "a", label: "概要" }], value: "a", label: "t" }}
+        inspector={<div>i</div>}
+      >
+        x
+      </DetailPage>,
+    );
+    const head = document.querySelector(".cb-template-head-frame") as HTMLElement;
+    const content = document.querySelector('[data-part="content"]') as HTMLElement;
+    expect(head.getAttribute("data-width")).toBe("content");
+    expect(content.getAttribute("data-width")).toBe("content");
+    expect(head.closest(".cb-body-main")).not.toBeNull();
+    expect(head.closest(".cb-body-main")).toBe(content.closest(".cb-body-main"));
+  });
 
   it("ListPage renders StatCards after the header when metrics are given", () => {
     zh(

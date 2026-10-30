@@ -17,7 +17,7 @@ export function ListPage({
   return (
     <div className="cb-template" data-template="ListPage" data-width="content">
       <TemplateHead header={header} />
-      <Body layout={rail != null ? "rail" : "single"} rail={rail}>
+      <Body layout={rail != null ? "rail" : "single"} rail={rail} width="content">
         <WithStats header={header}>{children}</WithStats>
       </Body>
       {actionRow ? <ActionRow {...actionRow} /> : null}

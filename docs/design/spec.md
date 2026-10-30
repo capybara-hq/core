@@ -129,7 +129,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 | Inner padding (inside a component, vertical / horizontal) | `dense` / `default` | 4/8 · 6/12 | `--cb-pad-<step>-y`, `--cb-pad-<step>-x` |
 | Type | §2.2 | | `--cb-type-<name>-size`, `--cb-type-<name>-line` |
 | Radius | `sm` / `md` / `bubble` | 4 / 8 / 10 | `--cb-radius-<step>` |
-| Layout | `sidebar` / `sidebar-rail` / `content` / `chat` / `status-bar` / `action-row` / `gutter` | 256 / 48 / 1120 / 720 / 24 / 40 / 20 | `--cb-layout-<name>` |
+| Layout | `sidebar` / `sidebar-rail` / `content` / `content-pad` / `chat` / `status-bar` / `action-row` / `gutter` | 256 / 48 / 1120 / 32 / 720 / 24 / 40 / 20 | `--cb-layout-<name>` |
 | Layout, conversation page | `title-bar` / `properties` / `panel-min` / `panel` / `chat-min` / `tool-output` / `file-card` / `thumb` / `inline-image` | 48 / 300 / 520 / 560 / 480 / 120 / 240 / 56 / 360 | `--cb-layout-<name>` |
 
 **Density steps.** Controls and rows come in three steps, chosen by context, never by taste:
@@ -251,7 +251,7 @@ States: `title`, `path`, `description-actions`, `long-title`
 | Rail + Content + Inspector | 240 + flexible + 400 | Inbox |
 | Centered | content max `layout.content` (1120), centered | Forms, settings, wizards |
 
-- Content width: **one** width for every frame, `layout.content` (1120), centered, whatever the template (lists, overview, forms, settings, wizards, details, inbox, trace); a form keeps its label column inside it (forms put `space.6` between sections, lists `space.3`); the conversation page has its own columns (§5.4). The page gutter is `layout.gutter` on both sides. The Centered layout has **no anchor navigation**; a form's error count lives in the ActionRow.
+- Content width: **one** width for the frame templates (list, overview, form, settings, wizard, detail), `layout.content` (1120), centered, with `layout.content-pad` (32) of side padding (16 below 640) and `space.5` (20) above the header; the page head and the body (also a detail page's tabs, beside its inspector) share that container. Trace, inbox, onboarding and status are their own templates and keep the full width and height (the page gutter `layout.gutter` applies to them). A form keeps its label column inside it (forms put `space.6` between sections, lists `space.3`); the conversation page has its own columns (§5.4). The Centered layout has **no anchor navigation**; a form's error count lives in the ActionRow.
 - Content has a minimum width of 560. The Rail is collapsible; the Inspector is closable.
 - Scrolling: the sidebar, PageHeader / PageTabs / ActionRow / StatusBar are fixed; the sidebar's conversation section, Rail, Content and Inspector scroll independently; the page must not show a horizontal scrollbar (wide tables scroll inside their own container).
 - Responsive: < 1280 the sidebar becomes the rail and the Inspector a right-side Sheet; < 960 the sidebar becomes a drawer and the Rail a toolbar "Filter" button + Sheet; < 640 the header actions beyond the primary fold into `more-horizontal`.

@@ -13,7 +13,7 @@ export function OverviewPage({
   return (
     <div className="cb-template" data-template="OverviewPage" data-width="content">
       <TemplateHead header={header} />
-      <Body layout="single">
+      <Body layout="single" width="content">
         <WithStats header={header}>{children}</WithStats>
       </Body>
     </div>

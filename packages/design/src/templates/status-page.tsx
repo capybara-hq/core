@@ -21,8 +21,8 @@ export function StatusPage({
   action?: ReactNode;
 }) {
   return (
-    <div className="cb-template" data-template="StatusPage" data-kind={kind} data-width="content">
-      <TemplateHead header={header} statsInHead />
+    <div className="cb-template" data-template="StatusPage" data-kind={kind} data-width="full">
+      <TemplateHead header={header} statsInHead width="full" />
       <Body layout="single">
         <div className="cb-status-page">
           <Logo scale={3} tone="muted" />
