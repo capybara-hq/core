@@ -810,7 +810,7 @@ describe("translateClaudePlugin", () => {
         "reviewer",
         "agents/reviewer.md",
         "agent_tools_unmapped",
-        { tools: "Agent, AskUserQuestion, WebFetch" },
+        { tools: "WebFetch" },
       ],
       ["warnings", "hook", "SessionStart", null, "session_start_pin_hint", null],
     ]);
@@ -1458,14 +1458,14 @@ describe("Claude agents/*.md (phase C, sub-agents spec §16.4)", () => {
     expect(t.tree.get("agents/code-reviewer.md")).toBe(files.get("agents/code-reviewer.md"));
   });
 
-  it("mixed reviewer: tools mapped, Agent / AskUserQuestion / WebFetch dropped with agent_tools_unmapped, haiku -> fast, permissionMode / hooks / mcpServers not_applicable, memory / isolation agent_field_ignored", () => {
+  it("mixed reviewer: tools mapped, WebFetch dropped with agent_tools_unmapped, haiku -> fast, permissionMode / hooks / mcpServers not_applicable, memory / isolation agent_field_ignored", () => {
     const t = translateClaudePlugin(loadFixture("mixed"), OPTS);
     expect(agentsOf(t.tree).map((a) => a.template)).toEqual([
       {
         name: "reviewer",
         description: "Reviews code",
         instructions: "\nYou review code.\n",
-        tools: ["sandbox_read", "sandbox_grep", "sandbox_bash"],
+        tools: ["Read", "Grep", "Bash", "Agent", "AskUserQuestion"],
         model: "fast",
         maxSteps: 12,
         skills: ["plain"],
@@ -1523,13 +1523,13 @@ describe("Claude agents/*.md (phase C, sub-agents spec §16.4)", () => {
     };
     // a YAML list, a pattern in tools is dropped (it would widen), MultiEdit and Edit dedupe
     expect(
-      one("tools: [Edit, MultiEdit, 'Bash(git status:*)', Skill, TodoWrite, ToolSearch, Task]\n"),
+      one("tools: [Edit, MultiEdit, 'Bash(git status:*)', Skill, TodoWrite, ToolSearch, Task, mcp__srv__x]\n"),
     ).toEqual({
       template: {
         name: "a",
         description: "A.",
         instructions: "Body.\n",
-        tools: ["sandbox_edit", "skill_load", "plugin__todo__write", "tool_search"],
+        tools: ["Edit", "Skill", "plugin__todo__write", "ToolSearch", "Agent"],
       },
       items: [
         [
@@ -1538,14 +1538,14 @@ describe("Claude agents/*.md (phase C, sub-agents spec §16.4)", () => {
           "a",
           "agents/a.md",
           "agent_tools_unmapped",
-          { tools: "Bash(git status:*), Task" },
+          { tools: "Bash(git status:*), mcp__srv__x" },
         ],
       ],
     });
     // a pattern in disallowedTools disallows the whole tool (narrower, never wider), reported as
     // agent_tools_narrowed; agent_tools_unmapped only lists tools that really were left out
     expect(one("disallowedTools: 'Bash(rm:*), Write'\n")).toMatchObject({
-      template: { disallowedTools: ["sandbox_bash", "sandbox_write"] },
+      template: { disallowedTools: ["Bash", "Write"] },
       items: [
         ["warnings", "agent", "a", "agents/a.md", "agent_tools_narrowed", { tools: "Bash(rm:*)" }],
       ],

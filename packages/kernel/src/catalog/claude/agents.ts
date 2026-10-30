@@ -23,16 +23,19 @@ export const GENERATED_AGENTS_DIR = ".capybara-generated/agents";
 
 /** Claude Code tool names -> Capybara tool keys (spec §16.4; anything else is dropped). */
 const TOOL_MAP: Readonly<Record<string, string>> = {
-  Bash: "sandbox_bash",
-  Read: "sandbox_read",
-  Write: "sandbox_write",
-  Edit: "sandbox_edit",
-  MultiEdit: "sandbox_edit",
-  Glob: "sandbox_glob",
-  Grep: "sandbox_grep",
-  Skill: "skill_load",
+  Bash: "Bash",
+  Read: "Read",
+  Write: "Write",
+  Edit: "Edit",
+  MultiEdit: "Edit",
+  Glob: "Glob",
+  Grep: "Grep",
+  Skill: "Skill",
+  AskUserQuestion: "AskUserQuestion",
+  ToolSearch: "ToolSearch",
+  Agent: "Agent",
+  Task: "Agent",
   TodoWrite: "plugin__todo__write",
-  ToolSearch: "tool_search",
 };
 /** Claude ignores these for plugin agents: `not_applicable`. */
 const NOT_APPLICABLE = new Set(["permissionMode", "hooks", "mcpServers"]);

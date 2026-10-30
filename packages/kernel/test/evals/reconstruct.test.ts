@@ -728,20 +728,22 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
   });
 
   it("an old snapshot keeps its old map text; a new snapshot gets the new one; both reconstruct with zero drift", async () => {
-    // The phase B line for Task / Agent (before phase C, sub-agents spec §16.5)
-    const OLD_MAP = CLAUDE_CODE_TOOL_MAP.split("\n")
-      .flatMap((l) =>
-        l.startsWith("- Task and Agent (sub-agents) -> agent")
-          ? ["- Task and Agent (sub-agents) -> not available: do the steps yourself, in order"]
-          : l.startsWith("- TaskOutput, TaskStop")
-            ? []
-            : [l],
-      )
-      .join("\n");
+    // The map text written before the tool-naming change, frozen: old snapshots keep it
+    const OLD_MAP = [
+      "Some skills in this conversation were written for Claude Code and name its tools. Use these tools instead:",
+      "- Bash -> sandbox_bash",
+      "- Read -> sandbox_read; Write -> sandbox_write; Edit and MultiEdit -> sandbox_edit; Glob -> sandbox_glob; Grep -> sandbox_grep",
+      '- Skill -> skill_load (a name such as "superpowers:brainstorming" also works)',
+      "- TodoWrite -> plugin__todo__write when it is in your tools; otherwise keep the task list in your replies",
+      "- AskUserQuestion -> ask_user",
+      "- ToolSearch -> tool_search when it is in your tools",
+      "- Task and Agent (sub-agents) -> agent when it is in your tools (subagent_type names one of the types its description lists; model names haiku / sonnet / opus -> fast / standard / capable; SendMessage to a sub-agent -> agent with resume); otherwise not available: do the steps yourself, in order",
+      "- TaskOutput, TaskStop -> not available",
+      "- Any other tool a skill names (for example WebFetch, WebSearch, NotebookEdit, EnterWorktree) -> not available unless one of your tools does the same job",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal Claude Code variable the model reads
+      "The sandbox tools exist only when this agent has a sandbox; without them a skill's scripts cannot run. A path such as ${CLAUDE_PLUGIN_ROOT}/skills/<name>/... means /skills/<name>/... after skill_load has copied that skill into the sandbox.",
+    ].join("\n");
     expect(OLD_MAP).not.toBe(CLAUDE_CODE_TOOL_MAP);
-    expect(CLAUDE_CODE_TOOL_MAP).toContain(
-      "- Task and Agent (sub-agents) -> agent when it is in your tools (subagent_type names one of the types its description lists; model names haiku / sonnet / opus -> fast / standard / capable; SendMessage to a sub-agent -> agent with resume); otherwise not available: do the steps yourself, in order\n- TaskOutput, TaskStop -> not available\n",
-    );
     reset();
     const brain = await seedSkill("planning-map", "Plan first.", undefined, {
       format: "claude-code",
