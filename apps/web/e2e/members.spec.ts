@@ -18,9 +18,9 @@ test("成员页：管理员生成邀请链接 → 新用户凭链接注册加入
   await signIn(page);
 
   // 组织设置 → 二级导航「成员」
-  await page.goto("/zh/settings/organization");
+  await page.goto("/settings/organization");
   await page.getByRole("link", { name: zh.connections.nav.members }).click();
-  await expect(page).toHaveURL(/\/zh\/settings\/members$/);
+  await expect(page).toHaveURL(/\/settings\/members$/);
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
 
   // 生成邀请（成员、7 天）并取链接
@@ -29,7 +29,7 @@ test("成员页：管理员生成邀请链接 → 新用户凭链接注册加入
   await dialog.getByRole("combobox", { name: M.inviteDialog.role }).selectOption("member");
   await dialog.getByRole("button", { name: M.inviteDialog.create }).click();
   const link = await dialog.getByRole("textbox", { name: M.inviteDialog.link }).inputValue();
-  expect(link).toMatch(/\/zh\/invite\/cap_inv_/);
+  expect(link).toMatch(/\/invite\/cap_inv_/);
   await dialog.getByRole("button", { name: M.inviteDialog.done }).click();
   await expect(dialog).toHaveCount(0);
   await expect(
@@ -47,7 +47,7 @@ test("成员页：管理员生成邀请链接 → 新用户凭链接注册加入
     await guestPage.getByLabel(zh.invite.passwordLabel).fill("invitee-password-123");
     await guestPage.getByLabel(zh.invite.displayNameLabel).fill("Invitee");
     await guestPage.getByRole("button", { name: zh.invite.signup }).click();
-    await expect(guestPage).toHaveURL(/\/zh$/);
+    await expect(guestPage).toHaveURL(/\/$/);
     await expect
       .poll(async () => {
         const me = await guestPage.request.get("/api/v1/me");

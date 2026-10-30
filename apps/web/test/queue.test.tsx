@@ -1,7 +1,7 @@
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import ChatPage from "../src/app/[locale]/(app)/chat/[conversationId]/page";
+import ChatPage from "../src/app/(app)/chat/[conversationId]/page";
 import { type Call, json, noContent, stubApi } from "./support/api";
 import { AGENTS, CONV, FakeEventSource, MODELS, runStarted, userMsg } from "./support/conversation";
 import { resetNavigation } from "./support/navigation";

@@ -20,6 +20,7 @@ import { useFocusReturn } from "../overlays/focus-return";
 import { Menu, type MenuItem } from "../overlays/index";
 import { useDesignLink, useDesignLocale, useDesignT } from "../provider";
 import { SIZES } from "../tokens";
+import { PreferenceBar, type PreferenceBarProps } from "./preference-bar";
 import { useHydrated, useMediaQuery } from "./use-media-query";
 
 export type SidebarNavItem = {
@@ -81,8 +82,13 @@ export type SidebarProps = {
      */
     scope?: string;
   };
-  /** The account footer: menu = org switch, language, theme, sign out. */
+  /** The account footer: menu = org switch, sign out. */
   account: { name: string; org: string | null; menu: MenuItem[] };
+  /**
+   * Language and theme, shown above the account when the sidebar is full (or in the open drawer);
+   * the rail has no room, so there they become the account menu's first items.
+   */
+  preferences?: PreferenceBarProps;
   onOpenCommands(): void;
   /** Default from media queries: below 1280 `rail`, below 960 `drawer`. */
   mode?: "full" | "rail" | "drawer";
@@ -372,7 +378,12 @@ function SidebarPanel({
       ) : null}
       <SidebarNav p={p} rail={rail} />
       {rail ? <div className="cb-sidebar-fill" /> : <Conversations p={p} />}
-      <Account account={p.account} rail={rail} />
+      {p.preferences && !rail ? (
+        <div className="cb-sidebar-prefs">
+          <PreferenceBar {...p.preferences} />
+        </div>
+      ) : null}
+      <Account account={rail ? withPreferences(p.account, p.preferences) : p.account} rail={rail} />
     </aside>
   );
 }
@@ -654,6 +665,28 @@ function Group({
       </div>
     </div>
   );
+}
+
+/** The rail's account menu: the preferences as items (other languages, the other theme) first. */
+function withPreferences(
+  account: SidebarProps["account"],
+  prefs: PreferenceBarProps | undefined,
+): SidebarProps["account"] {
+  if (!prefs || account.menu.length === 0) return account;
+  const { language, theme } = prefs;
+  const items: MenuItem[] = [
+    ...language.options
+      .filter((o) => o.value !== language.value)
+      .map((o) => ({
+        label: `${language.label}: ${o.label}`,
+        onSelect: () => language.onChange(o.value),
+      })),
+    theme.value === "dark"
+      ? { label: `${theme.label}: ${theme.lightLabel}`, onSelect: () => theme.onChange("light") }
+      : { label: `${theme.label}: ${theme.darkLabel}`, onSelect: () => theme.onChange("dark") },
+    "separator",
+  ];
+  return { ...account, menu: [...items, ...account.menu] };
 }
 
 function Account({ account, rail }: { account: SidebarProps["account"]; rail: boolean }) {

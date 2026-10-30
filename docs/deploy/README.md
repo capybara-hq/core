@@ -741,7 +741,7 @@ this:
   seconds (readiness turns 503 at the first SIGTERM; a repeated SIGTERM exits at once, see
   [Roles and scaling](#roles-and-scaling)).
 - **Probes:** `/readyz` and `/healthz` on port 8080 (`CAPYBARA_HTTP__PORT`) for every kernel role, and
-  `/zh/login` on port 3000 for `web`. Give the kernel pods a `startupProbe` on `/healthz` with a
+  `/login` on port 3000 for `web`. Give the kernel pods a `startupProbe` on `/healthz` with a
   generous failure threshold (minutes, not seconds): a pod that finds pending migrations doesn't listen
   until they finish, and a liveness probe must not kill it halfway.
 - **Secrets:** pass `CAPYBARA_MASTER_KEY`, the database URL and extension credentials from Kubernetes

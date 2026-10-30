@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import LoginPage from "../src/app/[locale]/(auth)/login/page";
+import LoginPage from "../src/app/(auth)/login/page";
 import {
   LOGIN_ERROR_CODES,
   parseLoginError,

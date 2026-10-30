@@ -4,14 +4,14 @@ export const THEMES = ["dark", "light"] as const;
 export type Theme = (typeof THEMES)[number];
 
 /**
- * Opens `/zh/dev/ui/reference/<component>` in `theme` (the `cb-theme` cookie), waits for the
+ * Opens `/dev/ui/reference/<component>` in `theme` (the `cb-theme` cookie), waits for the
  * fonts and for content drawn later (`data-ref-pending`), and forces the pseudo-states the blocks ask for (`data-ref-force` on
  * `data-ref-force-selector` inside the block) through the DevTools protocol, marking each forced
  * element `data-ref-forced="true"` (design spec §9.2). Chromium only.
  */
 export async function openReference(page: Page, component: string, theme: Theme, origin: string) {
   await page.context().addCookies([{ name: "cb-theme", value: theme, url: origin }]);
-  const res = await page.goto(`/zh/dev/ui/reference/${component}`);
+  const res = await page.goto(`/dev/ui/reference/${component}`);
   if (!res?.ok()) throw new Error(`/dev/ui/reference/${component} answered ${res?.status()}`);
   await page.waitForLoadState("networkidle");
   await page.evaluate(() => document.fonts.ready);

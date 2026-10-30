@@ -49,13 +49,13 @@ test("嵌入应用（假扩展 fake-embed）：「扩展」打开组织页面（
   expect(asApi.status()).toBe(401);
 
   // ---- sidebar Extensions → 面板 ----
-  await page.goto("/zh");
+  await page.goto("/");
   // The sidebar's Extensions group lists the page by its title
   await page
     .getByRole("navigation", { name: "主导航" })
     .getByRole("link", { name: "面板", exact: true })
     .click();
-  await expect(page).toHaveURL(/\/zh\/p\/fake-embed\/panel$/);
+  await expect(page).toHaveURL(/\/p\/fake-embed\/panel$/);
   const iframe = page.locator('iframe[title="面板"]');
   await expect(iframe).toHaveAttribute("sandbox", "allow-scripts allow-forms");
   await expect(iframe).toHaveAttribute("src", src);
@@ -97,7 +97,7 @@ test("嵌入应用（假扩展 fake-embed）：「扩展」打开组织页面（
   expect(conv.status(), await conv.text()).toBe(201);
   const convId = ((await conv.json()) as { conversation: { id: string } }).conversation.id;
 
-  await page.goto(`/zh/chat/${convId}`);
+  await page.goto(`/chat/${convId}`);
   // The extension's panel icon in the title bar opens its right panel
   const bar = page.locator('[data-part="title-bar"]');
   const icon = bar.getByRole("button", { name: "面板", exact: true });

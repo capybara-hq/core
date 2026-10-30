@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import ConnectionsPage from "../src/app/[locale]/(app)/settings/connections/page";
+import ConnectionsPage from "../src/app/(app)/settings/connections/page";
 import { ConnectCard } from "../src/components/ConnectCard";
 import { navigateBrowser } from "../src/lib/browser";
 import { parseConnectResult, useConnectResultToast } from "../src/lib/connect";

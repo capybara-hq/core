@@ -38,14 +38,14 @@ export const toolGroup = (page: Page, key: string): Locator =>
  * is `/chat?agent=<id>` and nothing is created before the first send.
  */
 export async function startChat(page: Page, agentName: string): Promise<void> {
-  if (!/\/zh\/agents$/.test(page.url())) await page.goto("/zh/agents");
+  if (!/\/agents$/.test(page.url())) await page.goto("/agents");
   await page
     .getByRole("row")
     .filter({ hasText: agentName })
     .getByRole("button", { name: ROW_ACTIONS })
     .click();
   await page.getByRole("menuitem", { name: zh.agents.startChat }).click();
-  await expect(page).toHaveURL(/\/zh\/chat\?agent=[^&]+$/);
+  await expect(page).toHaveURL(/\/chat\?agent=[^&]+$/);
   await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
   await expect(page.getByRole("heading", { name: agentName })).toBeVisible();
   await expect(composer(page)).toBeEnabled();
@@ -57,7 +57,7 @@ export async function send(page: Page, text: string): Promise<void> {
   await input.fill(text);
   await input.press("Enter");
   await expect(users(page).filter({ hasText: text }).first()).toBeVisible();
-  await expect(page).toHaveURL(/\/zh\/chat\/[^/?#]+(#.*)?$/);
+  await expect(page).toHaveURL(/\/chat\/[^/?#]+(#.*)?$/);
 }
 
 /** 内核要求非安全方法带的 CSRF 头。 */
@@ -115,7 +115,7 @@ export async function openConversation(
   });
   expect(conv.status(), await conv.text()).toBe(201);
   const id = ((await conv.json()) as { conversation: { id: string } }).conversation.id;
-  await page.goto(`/zh/chat/${id}`);
+  await page.goto(`/chat/${id}`);
   await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
   return id;
 }

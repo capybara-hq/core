@@ -14,7 +14,10 @@
     "cancel": "Cancel",
     "retry": "Retry",
     "loadFailed": "Failed to load",
-    "language": "Language"
+    "language": "Language",
+    "theme": "Theme",
+    "themeLight": "Light",
+    "themeDark": "Dark"
   },
   "login": {
     "title": "Sign in",
@@ -748,9 +751,6 @@
     "catalog": "Catalog"
   },
   "shell": {
-    "switchLocale": "Switch to {name}",
-    "themeLight": "Switch to light theme",
-    "themeDark": "Switch to dark theme",
     "noOrg": "Select organization"
   },
   "notFound": {

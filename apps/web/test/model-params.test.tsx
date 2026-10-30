@@ -6,7 +6,7 @@ import { type ReactNode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import NewAgentPage from "../src/app/[locale]/(app)/agents/new/page";
+import NewAgentPage from "../src/app/(app)/agents/new/page";
 import { ModelParams } from "../src/components/ModelParams";
 import type { ModelParameter, ParamValue } from "../src/lib/agents";
 import { resetNavigation, router } from "./support/navigation";

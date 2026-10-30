@@ -8,7 +8,7 @@ const actionRow = (page: Page) => page.getByRole("region", { name: designZh("she
 /** 用安装向导装一个无需认证的 MCP 连接器，完成后打开连接器详情。 */
 async function installMcp(page: Page, name: string, slug: string, url: string) {
   const w = zh.connectors.wizard;
-  if (!/\/connectors\/install$/.test(page.url())) await page.goto("/zh/connectors/install");
+  if (!/\/connectors\/install$/.test(page.url())) await page.goto("/connectors/install");
   await expect(page.locator('[data-template="WizardPage"]')).toBeVisible();
   await actionRow(page).getByRole("button", { name: w.next }).click();
   await page.getByRole("textbox", { name: zh.connectors.form.nameLabel, exact: true }).fill(name);
@@ -25,13 +25,13 @@ async function installMcp(page: Page, name: string, slug: string, url: string) {
   await actionRow(page).getByRole("button", { name: w.install }).click();
   await expect(page.getByText(w.doneTitle.replace("{name}", name))).toBeVisible();
   await actionRow(page).getByRole("button", { name: w.openConnector }).click();
-  await expect(page).toHaveURL(/\/zh\/connectors\/[^/]+$/);
+  await expect(page).toHaveURL(/\/connectors\/[^/]+$/);
   await expect(page.locator('[data-template="DetailPage"]')).toBeVisible();
 }
 
 /** 新建引用某连接器全部工具的 agent（model-fake），从列表开始对话，返回输入框。 */
 async function chatWithAgent(page: Page, agentName: string, connectorName: string) {
-  await page.goto("/zh/agents/new");
+  await page.goto("/agents/new");
   await page.getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true }).fill(agentName);
   await page
     .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
@@ -43,7 +43,7 @@ async function chatWithAgent(page: Page, agentName: string, connectorName: strin
     })
     .check();
   await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/zh\/agents$/);
+  await expect(page).toHaveURL(/\/agents$/);
   await startChat(page, agentName);
   return composer(page);
 }
@@ -60,9 +60,9 @@ test("MCP 连接器 → agent 引用 → destructive 工具触发审批 → 批�
     .getByRole("navigation", { name: "主导航" })
     .getByRole("link", { name: zh.nav.connectors })
     .click();
-  await expect(page).toHaveURL(/\/zh\/connectors$/);
+  await expect(page).toHaveURL(/\/connectors$/);
   await page.getByRole("link", { name: zh.connectors.new }).click();
-  await expect(page).toHaveURL(/\/zh\/connectors\/install$/);
+  await expect(page).toHaveURL(/\/connectors\/install$/);
   await installMcp(page, "Fixture", "fixture", mcpUrl as string);
   const policy = page.getByRole("combobox", {
     name: zh.connectors.tools.policyLabel.replace("{tool}", "fixture__delete_item"),
@@ -70,7 +70,7 @@ test("MCP 连接器 → agent 引用 → destructive 工具触发审批 → 批�
   await expect(policy).toHaveValue("ask");
 
   // 2. 新建 agent，引用该连接器的全部工具
-  await page.goto("/zh/agents/new");
+  await page.goto("/agents/new");
   await page
     .getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true })
     .fill("Tool agent");
@@ -84,7 +84,7 @@ test("MCP 连接器 → agent 引用 → destructive 工具触发审批 → 批�
     })
     .check();
   await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/zh\/agents$/);
+  await expect(page).toHaveURL(/\/agents$/);
 
   // 3. 开始对话：model-fake 按指令调用 destructive 工具 → 出现审批卡片，运行等人处理
   await startChat(page, "Tool agent");
@@ -185,9 +185,9 @@ test("带工具的对话结束后，管理员打开运行记录：瀑布里有�
     .getByRole("navigation", { name: "主导航" })
     .getByRole("link", { name: zh.nav.evals })
     .click();
-  await expect(page).toHaveURL(/\/zh\/evals$/);
+  await expect(page).toHaveURL(/\/evals$/);
   await page.getByRole("link", { name: zh.evals.runHistory }).click();
-  await expect(page).toHaveURL(/\/zh\/trajectories$/);
+  await expect(page).toHaveURL(/\/trajectories$/);
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
   await page
     .getByRole("combobox", { name: zh.trajectories.filters.agent })
@@ -204,7 +204,7 @@ test("带工具的对话结束后，管理员打开运行记录：瀑布里有�
     });
   }).toPass();
   await table.getByRole("row").nth(1).click();
-  await expect(page).toHaveURL(/\/zh\/trajectories\/[^/]+$/);
+  await expect(page).toHaveURL(/\/trajectories\/[^/]+$/);
 
   // 3. 轨迹页：模型与工具 span；选中工具 span 显示结果与审批链；有审计提示与「加入评测集」
   await expect(page.locator('[data-template="TracePage"]')).toBeVisible();

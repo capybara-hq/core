@@ -8,6 +8,7 @@ export {
   type PageHeaderProps,
 } from "./page-header";
 export { PageTabs } from "./page-tabs";
+export { PreferenceBar, type PreferenceBarProps } from "./preference-bar";
 export {
   Sidebar,
   type SidebarConversation,

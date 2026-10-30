@@ -8,7 +8,7 @@ import { expect, type Page, test } from "@playwright/test";
 const block = (page: Page, id: string) => page.locator(`[data-ref-block="${id}"]`);
 
 async function open(page: Page) {
-  await page.goto("/zh/dev/ui/reference/tool-group");
+  await page.goto("/dev/ui/reference/tool-group");
   await page.waitForLoadState("networkidle");
 }
 
@@ -74,7 +74,7 @@ test("reduced motion: opening is instant", async ({ page }) => {
 
 // ── The conversation template (design spec §5.4, §6.16.1, §6.16.18) ────────────────────────────
 
-const TEMPLATE = "/zh/dev/ui/templates/conversation";
+const TEMPLATE = "/dev/ui/templates/conversation";
 
 async function openTemplate(page: Page, width = 1440) {
   await page.setViewportSize({ width, height: 900 });
@@ -174,7 +174,7 @@ test.describe("before hydration (JS off)", () => {
 
 test("reduced motion: opening a sub-agent group is instant", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.goto("/zh/dev/ui/reference/subagent-group");
+  await page.goto("/dev/ui/reference/subagent-group");
   await page.waitForLoadState("networkidle");
   const head = block(page, "subagent-group-done").locator('[data-part="tool-line"]');
   await head.click();
@@ -186,7 +186,7 @@ test("reduced motion: opening a sub-agent group is instant", async ({ page }) =>
 test("the skill bubble's disclosure chevron is muted like its label (§6.16.6)", async ({
   page,
 }) => {
-  await page.goto("/zh/dev/ui/reference/user-bubble");
+  await page.goto("/dev/ui/reference/user-bubble");
   await page.waitForLoadState("networkidle");
   const details = block(page, "user-bubble-skill").locator(".cb-bubble-details");
   // the details line is `muted` (size table); its chevron takes the same color, as in the reference

@@ -2,7 +2,7 @@ import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import ChatPage from "../src/app/[locale]/(app)/chat/[conversationId]/page";
+import ChatPage from "../src/app/(app)/chat/[conversationId]/page";
 import type { UiView } from "../src/lib/ui";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
 import {

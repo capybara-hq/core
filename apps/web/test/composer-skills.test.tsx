@@ -3,8 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import ChatPage from "../src/app/[locale]/(app)/chat/[conversationId]/page";
-import NewChatPage from "../src/app/[locale]/(app)/chat/page";
+import ChatPage from "../src/app/(app)/chat/[conversationId]/page";
+import NewChatPage from "../src/app/(app)/chat/page";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
 import {
   AGENTS,

@@ -1,15 +1,6 @@
 "use client";
 
-import {
-  AppShell,
-  applyTheme,
-  Button,
-  type MenuItem,
-  parseTheme,
-  StatusPage,
-  type Theme,
-  useToast,
-} from "@capybara-hq/design";
+import { AppShell, Button, type MenuItem, StatusPage, useToast } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import {
   type ReactNode,
@@ -21,10 +12,10 @@ import {
   useSyncExternalStore,
 } from "react";
 import { usePathname, useRouter } from "../../i18n/navigation";
-import { routing } from "../../i18n/routing";
 import { ApiClientError } from "../../lib/api";
 import { loginPathFor } from "../../lib/auth-sources";
 import { useConnectResultToast } from "../../lib/connect";
+import { usePreferences } from "../../lib/preferences";
 import { getMe, logout, type Me, setCurrentOrg } from "../../lib/session";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { useConversationGroups } from "./conversations";
@@ -90,13 +81,9 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   );
   const extensions = useExtensions(me?.currentOrgId ?? null, locale);
   const [error, setError] = useState<string>();
-  const [theme, setTheme] = useState<Theme>("dark");
+  const preferences = usePreferences();
   const timeZone = useTimeZoneLabel();
   useConnectResultToast();
-
-  useEffect(() => {
-    setTheme(parseTheme(document.documentElement.dataset.theme));
-  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -150,24 +137,8 @@ export function AppFrame({ version, children }: { version: string; children: Rea
     }
   }
 
-  const nextTheme: Theme = theme === "dark" ? "light" : "dark";
-  const userMenu: MenuItem[] = [
-    ...routing.locales
-      .filter((l) => l !== locale)
-      .map((l) => ({
-        label: t("shell.switchLocale", { name: t(`common.localeName.${l}`) }),
-        onSelect: () => router.replace(pathname, { locale: l }),
-      })),
-    {
-      label: nextTheme === "light" ? t("shell.themeLight") : t("shell.themeDark"),
-      onSelect: () => {
-        applyTheme(nextTheme);
-        setTheme(nextTheme);
-      },
-    },
-    "separator",
-    { label: t("common.logout"), onSelect: () => void onLogout() },
-  ];
+  // language and theme sit in the sidebar's foot (PreferenceBar); the menu keeps the account's own
+  const userMenu: MenuItem[] = [{ label: t("common.logout"), onSelect: () => void onLogout() }];
 
   const currentOrg = me?.memberships.find((m) => m.orgId === me.currentOrgId);
   // The org switch heads the account menu (the current org checked).
@@ -199,6 +170,7 @@ export function AppFrame({ version, children }: { version: string; children: Rea
         (me !== undefined && me.memberships.length > 0 ? t("shell.noOrg") : null),
       menu: me === undefined ? [] : [...orgItems, ...userMenu],
     },
+    preferences,
   };
   const who =
     me === undefined ? "" : `${me.account.displayName}${currentOrg ? `@${currentOrg.name}` : ""}`;

@@ -130,7 +130,7 @@ test("a sub-agent's approval waits in the parent and is decided there; a legacy 
   expect(listed.ok(), await listed.text()).toBe(true);
   const child = ((await listed.json()) as { subagents: { id: string }[] }).subagents[0]?.id;
   expect(child).toBeTruthy();
-  await page.goto(`/zh/chat/${id}?subagent=${child}`);
+  await page.goto(`/chat/${id}?subagent=${child}`);
   await expect(panel(page, "Delete via child")).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`/chat/${id}#subagent=${child}$`));
 });

@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import MembersPage from "../src/app/[locale]/(app)/settings/members/page";
+import MembersPage from "../src/app/(app)/settings/members/page";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, noContent, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";

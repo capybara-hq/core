@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import ChatPage from "../src/app/[locale]/(app)/chat/[conversationId]/page";
+import ChatPage from "../src/app/(app)/chat/[conversationId]/page";
 import { resetNavigation } from "./support/navigation";
 import { renderPage } from "./support/render";
 

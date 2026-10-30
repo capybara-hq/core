@@ -14,7 +14,10 @@
     "cancel": "取消",
     "retry": "重试",
     "loadFailed": "加载失败",
-    "language": "语言"
+    "language": "语言",
+    "theme": "主题",
+    "themeLight": "浅色",
+    "themeDark": "深色"
   },
   "login": {
     "title": "登录",
@@ -748,9 +751,6 @@
     "catalog": "企业目录"
   },
   "shell": {
-    "switchLocale": "切换到 {name}",
-    "themeLight": "切换到浅色主题",
-    "themeDark": "切换到深色主题",
     "noOrg": "选择组织"
   },
   "notFound": {

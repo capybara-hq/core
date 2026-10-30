@@ -9,7 +9,7 @@ import { expect, type Page, test } from "@playwright/test";
 const block = (page: Page, id: string) => page.locator(`[data-ref-block="${id}"]`);
 
 async function open(page: Page) {
-  await page.goto("/zh/dev/ui/reference/sidebar");
+  await page.goto("/dev/ui/reference/sidebar");
   await page.waitForLoadState("networkidle");
 }
 
@@ -164,7 +164,7 @@ test.describe("viewport widths (full shell)", () => {
   for (const width of [1440, 1279, 959, 640]) {
     test(`no horizontal page scroll at ${width}`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
-      await page.goto("/zh/dev/ui/templates/list");
+      await page.goto("/dev/ui/templates/list");
       await page.waitForLoadState("networkidle");
       const { scroll, inner } = await page.evaluate(() => ({
         scroll: document.documentElement.scrollWidth,
@@ -175,7 +175,7 @@ test.describe("viewport widths (full shell)", () => {
   }
   test("1279: the rail shows icons only", async ({ page }) => {
     await page.setViewportSize({ width: 1279, height: 900 });
-    await page.goto("/zh/dev/ui/templates/list");
+    await page.goto("/dev/ui/templates/list");
     await expect(page.locator('[data-part="sidebar"][data-mode="rail"]')).toBeVisible();
     await expect(page.locator('[data-part="sidebar"][data-mode="full"]')).toHaveCount(0);
     await expect(page.getByRole("navigation", { name: "主导航" }).getByText("Agents")).toHaveCount(
@@ -184,7 +184,7 @@ test.describe("viewport widths (full shell)", () => {
   });
   test("959: the menu button opens the drawer; Esc closes it, focus returns", async ({ page }) => {
     await page.setViewportSize({ width: 959, height: 900 });
-    await page.goto("/zh/dev/ui/templates/list");
+    await page.goto("/dev/ui/templates/list");
     await page.waitForLoadState("networkidle");
     const menu = page.getByRole("button", { name: "打开导航" });
     await menu.click();
@@ -212,7 +212,7 @@ test.describe("first paint without JavaScript", () => {
       page,
     }) => {
       await page.setViewportSize({ width, height: 900 });
-      await page.goto("/zh/dev/ui/templates/list");
+      await page.goto("/dev/ui/templates/list");
       expect(await visibleModes(page)).toEqual([...modes]);
       const barShown = await page
         .locator('[data-part="drawer-bar"]')
@@ -233,7 +233,7 @@ test.describe("first paint without JavaScript", () => {
   ] as const) {
     test(`${width}: the page header shows ${labels.join(" / ")}`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
-      await page.goto("/zh/dev/ui/templates/list");
+      await page.goto("/dev/ui/templates/list");
       const shown = await page.$$eval(
         '[data-part="page-header"] .cb-pageheader-actions :is(button, a)',
         (els) =>

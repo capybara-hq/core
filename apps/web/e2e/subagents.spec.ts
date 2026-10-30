@@ -13,7 +13,7 @@ const ROW_ACTIONS = "行操作";
 
 /** A new model-fake agent with the agent tool switched on in the Sub-agents section. */
 async function createLead(page: Page, name: string) {
-  await page.goto("/zh/agents/new");
+  await page.goto("/agents/new");
   await expect(page.locator('[data-template="FormPage"]')).toBeVisible();
   await page.getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true }).fill(name);
   await page
@@ -23,11 +23,11 @@ async function createLead(page: Page, name: string) {
   await section.getByRole("checkbox", { name: S.agentTool }).check();
   await expect(section.getByRole("checkbox", { name: S.general })).toBeChecked();
   await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/zh\/agents$/);
+  await expect(page).toHaveURL(/\/agents$/);
 }
 
 async function openAgent(page: Page, name: string) {
-  await page.goto("/zh/agents");
+  await page.goto("/agents");
   await page
     .getByRole("row")
     .filter({ hasText: name })
@@ -42,14 +42,14 @@ test("the agent page's Sub-agents section: dispatchable and an allowlisted org a
 }) => {
   await signIn(page);
   // an agent others may dispatch
-  await page.goto("/zh/agents/new");
+  await page.goto("/agents/new");
   await page.getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true }).fill("Analyst");
   await page
     .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
     .selectOption("model-fake/fake-1");
   await page.getByRole("switch", { name: S.dispatchable }).click();
   await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/zh\/agents$/);
+  await expect(page).toHaveURL(/\/agents$/);
   await openAgent(page, "Analyst");
   await expect(page.getByRole("switch", { name: S.dispatchable })).toHaveAttribute(
     "aria-checked",
@@ -69,7 +69,7 @@ test("the agent page's Sub-agents section: dispatchable and an allowlisted org a
     .getByRole("textbox", { name: S.agentDescription.replace("{name}", "Analyst") })
     .fill("Answers data questions.");
   await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/zh\/agents$/);
+  await expect(page).toHaveURL(/\/agents$/);
   await openAgent(page, "Team lead");
   await expect(
     page.getByRole("region", { name: S.section }).getByRole("checkbox", { name: /Analyst/ }),

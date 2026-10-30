@@ -2,7 +2,7 @@ import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import ChatPage from "../src/app/[locale]/(app)/chat/[conversationId]/page";
+import ChatPage from "../src/app/(app)/chat/[conversationId]/page";
 import type { ConversationEvent } from "../src/lib/conversations";
 import { initialChatState, reduceChat } from "../src/lib/stream";
 import { buildTimeline, type TimelineEntry } from "../src/lib/timeline";

@@ -412,3 +412,71 @@
     display: none;
   }
 }
+
+/* Language and theme (PreferenceBar): a dense select and a two-choice icon radio (spec §6.13). */
+.cb-prefs {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-prefs .cb-select {
+  flex: 1;
+  min-width: 0;
+}
+.cb-prefs-theme {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-sm);
+}
+.cb-prefs-theme-option {
+  display: inline-grid;
+  place-items: center;
+  width: calc(var(--cb-control-dense) - 6px);
+  height: calc(var(--cb-control-dense) - 6px);
+  padding: 0;
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: transparent;
+  color: var(--cb-muted);
+  cursor: pointer;
+  transition:
+    background var(--cb-motion-hover),
+    color var(--cb-motion-hover);
+}
+.cb-prefs-theme-option:hover {
+  color: var(--cb-ink);
+}
+.cb-prefs-theme-option[data-state="checked"] {
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+}
+.cb-prefs-theme-option {
+  position: relative;
+}
+.cb-prefs-theme-option input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.cb-prefs-theme-option:has(input:focus-visible) {
+  box-shadow: 0 0 0 3px var(--cb-focus-ring);
+}
+.cb-sidebar-prefs {
+  flex: none;
+  margin-top: var(--cb-space-2);
+}
+.cb-auth-prefs {
+  box-sizing: border-box;
+  width: min(400px, 100%);
+}
+@media (prefers-reduced-motion: reduce) {
+  .cb-prefs-theme-option {
+    transition: none;
+  }
+}

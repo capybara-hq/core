@@ -17,7 +17,7 @@ export const ORG_NAME = "Acme";
  * 正常情况下 `setup` 项目（`setup.spec.ts`）已经完成初始化，这里走登录；单独跑某个用例时也能自己初始化。
  */
 export async function signIn(page: Page, { org = true }: { org?: boolean } = {}): Promise<void> {
-  await page.goto("/zh");
+  await page.goto("/");
   const setupButton = page.getByRole("button", { name: zh.setup.submit });
   const loginButton = page.getByRole("button", { name: zh.login.submit, exact: true });
   await expect(setupButton.or(loginButton)).toBeVisible();
@@ -34,7 +34,7 @@ export async function signIn(page: Page, { org = true }: { org?: boolean } = {})
     await page.getByLabel(zh.login.passwordLabel).fill(PASSWORD);
     await page.getByRole("button", { name: zh.login.submit, exact: true }).click();
   }
-  await expect(page).toHaveURL(/\/zh$/);
+  await expect(page).toHaveURL(/\/$/);
   if (!org) return;
   await page.getByRole("combobox", { name: zh.home.currentOrg }).selectOption({ label: ORG_NAME });
   await expect

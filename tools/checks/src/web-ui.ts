@@ -52,7 +52,7 @@ const FORBIDDEN_PKG = new RegExp(
 const CREATE_ELEMENT = new Set(["createElement", "jsx", "jsxs", "jsxDEV"]);
 const DESIGN_PKG = "@capybara-hq/design";
 /** 目录式 catalog 页，不要求使用页面模板。 */
-const TEMPLATE_EXEMPT_PREFIX = ["app", "[locale]", "dev"];
+const TEMPLATE_EXEMPT_PREFIX = ["app", "dev"];
 
 function listCssFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];

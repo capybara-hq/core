@@ -24,7 +24,7 @@ async function open(page: Page, route: string, theme: Theme, width = 1440) {
   ]);
   await page.setViewportSize({ width, height: 900 });
   if (route === "overlays/toast") await page.clock.install();
-  await page.goto(`/zh/dev/ui/${route}`);
+  await page.goto(`/dev/ui/${route}`);
   await page.waitForLoadState("networkidle");
   await page.evaluate(() => document.fonts.ready);
   await prepare(page, route);

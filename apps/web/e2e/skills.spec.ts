@@ -109,7 +109,7 @@ test("管理员上传技能包，agent 选用它；对话里 skill_load 的时�
   const orgId = await currentOrg(page);
 
   // 1. 技能库：上传 zip（GitHub 式外层目录），列表出现该技能
-  await page.goto("/zh/skills");
+  await page.goto("/skills");
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
   await expect(page.getByText(zh.skills.upload.layoutHint)).toBeVisible();
   const zip = makeZip({
@@ -124,11 +124,11 @@ test("管理员上传技能包，agent 选用它；对话里 skill_load 的时�
   await table.getByText(SKILL, { exact: true }).click();
 
   // 2. 详情：SKILL.md 正文按纯文本显示
-  await expect(page).toHaveURL(/\/zh\/skills\/[^/]+$/);
+  await expect(page).toHaveURL(/\/skills\/[^/]+$/);
   await expect(page.locator("pre")).toContainText("# Notes");
 
   // 3. 新建 agent，在技能分组里勾选它，并置顶（skills.pinned）
-  await page.goto("/zh/agents/new");
+  await page.goto("/agents/new");
   const group = page.getByRole("group", { name: zh.agents.form.orgSkillsLabel });
   await group.getByRole("checkbox", { name: new RegExp(SKILL) }).check();
   const pinnedGroup = page.getByRole("group", { name: zh.agents.form.pinnedLabel });
@@ -137,7 +137,7 @@ test("管理员上传技能包，agent 选用它；对话里 skill_load 的时�
     .check();
   await page.getByRole("textbox", { name: zh.agents.form.nameLabel }).fill("Skill agent");
   await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/zh\/agents$/);
+  await expect(page).toHaveURL(/\/agents$/);
 
   // 4. 对话：model-fake 按脚本调用 skill_load，时间线显示工具给的中文摘要
   const agents = (await (await page.request.get(`/api/v1/orgs/${orgId}/agents`)).json()) as {
@@ -150,7 +150,7 @@ test("管理员上传技能包，agent 选用它；对话里 skill_load 的时�
   expect(agent?.definition.skills?.orgSkills).toHaveLength(1);
   expect(agent?.definition.skills?.pinned).toEqual(agent?.definition.skills?.orgSkills);
   // the edit page shows it pinned after a reload
-  await page.goto(`/zh/agents/${agent?.id}`);
+  await page.goto(`/agents/${agent?.id}`);
   await page.reload();
   await expect(
     page
@@ -163,7 +163,7 @@ test("管理员上传技能包，agent 选用它；对话里 skill_load 的时�
   });
   expect(conv.status(), await conv.text()).toBe(201);
   const convId = ((await conv.json()) as { conversation: { id: string } }).conversation.id;
-  await page.goto(`/zh/chat/${convId}`);
+  await page.goto(`/chat/${convId}`);
   const input = composer(page);
   await input.fill(`tool:skill_load:${JSON.stringify({ name: SKILL })}`);
   await input.press("Enter");
@@ -197,7 +197,7 @@ test("共享 agent 用 skill_write 改技能：发起人确认工具调用，负
     data: { agentId },
   });
   const convId = ((await conv.json()) as { conversation: { id: string } }).conversation.id;
-  await page.goto(`/zh/chat/${convId}`);
+  await page.goto(`/chat/${convId}`);
 
   // 1. 共享 agent 的 skill_write 固定要确认：发起人（也是负责人）在对话里批准工具调用
   const write = {
@@ -216,7 +216,7 @@ test("共享 agent 用 skill_write 改技能：发起人确认工具调用，负
   await expect(toolGroup(page, "skill_write")).toHaveAttribute("data-tool-status", "done");
 
   // 2. 收件箱：技能变更卡片显示 agent、文件与差异；负责人批准
-  await page.goto("/zh/inbox");
+  await page.goto("/inbox");
   const list = page.getByRole("table", { name: zh.inbox.listLabel });
   await list.getByText(`${zh.inbox.skillChange.label} · team-glossary`).click();
   const card = page.locator("[data-skill-change-id]");
@@ -233,14 +233,14 @@ test("共享 agent 用 skill_write 改技能：发起人确认工具调用，负
   await expect(list.getByText(`${zh.inbox.skillChange.label} · team-glossary`)).toHaveCount(0);
 
   // 3. 批准后成为 agent 自己的技能：编辑页只读列出
-  await page.goto(`/zh/agents/${agentId}`);
+  await page.goto(`/agents/${agentId}`);
   const own = page.getByRole("group", { name: zh.agents.form.ownSkillsLabel });
   await expect(own.getByText("team-glossary · v1")).toBeVisible();
 });
 
 /** Uploads a one-skill zip through the skill library page; returns the skill's id. */
 async function uploadSkill(page: Page, orgId: string, name: string, md: string): Promise<string> {
-  await page.goto("/zh/skills");
+  await page.goto("/skills");
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
   await page.locator('input[type="file"]').setInputFiles({
     name: `${name}.zip`,
@@ -319,7 +319,7 @@ test("phase D: invoke skills from the / menu and typed, queue one, run a forked 
   await expect(input).toHaveAttribute("placeholder", "[issue-number]");
   await input.fill("123");
   await input.press("Enter");
-  await expect(page).toHaveURL(/\/zh\/chat\/[^/?#]+(#.*)?$/);
+  await expect(page).toHaveURL(/\/chat\/[^/?#]+(#.*)?$/);
   const first = bubble("/e2e-fix-issue");
   await expect(first.locator('[data-part="bubble"]')).toHaveText("/e2e-fix-issue123");
   await first.getByRole("button", { name: zh.chat.skillInstructions }).click();

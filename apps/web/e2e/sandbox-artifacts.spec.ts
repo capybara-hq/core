@@ -37,7 +37,7 @@ async function openSandboxChat(page: Page): Promise<{ orgId: string; convId: str
   });
   expect(conv.status(), await conv.text()).toBe(201);
   const convId = ((await conv.json()) as { conversation: { id: string } }).conversation.id;
-  await page.goto(`/zh/chat/${convId}`);
+  await page.goto(`/chat/${convId}`);
   await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
   return { orgId: orgId as unknown as string, convId };
 }

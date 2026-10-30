@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import BindPage from "../src/app/[locale]/(auth)/bind/[token]/page";
+import BindPage from "../src/app/(auth)/bind/[token]/page";
 import { json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderPage } from "./support/render";

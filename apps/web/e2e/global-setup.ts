@@ -678,7 +678,7 @@ export default async function globalSetup(): Promise<Cleanup> {
     cleanups.push(() => stopChild(web, 10_000));
     const baseUrl = `http://localhost:${webPort}`;
     // 首次请求触发 next dev 编译；顺带预热登录 / 初始化页
-    await waitFor(`${baseUrl}/zh/login`, web, 180_000).catch(async (e) => {
+    await waitFor(`${baseUrl}/login`, web, 180_000).catch(async (e) => {
       throw new Error(`${(e as Error).message}\n${await tail(logs.web)}`);
     });
     process.env.CAPYBARA_E2E_BASE_URL = baseUrl;

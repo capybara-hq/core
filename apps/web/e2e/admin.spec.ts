@@ -21,10 +21,10 @@ test("企业管理员：顶栏「管理」→ 组织 → 设置运行并发并�
     .getByRole("navigation", { name: "主导航" })
     .getByRole("link", { name: zh.nav.admin })
     .click();
-  await expect(page).toHaveURL(/\/zh\/admin$/);
+  await expect(page).toHaveURL(/\/admin$/);
   await expect(page.locator('[data-template="OverviewPage"]')).toBeVisible();
   await page.getByRole("link", { name: A.overview.orgs.open }).click();
-  await expect(page).toHaveURL(/\/zh\/admin\/orgs$/);
+  await expect(page).toHaveURL(/\/admin\/orgs$/);
 
   const row = page.getByRole("row").filter({ hasText: "Acme" });
   await row.getByRole("button", { name: ROW_ACTIONS }).click();

@@ -16,7 +16,7 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
   await signIn(page);
   await expect(page.locator('[data-template="OverviewPage"]')).toBeVisible();
   await page.getByRole("link", { name: zh.home.openAgents }).click();
-  await expect(page).toHaveURL(/\/zh\/agents$/);
+  await expect(page).toHaveURL(/\/agents$/);
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
   await page.getByRole("link", { name: zh.agents.new }).click();
 
@@ -28,7 +28,7 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
     .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
     .selectOption("model-fake/fake-1");
   await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/zh\/agents$/);
+  await expect(page).toHaveURL(/\/agents$/);
   await expect(page.getByText("Echo agent")).toBeVisible();
   await startChat(page, "Echo agent");
   // 2. echo → 页面出现回复（第一条消息才创建会话）
@@ -108,7 +108,7 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
   ]);
 
   // 6. 新建 agent 时按模型声明设置参数：model-fake.style = shout → 回复为大写
-  await page.goto("/zh/agents");
+  await page.goto("/agents");
   await page.getByRole("link", { name: zh.agents.new }).click();
   await page
     .getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true })
@@ -120,13 +120,13 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
   // 文案来自插件声明（zh）
   await params.getByRole("combobox", { name: "回复风格" }).selectOption("shout");
   await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/zh\/agents$/);
+  await expect(page).toHaveURL(/\/agents$/);
   await startChat(page, "Shout agent");
   await send(page, "echo:quiet please");
   await expect(assistants(page).last()).toHaveText("QUIET PLEASE");
 
   // 7. 未匹配的路径：HTTP 404，App Shell 内的 StatusPage 404
-  const missing = await page.goto("/zh/nope");
+  const missing = await page.goto("/nope");
   expect(missing?.status()).toBe(404);
   await expect(page.locator('[data-template="StatusPage"][data-kind="404"]')).toBeVisible();
   await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();

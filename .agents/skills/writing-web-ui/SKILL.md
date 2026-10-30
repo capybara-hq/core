@@ -66,7 +66,7 @@ Submit actions go in the ActionRow (built into `FormPage`, `WizardPage` etc.) an
 
 ## Skeleton examples
 
-List (`apps/web/src/app/[locale]/(app)/agents/page.tsx` is a real example):
+List (`apps/web/src/app/(app)/agents/page.tsx` is a real example):
 
 ```tsx
 "use client";
@@ -147,7 +147,7 @@ Rule implementation: `tools/checks/src/web-ui.ts`; every rule has a violating-fi
 | `design-char-icon` | A character used as an icon (`▾ ▴ ▸ ◂ ✓ ✗ ✕ ◐ › ‹ « » ● ○ ⠿ ▤ ⋯ ↻ ↗ ↕ ▲ ▼ ‖ ⊘ ◆ □ ■ ▶ ∅ ☰ ⚙ ⌕ ▦`) in a string, template literal or JSX text of non-test code in `apps/web/src` or `packages/design/src`, or in a value of `apps/web/messages/*.json`; the message names the icon to use. Box-drawing (`─ │ └`), `⌘`, `↵`, `→`, `·` and `…` are text and allowed | `<Icon name="chevron-down">` (or an `IconButton` with an `Icon`, `Text icon="circle-x"`, `MenuItem.checked`); keep the accessible name in text or `aria-label` |
 | `design-color-literal` | `#hex` / `rgb()` / `hsl()` in `packages/design/src` outside `styles/tokens.css` (both CSS and TS strings are checked; `color-mix()` referencing tokens is allowed) | Define a token in `tokens.css` and use `var(--cb-…)` |
 
-`web-ui-template` has two exemptions: `app/[locale]/dev/**` (the development catalog page; the other rules still apply), and pages that only handle 404 -- containing no JSX and calling `notFound()` imported from `next/navigation` (e.g. `(app)/[...rest]/page.tsx`), where the page is rendered by the `StatusPage` in the `not-found.tsx` of the same segment. Don't use this exemption to write other pages.
+`web-ui-template` has two exemptions: `app/dev/**` (the development catalog page; the other rules still apply), and pages that only handle 404 -- containing no JSX and calling `notFound()` imported from `next/navigation` (e.g. `(app)/[...rest]/page.tsx`), where the page is rendered by the `StatusPage` in the `not-found.tsx` of the same segment. Don't use this exemption to write other pages.
 
 `web-ui-iframe` is a static check and only recognizes literals: `<iframe>` and `createElement("iframe")`. It cannot see dynamic tags (`const Tag = "iframe"; <Tag />`, `createElement(tag)`, names assembled for `document.createElement`), but the rule applies all the same -- don't work around it this way; review treats it as a violation.
 
@@ -170,7 +170,7 @@ In order, don't skip steps (spec §10):
 ```bash
 pnpm vitest run --project design          # component tests of the design package
 pnpm check:web-ui                         # UI rule check (already part of pnpm check)
-pnpm --filter @capybara-hq/web dev        # development; /zh/dev/ui is the component catalog page
+pnpm --filter @capybara-hq/web dev        # development; /dev/ui is the component catalog page
 CAPYBARA_DEV_UI=1 pnpm --filter @capybara-hq/web start   # enable /dev/ui in a production build (off by default)
 pnpm --filter @capybara-hq/web visual     # screenshot regression (runs next build + start itself; local darwin differs from the baselines, for comparison only)
 pnpm --filter @capybara-hq/web visual fidelity      # measuring + state coverage against the spec size tables

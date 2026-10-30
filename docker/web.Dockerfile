@@ -112,6 +112,6 @@ EXPOSE 3000
 # The login page renders without calling the kernel, so the check reflects only this tier. The port
 # follows PORT; when CAPYBARA_WEB_HOST is not a wildcard or loopback address, override the check.
 HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=3 \
-  CMD ["node", "-e", "fetch(`http://127.0.0.1:${process.env.PORT || 3000}/zh/login`, { redirect: 'manual' }).then((r) => process.exit(r.status === 200 ? 0 : 1), () => process.exit(1))"]
+  CMD ["node", "-e", "fetch(`http://127.0.0.1:${process.env.PORT || 3000}/login`, { redirect: 'manual' }).then((r) => process.exit(r.status === 200 ? 0 : 1), () => process.exit(1))"]
 
 CMD ["node", "server.mjs"]

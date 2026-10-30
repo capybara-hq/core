@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import InvitePage from "../src/app/[locale]/(auth)/invite/[token]/page";
+import InvitePage from "../src/app/(auth)/invite/[token]/page";
 import { bodyOf, json, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";

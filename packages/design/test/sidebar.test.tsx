@@ -155,6 +155,85 @@ describe("Sidebar navigation", () => {
   });
 });
 
+describe("Sidebar preferences (language and theme)", () => {
+  function prefs() {
+    return {
+      language: {
+        label: "语言",
+        value: "zh",
+        options: [
+          { value: "zh", label: "中文" },
+          { value: "en", label: "English" },
+        ],
+        onChange: vi.fn(),
+      },
+      theme: {
+        label: "主题",
+        value: "dark" as const,
+        lightLabel: "浅色",
+        darkLabel: "深色",
+        onChange: vi.fn(),
+      },
+    };
+  }
+
+  it("full: a language dropdown and a theme radio above the account, one click each", async () => {
+    const p = prefs();
+    zh(
+      <Sidebar
+        {...props({
+          account: {
+            name: "grant",
+            org: "示例组织",
+            menu: [{ label: "退出登录", onSelect: vi.fn() }],
+          },
+          preferences: p,
+        })}
+        mode="full"
+      />,
+    );
+    const language = screen.getByRole("combobox", { name: "语言" }) as HTMLSelectElement;
+    expect(language.value).toBe("zh");
+    await userEvent.selectOptions(language, "en");
+    expect(p.language.onChange).toHaveBeenCalledWith("en");
+    const themes = screen.getByRole("radiogroup", { name: "主题" });
+    expect((within(themes).getByRole("radio", { name: "深色" }) as HTMLInputElement).checked).toBe(
+      true,
+    );
+    await userEvent.click(within(themes).getByRole("radio", { name: "浅色" }));
+    expect(p.theme.onChange).toHaveBeenCalledWith("light");
+    // the account menu keeps only the account's own items
+    await userEvent.click(screen.getByRole("button", { name: "账户: grant · 示例组织" }));
+    expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["退出登录"]);
+  });
+
+  it("rail: no room for the controls, so they lead the account menu", async () => {
+    const p = prefs();
+    zh(
+      <Sidebar
+        {...props({
+          account: {
+            name: "grant",
+            org: "示例组织",
+            menu: [{ label: "退出登录", onSelect: vi.fn() }],
+          },
+          preferences: p,
+        })}
+        mode="rail"
+      />,
+    );
+    expect(screen.queryByRole("radiogroup", { name: "主题" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "账户: grant · 示例组织" }));
+    expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual([
+      "语言: English",
+      "主题: 浅色",
+      "退出登录",
+    ]);
+    await userEvent.click(screen.getByRole("menuitem", { name: "主题: 浅色" }));
+    expect(p.theme.onChange).toHaveBeenCalledWith("light");
+  });
+});
+
 describe("Sidebar conversations", () => {
   it("groups render the agent name and conversation links; aria-current on activeId", () => {
     const p = props();

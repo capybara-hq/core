@@ -6,13 +6,13 @@ import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import CatchAllPage from "../src/app/[locale]/(app)/[...rest]/page";
-import NewAgentPage from "../src/app/[locale]/(app)/agents/new/page";
-import AgentsPage from "../src/app/[locale]/(app)/agents/page";
-import NotFound from "../src/app/[locale]/(app)/not-found";
-import HomePage from "../src/app/[locale]/(app)/page";
-import LoginPage from "../src/app/[locale]/(auth)/login/page";
-import SetupPage from "../src/app/[locale]/(auth)/setup/page";
+import CatchAllPage from "../src/app/(app)/[...rest]/page";
+import NewAgentPage from "../src/app/(app)/agents/new/page";
+import AgentsPage from "../src/app/(app)/agents/page";
+import NotFound from "../src/app/(app)/not-found";
+import HomePage from "../src/app/(app)/page";
+import LoginPage from "../src/app/(auth)/login/page";
+import SetupPage from "../src/app/(auth)/setup/page";
 import { AppFrame } from "../src/components/shell/AppFrame";
 import { activeNavOf } from "../src/components/shell/nav";
 import { RequireSession } from "../src/components/shell/session";
@@ -246,16 +246,16 @@ describe("(auth) 页面模板", () => {
     renderPage(<LoginPage />, { locale: "zh" });
     expect(template("AuthPage")).not.toBeNull();
     expect(screen.getByRole("heading", { level: 1, name: zh.login.title })).toBeTruthy();
-    // 认证页也能切换语言：两种语言各一个链接，指向当前路径
-    for (const name of [zh.common.localeName.zh, zh.common.localeName.en]) {
-      expect(screen.getByRole("link", { name }).getAttribute("href")).toBe("/");
-    }
-    expect(
-      screen.getByRole("link", { name: zh.common.localeName.zh }).getAttribute("aria-current"),
-    ).toBe("true");
-    expect(
-      screen.getByRole("navigation", { name: zh.common.language }).getAttribute("aria-label"),
-    ).toBe(zh.common.language);
+    // the auth pages switch language and theme too: a language dropdown and the theme radio
+    const language = screen.getByRole("combobox", {
+      name: zh.common.language,
+    }) as HTMLSelectElement;
+    expect(language.value).toBe("zh");
+    expect([...language.options].map((o) => o.textContent)).toEqual([
+      zh.common.localeName.zh,
+      zh.common.localeName.en,
+    ]);
+    expect(screen.getByRole("radiogroup", { name: zh.common.theme })).toBeTruthy();
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/setup"));
   });
 
@@ -263,7 +263,7 @@ describe("(auth) 页面模板", () => {
     stubApi({ "GET /api/v1/setup": () => json(200, { needsSetup: false }) });
     renderPage(<SetupPage />, { locale: "zh" });
     expect(template("AuthPage")).not.toBeNull();
-    expect(screen.getByRole("link", { name: zh.common.localeName.en })).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: zh.common.language })).toBeTruthy();
     expect(await screen.findByText(zh.setup.alreadyDone)).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: zh.setup.goToLogin }));
     expect(router.push).toHaveBeenCalledWith("/login");
@@ -535,14 +535,22 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
       expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ orgId: "o2" }),
     );
 
+    // language and theme are in the sidebar's foot, one click away, not in the account menu
     await user.click(account());
-    expect(
-      await screen.findByRole("menuitem", {
-        name: zh.shell.switchLocale.replace("{name}", zh.common.localeName.en),
-      }),
-    ).toBeTruthy();
-    await user.click(screen.getByRole("menuitem", { name: zh.shell.themeLight }));
+    expect(screen.queryByRole("menuitem", { name: new RegExp(zh.common.theme) })).toBeNull();
+    await user.keyboard("{Escape}");
+    const themes = screen.getByRole("radiogroup", { name: zh.common.theme });
+    await user.click(within(themes).getByRole("radio", { name: zh.common.themeLight }));
     expect(document.documentElement.dataset.theme).toBe("light");
+    expect(document.cookie).toContain("cb-theme=light");
+    expect(
+      (within(themes).getByRole("radio", { name: zh.common.themeLight }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+    const language = screen.getByRole("combobox", { name: zh.common.language });
+    await user.selectOptions(language, "en");
+    expect(document.cookie).toContain("NEXT_LOCALE=en");
+    expect(router.refresh).toHaveBeenCalled();
 
     await user.click(account());
     await user.click(await screen.findByRole("menuitem", { name: zh.common.logout }));

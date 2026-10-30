@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import NewAgentPage from "../src/app/[locale]/(app)/agents/new/page";
+import NewAgentPage from "../src/app/(app)/agents/new/page";
 import { resetNavigation, router } from "./support/navigation";
 import { renderPage } from "./support/render";
 

@@ -23,7 +23,7 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
   await signIn(page);
 
   // 1. 管理 → 模型：model-fake 的表里有 fake-1，行内编辑价格
-  await page.goto("/zh/admin/models");
+  await page.goto("/admin/models");
   await expect(page.locator('[data-template="SettingsPage"]')).toBeVisible();
   const table = page.getByRole("table", { name: "model-fake" });
   const row = table.getByRole("row").filter({ hasText: "fake-1" });
@@ -57,7 +57,7 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
   await expect(evalCard.getByRole("combobox", { name: P.model })).toHaveValue("model-fake/fake-1");
 
   // 3. 组织设置 → 模型用途（评测向导的「去设置」链到这里）：显示部署默认，覆盖后恢复默认
-  await page.goto("/zh/settings/models");
+  await page.goto("/settings/models");
   const orgCard = page.locator('[data-purpose="eval"]');
   const defText = fill(P.deploymentDefault, { target: "model-fake / fake-1" });
   await expect(orgCard.getByText(defText)).toBeVisible();
@@ -70,7 +70,7 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
   await expect(orgCard.getByRole("combobox", { name: P.model })).toHaveValue("");
 
   // 4. 清理：清除 eval 部署默认与 fake-1 的价格
-  await page.goto("/zh/admin/models");
+  await page.goto("/admin/models");
   await page
     .locator('[data-purpose="eval"]')
     .getByRole("button", { name: fill(P.clearLabel, { purpose: "eval" }) })

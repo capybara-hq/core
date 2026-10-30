@@ -138,7 +138,7 @@ describe("/dev/ui/reference (the reference-set blocks, spec §9.2)", () => {
   });
 
   it("is served by the dev/ui page", async () => {
-    const { default: Page } = await import("../src/app/[locale]/dev/ui/[[...slug]]/page");
+    const { default: Page } = await import("../src/app/dev/ui/[[...slug]]/page");
     await expect(
       Page({ params: Promise.resolve({ locale: "zh", slug: ["reference", "sidebar"] }) }),
     ).resolves.toBeTruthy();
@@ -154,7 +154,7 @@ describe("/dev/ui 生产门禁", () => {
   it("NODE_ENV=production 且未设 CAPYBARA_DEV_UI=1 时 notFound", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("CAPYBARA_DEV_UI", "");
-    const { default: Page } = await import("../src/app/[locale]/dev/ui/[[...slug]]/page");
+    const { default: Page } = await import("../src/app/dev/ui/[[...slug]]/page");
     await expect(Page({ params: params(["components"]) })).rejects.toThrow("NEXT_NOT_FOUND");
     expect(notFound).toHaveBeenCalled();
   });
@@ -162,7 +162,7 @@ describe("/dev/ui 生产门禁", () => {
   it("CAPYBARA_DEV_UI=1 时生产环境也可访问", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("CAPYBARA_DEV_UI", "1");
-    const { default: Page } = await import("../src/app/[locale]/dev/ui/[[...slug]]/page");
+    const { default: Page } = await import("../src/app/dev/ui/[[...slug]]/page");
     await expect(Page({ params: params(["components"]) })).resolves.toBeTruthy();
     expect(notFound).not.toHaveBeenCalled();
   });
@@ -178,13 +178,13 @@ describe("/dev/ui 生产门禁", () => {
       order.push("notFound");
       throw new Error("NEXT_NOT_FOUND");
     });
-    const { default: Page } = await import("../src/app/[locale]/dev/ui/[[...slug]]/page");
+    const { default: Page } = await import("../src/app/dev/ui/[[...slug]]/page");
     await expect(Page({ params: params(["components"]) })).rejects.toThrow("NEXT_NOT_FOUND");
     expect(order).toEqual(["connection", "notFound"]);
   });
 
   it("未知路由 notFound", async () => {
-    const { default: Page } = await import("../src/app/[locale]/dev/ui/[[...slug]]/page");
+    const { default: Page } = await import("../src/app/dev/ui/[[...slug]]/page");
     await expect(Page({ params: params(["nope"]) })).rejects.toThrow("NEXT_NOT_FOUND");
   });
 });

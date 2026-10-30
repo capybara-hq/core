@@ -1,17 +1,23 @@
 import type { ReactNode } from "react";
 import { Dither, Logo } from "../display/index";
 import { Card, Text } from "../layout/index";
+import { PreferenceBar, type PreferenceBarProps } from "../shell/preference-bar";
 
-/** T10 认证：无 Shell，居中卡片宽 400 + 两侧抖动点阵（Dither 仅此处使用）。 */
+/**
+ * T10 auth: no shell, a centered 400-wide card between two dither columns (Dither is used only
+ * here). `preferences` (language and theme) sit under the card, above the optional `footer`.
+ */
 export function AuthPage({
   title,
   subtitle,
   footer,
+  preferences,
   children,
 }: {
   title: string;
   subtitle?: string;
   footer?: ReactNode;
+  preferences?: PreferenceBarProps;
   children?: ReactNode;
 }) {
   return (
@@ -34,6 +40,11 @@ export function AuthPage({
             {children}
           </Card>
         </div>
+        {preferences ? (
+          <div className="cb-auth-prefs">
+            <PreferenceBar {...preferences} />
+          </div>
+        ) : null}
         {footer ? <div className="cb-auth-footer">{footer}</div> : null}
       </main>
       <div className="cb-auth-side" data-side="right">

@@ -14,7 +14,7 @@ const P = zh.admin.extensions;
 
 /** 在对话里让 model-fake 调用 greeter 的工具，返回这一轮工具行与助手回复。 */
 async function callGreet(page: Page, convId: string) {
-  await page.goto(`/zh/chat/${convId}`);
+  await page.goto(`/chat/${convId}`);
   const input = composer(page);
   await input.fill("tool:greeter__greet:{}");
   await input.press("Enter");
@@ -32,10 +32,10 @@ test("admin extensions: upload tgz -> review (acknowledge sensitive items) -> in
   await signIn(page);
 
   // 1. 管理 → 插件 → 安装插件
-  await page.goto("/zh/admin/extensions");
+  await page.goto("/admin/extensions");
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
   await page.getByRole("link", { name: P.install }).click();
-  await expect(page).toHaveURL(/\/zh\/admin\/extensions\/install$/);
+  await expect(page).toHaveURL(/\/admin\/extensions\/install$/);
   await expect(page.locator('[data-template="WizardPage"]')).toBeVisible();
 
   // 2. 选文件上传（经同源代理流式透传）→ 审阅：工具是敏感项，高亮并写明原因
@@ -58,7 +58,7 @@ test("admin extensions: upload tgz -> review (acknowledge sensitive items) -> in
   await expect(install).toBeDisabled();
   await page.getByRole("checkbox", { name: P.wizard.ack }).check();
   await install.click();
-  await expect(page).toHaveURL(/\/zh\/admin\/extensions\/greeter$/);
+  await expect(page).toHaveURL(/\/admin\/extensions\/greeter$/);
   await expect(page.locator('[data-template="DetailPage"]')).toBeVisible();
   // 各副本收敛后状态为已启用（页面在收敛中自动重读）
   await expect(page.getByText(P.status.enabled).first()).toBeVisible({ timeout: 60_000 });
@@ -108,7 +108,7 @@ test("admin extensions: upload tgz -> review (acknowledge sensitive items) -> in
   await expect(first.reply).toHaveText(/bonjour from greeter/);
 
   // 6. 停用：确认框写明在途调用的等待时限；收敛后为已停用
-  await page.goto("/zh/admin/extensions/greeter");
+  await page.goto("/admin/extensions/greeter");
   await page.getByRole("button", { name: P.detail.actions.disable }).click();
   const dialog = page.getByRole("dialog");
   await expect(

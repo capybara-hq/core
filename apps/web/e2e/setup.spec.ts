@@ -14,8 +14,8 @@ const zh = JSON.parse(
 test("初始化向导：未初始化的部署打开首页 → 初始化页（可切换语言）→ 建企业管理员与组织 → 进概览", async ({
   page,
 }) => {
-  await page.goto("/zh");
-  await expect(page).toHaveURL(/\/zh\/setup$/);
+  await page.goto("/");
+  await expect(page).toHaveURL(/\/setup$/);
   // 认证页也能切换语言
   await expect(page.getByRole("link", { name: zh.common.localeName.en })).toBeVisible();
   await page.getByLabel(zh.setup.loginLabel).fill(LOGIN);
@@ -24,6 +24,6 @@ test("初始化向导：未初始化的部署打开首页 → 初始化页（可
   await page.getByLabel(zh.setup.orgNameLabel).fill(ORG_NAME);
   await page.getByRole("button", { name: zh.setup.submit }).click();
 
-  await expect(page).toHaveURL(/\/zh$/);
+  await expect(page).toHaveURL(/\/$/);
   await expect(page.locator('[data-template="OverviewPage"]')).toBeVisible();
 });

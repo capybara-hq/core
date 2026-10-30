@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import ExtensionsPage from "../src/app/[locale]/(app)/settings/extensions/page";
+import ExtensionsPage from "../src/app/(app)/settings/extensions/page";
 import {
   createEmbedBridge,
   EMBED_PROTOCOL,
