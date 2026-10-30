@@ -1,7 +1,13 @@
 /** Injection tokens of the global infra modules. */
 
-/** The process logger (`KernelLogger`). */
+/**
+ * A class's logger (`KernelLogger`): the process logger with `context` set to the injecting class's
+ * name. Transient, so `app.get` cannot resolve it; use `KERNEL_ROOT_LOGGER` outside an injection.
+ */
 export const KERNEL_LOGGER = Symbol("KERNEL_LOGGER");
+
+/** The process logger itself (`KernelLogger`), without a context. */
+export const KERNEL_ROOT_LOGGER = Symbol("KERNEL_ROOT_LOGGER");
 
 /** The startup input of `KernelConfigService`: `{ config, env }`. */
 export const KERNEL_CONFIG_INPUT = Symbol("KERNEL_CONFIG_INPUT");

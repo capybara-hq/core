@@ -462,14 +462,15 @@ describe("same version, different bytes", () => {
     const warns: { msg: string; fields?: Record<string, unknown> }[] = [];
     const base = createLogger("error");
     const logger = new Proxy(base, {
-      get(t, k) {
+      get(t, k, receiver) {
         if (k === "warn") {
           return (msg: string, fields?: Record<string, unknown>) => {
             warns.push({ msg, ...(fields !== undefined && { fields }) });
           };
         }
         const v = Reflect.get(t, k);
-        return typeof v === "function" ? v.bind(t) : v;
+        // children (each class's context logger) forward to the proxy
+        return typeof v === "function" ? v.bind(k === "child" ? receiver : t) : v;
       },
     });
     const k = await boot(v2, {}, logger);
@@ -481,7 +482,7 @@ describe("same version, different bytes", () => {
     ).toEqual([
       {
         msg: expect.stringContaining("bootstrap:"),
-        fields: { plugin: "alpha", version: "1.0.0" },
+        fields: { plugin: "alpha", version: "1.0.0", context: "BootstrapService" },
       },
     ]);
   });

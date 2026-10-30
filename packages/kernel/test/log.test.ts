@@ -286,38 +286,124 @@ describe("console format", () => {
     expect(JSON.parse(chunks.join("")).msg).toBe("hello");
   });
 
-  it("pretty without a TTY prints one line per record with level, prefix and msg, no colors", () => {
+  it("pretty follows the octok layout: full time, level, [pid] - [context] msg, fields below", () => {
     const { chunks, out } = sink();
     const logger = createLogger("debug", {
       format: "pretty",
       out,
       isTTY: false,
+      colors: false,
       base: { role: "api,worker" },
     });
     logger.addSecrets(["pretty-secret-1"]);
-    logger.warn("disk pretty-secret-1 low", { free: 3, nested: { a: "b" } });
+    logger.child({ context: "DiskWatch" }).warn("disk pretty-secret-1 low", { free: 3 });
     logger.debug("second");
     const text = chunks.join("");
     const lines = text.trimEnd().split("\n");
-    expect(lines).toHaveLength(2);
-    expect(lines[0]).toMatch(/^\[\d{2}:\d{2}:\d{2}\.\d{3}\] WARN/);
-    expect(lines[0]).toContain("[api,worker] disk [REDACTED] low");
-    expect(lines[0]).toContain('"free":3');
-    expect(lines[1]).toContain("DEBUG");
+    expect(lines[0]).toMatch(
+      /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} [+-]\d{4}\] WARN: \[pid=\d+\] - \[context=DiskWatch\] disk \[REDACTED\] low$/,
+    );
+    // the remaining fields are indented key: value lines, not trailing JSON
+    expect(lines[1]).toMatch(/^\s+free: 3$/);
+    expect(lines[2]).toContain("DEBUG: [pid=");
+    expect(text).not.toContain("api,worker");
     expect(text).not.toContain("pretty-secret-1");
     // biome-ignore lint/suspicious/noControlCharactersInRegex: checking for ANSI escapes
     expect(text).not.toMatch(/\u001b\[/);
   });
 
-  it("pretty in a TTY uses colors", () => {
+  it("pretty prefix order: traceId, reqId, queue, jobId, runId, context, plugin", () => {
     const { chunks, out } = sink();
-    const logger = createLogger("info", { format: "pretty", out, isTTY: true });
-    logger.error("boom");
+    const logger = createLogger("info", { format: "pretty", out, colors: false });
+    logger.info("m", {
+      plugin: "p",
+      context: "C",
+      runId: "r",
+      jobId: "j",
+      queue: "q",
+      reqId: "rq",
+      traceId: "t",
+    });
+    expect(chunks.join("")).toContain(
+      "- [traceId=t] [reqId=rq] [queue=q] [jobId=j] [runId=r] [context=C] [plugin=p] m",
+    );
+  });
+
+  it("pretty folds the HTTP access record into one sentence", () => {
+    const { chunks, out } = sink();
+    const logger = createLogger("info", { format: "pretty", out, colors: false });
+    logger.info("request", { method: "GET", url: "/api/v1/me", status: 401, ms: 2, reqId: "x" });
+    const text = chunks.join("");
+    expect(text).toContain("[reqId=x] GET /api/v1/me 401 2ms");
+    expect(text.trimEnd().split("\n")).toHaveLength(1);
+  });
+
+  it("pretty prints an error's stack below the message", () => {
+    const { chunks, out } = sink();
+    const logger = createLogger("info", { format: "pretty", out, colors: false });
+    logger.error("boom", { err: new Error("kaput") });
+    const text = chunks.join("");
+    expect(text).toContain("kaput");
+    expect(text).toMatch(/\n\s+at /);
+  });
+
+  it("pretty uses colors in a TTY, when forced, and not with NO_COLOR", () => {
+    const run = (o: { isTTY?: boolean; colors?: boolean }) => {
+      const { chunks, out } = sink();
+      createLogger("info", { format: "pretty", out, ...o }).error("boom");
+      return chunks.join("");
+    };
     // biome-ignore lint/suspicious/noControlCharactersInRegex: checking for ANSI escapes
-    expect(chunks.join("")).toMatch(/\u001b\[/);
+    const ansi = /\u001b\[/;
+    const saved = { force: process.env.FORCE_COLOR, no: process.env.NO_COLOR };
+    try {
+      delete process.env.FORCE_COLOR;
+      delete process.env.NO_COLOR;
+      expect(run({ isTTY: true })).toMatch(ansi);
+      expect(run({ isTTY: false })).not.toMatch(ansi);
+      process.env.FORCE_COLOR = "1";
+      expect(run({ isTTY: false })).toMatch(ansi);
+      process.env.FORCE_COLOR = "0";
+      process.env.NO_COLOR = "1";
+      expect(run({ isTTY: true })).not.toMatch(ansi);
+      expect(run({ isTTY: false, colors: true })).toMatch(ansi);
+    } finally {
+      for (const [k, v] of [
+        ["FORCE_COLOR", saved.force],
+        ["NO_COLOR", saved.no],
+      ] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
   });
 
   it("an unknown format is refused", () => {
     expect(() => createLogger("info", { format: "loud" as never })).toThrow(/log\.format/);
+  });
+});
+
+describe("child", () => {
+  it("adds its fields to every record; call fields cannot overwrite them", () => {
+    const { logger, lines } = capture("info");
+    const child = logger.child({ context: "A" });
+    child.info("x", { context: "B", a: 1 });
+    child.child({ plugin: "p" }).warn("y");
+    expect(JSON.parse(lines[0] as string)).toMatchObject({ msg: "x", context: "A", a: 1 });
+    expect(JSON.parse(lines[1] as string)).toMatchObject({ msg: "y", context: "A", plugin: "p" });
+  });
+
+  it("shares level and secrets with its parent", () => {
+    const { logger, lines } = capture("info");
+    const child = logger.child({ context: "A" });
+    child.setLevel("warn");
+    expect(logger.level).toBe("warn");
+    logger.info("dropped");
+    logger.setLevel("info");
+    expect(child.level).toBe("info");
+    child.addSecrets(["child-secret-1"]);
+    logger.info("a child-secret-1 b");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("a [REDACTED] b");
   });
 });

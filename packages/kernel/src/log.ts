@@ -37,6 +37,11 @@ export interface KernelLogger extends Logger {
   redact(text: string): string;
   /** Waits until buffered records reached every output (Loki); never rejects. Call before exit. */
   flush(): Promise<void>;
+  /**
+   * A logger that adds `fields` to every record (e.g. `{ context: "RunWorker" }`); call fields cannot
+   * overwrite them. It shares everything else with this logger: level, secrets, outputs.
+   */
+  child(fields: Record<string, string>): KernelLogger;
 }
 
 const REDACTED = "[REDACTED]";
@@ -134,7 +139,7 @@ function expandSecret(value: string): string[] {
   return out;
 }
 
-/** Console format: `pretty` (pino-pretty, one line per record), `json`, or `auto` (pretty on a TTY). */
+/** Console format: `pretty` (pino-pretty), `json`, or `auto` (pretty on a TTY). */
 export const LOG_FORMATS = ["auto", "pretty", "json"] as const;
 /** Console format. */
 export type LogFormat = (typeof LOG_FORMATS)[number];
@@ -157,6 +162,11 @@ export interface LoggerOptions {
   out?: LogOutput;
   /** Whether the console is a terminal (picks `auto` and colors); default `process.stdout.isTTY`. */
   isTTY?: boolean;
+  /**
+   * Pretty output in colors; default: `FORCE_COLOR` (set and not `0`) turns them on, `NO_COLOR` off,
+   * else a TTY. `pnpm dev:kernel` forces them, since its output goes through `tee`.
+   */
+  colors?: boolean;
   /** Also push every record to Loki. */
   loki?: LokiOptions;
   /** Fields on every record (e.g. `role`); log calls cannot overwrite them. */
@@ -167,19 +177,37 @@ export interface LoggerOptions {
   onMatcherBuild?: () => void;
 }
 
-/** Fields shown in the pretty prefix instead of the trailing object, in this order. */
-const PREFIX_FIELDS = ["reqId", "traceId", "jobId", "runId", "plugin"] as const;
-
-/** pino-pretty's message format: `[role] [reqId=…] [plugin=…] msg`, each part only when present. */
+/** Fields shown in the pretty prefix instead of the lines below, in this order. */
+const PREFIX_FIELDS = ["traceId", "reqId", "queue", "jobId", "runId", "context", "plugin"] as const;
+/**
+ * pino-pretty's message format, the octok layout:
+ * `[pid=…] - [traceId=…] [reqId=…] [context=…] msg`, each bracket only when present.
+ */
 function prettyMessage(log: Record<string, unknown>, messageKey: string): string {
-  const parts: string[] = [];
-  if (typeof log.role === "string") parts.push(`[${log.role}]`);
+  const parts = [`[pid=${process.pid}] -`];
   for (const k of PREFIX_FIELDS) {
     const v = log[k];
     if (typeof v === "string" || typeof v === "number") parts.push(`[${k}=${v}]`);
   }
   parts.push(String(log[messageKey] ?? ""));
   return parts.join(" ");
+}
+
+/** The HTTP access record (`http/app.ts`) as one sentence: method, path, status and duration. */
+function foldAccessLine(log: Record<string, unknown>): Record<string, unknown> {
+  if (log.msg !== "request" || typeof log.method !== "string" || typeof log.url !== "string") {
+    return log;
+  }
+  const { method, url, status, ms, ...rest } = log;
+  return { ...rest, msg: `${method} ${url} ${status} ${ms}ms` };
+}
+
+function colorsOn(opts: LoggerOptions, isTTY: boolean): boolean {
+  if (opts.colors !== undefined) return opts.colors;
+  const force = process.env.FORCE_COLOR;
+  if (force !== undefined && force !== "0") return true;
+  if (process.env.NO_COLOR) return false;
+  return isTTY;
 }
 
 function consoleStream(opts: LoggerOptions): DestinationStream {
@@ -196,18 +224,30 @@ function consoleStream(opts: LoggerOptions): DestinationStream {
   const isTTY = opts.isTTY ?? process.stdout.isTTY === true;
   const pretty = format === "pretty" || (format === "auto" && isTTY);
   if (!pretty) return { write: (s: string) => out.write(s) };
-  // In process (no worker thread): pino-pretty formats each line synchronously.
+  const colors = colorsOn(opts, isTTY);
+  // In process (no worker thread): pino-pretty formats each record synchronously. The layout follows
+  // octok's buildPinoPrettyOptions: full local time, colored level, the bracket prefix, and
+  // the remaining fields as indented `key: value` lines below the message (errors with their stack).
   const format_ = prettyFactory({
-    colorize: isTTY,
-    colorizeObjects: isTTY,
-    singleLine: true,
-    // errors stay inside the one-line object instead of a multi-line stack block
-    errorLikeObjectKeys: [],
-    translateTime: "SYS:HH:MM:ss.l",
+    colorize: colors,
+    colorizeObjects: colors,
+    singleLine: false,
+    translateTime: "SYS:standard",
     ignore: ["pid", "hostname", "role", "spanId", ...PREFIX_FIELDS].join(","),
     messageFormat: (log, messageKey) => prettyMessage(log, messageKey),
   });
-  return { write: (s: string) => out.write(format_(s)) };
+  return {
+    write: (s: string) => {
+      let record: Record<string, unknown>;
+      try {
+        record = JSON.parse(s) as Record<string, unknown>;
+      } catch {
+        out.write(s);
+        return;
+      }
+      out.write(format_(foldAccessLine(record)));
+    },
+  };
 }
 
 /**
@@ -313,7 +353,7 @@ export function createLogger(level: string = "info", opts: LoggerOptions = {}): 
     sink[lvl](obj, redactMsg(msg));
   };
 
-  return {
+  const root: KernelLogger = {
     debug: (msg, fields) => emit("debug", msg, fields),
     info: (msg, fields) => emit("info", msg, fields),
     warn: (msg, fields) => emit("warn", msg, fields),
@@ -357,5 +397,36 @@ export function createLogger(level: string = "info", opts: LoggerOptions = {}): 
         }
       }
     },
+    // a method, so a wrapper of this logger (a test proxy) is the parent its children forward to
+    child(fields) {
+      return childLogger(this, fields);
+    },
   };
+  return root;
+}
+
+/**
+ * A logger that adds `bound` to every record and forwards it to `parent`'s public methods (so a spy
+ * on the parent sees its children's records); call fields cannot overwrite the bound ones.
+ */
+function childLogger(parent: KernelLogger, bound: Record<string, string>): KernelLogger {
+  const merged = (fields?: Record<string, unknown>) => ({ ...fields, ...bound });
+  const child: KernelLogger = {
+    debug: (msg, fields) => parent.debug(msg, merged(fields)),
+    info: (msg, fields) => parent.info(msg, merged(fields)),
+    warn: (msg, fields) => parent.warn(msg, merged(fields)),
+    error: (msg, fields) => parent.error(msg, merged(fields)),
+    get level() {
+      return parent.level;
+    },
+    setLevel: (level) => parent.setLevel(level),
+    addSecrets: (values) => parent.addSecrets(values),
+    addOrgSecrets: (values) => parent.addOrgSecrets(values),
+    redact: (text) => parent.redact(text),
+    flush: () => parent.flush(),
+    child(fields) {
+      return childLogger(this, fields);
+    },
+  };
+  return child;
 }

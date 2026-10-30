@@ -436,6 +436,7 @@ describe("@LockedCron", () => {
       expect(shared.runs).toBe(0);
       expect(a.info).toHaveBeenCalledWith("cron skipped: the scheduler is not started", {
         cron: "test-gated",
+        context: "Jobs",
       });
       expect(await redisOf(a).keys("cron:test-gated:*")).toEqual([]);
       expect(await redisOf(a).exists("lock:test-cron-gated")).toBe(0);

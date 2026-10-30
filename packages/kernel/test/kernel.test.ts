@@ -8,7 +8,7 @@ import type { ConfigSource } from "../src/config/load.js";
 import { type KernelConfig, KernelConfigSchema } from "../src/config/schema.js";
 import { ExtensionHost } from "../src/extensions/host.js";
 import { KernelConfigService } from "../src/infra/config/kernel-config.service.js";
-import { KERNEL_LOGGER } from "../src/infra/tokens.js";
+import { KERNEL_ROOT_LOGGER } from "../src/infra/tokens.js";
 import { migrateAll } from "../src/kernel.js";
 import { createLogger, type KernelLogger } from "../src/log.js";
 import { buildKernel, type TestKernel, type TestKernelOptions } from "./helpers/runs.js";
@@ -179,12 +179,13 @@ describe("插件路由", () => {
 });
 
 describe("启动日志", () => {
-  it("Nest 的路由映射等日志降为 debug，不出现在 info 级", async () => {
+  it("Nest's route mapping lines are logged at info with Nest's context, as in octok", async () => {
     const { logger, lines } = capture("info");
     const k = await kernel(cfg(), { logger });
     await k.start();
     expect(lines.some((l) => l.msg === "kernel started")).toBe(true);
-    expect(lines.filter((l) => String(l.msg).includes("Mapped"))).toEqual([]);
+    const mapped = lines.filter((l) => String(l.msg).includes("Mapped {/api/v1/me, GET} route"));
+    expect(mapped).toEqual([expect.objectContaining({ level: "info", context: "RouterExplorer" })]);
   });
 });
 
@@ -194,10 +195,10 @@ describe("配置热更新", () => {
     const src = manualSource();
     const k = await kernel(cfg(), { source: src.source, logger });
     await k.start();
-    expect(k.app.get<KernelLogger>(KERNEL_LOGGER).level).toBe("info");
+    expect(k.app.get<KernelLogger>(KERNEL_ROOT_LOGGER).level).toBe("info");
 
     src.push(raw({ log: { level: "debug" } }));
-    expect(k.app.get<KernelLogger>(KERNEL_LOGGER).level).toBe("debug");
+    expect(k.app.get<KernelLogger>(KERNEL_ROOT_LOGGER).level).toBe("debug");
     expect(k.app.get(KernelConfigService).get().log.level).toBe("debug");
 
     src.push(raw({ log: { level: "debug" }, http: { port: 9999 } }));
@@ -209,7 +210,7 @@ describe("配置热更新", () => {
     const before = k.app.get(KernelConfigService).get();
     src.push({ ...raw(), masterKey: "not-a-key", log: { level: "error" } });
     expect(k.app.get(KernelConfigService).get()).toEqual(before);
-    expect(k.app.get<KernelLogger>(KERNEL_LOGGER).level).toBe("debug");
+    expect(k.app.get<KernelLogger>(KERNEL_ROOT_LOGGER).level).toBe("debug");
     expect(lines.some((l) => l.level === "error" && JSON.stringify(l).includes("masterKey"))).toBe(
       true,
     );
