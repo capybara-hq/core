@@ -159,7 +159,7 @@ function lastUser(req: ModelRequest): { text: string; hasToolResult: boolean; re
 
 type Plan =
   | { kind: "text"; text: string; chunk: number; delayMs: number; failAfter?: ModelError }
-  | { kind: "tool"; name: string; input: unknown }
+  | { kind: "tool"; name: string; input: unknown; more?: { name: string; input: unknown }[] }
   | { kind: "stall" }
   | { kind: "fail"; error: ModelError };
 
@@ -218,6 +218,21 @@ function scripted(req: ModelRequest): Plan {
       kind: "fail",
       error: new ModelError(kind, `Scripted ${kind} failure`),
     };
+  }
+  // `tools:[{"name":…,"input":…},…]`: several calls in one assistant message
+  const multi = /^tools:(\[[\s\S]*\])$/.exec(text);
+  if (multi) {
+    try {
+      const calls = JSON.parse(multi[1] as string) as { name: string; input: unknown }[];
+      const [first, ...more] = calls;
+      if (first === undefined) throw new Error("empty");
+      return { kind: "tool", name: first.name, input: first.input, more };
+    } catch {
+      return {
+        kind: "fail",
+        error: new ModelError("invalid_request", "tools directive carries invalid JSON"),
+      };
+    }
   }
   const tool = /^tool:([^:]+):([\s\S]*)$/.exec(text);
   if (tool) {
@@ -312,16 +327,25 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
       });
 
       if (p.kind === "tool") {
-        const id = `call_${createHash("sha256")
-          .update(`${req.messages.length}:${p.name}:${JSON.stringify(p.input)}`)
-          .digest("hex")
-          .slice(0, 12)}`;
-        const content: ContentBlock[] = [{ type: "tool_call", id, name: p.name, input: p.input }];
+        const calls = [{ name: p.name, input: p.input }, ...(p.more ?? [])];
+        const content: ContentBlock[] = calls.map((c, i) => ({
+          type: "tool_call",
+          id: `call_${createHash("sha256")
+            .update(
+              `${req.messages.length}:${i === 0 ? "" : `${i}:`}${c.name}:${JSON.stringify(c.input)}`,
+            )
+            .digest("hex")
+            .slice(0, 12)}`,
+          name: c.name,
+          input: c.input,
+        }));
         yield {
           type: "message_complete",
           content,
           stopReason: "tool_use",
-          usage: usage(p.name.length + JSON.stringify(p.input ?? null).length),
+          usage: usage(
+            calls.reduce((n, c) => n + c.name.length + JSON.stringify(c.input ?? null).length, 0),
+          ),
         };
         return;
       }

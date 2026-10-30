@@ -280,4 +280,48 @@ describe("read before write", { timeout: 90_000 }, () => {
     expect(r.isError).toBe(true);
     expect(r.content).toContain(NOT_READ);
   });
+
+  // The pipeline runs one step's calls in order and logs each result before the next call starts,
+  // so the rule holds inside one assistant message (the ordering it depends on).
+  async function oneMessage(conv: string, n: number, calls: { name: string; input: unknown }[]) {
+    await postMessage(owner, orgId, conv, `tools:${JSON.stringify(calls)}`);
+    await waitForTerminal(db, conv, n, 30_000);
+    return (await eventsOf(db, conv))
+      .filter((e): e is ToolResultEvent => e.type === "tool_result")
+      .slice(-calls.length)
+      .map((e) => e.payload);
+  }
+
+  it("Read then Edit of one file in one assistant message both succeed", async () => {
+    const { conv, step } = await session1();
+    await step("Bash", { description: "seed", command: "printf 'one two\\n' > /workspace/a.txt" });
+    const r = await oneMessage(conv, 2, [
+      { name: "Read", input: { file_path: "/workspace/a.txt" } },
+      {
+        name: "Edit",
+        input: { file_path: "/workspace/a.txt", old_string: "one", new_string: "uno" },
+      },
+    ]);
+    expect(r.map((x) => [x.toolKey, x.isError])).toEqual([
+      ["Read", false],
+      ["Edit", false],
+    ]);
+  });
+
+  it("two Edits of one file in one assistant message both succeed", async () => {
+    const { conv, step } = await session1();
+    await step("Bash", { description: "seed", command: "printf 'one two\\n' > /workspace/a.txt" });
+    await step("Read", { file_path: "/workspace/a.txt" });
+    const r = await oneMessage(conv, 3, [
+      {
+        name: "Edit",
+        input: { file_path: "/workspace/a.txt", old_string: "one", new_string: "uno" },
+      },
+      {
+        name: "Edit",
+        input: { file_path: "/workspace/a.txt", old_string: "two", new_string: "dos" },
+      },
+    ]);
+    expect(r.map((x) => x.isError)).toEqual([false, false]);
+  });
 });

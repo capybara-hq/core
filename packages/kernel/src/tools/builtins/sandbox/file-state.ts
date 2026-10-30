@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
+import { ToolError } from "@capybara-hq/plugin-sdk";
 import type { EventLog } from "../../../conversations/event-log.js";
 
 /**
@@ -47,4 +48,21 @@ export async function lastFileState(
   path: string,
 ): Promise<FileState | null> {
   return log.latestFileState(conversationId, normalizeSandboxPath(path));
+}
+
+/**
+ * Throws the model-visible error unless the conversation read (or wrote) the file and it is
+ * unchanged: `current` is the state of the content the caller just read.
+ */
+export async function assertReadAndUnchanged(
+  deps: { eventLog: Pick<EventLog, "latestFileState"> },
+  conversationId: string,
+  path: string,
+  current: FileState,
+): Promise<void> {
+  const seen = await lastFileState(deps.eventLog, conversationId, path);
+  if (seen === null) throw new ToolError(NOT_READ_TEXT);
+  if (seen.size !== current.size || seen.sha256 !== current.sha256) {
+    throw new ToolError(MODIFIED_TEXT);
+  }
 }

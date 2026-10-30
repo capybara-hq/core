@@ -2,7 +2,6 @@ import { isSandboxGoneError, ToolError, type ToolSpec } from "@capybara-hq/plugi
 import type { BuiltinTool } from "../../registry.js";
 import { lineDiff, TOOL_VIEW_DIFF_MAX_BYTES, viewPath } from "../../view.js";
 import {
-  assertReadAndUnchanged,
   checkWritable,
   clip,
   display,
@@ -14,7 +13,12 @@ import {
   withNotices,
   withPathLease,
 } from "./common.js";
-import { fileStateOf, normalizeSandboxPath, recordedFile } from "./file-state.js";
+import {
+  assertReadAndUnchanged,
+  fileStateOf,
+  normalizeSandboxPath,
+  recordedFile,
+} from "./file-state.js";
 import { READ_MAX_BYTES } from "./read.js";
 
 const SPEC: ToolSpec = {

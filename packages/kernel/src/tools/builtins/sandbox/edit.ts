@@ -2,7 +2,6 @@ import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import type { BuiltinTool } from "../../registry.js";
 import { lineDiff, viewPath } from "../../view.js";
 import {
-  assertReadAndUnchanged,
   checkWritable,
   clip,
   display,
@@ -14,7 +13,12 @@ import {
   withNotices,
   withPathLease,
 } from "./common.js";
-import { fileStateOf, normalizeSandboxPath, recordedFile } from "./file-state.js";
+import {
+  assertReadAndUnchanged,
+  fileStateOf,
+  normalizeSandboxPath,
+  recordedFile,
+} from "./file-state.js";
 
 /** 可编辑的最大文件（字节）：更大的用 Bash 处理。 */
 const EDIT_MAX_BYTES = 10 * 1024 * 1024;

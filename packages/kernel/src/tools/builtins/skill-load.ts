@@ -556,7 +556,9 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
         instructions = renderSkillBody(parsed.body.trim(), invocation, args ?? "", name);
       } catch (e) {
         if (!(e instanceof RangeError)) throw e;
-        throw new ToolError(`Skill "${name}" cannot be rendered: ${e.message}.`);
+        throw new ToolError(
+          `Skill "${name}" cannot be rendered: ${e.message}; check the args against the skill's placeholders and retry with shorter args.`,
+        );
       }
       const text = [
         ...(fork ? [await forkLine(deps.db, ctx, fork, entry.plugin)] : []),

@@ -402,22 +402,3 @@ export const unavailableWhenNoSandbox =
 export function looksBinary(data: Uint8Array): boolean {
   return data.subarray(0, 8192).includes(0);
 }
-
-/**
- * Throws the model-visible error unless the conversation read (or wrote) the file and it is
- * unchanged: `current` is the state of the content the caller just read. The two texts are the
- * spec's wording (tool naming spec 4.5); they sit in file-state.ts, so the tool-design check does
- * not look for an action verb in them.
- */
-export async function assertReadAndUnchanged(
-  deps: Pick<SandboxToolDeps, "eventLog">,
-  conversationId: string,
-  path: string,
-  current: FileState,
-): Promise<void> {
-  const seen = await lastFileState(deps.eventLog, conversationId, path);
-  if (seen === null) throw new ToolError(NOT_READ_TEXT);
-  if (seen.size !== current.size || seen.sha256 !== current.sha256) {
-    throw new ToolError(MODIFIED_TEXT);
-  }
-}
