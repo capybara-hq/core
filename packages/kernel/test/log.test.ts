@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { secret } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -375,6 +376,26 @@ describe("console format", () => {
         if (v === undefined) delete process.env[k];
         else process.env[k] = v;
       }
+    }
+  });
+
+  it("a console whose reader is gone (EPIPE) is no longer written to, and its error is handled", () => {
+    // Without a listener the stream's error would be an uncaught exception (see process-guards).
+    for (const format of ["json", "pretty"] as const) {
+      const out = Object.assign(new EventEmitter(), {
+        writes: 0,
+        write: () => (out.writes++, true),
+      });
+      const logger = createLogger("info", { format, out, colors: false });
+      logger.info("before");
+      expect(out.writes).toBe(1);
+      expect(out.listenerCount("error")).toBe(1);
+      expect(() =>
+        out.emit("error", Object.assign(new Error("write EPIPE"), { code: "EPIPE" })),
+      ).not.toThrow();
+      logger.info("after");
+      logger.error("still after");
+      expect(out.writes).toBe(1);
     }
   });
 

@@ -147,6 +147,8 @@ export type LogFormat = (typeof LOG_FORMATS)[number];
 /** A minimal writable the console output goes to (`process.stdout` by default). */
 export interface LogOutput {
   write(chunk: string): unknown;
+  /** A stream's `error` event (EPIPE when its reader is gone). */
+  on?(event: "error", listener: (err: unknown) => void): unknown;
 }
 
 /** Options of {@link createLogger}. */
@@ -220,7 +222,20 @@ function consoleStream(opts: LoggerOptions): DestinationStream {
   if (!(LOG_FORMATS as readonly string[]).includes(format)) {
     throw new Error(`invalid log.format "${format}" (expected ${LOG_FORMATS.join(", ")})`);
   }
-  const out = opts.out ?? process.stdout;
+  const target = opts.out ?? process.stdout;
+  // A console whose reader is gone (the `tee` of `pnpm dev:kernel` stopped by Ctrl-C, a closed
+  // pipe) fails every write with EPIPE. Unhandled, each failure is an uncaught exception the
+  // process guard logs, which writes again: an endless chain that starves the event loop. So the
+  // first stream error ends console output for good (Loki, when configured, still gets records).
+  let broken = false;
+  target.on?.("error", () => {
+    broken = true;
+  });
+  const out = {
+    write: (s: string) => {
+      if (!broken) target.write(s);
+    },
+  };
   const isTTY = opts.isTTY ?? process.stdout.isTTY === true;
   const pretty = format === "pretty" || (format === "auto" && isTTY);
   if (!pretty) return { write: (s: string) => out.write(s) };
