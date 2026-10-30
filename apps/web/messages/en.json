@@ -693,7 +693,27 @@
     "noAgents": "No agent is available. Create an agent first.",
     "panelExtensions": "Extensions",
     "fullOutput": "Full output",
-    "builtinPreviewer": "Built-in preview"
+    "builtinPreviewer": "Built-in preview",
+    "setup": {
+      "title": "Before you start",
+      "description": "A few steps are left before you can start a conversation.",
+      "model": {
+        "label": "Set up a model",
+        "description": "Configure at least one model provider (such as the openai-compatible extension) so agents can answer.",
+        "askAdmin": "No model is available yet. Enterprise admins configure models under Admin → Extensions.",
+        "action": "Set up",
+        "waiting": "Waiting for an enterprise admin"
+      },
+      "agent": {
+        "label": "Create an agent",
+        "description": "An agent sets the model it uses and the tools and skills it can use.",
+        "action": "Create"
+      },
+      "chat": {
+        "label": "Start a conversation",
+        "description": "When the first two steps are done, come back here, pick an agent and send the first message."
+      }
+    }
   },
   "ui": {
     "dangerDescription": "The extension performs this action. It may not be reversible.",
@@ -751,7 +771,8 @@
     "catalog": "Catalog"
   },
   "shell": {
-    "noOrg": "Select organization"
+    "noOrg": "Select organization",
+    "orgMenu": "Organization"
   },
   "notFound": {
     "title": "Page not found",

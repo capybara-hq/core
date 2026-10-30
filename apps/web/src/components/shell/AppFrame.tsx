@@ -137,23 +137,37 @@ export function AppFrame({ version, children }: { version: string; children: Rea
     }
   }
 
-  // language and theme sit in the sidebar's foot (PreferenceBar); the menu keeps the account's own
-  const userMenu: MenuItem[] = [{ label: t("common.logout"), onSelect: () => void onLogout() }];
-
   const currentOrg = me?.memberships.find((m) => m.orgId === me.currentOrgId);
-  // The org switch heads the account menu (the current org checked).
-  const orgItems: MenuItem[] =
+  // The account menu: Organization ▸ (the current one checked) and Language ▸ above sign-out; the
+  // theme is the switch after the account (spec §6.13).
+  const orgMenu: MenuItem[] =
     me === undefined || me.memberships.length === 0
       ? []
       : [
-          ...me.memberships.map((m) => ({
-            label: m.name,
-            checked: m.orgId === me.currentOrgId,
-            disabled: m.orgId === me.currentOrgId,
-            onSelect: () => void switchOrg(m.orgId),
-          })),
-          "separator" as const,
+          {
+            label: t("shell.orgMenu"),
+            submenu: me.memberships.map((m) => ({
+              label: m.name,
+              checked: m.orgId === me.currentOrgId,
+              disabled: m.orgId === me.currentOrgId,
+              onSelect: () => void switchOrg(m.orgId),
+            })),
+          },
         ];
+  const languageMenu: MenuItem = {
+    label: preferences.language.label,
+    submenu: preferences.language.options.map((o) => ({
+      label: o.label,
+      checked: o.value === preferences.language.value,
+      onSelect: () => preferences.language.onChange(o.value),
+    })),
+  };
+  const accountMenu: MenuItem[] = [
+    ...orgMenu,
+    languageMenu,
+    "separator",
+    { label: t("common.logout"), onSelect: () => void onLogout() },
+  ];
   const sidebar = {
     // A new conversation starts at the composer; nothing is created before the first send.
     newConversation: { href: "/chat" },
@@ -168,9 +182,9 @@ export function AppFrame({ version, children }: { version: string; children: Rea
       org:
         currentOrg?.name ??
         (me !== undefined && me.memberships.length > 0 ? t("shell.noOrg") : null),
-      menu: me === undefined ? [] : [...orgItems, ...userMenu],
+      menu: me === undefined ? [] : accountMenu,
     },
-    preferences,
+    theme: preferences.theme,
   };
   const who =
     me === undefined ? "" : `${me.account.displayName}${currentOrg ? `@${currentOrg.name}` : ""}`;

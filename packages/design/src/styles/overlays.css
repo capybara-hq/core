@@ -204,6 +204,13 @@
   flex: none;
   width: 14px;
 }
+.cb-menu-sub-mark {
+  display: inline-flex;
+  color: var(--cb-muted);
+}
+.cb-menu-item[data-state="open"] {
+  background: var(--cb-hover);
+}
 .cb-menu-item[data-highlighted] {
   background: var(--cb-hover);
   outline: 1px solid var(--cb-accent);

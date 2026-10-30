@@ -20,7 +20,7 @@ import { useFocusReturn } from "../overlays/focus-return";
 import { Menu, type MenuItem } from "../overlays/index";
 import { useDesignLink, useDesignLocale, useDesignT } from "../provider";
 import { SIZES } from "../tokens";
-import { PreferenceBar, type PreferenceBarProps } from "./preference-bar";
+import { type PreferenceBarProps, ThemeToggle } from "./preference-bar";
 import { useHydrated, useMediaQuery } from "./use-media-query";
 
 export type SidebarNavItem = {
@@ -85,10 +85,10 @@ export type SidebarProps = {
   /** The account footer: menu = org switch, sign out. */
   account: { name: string; org: string | null; menu: MenuItem[] };
   /**
-   * Language and theme, shown above the account when the sidebar is full (or in the open drawer);
-   * the rail has no room, so there they become the account menu's first items.
+   * The theme switch, drawn after the account (full sidebar or open drawer); the rail has no room,
+   * so there it is the account menu's first item. The language is the caller's account submenu.
    */
-  preferences?: PreferenceBarProps;
+  theme?: PreferenceBarProps["theme"];
   onOpenCommands(): void;
   /** Default from media queries: below 1280 `rail`, below 960 `drawer`. */
   mode?: "full" | "rail" | "drawer";
@@ -378,12 +378,11 @@ function SidebarPanel({
       ) : null}
       <SidebarNav p={p} rail={rail} />
       {rail ? <div className="cb-sidebar-fill" /> : <Conversations p={p} />}
-      {p.preferences && !rail ? (
-        <div className="cb-sidebar-prefs">
-          <PreferenceBar {...p.preferences} />
-        </div>
-      ) : null}
-      <Account account={rail ? withPreferences(p.account, p.preferences) : p.account} rail={rail} />
+      <Account
+        account={rail ? withTheme(p.account, p.theme) : p.account}
+        rail={rail}
+        trailing={p.theme && !rail ? <ThemeToggle {...p.theme} /> : null}
+      />
     </aside>
   );
 }
@@ -667,29 +666,28 @@ function Group({
   );
 }
 
-/** The rail's account menu: the preferences as items (other languages, the other theme) first. */
-function withPreferences(
+/** The rail's account menu: the theme switch as its first item. */
+function withTheme(
   account: SidebarProps["account"],
-  prefs: PreferenceBarProps | undefined,
+  theme: PreferenceBarProps["theme"] | undefined,
 ): SidebarProps["account"] {
-  if (!prefs || account.menu.length === 0) return account;
-  const { language, theme } = prefs;
-  const items: MenuItem[] = [
-    ...language.options
-      .filter((o) => o.value !== language.value)
-      .map((o) => ({
-        label: `${language.label}: ${o.label}`,
-        onSelect: () => language.onChange(o.value),
-      })),
+  if (!theme || account.menu.length === 0) return account;
+  const item: MenuItem =
     theme.value === "dark"
       ? { label: `${theme.label}: ${theme.lightLabel}`, onSelect: () => theme.onChange("light") }
-      : { label: `${theme.label}: ${theme.darkLabel}`, onSelect: () => theme.onChange("dark") },
-    "separator",
-  ];
-  return { ...account, menu: [...items, ...account.menu] };
+      : { label: `${theme.label}: ${theme.darkLabel}`, onSelect: () => theme.onChange("dark") };
+  return { ...account, menu: [item, "separator", ...account.menu] };
 }
 
-function Account({ account, rail }: { account: SidebarProps["account"]; rail: boolean }) {
+function Account({
+  account,
+  rail,
+  trailing,
+}: {
+  account: SidebarProps["account"];
+  rail: boolean;
+  trailing?: ReactNode;
+}) {
   const t = useDesignT();
   const text = account.org ? `${account.name} · ${account.org}` : account.name;
   const content = (
@@ -707,6 +705,7 @@ function Account({ account, rail }: { account: SidebarProps["account"]; rail: bo
         <span className="cb-sidebar-account" data-part="account" data-static="true" title={text}>
           {content}
         </span>
+        {trailing}
       </div>
     );
   }
@@ -726,6 +725,7 @@ function Account({ account, rail }: { account: SidebarProps["account"]; rail: bo
           </button>
         }
       />
+      {trailing}
     </div>
   );
 }

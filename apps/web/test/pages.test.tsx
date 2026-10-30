@@ -510,7 +510,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(within(link).getByText("2+")).toBeTruthy();
   });
 
-  it("the account menu switches the org (current checked), and holds language, theme and sign out", async () => {
+  it("the account menu holds Organization ▸ and Language ▸ above sign-out; the theme switch follows the account", async () => {
     const me = {
       ...ME,
       memberships: [...ME.memberships, { orgId: "o2", slug: "b", name: "Beta", role: "member" }],
@@ -525,32 +525,37 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     const user = userEvent.setup();
     const account = () =>
       screen.getByRole("button", { name: `账户: ${ME.account.displayName} · Acme` });
+    // the account menu: Organization ▸ and Language ▸ above sign-out
     await user.click(account());
+    expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual([
+      zh.shell.orgMenu,
+      zh.common.language,
+      zh.common.logout,
+    ]);
+    await user.click(screen.getByRole("menuitem", { name: zh.shell.orgMenu }));
     const current = await screen.findByRole("menuitemradio", { name: "Acme" });
     expect(current.getAttribute("aria-checked")).toBe("true");
     expect(current.querySelector("svg")).toBeTruthy();
     expect(current.textContent).toBe("Acme");
-    await user.click(await screen.findByRole("menuitemradio", { name: "Beta" }));
+    // jsdom has no layout: pick submenu items with the keyboard (see design menu-submenu tests)
+    (await screen.findByRole("menuitemradio", { name: "Beta" })).focus();
+    await user.keyboard("{Enter}");
     await vi.waitFor(() =>
       expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ orgId: "o2" }),
     );
 
-    // language and theme are in the sidebar's foot, one click away, not in the account menu
     await user.click(account());
-    expect(screen.queryByRole("menuitem", { name: new RegExp(zh.common.theme) })).toBeNull();
-    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("menuitem", { name: zh.common.language }));
+    (await screen.findByRole("menuitemradio", { name: zh.common.localeName.en })).focus();
+    await user.keyboard("{Enter}");
+    expect(document.cookie).toContain("NEXT_LOCALE=en");
+    expect(router.refresh).toHaveBeenCalled();
+
+    // the theme switch sits after the account, one click away
     const themes = screen.getByRole("radiogroup", { name: zh.common.theme });
     await user.click(within(themes).getByRole("radio", { name: zh.common.themeLight }));
     expect(document.documentElement.dataset.theme).toBe("light");
     expect(document.cookie).toContain("cb-theme=light");
-    expect(
-      (within(themes).getByRole("radio", { name: zh.common.themeLight }) as HTMLInputElement)
-        .checked,
-    ).toBe(true);
-    const language = screen.getByRole("combobox", { name: zh.common.language });
-    await user.selectOptions(language, "en");
-    expect(document.cookie).toContain("NEXT_LOCALE=en");
-    expect(router.refresh).toHaveBeenCalled();
 
     await user.click(account());
     await user.click(await screen.findByRole("menuitem", { name: zh.common.logout }));

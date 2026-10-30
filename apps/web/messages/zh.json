@@ -693,7 +693,27 @@
     "noAgents": "没有可用的 agent。请先新建一个 agent。",
     "panelExtensions": "扩展",
     "fullOutput": "完整输出",
-    "builtinPreviewer": "内置预览"
+    "builtinPreviewer": "内置预览",
+    "setup": {
+      "title": "开始之前",
+      "description": "还差几步才能开始对话。",
+      "model": {
+        "label": "配置模型",
+        "description": "至少配置一个模型提供方（例如 openai-compatible 扩展），agent 才能回答。",
+        "askAdmin": "还没有可用的模型。模型由企业管理员在「管理 → 扩展」里配置。",
+        "action": "去配置",
+        "waiting": "等待企业管理员配置"
+      },
+      "agent": {
+        "label": "新建 agent",
+        "description": "agent 决定用哪个模型、能用哪些工具和技能。",
+        "action": "新建"
+      },
+      "chat": {
+        "label": "开始对话",
+        "description": "前两步完成后回到这里，选一个 agent 发第一条消息。"
+      }
+    }
   },
   "ui": {
     "dangerDescription": "这个操作由扩展执行，可能无法撤销。",
@@ -751,7 +771,8 @@
     "catalog": "企业目录"
   },
   "shell": {
-    "noOrg": "选择组织"
+    "noOrg": "选择组织",
+    "orgMenu": "切换组织"
   },
   "notFound": {
     "title": "页面不存在",

@@ -155,60 +155,60 @@ describe("Sidebar navigation", () => {
   });
 });
 
-describe("Sidebar preferences (language and theme)", () => {
-  function prefs() {
-    return {
-      language: {
-        label: "语言",
-        value: "zh",
-        options: [
-          { value: "zh", label: "中文" },
-          { value: "en", label: "English" },
-        ],
-        onChange: vi.fn(),
-      },
-      theme: {
-        label: "主题",
-        value: "dark" as const,
-        lightLabel: "浅色",
-        darkLabel: "深色",
-        onChange: vi.fn(),
-      },
-    };
-  }
+describe("Sidebar theme switch and account submenus", () => {
+  const theme = () => ({
+    label: "主题",
+    value: "dark" as const,
+    lightLabel: "浅色",
+    darkLabel: "深色",
+    onChange: vi.fn(),
+  });
+  const languages = (onSelect: () => void) => ({
+    label: "语言",
+    submenu: [
+      { label: "中文", checked: true, onSelect: vi.fn() },
+      { label: "English", checked: false, onSelect },
+    ],
+  });
 
-  it("full: a language dropdown and a theme radio above the account, one click each", async () => {
-    const p = prefs();
+  it("full: the theme radio sits after the account; the language is an account submenu", async () => {
+    const th = theme();
+    const toEnglish = vi.fn();
     zh(
       <Sidebar
         {...props({
           account: {
             name: "grant",
             org: "示例组织",
-            menu: [{ label: "退出登录", onSelect: vi.fn() }],
+            menu: [languages(toEnglish), "separator", { label: "退出登录", onSelect: vi.fn() }],
           },
-          preferences: p,
+          theme: th,
         })}
         mode="full"
       />,
     );
-    const language = screen.getByRole("combobox", { name: "语言" }) as HTMLSelectElement;
-    expect(language.value).toBe("zh");
-    await userEvent.selectOptions(language, "en");
-    expect(p.language.onChange).toHaveBeenCalledWith("en");
     const themes = screen.getByRole("radiogroup", { name: "主题" });
+    const account = screen.getByRole("button", { name: "账户: grant · 示例组织" });
+    // the switch follows the account in the same footer row
+    expect(account.closest(".cb-sidebar-foot")?.contains(themes)).toBe(true);
     expect((within(themes).getByRole("radio", { name: "深色" }) as HTMLInputElement).checked).toBe(
       true,
     );
     await userEvent.click(within(themes).getByRole("radio", { name: "浅色" }));
-    expect(p.theme.onChange).toHaveBeenCalledWith("light");
-    // the account menu keeps only the account's own items
-    await userEvent.click(screen.getByRole("button", { name: "账户: grant · 示例组织" }));
-    expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["退出登录"]);
+    expect(th.onChange).toHaveBeenCalledWith("light");
+
+    await userEvent.click(account);
+    expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["语言", "退出登录"]);
+    await userEvent.click(screen.getByRole("menuitem", { name: "语言" }));
+    const english = await screen.findByRole("menuitemradio", { name: "English" });
+    expect(english.getAttribute("aria-checked")).toBe("false");
+    english.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(toEnglish).toHaveBeenCalledTimes(1);
   });
 
-  it("rail: no room for the controls, so they lead the account menu", async () => {
-    const p = prefs();
+  it("rail: no room for the switch, so it leads the account menu", async () => {
+    const th = theme();
     zh(
       <Sidebar
         {...props({
@@ -217,7 +217,7 @@ describe("Sidebar preferences (language and theme)", () => {
             org: "示例组织",
             menu: [{ label: "退出登录", onSelect: vi.fn() }],
           },
-          preferences: p,
+          theme: th,
         })}
         mode="rail"
       />,
@@ -225,12 +225,11 @@ describe("Sidebar preferences (language and theme)", () => {
     expect(screen.queryByRole("radiogroup", { name: "主题" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "账户: grant · 示例组织" }));
     expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual([
-      "语言: English",
       "主题: 浅色",
       "退出登录",
     ]);
     await userEvent.click(screen.getByRole("menuitem", { name: "主题: 浅色" }));
-    expect(p.theme.onChange).toHaveBeenCalledWith("light");
+    expect(th.onChange).toHaveBeenCalledWith("light");
   });
 });
 

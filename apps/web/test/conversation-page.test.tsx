@@ -680,6 +680,64 @@ describe("a new conversation (/chat)", () => {
   });
 });
 
+describe("the new conversation before anything is set up", () => {
+  const setup = (agents: unknown, models: unknown) => {
+    resetNavigation("/chat");
+    stubApi({
+      "GET /api/v1/orgs/o1/agents": () => json(200, agents),
+      "GET /api/v1/orgs/o1/models": () => json(200, models),
+      "GET /api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
+    });
+  };
+  const step = (label: string) => screen.getByText(label).closest("li") as HTMLElement;
+
+  it("no model and no agent: a checklist instead of a composer; an admin goes to set up the model", async () => {
+    setup({ agents: [] }, { providers: [] });
+    const { container } = renderPage(<NewChatPage />, { locale: "zh" });
+    const m = zh.chat.setup;
+    expect(await screen.findByRole("heading", { name: m.title })).toBeTruthy();
+    expect(container.querySelector('[data-template="OnboardingPage"]')).not.toBeNull();
+    expect(container.querySelector('[data-template="ConversationPage"]')).toBeNull();
+    expect(step(m.model.label).getAttribute("data-state")).toBe("todo");
+    expect(step(m.agent.label).getAttribute("data-state")).toBe("todo");
+    expect(within(step(m.model.label)).getByText(m.model.description)).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(within(step(m.model.label)).getByRole("button", { name: m.model.action }));
+    expect(router.push).toHaveBeenCalledWith("/admin/extensions");
+    await user.click(within(step(m.agent.label)).getByRole("button", { name: m.agent.action }));
+    expect(router.push).toHaveBeenCalledWith("/agents/new");
+  });
+
+  it("a member who is not an enterprise admin is told to ask for the model", async () => {
+    setup({ agents: [] }, { providers: [] });
+    renderPage(<NewChatPage />, {
+      locale: "zh",
+      me: { ...ME, account: { ...ME.account, isEnterpriseAdmin: false } },
+    });
+    const m = zh.chat.setup;
+    expect(await screen.findByText(m.model.askAdmin)).toBeTruthy();
+    expect(within(step(m.model.label)).queryByRole("button")).toBeNull();
+    expect(within(step(m.model.label)).getByText(m.model.waiting)).toBeTruthy();
+  });
+
+  it("a model but no agent: the model step is done, creating an agent is next", async () => {
+    setup({ agents: [] }, MODELS);
+    renderPage(<NewChatPage />, { locale: "zh" });
+    const m = zh.chat.setup;
+    await screen.findByRole("heading", { name: m.title });
+    expect(step(m.model.label).getAttribute("data-state")).toBe("done");
+    expect(within(step(m.model.label)).queryByRole("button")).toBeNull();
+    expect(step(m.agent.label).getAttribute("data-state")).toBe("todo");
+  });
+
+  it("with a model and an agent the composer shows as before", async () => {
+    setup(AGENTS, MODELS);
+    const { container } = renderPage(<NewChatPage />, { locale: "en" });
+    expect(await screen.findByRole("heading", { name: /agent/i })).toBeTruthy();
+    expect(container.querySelector('[data-template="OnboardingPage"]')).toBeNull();
+  });
+});
+
 describe("the conversation page in the app frame", () => {
   const twoOrgs = (currentOrgId: string) => ({
     ...ME,
@@ -713,7 +771,10 @@ describe("the conversation page in the app frame", () => {
     expect(screen.getAllByText("v0").length).toBeGreaterThan(0);
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /^Account: .* · Acme$/ }));
-    await user.click(await screen.findByRole("menuitemradio", { name: "Beta" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Organization" }));
+    // jsdom has no layout: pick the submenu item with the keyboard (see design menu-submenu tests)
+    (await screen.findByRole("menuitemradio", { name: "Beta" })).focus();
+    await user.keyboard("{Enter}");
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
     expect(
       calls.some(

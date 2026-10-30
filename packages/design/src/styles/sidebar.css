@@ -257,6 +257,8 @@
 .cb-sidebar-foot {
   display: flex;
   flex: none;
+  align-items: center;
+  gap: var(--cb-space-2);
   margin-top: var(--cb-space-2);
 }
 .cb-sidebar-account {
@@ -467,13 +469,16 @@
 .cb-prefs-theme-option:has(input:focus-visible) {
   box-shadow: 0 0 0 3px var(--cb-focus-ring);
 }
-.cb-sidebar-prefs {
-  flex: none;
-  margin-top: var(--cb-space-2);
-}
+/* Auth pages: right-aligned under the card, each control at its own width (not stretched). */
 .cb-auth-prefs {
+  display: flex;
+  justify-content: flex-end;
   box-sizing: border-box;
   width: min(400px, 100%);
+}
+.cb-auth-prefs .cb-select {
+  flex: none;
+  width: auto;
 }
 @media (prefers-reduced-motion: reduce) {
   .cb-prefs-theme-option {
