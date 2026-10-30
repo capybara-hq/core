@@ -171,7 +171,7 @@ The `sdk` range is validated by the kernel against `SDK_VERSION` (equal to the p
 
 ### Sandboxes and object storage (`sandbox@1` / `object-store@1`)
 
-Both are single-select, brokered extension points: a deployment installs only one provider, other extensions cannot `requires` them, and they are consumed by the kernel (sandboxes through `SandboxService` and the builtin `sandbox_*` tools, storage through `ctx.storage` and kernel features). A provider only implements the primitives; the lifecycle, locks, prefix isolation and cleanup are all in the kernel. For details see `.agents/skills/writing-sandbox-providers` (official [`sandbox-docker`](https://github.com/capybara-hq/plugins/tree/main/plugins/sandbox-docker), [`sandbox-e2b`](https://github.com/capybara-hq/plugins/tree/main/plugins/sandbox-e2b)) and `.agents/skills/writing-object-store-providers` (official [`object-store-s3`](https://github.com/capybara-hq/plugins/tree/main/plugins/object-store-s3)).
+Both are single-select, brokered extension points: a deployment installs only one provider, other extensions cannot `requires` them, and they are consumed by the kernel (sandboxes through `SandboxService` and the builtin sandbox tools (`Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `Deliver`), storage through `ctx.storage` and kernel features). A provider only implements the primitives; the lifecycle, locks, prefix isolation and cleanup are all in the kernel. For details see `.agents/skills/writing-sandbox-providers` (official [`sandbox-docker`](https://github.com/capybara-hq/plugins/tree/main/plugins/sandbox-docker), [`sandbox-e2b`](https://github.com/capybara-hq/plugins/tree/main/plugins/sandbox-e2b)) and `.agents/skills/writing-object-store-providers` (official [`object-store-s3`](https://github.com/capybara-hq/plugins/tree/main/plugins/object-store-s3)).
 
 ### Channels, login, directory (`channel@1` / `identity-source@1` / `directory@1`)
 
@@ -217,8 +217,8 @@ is `usage.report`, below). Payloads are deep-frozen copies.
   `permissions.policyHooks`, throws `ExtensionPermissionError`; `check:extension-permissions` reports both
   as `perm-hooks`. Hooks are sensitive at review (they see conversation content).
 - **A person's forked skill is not a tool call.** When a person invokes a `context: fork` skill
-  (`/name`), the kernel dispatches the sub-agent itself (phase D spec §6.2): there is no `agent` call,
-  so `tool.preExecute` and the owner's `agent` tool policy do not see it (by design). The child's own
+  (`/name`), the kernel dispatches the sub-agent itself (phase D spec §6.2): there is no `Agent` call,
+  so `tool.preExecute` and the owner's `Agent` tool policy do not see it (by design). The child's own
   model steps and tool calls are hooked as usual. A hook point for person-initiated dispatches is
   planned for later.
 - **Order.** Policy hooks of several extensions run serially by extension name (registration order within a
@@ -273,11 +273,11 @@ is `usage.report`, below). Payloads are deep-frozen copies.
   observe-only.
 - **Sub-agents.** A sub-agent's model and tool calls fire hooks like a chat's, with `agentId` /
   `agentVersion` of the agent whose definition it runs and `parent: { conversationId, runId,
-  callId }` (the parent conversation, its run and the `agent` call that dispatched it; for a
+  callId }` (the parent conversation, its run and the `Agent` call that dispatched it; for a
   person's forked skill invocation `callId` is `skill-<seq>`, which matches no `tool_call`); a
   parent's own calls carry no `parent`. Its `usage.report` payloads say `conversationKind: "chat"` (the union
   is not widened) and carry the same `parent`, so a meter can attribute a sub-agent's tokens to the
-  parent run and still dedupe by `eventId`. The parent's `agent` call fires `tool.preExecute` (deny
+  parent run and still dedupe by `eventId`. The parent's `Agent` call fires `tool.preExecute` (deny
   it to refuse a dispatch; the input includes `subagent_type`) and, once the sub-agent finished,
   `tool.postExecute` with its result. A policy denial inside a sub-agent fails only that sub-agent.
 - **`usage.report` also covers full-run eval replays** (`conversationKind: "eval"`); single-step

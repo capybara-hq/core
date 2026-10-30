@@ -1517,16 +1517,16 @@ States: `image`, `text`, `markdown`, `csv`, `none`, `failed`
 - Error messages state the cause and give an actionable next step; include the error code and request ID for troubleshooting.
 - **Files, not artifacts**: what an agent delivers from its sandbox is "文件" / "files" in UI copy, never "产出物" / "artifacts" (reserved for project C's Artifacts). The kernel identifiers (`artifact_created`, `/artifacts/:id/download`) stay as they are.
 - **Untitled conversations** read "未命名会话 · MM-DD HH:mm" / "Untitled conversation · MM-DD HH:mm" (the start time) until a title exists.
-- **Tool verbs** (§6.16.8; rows name the tool instead, §6.16.9), as the signed reference set B draws them. Counts are Arabic numerals; failures append "（N 个失败）" / " (N failed)" in `fail`; mixed kinds join with "，" / ", " in the fixed order command, tools (connector, tool, search, meta), read, edit:
+- **Tool group wording** (§6.16.8; rows carry no verb: they name the tool, §6.16.9), as the signed reference set B draws them. Counts are Arabic numerals; failures append "（N 个失败）" / " (N failed)" in `fail`; mixed kinds join with "，" / ", " in the fixed order command, tools (connector, tool, search, meta), read, edit:
 
-  | Kind | Row verb zh / en | Group count zh / en | Running header zh / en |
-  |---|---|---|---|
-  | command | 已运行 / Ran | 已运行 N 个命令 / Ran N commands | 正在运行命令 / Running command |
-  | read | 已读取 / Read | 已读取 N 个文件 / Read N files (one path: 已读取 <path> / Read <path>) | 正在读取文件 / Reading file |
-  | edit | 已修改 / Edited | 已修改 N 个文件 · +a −b / Edited N files · +a −b (one path: 已修改 <path>) | 正在修改文件 / Editing file |
-  | search | 已搜索 / Searched | counted with tools | 正在使用工具 / Using tool |
-  | connector, tool | 已使用 / Used | 已使用 N 个工具 / Used N tools | 正在使用工具 / Using tool |
-  | meta | 已加载的工具 / Loaded tools | counted with tools | 正在使用工具 / Using tool |
+  | Kind | Group count zh / en | Running header zh / en |
+  |---|---|---|
+  | command | 已运行 N 个命令 / Ran N commands | 正在运行命令 / Running command |
+  | read | 已读取 N 个文件 / Read N files (one path: 已读取 <path> / Read <path>) | 正在读取文件 / Reading file |
+  | edit | 已修改 N 个文件 · +a −b / Edited N files · +a −b (one path: 已修改 <path>) | 正在修改文件 / Editing file |
+  | search | counted with tools | 正在使用工具 / Using tool |
+  | connector, tool | 已使用 N 个工具 / Used N tools | 正在使用工具 / Using tool |
+  | meta | counted with tools | 正在使用工具 / Using tool |
 
 ## 8. Accessibility
 - Text contrast ≥ 4.5:1 (`faint` only for non-essential information).

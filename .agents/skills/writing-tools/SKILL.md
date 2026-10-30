@@ -1,15 +1,15 @@
 ---
 name: writing-tools
-description: 'Use when changing the kernel tool pipeline or builtin tools (packages/kernel/src/tools), or the tool contract extensions and connectors implement: ctx.tools.register as the kernel hosts it, tool naming and keys, English descriptions and actionable error text (the tool design check), annotations, defaultPolicy and policy_source, ToolError and kind (circuit breaker), timeouts and abort, output archiving (ReadToolOutput, {"$output": id}), InputRequired and resume, ToolSearch, drift review; the builtin sandbox_* tools (sandboxToolPolicy) and skill tools Skill (also <plugin>:<name>) / SkillWrite (writePolicy, change approval), pinned skills (skills.pinned); the builtin agent tool (sub-agents); PLUGIN_UNLOADED_TOOL_ERROR; hooks in a tool call (tool.preExecute, tool.postExecute); tests with fake-tools-ui and model-fake. For connectors see writing-connectors; to write a plugin''s tools (todo) see writing-tools in capybara-hq/plugins.'
+description: 'Use when changing the kernel tool pipeline or builtin tools (packages/kernel/src/tools), or the tool contract extensions and connectors implement: ctx.tools.register as the kernel hosts it, tool naming and keys, English descriptions and actionable error text (the tool design check), annotations, defaultPolicy and policy_source, ToolError and kind (circuit breaker), timeouts and abort, output archiving (ReadToolOutput, {"$output": id}), InputRequired and resume, ToolSearch, drift review; the builtin sandbox tools Bash / Read / Write / Edit / Glob / Grep / Deliver (sandboxToolPolicy) and skill tools Skill (also <plugin>:<name>) / SkillWrite (writePolicy, change approval), pinned skills (skills.pinned); the builtin agent tool (sub-agents); PLUGIN_UNLOADED_TOOL_ERROR; hooks in a tool call (tool.preExecute, tool.postExecute); tests with fake-tools-ui and model-fake. For connectors see writing-connectors; to write a plugin''s tools (todo) see writing-tools in capybara-hq/plugins.'
 ---
 
 # Writing tools
 
-This skill covers what core owns: the tool pipeline, policy and approval, archiving, `ToolSearch`, drift review and resume, the kernel builtin tools (`AskUserQuestion`, `ReadToolOutput`, `ToolSearch`, `sandbox_*`, `Skill` / `SkillWrite`, `agent`), hooks around a tool call, and the tool contract as extensions and connectors implement it; tested on the `fake-tools-ui` and `fake-connector` extensions of `@capybara-hq/testing` with model-fake. The description and error rules below apply to builtin tools too (the tool design check of `pnpm check` covers `packages/kernel/src/tools/builtins` and the fake extensions). **Writing a plugin's own tools** is in [writing-tools in capybara-hq/plugins](https://github.com/capybara-hq/plugins/tree/main/.agents/skills/writing-tools), where `capybara-plugin check` runs the same tool design check.
+This skill covers what core owns: the tool pipeline, policy and approval, archiving, `ToolSearch`, drift review and resume, the kernel builtin tools (`AskUserQuestion`, `ReadToolOutput`, `ToolSearch`, `Bash` / `Read` / `Write` / `Edit` / `Glob` / `Grep` / `Deliver`, `Skill` / `SkillWrite`, `Agent`), hooks around a tool call, and the tool contract as extensions and connectors implement it; tested on the `fake-tools-ui` and `fake-connector` extensions of `@capybara-hq/testing` with model-fake. The description and error rules below apply to builtin tools too (the tool design check of `pnpm check` covers `packages/kernel/src/tools/builtins` and the fake extensions). **Writing a plugin's own tools** is in [writing-tools in capybara-hq/plugins](https://github.com/capybara-hq/plugins/tree/main/.agents/skills/writing-tools), where `capybara-plugin check` runs the same tool design check.
 
 For the extension host (manifest, config, ctx, the multi-replica prohibitions, dual-replica tests) see `.agents/skills/writing-extensions`. Implementations:
 
-- Kernel builtin tools: `packages/kernel/src/tools/builtins` (`AskUserQuestion`, `ReadToolOutput`, `ToolSearch`; the sandbox tools `sandbox_*`
+- Kernel builtin tools: `packages/kernel/src/tools/builtins` (`AskUserQuestion`, `ReadToolOutput`, `ToolSearch`; the sandbox tools `Bash` / `Read` / `Write` / `Edit` / `Glob` / `Grep` / `Deliver`
   are in `builtins/sandbox/`; the skill tools `Skill` / `SkillWrite`). See "Kernel builtin tools: sandbox and skills" below.
 - Extension tools: the core fake `fake-tools-ui` (tool `write`, model-visible `fake-tools-ui__write`, default allow); the official [`todo`](https://github.com/capybara-hq/plugins/tree/main/plugins/todo) plugin in capybara-hq/plugins (one `write` tool, writes the whole list into the extension's schema, default allow) is the reference for plugin authors and the source of the examples below.
 - Connectors: see `.agents/skills/writing-connectors`.
@@ -23,8 +23,8 @@ The tool name (key) the model sees must match `^[a-zA-Z0-9_-]{1,64}$`:
 | Source | key | Naming rule |
 |---|---|---|
 | builtin | the name itself: `AskUserQuestion`, `ReadToolOutput`, `ToolSearch`, `Bash`, `Skill` | Claude Code's PascalCase names, **no dots** (Ruling M12) |
-| extension | `<plugin>__<tool>`, e.g. `todo__write` | `spec.name` matches `^[a-zA-Z0-9_-]{1,40}$` (`EXTENSION_TOOL_NAME`) |
-| connector | `<connectorSlug>__<tool>`, e.g. `docs__search` | slug `^[a-z][a-z0-9_]{0,23}$`, no consecutive / trailing underscores; the tool name is decided by the remote |
+| extension | `plugin__<plugin>__<tool>`, e.g. `plugin__todo__write` | `spec.name` matches `^[a-zA-Z0-9_-]{1,40}$` (`EXTENSION_TOOL_NAME`); the whole key must fit 64 characters (`plugin-tool-key-length` of `capybara-plugin check` computes it) |
+| connector | `mcp__<connectorSlug>__<tool>`, e.g. `mcp__docs__search` | slug `^[a-z][a-z0-9_]{0,23}$`, no consecutive / trailing underscores; the tool name is decided by the remote |
 
 A key that is too long or contains illegal characters is **neither truncated nor guessed**: saving an agent reports `validation_failed`; a connector tool is disabled at install / refresh with the reason written in `issues`. Name tools with lowercase + underscore verb phrases (`write`, `search`, `delete_doc`), and don't write the extension name into the tool name again (the key already carries the prefix).
 
@@ -147,7 +147,7 @@ async (input, call) => {
 When the number of available tools exceeds `tools.searchThresholdTools` (default 30) or the estimated tokens of their definitions exceed `tools.searchThresholdTokens` (default 8000), and the org setting `toolSearch` is `on` (the default; an admin changes it through `PATCH /api/v1/orgs/:orgId/settings {"toolSearch":"on"|"off"}`), the kernel enables `ToolSearch` for that agent (`ToolRegistry.forAgent` decides live on every step, and the registry appends it; it is not in the agent definition):
 
 - The `tools` sent to the model contain only the builtin tools (`AskUserQuestion`, `ReadToolOutput`, `ToolSearch`, always fully loaded) and the full definitions of **loaded** tools; the remaining tools appear as a "catalog" in the second block of system: one line each, `- <key>: <first line of the description>` (truncated beyond 200 characters), sorted by key. The catalog depends only on the tool set and not on loading state, so the cache prefix is stable.
-- The model calls `ToolSearch {query, limit?}` (`limit` defaults to 5, max 10): it scores **the tools in the catalog** deterministically by keyword (a word in the key weighs twice as much as one in the description, rarer words weigh more, ties are sorted by key), returns the full definitions (name, description, inputSchema) of the matching tools, and loads them into `tools` from the **next step** on.
+- The model calls `ToolSearch {query, max_results?}` (`max_results` defaults to 5, max 10): it scores **the tools in the catalog** deterministically by keyword (a word in the key weighs twice as much as one in the description, rarer words weigh more, ties are sorted by key), returns the full definitions (name, description, inputSchema) of the matching tools, and loads them into `tools` from the **next step** on.
 - The loaded set = the union of all `tool_result.loadedTools` in the conversation log (including those before a compaction summary; ones no longer available this step are ignored), so it is reconstructed from the log alone. A tool just loaded by `ToolSearch` in the same step is rejected if called immediately (`Tool "<key>" is not loaded. Call ToolSearch first…`, since the model did not have its definition when forming that call); the same goes for calling a catalog tool that isn't loaded, and the kernel does not auto-load.
 
 **What this means for tool authors**:
@@ -190,6 +190,15 @@ the same transaction as the business rows.
 - Timeout: `Bash` = `min(timeout ?? 120000, sandbox.limits.maxCommandSeconds * 1000)` milliseconds plus a margin (margin =
   `tools.timeoutMs` + `sandbox.lockWaitSeconds`, covering lock waiting and creation / resume); a `timeout` above the limit is lowered to it and the result says so.
   The other sandbox tools use only the margin (deliver twice). The provider's command time limit arrives first, the model gets `timedOut`, and the sandbox remains usable as usual.
+- Parameters follow Claude Code: `file_path` (`Read`, `Write`, `Edit`, `Deliver`), `old_string` / `new_string` / `replace_all` (`Edit`),
+  `timeout` in milliseconds (`Bash`), and for `Grep` `-i`, `output_mode` (`files_with_matches` by default, `content`, `count`), `-n`, `-A` / `-B` / `-C`,
+  `head_limit` and `offset`.
+- Read before write: `Write` on an existing file and `Edit` fail unless the conversation has `Read` the file (or wrote it itself) and it is unchanged since. The
+  decision comes from the display-only `view.file` `{path, size, sha256}` each `Read` / `Write` / `Edit` result records, so every replica decides the same; `Write` reads up
+  to 10 MB of the old file for the digest and fails when the old content cannot be read for a reason other than the file being gone.
+- Legacy keys: release-candidate builtin keys and the unprefixed connector and extension keys live only in the frozen map `tools/legacy-keys.ts`. In flight, an old key a model or a
+  paused approval still carries is resolved from the run's own tools (and answered with a hint naming the new key); stored definitions are refused with a message
+  naming the new key; migration 0063 rewrote stored grants, pending approvals and questions. `terms-tool-key` keeps old keys out of everything else.
 - Spilling: `Bash`'s `spillChars` is 30000, and large output is read as usual through `ReadToolOutput` / `{"$output": id}`.
 - Result prefix notices (English): on first use `Sandbox started for this conversation (first use)…`, on recreation
   `Sandbox was recreated; previous files are gone.`, and newly copied attachments list their paths. Before every call, attachments in the conversation that are ready are synced to
@@ -201,7 +210,7 @@ the same transaction as the business rows.
 
 **Skill tools**:
 
-- `Skill {name}` is not in the agent definition and is added automatically by the registry: it appears when the conversation log has a skill catalog snapshot `skills_catalog` (resolved from the
+- `Skill {skill, args?}` (`args` renders the skill as a person's `/name args` does) is not in the agent definition and is added automatically by the registry: it appears when the conversation log has a skill catalog snapshot `skills_catalog` (resolved from the
   agent version at run start, written only when it differs from the previous one, Ruling M17). It resolves the name to a skill id, version and `source` (object prefix) from the **latest snapshot**,
   fetches files strictly by `source`, and checks size and sha256. A skill with other files is copied into the sandbox at `/skills/<name>/` (read-only, scripts have no executable bit,
   the result tells you to run them with `sh` / `python3`; files left by older versions are listed as ignorable, Ruling M18); when the agent has no sandbox tools only the body is returned.
@@ -224,7 +233,7 @@ the same transaction as the business rows.
   - On success a catalog snapshot is appended in the same transaction, so the next step of the same run can `Skill`. Cost: when the conversation's first catalog appears mid-run,
     the next step's tool list gains `Skill`, and the prompt cache is invalidated once.
 
-## The `agent` builtin tool (sub-agents, phase C)
+## The `Agent` builtin tool (sub-agents, phase C)
 
 Spec `docs/superpowers/specs/2026-10-26-subagents-design.md` §4–§9; code `tools/builtins/agent.ts`, `runtime/subagents/*`.
 
@@ -234,7 +243,7 @@ Spec `docs/superpowers/specs/2026-10-26-subagents-design.md` §4–§9; code `to
   always loaded under `ToolSearch`, never offered to a child, and not offered at all when the agent's roster is empty.
 - **Description varies with config**: it lists the roster (owner and plugin text made inert: `<` / `>` shown as `‹` / `›`) and the
   organization's `subagents.maxConcurrentPerRun`. So its spec hash changes when the roster or that limit changes: replays read specs
-  by hash (no `DriftReason`), drift review covers connector tools only, and a remembered grant on `agent` (only relevant when an owner
+  by hash (no `DriftReason`), drift review covers connector tools only, and a remembered grant on `Agent` (only relevant when an owner
   set it to `ask`) lapses with the hash, as for any spec change.
 - **The pipeline handles it, not `run`**: no `tool_call_started`; after policy, approval and `tool.preExecute` it dispatches a child
   run and the step suspends with a `subagents` wait; the result (the child's final reply plus the status line `[agentId: … · status ·
@@ -243,7 +252,7 @@ Spec `docs/superpowers/specs/2026-10-26-subagents-design.md` §4–§9; code `to
 - **Audit**: every dispatch is `subagent.dispatched`; the result is audited `tool.called` and fires `tool.postExecute` when it is
   written (also the stop texts of a stopped parent). Its `authorization` is set only when an approval allowed the call: the
   dispatch-time policy or grant decision is not recorded, and the pipeline does not guess.
-- **Children** never get `agent`, `AskUserQuestion`, `Deliver` or `SkillWrite`. A child's policy is the parent agent's current version
+- **Children** never get `Agent`, `AskUserQuestion`, `Deliver` or `SkillWrite`. A child's policy is the parent agent's current version
   with the frozen template overlay (stricter wins; never looser); an org agent child uses that agent's current version, then the
   parent's policies. "Approve for this conversation" on a child is stored on the **parent** conversation, so it covers siblings'
   identical calls, and a session grant on the parent also satisfies a template's `ask` for the same tool (one conversation from the
@@ -251,11 +260,11 @@ Spec `docs/superpowers/specs/2026-10-26-subagents-design.md` §4–§9; code `to
 - **Follow-ups** (`resume`) keep the child's frozen instructions and model, but the type must still be in the dispatching run's roster
   (else the unknown-type refusal), and the frozen tools and `orgSkills` are intersected with the current version (the parent run's;
   for an org agent child, that agent's current version), recorded as `user_message.dispatch.narrowed` and used by the child's run.
-- **A person's forked skill** (`/name` of a `context: fork` skill) dispatches through the same code but has no `agent` call: the
-  `agent` tool's policy, approval and `tool.preExecute` do not apply (by design, phase D spec §6.2: the person dispatches); the
+- **A person's forked skill** (`/name` of a `context: fork` skill) dispatches through the same code but has no `Agent` call: the
+  `Agent` tool's policy, approval and `tool.preExecute` do not apply (by design, phase D spec §6.2: the person dispatches); the
   child's own calls are gated as usual. A hook point for person-initiated dispatches comes later.
 - **Sandbox**: children use the parent conversation's sandbox (`BuiltinCallContext.sandboxConversationId`) and may run commands at
-  the same time; the `Bash` and `agent` descriptions warn that shell commands writing one file are not serialized (kernel file
+  the same time; the `Bash` and `Agent` descriptions warn that shell commands writing one file are not serialized (kernel file
   tools are, per path).
 
 ## Extension hooks around a tool call

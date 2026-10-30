@@ -113,22 +113,30 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
 
   function toolDetail(t, o = {}) {
     const parts = [];
-    if (t.input) {
+    const io = (label, body) =>
+      `<div class="r-tio"><span class="r-tio-l">${label}</span><div class="r-tio-b">${body}</div></div>`;
+    let input = "";
+    if (t.command) input = `<div class="r-tcmd"><span class="r-faint">$</span> ${esc(t.command)}</div>`;
+    else if (t.input) {
+      input = `<div class="r-kv">${t.input.map(([k, v]) => `<span class="r-kv-k">${esc(k)}</span><span class="r-kv-v">${esc(v)}</span>`).join("")}</div>`;
+    }
+    if (input) parts.push(io("IN", input));
+    if (t.output) {
+      const foot = [];
+      if (t.outputBytes) {
+        foot.push(`<span>输出 ${Math.round(t.outputBytes / 1024)} KB，已显示前 4 KB</span>`);
+        foot.push(`<button class="r-linkbtn">${esc(K.viewAll)}</button>`);
+      } else if (t.durationMs !== undefined) {
+        foot.push(`<span>${(t.durationMs / 1000).toFixed(1)} 秒</span>`);
+        foot.push(`<button class="r-linkbtn">${esc(K.copyOutput)}</button>`);
+      }
       parts.push(
-        `<div class="r-kv">${t.input.map(([k, v]) => `<span class="r-kv-k">${esc(k)}</span><span class="r-kv-v">${esc(v)}</span>`).join("")}</div>`,
+        io(
+          "OUT",
+          `<pre class="r-tout">${esc(t.output)}</pre>${foot.length ? `<div class="r-tfoot">${foot.join("")}</div>` : ""}`,
+        ),
       );
     }
-    if (t.command) parts.push(`<div class="r-tcmd"><span class="r-faint">$</span> ${esc(t.command)}</div>`);
-    if (t.output) parts.push(`<pre class="r-tout">${esc(t.output)}</pre>`);
-    const foot = [];
-    if (t.outputBytes) {
-      foot.push(`<span>输出 ${Math.round(t.outputBytes / 1024)} KB，已显示前 4 KB</span>`);
-      foot.push(`<button class="r-linkbtn">${esc(K.viewAll)}</button>`);
-    } else if (t.durationMs !== undefined) {
-      foot.push(`<span>${(t.durationMs / 1000).toFixed(1)} 秒</span>`);
-      if (t.output) foot.push(`<button class="r-linkbtn">${esc(K.copyOutput)}</button>`);
-    }
-    if (foot.length) parts.push(`<div class="r-tfoot">${foot.join("")}</div>`);
     return `<div class="r-tdetail"${o.flush ? " data-flush" : ""}>${parts.join("")}</div>`;
   }
 

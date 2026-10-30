@@ -9,7 +9,7 @@ One sandbox per conversation (D4), shared by its sub-agents. The kernel's sandbo
 attachment sync and `Skill` all use it through `SandboxService`. `sandbox@1` is a **single-choice, brokered** extension point: a deployment installs only one sandbox extension,
 and other extensions cannot `requires` it. For the extension host see `.agents/skills/writing-extensions`; for the tools side see `.agents/skills/writing-tools`.
 
-This skill covers what core owns: the contract as the kernel relies on it, `SandboxService` (leases, fencing, suspension, destruction), the builtin `sandbox_*` tools,
+This skill covers what core owns: the contract as the kernel relies on it, `SandboxService` (leases, fencing, suspension, destruction), the builtin sandbox tools (`Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `Deliver`),
 the socket proxy config and compose sandbox profile, and the kernel tests on the `sandbox-fake` fixture. **Writing a sandbox extension** (its code, README, Docker / E2B
 specifics and tests) is in [writing-sandbox-providers in capybara-hq/plugins](https://github.com/capybara-hq/plugins/tree/main/.agents/skills/writing-sandbox-providers).
 
@@ -118,7 +118,7 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   created lazily: `create` runs only on the first sandbox tool call.
 - **Leases** (phase C, `packages/kernel/src/sandbox/leases.ts`, spec `docs/superpowers/specs/2026-10-26-subagents-design.md` §10): using a sandbox recorded
   `running` takes a **shared** lease (up to `sandbox.maxConcurrentCommands`, default 6, hot; 1 for a provider without `concurrentExec` + `killTagged`):
-  every `sandbox_*` tool, attachment sync, `Skill` copies. Every lifecycle change (create, first use, rebuild after `gone`, `resume`, provider switch,
+  every sandbox tool, attachment sync, `Skill` copies. Every lifecycle change (create, first use, rebuild after `gone`, `resume`, provider switch,
   `suspend`, `destroy`, `killAll` after resume) takes the **exclusive** lease, alone. Keys: `capk:sandbox:<conv>` (the old lock key, kept for rolling
   upgrades: an exclusive token or the literal `shared`), `capk:sandbox-users:<conv>` (zset of shared tokens by expiry), `capk:sandbox-intent:<conv>`
   (an exclusive waiter's intent: new shared leases wait, writer preference), `capk:sandbox-holders:<conv>` (holder records), `capk:sandbox-path:<conv>:<sha256>`.

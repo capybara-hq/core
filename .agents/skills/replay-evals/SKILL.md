@@ -96,9 +96,9 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
 
 ## Sub-agents (phase C, sub-agents spec §15)
 
-- **Parent requests** change only through the `agent` tool definition (by spec hash) and its `tool_result` text; `subagent_*` events
+- **Parent requests** change only through the `Agent` tool definition (by spec hash) and its `tool_result` text; `subagent_*` events
   are not model-visible and request building skips them, so a log without them builds byte-identically.
-- **Parent full-run replay** needs nothing special: `RecordedToolPipeline` matches each `agent` call by `(toolKey, canonical input)` and
+- **Parent full-run replay** needs nothing special: `RecordedToolPipeline` matches each `Agent` call by `(toolKey, canonical input)` and
   returns the recorded result (the child's reply and status line); it always returns `done`, so the parent never suspends, **no child is
   started**, no `subagent_*` event or `subagent_dispatches` row is written and child tokens are not spent. Parallel calls replay in the same
   step; a `resume` matches because the recorded status line gave the model the same `agentId`. Pinned by
@@ -133,7 +133,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   mid-run can give two cases of one run different answers.
 - **Child full-run replay** runs the logged definition with the candidate's model and params only, and the logged `maxSteps`; the
   run result's drift gets `subagent_changed` by the same rule (`subagentCaseChanged`).
-- **Trajectory**: an `agent` call carries `subagent: { subagentId, childRunId, agentType, resumed, status }` (`running` until its
+- **Trajectory**: an `Agent` call carries `subagent: { subagentId, childRunId, agentType, resumed, status }` (`running` until its
   `subagent_finished`); a child's detail carries `conversation.parent` (the first dispatching call). A child's access is its parent's
   (the parent conversation's agent owner or an org admin; the dispatched org agent's owner gets 404, and a non-admin viewer of an
   org agent child must also still see that agent, as on the conversation read path), so a link never exposes a child the
@@ -166,7 +166,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   original run was stopped before it) ends the replayed run at that point with no model call (`completed`, not `aborted`: an aborted
   replay outcome reads as a lost claim to the eval worker). Every terminal path writes a report, so a recording without one
   only arises in a crash window before the sweep; an original stopped mid-fork has a stop-text report, so its replay goes on
-  to a model call the original never made (as a recorded stopped `agent` call replays).
+  to a model call the original never made (as a recorded stopped `Agent` call replays).
 - **The fork child** is an ordinary phase C child case. `takeSnapshot` copies `subagent_started.template.invokedSkill` into
   `CaseSnapshot.subagent.invokedSkill` (`{ id, version, name }`), shown on the case detail (`EvalCaseDetail.invokedSkill`); its
   `parent.callId` is `skill-<seq>`. Never rendered.

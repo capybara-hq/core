@@ -515,3 +515,31 @@ Saving a definition writes new keys only; validation rejects an old key on write
 ## Open questions for the maintainer
 
 None open. The three questions of the first draft were answered on 2026-10-29 (decisions 7–9).
+
+## As built
+
+Built as one PR in 12 tasks (`git log db29a244..HEAD`).
+
+- Builtin keys and parameters follow Claude Code (`Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`,
+  `Deliver`, `Skill`, `SkillWrite`, `AskUserQuestion`, `ReadToolOutput`, `ToolSearch`, `Agent`;
+  `file_path`, `old_string` / `new_string` / `replace_all`, `timeout` in ms, `skill` + `args`,
+  `max_results`, the `Grep` modes). Connector keys are `mcp__<slug>__<tool>`, extension keys
+  `plugin__<plugin>__<tool>`; the SDK exports `parseToolKey` and friends.
+- `Write` / `Edit` read-before-write is decided from the display-only `view.file`
+  `{path, size, sha256}` of earlier results (no process memory); `Write` reads up to 10 MB of the old
+  file and fails when it cannot be read for a reason other than the file being gone.
+- Legacy handling: the frozen map `tools/legacy-keys.ts`; in-flight resolution of old keys from the
+  run's own tools with a hint; migration 0063 rewrites stored grants, approvals and questions (an
+  unmappable key stays and is counted in one `tools.legacy_key_unmapped` WARN); saving a definition
+  with an old key is refused naming the new key. Old recordings replay with zero drift (old texts
+  rebuilt; full-run replay reads the recorded side in the new names and reports `legacyKeyMatch`).
+- Checks: `terms-tool-key` (old keys only in the exempt places) and `plugin-tool-key-length`
+  (`capybara-plugin check`, run by core on model-fake and the fakes).
+- Deviations from the first plan: the Claude map is shorter (unchanged names are listed once);
+  `MultiEdit` maps to `Edit` and `TodoWrite` to `plugin__todo__write`; approval cards carry
+  `toolName` as `<display name> [<tool>]` and no longer set `appName` (connect cards still do);
+  rows carry no verb (the group summary still does).
+- Not done in core: the follow-up in `capybara-hq/plugins` (tests and model-fake scripts using old
+  keys, author skills, card rendering, key-matching hooks), drafted in the SDD folder for the
+  maintainer to open; visual baselines (regenerate with `visual-update` after push); the live
+  acceptance of §14 (`docs/superpowers/plans/tool-naming-live-acceptance-checklist.md`).
