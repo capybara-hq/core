@@ -116,7 +116,7 @@ test("a sub-agent's approval waits in the parent and is decided there; a legacy 
     { kind: "connector", connectorId, tools: "all" },
   ]);
   await startChat(page, "Lead with a tool");
-  await send(page, dispatch("Delete via child", 'tool:capchild__delete_item:{"id":"c9"}'));
+  await send(page, dispatch("Delete via child", 'tool:mcp__capchild__delete_item:{"id":"c9"}'));
   // the child's approval shows in the parent, named by the sub-agent, and decides the child's call
   const wait = page.locator('[data-entry="subagent-wait"]');
   await expect(wait).toContainText(zh.subagents.askedBy.replace("{name}", "Delete via child"));

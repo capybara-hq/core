@@ -545,7 +545,10 @@ describe("sub-agents on the conversation page", () => {
   });
 
   it("a child that needs a connection: a line in the parent that opens the child", async () => {
-    api({}, { parent: [...parentEvents(), waiting(8, { kind: "connect", toolKey: "gh__issue" })] });
+    api(
+      {},
+      { parent: [...parentEvents(), waiting(8, { kind: "connect", toolKey: "mcp__gh__issue" })] },
+    );
     renderChat();
     const line = await vi.waitFor(() => {
       const c = document.querySelector('[data-role="subagent-connect"]');

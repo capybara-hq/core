@@ -214,11 +214,11 @@ describe("改名后的路由与旧 agent 版本", () => {
     ).toEqual([{ kind: "connector", connectorId: id, tools: "all" }]);
 
     const convId = await createConv(req, orgId, agentId);
-    await postMessage(req, orgId, convId, 'tool:kb__search:{"q":"x"}');
+    await postMessage(req, orgId, convId, 'tool:mcp__kb__search:{"q":"x"}');
     await waitForTerminal(db, convId, 1, 20_000);
     const results = (await eventsOf(db, convId)).filter((e) => e.type === "tool_result");
     expect(results.map((e) => e.payload)).toMatchObject([
-      { toolKey: "kb__search", content: "hits for x", isError: false },
+      { toolKey: "mcp__kb__search", content: "hits for x", isError: false },
     ]);
   }, 60_000);
 
@@ -245,7 +245,7 @@ describe("改名后的路由与旧 agent 版本", () => {
       .get(ToolRegistry)
       .forAgent(orgId, base?.definition ?? { tools: [] });
     const keys = resolved.tools.map((t) => t.key);
-    expect(keys).toEqual(expect.arrayContaining(["fx_docs__search", "fx_priv__search"]));
+    expect(keys).toEqual(expect.arrayContaining(["mcp__fx_docs__search", "mcp__fx_priv__search"]));
     expect(JSON.stringify(resolved.unavailable)).not.toContain("undefined");
     expect(resolved.unavailable).toEqual([]);
   }, 60_000);

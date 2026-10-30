@@ -82,7 +82,7 @@ function run(over: Partial<TrajectoryRun> = {}, cost: number | null = 0.0032): T
               reminderSeqs: [],
               params: { temperature: 0.2 },
               tools: [
-                { key: "fixture__delete_item", specHash: "s1" },
+                { key: "mcp__fixture__delete_item", specHash: "s1" },
                 { key: "ask_user", specHash: "s2" },
               ],
             },
@@ -92,7 +92,7 @@ function run(over: Partial<TrajectoryRun> = {}, cost: number | null = 0.0032): T
           {
             callId: "call-1",
             step: 0,
-            toolKey: "fixture__delete_item",
+            toolKey: "mcp__fixture__delete_item",
             input: { id: "x1" },
             startedAt: at(4000),
             durationMs: 250,
@@ -229,7 +229,7 @@ describe("trajectorySpans", () => {
       startMs: 4000,
       durationMs: 250,
       status: "ok",
-      label: "fixture__delete_item",
+      label: "mcp__fixture__delete_item",
     });
     // 审批等待 = decidedAt − requestedAt
     expect(by.get("approval:r1:ap1")).toMatchObject({
@@ -276,7 +276,7 @@ describe("trajectorySpans", () => {
             {
               callId: "bad",
               step: 0,
-              toolKey: "fixture__delete_item",
+              toolKey: "mcp__fixture__delete_item",
               input: {},
               startedAt: at(3500),
               durationMs: 10,
@@ -373,10 +373,10 @@ describe("轨迹详情（TracePage）", () => {
       expect(within(d).getByText(usd(0.0032, locale))).toBeTruthy();
       expect(within(d).getByText("1.5s")).toBeTruthy();
       expect(within(d).getByText("temperature=0.2")).toBeTruthy();
-      expect(within(d).getByText("fixture__delete_item, ask_user")).toBeTruthy();
+      expect(within(d).getByText("mcp__fixture__delete_item, ask_user")).toBeTruthy();
 
       // 工具调用：参数、结果、耗时、审批链
-      await user.click(within(list).getByText("fixture__delete_item"));
+      await user.click(within(list).getByText("mcp__fixture__delete_item"));
       const tool = detail();
       expect(within(tool).getByText(/"id": "x1"/)).toBeTruthy();
       expect(within(tool).getByText("deleted x1")).toBeTruthy();
@@ -429,7 +429,7 @@ describe("轨迹详情（TracePage）", () => {
       const list = await screen.findByRole("tree", { name: m.detail.waterfall });
       const detail = () => screen.getByRole("region", { name: m.detail.region });
       const user = userEvent.setup();
-      await user.click(within(list).getByText("fixture__delete_item"));
+      await user.click(within(list).getByText("mcp__fixture__delete_item"));
       expect(within(detail()).getByText(m.detail.hook.title)).toBeTruthy();
       expect(within(detail()).getByText("guard")).toBeTruthy();
       expect(within(detail()).getByText(m.detail.hook.causes.deny)).toBeTruthy();

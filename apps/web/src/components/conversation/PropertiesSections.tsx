@@ -11,17 +11,19 @@ import { useTranslations } from "next-intl";
 import { useEffect, useMemo, useRef } from "react";
 import { getSandboxStatus } from "../../lib/artifacts";
 import { listConnectors } from "../../lib/connectors";
-import type { ConversationEvent, ModelRef, SubagentView } from "../../lib/conversations";
+import type { ConversationEvent, ModelRef, SubagentView, ToolInfo } from "../../lib/conversations";
 import type { FileOutput } from "../../lib/files";
+import { useToolInfo } from "../../lib/tool-info";
+import { parseToolKey } from "../../lib/tool-key";
 import type { UiContributionItem } from "../../lib/ui";
 import { useLoad } from "../../lib/use-load";
 import { BackgroundSection } from "./BackgroundSection";
 import { type BlockContext, ExtensionSection } from "./ExtensionBlocks";
 
-/** A connector tool's key is `<connector slug>__<tool>`. */
+/** A connector tool's key is `mcp__<connector slug>__<tool>`. */
 const slugOf = (toolKey: string): string | null => {
-  const i = toolKey.indexOf("__");
-  return i > 0 ? toolKey.slice(0, i) : null;
+  const parsed = parseToolKey(toolKey);
+  return parsed?.kind === "connector" ? parsed.slug : null;
 };
 
 /**
@@ -53,8 +55,18 @@ export function connectorsUsed(
   return out;
 }
 
-const sandboxUses = (events: readonly ConversationEvent[]): number =>
-  events.filter((e) => e.type === "tool_result" && e.payload.toolKey.startsWith("sandbox_")).length;
+/** The kinds of the builtin tools that run in the sandbox (kernel `BUILTIN_TOOL_KINDS`). */
+const SANDBOX_KINDS: ReadonlySet<string> = new Set(["command", "read", "edit", "search"]);
+
+const sandboxUses = (
+  events: readonly ConversationEvent[],
+  info: ReadonlyMap<string, ToolInfo>,
+): number =>
+  events.filter((e) => {
+    if (e.type !== "tool_result") return false;
+    const i = info.get(e.payload.toolKey);
+    return i !== undefined && i.source.kind === "builtin" && SANDBOX_KINDS.has(i.kind);
+  }).length;
 
 /**
  * The built-in Context section (the old Context tab): the context ratio of the latest step's usage,
@@ -88,7 +100,14 @@ export function ContextSection({
     [connectors.state],
   );
   const sandbox = useLoad(() => getSandboxStatus(orgId, conversationId), [orgId, conversationId]);
-  const uses = useMemo(() => sandboxUses(events), [events]);
+  const resultKeys = useMemo(
+    () => [
+      ...new Set(events.flatMap((e) => (e.type === "tool_result" ? [e.payload.toolKey] : []))),
+    ],
+    [events],
+  );
+  const toolInfo = useToolInfo(orgId, conversationId, resultKeys);
+  const uses = useMemo(() => sandboxUses(events, toolInfo), [events, toolInfo]);
   const seen = useRef(uses);
   const { reload } = sandbox;
   useEffect(() => {

@@ -185,17 +185,17 @@ describe("ToolRegistry", () => {
     const before = await registry.forAgent(orgId, def);
     expect(before.tools.map((t) => t.key)).toEqual([
       "ask_user",
-      "docs__drop",
-      "docs__read",
-      "docs__write",
+      "mcp__docs__drop",
+      "mcp__docs__read",
+      "mcp__docs__write",
     ]);
     expect(before.unavailable).toEqual([
       {
-        ref: "mem-connector__echo",
+        ref: "plugin__mem-connector__echo",
         reason: "Plugin mem-connector is not enabled in this organization",
       },
       {
-        ref: "mem-connector__wipe",
+        ref: "plugin__mem-connector__wipe",
         reason: "Plugin mem-connector is not enabled in this organization",
       },
     ]);
@@ -208,19 +208,19 @@ describe("ToolRegistry", () => {
       source: { kind: "builtin", name: "ask_user" },
       defaultPolicy: "allow",
     });
-    expect(byKey["mem-connector__echo"]).toMatchObject({
+    expect(byKey["plugin__mem-connector__echo"]).toMatchObject({
       source: { kind: "plugin", plugin: "mem-connector", name: "echo" },
       defaultPolicy: "allow", // readOnlyHint
     });
     // 插件显式声明 defaultPolicy 优先于注解
-    expect(byKey["mem-connector__wipe"]?.defaultPolicy).toBe("allow");
-    expect(byKey.docs__read).toMatchObject({
+    expect(byKey["plugin__mem-connector__wipe"]?.defaultPolicy).toBe("allow");
+    expect(byKey.mcp__docs__read).toMatchObject({
       source: { kind: "connector", connectorId, name: "read" },
       defaultPolicy: "allow",
     });
-    expect(byKey.docs__write?.defaultPolicy).toBe("ask");
-    expect(byKey.docs__read?.spec.description).toBe("Read.");
-    expect(byKey.docs__read?.specHash).toBe(specHash(byKey.docs__read?.spec));
+    expect(byKey.mcp__docs__write?.defaultPolicy).toBe("ask");
+    expect(byKey.mcp__docs__read?.spec.description).toBe("Read.");
+    expect(byKey.mcp__docs__read?.specHash).toBe(specHash(byKey.mcp__docs__read?.spec));
     expect(byKey.ask_user?.specHash).toBe(specHash(askUser.spec));
   });
 
@@ -250,12 +250,12 @@ describe("ToolRegistry", () => {
     const all = await registry.forAgent(orgId, {
       tools: [{ kind: "connector", connectorId, tools: "all" }],
     });
-    expect(all.tools.map((t) => t.key)).toEqual(["docs__read"]);
+    expect(all.tools.map((t) => t.key)).toEqual(["mcp__docs__read"]);
     expect(all.tools[0]?.defaultPolicy).toBe("deny");
     expect(all.unavailable).toEqual([]);
     expect(all.hidden).toEqual([
-      { ref: "docs__drop", reason: "Tool is pending review" },
-      { ref: "docs__write", reason: "Tool is disabled" },
+      { ref: "mcp__docs__drop", reason: "Tool is pending review" },
+      { ref: "mcp__docs__write", reason: "Tool is disabled" },
     ]);
 
     // 点名：逐个报原因
@@ -267,13 +267,13 @@ describe("ToolRegistry", () => {
         { kind: "connector", connectorId: "missing-app", tools: "all" },
       ],
     });
-    expect(named.tools.map((t) => t.key)).toEqual(["docs__read"]);
+    expect(named.tools.map((t) => t.key)).toEqual(["mcp__docs__read"]);
     expect(named.unavailable).toEqual([
-      { ref: "docs__write", reason: "Tool is disabled" },
-      { ref: "docs__drop", reason: "Tool is pending review" },
-      { ref: "docs__gone", reason: "Tool no longer exists in app docs" },
+      { ref: "mcp__docs__write", reason: "Tool is disabled" },
+      { ref: "mcp__docs__drop", reason: "Tool is pending review" },
+      { ref: "mcp__docs__gone", reason: "Tool no longer exists in app docs" },
       { ref: "nope", reason: "Built-in tool does not exist" },
-      { ref: "not-loaded__x", reason: "Plugin tool does not exist" },
+      { ref: "plugin__not-loaded__x", reason: "Plugin tool does not exist" },
       { ref: "app:missing-app", reason: "App does not exist" },
     ]);
 
@@ -287,7 +287,7 @@ describe("ToolRegistry", () => {
       tools: [{ kind: "connector", connectorId, tools: "all" }],
     });
     expect(disabled.tools).toEqual([]);
-    expect(disabled.unavailable).toEqual([{ ref: "docs__*", reason: "App docs is disabled" }]);
+    expect(disabled.unavailable).toEqual([{ ref: "mcp__docs__*", reason: "App docs is disabled" }]);
 
     // 连接器删除
     const del = await req({
@@ -298,7 +298,7 @@ describe("ToolRegistry", () => {
     const deleted = await registry.forAgent(orgId, {
       tools: [{ kind: "connector", connectorId, tools: ["read"] }],
     });
-    expect(deleted.unavailable).toEqual([{ ref: "docs__*", reason: "App docs was deleted" }]);
+    expect(deleted.unavailable).toEqual([{ ref: "mcp__docs__*", reason: "App docs was deleted" }]);
 
     // 别的组织的连接器 id → 视为不存在
     const other = await req({ method: "POST", url: "/api/v1/orgs", payload: { name: "Other" } });
@@ -322,9 +322,9 @@ describe("ToolRegistry", () => {
     });
     expect(r.tools.map((t) => t.key)).toEqual([
       "ask_user",
-      "docs__read",
-      "docs__drop",
-      "docs__write",
+      "mcp__docs__read",
+      "mcp__docs__drop",
+      "mcp__docs__write",
     ]);
     expect(r.unavailable).toEqual([]);
   });
@@ -504,9 +504,9 @@ describe("组织设置与 tool_search 启用条件", () => {
     expect(below.toolSearch).toBe(false);
     expect(below.tools.map((t) => t.key)).toEqual([
       "ask_user",
-      "docs__drop",
-      "docs__read",
-      "docs__write",
+      "mcp__docs__drop",
+      "mcp__docs__read",
+      "mcp__docs__write",
     ]);
     expect(below.unavailable).toEqual([]);
 
@@ -515,9 +515,9 @@ describe("组织设置与 tool_search 启用条件", () => {
     expect(byCount.toolSearch).toBe(true);
     expect(byCount.tools.map((t) => t.key)).toEqual([
       "ask_user",
-      "docs__drop",
-      "docs__read",
-      "docs__write",
+      "mcp__docs__drop",
+      "mcp__docs__read",
+      "mcp__docs__write",
       "tool_search",
     ]);
     expect(byCount.tools.at(-1)).toMatchObject({

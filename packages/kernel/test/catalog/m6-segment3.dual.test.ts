@@ -702,14 +702,14 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     });
     agentId = (ag.agent as { id: string }).id;
     const conv = await newConv("boss", 1, agentId);
-    const r1 = await call("boss", 0, conv, "docs__search", { q: "deals" }, 1);
+    const r1 = await call("boss", 0, conv, "mcp__docs__search", { q: "deals" }, 1);
     expect(r1.isError, String(r1.content)).toBe(false);
     expect(String(r1.content)).toContain("hits for deals");
     const r2 = await call(
       "boss",
       1,
       conv,
-      "fake-tools-ui__write",
+      "plugin__fake-tools-ui__write",
       { items: [{ text: "Call", status: "pending" }] },
       2,
     );
@@ -756,7 +756,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     expect((await ok("boss", 1, "GET", `${base}/plugin-installs`)).installs).toEqual([]);
     // agent 仍能运行：连接器工具照常可用
     const conv = await newConv("boss", 1, agentId);
-    const r = await call("boss", 0, conv, "docs__search", { q: "after" }, 1);
+    const r = await call("boss", 0, conv, "mcp__docs__search", { q: "after" }, 1);
     expect(r.isError, String(r.content)).toBe(false);
     expect(String(r.content)).toContain("hits for after");
     // agent 定义里仍留着对 fake-tools-ui 的引用（插件已在本组织停用）：运行照常结束，调它只得到工具错误
@@ -769,7 +769,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       "boss",
       1,
       conv,
-      "fake-tools-ui__write",
+      "plugin__fake-tools-ui__write",
       { items: [{ text: "Call", status: "pending" }] },
       2,
     );
@@ -995,7 +995,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       .execute();
     for (const i of [0, 1] as const) {
       const conv = await newConv("boss", i, legacyId);
-      const r = await call("boss", i, conv, "docs__search", { q: `replica ${i}` }, 1);
+      const r = await call("boss", i, conv, "mcp__docs__search", { q: `replica ${i}` }, 1);
       expect(r.isError, String(r.content)).toBe(false);
       expect(String(r.content)).toContain(`hits for replica ${i}`);
     }

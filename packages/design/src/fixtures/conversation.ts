@@ -443,7 +443,7 @@ export const HITL_FIXTURE: {
 } = {
   approval: {
     tool: "Acme 工单: 发送消息",
-    toolKey: "acme_tickets__send_message",
+    toolKey: "mcp__acme_tickets__send_message",
     args: [
       ["channel", "#示例-支持"],
       ["text", "15 条流程已逐条核对完，可以交给你试运行……"],
@@ -473,13 +473,13 @@ export const HITL_FIXTURE: {
     who: "grant",
     approved: {
       tool: "Acme 工单: 发送消息",
-      toolKey: "acme_tickets__send_message",
+      toolKey: "mcp__acme_tickets__send_message",
       at: "10:32",
       scope: "仅这一次",
     },
     denied: {
       tool: "Acme 表格: 写入单元格",
-      toolKey: "acme_sheets__write_cells",
+      toolKey: "mcp__acme_sheets__write_cells",
       at: "10:35",
       reason: "先别写，等财务确认",
     },

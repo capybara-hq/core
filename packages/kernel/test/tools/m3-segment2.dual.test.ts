@@ -343,9 +343,9 @@ describe("M3 第二段双副本验收", () => {
       t.defaultPolicy,
     ]);
     expect(previewed).toEqual([
-      ["pets__listPets", "allow"],
-      ["pets__createPet", "ask"],
-      ["pets__getPet", "allow"],
+      ["mcp__pets__listPets", "allow"],
+      ["mcp__pets__createPet", "ask"],
+      ["mcp__pets__getPet", "allow"],
     ]);
 
     const app = await at(0, "POST", `${base}/connectors`, {
@@ -370,9 +370,9 @@ describe("M3 第二段双副本验收", () => {
     const conv = await Conv.create(0, agentId);
 
     // 只读工具：直接执行，注入 API key
-    const list = await conv.run(1, "pets__listPets", { limit: 5 });
+    const list = await conv.run(1, "mcp__pets__listPets", { limit: 5 });
     expect(list.result).toMatchObject({
-      toolKey: "pets__listPets",
+      toolKey: "mcp__pets__listPets",
       isError: false,
       content: "pets: 0",
     });
@@ -381,7 +381,7 @@ describe("M3 第二段双副本验收", () => {
     expect(listed.at(-1)?.headers["x-api-key"]).toBe(API_KEY);
 
     // 写工具：审批 → 运行 waiting → 在另一个副本批准 → 执行
-    await conv.send(0, "pets__createPet", { name: "Rex", tag: "dog" });
+    await conv.send(0, "mcp__pets__createPet", { name: "Rex", tag: "dog" });
     const asked = (await waitForEvent(
       db,
       conv.id,
@@ -409,7 +409,7 @@ describe("M3 第二段双副本验收", () => {
     const created = await conv.finish();
     expect(created.evs[0]?.runId).toBe(asked.runId);
     expect(created.result).toMatchObject({
-      toolKey: "pets__createPet",
+      toolKey: "mcp__pets__createPet",
       isError: false,
       content: "created Rex",
     });
@@ -445,9 +445,9 @@ describe("M3 第二段双副本验收", () => {
     const agentId = await createAgent(1, connectorId);
     const a = await Conv.create(0, agentId);
     const b = await Conv.create(1, agentId);
-    const first = await a.run(0, "me__whoami", {});
+    const first = await a.run(0, "mcp__me__whoami", {});
     expect(first.result).toMatchObject({
-      toolKey: "me__whoami",
+      toolKey: "mcp__me__whoami",
       isError: false,
       content: "you are owner",
     });
@@ -459,11 +459,11 @@ describe("M3 第二段双副本验收", () => {
     const refreshes = () => as.tokenRequests.filter((r) => r.grantType === "refresh_token");
     const before = refreshes().length;
     const reqsBefore = oauthMcp.requests.length;
-    await Promise.all([a.send(0, "me__whoami", {}), b.send(1, "me__whoami", {})]);
+    await Promise.all([a.send(0, "mcp__me__whoami", {}), b.send(1, "mcp__me__whoami", {})]);
     const [ra, rb] = await Promise.all([a.finish(), b.finish()]);
     for (const r of [ra, rb]) {
       expect(r.result).toMatchObject({
-        toolKey: "me__whoami",
+        toolKey: "mcp__me__whoami",
         isError: false,
         content: "you are owner",
       });
@@ -497,7 +497,7 @@ describe("M3 第二段双副本验收", () => {
     const connectorId = (app.json.connector as { id: string }).id;
     const agentId = await createAgent(0, connectorId, ["search", "stats"]);
     const conv = await Conv.create(1, agentId);
-    const okSearch = await conv.run(0, "docs__search", { q: "cats" });
+    const okSearch = await conv.run(0, "mcp__docs__search", { q: "cats" });
     expect(okSearch.result).toMatchObject({ isError: false, content: "found cats" });
 
     // 服务端改了 search 的描述（rug-pull）→ 定时扫描任务（任一副本的 worker 执行）→ 待复核
@@ -521,14 +521,14 @@ describe("M3 第二段双副本验收", () => {
 
     // 待复核期间调用：明确的不可用错误，不调用服务
     const callsBefore = docsMcp.calls.length;
-    const pending = await conv.run(1, "docs__search", { q: "dogs" });
+    const pending = await conv.run(1, "mcp__docs__search", { q: "dogs" });
     expect(pending.result).toMatchObject({
-      toolKey: "docs__search",
+      toolKey: "mcp__docs__search",
       isError: true,
-      content: 'Tool "docs__search" is unavailable: Tool is pending review.',
+      content: 'Tool "mcp__docs__search" is unavailable: Tool is pending review.',
     });
     expect(ofType(pending.evs, "reminder").map((e) => e.payload.text)).toEqual([
-      "The following tools are unavailable in this run: docs__search (Tool is pending review)",
+      "The following tools are unavailable in this run: mcp__docs__search (Tool is pending review)",
     ]);
     expect(docsMcp.calls.length).toBe(callsBefore);
 
@@ -537,7 +537,7 @@ describe("M3 第二段双副本验收", () => {
       action: "approve",
     });
     expect(rv.status, JSON.stringify(rv.json)).toBe(200);
-    const after = await conv.run(0, "docs__search", { q: "dogs" });
+    const after = await conv.run(0, "mcp__docs__search", { q: "dogs" });
     expect(after.result).toMatchObject({ isError: false, content: "found dogs" });
 
     // ---- 路由变化（A21）：fetch 改由 fetch_v2 提供，名字与描述都没变 ----
@@ -548,7 +548,7 @@ describe("M3 第二段双副本验收", () => {
       return () => docsMcp.calls.slice(mark).map((c) => c.name);
     };
     let seen = route();
-    const first = await fetching.run(1, "docs__fetch", {});
+    const first = await fetching.run(1, "mcp__docs__fetch", {});
     expect(first.result).toMatchObject({ isError: false, content: "fetched by fetch_v1" });
     expect(seen()).toEqual(["fetch_v1"]);
     (docsTools.find((t) => t.name === "fetch") as FakeMcpTool)._meta = {
@@ -556,7 +556,7 @@ describe("M3 第二段双副本验收", () => {
     };
     // 刷新前：按已复核的旧路由调用
     seen = route();
-    const old = await fetching.run(0, "docs__fetch", {});
+    const old = await fetching.run(0, "mcp__docs__fetch", {});
     expect(old.result).toMatchObject({ isError: false, content: "fetched by fetch_v1" });
     expect(seen()).toEqual(["fetch_v1"]);
 
@@ -566,10 +566,10 @@ describe("M3 第二段双副本验收", () => {
     expect(await toolStatus(connectorId, "fetch")).toBe("pending_review");
 
     seen = route();
-    const blocked = await fetching.run(1, "docs__fetch", {});
+    const blocked = await fetching.run(1, "mcp__docs__fetch", {});
     expect(blocked.result).toMatchObject({
       isError: true,
-      content: 'Tool "docs__fetch" is unavailable: Tool is pending review.',
+      content: 'Tool "mcp__docs__fetch" is unavailable: Tool is pending review.',
     });
     expect(seen()).toEqual([]);
 
@@ -578,7 +578,7 @@ describe("M3 第二段双副本验收", () => {
     });
     expect(reviewed.status, JSON.stringify(reviewed.json)).toBe(200);
     seen = route();
-    const now = await fetching.run(0, "docs__fetch", {});
+    const now = await fetching.run(0, "mcp__docs__fetch", {});
     expect(now.result).toMatchObject({ isError: false, content: "fetched by fetch_v2" });
     expect(seen()).toEqual(["fetch_v2"]);
   }, 120_000);
@@ -598,15 +598,15 @@ describe("M3 第二段双副本验收", () => {
     const conv = await Conv.create(0, agentId);
 
     // 直接调用目录里的工具：未加载
-    const nl = await conv.run(1, "big__op_delta", {});
+    const nl = await conv.run(1, "mcp__big__op_delta", {});
     expect(nl.result).toMatchObject({
-      toolKey: "big__op_delta",
+      toolKey: "mcp__big__op_delta",
       isError: true,
-      content: notLoadedText("big__op_delta"),
+      content: notLoadedText("mcp__big__op_delta"),
     });
     expect(bigMcp.calls).toEqual([]);
     const call1 = ofType(nl.evs, "model_call")[0]?.payload.request;
-    expect(call1?.catalog?.map((c) => c.key)).toEqual(WORDS.map((w) => `big__op_${w}`));
+    expect(call1?.catalog?.map((c) => c.key)).toEqual(WORDS.map((w) => `mcp__big__op_${w}`));
     const sent1 = call1?.tools?.map((t) => t.key) ?? [];
     expect(sent1).toContain("tool_search");
     expect(sent1.filter((k) => k.startsWith("big__"))).toEqual([]);
@@ -614,18 +614,18 @@ describe("M3 第二段双副本验收", () => {
     // tool_search 加载
     const ts = await conv.run(0, "tool_search", { query: "delta operation" });
     expect(ts.result).toMatchObject({ toolKey: "tool_search", isError: false });
-    expect(ts.result.loadedTools?.[0]).toBe("big__op_delta");
+    expect(ts.result.loadedTools?.[0]).toBe("mcp__big__op_delta");
 
     // 下一轮：请求里带了完整定义，调用成功
-    const okCall = await conv.run(1, "big__op_delta", {});
+    const okCall = await conv.run(1, "mcp__big__op_delta", {});
     expect(okCall.result).toMatchObject({
-      toolKey: "big__op_delta",
+      toolKey: "mcp__big__op_delta",
       isError: false,
       content: "delta done",
     });
     expect(bigMcp.calls.map((c) => c.name)).toEqual(["op_delta"]);
     const call3 = ofType(okCall.evs, "model_call")[0]?.payload.request;
-    expect(call3?.tools?.map((t) => t.key)).toContain("big__op_delta");
+    expect(call3?.tools?.map((t) => t.key)).toContain("mcp__big__op_delta");
     expect(call3?.catalog).toEqual(call1?.catalog);
   }, 120_000);
 });

@@ -49,7 +49,7 @@ const kernels: TestKernel[] = [];
 
 const config = () =>
   runConfig({ pg: pgc.url, redis: rd.url }, { extensions: [MODEL_FAKE, MEM_CONNECTOR] });
-const ECHO = 'tool:mem-connector__echo:{"text":"hi"}';
+const ECHO = 'tool:plugin__mem-connector__echo:{"text":"hi"}';
 const ofType = <T extends ConversationEvent["type"]>(evs: ConversationEvent[], type: T) =>
   evs.filter((e): e is Extract<ConversationEvent, { type: T }> => e.type === type);
 
@@ -115,7 +115,7 @@ async function setup(req: Req): Promise<void> {
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
         tools: [{ kind: "plugin", plugin: "mem-connector", name: "echo" }],
-        toolPolicies: { "mem-connector__echo": "ask" },
+        toolPolicies: { "plugin__mem-connector__echo": "ask" },
       },
       visibility: "org",
     },

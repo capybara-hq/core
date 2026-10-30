@@ -837,7 +837,7 @@ describe("tool rows read the tool info API", () => {
                 {
                   type: "tool_call",
                   id: "c1",
-                  name: "slack__search",
+                  name: "plugin__slack__search",
                   input: { query: "#feedback" },
                 },
               ],
@@ -849,7 +849,7 @@ describe("tool rows read the tool info API", () => {
         json(200, {
           tools: [
             {
-              key: "slack__search",
+              key: "plugin__slack__search",
               title: "Search messages",
               kind: "connector",
               keyArgs: ["query"],
@@ -860,6 +860,6 @@ describe("tool rows read the tool info API", () => {
     });
     renderChat("en");
     expect(await screen.findByText(/Slack: Search messages/)).toBeTruthy();
-    expect(calls.some((c) => c.url.endsWith("/tools?keys=slack__search"))).toBe(true);
+    expect(calls.some((c) => c.url.endsWith("/tools?keys=plugin__slack__search"))).toBe(true);
   });
 });

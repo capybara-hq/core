@@ -217,18 +217,18 @@ describe("GET /conversations/:id/tools", () => {
     });
     expect(inst.statusCode, inst.body).toBe(201);
     const connectorId = (inst.json() as { connector: { id: string } }).connector.id;
-    const res = await tools(req, orgId, conversationId, ["chat__search", "chat__post"]);
+    const res = await tools(req, orgId, conversationId, ["mcp__chat__search", "mcp__chat__post"]);
     expect(res.statusCode, res.body).toBe(200);
     expect((res.json() as { tools: ToolInfo[] }).tools).toEqual([
       {
-        key: "chat__search",
+        key: "mcp__chat__search",
         title: "Search messages",
         kind: "connector",
         keyArgs: ["query", "channel"],
         source: { kind: "connector", id: connectorId, name: "Acme Chat" },
       },
       {
-        key: "chat__post",
+        key: "mcp__chat__post",
         title: null,
         kind: "connector",
         keyArgs: [],
@@ -265,17 +265,17 @@ describe("GET /conversations/:id/tools", () => {
       .values({ spec_hash: row.spec_hash, spec: stale })
       .onConflict((oc) => oc.column("spec_hash").doUpdateSet({ spec: stale }))
       .execute();
-    const res = await tools(req, orgId, conversationId, ["chat__search"]);
+    const res = await tools(req, orgId, conversationId, ["mcp__chat__search"]);
     expect(res.statusCode, res.body).toBe(200);
-    expect(byKey(res).chat__search?.title).toBe("Search messages");
+    expect(byKey(res).mcp__chat__search?.title).toBe("Search messages");
   });
 
   it("an extension tool returns its registration's title and key arguments", async () => {
     const { req, orgId, conversationId } = await setup();
-    const res = await tools(req, orgId, conversationId, ["mem-connector__echo"]);
+    const res = await tools(req, orgId, conversationId, ["plugin__mem-connector__echo"]);
     expect(res.statusCode, res.body).toBe(200);
-    expect(byKey(res)["mem-connector__echo"]).toEqual({
-      key: "mem-connector__echo",
+    expect(byKey(res)["plugin__mem-connector__echo"]).toEqual({
+      key: "plugin__mem-connector__echo",
       title: "Echo",
       kind: "tool",
       keyArgs: ["text"],
@@ -286,14 +286,14 @@ describe("GET /conversations/:id/tools", () => {
   it("an unknown key comes back as a plain tool; repeated keys once, in request order", async () => {
     const { req, orgId, conversationId } = await setup();
     const res = await tools(req, orgId, conversationId, [
-      "nope__x",
+      "mcp__nope__x",
       "mystery",
       "ask_user",
-      "nope__x",
+      "mcp__nope__x",
     ]);
     expect(res.statusCode, res.body).toBe(200);
     expect((res.json() as { tools: ToolInfo[] }).tools).toEqual([
-      { key: "nope__x", title: null, kind: "tool", keyArgs: [], source: { kind: "unknown" } },
+      { key: "mcp__nope__x", title: null, kind: "tool", keyArgs: [], source: { kind: "unknown" } },
       { key: "mystery", title: null, kind: "tool", keyArgs: [], source: { kind: "unknown" } },
       expect.objectContaining({ key: "ask_user", kind: "meta" }),
     ]);

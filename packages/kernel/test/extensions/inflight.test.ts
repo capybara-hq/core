@@ -111,7 +111,7 @@ async function callTool(tool: string): Promise<string> {
   const res = await owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/conversations/${convId}/messages`,
-    payload: { text: `tool:everything__${tool}:{}` },
+    payload: { text: `tool:plugin__everything__${tool}:{}` },
   });
   expect(res.statusCode, res.body).toBe(202);
   await waitFor(
@@ -167,7 +167,7 @@ describe("撤销时的在途工具调用", () => {
     const res = await owner({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/conversations/${convId}/messages`,
-      payload: { text: "tool:everything__hang:{}" },
+      payload: { text: "tool:plugin__everything__hang:{}" },
     });
     expect(res.statusCode).toBe(202);
     await waitForTerminal(db(), convId, 1, 20_000);

@@ -1,7 +1,12 @@
-import type { ChannelCard, FormAnswer, InputForm, OutboundMessage } from "@capybara-hq/plugin-sdk";
+import {
+  type ChannelCard,
+  type FormAnswer,
+  type InputForm,
+  type OutboundMessage,
+  parseToolKey,
+} from "@capybara-hq/plugin-sdk";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import type { ApprovalsService, ApprovalView } from "../tools/approvals.service.js";
-import { KEY_SEPARATOR } from "../tools/naming.js";
 import { type ChannelLocale, phrase } from "./phrases.js";
 
 /** 审批卡片里工具参数预览的最大长度（字符）。 */
@@ -93,11 +98,11 @@ export const conversationUrl = (base: string, conversationId: string) =>
 export const connectUrl = (base: string, connectorId: string) =>
   `${base}/settings/connections#connector-${encodeURIComponent(connectorId)}`;
 
-/** 来源内的工具名：连接器工具去掉 `<slug>__`（审批详情已处理），插件工具去掉 `<插件>__`。 */
+/** The tool name within its source: the approval view already strips a connector's prefix; an extension key loses `plugin__<plugin>__`. */
 function shortToolName(v: ApprovalView): string {
   if (v.connector) return v.toolName;
-  const i = v.toolKey.indexOf(KEY_SEPARATOR);
-  return i > 0 ? v.toolKey.slice(i + KEY_SEPARATOR.length) : v.toolKey;
+  const parsed = parseToolKey(v.toolKey);
+  return parsed && parsed.kind !== "builtin" ? parsed.tool : v.toolKey;
 }
 
 export interface CardDeps {

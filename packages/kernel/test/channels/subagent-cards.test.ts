@@ -52,7 +52,7 @@ const agentCall = (input: Record<string, unknown>) => ({ name: "agent", input })
 const RULES: ScriptRule[] = [
   {
     when: { systemIncludes: CHILD, lastUserIncludes: "child-echo", assistantTurns: 0 },
-    reply: { toolCalls: [{ name: "mem-connector__echo", input: { text: "sa-hi" } }] },
+    reply: { toolCalls: [{ name: "plugin__mem-connector__echo", input: { text: "sa-hi" } }] },
   },
   {
     when: { systemIncludes: CHILD, lastToolResultIncludes: "sa-hi" },
@@ -60,7 +60,7 @@ const RULES: ScriptRule[] = [
   },
   {
     when: { systemIncludes: CHILD, lastUserIncludes: "child-ask", assistantTurns: 0 },
-    reply: { toolCalls: [{ name: "mem-connector__ask", input: {} }] },
+    reply: { toolCalls: [{ name: "plugin__mem-connector__ask", input: {} }] },
   },
   {
     when: { systemIncludes: CHILD, lastToolResultIncludes: "color=" },
@@ -68,7 +68,7 @@ const RULES: ScriptRule[] = [
   },
   {
     when: { systemIncludes: CHILD, lastUserIncludes: "child-deny", assistantTurns: 0 },
-    reply: { toolCalls: [{ name: "mem-connector__echo", input: { text: "deny-hi" } }] },
+    reply: { toolCalls: [{ name: "plugin__mem-connector__echo", input: { text: "deny-hi" } }] },
   },
   {
     when: { systemIncludes: CHILD, lastToolResultIncludes: "Reason: wrong repo" },
@@ -94,11 +94,11 @@ const RULES: ScriptRule[] = [
   },
   {
     when: { systemIncludes: CHILD, lastUserIncludes: "child-twice", assistantTurns: 0 },
-    reply: { toolCalls: [{ name: "mem-connector__echo", input: { text: "first-echo" } }] },
+    reply: { toolCalls: [{ name: "plugin__mem-connector__echo", input: { text: "first-echo" } }] },
   },
   {
     when: { systemIncludes: CHILD, lastToolResultIncludes: "first-echo" },
-    reply: { toolCalls: [{ name: "mem-connector__echo", input: { text: "second-echo" } }] },
+    reply: { toolCalls: [{ name: "plugin__mem-connector__echo", input: { text: "second-echo" } }] },
   },
   {
     when: { systemIncludes: CHILD, lastToolResultIncludes: "second-echo" },
@@ -177,7 +177,7 @@ beforeAll(async () => {
           { kind: "plugin", plugin: "mem-connector", name: "echo" },
           { kind: "plugin", plugin: "mem-connector", name: "ask" },
         ],
-        toolPolicies: { "mem-connector__echo": "ask" },
+        toolPolicies: { "plugin__mem-connector__echo": "ask" },
       },
       visibility: "org",
     },

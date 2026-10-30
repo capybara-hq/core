@@ -1036,7 +1036,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
       });
       expect(res.statusCode, res.body).toBe(200);
     };
-    const key = "hooks-probe__probe_echo";
+    const key = "plugin__hooks-probe__probe_echo";
     await enable(true);
     try {
       const cfg = await owner({

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { connectorToolKey } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
 import { EventLog } from "../conversations/event-log.js";
@@ -733,7 +734,7 @@ export class ApprovalsService {
       const c = ctx.get(r.runId);
       if (!c) return [];
       const app = r.connectorId === null ? undefined : connectorById.get(r.connectorId);
-      const prefix = app ? `${app.slug}__` : undefined;
+      const prefix = app ? connectorToolKey(app.slug, "") : undefined;
       return [
         {
           ...r,

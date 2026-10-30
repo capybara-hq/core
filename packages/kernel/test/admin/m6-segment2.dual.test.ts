@@ -368,7 +368,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     agentId = (ag.agent as { id: string }).id;
     // 先跑通一次 v1，确认它在工作
     firstConv = await newConv(1);
-    await send(0, firstConv, "fake-tools-ui__write", writeInput("warm up"));
+    await send(0, firstConv, "plugin__fake-tools-ui__write", writeInput("warm up"));
     const r = await finished(firstConv, 1);
     expect(r.isError, String(r.content)).toBe(false);
     expect(String(r.content)).toContain("List updated (1 items)");
@@ -383,7 +383,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
       await lock.query("BEGIN");
       await lock.query("LOCK TABLE plugin_fake_tools_ui.items IN EXCLUSIVE MODE");
       const convId = await newConv(0);
-      await send(1, convId, "fake-tools-ui__write", writeInput("stuck"));
+      await send(1, convId, "plugin__fake-tools-ui__write", writeInput("stuck"));
       await waitFor(
         async () => (await eventsOf(db, convId)).some((e) => e.type === "tool_call_started"),
         20_000,
@@ -461,7 +461,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
       expect(row.migrated_sha).toBe(sha(toolsUiV2));
 
       // 之后的调用落到 v2（两个副本都只有 v2）
-      await send(0, convId, "fake-tools-ui__write", writeInput("after"));
+      await send(0, convId, "plugin__fake-tools-ui__write", writeInput("after"));
       const next = await finished(convId, 2);
       expect(next.isError, String(next.content)).toBe(false);
       expect(String(next.content)).toContain(`${V2_MARK} (1 items)`);
@@ -491,10 +491,10 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     expect(await orgPluginAvailable(0, "fake-tools-ui")).toBe(false);
     expect(await orgPluginAvailable(1, "fake-tools-ui")).toBe(false);
     const c = await newConv(1);
-    await send(1, c, "fake-tools-ui__write", writeInput("off"));
+    await send(1, c, "plugin__fake-tools-ui__write", writeInput("off"));
     const off = await finished(c, 1);
     expect(off.isError).toBe(true);
-    expect(String(off.content)).toContain('Tool "fake-tools-ui__write" is unavailable');
+    expect(String(off.content)).toContain('Tool "plugin__fake-tools-ui__write" is unavailable');
 
     await ok(1, "POST", "/api/v1/admin/extensions/fake-tools-ui/enable");
     await waitFor(
@@ -511,7 +511,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
       "available on both replicas",
       100,
     );
-    await send(0, c, "fake-tools-ui__write", writeInput("on"));
+    await send(0, c, "plugin__fake-tools-ui__write", writeInput("on"));
     const on = await finished(c, 2);
     expect(on.isError, String(on.content)).toBe(false);
     expect(String(on.content)).toContain(V2_MARK);

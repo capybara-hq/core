@@ -1529,7 +1529,7 @@ describe("Claude agents/*.md (phase C, sub-agents spec §16.4)", () => {
         name: "a",
         description: "A.",
         instructions: "Body.\n",
-        tools: ["sandbox_edit", "skill_load", "todo__write", "tool_search"],
+        tools: ["sandbox_edit", "skill_load", "plugin__todo__write", "tool_search"],
       },
       items: [
         [

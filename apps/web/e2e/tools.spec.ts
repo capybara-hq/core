@@ -65,7 +65,7 @@ test("MCP 连接器 → agent 引用 → destructive 工具触发审批 → 批�
   await expect(page).toHaveURL(/\/zh\/connectors\/install$/);
   await installMcp(page, "Fixture", "fixture", mcpUrl as string);
   const policy = page.getByRole("combobox", {
-    name: zh.connectors.tools.policyLabel.replace("{tool}", "fixture__delete_item"),
+    name: zh.connectors.tools.policyLabel.replace("{tool}", "mcp__fixture__delete_item"),
   });
   await expect(policy).toHaveValue("ask");
 
@@ -89,17 +89,17 @@ test("MCP 连接器 → agent 引用 → destructive 工具触发审批 → 批�
   // 3. 开始对话：model-fake 按指令调用 destructive 工具 → 出现审批卡片，运行等人处理
   await startChat(page, "Tool agent");
   const input = composer(page);
-  await input.fill('tool:fixture__delete_item:{"id":"x1"}');
+  await input.fill('tool:mcp__fixture__delete_item:{"id":"x1"}');
   await input.press("Enter");
 
   const approval = page.locator('[data-role="approval"]');
   await expect(approval).toHaveCount(1);
   await expect(approval.getByText(/Fixture/).first()).toBeVisible();
-  await expect(approval.locator('[data-part="tool-key"]')).toHaveText("fixture__delete_item");
+  await expect(approval.locator('[data-part="tool-key"]')).toHaveText("mcp__fixture__delete_item");
   await expect(page.locator('[data-part="conv-main"] [data-part="status-bar"]')).toContainText(
     zh.chat.status.waiting,
   );
-  const tool = toolGroup(page, "fixture__delete_item");
+  const tool = toolGroup(page, "mcp__fixture__delete_item");
   await expect(tool).toHaveAttribute("data-tool-status", "pending");
 
   // 4. 批准（仅本次）→ 一行「你 批准了 …」；工具执行完成；回复包含工具结果
@@ -112,11 +112,11 @@ test("MCP 连接器 → agent 引用 → destructive 工具触发审批 → 批�
   await page.reload();
   await expect(page.locator('[data-role="approval"]').getByText(/批准了/)).toBeVisible();
   // 工具调用是时间线里的一行（默认折叠）：点开看输入与输出
-  const row = toolGroup(page, "fixture__delete_item").getByRole("button").first();
+  const row = toolGroup(page, "mcp__fixture__delete_item").getByRole("button").first();
   await expect(row).toHaveAttribute("aria-expanded", "false");
   await row.click();
   await expect(
-    toolGroup(page, "fixture__delete_item").getByText("deleted x1", { exact: true }),
+    toolGroup(page, "mcp__fixture__delete_item").getByText("deleted x1", { exact: true }),
   ).toBeVisible();
 });
 
@@ -154,7 +154,7 @@ test("MCP：/ 斜杠命令插入渲染后的提示；@ 资源随消息附带；e
   await expect(replies(page).last()).toContainText("Handbook");
 
   // 3. elicitation：工具调用途中请用户填表 → 回答后工具重新发起并拿到答案
-  await input.fill("tool:docs__signup:{}");
+  await input.fill("tool:mcp__docs__signup:{}");
   await input.press("Enter");
   const question = page.locator('[data-role="question"]');
   await expect(question).toHaveCount(1);
@@ -173,7 +173,7 @@ test("带工具的对话结束后，管理员打开运行记录：瀑布里有�
   // 1. 带工具的对话：destructive 工具 → 审批 → 批准 → 回复
   await installMcp(page, "Trace", "trace", mcpUrl);
   const input = await chatWithAgent(page, "Trace agent", "Trace");
-  await input.fill('tool:trace__delete_item:{"id":"t1"}');
+  await input.fill('tool:mcp__trace__delete_item:{"id":"t1"}');
   await input.press("Enter");
   const approval = page.locator('[data-role="approval"]');
   await expect(approval).toHaveCount(1);
@@ -212,7 +212,7 @@ test("带工具的对话结束后，管理员打开运行记录：瀑布里有�
   await expect(tree.locator('[data-kind="model"]').first()).toContainText("model-fake/fake-1");
   const tool = tree.locator('[data-kind="tool"]');
   await expect(tool).toHaveCount(1);
-  await expect(tool).toContainText("trace__delete_item");
+  await expect(tool).toContainText("mcp__trace__delete_item");
   await expect(tree.locator('[data-kind="wait"]')).toHaveCount(1);
   await expect(page.getByText(zh.trajectories.detail.audited)).toBeVisible();
   await expect(page.getByRole("button", { name: zh.trajectories.addToSet.action })).toBeVisible();

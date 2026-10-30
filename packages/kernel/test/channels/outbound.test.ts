@@ -55,8 +55,8 @@ const MEM_CONNECTOR = fileURLToPath(
   new URL("../fixtures/plugins/mem-connector/index.ts", import.meta.url),
 );
 const ECHO =
-  'tool:mem-connector__echo:{"text":"hi","apiKey":"sk-live-0123456789abcdef","max_tokens":42,"note":"app-secret-1234567"}';
-const ASK = "tool:mem-connector__ask:{}";
+  'tool:plugin__mem-connector__echo:{"text":"hi","apiKey":"sk-live-0123456789abcdef","max_tokens":42,"note":"app-secret-1234567"}';
+const ASK = "tool:plugin__mem-connector__ask:{}";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -133,7 +133,7 @@ beforeAll(async () => {
           { kind: "plugin", plugin: "mem-connector", name: "echo" },
           { kind: "plugin", plugin: "mem-connector", name: "ask" },
         ],
-        toolPolicies: { "mem-connector__echo": "ask" },
+        toolPolicies: { "plugin__mem-connector__echo": "ask" },
       },
       visibility: "org",
     },

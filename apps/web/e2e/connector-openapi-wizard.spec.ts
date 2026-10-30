@@ -98,20 +98,20 @@ test("OpenAPI 连接器经安装向导接入（文档认证提示预填 API key�
   await expect(page).toHaveURL(/\/zh\/connectors\/[^/]+$/);
   await expect(
     page.getByRole("combobox", {
-      name: zh.connectors.tools.policyLabel.replace("{tool}", "pets__createPet"),
+      name: zh.connectors.tools.policyLabel.replace("{tool}", "mcp__pets__createPet"),
     }),
   ).toHaveValue("ask");
-  await expect(page.getByText("pets__deletePet")).toHaveCount(0);
+  await expect(page.getByText("mcp__pets__deletePet")).toHaveCount(0);
 
   // 4. agent 调 POST 操作 → 审批 → 批准 → 回复含接口返回
   const input = await chatWithAgent(page, "Pets agent", "Pets");
-  await input.fill('tool:pets__createPet:{"body":{"name":"Rex"}}');
+  await input.fill('tool:mcp__pets__createPet:{"body":{"name":"Rex"}}');
   await input.press("Enter");
   const approval = page.locator('[data-role="approval"]');
   await expect(approval).toHaveCount(1);
-  await expect(approval.locator('[data-part="tool-key"]')).toHaveText("pets__createPet");
+  await expect(approval.locator('[data-part="tool-key"]')).toHaveText("mcp__pets__createPet");
   await approval.getByRole("button", { name: designZh("hitl.approve"), exact: true }).click();
   await expect(approval.getByText(/批准了/)).toBeVisible();
-  await expect(toolGroup(page, "pets__createPet")).toHaveAttribute("data-tool-status", "done");
+  await expect(toolGroup(page, "mcp__pets__createPet")).toHaveAttribute("data-tool-status", "done");
   await expect(replies(page).last()).toHaveText(/"name":\s*"Rex"/);
 });

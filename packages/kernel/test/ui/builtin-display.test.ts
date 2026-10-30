@@ -92,7 +92,7 @@ describe("内置工具的显示摘要", () => {
       ctx({
         tools: [
           {
-            key: "docs__search",
+            key: "mcp__docs__search",
             spec: { name: "search", description: "Search docs.", inputSchema: { type: "object" } },
           } as unknown as ResolvedTool,
         ],

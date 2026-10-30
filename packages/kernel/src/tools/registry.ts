@@ -7,6 +7,7 @@ import type {
   ToolResult,
   ToolSpec,
 } from "@capybara-hq/plugin-sdk";
+import { connectorToolKey, extensionToolKey } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { AgentDefinition } from "../agents/definition.js";
 import type { ToolView } from "../conversations/events.js";
@@ -23,7 +24,7 @@ import { AGENT_TOOL, agentToolSpec } from "./builtins/agent.js";
 import { BuiltinTools } from "./builtins/builtin-tools.js";
 import { SANDBOX_TOOL_NAMES } from "./builtins/sandbox/names.js";
 import { canonicalJson } from "./canonical-json.js";
-import { toolKey, toolKeyIssue } from "./naming.js";
+import { toolKeyIssue } from "./naming.js";
 
 export { canonicalJson } from "./canonical-json.js";
 
@@ -137,7 +138,7 @@ export interface ResolvedTool {
   requiredRole?: OrgRole;
 }
 
-/** 不可用的引用：`ref` 尽量写成模型认识的工具 key（`docs__search`、`docs__*`），否则 `app:<id>`。 */
+/** 不可用的引用：`ref` 尽量写成模型认识的工具 key（`mcp__docs__search`、`mcp__docs__*`），否则 `app:<id>`。 */
 export interface UnavailableTool {
   ref: string;
   reason: string;
@@ -343,7 +344,7 @@ export class ToolRegistry {
         }
         claim(path, ref.name, `builtin:${ref.name}`);
       } else if (ref.kind === "plugin") {
-        const key = toolKey(ref.plugin, ref.name);
+        const key = extensionToolKey(ref.plugin, ref.name);
         if (!pluginTools.some((x) => x.plugin === ref.plugin && x.spec.name === ref.name)) {
           issues.push({ path, message: `Plugin tool "${key}" does not exist` });
           return;
@@ -369,7 +370,7 @@ export class ToolRegistry {
             });
             continue;
           }
-          claim(path, toolKey(app.slug, name), `connector:${app.id}:${name}`);
+          claim(path, connectorToolKey(app.slug, name), `connector:${app.id}:${name}`);
         }
       }
     });
@@ -491,7 +492,7 @@ export class ToolRegistry {
           ...(b.spillChars !== undefined && { spillChars: b.spillChars }),
         });
       } else if (ref.kind === "plugin") {
-        const key = toolKey(ref.plugin, ref.name);
+        const key = extensionToolKey(ref.plugin, ref.name);
         const t = pluginTools.find((x) => x.plugin === ref.plugin && x.spec.name === ref.name);
         if (!t) {
           unavailable.push({ ref: key, reason: "Plugin tool does not exist" });
@@ -522,7 +523,7 @@ export class ToolRegistry {
           unavailable.push({ ref: `app:${ref.connectorId}`, reason: "App does not exist" });
           continue;
         }
-        const all = toolKey(app.slug, "*");
+        const all = connectorToolKey(app.slug, "*");
         if (app.deleted) {
           unavailable.push({ ref: all, reason: `App ${app.slug} was deleted` });
           continue;
@@ -548,7 +549,7 @@ export class ToolRegistry {
         // 「all」里未启用的工具不算 agent 点名要的，不进 unavailable（不提醒），只记进 hidden 备查
         const notEnabled = ref.tools === "all" ? hidden : unavailable;
         for (const t of wanted) {
-          const key = toolKey(app.slug, t.name);
+          const key = connectorToolKey(app.slug, t.name);
           // 远端已不再提供（漂移检测置停用并标记，见 drift.ts）：与「没有这一行」同一个事实
           if ("missing" in t || t.gone) {
             notEnabled.push({ ref: key, reason: `Tool no longer exists in app ${app.slug}` });

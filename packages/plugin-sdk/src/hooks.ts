@@ -120,6 +120,7 @@ export interface ModelResponseHookPayload extends HookScope {
 export interface ToolPreHookPayload extends HookScope {
   step: number;
   callId: string;
+  /** The model-visible key: a builtin name, `mcp__<slug>__<tool>` or `plugin__<plugin>__<tool>`; split it with `parseToolKey`. */
   toolKey: string;
   specHash: string;
   input: unknown;

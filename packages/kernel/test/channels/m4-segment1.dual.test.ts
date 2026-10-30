@@ -339,7 +339,7 @@ describe("M4 第一段验收（双副本）", () => {
     expect(sentTo("dm-u-alice").slice(dmBefore)).toHaveLength(1);
 
     // ================= 5. 群聊话题里调用写工具 → IM 审批卡片 =================
-    const tool = 'tool:fake-im__post_announcement:{"text":"Office closed on Friday"}';
+    const tool = 'tool:plugin__fake-im__post_announcement:{"text":"Office closed on Friday"}';
     im.push(connId, fakeGroupMessage("g1", "u-alice", tool, { chatId: "grp-ops" }));
     const cardMsg = await waitFor(
       async () => sentTo("grp-ops").find((s) => cardOf(s)?.kind === "approval"),

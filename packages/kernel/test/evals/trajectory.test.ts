@@ -549,7 +549,7 @@ describe("buildTrajectory: hook denials", () => {
       type: "assistant_message",
       payload: {
         step: 1,
-        content: [{ type: "tool_call", id: "c1", name: "t__x", input: { a: 1 } }],
+        content: [{ type: "tool_call", id: "c1", name: "mcp__t__x", input: { a: 1 } }],
         stopReason: "tool_use",
       },
     });
@@ -570,7 +570,7 @@ describe("buildTrajectory: hook denials", () => {
       payload: {
         step: 1,
         callId: "c1",
-        toolKey: "t__x",
+        toolKey: "mcp__t__x",
         content: 'Tool call blocked by the "guard" policy hook: nope',
         isError: true,
       },

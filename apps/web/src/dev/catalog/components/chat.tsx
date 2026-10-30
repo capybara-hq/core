@@ -69,7 +69,7 @@ export function ChatSection() {
           </TimelineItem>
           <TimelineItem mark="dot">
             <ToolCallRow
-              name="slack__search"
+              name="plugin__slack__search"
               summary="搜索 #feedback 本周消息 · 42 条"
               status="done"
               input={SEARCH_INPUT}
@@ -78,7 +78,7 @@ export function ChatSection() {
           </TimelineItem>
           <TimelineItem mark="running">
             <ToolCallRow
-              name="todo__write"
+              name="plugin__todo__write"
               summary="更新任务清单（4 项）"
               status="running"
               input='{"items":4}'
@@ -86,7 +86,7 @@ export function ChatSection() {
           </TimelineItem>
           <TimelineItem mark="error">
             <ToolCallRow
-              name="lark__send"
+              name="plugin__lark__send"
               summary="发送到 #product"
               status="error"
               input='{"chat":"#product"}'
@@ -94,7 +94,7 @@ export function ChatSection() {
             />
           </TimelineItem>
           <TimelineItem mark="dot">
-            <ToolCallRow name="crm__lookup" status="cancelled" input='{"id":"C-1042"}' />
+            <ToolCallRow name="mcp__crm__lookup" status="cancelled" input='{"id":"C-1042"}' />
           </TimelineItem>
           <TimelineItem mark="hollow">
             <ThinkingRow seconds={1} text="" />
@@ -106,7 +106,7 @@ export function ChatSection() {
           工具调用 · 展开（IN / OUT，长输出折叠 12 行）
         </Text>
         <ToolCallRow
-          name="slack__search"
+          name="plugin__slack__search"
           summary="搜索 #feedback 本周消息 · 42 条"
           status="done"
           input={SEARCH_INPUT}
@@ -120,7 +120,7 @@ export function ChatSection() {
         </Text>
         <Grid columns={1} gap={8}>
           <ToolCallRow
-            name="lark__send"
+            name="plugin__lark__send"
             summary="发送到 #product"
             status="error"
             input='{"chat":"#product"}'
@@ -128,7 +128,7 @@ export function ChatSection() {
             defaultExpanded
           />
           <ToolCallRow
-            name="http__get"
+            name="mcp__http__get"
             summary="GET /reports/weekly"
             status="done"
             input='{"url":"https://example.com/reports/weekly"}'
@@ -242,7 +242,7 @@ export function ChatSection() {
         </Text>
         <Card tone="accent" title="需要审批">
           <Text variant="small" tone="muted">
-            fixture__delete_item · 删除条目 x1
+            mcp__fixture__delete_item · 删除条目 x1
           </Text>
         </Card>
       </Grid>

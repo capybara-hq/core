@@ -34,7 +34,7 @@ const SPANS: Span[] = [
     id: "t",
     parentId: "s",
     kind: "tool",
-    label: "fixture__delete_item",
+    label: "mcp__fixture__delete_item",
     startMs: 1000,
     durationMs: 3000,
     status: "error",
@@ -109,7 +109,7 @@ describe("SpanWaterfall", () => {
     const onSelect = vi.fn();
     wrap(<Controlled onSelect={onSelect} />);
     const user = userEvent.setup();
-    await user.click(screen.getByText("fixture__delete_item"));
+    await user.click(screen.getByText("mcp__fixture__delete_item"));
     expect(onSelect).toHaveBeenLastCalledWith("t");
     const list = screen.getByRole("tree");
     const active = document.getElementById(list.getAttribute("aria-activedescendant") ?? "");

@@ -47,7 +47,7 @@ const SANDBOX_FAKE = fixture("sandbox-fake");
 const HOOKS_PROBE = fixture("hooks-probe");
 
 const CHILD = "You are a sub-agent";
-const ECHO = "hooks-probe__probe_echo";
+const ECHO = "plugin__hooks-probe__probe_echo";
 
 const agentCall = (input: Record<string, unknown>) => ({ name: "agent", input });
 

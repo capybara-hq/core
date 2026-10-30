@@ -1,11 +1,15 @@
-import type { ToolSpec } from "@capybara-hq/plugin-sdk";
+import {
+  connectorToolKey,
+  extensionToolKey,
+  parseToolKey,
+  type ToolSpec,
+} from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { ConversationAccess } from "../conversations/access.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { UUID_RE } from "../ui/registry.js";
-import { KEY_SEPARATOR, toolKey } from "./naming.js";
 import { ToolRegistry } from "./registry.js";
 
 /**
@@ -63,7 +67,7 @@ const display = (spec: ToolSpec | undefined) => ({
 
 /**
  * Presentation metadata for `keys` in this org, in request order with repeats dropped. Builtins
- * by name; `<prefix>__<tool>` keys first as a loaded extension's registration, then as a live
+ * by name; `plugin__<plugin>__<tool>` keys as a loaded extension's registration, and `mcp__<slug>__<tool>` keys as a live
  * connector's current stored tool (its reviewed definition, never a pending one). Anything else
  * comes back as an unknown plain tool.
  *
@@ -85,18 +89,14 @@ export async function toolInfo(
   const unique = [...new Set(keys)];
   const builtins = new Map(deps.registry.builtinSpecs().map((s) => [s.name, s]));
   const extensions = new Map(
-    deps.registry.extensionToolSpecs().map((t) => [toolKey(t.plugin, t.spec.name), t]),
+    deps.registry.extensionToolSpecs().map((t) => [extensionToolKey(t.plugin, t.spec.name), t]),
   );
-  const split = (key: string): [string, string] | null => {
-    const i = key.indexOf(KEY_SEPARATOR);
-    return i > 0 ? [key.slice(0, i), key.slice(i + KEY_SEPARATOR.length)] : null;
-  };
   const slugs = [
     ...new Set(
       unique.flatMap((k) => {
         if (builtins.has(k) || extensions.has(k)) return [];
-        const p = split(k);
-        return p ? [p[0]] : [];
+        const p = parseToolKey(k);
+        return p?.kind === "connector" ? [p.slug] : [];
       }),
     ),
   ];
@@ -111,7 +111,7 @@ export async function toolInfo(
           .where("c.deleted_at", "is", null)
           .where("c.slug", "in", slugs)
           .execute();
-  const connectorTools = new Map(connectorRows.map((r) => [toolKey(r.slug, r.tool), r]));
+  const connectorTools = new Map(connectorRows.map((r) => [connectorToolKey(r.slug, r.tool), r]));
 
   return unique.map((key): ToolInfo => {
     const b = builtins.get(key);

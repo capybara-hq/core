@@ -64,7 +64,7 @@ const fakeExtension = (name: string) =>
   join(repoRoot, "packages/testing/fixtures/extensions", name, "src/index.ts");
 /** Connector extension `fake-connector`, configured as kind `mcp` (an MCP client). */
 const fakeConnector = fakeExtension("fake-connector");
-/** Tool `fake-tools-ui__write` and the conversation view `tasks` (the right-hand "条目" tab). */
+/** Tool `plugin__fake-tools-ui__write` and the conversation view `tasks` (the right-hand "条目" tab). */
 const fakeToolsUi = fakeExtension("fake-tools-ui");
 /** Embeds `panel` (org page) and `panel-conv` (conversation tab), token-checked routes. */
 const fakeEmbed = fakeExtension("fake-embed");

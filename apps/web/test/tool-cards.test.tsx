@@ -22,7 +22,7 @@ const APPROVAL = {
   conversationId: "c1",
   runId: "r1",
   callId: "call_1",
-  toolKey: "fixture__delete_item",
+  toolKey: "mcp__fixture__delete_item",
   toolName: "delete_item",
   connector: { id: "app1", name: "Fixture", slug: "fixture" },
   agent: { id: "ag1", name: "Echo agent" },
@@ -40,7 +40,7 @@ const APPROVAL = {
 };
 
 const INFO: ToolInfo = {
-  key: "fixture__delete_item",
+  key: "mcp__fixture__delete_item",
   title: "Delete item",
   kind: "connector",
   keyArgs: ["id"],
@@ -57,7 +57,7 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
   const item = (decided: ApprovalItem["decided"] = null): ApprovalItem => ({
     approvalId: "ap1",
     callId: "call_1",
-    toolKey: "fixture__delete_item",
+    toolKey: "mcp__fixture__delete_item",
     input: { reason: "cleanup", id: "x1" },
     expiresAt: EXPIRES,
     policy: "connector",
@@ -72,7 +72,7 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
     });
     await screen.findByRole("button", { name: "本会话内都批准" });
     expect(screen.getByText("Fixture: Delete item")).toBeTruthy();
-    expect(screen.getByText("fixture__delete_item")).toBeTruthy();
+    expect(screen.getByText("mcp__fixture__delete_item")).toBeTruthy();
     const keys = [...container.querySelectorAll('[data-part="kv-key"]')].map((k) => k.textContent);
     expect(keys).toEqual(["id", "reason"]);
     expect(screen.getByText(zh.approval.policy.connector)).toBeTruthy();
@@ -130,7 +130,7 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
         await screen.findByText(
           m.approval.otherApproverFor
             .replace("{tool}", "Fixture: Delete item")
-            .replace("{key}", "fixture__delete_item"),
+            .replace("{key}", "mcp__fixture__delete_item"),
         ),
       ).toBeTruthy();
       expect(screen.queryByRole("button", { name: /批准|Approve/ })).toBeNull();
@@ -352,7 +352,7 @@ describe("the approval block lists every scope only when allowed", () => {
         item={{
           approvalId: "ap1",
           callId: "call_1",
-          toolKey: "fixture__delete_item",
+          toolKey: "mcp__fixture__delete_item",
           input: {},
           expiresAt: EXPIRES,
           decided: null,

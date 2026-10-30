@@ -20,7 +20,7 @@ const wrap = (ui: React.ReactElement, locale: "zh" | "en" = "zh") =>
 
 const pending = (over: Partial<ApprovalBlockProps> = {}): ApprovalBlockProps => ({
   tool: "Acme 工单: 发送消息",
-  toolKey: "acme_tickets__send_message",
+  toolKey: "mcp__acme_tickets__send_message",
   input: { text: "你好", channel: "#示例-支持", notify_all: true },
   keyArgs: ["channel"],
   scopes: ["once", "session", "always"],
@@ -57,7 +57,7 @@ describe("ApprovalBlock (§6.16.11)", () => {
     expect(card?.getAttribute("role")).toBe("group");
     expect(card?.getAttribute("data-pending")).toBe("true");
     expect(container.querySelector('[data-part="tool-key"]')?.textContent).toBe(
-      "acme_tickets__send_message",
+      "mcp__acme_tickets__send_message",
     );
     expect(screen.getByText("策略：发消息需审批").getAttribute("data-part")).toBe("card-note");
   });
@@ -140,7 +140,7 @@ describe("ApprovalBlock (§6.16.11)", () => {
     );
     const line = container.querySelector('[data-part="tool-line"]');
     expect(line?.textContent).toBe(
-      "grant 批准了 Acme 工单: 发送消息 acme_tickets__send_message · 仅这一次 · 10:32",
+      "grant 批准了 Acme 工单: 发送消息 mcp__acme_tickets__send_message · 仅这一次 · 10:32",
     );
     expect(container.querySelector('[data-part="approval-block"]')).toBeNull();
     expect(screen.queryByRole("button")).toBeNull();
@@ -161,7 +161,7 @@ describe("ApprovalBlock (§6.16.11)", () => {
       />,
     );
     expect(container.querySelector('[data-part="tool-line"]')?.textContent).toBe(
-      "grant 拒绝了 Acme 工单: 发送消息 acme_tickets__send_message · 「先别写」 · 10:35",
+      "grant 拒绝了 Acme 工单: 发送消息 mcp__acme_tickets__send_message · 「先别写」 · 10:35",
     );
   });
 

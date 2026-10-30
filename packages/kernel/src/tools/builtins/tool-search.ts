@@ -1,4 +1,4 @@
-import type { ToolSpec } from "@capybara-hq/plugin-sdk";
+import { parseToolKey, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import { BUILTIN_TOOL_NAMES, type BuiltinTool, type ResolvedTool } from "../registry.js";
 
 /** 内置工具名。 */
@@ -63,7 +63,11 @@ type CatalogTool = Pick<ResolvedTool, "key" | "spec">;
 
 /** 分词：切开驼峰，按非字母数字切分，转小写。 */
 export function tokenize(text: string): string[] {
+  const parsed = parseToolKey(text);
+  // The family token (`mcp`, `plugin`) is the same on every connector or extension key: drop it.
+  const family = parsed && parsed.kind !== "builtin" ? text.indexOf("__") + 2 : 0;
   return text
+    .slice(family)
     .replace(/([\p{Ll}\p{N}])(\p{Lu})/gu, "$1 $2")
     .toLowerCase()
     .split(/[^\p{L}\p{N}]+/u)

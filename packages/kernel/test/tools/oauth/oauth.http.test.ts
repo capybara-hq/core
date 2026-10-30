@@ -355,7 +355,7 @@ describe("安装", () => {
     ]);
 
     const convId = await createConv(req, orgId, await agentFor(app.id));
-    const r = await runTool(convId, 1, "svc__whoami");
+    const r = await runTool(convId, 1, "mcp__svc__whoami");
     expect(r).toMatchObject({ content: "you are [REDACTED]", isError: false });
     // token 缓存于凭据存储：调用没有再取 token
     expect(as.tokenRequests).toHaveLength(1);
@@ -420,7 +420,7 @@ describe("连接（授权码 + PKCE）", () => {
     expect(after.tools.map((t) => t.name)).toEqual(["whoami"]);
 
     const convId = await createConv(req, orgId, await agentFor(app.id));
-    const r = await runTool(convId, 1, "docs__whoami");
+    const r = await runTool(convId, 1, "mcp__docs__whoami");
     expect(r).toMatchObject({ content: "you are [REDACTED]", isError: false });
     expect(mcp.calls.at(-1)?.headers.authorization).toMatch(/^Bearer at_/);
   }, 60_000);
@@ -540,7 +540,7 @@ describe("刷新", () => {
     await connectFully(app.id);
     const before = refreshes(as).length;
     const convId = await createConv(req, orgId, await agentFor(app.id));
-    const r = await runTool(convId, 1, "docs__whoami");
+    const r = await runTool(convId, 1, "mcp__docs__whoami");
     expect(r?.isError).toBe(false);
     expect(refreshes(as).length).toBeGreaterThan(before);
     expect(refreshes(as).every((x) => x.status === 200)).toBe(true);
@@ -552,7 +552,7 @@ describe("刷新", () => {
     await connectFully(app.id);
     as.revokeAccessTokens();
     const convId = await createConv(req, orgId, await agentFor(app.id));
-    const r = await runTool(convId, 1, "docs__whoami");
+    const r = await runTool(convId, 1, "mcp__docs__whoami");
     expect(r).toMatchObject({ content: "you are [REDACTED]", isError: false });
     expect(refreshes(as)).toMatchObject([{ status: 200 }]);
   }, 60_000);
@@ -564,7 +564,7 @@ describe("刷新", () => {
     as.revokeAccessTokens();
     as.revokeRefreshTokens();
     const convId = await createConv(req, orgId, await agentFor(app.id));
-    const r = await runTool(convId, 1, "docs__whoami");
+    const r = await runTool(convId, 1, "mcp__docs__whoami");
     expect(r).toMatchObject({
       isError: true,
       content:
@@ -577,7 +577,7 @@ describe("刷新", () => {
     expect((await getConnector(app.id)).credential.status).toBe("missing");
 
     await connectFully(app.id);
-    const r2 = await runTool(convId, 2, "docs__whoami");
+    const r2 = await runTool(convId, 2, "mcp__docs__whoami");
     expect(r2?.isError).toBe(false);
   }, 60_000);
 
@@ -586,9 +586,9 @@ describe("刷新", () => {
     const app = await installDcr(mcp);
     await connectFully(app.id);
     const convId = await createConv(req, orgId, await agentFor(app.id));
-    await runTool(convId, 1, "docs__whoami");
+    await runTool(convId, 1, "mcp__docs__whoami");
     as.revokeAccessTokens();
-    await runTool(convId, 2, "docs__whoami");
+    await runTool(convId, 2, "mcp__docs__whoami");
     await call({ method: "GET", url: `/api/v1/orgs/${orgId}/conversations/${convId}/events` });
     const evs = await eventsOf(db, convId);
     const audits = await db.selectFrom("audit_events").selectAll().execute();
@@ -664,7 +664,7 @@ describe("轮换客户端与其他校验", () => {
     // 调用用新客户端换来的 token（缓存已替换，不再取 token）
     const before = as.tokenRequests.length;
     const convId = await createConv(req, orgId, await agentFor(connectorId));
-    const r = await runTool(convId, 1, "svc__whoami");
+    const r = await runTool(convId, 1, "mcp__svc__whoami");
     expect(r?.isError).toBe(false);
     expect(as.tokenRequests.length).toBe(before);
 

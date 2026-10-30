@@ -20,7 +20,7 @@ const approval = (id: string, over: Record<string, unknown> = {}) => ({
   conversationId: `c-${id}`,
   runId: "r1",
   callId: `call-${id}`,
-  toolKey: `fixture__${id}`,
+  toolKey: `mcp__fixture__${id}`,
   toolName: `tool_${id}`,
   connector: { id: "app1", name: "Fixture", slug: "fixture" },
   agent: { id: "ag1", name: "Echo agent" },
@@ -327,14 +327,14 @@ describe("已记住的授权（SettingsPage）", () => {
       {
         agentId: "ag1",
         agentName: "Echo agent",
-        toolKey: "fixture__delete_item",
+        toolKey: "mcp__fixture__delete_item",
         specHash: "h",
         createdAt: T,
       },
     ];
     const calls = stubApi({
       "GET /api/v1/orgs/o1/me/tool-grants": () => json(200, { grants }),
-      "DELETE /api/v1/orgs/o1/me/tool-grants/ag1/fixture__delete_item": () => {
+      "DELETE /api/v1/orgs/o1/me/tool-grants/ag1/mcp__fixture__delete_item": () => {
         grants = [];
         return noContent();
       },
@@ -344,11 +344,11 @@ describe("已记住的授权（SettingsPage）", () => {
     expect(
       screen.getByRole("link", { name: m.connections.nav.grants }).getAttribute("aria-current"),
     ).toBe("page");
-    expect(await screen.findByText("fixture__delete_item")).toBeTruthy();
+    expect(await screen.findByText("mcp__fixture__delete_item")).toBeTruthy();
     await userEvent.setup().click(
       screen.getByRole("button", {
         name: m.connections.grants.revokeLabel
-          .replace("{tool}", "fixture__delete_item")
+          .replace("{tool}", "mcp__fixture__delete_item")
           .replace("{agent}", "Echo agent"),
       }),
     );

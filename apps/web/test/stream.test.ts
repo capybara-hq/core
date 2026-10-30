@@ -171,7 +171,7 @@ describe("reduceChat", () => {
         step: 0,
         callId: "c1",
         approvalId: "a1",
-        toolKey: "x__y",
+        toolKey: "mcp__x__y",
         expiresAt: "2026-10-19T00:00:00.000Z",
       }),
     ]);
@@ -273,7 +273,7 @@ describe("reduceChat", () => {
         "assistant_message",
         {
           step: 0,
-          content: [{ type: "tool_call", id: "call_1", name: "docs__search", input }],
+          content: [{ type: "tool_call", id: "call_1", name: "mcp__docs__search", input }],
           stopReason: "tool_use",
         },
         runId,
@@ -287,13 +287,19 @@ describe("reduceChat", () => {
       ev(
         6,
         "tool_call_started",
-        { step: 0, callId: "call_1", toolKey: "docs__search", specHash: "h" },
+        { step: 0, callId: "call_1", toolKey: "mcp__docs__search", specHash: "h" },
         "r2",
       ),
       ev(
         7,
         "approval_requested",
-        { step: 0, callId: "call_1", approvalId: "ap1", toolKey: "docs__search", expiresAt: "x" },
+        {
+          step: 0,
+          callId: "call_1",
+          approvalId: "ap1",
+          toolKey: "mcp__docs__search",
+          expiresAt: "x",
+        },
         "r2",
       ),
     ]);

@@ -58,9 +58,9 @@ const INFO = new Map<string, ToolInfo>([
     },
   ],
   [
-    "slack__search",
+    "plugin__slack__search",
     {
-      key: "slack__search",
+      key: "plugin__slack__search",
       title: "Search messages",
       kind: "connector",
       keyArgs: ["query"],
@@ -108,7 +108,7 @@ describe("buildTimeline", () => {
       calls(2, [
         { id: "a", name: "sandbox_bash", input: { command: "ls", description: "List files" } },
         { id: "b", name: "sandbox_bash", input: { command: "false", description: "Fail" } },
-        { id: "c", name: "slack__search", input: { query: "#feedback" } },
+        { id: "c", name: "plugin__slack__search", input: { query: "#feedback" } },
       ]),
       result(3, "a", "sandbox_bash", {
         view: { kind: "command", exitCode: 0, timedOut: false, description: "List files" },
@@ -117,7 +117,7 @@ describe("buildTimeline", () => {
         content: "boom\nmore",
         view: { kind: "command", exitCode: 1, timedOut: false },
       }),
-      result(5, "c", "slack__search"),
+      result(5, "c", "plugin__slack__search"),
     ];
     const out = buildTimeline(events, [], INFO, "zh");
     expect(kinds(out)).toEqual(["user", "tools"]);
@@ -163,7 +163,7 @@ describe("buildTimeline", () => {
       user(1, "go"),
       calls(2, [
         { id: "a", name: "sandbox_deliver", input: { path: "out.csv" } },
-        { id: "b", name: "todo__write", input: { items: [] } },
+        { id: "b", name: "plugin__todo__write", input: { items: [] } },
       ]),
       result(3, "a", "sandbox_deliver"),
       ev(4, "artifact_created", {
@@ -174,7 +174,7 @@ describe("buildTimeline", () => {
         sourcePath: "/w/out.csv",
         callId: "a",
       }),
-      result(5, "b", "todo__write", { card: { plugin: "todo", view: "tasks-card" } }),
+      result(5, "b", "plugin__todo__write", { card: { plugin: "todo", view: "tasks-card" } }),
       calls(6, [], "Done."),
     ];
     const out = buildTimeline(events, [], new Map(), "en");
@@ -186,8 +186,8 @@ describe("buildTimeline", () => {
 
   it("an extension's display summary reads as the row's extra, in the locale", () => {
     const events = [
-      calls(1, [{ id: "a", name: "todo__write", input: { todos: [] } }]),
-      result(2, "a", "todo__write", {
+      calls(1, [{ id: "a", name: "plugin__todo__write", input: { todos: [] } }]),
+      result(2, "a", "plugin__todo__write", {
         display: { summary: { zh: "更新任务清单（2 项）", en: "Updated task list (2 items)" } },
       }),
     ];
@@ -201,7 +201,7 @@ describe("buildTimeline", () => {
 
   it("hook_denied with a callId marks the row as blocked by the extension", () => {
     const events = [
-      calls(1, [{ id: "a", name: "slack__search", input: { query: "x" } }]),
+      calls(1, [{ id: "a", name: "plugin__slack__search", input: { query: "x" } }]),
       ev(2, "hook_denied", {
         mount: "tool.preExecute",
         plugin: "compliance",
@@ -210,7 +210,7 @@ describe("buildTimeline", () => {
         step: 0,
         callId: "a",
       }),
-      result(3, "a", "slack__search", { isError: true, content: "denied" }),
+      result(3, "a", "plugin__slack__search", { isError: true, content: "denied" }),
     ];
     const row = tools(buildTimeline(events, [], INFO, "en"))[0]?.rows[0]?.row;
     expect(row).toMatchObject({ status: "failed", blockedBy: "compliance" });

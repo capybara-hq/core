@@ -1,6 +1,6 @@
 /**
  * 工具命名（Global Constraints）：模型可见的工具 key 必须匹配 `^[a-zA-Z0-9_-]{1,64}$`；
- * 插件工具为 `<plugin>__<tool>`，连接器工具为 `<connectorSlug>__<tool>`，内置工具就是其名字本身。
+ * 插件工具为 `plugin__<plugin>__<tool>`，连接器工具为 `mcp__<connectorSlug>__<tool>`（拼与拆见 SDK 的 tool-key.ts），内置工具就是其名字本身。
  * 超长或含非法字符的 key 一律报出来，不截断、不猜。
  */
 
@@ -9,9 +9,6 @@ export const TOOL_KEY_MAX = 64;
 
 /** 连接器 slug：小写字母开头，小写字母 / 数字 / 下划线，最长 24。 */
 export const APP_SLUG_RE = /^[a-z][a-z0-9_]{0,23}$/;
-
-/** 前缀与工具名之间的分隔符。 */
-export const KEY_SEPARATOR = "__";
 
 /**
  * slug 是否合法：除正则外，不得含连续下划线、不得以下划线结尾——否则 `a__b` + `c` 与 `a` + `b__c`
@@ -37,11 +34,6 @@ export function deriveSlug(name: string): string | null {
     .slice(0, 24)
     .replace(/_+$/, "");
   return isValidSlug(s) ? s : null;
-}
-
-/** 拼 `<prefix>__<name>`。 */
-export function toolKey(prefix: string, name: string): string {
-  return `${prefix}${KEY_SEPARATOR}${name}`;
 }
 
 /** key 不合法时返回英文原因，合法时返回 null。 */

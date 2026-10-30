@@ -33,7 +33,7 @@ import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
  * 2. A shared agent runs two turns (the first calls the fake's `write` tool): the probe saw as many `model.request` as
  *    `model.response` (one per model call), `tool.preExecute` / `tool.postExecute` once each, and one
  *    `usage.report` per `usage` event, each `eventId` exactly once.
- * 3. The probe denies `fake-tools-ui__write` (its org config): the tool result is `hookDeniedText`, the
+ * 3. The probe denies `plugin__fake-tools-ui__write` (its org config): the tool result is `hookDeniedText`, the
  *    trajectory shows the denial, and a single-step eval replay of the run has `drift: []` (replay
  *    runs no hooks).
  * 4. The probe is disabled on the deployment: a full turn later, and after the usage queue has
@@ -49,7 +49,7 @@ const PROBE_DIR = fileURLToPath(new URL("../fixtures/plugins/hooks-probe", impor
 const PROBE = "hooks-probe";
 /** A second copy of the probe under another name: the usage-queue barrier of step 4. */
 const BARRIER = "hooks-probe-b";
-const TOOL_KEY = "fake-tools-ui__write";
+const TOOL_KEY = "plugin__fake-tools-ui__write";
 const MOUNTS = [
   "model.request",
   "model.response",
@@ -394,7 +394,7 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
     expect(await counts(PROBE, 0)).toEqual(c);
   });
 
-  it("3. the probe denies fake-tools-ui__write: hookDeniedText result, denial in the trajectory, step replay has no drift", async () => {
+  it("3. the probe denies plugin__fake-tools-ui__write: hookDeniedText result, denial in the trajectory, step replay has no drift", async () => {
     const before = await counts(PROBE);
     await ok(0, "POST", `/plugins/${PROBE}/config`, { orgId, denyTools: [TOOL_KEY] });
     const { runId, events } = await turn(1, `tool:${TOOL_KEY}:${JSON.stringify(writeInput("x"))}`);
@@ -507,7 +507,7 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
     }
 
     const barrierBefore = await counts(BARRIER);
-    // the probe's org config still denies fake-tools-ui__write: the call goes through, so no probe hook ran
+    // the probe's org config still denies plugin__fake-tools-ui__write: the call goes through, so no probe hook ran
     const { events } = await turn(0, `tool:${TOOL_KEY}:${JSON.stringify(writeInput("after"))}`);
     const [result] = ofType(events, "tool_result");
     expect(result?.payload.isError, String(result?.payload.content)).toBe(false);

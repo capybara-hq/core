@@ -19,7 +19,7 @@ import { openSse, type SseClient, uiFrames } from "../helpers/sse.js";
 /**
  * 界面刷新跨副本（双副本，独立进程，共享 PG / Redis）：
  * - 插件在副本 0 调 `ctx.ui.invalidate`，副本 1 上的对话 SSE 收到 `event: ui`，组织级 SSE 收到组织视图的刷新；
- * - fake-tools-ui：`fake-tools-ui__write` 之后取 `tasks` 视图，badge 为「已完成/总数」、主体是 checklist，对话 SSE 收到刷新。
+ * - fake-tools-ui：`plugin__fake-tools-ui__write` 之后取 `tasks` 视图，badge 为「已完成/总数」、主体是 checklist，对话 SSE 收到刷新。
  */
 
 const UI_PROBE = fileURLToPath(new URL("../fixtures/plugins/ui-probe/index.ts", import.meta.url));
@@ -165,7 +165,7 @@ describe("界面刷新（双副本）", () => {
       ],
     };
     const sent = await at(0, "POST", `${base}/conversations/${convId}/messages`, {
-      text: `tool:fake-tools-ui__write:${JSON.stringify(items)}`,
+      text: `tool:plugin__fake-tools-ui__write:${JSON.stringify(items)}`,
     });
     expect(sent.status).toBe(202);
     await waitForTerminal(db, convId, 1, 30_000);

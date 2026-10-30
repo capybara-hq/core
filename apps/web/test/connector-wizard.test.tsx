@@ -33,7 +33,7 @@ const app = (over: Record<string, unknown> = {}) => ({
 
 const previewTool = (name: string, over: Record<string, unknown> = {}) => ({
   name,
-  key: `fixture__${name}`,
+  key: `mcp__fixture__${name}`,
   description: `${name} things`,
   inputSchema: {},
   annotations: null,
@@ -161,10 +161,10 @@ describe("安装向导（WizardPage）", () => {
         auth: { type: "bearer", ownership: "org" },
         credential: { token: "s3cret" },
       });
-      const search = within(table).getByText("fixture__search").closest("tr") as HTMLElement;
+      const search = within(table).getByText("mcp__fixture__search").closest("tr") as HTMLElement;
       expect(within(search).getByText(m.connectors.policy.allow)).toBeTruthy();
       expect(within(search).getByText(w.annotation.readOnly)).toBeTruthy();
-      const del = within(table).getByText("fixture__delete_item").closest("tr") as HTMLElement;
+      const del = within(table).getByText("mcp__fixture__delete_item").closest("tr") as HTMLElement;
       expect(within(del).getByText(m.connectors.policy.ask)).toBeTruthy();
       expect(within(del).getByText(w.annotation.destructive)).toBeTruthy();
       expect(screen.getByText("bad tool: Tool name is invalid")).toBeTruthy();

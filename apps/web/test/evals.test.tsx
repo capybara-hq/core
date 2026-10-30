@@ -179,14 +179,14 @@ function result(over: Partial<EvalResult> = {}): EvalResult {
     baseline: {
       content: [
         { type: "text", text: "I will delete it.\nDone." },
-        { type: "tool_call", id: "t1", name: "fixture__delete_item", input: { id: "x1" } },
+        { type: "tool_call", id: "t1", name: "mcp__fixture__delete_item", input: { id: "x1" } },
       ],
       stopReason: "tool_use",
     },
     candidate: {
       content: [
         { type: "text", text: "I will remove it.\nDone." },
-        { type: "tool_call", id: "t2", name: "fixture__delete_item", input: { id: "x2" } },
+        { type: "tool_call", id: "t2", name: "mcp__fixture__delete_item", input: { id: "x2" } },
       ],
       stopReason: "tool_use",
       provider: "model-fake",
@@ -197,8 +197,8 @@ function result(over: Partial<EvalResult> = {}): EvalResult {
         {
           index: 0,
           kind: "args_changed",
-          baseline: { name: "fixture__delete_item", input: { id: "x1" } },
-          candidate: { name: "fixture__delete_item", input: { id: "x2" } },
+          baseline: { name: "mcp__fixture__delete_item", input: { id: "x1" } },
+          candidate: { name: "mcp__fixture__delete_item", input: { id: "x2" } },
         },
       ],
       toolCallsMatch: false,

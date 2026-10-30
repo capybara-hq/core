@@ -177,9 +177,11 @@ async function seedGrants(orgId: string, connectorId: string): Promise<void> {
   await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
     VALUES ('cv-g', ${orgId}, 'ag-g', ${owner.id})`.execute(raw);
   await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash, connector_id)
-    VALUES (${orgId}, ${owner.id}, 'ag-g', 'docs__create_doc', 'h', ${connectorId})`.execute(raw);
+    VALUES (${orgId}, ${owner.id}, 'ag-g', 'mcp__docs__create_doc', 'h', ${connectorId})`.execute(
+    raw,
+  );
   await sql`INSERT INTO capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash, connector_id)
-    VALUES ('cv-g', 'docs__create_doc', 'h', ${connectorId})`.execute(raw);
+    VALUES ('cv-g', 'mcp__docs__create_doc', 'h', ${connectorId})`.execute(raw);
 }
 
 describe("连接器 HTTP", () => {
@@ -211,13 +213,13 @@ describe("连接器 HTTP", () => {
     });
     const byName = Object.fromEntries(app.tools.map((t) => [t.name, t]));
     expect(byName.search).toMatchObject({
-      key: "docs__search",
+      key: "mcp__docs__search",
       status: "enabled",
       defaultPolicy: "allow",
       issue: null,
     });
-    expect(byName.delete_doc).toMatchObject({ key: "docs__delete_doc", defaultPolicy: "ask" });
-    expect(byName.create_doc).toMatchObject({ key: "docs__create_doc", defaultPolicy: "ask" });
+    expect(byName.delete_doc).toMatchObject({ key: "mcp__docs__delete_doc", defaultPolicy: "ask" });
+    expect(byName.create_doc).toMatchObject({ key: "mcp__docs__create_doc", defaultPolicy: "ask" });
     expect(byName.search?.specHash).toMatch(/^[0-9a-f]{16}$/);
     // 用的是请求里带的凭据；会话已关闭
     expect(memState().auths[0]).toEqual({ headers: { Authorization: `Bearer ${TOKEN}` } });
@@ -391,7 +393,7 @@ describe("连接器 HTTP", () => {
       credential: undefined,
     });
     expect(app.credential).toEqual({ ownership: null, status: "connected" });
-    expect(app.tools.map((t) => t.key)).toEqual(["open__ping"]);
+    expect(app.tools.map((t) => t.key)).toEqual(["mcp__open__ping"]);
   });
 
   it("未知连接器 / 端点不合法 → 400", async () => {

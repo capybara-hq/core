@@ -1113,7 +1113,7 @@ describe("runModelStep", () => {
         specHash: specHash(search.spec),
         defaultPolicy: "allow",
       };
-      const tools = [mk("p__zeta"), mk("p__alpha"), searchTool];
+      const tools = [mk("mcp__p__zeta"), mk("mcp__p__alpha"), searchTool];
       const searchDeps: ModelStepDeps = {
         ...deps,
         tools: { forAgent: async () => ({ tools, unavailable: [], toolSearch: true }) },
@@ -1133,10 +1133,15 @@ describe("runModelStep", () => {
       const req = s.calls[0] as ModelRequest;
       expect(req.tools.map((t) => t.name)).toEqual(["tool_search"]);
       expect(req.system).toHaveLength(2);
-      expect(req.system[1]?.text).toContain("- p__alpha: Do p__alpha.\n- p__zeta: Do p__zeta.");
+      expect(req.system[1]?.text).toContain(
+        "- mcp__p__alpha: Do mcp__p__alpha.\n- mcp__p__zeta: Do mcp__p__zeta.",
+      );
       const [call] = await ofType("model_call");
       expect(call?.payload.request.tools?.map((t) => t.key)).toEqual(["tool_search"]);
-      expect(call?.payload.request.catalog?.map((t) => t.key)).toEqual(["p__alpha", "p__zeta"]);
+      expect(call?.payload.request.catalog?.map((t) => t.key)).toEqual([
+        "mcp__p__alpha",
+        "mcp__p__zeta",
+      ]);
       const stored = await db
         .selectFrom("tool_specs")
         .select("spec_hash")

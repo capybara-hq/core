@@ -116,14 +116,14 @@ test("approvals: once / this conversation / always; deny with a reason; stop whi
   ]);
   const approval = page.locator('[data-role="approval"]');
   const ask = async (id: string) => {
-    await send(page, `tool:capfix__delete_item:{"id":"${id}"}`);
+    await send(page, `tool:mcp__capfix__delete_item:{"id":"${id}"}`);
   };
 
   // Approve for this conversation: the next call in it asks no more.
   await newChat(page, agentId);
   await ask("x1");
   await expect(approval).toHaveCount(1);
-  await expect(approval.locator('[data-part="tool-key"]')).toHaveText("capfix__delete_item");
+  await expect(approval.locator('[data-part="tool-key"]')).toHaveText("mcp__capfix__delete_item");
   await expect(approval.getByText("x1")).toBeVisible();
   await expect(statusBar(page)).toContainText(zh.chat.status.waiting);
   for (const s of ["hitl.approve", "hitl.approveSession", "hitl.approveAlways"]) {
@@ -143,7 +143,7 @@ test("approvals: once / this conversation / always; deny with a reason; stop whi
   await approval.getByRole("textbox", { name: designZh("hitl.denyReason") }).fill("not today");
   await approval.getByRole("button", { name: designZh("hitl.deny"), exact: true }).click();
   await expect(approval.getByText(/「not today」/)).toBeVisible();
-  await expect(toolGroup(page, "capfix__delete_item")).toHaveAttribute(
+  await expect(toolGroup(page, "mcp__capfix__delete_item")).toHaveAttribute(
     "data-tool-status",
     "failed",
   );
@@ -246,7 +246,7 @@ test("questions with options and Other; URL elicitation; a connect card", async 
   await expect(replies(page).last()).toHaveText(/qa/);
 
   // URL elicitation: the full address, opened in a new window, then "I'm done".
-  await send(page, "tool:capver__verify:{}");
+  await send(page, "tool:mcp__capver__verify:{}");
   const url = "https://example.com/verify?token=e2e";
   await expect(question.last().getByRole("link", { name: url })).toBeVisible();
   const popup = context.waitForEvent("page");
@@ -269,7 +269,7 @@ test("questions with options and Other; URL elicitation; a connect card", async 
   await page.evaluate(() => {
     (window as unknown as { __holdRunEnd: boolean }).__holdRunEnd = true;
   });
-  await send(page, "tool:cappers__verify:{}");
+  await send(page, "tool:mcp__cappers__verify:{}");
   const connect = page.locator('[data-role="connect"]');
   await expect(connect).toBeVisible();
   await connect.getByRole("button", { name: designZh("hitl.connect") }).click();
@@ -348,13 +348,13 @@ test("a policy hook: a denied tool row names the extension; a denied run shows t
     page.request.post(`${kernel}/plugins/hooks-probe/config`, { data: { orgId, ...cfg } });
   expect((await enable(true)).status()).toBe(200);
   try {
-    expect((await probe({ denyTools: ["hooks-probe__probe_echo"] })).ok()).toBe(true);
+    expect((await probe({ denyTools: ["plugin__hooks-probe__probe_echo"] })).ok()).toBe(true);
     const agentId = await createAgent(page, orgId, "Cap hooks", [
       { kind: "plugin", plugin: "hooks-probe", name: "probe_echo" },
     ]);
     await newChat(page, agentId);
-    await send(page, 'tool:hooks-probe__probe_echo:{"text":"x"}');
-    const row = toolGroup(page, "hooks-probe__probe_echo");
+    await send(page, 'tool:plugin__hooks-probe__probe_echo:{"text":"x"}');
+    const row = toolGroup(page, "plugin__hooks-probe__probe_echo");
     await expect(row).toHaveAttribute("data-tool-status", "failed");
     await expect(row).toContainText("hooks-probe");
 

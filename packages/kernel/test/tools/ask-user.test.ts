@@ -386,7 +386,10 @@ describe("ask_user 端到端", () => {
       tools: [{ kind: "plugin", plugin: "mem-connector", name: "ask" }],
     });
     const convId = await createConv(reqA, orgId, agentId);
-    const { questionId } = await askedQuestion(convId, 'tool:mem-connector__ask:{"rounds":1}');
+    const { questionId } = await askedQuestion(
+      convId,
+      'tool:plugin__mem-connector__ask:{"rounds":1}',
+    );
     const ok = await answer(reqB, questionId, { answer: { color: "blue" } });
     expect(ok.statusCode, ok.body).toBe(200);
     await waitForTerminal(db, convId, 1);

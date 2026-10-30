@@ -13,7 +13,7 @@ export const CLAUDE_CODE_TOOL_MAP = [
   "- Bash -> sandbox_bash",
   "- Read -> sandbox_read; Write -> sandbox_write; Edit and MultiEdit -> sandbox_edit; Glob -> sandbox_glob; Grep -> sandbox_grep",
   '- Skill -> skill_load (a name such as "superpowers:brainstorming" also works)',
-  "- TodoWrite -> todo__write when it is in your tools; otherwise keep the task list in your replies",
+  "- TodoWrite -> plugin__todo__write when it is in your tools; otherwise keep the task list in your replies",
   "- AskUserQuestion -> ask_user",
   "- ToolSearch -> tool_search when it is in your tools",
   "- Task and Agent (sub-agents) -> agent when it is in your tools (subagent_type names one of the types its description lists; model names haiku / sonnet / opus -> fast / standard / capable; SendMessage to a sub-agent -> agent with resume); otherwise not available: do the steps yourself, in order",

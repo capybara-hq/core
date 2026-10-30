@@ -156,8 +156,8 @@ describe("连接器预览", () => {
     expect(body.operations).toBeUndefined();
     // 没给 slug / name：key 用占位 slug `app`
     expect(body.tools?.map((t) => [t.key, t.issue === null])).toEqual([
-      ["app__search", true],
-      ["app__bad name!", false],
+      ["mcp__app__search", true],
+      ["mcp__app__bad name!", false],
     ]);
     expect(memState().opened).toBe(1);
     expect(memState().closed).toBe(1);

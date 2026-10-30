@@ -428,15 +428,21 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
         { kind: "connector", connectorId: jira, tools: "all" },
         { kind: "connector", connectorId: wiki, tools: ["read", "write"] },
       ],
-      toolPolicies: { jira__search: "ask", sandbox_bash: "ask", jira__create: "deny" },
+      toolPolicies: { mcp__jira__search: "ask", sandbox_bash: "ask", mcp__jira__create: "deny" },
       subagents: {
         inline: [
           inline("scout", {
-            tools: ["sandbox_bash", "jira__search", "jira__create", "ask_user", "nope"],
-            toolPolicies: { sandbox_bash: "deny", jira__create: "ask", jira__search: "ask" },
+            tools: ["sandbox_bash", "mcp__jira__search", "mcp__jira__create", "ask_user", "nope"],
+            toolPolicies: {
+              sandbox_bash: "deny",
+              mcp__jira__create: "ask",
+              mcp__jira__search: "ask",
+            },
             maxSteps: 80,
           }),
-          inline("writer", { disallowedTools: ["wiki__write", "jira__delete", "sandbox_bash"] }),
+          inline("writer", {
+            disallowedTools: ["mcp__wiki__write", "mcp__jira__delete", "sandbox_bash"],
+          }),
         ],
       },
     });
@@ -446,9 +452,9 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       { kind: "connector", connectorId: jira, tools: ["create", "search"] },
     ]);
     expect(scout.definition.toolPolicies).toEqual({
-      jira__search: "ask",
+      mcp__jira__search: "ask",
       sandbox_bash: "deny",
-      jira__create: "deny",
+      mcp__jira__create: "deny",
     });
     expect(scout.definition.instructions).toBe("You are scout.");
     expect(scout.definition.name).toBe("Lead › scout");
@@ -508,9 +514,9 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       subagents: {
         inline: [
           // the allowlist covers every tool the connector has today
-          inline("scout", { tools: ["jira__search"] }),
+          inline("scout", { tools: ["mcp__jira__search"] }),
           // a deny key for a tool the connector does not have yet
-          inline("writer", { disallowedTools: ["jira__delete"] }),
+          inline("writer", { disallowedTools: ["mcp__jira__delete"] }),
         ],
       },
     });
@@ -684,7 +690,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
           { kind: "builtin", name: "sandbox_bash" },
           { kind: "connector", connectorId: jira, tools: "all" },
         ],
-        toolPolicies: { jira__create: "ask", sandbox_bash: "deny" },
+        toolPolicies: { mcp__jira__create: "ask", sandbox_bash: "deny" },
         skills: { orgSkills: [s], pinned: [s] },
         subagents: { dispatchable: true },
       });
@@ -694,7 +700,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
         .setOrg(orgId, "subagent_fast", { model: FAKE1, params: {} }, owner.id);
       const parent = def({
         tools: [{ kind: "builtin", name: "read_tool_output" }],
-        toolPolicies: { jira__search: "deny", sandbox_bash: "ask", read_tool_output: "ask" },
+        toolPolicies: { mcp__jira__search: "deny", sandbox_bash: "ask", read_tool_output: "ask" },
         subagents: { agents: [{ agentId: a, as: "analyst", description: "Data questions." }] },
       });
       const r = await eff(parent, "analyst", "fast");
@@ -707,9 +713,9 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
           { kind: "connector", connectorId: jira, tools: "all" },
         ],
         toolPolicies: {
-          jira__create: "ask",
+          mcp__jira__create: "ask",
           sandbox_bash: "deny",
-          jira__search: "deny",
+          mcp__jira__search: "deny",
           read_tool_output: "ask",
         },
         subagents: undefined,

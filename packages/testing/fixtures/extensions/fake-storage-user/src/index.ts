@@ -3,7 +3,7 @@ import { z } from "zod";
 
 /**
  * Test fake of an extension that uses `ctx.storage` (`permissions.storage`): tool `note`
- * (model-visible `fake-storage-user__note`) writes the text to `notes/<conversationId>.txt`, which
+ * (model-visible `plugin__fake-storage-user__note`) writes the text to `notes/<conversationId>.txt`, which
  * the kernel prefixes with `plugins/fake-storage-user/<orgId>/`, and returns the stored size; tool
  * `read_note` returns it (or says there is none). Needs an `object-store@1` provider.
  */

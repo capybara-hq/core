@@ -31,7 +31,7 @@ const TOOL_MAP: Readonly<Record<string, string>> = {
   Glob: "sandbox_glob",
   Grep: "sandbox_grep",
   Skill: "skill_load",
-  TodoWrite: "todo__write",
+  TodoWrite: "plugin__todo__write",
   ToolSearch: "tool_search",
 };
 /** Claude ignores these for plugin agents: `not_applicable`. */

@@ -66,7 +66,7 @@ let orgId: string;
 let ownerId: string;
 let agentId: string;
 
-const ECHO = 'tool:mem-connector__echo:{"text":"hi"}';
+const ECHO = 'tool:plugin__mem-connector__echo:{"text":"hi"}';
 const resultsOf = (evs: ConversationEvent[]) =>
   evs.flatMap((e) => (e.type === "tool_result" ? [e.payload] : []));
 const ofType = <T extends ConversationEvent["type"]>(evs: ConversationEvent[], type: T) =>
@@ -133,7 +133,7 @@ async function createToolAgent(r: Req, org: string): Promise<string> {
           { kind: "plugin", plugin: "mem-connector", name: "ask" },
         ],
         // echo 需要审批；ask 默认放行（只请求用户输入）
-        toolPolicies: { "mem-connector__echo": "ask" },
+        toolPolicies: { "plugin__mem-connector__echo": "ask" },
       },
       visibility: "org",
     },
@@ -384,7 +384,7 @@ describe("审批等待", () => {
     const convId = await createConv(req, orgId, agentId);
     const { runId, event } = await startAndWait(
       convId,
-      'tool:mem-connector__ask:{"rounds":1}',
+      'tool:plugin__mem-connector__ask:{"rounds":1}',
       "question_asked",
     );
     const qid = questionIdOf(event);
@@ -462,7 +462,7 @@ describe("输入请求等待", () => {
     const convId = await createConv(req, orgId, agentId);
     const { runId, event } = await startAndWait(
       convId,
-      'tool:mem-connector__ask:{"rounds":1}',
+      'tool:plugin__mem-connector__ask:{"rounds":1}',
       "question_asked",
     );
     const qid = questionIdOf(event);
@@ -532,7 +532,7 @@ describe("输入请求等待", () => {
     const convId = await createConv(req, orgId, agentId);
     const { event } = await startAndWait(
       convId,
-      'tool:mem-connector__ask:{"rounds":1}',
+      'tool:plugin__mem-connector__ask:{"rounds":1}',
       "question_asked",
     );
     const qid = questionIdOf(event);
@@ -554,7 +554,7 @@ describe("输入请求等待", () => {
 
   it("同一调用最多连续请求输入 3 次，第 4 次 → 工具错误", async () => {
     const convId = await createConv(req, orgId, agentId);
-    await postMessage(req, orgId, convId, 'tool:mem-connector__ask:{"rounds":5}');
+    await postMessage(req, orgId, convId, 'tool:plugin__mem-connector__ask:{"rounds":5}');
     for (let i = 1; i <= 3; i++) {
       const asked = await waitFor(
         async () => {
@@ -585,7 +585,7 @@ describe("输入请求等待", () => {
 
   it("不合规的表单 → 工具错误，不暂停", async () => {
     const convId = await createConv(req, orgId, agentId);
-    await postMessage(req, orgId, convId, 'tool:mem-connector__ask:{"bad":true}');
+    await postMessage(req, orgId, convId, 'tool:plugin__mem-connector__ask:{"bad":true}');
     await waitForTerminal(db, convId, 1);
     const evs = await eventsOf(db, convId);
     expect(ofType(evs, "question_asked")).toEqual([]);
@@ -599,7 +599,7 @@ describe("输入请求等待", () => {
     const convId = await createConv(req, orgId, agentId);
     const { runId, event } = await startAndWait(
       convId,
-      'tool:mem-connector__ask:{"rounds":1}',
+      'tool:plugin__mem-connector__ask:{"rounds":1}',
       "question_asked",
     );
     const res = await req({
