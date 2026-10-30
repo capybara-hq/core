@@ -14,6 +14,8 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
+import { legacyScopeOf, recordedCalls } from "../../src/evals/recorded-tools.js";
+import { runBaseline } from "../../src/evals/run-replay.js";
 import { caseBase, versionDefinition } from "../../src/evals/runs.service.js";
 import {
   type CaseSnapshot,
@@ -77,6 +79,69 @@ describe("改名前录制的会话：还原零漂移", () => {
       expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
       expect(out.request, `model_call seq ${c.seq}`).toEqual(fixture.requests[i]);
     }
+  });
+});
+
+describe("a recording made before the tool rename (full-run replay input)", () => {
+  const rc = JSON.parse(
+    readFileSync(
+      fileURLToPath(
+        new URL("../evals/fixtures/pre-tool-rename/conversation.json", import.meta.url),
+      ),
+      "utf8",
+    ),
+  ) as Fixture;
+
+  /** The snapshot seen as each of its runs (replay reads one run's calls). */
+  const perRun = [...new Set(rc.snapshot.events.flatMap((e) => (e.runId ? [e.runId] : [])))].map(
+    (runId) => ({ ...rc.snapshot, runId }),
+  );
+
+  it("reads the connectors and extensions from the snapshot alone", () => {
+    const scope = legacyScopeOf(rc.snapshot);
+    expect([...scope.extensionNames]).toEqual(["tools-probe"]);
+    expect([...scope.connectorSlugs]).toEqual(["docs"]);
+  });
+
+  it("recorded calls are keyed by the current names and parameters; nothing is left in rc form", () => {
+    const calls = perRun.flatMap((snap) => recordedCalls(snap));
+    const keys = calls.map((c) => c.toolKey);
+    expect(keys).toEqual(
+      expect.arrayContaining([
+        "Bash",
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Skill",
+        "ToolSearch",
+        "ReadToolOutput",
+        "mcp__docs__search",
+        "plugin__tools-probe__echo",
+      ]),
+    );
+    expect(keys.filter((k) => /^(sandbox_|skill_|tool_search|read_tool_output)/.test(k))).toEqual(
+      [],
+    );
+    expect(calls.every((c) => c.legacy === true)).toBe(true);
+    const edit = calls.find((c) => c.toolKey === "Edit");
+    expect(edit?.inputKey).toBe(
+      '{"file_path":"/workspace/src/b.md","new_string":"gamma","old_string":"alpha","replace_all":true}',
+    );
+    // the timeout is milliseconds now; the display-only description is ignored when matching
+    const bash = calls.find((c) => c.toolKey === "Bash" && c.inputKey.includes("timeout"));
+    expect(bash?.inputKey).toBe(
+      '{"command":"mkdir -p /workspace/src && echo hello > /workspace/src/a.txt","timeout":20000}',
+    );
+  });
+
+  it("the baseline summary names the same current tools", () => {
+    const names = perRun.flatMap((snap) => runBaseline(snap).toolCalls.map((c) => c.name));
+    expect(names.length).toBeGreaterThan(0);
+    expect(
+      names.filter((n) => /^(sandbox_|skill_load|tool_search|read_tool_output)/.test(n)),
+    ).toEqual([]);
   });
 });
 

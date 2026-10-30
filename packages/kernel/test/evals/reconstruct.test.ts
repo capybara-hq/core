@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1492,5 +1493,71 @@ describe("takeSnapshot", { timeout: 60_000 }, () => {
     // 别的组织拿不到
     const other = await takeSnapshot(db, randomUUID(), conv, runId, 4_194_304).catch((e) => e);
     expect((other as ApiError).code).toBe("conversation.not_found");
+  });
+});
+
+describe("reconstructRequest: a recording from before the tool rename", () => {
+  type Fixture = { model: ModelInfo; snapshot: CaseSnapshot; requests: ModelRequest[] };
+  const fixture = JSON.parse(
+    readFileSync(
+      fileURLToPath(new URL("./fixtures/pre-tool-rename/conversation.json", import.meta.url)),
+      "utf8",
+    ),
+  ) as Fixture;
+
+  it("covers every old builtin, a connector key, an extension key, a pinned skill, a notice, an invoked skill and a compaction", () => {
+    const events = fixture.snapshot.events;
+    const keys = new Set(
+      events.flatMap((e) =>
+        e.type === "tool_result" ? [(e.payload as { toolKey: string }).toolKey] : [],
+      ),
+    );
+    for (const k of [
+      "sandbox_bash",
+      "sandbox_read",
+      "sandbox_write",
+      "sandbox_edit",
+      "sandbox_glob",
+      "sandbox_grep",
+      "skill_load",
+      "tool_search",
+      "read_tool_output",
+      "docs__search",
+      "tools-probe__echo",
+    ]) {
+      expect(keys.has(k), k).toBe(true);
+    }
+    const types = new Set(events.map((e) => e.type));
+    for (const t of ["compaction_summary", "skills_catalog", "approval_decided"]) {
+      expect(types.has(t as ConversationEvent["type"]), t).toBe(true);
+    }
+    const catalogs = events.filter((e) => e.type === "skills_catalog");
+    expect(catalogs).toHaveLength(2);
+    const first = catalogs[0]?.payload as { pinned?: unknown[]; toolMap?: string };
+    expect(first.pinned).toHaveLength(1);
+    expect(first.toolMap).toBeDefined();
+    expect(
+      events.some((e) => e.type === "user_message" && (e.payload as { skill?: unknown }).skill),
+    ).toBe(true);
+  });
+
+  it("every model_call reconstructs with zero drift and equals what the provider received, with the legacy skill texts", () => {
+    const calls = modelCalls(toEvents(fixture.snapshot));
+    expect(calls).toHaveLength(fixture.requests.length);
+    const texts = new Set<string>();
+    for (const [i, c] of calls.entries()) {
+      const out = reconstructRequest(fixture.snapshot, c.seq, { model: fixture.model });
+      expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
+      expect(out.request, `model_call seq ${c.seq}`).toEqual(fixture.requests[i]);
+      for (const m of out.request.messages) {
+        if (m.role === "system" && typeof m.content === "string") texts.add(m.content);
+      }
+    }
+    const all = [...texts].join("\n");
+    // the legacy texts name the old tools and appear in the real recording
+    expect(all).toContain("Skills the user invoked earlier in this conversation: fix-bug.");
+    expect(all).toContain("Updated skills (");
+    expect(all).toMatch(/skill_load/);
+    expect(all).not.toMatch(/\bcall Skill\b/);
   });
 });

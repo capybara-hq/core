@@ -1,6 +1,12 @@
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import { assistantIdemKey } from "../runtime/model-call.js";
 import { MATCH_IGNORED_FIELDS } from "../tools/builtin-names.js";
+import {
+  isLegacyPrefixedKey,
+  type LegacyScope,
+  legacyToolInput,
+  legacyToolKey,
+} from "../tools/legacy-keys.js";
 import { RUN_STOPPED_TEXT, type ToolPipeline, type ToolStepContext } from "../tools/pipeline.js";
 import type { CaseSnapshot } from "./snapshot.js";
 
@@ -26,6 +32,45 @@ export interface RecordedCall {
   contentTypes?: string[];
   /** 原 `tool_call_started` 的定义指纹（没有开始事件的调用为空串）。 */
   specHash: string;
+  /** The recorded call used release-candidate names; `toolKey` and `inputKey` are already the current ones. */
+  legacy?: true;
+}
+
+/**
+ * The connectors and extensions a snapshot's `<x>__<tool>` keys can name, read from the snapshot
+ * alone: extension names are the plugin refs of its agent definitions, and any other head of an
+ * rc-format key in its assistant messages is a connector slug. Used to read an old recording.
+ */
+export function legacyScopeOf(s: CaseSnapshot): LegacyScope {
+  const extensionNames = new Set<string>();
+  for (const def of Object.values(s.definitions)) {
+    for (const t of def.tools) if (t.kind === "plugin") extensionNames.add(t.plugin);
+  }
+  const connectorSlugs = new Set<string>();
+  for (const e of s.events) {
+    if (e.type !== "assistant_message") continue;
+    for (const b of (e.payload as { content: { type: string; name?: string }[] }).content) {
+      if (b.type !== "tool_call" || b.name === undefined || !isLegacyPrefixedKey(b.name)) continue;
+      const head = b.name.slice(0, b.name.indexOf("__"));
+      if (!extensionNames.has(head)) connectorSlugs.add(head);
+    }
+  }
+  return { connectorSlugs, extensionNames };
+}
+
+/**
+ * A recorded call in the current names: an rc builtin or `<x>__<tool>` key becomes its current
+ * key with the input's parameters renamed. Only the recorded side is ever normalized; a call
+ * already in current names (or one that cannot be mapped) is returned as is.
+ */
+export function currentCall(
+  name: string,
+  input: unknown,
+  scope: LegacyScope,
+): { name: string; input: unknown; legacy: boolean } {
+  const key = legacyToolKey(name, scope);
+  if (key === null) return { name, input, legacy: false };
+  return { name: key, input: legacyToolInput(name, input), legacy: true };
 }
 
 /** 规范化 JSON：对象键递归按码点排序，数组保持顺序；`undefined` 按 JSON 规则省略。 */
@@ -86,6 +131,7 @@ export function recordedCalls(s: CaseSnapshot): RecordedCall[] {
       if (!started.has(p.callId)) started.set(p.callId, p.specHash);
     }
   }
+  const scope = legacyScopeOf(s);
   const out: RecordedCall[] = [];
   for (const e of own) {
     if (e.type !== "assistant_message") continue;
@@ -95,9 +141,11 @@ export function recordedCalls(s: CaseSnapshot): RecordedCall[] {
       const call = b as unknown as { id: string; name: string; input: unknown };
       const r = results.get(call.id);
       if (!r) continue;
+      const cur = currentCall(call.name, call.input, scope);
       out.push({
-        toolKey: call.name,
-        inputKey: matchKey(call.name, call.input),
+        toolKey: cur.name,
+        inputKey: matchKey(cur.name, cur.input),
+        ...(cur.legacy && { legacy: true as const }),
         content: r.content,
         isError: r.isError,
         ...(r.loadedTools !== undefined && { loadedTools: r.loadedTools }),
@@ -128,8 +176,14 @@ export interface RecordedToolPipelineDeps {
 export class RecordedToolPipeline implements Pick<ToolPipeline, "runStep"> {
   private readonly used = new Set<number>();
   private misses = 0;
+  private legacyHits = 0;
 
   constructor(private readonly d: RecordedToolPipelineDeps) {}
+
+  /** Calls so far matched with a recording made under release-candidate tool names. */
+  legacyMatches(): number {
+    return this.legacyHits;
+  }
 
   /** 至今没有匹配到记录的调用数。 */
   unmatched(): number {
@@ -198,6 +252,7 @@ export class RecordedToolPipeline implements Pick<ToolPipeline, "runStep"> {
     );
     if (i < 0) return undefined;
     this.used.add(i);
+    if (this.d.recordings[i]?.legacy === true) this.legacyHits++;
     return this.d.recordings[i];
   }
 }

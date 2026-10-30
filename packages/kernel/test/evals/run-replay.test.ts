@@ -631,6 +631,85 @@ describe("整轮回放", { timeout: 60_000 }, () => {
     expect((await readFakeSandboxOps(root)).length).toBe(sandboxBefore);
   });
 
+  it("an rc recording replays against the current names: legacyKeyMatch, no tool-call difference, nothing executed", async () => {
+    const setId = await createSet();
+    // recorded by the release candidate: sandbox_edit with path / oldText / newText, an extension
+    // tool by its <plugin>__<tool> key; the model now calls Edit with file_path and so on
+    const c1 = await createConv(admin, orgId, agentId);
+    await seedRun(
+      c1,
+      "legacy-edit",
+      'tool:Edit:{"file_path":"/workspace/a.txt","old_string":"a","new_string":"b","replace_all":true}',
+      [
+        {
+          name: "sandbox_edit",
+          input: { path: "/workspace/a.txt", oldText: "a", newText: "b", replaceAll: true },
+          content: "Edited /workspace/a.txt: replaced 2 occurrences.",
+        },
+      ],
+    );
+    const c2 = await createConv(admin, orgId, agentId);
+    await seedRun(c2, "legacy-ext", "tool:plugin__tools-count__count:{}", [
+      { name: "tools-count__count", input: {}, content: "recorded count" },
+    ]);
+    const c3 = await createConv(admin, orgId, agentId);
+    await seedRun(c3, "new-edit", 'tool:Edit:{"file_path":"/workspace/z.txt","old_string":"a"}', [
+      { name: "Edit", input: { file_path: "/workspace/z.txt", old_string: "a" }, content: "ok" },
+    ]);
+    await addCase(setId, c1, "legacy-edit");
+    await addCase(setId, c2, "legacy-ext");
+    await addCase(setId, c3, "new-edit");
+    const sandboxBefore = (await readFakeSandboxOps(root)).length;
+    const run = await startRun(setId, {});
+    expect((await finished(run.id)).status).toBe("completed");
+    const rs = await results(run.id);
+    expect(rs).toHaveLength(3);
+    type Call = { name: string; input: unknown };
+    const byCandidate = (name: string) => {
+      const r = rs.find((x) => (x.candidate as RunReplayResult).toolCalls[0]?.name === name);
+      if (!r) throw new Error(`no result whose candidate called ${name}`);
+      return r;
+    };
+    for (const r of rs) {
+      expect(r.status, JSON.stringify(r.error)).toBe("done");
+      expect((r.candidate as RunReplayResult).unmatched).toBe(0);
+      expect(r.drift).not.toContain("tool_unmatched");
+      const diff = r.diff as { toolCallsMatch: boolean; toolCalls: { kind: string }[] };
+      expect(diff.toolCallsMatch).toBe(true);
+      expect(diff.toolCalls.map((t) => t.kind)).toEqual(["same"]);
+      const [result] = (await evalEvents(r)).filter((e) => e.type === "tool_result");
+      expect(result?.payload).toMatchObject({ isError: false });
+    }
+    const baselineCalls = (r: EvalResultView) => (r.baseline as { toolCalls: Call[] }).toolCalls;
+    // sandbox_edit {path, oldText, ...} read as Edit {file_path, old_string, ...}
+    const edits = rs.filter((r) => (r.candidate as RunReplayResult).toolCalls[0]?.name === "Edit");
+    expect(edits).toHaveLength(2);
+    const legacyEdit = edits.find((r) =>
+      JSON.stringify(baselineCalls(r)[0]?.input).includes('"replace_all":true'),
+    );
+    expect(legacyEdit && (legacyEdit.candidate as RunReplayResult).legacyKeyMatch).toBe(true);
+    expect(legacyEdit && baselineCalls(legacyEdit)).toEqual([
+      {
+        name: "Edit",
+        input: {
+          file_path: "/workspace/a.txt",
+          old_string: "a",
+          new_string: "b",
+          replace_all: true,
+        },
+      },
+    ]);
+    // the extension tool recorded as tools-count__count
+    const ext = byCandidate("plugin__tools-count__count");
+    expect((ext.candidate as RunReplayResult).legacyKeyMatch).toBe(true);
+    expect(baselineCalls(ext)[0]?.name).toBe("plugin__tools-count__count");
+    // a recording already in the current names is not a legacy match
+    const current = edits.find((r) => r !== legacyEdit);
+    expect(current).toBeDefined();
+    expect((current?.candidate as RunReplayResult | undefined)?.legacyKeyMatch).toBeUndefined();
+    expect((await readFakeSandboxOps(root)).length).toBe(sandboxBefore);
+  });
+
   it("the run's skills snapshot is copied with pinned and toolMap unchanged (phase B)", async () => {
     const setId = await createSet();
     const conv = await createConv(admin, orgId, agentId);
