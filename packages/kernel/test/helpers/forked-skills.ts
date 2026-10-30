@@ -1,11 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { KernelDb, SkillManifest } from "../../src/db/kernel-schema.js";
+import type { KernelSchemaDb, SkillManifest } from "../../src/db/kernel-schema.js";
 import type { StorageService } from "../../src/storage/storage.service.js";
 
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 
 /** The id of catalog item `name` (created when missing). */
-export async function catalogItemNamed(db: KernelDb, name: string): Promise<string> {
+export async function catalogItemNamed(db: KernelSchemaDb, name: string): Promise<string> {
   const got = await db
     .selectFrom("catalog_items")
     .select("id")
@@ -66,7 +66,7 @@ export async function writeForkedSkillFiles(
  * its SKILL.md (and `files`) in object storage and its rows written directly.
  */
 export async function seedForkedSkill(
-  d: { db: KernelDb; storage: StorageService; orgId: string; ownerId: string },
+  d: { db: KernelSchemaDb; storage: StorageService; orgId: string; ownerId: string },
   name: string,
   body: string,
   agent?: string,

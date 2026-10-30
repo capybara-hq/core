@@ -1,16 +1,17 @@
+import { Inject, Injectable } from "@nestjs/common";
 import {
   CATALOG_REQUESTS_LIST_MAX,
-  type CatalogRequestsService,
+  CatalogRequestsService,
   type CatalogRequestView,
 } from "../catalog/requests.service.js";
 import {
   SKILL_CHANGES_LIST_MAX,
-  type SkillChangesService,
+  SkillChangesService,
   type SkillChangeView,
 } from "../skills/changes.service.js";
 import {
   APPROVALS_LIST_MAX,
-  type ApprovalsService,
+  ApprovalsService,
   type ApprovalView,
 } from "../tools/approvals.service.js";
 
@@ -36,20 +37,21 @@ export interface InboxView {
 }
 
 /** 收件箱（计划取舍 C6）：按类型汇总各来源的待处理事项。无状态，每次实时读 PG。 */
+@Injectable()
 export class InboxService {
   constructor(
-    private readonly d: {
-      approvals: Pick<ApprovalsService, "list">;
-      skillChanges: Pick<SkillChangesService, "listPending">;
-      catalogRequests?: Pick<CatalogRequestsService, "listForOrgAdmin">;
-    },
+    @Inject(ApprovalsService) private readonly approvals: Pick<ApprovalsService, "list">,
+    @Inject(SkillChangesService)
+    private readonly skillChanges: Pick<SkillChangesService, "listPending">,
+    @Inject(CatalogRequestsService)
+    private readonly catalogRequests: Pick<CatalogRequestsService, "listForOrgAdmin">,
   ) {}
 
   async list(orgId: string, accountId: string): Promise<InboxView> {
     const [approvals, changes, requests] = await Promise.all([
-      this.d.approvals.list(orgId, accountId, "pending"),
-      this.d.skillChanges.listPending(orgId, accountId),
-      this.d.catalogRequests?.listForOrgAdmin(orgId, accountId) ?? [],
+      this.approvals.list(orgId, accountId, "pending"),
+      this.skillChanges.listPending(orgId, accountId),
+      this.catalogRequests.listForOrgAdmin(orgId, accountId),
     ]);
     const all: InboxItem[] = [
       ...approvals.map(

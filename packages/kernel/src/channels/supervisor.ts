@@ -1,17 +1,31 @@
 import { randomUUID } from "node:crypto";
-import type { ExtensionContext, InboundEvent, Logger } from "@capybara-hq/plugin-sdk";
+import {
+  CHANNEL_EXTENSION_POINT,
+  type ExtensionContext,
+  type Logger,
+} from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { secretValues } from "../config/fields.js";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { enabledExtensionsByOrg } from "../extensions/enabled.js";
-import { createRedactor } from "../log.js";
+import { ExtensionRegistry } from "../extensions/registry.js";
+import { ReplicaStatusStore } from "../extensions/sources.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { type LeaseHandle, LockService } from "../infra/lock/lock.service.js";
+import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
+import { KERNEL_BUS, KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
+import { createRedactor, type KernelLogger } from "../log.js";
 import {
   CHANNEL_CHANGED_TOPIC,
-  type ChannelConnections,
+  ChannelConnections,
   channelBackoffKey,
   channelFailsKey,
 } from "./connections.service.js";
+import { ChannelInbound } from "./inbound.js";
+import { GATEWAY_CHECK_JOB } from "./job-ids.js";
 
 /** 长连接租约键（内核锁）：值为持有方的随机 token。 */
 export const channelLeaseKey = (connectionId: string) => `capk:channel-lease:${connectionId}`;
@@ -59,13 +73,6 @@ const FAILS_TTL_SECONDS = 3600;
 const SETTLE_MS = 5_000;
 /** `last_error` 的最大长度。 */
 const MAX_ERROR_CHARS = 1000;
-
-const RENEW = `
-if redis.call('GET', KEYS[1]) == ARGV[1] then
-  return redis.call('PEXPIRE', KEYS[1], ARGV[2])
-end
-return 0
-`;
 
 /**
  * Heartbeat with the Redis server clock (replica wall clocks may drift): for each key, ZADD the
@@ -121,18 +128,12 @@ export async function liveGateways(
   return out;
 }
 
-const RELEASE = `
-if redis.call('GET', KEYS[1]) == ARGV[1] then
-  return redis.call('DEL', KEYS[1])
-end
-return 0
-`;
-
 /** 本进程持有的一条长连接。 */
 interface Held {
   /** 提供这条连接的插件（实例撤销 / 替换时据此交还）。 */
   plugin: string;
-  token: string;
+  /** The lease `capk:channel-lease:<id>` (LockService renews it; `lost` drops the connection). */
+  lease: LeaseHandle;
   abort: AbortController;
   done: Promise<void>;
   startedAt: number;
@@ -142,52 +143,35 @@ interface Held {
   stable: boolean;
 }
 
-export interface ChannelSupervisorDeps {
-  db: KernelDb;
-  redis: Redis;
-  bus: ExtensionContext["bus"];
-  connections: Pick<ChannelConnections, "runtime">;
-  /** 本进程已加载、提供 `channel@1` 的插件名（内核传 `host.list("channel")`）。 */
-  localPlugins: () => string[];
-  onEvent(connectionId: string, e: InboundEvent): Promise<void>;
-  config: () => Pick<KernelConfig, "channels">;
-  log: Pick<Logger, "warn" | "error">;
-  /**
-   * This process's replica id (`newReplicaId()` in kernel.ts), the member of the gateway heartbeat
-   * ZSET. Not `http.replicaId`, which is optional and may repeat across replicas.
-   */
-  replicaId: string;
-  /** Called at the start of every scan round (`claimOnly` for handoff nudges); for tests / metrics. */
-  onScan?: (claimOnly: boolean) => void;
-}
-
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
- * 渠道长连接选主（runs only on the gateway role）。每个副本两个各自独立的循环，周期都是 `channels.scanIntervalMs`（默认 10s）：
- * - 续租循环：为本进程持有的连接续租（`capk:channel-lease:<id>`，TTL `channels.leaseTtlMs` 默认 30s）。
- *   它不做任何可能慢的事（不等交还、不查库），一个插件迟迟不退出不会拖慢其他连接的续租。
+ * 渠道长连接选主（runs only on the gateway role: a provider of `GatewayModule`, started and stopped by
+ * `KernelLifecycle` through `GatewayRole` after the extension load）。每个副本两个各自独立的循环，周期都是 `channels.scanIntervalMs`（默认 10s）：
+ * - 心跳循环：写本副本的 gateway 心跳，再为本进程持有的连接续一次租。它不做任何可能慢的事（不等交还、不查库），
+ *   一个插件迟迟不退出不会拖慢其他连接的续租。
  * - 扫描循环：复核持有的连接仍为 active、未删除且插件在该组织启用（不满足就交还，交还不阻塞本轮），
- *   再扫描无人持有的这类连接，`SET NX PX` 取到租约的副本调用插件 `connect`（传 `signal`）。
- * 续租失败（租约已丢）→ 立即中止，不释放（已不是自己的）；Redis 出错时，自上次续租成功起满 `TTL - 扫描周期`
- * 仍续不上就按丢失处理（赶在租约可能被别的副本拿走之前断开）。连接被停用 / 删除 / 改配置（内核 bus `channel.changed`，
- * 或扫描时复核发现）→ 中止、等 `connect` 返回后释放租约，下一轮任一副本按新配置重连；取得租约到 `connect` 开始之间
+ *   再扫描无人持有的这类连接，取到租约（`LockService.hold`）的副本调用插件 `connect`（传 `signal`）。
+ * The lease `capk:channel-lease:<id>` (value: this replica's random token, TTL
+ * `channels.leaseTtlMs`, default 30 s) is renewed by `LockService` (every TTL/3, plus once in the
+ * heartbeat loop). A lost lease (overwritten or expired, or no successful renewal by the renewal
+ * deadline) aborts at once and is not released (it is no longer ours).
+ * 连接被停用 / 删除 / 改配置（内核 bus `channel.changed`，或扫描时复核发现）→ 中止、等 `connect` 返回后释放租约，下一轮任一副本按新配置重连；取得租约到 `connect` 开始之间
  * 收到的重连广播会被记下，开始后立即交还。
  * `connect` 抛错或提前返回 → 记 `last_error`，在 Redis 写退避标记（指数退避，上限 5 分钟），释放租约后由任一副本重试。
- * Fair share (E11-B): the renewal loop also writes this replica's heartbeat into `capk:gateway-replicas`;
+ * Fair share (E11-B): the heartbeat loop writes this replica's heartbeat into `capk:gateway-replicas`;
  * each scan computes this replica's target from the runnable count and the live replicas
  * (`shareTarget`), stops claiming at the target and, when above it, gives back one connection per
  * round (the most recently connected) with a handoff marker. Exactly one holder per connection is
  * still guaranteed by the lease alone; the share only decides who claims.
- * 停机时中止全部长连接并释放租约，并等进行中的 `onEvent`（入队）结束。持有的长连接、租约 token 与定时器都是「本进程持有的资源」，
+ * 停机时中止全部长连接并释放租约，并等进行中的 `onEvent`（入队）结束。持有的长连接、租约与定时器都是「本进程持有的资源」，
  * 跨副本的状态（租约、退避、失败计数）都在 Redis。
  */
+@Injectable()
 export class ChannelSupervisor {
   private readonly held = new Map<string, Held>();
   /** 已取得租约、正在读配置准备 `connect` 的连接；值为期间是否收到了重连广播。 */
   private readonly connecting = new Map<string, { reconnect: boolean }>();
-  /** 正在交还（已中止、等 `connect` 返回）的连接 → 租约 token：等待期间照常续租，交还完成才释放。 */
-  private readonly settling = new Map<string, string>();
   /** 进行中的交还（`stop()` 要等它们全部结束）。 */
   private readonly releasing = new Set<Promise<void>>();
   /** 进行中的 `onEvent`（去重 + 入队，很快）：`stop()` 等它们结束，插件才不会在内核关闭队列之后才拿到结果。 */
@@ -205,11 +189,41 @@ export class ChannelSupervisor {
   private heartbeated = new Set<string>();
   /** A claim-only scan is queued and has not started yet: further nudges until then are dropped. */
   private claimQueued = false;
+  /**
+   * This process's replica id (`ReplicaStatusStore.replicaId`), the member of the gateway heartbeat
+   * ZSET. Not `http.replicaId`, which is optional and may repeat across replicas.
+   */
+  readonly replicaId: string;
+  /** Called at the start of every scan round (`claimOnly` for handoff nudges); for tests / metrics. */
+  onScan: ((claimOnly: boolean) => void) | undefined;
 
-  constructor(private readonly deps: ChannelSupervisorDeps) {}
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(REDIS) private readonly redis: Redis,
+    @Inject(KERNEL_BUS) private readonly bus: ExtensionContext["bus"],
+    @Inject(LockService) private readonly locks: Pick<LockService, "hold">,
+    @Inject(ChannelConnections) private readonly connections: Pick<ChannelConnections, "runtime">,
+    /** The channel extensions loaded in this process (`channel@1` providers). */
+    @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "list">,
+    /** Events from a plugin's `connect` (dedupe and enqueue; ack after it resolves). */
+    @Inject(ChannelInbound) private readonly inbound: Pick<ChannelInbound, "onEvent">,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "warn" | "error">,
+    @Inject(ReplicaStatusStore) replicaStatus: Pick<ReplicaStatusStore, "replicaId">,
+  ) {
+    this.replicaId = replicaStatus.replicaId;
+  }
+
+  /** 本进程已加载、提供 `channel@1` 的插件名。 */
+  private localPlugins(): string[] {
+    return this.registry
+      .list("channel")
+      .filter((e) => e.capability === CHANNEL_EXTENSION_POINT)
+      .map((e) => e.plugin);
+  }
 
   async start(): Promise<void> {
-    this.unsubscribe = await this.deps.bus.subscribe(CHANNEL_CHANGED_TOPIC, (payload) => {
+    this.unsubscribe = await this.bus.subscribe(CHANNEL_CHANGED_TOPIC, (payload) => {
       const m = payload as { connectionId?: unknown; reconnect?: unknown } | null;
       const id = m?.connectionId;
       if (m?.reconnect !== true || typeof id !== "string") return;
@@ -223,20 +237,20 @@ export class ChannelSupervisor {
     // round. Claim only (no hand-back), so hand-backs stay at one per plugin per scan round.
     // Nudges coalesce: at most one claim-only scan waits behind the one running; nudges for a
     // plugin not loaded here are ignored.
-    this.unsubscribeHandoff = await this.deps.bus.subscribe(CHANNEL_HANDOFF_TOPIC, (payload) => {
+    this.unsubscribeHandoff = await this.bus.subscribe(CHANNEL_HANDOFF_TOPIC, (payload) => {
       const m = payload as { replicaId?: unknown; plugin?: unknown } | null;
-      if (this.stopped || m?.replicaId === this.deps.replicaId || this.claimQueued) return;
-      if (typeof m?.plugin !== "string" || !this.deps.localPlugins().includes(m.plugin)) return;
+      if (this.stopped || m?.replicaId === this.replicaId || this.claimQueued) return;
+      if (typeof m?.plugin !== "string" || !this.localPlugins().includes(m.plugin)) return;
       this.claimQueued = true;
       const run = this.exclusive(() => {
         this.claimQueued = false;
         return this.scan(true);
       });
       this.track(run).catch((err: unknown) =>
-        this.deps.log.error("channel supervisor scan failed", { err }),
+        this.log.error("channel supervisor scan failed", { err }),
       );
     });
-    this.loop("renew", () => this.renewAll());
+    this.loop("heartbeat", () => this.heartbeatRound());
     this.loop("scan", () =>
       this.exclusive(async () => {
         await this.recheckHeld();
@@ -260,10 +274,10 @@ export class ChannelSupervisor {
       if (this.stopped) return;
       st.timer = setTimeout(() => {
         st.running = fn()
-          .catch((err) => this.deps.log.error(`channel supervisor ${name} failed`, { err }))
+          .catch((err) => this.log.error(`channel supervisor ${name} failed`, { err }))
           .finally(() => {
             st.running = undefined;
-            run(this.deps.config().channels.scanIntervalMs);
+            run(this.config.get().channels.scanIntervalMs);
           });
       }, ms);
       st.timer.unref?.();
@@ -271,33 +285,23 @@ export class ChannelSupervisor {
     run(0);
   }
 
-  private async renewAll(): Promise<void> {
-    const { leaseTtlMs: ttl, scanIntervalMs } = this.deps.config().channels;
-    // Heartbeat before renewing: a crashed replica's heartbeat then goes stale no later than its
-    // leases expire, so the survivors' share already excludes it when those connections free up
+  /**
+   * One heartbeat round: the heartbeat first, then one renewal of every lease held (on top of
+   * `LockService`'s own), so a crashed replica's heartbeat goes stale no later than its leases
+   * expire and the survivors' share already excludes it when those connections free up.
+   */
+  private async heartbeatRound(): Promise<void> {
+    const ttl = this.config.get().channels.leaseTtlMs;
     await this.heartbeat(ttl);
     await Promise.all(
       [...this.held].map(async ([id, h]) => {
-        let ok: boolean;
-        try {
-          ok =
-            Number(await this.deps.redis.eval(RENEW, 1, channelLeaseKey(id), h.token, ttl)) === 1;
-        } catch (err) {
-          // Redis 暂时不可用：再等一轮就可能超过 TTL（租约在别的副本眼里已过期），提前按丢失处理
-          this.deps.log.warn("channel lease renew failed", { connectionId: id, err });
-          ok = Date.now() - h.renewedAt < ttl - scanIntervalMs;
-          if (ok) return;
-        }
-        await this.afterRenew(id, h, ok, ttl);
+        // false marks the lease lost (`lost` aborts, the connection drops); a Redis error is the
+        // watchdog's to log and judge (lost at the renewal deadline)
+        const ok = await h.lease.renew().catch(() => undefined);
+        if (ok === true) await this.afterRenew(id, h, ttl);
+        // false: the key is gone or taken, or the lease was already lost (`drop` is idempotent)
+        else if (ok === false) this.drop(id, h);
       }),
-    );
-    // 交还中的连接：插件还没退出，租约不能在别的副本眼里过期（否则两边同时在线）；续不上就算了（已不是自己的）
-    await Promise.all(
-      [...this.settling].map(([id, token]) =>
-        this.deps.redis.eval(RENEW, 1, channelLeaseKey(id), token, ttl).catch((err: unknown) => {
-          this.deps.log.warn("channel lease renew failed", { connectionId: id, err });
-        }),
-      ),
     );
   }
 
@@ -308,21 +312,21 @@ export class ChannelSupervisor {
    */
   private async heartbeat(ttl: number): Promise<void> {
     if (this.stopped) return;
-    const plugins = [...new Set(this.deps.localPlugins())];
+    const plugins = [...new Set(this.localPlugins())];
     const gone = [...this.heartbeated].filter((p) => !plugins.includes(p));
     if (plugins.length === 0 && gone.length === 0) return;
     try {
-      await this.deps.redis.eval(
+      await this.redis.eval(
         HEARTBEAT,
         plugins.length,
         ...plugins.map(gatewayReplicasKey),
-        this.deps.replicaId,
+        this.replicaId,
         ttl,
         ...gone.map(gatewayReplicasKey),
       );
       this.heartbeated = new Set(plugins);
     } catch (err) {
-      this.deps.log.warn("gateway heartbeat failed", { err });
+      this.log.warn("gateway heartbeat failed", { err });
     }
   }
 
@@ -332,13 +336,13 @@ export class ChannelSupervisor {
    * written yet on the first round).
    */
   private async targets(runnable: Map<string, number>): Promise<Map<string, number>> {
-    const { leaseTtlMs: ttl, shareSlack } = this.deps.config().channels;
+    const { leaseTtlMs: ttl, shareSlack } = this.config.get().channels;
     const plugins = [...runnable.keys()];
-    const live = await liveGateways(this.deps.redis, plugins, ttl);
+    const live = await liveGateways(this.redis, plugins, ttl);
     const out = new Map<string, number>();
     for (const p of plugins) {
-      const members = [...new Set([...(live.get(p) ?? []), this.deps.replicaId])].sort();
-      const rank = members.indexOf(this.deps.replicaId);
+      const members = [...new Set([...(live.get(p) ?? []), this.replicaId])].sort();
+      const rank = members.indexOf(this.replicaId);
       out.set(p, shareTarget(runnable.get(p) ?? 0, members.length, shareSlack, rank));
     }
     return out;
@@ -362,29 +366,25 @@ export class ChannelSupervisor {
     }
     if (!latest) return;
     const [id] = latest;
-    const px = this.deps.config().channels.scanIntervalMs * 2;
-    await this.deps.redis.set(channelHandoffKey(id), this.deps.replicaId, "PX", px);
+    const px = this.config.get().channels.scanIntervalMs * 2;
+    await this.redis.set(channelHandoffKey(id), this.replicaId, "PX", px);
     this.releaseInBackground(id, this.nudge(plugin));
   }
 
   /** After-release callback: tells the other replicas a connection of `plugin` is free to claim. */
   private nudge(plugin: string): () => Promise<void> {
     return () =>
-      this.deps.bus
-        .publish(CHANNEL_HANDOFF_TOPIC, { plugin, replicaId: this.deps.replicaId })
-        .catch((err: unknown) => this.deps.log.warn("cannot publish channel handoff", { err }));
+      this.bus
+        .publish(CHANNEL_HANDOFF_TOPIC, { plugin, replicaId: this.replicaId })
+        .catch((err: unknown) => this.log.warn("cannot publish channel handoff", { err }));
   }
 
-  private async afterRenew(id: string, h: Held, ok: boolean, ttl: number): Promise<void> {
-    if (!ok) {
-      this.deps.log.warn("channel lease lost; disconnecting", { connectionId: id });
-      this.drop(id, h);
-      return;
-    }
+  /** A renewal succeeded: one lease period connected in a row clears the failure count. */
+  private async afterRenew(id: string, h: Held, ttl: number): Promise<void> {
     h.renewedAt = Date.now();
     if (!h.stable && Date.now() - h.startedAt >= ttl) {
       h.stable = true;
-      await this.deps.redis.del(channelFailsKey(id)).catch(() => {});
+      await this.redis.del(channelFailsKey(id)).catch(() => {});
     }
   }
 
@@ -393,11 +393,12 @@ export class ChannelSupervisor {
    * 且插件在本进程已加载——滚动升级期间还没有该插件的副本根本不考虑它（不取租约、不记失败），留给有插件的副本。
    */
   private runnable(plugins: string[]) {
+    const db = this.db.db;
     return (
-      this.deps.db
+      db
         .selectFrom("channel_connections")
         .innerJoin("orgs", "orgs.id", "channel_connections.org_id")
-        .innerJoin(enabledExtensionsByOrg(this.deps.db).as("en"), (j) =>
+        .innerJoin(enabledExtensionsByOrg(db).as("en"), (j) =>
           j
             .onRef("en.plugin", "=", "channel_connections.plugin")
             .onRef("en.org_id", "=", "channel_connections.org_id"),
@@ -419,7 +420,7 @@ export class ChannelSupervisor {
   private async recheckHeld(): Promise<void> {
     const ids = [...this.held.keys()];
     if (ids.length === 0) return;
-    const plugins = this.deps.localPlugins();
+    const plugins = this.localPlugins();
     const live = new Set(
       plugins.length === 0
         ? []
@@ -440,8 +441,8 @@ export class ChannelSupervisor {
    */
   private async scan(claimOnly: boolean): Promise<void> {
     if (this.stopped) return;
-    this.deps.onScan?.(claimOnly);
-    const plugins = this.deps.localPlugins();
+    this.onScan?.(claimOnly);
+    const plugins = this.localPlugins();
     if (plugins.length === 0) return;
     const rows = await this.runnable(plugins).execute();
     const runnable = new Map<string, number>();
@@ -461,31 +462,37 @@ export class ChannelSupervisor {
         continue;
       }
       if (this.held.has(id)) continue;
-      if ((await this.deps.redis.exists(channelBackoffKey(id))) === 1) continue;
-      if ((await this.deps.redis.get(channelHandoffKey(id))) === this.deps.replicaId) continue;
-      const token = randomUUID();
-      const ttl = this.deps.config().channels.leaseTtlMs;
-      const ok = await this.deps.redis.set(channelLeaseKey(id), token, "PX", ttl, "NX");
-      if (ok !== "OK") continue;
+      if ((await this.redis.exists(channelBackoffKey(id))) === 1) continue;
+      if ((await this.redis.get(channelHandoffKey(id))) === this.replicaId) continue;
+      const ttl = this.config.get().channels.leaseTtlMs;
+      const lease = await this.locks.hold(channelLeaseKey(id), randomUUID(), ttl);
+      if (!lease) continue;
       if (this.stopped) {
-        await this.releaseLease(id, token);
+        await lease.release();
         return;
       }
-      await this.connect(id, token);
+      await this.connect(id, lease);
     }
   }
 
   /** 已取得租约：读配置并在后台跑插件的 `connect`。 */
-  private async connect(id: string, token: string): Promise<void> {
+  private async connect(id: string, lease: LeaseHandle): Promise<void> {
     const pending = { reconnect: false };
     this.connecting.set(id, pending);
     let rt: Awaited<ReturnType<ChannelConnections["runtime"]>>;
     try {
-      rt = await this.deps.connections.runtime(id);
+      rt = await this.connections.runtime(id);
     } catch (err) {
       this.connecting.delete(id);
       await this.failed(id, err);
-      await this.releaseLease(id, token);
+      await lease.release();
+      return;
+    }
+    // The lease was lost while the config was read (an aborted signal never fires a listener
+    // added later): not ours any more, so no connect and no release
+    if (lease.lost.aborted) {
+      this.connecting.delete(id);
+      lease.abandon();
       return;
     }
     // 插件异常信息可能带上凭据：写进 last_error / 日志前按该连接的密钥打码
@@ -494,7 +501,7 @@ export class ChannelSupervisor {
     const now = Date.now();
     const h: Held = {
       plugin: rt.row.plugin,
-      token,
+      lease,
       abort,
       done: Promise.resolve(),
       startedAt: now,
@@ -503,12 +510,14 @@ export class ChannelSupervisor {
     };
     this.held.set(id, h);
     this.connecting.delete(id);
+    // 租约丢失（LockService 记一行 `lock lost`）：中止，不释放（已不是自己的）
+    lease.lost.addEventListener("abort", () => this.drop(id, h), { once: true });
     h.done = (async () => {
       try {
         await rt.channel.connect({
           connectionId: id,
           config: rt.config,
-          onEvent: (e) => this.track(this.deps.onEvent(id, e)),
+          onEvent: (e) => this.track(this.inbound.onEvent(id, e)),
           signal: abort.signal,
         });
         if (!abort.signal.aborted) throw new Error("connect returned before it was aborted");
@@ -519,7 +528,7 @@ export class ChannelSupervisor {
         // 自己结束（出错 / 提前返回）：交还租约，退避后由任一副本重试
         if (!abort.signal.aborted && this.held.get(id) === h) {
           this.held.delete(id);
-          await this.releaseLease(id, token);
+          await lease.release();
         }
       }
     })();
@@ -542,28 +551,30 @@ export class ChannelSupervisor {
   private async failed(id: string, err: unknown, redact?: (s: string) => string): Promise<void> {
     const raw = errMsg(err);
     const message = (redact ? redact(raw) : raw).slice(0, MAX_ERROR_CHARS);
-    this.deps.log.warn("channel connection failed", { connectionId: id, error: message });
+    this.log.warn("channel connection failed", { connectionId: id, error: message });
     try {
-      const fails = await this.deps.redis.incr(channelFailsKey(id));
-      await this.deps.redis.expire(channelFailsKey(id), FAILS_TTL_SECONDS);
+      const fails = await this.redis.incr(channelFailsKey(id));
+      await this.redis.expire(channelFailsKey(id), FAILS_TTL_SECONDS);
       const delay = Math.min(
         MAX_BACKOFF_MS,
-        this.deps.config().channels.retryBaseMs * 2 ** Math.min(fails - 1, 20),
+        this.config.get().channels.retryBaseMs * 2 ** Math.min(fails - 1, 20),
       );
-      await this.deps.redis.set(channelBackoffKey(id), "1", "PX", delay);
-      await this.deps.db
+      await this.redis.set(channelBackoffKey(id), "1", "PX", delay);
+      await this.db
         .updateTable("channel_connections")
         .set({ last_error: message })
         .where("id", "=", id)
         .execute();
     } catch (e) {
-      this.deps.log.warn("cannot record channel failure", { connectionId: id, err: e });
+      this.log.warn("cannot record channel failure", { connectionId: id, err: e });
     }
   }
 
-  /** 租约已丢：中止，不释放（已不是自己的）。 */
+  /** 租约已丢：中止，不释放（已不是自己的；续租已停）。 */
   private drop(id: string, h: Held): void {
-    if (this.held.get(id) === h) this.held.delete(id);
+    if (this.held.get(id) !== h) return;
+    this.held.delete(id);
+    h.lease.abandon();
     h.abort.abort();
   }
 
@@ -577,12 +588,14 @@ export class ChannelSupervisor {
     this.releasing.add(p);
   }
 
-  /** 主动交还：中止，等 `connect` 返回（至多 SETTLE_MS）后释放租约；超时则让租约自然过期，避免两边同时在线。 */
+  /**
+   * 主动交还：中止，等 `connect` 返回（至多 SETTLE_MS，期间租约照常续着，不会在别的副本眼里提前过期）后释放租约；
+   * 超时则停止续租、让租约自然过期，避免两边同时在线。
+   */
   private async release(id: string): Promise<boolean> {
     const h = this.held.get(id);
     if (!h) return false;
     this.held.delete(id);
-    this.settling.set(id, h.token);
     h.abort.abort();
     let timer: NodeJS.Timeout | undefined;
     const settled = await Promise.race([
@@ -593,21 +606,14 @@ export class ChannelSupervisor {
       }),
     ]);
     clearTimeout(timer);
-    if (this.settling.get(id) === h.token) this.settling.delete(id);
-    if (settled) await this.releaseLease(id, h.token);
-    else
-      this.deps.log.warn("channel connect did not stop in time; lease left to expire", {
+    if (settled) await h.lease.release();
+    else {
+      h.lease.abandon();
+      this.log.warn("channel connect did not stop in time; lease left to expire", {
         connectionId: id,
       });
-    return settled;
-  }
-
-  private async releaseLease(id: string, token: string): Promise<void> {
-    try {
-      await this.deps.redis.eval(RELEASE, 1, channelLeaseKey(id), token);
-    } catch (err) {
-      this.deps.log.warn("cannot release channel lease", { connectionId: id, err });
     }
+    return settled;
   }
 
   /**
@@ -636,8 +642,8 @@ export class ChannelSupervisor {
     // Leave the share first so the other gateways count one replica fewer right away
     await Promise.all(
       [...this.heartbeated].map((p) =>
-        this.deps.redis.zrem(gatewayReplicasKey(p), this.deps.replicaId).catch((err: unknown) => {
-          this.deps.log.warn("cannot remove gateway heartbeat", { plugin: p, err });
+        this.redis.zrem(gatewayReplicasKey(p), this.replicaId).catch((err: unknown) => {
+          this.log.warn("cannot remove gateway heartbeat", { plugin: p, err });
         }),
       ),
     );
@@ -650,27 +656,61 @@ export class ChannelSupervisor {
   }
 }
 
-/** Maintenance job that warns when channel connections need a gateway and none is live (Ruling R1). */
-export const GATEWAY_CHECK_JOB = "channel-gateway-check";
-export const GATEWAY_CHECK_SCHEDULER_ID = "channel-gateway-check-every";
+export { GATEWAY_CHECK_JOB, GATEWAY_CHECK_SCHEDULER_ID } from "./job-ids.js";
+/** The period of the gateway check (`@LockedCron` every minute). */
 export const GATEWAY_CHECK_EVERY_MS = 60_000;
 
 /**
- * Runs on the worker role (maintenance queue), per channel plugin (Ruling R3): when a plugin has
+ * Warns when channel connections need a gateway and none is live (Ruling R1 / R3 / R4):
+ * {@link checkGatewayPresence}, every minute, once across replicas; a worker-role job
+ * (`WorkerModule`), as the maintenance job it replaces was. Silent for one lease TTL after this
+ * worker process built its providers (the gateways' first heartbeats; the old handler's grace also
+ * started at the worker's kernel construction). Replaces the maintenance scheduler
+ * `channel-gateway-check-every` (retired at worker start).
+ */
+@Injectable()
+export class GatewayCheckJob {
+  /** The start of the grace period: when this process built its providers. */
+  private readonly graceFrom = Date.now();
+
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(REDIS) private readonly redis: Redis,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Inject(LockService) readonly lockService: LockService,
+    @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
+  ) {}
+
+  @LockedCron("* * * * *", { name: GATEWAY_CHECK_JOB })
+  async run(): Promise<void> {
+    await checkGatewayPresence({
+      db: this.db.db,
+      redis: this.redis,
+      locks: this.lockService,
+      config: this.config,
+      log: this.log,
+      graceUntil: this.graceFrom + this.config.get().channels.leaseTtlMs,
+    });
+  }
+}
+
+/**
+ * Runs once a minute across replicas ({@link GatewayCheckJob}), per channel plugin (Ruling R3): when a plugin has
  * active connections (not deleted, org not deleted, plugin enabled for the org; long connection or
  * webhook mode, Ruling R4) but no gateway replica with that plugin loaded has a heartbeat newer than
  * one lease TTL (Redis server clock), nobody holds those long connections or answers their webhooks.
  * - Logs one `warn` (naming the plugins) per interval at most across the cluster: a Redis
- *   `SET NX PX` rate limit a little shorter than the job period, so a duplicated job or several
- *   worker replicas do not repeat it while each period still gets its line.
+ *   marker (`LockService.lease`, a `SET NX PX`) a little shorter than the job period, so a
+ *   duplicated job or several replicas do not repeat it while each period still gets its line.
  * - Silent before `graceUntil` (this process's start + one lease TTL), so a fresh cluster does not
  *   warn before the gateways' first heartbeat.
  * Returns whether it warned.
  */
 export async function checkGatewayPresence(deps: {
-  db: KernelDb;
+  db: KernelSchemaDb;
   redis: Redis;
-  config: () => Pick<KernelConfig, "channels">;
+  locks: Pick<LockService, "lease">;
+  config: { get(): Pick<KernelConfig, "channels"> };
   log: Pick<Logger, "warn">;
   everyMs?: number;
   graceUntil?: number;
@@ -695,18 +735,16 @@ export async function checkGatewayPresence(deps: {
   const counts = new Map(rows.map((r) => [r.plugin, Number(r.n)] as const));
   const plugins = [...counts.keys()].filter((p) => (counts.get(p) ?? 0) > 0).sort();
   if (plugins.length === 0) return false;
-  const live = await liveGateways(deps.redis, plugins, deps.config().channels.leaseTtlMs);
+  const live = await liveGateways(deps.redis, plugins, deps.config.get().channels.leaseTtlMs);
   const missing = plugins.filter((p) => (live.get(p) ?? []).length === 0);
   if (missing.length === 0) return false;
   const everyMs = deps.everyMs ?? GATEWAY_CHECK_EVERY_MS;
-  const first = await deps.redis.set(
+  const first = await deps.locks.lease(
     gatewayMissingWarnedKey,
     "1",
-    "PX",
     Math.max(Math.ceil(everyMs / 2), everyMs - 5_000),
-    "NX",
   );
-  if (first !== "OK") return false;
+  if (!first) return false;
   deps.log.warn(
     "active channel connections have no live gateway replica with their plugin loaded; add the gateway role to a process (CAPYBARA_ROLES) that can load the plugin, or they receive no messages",
     {

@@ -8,15 +8,18 @@ import {
   startTestRedis,
   type TestContainer,
 } from "@capybara-hq/testing";
+import { SchedulerRegistry } from "@nestjs/schedule";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { ChannelConnections } from "../../src/channels/connections.service.js";
+import { GATEWAY_CHECK_JOB, GATEWAY_CHECK_SCHEDULER_ID } from "../../src/channels/job-ids.js";
 import {
   CHANNEL_HANDOFF_TOPIC,
-  ChannelSupervisor,
+  type ChannelSupervisor,
   channelHandoffKey,
+  channelLeaseKey,
   checkGatewayPresence,
   gatewayMissingWarnedKey,
   gatewayReplicasKey,
@@ -25,11 +28,23 @@ import {
 import type { KernelConfig } from "../../src/config/schema.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
+import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
+import { channelSupervisorFor } from "../helpers/channels.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { createAgent, createOrg, PW, runConfig, session, sleep, waitFor } from "../helpers/runs.js";
+import {
+  createAgent,
+  createOrg,
+  PW,
+  runConfig,
+  session,
+  sleep,
+  startKernel,
+  type TestKernel,
+  waitFor,
+} from "../helpers/runs.js";
 
 /**
  * Fair sharing of channel long connections across gateway replicas (E11-B), single process: several
@@ -48,7 +63,7 @@ const OTHER_KEY = gatewayReplicasKey("chan-other");
 let pgc: TestContainer;
 let rd: TestContainer;
 let im: FakeChannelServer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let redis: Redis;
 const ids: string[] = [];
@@ -67,7 +82,7 @@ const channels: KernelConfig["channels"] = {
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   im = await startFakeChannelServer();
-  k = await createKernel(
+  k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
@@ -79,10 +94,9 @@ beforeAll(async () => {
     ),
     { env: {}, logger: createLogger("info", { write: (l) => logLines.push(l) }) },
   );
-  await k.start();
   raw = createDb(pgc.url, 3);
   redis = new Redis(rd.url);
-  await new AccountsService(kernelDb(raw)).createLocal({
+  await accountsFor(kernelDb(raw)).createLocal({
     login: "owner",
     password: PW,
     displayName: "O",
@@ -114,7 +128,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await stopAll();
-  await k?.stop();
+  await k?.close();
   await im?.stop();
   redis?.disconnect();
   await raw?.destroy();
@@ -197,8 +211,8 @@ async function startSup(
         ReturnType<ChannelConnections["runtime"]>
       >,
   };
-  const sup = new ChannelSupervisor({
-    db: kernelDb(raw),
+  const sup = channelSupervisorFor({
+    pool: raw,
     redis,
     bus,
     connections,
@@ -415,13 +429,110 @@ describe("channel long connections: fair share across gateway replicas", () => {
     expect(await redis.zscore(MINI_KEY, s.replicaId)).toBeNull();
   }, 30_000);
 
+  it("a lease lost while the connection's config is read is never connected on (I1)", async () => {
+    const gated: string[] = [];
+    let first: string | undefined;
+    const channel = fakeChannel("gate");
+    const connections: Pick<ChannelConnections, "runtime"> = {
+      runtime: async (id) => {
+        if (first === undefined) {
+          first = id;
+          // the lease is taken from under us while runtime() is pending; the watchdog sees it
+          // (renewal answered false: lost) before the config arrives
+          await redis.del(channelLeaseKey(id));
+          await sleep(TTL);
+          return {
+            row: { plugin: "chan-mini" },
+            config: {},
+            channel: {
+              connectionSchema: z.object({}),
+              connect: async () => {
+                gated.push(id);
+              },
+            },
+          } as unknown as Awaited<ReturnType<ChannelConnections["runtime"]>>;
+        }
+        return { row: { plugin: "chan-mini" }, channel, config: {} } as unknown as Awaited<
+          ReturnType<ChannelConnections["runtime"]>
+        >;
+      },
+    };
+    const sup = channelSupervisorFor({
+      pool: raw,
+      redis,
+      bus,
+      connections,
+      localPlugins: () => ["chan-mini"],
+      onEvent: async () => {},
+      config: () => ({ channels }),
+      log: { warn: () => {}, error: () => {} },
+      replicaId: `rep-gate-${randomUUID()}`,
+    });
+    await sup.start();
+    running.push({ name: "gate", replicaId: sup.replicaId, sup });
+    // the lost one is claimed again later on a fresh lease: every connection ends up held once
+    await waitFor(async () => countOf("gate") === CONNECTIONS, 15_000, "all held");
+    expect(first).toBeDefined();
+    expect(gated).toEqual([]);
+  }, 30_000);
+
+  it("a heartbeat renewal answered false drops the connection (the watchdog never saw it)", async () => {
+    // The watchdog keeps renewing the real key; only the heartbeat round's explicit renew() of one
+    // connection's lease answers false, so only the heartbeat path can drop it
+    let refused: string | undefined;
+    const real = new LockService(redis, createLogger("error", { write: () => {} }));
+    const locks: Pick<LockService, "hold"> = {
+      hold: async (key, token, ttlMs) => {
+        const h = await real.hold(key, token, ttlMs);
+        return h && { ...h, renew: async () => (key === refused ? false : h.renew()) };
+      },
+    };
+    const channel = fakeChannel("hb-false");
+    const sup = channelSupervisorFor({
+      pool: raw,
+      redis,
+      bus,
+      connections: {
+        runtime: async () =>
+          ({ row: { plugin: "chan-mini" }, channel, config: {} }) as unknown as Awaited<
+            ReturnType<ChannelConnections["runtime"]>
+          >,
+      },
+      localPlugins: () => ["chan-mini"],
+      onEvent: async () => {},
+      config: () => ({ channels }),
+      log: { warn: () => {}, error: () => {} },
+      replicaId: `rep-hb-false-${randomUUID()}`,
+      locks,
+    });
+    await sup.start();
+    running.push({ name: "hb-false", replicaId: sup.replicaId, sup });
+    await waitFor(async () => countOf("hb-false") === CONNECTIONS, 15_000, "all held");
+    const id = ids[0] as string;
+    refused = channelLeaseKey(id);
+    await waitFor(
+      async () => events.some((e) => e.inst === "hb-false" && e.id === id && e.kind === "down"),
+      5_000,
+      "dropped on the heartbeat's false",
+    );
+    refused = undefined;
+  }, 30_000);
+
+  it("the gateway check runs every minute as a @LockedCron; its old maintenance scheduler is retired", () => {
+    expect(GATEWAY_CHECK_JOB).not.toContain(":");
+    expect(RETIRED_SCHEDULER_IDS).toContain(GATEWAY_CHECK_SCHEDULER_ID);
+    const cron = k.app.get(SchedulerRegistry).getCronJob(GATEWAY_CHECK_JOB);
+    expect(String(cron.cronTime.source)).toBe("* * * * *");
+  });
+
   it("maintenance check warns once per interval per missing plugin, after the grace period", async () => {
     await redis.del(MINI_KEY, OTHER_KEY, gatewayMissingWarnedKey);
     const warns: { msg: string; fields: Record<string, unknown> | undefined }[] = [];
     const deps = {
       db: kernelDb(raw),
       redis,
-      config: () => ({ channels }),
+      locks: new LockService(redis, createLogger("error", { write: () => {} })),
+      config: { get: () => ({ channels }) },
       log: { warn: (msg: string, fields?: Record<string, unknown>) => warns.push({ msg, fields }) },
       everyMs: 1000,
     };

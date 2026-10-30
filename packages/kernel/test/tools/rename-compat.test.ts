@@ -11,7 +11,7 @@ import {
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
 import { caseBase } from "../../src/evals/runs.service.js";
@@ -21,8 +21,8 @@ import {
   replayableCalls,
   toEvents,
 } from "../../src/evals/snapshot.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
+import { ToolRegistry } from "../../src/tools/registry.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -34,6 +34,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitForTerminal,
 } from "../helpers/runs.js";
 
@@ -84,9 +85,9 @@ const CONNECTOR = fakeExtensionEntry("fake-connector");
 describe("改名后的路由与旧 agent 版本", () => {
   let pgc: TestContainer;
   let rd: TestContainer;
-  let k: Kernel;
+  let k: TestKernel;
   let raw: ReturnType<typeof createDb>;
-  let db: KernelDb;
+  let db: KernelSchemaDb;
   let mcp: FakeMcpServer;
   let req: Req;
   let orgId: string;
@@ -116,13 +117,13 @@ describe("改名后的路由与旧 agent 版本", () => {
     );
     raw = createDb(pgc.url, 5);
     db = kernelDb(raw);
-    await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+    await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
     req = await session(k, "owner");
     orgId = await createOrg(req);
   }, 180_000);
 
   afterAll(async () => {
-    await k?.stop();
+    await k?.close();
     await mcp?.stop();
     await raw?.destroy();
     await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -240,7 +241,9 @@ describe("改名后的路由与旧 agent 版本", () => {
       { kind: "connector", connectorId: docs, tools: "all" },
       { kind: "connector", connectorId: priv, tools: ["search"] },
     ]);
-    const resolved = await k.tools.registry.forAgent(orgId, base?.definition ?? { tools: [] });
+    const resolved = await k.app
+      .get(ToolRegistry)
+      .forAgent(orgId, base?.definition ?? { tools: [] });
     const keys = resolved.tools.map((t) => t.key);
     expect(keys).toEqual(expect.arrayContaining(["fx_docs__search", "fx_priv__search"]));
     expect(JSON.stringify(resolved.unavailable)).not.toContain("undefined");

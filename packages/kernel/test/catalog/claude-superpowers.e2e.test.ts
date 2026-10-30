@@ -14,19 +14,19 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { AgentTemplatesService } from "../../src/agents/templates.js";
 import type { TranslationReport } from "../../src/catalog/claude/report.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
 import type { RunReplayResult } from "../../src/evals/run-replay.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import { takeSnapshot, toEvents } from "../../src/evals/snapshot.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import { pinnedBlock } from "../../src/runtime/context/skills.js";
+import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { agentTemplatesFor } from "../helpers/conversations.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
@@ -40,6 +40,7 @@ import {
   runsOf,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -62,11 +63,11 @@ const { sent } = capture;
 let pgc: TestContainer;
 let rd: TestContainer;
 let s3: TestS3;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
 let srv: FakeGitServer;
 let pluginsDir: string;
-let k: Kernel;
+let k: TestKernel;
 let admin: Req;
 let orgId: string;
 
@@ -109,7 +110,7 @@ beforeAll(async () => {
       },
     ),
   );
-  await new AccountsService(db).createLocal({
+  await accountsFor(db).createLocal({
     login: "root",
     password: PW,
     displayName: "R",
@@ -121,7 +122,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   capture.restore();
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await srv?.stop();
   if (pluginsDir) await rm(pluginsDir, { recursive: true, force: true });
@@ -242,7 +243,7 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
       ["writing-plans", "superpowers", "claude-code", false],
     ]);
     // phase C: the translated code-reviewer agent is an org agent template
-    const [reviewer, ...others] = await new AgentTemplatesService(db).listForOrg(orgId);
+    const [reviewer, ...others] = await agentTemplatesFor(db).listForOrg(orgId);
     expect(others).toEqual([]);
     expect(reviewer).toMatchObject({
       type: "superpowers:code-reviewer",
@@ -329,7 +330,9 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
     expect(calls.length).toBe(4);
     for (const [i, c] of calls.entries()) {
       const info = (
-        await k.runs.registry.resolve({ provider: c.payload.provider, model: c.payload.model })
+        await k.app
+          .get(ProviderRegistry)
+          .resolve({ provider: c.payload.provider, model: c.payload.model })
       ).info;
       const out = reconstructRequest(snap, c.seq, { model: info });
       expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);

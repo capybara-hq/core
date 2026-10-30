@@ -16,12 +16,11 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
 import { SUBAGENT_RUN_QUEUE_NAME } from "../../src/runtime/run-queue.js";
-import { unreportedForkRuns } from "../../src/runtime/waits.js";
+import { unreportedForkRuns, Waits } from "../../src/runtime/waits.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import { AGENT_STOPPED_WITH_RUN_TEXT } from "../../src/tools/builtins/agent.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../helpers/db.js";
@@ -30,6 +29,7 @@ import {
   seedForkedSkill,
   writeForkedSkillFiles,
 } from "../helpers/forked-skills.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
@@ -42,6 +42,7 @@ import {
   runsOf,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -83,9 +84,9 @@ const capture = captureProviderRequests();
 let pgc: TestContainer;
 let rd: TestContainer;
 let s3: TestS3;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 let root: string;
 let subQueue: Queue;
 
@@ -122,7 +123,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   capture.restore();
-  await k?.stop();
+  await k?.close();
   await subQueue?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
@@ -141,15 +142,20 @@ beforeEach(async () => {
     db,
     "capybara.skill_change_requests, capybara.agent_template_versions, capybara.agent_templates, capybara.skill_versions, capybara.skills, capybara.catalog_items, capybara.sandboxes, capybara.approvals, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts, capybara.audit_events",
   );
-  ownerId = (
-    await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" })
-  ).id;
+  ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
+    .id;
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
 });
 
 const seedForked = (name: string, body: string, agent?: string, files?: Record<string, string>) =>
-  seedForkedSkill({ db, storage: k.storage, orgId, ownerId }, name, body, agent, files);
+  seedForkedSkill(
+    { db, storage: k.app.get(StorageService), orgId, ownerId },
+    name,
+    body,
+    agent,
+    files,
+  );
 const catalogItem = (name: string) => catalogItemNamed(db, name);
 
 /** The plugin agent template `acme:code-reviewer`. */
@@ -464,12 +470,12 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
       .where("type", "=", "skill_fork_result")
       .execute();
     await backdateRun(db, (run as { id: string }).id);
-    const r = await k.runs.waits.sweep();
+    const r = await k.app.get(Waits).sweep();
     expect(r.repaired).toBeGreaterThanOrEqual(1);
     const report = ofType(await eventsOf(db, conv), "skill_fork_result");
     expect(report).toHaveLength(1);
     expect(report[0]?.payload.text).toContain("child report");
-    expect((await k.runs.waits.sweep()).repaired).toBe(0);
+    expect((await k.app.get(Waits).sweep()).repaired).toBe(0);
   });
 
   it("C1 P1: a message posted during the fork wait is not absorbed by the fork's first step; the report precedes the first model call", async () => {
@@ -611,7 +617,7 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
     );
     expect(ofType(await eventsOf(db, conv), "skill_fork_result")).toEqual([]);
     await backdateRun(db, runId);
-    expect((await k.runs.waits.sweep()).repaired).toBeGreaterThanOrEqual(1);
+    expect((await k.app.get(Waits).sweep()).repaired).toBeGreaterThanOrEqual(1);
     const report = ofType(await eventsOf(db, conv), "skill_fork_result");
     expect(report).toHaveLength(1);
     expect(report[0]?.payload.text).toBe(`${HEADER}\n\n${AGENT_STOPPED_WITH_RUN_TEXT}`);
@@ -807,7 +813,7 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
       const agentId = await lead([]);
       const conv = await createConv(owner, orgId, agentId);
       const { prefix, manifest } = await writeForkedSkillFiles(
-        { storage: k.storage, orgId },
+        { storage: k.app.get(StorageService), orgId },
         "review",
         "Review $ARGUMENTS.",
         undefined,

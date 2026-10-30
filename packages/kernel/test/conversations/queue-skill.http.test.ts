@@ -14,14 +14,15 @@ import {
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import { KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
+import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { seedForkedSkill } from "../helpers/forked-skills.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -33,6 +34,7 @@ import {
   runsOf,
   sleep,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -75,9 +77,9 @@ function release(): void {
 let pgc: TestContainer;
 let rd: TestContainer;
 let s3: TestS3;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 let root: string;
 
 beforeAll(async () => {
@@ -111,7 +113,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   release();
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
   if (root) await rm(root, { recursive: true, force: true });
@@ -129,9 +131,8 @@ beforeEach(async () => {
     db,
     "capybara.agent_template_versions, capybara.agent_templates, capybara.skill_versions, capybara.skills, capybara.catalog_items, capybara.sandboxes, capybara.approvals, capybara.conversation_queue, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
-  ownerId = (
-    await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" })
-  ).id;
+  ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
+    .id;
   const jar = cookieJar();
   owner = asUser(k.http, jar);
   const login = await owner({
@@ -156,7 +157,7 @@ async function seedSkill(
   const data = new TextEncoder().encode(
     `---\nname: ${name}\ndescription: Use for ${name} work.\n---\n${body}`,
   );
-  await k.storage.kernel(orgId).put(`${prefix}SKILL.md`, data, {
+  await k.app.get(StorageService).kernel(orgId).put(`${prefix}SKILL.md`, data, {
     contentType: "application/octet-stream",
     size: data.byteLength,
   });
@@ -426,7 +427,7 @@ describe("queued skill invocations (phase D Task 9)", { timeout: 90_000 }, () =>
 
   it("a queued fork invocation runs as a sub-agent: dispatched before any model call of its run", async () => {
     const review = await seedForkedSkill(
-      { db, storage: k.storage, orgId, ownerId },
+      { db, storage: k.app.get(StorageService), orgId, ownerId },
       "review",
       "Review $ARGUMENTS.",
     );
@@ -527,7 +528,7 @@ describe("queued skill invocations: more cases (batch 5 review m5)", { timeout: 
 
   it("a queued fork waits while the parent waits on its own sub-agent, then runs after it", async () => {
     const review = await seedForkedSkill(
-      { db, storage: k.storage, orgId, ownerId },
+      { db, storage: k.app.get(StorageService), orgId, ownerId },
       "review",
       "Review $ARGUMENTS.",
     );

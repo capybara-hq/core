@@ -21,7 +21,10 @@ export interface DualReplicaOptions {
    * this package is installed from npm; nothing needs to be set in `NODE_OPTIONS`.
    */
   extensions: string[];
-  /** 解析裸包名插件的目录，默认调用方的 `process.cwd()`（与 `createKernel` 的 resolveFrom 同义）。 */
+  /**
+   * Where extensions named by package resolve from; default the caller's `process.cwd()` (the
+   * `resolveFrom` of `createKernelApp`).
+   */
   resolveFrom?: string;
   /** 部署级插件配置，按插件名索引。 */
   extensionConfig?: Record<string, unknown>;

@@ -14,10 +14,10 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
-import { EventLog } from "../../src/conversations/event-log.js";
+import type { EventLog } from "../../src/conversations/event-log.js";
 import type { LogContentBlock } from "../../src/conversations/events.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
@@ -29,8 +29,9 @@ import {
 } from "../../src/runtime/context/build.js";
 import { MediaCache } from "../../src/runtime/media-cache.js";
 import { type ModelStepDeps, RunError, runModelStep } from "../../src/runtime/model-call.js";
-import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
+import { providerRegistryFor, stepLogFor } from "../helpers/runtime.js";
 
 /**
  * 运行一步模型调用时的附件解析（M5 T3 fix round 1）：存储暂时故障不变成占位（Ruling M4）、
@@ -40,7 +41,7 @@ import { truncateTables } from "../helpers/db.js";
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let redis: Redis;
 let sub: ReturnType<typeof createBusSubscriber>;
 let eventLog: EventLog;
@@ -118,22 +119,25 @@ beforeAll(async () => {
     masterKey: Buffer.alloc(32, 7).toString("base64"),
   });
   raw = createDb(pgc.url, 5);
-  db = kernelDb(raw);
+  db = legacyDbFor(raw);
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
-  eventLog = new EventLog(db, createBus(redis, sub, "kernel"));
+  eventLog = eventLogFor(db, createBus(redis, sub, "kernel"));
   deps = {
     db,
     eventLog,
-    registry: new ProviderRegistry(
+    stepLog: stepLogFor(db, eventLog),
+    registry: providerRegistryFor(
       { list: () => [{ plugin: "stub", capability: V2, impl: provider }] },
       redis,
     ),
     tools: { forAgent: async () => ({ tools: [], unavailable: [] }) },
-    config: () => ({
-      ...config,
-      attachments: { ...config.attachments, requestMediaBytes: budget },
-    }),
+    config: {
+      get: () => ({
+        ...config,
+        attachments: { ...config.attachments, requestMediaBytes: budget },
+      }),
+    },
     log: silent,
     media: {
       info: async (_o, _c, ids) =>

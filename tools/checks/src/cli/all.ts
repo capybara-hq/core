@@ -4,6 +4,7 @@ import { BOOTSTRAP_COMPOSE_FILES, checkBootstrap } from "../bootstrap.js";
 import { checkComposeHaproxy } from "../compose-haproxy.js";
 import { checkConfigDocs } from "../config-docs.js";
 import { checkI18n } from "../i18n.js";
+import { checkKernelConventions } from "../kernel-conventions.js";
 import { checkPackageSchemas } from "../package-schemas.js";
 import { checkReleaseMetadata } from "../release-metadata.js";
 import { checkSdkApi } from "../sdk-api.js";
@@ -42,6 +43,7 @@ const checks: NamedCheck[] = [
   { name: "release metadata", run: () => checkReleaseMetadata(root) },
   { name: "SDK API snapshot", run: () => checkSdkApi({ update: false }) },
   { name: "Terms", run: () => checkTerms(root) },
+  { name: "Kernel conventions", run: () => checkKernelConventions(root) },
   {
     name: "compose haproxy",
     run: () =>

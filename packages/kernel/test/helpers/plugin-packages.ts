@@ -477,7 +477,7 @@ export interface BootstrapFixtureEntry {
  * each by sha512 (`source: "workspace"`, `path: plugins/<name>`). With `source: "npm"` the entries
  * are npm entries (`npm: @test/plugin-<name>`), the directory stays empty and `packages` is what a
  * `startFakeNpmRegistry` should serve. `required` defaults to true. Pass the result as `bootstrap`
- * to the dual-replica harness or as `bootstrap: { dir }` / `bootstrapManifest` to `createKernel`;
+ * to the dual-replica harness or as `bootstrap: { dir }` / `bootstrapManifest` to `startKernel`;
  * `cleanup` removes the directory.
  */
 export async function bootstrapFixture(

@@ -8,15 +8,15 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
-import { AccountsService } from "../../../src/identity/accounts.js";
-import type { Kernel } from "../../../src/kernel.js";
+import { KernelConfigService } from "../../../src/infra/config/kernel-config.service.js";
 import { SUBAGENT_RUN_QUEUE_NAME } from "../../../src/runtime/run-queue.js";
 import { subagentLimits } from "../../../src/runtime/subagents/limits.js";
 import { AGENT_REFUSALS } from "../../../src/tools/builtins/agent.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../../helpers/db.js";
+import { accountsFor } from "../../helpers/identity.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import { captureProviderRequests } from "../../helpers/provider-capture.js";
 import {
@@ -29,6 +29,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitForTerminal,
 } from "../../helpers/runs.js";
 import { childRunsOf, parentWaiting } from "../../helpers/subagents.js";
@@ -114,9 +115,9 @@ const RULES: ScriptRule[] = [
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
-let k: Kernel;
+let k: TestKernel;
 let root: string;
 let subQueue: Queue;
 const capture = captureProviderRequests();
@@ -145,7 +146,7 @@ beforeAll(async () => {
 afterAll(async () => {
   capture.restore();
   await subQueue?.close();
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop()]);
   if (root) await rm(root, { recursive: true, force: true });
@@ -163,7 +164,7 @@ beforeEach(async () => {
   );
   capture.reset();
   scriptRules([]);
-  await new AccountsService(db).createLocal({
+  await accountsFor(db).createLocal({
     login: "owner",
     password: PW,
     displayName: "O",
@@ -231,20 +232,25 @@ async function converse(text: string, timeoutMs = 30_000) {
 
 describe("subagentLimits", () => {
   it("the config values, then the organization's override value by value", async () => {
-    expect(await subagentLimits(db, () => k.config, orgId)).toEqual({
+    expect(
+      await subagentLimits(db, { get: () => k.app.get(KernelConfigService).get() }, orgId),
+    ).toEqual({
       maxConcurrentPerRun: 4,
       maxDispatchesPerRun: 50,
       maxTokensPerRun: 5_000_000,
     });
     await override({ maxTokensPerRun: 20_000 });
-    expect(await subagentLimits(db, () => k.config, orgId)).toEqual({
+    expect(
+      await subagentLimits(db, { get: () => k.app.get(KernelConfigService).get() }, orgId),
+    ).toEqual({
       maxConcurrentPerRun: 4,
       maxDispatchesPerRun: 50,
       maxTokensPerRun: 20_000,
     });
-    expect((await subagentLimits(db, () => k.config, "another-org")).maxTokensPerRun).toBe(
-      5_000_000,
-    );
+    expect(
+      (await subagentLimits(db, { get: () => k.app.get(KernelConfigService).get() }, "another-org"))
+        .maxTokensPerRun,
+    ).toBe(5_000_000);
     // out of bounds or unknown keys are refused; null removes the override
     for (const bad of [
       { maxConcurrentPerRun: 21 },
@@ -261,7 +267,10 @@ describe("subagentLimits", () => {
       expect(res.statusCode, JSON.stringify(bad)).toBe(400);
     }
     await override(null);
-    expect((await subagentLimits(db, () => k.config, orgId)).maxTokensPerRun).toBe(5_000_000);
+    expect(
+      (await subagentLimits(db, { get: () => k.app.get(KernelConfigService).get() }, orgId))
+        .maxTokensPerRun,
+    ).toBe(5_000_000);
   });
 });
 

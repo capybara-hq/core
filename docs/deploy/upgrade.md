@@ -8,7 +8,8 @@ migrate.
 
 1. **Pull the new images first.**
 2. **Migrate and bootstrap.** Run `capybara migrate`, then `capybara bootstrap` (the compose `init`
-   container does both, or a Kubernetes Job) and wait for it to finish. The bootstrap step installs or
+   container does both, or a Kubernetes Job; `capybara bootstrap` needs Redis as well as PostgreSQL)
+   and wait for it to finish. The bootstrap step installs or
    upgrades the plugins the new image pins, downloading them from npm or taking them from the
    offline directory (see [Bootstrap plugins](README.md#extensions)); it does nothing when the
    manifest didn't change.
@@ -297,6 +298,15 @@ recorded is not affected until a new image raises a pin.
 config key `bootstrap.dir` (`CAPYBARA_BOOTSTRAP__DIR`, default `bootstrap` relative to the working
 directory; the image sets `/app/bootstrap`), and `capybara bootstrap --dir <path>` still overrides it.
 From a source checkout, `pnpm capybara start` now installs the bootstrap plugins on its first start.
+
+### The bootstrap step needs Redis
+
+`capybara bootstrap` (the compose `init` service, a Kubernetes init Job) and a starting kernel now
+run the bootstrap step under the Redis lock `lock:bootstrap` instead of a PostgreSQL advisory lock,
+so the command needs `CAPYBARA_REDIS__URL` to reach Redis as well as PostgreSQL. The compose `init`
+service waits for valkey. During the rolling deploy that brings this change, an old replica and a
+new one do not exclude each other; a bootstrap step that both run at once records once per manifest
+and its writes are idempotent.
 
 ### Moving config-declared extensions to install records
 

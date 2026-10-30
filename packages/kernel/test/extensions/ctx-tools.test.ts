@@ -8,7 +8,12 @@ import type { KernelDeps } from "../../src/ctx/create-ctx.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { ExtensionHost } from "../../src/extensions/host.js";
+import type { ExtensionHost } from "../../src/extensions/host.js";
+import { ExtensionRegistry } from "../../src/extensions/registry.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
+import { createLogger } from "../../src/log.js";
+import { EmbedTokens } from "../../src/ui/embed-token.js";
+import { testHost } from "../helpers/extensions.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let rd: Awaited<ReturnType<typeof startTestRedis>>;
@@ -33,9 +38,11 @@ beforeAll(async () => {
     db: createDb(pg.url, 5),
     dbUrl: pg.url,
     redis,
+    locks: new LockService(redis, createLogger("error")),
     busSubscriber: sub,
     redisUrl: rd.url,
     keyring: createKeyring(Buffer.alloc(32, 1), []),
+    embedTokens: new EmbedTokens(createKeyring(Buffer.alloc(32, 1), [])),
     runWorkers: false,
     log: quiet,
   };
@@ -50,7 +57,7 @@ afterAll(async () => {
 
 describe("ctx.tools.register", () => {
   it("收集规则：非法名 / 空描述 / 重复抛错，合法的按序收集；host.tools() 列出", async () => {
-    const h = new ExtensionHost(deps, {}, { autoApprove: true });
+    const h = testHost(deps, {}, { registry: new ExtensionRegistry(), autoApprove: true });
     hosts.push(h);
     await h.load([fx("tools-probe")]);
     const { errors } = h.get<{ errors: string[] }>("counter@1", "tools-probe");
@@ -71,7 +78,7 @@ describe("ctx.tools.register", () => {
   });
 
   it("setup 完成后注册抛错", async () => {
-    const h = new ExtensionHost(deps, {}, { autoApprove: true });
+    const h = testHost(deps, {}, { registry: new ExtensionRegistry(), autoApprove: true });
     hosts.push(h);
     await h.load([fx("tools-probe")]);
     const ctx = (globalThis as { __probeCtx?: ExtensionContext }).__probeCtx as ExtensionContext;
@@ -84,7 +91,7 @@ describe("ctx.tools.register", () => {
   });
 
   it("没有注册工具的插件不出现在 host.tools()", async () => {
-    const h = new ExtensionHost(deps, {}, { autoApprove: true });
+    const h = testHost(deps, {}, { registry: new ExtensionRegistry(), autoApprove: true });
     hosts.push(h);
     await h.load([fx("fixture2")]);
     expect(h.tools()).toEqual([]);

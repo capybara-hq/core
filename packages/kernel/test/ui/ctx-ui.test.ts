@@ -15,6 +15,8 @@ import { createExtensionContext, type KernelDeps } from "../../src/ctx/create-ct
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
+import { createLogger } from "../../src/log.js";
 import { EmbedTokens } from "../../src/ui/embed-token.js";
 import { orgUiTopic } from "../../src/ui/registry.js";
 import { waitFor } from "../helpers/runs.js";
@@ -40,9 +42,11 @@ beforeAll(async () => {
     db: createDb(pg.url, 5),
     dbUrl: pg.url,
     redis,
+    locks: new LockService(redis, createLogger("error")),
     busSubscriber: sub,
     redisUrl: rd.url,
     keyring: createKeyring(Buffer.alloc(32, 1), []),
+    embedTokens: new EmbedTokens(createKeyring(Buffer.alloc(32, 1), [])),
     runWorkers: false,
     log: quiet,
   };

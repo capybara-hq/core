@@ -15,12 +15,12 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
-import { EventLog } from "../../src/conversations/event-log.js";
+import type { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
 import { createLogger } from "../../src/log.js";
 import { COMPACTION_MARKER } from "../../src/runtime/context/compaction.js";
 import { estimateTokens } from "../../src/runtime/context/tokens.js";
@@ -33,17 +33,19 @@ import {
   TOOLS_UNSUPPORTED_REMINDER,
   WRAP_UP_REMINDER,
 } from "../../src/runtime/model-call.js";
-import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { toolSearchTool } from "../../src/tools/builtins/tool-search.js";
-import { type ResolvedTool, specHash } from "../../src/tools/registry.js";
+import { type ResolvedTool, specHash, ToolRegistry } from "../../src/tools/registry.js";
+import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { startKernel, type TestKernel } from "../helpers/runs.js";
+import { providerRegistryFor, stepLogFor } from "../helpers/runtime.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let k: Kernel;
+let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let redis: Redis;
 let sub: ReturnType<typeof createBusSubscriber>;
 let eventLog: EventLog;
@@ -136,17 +138,16 @@ beforeAll(async () => {
       },
     },
   });
-  k = await createKernel(baseConfig, { env: {}, logger: silent });
-  await k.start();
+  k = await startKernel(baseConfig, { env: {}, logger: silent });
   raw = createDb(pgc.url, 10);
-  db = kernelDb(raw);
+  db = legacyDbFor(raw);
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
-  eventLog = new EventLog(db, createBus(redis, sub, "kernel"));
-  const registry = new ProviderRegistry(
+  eventLog = eventLogFor(db, createBus(redis, sub, "kernel"));
+  const registry = providerRegistryFor(
     {
       list: (cap: string) => [
-        ...k.host.list(cap),
+        ...k.app.get(ExtensionHost).list(cap),
         { plugin: "stub", capability: V2, impl: stubImpl },
       ],
     },
@@ -155,15 +156,18 @@ beforeAll(async () => {
   deps = {
     db,
     eventLog,
+    stepLog: stepLogFor(db, eventLog),
     registry,
-    config: () => ({ ...baseConfig, runtime: { ...baseConfig.runtime, ...runtimeOverrides } }),
-    tools: k.tools.registry,
+    config: {
+      get: () => ({ ...baseConfig, runtime: { ...baseConfig.runtime, ...runtimeOverrides } }),
+    },
+    tools: k.app.get(ToolRegistry),
     log: silent,
   };
 }, 120_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await sub?.close();
   redis?.disconnect();
   await raw?.destroy();
@@ -596,10 +600,10 @@ describe("runModelStep", () => {
         throw new Error("unused");
       },
     };
-    const registry = new ProviderRegistry(
+    const registry = providerRegistryFor(
       {
         list: (cap: string) => [
-          ...k.host.list(cap),
+          ...k.app.get(ExtensionHost).list(cap),
           { plugin: "flaky", capability: V2, impl: flaky },
           { plugin: "stub", capability: V2, impl: stubImpl },
         ],
@@ -642,10 +646,10 @@ describe("runModelStep", () => {
         throw new Error("unused");
       },
     };
-    const registry = new ProviderRegistry(
+    const registry = providerRegistryFor(
       {
         list: (cap: string) => [
-          ...k.host.list(cap),
+          ...k.app.get(ExtensionHost).list(cap),
           { plugin: "broken", capability: V2, impl: broken },
         ],
       },

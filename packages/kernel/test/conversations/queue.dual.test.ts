@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
+import { RunQueue } from "../../src/runtime/run-queue.js";
+import { accountsFor } from "../helpers/identity.js";
 import {
   createAgent,
   createConv,
@@ -19,6 +19,7 @@ import {
   session,
   sleep,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -33,9 +34,9 @@ let pgc: TestContainer;
 let rd: TestContainer;
 let rawA: ReturnType<typeof createDb>;
 let rawB: ReturnType<typeof createDb>;
-let dbA: KernelDb;
-let a: Kernel;
-let b: Kernel;
+let dbA: KernelSchemaDb;
+let a: TestKernel;
+let b: TestKernel;
 let ownerA: Req;
 let ownerB: Req;
 let orgId: string;
@@ -49,14 +50,14 @@ beforeAll(async () => {
   const cfg = runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] });
   a = await startKernel(cfg);
   b = await startKernel(cfg);
-  await new AccountsService(dbA).createLocal({ login: "owner", password: PW, displayName: "O" });
+  await accountsFor(dbA).createLocal({ login: "owner", password: PW, displayName: "O" });
   ownerA = await session(a, "owner");
   ownerB = await session(b, "owner");
   orgId = await createOrg(ownerA);
   agentId = await createAgent(ownerA, orgId);
 }, 180_000);
 afterAll(async () => {
-  await Promise.all([a?.stop(), b?.stop()]);
+  await Promise.all([a?.close(), b?.close()]);
   await Promise.all([rawA?.destroy(), rawB?.destroy()]);
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
@@ -100,13 +101,16 @@ describe("queued messages on two replicas", { timeout: 90_000 }, () => {
     // resume through one replica while both replicas hammer ensureRun
     const resumed = ownerA({ method: "POST", url: `${base(conv)}/resume` });
     const kicks = Array.from({ length: 20 }, (_, i) =>
-      (i % 2 === 0 ? a : b).runs.queue.ensureRun(conv).catch(() => null),
+      (i % 2 === 0 ? a : b).app
+        .get(RunQueue)
+        .ensureRun(conv)
+        .catch(() => null),
     );
     await Promise.all([resumed, ...kicks]);
     // later kicks while runs finish on either replica
     const stop = Date.now() + 15_000;
     while ((await userTexts(conv)).length < 5 && Date.now() < stop) {
-      await Promise.all([a.runs.queue.ensureRun(conv), b.runs.queue.ensureRun(conv)]);
+      await Promise.all([a.app.get(RunQueue).ensureRun(conv), b.app.get(RunQueue).ensureRun(conv)]);
       await sleep(20);
     }
     await waitForTerminal(dbA, conv, 5, 30_000);

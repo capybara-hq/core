@@ -8,7 +8,7 @@ import {
   startFakeNpmRegistry,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, lifePkg } from "../helpers/plugin-packages.js";
@@ -24,7 +24,7 @@ import { waitFor } from "../helpers/runs.js";
 describe("bootstrap with two replicas starting together", { timeout: 180_000 }, () => {
   let h: Harness;
   let raw: ReturnType<typeof createDb>;
-  let db: KernelDb;
+  let db: KernelSchemaDb;
   let fx: Awaited<ReturnType<typeof bootstrapFixture>>;
   let extensionsDir: string;
   let reg: FakeNpmRegistry;

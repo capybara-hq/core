@@ -1,12 +1,14 @@
+import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
-import { isAgentVisibleTo } from "../agents/agents.service.js";
-import type { EventLog } from "../conversations/event-log.js";
+import { isAgentVisibleTo } from "../agents/agent-lookup.js";
+import { EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
-import type { ConversationKind, KernelDb } from "../db/kernel-schema.js";
+import type { ConversationKind } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import type { SettingsService } from "../identity/settings.js";
-import type { PricesService } from "../models/prices.js";
+import { SettingsService } from "../identity/settings.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { PricesService } from "../models/prices.js";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { buildTrajectory, type TrajectoryRun } from "./trajectory.js";
 
@@ -73,12 +75,13 @@ const notFound = () => new ApiError("trajectory.not_found", "Trajectory not foun
  * 评测对话（`kind = 'eval'`）只给组织管理员（Ruling S1-c）：里面是管理员的候选指令，非管理员的 agent 负责人
  * 列不出、读详情 404。
  */
+@Injectable()
 export class TrajectoryService {
   constructor(
-    private readonly db: KernelDb,
-    private readonly eventLog: EventLog,
-    private readonly prices: PricesService,
-    private readonly settings: SettingsService,
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(EventLog) private readonly eventLog: EventLog,
+    @Inject(PricesService) private readonly prices: PricesService,
+    @Inject(SettingsService) private readonly settings: SettingsService,
   ) {}
 
   /** 调用者当前在组织里的角色；不是成员或组织已删除 → null。 */
@@ -250,7 +253,7 @@ export class TrajectoryService {
       const role = await this.role(orgId, accountId);
       if (
         (role === null || !roleAtLeast(role, "admin")) &&
-        !(await isAgentVisibleTo(this.db, conv.agent_id, accountId))
+        !(await isAgentVisibleTo(this.db.db, conv.agent_id, accountId))
       ) {
         throw notFound();
       }
@@ -289,7 +292,7 @@ export class TrajectoryService {
       this.settings.get(),
       conv.kind === "subagent" ? this.firstDispatch(conv.id) : undefined,
     ]);
-    await audit(this.db, {
+    await audit(this.db.db, {
       actorAccountId: accountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
       orgId,

@@ -4,12 +4,14 @@ import {
   type IdentitySource,
   type Logger,
 } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
-import type { KernelConfig } from "../config/schema.js";
 import { ApiError } from "../errors.js";
-import type { ExtensionHost } from "../extensions/host.js";
-import { isSafeReturnPath } from "../tools/oauth/flow.js";
-import { type ExternalIdentities, IdentityNotVerified } from "./external.js";
+import { ExtensionRegistry } from "../extensions/registry.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
+import { isSafeReturnPath } from "../tools/oauth/flow-paths.js";
+import { ExternalIdentities, IdentityNotVerified } from "./external.js";
 
 /** state 的有效期（秒）。 */
 export const SSO_STATE_TTL_SECONDS = 600;
@@ -73,14 +75,6 @@ export function safeReturnTo(p: string | undefined): string {
   return p !== undefined && isSafeReturnPath(p) ? p : "/";
 }
 
-export interface SsoFlowDeps {
-  redis: Redis;
-  config: () => KernelConfig;
-  host: Pick<ExtensionHost, "list" | "deploymentConfig">;
-  external: ExternalIdentities;
-  log: Pick<Logger, "warn">;
-}
-
 /** 回调结果：成功给账号与回跳页面，失败给原因码。 */
 export type SsoCallbackResult =
   | { ok: true; accountId: string; returnTo: string }
@@ -95,39 +89,47 @@ export type SsoCallbackResult =
  * 已登录的用户也可以发起（「登录状态下绑定」）：回调请求带着同一账号的 Web 会话时，经 IM 绑定链接建立的身份
  * 由此证明本人控制该外部身份，升级为可登录（Ruling A18，见 `ExternalIdentities.resolve`）。
  */
+@Injectable()
 export class SsoFlow {
-  constructor(private readonly deps: SsoFlowDeps) {}
+  constructor(
+    @Inject(REDIS) private readonly redis: Redis,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Inject(ExtensionRegistry)
+    private readonly registry: Pick<ExtensionRegistry, "list" | "deploymentConfig">,
+    @Inject(ExternalIdentities) private readonly external: ExternalIdentities,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "warn">,
+  ) {}
 
   /** 已启用的登录方式：`auth.loginSources` 中（按其顺序）且已加载、提供 `identity-source@1` 的插件。 */
   sources(): { plugin: string; label: { zh: string; en: string } }[] {
-    return this.deps.config().auth.loginSources.flatMap((plugin) => {
+    return this.config.get().auth.loginSources.flatMap((plugin) => {
       const src = this.provider(plugin);
       return src ? [{ plugin, label: { zh: src.label.zh, en: src.label.en } }] : [];
     });
   }
 
   private provider(plugin: string): IdentitySource | undefined {
-    if (!this.deps.config().auth.loginSources.includes(plugin)) return undefined;
-    const entry = this.deps.host
+    if (!this.config.get().auth.loginSources.includes(plugin)) return undefined;
+    const entry = this.registry
       .list("identity-source")
       .find((e) => e.plugin === plugin && e.capability === IDENTITY_SOURCE_EXTENSION_POINT);
     return entry?.impl as IdentitySource | undefined;
   }
 
   private redirectUri(plugin: string): string {
-    const base = (this.deps.config().http.publicUrl ?? "").replace(/\/+$/, "");
+    const base = (this.config.get().http.publicUrl ?? "").replace(/\/+$/, "");
     return `${base}/api/v1/auth/sso/${encodeURIComponent(plugin)}/callback`;
   }
 
   /** 绑定 Cookie 是否加 Secure：`auth.cookieSecure`，或 `http.publicUrl` 是 https（浏览器经 https 访问）。 */
   cookieSecure(): boolean {
-    const cfg = this.deps.config();
+    const cfg = this.config.get();
     return cfg.auth.cookieSecure || (cfg.http.publicUrl ?? "").startsWith("https:");
   }
 
   /** 网页地址：`http.publicUrl` + 站内路径（未配置 publicUrl 时为相对地址）。 */
   webUrl(path: string): string {
-    const base = (this.deps.config().http.publicUrl ?? "").replace(/\/+$/, "");
+    const base = (this.config.get().http.publicUrl ?? "").replace(/\/+$/, "");
     return `${base}${path}`;
   }
 
@@ -147,7 +149,7 @@ export class SsoFlow {
     sessionAccountId?: string,
   ): Promise<string> {
     const src = this.provider(plugin);
-    if (!src || !this.deps.config().http.publicUrl) return this.loginError("sso.unavailable");
+    if (!src || !this.config.get().http.publicUrl) return this.loginError("sso.unavailable");
     const state = b64url();
     const nonce = b64url();
     const codeVerifier = b64url();
@@ -155,7 +157,7 @@ export class SsoFlow {
     let url: string;
     try {
       url = src.authorizeUrl({
-        config: this.deps.host.deploymentConfig(plugin),
+        config: this.registry.deploymentConfig(plugin),
         redirectUri,
         state,
         nonce,
@@ -165,7 +167,7 @@ export class SsoFlow {
       const proto = new URL(url).protocol;
       if (proto !== "https:" && proto !== "http:") throw new Error("authorize URL must be http(s)");
     } catch (err) {
-      this.deps.log.warn("identity source authorizeUrl failed", { plugin, err });
+      this.log.warn("identity source authorizeUrl failed", { plugin, err });
       return this.loginError("sso.unavailable");
     }
     const rec: StateRecord = {
@@ -177,7 +179,7 @@ export class SsoFlow {
       codeVerifier,
       ...(sessionAccountId !== undefined && { sessionAccountId }),
     };
-    await this.deps.redis.set(stateKey(state), JSON.stringify(rec), "EX", SSO_STATE_TTL_SECONDS);
+    await this.redis.set(stateKey(state), JSON.stringify(rec), "EX", SSO_STATE_TTL_SECONDS);
     return url;
   }
 
@@ -198,7 +200,7 @@ export class SsoFlow {
     const state = query.state;
     if (state === undefined || !STATE_RE.test(state))
       return { ok: false, error: "sso.state_invalid" };
-    const raw = await this.deps.redis.getdel(stateKey(state));
+    const raw = await this.redis.getdel(stateKey(state));
     if (raw === null) return { ok: false, error: "sso.state_invalid" };
     const rec = JSON.parse(raw) as StateRecord;
     if (rec.plugin !== plugin) return { ok: false, error: "sso.state_invalid" };
@@ -216,7 +218,7 @@ export class SsoFlow {
     let identity: Awaited<ReturnType<IdentitySource["callback"]>>;
     try {
       identity = await src.callback({
-        config: this.deps.host.deploymentConfig(plugin),
+        config: this.registry.deploymentConfig(plugin),
         redirectUri: rec.redirectUri,
         query,
         nonce: rec.nonce,
@@ -224,7 +226,7 @@ export class SsoFlow {
         codeVerifier: rec.codeVerifier,
       });
     } catch (err) {
-      this.deps.log.warn("identity source callback failed", { plugin, err });
+      this.log.warn("identity source callback failed", { plugin, err });
       return { ok: false, error: "sso.provider_error" };
     }
     // 身份源键由内核推导（Ruling A19）：插件只能为自己、为它报出的租户声明身份
@@ -232,7 +234,7 @@ export class SsoFlow {
       typeof identity?.tenantId !== "string" ||
       identity.source !== `${plugin}:${identity.tenantId}`
     ) {
-      this.deps.log.warn("identity source returned a source key that does not match its tenant", {
+      this.log.warn("identity source returned a source key that does not match its tenant", {
         plugin,
       });
       return { ok: false, error: "sso.provider_error" };
@@ -246,7 +248,7 @@ export class SsoFlow {
     try {
       // 只有登录路径允许按已验证邮箱合并（Ruling A9）
       accountId = (
-        await this.deps.external.resolve(identity, undefined, {
+        await this.external.resolve(identity, {
           allowMerge: true,
           linkedVia: "sso",
           login: provedBy === undefined ? {} : { sessionAccountId: provedBy },
@@ -254,11 +256,11 @@ export class SsoFlow {
       ).accountId;
     } catch (err) {
       if (err instanceof IdentityNotVerified) {
-        this.deps.log.warn("sign-in with an unverified linked identity refused", { plugin });
+        this.log.warn("sign-in with an unverified linked identity refused", { plugin });
         return { ok: false, error: "sso.identity_not_verified" };
       }
       if (!(err instanceof ApiError)) throw err;
-      this.deps.log.warn("external identity rejected", { plugin, err });
+      this.log.warn("external identity rejected", { plugin, err });
       return { ok: false, error: "sso.provider_error" };
     }
     return { ok: true, accountId, returnTo: rec.returnTo };

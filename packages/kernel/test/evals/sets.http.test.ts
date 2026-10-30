@@ -1,14 +1,14 @@
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { EventLog } from "../../src/conversations/event-log.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import type { EventLog } from "../../src/conversations/event-log.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { EvalCaseView, EvalSetView } from "../../src/evals/sets.service.js";
 import type { TrajectoryRun } from "../../src/evals/trajectory.js";
 import type { TrajectoryListItem } from "../../src/evals/trajectory.service.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
+import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createAgent,
@@ -19,13 +19,14 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
 } from "../helpers/runs.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
-let k: Kernel;
+let db: KernelSchemaDb;
+let k: TestKernel;
 let eventLog: EventLog;
 
 const MAX_CASES = 4;
@@ -34,8 +35,8 @@ const MAX_CASE_BYTES = 20_000;
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   raw = createDb(pgc.url, 3);
-  db = kernelDb(raw);
-  eventLog = new EventLog(db, { publish: async () => {} });
+  db = legacyDbFor(raw);
+  eventLog = eventLogFor(db, { publish: async () => {} });
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
@@ -44,7 +45,7 @@ beforeAll(async () => {
   );
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
@@ -180,7 +181,7 @@ beforeEach(async () => {
     raw,
     "capybara.eval_results, capybara.eval_runs, capybara.eval_cases, capybara.eval_sets, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.deployment_settings, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   const mk = async (login: string) =>
     (await accounts.createLocal({ login, password: PW, displayName: login })).id;
   ownerId = await mk("owner");

@@ -77,7 +77,7 @@ export function sandboxEditTool(deps: SandboxToolDeps): BuiltinTool {
     spec: SPEC,
     defaultPolicy: "allow",
     unavailable: unavailableWhenNoSandbox(deps),
-    timeoutMs: () => sandboxBaseTimeoutMs(deps.config()),
+    timeoutMs: () => sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx) {
       const { oldText, newText, replaceAll = false } = input as EditInput;
       const path = checkWritable((input as EditInput).path);

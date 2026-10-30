@@ -2,6 +2,8 @@ import { startTestRedis } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createLock } from "../../src/ctx/lock.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
+import { createLogger } from "../../src/log.js";
 
 let box: Awaited<ReturnType<typeof startTestRedis>>;
 let redis: Redis;
@@ -16,9 +18,11 @@ afterAll(async () => {
   await box.stop();
 });
 
+const locksOf = (r: Redis) => new LockService(r, createLogger("error"));
+
 describe("ctx.lock", () => {
   it("A 持有时 B 拿不到；A release 后 B 能拿到；键带 lock 前缀", async () => {
-    const lock = createLock(redis, "lk-a");
+    const lock = createLock(locksOf(redis), "lk-a");
     const a = await lock.acquire("r", { ttlMs: 5000 });
     expect(a).not.toBeNull();
     expect(await redis.exists("cap:lk-a:lock:r")).toBe(1);
@@ -30,7 +34,7 @@ describe("ctx.lock", () => {
   });
 
   it("A 不释放，过期后 B 能拿到；A 之后 release 不会释放 B 的锁，renew 返回 false", async () => {
-    const lock = createLock(redis, "lk-b");
+    const lock = createLock(locksOf(redis), "lk-b");
     const a = await lock.acquire("r", { ttlMs: 500 });
     expect(a).not.toBeNull();
     await sleep(700);
@@ -44,7 +48,7 @@ describe("ctx.lock", () => {
   });
 
   it("renew 在过期前返回 true 并延长", async () => {
-    const lock = createLock(redis, "lk-c");
+    const lock = createLock(locksOf(redis), "lk-c");
     const a = await lock.acquire("r", { ttlMs: 1000 });
     await sleep(600);
     expect(await a?.renew()).toBe(true);
@@ -54,7 +58,7 @@ describe("ctx.lock", () => {
   });
 
   it("ttlMs 非正整数抛 TypeError", async () => {
-    const lock = createLock(redis, "lk-d");
+    const lock = createLock(locksOf(redis), "lk-d");
     await expect(lock.acquire("r", { ttlMs: 0 })).rejects.toThrow(/ttlMs/);
     await expect(lock.acquire("r", { ttlMs: 1.5 })).rejects.toThrow(TypeError);
     // biome-ignore lint/suspicious/noExplicitAny: 故意传错误参数
@@ -62,7 +66,7 @@ describe("ctx.lock", () => {
   });
 
   it("非法 namespace 抛 TypeError", () => {
-    expect(() => createLock(redis, "a:b")).toThrow(TypeError);
-    expect(() => createLock(redis, "Bad")).toThrow(TypeError);
+    expect(() => createLock(locksOf(redis), "a:b")).toThrow(TypeError);
+    expect(() => createLock(locksOf(redis), "Bad")).toThrow(TypeError);
   });
 });

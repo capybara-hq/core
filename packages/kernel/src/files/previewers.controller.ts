@@ -1,16 +1,22 @@
-import { Body, Controller, Get, Header, Inject, Param, Put, Query } from "@nestjs/common";
+import { Controller, Get, Header, Inject, Param, Put } from "@nestjs/common";
 import { z } from "zod";
-import { FILE_PREVIEWERS } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import type { OrgPreviewerItem, PreviewerItem, PreviewerRegistry } from "./previewers.js";
+import { type OrgPreviewerItem, type PreviewerItem, PreviewerRegistry } from "./previewers.js";
 
 const Id = z.string().min(1).max(100);
 const PreviewQuery = z.object({ locale: z.enum(["zh", "en"]).default("en") });
 const OrderBody = z.object({
   items: z.array(z.object({ plugin: Id, id: Id, disabled: z.boolean().default(false) })).max(500),
 });
+/** The previewer named in a preview path (the other path parameters are read as they are). */
+const PreviewParams = z.object({ plugin: Id, previewerId: Id });
+
+class FilePreviewQueryDto extends createZodDto(PreviewQuery, "FilePreviewQuery") {}
+class FilePreviewParamsDto extends createZodDto(PreviewParams, "FilePreviewParams") {}
+class FilePreviewersOrderBodyDto extends createZodDto(OrderBody, "FilePreviewersOrderBody") {}
 
 /**
  * `file-preview@1` (UI refresh B Task 11):
@@ -26,7 +32,7 @@ const OrderBody = z.object({
  */
 @Controller("api/v1/orgs/:orgId")
 export class FilePreviewersController {
-  constructor(@Inject(FILE_PREVIEWERS) private readonly previewers: PreviewerRegistry) {}
+  constructor(@Inject(PreviewerRegistry) private readonly previewers: PreviewerRegistry) {}
 
   @Get("conversations/:id/files/:fileId/previewers")
   @Header("cache-control", "private, no-store")
@@ -49,9 +55,8 @@ export class FilePreviewersController {
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
     @Param("fileId") fileId: string,
-    @Param("plugin", new ZodPipe(Id)) plugin: string,
-    @Param("previewerId", new ZodPipe(Id)) previewerId: string,
-    @Query(new ZodPipe(PreviewQuery)) q: z.infer<typeof PreviewQuery>,
+    @ZParam(FilePreviewParamsDto) { plugin, previewerId }: z.infer<typeof PreviewParams>,
+    @ZQuery(FilePreviewQueryDto) q: z.infer<typeof PreviewQuery>,
   ) {
     const p = requireUser(principal);
     const view = await this.previewers.render({
@@ -77,7 +82,7 @@ export class FilePreviewersController {
   async put(
     @CurrentOrg() org: OrgContext,
     @CurrentPrincipal() principal: Principal,
-    @Body(new ZodPipe(OrderBody)) body: z.infer<typeof OrderBody>,
+    @ZBody(FilePreviewersOrderBodyDto) body: z.infer<typeof OrderBody>,
   ): Promise<{ items: OrgPreviewerItem[] }> {
     const actor =
       principal.kind === "service"

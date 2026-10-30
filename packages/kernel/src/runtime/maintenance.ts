@@ -1,196 +1,129 @@
-import type { Logger } from "@capybara-hq/plugin-sdk";
-import { type Job, type JobsOptions, Queue, Worker } from "bullmq";
-import type { Redis } from "ioredis";
-import { sql } from "kysely";
-import type { KernelDb } from "../db/kernel-schema.js";
-import { withJobContext } from "../log-context.js";
-import { bullConnection } from "./run-queue.js";
+import { getQueueToken, OnWorkerEvent, WorkerHost } from "@nestjs/bullmq";
+import { Inject, Injectable, Module } from "@nestjs/common";
+import type { Job, Queue, Worker } from "bullmq";
+import { configuredProcessor } from "../infra/queue/configured-processor.js";
+import { QueueModule } from "../infra/queue/queue.module.js";
+import { removeRetiredSchedulers } from "../infra/queue/retired-schedulers.js";
+import { runJob } from "../infra/queue/run-job.js";
+import { KernelScheduleModule } from "../infra/schedule/schedule.module.js";
+import { ScheduledRuns } from "../infra/schedule/scheduled-runs.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
+import { DIRECTORY_SYNC_JOB, DirectorySync, type SyncJobData } from "../orgs/directory-sync.js";
+import { OrgsModule } from "../orgs/orgs.module.js";
+import { runSandboxDestroyFor, SANDBOX_DESTROY_FOR_JOB } from "../sandbox/jobs.js";
+import { SandboxModule } from "../sandbox/sandbox.module.js";
+import { SandboxService } from "../sandbox/sandbox.service.js";
+import { type DriftConnectorJobData, ToolDrift } from "../tools/drift.js";
+import { DRIFT_CONNECTOR_JOB } from "../tools/job-ids.js";
+import { ToolsModule } from "../tools/tools.module.js";
+import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
+import { RETIRED_SCHEDULER_IDS } from "./retired-schedulers.js";
+import { RuntimeModule } from "./runtime.module.js";
+import { WAIT_TIMEOUT_JOB, Waits, type WaitTimeoutData } from "./waits.js";
+
+export { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
+
+/** The maintenance worker's concurrency (as the hand-made worker had). */
+export const MAINTENANCE_CONCURRENCY = 5;
 
 /**
- * 内核维护队列（不含 `:`）：等待超时任务（`wait-timeout`，见 waits.ts）与周期性维护（输出存档清理、
- * 工具漂移检测（见 tools/drift.ts）、等待兜底扫描（`wait-sweep`，见 waits.ts）、沙箱的空闲休眠与不活跃销毁
- * （见 sandbox/lifecycle.ts）等）。整个队列只有一个 Worker（只在 `worker` 角色上启动），
- * 按任务名分派给登记的处理函数。
- * 与运行队列分开：运行 worker 的处理函数、stalled / 失败处理都按「一个任务 = 一次运行」设计；
- * 维护任务短、无会话锁与配额。
+ * The one consumer of `cap-kernel-maintenance` (decision R11 of the Nest kernel spec): dispatches
+ * each one-off job by name to its domain (`wait-timeout` → {@link Waits}, `sandbox-destroy-for` →
+ * {@link SandboxService}, `drift-connector` → {@link ToolDrift}, `directory-sync` →
+ * {@link DirectorySync}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
+ * such as `sandbox-suspend-idle`) runs that job's body once ({@link ScheduledRuns.runNow}), as the
+ * maintenance handlers did when those jobs were schedulers on this queue: an operator's or a
+ * test's one-off run, not a second schedule (decision R23 of the Nest kernel spec). Any other
+ * name is warned and completes. The producers are the domains' own (same names, ids and options).
  */
-export const MAINTENANCE_QUEUE_NAME = "cap-kernel-maintenance";
-
-/** 输出存档清理：任务名、job scheduler id（不含 `:`）、周期与每批删除行数。 */
-export const OUTPUT_CLEANUP_JOB = "output-cleanup";
-export const OUTPUT_CLEANUP_SCHEDULER_ID = "output-cleanup-hourly";
-export const OUTPUT_CLEANUP_EVERY_MS = 3_600_000;
-export const OUTPUT_CLEANUP_BATCH = 1000;
-
-/**
- * Periodic marketplace refresh (C26): job name and job scheduler id (no `:`), every
- * `marketplaces.refreshIntervalMinutes`. One scheduler for all replicas; the handler refreshes each
- * enabled marketplace in turn (see catalog/marketplaces.service.ts). The values keep their old
- * names: the scheduler id is stored in Redis, and renaming it would leave the old scheduler behind.
- */
-export const MARKETPLACES_REFRESH_JOB = "catalogs-refresh";
-export const MARKETPLACES_REFRESH_SCHEDULER_ID = "catalogs-refresh-every";
-
-/**
- * Cleanup of plugin (app bundle) import staging (T25, F-AE): job name and job scheduler id (no
- * `:`), hourly; deletes expired (24-hour) staging rows and their object storage prefixes (see
- * catalog/plugin-import.ts `PluginImport.cleanupExpired`). The values keep their old names: the
- * scheduler id is stored in Redis, so renaming it would leave the old scheduler behind.
- */
-export const PLUGIN_STAGING_CLEANUP_JOB = "app-staging-cleanup";
-export const PLUGIN_STAGING_CLEANUP_SCHEDULER_ID = "app-staging-cleanup-hourly";
-export const PLUGIN_STAGING_CLEANUP_EVERY_MS = 3_600_000;
-
-/** 维护任务的处理函数（`token` 供 `moveToDelayed` 等使用）。 */
-export type MaintenanceHandler = (job: Job, token: string | undefined) => Promise<void>;
-
-/** 由其他模块登记的周期任务（如漂移检测）：scheduler id 与任务名不含 `:`，周期在登记时读取。 */
-export interface MaintenanceSchedule {
-  id: string;
-  name: string;
-  everyMs: () => number;
-}
-
-/**
- * 删除已过期（`expires_at < now()`）的输出存档，每批 `batch` 行，直到删完；返回删除的总行数。
- * 每批一条独立语句（不开长事务）；多个 worker 同时清理时 `SKIP LOCKED` 互不等待。
- */
-export async function deleteExpiredOutputs(
-  db: KernelDb,
-  batch = OUTPUT_CLEANUP_BATCH,
-): Promise<number> {
-  let total = 0;
-  for (;;) {
-    const r = await db
-      .deleteFrom("tool_outputs")
-      .where(
-        "id",
-        "in",
-        db
-          .selectFrom("tool_outputs")
-          .select("id")
-          .where("expires_at", "<", sql<Date>`now()`)
-          .limit(batch)
-          .forUpdate()
-          .skipLocked(),
-      )
-      .executeTakeFirst();
-    const n = Number(r.numDeletedRows);
-    total += n;
-    if (n < batch) return total;
-  }
-}
-
-export interface MaintenanceDeps {
-  db: KernelDb;
-  redisUrl: string;
-  log: Pick<Logger, "error" | "warn" | "info">;
-}
-
-/**
- * 维护队列的生产方与（worker 角色上的）唯一 Worker。状态都在 Redis / PG，没有进程内定时器：
- * 周期任务用 BullMQ job scheduler（`upsertJobScheduler` 幂等，多副本重复调用只有一个 scheduler）。
- */
-export class Maintenance {
-  private queue: Queue | undefined;
-  private queueConn: Redis | undefined;
-  private worker: Worker | undefined;
-  private workerConn: Redis | undefined;
-  private closed = false;
-  private readonly handlers = new Map<string, MaintenanceHandler>();
-  private readonly schedules: MaintenanceSchedule[] = [];
-
-  constructor(private readonly d: MaintenanceDeps) {
-    this.handle(OUTPUT_CLEANUP_JOB, async () => {
-      const n = await deleteExpiredOutputs(d.db);
-      if (n > 0) d.log.info("expired tool outputs deleted", { count: n });
-    });
+@Injectable()
+export class MaintenanceProcessor extends WorkerHost<Worker> {
+  constructor(
+    @Inject(Waits) private readonly waits: Pick<Waits, "processTimeout">,
+    @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "destroyFor">,
+    @Inject(ToolDrift) private readonly drift: Pick<ToolDrift, "check">,
+    @Inject(DirectorySync) private readonly directory: Pick<DirectorySync, "runSyncJob">,
+    @Inject(ScheduledRuns) private readonly scheduled: Pick<ScheduledRuns, "runNow">,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "error" | "warn">,
+    @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME))
+    private readonly queue: Pick<Queue, "removeJobScheduler">,
+  ) {
+    super();
   }
 
-  /** 登记某个任务名的处理函数（构造期调用；Worker 启动前后都可）。 */
-  handle(name: string, fn: MaintenanceHandler): void {
-    this.handlers.set(name, fn);
+  /**
+   * Removes the retired job schedulers (`RETIRED_SCHEDULER_IDS`, runtime/retired-schedulers.ts): every fixed-period
+   * maintenance job is a `@LockedCron` / `@LockedInterval` now. Idempotent; called once when a
+   * worker role starts.
+   */
+  removeRetiredSchedulers(): Promise<void> {
+    return removeRetiredSchedulers(this.queue, RETIRED_SCHEDULER_IDS);
   }
 
-  /** 登记一个周期任务（构造期调用；`ensureSchedules` 时一并 upsert）。 */
-  schedule(s: MaintenanceSchedule): void {
-    this.schedules.push(s);
+  process(job: Job, token?: string): Promise<void> {
+    return runJob(MAINTENANCE_QUEUE_NAME, job, () => this.dispatch(job, token));
   }
 
-  /** 投递一个维护任务。 */
-  async add(name: string, data: unknown, opts: JobsOptions): Promise<void> {
-    await this.getQueue().add(name, data, opts);
+  /** Starts consuming (worker role, after the extensions loaded; built with `autorun: false`). */
+  start(): void {
+    void this.worker.run().catch((err) => this.error(err));
   }
 
-  /** 登记周期任务的 job scheduler（幂等；worker 角色启动时调用）。 */
-  async ensureSchedules(): Promise<void> {
-    await this.getQueue().upsertJobScheduler(
-      OUTPUT_CLEANUP_SCHEDULER_ID,
-      { every: OUTPUT_CLEANUP_EVERY_MS },
-      {
-        name: OUTPUT_CLEANUP_JOB,
-        data: {},
-        opts: { removeOnComplete: true, removeOnFail: 100 },
-      },
-    );
-    for (const s of this.schedules) {
-      await this.getQueue().upsertJobScheduler(
-        s.id,
-        { every: s.everyMs() },
-        { name: s.name, data: {}, opts: { removeOnComplete: true, removeOnFail: 100 } },
-      );
+  private async dispatch(job: Job, token: string | undefined): Promise<void> {
+    switch (job.name) {
+      case WAIT_TIMEOUT_JOB:
+        await this.waits.processTimeout(job as Job<WaitTimeoutData>, token);
+        return;
+      case SANDBOX_DESTROY_FOR_JOB:
+        await runSandboxDestroyFor(this.sandbox, this.log, job);
+        return;
+      case DRIFT_CONNECTOR_JOB: {
+        const { orgId, connectorId, trigger } = job.data as DriftConnectorJobData;
+        await this.drift.check(orgId, connectorId, trigger);
+        return;
+      }
+      case DIRECTORY_SYNC_JOB:
+        await this.directory.runSyncJob(job.data as SyncJobData);
+        return;
+      default:
+        if (await this.scheduled.runNow(job.name)) return;
+        this.log.warn("unknown maintenance job", { name: job.name, jobId: job.id });
     }
   }
 
-  /** 启动维护队列的 Worker（只在含 `worker` 角色的进程）。 */
-  startWorker(): void {
-    if (this.worker || this.closed) return;
-    this.workerConn = bullConnection(this.d.redisUrl, this.d.log);
-    this.worker = new Worker(
-      MAINTENANCE_QUEUE_NAME,
-      (job, token) => withJobContext(MAINTENANCE_QUEUE_NAME, job, () => this.process(job, token)),
-      {
-        connection: this.workerConn,
-        concurrency: 5,
-      },
-    );
-    this.worker.on("error", (err) => this.d.log.error("maintenance worker error", { err }));
-    this.worker.on("failed", (job, err) =>
-      this.d.log.error("maintenance job failed", { name: job?.name, jobId: job?.id, err }),
-    );
+  @OnWorkerEvent("failed")
+  failed(job: Job | undefined, err: Error): void {
+    this.log.error("maintenance job failed", { name: job?.name, jobId: job?.id, err });
   }
 
-  async close(): Promise<void> {
-    this.closed = true;
-    const w = this.worker;
-    const q = this.queue;
-    this.worker = undefined;
-    this.queue = undefined;
-    await w?.close().catch(() => {});
-    await q?.close().catch(() => {});
-    for (const c of [this.workerConn, this.queueConn]) {
-      if (c) await c.quit().catch(() => c.disconnect());
-    }
-    this.workerConn = undefined;
-    this.queueConn = undefined;
-  }
-
-  private getQueue(): Queue {
-    if (this.closed) throw new Error("maintenance queue is closed");
-    if (!this.queue) {
-      this.queueConn = bullConnection(this.d.redisUrl, this.d.log);
-      this.queue = new Queue(MAINTENANCE_QUEUE_NAME, { connection: this.queueConn });
-      this.queue.on("error", (err) => this.d.log.error("maintenance queue error", { err }));
-    }
-    return this.queue;
-  }
-
-  private async process(job: Job, token: string | undefined): Promise<void> {
-    const fn = this.handlers.get(job.name);
-    if (!fn) {
-      this.d.log.warn("unknown maintenance job", { name: job.name, jobId: job.id });
-      return;
-    }
-    await fn(job, token);
+  @OnWorkerEvent("error")
+  error(err: Error): void {
+    this.log.error("maintenance worker error", { err });
   }
 }
+
+/**
+ * The maintenance queue's consumer: {@link MaintenanceProcessor}. Imported only by the worker role
+ * (`WorkerModule`), so other roles get no processor and no BullMQ worker. It never starts by
+ * itself: the worker role (`WorkerRole`) removes the retired job schedulers and starts it after the
+ * extensions loaded.
+ */
+@Module({
+  imports: [
+    // the periodic jobs' bodies (a periodic job's name enqueued here runs it once)
+    KernelScheduleModule,
+    RuntimeModule,
+    SandboxModule,
+    ToolsModule,
+    OrgsModule,
+    QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
+  ],
+  providers: [
+    configuredProcessor(MaintenanceProcessor, MAINTENANCE_QUEUE_NAME, {
+      concurrency: MAINTENANCE_CONCURRENCY,
+    }),
+  ],
+  exports: [MaintenanceProcessor],
+})
+export class MaintenanceModule {}

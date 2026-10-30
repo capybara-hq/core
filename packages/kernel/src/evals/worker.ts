@@ -1,48 +1,51 @@
 import { randomUUID } from "node:crypto";
-import { hostname } from "node:os";
 import type { ContentBlock } from "@capybara-hq/plugin-sdk";
 import { isModelError, isRetryableKind, type Logger } from "@capybara-hq/plugin-sdk";
-import { DelayedError, type Job, Worker } from "bullmq";
-import type { Redis } from "ioredis";
+import { Inject, Injectable, Optional } from "@nestjs/common";
+import { DelayedError, type Job, type Worker } from "bullmq";
 import { sql } from "kysely";
 import { loadTemplates } from "../agents/templates.js";
-import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import { EventLog } from "../conversations/event-log.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionUnloadedError } from "../extensions/inflight.js";
-import { withJobContext } from "../log-context.js";
-import { type ModelPurposesService, PurposeAttemptError } from "../models/purposes.js";
+import { waitWithin } from "../infra/close-within.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
+import { ModelPurposesService, PurposeAttemptError } from "../models/purposes.js";
+import { KyselyCheckpointSaver } from "../runtime/checkpointer.js";
 import { MediaUnavailableError, RunError } from "../runtime/model-call.js";
-import { ProviderListError } from "../runtime/providers.js";
-import { ORG_QUOTA_LEASE_MS, type OrgQuota } from "../runtime/quota.js";
-import { bullConnection } from "../runtime/run-queue.js";
+import { ProviderListError, ProviderRegistry } from "../runtime/providers.js";
+import { EVAL_QUOTA, ORG_QUOTA_LEASE_MS, type OrgQuota } from "../runtime/quota.js";
+import { RunFinish } from "../runtime/run-finish.js";
+import { AgentLoops, RunSteps } from "../runtime/run-steps.js";
 import {
   consumeTokens,
+  EvalBudget,
   recordOutcome,
-  recountCases,
   runActive,
   skipPendingJudges,
   usageTokens,
 } from "./budget.js";
 import { replyParts, structuralDiff } from "./diff.js";
+import { type EvalJobData, evalJobId } from "./jobs.js";
 import { JUDGE_PROVIDER_UNAVAILABLE, judge } from "./judge.js";
 import { userRequestOf } from "./plan.js";
 import { type DriftReason, subagentCaseChanged, subagentStartedOf } from "./reconstruct.js";
 import {
   deleteEvalConversation,
+  type EvalReplayHooks,
+  EvalReplaySeeder,
   ReplayClaimLost,
   type RunReplayDeps,
   replayRun,
   runBaseline,
 } from "./run-replay.js";
-import {
-  caseBase,
-  EVAL_QUEUE_NAME,
-  type EvalCandidate,
-  type EvalJobData,
-  evalJobId,
-  versionDefinition,
-} from "./runs.service.js";
+import { caseBase, type EvalCandidate, versionDefinition } from "./runs.service.js";
 import { type CaseSnapshot, readSnapshot, replayableCalls, toEvents } from "./snapshot.js";
 import {
   ReplayAttemptError,
@@ -76,22 +79,28 @@ export const EVAL_MAX_RETRIES = 3;
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
 const MAX_RETRY_AFTER_MS = 30_000;
 
-const MAX_STALLED_COUNT = 3;
+/** The eval worker's BullMQ stalled-job limit (the processor's `maxStalledCount`). */
+export const EVAL_MAX_STALLED_COUNT = 3;
 
-export interface EvalWorkerDeps {
-  db: KernelDb;
-  redisUrl: string;
-  /** 评测配额（`new OrgQuota(redis, EVAL_QUOTA_PREFIX)`）。 */
-  quota: OrgQuota;
-  config: () => KernelConfig;
+/**
+ * Test hooks of the full-run replay and the judge (`EvalReplayHooks`): a provider override in tests
+ * (`overrides: [{ provide: EVAL_REPLAY_HOOKS, useValue }]`), absent in production.
+ */
+export const EVAL_REPLAY_HOOKS = Symbol("EVAL_REPLAY_HOOKS");
+
+interface EvalWorkerDeps {
+  /** The context-aware handle (the `@Transactional` method's transaction, else the pool). */
+  readonly db: KernelSchemaDb;
+  /** 评测配额（`capk:org-evals:<orgId>`，`EVAL_QUOTA`）。 */
+  quota: Pick<OrgQuota, "enter">;
+  config: Pick<KernelConfigService, "get">;
   log: Logger;
   replay: StepReplayDeps;
   /** 整轮回放（mode = run）的依赖；认领相关的两项由 worker 按每次执行补上。 */
   runReplay: Omit<RunReplayDeps, "stillClaimed" | "onSeeded">;
   /** 评委（用途 `eval`，D3）：开了评委的运行每条 done 的结果发一次评委请求。 */
   purposes: Pick<ModelPurposesService, "chat">;
-  /** 测试用：覆盖拿不到配额时的延后时长。 */
-  quotaRetryMs?: number;
+  budget: Pick<EvalBudget, "recountCases">;
 }
 
 interface Failure {
@@ -220,45 +229,115 @@ function judgeInputOf(
   };
 }
 
+@Injectable()
 export class EvalWorker {
   private worker: Worker<EvalJobData> | undefined;
-  private conn: Redis | undefined;
   /** 本进程在执行的任务：停机时中止，任务回到队列。 */
   private readonly active = new Set<AbortController>();
   private closing = false;
+  private readonly d: EvalWorkerDeps;
 
-  constructor(private readonly d: EvalWorkerDeps) {}
-
-  start(): void {
-    if (this.worker) return;
-    const { runtime, evals } = this.d.config();
-    this.conn = bullConnection(this.d.redisUrl, this.d.log);
-    this.worker = new Worker<EvalJobData>(
-      EVAL_QUEUE_NAME,
-      (job, token) => withJobContext(EVAL_QUEUE_NAME, job, () => this.process(job, token)),
-      {
-        name: `${hostname()}-${process.pid}`,
-        connection: this.conn,
-        concurrency: evals.workerConcurrency,
-        lockDuration: runtime.jobLockMs,
-        stalledInterval: runtime.stalledIntervalMs,
-        maxStalledCount: MAX_STALLED_COUNT,
+  constructor(
+    @Inject(KernelDb) kdb: KernelDb,
+    @Inject(EVAL_QUOTA) quota: OrgQuota,
+    @Inject(KernelConfigService) config: KernelConfigService,
+    @Inject(KERNEL_LOGGER) log: KernelLogger,
+    @Inject(ModelPurposesService) purposes: ModelPurposesService,
+    @Inject(ProviderRegistry) registry: ProviderRegistry,
+    @Inject(RunSteps) steps: RunSteps,
+    @Inject(AgentLoops) loops: AgentLoops,
+    @Inject(EventLog) eventLog: EventLog,
+    @Inject(RunFinish) runFinish: RunFinish,
+    @Inject(KyselyCheckpointSaver) checkpoints: KyselyCheckpointSaver,
+    @Inject(EvalReplaySeeder) seeder: EvalReplaySeeder,
+    @Inject(EvalBudget) budget: EvalBudget,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Optional() @Inject(EVAL_REPLAY_HOOKS) hooks?: EvalReplayHooks,
+  ) {
+    const stepDeps = steps.deps;
+    this.d = {
+      get db(): KernelSchemaDb {
+        return kdb.db;
       },
+      quota,
+      config,
+      log,
+      purposes,
+      budget,
+      // 媒体按快照自己的组织与对话、经组织范围的附件接口取（C3）
+      replay: {
+        registry,
+        config,
+        ...(stepDeps.media !== undefined && { media: stepDeps.media }),
+      },
+      // 整轮回放（C6）：同一个 loop 工厂（同一 LangGraphLoop），只换工具管线（RecordedToolPipeline，
+      // 从不执行工具）、计费的模型注册表与按原对话取附件的来源
+      runReplay: {
+        get db(): KernelSchemaDb {
+          return kdb.db;
+        },
+        eventLog,
+        seeder,
+        runFinish,
+        config,
+        log,
+        registry,
+        ...(stepDeps.media !== undefined && { media: stepDeps.media }),
+        checkpoints,
+        // explicitly without plugin hooks: eval replays never fire them (P-18); nor do they
+        // publish sub-agent progress on a live conversation's stream
+        loop: (d) => {
+          // nor dispatch fork invocations: run-replay passes the recorded reports instead
+          const {
+            db: _snapshot,
+            hooks: _noHooks,
+            subagentProgress: _noProgress,
+            skillForks: _noForks,
+            ...replayDeps
+          } = stepDeps;
+          // the object rest above copied `db` as a value: read it through the step deps' getter
+          // instead, so the loop always resolves the context-aware handle
+          return loops.create({
+            ...replayDeps,
+            get db() {
+              return stepDeps.db;
+            },
+            ...d,
+          });
+        },
+        ...(hooks !== undefined && { hooks }),
+      },
+    };
+  }
+
+  /**
+   * Starts consuming with the `cap-kernel-evals` processor's worker (worker role, after the
+   * extensions loaded; built with `autorun: false`).
+   */
+  start(worker: Worker<EvalJobData>): void {
+    if (this.worker || this.closing) return;
+    this.worker = worker;
+    void worker.run().catch((err) => this.onError(err));
+  }
+
+  /** The worker's `error` event. */
+  onError(err: Error): void {
+    this.d.log.error("eval worker error", { err });
+  }
+
+  /** The worker's `failed` event. */
+  onFailed(job: Job<EvalJobData> | undefined, err: Error): void {
+    if (!job) return;
+    // 处理函数外的暂时故障（PG / Redis）由 BullMQ 按 attempts 指数退避重试；用尽（或 stalled 超限）才算失败
+    if (job.attemptsMade < (job.opts.attempts ?? 1) && !/stalled/i.test(err.message)) {
+      this.d.log.warn("eval job attempt failed; retrying", { jobId: job.id, err });
+      return;
+    }
+    this.d.log.error("eval job failed", { jobId: job.id, err });
+    // 任务不会再执行：该用例剩下的结果记 error，运行不因此卡住
+    void this.failCase(job.data, err).catch((e) =>
+      this.d.log.error("cannot mark failed eval job", { jobId: job.id, err: e }),
     );
-    this.worker.on("error", (err) => this.d.log.error("eval worker error", { err }));
-    this.worker.on("failed", (job, err) => {
-      if (!job) return;
-      // 处理函数外的暂时故障（PG / Redis）由 BullMQ 按 attempts 指数退避重试；用尽（或 stalled 超限）才算失败
-      if (job.attemptsMade < (job.opts.attempts ?? 1) && !/stalled/i.test(err.message)) {
-        this.d.log.warn("eval job attempt failed; retrying", { jobId: job.id, err });
-        return;
-      }
-      this.d.log.error("eval job failed", { jobId: job.id, err });
-      // 任务不会再执行：该用例剩下的结果记 error，运行不因此卡住
-      void this.failCase(job.data, err).catch((e) =>
-        this.d.log.error("cannot mark failed eval job", { jobId: job.id, err: e }),
-      );
-    });
   }
 
   /** 停止领取；中止本进程在执行的任务（回到队列由别的 worker 接着做），在 budgetMs 内等它们退出。 */
@@ -269,47 +348,35 @@ export class EvalWorker {
     this.closing = true;
     await worker.pause(true).catch(() => {});
     for (const ac of this.active) ac.abort();
-    let timer: NodeJS.Timeout | undefined;
-    const done = await Promise.race([
-      worker.close().then(() => true),
-      new Promise<false>((resolve) => {
-        timer = setTimeout(() => resolve(false), Math.max(0, budgetMs));
-        timer.unref();
-      }),
-    ]);
-    clearTimeout(timer);
+    const done = await waitWithin(worker.close(), budgetMs);
     if (!done) await worker.close(true).catch(() => {});
-    this.conn?.disconnect();
   }
 
-  private async process(job: Job<EvalJobData>, token: string | undefined): Promise<void> {
+  /** One job: replays one case (the processor runs it in `runJob`). */
+  async process(job: Job<EvalJobData>, token: string | undefined): Promise<void> {
     const data = job.data;
     const { runId, orgId } = data;
     const jobId = job.id ?? evalJobId(runId, data.caseId);
     if (!(await runActive(this.d.db, runId))) {
       await this.skipCase(data);
-      await recountCases(this.d.db, runId);
+      await this.d.budget.recountCases(runId);
       return;
     }
-    const limit = this.d.config().evals.orgConcurrency;
+    const limit = this.d.config.get().evals.orgConcurrency;
     // 每次执行一个新的认领号：失去认领（stalled 后被别的 worker 接手）的旧执行写不进结果（用量照样计入）。
     // 配额成员 = 任务 id + 认领号：旧执行退出时只移除自己的名额，不会把接手执行的名额一起移掉
     const claim = randomUUID();
     const member = `${jobId}-${claim}`;
-    if (!(await this.d.quota.tryEnter(orgId, member, limit, ORG_QUOTA_LEASE_MS))) {
+    // the slot is renewed every lease / 3 by the lock service's watchdog until released
+    const slot = await this.d.quota.enter(orgId, member, limit, ORG_QUOTA_LEASE_MS);
+    if (!slot) {
       // 配额满：固定 5 秒后再试，不按事件唤醒。评测是后台批任务，几秒空等可以接受，换来没有跨副本通知
-      await job.moveToDelayed(Date.now() + (this.d.quotaRetryMs ?? EVAL_QUOTA_RETRY_MS), token);
+      await job.moveToDelayed(Date.now() + EVAL_QUOTA_RETRY_MS, token);
       throw new DelayedError();
     }
     const ac = new AbortController();
     this.active.add(ac);
     if (this.closing) ac.abort();
-    const renew = setInterval(() => {
-      this.d.quota
-        .renew(orgId, member, ORG_QUOTA_LEASE_MS)
-        .catch((err) => this.d.log.warn("eval quota renew failed", { jobId, err }));
-    }, ORG_QUOTA_LEASE_MS / 3);
-    renew.unref();
     try {
       await this.d.db
         .updateTable("eval_runs")
@@ -326,13 +393,12 @@ export class EvalWorker {
       }
       throw err;
     } finally {
-      clearInterval(renew);
       this.active.delete(ac);
-      await this.d.quota
-        .leave(orgId, member)
+      await slot
+        .release()
         .catch((err) => this.d.log.warn("eval quota leave failed", { jobId, err }));
     }
-    await recountCases(this.d.db, runId);
+    await this.d.budget.recountCases(runId);
   }
 
   /** 单步回放每次请求前：运行仍在执行（{@link runActive}）且结果仍由本次执行认领。 */
@@ -375,7 +441,7 @@ export class EvalWorker {
       db,
       data.runId,
       false,
-      this.d.config().evals.maxConsecutiveErrors,
+      this.d.config.get().evals.maxConsecutiveErrors,
     );
     if (tripped) {
       this.d.log.warn("eval run stopped after too many consecutive errors", { runId: data.runId });
@@ -526,34 +592,7 @@ export class EvalWorker {
         { ...b, stopReason: result.baseline.stopReason },
         { ...c, stopReason: result.candidate.stopReason },
       );
-      const outcome = await db.transaction().execute(async (trx) => {
-        // 只在仍由本次执行认领时写结果：stalled 后被接手的旧执行不覆盖结果。用量照样计入（请求确实发出且已付费，
-        // 与失败尝试一样不以认领为条件），走同一个原子 consumeTokens
-        const w = await trx
-          .updateTable("eval_results")
-          .set({
-            status: "done",
-            baseline: JSON.stringify(result.baseline),
-            candidate: JSON.stringify(result.candidate),
-            diff: JSON.stringify(diff),
-            // 开了评委：评委做完之前用例不算做完（recountCases 不计 pending 的评委）
-            judge_status: grade.judge ? "pending" : "none",
-            drift: result.drift,
-            error: null,
-            updated_at: sql`now()`,
-          })
-          .where("id", "=", r.id)
-          .where("status", "=", "running")
-          .where("claimed_by", "=", claim)
-          .executeTakeFirst();
-        if (Number(w.numUpdatedRows) === 0) {
-          await consumeTokens(trx, runId, tokens);
-          return "lost" as const;
-        }
-        await recordOutcome(trx, runId, true, this.d.config().evals.maxConsecutiveErrors);
-        const { capped } = await consumeTokens(trx, runId, tokens);
-        return capped ? ("capped" as const) : ("ok" as const);
-      });
+      const outcome = await this.writeStepResultIn(runId, r.id, claim, result, diff, grade, tokens);
       // 失去认领：这个用例已由别的执行接手，本次停下
       if (outcome === "lost") return;
       if (outcome === "capped") {
@@ -641,7 +680,7 @@ export class EvalWorker {
         v = await judge(
           {
             purposes: this.d.purposes,
-            maxOutputTokens: this.d.config().evals.judgeMaxOutputTokens,
+            maxOutputTokens: this.d.config.get().evals.judgeMaxOutputTokens,
           },
           data.orgId,
           input,
@@ -738,7 +777,7 @@ export class EvalWorker {
       });
       return;
     }
-    const held = async (q: KernelDb = db) =>
+    const held = async (q: KernelSchemaDb = db) =>
       (await q
         .selectFrom("eval_results")
         .select("id")
@@ -752,8 +791,9 @@ export class EvalWorker {
         {
           ...this.d.runReplay,
           stillClaimed: () => held(),
-          onSeeded: async (trx, conversationId) => {
-            const w = await trx
+          // runs inside the seed's transaction (the context-aware handle joins it)
+          onSeeded: async (conversationId) => {
+            const w = await this.d.db
               .updateTable("eval_results")
               .set({ eval_conversation_id: conversationId, updated_at: sql`now()` })
               .where("id", "=", resultId)
@@ -804,27 +844,12 @@ export class EvalWorker {
       { toolCalls: baseline.toolCalls, text: baseText, stopReason: baseline.stopReason },
       { toolCalls: out.toolCalls, text: candText, stopReason: out.stopReason },
     );
-    const written = await db.transaction().execute(async (trx) => {
-      const w = await trx
-        .updateTable("eval_results")
-        .set({
-          status: "done",
-          baseline: JSON.stringify(baseline),
-          candidate: JSON.stringify(out),
-          diff: JSON.stringify(diff),
-          judge_status: grade.judge ? "pending" : "none",
-          drift,
-          error: null,
-          eval_conversation_id: out.conversationId,
-          updated_at: sql`now()`,
-        })
-        .where("id", "=", resultId)
-        .where("status", "=", "running")
-        .where("claimed_by", "=", claim)
-        .executeTakeFirst();
-      if (Number(w.numUpdatedRows) === 0) return false;
-      await recordOutcome(trx, runId, true, this.d.config().evals.maxConsecutiveErrors);
-      return true;
+    const written = await this.writeRunResultIn(runId, resultId, claim, {
+      baseline,
+      out,
+      diff,
+      drift,
+      judge: grade.judge,
     });
     if (!written || !grade.judge) return;
     await this.judgeResult(
@@ -834,6 +859,84 @@ export class EvalWorker {
       signal,
       judgeInputOf(s, "run", null, baseline, out, grade.rubric),
     );
+  }
+
+  /**
+   * 写一条单步回放的结果：只在仍由本次执行认领时写结果（stalled 后被接手的旧执行不覆盖结果）。用量照样计入（请求确实
+   * 发出且已付费，与失败尝试一样不以认领为条件），走同一个原子 consumeTokens。
+   */
+  @Transactional({ propagation: "requires_new" })
+  private async writeStepResultIn(
+    runId: string,
+    resultId: string,
+    claim: string,
+    result: Awaited<ReturnType<typeof replayStep>>,
+    diff: ReturnType<typeof structuralDiff>,
+    grade: Grading,
+    tokens: number,
+  ): Promise<"lost" | "capped" | "ok"> {
+    const db = this.d.db;
+    const w = await db
+      .updateTable("eval_results")
+      .set({
+        status: "done",
+        baseline: JSON.stringify(result.baseline),
+        candidate: JSON.stringify(result.candidate),
+        diff: JSON.stringify(diff),
+        // 开了评委：评委做完之前用例不算做完（recountCases 不计 pending 的评委）
+        judge_status: grade.judge ? "pending" : "none",
+        drift: result.drift,
+        error: null,
+        updated_at: sql`now()`,
+      })
+      .where("id", "=", resultId)
+      .where("status", "=", "running")
+      .where("claimed_by", "=", claim)
+      .executeTakeFirst();
+    if (Number(w.numUpdatedRows) === 0) {
+      await consumeTokens(db, runId, tokens);
+      return "lost";
+    }
+    await recordOutcome(db, runId, true, this.d.config.get().evals.maxConsecutiveErrors);
+    const { capped } = await consumeTokens(db, runId, tokens);
+    return capped ? "capped" : "ok";
+  }
+
+  /** 写一条整轮回放的结果（仍由本次执行认领时）；false = 已失去认领。 */
+  @Transactional({ propagation: "requires_new" })
+  private async writeRunResultIn(
+    runId: string,
+    resultId: string,
+    claim: string,
+    r: {
+      baseline: ReturnType<typeof runBaseline>;
+      out: Awaited<ReturnType<typeof replayRun>>;
+      diff: ReturnType<typeof structuralDiff>;
+      drift: DriftReason[];
+      judge: boolean;
+    },
+  ): Promise<boolean> {
+    const db = this.d.db;
+    const w = await db
+      .updateTable("eval_results")
+      .set({
+        status: "done",
+        baseline: JSON.stringify(r.baseline),
+        candidate: JSON.stringify(r.out),
+        diff: JSON.stringify(r.diff),
+        judge_status: r.judge ? "pending" : "none",
+        drift: r.drift,
+        error: null,
+        eval_conversation_id: r.out.conversationId,
+        updated_at: sql`now()`,
+      })
+      .where("id", "=", resultId)
+      .where("status", "=", "running")
+      .where("claimed_by", "=", claim)
+      .executeTakeFirst();
+    if (Number(w.numUpdatedRows) === 0) return false;
+    await recordOutcome(db, runId, true, this.d.config.get().evals.maxConsecutiveErrors);
+    return true;
   }
 
   /**
@@ -928,7 +1031,7 @@ export class EvalWorker {
       .execute();
     // 已 done 但评委一直没做成的：评委记 skipped（结果本身保留）
     await skipPendingJudges(this.d.db, data.runId, data.caseId);
-    await recountCases(this.d.db, data.runId);
+    await this.d.budget.recountCases(data.runId);
   }
 }
 
@@ -937,7 +1040,7 @@ export class EvalWorker {
  * (a template removed since gets version 0, so it always differs). Undefined for other cases.
  */
 export async function currentTemplate(
-  db: KernelDb,
+  db: KernelSchemaDb,
   s: CaseSnapshot,
 ): Promise<{ id: string; version: number } | undefined> {
   const t = subagentStartedOf(toEvents(s))?.template;

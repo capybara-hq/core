@@ -12,25 +12,35 @@ import {
   type ModelRequestV1,
   parseExtensionPoint,
 } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable, Module, Optional } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import type { ModelRef } from "../agents/definition.js";
 import { ApiError } from "../errors.js";
+import { ExtensionRegistry, ExtensionRegistryModule } from "../extensions/registry.js";
+import { CacheService } from "../infra/cache/cache.service.js";
+import { Cacheable } from "../infra/cache/cacheable.decorator.js";
+import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 
 /** 供应商模型列表在 Redis 中的缓存时长（秒）。 */
 const MODELS_TTL_SECONDS = 600;
 /** 单个供应商 `listModels()` 的时限（毫秒）：一个卡住的供应商不拖住整个列表与解析。 */
 export const LIST_MODELS_TIMEOUT_MS = 10_000;
+/** Optional provider: the `listModels()` time limit (ms) instead of {@link LIST_MODELS_TIMEOUT_MS} (tests). */
+export const LIST_MODELS_TIMEOUT = Symbol("LIST_MODELS_TIMEOUT");
 /**
  * 列表视图（后台模型页、组织模型页）里列模型失败的供应商在这么多秒内直接标 error、不再请求（Redis，多副本共享）。
  * 只用于列表；`resolve`（运行时）照常每次请求，失败由降级梯子重试。
  */
 export const LIST_FAILURE_TTL_SECONDS = 15;
 /**
- * 键带供应商的契约主版本：插件从 `@1` 升级到 `@2` 后不会读到 `@1`（经适配）时写入的列表
- * （两者都是 `@2` 形状，按形状分辨不出来）。
- * 键还带插件版本与部署配置摘要：插件升级（参数声明可能变了）或改部署配置（如增删模型）后，
- * 各副本立即按新声明校验，不必等旧缓存 TTL 到期。摘要只是哈希，不含配置明文（secret 不进键）。
- * 旧键按 TTL 自然过期。没有版本 / 摘要的条目（测试替身）用 `-` 占位。
+ * The model list's cache key (`@Cacheable` stores it as `cache:<key>`). It carries the provider's
+ * contract major: after a plugin moves from `@1` to `@2` it never reads the list written through
+ * the `@1` adapter (both are `@2`-shaped, the shape cannot tell them apart). It also carries the
+ * plugin version and the deployment config digest: after an upgrade (the parameter declarations may
+ * have changed) or a deployment config change (models added or removed) every replica validates
+ * the new declarations at once instead of waiting for the old entry's TTL. The digest is only a
+ * hash, never config text (no secret in the key). Old keys expire by TTL. Entries without a
+ * version / digest (test doubles) use `-`.
  */
 const modelsKey = (p: ProviderEntry) =>
   `capk:models:${p.plugin}:v${p.major}:${p.version ?? "-"}:${p.configHash ?? "-"}`;
@@ -125,32 +135,31 @@ export function adaptModelProviderV1(impl: ModelProviderV1): ModelProvider {
   };
 }
 
-/** 缓存里的条目必须是 `@2` 形状（旧版本内核写入的 `@1` 原始结果没有 `parameters`，视为未命中）。 */
-const isCurrentShape = (models: unknown): models is ModelInfo[] =>
-  Array.isArray(models) &&
-  models.every(
-    (m) => typeof m === "object" && m !== null && Array.isArray((m as ModelInfo).parameters),
-  );
-
 /**
  * 模型供应商注册表：供应商即提供 `model-provider` 能力的插件（以插件名为供应商名）。
  * 同时支持 `model-provider@1`（经 {@link adaptModelProviderV1} 适配）与 `@2`；
  * 同一插件两者都提供时用 `@2`。`@2` 的 `listModels()` 结果先过 `assertValidDeclarations`，
  * 不合规的供应商不可用（不可重试）。
- * 每个供应商的模型列表（`@2` 形状）缓存在 Redis `capk:models:<provider>:v<主版本>:<插件版本>:<部署配置摘要>`（EX 600），不放进程内存，
- * 多副本共享同一份缓存。
+ * Each provider's model list (`@2`-shaped) is cached in Redis (`@Cacheable`, key
+ * `cache:capk:models:<provider>:v<major>:<plugin version>:<config digest>`, 600 s), never in
+ * process memory: every replica shares it.
  */
+@Injectable()
 export class ProviderRegistry {
   constructor(
-    private readonly host: ProviderHost,
-    private readonly kv: Redis,
-    private readonly log?: Pick<Logger, "warn">,
-    private readonly opts: { listTimeoutMs?: number } = {},
+    @Inject(ExtensionRegistry) private readonly host: ProviderHost,
+    @Inject(CacheService) readonly cacheService: CacheService,
+    @Inject(REDIS) private readonly kv: Redis,
+    @Inject(KERNEL_LOGGER) private readonly log?: Pick<Logger, "warn">,
+    /** The `listModels()` time limit. */
+    @Optional()
+    @Inject(LIST_MODELS_TIMEOUT)
+    private readonly listTimeoutMs: number = LIST_MODELS_TIMEOUT_MS,
   ) {}
 
   /** `listModels()` 加时限（到时按失败处理，供应商的调用留在后台、结果丢弃）。 */
   private async listModelsWithTimeout(impl: ModelProvider): Promise<ModelInfo[]> {
-    const ms = this.opts.listTimeoutMs ?? LIST_MODELS_TIMEOUT_MS;
+    const ms = this.listTimeoutMs;
     let timer: NodeJS.Timeout | undefined;
     const call = Promise.resolve().then(() => impl.listModels());
     call.catch(() => {});
@@ -200,14 +209,14 @@ export class ProviderRegistry {
     }));
   }
 
-  private async models(p: ProviderEntry): Promise<ModelInfo[]> {
+  private models(p: ProviderEntry): Promise<ModelInfo[]> {
+    return this.validatedModels(modelsKey(p), p);
+  }
+
+  /** The provider's validated model list, cached under `key` (see {@link modelsKey}). */
+  @Cacheable({ key: "#{0}", ttl: MODELS_TTL_SECONDS })
+  private async validatedModels(_key: string, p: ProviderEntry): Promise<ModelInfo[]> {
     const { plugin: provider, major, impl } = p;
-    const key = modelsKey(p);
-    const cached = await this.kv.get(key);
-    if (cached !== null) {
-      const parsed: unknown = JSON.parse(cached);
-      if (isCurrentShape(parsed)) return parsed;
-    }
     let models: ModelInfo[];
     try {
       models = await this.listModelsWithTimeout(impl);
@@ -226,7 +235,6 @@ export class ProviderRegistry {
         throw e;
       }
     }
-    await this.kv.set(key, JSON.stringify(models), "EX", MODELS_TTL_SECONDS);
     return models;
   }
 
@@ -290,3 +298,11 @@ export class ProviderRegistry {
     return { provider: p.impl, info };
   }
 }
+
+/** The model provider registry (one instance; the models and agents domains read it). */
+@Module({
+  imports: [ExtensionRegistryModule],
+  providers: [ProviderRegistry],
+  exports: [ProviderRegistry],
+})
+export class ProvidersModule {}

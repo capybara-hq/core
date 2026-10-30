@@ -1,22 +1,22 @@
-import { Body, Controller, Get, HttpCode, Inject, Param, Post, Put, Query } from "@nestjs/common";
+import { Controller, Get, HttpCode, Inject, Param, Post, Put } from "@nestjs/common";
 import { z } from "zod";
 import { ModelRef } from "../agents/definition.js";
-import { EVAL_RUNS } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
 import {
   CurrentPrincipal,
   type Principal,
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import type {
-  EvalEstimate,
-  EvalResultLight,
-  EvalResultView,
+import {
+  type EvalEstimate,
+  type EvalResultLight,
+  type EvalResultView,
   EvalRunsService,
-  EvalRunView,
-  EvalTokenCaps,
+  type EvalRunView,
+  type EvalTokenCaps,
 } from "./runs.service.js";
 import type { EvalCandidate } from "./step-replay.js";
 
@@ -75,6 +75,11 @@ function candidateOf(c: z.infer<typeof Candidate>): EvalCandidate {
   };
 }
 
+class EstimateBodyDto extends createZodDto(EstimateBody, "EvalRunEstimateBody") {}
+class StartBodyDto extends createZodDto(StartBody, "EvalRunStartBody") {}
+class ResultsQueryDto extends createZodDto(ResultsQuery, "EvalRunResultsQuery") {}
+class LabelBodyDto extends createZodDto(LabelBody, "EvalRunLabelBody") {}
+
 /**
  * 评测运行（`/api/v1/orgs/:orgId/eval-sets/:setId/runs`、`/api/v1/orgs/:orgId/eval-runs/:runId[/results[/:resultId]]`）与
  * 结果的人工标注（`/api/v1/orgs/:orgId/eval-results/:resultId/label`）：
@@ -82,7 +87,7 @@ function candidateOf(c: z.infer<typeof Candidate>): EvalCandidate {
  */
 @Controller("api/v1/orgs/:orgId")
 export class EvalRunsController {
-  constructor(@Inject(EVAL_RUNS) private readonly runs: EvalRunsService) {}
+  constructor(@Inject(EvalRunsService) private readonly runs: EvalRunsService) {}
 
   @Post("eval-sets/:setId/runs/estimate")
   @HttpCode(200)
@@ -91,7 +96,7 @@ export class EvalRunsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("setId") setId: string,
-    @Body(new ZodPipe(EstimateBody)) body: z.infer<typeof EstimateBody>,
+    @ZBody(EstimateBodyDto) body: z.infer<typeof EstimateBody>,
   ): Promise<{ estimate: EvalEstimate } & EvalTokenCaps> {
     requireUser(principal);
     return this.runs.estimate(org.orgId, setId, {
@@ -108,7 +113,7 @@ export class EvalRunsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("setId") setId: string,
-    @Body(new ZodPipe(StartBody)) body: z.infer<typeof StartBody>,
+    @ZBody(StartBodyDto) body: z.infer<typeof StartBody>,
   ): Promise<{ run: EvalRunView }> {
     const p = requireUser(principal);
     const run = await this.runs.start(
@@ -154,7 +159,7 @@ export class EvalRunsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("runId") runId: string,
-    @Query(new ZodPipe(ResultsQuery)) q: z.infer<typeof ResultsQuery>,
+    @ZQuery(ResultsQueryDto) q: z.infer<typeof ResultsQuery>,
   ): Promise<
     | { results: EvalResultView[]; next: string | null }
     | { results: EvalResultLight[]; next: string | null; asOf: string }
@@ -204,7 +209,7 @@ export class EvalRunsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("resultId") resultId: string,
-    @Body(new ZodPipe(LabelBody)) body: z.infer<typeof LabelBody>,
+    @ZBody(LabelBodyDto) body: z.infer<typeof LabelBody>,
   ): Promise<{ result: EvalResultView }> {
     const p = requireUser(principal);
     const result = await this.runs.label(

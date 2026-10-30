@@ -3,9 +3,7 @@ import {
   BOOTSTRAP_MANIFEST_FILE,
   type BootstrapEntryResult,
   BootstrapFailedError,
-  BootstrapService,
   bootstrapManifestSha256,
-  type CatalogCli,
   type KernelLogger,
   openCatalogCli,
   readBootstrapManifest,
@@ -40,29 +38,15 @@ const ACTION_TEXT: Record<BootstrapEntryResult["action"], string> = {
   required_cleared: "no longer required",
 };
 
-const serviceOf = (cli: CatalogCli, log: KernelLogger) => {
-  const declared = new Set(cli.inspected.map((p) => p.manifest.name));
-  return new BootstrapService({
-    db: cli.db,
-    dbUrl: cli.config.db.url,
-    connectTimeoutMs: cli.config.db.connectTimeoutMs,
-    config: () => cli.config,
-    imports: cli.imports,
-    installs: cli.installs,
-    ops: cli.ops,
-    declared: () => declared,
-    log,
-  });
-};
-
 /**
  * `capybara bootstrap [--dir <path>] [--manifest <path>]` (package ecosystem spec §7, startup
  * bootstrap spec): installs the plugins the bootstrap manifest pins (default: the `bootstrap.json`
  * shipped with the kernel), each from a `*.tgz` of the offline directory whose sha512 matches
  * (`--dir`, else config `bootstrap.dir`, see {@link bootstrapDirOf}; it may be missing), else
  * downloaded from `packages.npmRegistry`. Runs the kernel migrations first; the step itself is
- * `BootstrapService` (every package obtained and checked before anything is written, advisory
- * lock, done once per manifest). Prints what it did per plugin; a
+ * `BootstrapService` (every package obtained and checked before anything is written, under the
+ * Redis lock `lock:bootstrap` shared with starting kernels, so this command needs Redis; done once
+ * per manifest). Prints what it did per plugin; a
  * re-run for the same manifest does nothing. When only optional entries failed, it opens the CLI
  * context again and runs once more (a declarative entry's catalog files need the object store,
  * which on a fresh deployment is itself a bootstrap plugin installed by the first pass). Running
@@ -96,11 +80,16 @@ export async function runBootstrap(
       env,
       (config) => openCatalogCli(config, log),
       async (cli) => {
-        const service = serviceOf(cli, log);
-        if (carry === undefined && (await service.isDone(sha))) return "done" as const;
+        if (carry === undefined && (await cli.bootstrap.isDone(sha))) return "done" as const;
         const dir = bootstrapDirOf(cli.config, opts.dir);
-        return (await service.run({ manifest, dir, ...(carry !== undefined && { carry }) }))
-          .results;
+        return (
+          await cli.bootstrap.run({
+            manifest,
+            dir,
+            imports: cli.imports,
+            ...(carry !== undefined && { carry }),
+          })
+        ).results;
       },
     );
   try {

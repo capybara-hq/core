@@ -6,9 +6,9 @@ import { KernelConfigSchema } from "../../src/config/schema.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { SettingsService } from "../../src/identity/settings.js";
 import { KERNEL_MIGRATIONS_DIR, KERNEL_SCHEMA } from "../../src/kernel.js";
 import { OrgQuota, orgRunLimit } from "../../src/runtime/quota.js";
+import { settingsFor } from "../helpers/identity.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -77,8 +77,8 @@ describe("OrgQuota", () => {
       .insertInto("deployment_settings")
       .values({ key: "runConcurrencyOverrides", value: JSON.stringify({ oA: 1 }) })
       .execute();
-    const settings = new SettingsService(db);
-    const limitOf = (org: string) => orgRunLimit(settings, () => config, org);
+    const settings = settingsFor(db);
+    const limitOf = (org: string) => orgRunLimit(settings, { get: () => config }, org);
     expect(await limitOf("oA")).toBe(1);
     expect(await limitOf("oB")).toBe(3);
 
@@ -97,8 +97,8 @@ describe("OrgQuota", () => {
       .insertInto("deployment_settings")
       .values({ key: "runConcurrencyOverrides", value: JSON.stringify({ oA: 0 }) })
       .execute();
-    const settings = new SettingsService(db);
+    const settings = settingsFor(db);
     expect((await settings.get()).runConcurrencyOverrides).toEqual({});
-    expect(await orgRunLimit(settings, () => config, "oA")).toBe(3);
+    expect(await orgRunLimit(settings, { get: () => config }, "oA")).toBe(3);
   });
 });

@@ -5,7 +5,7 @@ import { startTestPostgres, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import pg from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import {
@@ -22,7 +22,7 @@ import { truncateTables } from "../helpers/db.js";
  */
 
 let pgc: TestContainer;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
 let dir: string;
 const published: { topic: string; payload: unknown }[] = [];

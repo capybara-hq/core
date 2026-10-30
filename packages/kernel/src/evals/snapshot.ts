@@ -5,7 +5,7 @@ import type {
   ConversationEventType,
   EventPayload,
 } from "../conversations/events.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { childRunDefinition, type FollowUpNarrowing } from "../runtime/subagents/definition.js";
 
@@ -76,7 +76,7 @@ type ModelCallEvent = Extract<ConversationEvent, { type: "model_call" }>;
  * `maxBytes` 由调用方传入（`evals.maxCaseBytes`）。
  */
 export async function takeSnapshot(
-  db: KernelDb,
+  db: KernelSchemaDb,
   orgId: string,
   conversationId: string,
   runId: string,

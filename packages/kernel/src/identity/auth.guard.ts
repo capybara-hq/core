@@ -2,9 +2,8 @@ import { type CanActivate, type ExecutionContext, Inject, Injectable } from "@ne
 import { Reflector } from "@nestjs/core";
 import type { FastifyRequest } from "fastify";
 import { ApiError } from "../errors.js";
-import { ACCOUNTS, API_TOKENS, SESSIONS } from "../http/tokens.js";
-import type { Account, AccountsService } from "./accounts.js";
-import type { ApiTokenService } from "./api-tokens.js";
+import { type Account, AccountsService } from "./accounts.js";
+import { ApiTokenService } from "./api-tokens.js";
 import { ACCESS_COOKIE } from "./cookies.js";
 import {
   ALLOW_SERVICE_KEY,
@@ -13,7 +12,7 @@ import {
   PUBLIC_KEY,
   SESSION_ONLY_KEY,
 } from "./principal.js";
-import type { SessionService } from "./sessions.js";
+import { SessionService } from "./sessions.js";
 
 /** CSRF 头：Cookie 认证的非安全请求（及所有公开路由的非安全请求）必须带 `X-Capybara-Csrf: 1`。 */
 export const CSRF_HEADER = "x-capybara-csrf";
@@ -109,9 +108,9 @@ export async function authorizeEnterpriseAdmin(
 export class AuthGuard implements CanActivate {
   constructor(
     @Inject(Reflector) private readonly reflector: Reflector,
-    @Inject(ACCOUNTS) readonly accounts: AccountsService,
-    @Inject(SESSIONS) readonly sessions: SessionService,
-    @Inject(API_TOKENS) readonly tokens: ApiTokenService,
+    @Inject(AccountsService) readonly accounts: AccountsService,
+    @Inject(SessionService) readonly sessions: SessionService,
+    @Inject(ApiTokenService) readonly tokens: ApiTokenService,
   ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {

@@ -1,15 +1,15 @@
-import { Body, Controller, Get, Inject, Param, Put } from "@nestjs/common";
+import { Controller, Get, Inject, Param, Put } from "@nestjs/common";
 import { z } from "zod";
-import { ORG_EXTENSION_CONFIGS } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
 import {
   CurrentPrincipal,
   type Principal,
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import type { OrgExtensionConfigs, OrgExtensionView } from "./org-config.js";
+import { OrgExtensionConfigs, type OrgExtensionView } from "./org-config.js";
 
 const PutBody = z
   .object({
@@ -19,13 +19,15 @@ const PutBody = z
   })
   .strict();
 
+class OrgExtensionPutBody extends createZodDto(PutBody, "OrgExtensionPutBody") {}
+
 /**
  * Org-level extension enablement and config (`/api/v1/orgs/:orgId/extensions`); responses echo only
  * non-secret config and whether each secret is set.
  */
 @Controller("api/v1/orgs/:orgId/extensions")
 export class OrgExtensionConfigsController {
-  constructor(@Inject(ORG_EXTENSION_CONFIGS) private readonly configs: OrgExtensionConfigs) {}
+  constructor(@Inject(OrgExtensionConfigs) private readonly configs: OrgExtensionConfigs) {}
 
   @Get()
   @OrgAction("org.extensions.manage")
@@ -39,7 +41,7 @@ export class OrgExtensionConfigsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("extension") extension: string,
-    @Body(new ZodPipe(PutBody)) body: z.infer<typeof PutBody>,
+    @ZBody(OrgExtensionPutBody) body: z.infer<typeof PutBody>,
   ): Promise<{ extension: OrgExtensionView }> {
     const p = requireUser(principal);
     return {

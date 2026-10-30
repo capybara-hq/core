@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { ModelError } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { recordOutcome } from "../../src/evals/budget.js";
@@ -14,15 +14,16 @@ import {
   parseVerdict,
   textTokens,
 } from "../../src/evals/judge.js";
+import type { EvalReplayHooks } from "../../src/evals/run-replay.js";
 import type { EvalEstimate, EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import type { EvalSetView } from "../../src/evals/sets.service.js";
 import type { CaseSnapshot } from "../../src/evals/snapshot.js";
+import { EVAL_REPLAY_HOOKS } from "../../src/evals/worker.js";
 import { ExtensionUnloadedError } from "../../src/extensions/inflight.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import type { Kernel } from "../../src/kernel.js";
 import { PurposeAttemptError } from "../../src/models/purposes.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -35,6 +36,7 @@ import {
   runConfig,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -249,8 +251,8 @@ let beforeJudgeHook: ((evalRunId: string) => Promise<void>) | null = null;
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
-let k: Kernel;
+let db: KernelSchemaDb;
+let k: TestKernel;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -265,20 +267,26 @@ beforeAll(async () => {
       },
     ),
     {
-      evalHooks: {
-        async beforeJudge(evalRunId: string) {
-          await beforeJudgeHook?.(evalRunId);
-          if (!judgeCrashOnce) return;
-          judgeCrashOnce = false;
-          judgeCrashes++;
-          throw new Error("simulated crash before the judge request");
+      // the replay and judge test hooks are a provider override (a test seam)
+      overrides: [
+        {
+          provide: EVAL_REPLAY_HOOKS,
+          useValue: {
+            async beforeJudge(evalRunId: string) {
+              await beforeJudgeHook?.(evalRunId);
+              if (!judgeCrashOnce) return;
+              judgeCrashOnce = false;
+              judgeCrashes++;
+              throw new Error("simulated crash before the judge request");
+            },
+          } satisfies EvalReplayHooks,
         },
-      },
+      ],
     },
   );
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
@@ -296,7 +304,7 @@ beforeEach(async () => {
   );
   resetEvalModel();
   beforeJudgeHook = null;
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   await accounts.createLocal({
     login: "ent",
     password: PW,

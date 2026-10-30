@@ -1,20 +1,25 @@
 import { hasControlChars, MEDIA_NAME_MAX_CHARS } from "@capybara-hq/plugin-sdk";
-import { Body, Controller, Delete, Get, HttpCode, Inject, Param, Post } from "@nestjs/common";
+import { Controller, Delete, Get, HttpCode, Inject, Param, Post } from "@nestjs/common";
 import { z } from "zod";
 import {
   type CreatedAttachment,
   SKILL_PACKAGE_UPLOAD_MAX_BYTES,
 } from "../conversations/attachments.service.js";
-import { SKILLS } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
 import {
   CurrentPrincipal,
   type Principal,
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import type { SkillDetail, SkillSummary, SkillsService, UploadedSkill } from "./skills.service.js";
+import {
+  type SkillDetail,
+  type SkillSummary,
+  SkillsService,
+  type UploadedSkill,
+} from "./skills.service.js";
 
 const UploadBody = z
   .object({
@@ -27,6 +32,8 @@ const UploadBody = z
   })
   .strict();
 const CreateBody = z.object({ uploadId: z.string().min(1).max(100) }).strict();
+class SkillUploadBody extends createZodDto(UploadBody, "SkillUploadBody") {}
+class SkillCreateBody extends createZodDto(CreateBody, "SkillCreateBody") {}
 
 /**
  * The org skill library (`/api/v1/orgs/:orgId/skills`, human users only):
@@ -46,14 +53,14 @@ const CreateBody = z.object({ uploadId: z.string().min(1).max(100) }).strict();
  */
 @Controller("api/v1/orgs/:orgId/skills")
 export class SkillsController {
-  constructor(@Inject(SKILLS) private readonly skills: SkillsService) {}
+  constructor(@Inject(SkillsService) private readonly skills: SkillsService) {}
 
   @Post("uploads")
   @OrgAction("skills.manage")
   async createUpload(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Body(new ZodPipe(UploadBody)) body: z.infer<typeof UploadBody>,
+    @ZBody(SkillUploadBody) body: z.infer<typeof UploadBody>,
   ): Promise<CreatedAttachment> {
     const p = requireUser(principal);
     return this.skills.createUpload(org.orgId, p.account.id, body);
@@ -64,7 +71,7 @@ export class SkillsController {
   async create(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Body(new ZodPipe(CreateBody)) body: z.infer<typeof CreateBody>,
+    @ZBody(SkillCreateBody) body: z.infer<typeof CreateBody>,
   ): Promise<UploadedSkill> {
     const p = requireUser(principal);
     return this.skills.upload(org.orgId, p.account.id, body.uploadId, patTokenId(p));

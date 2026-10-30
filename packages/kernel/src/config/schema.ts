@@ -226,11 +226,11 @@ export const KernelConfigSchema = z.object({
       dir: z
         .string()
         .min(1)
-        .default("/var/lib/capybara/plugins")
+        .default(".capybara/plugins")
         .meta(
           meta({
             description:
-              "Local directory where each replica unpacks installed extension packages (<dir>/<name>/<first 16 hex of sha256>/); safe to wipe, replicas re-download from the package store",
+              "Local directory where each replica unpacks installed extension packages (<dir>/<name>/<first 16 hex of sha256>/), relative to the working directory unless absolute (the image sets /var/lib/capybara/plugins); safe to wipe, replicas re-download from the package store",
           }),
         ),
       drainSeconds: z
@@ -397,7 +397,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Minutes between periodic refreshes of every enabled marketplace (one maintenance job for all replicas)",
+              "Minutes between periodic refreshes of every enabled marketplace (one run per period across all replicas)",
           }),
         ),
       maxIndexBytes: z
@@ -567,6 +567,15 @@ export const KernelConfigSchema = z.object({
               "Optional replica identifier; when set, every HTTP response carries an x-capybara-replica header with this value (used by the dual-replica test harness and for debugging load balancers)",
           }),
         ),
+      swagger: z
+        .boolean()
+        .default(false)
+        .meta(
+          meta({
+            description:
+              "Serve the OpenAPI document and swagger UI at /docs (JSON at /docs-json). The routes are not authenticated, so enable it in development and trials only",
+          }),
+        ),
       publicUrl: z
         .url()
         .optional()
@@ -577,7 +586,7 @@ export const KernelConfigSchema = z.object({
           }),
         ),
     })
-    .default({ port: 8080, trustProxy: false }),
+    .default({ port: 8080, trustProxy: false, swagger: false }),
   roles: z
     .preprocess(
       // Also accept a comma-separated string (CAPYBARA_ROLES=api,worker; env values that are not

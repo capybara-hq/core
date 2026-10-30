@@ -132,10 +132,12 @@ export default defineExtension({
       "usage.report",
       async (p, signal) => {
         const cfg = await prelude("usage.report", p.orgId, p, signal);
-        // per event: deliveries and the last payload (idempotency is the handler's job: by eventId)
+        // per event: deliveries and the last payload (idempotency is the handler's job: by eventId).
+        // The payload is written before the delivery is counted: a reader that sees the count
+        // always sees its payload (`GET /usage` polls both while deliveries run)
+        await ctx.kv.set(`usage-last:${p.eventId}`, JSON.stringify(p), TTL);
         const n = await ctx.kv.incr(`usage:${p.eventId}`, TTL);
         await ctx.kv.incr(`usage-by:${instanceId}`, TTL);
-        await ctx.kv.set(`usage-last:${p.eventId}`, JSON.stringify(p), TTL);
         if (n === 1 && cfg.usageThrowOnce) throw new Error("probe usage failure (first delivery)");
         if (n === 1 && cfg.usageHoldOnce) {
           await ctx.kv.set(`usage-holder:${p.eventId}`, instanceId, TTL);
@@ -192,9 +194,12 @@ export default defineExtension({
       const ids = (new URL(req.url).searchParams.get("eventIds") ?? "").split(",").filter(Boolean);
       const out: Record<string, { calls: number; last: unknown; holder: string | null }> = {};
       for (const id of ids) {
+        // the count first, then the payload: the handler writes the payload before it counts the
+        // delivery, so a count of at least 1 read here always comes with its payload
+        const calls = Number((await ctx.kv.get(`usage:${id}`)) ?? 0);
         const last = await ctx.kv.get(`usage-last:${id}`);
         out[id] = {
-          calls: Number((await ctx.kv.get(`usage:${id}`)) ?? 0),
+          calls,
           last: last === null ? null : JSON.parse(last),
           holder: await ctx.kv.get(`usage-holder:${id}`),
         };

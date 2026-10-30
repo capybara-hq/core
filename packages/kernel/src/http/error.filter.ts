@@ -8,7 +8,7 @@ import {
 } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { ApiError, type ErrorCode, errorBody } from "../errors.js";
-import { KERNEL_LOG } from "./tokens.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
 
 /**
  * Nest `HttpException`（框架自身抛出，如路由不存在、请求体解析失败）的状态码 → 通用错误码。
@@ -49,7 +49,7 @@ export function redactPath(url: string): string {
  */
 @Catch()
 export class ErrorFilter implements ExceptionFilter {
-  constructor(@Inject(KERNEL_LOG) private readonly log: Logger) {}
+  constructor(@Inject(KERNEL_LOGGER) private readonly log: Logger) {}
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const http = host.switchToHttp();

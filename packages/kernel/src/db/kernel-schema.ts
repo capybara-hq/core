@@ -1221,10 +1221,10 @@ export interface PluginInstallComponentsTable {
   dropped: ColumnType<boolean, boolean | undefined, boolean>;
 }
 
-export type KernelDb = Kysely<KernelDatabase>;
+export type KernelSchemaDb = Kysely<KernelDatabase>;
 
 /** 把无类型的 Kysely 实例收窄成内核 schema 视图（`capybara`）。 */
 // biome-ignore lint/suspicious/noExplicitAny: 入口处接收无表结构类型的实例
-export function kernelDb(db: Kysely<any>): KernelDb {
-  return db.withSchema("capybara") as unknown as KernelDb;
+export function kernelDb(db: Kysely<any>): KernelSchemaDb {
+  return db.withSchema("capybara") as unknown as KernelSchemaDb;
 }

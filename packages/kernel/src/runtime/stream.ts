@@ -1,14 +1,18 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
-import type { KernelConfig } from "../config/schema.js";
+import { Inject, Injectable, Optional } from "@nestjs/common";
+import { ConversationAccess } from "../conversations/access.js";
 import {
   CONVERSATION_CHANGES,
   type ConversationBusMessage,
   conversationTopic,
-  type EventLog,
+  EventLog,
 } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
 import { ApiError, type ErrorCode } from "../errors.js";
 import type { CredentialCheck } from "../identity/credential-check.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { GracefulShutdown } from "../infra/lifecycle/graceful-shutdown.service.js";
+import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import { isUiBusMessage, uiFrame } from "../ui/registry.js";
 
 /** 一次 SSE 连接的输出端（由 HTTP 层包装原始响应）。 */
@@ -32,7 +36,7 @@ export interface ConversationStreamsDeps {
   bus: StreamBus;
   /** 轻量可见性判定：连接建立时与每 `sseRecheckMs` 复核一次。 */
   access(orgId: string, conversationId: string, viewerAccountId: string): Promise<boolean>;
-  config: () => KernelConfig;
+  config: Pick<KernelConfigService, "get">;
   log: Pick<Logger, "warn">;
 }
 
@@ -107,10 +111,37 @@ const eventFrame = (e: ConversationEvent): string =>
  * 跨副本的数据只经 PG（事件日志）与内核 bus（`conv.<id>`）流动，进程内只保存连接本身的资源
  * （订阅、心跳与复核定时器）。
  */
+@Injectable()
 export class ConversationStreams {
   private readonly active = new Set<Connection>();
+  /** Set by {@link closeAll}: streams opened afterwards end as soon as they begin. */
+  private closing = false;
+  private readonly d: ConversationStreamsDeps;
 
-  constructor(private readonly d: ConversationStreamsDeps) {}
+  /**
+   * Closes the streams when the shutdown begins (readiness answers 503 from that moment) and
+   * latches: streams opened afterwards end at once, so the HTTP phase of the stop never waits on
+   * an event stream. Without `GracefulShutdown` (a standalone HTTP application, tests only) the
+   * streams end with their connections.
+   */
+  constructor(
+    @Inject(EventLog) eventLog: Pick<EventLog, "readAfter">,
+    @Inject(KERNEL_BUS) bus: StreamBus,
+    @Inject(ConversationAccess) access: Pick<ConversationAccess, "isAccessible">,
+    @Inject(KernelConfigService) config: Pick<KernelConfigService, "get">,
+    @Inject(KERNEL_LOGGER) log: Pick<Logger, "warn">,
+    @Optional() @Inject(GracefulShutdown) shutdown?: Pick<GracefulShutdown, "signal">,
+  ) {
+    this.d = {
+      eventLog,
+      bus,
+      access: (orgId, conversationId, viewer) => access.isAccessible(orgId, conversationId, viewer),
+      config,
+      log,
+    };
+    if (shutdown?.signal.aborted) this.closeAll();
+    else shutdown?.signal.addEventListener("abort", () => this.closeAll(), { once: true });
+  }
 
   /**
    * 复核凭据与可见性，并先订阅会话频道（之后再回放，避免遗漏两者之间提交的事件）。
@@ -119,6 +150,7 @@ export class ConversationStreams {
   async open(p: StreamParams, out: SseOutput): Promise<StreamHandle> {
     const denied = await authorize(this.d, p);
     if (denied !== null) throw new ApiError(denied, DENIAL_MESSAGES[denied] ?? "Access denied");
+    if (this.closing) return endedStream(out);
     const conn = new Connection(this.d, p, out, () => this.active.delete(conn));
     this.active.add(conn);
     try {
@@ -127,11 +159,20 @@ export class ConversationStreams {
       conn.close();
       throw e;
     }
+    // closeAll ran while subscribing: the connection is closed, the response must still end
+    if (this.closing) {
+      conn.close();
+      return endedStream(out);
+    }
     return conn;
   }
 
-  /** 关闭本进程的全部流（停机时调用）。 */
+  /**
+   * Closes every stream of this process (at shutdown) and latches: a stream opened afterwards ends
+   * right after its headers, so a reconnecting client cannot hold the HTTP close open.
+   */
   closeAll(): void {
+    this.closing = true;
     for (const c of [...this.active]) c.close();
   }
 
@@ -139,6 +180,23 @@ export class ConversationStreams {
   get size(): number {
     return this.active.size;
   }
+}
+
+/**
+ * The handle of a stream opened after shutdown began: `begin` (the headers are written) ends the
+ * response at once; the client reconnects with `Last-Event-ID`, to a replica that is still ready.
+ */
+export function endedStream(out: SseOutput): StreamHandle {
+  return {
+    begin: () => {
+      try {
+        out.end();
+      } catch {
+        // the connection is already gone
+      }
+    },
+    close: () => {},
+  };
 }
 
 class Connection implements StreamHandle {
@@ -176,7 +234,7 @@ class Connection implements StreamHandle {
   begin(): void {
     if (this.closed) return;
     this.begun = true;
-    const { sseHeartbeatMs, sseRecheckMs } = this.d.config().runtime;
+    const { sseHeartbeatMs, sseRecheckMs } = this.d.config.get().runtime;
     this.timers.push(
       setInterval(() => this.write(": ping\n\n"), sseHeartbeatMs),
       setInterval(() => void this.recheck(), sseRecheckMs),

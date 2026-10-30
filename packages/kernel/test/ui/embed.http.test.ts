@@ -7,13 +7,11 @@ import {
 } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import { ApiTokenService } from "../../src/identity/api-tokens.js";
-import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createAgent,
@@ -23,6 +21,8 @@ import {
   type Req,
   runConfig,
   session,
+  startKernel,
+  type TestKernel,
 } from "../helpers/runs.js";
 
 /**
@@ -41,9 +41,9 @@ const EMBED = fakeExtensionEntry("fake-embed");
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let redis: Redis;
-let k: Kernel;
+let k: TestKernel;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -51,14 +51,13 @@ beforeAll(async () => {
   db = kernelDb(raw);
   redis = new Redis(rd.url);
   const base = runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] });
-  k = await createKernel(
+  k = await startKernel(
     { ...base, extensions: [...base.extensions, UI_PROBE, EMBED] },
     { env: {}, logger: createLogger("error", { write: () => {} }) },
   );
-  await k.start();
 }, 120_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -67,9 +66,7 @@ afterAll(async () => {
 const errCode = (r: { json(): unknown }) => (r.json() as { error?: { code?: string } }).error?.code;
 
 async function account(name: string): Promise<string> {
-  return (
-    await new AccountsService(db).createLocal({ login: name, password: PW, displayName: name })
-  ).id;
+  return (await accountsFor(db).createLocal({ login: name, password: PW, displayName: name })).id;
 }
 
 const enable = async (req: Req, orgId: string, plugin: string) => {
@@ -160,7 +157,7 @@ describe("嵌入令牌", () => {
     const url = `${ui}/embeds/fake-embed/panel/token`;
     expect((await k.http.inject({ method: "POST", url, payload: {} })).statusCode).toBe(401);
 
-    const { token: svc } = await new ApiTokenService(db).createService(orgId, {
+    const { token: svc } = await apiTokensFor(db).createService(orgId, {
       name: "bot",
       role: "admin",
       createdBy: ownerId,

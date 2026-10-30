@@ -1,14 +1,16 @@
 import { randomUUID } from "node:crypto";
 import type { LocalizedName } from "@capybara-hq/plugin-sdk";
-import { sql, type Transaction } from "kysely";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
-import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
+import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { OrgLock } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
-
-type Trx = Transaction<KernelDatabase>;
 
 export type CatalogRequestStage = "org" | "deployment";
 export type CatalogRequestStatus = "pending" | "approved" | "rejected" | "cancelled";
@@ -50,7 +52,7 @@ const itemDisabled = () =>
   );
 
 /** 在调用方事务里读条目的策略（FOR SHARE：与企业管理员改策略 / 删除互斥）。不存在或已删除 → undefined。 */
-async function lockItem(t: Trx, itemId: string) {
+async function lockItem(t: KernelSchemaDb, itemId: string) {
   if (!UUID_RE.test(itemId)) return undefined;
   return t
     .selectFrom("catalog_items")
@@ -60,7 +62,7 @@ async function lockItem(t: Trx, itemId: string) {
     .executeTakeFirst();
 }
 
-async function hasGrant(db: KernelDb | Trx, orgId: string, itemId: string): Promise<boolean> {
+async function hasGrant(db: KernelSchemaDb, orgId: string, itemId: string): Promise<boolean> {
   const g = await db
     .selectFrom("catalog_org_grants")
     .select("item_id")
@@ -80,7 +82,7 @@ async function hasGrant(db: KernelDb | Trx, orgId: string, itemId: string): Prom
  * approval is judged by `approvedBy`.
  */
 export async function assertItemInstallable(
-  t: Trx,
+  t: KernelSchemaDb,
   orgId: string,
   itemId: string,
   approvedBy: string = itemId,
@@ -105,7 +107,7 @@ export async function assertItemInstallable(
  * (direct enabling, its item, another plugin) can newly enable its extension (Ruling M-5).
  */
 export async function disabledPluginItems(
-  db: KernelDb | Trx,
+  db: KernelSchemaDb,
   plugins: readonly string[],
 ): Promise<string[]> {
   if (plugins.length === 0) return [];
@@ -142,7 +144,7 @@ export function pluginItemDisabled(names: readonly string[]): ApiError {
  * installed through the catalog) -> not bound by catalog policy.
  */
 export async function assertPluginSourcesInstallable(
-  t: Trx,
+  t: KernelSchemaDb,
   orgId: string,
   plugin: string,
 ): Promise<void> {
@@ -172,18 +174,18 @@ export interface RequestActorOpts {
 }
 
 /**
- * Cancels catalog requests still pending in the caller's transaction (when the item or the org is
- * deleted), status `cancelled` (the decider is the actor). Each one audits
+ * Cancels catalog requests still pending in the caller's transaction (`db` is its handle; when the
+ * item or the org is deleted), status `cancelled` (the decider is the actor). Each one audits
  * `catalog.request_cancelled` (with the reason). Returns how many were cancelled.
  */
 export async function cancelPendingRequests(
-  t: Trx,
+  db: KernelSchemaDb,
   where: { itemId: string } | { orgId: string },
   actor: string,
   reason: "item_removed" | "org_deleted",
   opts: RequestActorOpts = {},
 ): Promise<number> {
-  let q = t
+  let q = db
     .updateTable("catalog_requests")
     .set({ status: "cancelled", decided_by: actor, decided_at: sql<Date>`now()` })
     .where("status", "=", "pending");
@@ -191,7 +193,7 @@ export async function cancelPendingRequests(
     "itemId" in where ? q.where("item_id", "=", where.itemId) : q.where("org_id", "=", where.orgId);
   const rows = await q.returning(["id", "org_id", "item_id", "stage"]).execute();
   for (const r of rows) {
-    await audit(t, {
+    await audit(db, {
       actorAccountId: actor,
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
       orgId: r.org_id,
@@ -215,8 +217,20 @@ export async function cancelPendingRequests(
  * One pending request per org and item (partial unique index; org-side writes all run inside the
  * org row lock, in order). No in-process state.
  */
+@Injectable()
 export class CatalogRequestsService {
-  constructor(private readonly db: KernelDb) {}
+  constructor(
+    @Inject(KernelDb) private readonly kdb: KernelDb,
+    /** The org row and enterprise admin locks: both join the caller's transaction. */
+    @Inject(OrgLock) private readonly orgLock: OrgLock,
+    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {}
+
+  /** The kernel-schema handle of the current context (the transaction, else the pool). */
+  private get db(): KernelSchemaDb {
+    return this.kdb.db;
+  }
 
   /**
    * A member request (`catalog.request`, re-checked inside the org row lock). Item missing /
@@ -231,44 +245,54 @@ export class CatalogRequestsService {
     input: { note?: string | undefined; version?: string | undefined },
     opts: RequestActorOpts = {},
   ): Promise<{ request: CatalogRequestView; created: boolean }> {
-    const r = await this.db.transaction().execute(async (t) => {
-      const { role } = await lockOrgAndAuthorize(t, orgId, actor, "catalog.request");
-      const item = await lockItem(t, itemId);
-      if (!item || item.deleted_at !== null) throw itemNotFound();
-      // 成员看不到 disabled 的条目（列表、详情、图标一致）：同样答 not found，不暴露条目存在
-      if (item.policy === "disabled") {
-        throw roleAtLeast(role, "admin") ? itemDisabled() : itemNotFound();
-      }
-      const existing = await this.pendingRow(t, orgId, itemId);
-      if (existing) return { id: existing.id, created: false };
-      const id = randomUUID();
-      await t
-        .insertInto("catalog_requests")
-        .values({
-          id,
-          org_id: orgId,
-          item_id: itemId,
-          version: input.version ?? null,
-          stage: "org",
-          requested_by: actor,
-          note: input.note ?? "",
-        })
-        .execute();
-      await audit(t, {
-        actorAccountId: actor,
-        ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-        orgId,
-        action: "catalog.requested",
-        target: id,
-        detail: { itemId, name: item.name, stage: "org" },
-      });
-      return { id, created: true };
-    });
-    return { request: await this.view(this.db, r.id), created: r.created };
+    const r = await this.writeRequest(orgId, actor, itemId, input, opts);
+    return { request: await this.view(r.id), created: r.created };
   }
 
-  private pendingRow(t: Trx | KernelDb, orgId: string, itemId: string) {
-    return t
+  @Transactional()
+  private async writeRequest(
+    orgId: string,
+    actor: string,
+    itemId: string,
+    input: { note?: string | undefined; version?: string | undefined },
+    opts: RequestActorOpts,
+  ): Promise<{ id: string; created: boolean }> {
+    const t = this.db;
+    const { role } = await this.orgLock.lockAndAuthorize(orgId, actor, "catalog.request");
+    const item = await lockItem(t, itemId);
+    if (!item || item.deleted_at !== null) throw itemNotFound();
+    // 成员看不到 disabled 的条目（列表、详情、图标一致）：同样答 not found，不暴露条目存在
+    if (item.policy === "disabled") {
+      throw roleAtLeast(role, "admin") ? itemDisabled() : itemNotFound();
+    }
+    const existing = await this.pendingRow(orgId, itemId);
+    if (existing) return { id: existing.id, created: false };
+    const id = randomUUID();
+    await t
+      .insertInto("catalog_requests")
+      .values({
+        id,
+        org_id: orgId,
+        item_id: itemId,
+        version: input.version ?? null,
+        stage: "org",
+        requested_by: actor,
+        note: input.note ?? "",
+      })
+      .execute();
+    await audit(t, {
+      actorAccountId: actor,
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      orgId,
+      action: "catalog.requested",
+      target: id,
+      detail: { itemId, name: item.name, stage: "org" },
+    });
+    return { id, created: true };
+  }
+
+  private pendingRow(orgId: string, itemId: string) {
+    return this.db
       .selectFrom("catalog_requests")
       .select(["id", "stage"])
       .where("org_id", "=", orgId)
@@ -283,15 +307,16 @@ export class CatalogRequestsService {
    * existing pending request is moved to deployment (a member request goes to the enterprise admins
    * with it). Returns the request id. Audits `catalog.requested`.
    */
+  @Transactional({ propagation: "mandatory" })
   async requestDeployment(
-    t: Trx,
     orgId: string,
     actor: string,
     item: { id: string; name: string },
     version: string | null,
     opts: RequestActorOpts = {},
   ): Promise<string> {
-    const existing = await this.pendingRow(t, orgId, item.id);
+    const t = this.db;
+    const existing = await this.pendingRow(orgId, item.id);
     if (existing) {
       if (existing.stage === "org") {
         await t
@@ -338,13 +363,14 @@ export class CatalogRequestsService {
    * 申请——条目之后改成 allow 再装的就不会一直挂着）标为 approved（安装者即决定人），收件箱与企业管理员列表随之清空。
    * 在调用方事务里执行。
    */
+  @Transactional({ propagation: "mandatory" })
   async resolveByInstall(
-    t: Trx,
     orgId: string,
     itemId: string,
     actor: string,
     opts: RequestActorOpts = {},
   ): Promise<void> {
+    const t = this.db;
     const rows = await t
       .updateTable("catalog_requests")
       .set({ status: "approved", decided_by: actor, decided_at: sql<Date>`now()` })
@@ -380,53 +406,63 @@ export class CatalogRequestsService {
     opts: RequestActorOpts = {},
   ): Promise<CatalogRequestView> {
     if (!UUID_RE.test(requestId)) throw requestNotFound();
-    await this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actor, "catalog.decide");
-      const row = await t
-        .selectFrom("catalog_requests")
-        .select(["id", "item_id", "stage", "status"])
-        .where("id", "=", requestId)
-        .where("org_id", "=", orgId)
-        .forUpdate()
-        .executeTakeFirst();
-      if (!row) throw requestNotFound();
-      if (row.status !== "pending" || row.stage !== "org") {
-        throw new ApiError(
-          "catalog.request_decided",
-          row.status === "pending"
-            ? "This request is waiting for the enterprise admin"
-            : "This request has already been decided",
-        );
-      }
-      let escalated = false;
-      if (decision === "approve") {
-        const item = await lockItem(t, row.item_id);
-        if (!item || item.deleted_at !== null || item.policy === "disabled") throw itemDisabled();
-        escalated = item.policy === "needs_approval" && !(await hasGrant(t, orgId, row.item_id));
-      }
-      await t
-        .updateTable("catalog_requests")
-        .set(
-          escalated
-            ? { stage: "deployment", org_decided_by: actor, org_decided_at: sql<Date>`now()` }
-            : {
-                status: decision === "approve" ? "approved" : "rejected",
-                decided_by: actor,
-                decided_at: sql<Date>`now()`,
-              },
-        )
-        .where("id", "=", requestId)
-        .execute();
-      await audit(t, {
-        actorAccountId: actor,
-        ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-        orgId,
-        action: "catalog.request_decided",
-        target: requestId,
-        detail: { itemId: row.item_id, decision, stage: "org", escalated },
-      });
+    await this.writeDecideOrg(orgId, actor, requestId, decision, opts);
+    return this.view(requestId);
+  }
+
+  @Transactional()
+  private async writeDecideOrg(
+    orgId: string,
+    actor: string,
+    requestId: string,
+    decision: CatalogDecision,
+    opts: RequestActorOpts,
+  ): Promise<void> {
+    const t = this.db;
+    await this.orgLock.lockAndAuthorize(orgId, actor, "catalog.decide");
+    const row = await t
+      .selectFrom("catalog_requests")
+      .select(["id", "item_id", "stage", "status"])
+      .where("id", "=", requestId)
+      .where("org_id", "=", orgId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row) throw requestNotFound();
+    if (row.status !== "pending" || row.stage !== "org") {
+      throw new ApiError(
+        "catalog.request_decided",
+        row.status === "pending"
+          ? "This request is waiting for the enterprise admin"
+          : "This request has already been decided",
+      );
+    }
+    let escalated = false;
+    if (decision === "approve") {
+      const item = await lockItem(t, row.item_id);
+      if (!item || item.deleted_at !== null || item.policy === "disabled") throw itemDisabled();
+      escalated = item.policy === "needs_approval" && !(await hasGrant(t, orgId, row.item_id));
+    }
+    await t
+      .updateTable("catalog_requests")
+      .set(
+        escalated
+          ? { stage: "deployment", org_decided_by: actor, org_decided_at: sql<Date>`now()` }
+          : {
+              status: decision === "approve" ? "approved" : "rejected",
+              decided_by: actor,
+              decided_at: sql<Date>`now()`,
+            },
+      )
+      .where("id", "=", requestId)
+      .execute();
+    await audit(t, {
+      actorAccountId: actor,
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      orgId,
+      action: "catalog.request_decided",
+      target: requestId,
+      detail: { itemId: row.item_id, decision, stage: "org", escalated },
     });
-    return this.view(this.db, requestId);
   }
 
   /**
@@ -444,57 +480,66 @@ export class CatalogRequestsService {
     opts: RequestActorOpts = {},
   ): Promise<CatalogRequestView> {
     if (!UUID_RE.test(requestId)) throw requestNotFound();
-    await this.db.transaction().execute(async (t) => {
-      await lockEnterpriseAdminsAndAuthorize(t, actor);
-      const row = await t
-        .selectFrom("catalog_requests")
-        .select(["id", "org_id", "item_id", "stage", "status"])
-        .where("id", "=", requestId)
-        .forUpdate()
+    await this.writeDecideDeployment(actor, requestId, decision, opts);
+    return this.view(requestId);
+  }
+
+  @Transactional()
+  private async writeDecideDeployment(
+    actor: string,
+    requestId: string,
+    decision: CatalogDecision,
+    opts: RequestActorOpts,
+  ): Promise<void> {
+    const t = this.db;
+    await this.adminLock.lockAndAuthorize(actor);
+    const row = await t
+      .selectFrom("catalog_requests")
+      .select(["id", "org_id", "item_id", "stage", "status"])
+      .where("id", "=", requestId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (row?.stage !== "deployment") throw requestNotFound();
+    if (row.status !== "pending") {
+      throw new ApiError("catalog.request_decided", "This request has already been decided");
+    }
+    if (decision === "approve") {
+      const item = await lockItem(t, row.item_id);
+      if (!item || item.deleted_at !== null || item.policy === "disabled") throw itemDisabled();
+      const org = await t
+        .selectFrom("orgs")
+        .select("deleted_at")
+        .where("id", "=", row.org_id)
         .executeTakeFirst();
-      if (row?.stage !== "deployment") throw requestNotFound();
-      if (row.status !== "pending") {
-        throw new ApiError("catalog.request_decided", "This request has already been decided");
-      }
-      if (decision === "approve") {
-        const item = await lockItem(t, row.item_id);
-        if (!item || item.deleted_at !== null || item.policy === "disabled") throw itemDisabled();
-        const org = await t
-          .selectFrom("orgs")
-          .select("deleted_at")
-          .where("id", "=", row.org_id)
-          .executeTakeFirst();
-        if (!org || org.deleted_at !== null) throw requestNotFound();
-        await t
-          .insertInto("catalog_org_grants")
-          .values({ item_id: row.item_id, org_id: row.org_id, granted_by: actor })
-          .onConflict((oc) => oc.columns(["item_id", "org_id"]).doNothing())
-          .execute();
-      }
+      if (!org || org.deleted_at !== null) throw requestNotFound();
       await t
-        .updateTable("catalog_requests")
-        .set({
-          status: decision === "approve" ? "approved" : "rejected",
-          decided_by: actor,
-          decided_at: sql<Date>`now()`,
-        })
-        .where("id", "=", requestId)
+        .insertInto("catalog_org_grants")
+        .values({ item_id: row.item_id, org_id: row.org_id, granted_by: actor })
+        .onConflict((oc) => oc.columns(["item_id", "org_id"]).doNothing())
         .execute();
-      await audit(t, {
-        actorAccountId: actor,
-        ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-        orgId: row.org_id,
-        action: "catalog.request_decided",
-        target: requestId,
-        detail: { itemId: row.item_id, decision, stage: "deployment" },
-      });
+    }
+    await t
+      .updateTable("catalog_requests")
+      .set({
+        status: decision === "approve" ? "approved" : "rejected",
+        decided_by: actor,
+        decided_at: sql<Date>`now()`,
+      })
+      .where("id", "=", requestId)
+      .execute();
+    await audit(t, {
+      actorAccountId: actor,
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      orgId: row.org_id,
+      action: "catalog.request_decided",
+      target: requestId,
+      detail: { itemId: row.item_id, decision, stage: "deployment" },
     });
-    return this.view(this.db, requestId);
   }
 
   /** 企业管理员的申请列表（stage deployment；`status` 缺省 pending），新的在前。 */
   async listDeployment(q: { status?: CatalogRequestStatus } = {}): Promise<CatalogRequestView[]> {
-    const rows = await this.baseQuery(this.db)
+    const rows = await this.baseQuery()
       .where("r.stage", "=", "deployment")
       .where("r.status", "=", q.status ?? "pending")
       .where("o.deleted_at", "is", null)
@@ -530,7 +575,7 @@ export class CatalogRequestsService {
       .where("account_id", "=", accountId)
       .executeTakeFirst();
     if (!m || !roleAtLeast(m.role, "admin")) return [];
-    const rows = await this.baseQuery(this.db)
+    const rows = await this.baseQuery()
       .where("r.org_id", "=", orgId)
       .where("r.stage", "=", "org")
       .where("r.status", "=", "pending")
@@ -556,14 +601,14 @@ export class CatalogRequestsService {
     return out;
   }
 
-  async view(db: KernelDb | Trx, id: string): Promise<CatalogRequestView> {
-    const row = await this.baseQuery(db).where("r.id", "=", id).executeTakeFirst();
+  async view(id: string): Promise<CatalogRequestView> {
+    const row = await this.baseQuery().where("r.id", "=", id).executeTakeFirst();
     if (!row) throw requestNotFound();
     return toView(row);
   }
 
-  private baseQuery(db: KernelDb | Trx) {
-    return db
+  private baseQuery() {
+    return this.db
       .selectFrom("catalog_requests as r")
       .innerJoin("catalog_items as i", "i.id", "r.item_id")
       .innerJoin("orgs as o", "o.id", "r.org_id")

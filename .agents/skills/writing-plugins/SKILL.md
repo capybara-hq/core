@@ -152,7 +152,7 @@ Every plugin, whatever it contains, goes through the same two steps (`packages/k
   - `deployExtension: true`: after the commit the plugin's own extension is installed on the deployment and enabled (each replica reconciles, no restart); an `upgrade` also gets its snapshot. A failed deploy is returned in `deploy`, not thrown; the committed item stays, and an upgrade that was not installed gets its old snapshot back.
   - `deployExtension: false`: only the catalog changes. The extension is installed later with `POST /api/v1/admin/catalog/items/:id/install-deployment { version }` (409 `catalog.no_extension` for a version without one) or from the extensions page by sha256; until then org installs return `catalog.not_deployed`.
 - Errors: a pre-0.1.0 package (a `capybara` section in `package.json`, or an app bundle, without `.capybara-plugin/plugin.json`) -> 422 `catalog.legacy_format` ("repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin)"); any other invalid plugin -> 422 `catalog.invalid_manifest` with every problem in the details.
-- Expired staging is cleaned by the maintenance job `app-staging-cleanup` (hourly; the job name is frozen). A stored extension package stays in the content-addressed store and, with no install record, is never loaded.
+- Expired staging is cleaned by the hourly `@LockedCron` job `app-staging-cleanup` (`CatalogJobs`, once per hour across replicas; the job name is frozen). A stored extension package stays in the content-addressed store and, with no install record, is never loaded.
 - Catalog item routes: `GET items` / `items/:id` / `items/:id/icon`, `PUT items/:id/policy` (`allow` / `needs_approval` / `disabled`), `DELETE items/:id`. There is no `kind` anywhere.
 
 ### CLI

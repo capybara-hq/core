@@ -15,9 +15,9 @@ import {
   type TestContainer,
 } from "@capybara-hq/testing";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, PW, sleep, waitFor } from "../helpers/runs.js";
 
@@ -112,7 +112,7 @@ describe("M4 第一段验收（双副本）", () => {
     const harness = h;
     const raw = createDb(harness.dbUrl, 3);
     cleanups.push(() => raw.destroy());
-    const db: KernelDb = kernelDb(raw);
+    const db: KernelSchemaDb = kernelDb(raw);
 
     // ---- HTTP：杀副本前严格交替发往两个副本；之后只发往幸存的副本 ----
     let dead: number | undefined;
@@ -147,7 +147,7 @@ describe("M4 第一段验收（双副本）", () => {
 
     const ownerJar: Jar = new Map();
     const aliceJar: Jar = new Map();
-    await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+    await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
     expect(
       (await call(ownerJar, "POST", "/api/v1/auth/login", { login: "owner", password: PW })).status,
     ).toBe(200);

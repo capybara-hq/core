@@ -133,7 +133,7 @@ starting. Read its output with `docker compose logs init`.
 | `seaweedfs` | `chrislusf/seaweedfs` | SeaweedFS master, volume server and filer (volume `seaweedfsdata`) |
 | `seaweedfs-s3` | `chrislusf/seaweedfs` | The S3 gateway (signed requests only) |
 | `createbuckets` | `chrislusf/seaweedfs` | One-shot: creates the bucket `capybara` |
-| `init` | `capybara-api` | One-shot on every `up`: migrate, bootstrap (once per manifest), then create the admin if the password file is set |
+| `init` | `capybara-api` | One-shot on every `up`: migrate, bootstrap (once per manifest; needs PostgreSQL and Redis), then create the admin if the password file is set |
 | `api` | `capybara-api` | HTTP API (`CAPYBARA_ROLES=api`) |
 | `worker` | `capybara-worker` | Agent runs, queues, maintenance jobs (`CAPYBARA_ROLES=worker`) |
 | `gateway` | `capybara-gateway` | IM long connections and channel webhooks (`CAPYBARA_ROLES=gateway`) |
@@ -275,7 +275,7 @@ otherwise.
 | Role | Does | Scale by |
 |---|---|---|
 | `api` | The HTTP API behind `web` (`/api/v1/*`, extension routes) | CPU and request rate. Stateless. |
-| `worker` | Agent runs, BullMQ queues (channel inbound and outbound delivery, evals, extension jobs), maintenance jobs | Queue backlog and run concurrency. Serves only `/healthz` and `/readyz`. |
+| `worker` | Agent runs, every BullMQ queue consumer (channel inbound and outbound delivery, evals, titles, usage reports, maintenance, extension jobs) and every periodic job (sweeps, cleanups, marketplace refresh, drift scan, extension reconcile, the gateway check) | Queue backlog and run concurrency. Serves only `/healthz` and `/readyz`. |
 | `gateway` | IM long connections (Slack Socket Mode, Lark long connection) and the channel webhook route | For availability and to spread connections; see below. |
 
 - **Choosing roles:**
@@ -286,6 +286,29 @@ otherwise.
     `gateway`. They are built from one Dockerfile with the build argument `ROLES` (comma-separated or
     a JSON array, default `api,worker,gateway`):
     `docker build -f docker/kernel.Dockerfile --build-arg ROLES=worker .`.
+- **Periodic jobs run on `worker` only.** Each runs once per period across all worker replicas
+  (another replica's attempt logs at info, not error). A deployment without a `worker` process runs
+  none of them and consumes no queue. A starting worker runs no periodic job before its start
+  sequence (migrations, the bootstrap step, the extension load) has finished; a tick that fires
+  earlier logs `cron skipped: the scheduler is not started` at info. The marketplace refresh and the
+  connector drift scan also run once right after a worker starts.
+- **Stopping.** On SIGTERM or SIGINT a process answers `/readyz` with 503 at once, aborts a start in
+  progress, drains its runs, jobs and extension calls, closes its queues, then Redis and PostgreSQL,
+  all within a 30 s budget, and exits 0 (1 if the stop failed). A second signal exits 1 at once.
+  When Redis is unreachable the stop takes the whole budget: queue connections that cannot close are
+  abandoned rather than holding the exit.
+- **Unhandled errors.** `capybara start` logs an unhandled promise rejection or uncaught exception
+  and keeps running; it exits 1 only after more than 5 of them within 60 s, so the orchestrator
+  restarts a process that keeps failing. Before, it exited on the first one. Every other `capybara`
+  command still exits 1 on the first.
+- **Redis outages and leases.** Conversation runs, IM long connections, sandbox commands and org
+  quota slots hold Redis leases renewed every third of their TTL. A holder whose renewals keep
+  failing gives up one renewal period before the key could expire (two thirds of the TTL after its
+  last successful renewal) and logs `lock lost: <key>`: a run that lost its conversation lease is
+  re-queued and resumes on another worker, a long connection reconnects, and a lost quota slot lets
+  the run go on (the org may briefly exceed its concurrency). So after a Redis outage longer than
+  about two thirds of a lease TTL (`runtime.jobLockMs`, `channels.leaseTtlMs`) expect re-queued runs
+  and reconnects, never two holders of one lease.
 - **IM needs a gateway.** Since 0.1.0, IM long connections run **only on processes with the `gateway`
   role**. A deployment whose processes don't include `gateway` receives no IM messages. Two log lines
   catch this:
@@ -690,7 +713,9 @@ this:
   - Scale `worker` on queue backlog (for example KEDA on Redis), or on CPU as a first approximation.
   - Give `gateway` a fixed replica count, two or more. Its replicas are for availability and fair
     share, not throughput.
-- **An init Job** runs `capybara migrate`, then `capybara bootstrap`, and optionally
+- **An init Job** runs `capybara migrate`, then `capybara bootstrap` (it needs PostgreSQL and Redis:
+  the bootstrap step holds the Redis lock `lock:bootstrap`, shared with starting replicas, so the
+  Job and a replica never run it at the same time), and optionally
   `capybara admin create --if-none --login <login> --display-name <name> --password-file <path>`, from
   the `capybara-api` image before each rollout (e.g. a Helm pre-upgrade hook or an Argo CD sync wave).
   Kernel replicas also apply pending kernel migrations at startup, under the same advisory lock, but
@@ -709,7 +734,8 @@ this:
   cache rebuilt from object storage or PostgreSQL, so an `emptyDir` is enough. Don't share a volume
   between pods.
 - **Shutdown:** set `terminationGracePeriodSeconds` to 40 or more. The kernel's shutdown budget is 30
-  seconds.
+  seconds (readiness turns 503 at the first SIGTERM; a repeated SIGTERM exits at once, see
+  [Roles and scaling](#roles-and-scaling)).
 - **Probes:** `/readyz` and `/healthz` on port 8080 (`CAPYBARA_HTTP__PORT`) for every kernel role, and
   `/zh/login` on port 3000 for `web`. Give the kernel pods a `startupProbe` on `/healthz` with a
   generous failure threshold (minutes, not seconds): a pod that finds pending migrations doesn't listen

@@ -9,14 +9,16 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { readSandboxLimitOverride } from "../../src/identity/settings.js";
-import { effectiveSandboxLimits, OrgSettingsService } from "../../src/orgs/settings.service.js";
-import { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import { effectiveSandboxLimits } from "../../src/orgs/settings.service.js";
+import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { createFakeSandbox, fakeSandboxMeta } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { orgSettingsFor } from "../helpers/identity.js";
+import { sandboxServiceFor } from "../helpers/sandbox.js";
 
 /**
  * 组织级沙箱 cpu / 内存（C19 / Ruling M16）：企业管理员在部署设置 `sandboxLimitOverrides` 里按组织覆盖，
@@ -56,7 +58,7 @@ describe("effectiveSandboxLimits", () => {
 let pgc: TestContainer;
 let rdc: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let redis: Redis;
 let config: KernelConfig;
 let root: string;
@@ -111,7 +113,7 @@ const setOverrides = (value: unknown) =>
     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`.execute(raw);
 
 const service = () =>
-  new SandboxService({
+  sandboxServiceFor({
     db,
     redis,
     provider: () => ({ plugin: "sandbox-fake", impl: provider }),
@@ -200,7 +202,7 @@ describe("创建沙箱时按组织覆盖 cpu / memoryMb", () => {
 
 describe("组织设置只读地带回实际生效的沙箱限额", () => {
   it("没有覆盖 → source deployment；有覆盖 → source override，未给的项用部署默认", async () => {
-    const settings = new OrgSettingsService(db, () => config);
+    const settings = orgSettingsFor(db, () => config);
     expect(await settings.sandboxLimits(orgId)).toEqual({
       cpu: config.sandbox.limits.cpu,
       memoryMb: config.sandbox.limits.memoryMb,

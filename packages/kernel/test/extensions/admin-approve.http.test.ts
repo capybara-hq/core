@@ -3,22 +3,34 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
+import { type ExtensionContext, SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { PLUGINS_CHANGED_TOPIC } from "../../src/extensions/admin-view.js";
-import { ExtensionBlobs } from "../../src/extensions/blobs.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
+import { ExtensionLifecycle } from "../../src/extensions/lifecycle.js";
 import { permissionSetOfPackage, readExtensionPackage } from "../../src/extensions/package.js";
 import { reviewHash } from "../../src/extensions/permission-view.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import { KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
+import { ReplicaStatusStore } from "../../src/extensions/sources.js";
+import { KERNEL_BUS } from "../../src/infra/tokens.js";
+import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import { truncateTables } from "../helpers/db.js";
+import { blobsFor } from "../helpers/extensions.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, legacyTgz, packFake, pluginTgz } from "../helpers/plugin-packages.js";
-import { PW, type Req, runConfig, session, startKernel, waitFor } from "../helpers/runs.js";
+import {
+  PW,
+  type Req,
+  runConfig,
+  session,
+  startKernel,
+  type TestKernel,
+  waitFor,
+} from "../helpers/runs.js";
 
 /** The bootstrap packages: the fake fake-bootstrap-b (object-store@1), required and not configured, as the image carries its object store. */
 let bootstrap: Awaited<ReturnType<typeof bootstrapFixture>>;
@@ -33,10 +45,10 @@ const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
 let pluginsDir: string;
-let k: Kernel;
+let k: TestKernel;
 let admin: Req;
 let member: Req;
 let adminId: string;
@@ -76,7 +88,7 @@ async function installPkg(
     maxBytes: MAX_BYTES,
     hostSdkVersion: SDK_VERSION,
   });
-  await new ExtensionBlobs({ db, maxBytes: () => MAX_BYTES }).put(pkg, bytes, {
+  await blobsFor(db, { maxBytes: MAX_BYTES }).put(pkg, bytes, {
     source: "file",
     ref: "upload",
     actor: null,
@@ -140,7 +152,7 @@ beforeAll(async () => {
     ),
     { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest },
   );
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   adminId = (
     await accounts.createLocal({
       login: "root",
@@ -154,7 +166,7 @@ beforeAll(async () => {
   member = await session(k, "mem");
 }, 240_000);
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await rm(pluginsDir, { recursive: true, force: true });
   await bootstrap?.cleanup();
@@ -263,7 +275,11 @@ describe("插件列表与网页批准权限", () => {
       removable: true,
     });
     expect(d.replicas).toEqual([
-      expect.objectContaining({ replicaId: k.replicaId, state: "pending", reason: "approval" }),
+      expect.objectContaining({
+        replicaId: k.app.get(ReplicaStatusStore).replicaId,
+        state: "pending",
+        reason: "approval",
+      }),
     ]);
     // 待批准与期望状态无关（F-N）：停用的安装记录同样待批准
     expect(all.get("demo-off")).toMatchObject({
@@ -319,12 +335,14 @@ describe("插件列表与网页批准权限", () => {
 
   it("approving an install record: snapshot source web, audit, kernel.plugins.changed published, this replica loads it; approving again 409 extension.not_pending", async () => {
     const got: unknown[] = [];
-    const unsubscribe = await k.bus.subscribe(PLUGINS_CHANGED_TOPIC, (p) => {
-      got.push(p);
-    });
+    const unsubscribe = await k.app
+      .get<ExtensionContext["bus"]>(KERNEL_BUS)
+      .subscribe(PLUGINS_CHANGED_TOPIC, (p) => {
+        got.push(p);
+      });
     try {
       const d = (await list()).get("demo-pkg") as View;
-      expect(k.host.current("demo-pkg")).toBeUndefined();
+      expect(k.app.get(ExtensionHost).current("demo-pkg")).toBeUndefined();
       const res = await approve("demo-pkg", { sha256: demoHash, reviewHash: d.reviewHash });
       expect(res.statusCode, res.body).toBe(200);
       const view = res.json() as View;
@@ -358,8 +376,13 @@ describe("插件列表与网页批准权限", () => {
       await waitFor(async () => got.length > 0);
       expect(got).toEqual([{ plugin: "demo-pkg" }]);
       // 本副本：待批准的实例随即加载（跨副本收敛由 T14 的 reconcile 负责）
-      expect(k.host.current("demo-pkg")?.sha256).toBe(demoHash);
-      expect(k.host.pending().map((p) => p.plugin)).not.toContain("demo-pkg");
+      expect(k.app.get(ExtensionHost).current("demo-pkg")?.sha256).toBe(demoHash);
+      expect(
+        k.app
+          .get(ExtensionHost)
+          .pending()
+          .map((p) => p.plugin),
+      ).not.toContain("demo-pkg");
       const status = await db
         .selectFrom("extension_replica_status")
         .select(["state", "reason"])
@@ -380,7 +403,7 @@ describe("插件列表与网页批准权限", () => {
     const res = await approve("demo-off", { sha256: d.sha256, reviewHash: d.reviewHash });
     expect(res.statusCode, res.body).toBe(200);
     expect(res.json()).toMatchObject({ status: "disabled", snapshot: { source: "web" } });
-    expect(k.host.current("demo-off")).toBeUndefined();
+    expect(k.app.get(ExtensionHost).current("demo-off")).toBeUndefined();
   });
 
   it("启动后被停用的安装记录：批准只写快照，本副本不按启动时的待批准参数加载", async () => {
@@ -392,7 +415,7 @@ describe("插件列表与网页批准权限", () => {
     const d = (await list()).get("demo-late") as View;
     const res = await approve("demo-late", { sha256: d.sha256, reviewHash: d.reviewHash });
     expect(res.statusCode, res.body).toBe(200);
-    expect(k.host.current("demo-late")).toBeUndefined();
+    expect(k.app.get(ExtensionHost).current("demo-late")).toBeUndefined();
     expect(await snapshotOf("demo-late")).toMatchObject({ source: "web" });
   });
 
@@ -402,13 +425,13 @@ describe("插件列表与网页批准权限", () => {
     const r1 = await approve("perm-dep", { sha256: null, reviewHash: dep.reviewHash });
     expect(r1.statusCode, r1.body).toBe(200);
     expect(r1.json()).toMatchObject({ status: "dependency", snapshot: { source: "web" } });
-    expect(k.host.current("perm-dep")).toBeUndefined();
+    expect(k.app.get(ExtensionHost).current("perm-dep")).toBeUndefined();
 
     const a = all.get("perm-a") as View;
     const r2 = await approve("perm-a", { sha256: null, reviewHash: a.reviewHash });
     expect(r2.statusCode, r2.body).toBe(200);
-    expect(k.host.current("perm-a")).toBeDefined();
-    expect(k.host.current("perm-dep")).toBeDefined();
+    expect(k.app.get(ExtensionHost).current("perm-a")).toBeDefined();
+    expect(k.app.get(ExtensionHost).current("perm-dep")).toBeDefined();
     const after = await list();
     expect(after.get("perm-a")?.status).toBe("enabled");
     expect(after.get("perm-dep")?.status).toBe("enabled");
@@ -526,7 +549,7 @@ describe("插件列表与网页批准权限", () => {
     expect(res.json().error.code).toBe("extension.legacy_format");
     expect(res.json().error.message).toContain(LEGACY);
 
-    await k.extensionLifecycle.reconcile("test");
+    await k.app.get(ExtensionLifecycle).reconcile("test");
     const row = await db
       .selectFrom("extension_replica_status")
       .select(["state", "reason", "detail"])
@@ -534,9 +557,9 @@ describe("插件列表与网页批准权限", () => {
       .executeTakeFirstOrThrow();
     expect(row).toMatchObject({ state: "failed", reason: "sync_failed" });
     expect(row.detail).toContain(LEGACY);
-    expect(k.host.current("demo-legacy")).toBeUndefined();
+    expect(k.app.get(ExtensionHost).current("demo-legacy")).toBeUndefined();
     // the rest keeps loading
-    expect(k.host.current("demo-pkg")?.sha256).toBe(demoHash);
+    expect(k.app.get(ExtensionHost).current("demo-pkg")?.sha256).toBe(demoHash);
     expect((await list()).get("demo-legacy")?.status).toBe("legacy_format");
   });
 });

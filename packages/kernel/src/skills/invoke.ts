@@ -1,20 +1,23 @@
 import {
   escapeSkillInvocationTags,
   hasShellInjection,
-  type Logger,
   parseSkillMd,
   renderSkillBody,
   renderSkillInvocation,
   SKILL_ENTRY_FILE,
   SKILL_INVOCATION_LIMITS,
 } from "@capybara-hq/plugin-sdk";
-import type { AgentsService } from "../agents/agents.service.js";
+import { Inject, Injectable } from "@nestjs/common";
+import { AgentLookup } from "../agents/agent-lookup.js";
 import type { AgentDefinition } from "../agents/definition.js";
 import type { EventPayload } from "../conversations/events.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 import { isGeneralAlias, resolveSkillForkType } from "../runtime/subagents/roster.js";
-import type { StorageService } from "../storage/storage.service.js";
+import { StorageService } from "../storage/storage.service.js";
 import {
   findSkillVersion,
   readSkillFile,
@@ -105,7 +108,7 @@ export const notInvocable = (reason: NotInvocableReason, name: string) =>
  * text stays as rendered when queued. Null when it is, else the reason.
  */
 export async function recordedSkillBlocked(
-  db: KernelDb,
+  db: KernelSchemaDb,
   a: {
     orgId: string;
     agentId: string;
@@ -129,17 +132,19 @@ export const forkLeadText = (name: string, agentType: string, args: string): str
 export const forkAgentUnknownText = (name: string, agent: string): string =>
   `Skill "${name}" asked for sub-agent type "${agent}", which this agent does not have; it ran as general-purpose.`;
 
-export interface SkillInvokerDeps {
-  db: KernelDb;
-  storage: StorageService;
-  /** For {@link SkillInvoker.listFor} (the HTTP route's access check). */
-  agents?: Pick<AgentsService, "get">;
-  /** An unreadable SKILL.md is logged at `error` (skill id, version, source), as pinned skills. */
-  log?: Pick<Logger, "error">;
-}
-
+/**
+ * Skill invocations by a person (one provider: the HTTP routes, IM channels and fork dispatch all
+ * use it). Unreadable SKILL.md files are logged at `error` (skill id, version, source), as pinned
+ * skills; the agent access check of {@link SkillInvoker.listFor} is `AgentLookup.get`.
+ */
+@Injectable()
 export class SkillInvoker {
-  constructor(private readonly d: SkillInvokerDeps) {}
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(StorageService) private readonly storage: StorageService,
+    @Inject(AgentLookup) private readonly agents: Pick<AgentLookup, "get">,
+    @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+  ) {}
 
   /**
    * The `/` menu for `accountId`: the agent must be usable by them (`agent.not_found`), and with
@@ -152,10 +157,9 @@ export class SkillInvoker {
     accountId: string,
     conversationId?: string,
   ): Promise<InvocableSkill[]> {
-    if (!this.d.agents) throw new Error("SkillInvoker.listFor needs agents");
-    const agent = await this.d.agents.get(orgId, agentId, accountId);
+    const agent = await this.agents.get(orgId, agentId, accountId);
     if (conversationId !== undefined) {
-      const row = await this.d.db
+      const row = await this.db
         .selectFrom("conversations")
         .select("id")
         .where("id", "=", conversationId)
@@ -184,7 +188,7 @@ export class SkillInvoker {
     agent: Pick<AgentDefinition, "skills">;
     conversationId?: string;
   }): Promise<InvocableSkill[]> {
-    const all = await resolveSkills(this.d.db, a);
+    const all = await resolveSkills(this.db.db, a);
     const out: InvocableSkill[] = [];
     for (const r of all) {
       const inv = invocationOf(r.manifest);
@@ -219,7 +223,7 @@ export class SkillInvoker {
     name: string;
     args: string;
   }): Promise<RenderedInvocation> {
-    const all = await resolveSkills(this.d.db, a);
+    const all = await resolveSkills(this.db.db, a);
     const found = findSkill(all, a.name);
     if (!found) throw notInvocable("not_found", a.name);
     const inv = invocationOf(found.manifest);
@@ -257,7 +261,7 @@ export class SkillInvoker {
     if (!inv.fork) return { text: rendered(() => renderSkillInvocation(input)), skill: record };
     const task = rendered(() => renderSkillInvocation({ ...input, lead: false }));
     const type = await resolveSkillForkType(
-      this.d.db,
+      this.db.db,
       a.orgId,
       a.agent,
       inv.fork.agent,
@@ -291,9 +295,9 @@ export class SkillInvoker {
     skill: InvocationRecord;
   }): Promise<{ task: (child: Pick<AgentDefinition, "tools">) => string; warning?: string }> {
     const { skill } = a;
-    const found = await findSkillVersion(this.d.db, a, { id: skill.id, source: skill.source });
+    const found = await findSkillVersion(this.db.db, a, { id: skill.id, source: skill.source });
     if (!found) {
-      this.d.log?.error("invoked skill unreadable", {
+      this.log.error("invoked skill unreadable", {
         orgId: a.orgId,
         skillId: skill.id,
         version: skill.version,
@@ -340,7 +344,7 @@ export class SkillInvoker {
     },
   ): Promise<string> {
     const unreadable = (problem: string) => {
-      this.d.log?.error("invoked skill unreadable", {
+      this.log.error("invoked skill unreadable", {
         orgId,
         skillId: r.skill.id,
         version: r.skill.version,
@@ -353,11 +357,11 @@ export class SkillInvoker {
     };
     const md = r.manifest.files.find((f) => f.path === SKILL_ENTRY_FILE);
     if (!md) throw unreadable(`has no ${SKILL_ENTRY_FILE}`);
-    this.d.storage.assertAvailable();
+    this.storage.assertAvailable();
     let bytes: Uint8Array;
     try {
       bytes = await readSkillFile(
-        this.d.storage.kernel(orgId),
+        this.storage.kernel(orgId),
         `${r.skill.source}${SKILL_ENTRY_FILE}`,
         md,
       );

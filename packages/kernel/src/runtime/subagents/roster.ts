@@ -1,7 +1,7 @@
-import { SUBAGENT_ROSTER_MAX } from "../../agents/agents.service.js";
 import type { AgentDefinition } from "../../agents/definition.js";
+import { SUBAGENT_ROSTER_MAX } from "../../agents/definition.js";
 import { loadTemplates } from "../../agents/templates.js";
-import type { KernelDb } from "../../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../db/kernel-schema.js";
 
 /**
  * The sub-agent roster of an agent version (phase C, spec §4.3, §5.1): the agent types its `agent`
@@ -42,7 +42,7 @@ export const templateType = (plugin: string, name: string) => `${plugin}:${name}
  * and refuses with the §4.5 text), with `agentName` only while the agent is live.
  */
 export async function resolveRoster(
-  db: KernelDb,
+  db: KernelSchemaDb,
   orgId: string,
   parent: Pick<AgentDefinition, "subagents">,
 ): Promise<RosterEntry[]> {
@@ -133,7 +133,7 @@ export const isGeneralAlias = (agent: string): boolean => GENERAL_ALIASES.has(ag
  * `subagents.general === false`, which does not block a person's fork invocation).
  */
 export async function resolveSkillForkType(
-  db: KernelDb,
+  db: KernelSchemaDb,
   orgId: string,
   parent: Pick<AgentDefinition, "subagents">,
   agent: string | undefined,

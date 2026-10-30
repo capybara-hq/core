@@ -1,16 +1,15 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
-import { createHttpApp, type KernelHttpApp } from "../../src/http/app.js";
+import type { KernelHttpApp } from "../../src/http/app.js";
 import { createLogger } from "../../src/log.js";
+import { testHttpApp } from "../helpers/http-app.js";
 
 const apps: KernelHttpApp[] = [];
 
 async function app(replicaId?: string): Promise<KernelHttpApp> {
   const log = createLogger("error", { write: () => {} });
-  const a = await createHttpApp({
+  const a = await testHttpApp({
     log,
-    health: { checks: { pg: async () => {}, redis: async () => {} }, isStopping: () => false, log },
-    serveApi: false,
     servePlugins: true,
     ...(replicaId !== undefined && { replicaId }),
   });

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { ExtensionPointUnavailableError } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
-import { StorageKeyError, StorageService } from "../../src/storage/storage.service.js";
+import { PrefixedStorage, StorageKeyError } from "../../src/storage/storage.service.js";
 import { MemoryObjectStore } from "./memory-store.js";
 
 const ORG_A = randomUUID();
@@ -13,13 +13,13 @@ const text = async (b: ReadableStream<Uint8Array>) => new Response(b).text();
 
 const setup = (plugins: string[] = ["aa", "bb"]) => {
   const mem = new MemoryObjectStore();
-  const svc = new StorageService({ provider: () => mem, plugins: async () => plugins });
+  const svc = new PrefixedStorage({ provider: () => mem, plugins: async () => plugins });
   return { mem, svc };
 };
 
 describe("StorageService 可用性", () => {
   it("没有提供方：available 为 false，各方法 reject storage.unavailable", async () => {
-    const svc = new StorageService({ provider: () => undefined, plugins: async () => [] });
+    const svc = new PrefixedStorage({ provider: () => undefined, plugins: async () => [] });
     expect(svc.available).toBe(false);
     const s = svc.forPlugin("aa");
     await expect(s.head(ORG_A, "k")).rejects.toThrow(ExtensionPointUnavailableError);
@@ -32,7 +32,7 @@ describe("StorageService 可用性", () => {
 
   it("提供方后来才就绪（按调用时取）：available 跟着变", async () => {
     let p: MemoryObjectStore | undefined;
-    const svc = new StorageService({ provider: () => p, plugins: async () => [] });
+    const svc = new PrefixedStorage({ provider: () => p, plugins: async () => [] });
     expect(svc.available).toBe(false);
     p = new MemoryObjectStore();
     expect(svc.available).toBe(true);

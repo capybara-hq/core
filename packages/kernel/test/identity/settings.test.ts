@@ -1,16 +1,15 @@
 import { fileURLToPath } from "node:url";
 import { startTestPostgres } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import { SettingsService } from "../../src/identity/settings.js";
+import { accountsFor, settingsFor } from "../helpers/identity.js";
 
 let box: Awaited<ReturnType<typeof startTestPostgres>>;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 
 beforeAll(async () => {
   box = await startTestPostgres();
@@ -28,8 +27,8 @@ afterAll(async () => {
 
 describe("SettingsService", () => {
   it("默认 anyone；更新后读到新值；非法值抛 validation_failed", async () => {
-    const s = new SettingsService(db);
-    const admin = await new AccountsService(db).createLocal({
+    const s = settingsFor(db);
+    const admin = await accountsFor(db).createLocal({
       login: "root",
       password: "correct horse battery",
       displayName: "R",
@@ -65,7 +64,7 @@ describe("SettingsService", () => {
       warn: (msg: string, fields?: Record<string, unknown>) =>
         warns.push({ msg, ...(fields && { fields }) }),
     };
-    const s = new SettingsService(db, log);
+    const s = settingsFor(db, log);
     expect(await s.get()).toEqual({
       orgCreation: "anyone",
       runConcurrencyOverrides: {},
@@ -86,15 +85,15 @@ describe("SettingsService", () => {
       .values({ key: "orgCreation", value: JSON.stringify("enterprise_admin") })
       .execute();
     const warns: string[] = [];
-    const s = new SettingsService(db, { warn: (msg) => warns.push(msg) });
+    const s = settingsFor(db, { warn: (msg) => warns.push(msg) });
     expect((await s.get()).orgCreation).toBe("enterprise_admin");
     expect(warns).toEqual([]);
   });
 
   it("sandboxLimitOverrides 按组织合并（整项替换，null 删除）；customConnectors / customSkills；审计", async () => {
     await db.deleteFrom("deployment_settings").execute();
-    const s = new SettingsService(db);
-    const admin = await new AccountsService(db).createLocal({
+    const s = settingsFor(db);
+    const admin = await accountsFor(db).createLocal({
       login: "limits-admin",
       password: "correct horse battery",
       displayName: "L",
@@ -142,8 +141,8 @@ describe("SettingsService", () => {
 
   it("sandboxLimitOverrides 越界 / 非整数 / 空项与 customSkills 非法值 → validation_failed，库不变", async () => {
     await db.deleteFrom("deployment_settings").execute();
-    const s = new SettingsService(db);
-    const admin = await new AccountsService(db).createLocal({
+    const s = settingsFor(db);
+    const admin = await accountsFor(db).createLocal({
       login: "limits-admin-2",
       password: "correct horse battery",
       displayName: "L2",
@@ -177,7 +176,7 @@ describe("SettingsService", () => {
       .values({ key: "sandboxLimitOverrides", value: JSON.stringify({ orgA: { cpu: 999 } }) })
       .execute();
     const warns: string[] = [];
-    const s = new SettingsService(db, { warn: (msg) => warns.push(msg) });
+    const s = settingsFor(db, { warn: (msg) => warns.push(msg) });
     expect((await s.get()).sandboxLimitOverrides).toEqual({});
     expect(warns).toHaveLength(1);
   });

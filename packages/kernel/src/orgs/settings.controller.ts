@@ -1,12 +1,12 @@
-import { Body, Controller, Get, Inject, Patch } from "@nestjs/common";
-import { ORG_SETTINGS } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
+import { Controller, Get, Inject, Patch } from "@nestjs/common";
 import {
   CurrentPrincipal,
   type Principal,
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "./org.guard.js";
 import {
   type OrgSandboxLimits,
@@ -14,8 +14,10 @@ import {
   type OrgSettingsDeployment,
   type OrgSettingsPatch,
   OrgSettingsPatchSchema,
-  type OrgSettingsService,
+  OrgSettingsService,
 } from "./settings.service.js";
+
+class OrgSettingsPatchBody extends createZodDto(OrgSettingsPatchSchema, "OrgSettingsPatch") {}
 
 /**
  * 组织设置（`/api/v1/orgs/:orgId/settings`）：成员可读，修改需 `org.update`（admin）。
@@ -30,7 +32,7 @@ type SettingsResponse = {
 
 @Controller("api/v1/orgs/:orgId/settings")
 export class OrgSettingsController {
-  constructor(@Inject(ORG_SETTINGS) private readonly settings: OrgSettingsService) {}
+  constructor(@Inject(OrgSettingsService) private readonly settings: OrgSettingsService) {}
 
   @Get()
   @OrgAction("org.read")
@@ -47,7 +49,7 @@ export class OrgSettingsController {
   async update(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Body(new ZodPipe(OrgSettingsPatchSchema)) body: OrgSettingsPatch,
+    @ZBody(OrgSettingsPatchBody) body: OrgSettingsPatch,
   ): Promise<SettingsResponse> {
     const p = requireUser(principal);
     return {

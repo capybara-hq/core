@@ -1,7 +1,6 @@
 import { Controller, Get, Inject } from "@nestjs/common";
-import { AGENT_TEMPLATES } from "../http/tokens.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import type { AgentTemplatesService, AgentTemplateView } from "./templates.js";
+import { AgentTemplatesService, type AgentTemplateView } from "./templates.js";
 
 /**
  * The org's agent templates installed from plugins (`/api/v1/orgs/:orgId/agent-templates`, phase C
@@ -11,7 +10,7 @@ import type { AgentTemplatesService, AgentTemplateView } from "./templates.js";
  */
 @Controller("api/v1/orgs/:orgId/agent-templates")
 export class AgentTemplatesController {
-  constructor(@Inject(AGENT_TEMPLATES) private readonly templates: AgentTemplatesService) {}
+  constructor(@Inject(AgentTemplatesService) private readonly templates: AgentTemplatesService) {}
 
   @Get()
   @OrgAction("agents.create")
