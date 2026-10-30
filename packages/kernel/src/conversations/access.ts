@@ -54,6 +54,7 @@ export class ConversationAccess {
       .where("conversations.id", "=", conversationId)
       .where("conversations.org_id", "=", orgId)
       .where("conversations.account_id", "=", viewerAccountId)
+      .where("conversations.deleted_at", "is", null)
       .where("conversations.kind", "in", ["chat", "subagent"])
       .where(parentReachable(viewerAccountId))
       .where((eb) =>

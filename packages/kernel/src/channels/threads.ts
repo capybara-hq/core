@@ -155,3 +155,15 @@ export async function archiveThread(db: KernelSchemaDb, k: ThreadKey): Promise<b
     .executeTakeFirst();
   return r.numUpdatedRows > 0n;
 }
+
+/**
+ * Drops a conversation's channel bindings (its thread rows and its delivery target), so a deleted
+ * conversation neither receives inbound messages nor posts to the chat any more.
+ */
+export async function unbindConversation(
+  db: KernelSchemaDb,
+  conversationId: string,
+): Promise<void> {
+  await db.deleteFrom("channel_threads").where("conversation_id", "=", conversationId).execute();
+  await db.deleteFrom("channel_deliveries").where("conversation_id", "=", conversationId).execute();
+}

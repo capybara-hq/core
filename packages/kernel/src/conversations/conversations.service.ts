@@ -3,6 +3,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { AgentLookup, visibleTo } from "../agents/agent-lookup.js";
 import type { AgentDefinition, ModelRef } from "../agents/definition.js";
+import { unbindConversation } from "../channels/threads.js";
 import type { TitleSource } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -40,6 +41,8 @@ export interface ConversationView {
   parentConversationId: string | null;
   /** A sub-agent's type as resolved at its first dispatch; null for any other conversation. */
   subagentType: string | null;
+  /** When the owner archived it; null = not archived (hidden from the default lists). */
+  archivedAt: Date | null;
 }
 
 /** One agent's group in the sidebar list: the caller's newest conversations with that agent. */
@@ -129,6 +132,7 @@ const COLUMNS = [
   "updated_at",
   "parent_conversation_id",
   "subagent_type",
+  "archived_at",
 ] as const;
 
 function toView(r: {
@@ -144,6 +148,7 @@ function toView(r: {
   updated_at: Date;
   parent_conversation_id: string | null;
   subagent_type: string | null;
+  archived_at: Date | null;
 }): ConversationView {
   return {
     id: r.id,
@@ -158,6 +163,7 @@ function toView(r: {
     updatedAt: r.updated_at,
     parentConversationId: r.parent_conversation_id,
     subagentType: r.subagent_type,
+    archivedAt: r.archived_at,
   };
 }
 
@@ -388,6 +394,54 @@ export class ConversationsService {
     return toView(row);
   }
 
+  /**
+   * Archives or unarchives a conversation (owner only, as {@link rename}). An archived
+   * conversation leaves the default lists but stays readable. Publishes `changed: archived`.
+   */
+  async setArchived(
+    orgId: string,
+    conversationId: string,
+    accountId: string,
+    archived: boolean,
+  ): Promise<ConversationView> {
+    await this.writable(orgId, conversationId, accountId);
+    const row = await this.db
+      .updateTable("conversations")
+      .set({ archived_at: archived ? sql<Date>`now()` : null })
+      .where("id", "=", conversationId)
+      .returning(COLUMNS)
+      .executeTakeFirstOrThrow();
+    await this.eventLog.publishChanged(conversationId, "archived");
+    return toView(row);
+  }
+
+  /**
+   * Soft-deletes a conversation (owner only; a sub-agent's conversation is `conversation.read_only`):
+   * stops an active run, hides the conversation everywhere for its owner and drops its channel
+   * bindings. The event log, runs and trajectory stay (enterprise admins still see them).
+   */
+  async remove(orgId: string, conversationId: string, accountId: string): Promise<void> {
+    await this.writable(orgId, conversationId, accountId);
+    try {
+      await this.abort(orgId, conversationId, accountId);
+    } catch (e) {
+      if (!(e instanceof ApiError && e.code === "run.not_active")) throw e;
+    }
+    await this.markDeleted(conversationId);
+    await this.eventLog.publishChanged(conversationId, "deleted");
+  }
+
+  // the publish happens after the commit, in the caller
+  @Transactional()
+  private async markDeleted(conversationId: string): Promise<void> {
+    await this.db
+      .updateTable("conversations")
+      .set({ deleted_at: sql<Date>`now()` })
+      .where("id", "=", conversationId)
+      .execute();
+    await unbindConversation(this.db.db, conversationId);
+  }
+
   /** 读会话：非所有者、或 agent 已对所有者不可用 → `conversation.not_found`。 */
   async get(
     orgId: string,
@@ -422,6 +476,7 @@ export class ConversationsService {
       .where("id", "=", conversationId)
       .where("org_id", "=", orgId)
       .where("account_id", "=", viewerAccountId)
+      .where("deleted_at", "is", null)
       // Hidden eval replay conversations (kind 'eval') are not reachable here (only the trajectory
       // viewer shows them); a sub-agent's conversation is, for its owner (sub-agents spec §6.1)
       .where("kind", "in", ["chat", "subagent"])
@@ -449,7 +504,7 @@ export class ConversationsService {
   async listMine(
     orgId: string,
     accountId: string,
-    opts: { after?: string; limit: number; agentId?: string },
+    opts: { after?: string; limit: number; agentId?: string; archived?: boolean },
   ): Promise<ConversationView[]> {
     let q = this.db
       .selectFrom("conversations")
@@ -458,6 +513,8 @@ export class ConversationsService {
       .where("account_id", "=", accountId)
       // 评测回放的隐藏对话（kind = 'eval'）不在「我的对话」里
       .where("kind", "=", "chat")
+      .where("deleted_at", "is", null)
+      .where("archived_at", opts.archived === true ? "is not" : "is", null)
       .where((eb) =>
         eb.exists(
           eb
@@ -495,7 +552,7 @@ export class ConversationsService {
   async listGroups(
     orgId: string,
     accountId: string,
-    opts: { perGroup: number; limit: number; after?: string },
+    opts: { perGroup: number; limit: number; after?: string; archived?: boolean },
   ): Promise<{ groups: ConversationGroup[]; next: string | null }> {
     const visibleAgents = this.db
       .selectFrom("agents")
@@ -503,6 +560,8 @@ export class ConversationsService {
       .where("agents.org_id", "=", orgId)
       .where("agents.deleted_at", "is", null)
       .where(visibleTo(accountId));
+    const archivedFilter =
+      opts.archived === true ? sql`c.archived_at IS NOT NULL` : sql`c.archived_at IS NULL`;
     const cursor =
       opts.after === undefined
         ? sql``
@@ -524,11 +583,13 @@ export class ConversationsService {
       updated_at: Date;
       parent_conversation_id: string | null;
       subagent_type: string | null;
+      archived_at: Date | null;
     }>`
       WITH g AS (
         SELECT c.agent_id, max(c.updated_at) AS latest_at
         FROM capybara.conversations c
         WHERE c.org_id = ${orgId} AND c.account_id = ${accountId} AND c.kind = 'chat'
+          AND c.deleted_at IS NULL AND ${archivedFilter}
           AND c.agent_id IN ${visibleAgents}
         GROUP BY c.agent_id
       ), page AS (
@@ -539,15 +600,18 @@ export class ConversationsService {
       )
       SELECT page.agent_id, page.latest_at, v.definition ->> 'name' AS agent_name,
         cs.id, cs.org_id, cs.account_id, cs.title, cs.title_source, cs.selection, cs.last_seq,
-        cs.created_at, cs.updated_at, cs.parent_conversation_id, cs.subagent_type
+        cs.created_at, cs.updated_at, cs.parent_conversation_id, cs.subagent_type,
+        cs.archived_at
       FROM page
       JOIN capybara.agents a ON a.id = page.agent_id
       JOIN capybara.agent_versions v ON v.agent_id = a.id AND v.version = a.current_version
       CROSS JOIN LATERAL (
         SELECT c.id, c.org_id, c.account_id, c.title, c.title_source, c.selection, c.last_seq,
-          c.created_at, c.updated_at, c.parent_conversation_id, c.subagent_type
+          c.created_at, c.updated_at, c.parent_conversation_id, c.subagent_type,
+          c.archived_at
         FROM capybara.conversations c
         WHERE c.org_id = ${orgId} AND c.account_id = ${accountId} AND c.kind = 'chat'
+          AND c.deleted_at IS NULL AND ${archivedFilter}
           AND c.agent_id = page.agent_id
         ORDER BY c.updated_at DESC, c.id DESC
         LIMIT ${opts.perGroup + 1}
@@ -749,6 +813,15 @@ export class ConversationsService {
     input: UserMessageInput,
   ): Promise<ConversationEvent> {
     const conv = await this.writable(orgId, conversationId, accountId);
+    // A message brings an archived conversation back into the default lists
+    if (conv.archivedAt !== null) {
+      await this.db
+        .updateTable("conversations")
+        .set({ archived_at: null })
+        .where("id", "=", conversationId)
+        .execute();
+      await this.eventLog.publishChanged(conversationId, "archived");
+    }
     const refs = input.attachments ?? [];
     const files = input.files ?? [];
     // A retry returns the written event (no resource read, no file check, no skill resolution)

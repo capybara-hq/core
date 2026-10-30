@@ -15,7 +15,7 @@ import { z } from "zod";
 import { ModelRef } from "../agents/definition.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
-import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
+import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { CONTROL_OR_HIDDEN_RE } from "../text.js";
 import { MAX_ATTACHMENTS } from "../tools/connector-content.js";
@@ -195,7 +195,7 @@ const QueueEditBody = z.object({ text: z.string().max(100_000) }).strict();
  * A rename: 1–120 characters counted in code points after trimming, with no control or format
  * (bidi, zero-width) characters, the same rule generated and tool titles follow.
  */
-const RenameBody = z
+const PatchBody = z
   .object({
     title: z
       .string()
@@ -209,12 +209,22 @@ const RenameBody = z
       .refine(
         (t) => !CONTROL_OR_HIDDEN_RE.test(t),
         "title must not contain control or format characters",
-      ),
+      )
+      .optional(),
+    /** true archives (hidden from the default lists), false unarchives. */
+    archived: z.boolean().optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (b) => b.title !== undefined || b.archived !== undefined,
+    "title or archived is required",
+  );
+
+const IdParams = z.object({ id: z.string().min(1).max(100) });
 
 class ConversationCreateBodyDto extends createZodDto(CreateBody, "ConversationCreateBody") {}
-class ConversationRenameBodyDto extends createZodDto(RenameBody, "ConversationRenameBody") {}
+class ConversationPatchBodyDto extends createZodDto(PatchBody, "ConversationPatchBody") {}
+class ConversationIdParamsDto extends createZodDto(IdParams, "ConversationIdParams") {}
 class ConversationListQueryDto extends createZodDto(ListQuery, "ConversationListQuery") {}
 class ConversationGroupsQueryDto extends createZodDto(GroupsQuery, "ConversationGroupsQuery") {}
 class ConversationEventsQueryDto extends createZodDto(EventsQuery, "ConversationEventsQuery") {}
@@ -285,19 +295,45 @@ export class ConversationsController {
     return { conversation: out.conversation, event: out.event };
   }
 
-  /** Rename (owner only): `titleSource` becomes `manual` and the title is never regenerated. */
+  /**
+   * Rename and / or archive (owner only). A rename makes `titleSource` `manual`, so the title is
+   * never regenerated; `archived` archives or unarchives. Returns the final view.
+   */
   @Patch(":id")
   @OrgAction("agents.use")
-  async rename(
+  async patch(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
-    @ZBody(ConversationRenameBodyDto) body: z.infer<typeof RenameBody>,
+    @ZBody(ConversationPatchBodyDto) body: z.infer<typeof PatchBody>,
   ): Promise<{ conversation: ConversationView }> {
     const p = requireUser(principal);
-    return {
-      conversation: await this.conversations.rename(org.orgId, id, p.account.id, body.title),
-    };
+    let conversation: ConversationView | undefined;
+    if (body.title !== undefined) {
+      conversation = await this.conversations.rename(org.orgId, id, p.account.id, body.title);
+    }
+    if (body.archived !== undefined) {
+      conversation = await this.conversations.setArchived(
+        org.orgId,
+        id,
+        p.account.id,
+        body.archived,
+      );
+    }
+    return { conversation: conversation as ConversationView };
+  }
+
+  /** Soft delete (owner only): stops an active run and hides the conversation everywhere. */
+  @Delete(":id")
+  @HttpCode(204)
+  @OrgAction("agents.use")
+  async remove(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(ConversationIdParamsDto) { id }: z.infer<typeof IdParams>,
+  ): Promise<void> {
+    const p = requireUser(principal);
+    await this.conversations.remove(org.orgId, id, p.account.id);
   }
 
   /** 我的会话，最近更新的在前：`next` 为下一页游标（作为 `after` 传回），没有更多时为 null。 */

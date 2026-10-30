@@ -221,6 +221,10 @@ export interface ConversationsTable {
   queue_paused: ColumnType<boolean, boolean | undefined, boolean>;
   /** 0062: why the queue paused (`QueuePauseReason`); null when not paused or not recorded. */
   queue_pause_reason: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0064: when the owner archived it (hidden from the default lists); null = not archived. */
+  archived_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  /** 0064: when the owner deleted it (soft delete: hidden everywhere for the owner); null = live. */
+  deleted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
 }
 
 /** 0060: an org's order of file-preview@1 previewers (UI refresh B Task 11). */
