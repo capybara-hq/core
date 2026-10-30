@@ -72,7 +72,7 @@ const RULES: ScriptRule[] = [
   {
     when: { systemIncludes: CHILD, lastUserIncludes: "task-write", assistantTurns: 0 },
     reply: {
-      toolCalls: [{ name: "Write", input: { path: "/workspace/c.txt", content: "c" } }],
+      toolCalls: [{ name: "Write", input: { file_path: "/workspace/c.txt", content: "c" } }],
     },
   },
   { when: { systemIncludes: CHILD }, reply: { text: "child ok" } },
@@ -93,7 +93,7 @@ const RULES: ScriptRule[] = [
     reply: {
       toolCalls: [
         agentCall("task-mixed"),
-        { name: "Write", input: { path: "/workspace/m.txt", content: "m" } },
+        { name: "Write", input: { file_path: "/workspace/m.txt", content: "m" } },
       ],
     },
   },

@@ -190,17 +190,17 @@ describe("GET /conversations/:id/tools", () => {
       keyArgs: ["command"],
       source: { kind: "builtin" },
     });
-    expect(t.Read?.keyArgs).toEqual(["path"]);
-    expect(t.Write).toMatchObject({ kind: "edit", keyArgs: ["path"] });
-    expect(t.Edit).toMatchObject({ kind: "edit", keyArgs: ["path"] });
+    expect(t.Read?.keyArgs).toEqual(["file_path"]);
+    expect(t.Write).toMatchObject({ kind: "edit", keyArgs: ["file_path"] });
+    expect(t.Edit).toMatchObject({ kind: "edit", keyArgs: ["file_path"] });
     expect(t.Glob).toMatchObject({ kind: "search", keyArgs: ["pattern"] });
     expect(t.Grep).toMatchObject({ kind: "search", keyArgs: ["pattern", "path"] });
-    expect(t.Deliver).toMatchObject({ kind: "tool", keyArgs: ["path"] });
+    expect(t.Deliver).toMatchObject({ kind: "tool", keyArgs: ["file_path"] });
     expect(t.Deliver).toMatchObject({ sandbox: true });
     for (const k of ["Skill", "ToolSearch", "AskUserQuestion", "Agent"]) {
       expect(t[k]?.sandbox, k).toBe(false);
     }
-    expect(t.Skill).toMatchObject({ kind: "meta", keyArgs: ["name"] });
+    expect(t.Skill).toMatchObject({ kind: "meta", keyArgs: ["skill"] });
     expect(t.ToolSearch).toMatchObject({ kind: "meta", keyArgs: ["query"] });
     expect(t.AskUserQuestion).toMatchObject({ kind: "meta", keyArgs: [], title: null });
     // a sub-agent's task name, then its type (the page shows agent calls as sub-agent rows)

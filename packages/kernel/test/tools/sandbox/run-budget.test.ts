@@ -131,7 +131,7 @@ afterAll(async () => {
 type ToolResultEvent = Extract<ConversationEvent, { type: "tool_result" }>;
 
 describe("Bash 按运行剩下的时间收紧超时", { timeout: 90_000 }, () => {
-  it("请求的 timeoutSeconds 超过运行剩余：命令在截止前超时，结果说明运行时限（不是结果未知）", async () => {
+  it("请求的 timeout 超过运行剩余：命令在截止前超时，结果说明运行时限（不是结果未知）", async () => {
     await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
     const owner = await session(k, "owner");
     const orgId = await createOrg(owner);
@@ -152,7 +152,7 @@ describe("Bash 按运行剩下的时间收紧超时", { timeout: 90_000 }, () =>
     const conv = await createConv(owner, orgId, (res.json() as { agent: { id: string } }).agent.id);
 
     const t0 = Date.now();
-    const input = { description: "Test step", command: "sleep 120", timeoutSeconds: 600 };
+    const input = { description: "Test step", command: "sleep 120", timeout: 600_000 };
     await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(input)}`);
     const [run] = await waitForTerminal(db, conv, 1, 60_000);
     // 命令收紧到约 4 秒后超时，运行照常结束（没有撞上截止时间）

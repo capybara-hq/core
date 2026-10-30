@@ -57,10 +57,10 @@ test("Write + Deliver：文件卡片实时出现，右侧预览为表格，能�
   const content = "name,qty\napple,3\npear,5\n";
   await send(
     page,
-    `tool:Write:${JSON.stringify({ path: "/workspace/out/fruit.csv", content })}`,
+    `tool:Write:${JSON.stringify({ file_path: "/workspace/out/fruit.csv", content })}`,
     1,
   );
-  await send(page, `tool:Deliver:${JSON.stringify({ path: "/workspace/out/fruit.csv" })}`, 2);
+  await send(page, `tool:Deliver:${JSON.stringify({ file_path: "/workspace/out/fruit.csv" })}`, 2);
 
   // SSE 收到 artifact_created：不刷新页面，文件卡片出现在交付它的工具组之后
   const card = page.locator('[data-entry="files"]').getByRole("button", { name: /fruit\.csv/ });

@@ -23,7 +23,7 @@ export const READ_MAX_BYTES = 10 * 1024 * 1024;
 const SPEC: ToolSpec = {
   name: "Read",
   // Display only (the tool row; not in the fingerprint, never sent to the model).
-  keyArgs: ["path"],
+  keyArgs: ["file_path"],
   description:
     "Read a text file from this conversation's sandbox, with line numbers. Use it to look at " +
     "source code, data files, logs and files the user attached (under /workspace/attachments). " +
@@ -33,7 +33,7 @@ const SPEC: ToolSpec = {
   inputSchema: {
     type: "object",
     properties: {
-      path: {
+      file_path: {
         type: "string",
         minLength: 1,
         description: 'Absolute path of the file, e.g. "/workspace/src/main.py".',
@@ -49,14 +49,14 @@ const SPEC: ToolSpec = {
         description: `Maximum number of lines to read. Default ${DEFAULT_LIMIT}.`,
       },
     },
-    required: ["path"],
+    required: ["file_path"],
     additionalProperties: false,
   },
   annotations: { readOnlyHint: true },
 };
 
 interface ReadInput {
-  path: string;
+  file_path: string;
   offset?: number;
   limit?: number;
 }
@@ -104,7 +104,7 @@ export function sandboxReadTool(deps: SandboxToolDeps): BuiltinTool {
     timeoutMs: () => sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx) {
       const { offset = 1, limit = DEFAULT_LIMIT } = input as ReadInput;
-      const path = checkPath((input as ReadInput).path);
+      const path = checkPath((input as ReadInput).file_path);
       const { value, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
         const st = await p.stat(h, path, signal);
         if (st === null) throw new ToolError(notFound(path));

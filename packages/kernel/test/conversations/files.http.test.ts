@@ -200,7 +200,7 @@ describe("file outputs", { timeout: 60_000 }, () => {
         },
         1,
       );
-      await callTool(conv, "Deliver", { path: "/workspace/out/report.md" }, 2);
+      await callTool(conv, "Deliver", { file_path: "/workspace/out/report.md" }, 2);
       const sse = await openSse(
         `http://127.0.0.1:${k.port}/api/v1/orgs/${orgId}/conversations/${conv}/stream`,
         { cookie: ownerCookie() },
@@ -212,7 +212,7 @@ describe("file outputs", { timeout: 60_000 }, () => {
           { description: "Update it", command: "printf 'v2 longer\\n' > out/report.md" },
           3,
         );
-        await callTool(conv, "Deliver", { path: "/workspace/out/report.md" }, 4);
+        await callTool(conv, "Deliver", { file_path: "/workspace/out/report.md" }, 4);
         await sse.until(
           (m) => m.some((x) => x.event === "changed" && x.data === '{"what":"files"}'),
           10_000,

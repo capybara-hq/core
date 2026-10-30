@@ -66,7 +66,7 @@ const RULES: ScriptRule[] = [
       toolCalls: [
         {
           name: "Write",
-          input: { path: "/workspace/from-child.txt", content: "hi from child" },
+          input: { file_path: "/workspace/from-child.txt", content: "hi from child" },
         },
       ],
     },
@@ -92,7 +92,7 @@ const RULES: ScriptRule[] = [
   },
   {
     when: { lastToolResultIncludes: "wrote it" },
-    reply: { toolCalls: [{ name: "Read", input: { path: "/workspace/from-child.txt" } }] },
+    reply: { toolCalls: [{ name: "Read", input: { file_path: "/workspace/from-child.txt" } }] },
   },
   { when: { lastToolResultIncludes: "hi from child" }, reply: { text: "parent saw the file" } },
   {

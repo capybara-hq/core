@@ -534,11 +534,11 @@ describe("path leases in the sandbox tools", () => {
       },
     };
     const s = service(() => slow);
-    await tool(s, "Write").run({ path: "/workspace/f.txt", content: "a\nb\n" }, callCtx());
+    await tool(s, "Write").run({ file_path: "/workspace/f.txt", content: "a\nb\n" }, callCtx());
     const edit = tool(s, "Edit");
     await Promise.all([
-      edit.run({ path: "/workspace/f.txt", oldText: "a\n", newText: "A\n" }, callCtx()),
-      edit.run({ path: "/workspace/f.txt", oldText: "b\n", newText: "B\n" }, callCtx()),
+      edit.run({ file_path: "/workspace/f.txt", old_string: "a\n", new_string: "A\n" }, callCtx()),
+      edit.run({ file_path: "/workspace/f.txt", old_string: "b\n", new_string: "B\n" }, callCtx()),
     ]);
     const got = await s.withSandbox(
       ctx(),
@@ -590,7 +590,7 @@ describe("path leases in the sandbox tools", () => {
       return { signal: ctl.signal, release: async () => {} };
     };
     await expect(
-      tool(s, "Write").run({ path: "/workspace/lost.txt", content: "x" }, callCtx()),
+      tool(s, "Write").run({ file_path: "/workspace/lost.txt", content: "x" }, callCtx()),
     ).rejects.toThrow(/lock was lost/);
     const st = await s.withSandbox(
       ctx(),
@@ -608,7 +608,7 @@ describe("path leases in the sandbox tools", () => {
       conversationId: randomUUID(),
       sandboxConversationId: conversationId,
     };
-    await tool(s, "Write").run({ path: "/workspace/g.txt", content: "x" }, child);
+    await tool(s, "Write").run({ file_path: "/workspace/g.txt", content: "x" }, child);
     // the child's call used the parent's sandbox: one instance, the file is there
     const out = await run(s, "cat /workspace/g.txt");
     expect(out.r.stdout).toBe("x");

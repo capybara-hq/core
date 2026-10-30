@@ -725,7 +725,7 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
       },
       {
         when: { systemIncludes: CHILD, assistantTurns: 0 },
-        reply: { toolCalls: [{ name: "Skill", input: { name: "review" } }] },
+        reply: { toolCalls: [{ name: "Skill", input: { skill: "review" } }] },
       },
       { when: { systemIncludes: CHILD }, reply: { text: "child refused" } },
     ];

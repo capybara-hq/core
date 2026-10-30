@@ -17,7 +17,7 @@ import {
 const SPEC: ToolSpec = {
   name: "Write",
   // Display only (the tool row; not in the fingerprint, never sent to the model).
-  keyArgs: ["path"],
+  keyArgs: ["file_path"],
   description:
     "Write a text file in this conversation's sandbox, creating parent directories as needed. " +
     "Each call replaces the whole file (it is created if missing). Use it to create scripts, " +
@@ -27,20 +27,20 @@ const SPEC: ToolSpec = {
   inputSchema: {
     type: "object",
     properties: {
-      path: {
+      file_path: {
         type: "string",
         minLength: 1,
         description: 'Absolute path of the file, e.g. "/workspace/report.md".',
       },
       content: { type: "string", description: "The complete new content of the file." },
     },
-    required: ["path", "content"],
+    required: ["file_path", "content"],
     additionalProperties: false,
   },
 };
 
 interface WriteInput {
-  path: string;
+  file_path: string;
   content: string;
 }
 
@@ -62,7 +62,7 @@ export function sandboxWriteTool(deps: SandboxToolDeps): BuiltinTool {
     unavailable: unavailableWhenNoSandbox(deps),
     timeoutMs: () => sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx) {
-      const path = checkWritable((input as WriteInput).path);
+      const path = checkWritable((input as WriteInput).file_path);
       const data = new TextEncoder().encode((input as WriteInput).content);
       const { value, notices } = await inSandbox(deps, ctx, ({ h, p, signal }) =>
         // stat, read the previous content, write: one holder at a time per file

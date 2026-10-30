@@ -282,9 +282,9 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
     capture.reset();
     const conv = await createConv(admin, orgId, state.agentId as string);
     state.convId = conv;
-    await postMessage(admin, orgId, conv, 'tool:Skill:{"name":"superpowers:brainstorming"}');
+    await postMessage(admin, orgId, conv, 'tool:Skill:{"skill":"superpowers:brainstorming"}');
     await waitForTerminal(db, conv, 1, 30_000);
-    await postMessage(admin, orgId, conv, 'tool:Skill:{"name":"brainstorming"}');
+    await postMessage(admin, orgId, conv, 'tool:Skill:{"skill":"brainstorming"}');
     await waitForTerminal(db, conv, 2, 30_000);
 
     const first = sent[0];
@@ -381,7 +381,7 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
     expect(r?.drift).toEqual([]);
     const candidate = r?.candidate as RunReplayResult;
     expect(candidate.unmatched).toBe(0);
-    expect(candidate.toolCalls).toEqual([{ name: "Skill", input: { name: "brainstorming" } }]);
+    expect(candidate.toolCalls).toEqual([{ name: "Skill", input: { skill: "brainstorming" } }]);
     // the replayed run sends exactly the requests of the original last run (its two steps)
     expect(sent).toEqual(original.slice(2));
   });

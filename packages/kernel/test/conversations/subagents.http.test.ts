@@ -63,7 +63,7 @@ const RULES: ScriptRule[] = [
   {
     when: { systemIncludes: CHILD, lastUserIncludes: "task-write", assistantTurns: 0 },
     reply: {
-      toolCalls: [{ name: "Write", input: { path: "/workspace/w.txt", content: "w" } }],
+      toolCalls: [{ name: "Write", input: { file_path: "/workspace/w.txt", content: "w" } }],
     },
   },
   { when: { systemIncludes: CHILD }, reply: { text: "child ok" } },

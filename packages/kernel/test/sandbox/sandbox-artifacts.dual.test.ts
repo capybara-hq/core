@@ -285,7 +285,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
 
     // ---- 3. 交付产物 → artifact_created → 下载 ----
     await send(1, convId, "Deliver", {
-      path: "/workspace/out/summary.txt",
+      file_path: "/workspace/out/summary.txt",
       name: "summary.txt",
     });
     const r3 = await finished(convId, 3);
@@ -410,7 +410,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     );
     expect((await instanceOf(convId)).state).toBe("suspended");
 
-    await send(survivor, convId, "Read", { path: "/workspace/out/summary.txt" });
+    await send(survivor, convId, "Read", { file_path: "/workspace/out/summary.txt" });
     const r5 = await finished(convId, 7);
     expect(r5.result.isError, r5.result.content).toBe(false);
     expect(r5.result.content).not.toContain(SANDBOX_STARTED_NOTICE);

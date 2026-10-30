@@ -715,7 +715,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     );
     expect(r2.isError, String(r2.content)).toBe(false);
     expect(String(r2.content)).toContain("List updated (1 items)");
-    const r3 = await call("boss", 0, conv, "Skill", { name: "crm-notes" }, 3);
+    const r3 = await call("boss", 0, conv, "Skill", { skill: "crm-notes" }, 3);
     expect(r3.isError, String(r3.content)).toBe(false);
     expect(String(r3.content)).toContain("# crm-notes");
   });
@@ -1088,7 +1088,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     });
     const kitAgent = (ag.agent as { id: string }).id;
     const before = await newConv("boss", 1, kitAgent);
-    const r1 = await call("boss", 1, before, "Skill", { name: "kit-notes" }, 1);
+    const r1 = await call("boss", 1, before, "Skill", { skill: "kit-notes" }, 1);
     expect(String(r1.content)).toContain("Steps 1.0.0.");
 
     // A: preview and upgrade
@@ -1140,7 +1140,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       definition: { skills: { orgSkills: [skill?.id] } },
     });
     const conv = await newConv("boss", 1, kitAgent);
-    const r2 = await call("boss", 1, conv, "Skill", { name: "kit-notes" }, 1);
+    const r2 = await call("boss", 1, conv, "Skill", { skill: "kit-notes" }, 1);
     expect(r2.isError, String(r2.content)).toBe(false);
     expect(String(r2.content)).toContain("Steps 2.0.0.");
     expect([h.replicas[0].pid, h.replicas[1].pid]).toEqual(bootPids);

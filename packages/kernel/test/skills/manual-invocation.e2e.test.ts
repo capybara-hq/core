@@ -71,11 +71,11 @@ const RULES: ScriptRule[] = [
   { when: { lastUserIncludes: "Report from the sub-agent" }, reply: { text: "parent answered" } },
   {
     when: { lastUserIncludes: "LOAD fix-issue" },
-    reply: { toolCalls: [{ name: "Skill", input: { name: "fix-issue" } }] },
+    reply: { toolCalls: [{ name: "Skill", input: { skill: "fix-issue" } }] },
   },
   {
     when: { lastUserIncludes: '<skill_invocation name="manual-script"' },
-    reply: { toolCalls: [{ name: "Skill", input: { name: "manual-script" } }] },
+    reply: { toolCalls: [{ name: "Skill", input: { skill: "manual-script" } }] },
   },
   { when: {}, reply: { text: "done" } },
 ];

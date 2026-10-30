@@ -22,17 +22,17 @@ import {
 const SPEC: ToolSpec = {
   name: "Deliver",
   // Display only (the tool row; not in the fingerprint, never sent to the model).
-  keyArgs: ["path"],
+  keyArgs: ["file_path"],
   description:
     "Deliver a file from this conversation's sandbox to the user as a downloadable artifact. Use " +
     "it when the user should receive a file you produced (a report, chart, spreadsheet, archive " +
     "and so on); files that stay in the sandbox are not visible to the user. Delivers one file " +
-    "per call; archive a directory first (e.g. zip -r with Bash). The file size is " +
+    "per call; archive a directory first (e.g. tar -czf with Bash). The file size is " +
     "limited (100 MB by default). Do not use it for intermediate files the user does not need.",
   inputSchema: {
     type: "object",
     properties: {
-      path: {
+      file_path: {
         type: "string",
         minLength: 1,
         description: 'Absolute path of the file in the sandbox, e.g. "/workspace/out/report.pdf".',
@@ -42,16 +42,16 @@ const SPEC: ToolSpec = {
         minLength: 1,
         maxLength: MEDIA_NAME_MAX_CHARS,
         description:
-          'File name shown to the user, e.g. "Q3 report.pdf". Default: the file name in path.',
+          'File name shown to the user, e.g. "Q3 report.pdf". Default: the file name in file_path.',
       },
     },
-    required: ["path"],
+    required: ["file_path"],
     additionalProperties: false,
   },
 };
 
 interface DeliverInput {
-  path: string;
+  file_path: string;
   name?: string;
 }
 
@@ -99,7 +99,7 @@ export function contentTypeFor(name: string): string {
 
 const notFound = (path: string) => `File not found: ${clip(path, 200)}. Check the path with Glob.`;
 const isDirectory = (path: string) =>
-  `${clip(path, 200)} is a directory; deliver one file, e.g. archive the directory first with Bash (zip -r) and retry.`;
+  `${clip(path, 200)} is a directory; deliver one file, e.g. archive the directory first with Bash (tar -czf) and retry.`;
 const tooLarge = (path: string, size: number, max: number) =>
   `File ${clip(path, 200)} is ${size} bytes, over the delivery limit of ${max} bytes; compress or split it with Bash and retry.`;
 const BAD_NAME =
@@ -133,7 +133,7 @@ export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
     async run(input, ctx) {
       // 存储在调用前就核对：不为一个交付不了的文件去 stat / 读沙箱
       if (!deps.storage.available) throw new ToolError(NO_STORAGE);
-      const path = checkPath((input as DeliverInput).path);
+      const path = checkPath((input as DeliverInput).file_path);
       const given = (input as DeliverInput).name?.trim();
       // 与 artifact_created 的 schema 同一规则，在上传前检查（不合法的名字不会在写事件时才失败）
       if (given !== undefined && (!isValidArtifactName(given) || /[/\\]/.test(given))) {

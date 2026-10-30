@@ -67,7 +67,7 @@ const RULES: ScriptRule[] = [
   {
     when: { systemIncludes: CHILD, lastUserIncludes: "task-write", assistantTurns: 0 },
     reply: {
-      toolCalls: [{ name: "Write", input: { path: "/workspace/c.txt", content: "c" } }],
+      toolCalls: [{ name: "Write", input: { file_path: "/workspace/c.txt", content: "c" } }],
     },
   },
   // a child that keeps running until it is stopped (the barrier is never reached)

@@ -104,7 +104,7 @@ describe("ToolSearch 评分与目录", () => {
     expect(t.spec).toBe(TOOL_SEARCH_SPEC);
     expect(t.defaultPolicy).toBe("allow");
     const r = (await t.run(
-      { query: "search documents", limit: 2 },
+      { query: "search documents", max_results: 2 },
       {
         orgId: "o",
         accountId: "a",

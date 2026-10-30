@@ -170,7 +170,7 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     const r = await call(
       conv,
       "Bash",
-      { description: "Test step", command: "sleep 30", timeoutSeconds: 1 },
+      { description: "Test step", command: "sleep 30", timeout: 1500 },
       1,
     );
     expect(Date.now() - t0).toBeLessThan(20_000);
@@ -186,16 +186,38 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     expect(ok.content).toContain("still-alive");
   });
 
-  it("bash: timeoutSeconds above sandbox.limits.maxCommandSeconds is rejected", async () => {
+  it("bash: timeout is milliseconds; one above the deployment maximum is lowered and says so", async () => {
     const conv = await sandboxConversation();
+    const t0 = Date.now();
+    const slow = await call(
+      conv,
+      "Bash",
+      { description: "Test step", command: "sleep 30", timeout: 1500 },
+      1,
+    );
+    const took = Date.now() - t0;
+    expect(slow.isError).toBe(true);
+    expect(slow.content).toContain("timedOut");
+    expect(slow.content).toContain("1.5s");
+    expect(took).toBeLessThan(20_000);
     const r = await call(
       conv,
       "Bash",
-      { description: "Test step", command: "true", timeoutSeconds: 7201 },
-      1,
+      { description: "Test step", command: "echo done", timeout: 7_201_000 },
+      2,
     );
-    expect(r.isError).toBe(true);
-    expect(r.content).toContain("7200");
+    expect(r.isError).toBe(false);
+    expect(r.content).toContain("done");
+    expect(r.content).toContain("timeout 7201000 ms is over the deployment maximum");
+    expect(r.content).toContain("lowered to 7200000 ms");
+    const old = await call(
+      conv,
+      "Bash",
+      { description: "Test step", command: "true", timeoutSeconds: 5 },
+      3,
+    );
+    expect(old.isError).toBe(true);
+    expect(old.content).toContain("timeoutSeconds");
   });
 
   it("bash: output over 30000 characters is archived", async () => {
@@ -236,7 +258,7 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     const t = await call(
       conv,
       "Bash",
-      { command: "sleep 30", description: "Wait", timeoutSeconds: 1 },
+      { command: "sleep 30", description: "Wait", timeout: 1500 },
       2,
     );
     expect(t.isError).toBe(true);
@@ -248,7 +270,7 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     const w1 = await call(
       conv,
       "Write",
-      { path: "/workspace/v.txt", content: "one\ntwo\nthree\n" },
+      { file_path: "/workspace/v.txt", content: "one\ntwo\nthree\n" },
       1,
     );
     expect(w1.view).toMatchObject({
@@ -262,7 +284,7 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     const w2 = await call(
       conv,
       "Write",
-      { path: "/workspace/v.txt", content: "one\nTWO\nthree\n" },
+      { file_path: "/workspace/v.txt", content: "one\nTWO\nthree\n" },
       2,
     );
     expect(w2.view).toMatchObject({ kind: "edit", created: false, added: 1, removed: 1 });
@@ -275,7 +297,7 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     const e = await call(
       conv,
       "Edit",
-      { path: "/workspace/v.txt", oldText: "three", newText: "3\n4" },
+      { file_path: "/workspace/v.txt", old_string: "three", new_string: "3\n4" },
       3,
     );
     expect(e.view).toMatchObject({
@@ -285,9 +307,9 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
       added: 2,
       removed: 1,
     });
-    const rd = await call(conv, "Read", { path: "/workspace/v.txt", offset: 2 }, 4);
+    const rd = await call(conv, "Read", { file_path: "/workspace/v.txt", offset: 2 }, 4);
     expect(rd.view).toEqual({ kind: "read", path: "/workspace/v.txt", fromLine: 2, toLine: 4 });
-    const failed = await call(conv, "Read", { path: "/workspace/none.txt" }, 5);
+    const failed = await call(conv, "Read", { file_path: "/workspace/none.txt" }, 5);
     expect(failed.isError).toBe(true);
     expect(failed.view).toBeUndefined();
   });
@@ -300,7 +322,7 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     const b1 = await call(conv, "Bash", { description: "Make file", command: make }, 1);
     expect(b1.content).toContain("[exit code: 0]");
     // write over it: the old content has a NUL, so no diff view, but the write completes
-    const w = await call(conv, "Write", { path: "/workspace/nul.txt", content: "new\n" }, 2);
+    const w = await call(conv, "Write", { file_path: "/workspace/nul.txt", content: "new\n" }, 2);
     expect(w.isError).toBe(false);
     expect(w.content).toContain("Overwrote /workspace/nul.txt");
     expect(w.view).toBeUndefined();
@@ -309,7 +331,7 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     const e = await call(
       conv,
       "Edit",
-      { path: "/workspace/nul.txt", oldText: "z\n", newText: "Z\n" },
+      { file_path: "/workspace/nul.txt", old_string: "z\n", new_string: "Z\n" },
       4,
     );
     expect(e.isError).toBe(false);
@@ -317,9 +339,120 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
       "x\uFFFDy",
     );
     // read (a bug from before B): the NUL reaches the model as U+FFFD instead of failing the run
-    const r = await call(conv, "Read", { path: "/workspace/nul.txt", offset: 2 }, 5);
+    const r = await call(conv, "Read", { file_path: "/workspace/nul.txt", offset: 2 }, 5);
     expect(r.isError).toBe(false);
     expect(r.content).toContain("x\uFFFDy");
+  });
+
+  it("edit: old_string / new_string / replace_all; the old field names are a validation error", async () => {
+    const conv = await sandboxConversation();
+    await call(conv, "Write", { file_path: "/workspace/e.txt", content: "a-a-a\n" }, 1);
+    const one = await call(
+      conv,
+      "Edit",
+      { file_path: "/workspace/e.txt", old_string: "-a-a", new_string: "" },
+      2,
+    );
+    expect(one.isError).toBe(false);
+    const rd = await call(conv, "Read", { file_path: "/workspace/e.txt" }, 3);
+    expect(rd.content).toContain("1\ta");
+    await call(conv, "Write", { file_path: "/workspace/e.txt", content: "a-a-a\n" }, 4);
+    const amb = await call(
+      conv,
+      "Edit",
+      { file_path: "/workspace/e.txt", old_string: "a", new_string: "b" },
+      5,
+    );
+    expect(amb.isError).toBe(true);
+    expect(amb.content).toContain("replace_all");
+    const all = await call(
+      conv,
+      "Edit",
+      { file_path: "/workspace/e.txt", old_string: "a", new_string: "b", replace_all: true },
+      6,
+    );
+    expect(all.isError).toBe(false);
+    expect((await call(conv, "Read", { file_path: "/workspace/e.txt" }, 7)).content).toContain(
+      "b-b-b",
+    );
+    const bad = await call(
+      conv,
+      "Edit",
+      { path: "/workspace/e.txt", oldText: "b", newText: "c" },
+      8,
+    );
+    expect(bad.isError).toBe(true);
+    expect(bad.content).toContain("file_path");
+  });
+
+  it("grep: output modes, context, head_limit and offset", async () => {
+    const conv = await sandboxConversation();
+    await call(
+      conv,
+      "Write",
+      { file_path: "/workspace/g/a.txt", content: "one\nneedle 1\nthree\nneedle 2\n" },
+      1,
+    );
+    await call(conv, "Write", { file_path: "/workspace/g/b.txt", content: "x\nNEEDLE 3\ny\n" }, 2);
+    await call(conv, "Write", { file_path: "/workspace/g/c.txt", content: "nothing\n" }, 3);
+
+    const files = await call(conv, "Grep", { pattern: "needle", path: "/workspace/g" }, 4);
+    expect(files.content.split("\n").sort()).toEqual(["/workspace/g/a.txt"]);
+    const filesI = await call(
+      conv,
+      "Grep",
+      { pattern: "needle", path: "/workspace/g", "-i": true },
+      5,
+    );
+    expect(filesI.content.split("\n").sort()).toEqual(["/workspace/g/a.txt", "/workspace/g/b.txt"]);
+
+    const count = await call(
+      conv,
+      "Grep",
+      { pattern: "needle", path: "/workspace/g", "-i": true, output_mode: "count" },
+      6,
+    );
+    expect(count.content.split("\n").sort()).toEqual([
+      "/workspace/g/a.txt:2",
+      "/workspace/g/b.txt:1",
+    ]);
+
+    const ctx = await call(
+      conv,
+      "Grep",
+      { pattern: "needle 1", path: "/workspace/g", output_mode: "content", "-C": 1 },
+      7,
+    );
+    expect(ctx.content).toBe(
+      [
+        "/workspace/g/a.txt-1-one",
+        "/workspace/g/a.txt:2:needle 1",
+        "/workspace/g/a.txt-3-three",
+      ].join("\n"),
+    );
+    const noNum = await call(
+      conv,
+      "Grep",
+      { pattern: "needle 1", path: "/workspace/g", output_mode: "content", "-n": false },
+      8,
+    );
+    expect(noNum.content).toBe("/workspace/g/a.txt:needle 1");
+
+    const content = { pattern: "needle", path: "/workspace/g", "-i": true, output_mode: "content" };
+    const first = await call(conv, "Grep", { ...content, head_limit: 1 }, 9);
+    expect(first.content.split("\n")[0]).toMatch(/^\/workspace\/g\/[ab]\.txt:\d+:/);
+    expect(first.content).toContain("Showing entries 1\u20131 of 3");
+    expect(first.content).toContain("offset=1");
+    const next = await call(conv, "Grep", { ...content, head_limit: 1, offset: 1 }, 10);
+    expect(next.content).toContain("Showing entries 2\u20132 of 3");
+    const past = await call(conv, "Grep", { ...content, offset: 5 }, 11);
+    expect(past.content).toBe("No more results (3 total).");
+    const everything = await call(conv, "Grep", { ...content, head_limit: 0 }, 12);
+    expect(everything.content.split("\n")).toHaveLength(3);
+    const none = await call(conv, "Grep", { pattern: "zzzz", offset: 4 }, 13);
+    expect(none.content).toContain("No matches for zzzz");
+    const old = await call(conv, "Grep", { pattern: "needle", ignoreCase: true }, 14);
+    expect(old.isError).toBe(true);
   });
 
   it("write / read / edit / glob / grep round trip", async () => {
@@ -327,30 +460,35 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     const w = await call(
       conv,
       "Write",
-      { path: "/workspace/src/a.txt", content: "alpha\nbeta\ngamma\n" },
+      { file_path: "/workspace/src/a.txt", content: "alpha\nbeta\ngamma\n" },
       1,
     );
     expect(w.isError).toBe(false);
-    await call(conv, "Write", { path: "/workspace/src/b.md", content: "beta two\n" }, 2);
+    await call(conv, "Write", { file_path: "/workspace/src/b.md", content: "beta two\n" }, 2);
 
-    const rd1 = await call(conv, "Read", { path: "/workspace/src/a.txt" }, 3);
+    const rd1 = await call(conv, "Read", { file_path: "/workspace/src/a.txt" }, 3);
     expect(rd1.content).toContain("1\talpha");
     expect(rd1.content).toContain("3\tgamma");
-    const rd2 = await call(conv, "Read", { path: "/workspace/src/a.txt", offset: 2, limit: 1 }, 4);
+    const rd2 = await call(
+      conv,
+      "Read",
+      { file_path: "/workspace/src/a.txt", offset: 2, limit: 1 },
+      4,
+    );
     expect(rd2.content).toContain("2\tbeta");
     expect(rd2.content).not.toContain("alpha");
 
     const e = await call(
       conv,
       "Edit",
-      { path: "/workspace/src/a.txt", oldText: "beta", newText: "BETA" },
+      { file_path: "/workspace/src/a.txt", old_string: "beta", new_string: "BETA" },
       5,
     );
     expect(e.isError).toBe(false);
     const missing = await call(
       conv,
       "Edit",
-      { path: "/workspace/src/a.txt", oldText: "nope", newText: "x" },
+      { file_path: "/workspace/src/a.txt", old_string: "nope", new_string: "x" },
       6,
     );
     expect(missing.isError).toBe(true);
@@ -359,33 +497,38 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     expect(g.content).toContain("/workspace/src/a.txt");
     expect(g.content).not.toContain("b.md");
 
-    const gr = await call(conv, "Grep", { pattern: "beta", ignoreCase: true }, 8);
+    const gr = await call(conv, "Grep", { pattern: "beta", "-i": true, output_mode: "content" }, 8);
     expect(gr.content).toContain("/workspace/src/a.txt:2:BETA");
     expect(gr.content).toContain("/workspace/src/b.md:1:beta two");
-    const grGlob = await call(conv, "Grep", { pattern: "beta", glob: "*.md" }, 9);
+    const grGlob = await call(
+      conv,
+      "Grep",
+      { pattern: "beta", glob: "*.md", output_mode: "content" },
+      9,
+    );
     expect(grGlob.content).toContain("b.md");
     expect(grGlob.content).not.toContain("a.txt");
 
-    // 多处匹配：不加 replaceAll 报歧义；加了全部替换
-    await call(conv, "Write", { path: "/workspace/r.txt", content: "x-x-x\n" }, 10);
+    // 多处匹配：不加 replace_all 报歧义；加了全部替换
+    await call(conv, "Write", { file_path: "/workspace/r.txt", content: "x-x-x\n" }, 10);
     const amb = await call(
       conv,
       "Edit",
-      { path: "/workspace/r.txt", oldText: "x", newText: "y" },
+      { file_path: "/workspace/r.txt", old_string: "x", new_string: "y" },
       11,
     );
     expect(amb.isError).toBe(true);
     expect(amb.content).toContain("occurs 3 times");
-    expect(amb.content).toContain("replaceAll");
+    expect(amb.content).toContain("replace_all");
     const all = await call(
       conv,
       "Edit",
-      { path: "/workspace/r.txt", oldText: "x", newText: "$&y", replaceAll: true },
+      { file_path: "/workspace/r.txt", old_string: "x", new_string: "$&y", replace_all: true },
       12,
     );
     expect(all.isError, all.content).toBe(false);
     expect(all.content).toContain("replaced 3 occurrences");
-    const after = await call(conv, "Read", { path: "/workspace/r.txt" }, 13);
+    const after = await call(conv, "Read", { file_path: "/workspace/r.txt" }, 13);
     expect(after.content).toContain("$&y-$&y-$&y");
   });
 
@@ -406,34 +549,34 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
           .executeTakeFirstOrThrow()
       ).handle;
     const before = await handle();
-    const r = await call(conv, "Read", { path: "/workspace/missing.txt" }, 2);
+    const r = await call(conv, "Read", { file_path: "/workspace/missing.txt" }, 2);
     expect(r.isError).toBe(true);
     expect(r.content).toContain("File not found");
     expect(await handle()).toEqual(before);
-    const ok = await call(conv, "Read", { path: "/workspace/keep.txt" }, 3);
+    const ok = await call(conv, "Read", { file_path: "/workspace/keep.txt" }, 3);
     expect(ok.content).not.toContain("recreated");
     expect(ok.content).toContain("keep");
   });
 
   it("paths outside the sandbox roots are rejected", async () => {
     const conv = await sandboxConversation();
-    const a = await call(conv, "Read", { path: "/etc/passwd" }, 1);
+    const a = await call(conv, "Read", { file_path: "/etc/passwd" }, 1);
     expect(a.isError).toBe(true);
     expect(a.content).toContain("/workspace");
-    const b = await call(conv, "Write", { path: "/workspace/../etc/x", content: "x" }, 2);
+    const b = await call(conv, "Write", { file_path: "/workspace/../etc/x", content: "x" }, 2);
     expect(b.isError).toBe(true);
     expect(b.content).toContain("..");
-    const c = await call(conv, "Deliver", { path: "relative.txt" }, 3);
+    const c = await call(conv, "Deliver", { file_path: "relative.txt" }, 3);
     expect(c.isError).toBe(true);
   });
 
   it("deliver writes the object and artifact_created; download follows conversation access", async () => {
     const conv = await sandboxConversation();
-    await call(conv, "Write", { path: "/workspace/out/report.csv", content: "a,b\n1,2\n" }, 1);
+    await call(conv, "Write", { file_path: "/workspace/out/report.csv", content: "a,b\n1,2\n" }, 1);
     const r = await call(
       conv,
       "Deliver",
-      { path: "/workspace/out/report.csv", name: "Q3 report.csv" },
+      { file_path: "/workspace/out/report.csv", name: "Q3 report.csv" },
       2,
     );
     expect(r.isError).toBe(false);
@@ -496,16 +639,16 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
       },
       1,
     );
-    await call(conv, "Write", { path: "/workspace/notes.txt", content: "l1\nl2\n" }, 2);
+    await call(conv, "Write", { file_path: "/workspace/notes.txt", content: "l1\nl2\n" }, 2);
     await call(
       conv,
       "Write",
-      { path: "/workspace/page.svg", content: "<svg xmlns='http://www.w3.org/2000/svg'/>" },
+      { file_path: "/workspace/page.svg", content: "<svg xmlns='http://www.w3.org/2000/svg'/>" },
       3,
     );
-    await call(conv, "Deliver", { path: "/workspace/dot.png" }, 4);
-    await call(conv, "Deliver", { path: "/workspace/notes.txt" }, 5);
-    await call(conv, "Deliver", { path: "/workspace/page.svg" }, 6);
+    await call(conv, "Deliver", { file_path: "/workspace/dot.png" }, 4);
+    await call(conv, "Deliver", { file_path: "/workspace/notes.txt" }, 5);
+    await call(conv, "Deliver", { file_path: "/workspace/page.svg" }, 6);
     const arts = (await eventsOf(db, conv))
       .filter(
         (e): e is Extract<ConversationEvent, { type: "artifact_created" }> =>
@@ -557,7 +700,7 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
       { description: "Test step", command: "seq 1 120 | sed 's/^/line /' > /workspace/long.log" },
       1,
     );
-    await call(conv, "Deliver", { path: "/workspace/long.log" }, 2);
+    await call(conv, "Deliver", { file_path: "/workspace/long.log" }, 2);
     const a = (await eventsOf(db, conv)).find((e) => e.type === "artifact_created") as Extract<
       ConversationEvent,
       { type: "artifact_created" }
@@ -658,7 +801,7 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
       { description: "Test step", command: "head -c 2048 /dev/zero > /workspace/big.bin" },
       1,
     );
-    const r = await call(conv, "Deliver", { path: "/workspace/big.bin" }, 2);
+    const r = await call(conv, "Deliver", { file_path: "/workspace/big.bin" }, 2);
     expect(r.isError).toBe(true);
     expect(r.content).toContain("1024");
     expect((await eventsOf(db, conv)).some((e) => e.type === "artifact_created")).toBe(false);
@@ -676,13 +819,13 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
       owner,
       orgId,
       conv,
-      `tool:Write:${JSON.stringify({ path: "/workspace/x.txt", content: "x" })}`,
+      `tool:Write:${JSON.stringify({ file_path: "/workspace/x.txt", content: "x" })}`,
     );
     const asked = await waitForEvent(db, conv, (e) => e.type === "approval_requested");
     expect(asked.type === "approval_requested" && asked.payload.toolKey).toBe("Write");
 
     const conv2 = await sandboxConversation();
-    const r = await call(conv2, "Read", { path: "/workspace/none.txt" }, 1);
+    const r = await call(conv2, "Read", { file_path: "/workspace/none.txt" }, 1);
     expect(r.toolKey).toBe("Read");
     expect((await eventsOf(db, conv2)).some((e) => e.type === "approval_requested")).toBe(false);
   });
@@ -742,7 +885,7 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     const g = await call(conv, "Glob", { pattern: "**" }, 4);
     expect(g.content).toContain("/workspace/attachments/fruit.csv");
     expect(g.content).not.toContain(".capybara-sync.json");
-    const gr = await call(conv, "Grep", { pattern: "fruit|apple" }, 5);
+    const gr = await call(conv, "Grep", { pattern: "fruit|apple", output_mode: "content" }, 5);
     expect(gr.content).toContain("/workspace/attachments/fruit.csv:2:apple,3");
     expect(gr.content).not.toContain(".capybara-sync.json");
 

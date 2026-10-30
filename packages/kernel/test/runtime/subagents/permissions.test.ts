@@ -57,7 +57,7 @@ const RULES: ScriptRule[] = [
     when: { systemIncludes: CHILD, lastUserIncludes: "asker-policy", assistantTurns: 0 },
     reply: {
       toolCalls: [
-        { name: "Read", input: { path: "/workspace/x.txt" } },
+        { name: "Read", input: { file_path: "/workspace/x.txt" } },
         { name: ECHO, input: { text: "one" } },
       ],
     },

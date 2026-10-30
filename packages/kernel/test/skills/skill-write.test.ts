@@ -367,7 +367,7 @@ describe("SkillWrite on a private agent", { timeout: 120_000 }, () => {
       },
     ]);
 
-    const loaded = await call(owner, conv, "Skill", { name: "notes" }, 2);
+    const loaded = await call(owner, conv, "Skill", { skill: "notes" }, 2);
     expect(loaded.isError, loaded.content).toBe(false);
     expect(loaded.content).toContain("Take notes v1.");
 
@@ -375,7 +375,7 @@ describe("SkillWrite on a private agent", { timeout: 120_000 }, () => {
     const r2 = await call(owner, conv, "SkillWrite", write("notes", "Take notes v2."), 3);
     expect(r2.isError, r2.content).toBe(false);
     expect(r2.content).toContain("version 2");
-    const l2 = await call(owner, conv, "Skill", { name: "notes" }, 4);
+    const l2 = await call(owner, conv, "Skill", { skill: "notes" }, 4);
     expect(l2.content).toContain("Take notes v2.");
     expect(l2.content).toContain("version 2");
 
@@ -657,10 +657,10 @@ describe("SkillWrite on a shared agent (R4)", { timeout: 180_000 }, () => {
     expect(requested[0]?.actor_account_id).toBe(memberId);
 
     // 发起对话可试用；别的对话看不到
-    const mine = await call(member, convM, "Skill", { name: "alpha" }, 2);
+    const mine = await call(member, convM, "Skill", { skill: "alpha" }, 2);
     expect(mine.isError, mine.content).toBe(false);
     expect(mine.content).toContain("Alpha v1.");
-    const theirs = await call(other, convX, "Skill", { name: "alpha" }, 1);
+    const theirs = await call(other, convX, "Skill", { skill: "alpha" }, 1);
     expect(theirs.isError).toBe(true);
     expect(theirs.content).not.toContain("Alpha v1.");
 
@@ -726,7 +726,7 @@ describe("SkillWrite on a shared agent (R4)", { timeout: 180_000 }, () => {
     expect(again.statusCode).toBe(409);
     expect(again.json().error.code).toBe("skill_change.already_decided");
 
-    const theirs2 = await call(other, convX, "Skill", { name: "alpha" }, 2);
+    const theirs2 = await call(other, convX, "Skill", { skill: "alpha" }, 2);
     expect(theirs2.isError, theirs2.content).toBe(false);
     expect(theirs2.content).toContain("Alpha v1.");
     const skill = await db
@@ -757,10 +757,10 @@ describe("SkillWrite on a shared agent (R4)", { timeout: 180_000 }, () => {
     expect(r.isError, r.content).toBe(false);
     const [second] = await pending();
     expect(second?.skill_id).not.toBeNull();
-    const mine = await call(member, convM, "Skill", { name: "beta" }, 3);
+    const mine = await call(member, convM, "Skill", { skill: "beta" }, 3);
     expect(mine.content).toContain("Beta v2.");
     expect(mine.content).toContain("version 2");
-    const theirs = await call(other, convX, "Skill", { name: "beta" }, 1);
+    const theirs = await call(other, convX, "Skill", { skill: "beta" }, 1);
     expect(theirs.content).toContain("Beta v1.");
     expect(theirs.content).not.toContain("Beta v2.");
 
@@ -796,7 +796,7 @@ describe("SkillWrite on a shared agent (R4)", { timeout: 180_000 }, () => {
       10_000,
       "draft deleted",
     );
-    const back = await call(member, convM, "Skill", { name: "beta" }, 4);
+    const back = await call(member, convM, "Skill", { skill: "beta" }, 4);
     expect(back.isError, back.content).toBe(false);
     expect(back.content).toContain("Beta v1.");
     expect((await catalogs(convM)).at(-1)?.payload.skills[0]?.version).toBe(1);
@@ -845,7 +845,7 @@ describe("SkillWrite on a shared agent (R4)", { timeout: 180_000 }, () => {
       10_000,
       "superseded draft deleted",
     );
-    const mine = await call(member, convM, "Skill", { name: "gamma" }, 3);
+    const mine = await call(member, convM, "Skill", { skill: "gamma" }, 3);
     expect(mine.content).toContain("Gamma draft 2.");
 
     // 旧申请已不能决定
@@ -868,7 +868,7 @@ describe("SkillWrite on a shared agent (R4)", { timeout: 180_000 }, () => {
       2,
     );
     const [d1] = await pending();
-    const l1 = await call(member, convM, "Skill", { name: "delta" }, 3);
+    const l1 = await call(member, convM, "Skill", { skill: "delta" }, 3);
     expect(l1.content, l1.content).toContain("version 2");
     const box = await db
       .selectFrom("sandboxes")
@@ -890,7 +890,7 @@ describe("SkillWrite on a shared agent (R4)", { timeout: 180_000 }, () => {
       write("delta", "Run run.sh.", [{ ...run, content: "echo d2" }]),
       4,
     );
-    const l2 = await call(member, convM, "Skill", { name: "delta" }, 5);
+    const l2 = await call(member, convM, "Skill", { skill: "delta" }, 5);
     expect(l2.content).toContain("version 2");
     expect(await file()).toBe("echo d2");
   });
@@ -924,7 +924,7 @@ describe("SkillWrite on a shared agent (R4)", { timeout: 180_000 }, () => {
     expect((await decide(owner, b2?.id as string, "approve")).statusCode).toBe(200);
 
     // A 的下一次运行：目录更新为 B 的 v2（来源不同），加载得到 B 的内容
-    const l = await call(member, convA, "Skill", { name: "xray" }, 3);
+    const l = await call(member, convA, "Skill", { skill: "xray" }, 3);
     expect(l.content).toContain("X v2 from B.");
     expect((await catalogs(convA)).at(-1)?.payload.skills[0]).toMatchObject({
       version: 2,
@@ -964,7 +964,7 @@ describe("SkillWrite on a shared agent (R4)", { timeout: 180_000 }, () => {
     });
     await expect(
       t.run(
-        { name: "xray" },
+        { skill: "xray" },
         {
           orgId,
           accountId: memberId,
@@ -1170,7 +1170,9 @@ describe("SkillWrite and manual-only skills (phase D)", { timeout: 180_000 }, ()
     const v1 = await call(owner, conv, "SkillWrite", write("notes", "Notes v1."), 2);
     expect(v1.isError, v1.content).toBe(false);
     expect(await names(conv)).toEqual(["notes", "other"]);
-    expect((await call(owner, conv, "Skill", { name: "notes" }, 3)).content).toContain("Notes v1.");
+    expect((await call(owner, conv, "Skill", { skill: "notes" }, 3)).content).toContain(
+      "Notes v1.",
+    );
 
     // A new manual-only version of a skill in the snapshot removes it.
     const v2 = await call(owner, conv, "SkillWrite", write("notes", manual("Notes v2.")), 4);
@@ -1180,7 +1182,7 @@ describe("SkillWrite and manual-only skills (phase D)", { timeout: 180_000 }, ()
     );
     expect(v2.content).not.toContain("call Skill to use it");
     expect(await names(conv)).toEqual(["other"]);
-    const gone = await call(owner, conv, "Skill", { name: "notes" }, 5);
+    const gone = await call(owner, conv, "Skill", { skill: "notes" }, 5);
     expect(gone.isError).toBe(true);
     expect(gone.content).toContain('Skill "notes" is not in the skills catalog');
 
@@ -1190,7 +1192,7 @@ describe("SkillWrite and manual-only skills (phase D)", { timeout: 180_000 }, ()
     expect(memo.isError, memo.content).toBe(false);
     expect((await catalogs(conv)).length).toBe(before);
     expect(await names(conv)).toEqual(["other"]);
-    const refused = await call(owner, conv, "Skill", { name: "memo" }, 7);
+    const refused = await call(owner, conv, "Skill", { skill: "memo" }, 7);
     expect(refused.isError).toBe(true);
     expect(refused.content).toContain('Skill "memo" is not in the skills catalog');
     // The next run start agrees with the mid-run snapshots.
@@ -1244,7 +1246,7 @@ describe("SkillWrite and manual-only skills (phase D)", { timeout: 180_000 }, ()
     expect((await decide(owner, b2?.id as string, "reject")).statusCode).toBe(200);
     // The revert removes the draft and does not re-add the manual-only version 1
     expect(await names(conv)).toEqual(["other"]);
-    const load = await call(member, conv, "Skill", { name: "beta" }, 4);
+    const load = await call(member, conv, "Skill", { skill: "beta" }, 4);
     expect(load.isError).toBe(true);
     expect(load.content).toContain('Skill "beta" is not in the skills catalog');
   });

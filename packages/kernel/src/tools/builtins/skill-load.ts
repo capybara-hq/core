@@ -62,7 +62,7 @@ const MAX_LISTED_NAMES = 50;
 const SPEC: ToolSpec = {
   name: "Skill",
   // Display only (the tool row; not in the fingerprint, never sent to the model).
-  keyArgs: ["name"],
+  keyArgs: ["skill"],
   description:
     "Load a skill from the skills list: returns the skill's instructions " +
     "(its SKILL.md) and the list of its files. Call it before starting a task that matches a " +
@@ -73,14 +73,14 @@ const SPEC: ToolSpec = {
   inputSchema: {
     type: "object",
     properties: {
-      name: {
+      skill: {
         type: "string",
         minLength: 1,
         maxLength: 64,
         description: 'The skill name exactly as listed, e.g. "pdf-report".',
       },
     },
-    required: ["name"],
+    required: ["skill"],
     additionalProperties: false,
   },
   annotations: { readOnlyHint: true },
@@ -463,7 +463,7 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
     // 可能要创建 / 恢复沙箱并复制文件：与沙箱工具同一时限
     timeoutMs: () => sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx: BuiltinCallContext) {
-      const asked = (input as { name: string }).name;
+      const asked = (input as { skill: string }).skill;
       const snap = await deps.eventLog.latestOfType(ctx.conversationId, "skills_catalog");
       const skills = snap?.payload.skills ?? [];
       let entry = findEntry(skills, asked);

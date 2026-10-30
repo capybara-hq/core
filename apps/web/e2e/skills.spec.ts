@@ -165,7 +165,7 @@ test("管理员上传技能包，agent 选用它；对话里 Skill 的时间线�
   const convId = ((await conv.json()) as { conversation: { id: string } }).conversation.id;
   await page.goto(`/zh/chat/${convId}`);
   const input = composer(page);
-  await input.fill(`tool:Skill:${JSON.stringify({ name: SKILL })}`);
+  await input.fill(`tool:Skill:${JSON.stringify({ skill: SKILL })}`);
   await input.press("Enter");
   const tool = toolGroup(page, "Skill");
   await expect(tool).toHaveAttribute("data-tool-status", "done");

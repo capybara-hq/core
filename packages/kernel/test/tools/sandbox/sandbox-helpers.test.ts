@@ -163,9 +163,9 @@ describe("Bash time limit", () => {
     expect(SANDBOX_SETUP_MARGIN_MS).toBeGreaterThanOrEqual(160_000);
     expect(sandboxBaseTimeoutMs(cfg)).toBe(margin);
     expect(bash?.spillChars).toBe(30_000);
-    expect(bash?.timeoutMs?.({ command: "x", timeoutSeconds: 600 })).toBe(600_000 + margin);
+    expect(bash?.timeoutMs?.({ command: "x", timeout: 600_000 })).toBe(600_000 + margin);
     expect(bash?.timeoutMs?.({ command: "x" })).toBe(120_000 + margin);
-    expect(bash?.timeoutMs?.({ command: "x", timeoutSeconds: 99_999 })).toBe(7_200_000 + margin);
+    expect(bash?.timeoutMs?.({ command: "x", timeout: 99_999_000 })).toBe(7_200_000 + margin);
   });
 });
 
@@ -340,7 +340,7 @@ describe("attachment sync", () => {
     }).find((t) => t.spec.name === "Read");
     mem.files.set("/workspace/f.txt", new TextEncoder().encode("hello\n"));
     const r = (await read?.run(
-      { path: "/workspace/f.txt" },
+      { file_path: "/workspace/f.txt" },
       {
         orgId: "o",
         accountId: "a",
@@ -461,7 +461,7 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
       failWrite: "/workspace/attachments/.capybara-sync.json",
     });
     r.files.set("/workspace/f.txt", new TextEncoder().encode("hi\n"));
-    const out = r.text(await r.tool("Read").run({ path: "/workspace/f.txt" }, callCtx()));
+    const out = r.text(await r.tool("Read").run({ file_path: "/workspace/f.txt" }, callCtx()));
     expect(out).toContain("Attachments copied into the sandbox: /workspace/attachments/ok.csv");
     expect(out).not.toContain("could not be copied");
     expect(r.files.has("/workspace/attachments/.capybara-sync.json")).toBe(false);
@@ -471,12 +471,18 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
     const r = rig();
     r.files.set("/workspace/out.txt", new TextEncoder().encode("x"));
     await expect(
-      r.tool("Deliver").run({ path: "/workspace/out.txt", name: "bad\u0001name" }, callCtx()),
+      r.tool("Deliver").run({ file_path: "/workspace/out.txt", name: "bad\u0001name" }, callCtx()),
     ).rejects.toThrow(/control characters/);
     await expect(
-      r.tool("Deliver").run({ path: "/workspace/out.txt", name: "x".repeat(300) }, callCtx()),
+      r.tool("Deliver").run({ file_path: "/workspace/out.txt", name: "x".repeat(300) }, callCtx()),
     ).rejects.toThrow(/plain file name/);
     expect(r.puts).toEqual([]);
+  });
+
+  it("deliver: the description suggests tar -czf, not zip (the sandbox image has no zip)", () => {
+    const d = rig().tool("Deliver").spec.description;
+    expect(d).toContain("tar -czf");
+    expect(d).not.toContain("zip");
   });
 
   it("deliver without an object store: unavailable with an English reason, fails before stat / read", async () => {
@@ -486,7 +492,7 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
     expect(deliver.unavailable?.()).toMatch(/^File storage is not configured in this deployment/);
     // 其他沙箱工具不受影响
     expect(r.tool("Read").unavailable?.()).toBeNull();
-    await expect(deliver.run({ path: "/workspace/out.txt" }, callCtx())).rejects.toThrow(
+    await expect(deliver.run({ file_path: "/workspace/out.txt" }, callCtx())).rejects.toThrow(
       /File storage is not configured/,
     );
     expect(r.reads()).toBe(0);
@@ -501,9 +507,9 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
       },
     });
     r.files.set("/workspace/out.txt", new TextEncoder().encode("x"));
-    await expect(r.tool("Deliver").run({ path: "/workspace/out.txt" }, callCtx())).rejects.toThrow(
-      "db down",
-    );
+    await expect(
+      r.tool("Deliver").run({ file_path: "/workspace/out.txt" }, callCtx()),
+    ).rejects.toThrow("db down");
     expect(r.puts).toHaveLength(1);
     expect(r.deletes).toEqual(r.puts);
   });
@@ -516,7 +522,9 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
         stderr: "grep: ./secret: Permission denied",
       },
     });
-    const out = r.text(await r.tool("Grep").run({ pattern: "hit" }, callCtx()));
+    const out = r.text(
+      await r.tool("Grep").run({ pattern: "hit", output_mode: "content" }, callCtx()),
+    );
     expect(out).toContain("/workspace/a.txt:1:hit");
     expect(out).toContain("[grep also reported errors: grep: ./secret: Permission denied]");
   });
@@ -529,7 +537,9 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
         stderr: "grep: ./secret: Permission denied",
       },
     });
-    const out = r.text(await r.tool("Grep").run({ pattern: "hit" }, callCtx()));
+    const out = r.text(
+      await r.tool("Grep").run({ pattern: "hit", output_mode: "content" }, callCtx()),
+    );
     expect(out).toContain("No matches for hit in /workspace.");
     expect(out).toContain("[grep also reported errors:");
     expect(out).not.toContain(".capybara-sync.json");

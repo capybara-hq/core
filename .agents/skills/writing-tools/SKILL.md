@@ -187,8 +187,8 @@ the same transaction as the business rows.
 - They exist only when the agent definition references them explicitly (`DEFAULT_AGENT_TOOLS` does not include them); when the deployment has no sandbox extension they are reported unavailable (`unavailable()`).
 - All go through `SandboxService.withSandbox` (one sandbox per conversation, created lazily, see `.agents/skills/writing-sandbox-providers`), passing the lock-linked
   signal to every provider call; paths go through `validateSandboxPath`, and `write` / `edit` reject `/skills`.
-- Timeout: `sandbox_bash` = `min(timeoutSeconds ?? 120, sandbox.limits.maxCommandSeconds)` seconds plus a margin (margin =
-  `tools.timeoutMs` + `sandbox.lockWaitSeconds`, covering lock waiting and creation / resume); a `timeoutSeconds` above the limit is rejected with an error.
+- Timeout: `Bash` = `min(timeout ?? 120000, sandbox.limits.maxCommandSeconds * 1000)` milliseconds plus a margin (margin =
+  `tools.timeoutMs` + `sandbox.lockWaitSeconds`, covering lock waiting and creation / resume); a `timeout` above the limit is lowered to it and the result says so.
   The other sandbox tools use only the margin (deliver twice). The provider's command time limit arrives first, the model gets `timedOut`, and the sandbox remains usable as usual.
 - Spilling: `sandbox_bash`'s `spillChars` is 30000, and large output is read as usual through `read_tool_output` / `{"$output": id}`.
 - Result prefix notices (English): on first use `Sandbox started for this conversation (first use)…`, on recreation

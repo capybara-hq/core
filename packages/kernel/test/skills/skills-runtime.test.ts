@@ -307,7 +307,7 @@ describe("skills at runtime", { timeout: 90_000 }, () => {
     });
     const conv = await createConv(owner, orgId, agentId);
 
-    const r = await call(conv, "Skill", { name: "alpha" }, 1);
+    const r = await call(conv, "Skill", { skill: "alpha" }, 1);
     expect(r.isError, r.content).toBe(false);
     expect(r.content).toContain("Do alpha step by step.");
     expect(r.content).toContain("version 1");
@@ -326,7 +326,7 @@ describe("skills at runtime", { timeout: 90_000 }, () => {
     ]);
 
     // 未选中的组织技能：不在目录里，加载报错
-    const b = await call(conv, "Skill", { name: "beta" }, 2);
+    const b = await call(conv, "Skill", { skill: "beta" }, 2);
     expect(b.isError).toBe(true);
     expect(b.content).toContain("not in the skills catalog");
     expect(b.content).not.toContain("Secret beta");
@@ -368,7 +368,7 @@ describe("skills at runtime", { timeout: 90_000 }, () => {
   it("an agent without skills gets no catalog event and no Skill tool", async () => {
     const agentId = await createSkillAgent([]);
     const conv = await createConv(owner, orgId, agentId);
-    const r = await call(conv, "Skill", { name: "alpha" }, 1);
+    const r = await call(conv, "Skill", { skill: "alpha" }, 1);
     expect(r.isError).toBe(true);
     expect(await catalogs(conv)).toHaveLength(0);
   });
@@ -385,7 +385,7 @@ describe("skills at runtime", { timeout: 90_000 }, () => {
     const agentId = await createSkillAgent([delta.id]);
     const conv = await createConv(owner, orgId, agentId);
 
-    const r = await call(conv, "Skill", { name: "delta" }, 1);
+    const r = await call(conv, "Skill", { skill: "delta" }, 1);
     expect(r.isError, r.content).toBe(false);
     expect(r.content).toContain("/skills/delta/");
     expect(r.content).toContain("scripts/run.sh");
@@ -404,7 +404,7 @@ describe("skills at runtime", { timeout: 90_000 }, () => {
     // 同一版本再加载：标记命中，不重新复制（被改过的文件保持原样）
     const p = join(root, "instances", await sandboxId(conv), "fs", "skills/delta/data/notes.txt");
     await writeFile(p, "touched");
-    const again = await call(conv, "Skill", { name: "delta" }, 3);
+    const again = await call(conv, "Skill", { skill: "delta" }, 3);
     expect(again.isError).toBe(false);
     expect(await sandboxFile(conv, "skills/delta/data/notes.txt")).toBe("touched");
 
@@ -417,7 +417,7 @@ describe("skills at runtime", { timeout: 90_000 }, () => {
         "scripts/run.sh": "echo delta-v2",
       },
     });
-    const v2 = await call(conv, "Skill", { name: "delta" }, 4);
+    const v2 = await call(conv, "Skill", { skill: "delta" }, 4);
     expect(v2.content).toContain("version 2");
     expect(v2.content).toContain("(v2)");
     // v1 独有的 data/notes.txt 留在原处，列为旧版本遗留（M18）
@@ -428,7 +428,7 @@ describe("skills at runtime", { timeout: 90_000 }, () => {
 
     // 沙箱被销毁：重建后重新复制
     await removeFakeSandbox(root, await sandboxId(conv));
-    const re = await call(conv, "Skill", { name: "delta" }, 5);
+    const re = await call(conv, "Skill", { skill: "delta" }, 5);
     expect(re.isError, re.content).toBe(false);
     expect(re.content).toContain("recreated");
     expect(await sandboxFile(conv, "skills/delta/scripts/run.sh")).toBe("echo delta-v2");
@@ -441,13 +441,13 @@ describe("skills at runtime", { timeout: 90_000 }, () => {
     });
     const agentId = await createSkillAgent([alpha.id]);
     const conv = await createConv(owner, orgId, agentId);
-    expect((await call(conv, "Skill", { name: "alpha" }, 1)).isError).toBe(false);
+    expect((await call(conv, "Skill", { skill: "alpha" }, 1)).isError).toBe(false);
     await db
       .updateTable("skills")
       .set({ deleted_at: new Date() })
       .where("id", "=", alpha.id)
       .execute();
-    const r = await call(conv, "Skill", { name: "alpha" }, 2);
+    const r = await call(conv, "Skill", { skill: "alpha" }, 2);
     expect(r.isError).toBe(true);
     const snaps = await catalogs(conv);
     expect(snaps.map((s) => s.payload.skills.length)).toEqual([1, 0]);
@@ -514,7 +514,7 @@ describe("Skill handler", { timeout: 60_000 }, () => {
       { skills: [{ id: s.id, name: "echo", description: "d", version: 1, source: s.prefix }] },
       false,
     );
-    const r = (await t.run({ name: "echo" }, ctx())) as ToolResult;
+    const r = (await t.run({ skill: "echo" }, ctx())) as ToolResult;
     const text = (r.content[0] as { text: string }).text;
     expect(text).toContain("Echo body.");
     expect(text).toContain("run.py");
@@ -532,7 +532,7 @@ describe("Skill handler", { timeout: 60_000 }, () => {
       { skills: [{ id: s.id, name: "nobox", description: "d", version: 1, source: s.prefix }] },
       true,
     );
-    const r = (await t.run({ name: "nobox" }, { ...ctx(), tools: [] })) as ToolResult;
+    const r = (await t.run({ skill: "nobox" }, { ...ctx(), tools: [] })) as ToolResult;
     const text = (r.content[0] as { text: string }).text;
     expect(text).toContain("Nobox body.");
     expect(text).toContain("run.sh");
@@ -546,7 +546,7 @@ describe("Skill handler", { timeout: 60_000 }, () => {
       { skills: [{ id: s.id, name: "gone", description: "d", version: 1, source: s.prefix }] },
       true,
     );
-    await expect(t.run({ name: "gone" }, ctx())).rejects.toThrow(/removed.*(ask|do the task)/i);
+    await expect(t.run({ skill: "gone" }, ctx())).rejects.toThrow(/removed.*(ask|do the task)/i);
   });
 
   it("file content that does not match the manifest sha256 is rejected", async () => {
@@ -565,12 +565,12 @@ describe("Skill handler", { timeout: 60_000 }, () => {
       { skills: [{ id: s.id, name: "bad", description: "d", version: 1, source: s.prefix }] },
       true,
     );
-    await expect(t.run({ name: "bad" }, ctx())).rejects.toThrow(/integrity/i);
+    await expect(t.run({ skill: "bad" }, ctx())).rejects.toThrow(/integrity/i);
   });
 
   it("no catalog: actionable error", async () => {
     const t = tool(null, true);
-    await expect(t.run({ name: "x" }, ctx())).rejects.toThrow(/no skills/i);
+    await expect(t.run({ skill: "x" }, ctx())).rejects.toThrow(/no skills/i);
   });
 });
 
@@ -853,15 +853,15 @@ describe("phase B snapshot: plugins, pinned skills and the Claude tool map", {
     });
     const agentId = await createSkillAgent([brain.id]);
     const conv = await createConv(owner, orgId, agentId);
-    const q = await call(conv, "Skill", { name: "superpowers:brainstorming" }, 1);
+    const q = await call(conv, "Skill", { skill: "superpowers:brainstorming" }, 1);
     expect(q.isError, q.content).toBe(false);
     expect(q.content).toContain('Loaded skill "brainstorming" (version 1)');
     expect(q.content).toContain("Brainstorm first.");
-    const other = await call(conv, "Skill", { name: "other:brainstorming" }, 2);
+    const other = await call(conv, "Skill", { skill: "other:brainstorming" }, 2);
     expect(other.isError).toBe(true);
     expect(other.content).toContain("not in the skills catalog");
     expect(other.content).toContain(": brainstorming.");
-    const plain = await call(conv, "Skill", { name: "brainstorming" }, 3);
+    const plain = await call(conv, "Skill", { skill: "brainstorming" }, 3);
     expect(plain.isError, plain.content).toBe(false);
     expect(plain.content).toContain("Brainstorm first.");
   });
@@ -898,12 +898,12 @@ describe("phase D: Skill for invoked and forked skills", { timeout: 90_000 }, ()
     });
     const { agentId } = await agentWith([manual.id]);
     const conv = await createConv(owner, orgId, agentId);
-    const before = await call(conv, "Skill", { name: "manual" }, 1);
+    const before = await call(conv, "Skill", { skill: "manual" }, 1);
     expect(before.isError).toBe(true);
     expect(before.content).toContain('Skill "manual" is not in the skills catalog');
 
     await invoke(conv, "manual", 2);
-    const after = await call(conv, "Skill", { name: "manual" }, 3);
+    const after = await call(conv, "Skill", { skill: "manual" }, 3);
     expect(after.isError, after.content).toBe(false);
     expect(after.content).toContain('Loaded skill "manual" (version 1).');
     expect(after.content).toContain("Manual body.");
@@ -911,7 +911,7 @@ describe("phase D: Skill for invoked and forked skills", { timeout: 90_000 }, ()
 
     // another conversation of the same agent: nobody invoked it there
     const other = await createConv(owner, orgId, agentId);
-    const there = await call(other, "Skill", { name: "manual" }, 1);
+    const there = await call(other, "Skill", { skill: "manual" }, 1);
     expect(there.isError).toBe(true);
     expect(there.content).toContain("is not in the skills catalog");
   });
@@ -930,7 +930,7 @@ describe("phase D: Skill for invoked and forked skills", { timeout: 90_000 }, ()
       .set({ deleted_at: new Date() })
       .where("id", "=", manual.id)
       .execute();
-    const gone = await call(conv, "Skill", { name: "manual" }, 2);
+    const gone = await call(conv, "Skill", { skill: "manual" }, 2);
     expect(gone.isError).toBe(true);
     expect(gone.content).toContain('Skill "manual" was removed after the skills list was shown');
 
@@ -941,7 +941,7 @@ describe("phase D: Skill for invoked and forked skills", { timeout: 90_000 }, ()
       invocation: MANUAL,
     });
     await setSkills(agentId, [plain, fresh.id]);
-    const again = await call(conv, "Skill", { name: "manual" }, 3);
+    const again = await call(conv, "Skill", { skill: "manual" }, 3);
     expect(again.isError).toBe(true);
     expect(again.content).toContain("was removed");
     expect(again.content).not.toContain("New body.");
@@ -957,7 +957,7 @@ describe("phase D: Skill for invoked and forked skills", { timeout: 90_000 }, ()
     const conv = await createConv(owner, orgId, agentId);
     await invoke(conv, "manual", 1);
     await setSkills(agentId, [plain]);
-    const r = await call(conv, "Skill", { name: "manual" }, 2);
+    const r = await call(conv, "Skill", { skill: "manual" }, 2);
     expect(r.isError).toBe(true);
     expect(r.content).toContain("was removed");
   });
@@ -1014,7 +1014,7 @@ describe("phase D: Skill for invoked and forked skills", { timeout: 90_000 }, ()
     expect(res.statusCode, res.body).toBe(201);
     const withAgent = (res.json() as { agent: { id: string } }).agent.id;
     const c1 = await createConv(owner, orgId, withAgent);
-    const r1 = await call(c1, "Skill", { name: "review" }, 1);
+    const r1 = await call(c1, "Skill", { skill: "review" }, 1);
     expect(r1.isError, r1.content).toBe(false);
     expect(
       r1.content.startsWith(
@@ -1026,7 +1026,7 @@ describe("phase D: Skill for invoked and forked skills", { timeout: 90_000 }, ()
 
     const without = await createSkillAgent([review.id]);
     const c2 = await createConv(owner, orgId, without);
-    const r2 = await call(c2, "Skill", { name: "review" }, 1);
+    const r2 = await call(c2, "Skill", { skill: "review" }, 1);
     expect(r2.isError, r2.content).toBe(false);
     expect(
       r2.content.startsWith(
@@ -1036,7 +1036,7 @@ describe("phase D: Skill for invoked and forked skills", { timeout: 90_000 }, ()
     ).toBe(true);
   });
 
-  it("the Skill spec hash is pinned (it changed only with the Claude Code rename)", () => {
-    expect(specHash(skillLoadTool({} as never).spec)).toBe("f5e9b39fb342f3df");
+  it("the Skill spec hash is pinned (it changes only with a reviewed rename of the tool or its parameters)", () => {
+    expect(specHash(skillLoadTool({} as never).spec)).toBe("c365433b66afc57b");
   });
 });

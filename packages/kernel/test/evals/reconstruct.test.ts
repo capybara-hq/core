@@ -410,7 +410,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     });
     expect(decided.statusCode, decided.body).toBe(200);
     await waitForTerminal(db, conv, ++n, 30_000);
-    await turn('tool:Skill:{"name":"alpha"}');
+    await turn('tool:Skill:{"skill":"alpha"}');
 
     // 技能新版本：下一轮写新快照（变更提醒）
     await seedSkill("alpha", "Alpha body v2.", alpha);
@@ -680,7 +680,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
       await waitForTerminal(db, conv, ++n, 30_000);
     };
     await turn("echo:first");
-    await turn('tool:Skill:{"name":"superpowers:brainstorming"}');
+    await turn('tool:Skill:{"skill":"superpowers:brainstorming"}');
     // a new version of the pinned skill: the next run writes a snapshot with the new body
     await seedSkill("pinned-rules", "Always answer in limericks.", pinned);
     for (let i = 0; i < 5; i++) await turn(`long:${300 + i}`);
@@ -815,7 +815,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     };
     await invoke("fix-issue", "12");
     await invoke("brainstorm", "");
-    await turn('tool:Skill:{"name":"brainstorm"}');
+    await turn('tool:Skill:{"skill":"brainstorm"}');
     for (let i = 0; i < 5; i++) await turn(`long:${300 + i}`);
 
     const events = await eventsOf(db, conv);
@@ -880,7 +880,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
       'call Skill with "deploy" to copy them to /skills/deploy/',
     );
     expect(sent[1]?.tools.map((t) => t.name)).toContain("Skill");
-    await postMessage(owner, orgId, conv, 'tool:Skill:{"name":"deploy"}');
+    await postMessage(owner, orgId, conv, 'tool:Skill:{"skill":"deploy"}');
     await waitForTerminal(db, conv, 3, 30_000);
     const loaded = (await eventsOf(db, conv)).filter((e) => e.type === "tool_result").at(-1);
     expect(loaded?.type === "tool_result" && loaded.payload.isError).toBe(false);
@@ -971,7 +971,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     /** Arguments that look like placeholders (Review Focus 1), written without a template literal. */
     const args = `12 '$1' $${"{CLAUDE_SKILL_DIR}"}`;
     await invoke("fix-bug", args);
-    await turn('tool:Skill:{"name":"fix-bug"}');
+    await turn('tool:Skill:{"skill":"fix-bug"}');
     await invoke("audit", "src");
     for (let i = 0; i < 5; i++) await turn(`long:${400 + i}`);
 
@@ -1136,7 +1136,7 @@ describe("reconstructRequest: UI refresh B tool views", { timeout: 120_000 }, ()
     const bash = { command: "echo hi && exit 3", description: "Greet and fail" };
     await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(bash)}`);
     await waitForTerminal(db, conv, 1, 30_000);
-    const write = { path: "/workspace/n.txt", content: "a\nb\n" };
+    const write = { file_path: "/workspace/n.txt", content: "a\nb\n" };
     await postMessage(owner, orgId, conv, `tool:Write:${JSON.stringify(write)}`);
     await waitForTerminal(db, conv, 2, 30_000);
     const views = (await eventsOf(db, conv)).flatMap((e) =>

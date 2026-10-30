@@ -33,7 +33,7 @@ export const TOOL_SEARCH_SPEC: ToolSpec = {
         maxLength: 500,
         description: "Keywords describing the tool you need, e.g. 'create calendar event'.",
       },
-      limit: {
+      max_results: {
         type: "integer",
         minimum: 1,
         maximum: MAX_LIMIT,
@@ -158,7 +158,7 @@ function definitionText(t: CatalogTool): string {
 
 interface SearchInput {
   query: string;
-  limit?: number;
+  max_results?: number;
 }
 
 /** 显示摘要里的查询词上限（码点）：摘要整体须 ≤ 200 码点（`validateToolDisplay`）。 */
@@ -181,7 +181,7 @@ export function toolSearchTool(): BuiltinTool {
     spec: TOOL_SEARCH_SPEC,
     defaultPolicy: "allow",
     async run(input, ctx) {
-      const { query, limit = DEFAULT_LIMIT } = input as SearchInput;
+      const { query, max_results: limit = DEFAULT_LIMIT } = input as SearchInput;
       const catalog = (ctx.tools ?? []).filter((t) => !isAlwaysLoaded(t.key));
       const found = searchTools(query, catalog, limit);
       const q = displayQuery(query);
