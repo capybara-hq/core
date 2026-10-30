@@ -102,6 +102,7 @@ function ListBody() {
   return (
     <ListPage
       header={{
+        path: [{ label: "capybara", href: "/dev/ui" }, { label: "agents" }],
         title: "Agents",
         count: "24",
         metrics: LIST_KPIS,

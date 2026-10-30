@@ -3,6 +3,7 @@
 import { Button, type Column, DataTable, ListPage, StatusMark } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { OrgGate } from "../../../components/OrgGate";
+import { usePagePath } from "../../../components/shell/path";
 import { useSession } from "../../../components/shell/session";
 import { useRouter } from "../../../i18n/navigation";
 import {
@@ -18,6 +19,7 @@ export default function AppsPage() {
 }
 
 function Connectors({ orgId }: { orgId: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("connectors");
   const router = useRouter();
   const { me } = useSession();
@@ -49,6 +51,7 @@ function Connectors({ orgId }: { orgId: string }) {
   return (
     <ListPage
       header={{
+        path: [...scope, { label: "connectors" }],
         title: t("title"),
         count: state.kind === "ready" ? String(state.data.length) : undefined,
         actions: [

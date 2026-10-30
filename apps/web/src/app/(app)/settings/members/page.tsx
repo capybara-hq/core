@@ -20,6 +20,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { FormError } from "../../../../components/form-error";
 import { OrgGate } from "../../../../components/OrgGate";
+import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import {
   changeMemberRole,
@@ -59,6 +60,7 @@ const date = (iso: string, locale: string) =>
   new Date(iso).toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" });
 
 function Members({ orgId }: { orgId: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("members");
   const tn = useTranslations("connections.nav");
   const locale = useLocale();
@@ -167,7 +169,11 @@ function Members({ orgId }: { orgId: string }) {
   return (
     <ListPage
       header={{
-        breadcrumb: [{ label: tn("organization"), href: "/settings/organization" }],
+        path: [
+          ...scope,
+          { label: "settings", href: "/settings/organization" },
+          { label: "members" },
+        ],
         title: t("title"),
         count: members.state.kind === "ready" ? String(rows.length) : undefined,
         actions: manage

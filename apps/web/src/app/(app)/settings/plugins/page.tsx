@@ -8,6 +8,7 @@ import { FormError } from "../../../../components/form-error";
 import { OrgGate } from "../../../../components/OrgGate";
 import { PluginUpgradeDialog } from "../../../../components/PluginUpgradeDialog";
 import { useSettingsNav } from "../../../../components/settings-nav";
+import { usePagePath } from "../../../../components/shell/path";
 import { ApiClientError } from "../../../../lib/api";
 import {
   listPluginInstalls,
@@ -34,6 +35,7 @@ export default function PluginsPage() {
 }
 
 function Apps({ orgId }: { orgId: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("catalog.plugins");
   const nav = useSettingsNav();
   const errorMessage = useErrorMessage();
@@ -48,7 +50,18 @@ function Apps({ orgId }: { orgId: string }) {
   } | null>(null);
   const installs = state.kind === "ready" ? state.data : [];
   return (
-    <SettingsPage header={{ title: t("title") }} nav={nav} activeNav="plugins">
+    <SettingsPage
+      header={{
+        path: [
+          ...scope,
+          { label: "settings", href: "/settings/organization" },
+          { label: "plugins" },
+        ],
+        title: t("title"),
+      }}
+      nav={nav}
+      activeNav="plugins"
+    >
       <Stack gap={16}>
         {report !== null && (
           <ReportCard

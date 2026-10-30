@@ -4,6 +4,7 @@ import { FormPage } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useAgentForm } from "../../../../components/AgentForm";
 import { OrgGate } from "../../../../components/OrgGate";
+import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 
 /** `/agents/new`：新建 agent（FormPage），保存后回到列表。 */
@@ -12,6 +13,7 @@ export default function NewAgentPage() {
 }
 
 function NewAgent({ orgId }: { orgId: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations();
   const router = useRouter();
   const done = () => router.push("/agents");
@@ -19,7 +21,7 @@ function NewAgent({ orgId }: { orgId: string }) {
   return (
     <FormPage
       header={{
-        breadcrumb: [{ label: t("agents.title"), href: "/agents" }],
+        path: [...scope, { label: "agents", href: "/agents" }, { label: "new" }],
         title: t("agents.form.title"),
       }}
       actionRow={{

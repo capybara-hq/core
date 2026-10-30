@@ -12,8 +12,8 @@ import {
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { AdminGate } from "../../../../components/AdminGate";
-import { useAdminBreadcrumb } from "../../../../components/admin-nav";
 import { PolicyBadge, useSourceLabel } from "../../../../components/CatalogParts";
+import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import {
   type CatalogItem,
@@ -42,10 +42,10 @@ export default function AdminCatalogPage() {
 }
 
 function AdminDirectory() {
+  const scope = usePagePath("admin");
   const t = useTranslations("catalog.admin");
   const td = useTranslations("catalog");
   const locale = useLocale();
-  const breadcrumb = useAdminBreadcrumb();
   const router = useRouter();
   const { state, reload } = useLoad(listCatalogItems, []);
   const sources = useLoad(
@@ -104,7 +104,7 @@ function AdminDirectory() {
   return (
     <ListPage
       header={{
-        breadcrumb,
+        path: [...scope, { label: "catalog" }],
         title: t("title"),
         count: String(all.length),
         actions: [

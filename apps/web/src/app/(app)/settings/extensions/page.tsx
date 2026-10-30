@@ -25,6 +25,7 @@ import {
   schemaFields,
 } from "../../../../components/SchemaForm";
 import { useSettingsNav } from "../../../../components/settings-nav";
+import { usePagePath } from "../../../../components/shell/path";
 import { Link } from "../../../../i18n/navigation";
 import { ApiClientError, issueLines } from "../../../../lib/api";
 import {
@@ -53,6 +54,7 @@ export default function ExtensionsPage() {
 }
 
 function Plugins({ orgId }: { orgId: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("extensions");
   const errorMessage = useErrorMessage();
   const nav = useSettingsNav();
@@ -62,7 +64,18 @@ function Plugins({ orgId }: { orgId: string }) {
     set(state.data.map((p) => (p.plugin === next.plugin ? next : p)));
   };
   return (
-    <SettingsPage header={{ title: t("title") }} nav={nav} activeNav="extensions">
+    <SettingsPage
+      header={{
+        path: [
+          ...scope,
+          { label: "settings", href: "/settings/organization" },
+          { label: "extensions" },
+        ],
+        title: t("title"),
+      }}
+      nav={nav}
+      activeNav="extensions"
+    >
       {state.kind === "loading" ? (
         <Skeleton rows={6} />
       ) : state.kind === "error" ? (

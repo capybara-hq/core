@@ -18,6 +18,7 @@ import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { FormError } from "../../../../components/form-error";
 import { OrgGate } from "../../../../components/OrgGate";
+import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import {
   ParentTrajectoryLink,
@@ -57,13 +58,17 @@ export default function TrajectoryPage() {
 }
 
 function TrajectoryInOrg({ orgId, id }: { orgId: string; id: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("trajectories");
   const errorMessage = useErrorMessage();
   const { state } = useLoad(() => getTrajectory(orgId, id, { limit: RUN_PAGE }), [orgId, id]);
   if (state.kind === "ready") return <Trajectory orgId={orgId} first={state.data} />;
   return (
     <TracePage
-      header={{ breadcrumb: [{ label: t("title"), href: "/trajectories" }], title: t("title") }}
+      header={{
+        path: [...scope, { label: "trajectories", href: "/trajectories" }, { label: "…" }],
+        title: t("title"),
+      }}
       waterfall={state.kind === "loading" ? <Skeleton rows={6} /> : null}
       detail={
         state.kind === "error" ? (
@@ -75,6 +80,7 @@ function TrajectoryInOrg({ orgId, id }: { orgId: string; id: string }) {
 }
 
 function Trajectory({ orgId, first }: { orgId: string; first: TrajectoryDetail }) {
+  const scope = usePagePath("org");
   const t = useTranslations("trajectories");
   const { me } = useSession();
   const errorMessage = useErrorMessage();
@@ -126,7 +132,11 @@ function Trajectory({ orgId, first }: { orgId: string; first: TrajectoryDetail }
     <>
       <TracePage
         header={{
-          breadcrumb: [{ label: t("title"), href: "/trajectories" }],
+          path: [
+            ...scope,
+            { label: "trajectories", href: "/trajectories" },
+            { label: conv.title ?? t("untitled") },
+          ],
           title: conv.title ?? t("untitled"),
           metrics,
           ...(canAdd && {

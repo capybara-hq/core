@@ -23,6 +23,7 @@ import { useState } from "react";
 import { formatTime } from "../../../../components/ApprovalCard";
 import { FormError } from "../../../../components/form-error";
 import { OrgGate } from "../../../../components/OrgGate";
+import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import { getAgent } from "../../../../lib/agents";
 import { ApiClientError } from "../../../../lib/api";
@@ -60,6 +61,7 @@ export default function EvalSetPage() {
 }
 
 function EvalSetView({ orgId, setId }: { orgId: string; setId: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("evals");
   const router = useRouter();
   const toast = useToast();
@@ -78,7 +80,7 @@ function EvalSetView({ orgId, setId }: { orgId: string; setId: string }) {
     <>
       <DetailPage
         header={{
-          breadcrumb: [{ label: t("title"), href: "/evals" }],
+          path: [...scope, { label: "evals", href: "/evals" }, { label: set?.name ?? t("title") }],
           title: set?.name ?? t("title"),
           ...(set && {
             count: t("set.count", { n: set.caseCount }),

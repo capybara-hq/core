@@ -27,6 +27,7 @@ import {
   SchemaForm,
   schemaFields,
 } from "../../../../components/SchemaForm";
+import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import { type Agent, listAgents } from "../../../../lib/agents";
 import { ApiClientError, issueLines } from "../../../../lib/api";
@@ -85,6 +86,7 @@ async function load(orgId: string, id: string): Promise<Loaded> {
 }
 
 function ChannelView({ orgId, id }: { orgId: string; id: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("channels");
   const { state, reload, set } = useLoad(() => load(orgId, id), [orgId, id]);
   const [tab, setTab] = useState<Tab>("overview");
@@ -96,7 +98,11 @@ function ChannelView({ orgId, id }: { orgId: string; id: string }) {
   return (
     <DetailPage
       header={{
-        breadcrumb: [{ label: t("title"), href: "/channels" }],
+        path: [
+          ...scope,
+          { label: "channels", href: "/channels" },
+          { label: data?.channel.name ?? t("title") },
+        ],
         title: data?.channel.name ?? t("title"),
         ...(data
           ? {

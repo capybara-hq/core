@@ -11,9 +11,9 @@ export function OverviewPage({
   children?: ReactNode;
 }) {
   return (
-    <div className="cb-template" data-template="OverviewPage" data-width="list">
-      <TemplateHead header={header} width="list" />
-      <Body layout="single" width="list">
+    <div className="cb-template" data-template="OverviewPage" data-width="content">
+      <TemplateHead header={header} />
+      <Body layout="single">
         <WithStats header={header}>{children}</WithStats>
       </Body>
     </div>

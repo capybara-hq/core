@@ -6,6 +6,7 @@ import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { FormError } from "../../../../../../components/form-error";
 import { OrgGate } from "../../../../../../components/OrgGate";
+import { usePagePath } from "../../../../../../components/shell/path";
 import {
   ParentTrajectoryLink,
   SpanDetail,
@@ -34,6 +35,7 @@ export default function EvalCasePage() {
 }
 
 function CaseInOrg({ orgId, setId, id }: { orgId: string; setId: string; id: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("evals");
   const errorMessage = useErrorMessage();
   const { state } = useLoad(() => getEvalCase(orgId, setId, id), [orgId, setId, id]);
@@ -41,7 +43,10 @@ function CaseInOrg({ orgId, setId, id }: { orgId: string; setId: string; id: str
   if (state.kind === "ready") return <CaseTrajectory parent={parent} detail={state.data} />;
   return (
     <TracePage
-      header={{ breadcrumb: [parent], title: t("title") }}
+      header={{
+        path: [...scope, { label: "evals", href: "/evals" }, parent, { label: "…" }],
+        title: t("title"),
+      }}
       waterfall={state.kind === "loading" ? <Skeleton rows={6} /> : null}
       detail={
         state.kind === "error" ? (
@@ -59,6 +64,7 @@ function CaseTrajectory({
   parent: { label: string; href: string };
   detail: EvalCaseDetail;
 }) {
+  const scope = usePagePath("org");
   const t = useTranslations("evals");
   const tt = useTranslations("trajectories.detail");
   const runs = detail.trajectory;
@@ -78,7 +84,7 @@ function CaseTrajectory({
   return (
     <TracePage
       header={{
-        breadcrumb: [parent],
+        path: [...scope, { label: "evals", href: "/evals" }, parent, { label: detail.case.title }],
         title: t("case.title", { title: detail.case.title }),
         metrics,
       }}

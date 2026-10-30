@@ -33,6 +33,7 @@ import {
   useSourceLabel,
 } from "../../../../../components/CatalogParts";
 import { FormError } from "../../../../../components/form-error";
+import { usePagePath } from "../../../../../components/shell/path";
 import { Link, useRouter } from "../../../../../i18n/navigation";
 import { ApiClientError } from "../../../../../lib/api";
 import {
@@ -83,6 +84,7 @@ export default function AdminCatalogItemPage() {
 }
 
 function DirectoryItemView({ itemId }: { itemId: string }) {
+  const scope = usePagePath("admin");
   const t = useTranslations("catalog.admin");
   const td = useTranslations("catalog");
   const locale = useLocale();
@@ -107,7 +109,11 @@ function DirectoryItemView({ itemId }: { itemId: string }) {
   return (
     <DetailPage
       header={{
-        breadcrumb: [{ label: t("title"), href: "/admin/catalog" }],
+        path: [
+          ...scope,
+          { label: "catalog", href: "/admin/catalog" },
+          { label: item ? displayNameOf(item, locale) : itemId },
+        ],
         title: item ? displayNameOf(item, locale) : itemId,
         ...(item && { count: item.latestVersion, status: <PolicyBadge policy={item.policy} /> }),
       }}

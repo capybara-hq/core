@@ -1,6 +1,7 @@
 import { Fragment, type ReactNode } from "react";
-import { Button, IconButton } from "../controls/index";
+import { Button, IconButton, Input } from "../controls/index";
 import type { MetricProps } from "../display/index";
+import { Tabs } from "../display/tabs";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { Menu, type MenuItem } from "../overlays/index";
@@ -22,8 +23,11 @@ export type HeaderAction =
   | { menu: MenuItem[]; label: string };
 
 export type PageHeaderProps = {
-  /** Row 1 (optional): links to the parents, in order; a crumb without `href` is plain text. */
-  breadcrumb?: { label: string; href?: string }[];
+  /**
+   * Row 1: the path line `scope / page / object` (spec §4.2), mono; a segment with `href` is a
+   * link, the last one is the current page (`aria-current="page"`).
+   */
+  path: { label: string; href?: string }[];
   /** Row 2: an h1, one line with an ellipsis, the full text in `title`. */
   title: string;
   /** One line under the title (`prose-small`, `muted`), with an ellipsis. */
@@ -34,6 +38,12 @@ export type PageHeaderProps = {
   metrics?: MetricProps[];
   /** Row 2 right; at most one primary, rightmost. */
   actions?: HeaderAction[];
+  /** Row 4 (optional): the page's views with counts; the search sits at the row's right end. */
+  tabs?: { id: string; label: string; count?: number; href?: string; onSelect?(): void }[];
+  /** The selected tab's id. */
+  activeTab?: string;
+  /** The search field at the right end of the tabs row. */
+  search?: { label: string; value: string; onChange(v: string): void };
 };
 
 /** Spec §4.2: metrics ≤ 5, at most one solid primary. Throws in development and tests. */
@@ -51,7 +61,7 @@ export function assertHeader(p: PageHeaderProps): void {
 const shown = (v: React.ReactNode) => v != null && v !== false;
 
 /**
- * The page header (spec §4.2): row 1 the breadcrumb, row 2 the title (+ count / status) and the
+ * The page header (spec §4.2): row 1 the path, row 2 the title (+ count / status) and the
  * description, actions on the right. No line, no ground. Below 640 the actions other than the
  * primary fold into a `more-horizontal` menu.
  */
@@ -60,7 +70,8 @@ export function PageHeader(p: PageHeaderProps) {
   const t = useDesignT();
   const Link = useDesignLink();
   const narrow = useMediaQuery("(max-width: 639px)");
-  const crumbs = p.breadcrumb ?? [];
+  const segments = p.path;
+  const tabItems = p.tabs ?? [];
   // The primary action is rightmost (spec §4.2), whatever order the page gives.
   const isPrimary = (a: HeaderAction) => "variant" in a && a.variant === "primary";
   const actions = [
@@ -142,29 +153,34 @@ export function PageHeader(p: PageHeaderProps) {
       : actions.map(renderAction);
   return (
     <header className="cb-pageheader" data-part="page-header">
-      {crumbs.length > 0 ? (
-        <nav
-          className="cb-pageheader-crumbs"
-          data-part="breadcrumb"
-          aria-label={t("shell.breadcrumb")}
-        >
-          {crumbs.map((c, i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: crumbs are positional (labels may repeat)
-            <Fragment key={`${i}-${c.label}`}>
-              {i > 0 ? (
-                <span className="cb-pageheader-crumb-sep" aria-hidden="true">
-                  /
-                </span>
-              ) : null}
-              {c.href !== undefined ? (
-                <Link href={c.href} className="cb-pageheader-crumb">
-                  {c.label}
-                </Link>
-              ) : (
-                <span className="cb-pageheader-crumb">{c.label}</span>
-              )}
-            </Fragment>
-          ))}
+      {segments.length > 0 ? (
+        <nav className="cb-pageheader-path" data-part="path" aria-label={t("shell.path")}>
+          {segments.map((c, i) => {
+            const last = i === segments.length - 1;
+            return (
+              // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional (labels may repeat)
+              <Fragment key={`${i}-${c.label}`}>
+                {i > 0 ? (
+                  <span className="cb-pageheader-path-sep" aria-hidden="true">
+                    /
+                  </span>
+                ) : null}
+                {c.href !== undefined && !last ? (
+                  <Link href={c.href} className="cb-pageheader-path-seg">
+                    {c.label}
+                  </Link>
+                ) : (
+                  <span
+                    className="cb-pageheader-path-seg"
+                    data-current={last ? "true" : undefined}
+                    aria-current={last ? "page" : undefined}
+                  >
+                    {c.label}
+                  </span>
+                )}
+              </Fragment>
+            );
+          })}
         </nav>
       ) : null}
       <div className="cb-pageheader-row">
@@ -192,6 +208,32 @@ export function PageHeader(p: PageHeaderProps) {
           </div>
         ) : null}
       </div>
+      {tabItems.length > 0 || p.search ? (
+        <div className="cb-pageheader-tabs" data-part="page-header-tabs">
+          {tabItems.length > 0 ? (
+            <Tabs
+              label={t("shell.pageViews")}
+              items={tabItems.map(({ onSelect: _o, ...it }) => it)}
+              value={p.activeTab ?? tabItems[0]?.id ?? ""}
+              onChange={(id) => tabItems.find((x) => x.id === id)?.onSelect?.()}
+            />
+          ) : (
+            <span />
+          )}
+          {p.search ? (
+            <div className="cb-pageheader-search">
+              <Input
+                type="search"
+                aria-label={p.search.label}
+                placeholder={p.search.label}
+                value={p.search.value}
+                onChange={(e) => p.search?.onChange(e.target.value)}
+                prefix={<Icon name="search" size={14} />}
+              />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </header>
   );
 }

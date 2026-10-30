@@ -10,6 +10,7 @@ import {
 import { CatalogIcon, ComponentSection } from "../../../../components/CatalogParts";
 import { FormError } from "../../../../components/form-error";
 import { OrgGate } from "../../../../components/OrgGate";
+import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import { ApiClientError } from "../../../../lib/api";
 import {
@@ -37,6 +38,7 @@ export default function OrgCatalogItemPage() {
 }
 
 function ItemDetail({ orgId, itemId }: { orgId: string; itemId: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("catalog.org");
   const tr = useTranslations("catalog.admin.review");
   const tc = useTranslations("catalog.components");
@@ -51,7 +53,11 @@ function ItemDetail({ orgId, itemId }: { orgId: string; itemId: string }) {
   return (
     <DetailPage
       header={{
-        breadcrumb: [{ label: t("title"), href: "/catalog" }],
+        path: [
+          ...scope,
+          { label: "catalog", href: "/catalog" },
+          { label: item ? displayNameOf(item, locale) : itemId },
+        ],
         title: item ? displayNameOf(item, locale) : t("title"),
         ...(item && { count: item.latestVersion }),
       }}

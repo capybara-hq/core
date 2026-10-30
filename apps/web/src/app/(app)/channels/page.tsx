@@ -4,6 +4,7 @@ import { type Column, DataTable, ListPage, Stack, Text } from "@capybara-hq/desi
 import { useTranslations } from "next-intl";
 import { ChannelStatusMark } from "../../../components/ChannelFields";
 import { OrgGate } from "../../../components/OrgGate";
+import { usePagePath } from "../../../components/shell/path";
 import { useRouter } from "../../../i18n/navigation";
 import { listAgents } from "../../../lib/agents";
 import { type ChannelConnection, listChannels } from "../../../lib/channels";
@@ -27,6 +28,7 @@ async function load(orgId: string) {
 }
 
 function Channels({ orgId }: { orgId: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("channels");
   const router = useRouter();
   const { state, reload } = useLoad(() => load(orgId), [orgId]);
@@ -69,6 +71,7 @@ function Channels({ orgId }: { orgId: string }) {
   return (
     <ListPage
       header={{
+        path: [...scope, { label: "channels" }],
         title: t("title"),
         count: state.kind === "ready" ? String(state.data.channels.length) : undefined,
         actions: [{ label: t("new"), variant: "primary", href: "/channels/new" }],

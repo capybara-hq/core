@@ -16,6 +16,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { formatTime } from "../../../components/ApprovalCard";
 import { OrgGate } from "../../../components/OrgGate";
+import { usePagePath } from "../../../components/shell/path";
 import { useRouter } from "../../../i18n/navigation";
 import { listAgents } from "../../../lib/agents";
 import {
@@ -47,6 +48,7 @@ const initialAgent = (): string => {
 };
 
 function Trajectories({ orgId }: { orgId: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("trajectories");
   const [agentId, setAgentId] = useState(initialAgent);
   const [status, setStatus] = useState<RunStatus | "">("");
@@ -64,7 +66,7 @@ function Trajectories({ orgId }: { orgId: string }) {
   }
   return (
     <ListPage
-      header={{ title: t("title") }}
+      header={{ path: [...scope, { label: "trajectories" }], title: t("title") }}
       rail={
         <Stack gap={16}>
           <Field label={t("filters.agent")}>

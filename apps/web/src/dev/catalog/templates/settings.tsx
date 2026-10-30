@@ -27,7 +27,10 @@ function SettingsBody() {
   const [mfa, setMfa] = useState(true);
   return (
     <SettingsPage
-      header={{ title: "设置" }}
+      header={{
+        path: [{ label: "capybara", href: "/dev/ui" }, { label: "settings" }],
+        title: "设置",
+      }}
       nav={NAV}
       activeNav="org"
       actionRow={{

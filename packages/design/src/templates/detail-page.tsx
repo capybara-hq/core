@@ -20,8 +20,8 @@ export function DetailPage({
   children?: ReactNode;
 }) {
   return (
-    <div className="cb-template" data-template="DetailPage" data-width="full">
-      <TemplateHead header={header} width="full" />
+    <div className="cb-template" data-template="DetailPage" data-width="content">
+      <TemplateHead header={header} statsInHead />
       <PageTabs {...tabs} />
       <Body
         layout={inspector != null ? "inspector" : "single"}

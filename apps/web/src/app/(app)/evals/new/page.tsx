@@ -14,6 +14,7 @@ import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { FormError } from "../../../../components/form-error";
 import { OrgGate } from "../../../../components/OrgGate";
+import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import { listAgents } from "../../../../lib/agents";
 import { createEvalSet } from "../../../../lib/evals";
@@ -29,6 +30,7 @@ export default function NewEvalSetPage() {
 }
 
 function NewEvalSet({ orgId }: { orgId: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("evals");
   const tc = useTranslations("common");
   const router = useRouter();
@@ -69,7 +71,10 @@ function NewEvalSet({ orgId }: { orgId: string }) {
 
   return (
     <FormPage
-      header={{ breadcrumb: [{ label: t("title"), href: "/evals" }], title: t("form.title") }}
+      header={{
+        path: [...scope, { label: "evals", href: "/evals" }, { label: "new" }],
+        title: t("form.title"),
+      }}
       actionRow={{
         unsaved,
         errors: nameError ? 1 : 0,

@@ -20,6 +20,7 @@ import {
 import { FormError } from "../../../../components/form-error";
 import { OrgGate } from "../../../../components/OrgGate";
 import { useSettingsNav } from "../../../../components/settings-nav";
+import { usePagePath } from "../../../../components/shell/path";
 import { ApiClientError } from "../../../../lib/api";
 import { useStartConnect } from "../../../../lib/connect";
 import {
@@ -50,12 +51,24 @@ async function personalConnectors(orgId: string): Promise<ConnectorDetail[]> {
 }
 
 function Connections({ orgId }: { orgId: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("connections");
   const errorMessage = useErrorMessage();
   const nav = useSettingsNav();
   const { state, reload } = useLoad(() => personalConnectors(orgId), [orgId]);
   return (
-    <SettingsPage header={{ title: t("title") }} nav={nav} activeNav="connections">
+    <SettingsPage
+      header={{
+        path: [
+          ...scope,
+          { label: "settings", href: "/settings/organization" },
+          { label: "connections" },
+        ],
+        title: t("title"),
+      }}
+      nav={nav}
+      activeNav="connections"
+    >
       {state.kind === "loading" ? (
         <Skeleton rows={4} />
       ) : state.kind === "error" ? (

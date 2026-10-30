@@ -4,6 +4,7 @@ import { type Column, DataTable, ListPage, Stack, Text } from "@capybara-hq/desi
 import { useLocale, useTranslations } from "next-intl";
 import { CatalogInstallAction, useOrgItemStatus } from "../../../components/CatalogInstallAction";
 import { OrgGate } from "../../../components/OrgGate";
+import { usePagePath } from "../../../components/shell/path";
 import { useSession } from "../../../components/shell/session";
 import { useRouter } from "../../../i18n/navigation";
 import { displayNameOf, listOrgCatalog, type OrgCatalogItem } from "../../../lib/catalog";
@@ -20,6 +21,7 @@ export default function CatalogPage() {
 }
 
 function Catalog({ orgId }: { orgId: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("catalog.org");
   const locale = useLocale();
   const router = useRouter();
@@ -62,7 +64,13 @@ function Catalog({ orgId }: { orgId: string }) {
   ];
 
   return (
-    <ListPage header={{ title: t("title"), count: String(rows.length) }}>
+    <ListPage
+      header={{
+        path: [...scope, { label: "catalog" }],
+        title: t("title"),
+        count: String(rows.length),
+      }}
+    >
       <Stack gap={12}>
         <Text tone="muted">{t("hint")}</Text>
         <DataTable

@@ -95,23 +95,38 @@
   }
 }
 
+/* The tabs row (spec §2.4): the views with counts, the search at the right end. */
+.cb-pageheader-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cb-space-3);
+  margin-top: var(--cb-space-3);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.cb-pageheader-tabs .cb-tabs {
+  border-bottom: 0;
+}
+.cb-pageheader-search {
+  flex: none;
+  width: 240px;
+  max-width: 100%;
+  padding: var(--cb-space-1) 0;
+}
+
 /* Template head: the PageHeader in the content width, fixed above the body. */
 .cb-template-head {
   flex: none;
   padding: var(--cb-space-6) var(--cb-layout-gutter) var(--cb-space-3);
 }
 /* A form's first section sits space.6 below the header, as sections sit apart (spec §5.3). */
-.cb-template-head[data-width="form"] {
+.cb-template-head[data-gap="loose"] {
   padding-bottom: var(--cb-space-6);
 }
-.cb-template-head-frame[data-width="list"],
-.cb-body-frame[data-width="list"] {
-  max-width: var(--cb-layout-content-list);
-  margin: 0 auto;
-}
-.cb-template-head-frame[data-width="form"],
-.cb-body-frame[data-width="form"] {
-  max-width: var(--cb-layout-content-form);
+/* One content width for every frame (spec §4.3). */
+.cb-template-head-frame,
+.cb-body-frame[data-width="content"] {
+  max-width: var(--cb-layout-content);
   margin: 0 auto;
 }
 
@@ -122,28 +137,32 @@
   gap: var(--cb-space-1);
   min-width: 0;
 }
-.cb-pageheader-crumbs {
+.cb-pageheader-path {
   display: flex;
   align-items: center;
   gap: var(--cb-space-2);
   min-width: 0;
-  color: var(--cb-muted);
+  color: var(--cb-faint);
+  font-family: var(--cb-font);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
-.cb-pageheader-crumb {
+.cb-pageheader-path-seg {
   min-width: 0;
   overflow: hidden;
-  color: var(--cb-muted);
+  color: var(--cb-faint);
   text-decoration: none;
   text-overflow: ellipsis;
   white-space: nowrap;
   transition: color var(--cb-motion-hover);
 }
-.cb-pageheader-crumb:hover {
+a.cb-pageheader-path-seg:hover {
   color: var(--cb-ink);
 }
-.cb-pageheader-crumb-sep {
+.cb-pageheader-path-seg[data-current="true"] {
+  color: var(--cb-ink);
+}
+.cb-pageheader-path-sep {
   flex: none;
   color: var(--cb-faint);
 }
@@ -310,24 +329,18 @@
   box-sizing: border-box;
   padding: var(--cb-space-4) var(--cb-layout-gutter);
 }
-/* List and form widths: the gutter on both sides, the frame centered, space at the bottom. */
-.cb-body-content:has(> .cb-body-frame[data-width="list"]),
-.cb-body-content:has(> .cb-body-frame[data-width="form"]) {
+/* The content width: the gutter on both sides, the frame centered, space at the bottom. */
+.cb-body-content:not([data-padded="true"]):has(> .cb-body-frame[data-width="content"]) {
   box-sizing: border-box;
   padding: 0 var(--cb-layout-gutter) var(--cb-space-6);
 }
-.cb-body-frame[data-width="list"] {
+.cb-body-frame[data-width="content"] {
   display: flex;
   flex-direction: column;
   gap: var(--cb-space-3);
 }
-.cb-body-frame[data-width="form"] {
-  display: flex;
-  flex-direction: column;
+.cb-body-frame[data-width="content"][data-gap="loose"] {
   gap: var(--cb-space-6);
-}
-.cb-body-frame[data-width="full"] {
-  height: 100%;
 }
 .cb-body-rail-inner {
   padding: var(--cb-space-3) var(--cb-space-4);
@@ -462,8 +475,8 @@
   }
 }
 
-/* Full-width templates: the StatCards under the header, inside the fixed head. */
-.cb-template-head-frame[data-width="full"] {
+/* Templates that draw the StatCards under the header, inside the fixed head. */
+.cb-template-head-frame[data-stats="head"] {
   display: flex;
   flex-direction: column;
   gap: var(--cb-space-3);

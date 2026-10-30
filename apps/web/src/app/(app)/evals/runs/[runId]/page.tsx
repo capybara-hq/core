@@ -23,6 +23,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import { formatTime } from "../../../../../components/ApprovalCard";
 import { FormError } from "../../../../../components/form-error";
 import { OrgGate } from "../../../../../components/OrgGate";
+import { usePagePath } from "../../../../../components/shell/path";
 import { grouped, useFormatCost } from "../../../../../components/TrajectoryParts";
 import { Link } from "../../../../../i18n/navigation";
 import { ApiClientError } from "../../../../../lib/api";
@@ -85,6 +86,7 @@ type Loaded = {
 };
 
 function EvalRunInOrg({ orgId, runId }: { orgId: string; runId: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("evals");
   const errorMessage = useErrorMessage();
   const { state, set } = useLoad(async (): Promise<Loaded> => {
@@ -179,7 +181,10 @@ function EvalRunInOrg({ orgId, runId }: { orgId: string; runId: string }) {
   }
   return (
     <DetailPage
-      header={{ breadcrumb: [{ label: t("title"), href: "/evals" }], title: t("title") }}
+      header={{
+        path: [...scope, { label: "evals", href: "/evals" }, { label: "runs" }],
+        title: t("title"),
+      }}
       tabs={{
         label: t("run.tabsLabel"),
         items: TABS.map((x) => ({ id: x, label: t(`run.tabs.${x}`) })),
@@ -206,6 +211,7 @@ function EvalRunView({
   onChange(data: Loaded): void;
   onRefresh(): void;
 }) {
+  const scope = usePagePath("org");
   const t = useTranslations("evals");
   const te = useTranslations("errors");
   const locale = useLocale();
@@ -346,7 +352,12 @@ function EvalRunView({
   return (
     <DetailPage
       header={{
-        breadcrumb: [{ label: t("title"), href: `/evals/${encodeURIComponent(run.setId)}` }],
+        path: [
+          ...scope,
+          { label: "evals", href: "/evals" },
+          { label: t("title"), href: `/evals/${encodeURIComponent(run.setId)}` },
+          { label: formatTime(run.createdAt, locale) },
+        ],
         title: t("run.title", { time: formatTime(run.createdAt, locale) }),
         status: (
           <StatusMark status={evalRunMark(run.status)} label={t(`runStatus.${run.status}`)} />

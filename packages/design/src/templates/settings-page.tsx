@@ -38,14 +38,14 @@ export function SettingsPage({
     </nav>
   );
   return (
-    <div className="cb-template" data-template="SettingsPage" data-width="form">
+    <div className="cb-template" data-template="SettingsPage" data-width="content">
       <Body
         layout="rail"
         rail={rail}
         railFlush
         railCollapsible={false}
-        head={<TemplateHead header={header} width="form" />}
-        width="form"
+        head={<TemplateHead header={header} loose />}
+        loose
       >
         {children}
       </Body>

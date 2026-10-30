@@ -19,6 +19,7 @@ import {
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { setupReady, useSetupSteps } from "../../components/conversation/SetupGuide";
+import { usePagePath } from "../../components/shell/path";
 import { RequireSession, useSession } from "../../components/shell/session";
 import { useRouter } from "../../i18n/navigation";
 import { type Agent, listAgents, listModels, type ProviderModels } from "../../lib/agents";
@@ -97,6 +98,7 @@ async function loadOverview(orgId: string): Promise<OverviewData> {
 }
 
 function Overview({ orgId }: { orgId: string }) {
+  const home = usePagePath("home");
   const t = useTranslations("home");
   const { me } = useSession();
   const { state, reload } = useLoad(() => loadOverview(orgId), [orgId]);
@@ -106,14 +108,14 @@ function Overview({ orgId }: { orgId: string }) {
 
   if (state.kind === "loading") {
     return (
-      <OverviewPage header={{ title: t("greeting", { name: me.account.displayName }) }}>
+      <OverviewPage header={{ path: home, title: t("greeting", { name: me.account.displayName }) }}>
         <Skeleton rows={6} />
       </OverviewPage>
     );
   }
   if (state.kind === "error") {
     return (
-      <OverviewPage header={{ title: t("greeting", { name: me.account.displayName }) }}>
+      <OverviewPage header={{ path: home, title: t("greeting", { name: me.account.displayName }) }}>
         <Card>
           <Stack gap={12}>
             <Text tone="muted">{t("loadFailed")}</Text>
@@ -177,6 +179,7 @@ function SetupOverview({
   orgName: string;
   orgCard: React.ReactNode;
 }) {
+  const home = usePagePath("home");
   const t = useTranslations("home");
   const { me } = useSession();
   const steps = [
@@ -202,6 +205,7 @@ function SetupOverview({
   return (
     <OverviewPage
       header={{
+        path: home,
         title: t("greeting", { name: me.account.displayName }),
         description: t("setup.description", { org: orgName }),
       }}
@@ -240,6 +244,7 @@ function DailyOverview({
   orgCard: React.ReactNode;
   onChanged(): void;
 }) {
+  const home = usePagePath("home");
   const t = useTranslations("home");
   const locale = useLocale();
   const router = useRouter();
@@ -349,6 +354,7 @@ function DailyOverview({
   return (
     <OverviewPage
       header={{
+        path: home,
         title: t("greeting", { name: me.account.displayName }),
         description:
           pending > 0

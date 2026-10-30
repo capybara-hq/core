@@ -15,6 +15,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { FormError } from "../../../../components/form-error";
 import { useSettingsNav } from "../../../../components/settings-nav";
+import { usePagePath } from "../../../../components/shell/path";
 import { RequireSession } from "../../../../components/shell/session";
 import { listAuthSources, ssoStartUrl } from "../../../../lib/auth-sources";
 import { navigateBrowser } from "../../../../lib/browser";
@@ -45,6 +46,7 @@ export default function IdentitiesPage() {
 const rowKey = (x: LinkedIdentity) => `${x.source}\u0000${x.externalId}`;
 
 function Identities() {
+  const scope = usePagePath("org");
   const t = useTranslations("identities");
   const tc = useTranslations("common");
   const locale = useLocale();
@@ -126,7 +128,18 @@ function Identities() {
   ];
 
   return (
-    <SettingsPage header={{ title: t("title") }} nav={nav} activeNav="identities">
+    <SettingsPage
+      header={{
+        path: [
+          ...scope,
+          { label: "settings", href: "/settings/organization" },
+          { label: "identities" },
+        ],
+        title: t("title"),
+      }}
+      nav={nav}
+      activeNav="identities"
+    >
       <Stack gap={12}>
         <Text tone="muted">{t("hint")}</Text>
         <DataTable<LinkedIdentity>

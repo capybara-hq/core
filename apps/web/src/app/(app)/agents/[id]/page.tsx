@@ -8,6 +8,7 @@ import { useAgentForm } from "../../../../components/AgentForm";
 import { FormError } from "../../../../components/form-error";
 import { OrgGate } from "../../../../components/OrgGate";
 import { navLevelOf } from "../../../../components/shell/nav";
+import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import { useRouter } from "../../../../i18n/navigation";
 import { type Agent, getAgent } from "../../../../lib/agents";
@@ -33,6 +34,7 @@ function AgentInOrg({ orgId, id }: { orgId: string; id: string }) {
 }
 
 function LoadAgent({ orgId, id }: { orgId: string; id: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations();
   const router = useRouter();
   const errorMessage = useErrorMessage();
@@ -44,7 +46,11 @@ function LoadAgent({ orgId, id }: { orgId: string; id: string }) {
   return (
     <FormPage
       header={{
-        breadcrumb: [{ label: t("agents.title"), href: "/agents" }],
+        path: [
+          ...scope,
+          { label: "agents", href: "/agents" },
+          { label: t("agents.form.editTitle") },
+        ],
         title: t("agents.form.editTitle"),
       }}
       actionRow={{
@@ -62,6 +68,7 @@ function LoadAgent({ orgId, id }: { orgId: string; id: string }) {
 }
 
 function EditAgent({ orgId, agent }: { orgId: string; agent: Agent }) {
+  const scope = usePagePath("org");
   const t = useTranslations();
   const router = useRouter();
   const { me } = useSession();
@@ -73,7 +80,11 @@ function EditAgent({ orgId, agent }: { orgId: string; agent: Agent }) {
   return (
     <FormPage
       header={{
-        breadcrumb: [{ label: t("agents.title"), href: "/agents" }],
+        path: [
+          ...scope,
+          { label: "agents", href: "/agents" },
+          { label: agent.definition.name || t("agents.form.editTitle") },
+        ],
         title: agent.definition.name || t("agents.form.editTitle"),
         ...(canViewRuns && {
           actions: [

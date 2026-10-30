@@ -12,6 +12,7 @@ import {
 } from "../../../../../components/extension-ui/ExtensionViewTab";
 import { FormError } from "../../../../../components/form-error";
 import { OrgGate } from "../../../../../components/OrgGate";
+import { usePagePath } from "../../../../../components/shell/path";
 import { ApiClientError } from "../../../../../lib/api";
 import { listUiContributions, openUiStream, uiKey, uiLocale } from "../../../../../lib/ui";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
@@ -32,6 +33,7 @@ export default function PluginPage() {
 }
 
 function PluginPageInOrg({ orgId, plugin, id }: { orgId: string; plugin: string; id: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations();
   const errorMessage = useErrorMessage();
   const locale = uiLocale(useLocale());
@@ -100,7 +102,7 @@ function PluginPageInOrg({ orgId, plugin, id }: { orgId: string; plugin: string;
 
   return (
     <DetailPage
-      header={{ title }}
+      header={{ path: [...scope, { label: "p" }, { label: title }], title }}
       tabs={{ label: title, items: [{ id: "view", label: title }], value: "view" }}
     >
       <Stack gap={12}>

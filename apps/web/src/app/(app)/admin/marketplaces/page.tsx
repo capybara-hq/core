@@ -21,6 +21,7 @@ import { formatTime } from "../../../../components/ApprovalCard";
 import { useAdminNav } from "../../../../components/admin-nav";
 import { useCatalogErrorLines } from "../../../../components/CatalogParts";
 import { FormError } from "../../../../components/form-error";
+import { usePagePath } from "../../../../components/shell/path";
 import { ApiClientError, issueLines } from "../../../../lib/api";
 import {
   addMarketplace,
@@ -62,6 +63,7 @@ function useProblem(): (e: unknown) => Problem {
 }
 
 function Sources() {
+  const scope = usePagePath("admin");
   const t = useTranslations("catalog.admin.marketplaces");
   const nav = useAdminNav();
   const errorMessage = useErrorMessage();
@@ -74,7 +76,11 @@ function Sources() {
   const enterprise = state.kind === "ready" ? state.data.items.filter((s) => !s.builtin) : [];
 
   return (
-    <SettingsPage header={{ title: t("title") }} nav={nav} activeNav="catalog">
+    <SettingsPage
+      header={{ path: [...scope, { label: "marketplaces" }], title: t("title") }}
+      nav={nav}
+      activeNav="catalog"
+    >
       {state.kind === "loading" ? (
         <Skeleton rows={6} />
       ) : state.kind === "error" ? (

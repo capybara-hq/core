@@ -6,6 +6,7 @@ import { type ReactNode, useState } from "react";
 import { usePathname, useRouter } from "../i18n/navigation";
 import { CreateOrgDialog } from "./CreateOrgDialog";
 import { activeNavOf } from "./shell/nav";
+import { usePagePath } from "./shell/path";
 import { RequireSession, useSession } from "./shell/session";
 
 /**
@@ -23,6 +24,7 @@ export function OrgGate({ children }: { children: (orgId: string) => ReactNode }
 }
 
 function OrgGateInner({ children }: { children: (orgId: string) => ReactNode }) {
+  const scope = usePagePath("org");
   const t = useTranslations();
   const router = useRouter();
   const pathname = usePathname();
@@ -36,7 +38,7 @@ function OrgGateInner({ children }: { children: (orgId: string) => ReactNode }) 
     return (
       <>
         <StatusPage
-          header={{ title: pageTitle }}
+          header={{ path: scope, title: pageTitle }}
           kind="disabled"
           title={none ? t("home.noMemberships") : t("agents.noOrg")}
           description={

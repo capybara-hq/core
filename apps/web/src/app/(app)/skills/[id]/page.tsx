@@ -21,6 +21,7 @@ import { useState } from "react";
 import { formatTime } from "../../../../components/ApprovalCard";
 import { FormError } from "../../../../components/form-error";
 import { OrgGate } from "../../../../components/OrgGate";
+import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import { useRouter } from "../../../../i18n/navigation";
 import { ApiClientError } from "../../../../lib/api";
@@ -55,6 +56,7 @@ function SkillInOrg({ orgId, id }: { orgId: string; id: string }) {
 }
 
 function SkillView({ orgId, id }: { orgId: string; id: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("skills");
   const { state, reload } = useLoad(() => getSkill(orgId, id), [orgId, id]);
   const [tab, setTab] = useState<Tab>("content");
@@ -63,7 +65,11 @@ function SkillView({ orgId, id }: { orgId: string; id: string }) {
   return (
     <DetailPage
       header={{
-        breadcrumb: [{ label: t("title"), href: "/skills" }],
+        path: [
+          ...scope,
+          { label: "skills", href: "/skills" },
+          { label: skill?.name ?? t("title") },
+        ],
         title: skill?.name ?? t("title"),
         ...(skill ? { count: t("version", { version: skill.currentVersion }) } : {}),
       }}

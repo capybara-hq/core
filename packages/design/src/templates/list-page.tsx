@@ -15,9 +15,9 @@ export function ListPage({
   children?: ReactNode;
 }) {
   return (
-    <div className="cb-template" data-template="ListPage" data-width="list">
-      <TemplateHead header={header} width="list" />
-      <Body layout={rail != null ? "rail" : "single"} rail={rail} width="list">
+    <div className="cb-template" data-template="ListPage" data-width="content">
+      <TemplateHead header={header} />
+      <Body layout={rail != null ? "rail" : "single"} rail={rail}>
         <WithStats header={header}>{children}</WithStats>
       </Body>
       {actionRow ? <ActionRow {...actionRow} /> : null}

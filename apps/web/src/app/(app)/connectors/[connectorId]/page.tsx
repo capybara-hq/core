@@ -33,6 +33,7 @@ import {
 } from "../../../../components/ConnectorForm";
 import { FormError } from "../../../../components/form-error";
 import { OrgGate } from "../../../../components/OrgGate";
+import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import { useRouter } from "../../../../i18n/navigation";
 import { ApiClientError } from "../../../../lib/api";
@@ -76,6 +77,7 @@ function ConnectorInOrg({ orgId, connectorId }: { orgId: string; connectorId: st
 }
 
 function ConnectorView({ orgId, connectorId }: { orgId: string; connectorId: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("connectors");
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -105,7 +107,11 @@ function ConnectorView({ orgId, connectorId }: { orgId: string; connectorId: str
   return (
     <DetailPage
       header={{
-        breadcrumb: [{ label: t("title"), href: "/connectors" }],
+        path: [
+          ...scope,
+          { label: "connectors", href: "/connectors" },
+          { label: app?.name ?? t("title") },
+        ],
         title: app?.name ?? t("title"),
         ...(app
           ? {

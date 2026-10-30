@@ -28,6 +28,7 @@ import {
   SkillChangeReview,
   useDecideSkillChange,
 } from "../../../components/SkillChangeReview";
+import { usePagePath } from "../../../components/shell/path";
 import { Link, useRouter } from "../../../i18n/navigation";
 import type { Approval, ApprovalScope } from "../../../lib/approvals";
 import {
@@ -50,6 +51,7 @@ export default function InboxRoute() {
 }
 
 function Inbox({ orgId }: { orgId: string }) {
+  const here = usePagePath("org");
   const t = useTranslations("inbox");
   const locale = useLocale();
   const toast = useToast();
@@ -166,6 +168,7 @@ function Inbox({ orgId }: { orgId: string }) {
   return (
     <InboxPage
       header={{
+        path: [...here, { label: "inbox" }],
         title: t("title"),
         ...(state.kind === "ready" ? { count: `${rows.length}${truncated ? "+" : ""}` } : {}),
       }}

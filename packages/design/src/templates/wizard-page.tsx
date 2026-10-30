@@ -20,9 +20,9 @@ export function WizardPage({
 }) {
   const t = useDesignT();
   return (
-    <div className="cb-template" data-template="WizardPage" data-width="form">
-      <TemplateHead header={header} width="form" />
-      <Body layout="centered" width="form">
+    <div className="cb-template" data-template="WizardPage" data-width="content">
+      <TemplateHead header={header} loose />
+      <Body layout="centered" loose>
         <ol className="cb-steps" aria-label={t("shell.steps")}>
           {steps.map((label, i) => {
             const state = i < current ? "done" : i === current ? "current" : "todo";

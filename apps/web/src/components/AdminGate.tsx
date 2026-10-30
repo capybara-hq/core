@@ -3,6 +3,7 @@
 import { StatusPage } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import type { ReactNode } from "react";
+import { usePagePath } from "./shell/path";
 import { RequireSession, useSession } from "./shell/session";
 
 /**
@@ -18,12 +19,13 @@ export function AdminGate({ children }: { children: ReactNode }) {
 }
 
 function AdminGateInner({ children }: { children: ReactNode }) {
+  const scope = usePagePath("admin");
   const t = useTranslations("admin.forbidden");
   const { me } = useSession();
   if (!me.account.isEnterpriseAdmin) {
     return (
       <StatusPage
-        header={{ title: t("title") }}
+        header={{ path: scope, title: t("title") }}
         kind="403"
         title={t("title")}
         description={t("hint")}

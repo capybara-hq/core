@@ -59,8 +59,7 @@ export const SIZES = {
   layout: {
     sidebar: 256,
     "sidebar-rail": 48,
-    "content-list": 1080,
-    "content-form": 880,
+    content: 1120,
     chat: 720,
     "status-bar": 24,
     "action-row": 40,

@@ -18,6 +18,7 @@ import { useState } from "react";
 import { FormError } from "../../../../components/form-error";
 import { OrgGate } from "../../../../components/OrgGate";
 import { useSettingsNav } from "../../../../components/settings-nav";
+import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import { ApiClientError } from "../../../../lib/api";
 import {
@@ -48,6 +49,7 @@ export default function OrganizationSettingsPage() {
 }
 
 function OrganizationSettings({ orgId }: { orgId: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("orgSettings");
   const tc = useTranslations("common");
   const toast = useToast();
@@ -124,7 +126,14 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
 
   return (
     <SettingsPage
-      header={{ title: t("title") }}
+      header={{
+        path: [
+          ...scope,
+          { label: "settings", href: "/settings/organization" },
+          { label: "organization" },
+        ],
+        title: t("title"),
+      }}
       nav={nav}
       activeNav="organization"
       {...(dirty

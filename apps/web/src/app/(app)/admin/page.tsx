@@ -4,6 +4,7 @@ import { Grid, LinkCard, OverviewPage, Stack } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { AdminGate } from "../../../components/AdminGate";
 import { FormError } from "../../../components/form-error";
+import { usePagePath } from "../../../components/shell/path";
 import { getAdminOverview } from "../../../lib/admin";
 import { ApiClientError } from "../../../lib/api";
 import { useErrorMessage } from "../../../lib/use-error-message";
@@ -32,6 +33,7 @@ const SECTIONS = [
 ] as const;
 
 function AdminOverview() {
+  const scope = usePagePath("admin");
   const t = useTranslations("admin");
   const errorMessage = useErrorMessage();
   const { state } = useLoad(getAdminOverview, []);
@@ -40,6 +42,7 @@ function AdminOverview() {
   return (
     <OverviewPage
       header={{
+        path: [...scope],
         title: t("title"),
         description: t("overview.intro"),
         metrics: [

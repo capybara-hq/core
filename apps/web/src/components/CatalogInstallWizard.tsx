@@ -51,6 +51,7 @@ import {
   SchemaForm,
   schemaFields,
 } from "./SchemaForm";
+import { usePagePath } from "./shell/path";
 
 export type TemplateDraft = {
   name: string;
@@ -241,8 +242,14 @@ export function CatalogInstallWizard({
         .catch(() => [] as OrgExtension[]),
     [orgId],
   );
+  const scope = usePagePath("org");
   const header = (title: string) => ({
-    breadcrumb: [{ label: to("title"), href: `/catalog/${itemId}` }],
+    path: [
+      ...scope,
+      { label: "catalog", href: "/catalog" },
+      { label: itemId, href: `/catalog/${itemId}` },
+      { label: "install" },
+    ],
     title,
   });
   if (detail.state.kind !== "ready" || extensions.state.kind !== "ready") {

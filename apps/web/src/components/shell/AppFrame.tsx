@@ -211,7 +211,7 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   const body: ReactNode =
     error !== undefined && session === undefined ? (
       <StatusPage
-        header={{ title: t("common.loadFailed") }}
+        header={{ path: [{ label: "~" }], title: t("common.loadFailed") }}
         kind="maintenance"
         title={t("common.loadFailed")}
         description={error}

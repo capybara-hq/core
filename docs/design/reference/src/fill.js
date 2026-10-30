@@ -138,11 +138,14 @@
   function pageHeader(o) {
     const L = F.LIST_PAGE_FIXTURE;
     const title = o.title || L.title;
-    const crumb = o.breadcrumb
-      ? `<nav class="r-ph-crumb" aria-label="面包屑">${F.FORM_PAGE_FIXTURE.breadcrumb
-          .map((c) => (c.href ? `<a href="#">${esc(c.label)}</a>` : `<span>${esc(c.label)}</span>`))
-          .join('<span class="r-faint" aria-hidden="true">/</span>')}</nav>`
-      : "";
+    const segs = o.path ? F.FORM_PAGE_FIXTURE.path : F.FORM_PAGE_FIXTURE.path.slice(0, 1);
+    const crumb = `<nav class="r-ph-crumb" aria-label="路径">${segs
+      .map((c, i) =>
+        c.href && i < segs.length - 1
+          ? `<a href="#">${esc(c.label)}</a>`
+          : `<span${i === segs.length - 1 ? ' class="r-ink"' : ""}>${esc(c.label)}</span>`,
+      )
+      .join('<span aria-hidden="true">/</span>')}</nav>`;
     const desc = o.description ? `<p class="r-ph-desc">${esc(L.description)}</p>` : "";
     const actions = o.actions
       ? `<div class="r-ph-actions"><button class="r-btn" data-variant="default">${esc(L.secondaryAction)}</button><button class="r-btn" data-variant="primary">${icon("plus", 14)}${esc(L.primaryAction)}</button></div>`
@@ -275,12 +278,12 @@
   // ── Templates ────────────────────────────────────────────────────────────
 
   function listPage() {
-    return `<div class="r-app">${sidebar({ active: "connectors", activeConversation: null })}<main class="r-main"><div class="r-main-scroll"><div class="r-content" data-width="list">${pageHeader({ description: true, actions: true })}${stats({})}${toolbar()}${table({})}${pagination()}</div></div>${statusBar({})}</main></div>`;
+    return `<div class="r-app">${sidebar({ active: "connectors", activeConversation: null })}<main class="r-main"><div class="r-main-scroll"><div class="r-content" data-width="content">${pageHeader({ description: true, actions: true })}${stats({})}${toolbar()}${table({})}${pagination()}</div></div>${statusBar({})}</main></div>`;
   }
 
   function formPage() {
     const P = F.FORM_PAGE_FIXTURE;
-    return `<div class="r-app">${sidebar({ active: "agents", activeConversation: null })}<main class="r-main"><div class="r-main-scroll"><div class="r-content" data-width="form">${pageHeader({ breadcrumb: true, title: P.title })}${formSections()}</div></div>${actionRow({})}${statusBar({ context: P.status.context, pageStatus: P.status.pageStatus })}</main></div>`;
+    return `<div class="r-app">${sidebar({ active: "agents", activeConversation: null })}<main class="r-main"><div class="r-main-scroll"><div class="r-content" data-width="content">${pageHeader({ path: true, title: P.title })}${formSections()}</div></div>${actionRow({})}${statusBar({ context: P.status.context, pageStatus: P.status.pageStatus })}</main></div>`;
   }
 
   function drawer(o) {

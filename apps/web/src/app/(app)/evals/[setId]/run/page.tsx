@@ -22,6 +22,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { FormError } from "../../../../../components/form-error";
 import { ModelParams } from "../../../../../components/ModelParams";
 import { OrgGate } from "../../../../../components/OrgGate";
+import { usePagePath } from "../../../../../components/shell/path";
 import { grouped, useFormatCost } from "../../../../../components/TrajectoryParts";
 import { Link, useRouter } from "../../../../../i18n/navigation";
 import {
@@ -77,6 +78,7 @@ export default function RunWizardPage() {
 }
 
 function RunWizardInOrg({ orgId, setId }: { orgId: string; setId: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("evals");
   const errorMessage = useErrorMessage();
   const { state } = useLoad(async () => {
@@ -91,7 +93,12 @@ function RunWizardInOrg({ orgId, setId }: { orgId: string; setId: string }) {
   return (
     <WizardPage
       header={{
-        breadcrumb: [{ label: t("title"), href: `/evals/${encodeURIComponent(setId)}` }],
+        path: [
+          ...scope,
+          { label: "evals", href: "/evals" },
+          { label: t("title"), href: `/evals/${encodeURIComponent(setId)}` },
+          { label: "run" },
+        ],
         title: t("wizard.title"),
       }}
       steps={STEPS.map((s) => t(`wizard.steps.${s}`))}
@@ -127,6 +134,7 @@ function RunWizard({
   agent: Agent;
   providers: ProviderModels[];
 }) {
+  const scope = usePagePath("org");
   const t = useTranslations("evals");
   const tc = useTranslations("common");
   const locale = useLocale();
@@ -429,7 +437,15 @@ function RunWizard({
 
   return (
     <WizardPage
-      header={{ breadcrumb: [{ label: set.name, href: setHref }], title: t("wizard.title") }}
+      header={{
+        path: [
+          ...scope,
+          { label: "evals", href: "/evals" },
+          { label: set.name, href: setHref },
+          { label: "run" },
+        ],
+        title: t("wizard.title"),
+      }}
       steps={STEPS.map((s) => t(`wizard.steps.${s}`))}
       current={step}
       actionRow={actionRow}

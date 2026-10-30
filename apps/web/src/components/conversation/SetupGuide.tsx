@@ -4,6 +4,7 @@ import { Button, OnboardingPage, type Step, Text } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useRouter } from "../../i18n/navigation";
 import type { Agent, ProviderModels } from "../../lib/agents";
+import { usePagePath } from "../shell/path";
 import { useSession } from "../shell/session";
 
 /** Whether a conversation can start: a model to answer and an agent to talk to. */
@@ -73,11 +74,12 @@ export function SetupGuide({
   agents: Agent[];
   providers: ProviderModels[];
 }) {
+  const scope = usePagePath("org");
   const t = useTranslations("chat.setup");
   const steps = useSetupSteps(agents, providers);
   return (
     <OnboardingPage
-      header={{ title: t("title"), description: t("description") }}
+      header={{ path: scope, title: t("title"), description: t("description") }}
       steps={[
         ...steps,
         { label: t("chat.label"), description: t("chat.description"), done: false },

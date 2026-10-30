@@ -10,7 +10,11 @@ function WizardBody() {
   return (
     <WizardPage
       header={{
-        breadcrumb: [{ label: "设置", href: "/dev/ui/templates/settings" }],
+        path: [
+          { label: "capybara", href: "/dev/ui" },
+          { label: "settings", href: "/dev/ui/templates/settings" },
+          { label: "models" },
+        ],
         title: "接入模型",
       }}
       steps={["选择供应商", "填写凭据", "测试连接", "完成"]}

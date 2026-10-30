@@ -17,6 +17,7 @@ import { useRef, useState } from "react";
 import { AdminGate } from "../../../../../components/AdminGate";
 import { FormError } from "../../../../../components/form-error";
 import { PermissionReview } from "../../../../../components/PermissionReview";
+import { usePagePath } from "../../../../../components/shell/path";
 import { Link, useRouter } from "../../../../../i18n/navigation";
 import {
   type AdminExtension,
@@ -66,6 +67,7 @@ type Step = 0 | 1 | 2;
 type Problem = { message: string; extra: string[] };
 
 function ExtensionInstall() {
+  const scope = usePagePath("admin");
   const t = useTranslations("admin.extensions.wizard");
   const tp = useTranslations("admin.extensions");
   const td = useTranslations("admin.extensions.detail");
@@ -213,7 +215,7 @@ function ExtensionInstall() {
   return (
     <WizardPage
       header={{
-        breadcrumb: [{ label: tp("title"), href: "/admin/extensions" }],
+        path: [...scope, { label: "extensions", href: "/admin/extensions" }, { label: "install" }],
         title: target !== null ? t("upgradeTitle", { name: target }) : t("title"),
       }}
       steps={[t("steps.source"), t("steps.review"), t("steps.confirm")]}

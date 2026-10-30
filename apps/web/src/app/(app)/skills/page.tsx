@@ -17,6 +17,7 @@ import { useRef, useState } from "react";
 import { formatTime } from "../../../components/ApprovalCard";
 import { FormError } from "../../../components/form-error";
 import { OrgGate } from "../../../components/OrgGate";
+import { usePagePath } from "../../../components/shell/path";
 import { useSession } from "../../../components/shell/session";
 import { useRouter } from "../../../i18n/navigation";
 import { issueLines } from "../../../lib/api";
@@ -39,6 +40,7 @@ export default function SkillsPage() {
 }
 
 function Skills({ orgId }: { orgId: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("skills");
   const locale = useLocale();
   const router = useRouter();
@@ -75,6 +77,7 @@ function Skills({ orgId }: { orgId: string }) {
   return (
     <ListPage
       header={{
+        path: [...scope, { label: "skills" }],
         title: t("title"),
         count: state.kind === "ready" ? String(rows.length) : undefined,
       }}

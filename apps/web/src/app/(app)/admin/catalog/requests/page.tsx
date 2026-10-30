@@ -15,6 +15,7 @@ import { useState } from "react";
 import { AdminGate } from "../../../../../components/AdminGate";
 import { formatTime } from "../../../../../components/ApprovalCard";
 import { FormError } from "../../../../../components/form-error";
+import { usePagePath } from "../../../../../components/shell/path";
 import { Link } from "../../../../../i18n/navigation";
 import {
   type CatalogRequest,
@@ -41,6 +42,7 @@ export default function CatalogRequestsPage() {
 }
 
 function Requests() {
+  const scope = usePagePath("admin");
   const t = useTranslations("catalog.admin.requests");
   const ta = useTranslations("catalog.admin");
   const locale = useLocale();
@@ -93,7 +95,7 @@ function Requests() {
   return (
     <InboxPage
       header={{
-        breadcrumb: [{ label: ta("title"), href: "/admin/catalog" }],
+        path: [...scope, { label: "catalog", href: "/admin/catalog" }, { label: "requests" }],
         title: t("title"),
         ...(state.kind === "ready" && { count: String(rows.length) }),
       }}

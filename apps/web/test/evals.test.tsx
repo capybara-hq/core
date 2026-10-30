@@ -405,7 +405,7 @@ describe("用例快照轨迹（TracePage）", () => {
     expect(within(tree).getByText("run · v2")).toBeTruthy();
     expect(screen.getByText(en.trajectories.detail.audited)).toBeTruthy();
     expect(
-      within(screen.getByRole("navigation", { name: "Breadcrumb" }))
+      within(screen.getByRole("navigation", { name: "Path" }))
         .getByRole("link", { name: E.title })
         .getAttribute("href"),
     ).toBe("/evals/s1");

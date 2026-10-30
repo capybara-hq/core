@@ -14,6 +14,7 @@ import { useState } from "react";
 import { AdminGate } from "../../../../components/AdminGate";
 import { useAdminNav } from "../../../../components/admin-nav";
 import { FormError } from "../../../../components/form-error";
+import { usePagePath } from "../../../../components/shell/path";
 import {
   type CustomPolicy,
   type DeploymentSettings,
@@ -47,6 +48,7 @@ type Simple = Pick<
 const POLICIES = ["allow", "deny"] as const;
 
 function AdminSettings() {
+  const scope = usePagePath("admin");
   const t = useTranslations("admin.settings");
   const tc = useTranslations("common");
   const nav = useAdminNav();
@@ -100,7 +102,7 @@ function AdminSettings() {
 
   return (
     <SettingsPage
-      header={{ title: t("title") }}
+      header={{ path: [...scope, { label: "settings" }], title: t("title") }}
       nav={nav}
       activeNav="settings"
       {...(unsaved > 0

@@ -24,6 +24,7 @@ import { formatTime } from "../../../../../components/ApprovalCard";
 import { ExtensionDeploymentConfig } from "../../../../../components/ExtensionDeploymentConfig";
 import { FormError } from "../../../../../components/form-error";
 import { PermissionReview } from "../../../../../components/PermissionReview";
+import { usePagePath } from "../../../../../components/shell/path";
 import { Link, useRouter } from "../../../../../i18n/navigation";
 import {
   type AdminExtension,
@@ -72,6 +73,7 @@ export default function ExtensionDetailPage() {
 }
 
 function ExtensionDetail({ name }: { name: string }) {
+  const scope = usePagePath("admin");
   const t = useTranslations("admin.extensions");
   const errorMessage = useErrorMessage();
   const { state, reload, set } = useLoad(listAdminExtensions, [name]);
@@ -113,7 +115,7 @@ function ExtensionDetail({ name }: { name: string }) {
   return (
     <DetailPage
       header={{
-        breadcrumb: [{ label: t("title"), href: "/admin/extensions" }],
+        path: [...scope, { label: "extensions", href: "/admin/extensions" }, { label: name }],
         title: name,
         ...(plugin && {
           count: plugin.version,

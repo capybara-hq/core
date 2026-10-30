@@ -4,6 +4,7 @@ import { type Column, DataTable, ListPage } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { formatTime } from "../../../components/ApprovalCard";
 import { OrgGate } from "../../../components/OrgGate";
+import { usePagePath } from "../../../components/shell/path";
 import { useRouter } from "../../../i18n/navigation";
 import { listAgents } from "../../../lib/agents";
 import { type EvalSet, listEvalSets } from "../../../lib/evals";
@@ -18,6 +19,7 @@ export default function EvalsPage() {
 }
 
 function EvalSets({ orgId }: { orgId: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("evals");
   const locale = useLocale();
   const router = useRouter();
@@ -49,6 +51,7 @@ function EvalSets({ orgId }: { orgId: string }) {
   return (
     <ListPage
       header={{
+        path: [...scope, { label: "evals" }],
         title: t("title"),
         ...(state.kind === "ready" && { count: String(sets.length) }),
         actions: [

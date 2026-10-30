@@ -23,6 +23,7 @@ import {
   SchemaForm,
   schemaFields,
 } from "../../../../components/SchemaForm";
+import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import { listAgents } from "../../../../lib/agents";
 import { ApiClientError, issueLines } from "../../../../lib/api";
@@ -51,6 +52,7 @@ async function loadOptions(orgId: string) {
 }
 
 function NewChannel({ orgId }: { orgId: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("channels");
   const tc = useTranslations("common");
   const router = useRouter();
@@ -114,7 +116,10 @@ function NewChannel({ orgId }: { orgId: string }) {
 
   return (
     <FormPage
-      header={{ breadcrumb: [{ label: t("title"), href: "/channels" }], title: t("form.title") }}
+      header={{
+        path: [...scope, { label: "channels", href: "/channels" }, { label: "new" }],
+        title: t("form.title"),
+      }}
       actionRow={{
         ...(attempted && missing > 0 ? { errors: missing } : {}),
         cancel: { label: tc("cancel"), onSelect: back },

@@ -6,6 +6,7 @@ import { useState } from "react";
 import { formatTime } from "../../../../components/ApprovalCard";
 import { OrgGate } from "../../../../components/OrgGate";
 import { useSettingsNav } from "../../../../components/settings-nav";
+import { usePagePath } from "../../../../components/shell/path";
 import { listToolGrants, revokeToolGrant, type ToolGrant } from "../../../../lib/approvals";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import { useLoad } from "../../../../lib/use-load";
@@ -18,6 +19,7 @@ export default function GrantsPage() {
 const keyOf = (g: ToolGrant) => `${g.agentId}/${g.toolKey}`;
 
 function Grants({ orgId }: { orgId: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("connections");
   const locale = useLocale();
   const toast = useToast();
@@ -68,7 +70,18 @@ function Grants({ orgId }: { orgId: string }) {
   ];
 
   return (
-    <SettingsPage header={{ title: t("title") }} nav={nav} activeNav="grants">
+    <SettingsPage
+      header={{
+        path: [
+          ...scope,
+          { label: "settings", href: "/settings/organization" },
+          { label: "grants" },
+        ],
+        title: t("title"),
+      }}
+      nav={nav}
+      activeNav="grants"
+    >
       <DataTable<ToolGrant>
         label={t("nav.grants")}
         columns={columns}

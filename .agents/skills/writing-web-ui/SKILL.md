@@ -109,7 +109,7 @@ import { Field, FormPage, FormSection, Input, Select } from "@capybara-hq/design
 
 <FormPage
   header={{
-    breadcrumb: [{ label: t("agents.title"), href: "/agents" }],
+    path: [...scope, { label: "agents", href: "/agents" }, { label: "new" }], // scope = usePagePath("org")
     title: t("agents.form.title"),
   }}
   actionRow={{
@@ -127,7 +127,7 @@ import { Field, FormPage, FormSection, Input, Select } from "@capybara-hq/design
 </FormPage>
 ```
 
-`PageHeaderProps`: `{ breadcrumb?, title, description?, count?, status?, metrics?, actions? }` (metrics become StatCards, drawn by the template). Forms have no anchor navigation; the error count lives in the ActionRow. `ActionRowProps`: `{ unsaved?, errors?, cancel?, secondary?, primary }` (`unsaved: 0` reads "No unsaved changes"); button spec `{ label, onSelect, shortcut?, loading?, disabled? }`. For the exact props of the controls in the examples, `packages/design/src/controls` and `/dev/ui` are authoritative (`Field` passes the aria associations for label, help and error to its child control). Use `useStatusBar(...)` for page status text; `useToast()` for toasts; in-app links go through the `DesignProvider` `link` (apps/web already passes next-intl's `Link`).
+`PageHeaderProps`: `{ path, title, description?, count?, status?, metrics?, actions?, tabs?, activeTab?, search? }` (`path` is required: `usePagePath("org" | "home" | "admin", ...segments)` from `components/shell/path.ts` gives the scope, then add the page and object segments; metrics become StatCards, drawn by the template; `tabs` with counts and the `search` field form the head's last row). Forms have no anchor navigation; the error count lives in the ActionRow. `ActionRowProps`: `{ unsaved?, errors?, cancel?, secondary?, primary }` (`unsaved: 0` reads "No unsaved changes"); button spec `{ label, onSelect, shortcut?, loading?, disabled? }`. For the exact props of the controls in the examples, `packages/design/src/controls` and `/dev/ui` are authoritative (`Field` passes the aria associations for label, help and error to its child control). Use `useStatusBar(...)` for page status text; `useToast()` for toasts; in-app links go through the `DesignProvider` `link` (apps/web already passes next-intl's `Link`).
 
 UI text goes through next-intl (`apps/web/messages/{zh,en}.json`); text inside design goes through design's own i18n.
 

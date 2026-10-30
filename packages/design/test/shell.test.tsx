@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
 import { renderToString } from "react-dom/server";
@@ -170,36 +170,69 @@ describe("AppShell", () => {
 });
 
 describe("PageHeader", () => {
-  it("breadcrumb: a nav labelled 面包屑 with the links in order; the last crumb may be text", () => {
+  it("renders the path with separators and marks the last segment current", () => {
     zh(
       <PageHeader
-        breadcrumb={[
-          { label: "Agents", href: "/agents" },
-          { label: "研究助手", href: "/agents/a1" },
+        path={[
+          { label: "capybara", href: "/" },
+          { label: "agents", href: "/agents" },
+          { label: "研究助手" },
         ]}
         title="编辑 Agent"
       />,
     );
-    const nav = screen.getByRole("navigation", { name: "面包屑" });
+    const nav = screen.getByRole("navigation", { name: "路径" });
     const links = within(nav).getAllByRole("link");
     expect(links.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
-      ["Agents", "/agents"],
-      ["研究助手", "/agents/a1"],
+      ["capybara", "/"],
+      ["agents", "/agents"],
     ]);
+    expect(nav.textContent).toBe("capybara/agents/研究助手");
+    const last = nav.querySelector('[aria-current="page"]');
+    expect(last?.textContent).toBe("研究助手");
     expect(screen.getByRole("heading", { level: 1, name: "编辑 Agent" })).toBeTruthy();
   });
 
-  it("the breadcrumb is labelled Breadcrumb in English", () => {
+  it("the path is labelled Path in English", () => {
     render(
       <DesignProvider locale="en">
-        <PageHeader breadcrumb={[{ label: "Agents", href: "/agents" }]} title="Edit agent" />
+        <PageHeader path={[{ label: "~" }]} title="Home" />
       </DesignProvider>,
     );
-    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toBeTruthy();
+    expect(screen.getByRole("navigation", { name: "Path" })).toBeTruthy();
+  });
+
+  it("renders tabs with counts and the search at the row end", () => {
+    const onSearch = vi.fn();
+    const onSelect = vi.fn();
+    zh(
+      <PageHeader
+        path={[{ label: "capybara" }]}
+        title="Agents"
+        tabs={[
+          { id: "all", label: "全部", count: 6 },
+          { id: "mine", label: "我的", count: 3, onSelect },
+        ]}
+        activeTab="all"
+        search={{ label: "搜索 Agent", value: "", onChange: onSearch }}
+      />,
+    );
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.map((t) => t.textContent)).toEqual(["全部6", "我的3"]);
+    expect(tabs[0]?.getAttribute("aria-selected")).toBe("true");
+    const row = document.querySelector<HTMLElement>(
+      '[data-part="page-header-tabs"]',
+    ) as HTMLElement;
+    const input = within(row).getByRole("searchbox", { name: "搜索 Agent" });
+    expect(row.lastElementChild?.contains(input)).toBe(true);
+    fireEvent.click(tabs[1] as HTMLElement);
+    expect(onSelect).toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "x" } });
+    expect(onSearch).toHaveBeenCalledWith("x");
   });
 
   it("description renders under the title", () => {
-    zh(<PageHeader title="连接器" description="把外部服务接进来。" />);
+    zh(<PageHeader path={[{ label: "~" }]} title="连接器" description="把外部服务接进来。" />);
     const h1 = screen.getByRole("heading", { level: 1 });
     const desc = screen.getByText("把外部服务接进来。");
     expect(desc.getAttribute("data-part")).toBe("page-header-description");
@@ -209,17 +242,17 @@ describe("PageHeader", () => {
 
   it("two primaries throw; six metrics throw", () => {
     const p = (label: string): HeaderAction => ({ label, variant: "primary" });
-    expect(() => assertHeader({ title: "x", actions: [p("a"), p("b")] })).toThrow();
+    expect(() => assertHeader({ path: [], title: "x", actions: [p("a"), p("b")] })).toThrow();
     const m = Array.from({ length: 6 }, (_, i) => ({ label: `m${i}`, value: i }));
-    expect(() => assertHeader({ title: "x", metrics: m } as PageHeaderProps)).toThrow();
+    expect(() => assertHeader({ path: [], title: "x", metrics: m } as PageHeaderProps)).toThrow();
     expect(() =>
-      assertHeader({ title: "x", actions: [p("a")], metrics: m.slice(0, 5) }),
+      assertHeader({ path: [], title: "x", actions: [p("a")], metrics: m.slice(0, 5) }),
     ).not.toThrow();
   });
 
   it("an 80-character title keeps the full text in title", () => {
     const long = "长".repeat(80);
-    zh(<PageHeader title={long} />);
+    zh(<PageHeader path={[{ label: "~" }]} title={long} />);
     expect(screen.getByRole("heading", { level: 1 }).getAttribute("title")).toBe(long);
   });
 
@@ -227,6 +260,7 @@ describe("PageHeader", () => {
     const onSelect = vi.fn();
     zh(
       <PageHeader
+        path={[{ label: "~" }]}
         title="t"
         actions={[
           { menu: [{ label: "导出", onSelect: () => {} }], label: "更多" },
@@ -242,6 +276,7 @@ describe("PageHeader", () => {
   it("the primary action is drawn rightmost whatever the given order", () => {
     zh(
       <PageHeader
+        path={[{ label: "~" }]}
         title="t"
         actions={[
           { label: "新建", variant: "primary", onSelect: () => {} },
@@ -253,7 +288,13 @@ describe("PageHeader", () => {
   });
 
   it("metrics are not drawn by the header (the template draws StatCards)", () => {
-    zh(<PageHeader title="t" metrics={[{ label: "成功率", value: "98%" }]} />);
+    zh(
+      <PageHeader
+        path={[{ label: "~" }]}
+        title="t"
+        metrics={[{ label: "成功率", value: "98%" }]}
+      />,
+    );
     expect(screen.queryByText("成功率")).toBeNull();
   });
 
@@ -261,6 +302,7 @@ describe("PageHeader", () => {
     stubMedia(639);
     zh(
       <PageHeader
+        path={[{ label: "~" }]}
         title="t"
         actions={[
           { label: "导入", variant: "default", onSelect: () => {} },
@@ -280,6 +322,7 @@ describe("PageHeader first paint (m6)", () => {
     const html = renderToString(
       <DesignProvider locale="zh">
         <PageHeader
+          path={[{ label: "~" }]}
           title="t"
           actions={[
             { label: "导入", variant: "default", onSelect: () => {} },
@@ -428,15 +471,16 @@ describe("Body", () => {
     expect(screen.getByText("筛选器内容")).toBeTruthy();
   });
 
-  it("centered: no anchor navigation; content at the form width", () => {
+  it("centered: no anchor navigation; content at the content width", () => {
     zh(
-      <Body layout="centered" width="form">
+      <Body layout="centered" loose>
         <div>表单</div>
       </Body>,
     );
     expect(screen.queryByRole("navigation")).toBeNull();
     const content = document.querySelector('[data-part="content"]') as HTMLElement;
-    expect(content.getAttribute("data-width")).toBe("form");
+    expect(content.getAttribute("data-width")).toBe("content");
+    expect(content.getAttribute("data-gap")).toBe("loose");
     expect(content.textContent).toBe("表单");
   });
 
@@ -453,14 +497,14 @@ describe("Body", () => {
     }
   });
 
-  it("width defaults to full", () => {
+  it("every body is the content width", () => {
     zh(
       <Body layout="single">
         <div>主内容</div>
       </Body>,
     );
     expect(document.querySelector('[data-part="content"]')?.getAttribute("data-width")).toBe(
-      "full",
+      "content",
     );
   });
 
@@ -550,7 +594,7 @@ describe("Body 折叠与关闭、数值 0", () => {
   });
 
   it("PageHeader count=0 渲染 0", () => {
-    zh(<PageHeader title="Agents" count={0} />);
+    zh(<PageHeader path={[{ label: "~" }]} title="Agents" count={0} />);
     expect(screen.getByText("0")).toBeTruthy();
   });
 
@@ -577,6 +621,7 @@ describe("清理：PageHeader 链接操作", () => {
   it("href 操作与按钮一样显示快捷键提示", () => {
     zh(
       <PageHeader
+        path={[{ label: "~" }]}
         title="t"
         actions={[
           { label: "编辑", variant: "default", href: "/edit", shortcut: "E" },

@@ -30,6 +30,7 @@ import {
 } from "../../../../../components/CatalogParts";
 import { FormError } from "../../../../../components/form-error";
 import { PermissionReview } from "../../../../../components/PermissionReview";
+import { usePagePath } from "../../../../../components/shell/path";
 import { Link, useRouter } from "../../../../../i18n/navigation";
 import { issueLines } from "../../../../../lib/api";
 import {
@@ -102,6 +103,7 @@ type Problem = { message: string; extra: string[] };
 type Staged = PluginPrepared | null | "loading" | { problem: Problem } | undefined;
 
 function PluginImportWizard() {
+  const scope = usePagePath("admin");
   const t = useTranslations("catalog.admin.review");
   const ta = useTranslations("catalog.admin");
   const tw = useTranslations("admin.extensions.wizard");
@@ -270,7 +272,10 @@ function PluginImportWizard() {
 
   return (
     <WizardPage
-      header={{ breadcrumb: [{ label: ta("title"), href: "/admin/catalog" }], title: t("title") }}
+      header={{
+        path: [...scope, { label: "catalog", href: "/admin/catalog" }, { label: "import" }],
+        title: t("title"),
+      }}
       steps={[t("steps.source"), t("steps.review"), t("steps.confirm")]}
       current={step}
       actionRow={actionRow}

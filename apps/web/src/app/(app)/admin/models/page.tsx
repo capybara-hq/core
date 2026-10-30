@@ -20,6 +20,7 @@ import { AdminGate } from "../../../../components/AdminGate";
 import { useAdminNav } from "../../../../components/admin-nav";
 import { FormError } from "../../../../components/form-error";
 import { PurposeEditor } from "../../../../components/PurposeEditor";
+import { usePagePath } from "../../../../components/shell/path";
 import { ApiClientError } from "../../../../lib/api";
 import {
   type AdminModelInfo,
@@ -60,6 +61,7 @@ interface Data extends AdminModels {
 }
 
 function AdminModelsInner() {
+  const scope = usePagePath("admin");
   const t = useTranslations("models");
   const nav = useAdminNav();
   const errorMessage = useErrorMessage();
@@ -118,7 +120,11 @@ function AdminModelsInner() {
   }
 
   return (
-    <SettingsPage header={{ title: t("admin.title") }} nav={nav} activeNav="models">
+    <SettingsPage
+      header={{ path: [...scope, { label: "models" }], title: t("admin.title") }}
+      nav={nav}
+      activeNav="models"
+    >
       {body}
     </SettingsPage>
   );

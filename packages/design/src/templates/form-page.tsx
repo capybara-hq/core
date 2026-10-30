@@ -28,9 +28,9 @@ export function FormPage({
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [dirty]);
   return (
-    <div className="cb-template" data-template="FormPage" data-width="form">
-      <TemplateHead header={header} width="form" />
-      <Body layout="centered" width="form">
+    <div className="cb-template" data-template="FormPage" data-width="content">
+      <TemplateHead header={header} loose />
+      <Body layout="centered" loose>
         {children}
       </Body>
       <ActionRow {...actionRow} />

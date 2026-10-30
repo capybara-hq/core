@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { CatalogInstallWizard } from "../../../../components/CatalogInstallWizard";
 import { useConnectorWizard } from "../../../../components/ConnectorWizard";
 import { OrgGate } from "../../../../components/OrgGate";
+import { usePagePath } from "../../../../components/shell/path";
 
 /** `?template=<目录条目 id>`：挂载后在 effect 里读（客户端跳转时渲染那一刻地址栏可能还没更新）。 */
 const templateParam = (): string | null => {
@@ -48,12 +49,13 @@ function Install({ orgId }: { orgId: string }) {
 }
 
 function InstallApp({ orgId }: { orgId: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("connectors");
   const wizard = useConnectorWizard(orgId);
   return (
     <WizardPage
       header={{
-        breadcrumb: [{ label: t("title"), href: "/connectors" }],
+        path: [...scope, { label: "connectors", href: "/connectors" }, { label: "install" }],
         title: t("wizard.title"),
       }}
       steps={wizard.steps}

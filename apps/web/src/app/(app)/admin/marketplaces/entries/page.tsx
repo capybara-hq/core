@@ -17,6 +17,7 @@ import { useEffect, useState } from "react";
 import { AdminGate } from "../../../../../components/AdminGate";
 import { useCatalogErrorLines } from "../../../../../components/CatalogParts";
 import { FormError } from "../../../../../components/form-error";
+import { usePagePath } from "../../../../../components/shell/path";
 import { useRouter } from "../../../../../i18n/navigation";
 import { issueLines } from "../../../../../lib/api";
 import {
@@ -63,6 +64,7 @@ type Notice = { message: string; extra: string[] };
 const keyOf = (e: MarketplaceEntry) => `${e.sourceId}/${e.name}/${e.version ?? ""}`;
 
 function Catalog() {
+  const scope = usePagePath("admin");
   const t = useTranslations("catalog.admin.entries");
   const ta = useTranslations("catalog.admin");
   const td = useTranslations("catalog");
@@ -208,7 +210,11 @@ function Catalog() {
   return (
     <ListPage
       header={{
-        breadcrumb: [{ label: ta("title"), href: "/admin/catalog" }],
+        path: [
+          ...scope,
+          { label: "marketplaces", href: "/admin/marketplaces" },
+          { label: "entries" },
+        ],
         title: t("title"),
         ...(state.kind === "ready" && { count: `${rows.length}${truncated ? "+" : ""}` }),
       }}

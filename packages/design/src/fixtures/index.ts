@@ -343,13 +343,17 @@ export type FixtureFormField =
     };
 
 export const FORM_PAGE_FIXTURE: {
-  breadcrumb: { label: string; href?: string }[];
+  path: { label: string; href?: string }[];
   title: string;
   sections: { title: string; description: string; fields: FixtureFormField[] }[];
   actionRow: { unsaved: string; errors: string; discard: string; save: string; clean: string };
   status: { context: string; pageStatus: string };
 } = {
-  breadcrumb: [{ label: "Agents", href: "/agents" }, { label: "研究助手" }],
+  path: [
+    { label: "capybara", href: "/" },
+    { label: "agents", href: "/agents" },
+    { label: "研究助手" },
+  ],
   title: "编辑 Agent",
   sections: [
     {
@@ -435,7 +439,7 @@ export const FORM_PAGE_FIXTURE: {
 
 export const PAGE_HEADER_FIXTURE = {
   title: "Agents",
-  breadcrumbTitle: "编辑 Agent",
+  pathTitle: "编辑 Agent",
   longTitle:
     "季度经营分析与预算执行跟踪复盘助手的全部历史版本与发布记录以及每个版本的变更说明和审批意见汇总页面",
 };

@@ -129,7 +129,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 | Inner padding (inside a component, vertical / horizontal) | `dense` / `default` | 4/8 · 6/12 | `--cb-pad-<step>-y`, `--cb-pad-<step>-x` |
 | Type | §2.2 | | `--cb-type-<name>-size`, `--cb-type-<name>-line` |
 | Radius | `sm` / `md` / `bubble` | 4 / 8 / 10 | `--cb-radius-<step>` |
-| Layout | `sidebar` / `sidebar-rail` / `content-list` / `content-form` / `chat` / `status-bar` / `action-row` / `gutter` | 256 / 48 / 1080 / 880 / 720 / 24 / 40 / 20 | `--cb-layout-<name>` |
+| Layout | `sidebar` / `sidebar-rail` / `content` / `chat` / `status-bar` / `action-row` / `gutter` | 256 / 48 / 1120 / 720 / 24 / 40 / 20 | `--cb-layout-<name>` |
 | Layout, conversation page | `title-bar` / `properties` / `panel-min` / `panel` / `chat-min` / `tool-output` / `file-card` / `thumb` / `inline-image` | 48 / 300 / 520 / 560 / 480 / 120 / 240 / 56 / 360 | `--cb-layout-<name>` |
 
 **Density steps.** Controls and rows come in three steps, chosen by context, never by taste:
@@ -202,7 +202,7 @@ Every page (except auth pages, §5 T10) is **Sidebar | content area**. The conte
 | Layer | Height | Required | Content |
 |---|---|---|---|
 | Drawer menu bar | `row.roomy` | Only below 960 | Menu button that opens the sidebar drawer, page title |
-| PageHeader | content | Required | Row 1 breadcrumb (optional); row 2 title + one-line description, actions on the right (§4.2) |
+| PageHeader | content | Required | Row 1 the path; row 2 title + one-line description, actions on the right; optional tabs row (§4.2) |
 | PageTabs | 36 | Optional (detail pages only) | In-page tabs, current item underlined |
 | Body | flexible | Required | One of the layouts in §4.3 |
 | ActionRow | `layout.action-row` | Optional | Appears when the page has actions to submit, stacked above the StatusBar |
@@ -217,14 +217,14 @@ See §6.13 for the component. Width `layout.sidebar`; below 1280 an icon rail of
 
 ### 4.2 PageHeader
 
-- Two rows. Row 1 (optional): breadcrumb, `small` `muted`, links separated by a `faint` `/`, inside a `nav` labelled "Breadcrumb"; a crumb without a link (the current object) is plain text. Row 2: title (`h1`, single line with an ellipsis, full text in `title`) + count / status, a one-line description under it (`prose-small` `muted`, single line with an ellipsis), actions on the right.
+- Four rows. Row 1: the **path** `scope / page [/ object]` (mono, `small`, `faint`; the last segment, the current page, in `ink` with `aria-current="page"`), inside a `nav` labelled "Path"; earlier segments with a link are links. The scope is the org slug for workspace pages (links to `/`), `~` for the home page, `/admin` for admin pages. Row 2: title (`h1`, single line with an ellipsis, full text in `title`) + count / status, actions on the right (at most one primary, rightmost). Row 3 (optional): a one-line description (`prose-small` `muted`, single line with an ellipsis). Row 4 (optional): **tabs** with counts (`全部 6 · 我的 3`) for pages with views, with the **search** field at the right end of the same row; a tab changes the view (`onSelect`) or links (`href`).
 - No bottom line and no background; spacing separates it from the body.
 - Actions: at most 1 solid primary action + 2 secondary + a `more-horizontal` menu; the primary action is rightmost; all `default` density; an action may lead with a 14 icon (`plus` on a create action). The submit action of form pages **must not** go here; it goes in the ActionRow.
-- List-page key metrics are **not** in the header: the template renders them below the header as StatCards (§6.14), at most 4–5. List and overview pages draw them at the top of the body; full-width templates (detail, trace, inbox) draw them in the fixed header area under the PageHeader.
-- Content width: the header shares the body's content width (lists 1080, forms 880, centered; §4.3). It sits `space.6` below the top of the content area and `space.3` above the body (StatCards or the table).
+- List-page key metrics are **not** in the header: the template renders them below the header as StatCards (§6.14), at most 4–5. List and overview pages draw them at the top of the body; detail, trace, inbox, onboarding and status templates draw them in the fixed header area under the PageHeader.
+- Content width: the header shares the body's one content width (`layout.content`, 1120, centered; §4.3). It sits `space.6` below the top of the content area and `space.3` above the body (StatCards or the table).
 
 <!-- states: page-header -->
-States: `title`, `breadcrumb`, `description-actions`, `long-title`
+States: `title`, `path`, `description-actions`, `long-title`
 
 <!-- size-table: page-header -->
 | Part | State | Property | Value |
@@ -232,8 +232,8 @@ States: `title`, `breadcrumb`, `description-actions`, `long-title`
 | page-header-title | title | font-size | type.h1 |
 | page-header-title | title | line-height | type.h1.line |
 | page-header-title | title | color | color.ink |
-| breadcrumb | breadcrumb | font-size | type.small |
-| breadcrumb | breadcrumb | color | color.muted |
+| path | path | font-size | type.small |
+| path | path | color | color.faint |
 | page-header-description | description-actions | font-size | type.prose-small |
 | page-header-description | description-actions | line-height | type.prose-small.line |
 | page-header-description | description-actions | color | color.muted |
@@ -249,9 +249,9 @@ States: `title`, `breadcrumb`, `description-actions`, `long-title`
 | Rail + Content | 240 + flexible | Lists with facet filters |
 | Content + Inspector | flexible + 400 | Details |
 | Rail + Content + Inspector | 240 + flexible + 400 | Inbox |
-| Centered | content max `layout.content-form` (880), centered | Forms, settings, wizards |
+| Centered | content max `layout.content` (1120), centered | Forms, settings, wizards |
 
-- Content widths: list pages and the overview `layout.content-list` (1080), forms / settings content / wizards `layout.content-form` (880), centered; details, inbox and trace use the full width; the conversation page has its own columns (§5.4). The page gutter is `layout.gutter` on both sides. The Centered layout has **no anchor navigation**; a form's error count lives in the ActionRow.
+- Content width: **one** width for every frame, `layout.content` (1120), centered, whatever the template (lists, overview, forms, settings, wizards, details, inbox, trace); a form keeps its label column inside it (forms put `space.6` between sections, lists `space.3`); the conversation page has its own columns (§5.4). The page gutter is `layout.gutter` on both sides. The Centered layout has **no anchor navigation**; a form's error count lives in the ActionRow.
 - Content has a minimum width of 560. The Rail is collapsible; the Inspector is closable.
 - Scrolling: the sidebar, PageHeader / PageTabs / ActionRow / StatusBar are fixed; the sidebar's conversation section, Rail, Content and Inspector scroll independently; the page must not show a horizontal scrollbar (wide tables scroll inside their own container).
 - Responsive: < 1280 the sidebar becomes the rail and the Inspector a right-side Sheet; < 960 the sidebar becomes a drawer and the Rail a toolbar "Filter" button + Sheet; < 640 the header actions beyond the primary fold into `more-horizontal`.
@@ -328,17 +328,17 @@ States: `page`
 | Part | State | Property | Value |
 |---|---|---|---|
 | sidebar | page | width | layout.sidebar |
-| content | page | max-width | layout.content-list |
+| content | page | max-width | layout.content |
 | status-bar | page | height | layout.status-bar |
 
 ### 5.2 Detail (T3)
-- PageHeader: breadcrumb to the parent; name + version (faint) + status; actions: Edit (default), Trial run (secondary), `more-horizontal`.
+- PageHeader: path ending with the object's name; name + version (faint) + status; actions: Edit (default), Trial run (secondary), `more-horizontal`.
 - PageTabs: Summary · Runs · Config · Versions · Permissions · Audit (pick per object type), with counts following in faint.
 - Content: sections on the `panel` ground with radius `md` (no border), section header h2 + actions on the right, `space.4` between sections.
 - Inspector: grouped properties, group title small muted, key 8ch wide muted, value single line with ellipsis.
 
 ### 5.3 Form (T4)
-- PageHeader: breadcrumb to the parent; title "Create X" + draft badge; only auxiliary actions on the right (such as "Import from YAML").
+- PageHeader: path ending with the object's name (`new` for a new one); title "Create X" + draft badge; only auxiliary actions on the right (such as "Import from YAML").
 - No anchor navigation (the Centered body has none, §4.3).
 - Sections: a two-column grid, the left column 240 wide with the section title (`h2`) and a description (`prose-small` `muted`), the right column the fields on a `panel` card with radius `md`, padding `space.4`, `space.3` between fields. Sections are separated by `space.6` of spacing, **not by lines**; rows inside a list of switches are divided by `line-soft`.
 - Fields: label on top (`body` `ink`; required marked with an accent `*`, optional marked "Optional" in faint); controls `default` density; help text and error message below (`small`); on error the border is `fail` and the message starts with the `circle-alert` icon and gives an actionable suggestion.
@@ -351,7 +351,7 @@ States: `page`
 | Part | State | Property | Value |
 |---|---|---|---|
 | sidebar | page | width | layout.sidebar |
-| content | page | max-width | layout.content-form |
+| content | page | max-width | layout.content |
 | action-row | page | height | layout.action-row |
 | status-bar | page | height | layout.status-bar |
 
@@ -606,7 +606,7 @@ Selection rules: the user needs to decide → Dialog; view / edit one object wit
 - **Dialog**: width 480 / 640, `panel` background + `line-strong` border + radius `md` + `shadow-2` + `scrim`. Header (h2 title + close `x`) / body (padding 16) / footer (right-aligned: ghost Cancel + primary action, the primary action carries `↵`), with 1px `line` separating header and footer. Esc closes; focus is trapped and returned after closing. Default focus: on the primary action for an ordinary dialog, on Cancel for a dangerous dialog.
 - **Dangerous confirmation**: `fail` frame, `fail` title; explains the consequences and recoverability; the object name must be typed, the confirm button is disabled until it matches, and is danger-solid once it matches.
 - **Sheet**: slides out from the right, width 480 / 720, `panel` background + `line-strong` left line + `shadow-sheet`; no scrim by default (the list is still operable). Header: name + version + open in a new page `external-link` + close `x`; may contain Tabs; footer: actions. Closing with unsaved changes needs a second confirmation.
-- **Links**: the design package is framework-agnostic; links in the sidebar navigation, the PageHeader breadcrumb, Tabs, Sheet, TextLink and LinkCard are rendered through the `link` component of `DesignProvider` (default `<a>`); `apps/web` passes next-intl's `Link` to get client-side navigation and the locale prefix. Pages should not build `<a href>` themselves for in-site navigation.
+- **Links**: the design package is framework-agnostic; links in the sidebar navigation, the PageHeader path, Tabs, Sheet, TextLink and LinkCard are rendered through the `link` component of `DesignProvider` (default `<a>`); `apps/web` passes next-intl's `Link` to get client-side navigation and the locale prefix. Pages should not build `<a href>` themselves for in-site navigation.
 - **Popover / Menu**: `panel` background + `line-strong` border + radius `md` + `shadow-1`; menu items are `row.default` high with padding `pad.default.x`; a filter Popover has a search `>` at the top and "Clear / Apply ↵" at the bottom; a hovered item gets a `hover` background. The trigger button is outlined in the accent color when open and holding a value.
 - **Command palette (⌘K)**: width 560, input with a `>` prefix; group titles small faint; the current item has an `accent-tint` background + left marker; key hints at the bottom.
   - **Items** are one `row.dense` line, gap `space.2`: the label (`ink`), then an optional hint (`faint`, a skill's argument hint "[issue-number]"), then optional tags (`micro` `muted` on the `selected` ground, radius `sm`, padding 0 `space.1`, the picker-menu tag), then an optional description (`muted`, filling the rest of the line with an ellipsis), then an optional source, a secondary label (`small` `faint`, at the end of the line: the plugin a skill comes from, "superpowers"), then an optional shortcut (`Kbd`, at the end).

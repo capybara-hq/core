@@ -6,6 +6,7 @@ import { FormError } from "../../../../components/form-error";
 import { OrgGate } from "../../../../components/OrgGate";
 import { PurposeEditor } from "../../../../components/PurposeEditor";
 import { useSettingsNav } from "../../../../components/settings-nav";
+import { usePagePath } from "../../../../components/shell/path";
 import { listModels } from "../../../../lib/agents";
 import { ApiClientError } from "../../../../lib/api";
 import {
@@ -26,6 +27,7 @@ export default function OrgModelsPage() {
 }
 
 function OrgModels({ orgId }: { orgId: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("models");
   const nav = useSettingsNav();
   const errorMessage = useErrorMessage();
@@ -66,7 +68,18 @@ function OrgModels({ orgId }: { orgId: string }) {
   }
 
   return (
-    <SettingsPage header={{ title: t("org.title") }} nav={nav} activeNav="models">
+    <SettingsPage
+      header={{
+        path: [
+          ...scope,
+          { label: "settings", href: "/settings/organization" },
+          { label: "models" },
+        ],
+        title: t("org.title"),
+      }}
+      nav={nav}
+      activeNav="models"
+    >
       {body}
     </SettingsPage>
   );

@@ -28,7 +28,7 @@ afterEach(() => {
 
 const zh = (ui: React.ReactElement) => render(<DesignProvider locale="zh">{ui}</DesignProvider>);
 
-const header = { title: "页面标题" };
+const header = { path: [{ label: "capybara" }], title: "页面标题" };
 const row = { primary: { label: "保存", onSelect: () => {} } };
 
 function root(name: string) {
@@ -193,28 +193,28 @@ describe("widths, stat cards and the form without anchors", () => {
   const width = () =>
     document.querySelector('[data-part="content"]')?.getAttribute("data-width") ?? null;
   const widths: [string, React.ReactElement, string][] = [
-    ["OverviewPage", <OverviewPage header={header}>x</OverviewPage>, "list"],
-    ["ListPage", <ListPage header={header}>x</ListPage>, "list"],
+    ["OverviewPage", <OverviewPage header={header}>x</OverviewPage>, "content"],
+    ["ListPage", <ListPage header={header}>x</ListPage>, "content"],
     [
       "FormPage",
       <FormPage header={header} actionRow={row}>
         x
       </FormPage>,
-      "form",
+      "content",
     ],
     [
       "SettingsPage",
       <SettingsPage header={header} nav={[{ id: "o", label: "组织", href: "/o" }]} activeNav="o">
         x
       </SettingsPage>,
-      "form",
+      "content",
     ],
     [
       "WizardPage",
       <WizardPage header={header} steps={["一"]} current={0} actionRow={row}>
         x
       </WizardPage>,
-      "form",
+      "content",
     ],
     [
       "DetailPage",
@@ -224,23 +224,23 @@ describe("widths, stat cards and the form without anchors", () => {
       >
         x
       </DetailPage>,
-      "full",
+      "content",
     ],
     [
       "InboxPage",
       <InboxPage header={header} list={<div>l</div>}>
         x
       </InboxPage>,
-      "full",
+      "content",
     ],
     [
       "TracePage",
       <TracePage header={header} waterfall={<div>w</div>} detail={<div>d</div>} />,
-      "full",
+      "content",
     ],
   ];
   for (const [name, el, w] of widths) {
-    it(`${name} content is data-width="${w}"`, () => {
+    it(`${name} uses the content width: data-width="${w}"`, () => {
       zh(el);
       expect(width()).toBe(w);
     });
@@ -250,6 +250,7 @@ describe("widths, stat cards and the form without anchors", () => {
     zh(
       <ListPage
         header={{
+          path: [{ label: "capybara" }],
           title: "连接器",
           metrics: [
             { label: "已接入", value: "24" },
@@ -283,7 +284,9 @@ describe("widths, stat cards and the form without anchors", () => {
       </FormPage>,
     );
     expect(screen.queryByRole("navigation", { name: "页内导航" })).toBeNull();
-    expect(screen.queryByRole("navigation")).toBeNull();
+    // only the path line is a navigation landmark
+    const navs = screen.queryAllByRole("navigation");
+    expect(navs.map((n) => n.getAttribute("data-part"))).toEqual(["path"]);
   });
 });
 
@@ -477,7 +480,7 @@ describe("SettingsPage column (blind round 2)", () => {
   const settings = () =>
     zh(
       <SettingsPage
-        header={{ title: "组织设置" }}
+        header={{ path: [], title: "组织设置" }}
         nav={[
           { id: "org", label: "组织", href: "/org" },
           { id: "members", label: "成员", href: "/members" },
@@ -499,7 +502,7 @@ describe("SettingsPage column (blind round 2)", () => {
     expect(rail.contains(title)).toBe(false);
     expect(rail.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // the header frame has the form width, like the content frame
-    expect(title.closest(".cb-template-head-frame")?.getAttribute("data-width")).toBe("form");
+    expect(title.closest(".cb-template-head-frame")?.getAttribute("data-width")).toBe("content");
   });
 
   it("the nav starts the rail: no collapse button above it; the nav has a name", () => {

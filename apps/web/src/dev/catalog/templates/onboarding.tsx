@@ -6,7 +6,7 @@ export function OnboardingTemplate() {
   return (
     <FixtureShell nav="overview" context="onboarding">
       <OnboardingPage
-        header={{ title: "开始使用" }}
+        header={{ path: [{ label: "capybara" }, { label: "start" }], title: "开始使用" }}
         steps={[
           { label: "创建组织", description: "示例组织 · 生产环境", done: true },
           { label: "接入模型", description: "Anthropic · claude-opus-5-5", done: true },

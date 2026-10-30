@@ -41,7 +41,11 @@ function FormBody() {
   return (
     <FormPage
       header={{
-        breadcrumb: [{ label: "Agents", href: "/dev/ui/templates/list" }],
+        path: [
+          { label: "capybara", href: "/dev/ui" },
+          { label: "agents", href: "/dev/ui/templates/list" },
+          { label: "new" },
+        ],
         title: "新建 Agent",
         status: <Badge>草稿</Badge>,
         actions: [{ label: "从 YAML 导入", variant: "default" }],

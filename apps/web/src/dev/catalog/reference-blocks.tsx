@@ -54,8 +54,9 @@ import { type SidebarFixture, sidebarProps, statusFixture } from "./shell-fixtur
 // The /dev/ui side of the reference set (docs/design/reference/src): one RefBlock per state, with
 // the reference block's id, box and fixture copy. Pseudo-states are forced by the Playwright specs.
 
-const LIST = SIZES.layout["content-list"];
+const LIST = SIZES.layout.content;
 const noop = () => {};
+const LP = [{ label: "capybara", href: "/" }, { label: "connectors" }];
 
 // ── Button ──────────────────────────────────────────────────────────────────
 
@@ -445,6 +446,7 @@ function DrawerPage() {
     >
       <ListPage
         header={{
+          path: LP,
           title: LIST_PAGE_FIXTURE.title,
           description: LIST_PAGE_FIXTURE.description,
           metrics: LIST_PAGE_FIXTURE.metrics,
@@ -510,16 +512,17 @@ function pageHeaderBlocks(): ReactNode {
   return (
     <>
       <RefBlock id="page-header-title" width={LIST} pad>
-        <PageHeader title={PAGE_HEADER_FIXTURE.title} />
+        <PageHeader path={F.path.slice(0, 1)} title={PAGE_HEADER_FIXTURE.title} />
       </RefBlock>
-      <RefBlock id="page-header-breadcrumb" width={LIST} pad>
-        <PageHeader breadcrumb={F.breadcrumb} title={PAGE_HEADER_FIXTURE.breadcrumbTitle} />
+      <RefBlock id="page-header-path" width={LIST} pad>
+        <PageHeader path={F.path} title={PAGE_HEADER_FIXTURE.pathTitle} />
       </RefBlock>
       <RefBlock id="page-header-description-actions" width={LIST} pad>
-        <PageHeader title={L.title} description={L.description} actions={ACTIONS} />
+        <PageHeader path={LP} title={L.title} description={L.description} actions={ACTIONS} />
       </RefBlock>
       <RefBlock id="page-header-long-title" width={640} pad>
         <PageHeader
+          path={LP}
           title={PAGE_HEADER_FIXTURE.longTitle}
           description={L.description}
           actions={ACTIONS}
@@ -626,7 +629,13 @@ function ListTemplateBody() {
   useStatusBar(STATUS_FIXTURE.pageStatus);
   return (
     <ListPage
-      header={{ title: L.title, description: L.description, metrics: L.metrics, actions: ACTIONS }}
+      header={{
+        path: LP,
+        title: L.title,
+        description: L.description,
+        metrics: L.metrics,
+        actions: ACTIONS,
+      }}
     >
       <DataTable<FixtureConnectorRow>
         label={L.title}
@@ -729,7 +738,7 @@ function FormTemplateBody() {
   useStatusBar(F.status.pageStatus);
   return (
     <FormPage
-      header={{ breadcrumb: F.breadcrumb, title: F.title }}
+      header={{ path: F.path, title: F.title }}
       actionRow={{
         unsaved: 2,
         errors: 1,

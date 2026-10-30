@@ -301,6 +301,6 @@ a.cb-item-list-title:hover {
 .cb-form-section + .cb-form-section {
   margin-top: var(--cb-space-6);
 }
-.cb-body-frame[data-width="form"] > .cb-form-section + .cb-form-section {
+.cb-body-frame[data-gap="loose"] > .cb-form-section + .cb-form-section {
   margin-top: 0;
 }
