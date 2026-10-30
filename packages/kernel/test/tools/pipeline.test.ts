@@ -1672,4 +1672,35 @@ describe("release-candidate tool keys", () => {
       expect.objectContaining({ toolKey: "sandbox_edit", isError: false, content: "edited" }),
     ]);
   });
+
+  it("an in-flight old <x>__<tool> key runs as mcp__x__tool / plugin__x__tool when x is in only one scope", async () => {
+    await modelCall(["docs__read", "probe__echo"]);
+    const evs = await runCalls([
+      { id: "c1", name: "docs__read", input: {} },
+      { id: "c2", name: "probe__echo", input: { text: "hi" } },
+    ]);
+    const [r1, r2] = resultsOf(evs);
+    expect(r1).toMatchObject({ toolKey: "docs__read", isError: false, content: "called read" });
+    expect(r2).toMatchObject({ toolKey: "probe__echo", isError: false });
+    expect(handlerCalls.echo).toEqual([{ text: "hi" }]);
+    expect(startedOf(evs).map((p) => p.toolKey)).toEqual([
+      "mcp__docs__read",
+      "plugin__probe__echo",
+    ]);
+  });
+
+  it("an ambiguous or unknown owner gives the plain unknown-tool error, without a hint", async () => {
+    resolved = [...resolved, appTool("probe", connectorId, "echo")];
+    await modelCall(["probe__echo", "nope__x"]);
+    const evs = await runCalls([
+      { id: "c1", name: "probe__echo", input: { text: "hi" } },
+      { id: "c2", name: "nope__x", input: {} },
+    ]);
+    for (const r of resultsOf(evs)) {
+      expect(r.isError).toBe(true);
+      expect(r.content).toMatch(/^Unknown tool "/);
+      expect(r.content).not.toContain("no longer exists");
+    }
+    expect(handlerCalls.echo).toBeUndefined();
+  });
 });

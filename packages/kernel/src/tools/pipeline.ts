@@ -5,6 +5,7 @@ import {
   type InputForm,
   type InputRequired,
   type Logger,
+  parseToolKey,
   type ToolDisplay,
   ToolError,
   validateInputForm,
@@ -66,7 +67,7 @@ import { isAlwaysLoaded, notLoadedText } from "./builtins/tool-search.js";
 import { type ConnectorAuth, CredentialMissing, Credentials } from "./credentials.js";
 import { ToolDrift } from "./drift.js";
 import { ElicitationSession } from "./elicitation.js";
-import { legacyHint, legacyToolInput, legacyToolKey } from "./legacy-keys.js";
+import { type LegacyScope, legacyHint, legacyToolInput, legacyToolKey } from "./legacy-keys.js";
 import { renderResult, resolveOutputRefs, spillIfLarge, ToolOutputs } from "./outputs.js";
 import { createDecidePolicy } from "./policy.js";
 import { type QuestionRecord, QuestionsService } from "./questions.service.js";
@@ -111,6 +112,17 @@ const timeoutText = (key: string, ms: number) =>
   `Tool ${key} timed out after ${ms / 1000}s. The operation may or may not have completed; verify before retrying.`;
 const failedText = (key: string, errName: string) =>
   `Tool ${key} failed (${errName}). The operation may not have completed; check before retrying or try another approach.`;
+/** The connector slugs and extension names among the run's tools (to read old `<x>__<tool>` keys). */
+const legacyScopeOf = (tools: readonly ResolvedTool[]): LegacyScope => {
+  const connectorSlugs = new Set<string>();
+  const extensionNames = new Set<string>();
+  for (const t of tools) {
+    const p = parseToolKey(t.key);
+    if (p?.kind === "connector") connectorSlugs.add(p.slug);
+    else if (p?.kind === "extension") extensionNames.add(p.plugin);
+  }
+  return { connectorSlugs, extensionNames };
+};
 const unknownToolText = (
   name: string,
   keys: string[],
@@ -930,7 +942,7 @@ export class ToolPipeline {
     // the old key. It runs as the current tool with translated input; the result keeps the logged key.
     let legacy = false;
     if (!tool) {
-      const next = legacyToolKey(call.name);
+      const next = legacyToolKey(call.name, legacyScopeOf(resolved.tools));
       const current = next === null ? undefined : resolved.tools.find((t) => t.key === next);
       if (current && (await this.requestToolKeys(ctx))?.has(call.name) === true) {
         tool = current;
