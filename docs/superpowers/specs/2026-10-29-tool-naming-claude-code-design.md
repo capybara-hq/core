@@ -1,9 +1,12 @@
 # Tool naming and display aligned with Claude Code
 
-- Date: 2026-10-29, written against `main` at `ae213182`.
-- Status: draft for review. Implementation waits for the Nest kernel refactor
-  (`2026-10-28-nest-kernel-design.md`) to merge, and should land before the final 0.1.0 (nothing
-  is released yet beyond release candidates, so no old name is kept as an alias for the model).
+- Date: 2026-10-29, written against `main` at `ae213182`; re-checked 2026-10-30 against `main` at
+  `02b9634b` (the Nest kernel refactor, PR #55, merged). The builtins' names and schemas did not
+  change in the refactor; they are now assembled by one provider, `BuiltinTools`
+  (`tools/builtins/builtin-tools.ts`). Every file this spec names still exists.
+- Status: draft for review. Ready to plan (the refactor it waited for has merged); it should land
+  before the final 0.1.0 (nothing is released yet beyond release candidates, so no old name is
+  kept as an alias for the model).
 - Followed by: the employee co-build design (separate spec), whose builder agent and skills use
   the names fixed here.
 - Markers: **(decided, 2026-10-29)** is the maintainer's ruling in the discussion of 2026-10-29;
@@ -173,9 +176,11 @@ Which tools need a sandbox stays as it is (the seven former `sandbox_*`); the co
 `SANDBOX_TOOL_NAMES` list with the new names. Constants (`SKILL_LOAD`, `TOOL_SEARCH`,
 `AGENT_TOOL`, `BUILTIN_TOOL_NAMES`, `SANDBOX_ASK_TOOL_NAMES`, `R3_FIXED_ASK_TOOL_KEYS`,
 `CHILD_REMOVED_TOOLS`, `DEFAULT_AGENT_TOOLS`, `MATCH_IGNORED_FIELDS`, web `AGENT_TOOL` and
-`BUILTIN_TOOLS`) move to one module, `tools/builtin-names.ts`, that the kernel exports for tests;
-the web keeps its own copy (it may not import the kernel), checked equal by a kernel test reading
-the web file **(designer's call)**.
+`BUILTIN_TOOLS`) move to one module, `tools/builtin-names.ts`, plain constants (not a provider;
+`BuiltinTools` and the tool factories import them, kernel tests import them from `src`); the web
+keeps its own copy (it may not import the kernel), checked equal by a kernel test reading the web
+file **(designer's call)**. The renamed builtins keep being built in `BuiltinTools`; the new ones
+of the co-build spec (`SubmitPlugin`, `PlatformInfo`) are added there too.
 
 ### 4.2 Parameters
 
