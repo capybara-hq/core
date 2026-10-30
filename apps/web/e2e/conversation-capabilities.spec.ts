@@ -237,7 +237,7 @@ test("questions with options and Other; URL elicitation; a connect card", async 
       },
     ],
   };
-  await send(page, `tool:ask_user:${JSON.stringify(askUser)}`);
+  await send(page, `tool:AskUserQuestion:${JSON.stringify(askUser)}`);
   await expect(question.getByText("Which environment?")).toBeVisible();
   await question.getByRole("radio", { name: designZh("hitl.other") }).click();
   await question.getByRole("textbox").fill("qa");
@@ -373,15 +373,13 @@ test("a policy hook: a denied tool row names the extension; a denied run shows t
 test("View all of an archived output; a model switch is logged and used", async ({ page }) => {
   await signIn(page);
   const orgId = await currentOrg(page);
-  const agentId = await createAgent(page, orgId, "Cap output", [
-    { kind: "builtin", name: "sandbox_bash" },
-  ]);
+  const agentId = await createAgent(page, orgId, "Cap output", [{ kind: "builtin", name: "Bash" }]);
   await newChat(page, agentId);
   await send(
     page,
-    `tool:sandbox_bash:${JSON.stringify({ command: "seq 1 60000", description: "Count to 60000" })}`,
+    `tool:Bash:${JSON.stringify({ command: "seq 1 60000", description: "Count to 60000" })}`,
   );
-  const group = toolGroup(page, "sandbox_bash");
+  const group = toolGroup(page, "Bash");
   await expect(group).toHaveAttribute("data-tool-status", "done");
   await group.getByRole("button", { name: /Count to 60000/ }).click();
   await group.getByRole("button", { name: designZh("tool.viewAll") }).click();

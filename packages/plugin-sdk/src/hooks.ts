@@ -16,12 +16,12 @@ export const HOOKS_AVAILABLE = [
 /** A mount point that `ctx.hooks.on` accepts. */
 export type AvailableHook = (typeof HOOKS_AVAILABLE)[number];
 
-/** Where a sub-agent was dispatched from: the parent conversation, its run and the `agent` call. */
+/** Where a sub-agent was dispatched from: the parent conversation, its run and the `Agent` call. */
 export interface HookParentScope {
   conversationId: string;
   runId: string;
   /**
-   * The `agent` call's id; `skill-<seq>` for a person's forked skill invocation, which has no
+   * The `Agent` call's id; `skill-<seq>` for a person's forked skill invocation, which has no
    * tool call in the parent's log.
    */
   callId: string;

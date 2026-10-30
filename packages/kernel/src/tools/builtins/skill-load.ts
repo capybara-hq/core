@@ -18,6 +18,7 @@ import { type CatalogSkill, latestInvocation } from "../../runtime/context/skill
 import { dispatchOfChildRun } from "../../runtime/subagents/child.js";
 import { resolveSkillForkType } from "../../runtime/subagents/roster.js";
 import { invocationOf, resolveSkills } from "../../skills/catalog.js";
+import { AGENT_TOOL, SANDBOX_TOOL_NAMES } from "../builtin-names.js";
 import type { BuiltinCallContext, BuiltinTool } from "../registry.js";
 import {
   clip,
@@ -29,10 +30,9 @@ import {
   withNotices,
   withPathLease,
 } from "./sandbox/common.js";
-import { SANDBOX_TOOL_NAMES } from "./sandbox/names.js";
 
 /**
- * 内置工具 `skill_load`（M5 T14，Ruling M17）：按日志里最新一份技能目录快照把名字解析为 id 与版本，返回该版本
+ * 内置工具 `Skill`（M5 T14，Ruling M17）：按日志里最新一份技能目录快照把名字解析为 id 与版本，返回该版本
  * SKILL.md 的正文与文件清单（结果里写明版本）。技能带其他文件时把整个技能复制进本对话沙箱的 `/skills/<name>/`
  * （提供方以 root 写，命令用户只读）；没有沙箱提供方时只给正文，并说明脚本不可用。
  *
@@ -60,7 +60,7 @@ const MAX_LISTED_FILES = 200;
 const MAX_LISTED_NAMES = 50;
 
 const SPEC: ToolSpec = {
-  name: "skill_load",
+  name: "Skill",
   // Display only (the tool row; not in the fingerprint, never sent to the model).
   keyArgs: ["name"],
   description:
@@ -96,7 +96,7 @@ const STORAGE_UNAVAILABLE_TEXT =
 const notInCatalog = (name: string, skills: readonly CatalogSkill[]): string => {
   const names = skills.slice(0, MAX_LISTED_NAMES).map((s) => s.name);
   const more = skills.length > names.length ? ", …" : "";
-  return `Skill "${clip(name, 80)}" is not in the skills catalog for this conversation; call skill_load with one of the listed names: ${names.join(", ")}${more}.`;
+  return `Skill "${clip(name, 80)}" is not in the skills catalog for this conversation; call Skill with one of the listed names: ${names.join(", ")}${more}.`;
 };
 
 const removedText = (name: string): string =>
@@ -104,7 +104,7 @@ const removedText = (name: string): string =>
 
 /** Phase D spec §4.4: the line before a forked skill's instructions (model-visible, English). */
 const forkAvailableText = (type: string): string =>
-  `This skill is written to run in a sub-agent: call agent with subagent_type "${type}" and a prompt containing these instructions and the details of the task, then use its report; do not follow the instructions yourself.`;
+  `This skill is written to run in a sub-agent: call Agent with subagent_type "${type}" and a prompt containing these instructions and the details of the task, then use its report; do not follow the instructions yourself.`;
 const FORK_UNAVAILABLE_TEXT =
   "This skill is written to run in a sub-agent, which is not available here; follow the instructions yourself.";
 
@@ -436,7 +436,7 @@ async function invokedEntry(
 }
 
 /**
- * The line before a forked skill's instructions (spec §4.4): run it through `agent` when this step
+ * The line before a forked skill's instructions (spec §4.4): run it through `Agent` when this step
  * offers the tool and the skill's type is in the agent's roster, else follow it yourself.
  */
 async function forkLine(
@@ -446,7 +446,7 @@ async function forkLine(
   plugin: string | undefined,
 ): Promise<string> {
   const hasAgent = (ctx.tools ?? []).some(
-    (t) => t.source.kind === "builtin" && t.source.name === "agent",
+    (t) => t.source.kind === "builtin" && t.source.name === AGENT_TOOL,
   );
   if (!hasAgent) return FORK_UNAVAILABLE_TEXT;
   const agent = await runAgent(db, ctx);
@@ -455,7 +455,7 @@ async function forkLine(
   return type.inRoster ? forkAvailableText(type.agentType) : FORK_UNAVAILABLE_TEXT;
 }
 
-/** 内置工具 `skill_load`（见文件头）。 */
+/** 内置工具 `Skill`（见文件头）。 */
 export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
   return {
     spec: SPEC,

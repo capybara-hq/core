@@ -91,8 +91,8 @@ export async function createAgent(
         instructions: "Help.",
         model: { provider: "model-fake", model: "fake-1" },
         tools: [
-          { kind: "builtin", name: "ask_user" },
-          { kind: "builtin", name: "read_tool_output" },
+          { kind: "builtin", name: "AskUserQuestion" },
+          { kind: "builtin", name: "ReadToolOutput" },
           ...tools,
         ],
       },

@@ -370,7 +370,7 @@ describe("queued messages and the author's access (review I1, M5)", { timeout: 6
     });
     expect(res.statusCode, res.body).toBe(201);
     const conv = await createConv(owner, orgId, (res.json() as { agent: { id: string } }).agent.id);
-    const ask = `tool:ask_user:${JSON.stringify({
+    const ask = `tool:AskUserQuestion:${JSON.stringify({
       questions: [
         {
           question: "Which one?",

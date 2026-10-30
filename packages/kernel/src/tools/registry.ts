@@ -20,29 +20,14 @@ import { readOrgSettings } from "../orgs/settings.service.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import { SUBAGENT_LIMIT_DEFAULTS, subagentLimits } from "../runtime/subagents/limits.js";
 import { resolveRoster } from "../runtime/subagents/roster.js";
-import { AGENT_TOOL, agentToolSpec } from "./builtins/agent.js";
+import { AGENT_TOOL, BUILTIN_TOOL_NAMES, SKILL_LOAD, TOOL_SEARCH } from "./builtin-names.js";
+import { agentToolSpec } from "./builtins/agent.js";
 import { BuiltinTools } from "./builtins/builtin-tools.js";
-import { SANDBOX_TOOL_NAMES } from "./builtins/sandbox/names.js";
 import { canonicalJson } from "./canonical-json.js";
 import { toolKeyIssue } from "./naming.js";
 
+export { BUILTIN_TOOL_NAMES } from "./builtin-names.js";
 export { canonicalJson } from "./canonical-json.js";
-
-/**
- * 内核内置工具的名字（Task 10 / Task 19 实现；M5 T8 加沙箱工具）。保存 agent 时内置工具引用按这份清单校验，
- * 不依赖当前是否已注册，避免实现落地顺序影响已保存的定义；运行时未注册的照常报不可用。
- * `skill_write`（M5 T15）由 agent 定义显式引用才可用（负责人决定 agent 能否改自己的技能）。
- */
-export const BUILTIN_TOOL_NAMES = [
-  "ask_user",
-  "read_tool_output",
-  "tool_search",
-  "skill_load",
-  "skill_write",
-  ...SANDBOX_TOOL_NAMES,
-  // phase C: dispatches sub-agents; its description is built per agent from the roster
-  "agent",
-] as const;
 
 /** 保存 agent 时引用校验的问题（`path` 为 `tools.<i>`）。 */
 export interface ToolRefIssue {
@@ -52,7 +37,7 @@ export interface ToolRefIssue {
 
 /**
  * 内置工具处理函数的上下文：在 SDK 的 `ToolCallContext` 之上，管线额外传入本步解析出的工具
- * （`tool_search` 据此搜索）。插件处理函数收到的仍是 `ToolCallContext`。
+ * （`ToolSearch` 据此搜索）。插件处理函数收到的仍是 `ToolCallContext`。
  */
 export interface BuiltinCallContext extends ToolCallContext {
   tools?: readonly ResolvedTool[];
@@ -71,7 +56,7 @@ export interface BuiltinCallContext extends ToolCallContext {
 }
 
 /**
- * 内置工具的结果：`ToolResult` 之外可带 `loadedTools`（`tool_search` 加载的工具 key，
+ * 内置工具的结果：`ToolResult` 之外可带 `loadedTools`（`ToolSearch` 加载的工具 key，
  * 管线写进 `tool_result.loadedTools`）。
  */
 export type BuiltinResult =
@@ -88,7 +73,7 @@ export type BuiltinResult =
 /** 内置工具的处理函数（插件的 `ToolHandler` 可直接赋给它）。 */
 export type BuiltinHandler = (input: unknown, ctx: BuiltinCallContext) => Promise<BuiltinResult>;
 
-/** 内核内置工具（`ask_user` 等，Task 10 实现具体工具）；key 就是 `spec.name`。 */
+/** 内核内置工具（`AskUserQuestion` 等，Task 10 实现具体工具）；key 就是 `spec.name`。 */
 export interface BuiltinTool {
   spec: ToolSpec;
   defaultPolicy: "allow" | "ask";
@@ -187,16 +172,14 @@ export interface AgentTools {
    */
   hidden?: UnavailableTool[];
   /**
-   * 本步是否启用 `tool_search`（spec 5.5）：启用时 `tools` 末尾含 `tool_search`，构建请求时只放内置工具
+   * 本步是否启用 `ToolSearch`（spec 5.5）：启用时 `tools` 末尾含 `ToolSearch`，构建请求时只放内置工具
    * 与已加载工具的完整定义，其余进目录。缺省视为未启用。
    */
   toolSearch?: boolean;
 }
 
-/** 内置 `tool_search` 的名字（由注册表按组织设置与阈值自动加入，不进 agent 定义）。 */
-const TOOL_SEARCH = "tool_search";
-/** 内置 `skill_load` 的名字（对话日志里有技能目录快照时由注册表自动加入，不进 agent 定义）。 */
-const SKILL_LOAD = "skill_load";
+// `ToolSearch` is added by the registry by org setting and threshold, `Skill` when the log has a
+// skills catalog snapshot; neither comes from agent definitions (`./builtin-names.ts`).
 
 /** 工具定义（模型可见三项）的估算 token 数（与请求估算同一口径）。 */
 function estimateToolTokens(tools: readonly ResolvedTool[]): number {
@@ -245,13 +228,13 @@ export class ToolRegistry {
     @Inject(ExtensionRegistry) private readonly extensions: Pick<ExtensionRegistry, "list">,
     @Inject(BuiltinTools) private readonly builtinTools: Pick<BuiltinTools, "list">,
     /**
-     * `tools.searchThreshold*` and the sub-agent limits. Absent (some tests): `tool_search` is never
+     * `tools.searchThreshold*` and the sub-agent limits. Absent (some tests): `ToolSearch` is never
      * offered and the sub-agent limits are the schema defaults.
      */
     @Inject(KernelConfigService) private readonly config?: Pick<KernelConfigService, "get">,
   ) {}
 
-  /** The kernel's builtin tools (`tool_search` is added by {@link forAgent}, not by definitions). */
+  /** The kernel's builtin tools (`ToolSearch` is added by {@link forAgent}, not by definitions). */
   private get builtins(): readonly BuiltinTool[] {
     return this.builtinTools.list();
   }
@@ -378,18 +361,18 @@ export class ToolRegistry {
   }
 
   /**
-   * 解析 agent 引用的工具（见类注释），再判定是否启用 `tool_search`：组织设置 `toolSearch === "on"`，且
+   * 解析 agent 引用的工具（见类注释），再判定是否启用 `ToolSearch`：组织设置 `toolSearch === "on"`，且
    * 可用工具数 > `tools.searchThresholdTools` 或其定义的估算 token > `tools.searchThresholdTokens`。
-   * 启用时把内置 `tool_search` 追加到末尾。定义里显式引用的 `tool_search` 忽略（由这里按设置管理）。
-   * `skillLoad`：对话日志里有技能目录快照（`skills_catalog`，Ruling M17）→ 加入内置 `skill_load`（始终完整加载）；
-   * 定义里显式引用的 `skill_load` 同样忽略。
+   * 启用时把内置 `ToolSearch` 追加到末尾。定义里显式引用的 `ToolSearch` 忽略（由这里按设置管理）。
+   * `skillLoad`：对话日志里有技能目录快照（`skills_catalog`，Ruling M17）→ 加入内置 `Skill`（始终完整加载）；
+   * 定义里显式引用的 `Skill` 同样忽略。
    */
   async forAgent(
     orgId: string,
     def: {
       tools: readonly AgentToolRef[];
       skillLoad?: boolean;
-      /** The definition's sub-agent roster source: the `agent` tool's description lists it. */
+      /** The definition's sub-agent roster source: the `Agent` tool's description lists it. */
       subagents?: AgentDefinition["subagents"];
     },
   ): Promise<AgentTools> {
@@ -419,7 +402,7 @@ export class ToolRegistry {
     return { tools, unavailable, hidden, toolSearch };
   }
 
-  /** 是否启用 `tool_search`（见 {@link forAgent}）；先比阈值，超过才读组织设置。 */
+  /** 是否启用 `ToolSearch`（见 {@link forAgent}）；先比阈值，超过才读组织设置。 */
   private async searchActive(orgId: string, tools: readonly ResolvedTool[]): Promise<boolean> {
     const cfg = this.config?.get().tools;
     if (!cfg || !this.builtins.some((b) => b.spec.name === TOOL_SEARCH)) return false;
@@ -474,7 +457,7 @@ export class ToolRegistry {
           unavailable.push({ ref: ref.name, reason: why });
           continue;
         }
-        // `agent`: the description lists this definition's roster (sub-agents spec §4.3); with an
+        // `Agent`: the description lists this definition's roster (sub-agents spec §4.3); with an
         // empty roster there is nothing to dispatch, so the tool is not offered at all
         let spec = b.spec;
         if (b.spec.name === AGENT_TOOL) {
@@ -587,7 +570,7 @@ export class ToolRegistry {
   }
 
   /**
-   * `subagents.maxConcurrentPerRun` with the organization's override, for the `agent` tool's
+   * `subagents.maxConcurrentPerRun` with the organization's override, for the `Agent` tool's
    * description (§4.3). A change of the limit changes the tool's spec hash; replays read the
    * definition logged by hash, so no drift reason is involved. Without config (some tests): the
    * schema default.

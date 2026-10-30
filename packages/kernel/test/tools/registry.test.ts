@@ -41,7 +41,7 @@ const log = createLogger("error", { write: () => {} });
 
 const askUser = {
   spec: {
-    name: "ask_user",
+    name: "AskUserQuestion",
     description: "Ask the user a question.",
     inputSchema: { type: "object" },
   },
@@ -176,7 +176,7 @@ describe("ToolRegistry", () => {
     const connectorId = await installConnector("docs");
     const def = {
       tools: [
-        { kind: "builtin" as const, name: "ask_user" },
+        { kind: "builtin" as const, name: "AskUserQuestion" },
         { kind: "plugin" as const, plugin: "mem-connector", name: "echo" },
         { kind: "plugin" as const, plugin: "mem-connector", name: "wipe" },
         { kind: "connector" as const, connectorId, tools: "all" as const },
@@ -184,7 +184,7 @@ describe("ToolRegistry", () => {
     };
     const before = await registry.forAgent(orgId, def);
     expect(before.tools.map((t) => t.key)).toEqual([
-      "ask_user",
+      "AskUserQuestion",
       "mcp__docs__drop",
       "mcp__docs__read",
       "mcp__docs__write",
@@ -204,8 +204,8 @@ describe("ToolRegistry", () => {
     const after = await registry.forAgent(orgId, def);
     expect(after.unavailable).toEqual([]);
     const byKey = Object.fromEntries(after.tools.map((t) => [t.key, t]));
-    expect(byKey.ask_user).toMatchObject({
-      source: { kind: "builtin", name: "ask_user" },
+    expect(byKey.AskUserQuestion).toMatchObject({
+      source: { kind: "builtin", name: "AskUserQuestion" },
       defaultPolicy: "allow",
     });
     expect(byKey["plugin__mem-connector__echo"]).toMatchObject({
@@ -221,7 +221,7 @@ describe("ToolRegistry", () => {
     expect(byKey.mcp__docs__write?.defaultPolicy).toBe("ask");
     expect(byKey.mcp__docs__read?.spec.description).toBe("Read.");
     expect(byKey.mcp__docs__read?.specHash).toBe(specHash(byKey.mcp__docs__read?.spec));
-    expect(byKey.ask_user?.specHash).toBe(specHash(askUser.spec));
+    expect(byKey.AskUserQuestion?.specHash).toBe(specHash(askUser.spec));
   });
 
   it("过滤停用 / 待复核 / 已删除，并给出原因", async () => {
@@ -314,14 +314,14 @@ describe("ToolRegistry", () => {
     const connectorId = await installConnector("docs");
     const r = await registry.forAgent(orgId, {
       tools: [
-        { kind: "builtin", name: "ask_user" },
-        { kind: "builtin", name: "ask_user" },
+        { kind: "builtin", name: "AskUserQuestion" },
+        { kind: "builtin", name: "AskUserQuestion" },
         { kind: "connector", connectorId, tools: ["read"] },
         { kind: "connector", connectorId, tools: "all" },
       ],
     });
     expect(r.tools.map((t) => t.key)).toEqual([
-      "ask_user",
+      "AskUserQuestion",
       "mcp__docs__read",
       "mcp__docs__drop",
       "mcp__docs__write",
@@ -330,7 +330,7 @@ describe("ToolRegistry", () => {
   });
 });
 
-describe("组织设置与 tool_search 启用条件", () => {
+describe("组织设置与 ToolSearch 启用条件", () => {
   const baseCfg = KernelConfigSchema.parse({
     db: { url: "postgres://x/y" },
     redis: { url: "redis://x" },
@@ -488,13 +488,13 @@ describe("组织设置与 tool_search 启用条件", () => {
     });
   });
 
-  it("阈值切换：工具数或定义估算超过阈值才启用并自动加入 tool_search；组织关闭后全部直接加载", async () => {
+  it("阈值切换：工具数或定义估算超过阈值才启用并自动加入 ToolSearch；组织关闭后全部直接加载", async () => {
     const connectorId = await installConnector("docs");
     const def = {
       tools: [
-        { kind: "builtin" as const, name: "ask_user" },
-        // 定义里显式引用 tool_search 也不重复（由注册表按设置管理）
-        { kind: "builtin" as const, name: "tool_search" },
+        { kind: "builtin" as const, name: "AskUserQuestion" },
+        // 定义里显式引用 ToolSearch 也不重复（由注册表按设置管理）
+        { kind: "builtin" as const, name: "ToolSearch" },
         { kind: "connector" as const, connectorId, tools: "all" as const },
       ],
     };
@@ -503,7 +503,7 @@ describe("组织设置与 tool_search 启用条件", () => {
     const below = await r.forAgent(orgId, def);
     expect(below.toolSearch).toBe(false);
     expect(below.tools.map((t) => t.key)).toEqual([
-      "ask_user",
+      "AskUserQuestion",
       "mcp__docs__drop",
       "mcp__docs__read",
       "mcp__docs__write",
@@ -514,14 +514,14 @@ describe("组织设置与 tool_search 启用条件", () => {
     const byCount = await r.forAgent(orgId, def);
     expect(byCount.toolSearch).toBe(true);
     expect(byCount.tools.map((t) => t.key)).toEqual([
-      "ask_user",
+      "AskUserQuestion",
       "mcp__docs__drop",
       "mcp__docs__read",
       "mcp__docs__write",
-      "tool_search",
+      "ToolSearch",
     ]);
     expect(byCount.tools.at(-1)).toMatchObject({
-      source: { kind: "builtin", name: "tool_search" },
+      source: { kind: "builtin", name: "ToolSearch" },
       defaultPolicy: "allow",
     });
 
@@ -536,7 +536,7 @@ describe("组织设置与 tool_search 启用条件", () => {
     expect(patched.statusCode).toBe(200);
     const off = await r.forAgent(orgId, def);
     expect(off.toolSearch).toBe(false);
-    expect(off.tools.map((t) => t.key)).not.toContain("tool_search");
+    expect(off.tools.map((t) => t.key)).not.toContain("ToolSearch");
     expect(off.tools).toHaveLength(4);
 
     // 没有 config 的注册表（旧调用方）从不启用

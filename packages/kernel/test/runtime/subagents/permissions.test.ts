@@ -49,7 +49,7 @@ const HOOKS_PROBE = fixture("hooks-probe");
 const CHILD = "You are a sub-agent";
 const ECHO = "plugin__hooks-probe__probe_echo";
 
-const agentCall = (input: Record<string, unknown>) => ({ name: "agent", input });
+const agentCall = (input: Record<string, unknown>) => ({ name: "Agent", input });
 
 const RULES: ScriptRule[] = [
   // children
@@ -57,7 +57,7 @@ const RULES: ScriptRule[] = [
     when: { systemIncludes: CHILD, lastUserIncludes: "asker-policy", assistantTurns: 0 },
     reply: {
       toolCalls: [
-        { name: "sandbox_read", input: { path: "/workspace/x.txt" } },
+        { name: "Read", input: { path: "/workspace/x.txt" } },
         { name: ECHO, input: { text: "one" } },
       ],
     },
@@ -188,12 +188,12 @@ beforeEach(async () => {
         instructions: "Lead the work.",
         model: { provider: "model-script", model: "script-1" },
         tools: [
-          { kind: "builtin", name: "agent" },
-          { kind: "builtin", name: "sandbox_read" },
+          { kind: "builtin", name: "Agent" },
+          { kind: "builtin", name: "Read" },
           { kind: "plugin", plugin: "hooks-probe", name: "probe_echo" },
         ],
-        // the parent denies sandbox_read and allows probe_echo
-        toolPolicies: { sandbox_read: "deny" },
+        // the parent denies Read and allows probe_echo
+        toolPolicies: { Read: "deny" },
         subagents: {
           inline: [
             {
@@ -201,7 +201,7 @@ beforeEach(async () => {
               description: "Asks before echoing.",
               instructions: "You are asker.",
               // stricter on top of the parent's allow; cannot loosen the parent's deny
-              toolPolicies: { [ECHO]: "ask", sandbox_read: "ask" },
+              toolPolicies: { [ECHO]: "ask", Read: "ask" },
             },
           ],
         },
@@ -272,9 +272,9 @@ describe("policies and approvals of a sub-agent", () => {
     const approval = await pendingApproval(child);
     expect(approval.tool_key).toBe(ECHO);
     const cev = await eventsOf(db, child);
-    const read = ofType(cev, "tool_result").find((r) => r.payload.toolKey === "sandbox_read");
+    const read = ofType(cev, "tool_result").find((r) => r.payload.toolKey === "Read");
     expect(read?.payload).toMatchObject({
-      content: "Tool sandbox_read is denied by policy.",
+      content: "Tool Read is denied by policy.",
       isError: true,
     });
     await decide(owner, approval.id);
@@ -422,7 +422,7 @@ describe("hooks and usage reports of a sub-agent", () => {
     );
     expect(parentLast["model.request"]).not.toHaveProperty("parent");
     const post = parentLast["tool.postExecute"] as ToolPostHookPayload;
-    expect(post).toMatchObject({ conversationId: conv, toolKey: "agent", callId: call });
+    expect(post).toMatchObject({ conversationId: conv, toolKey: "Agent", callId: call });
     expect(post).not.toHaveProperty("parent");
     expect(post.content).toContain("hooks child done");
     expect(post.durationMs).toBeGreaterThanOrEqual(0);
@@ -435,7 +435,7 @@ describe("hooks and usage reports of a sub-agent", () => {
     const agentAudit = audits.find(
       (a) => (a.detail as { toolKey?: string; callId?: string }).callId === call,
     );
-    expect(agentAudit?.detail).toMatchObject({ toolKey: "agent", conversationId: conv });
+    expect(agentAudit?.detail).toMatchObject({ toolKey: "Agent", conversationId: conv });
   }, 60_000);
 
   it("a child's usage.report has conversationKind chat and parent", async () => {

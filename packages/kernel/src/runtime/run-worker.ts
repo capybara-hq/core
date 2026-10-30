@@ -159,7 +159,7 @@ export class RunWorker {
     @Inject(SkillsCatalogService)
     private readonly skillsCatalog: Pick<SkillsCatalogService, "record">,
     /**
-     * In the terminal transaction of every run: writes its open `agent` call results
+     * In the terminal transaction of every run: writes its open `Agent` call results
      * (`stopOpenAgentCalls`; a no-op without dispatches); `fire` runs their observe hooks after the
      * commit (sub-agents spec §12, review m1: a failed or stalled parent too).
      */

@@ -382,9 +382,9 @@
       "toolsSectionHint": "agent 可以调用的工具。策略只能收紧：改为需审批，或禁止。",
       "builtinLabel": "内置工具",
       "builtin": {
-        "ask_user": "向用户提问（ask_user）",
-        "read_tool_output": "读取存档的工具结果（read_tool_output）",
-        "skill_write": "编写技能（skill_write）"
+        "AskUserQuestion": "向用户提问（AskUserQuestion）",
+        "ReadToolOutput": "读取存档的工具结果（ReadToolOutput）",
+        "SkillWrite": "编写技能（SkillWrite）"
       },
       "connectorsLabel": "连接器",
       "connectorTools": "{name} 的全部工具",
@@ -405,7 +405,7 @@
       "deletedSkill": "已删除的技能（{id}）",
       "deletedSkillHint": "已删除的技能在运行时会被忽略；取消勾选即可移除引用。",
       "ownSkillsLabel": "agent 自己写的技能",
-      "ownSkillsHint": "这些技能由 agent 通过 skill_write 编写。共享 agent 的每次改动都要等负责人在收件箱里批准。",
+      "ownSkillsHint": "这些技能由 agent 通过 SkillWrite 编写。共享 agent 的每次改动都要等负责人在收件箱里批准。",
       "noOwnSkills": "这个 agent 还没有写过技能。",
       "ownSkillVersion": "{name} · v{version}",
       "deleteOwnSkill": "删除",
@@ -416,7 +416,7 @@
       "pinnedLabel": "置顶的技能",
       "pinnedLoading": "正在读取技能…",
       "pinnedUnavailable": "读不到技能列表；置顶的技能保持不变。",
-      "pinnedHint": "置顶技能的说明始终在模型的上下文里，不用 skill_load。最多从已选技能里置顶 3 个，SKILL.md 合计不超过 32 KB。",
+      "pinnedHint": "置顶技能的说明始终在模型的上下文里，不用调用 Skill。最多从已选技能里置顶 3 个，SKILL.md 合计不超过 32 KB。",
       "noPinnable": "先在上面选择技能，才能置顶。",
       "pinSkill": "置顶 {name}",
       "suggested": "建议置顶",
@@ -1188,9 +1188,9 @@
     "readonly": "只有管理员可以修改组织设置。",
     "toolSearch": {
       "title": "工具搜索",
-      "description": "agent 可用的工具很多时，只给模型一份工具目录，由模型用 tool_search 按需加载工具定义。",
+      "description": "agent 可用的工具很多时，只给模型一份工具目录，由模型用 ToolSearch 按需加载工具定义。",
       "on": "开启",
-      "onHint": "工具超过阈值时改用目录 + tool_search（推荐）。",
+      "onHint": "工具超过阈值时改用目录 + ToolSearch（推荐）。",
       "off": "关闭",
       "offHint": "总是把全部工具定义发给模型。"
     },
@@ -1201,7 +1201,7 @@
     },
     "sandbox": {
       "title": "沙箱工具",
-      "description": "agent 使用沙箱（执行命令、写文件、交付文件）时的默认策略；只读的 sandbox_read / sandbox_glob / sandbox_grep 始终直接执行。",
+      "description": "agent 使用沙箱（执行命令、写文件、交付文件）时的默认策略；只读的 Read / Glob / Grep 始终直接执行。",
       "allow": "直接执行",
       "allowHint": "沙箱工具无需审批（默认）。",
       "ask": "需要审批",

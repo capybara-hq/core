@@ -27,7 +27,7 @@ import { publishSubagentProgress, type SubagentStep } from "./progress.js";
 import { liveSkillForks, type SkillForkDeps, type SkillForks } from "./skill-fork.js";
 
 /**
- * Sub-agents (phase C, spec §7) and forked skills (phase D): the `agent` tool's dispatch (the
+ * Sub-agents (phase C, spec §7) and forked skills (phase D): the `Agent` tool's dispatch (the
  * tool pipeline calls {@link dispatch}), a run's fork invocation ({@link skillForks}, the loop's
  * `prepare`) and a child step's progress on the parent's stream ({@link progress}). Child runs go
  * to the sub-agent run queue through {@link RunJobs}. The child lifecycle after dispatch (a
@@ -69,7 +69,7 @@ export class SubagentsService {
     this.skillForks = liveSkillForks(this.deps);
   }
 
-  /** Dispatches the sub-agent of one `agent` call (`dispatchSubagent`). */
+  /** Dispatches the sub-agent of one `Agent` call (`dispatchSubagent`). */
   dispatch(a: DispatchArgs): Promise<DispatchOutcome> {
     return dispatchSubagent(this.deps, a);
   }
@@ -90,7 +90,7 @@ export class SubagentsService {
   }
 }
 
-/** Sub-agent dispatch (the tools domain's `agent` tool and the run loop use it). */
+/** Sub-agent dispatch (the tools domain's `Agent` tool and the run loop use it). */
 @Module({
   imports: [EventLogModule, ModelsModule, ProvidersModule, RunJobsModule, SkillsModule],
   providers: [SubagentsService],

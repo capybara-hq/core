@@ -37,7 +37,7 @@ import {
 import { configFrom } from "../helpers/tools.js";
 
 /**
- * Task 10：内置工具 `ask_user`（用通用的输入请求机制实现）与输入请求 HTTP 接口。
+ * Task 10：内置工具 `AskUserQuestion`（用通用的输入请求机制实现）与输入请求 HTTP 接口。
  * 双副本：A（api + worker）执行运行并暂停，回答经 B（只有 api）提交，续跑回到 A 的 worker。
  */
 
@@ -73,16 +73,16 @@ const question = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-describe("ask_user（单元）", () => {
+describe("AskUserQuestion（单元）", () => {
   it("声明：名字、默认 allow、不要求审批", () => {
     const t = tool();
-    expect(t.spec.name).toBe("ask_user");
+    expect(t.spec.name).toBe("AskUserQuestion");
     expect(t.defaultPolicy).toBe("allow");
     expect(t.spec.annotations?.requiresUserInteraction).not.toBe(true);
   });
 
   it("参数校验：问题 1–4 个、选项 2–4 个、header ≤ 12 字符", () => {
-    const v = (input: unknown) => validateInput("ask_user", tool().spec, input);
+    const v = (input: unknown) => validateInput("AskUserQuestion", tool().spec, input);
     expect(v({ questions: [question()] })).toBeNull();
     expect(v({ questions: [question(), question(), question(), question()] })).toBeNull();
     expect(v({ questions: [] })).not.toBeNull();
@@ -228,7 +228,7 @@ beforeEach(async () => {
   orgId = await createOrg(reqA);
 });
 
-/** 不带 tools 字段新建 agent：得到默认的内置工具（ask_user、read_tool_output）。 */
+/** 不带 tools 字段新建 agent：得到默认的内置工具（AskUserQuestion、ReadToolOutput）。 */
 async function createDefaultAgent(extra: Record<string, unknown> = {}): Promise<string> {
   const res = await reqA({
     method: "POST",
@@ -270,12 +270,12 @@ async function askedQuestion(convId: string, text: string) {
 const answer = (r: Req, id: string, body: Record<string, unknown>) =>
   r({ method: "POST", url: `/api/v1/orgs/${orgId}/questions/${id}/answer`, payload: body });
 
-const ASK = `tool:ask_user:${JSON.stringify({
+const ASK = `tool:AskUserQuestion:${JSON.stringify({
   questions: [question()],
 })}`;
 
-describe("ask_user 端到端", () => {
-  it("默认工具的 agent：带 ask_user / read_tool_output 且没有不可用提醒；提问暂停，另一副本回答后续跑", async () => {
+describe("AskUserQuestion 端到端", () => {
+  it("默认工具的 agent：带 AskUserQuestion / ReadToolOutput 且没有不可用提醒；提问暂停，另一副本回答后续跑", async () => {
     const agentId = await createDefaultAgent();
     const convId = await createConv(reqA, orgId, agentId);
     const { runId, questionId, event } = await askedQuestion(convId, ASK);
@@ -290,7 +290,7 @@ describe("ask_user 端到端", () => {
         runId,
         conversationId: convId,
         status: "pending",
-        toolKey: "ask_user",
+        toolKey: "AskUserQuestion",
       },
     });
     expect((got.json() as { question: Record<string, unknown> }).question).not.toHaveProperty(
@@ -316,7 +316,7 @@ describe("ask_user 端到端", () => {
     const evs = await eventsOf(db, convId);
     expect(ofType(evs, "tool_result").map((e) => e.payload)).toMatchObject([
       {
-        toolKey: "ask_user",
+        toolKey: "AskUserQuestion",
         content: 'User answered: "Which database should I use?" = "Postgres"',
         isError: false,
       },
@@ -332,8 +332,8 @@ describe("ask_user 端到端", () => {
     ]);
     const calls = ofType(evs, "model_call");
     expect(calls[0]?.payload.request.tools?.map((t) => t.key).sort()).toEqual([
-      "ask_user",
-      "read_tool_output",
+      "AskUserQuestion",
+      "ReadToolOutput",
     ]);
     expect(
       ofType(evs, "reminder").filter((e) => e.payload.text.startsWith(TOOLS_UNAVAILABLE_PREFIX)),

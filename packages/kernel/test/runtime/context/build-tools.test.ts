@@ -51,15 +51,15 @@ describe("buildModelRequest 工具", () => {
     log.user("hi");
     const tools = [
       tool("mcp__zeta__b"),
-      tool("ask_user"),
+      tool("AskUserQuestion"),
       tool("mcp__docs__search"),
       tool("Docs__a"),
     ];
     const a = build(log.events, tools);
     const b = build(log.events, [...tools].reverse());
     expect(a.request.tools.map((t) => t.name)).toEqual([
+      "AskUserQuestion",
       "Docs__a",
-      "ask_user",
       "mcp__docs__search",
       "mcp__zeta__b",
     ]);
@@ -70,15 +70,15 @@ describe("buildModelRequest 工具", () => {
       inputSchema: { type: "object", properties: { q: { type: "string" } } },
     });
     expect(a.meta.tools).toEqual([
+      { key: "AskUserQuestion", specHash: "h-AskUserQuestion" },
       { key: "Docs__a", specHash: "h-Docs__a" },
-      { key: "ask_user", specHash: "h-ask_user" },
       { key: "mcp__docs__search", specHash: "h-mcp__docs__search" },
       { key: "mcp__zeta__b", specHash: "h-mcp__zeta__b" },
     ]);
     // 不改动入参
     expect(tools.map((t) => t.key)).toEqual([
       "mcp__zeta__b",
-      "ask_user",
+      "AskUserQuestion",
       "mcp__docs__search",
       "Docs__a",
     ]);

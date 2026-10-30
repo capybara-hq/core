@@ -148,18 +148,18 @@ const byKey = (res: { json(): unknown }) =>
 describe("tool kinds", () => {
   it("map every builtin per the table, and nothing else", () => {
     expect(BUILTIN_TOOL_KINDS).toEqual({
-      sandbox_bash: "command",
-      sandbox_read: "read",
-      sandbox_write: "edit",
-      sandbox_edit: "edit",
-      sandbox_glob: "search",
-      sandbox_grep: "search",
-      sandbox_deliver: "tool",
-      tool_search: "meta",
-      skill_load: "meta",
-      skill_write: "meta",
-      read_tool_output: "meta",
-      ask_user: "meta",
+      Bash: "command",
+      Read: "read",
+      Write: "edit",
+      Edit: "edit",
+      Glob: "search",
+      Grep: "search",
+      Deliver: "tool",
+      ToolSearch: "meta",
+      Skill: "meta",
+      SkillWrite: "meta",
+      ReadToolOutput: "meta",
+      AskUserQuestion: "meta",
     });
   });
 });
@@ -168,43 +168,43 @@ describe("GET /conversations/:id/tools", () => {
   it("builtins: kind and key arguments, no title, source builtin", async () => {
     const { req, orgId, conversationId } = await setup();
     const res = await tools(req, orgId, conversationId, [
-      "sandbox_bash",
-      "sandbox_read",
-      "sandbox_write",
-      "sandbox_edit",
-      "sandbox_glob",
-      "sandbox_grep",
-      "sandbox_deliver",
-      "skill_load",
-      "tool_search",
-      "ask_user",
-      "agent",
+      "Bash",
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "Deliver",
+      "Skill",
+      "ToolSearch",
+      "AskUserQuestion",
+      "Agent",
     ]);
     expect(res.statusCode, res.body).toBe(200);
     const t = byKey(res);
-    expect(t.sandbox_bash).toEqual({
-      key: "sandbox_bash",
+    expect(t.Bash).toEqual({
+      key: "Bash",
       title: null,
       kind: "command",
       sandbox: true,
       keyArgs: ["command"],
       source: { kind: "builtin" },
     });
-    expect(t.sandbox_read?.keyArgs).toEqual(["path"]);
-    expect(t.sandbox_write).toMatchObject({ kind: "edit", keyArgs: ["path"] });
-    expect(t.sandbox_edit).toMatchObject({ kind: "edit", keyArgs: ["path"] });
-    expect(t.sandbox_glob).toMatchObject({ kind: "search", keyArgs: ["pattern"] });
-    expect(t.sandbox_grep).toMatchObject({ kind: "search", keyArgs: ["pattern", "path"] });
-    expect(t.sandbox_deliver).toMatchObject({ kind: "tool", keyArgs: ["path"] });
-    expect(t.sandbox_deliver).toMatchObject({ sandbox: true });
-    for (const k of ["skill_load", "tool_search", "ask_user", "agent"]) {
+    expect(t.Read?.keyArgs).toEqual(["path"]);
+    expect(t.Write).toMatchObject({ kind: "edit", keyArgs: ["path"] });
+    expect(t.Edit).toMatchObject({ kind: "edit", keyArgs: ["path"] });
+    expect(t.Glob).toMatchObject({ kind: "search", keyArgs: ["pattern"] });
+    expect(t.Grep).toMatchObject({ kind: "search", keyArgs: ["pattern", "path"] });
+    expect(t.Deliver).toMatchObject({ kind: "tool", keyArgs: ["path"] });
+    expect(t.Deliver).toMatchObject({ sandbox: true });
+    for (const k of ["Skill", "ToolSearch", "AskUserQuestion", "Agent"]) {
       expect(t[k]?.sandbox, k).toBe(false);
     }
-    expect(t.skill_load).toMatchObject({ kind: "meta", keyArgs: ["name"] });
-    expect(t.tool_search).toMatchObject({ kind: "meta", keyArgs: ["query"] });
-    expect(t.ask_user).toMatchObject({ kind: "meta", keyArgs: [], title: null });
+    expect(t.Skill).toMatchObject({ kind: "meta", keyArgs: ["name"] });
+    expect(t.ToolSearch).toMatchObject({ kind: "meta", keyArgs: ["query"] });
+    expect(t.AskUserQuestion).toMatchObject({ kind: "meta", keyArgs: [], title: null });
     // a sub-agent's task name, then its type (the page shows agent calls as sub-agent rows)
-    expect(t.agent).toMatchObject({ kind: "tool", keyArgs: ["description", "subagent_type"] });
+    expect(t.Agent).toMatchObject({ kind: "tool", keyArgs: ["description", "subagent_type"] });
   });
 
   it("a connector tool returns its MCP title and key arguments, named by the connector", async () => {
@@ -296,7 +296,7 @@ describe("GET /conversations/:id/tools", () => {
     const res = await tools(req, orgId, conversationId, [
       "mcp__nope__x",
       "mystery",
-      "ask_user",
+      "AskUserQuestion",
       "mcp__nope__x",
     ]);
     expect(res.statusCode, res.body).toBe(200);
@@ -317,7 +317,7 @@ describe("GET /conversations/:id/tools", () => {
         keyArgs: [],
         source: { kind: "unknown" },
       },
-      expect.objectContaining({ key: "ask_user", kind: "meta" }),
+      expect.objectContaining({ key: "AskUserQuestion", kind: "meta" }),
     ]);
   });
 
@@ -326,10 +326,10 @@ describe("GET /conversations/:id/tools", () => {
     const other = await accounts.createLocal({ login: "mem", password: PW, displayName: "M" });
     await members.add(orgId, other.id, "member", owner.id);
     const m = await session("mem");
-    const hidden = await tools(m, orgId, conversationId, ["ask_user"]);
+    const hidden = await tools(m, orgId, conversationId, ["AskUserQuestion"]);
     expect(hidden.statusCode).toBe(404);
     expect(errCode(hidden)).toBe("conversation.not_found");
-    const notUuid = await tools(req, orgId, "not-a-uuid", ["ask_user"]);
+    const notUuid = await tools(req, orgId, "not-a-uuid", ["AskUserQuestion"]);
     expect(notUuid.statusCode).toBe(404);
     expect(errCode(notUuid)).toBe("conversation.not_found");
 
@@ -353,7 +353,7 @@ describe("GET /conversations/:id/tools", () => {
     });
     const svc = await k.http.inject({
       method: "GET",
-      url: `/api/v1/orgs/${orgId}/conversations/${conversationId}/tools?keys=ask_user`,
+      url: `/api/v1/orgs/${orgId}/conversations/${conversationId}/tools?keys=AskUserQuestion`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(svc.statusCode).toBe(403);

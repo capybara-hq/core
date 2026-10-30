@@ -22,7 +22,7 @@ const MAX_LINE_CHARS = 500;
 const MAX_GREP_BYTES = 4 * 1024 * 1024;
 
 const SPEC: ToolSpec = {
-  name: "sandbox_grep",
+  name: "Grep",
   // Display only (the tool row; not in the fingerprint, never sent to the model).
   keyArgs: ["pattern", "path"],
   description:
@@ -30,7 +30,7 @@ const SPEC: ToolSpec = {
     "extended, as grep -E). Use it to find where something is defined or mentioned. Searches path " +
     "(a file, or a directory recursively; default /workspace), skipping binary files; glob limits " +
     'the files searched by name, e.g. "*.py". Returns matching lines as <path>:<line>:<text>, up ' +
-    "to 500. To find files by name, use sandbox_glob.",
+    "to 500. To find files by name, use Glob.",
   inputSchema: {
     type: "object",
     properties: {
@@ -64,8 +64,7 @@ interface GrepInput {
   ignoreCase?: boolean;
 }
 
-const notFound = (path: string) =>
-  `${clip(path, 200)} does not exist; check the path with sandbox_glob.`;
+const notFound = (path: string) => `${clip(path, 200)} does not exist; check the path with Glob.`;
 const failed = (stderr: string) =>
   `grep failed: ${clip(stderr, 300)}. Check the pattern (POSIX extended regular expression) and retry.`;
 const GREP_TIMEOUT = "The search did not finish in time; pass a narrower path or a glob and retry.";
@@ -90,7 +89,7 @@ export function parseGrepNull(stdout: string, base: string): string[] {
   return out;
 }
 
-/** 内置工具 `sandbox_grep`：按正则搜文件内容（只读）。 */
+/** 内置工具 `Grep`：按正则搜文件内容（只读）。 */
 export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
   return {
     spec: SPEC,

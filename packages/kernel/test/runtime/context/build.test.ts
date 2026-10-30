@@ -357,7 +357,7 @@ describe("buildModelRequest", () => {
     const call = {
       type: "tool_call" as const,
       id: "call-1",
-      name: "agent",
+      name: "Agent",
       input: { prompt: "go" },
     };
     const usage = { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 };
@@ -382,7 +382,7 @@ describe("buildModelRequest", () => {
           childRunId: "run-c",
           kind: "approval",
           approvalId: "ap-1",
-          toolKey: "sandbox_bash",
+          toolKey: "Bash",
           expiresAt: "2026-10-26T00:00:00.000Z",
         },
       }),
@@ -433,7 +433,7 @@ describe("buildModelRequest", () => {
       if (withSubagents) for (const e of extras) log.add(e);
       log.add({
         type: "tool_result",
-        payload: { step: 0, callId: "call-1", toolKey: "agent", content: "done", isError: false },
+        payload: { step: 0, callId: "call-1", toolKey: "Agent", content: "done", isError: false },
       });
       log.assistant("finished", "end_turn", 1);
       return log;

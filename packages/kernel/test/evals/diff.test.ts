@@ -63,17 +63,17 @@ describe("structuralDiff", () => {
     expect(d.stopReasonMatch).toBe(true);
   });
 
-  it("sandbox_bash calls that differ only in description are the same call", () => {
+  it("Bash calls that differ only in description are the same call", () => {
     const d = structuralDiff(
-      side([{ name: "sandbox_bash", input: { command: "ls" } }]),
-      side([{ name: "sandbox_bash", input: { command: "ls", description: "List files" } }]),
+      side([{ name: "Bash", input: { command: "ls" } }]),
+      side([{ name: "Bash", input: { command: "ls", description: "List files" } }]),
     );
     expect(d.toolCalls.map((e) => e.kind)).toEqual(["same"]);
     expect(d.toolCallsMatch).toBe(true);
     // the other direction: recorded with a description, replayed without one
     const back = structuralDiff(
-      side([{ name: "sandbox_bash", input: { command: "ls", description: "List files" } }]),
-      side([{ name: "sandbox_bash", input: { command: "ls" } }]),
+      side([{ name: "Bash", input: { command: "ls", description: "List files" } }]),
+      side([{ name: "Bash", input: { command: "ls" } }]),
     );
     expect(back.toolCalls.map((e) => e.kind)).toEqual(["same"]);
     expect(back.toolCallsMatch).toBe(true);

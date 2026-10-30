@@ -14,18 +14,18 @@ import {
   withPathLease,
 } from "./common.js";
 
-/** 可编辑的最大文件（字节）：更大的用 sandbox_bash 处理。 */
+/** 可编辑的最大文件（字节）：更大的用 Bash 处理。 */
 const EDIT_MAX_BYTES = 10 * 1024 * 1024;
 
 const SPEC: ToolSpec = {
-  name: "sandbox_edit",
+  name: "Edit",
   // Display only (the tool row; not in the fingerprint, never sent to the model).
   keyArgs: ["path"],
   description:
     "Edit a text file in this conversation's sandbox by replacing exact text. oldText must match " +
     "the file exactly (including whitespace and indentation) and, unless replaceAll is true, occur " +
     "exactly once; include enough surrounding lines to make it unique. Read the file with " +
-    "sandbox_read first. Use sandbox_write to create a file or replace all of it.",
+    "Read first. Use Write to create a file or replace all of it.",
   inputSchema: {
     type: "object",
     properties: {
@@ -54,13 +54,13 @@ interface EditInput {
 }
 
 const notFound = (path: string) =>
-  `File not found: ${clip(path, 200)}. Check the path with sandbox_glob, or use sandbox_write to create it.`;
+  `File not found: ${clip(path, 200)}. Check the path with Glob, or use Write to create it.`;
 const notText = (path: string) =>
-  `${clip(path, 200)} is a directory, a binary file or larger than ${EDIT_MAX_BYTES} bytes; use sandbox_bash to change it.`;
+  `${clip(path, 200)} is a directory, a binary file or larger than ${EDIT_MAX_BYTES} bytes; use Bash to change it.`;
 const SAME_TEXT =
   "oldText and newText are the same; pass the text you want to change and its replacement.";
 const noMatch = (path: string) =>
-  `oldText was not found in ${clip(path, 200)}; call sandbox_read and pass the exact text, including whitespace.`;
+  `oldText was not found in ${clip(path, 200)}; call Read and pass the exact text, including whitespace.`;
 const ambiguous = (n: number) =>
   `oldText occurs ${n} times; pass more surrounding text to make it unique, or pass replaceAll: true.`;
 
@@ -71,7 +71,7 @@ function occurrences(text: string, sub: string): number {
   return n;
 }
 
-/** 内置工具 `sandbox_edit`：按精确文本替换。 */
+/** 内置工具 `Edit`：按精确文本替换。 */
 export function sandboxEditTool(deps: SandboxToolDeps): BuiltinTool {
   return {
     spec: SPEC,

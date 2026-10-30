@@ -2,19 +2,20 @@ import type { AgentTemplateTier, ToolSpec } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import type { EventPayload } from "../../conversations/events.js";
 import { ROSTER_DESCRIPTION_MAX, type RosterEntry } from "../../runtime/subagents/roster.js";
+import { AGENT_TOOL } from "../builtin-names.js";
 import type { BuiltinTool } from "../registry.js";
 
+export { AGENT_TOOL } from "../builtin-names.js";
+
 /**
- * The `agent` builtin tool (sub-agents spec §4): dispatches a sub-agent. Its description is built
+ * The `Agent` builtin tool (sub-agents spec §4): dispatches a sub-agent. Its description is built
  * per parent agent version from the roster ({@link agentToolSpec}); the tool pipeline handles the
  * call itself (dispatch, suspend, resume), so {@link agentTool}'s `run` is only a guard.
  */
-export const AGENT_TOOL = "agent";
-
 /** How a sub-agent's run ended (`subagent_finished.status`). */
 export type SubagentStatus = EventPayload<"subagent_finished">["status"];
 
-/** The input of an `agent` call (§4.2). */
+/** The input of an `Agent` call (§4.2). */
 export const AgentToolInput = z
   .object({
     description: z.string().min(1).max(80),
@@ -112,7 +113,7 @@ function rosterLine(e: RosterEntry): string {
 }
 
 /**
- * The `agent` tool definition of a parent agent version (§4.3): the fixed text with
+ * The `Agent` tool definition of a parent agent version (§4.3): the fixed text with
  * `maxConcurrent`, then one line per roster entry in roster order. Built at tool resolution, so the
  * spec hash changes with the roster or the limit (logged per request in `tool_specs`).
  */
@@ -132,7 +133,7 @@ export function agentToolSpec(roster: readonly RosterEntry[], maxConcurrent: num
  * `agentToolSpec([general-purpose], 4)`.
  */
 const SPEC: ToolSpec = {
-  name: "agent",
+  name: "Agent",
   description:
     "Dispatch a sub-agent: a fresh agent with its own context that works on one task and returns its " +
     "final reply as this tool's result. The sub-agent sees only your prompt, not this conversation, so " +
@@ -170,7 +171,7 @@ export const AGENT_REFUSALS = {
 
 /**
  * The parent run was stopped while this sub-agent worked (§4.4, §12): the result of a stopped
- * parent's open `agent` call, and the text of a child stopped with its parent.
+ * parent's open `Agent` call, and the text of a child stopped with its parent.
  */
 export const AGENT_STOPPED_WITH_RUN_TEXT =
   "The run was stopped while this sub-agent was working; it was stopped too.";
@@ -203,7 +204,7 @@ export function agentResultText(r: {
   ownModel?: boolean;
   abortedBy?: "user" | "parent";
   /**
-   * Phase D: the report of a person's fork invocation, whose parent need not have the `agent`
+   * Phase D: the report of a person's fork invocation, whose parent need not have the `Agent`
    * tool: the status line leaves out the resume hint (batch 3 review m2).
    */
   noResumeHint?: boolean;
@@ -265,7 +266,7 @@ export function agentResultText(r: {
 
 /**
  * The builtin. `defaultPolicy: "allow"` (§4.6): a sub-agent runs only tools its parent may run,
- * each under its own policy. The tool pipeline dispatches `agent` calls itself; `run` answers only
+ * each under its own policy. The tool pipeline dispatches `Agent` calls itself; `run` answers only
  * when a call reaches it anyway.
  */
 export const agentTool: BuiltinTool = {

@@ -619,10 +619,8 @@ describe("新建 agent：工具选择与策略收紧", () => {
     const user = userEvent.setup();
     expect(await screen.findByRole("region", { name: m.agents.form.toolsSection })).toBeTruthy();
     await user.type(screen.getByRole("textbox", { name: m.agents.form.nameLabel }), "Tooly");
-    // 内置工具默认勾选；取消 read_tool_output
-    await user.click(
-      screen.getByRole("checkbox", { name: m.agents.form.builtin.read_tool_output }),
-    );
+    // 内置工具默认勾选；取消 ReadToolOutput
+    await user.click(screen.getByRole("checkbox", { name: m.agents.form.builtin.ReadToolOutput }));
     await user.click(
       await screen.findByRole("checkbox", {
         name: m.agents.form.connectorTools.replace("{name}", "Fixture"),
@@ -634,7 +632,7 @@ describe("新建 agent：工具选择与策略收紧", () => {
     expect(posts[0]).toMatchObject({
       definition: {
         tools: [
-          { kind: "builtin", name: "ask_user" },
+          { kind: "builtin", name: "AskUserQuestion" },
           { kind: "connector", connectorId: "app1", tools: "all" },
         ],
         toolPolicies: { mcp__fixture__delete_item: "deny" },

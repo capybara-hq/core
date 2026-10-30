@@ -1,8 +1,9 @@
 import { parseToolKey, type ToolSpec } from "@capybara-hq/plugin-sdk";
-import { BUILTIN_TOOL_NAMES, type BuiltinTool, type ResolvedTool } from "../registry.js";
+import { BUILTIN_TOOL_NAMES, TOOL_SEARCH } from "../builtin-names.js";
+import { isLegacyBuiltinKey } from "../legacy-keys.js";
+import type { BuiltinTool, ResolvedTool } from "../registry.js";
 
-/** 内置工具名。 */
-export const TOOL_SEARCH = "tool_search";
+export { TOOL_SEARCH } from "../builtin-names.js";
 
 /** 默认返回的匹配数。 */
 const DEFAULT_LIMIT = 5;
@@ -47,17 +48,20 @@ export const TOOL_SEARCH_SPEC: ToolSpec = {
 
 /** 目录（system 第二个块）的开头说明（模型可见，英文）。 */
 export const CATALOG_HEADER =
-  "More tools are available but not loaded. To use one, first call tool_search with keywords; " +
+  "More tools are available but not loaded. To use one, first call ToolSearch with keywords; " +
   "it returns the full definitions and loads the matching tools for your next step. " +
   "Calling a tool that is not loaded returns an error. Tool catalog:";
 
 /** 调用目录里尚未加载的工具（模型可见，英文；spec 5.5：不自动加载）。 */
 export const notLoadedText = (key: string): string =>
-  `Tool "${key}" is not loaded. Call tool_search first with keywords for this tool, then call it in a later step.`;
+  `Tool "${key}" is not loaded. Call ToolSearch first with keywords for this tool, then call it in a later step.`;
 
-/** 始终完整加载、不进目录的工具（内置工具）。 */
+/**
+ * 始终完整加载、不进目录的工具（内置工具）。A release-candidate builtin key counts too: a request
+ * recorded before the tool rename is rebuilt with its old keys, and its builtins were loaded.
+ */
 export const isAlwaysLoaded = (key: string): boolean =>
-  (BUILTIN_TOOL_NAMES as readonly string[]).includes(key);
+  (BUILTIN_TOOL_NAMES as readonly string[]).includes(key) || isLegacyBuiltinKey(key);
 
 type CatalogTool = Pick<ResolvedTool, "key" | "spec">;
 
@@ -134,13 +138,16 @@ export function catalogLine(t: CatalogTool): string {
   return `- ${t.key}: ${desc}`;
 }
 
-/** 目录全文：开头说明 + 按 key 排序的目录行。只依赖工具集合，与加载状态无关（缓存前缀稳定）。 */
-export function catalogText(tools: readonly CatalogTool[]): string {
+/**
+ * 目录全文：开头说明 + 按 key 排序的目录行。只依赖工具集合，与加载状态无关（缓存前缀稳定）。
+ * `header`: a request recorded before the tool rename passes the frozen legacy header.
+ */
+export function catalogText(tools: readonly CatalogTool[], header = CATALOG_HEADER): string {
   const sorted = [...tools].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-  return [CATALOG_HEADER, ...sorted.map(catalogLine)].join("\n");
+  return [header, ...sorted.map(catalogLine)].join("\n");
 }
 
-/** 一个工具的完整定义文本（tool_search 的结果）。 */
+/** 一个工具的完整定义文本（`ToolSearch` 的结果）。 */
 function definitionText(t: CatalogTool): string {
   return [
     `Tool: ${t.key}`,
@@ -165,7 +172,7 @@ function displayQuery(query: string): string {
 }
 
 /**
- * 内置工具 `tool_search`（spec 5.5）：在本次运行可用、但未直接加载的工具中按关键词搜索，返回完整定义，
+ * 内置工具 `ToolSearch`（spec 5.5）：在本次运行可用、但未直接加载的工具中按关键词搜索，返回完整定义，
  * 并在结果里带 `loadedTools`（管线写进 `tool_result.loadedTools`；已加载集合只由日志还原）。
  * 搜索范围来自管线传入的 `ctx.tools`（本步解析出的工具）；内置工具始终加载，不参与搜索。
  */

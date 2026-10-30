@@ -55,6 +55,7 @@ import { SubagentsService } from "../runtime/subagents/subagents.service.js";
 import { skillLoadOfferedIn } from "../skills/catalog.js";
 import { type ApprovalRecord, type ApprovalScope, ApprovalsService } from "./approvals.service.js";
 import { Breaker, breakerOpenMessage } from "./breaker.js";
+import { TOOL_SEARCH } from "./builtin-names.js";
 import {
   AGENT_STOPPED_WITH_RUN_TEXT,
   AGENT_TOOL,
@@ -111,7 +112,7 @@ const failedText = (key: string, errName: string) =>
   `Tool ${key} failed (${errName}). The operation may not have completed; check before retrying or try another approach.`;
 const unknownToolText = (name: string, keys: string[], toolSearch: boolean) =>
   `Unknown tool "${name}". Available tools: ${keys.length === 0 ? "(none)" : keys.join(", ")}.` +
-  (toolSearch ? " Use tool_search to load other tools." : "");
+  (toolSearch ? " Use ToolSearch to load other tools." : "");
 const unavailableText = (name: string, reason: string) =>
   `Tool "${name}" is unavailable: ${reason}.`;
 const deniedText = (key: string) => `Tool ${key} is denied by policy.`;
@@ -246,8 +247,8 @@ interface PipelineDeps {
    */
   onToolsChanged(orgId: string, connectorId: string): void;
   /**
-   * Dispatches the sub-agent of an `agent` call (sub-agents spec §7.1; `dispatchSubagent`). Without
-   * it, `agent` calls reach the builtin's guard, which refuses them.
+   * Dispatches the sub-agent of an `Agent` call (sub-agents spec §7.1; `dispatchSubagent`). Without
+   * it, `Agent` calls reach the builtin's guard, which refuses them.
    */
   readonly subagents:
     | {
@@ -307,7 +308,7 @@ export type ExecOutcome =
 
 type ToolCall = { id: string; name: string; input: unknown };
 
-/** The result written for an open `agent` call of a stopped run. */
+/** The result written for an open `Agent` call of a stopped run. */
 type StoppedAgentResult = { content: string; isError: boolean; durationMs: number };
 
 /** `runCall` dispatched a sub-agent: the call stays open until the child run finishes. */
@@ -420,7 +421,7 @@ export class ToolPipeline {
   constructor(
     @Inject(KernelDb) kdb: KernelDb,
     @Inject(EventLog) eventLog: EventLog,
-    /** The `agent` tool's sub-agent dispatch; absent (tests): `agent` calls are refused. */
+    /** The `Agent` tool's sub-agent dispatch; absent (tests): `Agent` calls are refused. */
     @Inject(SubagentsService) subagents: Pick<SubagentsService, "dispatch"> | undefined,
     @Inject(ToolRegistry) registry: Pick<ToolRegistry, "forAgent" | "findConnector" | "handler">,
     @Inject(Credentials) credentials: Pick<Credentials, "injection" | "onUnauthorized">,
@@ -492,7 +493,7 @@ export class ToolPipeline {
       // 每步实时解析（连接器 / 插件状态可能在模型调用之后变化）
       if (!resolved) {
         // the request builder's rule: a skills catalog snapshot (even an empty one) or a person's
-        // skill invocation in the log → skill_load is offered (see skillLoadOffered)
+        // skill invocation in the log → Skill is offered (see skillLoadOffered)
         const skillLoad = await skillLoadOfferedIn(
           this.deps.db,
           this.deps.eventLog,
@@ -506,7 +507,7 @@ export class ToolPipeline {
       }
       return resolved;
     };
-    // `agent` calls whose sub-agent still runs (spec §7.1): a dispatch never blocks later calls;
+    // `Agent` calls whose sub-agent still runs (spec §7.1): a dispatch never blocks later calls;
     // once every call was handled, the step waits for them
     let open = 0;
     for (const call of calls) {
@@ -543,7 +544,7 @@ export class ToolPipeline {
   }
 
   /**
-   * An `agent` call that was dispatched (spec §7.1 "already dispatched"): when its child run is
+   * An `Agent` call that was dispatched (spec §7.1 "already dispatched"): when its child run is
    * terminal, writes the parent's `subagent_finished` (if the child's finisher did not) and the
    * call's `tool_result` from the child's log, and returns true; else false (still open).
    *
@@ -564,7 +565,7 @@ export class ToolPipeline {
       (call.input as { model?: unknown }).model !== undefined;
     const r = await childResult(this.deps.eventLog, row, { modelGiven });
     if (!r) return false;
-    // No spec-hash check as in processCall: an `agent` call writes no tool_call_started holding
+    // No spec-hash check as in processCall: an `Agent` call writes no tool_call_started holding
     // the executed definition's hash, and its description changes with the roster and limits
     // while the child runs. The call's approval (forCall: its latest) is by construction the one
     // that let this dispatch start, since a dispatch happens only after an approved decision.
@@ -617,14 +618,14 @@ export class ToolPipeline {
   }
 
   /**
-   * Writes, in the caller's transaction (`mandatory`), the `tool_result` of every open `agent` call
+   * Writes, in the caller's transaction (`mandatory`), the `tool_result` of every open `Agent` call
    * of a run that is being stopped
    * (sub-agents spec §12: a person stopped it while it waited on sub-agents, or its deadline or a
    * stop hit its tools node after a dispatch). A call whose child already ended gets the child's
    * result (and the missing `subagent_finished`); one whose child is still active gets
    * {@link AGENT_STOPPED_WITH_RUN_TEXT}. The caller stops those children after its commit.
    *
-   * Like every `agent` result (see {@link finishAgentCall}), each is audited `tool.called` in it
+   * Like every `Agent` result (see {@link finishAgentCall}), each is audited `tool.called` in it
    * (duration: the child's, or the time since the dispatch) and fires `tool.postExecute`, through
    * `fire()`, which the caller runs after its commit. Returns the steps and calls written (the
    * caller must not write a "not executed" result for them) and the highest seq written.
@@ -924,16 +925,16 @@ export class ToolPipeline {
         resolved.hidden?.find((u) => u.ref === call.name);
       if (why) return fail(unavailableText(call.name, why.reason));
       let keys = resolved.tools.map((t) => t.key);
-      // tool_search 模式：目录可能很大，只列内置工具与发出本次调用的请求里带了定义的工具
+      // ToolSearch 模式：目录可能很大，只列内置工具与发出本次调用的请求里带了定义的工具
       if (resolved.toolSearch === true) {
         const sent = await this.sentTools(ctx);
         if (sent !== null) keys = keys.filter((k) => isAlwaysLoaded(k) || sent.has(k));
       }
       keys.sort();
-      return fail(unknownToolText(call.name, keys, keys.includes("tool_search")));
+      return fail(unknownToolText(call.name, keys, keys.includes(TOOL_SEARCH)));
     }
-    // tool_search 模式下，模型只能调用请求里带了完整定义的工具：目录里有、但发出本次调用的请求没加载 →
-    // 明确错误，不自动加载（spec 5.5 / 6.3）。同一步里先 tool_search 再调用刚加载的工具同样报错。
+    // ToolSearch 模式下，模型只能调用请求里带了完整定义的工具：目录里有、但发出本次调用的请求没加载 →
+    // 明确错误，不自动加载（spec 5.5 / 6.3）。同一步里先 ToolSearch 再调用刚加载的工具同样报错。
     if (resolved.toolSearch === true && !isAlwaysLoaded(tool.key)) {
       const sent = await this.sentTools(ctx);
       if (sent !== null && !sent.has(tool.key)) return fail(notLoadedText(tool.key), tool.key);
@@ -1069,7 +1070,7 @@ export class ToolPipeline {
       }
     }
 
-    // `agent` (sub-agents spec §7.1): no tool_call_started; the dispatch is made durable in one
+    // `Agent` (sub-agents spec §7.1): no tool_call_started; the dispatch is made durable in one
     // transaction (its marker is the subagent_dispatches row) and the call stays open
     const dispatcher = this.deps.subagents;
     if (tool.source.kind === "builtin" && tool.key === AGENT_TOOL && dispatcher) {
@@ -1107,7 +1108,7 @@ export class ToolPipeline {
       outcome.kind === "result"
         ? renderResult(outcome.result)
         : { text: outcome.message, contentTypes: [], isError: true };
-    // 内置工具（tool_search）报告的已加载工具：只认本步可用、非内置的 key，写进 tool_result（日志即事实源）
+    // 内置工具（ToolSearch）报告的已加载工具：只认本步可用、非内置的 key，写进 tool_result（日志即事实源）
     const loadedTools =
       outcome.kind === "result" && tool.source.kind === "builtin"
         ? loadedFrom(outcome.result, resolved.tools)
@@ -1220,7 +1221,7 @@ export class ToolPipeline {
 
   /**
    * 发出本步调用的请求里带了完整定义的工具 key：本步最后一次尝试的 `model_call.request.tools`
-   * （`assistant_message` 来自最后一次尝试）。该请求不在 tool_search 模式（没有 `catalog`，工具全部发送）
+   * （`assistant_message` 来自最后一次尝试）。该请求不在 ToolSearch 模式（没有 `catalog`，工具全部发送）
    * 或找不到 model_call 时返回 null（不做加载检查）。已加载集合由此从日志得出，不放进程内存。
    */
   private async sentTools(ctx: ToolStepContext): Promise<Set<string> | null> {
@@ -1307,7 +1308,7 @@ export class ToolPipeline {
     }
     const handler = this.deps.registry.handler(tool.source);
     if (!handler) return { kind: "error", message: `Tool ${tool.key} is no longer available.` };
-    // 插件处理函数只拿到 SDK 的 ToolCallContext；内置工具另外拿到本步解析出的工具（tool_search 用）
+    // 插件处理函数只拿到 SDK 的 ToolCallContext；内置工具另外拿到本步解析出的工具（ToolSearch 用）
     const base: Omit<BuiltinCallContext, "signal"> = {
       orgId: ctx.orgId,
       accountId: ctx.accountId,

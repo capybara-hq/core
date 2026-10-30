@@ -222,10 +222,10 @@ describe("renderSkillInvocation", () => {
     };
     const wrapped = `${lead}\n\n<skill_invocation name="m" version="3">\nB 7\n</skill_invocation>`;
     const load =
-      'Its files are not in the sandbox yet: call skill_load with "m" to copy them to /skills/m/ before running its scripts.';
+      'Its files are not in the sandbox yet: call Skill with "m" to copy them to /skills/m/ before running its scripts.';
     const unavailable = "Its other files are not available in this conversation.";
     const shell =
-      "Lines written as !`command` were meant to run before you read this; run those commands with sandbox_bash if you need their output.";
+      "Lines written as !`command` were meant to run before you read this; run those commands with Bash if you need their output.";
     expect(renderSkillInvocation({ ...base, lines: { files: "load" } })).toBe(
       `${wrapped}\n\n${load}`,
     );
@@ -286,7 +286,7 @@ describe("renderSkillInvocation", () => {
     expect(out).toBe(
       'The user invoked the skill "sp:brainstorm" with /sp:brainstorm. Follow its instructions for this request.\n\n' +
         '<skill_invocation name="sp:brainstorm" version="4">\nRun /skills/brainstorm/x.sh\n</skill_invocation>\n\n' +
-        'Its files are not in the sandbox yet: call skill_load with "sp:brainstorm" to copy them to /skills/brainstorm/ before running its scripts.',
+        'Its files are not in the sandbox yet: call Skill with "sp:brainstorm" to copy them to /skills/brainstorm/ before running its scripts.',
     );
     expect(() =>
       renderSkillInvocation({

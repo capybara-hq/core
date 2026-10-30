@@ -368,12 +368,12 @@ describe("resolveRoster / findType", { timeout: 60_000 }, () => {
 
 describe("effectiveDefinition", { timeout: 60_000 }, () => {
   const parentTools = [
-    { kind: "builtin", name: "ask_user" },
-    { kind: "builtin", name: "read_tool_output" },
-    { kind: "builtin", name: "skill_write" },
-    { kind: "builtin", name: "sandbox_deliver" },
-    { kind: "builtin", name: "sandbox_bash" },
-    { kind: "builtin", name: "agent" },
+    { kind: "builtin", name: "AskUserQuestion" },
+    { kind: "builtin", name: "ReadToolOutput" },
+    { kind: "builtin", name: "SkillWrite" },
+    { kind: "builtin", name: "Deliver" },
+    { kind: "builtin", name: "Bash" },
+    { kind: "builtin", name: "Agent" },
   ];
 
   it("general-purpose: the parent's definition minus the child-removed tools, nothing pinned", async () => {
@@ -382,7 +382,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       instructions: "Lead instructions.",
       avatarUrl: "https://example.com/a.png",
       tools: parentTools,
-      toolPolicies: { sandbox_bash: "ask", skill_write: "deny" },
+      toolPolicies: { Bash: "ask", SkillWrite: "deny" },
       modelParams: { effort: "low" },
       fallback: FAKE2,
       fallbackParams: { effort: "high" },
@@ -390,7 +390,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       subagents: { inline: [inline("scout")] },
     });
     const r = await eff(parent, "general-purpose");
-    expect(CHILD_REMOVED_TOOLS).toEqual(["agent", "ask_user", "sandbox_deliver", "skill_write"]);
+    expect(CHILD_REMOVED_TOOLS).toEqual(["Agent", "AskUserQuestion", "Deliver", "SkillWrite"]);
     expect(r.definition).toEqual({
       name: "Lead › general-purpose",
       avatarUrl: "https://example.com/a.png",
@@ -400,10 +400,10 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       modelParams: { effort: "low" },
       fallbackParams: { effort: "high" },
       tools: [
-        { kind: "builtin", name: "read_tool_output" },
-        { kind: "builtin", name: "sandbox_bash" },
+        { kind: "builtin", name: "ReadToolOutput" },
+        { kind: "builtin", name: "Bash" },
       ],
-      toolPolicies: { sandbox_bash: "ask", skill_write: "deny" },
+      toolPolicies: { Bash: "ask", SkillWrite: "deny" },
       skills: { orgSkills: [s] },
     });
     expect(r.template).toEqual({ source: "general" });
@@ -428,32 +428,32 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
         { kind: "connector", connectorId: jira, tools: "all" },
         { kind: "connector", connectorId: wiki, tools: ["read", "write"] },
       ],
-      toolPolicies: { mcp__jira__search: "ask", sandbox_bash: "ask", mcp__jira__create: "deny" },
+      toolPolicies: { mcp__jira__search: "ask", Bash: "ask", mcp__jira__create: "deny" },
       subagents: {
         inline: [
           inline("scout", {
-            tools: ["sandbox_bash", "mcp__jira__search", "mcp__jira__create", "ask_user", "nope"],
+            tools: ["Bash", "mcp__jira__search", "mcp__jira__create", "AskUserQuestion", "nope"],
             toolPolicies: {
-              sandbox_bash: "deny",
+              Bash: "deny",
               mcp__jira__create: "ask",
               mcp__jira__search: "ask",
             },
             maxSteps: 80,
           }),
           inline("writer", {
-            disallowedTools: ["mcp__wiki__write", "mcp__jira__delete", "sandbox_bash"],
+            disallowedTools: ["mcp__wiki__write", "mcp__jira__delete", "Bash"],
           }),
         ],
       },
     });
     const scout = await eff(parent, "scout");
     expect(scout.definition.tools).toEqual([
-      { kind: "builtin", name: "sandbox_bash" },
+      { kind: "builtin", name: "Bash" },
       { kind: "connector", connectorId: jira, tools: ["create", "search"] },
     ]);
     expect(scout.definition.toolPolicies).toEqual({
       mcp__jira__search: "ask",
-      sandbox_bash: "deny",
+      Bash: "deny",
       mcp__jira__create: "deny",
     });
     expect(scout.definition.instructions).toBe("You are scout.");
@@ -463,7 +463,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
 
     const writer = await eff(parent, "writer");
     expect(writer.definition.tools).toEqual([
-      { kind: "builtin", name: "read_tool_output" },
+      { kind: "builtin", name: "ReadToolOutput" },
       { kind: "connector", connectorId: jira, tools: ["create", "search"] },
       { kind: "connector", connectorId: wiki, tools: ["read"] },
     ]);
@@ -562,7 +562,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
   it("plugin template: current version, skills by name, template reference", async () => {
     const tdd = await skill("test-driven-development");
     const t = await template("implementer", {
-      tools: ["read_tool_output"],
+      tools: ["ReadToolOutput"],
       skills: ["test-driven-development", "superpowers:missing"],
       maxSteps: 12,
     });
@@ -575,7 +575,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
     expect(r.template).toEqual({ source: "plugin", id: t, version: 2, plugin: "superpowers" });
     expect(r.definition.instructions).toBe("Body of implementer v2.");
     expect(r.definition.name).toBe("Lead › superpowers:implementer");
-    expect(r.definition.tools).toEqual([{ kind: "builtin", name: "read_tool_output" }]);
+    expect(r.definition.tools).toEqual([{ kind: "builtin", name: "ReadToolOutput" }]);
     expect(r.definition.skills).toEqual({ orgSkills: [tdd], pinned: [tdd] });
     expect(r.warnings).toEqual([
       'The skill "superpowers:missing" was not pinned: the agent does not select it.',
@@ -685,12 +685,12 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
         model: FAKE2,
         modelParams: { effort: "medium" },
         tools: [
-          { kind: "builtin", name: "ask_user" },
-          { kind: "builtin", name: "skill_write" },
-          { kind: "builtin", name: "sandbox_bash" },
+          { kind: "builtin", name: "AskUserQuestion" },
+          { kind: "builtin", name: "SkillWrite" },
+          { kind: "builtin", name: "Bash" },
           { kind: "connector", connectorId: jira, tools: "all" },
         ],
-        toolPolicies: { mcp__jira__create: "ask", sandbox_bash: "deny" },
+        toolPolicies: { mcp__jira__create: "ask", Bash: "deny" },
         skills: { orgSkills: [s], pinned: [s] },
         subagents: { dispatchable: true },
       });
@@ -699,8 +699,8 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
         .get(ModelPurposesService)
         .setOrg(orgId, "subagent_fast", { model: FAKE1, params: {} }, owner.id);
       const parent = def({
-        tools: [{ kind: "builtin", name: "read_tool_output" }],
-        toolPolicies: { mcp__jira__search: "deny", sandbox_bash: "ask", read_tool_output: "ask" },
+        tools: [{ kind: "builtin", name: "ReadToolOutput" }],
+        toolPolicies: { mcp__jira__search: "deny", Bash: "ask", ReadToolOutput: "ask" },
         subagents: { agents: [{ agentId: a, as: "analyst", description: "Data questions." }] },
       });
       const r = await eff(parent, "analyst", "fast");
@@ -709,14 +709,14 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
         ...agentDef,
         instructions: "v3",
         tools: [
-          { kind: "builtin", name: "sandbox_bash" },
+          { kind: "builtin", name: "Bash" },
           { kind: "connector", connectorId: jira, tools: "all" },
         ],
         toolPolicies: {
           mcp__jira__create: "ask",
-          sandbox_bash: "deny",
+          Bash: "deny",
           mcp__jira__search: "deny",
-          read_tool_output: "ask",
+          ReadToolOutput: "ask",
         },
         subagents: undefined,
       });
@@ -734,8 +734,8 @@ describe("follow-up narrowing (final review I1)", () => {
 
   it("keeps the refs the current version still has; a connector's all meets the names", () => {
     const frozen = [
-      { kind: "builtin", name: "sandbox_read" } as const,
-      { kind: "builtin", name: "sandbox_write" } as const,
+      { kind: "builtin", name: "Read" } as const,
+      { kind: "builtin", name: "Write" } as const,
       { kind: "plugin", plugin: "todo", name: "add" } as const,
       conn("c1", "all"),
       conn("c2", ["a", "b"]),
@@ -743,7 +743,7 @@ describe("follow-up narrowing (final review I1)", () => {
       conn("c4", ["a"]),
     ];
     const current = [
-      { kind: "builtin", name: "sandbox_read" } as const,
+      { kind: "builtin", name: "Read" } as const,
       { kind: "plugin", plugin: "todo", name: "add" } as const,
       conn("c1", ["x"]),
       conn("c2", ["b", "c"]),
@@ -751,7 +751,7 @@ describe("follow-up narrowing (final review I1)", () => {
       conn("c4", ["z"]),
     ];
     expect(intersectTools(frozen, current)).toEqual([
-      { kind: "builtin", name: "sandbox_read" },
+      { kind: "builtin", name: "Read" },
       { kind: "plugin", plugin: "todo", name: "add" },
       conn("c1", ["x"]),
       conn("c2", ["b"]),

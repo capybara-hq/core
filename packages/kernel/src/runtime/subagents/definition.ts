@@ -16,14 +16,11 @@ import { ApiError } from "../../errors.js";
 import type { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import type { ModelPurposesService } from "../../models/purposes.js";
 import { PINNED_SKILLS_LIMITS } from "../../skills/catalog.js";
+import { CHILD_REMOVED_TOOLS } from "../../tools/builtin-names.js";
 import type { ProviderRegistry } from "../providers.js";
 import type { RosterEntry } from "./roster.js";
 
-/**
- * Tools a sub-agent never gets (spec §5.3, §5.5): `agent` (depth 1), `ask_user` (the person does not
- * see the child), `sandbox_deliver` (delivering files is the parent's job) and `skill_write`.
- */
-export const CHILD_REMOVED_TOOLS = ["agent", "ask_user", "sandbox_deliver", "skill_write"] as const;
+export { CHILD_REMOVED_TOOLS } from "../../tools/builtin-names.js";
 
 /**
  * The roster entry's template is gone (an inline template edited away, a plugin template

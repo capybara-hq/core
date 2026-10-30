@@ -48,9 +48,9 @@ const result = (
 
 const INFO = new Map<string, ToolInfo>([
   [
-    "sandbox_bash",
+    "Bash",
     {
-      key: "sandbox_bash",
+      key: "Bash",
       title: null,
       kind: "command",
       sandbox: true,
@@ -80,12 +80,12 @@ describe("buildTimeline", () => {
     const events = [
       user(1, "list files"),
       ev(2, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }),
-      calls(3, [{ id: "c1", name: "sandbox_bash", input: { command: "ls -la" } }]),
-      started(4, "c1", "sandbox_bash"),
+      calls(3, [{ id: "c1", name: "Bash", input: { command: "ls -la" } }]),
+      started(4, "c1", "Bash"),
       ev(5, "tool_result", {
         step: 0,
         callId: "c1",
-        toolKey: "sandbox_bash",
+        toolKey: "Bash",
         content: "a\nb",
         isError: false,
       }),
@@ -95,7 +95,7 @@ describe("buildTimeline", () => {
     expect(kinds(out)).toEqual(["user", "tools"]);
     const row = tools(out)[0]?.rows[0]?.row;
     expect(row).toMatchObject({
-      title: "sandbox_bash",
+      title: "Bash",
       keyArg: "ls -la",
       status: "done",
       kind: "tool",
@@ -108,14 +108,14 @@ describe("buildTimeline", () => {
     const events = [
       user(1, "go"),
       calls(2, [
-        { id: "a", name: "sandbox_bash", input: { command: "ls", description: "List files" } },
-        { id: "b", name: "sandbox_bash", input: { command: "false", description: "Fail" } },
+        { id: "a", name: "Bash", input: { command: "ls", description: "List files" } },
+        { id: "b", name: "Bash", input: { command: "false", description: "Fail" } },
         { id: "c", name: "plugin__slack__search", input: { query: "#feedback" } },
       ]),
-      result(3, "a", "sandbox_bash", {
+      result(3, "a", "Bash", {
         view: { kind: "command", exitCode: 0, timedOut: false, description: "List files" },
       }),
-      result(4, "b", "sandbox_bash", {
+      result(4, "b", "Bash", {
         content: "boom\nmore",
         view: { kind: "command", exitCode: 1, timedOut: false },
       }),
@@ -137,24 +137,24 @@ describe("buildTimeline", () => {
   it("prose between calls and an approval split groups; prose is never folded", () => {
     const events = [
       user(1, "go"),
-      calls(2, [{ id: "a", name: "sandbox_bash", input: { command: "ls" } }]),
-      result(3, "a", "sandbox_bash"),
-      calls(4, [{ id: "b", name: "sandbox_bash", input: { command: "pwd" } }], "Now the folder."),
+      calls(2, [{ id: "a", name: "Bash", input: { command: "ls" } }]),
+      result(3, "a", "Bash"),
+      calls(4, [{ id: "b", name: "Bash", input: { command: "pwd" } }], "Now the folder."),
       ev(5, "approval_requested", {
         step: 0,
         callId: "b",
         approvalId: "ap1",
-        toolKey: "sandbox_bash",
+        toolKey: "Bash",
         expiresAt: "x",
         policy: "agent",
       }),
-      calls(6, [{ id: "c", name: "sandbox_bash", input: { command: "id" } }]),
+      calls(6, [{ id: "c", name: "Bash", input: { command: "id" } }]),
     ];
     const out = buildTimeline(events, [], INFO, "en");
     expect(kinds(out)).toEqual(["user", "tools", "prose", "tools", "approval", "tools"]);
     const ap = out[4];
     expect(ap?.kind === "approval" && ap.item).toMatchObject({
-      toolKey: "sandbox_bash",
+      toolKey: "Bash",
       input: { command: "pwd" },
       policy: "agent",
     });
@@ -164,10 +164,10 @@ describe("buildTimeline", () => {
     const events = [
       user(1, "go"),
       calls(2, [
-        { id: "a", name: "sandbox_deliver", input: { path: "out.csv" } },
+        { id: "a", name: "Deliver", input: { path: "out.csv" } },
         { id: "b", name: "plugin__todo__write", input: { items: [] } },
       ]),
-      result(3, "a", "sandbox_deliver"),
+      result(3, "a", "Deliver"),
       ev(4, "artifact_created", {
         artifactId: "f1",
         name: "out.csv",
@@ -397,8 +397,8 @@ describe("buildTimeline", () => {
 
   it("calls of a run that ended without a result are cancelled", () => {
     const events = [
-      calls(1, [{ id: "a", name: "sandbox_bash", input: { command: "sleep 9" } }]),
-      started(2, "a", "sandbox_bash"),
+      calls(1, [{ id: "a", name: "Bash", input: { command: "sleep 9" } }]),
+      started(2, "a", "Bash"),
       ev(3, "run_aborted", { byAccountId: null, reason: "x" }),
     ];
     expect(tools(buildTimeline(events, [], INFO, "en"))[0]?.rows[0]?.row.status).toBe("cancelled");
@@ -423,8 +423,8 @@ describe("final review fixes", () => {
   it("a read's line range is data for the thread's i18n, not a hard-coded string (m10)", () => {
     const events = [
       user(1, "read"),
-      calls(2, [{ id: "r", name: "sandbox_read", input: { path: "a.ts" } }]),
-      result(3, "r", "sandbox_read", {
+      calls(2, [{ id: "r", name: "Read", input: { path: "a.ts" } }]),
+      result(3, "r", "Read", {
         view: { kind: "read", path: "a.ts", fromLine: 3, toLine: 9 },
         display: { summary: { zh: "摘要", en: "summary" } },
       }),

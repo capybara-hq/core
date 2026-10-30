@@ -15,15 +15,15 @@ import {
 } from "./common.js";
 
 const SPEC: ToolSpec = {
-  name: "sandbox_write",
+  name: "Write",
   // Display only (the tool row; not in the fingerprint, never sent to the model).
   keyArgs: ["path"],
   description:
     "Write a text file in this conversation's sandbox, creating parent directories as needed. " +
     "Each call replaces the whole file (it is created if missing). Use it to create scripts, " +
     "source files and data files. The path is absolute, under /workspace or /tmp (/skills is " +
-    "read-only). To change part of an existing file, use sandbox_edit instead; to give a file to " +
-    "the user, use sandbox_deliver.",
+    "read-only). To change part of an existing file, use Edit instead; to give a file to " +
+    "the user, use Deliver.",
   inputSchema: {
     type: "object",
     properties: {
@@ -54,7 +54,7 @@ const PREVIOUS_MAX_BYTES = TOOL_VIEW_DIFF_MAX_BYTES;
 const isDirectory = (path: string) =>
   `${clip(path, 200)} is a directory; pass the path of a file inside it.`;
 
-/** 内置工具 `sandbox_write`：整文件写入。 */
+/** 内置工具 `Write`：整文件写入。 */
 export function sandboxWriteTool(deps: SandboxToolDeps): BuiltinTool {
   return {
     spec: SPEC,

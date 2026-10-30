@@ -46,7 +46,7 @@ export const UNSUPPORTED_ELICITATION_NOTE =
   "The app asked the user for input that cannot be shown in this client, so the request was declined";
 
 const unsupportedNote = (why: string) =>
-  `[${UNSUPPORTED_ELICITATION_NOTE} (${why}). If the call needs that input, ask the user for it with ask_user and pass it as tool arguments, or try another approach.]`;
+  `[${UNSUPPORTED_ELICITATION_NOTE} (${why}). If the call needs that input, ask the user for it with AskUserQuestion and pass it as tool arguments, or try another approach.]`;
 
 /** URL 模式表单里「已完成」开关的字段名。 */
 export const URL_COMPLETED_FIELD = "completed";

@@ -87,8 +87,8 @@ const def = (over: Record<string, unknown> = {}): AgentDefinition =>
     name: "Lead",
     model: { provider: "model-fake", model: "fake-1" },
     tools: [
-      { kind: "builtin", name: "ask_user" },
-      { kind: "builtin", name: "read_tool_output" },
+      { kind: "builtin", name: "AskUserQuestion" },
+      { kind: "builtin", name: "ReadToolOutput" },
     ],
     ...over,
   });
@@ -194,9 +194,9 @@ describe("agent definition subagents (save checks)", { timeout: 60_000 }, () => 
       templates: [t],
       inline: [
         inline("scout", {
-          tools: ["read_tool_output"],
-          disallowedTools: ["ask_user"],
-          toolPolicies: { read_tool_output: "ask" },
+          tools: ["ReadToolOutput"],
+          disallowedTools: ["AskUserQuestion"],
+          toolPolicies: { ReadToolOutput: "ask" },
           model: "fast",
           maxSteps: 5,
           skills: [s],
@@ -257,9 +257,9 @@ describe("agent definition subagents (save checks)", { timeout: 60_000 }, () => 
             subagents: {
               inline: [
                 inline("scout", {
-                  tools: ["sandbox_bash"],
-                  disallowedTools: ["skill_load"],
-                  toolPolicies: { tool_search: "deny" },
+                  tools: ["Bash"],
+                  disallowedTools: ["Skill"],
+                  toolPolicies: { ToolSearch: "deny" },
                 }),
               ],
             },
@@ -269,7 +269,7 @@ describe("agent definition subagents (save checks)", { timeout: 60_000 }, () => 
     ).toEqual([
       ["tool_not_selected", "subagents.inline.0.tools.0"],
       ["tool_not_selected", "subagents.inline.0.disallowedTools.0"],
-      ["tool_not_selected", "subagents.inline.0.toolPolicies.tool_search"],
+      ["tool_not_selected", "subagents.inline.0.toolPolicies.ToolSearch"],
     ]);
   });
 

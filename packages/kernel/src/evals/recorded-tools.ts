@@ -1,5 +1,6 @@
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import { assistantIdemKey } from "../runtime/model-call.js";
+import { MATCH_IGNORED_FIELDS } from "../tools/builtin-names.js";
 import { RUN_STOPPED_TEXT, type ToolPipeline, type ToolStepContext } from "../tools/pipeline.js";
 import type { CaseSnapshot } from "./snapshot.js";
 
@@ -20,7 +21,7 @@ export interface RecordedCall {
   inputKey: string;
   content: string;
   isError: boolean;
-  /** 原结果里的 `tool_search` 已加载工具（照抄：之后请求的已加载集合由日志还原）。 */
+  /** 原结果里的 `ToolSearch` 已加载工具（照抄：之后请求的已加载集合由日志还原）。 */
   loadedTools?: string[];
   contentTypes?: string[];
   /** 原 `tool_call_started` 的定义指纹（没有开始事件的调用为空串）。 */
@@ -41,15 +42,6 @@ export function canonicalJson(v: unknown): string {
   };
   return JSON.stringify(norm(v) ?? null);
 }
-
-/**
- * Input fields left out when matching, per tool: display-only arguments the model writes that do not
- * change what the tool does. `sandbox_bash`'s `description` became required in UI refresh B, so a
- * recording without it and a replayed call with one (or a different wording) still match.
- */
-const MATCH_IGNORED_FIELDS: Readonly<Record<string, readonly string[]>> = {
-  sandbox_bash: ["description"],
-};
 
 /** The matching key of a call: the canonical JSON of its input without the ignored fields. */
 export function matchKey(toolKey: string, input: unknown): string {

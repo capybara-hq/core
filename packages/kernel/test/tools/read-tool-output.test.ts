@@ -13,7 +13,7 @@ import { truncateTables } from "../helpers/db.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 import { configFrom, outputsFor } from "../helpers/tools.js";
 
-/** Task 10：内置工具 `read_tool_output`（按行分页读取输出存档，只读本组织、未过期的）。 */
+/** Task 10：内置工具 `ReadToolOutput`（按行分页读取输出存档，只读本组织、未过期的）。 */
 
 let pgc: TestContainer;
 let raw: ReturnType<typeof createDb>;
@@ -85,20 +85,20 @@ async function read(input: Record<string, unknown>, orgId = seed.orgId): Promise
 const lines = (n: number, f: (i: number) => string = (i) => `line${i}`) =>
   Array.from({ length: n }, (_, i) => f(i)).join("\n");
 
-describe("read_tool_output", () => {
+describe("ReadToolOutput", () => {
   it("声明：名字、只读、默认 allow；参数校验", () => {
     const t = tool();
-    expect(t.spec.name).toBe("read_tool_output");
+    expect(t.spec.name).toBe("ReadToolOutput");
     expect(t.defaultPolicy).toBe("allow");
     expect(t.spec.annotations?.readOnlyHint).toBe(true);
-    expect(validateInput("read_tool_output", t.spec, { id: "x" })).toBeNull();
+    expect(validateInput("ReadToolOutput", t.spec, { id: "x" })).toBeNull();
     expect(
-      validateInput("read_tool_output", t.spec, { id: "x", offset: 3, limit: 10, charOffset: 5 }),
+      validateInput("ReadToolOutput", t.spec, { id: "x", offset: 3, limit: 10, charOffset: 5 }),
     ).toBeNull();
-    expect(validateInput("read_tool_output", t.spec, {})).toContain("id");
-    expect(validateInput("read_tool_output", t.spec, { id: "x", offset: -1 })).not.toBeNull();
-    expect(validateInput("read_tool_output", t.spec, { id: "x", limit: 0 })).not.toBeNull();
-    expect(validateInput("read_tool_output", t.spec, { id: "x", offset: 1.5 })).not.toBeNull();
+    expect(validateInput("ReadToolOutput", t.spec, {})).toContain("id");
+    expect(validateInput("ReadToolOutput", t.spec, { id: "x", offset: -1 })).not.toBeNull();
+    expect(validateInput("ReadToolOutput", t.spec, { id: "x", limit: 0 })).not.toBeNull();
+    expect(validateInput("ReadToolOutput", t.spec, { id: "x", offset: 1.5 })).not.toBeNull();
   });
 
   it("按行分页：默认从第 0 行读 200 行；offset / limit；结尾写行范围", async () => {

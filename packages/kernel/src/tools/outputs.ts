@@ -222,7 +222,7 @@ export async function spillIfLarge(
     content:
       `${text.slice(0, opts.previewChars)}\n…\n` +
       `[Output truncated: ${saved.sizeChars} chars, ${saved.lineCount} lines. Full output id: ${id}. ` +
-      `Use read_tool_output to page through it, or pass {"$output":"${id}"} as a tool argument.]`,
+      `Use ReadToolOutput to page through it, or pass {"$output":"${id}"} as a tool argument.]`,
     outputId: id,
   };
 }

@@ -209,7 +209,7 @@ type EventBody =
       };
     }
   | {
-      /** agent 经 `sandbox_deliver` 交付的文件（产物）：字节在对象存储，经 artifacts 下载接口取。 */
+      /** agent 经 `Deliver` 交付的文件（产物）：字节在对象存储，经 artifacts 下载接口取。 */
       type: "artifact_created";
       payload: {
         artifactId: string;

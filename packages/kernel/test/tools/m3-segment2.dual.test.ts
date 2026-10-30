@@ -37,7 +37,7 @@ import { eventsOf, PW, waitFor, waitForEvent, waitForTerminal } from "../helpers
  *    → 工具调用可用；作废 access token 后两个副本上的运行同时 401 → 只刷新一次 token。
  * 3. 漂移：MCP 服务改了工具 → 定时扫描任务 → 待复核 → 调用报不可用 → 批准 → 可用；工具改了路由但没改名
  *    （connectorData，A21）→ 手动刷新 → 待复核期间仍不可用（也不调用服务）→ 批准后走新路由。
- * 4. tool_search 阈值：工具数超过 `tools.searchThresholdTools` → 目录模式；直接调用报未加载；tool_search
+ * 4. ToolSearch 阈值：工具数超过 `tools.searchThresholdTools` → 目录模式；直接调用报未加载；ToolSearch
  *    加载后下一轮调用成功。
  *
  * 各用例按顺序共享同一组副本、组织与登录态。
@@ -49,7 +49,7 @@ const ROUTE_META = "fake/route";
 const PUBLIC_URL = "https://capybara.example.com";
 const API_KEY = "pets-seg2-key-7d3e91c4b2";
 const DOCS_TOKEN = "mcp-seg2-token-a81f0c6e53";
-/** 小于 tool_search 用例的工具数、大于其余用例 agent 的工具数（含内置工具）。 */
+/** 小于 ToolSearch 用例的工具数、大于其余用例 agent 的工具数（含内置工具）。 */
 const SEARCH_THRESHOLD = 6;
 
 type Json = Record<string, unknown>;
@@ -583,7 +583,7 @@ describe("M3 第二段双副本验收", () => {
     expect(seen()).toEqual(["fetch_v2"]);
   }, 120_000);
 
-  it("4. tool_search 阈值：目录模式；未加载 → 明确错误；tool_search 加载后调用成功", async () => {
+  it("4. ToolSearch 阈值：目录模式；未加载 → 明确错误；ToolSearch 加载后调用成功", async () => {
     const app = await at(0, "POST", `${base}/connectors`, {
       name: "Big",
       slug: "big",
@@ -608,12 +608,12 @@ describe("M3 第二段双副本验收", () => {
     const call1 = ofType(nl.evs, "model_call")[0]?.payload.request;
     expect(call1?.catalog?.map((c) => c.key)).toEqual(WORDS.map((w) => `mcp__big__op_${w}`));
     const sent1 = call1?.tools?.map((t) => t.key) ?? [];
-    expect(sent1).toContain("tool_search");
+    expect(sent1).toContain("ToolSearch");
     expect(sent1.filter((k) => k.startsWith("big__"))).toEqual([]);
 
-    // tool_search 加载
-    const ts = await conv.run(0, "tool_search", { query: "delta operation" });
-    expect(ts.result).toMatchObject({ toolKey: "tool_search", isError: false });
+    // ToolSearch 加载
+    const ts = await conv.run(0, "ToolSearch", { query: "delta operation" });
+    expect(ts.result).toMatchObject({ toolKey: "ToolSearch", isError: false });
     expect(ts.result.loadedTools?.[0]).toBe("mcp__big__op_delta");
 
     // 下一轮：请求里带了完整定义，调用成功

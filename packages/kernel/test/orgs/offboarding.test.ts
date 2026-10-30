@@ -220,7 +220,7 @@ beforeEach(async () => {
     step: 1,
     callId: "c3",
     attempt: 1,
-    toolKey: "ask_user",
+    toolKey: "AskUserQuestion",
     form: { title: "Q", fields: [{ key: "x", label: "X", schema: { type: "string" } }] },
     state: null,
   });

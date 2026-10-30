@@ -24,7 +24,7 @@ async function openSandboxChat(page: Page): Promise<{ orgId: string; convId: str
         name: "Sandbox agent",
         instructions: "Use the sandbox.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: ["sandbox_write", "sandbox_deliver"].map((name) => ({ kind: "builtin", name })),
+        tools: ["Write", "Deliver"].map((name) => ({ kind: "builtin", name })),
       },
       visibility: "private",
     },
@@ -50,21 +50,17 @@ async function send(page: Page, text: string, count: number) {
   await expect(replies(page)).toHaveCount(count);
 }
 
-test("sandbox_write + sandbox_deliver：文件卡片实时出现，右侧预览为表格，能下载；属性面板列出文件与沙箱运行中", async ({
+test("Write + Deliver：文件卡片实时出现，右侧预览为表格，能下载；属性面板列出文件与沙箱运行中", async ({
   page,
 }) => {
   const { convId } = await openSandboxChat(page);
   const content = "name,qty\napple,3\npear,5\n";
   await send(
     page,
-    `tool:sandbox_write:${JSON.stringify({ path: "/workspace/out/fruit.csv", content })}`,
+    `tool:Write:${JSON.stringify({ path: "/workspace/out/fruit.csv", content })}`,
     1,
   );
-  await send(
-    page,
-    `tool:sandbox_deliver:${JSON.stringify({ path: "/workspace/out/fruit.csv" })}`,
-    2,
-  );
+  await send(page, `tool:Deliver:${JSON.stringify({ path: "/workspace/out/fruit.csv" })}`, 2);
 
   // SSE 收到 artifact_created：不刷新页面，文件卡片出现在交付它的工具组之后
   const card = page.locator('[data-entry="files"]').getByRole("button", { name: /fruit\.csv/ });

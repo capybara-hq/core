@@ -17,7 +17,7 @@ import type { BuiltinCallContext, BuiltinTool } from "../registry.js";
 import { display } from "./sandbox/common.js";
 
 /**
- * 内置工具 `skill_write`（M5 T15，R4）：agent 新建或更新它自己的技能（`scope = agent`）。
+ * 内置工具 `SkillWrite`（M5 T15，R4）：agent 新建或更新它自己的技能（`scope = agent`）。
  * - 输入 `{ name, description, files: [{ path, content }] }`，只收文本文件，整个技能 ≤ {@link SKILL_WRITE_MAX_BYTES}；
  * - the kernel generates SKILL.md ({@link buildSkillWrite}): its frontmatter is `name` / `description`
  *   plus the invocation keys (`disable-model-invocation`, `context`, ... phase D) of the frontmatter
@@ -26,7 +26,7 @@ import { display } from "./sandbox/common.js";
  * - 每次调用写一个完整的新版本（上一版有、这次没给的文件不再属于新版本）；
  * - 私有 agent 直接生成新版本并立即生效；共享 agent 由触发对话的人先确认这次调用（R3 固定 ask，见 tools/policy.ts），
  *   再生成变更申请等负责人批准，期间只有本对话试用新版本（见 skills/changes.service.ts）；
- * - 成功后立即在日志追加技能目录快照（`skills_catalog`，Ruling M17），同一运行的下一步就能 `skill_load`。
+ * - 成功后立即在日志追加技能目录快照（`skills_catalog`，Ruling M17），同一运行的下一步就能 `Skill`。
  */
 
 /** 一个技能（含合成的 SKILL.md）的总大小上限（UTF-8 字节）。 */
@@ -35,10 +35,10 @@ export const SKILL_WRITE_MAX_BYTES = 1024 * 1024;
 export const SKILL_WRITE_MAX_FILES = 200;
 
 const SPEC: ToolSpec = {
-  name: "skill_write",
+  name: "SkillWrite",
   description:
     "Create or update one of this agent's own skills: reusable instructions plus optional text files " +
-    "(scripts, templates, reference notes) that you or later conversations can load with skill_load. " +
+    "(scripts, templates, reference notes) that you or later conversations can load with Skill. " +
     "Each call writes a complete new version. SKILL.md is generated for you: its frontmatter comes from " +
     "`name` and `description`, and its body is the content of the `SKILL.md` entry in `files` if you " +
     "include one (its frontmatter is dropped, except the invocation keys disable-model-invocation, " +
@@ -88,7 +88,7 @@ const SPEC: ToolSpec = {
   },
 };
 
-/** `skill_write` 的输入（已按 inputSchema 校验）。 */
+/** `SkillWrite` 的输入（已按 inputSchema 校验）。 */
 export interface SkillWriteInput {
   name: string;
   description: string;
@@ -236,7 +236,7 @@ export interface SkillWriteDeps {
   changes: Pick<SkillChangesService, "write">;
 }
 
-/** 内置工具 `skill_write`（见文件头）。 */
+/** 内置工具 `SkillWrite`（见文件头）。 */
 export function skillWriteTool(deps: SkillWriteDeps): BuiltinTool {
   return {
     spec: SPEC,
@@ -246,7 +246,7 @@ export function skillWriteTool(deps: SkillWriteDeps): BuiltinTool {
       const built = buildSkillWrite(input as SkillWriteInput);
       if ("errors" in built) {
         throw new ToolError(
-          `The skill was not written. Fix these problems and call skill_write again:\n- ${built.errors.slice(0, 20).join("\n- ")}`,
+          `The skill was not written. Fix these problems and call SkillWrite again:\n- ${built.errors.slice(0, 20).join("\n- ")}`,
         );
       }
       const r = await deps.changes.write(
@@ -260,11 +260,11 @@ export function skillWriteTool(deps: SkillWriteDeps): BuiltinTool {
         built,
       );
       const name = built.name;
-      // A manual-only version (phase D) is not in the model's catalog, so skill_load cannot load it
+      // A manual-only version (phase D) is not in the model's catalog, so Skill cannot load it
       const manualOnly = built.manifest.invocation?.model === false;
       const manualText =
         `It is manual-only (disable-model-invocation: true): it is not in your skills catalog and ` +
-        `skill_load cannot load it; a person invokes it with /${name}.`;
+        `Skill cannot load it; a person invokes it with /${name}.`;
       if (r.kind === "version") {
         const what = r.created ? "Created" : "Updated";
         return {
@@ -275,7 +275,7 @@ export function skillWriteTool(deps: SkillWriteDeps): BuiltinTool {
                 `${what} skill "${name}" (version ${r.version}, ${built.files.length} files). ` +
                 (manualOnly
                   ? `It is in effect now for every conversation with this agent. ${manualText}`
-                  : "It is in effect now for every conversation with this agent; call skill_load to use it."),
+                  : "It is in effect now for every conversation with this agent; call Skill to use it."),
             },
           ],
           display: display(
@@ -293,7 +293,7 @@ export function skillWriteTool(deps: SkillWriteDeps): BuiltinTool {
               "awaiting the owner's approval, because this agent is shared. Until the owner approves it, " +
               (manualOnly
                 ? `the new version applies only in this conversation; other conversations keep the current version. ${manualText} `
-                : "the new version is usable only in this conversation (call skill_load to use it); other " +
+                : "the new version is usable only in this conversation (call Skill to use it); other " +
                   "conversations keep the current version. ") +
               "Tell the user the change needs the owner's approval.",
           },

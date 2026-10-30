@@ -188,7 +188,7 @@ let resolved: ResolvedTool[] = [];
 let unavailable: UnavailableTool[] = [];
 /** `tools: "all"` 连接器里未启用的工具（不提醒，只在被调用时给原因）。 */
 let hidden: UnavailableTool[] = [];
-/** forAgent 报告的 tool_search 是否生效。 */
+/** forAgent 报告的 ToolSearch 是否生效。 */
 let toolSearch = false;
 /** 内置工具的处理函数（名字 → 处理函数）。 */
 let builtinHandlers: Record<string, BuiltinHandler> = {};
@@ -765,7 +765,7 @@ describe("ToolPipeline.runStep", () => {
     expect(r?.content).toContain(`Input schema: ${JSON.stringify(ECHO_SCHEMA)}`);
   });
 
-  it("未知工具：列出可用工具；启用 tool_search 时提示用它加载", async () => {
+  it("未知工具：列出可用工具；启用 ToolSearch 时提示用它加载", async () => {
     resolved = [pluginTool("echo", "allow", ECHO_SCHEMA), pluginTool("big")];
     let evs = await runCalls([{ id: "c1", name: "nope", input: {} }]);
     expect(resultsOf(evs)[0]).toMatchObject({
@@ -773,11 +773,11 @@ describe("ToolPipeline.runStep", () => {
       isError: true,
       content: 'Unknown tool "nope". Available tools: plugin__probe__big, plugin__probe__echo.',
     });
-    resolved = [...resolved, { ...pluginTool("x"), key: "tool_search" }];
+    resolved = [...resolved, { ...pluginTool("x"), key: "ToolSearch" }];
     runId = randomUUID();
     evs = await runCalls([{ id: "c2", name: "nope", input: {} }]);
     expect(resultsOf(evs)[1]?.content).toBe(
-      'Unknown tool "nope". Available tools: plugin__probe__big, plugin__probe__echo, tool_search. Use tool_search to load other tools.',
+      'Unknown tool "nope". Available tools: ToolSearch, plugin__probe__big, plugin__probe__echo. Use ToolSearch to load other tools.',
     );
   });
 
@@ -1349,17 +1349,17 @@ describe("ToolPipeline.runStep", () => {
   });
 });
 
-describe("tool_search 模式", () => {
+describe("ToolSearch 模式", () => {
   const search = toolSearchTool();
   const searchTool: ResolvedTool = {
-    key: "tool_search",
-    source: { kind: "builtin", name: "tool_search" },
+    key: "ToolSearch",
+    source: { kind: "builtin", name: "ToolSearch" },
     spec: search.spec,
     specHash: specHash(search.spec),
     defaultPolicy: "allow",
   };
 
-  /** 本步的 model_call（模型实际收到的工具；catalog 非空 = 该请求处于 tool_search 模式）。 */
+  /** 本步的 model_call（模型实际收到的工具；catalog 非空 = 该请求处于 ToolSearch 模式）。 */
   async function modelCall(keys: string[], catalog: boolean, attempt = 1): Promise<void> {
     const sent = resolved.filter((t) => keys.includes(t.key));
     await eventLog.append(seed.conversationId, [
@@ -1394,11 +1394,11 @@ describe("tool_search 模式", () => {
   beforeEach(() => {
     toolSearch = true;
     resolved = [...resolved, searchTool];
-    builtinHandlers = { tool_search: search.run };
+    builtinHandlers = { ToolSearch: search.run };
   });
 
   it("目录里有、但本步请求没加载的工具 → 明确错误（不自动加载），处理函数不被调用", async () => {
-    await modelCall(["tool_search"], true);
+    await modelCall(["ToolSearch"], true);
     const evs = await runCalls([{ id: "c1", name: "plugin__probe__echo", input: { text: "x" } }]);
     expect(resultsOf(evs)).toEqual([
       expect.objectContaining({
@@ -1412,28 +1412,28 @@ describe("tool_search 模式", () => {
   });
 
   it("按最后一次尝试的 model_call 判断：已加载（在请求的 tools 里）→ 照常执行", async () => {
-    await modelCall(["tool_search"], true, 1);
-    await modelCall(["tool_search", "plugin__probe__echo"], true, 2);
+    await modelCall(["ToolSearch"], true, 1);
+    await modelCall(["ToolSearch", "plugin__probe__echo"], true, 2);
     const evs = await runCalls([{ id: "c1", name: "plugin__probe__echo", input: { text: "x" } }]);
     expect(resultsOf(evs)[0]).toMatchObject({ isError: false });
     expect(handlerCalls.echo).toHaveLength(1);
   });
 
-  it("请求不在 tool_search 模式（没有 catalog，全部工具已发送）→ 不做加载检查", async () => {
-    await modelCall(["tool_search"], false);
+  it("请求不在 ToolSearch 模式（没有 catalog，全部工具已发送）→ 不做加载检查", async () => {
+    await modelCall(["ToolSearch"], false);
     const evs = await runCalls([{ id: "c1", name: "plugin__probe__echo", input: { text: "x" } }]);
     expect(resultsOf(evs)[0]).toMatchObject({ isError: false });
   });
 
-  it("tool_search 的结果写 loadedTools（日志是已加载集合的唯一来源）；同一步里调用刚加载的工具仍报未加载", async () => {
-    await modelCall(["tool_search"], true);
+  it("ToolSearch 的结果写 loadedTools（日志是已加载集合的唯一来源）；同一步里调用刚加载的工具仍报未加载", async () => {
+    await modelCall(["ToolSearch"], true);
     const evs = await runCalls([
-      { id: "c1", name: "tool_search", input: { query: "echo" } },
+      { id: "c1", name: "ToolSearch", input: { query: "echo" } },
       { id: "c2", name: "plugin__probe__echo", input: { text: "x" } },
     ]);
     const [r1, r2] = resultsOf(evs);
     expect(r1).toMatchObject({
-      toolKey: "tool_search",
+      toolKey: "ToolSearch",
       isError: false,
       loadedTools: ["plugin__probe__echo"],
     });
@@ -1441,17 +1441,17 @@ describe("tool_search 模式", () => {
     expect(r2).toMatchObject({ isError: true, content: notLoadedText("plugin__probe__echo") });
   });
 
-  it("未知工具：只列内置工具与本步请求里发送的工具，再提示用 tool_search 加载其他工具", async () => {
-    await modelCall(["tool_search", "plugin__probe__echo"], true);
+  it("未知工具：只列内置工具与本步请求里发送的工具，再提示用 ToolSearch 加载其他工具", async () => {
+    await modelCall(["ToolSearch", "plugin__probe__echo"], true);
     const evs = await runCalls([{ id: "c1", name: "nope", input: {} }]);
     expect(resultsOf(evs)[0]?.content).toBe(
-      'Unknown tool "nope". Available tools: plugin__probe__echo, tool_search. Use tool_search to load other tools.',
+      'Unknown tool "nope". Available tools: ToolSearch, plugin__probe__echo. Use ToolSearch to load other tools.',
     );
   });
 
   it("没有匹配时不写 loadedTools", async () => {
-    await modelCall(["tool_search"], true);
-    const evs = await runCalls([{ id: "c1", name: "tool_search", input: { query: "zzzz" } }]);
+    await modelCall(["ToolSearch"], true);
+    const evs = await runCalls([{ id: "c1", name: "ToolSearch", input: { query: "zzzz" } }]);
     expect(resultsOf(evs)[0]).not.toHaveProperty("loadedTools");
   });
 });

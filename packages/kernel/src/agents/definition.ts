@@ -46,14 +46,7 @@ export const AgentToolRef = z.preprocess(
 );
 export type AgentToolRef = z.output<typeof AgentToolRef>;
 
-/**
- * 新建 agent 未给 `tools` 时的默认工具（`tool_search` 由注册表按组织设置自动加入，不进定义）。
- * 只用于创建请求；修改与读出旧版本都不注入默认值。
- */
-export const DEFAULT_AGENT_TOOLS: AgentToolRef[] = [
-  { kind: "builtin", name: "ask_user" },
-  { kind: "builtin", name: "read_tool_output" },
-];
+export { DEFAULT_AGENT_TOOLS } from "../tools/builtin-names.js";
 
 /** Roster names of inline templates and allowlisted org agents (the template name rule). */
 export const SUBAGENT_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -81,7 +74,7 @@ export const InlineAgentTemplate = z
 export type InlineAgentTemplate = z.infer<typeof InlineAgentTemplate>;
 
 /**
- * Sub-agents this agent may dispatch with the builtin `agent` tool (phase C, spec §5.2). No
+ * Sub-agents this agent may dispatch with the builtin `Agent` tool (phase C, spec §5.2). No
  * default: definitions without it are unchanged and gain no version.
  */
 export const SubagentsSchema = z
@@ -135,7 +128,7 @@ export const AgentDefinitionSchema = z.object({
    * 技能（M5 T13）：`orgSkills` 是引用的组织技能 id（保存时校验属于本组织且未删除，不可重复）。
    * agent 自己的技能（`scope=agent`）自动对它生效，不进定义。可省略（较早保存的定义也没有），按空处理；
    * 不给默认值：没用技能的定义保存前后不变，不会因此多出一个版本。
-   * `writePolicy`（M6 T27，D10）：私有 agent 的 `skill_write` 是否固定确认，缺省按 `allow`（不写进定义）；
+   * `writePolicy`（M6 T27，D10）：私有 agent 的 `SkillWrite` 是否固定确认，缺省按 `allow`（不写进定义）；
    * 共享 agent 不论取值都走 R3 + R4。
    */
   skills: z
@@ -153,7 +146,7 @@ export const AgentDefinitionSchema = z.object({
     })
     .strict()
     .optional(),
-  /** Sub-agents (phase C); offered only when the builtin `agent` tool is in `tools`. */
+  /** Sub-agents (phase C); offered only when the builtin `Agent` tool is in `tools`. */
   subagents: SubagentsSchema.optional(),
 });
 export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>;

@@ -20,14 +20,14 @@ import {
 } from "./common.js";
 
 const SPEC: ToolSpec = {
-  name: "sandbox_deliver",
+  name: "Deliver",
   // Display only (the tool row; not in the fingerprint, never sent to the model).
   keyArgs: ["path"],
   description:
     "Deliver a file from this conversation's sandbox to the user as a downloadable artifact. Use " +
     "it when the user should receive a file you produced (a report, chart, spreadsheet, archive " +
     "and so on); files that stay in the sandbox are not visible to the user. Delivers one file " +
-    "per call; archive a directory first (e.g. zip -r with sandbox_bash). The file size is " +
+    "per call; archive a directory first (e.g. zip -r with Bash). The file size is " +
     "limited (100 MB by default). Do not use it for intermediate files the user does not need.",
   inputSchema: {
     type: "object",
@@ -97,12 +97,11 @@ export function contentTypeFor(name: string): string {
   return CONTENT_TYPES[ext] ?? "application/octet-stream";
 }
 
-const notFound = (path: string) =>
-  `File not found: ${clip(path, 200)}. Check the path with sandbox_glob.`;
+const notFound = (path: string) => `File not found: ${clip(path, 200)}. Check the path with Glob.`;
 const isDirectory = (path: string) =>
-  `${clip(path, 200)} is a directory; deliver one file, e.g. archive the directory first with sandbox_bash (zip -r) and retry.`;
+  `${clip(path, 200)} is a directory; deliver one file, e.g. archive the directory first with Bash (zip -r) and retry.`;
 const tooLarge = (path: string, size: number, max: number) =>
-  `File ${clip(path, 200)} is ${size} bytes, over the delivery limit of ${max} bytes; compress or split it with sandbox_bash and retry.`;
+  `File ${clip(path, 200)} is ${size} bytes, over the delivery limit of ${max} bytes; compress or split it with Bash and retry.`;
 const BAD_NAME =
   "name must not contain control characters, / or \\; pass a plain file name such as report.pdf.";
 /** 默认产物名：路径的文件名部分，过长时保留末尾（扩展名）截到 255 个 UTF-16 单元以内。 */
@@ -122,7 +121,7 @@ const NO_STORAGE =
 /** 「工具不可用」提醒里的原因（内核在后面补句号）。 */
 const NO_STORAGE_REASON = NO_STORAGE.slice(0, -1);
 
-/** 内置工具 `sandbox_deliver`：把沙箱里的文件存进对象存储，写 `artifact_created`，用户可下载。 */
+/** 内置工具 `Deliver`：把沙箱里的文件存进对象存储，写 `artifact_created`，用户可下载。 */
 export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
   return {
     spec: SPEC,

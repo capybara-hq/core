@@ -85,8 +85,8 @@ describe("decide", () => {
     expect(decide({ ...base, connectorDefault: "allow", agentOverride: "ask" })).toBe("ask");
   });
 
-  it("R3 固定询问清单：M5 起含 skill_write（改共享技能），只对共享 agent 生效", () => {
-    expect([...R3_FIXED_ASK_TOOL_KEYS]).toEqual(["skill_write"]);
+  it("R3 固定询问清单：M5 起含 SkillWrite（改共享技能），只对共享 agent 生效", () => {
+    expect([...R3_FIXED_ASK_TOOL_KEYS]).toEqual(["SkillWrite"]);
     const tool = (key: string) =>
       ({
         key,
@@ -95,19 +95,19 @@ describe("decide", () => {
         specHash: "h",
         defaultPolicy: "allow",
       }) as ResolvedTool;
-    expect(isFixedAsk(tool("skill_write"), "org")).toBe(true);
-    expect(isFixedAsk(tool("skill_write"), "members")).toBe(true);
-    expect(isFixedAsk(tool("skill_write"), "private")).toBe(false);
+    expect(isFixedAsk(tool("SkillWrite"), "org")).toBe(true);
+    expect(isFixedAsk(tool("SkillWrite"), "members")).toBe(true);
+    expect(isFixedAsk(tool("SkillWrite"), "private")).toBe(false);
     // 不知道可见性时按共享处理（更严）
-    expect(isFixedAsk(tool("skill_write"), undefined)).toBe(true);
-    expect(isFixedAsk(tool("skill_load"), "org")).toBe(false);
+    expect(isFixedAsk(tool("SkillWrite"), undefined)).toBe(true);
+    expect(isFixedAsk(tool("Skill"), "org")).toBe(false);
   });
 
-  it("skill_write 的私有 agent 开关（D10）：私有且 ask → 固定询问；缺省 / allow → 不问；共享不论取值都问", () => {
+  it("SkillWrite 的私有 agent 开关（D10）：私有且 ask → 固定询问；缺省 / allow → 不问；共享不论取值都问", () => {
     const t = {
-      key: "skill_write",
-      source: { kind: "builtin", name: "skill_write" },
-      spec: { name: "skill_write", description: "d", inputSchema: { type: "object" } },
+      key: "SkillWrite",
+      source: { kind: "builtin", name: "SkillWrite" },
+      spec: { name: "SkillWrite", description: "d", inputSchema: { type: "object" } },
       specHash: "h",
       defaultPolicy: "allow",
     } as ResolvedTool;
@@ -321,10 +321,10 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
 
   it("which policy asked: org (sandboxToolPolicy) and fixed (requiresUserInteraction, R3)", async () => {
     const policy = createDecidePolicy(db);
-    const bashSpec = { name: "sandbox_bash", description: "d", inputSchema: { type: "object" } };
+    const bashSpec = { name: "Bash", description: "d", inputSchema: { type: "object" } };
     const bash: ResolvedTool = {
-      key: "sandbox_bash",
-      source: { kind: "builtin", name: "sandbox_bash" },
+      key: "Bash",
+      source: { kind: "builtin", name: "Bash" },
       spec: bashSpec,
       specHash: specHash(bashSpec),
       defaultPolicy: "allow",
@@ -480,11 +480,11 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     });
   });
 
-  it("skill_write 私有 agent（D10）：缺省不问；当前版本设为 ask 即时生效且记住的授权无效；共享 agent 设 allow 仍 ask", async () => {
+  it("SkillWrite 私有 agent（D10）：缺省不问；当前版本设为 ask 即时生效且记住的授权无效；共享 agent 设 allow 仍 ask", async () => {
     const tool: ResolvedTool = {
-      key: "skill_write",
-      source: { kind: "builtin", name: "skill_write" },
-      spec: { name: "skill_write", description: "d", inputSchema: { type: "object" } },
+      key: "SkillWrite",
+      source: { kind: "builtin", name: "SkillWrite" },
+      spec: { name: "SkillWrite", description: "d", inputSchema: { type: "object" } },
       specHash: "h-sw",
       defaultPolicy: "allow",
     };
@@ -511,13 +511,13 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     await setCurrent(2);
     // 记住的授权不放行固定 ask
     await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash)
-      VALUES (${seed.orgId}, ${seed.accountId}, ${seed.agentId}, 'skill_write', 'h-sw')`.execute(
+      VALUES (${seed.orgId}, ${seed.accountId}, ${seed.agentId}, 'SkillWrite', 'h-sw')`.execute(
       raw,
     );
     await sql`INSERT INTO capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash)
-      VALUES (${seed.conversationId}, 'skill_write', 'h-sw')`.execute(raw);
+      VALUES (${seed.conversationId}, 'SkillWrite', 'h-sw')`.execute(raw);
     expect(await policy(tool, agentDef, ctx)).toMatchObject({
-      ask: { toolKey: "skill_write", requestedFor: seed.accountId },
+      ask: { toolKey: "SkillWrite", requestedFor: seed.accountId },
     });
     // 改回 allow 后不再询问
     await ver(3, "allow");
@@ -527,7 +527,7 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     await sql`UPDATE capybara.agents SET visibility = 'org' WHERE id = ${seed.agentId}`.execute(
       raw,
     );
-    expect(await policy(tool, agentDef, ctx)).toMatchObject({ ask: { toolKey: "skill_write" } });
+    expect(await policy(tool, agentDef, ctx)).toMatchObject({ ask: { toolKey: "SkillWrite" } });
   });
 
   it("R1：requiredRole 高于发起人实时角色 → 按角色升级（approverRole = 所需角色，requestedFor = null）", async () => {

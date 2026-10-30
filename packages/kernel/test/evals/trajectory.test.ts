@@ -65,7 +65,7 @@ const table = (...ps: ModelPrice[]): PriceTable =>
 const U0 = usage(1000, 200, 500, 100);
 const U1 = usage(2000, 50, 0, 0);
 
-/** 一次运行：第 0 步主模型失败 + 兜底成功，调用一个需审批的工具和 ask_user；第 1 步收尾。 */
+/** 一次运行：第 0 步主模型失败 + 兜底成功，调用一个需审批的工具和 AskUserQuestion；第 1 步收尾。 */
 function scenario() {
   const { events, e } = log();
   e(0, null, {
@@ -111,7 +111,7 @@ function scenario() {
         { type: "text", text: "Let me " },
         { type: "text", text: "check." },
         { type: "tool_call", id: "c1", name: "lookup", input: { q: 1 } },
-        { type: "tool_call", id: "c2", name: "ask_user", input: { question: "Which?" } },
+        { type: "tool_call", id: "c2", name: "AskUserQuestion", input: { question: "Which?" } },
       ],
       stopReason: "tool_use",
     },
@@ -141,7 +141,7 @@ function scenario() {
   });
   e(2800, "r1", {
     type: "tool_call_started",
-    payload: { step: 0, callId: "c2", toolKey: "ask_user", specHash: "h2" },
+    payload: { step: 0, callId: "c2", toolKey: "AskUserQuestion", specHash: "h2" },
   });
   e(2810, "r1", {
     type: "question_asked",
@@ -165,14 +165,14 @@ function scenario() {
   });
   e(5010, "r1", {
     type: "tool_call_started",
-    payload: { step: 0, callId: "c2", toolKey: "ask_user", specHash: "h2" },
+    payload: { step: 0, callId: "c2", toolKey: "AskUserQuestion", specHash: "h2" },
   });
   e(5020, "r1", {
     type: "tool_result",
     payload: {
       step: 0,
       callId: "c2",
-      toolKey: "ask_user",
+      toolKey: "AskUserQuestion",
       content: "pick: a",
       isError: false,
       outputId: "out-1",
@@ -217,7 +217,7 @@ describe("costOf", () => {
 });
 
 describe("buildTrajectory", () => {
-  it("失败尝试 + 兜底成功、需审批的工具、ask_user：延迟、审批链与成本", () => {
+  it("失败尝试 + 兜底成功、需审批的工具、AskUserQuestion：延迟、审批链与成本", () => {
     const runs = buildTrajectory(scenario(), table(PRICE_M1, PRICE_M2));
     expect(runs).toHaveLength(1);
     const run = runs[0];
@@ -287,7 +287,7 @@ describe("buildTrajectory", () => {
     });
     expect(c2).toMatchObject({
       callId: "c2",
-      toolKey: "ask_user",
+      toolKey: "AskUserQuestion",
       input: { question: "Which?" },
       // 输入请求之后再次执行：耗时只算产出结果的那次执行
       durationMs: 10,
@@ -343,7 +343,7 @@ describe("buildTrajectory", () => {
         step: 0,
         content: [
           { type: "tool_call", id: "x", name: "danger", input: {} },
-          { type: "tool_call", id: "y", name: "ask_user", input: {} },
+          { type: "tool_call", id: "y", name: "AskUserQuestion", input: {} },
         ],
         stopReason: "tool_use",
       },
@@ -363,7 +363,7 @@ describe("buildTrajectory", () => {
     });
     e(50, "r1", {
       type: "tool_call_started",
-      payload: { step: 0, callId: "y", toolKey: "ask_user", specHash: "h" },
+      payload: { step: 0, callId: "y", toolKey: "AskUserQuestion", specHash: "h" },
     });
     e(51, "r1", {
       type: "question_asked",

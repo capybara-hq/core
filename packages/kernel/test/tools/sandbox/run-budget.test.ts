@@ -30,7 +30,7 @@ import {
 } from "../../helpers/runs.js";
 
 /**
- * Ruling M20：运行截止（`runtime.maxRunSeconds`）早于命令超时时，`sandbox_bash` 把超时收紧到运行剩下的时间，
+ * Ruling M20：运行截止（`runtime.maxRunSeconds`）早于命令超时时，`Bash` 把超时收紧到运行剩下的时间，
  * 命令自己超时并告诉模型原因，而不是被运行截止打断成「结果未知」。
  */
 
@@ -130,7 +130,7 @@ afterAll(async () => {
 
 type ToolResultEvent = Extract<ConversationEvent, { type: "tool_result" }>;
 
-describe("sandbox_bash 按运行剩下的时间收紧超时", { timeout: 90_000 }, () => {
+describe("Bash 按运行剩下的时间收紧超时", { timeout: 90_000 }, () => {
   it("请求的 timeoutSeconds 超过运行剩余：命令在截止前超时，结果说明运行时限（不是结果未知）", async () => {
     await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
     const owner = await session(k, "owner");
@@ -143,7 +143,7 @@ describe("sandbox_bash 按运行剩下的时间收紧超时", { timeout: 90_000 
           name: "Coder",
           instructions: "Use the sandbox.",
           model: { provider: "model-fake", model: "fake-1" },
-          tools: [{ kind: "builtin", name: "sandbox_bash" }],
+          tools: [{ kind: "builtin", name: "Bash" }],
         },
         visibility: "org",
       },
@@ -153,7 +153,7 @@ describe("sandbox_bash 按运行剩下的时间收紧超时", { timeout: 90_000 
 
     const t0 = Date.now();
     const input = { description: "Test step", command: "sleep 120", timeoutSeconds: 600 };
-    await postMessage(owner, orgId, conv, `tool:sandbox_bash:${JSON.stringify(input)}`);
+    await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(input)}`);
     const [run] = await waitForTerminal(db, conv, 1, 60_000);
     // 命令收紧到约 4 秒后超时，运行照常结束（没有撞上截止时间）
     expect(Date.now() - t0).toBeLessThan(MAX_RUN_SECONDS * 1000);

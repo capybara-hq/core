@@ -18,6 +18,7 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { isGeneralAlias, resolveSkillForkType } from "../runtime/subagents/roster.js";
 import { StorageService } from "../storage/storage.service.js";
+import { BUILTIN } from "../tools/builtin-names.js";
 import {
   findSkillVersion,
   readSkillFile,
@@ -231,10 +232,10 @@ export class SkillInvoker {
     const body = await this.readBody(a.orgId, found);
     const others = found.manifest.files.some((f) => f.path !== SKILL_ENTRY_FILE);
     const lines = {
-      // the invocation itself makes the conversation's next run offer skill_load (skillLoadOffered)
+      // the invocation itself makes the conversation's next run offer Skill (skillLoadOffered)
       ...(others && { files: "load" as const }),
       ...(hasShellInjection(body) &&
-        hasBuiltin(a.agent, "sandbox_bash") && { shellHint: true as const }),
+        hasBuiltin(a.agent, BUILTIN.Bash) && { shellHint: true as const }),
     };
     const input = {
       name: a.name,
@@ -287,7 +288,7 @@ export class SkillInvoker {
    * `storage.unavailable` (`skill_unreadable`) when the version is gone or its SKILL.md cannot be
    * read, plain `storage.unavailable` when storage is down. `task` renders the text for the
    * sub-agent's effective definition: the shell-injection line only when the sub-agent has
-   * `sandbox_bash` (batch 3 review m1).
+   * `Bash` (batch 3 review m1).
    */
   async renderTask(a: {
     orgId: string;
@@ -325,7 +326,7 @@ export class SkillInvoker {
         lines: {
           ...(others && { files: "load" as const }),
           ...(hasShellInjection(body) &&
-            hasBuiltin(child, "sandbox_bash") && { shellHint: true as const }),
+            hasBuiltin(child, BUILTIN.Bash) && { shellHint: true as const }),
         },
         lead: false,
       });

@@ -29,14 +29,14 @@ const panel = (page: Page, description: string) =>
   page.getByRole("complementary", { name: description });
 
 const dispatch = (description: string, prompt: string) =>
-  `tool:agent:${JSON.stringify({ description, prompt })}`;
+  `tool:Agent:${JSON.stringify({ description, prompt })}`;
 
 test("sub-agents: the group, the record on the right, stop, and the properties panel", async ({
   page,
 }) => {
   await signIn(page);
   const orgId = await currentOrg(page);
-  await createAgent(page, orgId, "Lead with helpers", [{ kind: "builtin", name: "agent" }]);
+  await createAgent(page, orgId, "Lead with helpers", [{ kind: "builtin", name: "Agent" }]);
   await startChat(page, "Lead with helpers");
 
   // 1. a sub-agent that answers at once: a done row, its result folded into the parent's reply
@@ -112,7 +112,7 @@ test("a sub-agent's approval waits in the parent and is decided there; a legacy 
   const orgId = await currentOrg(page);
   const connectorId = await createMcpConnector(page, orgId, "Cap Child", "capchild");
   await createAgent(page, orgId, "Lead with a tool", [
-    { kind: "builtin", name: "agent" },
+    { kind: "builtin", name: "Agent" },
     { kind: "connector", connectorId, tools: "all" },
   ]);
   await startChat(page, "Lead with a tool");

@@ -105,11 +105,9 @@ describe("ToolRow (§6.16.9)", () => {
   });
 
   it("a shell row shows the description instead of verb and title", () => {
-    wrap(
-      <ToolRow row={row({ kind: "command", title: "sandbox_bash", description: "检查配置" })} />,
-    );
+    wrap(<ToolRow row={row({ kind: "command", title: "Bash", description: "检查配置" })} />);
     expect(screen.getByText("检查配置")).toBeTruthy();
-    expect(screen.queryByText(/sandbox_bash/)).toBeNull();
+    expect(screen.queryByText(/Bash/)).toBeNull();
   });
 
   it("failed shows 失败 and the error's first line", () => {

@@ -523,7 +523,7 @@ describe("path leases in the sandbox tools", () => {
   const tool = (s: SandboxService, name: string) =>
     tools(s).find((t) => t.spec.name === name) as BuiltinTool;
 
-  it("two sandbox_edit calls on one file both apply", async () => {
+  it("two Edit calls on one file both apply", async () => {
     withCap(3);
     // a slow read widens the read-modify-write window: without the path lease one edit is lost
     const slow: SandboxProvider = {
@@ -534,8 +534,8 @@ describe("path leases in the sandbox tools", () => {
       },
     };
     const s = service(() => slow);
-    await tool(s, "sandbox_write").run({ path: "/workspace/f.txt", content: "a\nb\n" }, callCtx());
-    const edit = tool(s, "sandbox_edit");
+    await tool(s, "Write").run({ path: "/workspace/f.txt", content: "a\nb\n" }, callCtx());
+    const edit = tool(s, "Edit");
     await Promise.all([
       edit.run({ path: "/workspace/f.txt", oldText: "a\n", newText: "A\n" }, callCtx()),
       edit.run({ path: "/workspace/f.txt", oldText: "b\n", newText: "B\n" }, callCtx()),
@@ -573,7 +573,7 @@ describe("path leases in the sandbox tools", () => {
       // biome-ignore lint/suspicious/noExplicitAny: not called
       eventLog: {} as any,
       config: { get: () => config },
-    }).find((x) => x.spec.name === "sandbox_bash") as BuiltinTool;
+    }).find((x) => x.spec.name === "Bash") as BuiltinTool;
     await t.run({ command: "true" }, callCtx());
     expect(leased).toEqual(["/workspace/attachments/.capybara-sync.json"]);
     await t.run({ command: "true" }, callCtx());
@@ -590,7 +590,7 @@ describe("path leases in the sandbox tools", () => {
       return { signal: ctl.signal, release: async () => {} };
     };
     await expect(
-      tool(s, "sandbox_write").run({ path: "/workspace/lost.txt", content: "x" }, callCtx()),
+      tool(s, "Write").run({ path: "/workspace/lost.txt", content: "x" }, callCtx()),
     ).rejects.toThrow(/lock was lost/);
     const st = await s.withSandbox(
       ctx(),
@@ -608,7 +608,7 @@ describe("path leases in the sandbox tools", () => {
       conversationId: randomUUID(),
       sandboxConversationId: conversationId,
     };
-    await tool(s, "sandbox_write").run({ path: "/workspace/g.txt", content: "x" }, child);
+    await tool(s, "Write").run({ path: "/workspace/g.txt", content: "x" }, child);
     // the child's call used the parent's sandbox: one instance, the file is there
     const out = await run(s, "cat /workspace/g.txt");
     expect(out.r.stdout).toBe("x");

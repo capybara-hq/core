@@ -43,7 +43,7 @@ const SANDBOX_FAKE = fixture("sandbox-fake");
 
 const CHILD = "You are a sub-agent";
 const agentCall = (description: string, prompt: string) => ({
-  name: "agent",
+  name: "Agent",
   input: { description, prompt },
 });
 
@@ -54,7 +54,7 @@ const RULES: ScriptRule[] = [
     reply: {
       toolCalls: [
         {
-          name: "sandbox_bash",
+          name: "Bash",
           input: { description: "Print a lot", command: "yes a | head -c 40000" },
         },
       ],
@@ -63,7 +63,7 @@ const RULES: ScriptRule[] = [
   {
     when: { systemIncludes: CHILD, lastUserIncludes: "task-write", assistantTurns: 0 },
     reply: {
-      toolCalls: [{ name: "sandbox_write", input: { path: "/workspace/w.txt", content: "w" } }],
+      toolCalls: [{ name: "Write", input: { path: "/workspace/w.txt", content: "w" } }],
     },
   },
   { when: { systemIncludes: CHILD }, reply: { text: "child ok" } },
@@ -155,11 +155,11 @@ beforeEach(async () => {
         name: "Lead",
         instructions: "Lead the work.",
         model: { provider: "model-script", model: "script-1" },
-        tools: ["agent", "sandbox_write", "sandbox_bash"].map((name) => ({
+        tools: ["Agent", "Write", "Bash"].map((name) => ({
           kind: "builtin",
           name,
         })),
-        toolPolicies: { sandbox_write: "ask" },
+        toolPolicies: { Write: "ask" },
       },
       // the member can use the agent, so a 404 below is the owner-only rule, not visibility
       visibility: "org",
@@ -446,7 +446,7 @@ describe("progress and usage", () => {
         subagentId: c?.conversationId,
         step: 1,
         toolCalls: 1,
-        lastToolKey: "sandbox_bash",
+        lastToolKey: "Bash",
       });
     } finally {
       s.close();

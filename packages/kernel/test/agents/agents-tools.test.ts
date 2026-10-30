@@ -155,7 +155,7 @@ describe("agent 定义的工具", () => {
     expect((got.json() as AgentRes).agent.definition.tools).toEqual([]);
   });
 
-  it("创建时省略 tools → 默认 ask_user + read_tool_output；修改时省略 tools 不注入默认值", async () => {
+  it("创建时省略 tools → 默认 AskUserQuestion + ReadToolOutput；修改时省略 tools 不注入默认值", async () => {
     const res = await createAgent({});
     expect(res.statusCode, res.body).toBe(201);
     const { agent } = res.json() as AgentRes;
@@ -181,7 +181,7 @@ describe("agent 定义的工具", () => {
     const connectorId = await installConnector("docs");
     const res = await createAgent({
       tools: [
-        { kind: "builtin", name: "ask_user" },
+        { kind: "builtin", name: "AskUserQuestion" },
         { kind: "plugin", plugin: "tools-probe", name: "echo" },
         { kind: "connector", connectorId, tools: "all" },
       ],
@@ -203,7 +203,7 @@ describe("agent 定义的工具", () => {
     const connectorId = await installConnector("docs");
     const missing = await createAgent({
       tools: [
-        { kind: "builtin", name: "ask_user" },
+        { kind: "builtin", name: "AskUserQuestion" },
         { kind: "connector", connectorId: randomUUID(), tools: "all" },
       ],
     });
@@ -258,12 +258,12 @@ describe("agent 定义的工具", () => {
 
     const unknown = await createAgent({
       tools: [{ kind: "connector", connectorId, tools: ["read"] }],
-      toolPolicies: { mcp__docs__write: "deny", ask_user: "ask" },
+      toolPolicies: { mcp__docs__write: "deny", AskUserQuestion: "ask" },
     });
     expect(unknown.statusCode).toBe(400);
     expect(detailPaths(unknown)).toEqual([
       "toolPolicies.mcp__docs__write",
-      "toolPolicies.ask_user",
+      "toolPolicies.AskUserQuestion",
     ]);
 
     // PATCH 同样校验

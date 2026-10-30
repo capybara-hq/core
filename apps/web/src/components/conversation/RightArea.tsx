@@ -111,7 +111,7 @@ function useContributions(orgId: string, version: number): UiContributionItem[] 
 
 /**
  * The conversation's file outputs (the kernel's order); read again on `changed: files`
- * (and reconnects). Sub-agents cannot deliver files (`sandbox_deliver` is removed for children),
+ * (and reconnects). Sub-agents cannot deliver files (`Deliver` is removed for children),
  * so their lists are not read (Task 22 ruling, final review I5); the Files rows' `from` marking
  * stays ready for when they can.
  */

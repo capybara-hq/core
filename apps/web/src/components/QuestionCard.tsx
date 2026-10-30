@@ -39,7 +39,7 @@ function toNumber(raw: string): number | undefined {
 }
 
 /**
- * 通用 `InputForm` 渲染器（`ask_user`、插件工具与 MCP elicitation 共用）：
+ * 通用 `InputForm` 渲染器（`AskUserQuestion`、插件工具与 MCP elicitation 共用）：
  * 枚举 → RadioGroup（单选）/ Checkbox 组（multiSelect），`allowOther` → 追加「其他」+ Input；
  * 布尔 → Switch；上下限齐全的数字 → Slider（带数值框），其余数字 → 数字 Input；字符串 → Input。
  * 文案取 `label[locale]`，回退 en；纯字符串原样。`missing` 中的字段显示「必填」错误。
@@ -229,7 +229,7 @@ export function questionField(f: InputForm["fields"][number], locale: string): Q
 }
 
 /**
- * A question in the conversation (`ask_user`, an extension's tool, MCP elicitation; design
+ * A question in the conversation (`AskUserQuestion`, an extension's tool, MCP elicitation; design
  * `QuestionBlock`): options plus Other, a URL shown in full and opened in a new window, Answer.
  * Answered, one question / answer line; expired or cancelled, its line.
  */
@@ -243,7 +243,7 @@ export function QuestionCard({ orgId, item }: { orgId: string; item: QuestionIte
   const [submitted, setSubmitted] = useState<FormAnswer | null>(null);
   const done = item.answered;
   const fields = item.form.fields.map((f) => questionField(f, locale));
-  // A single choice field draws no label of its own (design QuestionBlock): its label (ask_user's
+  // A single choice field draws no label of its own (design QuestionBlock): its label (AskUserQuestion's
   // question) is the block's title then, so the question always shows.
   const only = fields.length === 1 ? fields[0] : undefined;
   const title =

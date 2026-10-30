@@ -56,7 +56,7 @@ const agent = (over: Record<string, unknown> = {}) => ({
     modelParams: {},
     fallbackParams: {},
     tools: [
-      { kind: "builtin", name: "ask_user" },
+      { kind: "builtin", name: "AskUserQuestion" },
       { kind: "plugin", plugin: "todo", name: "write" },
     ],
     toolPolicies: {},
@@ -108,7 +108,7 @@ describe("新建 agent：选择组织技能", () => {
   );
 
   it.each(["zh", "en"] as const)(
-    "私有 agent 显示 skill_write 确认开关，勾选后保存 writePolicy ask；改成共享后隐藏（%s）",
+    "私有 agent 显示 SkillWrite 确认开关，勾选后保存 writePolicy ask；改成共享后隐藏（%s）",
     async (locale) => {
       const m = msgs[locale];
       const calls = stubApi({
@@ -212,7 +212,7 @@ describe("编辑 agent（FormPage）", () => {
     expect(body.definition.skills).toEqual({ orgSkills: ["s1"] });
     expect(body.definition.futureField).toEqual({ keep: true });
     expect(body.definition.tools).toEqual([
-      { kind: "builtin", name: "ask_user" },
+      { kind: "builtin", name: "AskUserQuestion" },
       { kind: "plugin", plugin: "todo", name: "write" },
     ]);
     expect(body.definition.instructions).toBe("Be helpful.");
@@ -255,8 +255,8 @@ describe("编辑 agent（FormPage）", () => {
   it("不改动直接保存：工具引用保持原顺序、skills 合并（保留不认识的键）、带 expectedVersion", async () => {
     const tools = [
       { kind: "plugin", plugin: "todo", name: "write" },
-      { kind: "builtin", name: "read_tool_output" },
-      { kind: "builtin", name: "ask_user" },
+      { kind: "builtin", name: "ReadToolOutput" },
+      { kind: "builtin", name: "AskUserQuestion" },
     ];
     const def = agent().definition;
     const calls = stubApi({

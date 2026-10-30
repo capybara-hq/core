@@ -45,7 +45,7 @@ const MEM_CONNECTOR = fixture("mem-connector");
 const ANALYST = "You are the analyst";
 const SCRIPT = { provider: "model-script", model: "script-1" };
 
-const agentCall = (input: Record<string, unknown>) => ({ name: "agent", input });
+const agentCall = (input: Record<string, unknown>) => ({ name: "Agent", input });
 
 const RULES: ScriptRule[] = [
   // the analyst (child)
@@ -256,7 +256,7 @@ beforeEach(async () => {
         instructions: "Lead the work.",
         model: SCRIPT,
         tools: [
-          { kind: "builtin", name: "agent" },
+          { kind: "builtin", name: "Agent" },
           { kind: "connector", connectorId, tools: ["remove"] },
         ],
         toolPolicies: { mcp__mine__remove: "deny" },
@@ -286,7 +286,7 @@ const finalText = (events: ConversationEvent[]) =>
     .join("");
 
 const agentResults = (events: ConversationEvent[]) =>
-  ofType(events, "tool_result").filter((r) => r.payload.toolKey === "agent");
+  ofType(events, "tool_result").filter((r) => r.payload.toolKey === "Agent");
 
 async function childrenOf(parent: string) {
   return db
@@ -567,7 +567,7 @@ describe("the gates", () => {
           name: "Other",
           instructions: "x",
           model: SCRIPT,
-          tools: [{ kind: "builtin", name: "agent" }],
+          tools: [{ kind: "builtin", name: "Agent" }],
           subagents: { agents: [{ agentId: hiddenId, as: "hidden", description: "Hidden." }] },
         },
         visibility: "private",
@@ -658,7 +658,7 @@ describe("follow-ups", () => {
           instructions: "Lead the work.",
           model: SCRIPT,
           tools: [
-            { kind: "builtin", name: "agent" },
+            { kind: "builtin", name: "Agent" },
             { kind: "connector", connectorId, tools: ["remove"] },
           ],
           toolPolicies: { mcp__mine__remove: "deny" },
@@ -705,7 +705,7 @@ describe("follow-ups", () => {
           name: "Lead",
           instructions: "Lead the work.",
           model: SCRIPT,
-          tools: [{ kind: "builtin", name: "agent" }],
+          tools: [{ kind: "builtin", name: "Agent" }],
           subagents: { agents: [] },
         },
       },

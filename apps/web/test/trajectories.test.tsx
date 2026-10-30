@@ -83,7 +83,7 @@ function run(over: Partial<TrajectoryRun> = {}, cost: number | null = 0.0032): T
               params: { temperature: 0.2 },
               tools: [
                 { key: "mcp__fixture__delete_item", specHash: "s1" },
-                { key: "ask_user", specHash: "s2" },
+                { key: "AskUserQuestion", specHash: "s2" },
               ],
             },
           },
@@ -265,7 +265,7 @@ describe("trajectorySpans", () => {
             {
               callId: "q1",
               step: 0,
-              toolKey: "ask_user",
+              toolKey: "AskUserQuestion",
               input: { question: "?" },
               startedAt: at(3000),
               durationMs: null,
@@ -373,7 +373,7 @@ describe("轨迹详情（TracePage）", () => {
       expect(within(d).getByText(usd(0.0032, locale))).toBeTruthy();
       expect(within(d).getByText("1.5s")).toBeTruthy();
       expect(within(d).getByText("temperature=0.2")).toBeTruthy();
-      expect(within(d).getByText("mcp__fixture__delete_item, ask_user")).toBeTruthy();
+      expect(within(d).getByText("mcp__fixture__delete_item, AskUserQuestion")).toBeTruthy();
 
       // 工具调用：参数、结果、耗时、审批链
       await user.click(within(list).getByText("mcp__fixture__delete_item"));
@@ -677,7 +677,7 @@ describe("sub-agent links in the trajectory (phase C)", () => {
             {
               callId: "k1",
               step: 0,
-              toolKey: "agent",
+              toolKey: "Agent",
               input: { description: "Scan docs", prompt: "Scan" },
               startedAt: at(4000),
               durationMs: 2000,
@@ -703,7 +703,7 @@ describe("sub-agent links in the trajectory (phase C)", () => {
     stubApi({ [`GET ${DETAIL}`]: () => json(200, detailBody([parentRun()])) });
     renderPage(<TrajectoryPage />);
     const list = await screen.findByRole("tree", { name: en.trajectories.detail.waterfall });
-    await userEvent.setup().click(within(list).getByText("agent"));
+    await userEvent.setup().click(within(list).getByText("Agent"));
     const detail = screen.getByRole("region", { name: en.trajectories.detail.region });
     const link = within(detail).getByRole("link", { name: /general-purpose/ });
     expect(link.getAttribute("href")).toBe("/trajectories/ch1");

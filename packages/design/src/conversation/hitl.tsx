@@ -7,7 +7,7 @@ import { useDesignT } from "../provider";
 import { fillCopy } from "./tool-copy";
 
 // Human-in-the-loop blocks (spec §6.16.11–§6.16.13): the pending approval (the only accent card),
-// questions (ask_user and connector elicitation) and connect requests, and their one-line forms
+// questions (AskUserQuestion and connector elicitation) and connect requests, and their one-line forms
 // once handled.
 
 // ── Approval ────────────────────────────────────────────────────────────────
@@ -573,7 +573,7 @@ function ChoiceField({
   );
 }
 
-/** A question (§6.16.12): `ask_user` or a connector's elicitation. */
+/** A question (§6.16.12): `AskUserQuestion` or a connector's elicitation. */
 export function QuestionBlock(p: QuestionBlockProps): JSX.Element {
   const t = useDesignT();
   const [draft, setDraft] = useState<Draft>(() => initialDraft(p.fields, p.defaultDraft));

@@ -369,7 +369,7 @@ describe("the approval block lists every scope only when allowed", () => {
 });
 
 describe("QuestionCard: a single choice question", () => {
-  it("shows ask_user's question as the title (the field draws no label of its own)", () => {
+  it("shows AskUserQuestion's question as the title (the field draws no label of its own)", () => {
     renderPage(
       <QuestionCard
         orgId="o1"

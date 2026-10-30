@@ -20,7 +20,7 @@
  * `model-fake`'s
  * fake-1 declares image and document support. The sandbox is the kernel test fixture `sandbox-fake`
  * (a real /bin/sh, instance directories under a temp dir, for tests only), for the artifact case
- * (sandbox_write -> sandbox_deliver -> the artifacts tab).
+ * (Write -> Deliver -> the artifacts tab).
  * The web URL goes into `CAPYBARA_E2E_BASE_URL` (inherited by the worker processes as Playwright's
  * baseURL), the fake MCP endpoint into `CAPYBARA_E2E_MCP_URL`, the pets API's document URL and
  * API key into `CAPYBARA_E2E_OPENAPI_SPEC_URL` / `CAPYBARA_E2E_OPENAPI_KEY`. An extension package

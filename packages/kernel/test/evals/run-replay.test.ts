@@ -159,7 +159,7 @@ beforeAll(async () => {
         tools: [
           { kind: "plugin", plugin: "tools-count", name: "count" },
           { kind: "plugin", plugin: "tools-count", name: "ask" },
-          { kind: "builtin", name: "sandbox_bash" },
+          { kind: "builtin", name: "Bash" },
         ],
       },
       visibility: "org",
@@ -537,13 +537,13 @@ describe("整轮回放", { timeout: 60_000 }, () => {
 
   it("Review Focus 3：参数不同或没有记录的工具都不执行；模型收到英文错误，结果标 unmatched", async () => {
     const setId = await createSet();
-    // 记录的是 n=1，模型现在给 n=2；第二个用例让模型调用从未记录过的 sandbox_bash
+    // 记录的是 n=1，模型现在给 n=2；第二个用例让模型调用从未记录过的 Bash
     const c1 = await createConv(admin, orgId, agentId);
     await seedRun(c1, "rf3-args", 'tool:plugin__tools-count__ask:{"n":2}', [
       { name: "plugin__tools-count__ask", input: { n: 1 }, content: "recorded ask" },
     ]);
     const c2 = await createConv(admin, orgId, agentId);
-    await seedRun(c2, "rf3-sandbox", 'tool:sandbox_bash:{"command":"touch /workspace/pwned"}', [
+    await seedRun(c2, "rf3-sandbox", 'tool:Bash:{"command":"touch /workspace/pwned"}', [
       { name: "plugin__tools-count__count", input: { n: 1 }, content: "recorded count" },
     ]);
     await addCase(setId, c1, "rf3-args");
@@ -571,7 +571,7 @@ describe("整轮回放", { timeout: 60_000 }, () => {
       expect(text).toContain(REPLAY_NO_RECORDING);
     }
     const names = rs.map((r) => (r.candidate as RunReplayResult).toolCalls[0]?.name).sort();
-    expect(names).toEqual(["plugin__tools-count__ask", "sandbox_bash"]);
+    expect(names).toEqual(["Bash", "plugin__tools-count__ask"]);
     expect(toolsCountState()).toEqual({ count: before.count, ask: before.ask });
     expect(await approvalsCount()).toBe(before.approvals);
     expect((await readFakeSandboxOps(root)).length).toBe(before.sandbox);
@@ -590,25 +590,22 @@ describe("整轮回放", { timeout: 60_000 }, () => {
     }
   });
 
-  it("sandbox_bash matching ignores description: old recordings match new calls and the reverse", async () => {
+  it("Bash matching ignores description: old recordings match new calls and the reverse", async () => {
     const setId = await createSet();
     // recorded before UI refresh B (no description); the model now passes one
     const c1 = await createConv(admin, orgId, agentId);
-    await seedRun(
-      c1,
-      "desc-old",
-      'tool:sandbox_bash:{"command":"echo hi","description":"Say hi"}',
-      [{ name: "sandbox_bash", input: { command: "echo hi" }, content: "hi\n[exit code: 0]" }],
-    );
+    await seedRun(c1, "desc-old", 'tool:Bash:{"command":"echo hi","description":"Say hi"}', [
+      { name: "Bash", input: { command: "echo hi" }, content: "hi\n[exit code: 0]" },
+    ]);
     // recorded with a description; the model now passes a different one
     const c2 = await createConv(admin, orgId, agentId);
     await seedRun(
       c2,
       "desc-new",
-      'tool:sandbox_bash:{"command":"echo yo","description":"Another wording"}',
+      'tool:Bash:{"command":"echo yo","description":"Another wording"}',
       [
         {
-          name: "sandbox_bash",
+          name: "Bash",
           input: { command: "echo yo", description: "Greet" },
           content: "yo\n[exit code: 0]",
         },

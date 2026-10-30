@@ -64,7 +64,7 @@ const SANDBOX_FAKE = fixture("sandbox-fake");
 
 const CHILD = "You are a sub-agent";
 const agentCall = (prompt: string) => ({
-  name: "agent",
+  name: "Agent",
   input: { description: "Task", prompt },
 });
 
@@ -72,7 +72,7 @@ const RULES: ScriptRule[] = [
   {
     when: { systemIncludes: CHILD, lastUserIncludes: "task-write", assistantTurns: 0 },
     reply: {
-      toolCalls: [{ name: "sandbox_write", input: { path: "/workspace/c.txt", content: "c" } }],
+      toolCalls: [{ name: "Write", input: { path: "/workspace/c.txt", content: "c" } }],
     },
   },
   { when: { systemIncludes: CHILD }, reply: { text: "child ok" } },
@@ -93,7 +93,7 @@ const RULES: ScriptRule[] = [
     reply: {
       toolCalls: [
         agentCall("task-mixed"),
-        { name: "sandbox_write", input: { path: "/workspace/m.txt", content: "m" } },
+        { name: "Write", input: { path: "/workspace/m.txt", content: "m" } },
       ],
     },
   },
@@ -168,8 +168,8 @@ beforeEach(async () => {
         name: "Lead",
         instructions: "Lead the work.",
         model: { provider: "model-script", model: "script-1" },
-        tools: ["agent", "sandbox_write"].map((name) => ({ kind: "builtin", name })),
-        toolPolicies: { sandbox_write: "ask" },
+        tools: ["Agent", "Write"].map((name) => ({ kind: "builtin", name })),
+        toolPolicies: { Write: "ask" },
       },
       visibility: "org",
     },
@@ -190,7 +190,7 @@ type Ev<T extends ConversationEvent["type"]> = ConversationEvent & {
 const ofType = <T extends ConversationEvent["type"]>(events: ConversationEvent[], type: T) =>
   events.filter((e): e is Ev<T> => e.type === type);
 const agentResults = (events: ConversationEvent[]) =>
-  ofType(events, "tool_result").filter((r) => r.payload.toolKey === "agent");
+  ofType(events, "tool_result").filter((r) => r.payload.toolKey === "Agent");
 const finalText = (events: ConversationEvent[]) =>
   ofType(events, "assistant_message")
     .at(-1)
@@ -316,7 +316,7 @@ describe("resume after sub-agents", () => {
       ofType(events, "tool_result")
         .map((r) => r.payload.toolKey)
         .sort(),
-    ).toEqual(["agent", "sandbox_write"]);
+    ).toEqual(["Agent", "Write"]);
     expect(children).toHaveLength(1);
   }, 60_000);
 

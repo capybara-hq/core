@@ -3,25 +3,15 @@ import type { AgentDefinition } from "../agents/definition.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
-import { SANDBOX_ASK_TOOL_NAMES } from "./builtins/sandbox/names.js";
+import {
+  R3_FIXED_ASK_TOOL_KEYS,
+  R3_SHARED_AGENT_ONLY_TOOL_KEYS,
+  SANDBOX_ASK_TOOL_NAMES,
+} from "./builtin-names.js";
 import type { AskRequest, DecidePolicy } from "./pipeline.js";
 import type { ResolvedTool, ToolPolicy } from "./registry.js";
 
-/**
- * spec 3.6 R3「有权 ≠ 已确认」固定清单上的工具 key：策略至少为 `ask`，记住的授权也不放行。
- *
- * R3 清单：发布到公共市场、安装连接器、提插件申请、改角色与成员、删除、改共享技能、改自己的指令。
- * M3 的内置工具（`ask_user`、`read_tool_output`、`tool_search`）与连接器工具都不在清单上；M5 T15 加入
- * `skill_write`（改共享技能）。后续实现上述动作的内置工具时把 key 登记在这里。连接器 / 插件工具由
- * `annotations.requiresUserInteraction` 表达同一约束。
- */
-export const R3_FIXED_ASK_TOOL_KEYS: ReadonlySet<string> = new Set<string>(["skill_write"]);
-
-/**
- * R3 清单里只对共享 agent 生效的 key（窄口子）：R3 的条目是「改共享技能」，私有 agent（`visibility = private`，
- * 只有负责人本人能用）的技能不是共享的，`skill_write` 直接生效、不询问（R4）。其余 R3 条目不论可见性一律固定 ask。
- */
-export const R3_SHARED_AGENT_ONLY_TOOL_KEYS: ReadonlySet<string> = new Set<string>(["skill_write"]);
+export { R3_FIXED_ASK_TOOL_KEYS, R3_SHARED_AGENT_ONLY_TOOL_KEYS } from "./builtin-names.js";
 
 const RANK: Record<ToolPolicy, number> = { allow: 0, ask: 1, deny: 2 };
 
@@ -169,7 +159,7 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
       if (!roleAtLeast(m.role, tool.requiredRole)) escalateTo = tool.requiredRole;
     }
 
-    // 可见性实时读（R5）：共享 agent 的 skill_write 固定 ask，私有 agent 不问（见 R3_SHARED_AGENT_ONLY_TOOL_KEYS）
+    // 可见性实时读（R5）：共享 agent 的 SkillWrite 固定 ask，私有 agent 不问（见 R3_SHARED_AGENT_ONLY_TOOL_KEYS）
     // 当前版本的 skills.writePolicy 同样实时读（R5）：运行中改为 ask，下一次调用即生效；固定 ask 时授权不放行
     const writePolicy = (current?.definition as AgentDefinition | undefined)?.skills?.writePolicy;
     const fixedAsk = isFixedAsk(tool, current?.visibility, writePolicy);

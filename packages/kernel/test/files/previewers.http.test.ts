@@ -108,7 +108,7 @@ beforeEach(async () => {
   delete probe().read;
 });
 
-/** Stores an object and logs its `artifact_created` (as `sandbox_deliver` would). */
+/** Stores an object and logs its `artifact_created` (as `Deliver` would). */
 async function deliver(
   name: string,
   bytes: Buffer,

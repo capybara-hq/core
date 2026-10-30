@@ -56,7 +56,7 @@ const HOOKS_PROBE = fixture("hooks-probe");
 const CHILD = "You are a sub-agent";
 const INSTRUCTIONS = "Lead the work.";
 
-const agentCall = (input: Record<string, unknown>) => ({ name: "agent", input });
+const agentCall = (input: Record<string, unknown>) => ({ name: "Agent", input });
 
 /** The static rules: children first (their system text carries the preamble). */
 const RULES: ScriptRule[] = [
@@ -65,7 +65,7 @@ const RULES: ScriptRule[] = [
     reply: {
       toolCalls: [
         {
-          name: "sandbox_write",
+          name: "Write",
           input: { path: "/workspace/from-child.txt", content: "hi from child" },
         },
       ],
@@ -92,7 +92,7 @@ const RULES: ScriptRule[] = [
   },
   {
     when: { lastToolResultIncludes: "wrote it" },
-    reply: { toolCalls: [{ name: "sandbox_read", input: { path: "/workspace/from-child.txt" } }] },
+    reply: { toolCalls: [{ name: "Read", input: { path: "/workspace/from-child.txt" } }] },
   },
   { when: { lastToolResultIncludes: "hi from child" }, reply: { text: "parent saw the file" } },
   {
@@ -225,7 +225,7 @@ beforeEach(async () => {
         name: "Lead",
         instructions: INSTRUCTIONS,
         model: { provider: "model-script", model: "script-1" },
-        tools: ["agent", "sandbox_write", "sandbox_read", "sandbox_deliver"].map((name) => ({
+        tools: ["Agent", "Write", "Read", "Deliver"].map((name) => ({
           kind: "builtin",
           name,
         })),
@@ -280,10 +280,10 @@ const finalText = (events: ConversationEvent[]) =>
 const isChildRequest = (r: ModelRequest) => r.system.some((s) => s.text.includes(CHILD));
 
 describe("dispatch", () => {
-  it("a child's sandbox_write lands in the parent conversation's sandbox", async () => {
+  it("a child's Write lands in the parent conversation's sandbox", async () => {
     const { conv, events } = await converse("SCENARIO sandbox");
     expect(finalText(events)).toBe("parent saw the file");
-    const read = toolResults(events).find((r) => r.payload.toolKey === "sandbox_read");
+    const read = toolResults(events).find((r) => r.payload.toolKey === "Read");
     expect(read?.payload.content).toContain("hi from child");
     const [child] = await children(conv);
     const sandboxes = await db.selectFrom("sandboxes").select("conversation_id").execute();
@@ -314,8 +314,8 @@ describe("dispatch", () => {
       parent: { conversationId: conv, runId: run.id, step: 1 },
     });
     expect(started.payload.definition.tools.map((t) => (t as { name: string }).name)).toEqual([
-      "sandbox_write",
-      "sandbox_read",
+      "Write",
+      "Read",
     ]);
     const task = cev[1] as Ev<"user_message">;
     expect(task.payload).toMatchObject({
@@ -333,12 +333,12 @@ describe("dispatch", () => {
       { role: "user", content: [{ type: "text", text: "gp-task: do it" }] },
     ]);
     // a child never sees the agent tool; the parent does
-    expect(first.tools?.map((t) => t.name).sort()).toEqual(["sandbox_read", "sandbox_write"]);
+    expect(first.tools?.map((t) => t.name).sort()).toEqual(["Read", "Write"]);
     const parentReq = capture.sent.find((r) => !isChildRequest(r)) as ModelRequest;
-    expect(parentReq.tools?.map((t) => t.name)).toContain("agent");
+    expect(parentReq.tools?.map((t) => t.name)).toContain("Agent");
 
     // the parent's result: the reply plus the status line
-    const result = toolResults(events).find((r) => r.payload.toolKey === "agent");
+    const result = toolResults(events).find((r) => r.payload.toolKey === "Agent");
     expect(result?.payload.isError).toBe(false);
     expect(result?.payload.content).toMatch(
       new RegExp(
@@ -347,7 +347,7 @@ describe("dispatch", () => {
     );
     // agent calls write no tool_call_started
     expect(
-      ofType(events, "tool_call_started").filter((e) => e.payload.toolKey === "agent"),
+      ofType(events, "tool_call_started").filter((e) => e.payload.toolKey === "Agent"),
     ).toEqual([]);
     // parent log: subagent_dispatched then subagent_finished
     const dispatched = ofType(events, "subagent_dispatched");
@@ -392,7 +392,7 @@ describe("dispatch", () => {
           name: "Lead",
           instructions: INSTRUCTIONS,
           model: { provider: "model-script", model: "script-1" },
-          tools: ["agent", "sandbox_read"].map((name) => ({ kind: "builtin", name })),
+          tools: ["Agent", "Read"].map((name) => ({ kind: "builtin", name })),
           // `fast` is unmapped here: the tier falls back to the parent's model
           subagents: {
             inline: [
@@ -430,7 +430,7 @@ describe("dispatch", () => {
     const { conv, events } = await converse("SCENARIO parallel");
     expect(finalText(events)).toBe("all three done");
     expect(await children(conv)).toHaveLength(3);
-    const results = toolResults(events).filter((r) => r.payload.toolKey === "agent");
+    const results = toolResults(events).filter((r) => r.payload.toolKey === "Agent");
     expect(results).toHaveLength(3);
     // the barrier only opens when all three requests are in flight at once
     for (const r of results) expect(r.payload.content.startsWith("parallel ok\n\n")).toBe(true);
@@ -493,7 +493,7 @@ describe("dispatch", () => {
           name: "Lead",
           instructions: INSTRUCTIONS,
           model: { provider: "model-script", model: "script-1" },
-          tools: ["agent", "sandbox_read", "sandbox_deliver"].map((name) => ({
+          tools: ["Agent", "Read", "Deliver"].map((name) => ({
             kind: "builtin",
             name,
           })),
@@ -508,15 +508,15 @@ describe("dispatch", () => {
     const childRequests = capture.sent.filter(isChildRequest);
     const first = childRequests.find((r) => JSON.stringify(r.messages).includes("kiwi"));
     const followUp = childRequests.find((r) => JSON.stringify(r.messages).includes("what word"));
-    expect(toolNames(first as ModelRequest)).toContain("sandbox_write");
-    expect(toolNames(followUp as ModelRequest)).toContain("sandbox_read");
-    expect(toolNames(followUp as ModelRequest)).not.toContain("sandbox_write");
+    expect(toolNames(first as ModelRequest)).toContain("Write");
+    expect(toolNames(followUp as ModelRequest)).toContain("Read");
+    expect(toolNames(followUp as ModelRequest)).not.toContain("Write");
     // the narrowed set is in the child's log, on the follow-up's task message
     const [child] = await children(conv);
     const tasks = ofType(await eventsOf(db, (child as { id: string }).id), "user_message");
     expect(tasks[0]?.payload.dispatch?.narrowed).toBeUndefined();
     expect(tasks[1]?.payload.dispatch?.narrowed?.tools).toEqual([
-      { kind: "builtin", name: "sandbox_read" },
+      { kind: "builtin", name: "Read" },
     ]);
   }, 60_000);
 
@@ -529,7 +529,7 @@ describe("dispatch", () => {
           name: "Lead",
           instructions: INSTRUCTIONS,
           model: { provider: "model-script", model: "script-1" },
-          tools: ["agent", "sandbox_read"].map((name) => ({ kind: "builtin", name })),
+          tools: ["Agent", "Read"].map((name) => ({ kind: "builtin", name })),
           subagents: {
             inline: [
               { name: "looper", description: "Loops.", instructions: "You loop.", maxSteps: 3 },
@@ -686,12 +686,12 @@ describe("dispatch", () => {
     const cfg = await owner({
       method: "POST",
       url: "/plugins/hooks-probe/config",
-      payload: { orgId, denyTools: ["agent"] },
+      payload: { orgId, denyTools: ["Agent"] },
     });
     expect(cfg.statusCode, cfg.body).toBe(200);
     const { conv, events } = await converse("SCENARIO hook");
     expect(finalText(events)).toBe("hook seen");
-    const result = toolResults(events).find((r) => r.payload.toolKey === "agent");
+    const result = toolResults(events).find((r) => r.payload.toolKey === "Agent");
     expect(result?.payload).toMatchObject({
       content: hookDeniedText("hooks-probe", "nope"),
       isError: true,
@@ -862,7 +862,7 @@ describe("dispatch idempotency under the parent run lock", () => {
     const v2 = {
       ...ctx.agent,
       tools: [
-        ...ctx.agent.tools.filter((t) => t.kind !== "builtin" || t.name !== "sandbox_write"),
+        ...ctx.agent.tools.filter((t) => t.kind !== "builtin" || t.name !== "Write"),
         { kind: "connector" as const, connectorId: kept, tools: ["lookup"] },
       ],
       skills: { orgSkills: ["s-kept"] },
@@ -875,7 +875,7 @@ describe("dispatch idempotency under the parent run lock", () => {
     expect(again.kind).toBe("dispatched");
     expect((await followUpTask(childId))?.narrowed).toEqual({
       tools: [
-        { kind: "builtin", name: "sandbox_read" },
+        { kind: "builtin", name: "Read" },
         { kind: "connector", connectorId: kept, tools: ["lookup"] },
       ],
       skills: { orgSkills: ["s-kept"] },

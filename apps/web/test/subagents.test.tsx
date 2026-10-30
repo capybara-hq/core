@@ -39,7 +39,7 @@ const CHILD = `${ORG}/conversations/ch2`;
 const call = (id: string, description: string, type = "general-purpose") => ({
   type: "tool_call",
   id,
-  name: "agent",
+  name: "Agent",
   input: { description, prompt: `Do ${description}`, subagent_type: type },
 });
 
@@ -67,7 +67,7 @@ const finished = (seq: number, callId: string, child: string, status: string, ca
   });
 
 const agentResult = (seq: number, callId: string, content: string, isError = false) =>
-  ev(seq, "tool_result", { callId, toolKey: "agent", content, isError, step: 1 });
+  ev(seq, "tool_result", { callId, toolKey: "Agent", content, isError, step: 1 });
 
 /** A parent that dispatched two sub-agents in one step; the first one is done. */
 function parentEvents(): ConversationEvent[] {
@@ -90,7 +90,7 @@ const waiting = (seq: number, extra: Record<string, unknown>) =>
   ev(seq, "subagent_waiting", {
     subagentId: "ch2",
     childRunId: "run-ch2",
-    toolKey: "sandbox_bash",
+    toolKey: "Bash",
     expiresAt: "2026-10-26T08:00:00.000Z",
     ...extra,
   });
@@ -110,7 +110,7 @@ function childEvents(running = false): ConversationEvent[] {
         definition: {
           name: "Echo agent › general-purpose",
           model: { provider: "model-fake", model: "fake-1" },
-          tools: [{ kind: "builtin", name: "sandbox_bash" }],
+          tools: [{ kind: "builtin", name: "Bash" }],
         },
         maxSteps: 20,
       },
@@ -134,14 +134,14 @@ function childEvents(running = false): ConversationEvent[] {
         {
           type: "tool_call",
           id: "x1",
-          name: "sandbox_bash",
+          name: "Bash",
           input: { command: "pnpm test", description: "Run the tests" },
         },
       ],
     }),
     c(5, "tool_result", {
       callId: "x1",
-      toolKey: "sandbox_bash",
+      toolKey: "Bash",
       content: "ok",
       isError: false,
       step: 1,
@@ -320,7 +320,7 @@ describe("the timeline's sub-agent groups", () => {
       subagent: { id: "ch2", name: "Check tests" },
       wait: "approval",
       approvalId: "ap1",
-      toolKey: "sandbox_bash",
+      toolKey: "Bash",
     });
   });
 
@@ -345,13 +345,13 @@ describe("sub-agents on the conversation page", () => {
     // the task, then the agent · subagent · model · tools line
     expect(await within(panel).findByText("Do Check tests")).toBeTruthy();
     expect(panel.querySelector('[data-part="subagent-meta"]')?.textContent).toBe(
-      "Echo agent › general-purpose · subagent · fake-1 · sandbox_bash",
+      "Echo agent › general-purpose · subagent · fake-1 · Bash",
     );
     expect(await within(panel).findByText("All tests pass.")).toBeTruthy();
     // one live thread: the panel's record does not announce (I2)
     expect(within(panel).getByRole("log").getAttribute("aria-live")).toBe("off");
     expect(panel.querySelector('[data-entry="tools"]')?.getAttribute("data-tool-keys")).toBe(
-      "sandbox_bash",
+      "Bash",
     );
     expect(panel.textContent).toContain(en.subagents.view.readOnly);
     // read-only: no composer inside, the child's own stream
@@ -437,8 +437,8 @@ describe("sub-agents on the conversation page", () => {
               conversationId: "ch2",
               runId: "run-ch2",
               callId: "x1",
-              toolKey: "sandbox_bash",
-              toolName: "sandbox_bash",
+              toolKey: "Bash",
+              toolName: "Bash",
               connector: null,
               agent: { id: "ag1", name: "Lead" },
               input: { command: "rm -rf build" },
@@ -489,9 +489,7 @@ describe("sub-agents on the conversation page", () => {
     );
     renderChat();
     // the waiting line, once the read said no (pending, the block shows until then)
-    const line = en.approval.otherApproverFor
-      .replace("{tool}", "sandbox_bash")
-      .replace("{key}", "sandbox_bash");
+    const line = en.approval.otherApproverFor.replace("{tool}", "Bash").replace("{key}", "Bash");
     const card = await vi.waitFor(() => {
       const c = document.querySelector('[data-entry="subagent-wait"] [data-role="approval"]');
       if (c?.textContent !== line) throw new Error("no line yet");
@@ -504,7 +502,7 @@ describe("sub-agents on the conversation page", () => {
     const question = {
       id: "q1",
       conversationId: "ch2",
-      toolKey: "ask_user",
+      toolKey: "AskUserQuestion",
       form: {
         title: "Pick a region",
         fields: [{ key: "region", label: "Region", schema: { type: "string" } }],
@@ -523,8 +521,8 @@ describe("sub-agents on the conversation page", () => {
       {
         parent: [
           ...parentEvents(),
-          waiting(8, { kind: "input", questionId: "q1", toolKey: "ask_user" }),
-          waiting(9, { kind: "input", questionId: "q9", toolKey: "ask_user" }),
+          waiting(8, { kind: "input", questionId: "q1", toolKey: "AskUserQuestion" }),
+          waiting(9, { kind: "input", questionId: "q9", toolKey: "AskUserQuestion" }),
         ],
       },
     );

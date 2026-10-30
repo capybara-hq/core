@@ -69,7 +69,7 @@ export const DEPLOYMENT_SETTINGS = z.object({
   /** 组织能否自建连接器（不经企业目录）。 */
   customConnectors: CustomPolicy.default("allow"),
   /**
-   * 组织能否自建技能（不经企业目录）：deny 时组织管理员不能上传技能包。agent 自写技能（`skill_write`，私有 agent 的
+   * 组织能否自建技能（不经企业目录）：deny 时组织管理员不能上传技能包。agent 自写技能（`SkillWrite`，私有 agent 的
    * agent 级技能与共享 agent 经负责人审批的变更）不受此开关约束——那是 agent 定义的一部分，由 R3 / R4 把关。
    */
   customSkills: CustomPolicy.default("allow"),

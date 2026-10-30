@@ -16,13 +16,13 @@ import {
 export const BASH_DEFAULT_TIMEOUT_SECONDS = 120;
 /** The longest `description` (the shell row shows it instead of the command). */
 export const BASH_DESCRIPTION_MAX_CHARS = 120;
-/** bash 结果超过这么多字符即转存（走现有输出存档，模型用 read_tool_output 分页读）。 */
+/** bash 结果超过这么多字符即转存（走现有输出存档，模型用 ReadToolOutput 分页读）。 */
 export const BASH_SPILL_CHARS = 30_000;
 /** 一次命令最多收集的输出字节（stdout + stderr）；超出的丢弃并在结果里说明。 */
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 
 const SPEC: ToolSpec = {
-  name: "sandbox_bash",
+  name: "Bash",
   // Display only (the tool row; not in the fingerprint, never sent to the model).
   keyArgs: ["command"],
   description:
@@ -34,10 +34,10 @@ const SPEC: ToolSpec = {
     "Files the user attached to the conversation are under /workspace/attachments, " +
     "and skill files under /skills (read-only). Each call runs in a fresh shell (no state such as " +
     "cd or environment variables carries over). The result has stdout, stderr and the exit code; " +
-    "long output is saved and can be paged with read_tool_output. A command that runs longer than " +
-    "timeoutSeconds is stopped. Prefer sandbox_read, sandbox_write, sandbox_edit, sandbox_glob and " +
-    "sandbox_grep for reading, writing and searching files. To give a file to the user, use " +
-    "sandbox_deliver. Other sub-agents of this conversation may run commands in this sandbox at " +
+    "long output is saved and can be paged with ReadToolOutput. A command that runs longer than " +
+    "timeoutSeconds is stopped. Prefer Read, Write, Edit, Glob and " +
+    "Grep for reading, writing and searching files. To give a file to the user, use " +
+    "Deliver. Other sub-agents of this conversation may run commands in this sandbox at " +
     "the same time. Always pass description: a few words saying what the command is for; the " +
     "user sees it instead of the command.",
   inputSchema: {
@@ -106,7 +106,7 @@ export function formatExec(r: ExecResult, seconds: number, budgetClamped = false
   return parts.join("\n");
 }
 
-/** 内置工具 `sandbox_bash`：在本对话的沙箱里执行命令。 */
+/** 内置工具 `Bash`：在本对话的沙箱里执行命令。 */
 export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
   return {
     spec: SPEC,

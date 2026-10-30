@@ -122,7 +122,7 @@ async function lead(templateIds: string[]): Promise<{ id: string; definition: Ag
     name: "Lead",
     instructions: "Lead the work.",
     model: { provider: "model-fake", model: "fake-1" },
-    tools: [{ kind: "builtin", name: "agent" }],
+    tools: [{ kind: "builtin", name: "Agent" }],
     subagents: { templates: templateIds },
   };
   const r = await env.boss({
@@ -138,7 +138,7 @@ describe("agent templates in plugins", () => {
   it("a plugin with agents/reviewer.md imports with the template in the review and reviewHash", async () => {
     const one = await prepare(
       await agentPlugin("1.0.0", {
-        reviewer: md("reviewer", "Review v1.", "model: fast\ntools: [sandbox_read]\n"),
+        reviewer: md("reviewer", "Review v1.", "model: fast\ntools: [Read]\n"),
       }),
     );
     expect(one.review.agentTemplates).toEqual([
@@ -147,7 +147,7 @@ describe("agent templates in plugins", () => {
         path: "agents/reviewer.md",
         description: "Reviews reviewer work.",
         model: "fast",
-        tools: ["sandbox_read"],
+        tools: ["Read"],
         instructions: "Review v1.\n",
       }),
     ]);
@@ -155,7 +155,7 @@ describe("agent templates in plugins", () => {
     await truncateTables(env.db, "capybara.plugin_import_staging");
     const two = await prepare(
       await agentPlugin("1.0.0", {
-        reviewer: md("reviewer", "Review v2.", "model: fast\ntools: [sandbox_read]\n"),
+        reviewer: md("reviewer", "Review v2.", "model: fast\ntools: [Read]\n"),
       }),
     );
     expect(two.review.reviewHash).not.toBe(one.review.reviewHash);
@@ -450,7 +450,7 @@ describe("agent templates in plugins", () => {
       env.boss,
       env.orgId,
       conv,
-      `tool:agent:${JSON.stringify({ description: "Review", prompt: "echo:first", subagent_type: "crm:reviewer" })}`,
+      `tool:Agent:${JSON.stringify({ description: "Review", prompt: "echo:first", subagent_type: "crm:reviewer" })}`,
     );
     await waitForTerminal(env.db, conv, 1, 30_000);
     const dispatched = (await eventsOf(env.db, conv)).find(
@@ -465,7 +465,7 @@ describe("agent templates in plugins", () => {
       env.boss,
       env.orgId,
       conv,
-      `tool:agent:${JSON.stringify({ description: "Again", prompt: "echo:again", resume: subagentId })}`,
+      `tool:Agent:${JSON.stringify({ description: "Again", prompt: "echo:again", resume: subagentId })}`,
     );
     await waitForTerminal(env.db, conv, 2, 30_000);
     const childReq = await waitFor(
@@ -477,7 +477,7 @@ describe("agent templates in plugins", () => {
           return (
             last?.role === "user" &&
             JSON.stringify(last.content).includes("echo:again") &&
-            !JSON.stringify(last.content).includes("tool:agent")
+            !JSON.stringify(last.content).includes("tool:Agent")
           );
         }),
       10_000,

@@ -2,7 +2,7 @@
 -- - conversations: kind gains 'subagent' (a child conversation, read-only for people), with the
 --   parent conversation (deleting it deletes its children) and the dispatched type name.
 -- - runs.subagent_tokens_used: the parent run's sub-agent token counter (§8.3).
--- - subagent_dispatches: one row per dispatch (an `agent` call of a parent run).
+-- - subagent_dispatches: one row per dispatch (an `Agent` call of a parent run).
 -- - agent_templates / agent_template_versions: agent templates installed from plugins.
 -- - plugin_install_components.kind gains 'agent_template'.
 -- Additive only: new columns are nullable or have a default and the CHECKs only widen, so a

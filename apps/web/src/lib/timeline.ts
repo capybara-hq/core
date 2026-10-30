@@ -94,7 +94,7 @@ export interface TimelineTool {
   callId: string;
   toolKey: string;
   input: unknown;
-  /** The archive of a cut output (`read_tool_output`), or null. */
+  /** The archive of a cut output (`ReadToolOutput`), or null. */
   outputId: string | null;
   /** A read's line range; the thread shows it as the row's extra through i18n (m10). */
   lines?: { from: number; to: number };
@@ -216,7 +216,7 @@ export interface TimelineDraft {
 
 const TERMINAL = new Set<ConversationEvent["type"]>(["run_finished", "run_failed", "run_aborted"]);
 /** The builtin tool that dispatches sub-agents. */
-export const AGENT_TOOL = "agent";
+export const AGENT_TOOL = "Agent";
 const stepKey = (runId: string, step: number) => `${runId}:${step}`;
 const callKey = (runId: string | null, callId: string) => `${runId ?? ""}\u0000${callId}`;
 /** A row id that is a call key (an `agent` call never dispatched), not a sub-agent id. */

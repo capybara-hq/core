@@ -118,7 +118,7 @@ async function sandboxConversation(): Promise<string> {
         name: "Coder",
         instructions: "Use the sandbox.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: ["sandbox_bash", "sandbox_deliver"].map((name) => ({ kind: "builtin", name })),
+        tools: ["Bash", "Deliver"].map((name) => ({ kind: "builtin", name })),
       },
       visibility: "org",
     },
@@ -132,7 +132,7 @@ async function callTool(conv: string, key: string, input: unknown, n: number): P
   await waitForTerminal(db, conv, n, 30_000);
 }
 
-/** Stores an object and logs its `artifact_created` (as `sandbox_deliver` would). */
+/** Stores an object and logs its `artifact_created` (as `Deliver` would). */
 async function deliver(
   conv: string,
   name: string,
@@ -193,14 +193,14 @@ describe("file outputs", { timeout: 60_000 }, () => {
     {
       await callTool(
         conv,
-        "sandbox_bash",
+        "Bash",
         {
           description: "Write a report",
           command: "mkdir -p out && printf 'v1\\n' > out/report.md",
         },
         1,
       );
-      await callTool(conv, "sandbox_deliver", { path: "/workspace/out/report.md" }, 2);
+      await callTool(conv, "Deliver", { path: "/workspace/out/report.md" }, 2);
       const sse = await openSse(
         `http://127.0.0.1:${k.port}/api/v1/orgs/${orgId}/conversations/${conv}/stream`,
         { cookie: ownerCookie() },
@@ -208,11 +208,11 @@ describe("file outputs", { timeout: 60_000 }, () => {
       try {
         await callTool(
           conv,
-          "sandbox_bash",
+          "Bash",
           { description: "Update it", command: "printf 'v2 longer\\n' > out/report.md" },
           3,
         );
-        await callTool(conv, "sandbox_deliver", { path: "/workspace/out/report.md" }, 4);
+        await callTool(conv, "Deliver", { path: "/workspace/out/report.md" }, 4);
         await sse.until(
           (m) => m.some((x) => x.event === "changed" && x.data === '{"what":"files"}'),
           10_000,

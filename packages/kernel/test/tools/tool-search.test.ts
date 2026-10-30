@@ -43,10 +43,10 @@ const CATALOG = [
   ),
 ];
 
-const SEARCH = tool("tool_search", TOOL_SEARCH_SPEC.description);
-const ASK = tool("ask_user", "Ask the user.");
+const SEARCH = tool("ToolSearch", TOOL_SEARCH_SPEC.description);
+const ASK = tool("AskUserQuestion", "Ask the user.");
 
-describe("tool_search 评分与目录", () => {
+describe("ToolSearch 评分与目录", () => {
   it("分词：key 按 __ / _ / - / 驼峰切开，转小写，去掉标点", () => {
     expect(tokenize("mcp__crm__searchContacts by-Email!")).toEqual([
       "crm",
@@ -95,11 +95,11 @@ describe("tool_search 评分与目录", () => {
 
   it("未加载错误文案（英文、可执行）", () => {
     expect(notLoadedText("mcp__docs__search")).toBe(
-      'Tool "mcp__docs__search" is not loaded. Call tool_search first with keywords for this tool, then call it in a later step.',
+      'Tool "mcp__docs__search" is not loaded. Call ToolSearch first with keywords for this tool, then call it in a later step.',
     );
   });
 
-  it("tool_search 工具：返回匹配工具的完整定义并带 loadedTools；内置工具不参与搜索", async () => {
+  it("ToolSearch 工具：返回匹配工具的完整定义并带 loadedTools；内置工具不参与搜索", async () => {
     const t = toolSearchTool();
     expect(t.spec).toBe(TOOL_SEARCH_SPEC);
     expect(t.defaultPolicy).toBe("allow");
@@ -120,7 +120,7 @@ describe("tool_search 评分与目录", () => {
     expect(text).toContain("mcp__docs__search");
     expect(text).toContain("Full-text search over company documents.");
     expect(text).toContain('"properties":{"q":{"type":"string"}}');
-    expect(text).not.toContain("ask_user");
+    expect(text).not.toContain("AskUserQuestion");
 
     const none = (await t.run(
       { query: "zzz" },
@@ -139,7 +139,7 @@ describe("tool_search 评分与目录", () => {
   });
 });
 
-describe("buildModelRequest 的 tool_search 模式", () => {
+describe("buildModelRequest 的 ToolSearch 模式", () => {
   const build = (log: Log, tools: RequestTool[], toolSearch: boolean) =>
     buildModelRequest({
       events: log.events,
@@ -151,10 +151,10 @@ describe("buildModelRequest 的 tool_search 模式", () => {
       toolSearch,
     });
 
-  /** tool_search 的一次调用与结果（结果带 loadedTools）。 */
+  /** ToolSearch 的一次调用与结果（结果带 loadedTools）。 */
   function loaded(log: Log, callId: string, keys: string[]) {
     log.assistant(
-      [{ type: "tool_call", id: callId, name: "tool_search", input: { query: "x" } }],
+      [{ type: "tool_call", id: callId, name: "ToolSearch", input: { query: "x" } }],
       "tool_use",
     );
     log.add({
@@ -162,7 +162,7 @@ describe("buildModelRequest 的 tool_search 模式", () => {
       payload: {
         step: 1,
         callId,
-        toolKey: "tool_search",
+        toolKey: "ToolSearch",
         content: "loaded",
         isError: false,
         ...(keys.length > 0 && { loadedTools: keys }),
@@ -179,11 +179,11 @@ describe("buildModelRequest 的 tool_search 模式", () => {
     expect(meta).not.toHaveProperty("catalog");
   });
 
-  it("启用：tools 只有内置工具（含 tool_search）；其余进 system 第二个块的目录（按 key 排序）；meta 记录 catalog", () => {
+  it("启用：tools 只有内置工具（含 ToolSearch）；其余进 system 第二个块的目录（按 key 排序）；meta 记录 catalog", () => {
     const log = new Log();
     log.user("hi");
     const a = build(log, [...CATALOG, SEARCH, ASK], true);
-    expect(a.request.tools.map((t) => t.name)).toEqual(["ask_user", "tool_search"]);
+    expect(a.request.tools.map((t) => t.name)).toEqual(["AskUserQuestion", "ToolSearch"]);
     expect(a.request.system).toHaveLength(2);
     expect(a.request.system[1]).toEqual({ text: catalogText(CATALOG), cache: true });
     expect(a.meta.catalog?.map((c) => c.key)).toEqual([
@@ -212,8 +212,8 @@ describe("buildModelRequest 的 tool_search 模式", () => {
     loaded(log, "c3", []);
     const after = build(log, [...CATALOG, SEARCH, ASK], true);
     expect(after.request.tools.map((t) => t.name)).toEqual([
-      "ask_user",
-      "tool_search",
+      "AskUserQuestion",
+      "ToolSearch",
       "mcp__docs__search",
       "mcp__crm__search_contacts",
       "mcp__crm__create_contact",
@@ -240,8 +240,8 @@ describe("buildModelRequest 的 tool_search 模式", () => {
     log.user("next");
     const { request } = build(log, [...CATALOG, SEARCH, ASK], true);
     expect(request.tools.map((t) => t.name)).toEqual([
-      "ask_user",
-      "tool_search",
+      "AskUserQuestion",
+      "ToolSearch",
       "mcp__docs__search",
     ]);
   });

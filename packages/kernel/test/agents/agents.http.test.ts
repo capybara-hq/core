@@ -145,8 +145,8 @@ describe("Agent HTTP", () => {
       fallbackParams: {},
       // 创建时未给 tools → 默认工具（Ruling P7）
       tools: [
-        { kind: "builtin", name: "ask_user" },
-        { kind: "builtin", name: "read_tool_output" },
+        { kind: "builtin", name: "AskUserQuestion" },
+        { kind: "builtin", name: "ReadToolOutput" },
       ],
       toolPolicies: {},
     });

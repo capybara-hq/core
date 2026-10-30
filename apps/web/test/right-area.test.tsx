@@ -242,7 +242,7 @@ describe("the output panel", () => {
                   {
                     type: "tool_call",
                     id: "call_1",
-                    name: "sandbox_bash",
+                    name: "Bash",
                     input: { command: "cat big" },
                   },
                 ],
@@ -257,7 +257,7 @@ describe("the output panel", () => {
               payload: {
                 step: 0,
                 callId: "call_1",
-                toolKey: "sandbox_bash",
+                toolKey: "Bash",
                 content: "head…",
                 isError: false,
                 outputId: "out1",
@@ -280,7 +280,7 @@ describe("the output panel", () => {
     });
     renderPage(<ChatPage />, { locale: "en" });
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: /sandbox_bash/ }));
+    await user.click(await screen.findByRole("button", { name: /Bash/ }));
     await user.click(await screen.findByRole("button", { name: "View full text" }));
     const panel = await screen.findByRole("complementary", { name: "Full output" });
     expect(await within(panel).findByText("the whole output")).toBeTruthy();
@@ -300,14 +300,14 @@ describe("the Context section's sandbox status", () => {
   const result = (seq: number, toolKey: string) =>
     ev(seq, "tool_result", { step: 0, callId: `c${seq}`, toolKey, content: "ok", isError: false });
 
-  it("existing sandbox calls do not reload on first load; a later sandbox_deliver result does", async () => {
+  it("existing sandbox calls do not reload on first load; a later Deliver result does", async () => {
     const calls = api("c1", {
       [`GET ${conv("c1")}/events`]: () =>
-        json(200, { events: [userMsg(1, "go"), result(2, "sandbox_bash")] }),
+        json(200, { events: [userMsg(1, "go"), result(2, "Bash")] }),
       [`GET ${conv("c1")}/tools`]: (c) => {
         const keys = (new URL(c.url, "http://x").searchParams.get("keys") ?? "").split(",");
         return json(200, {
-          tools: keys.map((k) => toolInfo(k, k === "sandbox_bash" || k === "sandbox_deliver")),
+          tools: keys.map((k) => toolInfo(k, k === "Bash" || k === "Deliver")),
         });
       },
     });
@@ -324,7 +324,7 @@ describe("the Context section's sandbox status", () => {
     expect(sandboxGets()).toBe(1);
 
     act(() => {
-      FakeEventSource.instances[0]?.emit("event", result(3, "sandbox_deliver"));
+      FakeEventSource.instances[0]?.emit("event", result(3, "Deliver"));
     });
     await waitFor(() => expect(sandboxGets()).toBe(2));
   });

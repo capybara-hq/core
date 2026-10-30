@@ -24,7 +24,7 @@ interface QuestionSpec {
   step: number;
 }
 
-/** 一条输入请求（`ask_user`、插件工具的 `input_required`、MCP elicitation 共用）。 */
+/** 一条输入请求（`AskUserQuestion`、插件工具的 `input_required`、MCP elicitation 共用）。 */
 export interface QuestionRecord {
   id: string;
   orgId: string;

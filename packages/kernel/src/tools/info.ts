@@ -10,7 +10,7 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { UUID_RE } from "../ui/registry.js";
-import { SANDBOX_TOOL_NAMES } from "./builtins/sandbox/names.js";
+import { BUILTIN_TOOL_KINDS, SANDBOX_TOOL_NAMES } from "./builtin-names.js";
 import { ToolRegistry } from "./registry.js";
 
 /**
@@ -38,21 +38,7 @@ export interface ToolInfo {
     | { kind: "unknown" };
 }
 
-/** Kinds of the kernel builtin tools; a builtin missing here is a plain `tool`. */
-export const BUILTIN_TOOL_KINDS: Readonly<Record<string, ToolKind>> = {
-  sandbox_bash: "command",
-  sandbox_read: "read",
-  sandbox_write: "edit",
-  sandbox_edit: "edit",
-  sandbox_glob: "search",
-  sandbox_grep: "search",
-  sandbox_deliver: "tool",
-  tool_search: "meta",
-  skill_load: "meta",
-  skill_write: "meta",
-  read_tool_output: "meta",
-  ask_user: "meta",
-};
+export { BUILTIN_TOOL_KINDS } from "./builtin-names.js";
 
 /** At most this many keys per request, each at most {@link TOOL_INFO_KEY_MAX} characters. */
 export const TOOL_INFO_MAX_KEYS = 100;
