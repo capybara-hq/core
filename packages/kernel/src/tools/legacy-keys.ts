@@ -49,6 +49,11 @@ export const isLegacyBuiltinKey = (key: string): boolean => Object.hasOwn(LEGACY
 export interface LegacyScope {
   connectorSlugs: ReadonlySet<string>;
   extensionNames: ReadonlySet<string>;
+  /**
+   * Connector id -> slug, for reading a stored definition's connector refs when a key is
+   * ambiguous (a slug that is also an extension name); optional.
+   */
+  connectorSlugById?: ReadonlyMap<string, string>;
 }
 
 /** A key in the current format for connector and extension tools (`mcp__…`, `plugin__…`). */

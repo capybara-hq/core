@@ -118,12 +118,14 @@ describe("normalizeToolKeys (stored definitions and templates)", () => {
       },
     });
     expect(normalizeToolKeys(def, scope)).toMatchObject({
-      // todo__x is ambiguous (a connector slug and an extension name): it stays
+      // todo__x is ambiguous (a connector slug and an extension name) and the definition refs
+      // neither: the ask is kept on both candidates
       toolPolicies: {
         Bash: "ask",
         mcp__docs__search: "deny",
         plugin__board__move: "ask",
-        todo__x: "ask",
+        mcp__todo__x: "ask",
+        plugin__todo__x: "ask",
       },
       subagents: { inline: [{ tools: ["Read"], disallowedTools: ["mcp__docs__search"] }] },
     });
@@ -148,6 +150,73 @@ describe("normalizeToolKeys (stored definitions and templates)", () => {
     });
     expect(normalizeToolKeys({ toolPolicies: { Bash: "ask", sandbox_bash: "ask" } })).toEqual({
       toolPolicies: { Bash: "ask" },
+    });
+  });
+
+  it("an ambiguous key (slug and extension name): the definition's own refs decide, else a deny is kept on both", () => {
+    const scoped = { ...scope, connectorSlugById: new Map([["c-todo", "todo"]]) };
+    // refs the connector todo only
+    expect(
+      normalizeToolKeys(
+        {
+          tools: [{ kind: "connector", connectorId: "c-todo", tools: "all" }],
+          toolPolicies: { todo__x: "deny" },
+        },
+        scoped,
+      ),
+    ).toMatchObject({ toolPolicies: { mcp__todo__x: "deny" } });
+    // refs the extension todo only
+    expect(
+      normalizeToolKeys(
+        {
+          tools: [{ kind: "plugin", plugin: "todo", name: "x" }],
+          toolPolicies: { todo__x: "ask" },
+        },
+        scoped,
+      ),
+    ).toMatchObject({ toolPolicies: { plugin__todo__x: "ask" } });
+    // both or neither: ask / deny on both candidates, anything else dropped
+    const both = {
+      tools: [
+        { kind: "connector", connectorId: "c-todo", tools: "all" },
+        { kind: "plugin", plugin: "todo", name: "x" },
+      ],
+      toolPolicies: { todo__x: "deny" },
+    };
+    expect((normalizeToolKeys(both, scoped) as { toolPolicies: unknown }).toolPolicies).toEqual({
+      mcp__todo__x: "deny",
+      plugin__todo__x: "deny",
+    });
+    expect(
+      (
+        normalizeToolKeys(
+          { tools: [], toolPolicies: { todo__x: "ask", todo__y: "allow" } },
+          scoped,
+        ) as {
+          toolPolicies: unknown;
+        }
+      ).toolPolicies,
+    ).toEqual({ mcp__todo__x: "ask", plugin__todo__x: "ask" });
+    // an inline template reads its parent's refs; its deny list keeps both, its allowlist the old key
+    const parent = {
+      tools: [{ kind: "plugin", plugin: "todo", name: "x" }],
+      subagents: {
+        inline: [{ name: "a", toolPolicies: { todo__x: "deny" }, disallowedTools: ["todo__y"] }],
+      },
+    };
+    expect(normalizeToolKeys(parent, scoped)).toMatchObject({
+      subagents: {
+        inline: [
+          { toolPolicies: { plugin__todo__x: "deny" }, disallowedTools: ["plugin__todo__y"] },
+        ],
+      },
+    });
+    expect(normalizeToolKeys({ tools: ["todo__x"], disallowedTools: ["todo__y"] }, scoped)).toEqual(
+      { tools: ["todo__x"], disallowedTools: ["mcp__todo__y", "plugin__todo__y"] },
+    );
+    // a template naming the extension's current key disambiguates its other keys
+    expect(normalizeToolKeys({ tools: ["plugin__todo__x", "todo__y"] }, scoped)).toEqual({
+      tools: ["plugin__todo__x", "plugin__todo__y"],
     });
   });
 

@@ -8,6 +8,7 @@ import {
   R3_SHARED_AGENT_ONLY_TOOL_KEYS,
   SANDBOX_ASK_TOOL_NAMES,
 } from "./builtin-names.js";
+import { normalizeStoredDefinitionIn } from "./legacy-data.js";
 import type { AskRequest, DecidePolicy } from "./pipeline.js";
 import type { ResolvedTool, ToolPolicy } from "./registry.js";
 
@@ -137,9 +138,12 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
       .select(["agent_versions.definition", "agents.visibility"])
       .where("agents.id", "=", ctx.agentId)
       .executeTakeFirst();
-    const currentPolicies = (
-      current?.definition as { toolPolicies?: Record<string, unknown> } | undefined
-    )?.toolPolicies;
+    // stored raw: an rc version's keys read as current keys, so its deny keeps applying (§8.3)
+    const currentDef =
+      current === undefined
+        ? undefined
+        : await normalizeStoredDefinitionIn(db, ctx.orgId, current.definition);
+    const currentPolicies = currentDef?.toolPolicies as Record<string, unknown> | undefined;
     const currentOverride = asOverride(currentPolicies?.[tool.key]);
     let strictest = stricter(runOverride ?? "allow", currentOverride);
     if (ctx.parentConversationId !== undefined && ctx.parentAgentDiffers !== false) {
@@ -161,7 +165,7 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
 
     // 可见性实时读（R5）：共享 agent 的 SkillWrite 固定 ask，私有 agent 不问（见 R3_SHARED_AGENT_ONLY_TOOL_KEYS）
     // 当前版本的 skills.writePolicy 同样实时读（R5）：运行中改为 ask，下一次调用即生效；固定 ask 时授权不放行
-    const writePolicy = (current?.definition as AgentDefinition | undefined)?.skills?.writePolicy;
+    const writePolicy = (currentDef as AgentDefinition | undefined)?.skills?.writePolicy;
     const fixedAsk = isFixedAsk(tool, current?.visibility, writePolicy);
     const input: PolicyInput = {
       connectorDefault,
@@ -214,7 +218,7 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
 async function parentAgentOverride(
   db: KernelSchemaDb,
   toolKey: string,
-  ctx: { agentId: string; parentConversationId?: string },
+  ctx: { orgId: string; agentId: string; parentConversationId?: string },
 ): Promise<"ask" | "deny" | undefined> {
   const row = await db
     .selectFrom("conversations as c")
@@ -226,7 +230,9 @@ async function parentAgentOverride(
     .where("c.id", "=", ctx.parentConversationId ?? "")
     .executeTakeFirst();
   if (!row || row.id === ctx.agentId) return undefined;
-  const policies = (row.definition as { toolPolicies?: Record<string, unknown> }).toolPolicies;
+  // stored raw: an rc version's keys read as current keys, so its deny keeps applying (§8.3)
+  const policies = (await normalizeStoredDefinitionIn(db, ctx.orgId, row.definition))
+    .toolPolicies as Record<string, unknown> | undefined;
   return asOverride(policies?.[toolKey]);
 }
 

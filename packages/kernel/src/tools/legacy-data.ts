@@ -24,7 +24,7 @@ export async function loadLegacyScope(db: KernelSchemaDb, orgId: string): Promis
   const [connectors, installs, owners] = await Promise.all([
     db
       .selectFrom("connectors")
-      .select("slug")
+      .select(["id", "slug"])
       .where("org_id", "=", orgId)
       .where("deleted_at", "is", null)
       .execute(),
@@ -33,6 +33,7 @@ export async function loadLegacyScope(db: KernelSchemaDb, orgId: string): Promis
   ]);
   return {
     connectorSlugs: new Set(connectors.map((r) => r.slug)),
+    connectorSlugById: new Map(connectors.map((r) => [r.id, r.slug])),
     extensionNames: new Set([...installs, ...owners].map((r) => r.name)),
   };
 }

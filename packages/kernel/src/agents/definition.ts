@@ -160,46 +160,111 @@ export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>;
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** The current key of a stored key: mapped when it is an rc key `scope` can read, else as is. */
-const currentKey = (key: string, scope: LegacyScope | undefined): string =>
-  legacyToolKey(key, scope) ?? key;
+/** The connectors and extensions a definition's own tool refs name (to read an ambiguous rc key). */
+interface OwnRefs {
+  connectors: ReadonlySet<string>;
+  extensions: ReadonlySet<string>;
+}
 
-/** A list of tool keys (a template's `tools` / `disallowedTools`) in current keys, deduplicated. */
-function keyList(v: unknown, scope: LegacyScope | undefined): unknown {
+/**
+ * The connector slugs and extension names `definition`'s `tools` name: connector refs (through
+ * `scope.connectorSlugById`), plugin refs, and current-format keys of a template's `tools`;
+ * `inherited` (the parent agent's, for an inline template) is added.
+ */
+function ownRefs(definition: Record<string, unknown>, scope: LegacyScope, inherited?: OwnRefs) {
+  const connectors = new Set(inherited?.connectors);
+  const extensions = new Set(inherited?.extensions);
+  const tools = Array.isArray(definition.tools) ? definition.tools : [];
+  for (const r of tools) {
+    if (typeof r === "string") {
+      const m = /^(mcp|plugin)__([^_].*?)__./.exec(r);
+      if (m) (m[1] === "mcp" ? connectors : extensions).add(m[2] as string);
+    } else if (isRecord(r) && r.kind === "connector" && typeof r.connectorId === "string") {
+      const slug = scope.connectorSlugById?.get(r.connectorId);
+      if (slug !== undefined) connectors.add(slug);
+    } else if (isRecord(r) && r.kind === "plugin" && typeof r.plugin === "string") {
+      extensions.add(r.plugin);
+    }
+  }
+  return { connectors, extensions };
+}
+
+/**
+ * The current key(s) of a stored key. A builtin and an unambiguous `<x>__<tool>` map to one key
+ * ({@link legacyToolKey}). When `x` is both a connector slug and an extension name, the
+ * definition's own refs decide (only connector `x` -> `mcp__…`, only extension `x` ->
+ * `plugin__…`); when they name both or neither, both candidates are returned and the caller
+ * decides (a policy keeps a deny / ask on both: it must never be lost). Anything else: as is.
+ */
+function currentKeys(key: string, scope: LegacyScope | undefined, own: OwnRefs | undefined) {
+  const one = legacyToolKey(key, scope);
+  if (one !== null) return [one];
+  if (scope === undefined || !isLegacyPrefixedKey(key)) return [key];
+  const head = key.slice(0, key.indexOf("__"));
+  if (!scope.connectorSlugs.has(head) || !scope.extensionNames.has(head)) return [key];
+  const c = own?.connectors.has(head) === true;
+  const e = own?.extensions.has(head) === true;
+  if (c && !e) return [`mcp__${key}`];
+  if (e && !c) return [`plugin__${key}`];
+  return [`mcp__${key}`, `plugin__${key}`];
+}
+
+/**
+ * A list of tool keys (a template's `tools` / `disallowedTools`) in current keys, deduplicated.
+ * A still-ambiguous key becomes both candidates in a deny list (`widen`), and stays as is (inert,
+ * so narrower) in an allowlist.
+ */
+function keyList(
+  v: unknown,
+  scope: LegacyScope | undefined,
+  own: OwnRefs | undefined,
+  widen: boolean,
+): unknown {
   if (!Array.isArray(v)) return v;
   let changed = false;
   const out: unknown[] = [];
   for (const x of v) {
-    const next = typeof x === "string" ? currentKey(x, scope) : x;
-    if (next !== x) changed = true;
-    if (typeof next === "string" && out.includes(next)) {
-      changed = true;
-      continue;
+    let next: unknown[] = [x];
+    if (typeof x === "string") {
+      const keys = currentKeys(x, scope, own);
+      next = keys.length > 1 && !widen ? [x] : keys;
     }
-    out.push(next);
+    if (next.length !== 1 || next[0] !== x) changed = true;
+    for (const n of next) {
+      if (typeof n === "string" && out.includes(n)) {
+        changed = true;
+        continue;
+      }
+      out.push(n);
+    }
   }
   return changed ? out : v;
 }
 
-/** `toolPolicies` in current keys; two keys that become one keep the stricter policy. */
-function policyKeys(v: unknown, scope: LegacyScope | undefined): unknown {
+/**
+ * `toolPolicies` in current keys; keys that become one keep the stricter policy, and a
+ * still-ambiguous key keeps its `ask` / `deny` on both candidates (anything else is dropped).
+ */
+function policyKeys(v: unknown, scope: LegacyScope | undefined, own: OwnRefs | undefined) {
   if (!isRecord(v)) return v;
-  const keys = Object.keys(v);
-  if (!keys.some((k) => currentKey(k, scope) !== k)) return v;
+  const mapped = Object.entries(v).map(([k, p]) => [k, p, currentKeys(k, scope, own)] as const);
+  if (mapped.every(([k, , keys]) => keys.length === 1 && keys[0] === k)) return v;
   const rank = (p: unknown) => (p === "deny" ? 2 : p === "ask" ? 1 : 0);
   const out: Record<string, unknown> = {};
-  for (const [k, p] of Object.entries(v)) {
-    const next = currentKey(k, scope);
-    if (!Object.hasOwn(out, next) || rank(p) > rank(out[next])) out[next] = p;
+  for (const [, p, keys] of mapped) {
+    if (keys.length > 1 && rank(p) === 0) continue;
+    for (const next of keys) {
+      if (!Object.hasOwn(out, next) || rank(p) > rank(out[next])) out[next] = p;
+    }
   }
   return out;
 }
 
 /** An agent definition's `tools`: builtin refs by their current names (connector and plugin refs name tools, not keys). */
-function toolRefs(v: unknown, scope: LegacyScope | undefined): unknown {
+function toolRefs(v: unknown, scope: LegacyScope | undefined, own: OwnRefs | undefined): unknown {
   if (!Array.isArray(v)) return v;
-  // template-shaped (`tools: string[]`)
-  if (v.some((x) => typeof x === "string")) return keyList(v, scope);
+  // template-shaped (`tools: string[]`): an allowlist
+  if (v.some((x) => typeof x === "string")) return keyList(v, scope, own, false);
   if (
     !v.some(
       (r) =>
@@ -213,7 +278,7 @@ function toolRefs(v: unknown, scope: LegacyScope | undefined): unknown {
   }
   return v.map((r) =>
     isRecord(r) && r.kind === "builtin" && typeof r.name === "string"
-      ? { ...r, name: currentKey(r.name, undefined) }
+      ? { ...r, name: legacyToolKey(r.name) ?? r.name }
       : r,
   );
 }
@@ -224,13 +289,20 @@ function toolRefs(v: unknown, scope: LegacyScope | undefined): unknown {
  * `tools`, the keys of `toolPolicies`, and the `tools` / `disallowedTools` / `toolPolicies` of a
  * template, the agent's inline sub-agent templates included. Works on an agent definition and on
  * an agent template alike. Old builtin names map without `scope`; an rc `<x>__<tool>` key maps
- * only with one (the org's connector slugs, the deployment's extension names), and stays as it is
- * when it is ambiguous or unknown (it then matches no tool and is inert). Keys in the current
- * format are never touched. Returns the same object when nothing changes. Saving never goes
- * through this: a new definition with an old key is refused (`AgentsService`).
+ * only with one (the org's connector slugs and their ids, the deployment's extension names). When
+ * `x` is both a slug and an extension name, the definition's own tool refs decide; when they
+ * cannot, a policy or a deny list keeps the restriction on both candidate keys (a deny is never
+ * lost) and an allowlist keeps the old key (inert). An unknown key stays as it is. Keys in the
+ * current format are never touched. Returns the same object when nothing changes. Saving never
+ * goes through this: a new definition with an old key is refused (`AgentsService`).
  */
-export function normalizeToolKeys(definition: unknown, scope?: LegacyScope): unknown {
+export function normalizeToolKeys(
+  definition: unknown,
+  scope?: LegacyScope,
+  inherited?: OwnRefs,
+): unknown {
   if (!isRecord(definition)) return definition;
+  const own = scope === undefined ? undefined : ownRefs(definition, scope, inherited);
   const next: Record<string, unknown> = { ...definition };
   let changed = false;
   const put = (field: string, value: unknown) => {
@@ -238,16 +310,19 @@ export function normalizeToolKeys(definition: unknown, scope?: LegacyScope): unk
     next[field] = value;
     changed = true;
   };
-  if ("tools" in definition) put("tools", toolRefs(definition.tools, scope));
+  if ("tools" in definition) put("tools", toolRefs(definition.tools, scope, own));
   if ("disallowedTools" in definition) {
-    put("disallowedTools", keyList(definition.disallowedTools, scope));
+    put("disallowedTools", keyList(definition.disallowedTools, scope, own, true));
   }
-  if ("toolPolicies" in definition) put("toolPolicies", policyKeys(definition.toolPolicies, scope));
+  if ("toolPolicies" in definition) {
+    put("toolPolicies", policyKeys(definition.toolPolicies, scope, own));
+  }
   const sub = definition.subagents;
   if (isRecord(sub) && Array.isArray(sub.inline)) {
-    const inline = sub.inline.map((t) => normalizeToolKeys(t, scope));
-    if (inline.some((t, i) => t !== (sub.inline as unknown[])[i]))
+    const inline = sub.inline.map((t) => normalizeToolKeys(t, scope, own));
+    if (inline.some((t, i) => t !== (sub.inline as unknown[])[i])) {
       put("subagents", { ...sub, inline });
+    }
   }
   return changed ? next : definition;
 }

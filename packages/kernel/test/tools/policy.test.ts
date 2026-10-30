@@ -404,6 +404,65 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     expect(await policy(appTool(), agentDef, child)).toBe("deny");
   });
 
+  it("an rc current version's deny (old builtin and connector keys) still tightens a run of another version", async () => {
+    await setAppTool("allow");
+    const policy = createDecidePolicy(db);
+    const bashSpec = { name: "Bash", description: "d", inputSchema: { type: "object" } };
+    const bash: ResolvedTool = {
+      key: "Bash",
+      source: { kind: "builtin", name: "Bash" },
+      spec: bashSpec,
+      specHash: specHash(bashSpec),
+      defaultPolicy: "allow",
+    };
+    expect(await policy(appTool(), agentDef, ctx)).toBe("allow");
+    expect(await policy(bash, agentDef, ctx)).toBe("allow");
+    // the current version (2) was saved by a release candidate; the run uses version 1
+    await sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
+      VALUES (${seed.agentId}, 2, ${JSON.stringify({ ...agentDef, toolPolicies: { sandbox_bash: "deny", docs__create_doc: "deny" } })}::jsonb,
+        ${seed.accountId})`.execute(raw);
+    await sql`UPDATE capybara.agents SET current_version = 2 WHERE id = ${seed.agentId}`.execute(
+      raw,
+    );
+    expect(await policy(appTool(), agentDef, ctx)).toBe("deny");
+    expect(await policy(bash, agentDef, ctx)).toBe("deny");
+  });
+
+  it("an org agent sub-agent: an rc parent's current deny (old builtin and connector keys) denies the child's call", async () => {
+    await setAppTool("allow");
+    const policy = createDecidePolicy(db);
+    await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
+      VALUES ('ag-rc-child', ${seed.orgId}, ${seed.accountId}, 'org', 1)`.execute(raw);
+    await sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
+      VALUES ('ag-rc-child', 1, ${JSON.stringify(agentDef)}::jsonb, ${seed.accountId})`.execute(
+      raw,
+    );
+    const child: PolicyContext = {
+      ...ctx,
+      agentId: "ag-rc-child",
+      conversationId: "child-conv",
+      parentConversationId: seed.conversationId,
+    };
+    const readSpec = { name: "Read", description: "d", inputSchema: { type: "object" } };
+    const read: ResolvedTool = {
+      key: "Read",
+      source: { kind: "builtin", name: "Read" },
+      spec: readSpec,
+      specHash: specHash(readSpec),
+      defaultPolicy: "allow",
+    };
+    expect(await policy(appTool(), agentDef, child)).toBe("allow");
+    expect(await policy(read, agentDef, child)).toBe("allow");
+    await sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
+      VALUES (${seed.agentId}, 2, ${JSON.stringify({ ...agentDef, toolPolicies: { sandbox_read: "deny", docs__create_doc: "deny" } })}::jsonb,
+        ${seed.accountId})`.execute(raw);
+    await sql`UPDATE capybara.agents SET current_version = 2 WHERE id = ${seed.agentId}`.execute(
+      raw,
+    );
+    expect(await policy(appTool(), agentDef, child)).toBe("deny");
+    expect(await policy(read, agentDef, child)).toBe("deny");
+  });
+
   it("记住的授权：spec_hash 一致才把 ask 放行；定义变化后失效（D8）", async () => {
     await setAppTool("ask");
     const policy = createDecidePolicy(db);
