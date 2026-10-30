@@ -37,23 +37,54 @@ export interface RecordedCall {
 }
 
 /**
- * The connectors and extensions a snapshot's `<x>__<tool>` keys can name, read from the snapshot
- * alone: extension names are the plugin refs of its agent definitions, and any other head of an
- * rc-format key in its assistant messages is a connector slug. Used to read an old recording.
+ * The connectors and extensions an rc `<x>__<tool>` key can name, from positive evidence in the
+ * snapshot only (a head with no evidence, or evidence of both kinds, stays unmapped, so its
+ * recorded calls are unmatched, which is a safe miss):
+ * - a connector: the tool definition the key was recorded with (`toolSpecs`, found by the specHash of
+ *   its `tool_call_started` or its `model_call` tools / catalog entry) has `connectorData`;
+ * - an extension: that definition exists without `connectorData` and its name is the key's tool
+ *   part, or an agent definition names exactly that tool as a `{ kind: "plugin", plugin: x, name }` ref.
  */
 export function legacyScopeOf(s: CaseSnapshot): LegacyScope {
-  const extensionNames = new Set<string>();
-  for (const def of Object.values(s.definitions)) {
-    for (const t of def.tools) if (t.kind === "plugin") extensionNames.add(t.plugin);
-  }
-  const connectorSlugs = new Set<string>();
+  const hashes = new Map<string, Set<string>>();
+  const note = (key: string, hash: string | undefined) => {
+    if (!isLegacyPrefixedKey(key)) return;
+    const set = hashes.get(key) ?? new Set<string>();
+    if (hash !== undefined && hash !== "") set.add(hash);
+    hashes.set(key, set);
+  };
   for (const e of s.events) {
-    if (e.type !== "assistant_message") continue;
-    for (const b of (e.payload as { content: { type: string; name?: string }[] }).content) {
-      if (b.type !== "tool_call" || b.name === undefined || !isLegacyPrefixedKey(b.name)) continue;
-      const head = b.name.slice(0, b.name.indexOf("__"));
-      if (!extensionNames.has(head)) connectorSlugs.add(head);
+    if (e.type === "tool_call_started") {
+      const p = e.payload as { toolKey: string; specHash?: string };
+      note(p.toolKey, p.specHash);
+    } else if (e.type === "model_call") {
+      type Entry = { key: string; specHash: string };
+      const r = (e.payload as { request?: { tools?: Entry[]; catalog?: Entry[] } }).request;
+      for (const t of [...(r?.tools ?? []), ...(r?.catalog ?? [])]) note(t.key, t.specHash);
     }
+  }
+  const extensionNames = new Set<string>();
+  const connectorSlugs = new Set<string>();
+  const planted = new Set<string>();
+  for (const def of Object.values(s.definitions)) {
+    for (const t of def.tools) if (t.kind === "plugin") planted.add(`${t.plugin}__${t.name}`);
+  }
+  for (const [key, set] of hashes) {
+    const i = key.indexOf("__");
+    const head = key.slice(0, i);
+    const tool = key.slice(i + 2);
+    for (const h of set) {
+      const spec = s.toolSpecs[h];
+      if (spec === undefined) continue;
+      if ((spec as { connectorData?: unknown }).connectorData !== undefined) {
+        connectorSlugs.add(head);
+      } else if (spec.name === tool) {
+        extensionNames.add(head);
+      }
+    }
+  }
+  for (const key of planted) {
+    if (hashes.has(key)) extensionNames.add(key.slice(0, key.indexOf("__")));
   }
   return { connectorSlugs, extensionNames };
 }
