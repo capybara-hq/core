@@ -1523,7 +1523,9 @@ describe("Claude agents/*.md (phase C, sub-agents spec §16.4)", () => {
     };
     // a YAML list, a pattern in tools is dropped (it would widen), MultiEdit and Edit dedupe
     expect(
-      one("tools: [Edit, MultiEdit, 'Bash(git status:*)', Skill, TodoWrite, ToolSearch, Task, mcp__srv__x]\n"),
+      one(
+        "tools: [Edit, MultiEdit, 'Bash(git status:*)', Skill, TodoWrite, ToolSearch, Task, mcp__srv__x]\n",
+      ),
     ).toEqual({
       template: {
         name: "a",
