@@ -36,6 +36,17 @@
    sub-agents); what it lacks for extensions is a test loop and a submit path, added in phase 3
    **(decided)** (§9).
 
+Answers of 2026-10-30 to the first draft's open questions:
+
+9. **Org admins approve in phase 1** (`submissions.decide` = admin); a dedicated reviewer role may
+   come later **(decided, 2026-10-30)**.
+10. **Approve publishes**; installing in the org is a checkbox on the same action
+    **(decided, 2026-10-30)**.
+11. **Plugin names are deployment-unique**, so an org item is promoted without a rename
+    **(decided, 2026-10-30)**.
+12. **Submitters never see the review conversation**, only the reviewer's report
+    **(decided, 2026-10-30)**.
+
 ## 0. Summary
 
 An employee, usually through an agent, builds a plugin: a skill that writes the weekly report, an
@@ -154,7 +165,7 @@ be published **(designer's call)**.
 
 ### 3.3 Names and versions
 
-- Plugin names stay deployment-unique (the catalog owns names), so an org item can later be
+- Plugin names stay deployment-unique (the catalog owns names) **(decided, 2026-10-30)**, so an org item can later be
   promoted without a rename. A submission whose name belongs to an item of another org or of the
   deployment catalog is refused (`submission.name_taken`); a name owned by this org's item is a
   new version of it.
@@ -316,7 +327,7 @@ worst produce a misleading report a person reads next to the deterministic repor
 publication **(designer's call)**.
 
 The review conversation is visible to org admins (trajectory) for audit; it is never visible to
-the submitter, so the submitter cannot tune an injection against it **(designer's call)**.
+the submitter, so the submitter cannot tune an injection against it **(decided, 2026-10-30)**.
 
 ## 7. Entry points
 
@@ -474,12 +485,4 @@ deterministic checks synchronously and returns the report without creating a sub
 
 ## Open questions for the maintainer
 
-1. **Who approves in an org**: org admins (`submissions.decide` = admin), or a new role
-   "reviewer" so an org can delegate approval without full admin rights? Recommendation: admins in
-   phase 1, a role later if needed.
-2. **Approve = publish, or approve then publish separately?** Recommendation: approve publishes;
-   installing is a checkbox on the same action.
-3. **Deployment-unique names** (§3.3), or per-org names with a rename on promotion?
-   Recommendation: deployment-unique.
-4. **Should members see the review conversation of their own submissions?** Recommendation: no
-   (§6.3); they see the report.
+None open. The four questions of the first draft were answered on 2026-10-30 (decisions 9–12).
