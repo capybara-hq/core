@@ -21,6 +21,7 @@ import {
   listFilePreviewers,
   renderFilePreview,
 } from "../../lib/previewers";
+import { ago } from "../../lib/time";
 import { type UiView, uiLocale } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { EmbedTab } from "../extension-ui/EmbedTab";
@@ -31,16 +32,6 @@ type Load<T> = { kind: "loading" } | { kind: "ready"; data: T } | { kind: "error
 
 const BUILTIN = "builtin";
 const previewerId = (p: FilePreviewerItem) => `${p.plugin}/${p.id}`;
-
-/** The relative age of a version ("刚刚", "5 分钟前") for the header's "v2 · …". */
-function ago(iso: string, locale: string): string {
-  const s = Math.round((Date.now() - Date.parse(iso)) / 1000);
-  const rtf = new Intl.RelativeTimeFormat(locale === "zh" ? "zh-CN" : "en", { numeric: "auto" });
-  if (s < 60) return rtf.format(0, "second");
-  if (s < 3600) return rtf.format(-Math.floor(s / 60), "minute");
-  if (s < 86400) return rtf.format(-Math.floor(s / 3600), "hour");
-  return rtf.format(-Math.floor(s / 86400), "day");
-}
 
 /**
  * A file output in the right panel (spec §5.8, design `FilePreviewFrame`): the header switches

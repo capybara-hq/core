@@ -38,7 +38,8 @@ export function Grid({
   gap = 16,
   children,
 }: {
-  columns: 1 | 2 | 3 | 4 | "form";
+  /** `main-side`: a main column twice the side column's width; one column below 960. */
+  columns: 1 | 2 | 3 | 4 | "form" | "main-side";
   gap?: Gap;
   children?: ReactNode;
 }) {

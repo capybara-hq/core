@@ -64,7 +64,7 @@
     "currentOrg": "当前组织",
     "selectOrg": "选择组织",
     "noMemberships": "还没有加入任何组织",
-    "agents": "Agent",
+    "agents": "Agents",
     "openAgents": "查看与新建 Agent",
     "noMembershipsHint": "请联系组织管理员邀请你加入。",
     "noCurrentOrg": "请选择当前组织，之后即可查看与新建 Agent。",
@@ -80,6 +80,56 @@
       "nameRequired": "请填写组织名称。",
       "submit": "创建",
       "cancel": "取消"
+    },
+    "loadFailed": "概览没有加载出来。",
+    "retry": "重试",
+    "orgSettings": "组织设置",
+    "skills": "技能",
+    "connectors": "连接器",
+    "members": "成员",
+    "models": "可用模型",
+    "newAgent": "新建 Agent",
+    "newConversation": "新会话",
+    "dailyDescription": "{org} · {role}",
+    "dailyDescriptionPending": "{org} · {role} · {count, plural, other {# 件事等你处理}}",
+    "setup": {
+      "title": "开始之前",
+      "description": "{org} 刚建好。完成下面几步，团队就能开始用 agent 干活。",
+      "progress": "已完成 {done} / {total}",
+      "org": "组织已建好",
+      "later": "可以稍后再做",
+      "inviteMembers": "邀请成员",
+      "inviteMembersWhere": "设置 · 成员",
+      "channels": "接入飞书或 Slack，在 IM 里用 agent",
+      "channelsWhere": "渠道",
+      "catalog": "从企业目录装插件（技能、连接器）",
+      "catalogWhere": "企业目录"
+    },
+    "inbox": {
+      "title": "等你处理",
+      "titleCount": "等你处理 · {count}",
+      "open": "打开收件箱",
+      "empty": "没有要你处理的事。",
+      "toolApproval": "工具审批",
+      "toolApprovalTitle": "{agent} 想调用 {tool}",
+      "view": "查看",
+      "approveOnce": "允许一次",
+      "approved": "已允许，这一次调用会继续。",
+      "skillChange": "技能变更",
+      "skillNew": "{agent} 想新建技能 {skill}",
+      "skillUpdate": "{agent} 想更新技能 {skill}",
+      "catalogRequest": "目录申请",
+      "catalogRequestTitle": "申请安装 {item}"
+    },
+    "recent": {
+      "title": "接着上次的会话",
+      "empty": "还没有会话。从右边选一个 agent 开始。",
+      "waiting": "等你处理"
+    },
+    "agentsCard": {
+      "title": "常用 Agent",
+      "all": "全部",
+      "chat": "对话"
     }
   },
   "errors": {

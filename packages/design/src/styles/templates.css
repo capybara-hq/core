@@ -221,6 +221,81 @@
 .cb-checklist-action {
   flex: none;
 }
+.cb-checklist[data-inset="card"] {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+/* ItemList (spec §6.12): rows inside a Card, split by line-soft. */
+.cb-item-list {
+  margin: -8px 0;
+  padding: 0;
+  list-style: none;
+}
+.cb-item-list-row {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-height: var(--cb-row-roomy);
+  padding: var(--cb-space-2) 0;
+  border-top: 1px solid var(--cb-line-soft);
+}
+.cb-item-list-row:first-child {
+  border-top: 0;
+}
+.cb-item-list-tag,
+.cb-item-list-status {
+  flex: none;
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+  color: var(--cb-muted);
+  white-space: nowrap;
+}
+.cb-item-list-tag {
+  padding: 1px 6px;
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-sm);
+}
+.cb-item-list-tag[data-tone="accent"] {
+  border-color: var(--cb-accent);
+  color: var(--cb-accent);
+}
+.cb-item-list-status[data-tone="accent"] {
+  color: var(--cb-accent);
+}
+.cb-item-list-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.cb-item-list-title {
+  overflow: hidden;
+  color: var(--cb-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+a.cb-item-list-title:hover {
+  color: var(--cb-accent);
+}
+.cb-item-list-meta {
+  overflow: hidden;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  color: var(--cb-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-item-list-actions {
+  display: flex;
+  flex: none;
+  gap: var(--cb-space-2);
+}
+.cb-item-list-empty {
+  margin: 0;
+  color: var(--cb-muted);
+}
 
 /* Sections inside a page's own wrapper (not the form frame's direct children) keep space.6 apart. */
 .cb-form-section + .cb-form-section {

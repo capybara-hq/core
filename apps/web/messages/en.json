@@ -80,6 +80,56 @@
       "nameRequired": "Enter a name for the organization.",
       "submit": "Create",
       "cancel": "Cancel"
+    },
+    "loadFailed": "The overview didn't load.",
+    "retry": "Retry",
+    "orgSettings": "Organization settings",
+    "skills": "Skills",
+    "connectors": "Connectors",
+    "members": "Members",
+    "models": "Available models",
+    "newAgent": "New agent",
+    "newConversation": "New conversation",
+    "dailyDescription": "{org} · {role}",
+    "dailyDescriptionPending": "{org} · {role} · {count, plural, one {# thing waits for you} other {# things wait for you}}",
+    "setup": {
+      "title": "Before you start",
+      "description": "{org} is new. Finish these steps and your team can start working with agents.",
+      "progress": "{done} of {total} done",
+      "org": "Organization created",
+      "later": "Can wait",
+      "inviteMembers": "Invite members",
+      "inviteMembersWhere": "Settings · Members",
+      "channels": "Connect Lark or Slack to use agents in chat",
+      "channelsWhere": "Channels",
+      "catalog": "Install plugins (skills, connectors) from the catalog",
+      "catalogWhere": "Catalog"
+    },
+    "inbox": {
+      "title": "Waiting for you",
+      "titleCount": "Waiting for you · {count}",
+      "open": "Open inbox",
+      "empty": "Nothing waits for you.",
+      "toolApproval": "Tool approval",
+      "toolApprovalTitle": "{agent} wants to use {tool}",
+      "view": "View",
+      "approveOnce": "Allow once",
+      "approved": "Allowed. This call continues.",
+      "skillChange": "Skill change",
+      "skillNew": "{agent} wants to create the skill {skill}",
+      "skillUpdate": "{agent} wants to update the skill {skill}",
+      "catalogRequest": "Catalog request",
+      "catalogRequestTitle": "Request to install {item}"
+    },
+    "recent": {
+      "title": "Pick up where you left off",
+      "empty": "No conversations yet. Pick an agent on the right to start.",
+      "waiting": "Waiting for you"
+    },
+    "agentsCard": {
+      "title": "Your agents",
+      "all": "All",
+      "chat": "Chat"
     }
   },
   "errors": {

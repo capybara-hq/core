@@ -57,6 +57,15 @@
 .cb-grid[data-columns="form"] {
   grid-template-columns: 220px 1fr;
 }
+.cb-grid[data-columns="main-side"] {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  align-items: start;
+}
+@media (max-width: 959px) {
+  .cb-grid[data-columns="main-side"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 
 .cb-stack[data-gap="0"],
 .cb-grid[data-gap="0"] {

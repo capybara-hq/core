@@ -36,6 +36,7 @@ export {
 export { Disclosure, type DisclosureProps } from "./disclosure";
 export { EMBED_SANDBOX, EmbedFrame, type EmbedFrameProps } from "./embed";
 export { BarChart, Dither, Skeleton, Sparkline } from "./graphics";
+export { ItemList, type ItemListRow } from "./item-list";
 export { KeyValue, type KeyValueProps } from "./key-value";
 export { LinkCard, TextLink } from "./link";
 export { CAPYBARA_BITMAP, Logo } from "./logo";
@@ -47,6 +48,7 @@ export {
 } from "./markdown";
 export { Pagination, type PaginationProps } from "./pagination";
 export { StatCards } from "./stat-cards";
+export { type Step, StepList } from "./step-list";
 export { Segmented, type TabItem, Tabs, type TabsProps } from "./tabs";
 export { Tooltip } from "./tooltip";
 export { formatSpanDuration, type Span, SpanWaterfall, type SpanWaterfallProps } from "./waterfall";

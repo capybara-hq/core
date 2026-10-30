@@ -56,27 +56,189 @@ afterEach(() => {
 });
 
 describe("(app) 页面模板", () => {
-  it("概览页：OverviewPage，问候 + 当前组织 + 去 Agents 的入口", () => {
+  const MODELS_READY = { providers: [{ provider: "model-fake", models: [{ id: "fake-1" }] }] };
+  const AGENT = (id: string, name: string) => ({
+    id,
+    definition: { name, model: { provider: "model-fake", model: "fake-1" } },
+  });
+  const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+  function overviewApi(over: Record<string, () => Response> = {}) {
+    return stubApi({
+      "GET /api/v1/orgs/o1/agents": () =>
+        json(200, {
+          agents: [AGENT("ag1", "研究助手"), AGENT("ag2", "客服分流"), AGENT("ag3", "写作助手")],
+        }),
+      "GET /api/v1/orgs/o1/models": () => json(200, MODELS_READY),
+      "GET /api/v1/orgs/o1/inbox": () =>
+        json(200, {
+          truncated: false,
+          items: [
+            {
+              type: "tool_approval",
+              id: "ap1",
+              createdAt: ago(2),
+              approval: {
+                id: "ap1",
+                conversationId: "c1",
+                toolName: "sandbox_bash",
+                agent: { id: "ag1", name: "研究助手" },
+                requestedFor: "a1",
+                conversationPath: "/chat/c1",
+              },
+            },
+            {
+              type: "skill_change",
+              id: "sc1",
+              createdAt: ago(60),
+              skillChange: {
+                id: "sc1",
+                agent: { id: "ag2", name: "客服分流" },
+                skillId: "s1",
+                name: "refund-policy",
+              },
+            },
+          ],
+        }),
+      "GET /api/v1/orgs/o1/conversations/groups": () =>
+        json(200, {
+          next: null,
+          groups: [
+            {
+              agent: { id: "ag2", name: "客服分流" },
+              latestAt: ago(1),
+              more: false,
+              conversations: [
+                {
+                  id: "c2",
+                  agentId: "ag2",
+                  title: "订单 8841 退款",
+                  createdAt: ago(30),
+                  updatedAt: ago(1),
+                },
+              ],
+            },
+            {
+              agent: { id: "ag1", name: "研究助手" },
+              latestAt: ago(2),
+              more: false,
+              conversations: [
+                {
+                  id: "c1",
+                  agentId: "ag1",
+                  title: "季度报告数据核对",
+                  createdAt: ago(90),
+                  updatedAt: ago(2),
+                },
+              ],
+            },
+          ],
+        }),
+      "GET /api/v1/orgs/o1/skills": () => json(200, { skills: [{}, {}, {}] }),
+      "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [{}] }),
+      "GET /api/v1/orgs/o1/members": () => json(200, { members: [{}, {}] }),
+      "POST /api/v1/orgs/o1/approvals/ap1/decision": () => json(200, { approval: { id: "ap1" } }),
+      ...over,
+    });
+  }
+
+  it("the overview: what waits on me (allow once in place), conversations to pick up, the org, my agents", async () => {
+    const calls = overviewApi();
     renderPage(<HomePage />, { locale: "zh" });
     expect(template("OverviewPage")).not.toBeNull();
+    const h = zh.home;
     expect(
-      screen.getByRole("heading", { level: 1, name: zh.home.greeting.replace("{name}", "Grant") }),
+      screen.getByRole("heading", { level: 1, name: h.greeting.replace("{name}", "Grant") }),
     ).toBeTruthy();
-    expect(
-      (screen.getByRole("combobox", { name: zh.home.currentOrg }) as HTMLSelectElement).value,
-    ).toBe("o1");
-    expect(screen.getByRole("link", { name: zh.home.openAgents }).getAttribute("href")).toBe(
-      "/agents",
+    const inbox = await screen.findByRole("list", { name: h.inbox.title });
+    const rows = within(inbox).getAllByRole("listitem");
+    expect(rows.map((r) => r.textContent)).toEqual([
+      expect.stringContaining("研究助手 想调用 sandbox_bash"),
+      expect.stringContaining("客服分流 想更新技能 refund-policy"),
+    ]);
+    expect(screen.getByText("Acme · 所有者 · 2 件事等你处理")).toBeTruthy();
+    // the conversations to pick up, newest first; the one with an approval is marked
+    const recent = within(screen.getByRole("list", { name: h.recent.title })).getAllByRole(
+      "listitem",
     );
+    expect(recent.map((r) => within(r).getByRole("link").textContent)).toEqual([
+      "订单 8841 退款",
+      "季度报告数据核对",
+    ]);
+    expect(within(recent[1] as HTMLElement).getByText(h.recent.waiting)).toBeTruthy();
+    expect(
+      within(recent[1] as HTMLElement)
+        .getByRole("link")
+        .getAttribute("href"),
+    ).toBe("/chat/c1");
+    // the org at a glance
+    for (const [k, v] of [
+      [h.agents, "3"],
+      [h.skills, "3"],
+      [h.connectors, "1"],
+      [h.members, "2"],
+      [h.models, "1"],
+    ]) {
+      expect(screen.getByText(k as string).nextElementSibling?.textContent).toBe(v);
+    }
+    // my agents, the most recently used first
+    const agents = within(screen.getByRole("list", { name: h.agentsCard.title })).getAllByRole(
+      "listitem",
+    );
+    expect(agents.map((r) => within(r).getByRole("link").textContent)).toEqual([
+      "客服分流",
+      "研究助手",
+      "写作助手",
+    ]);
+    const user = userEvent.setup();
+    await user.click(
+      within(agents[0] as HTMLElement).getByRole("button", { name: h.agentsCard.chat }),
+    );
+    expect(router.push).toHaveBeenCalledWith("/chat?agent=ag2");
+    expect(screen.getByRole("link", { name: h.newConversation }).getAttribute("href")).toBe(
+      "/chat",
+    );
+    // allowing an approval in place sends "approve once" and reloads
+    await user.click(
+      within(rows[0] as HTMLElement).getByRole("button", { name: h.inbox.approveOnce }),
+    );
+    await vi.waitFor(() =>
+      expect(calls.find((c) => c.method === "POST")?.body).toEqual({
+        decision: "approve",
+        scope: "once",
+      }),
+    );
+    await vi.waitFor(() => expect(calls.filter((c) => c.url.endsWith("/inbox")).length).toBe(2));
   });
 
-  it("概览页：选回「选择组织」清除当前组织（switchOrg(null)）", async () => {
-    const switchOrg = vi.fn(async () => {});
-    renderPage(<HomePage />, { session: { switchOrg } });
-    const select = screen.getByRole("combobox", { name: en.home.currentOrg });
-    expect(within(select).getByRole("option", { name: en.home.selectOrg })).toBeTruthy();
-    await userEvent.selectOptions(select, "");
-    expect(switchOrg).toHaveBeenCalledWith(null);
+  it("the overview hides counts this role may not read", async () => {
+    overviewApi({
+      "GET /api/v1/orgs/o1/members": () => json(403, { error: { code: "forbidden" } }),
+    });
+    renderPage(<HomePage />);
+    await screen.findByRole("list", { name: en.home.inbox.title });
+    expect(screen.queryByText(en.home.members)).toBeNull();
+    expect(screen.getByText(en.home.skills)).toBeTruthy();
+  });
+
+  it("before a model and an agent exist the overview is the setup checklist", async () => {
+    overviewApi({
+      "GET /api/v1/orgs/o1/agents": () => json(200, { agents: [] }),
+      "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
+      "GET /api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
+    });
+    renderPage(<HomePage />, { locale: "zh" });
+    const h = zh.home;
+    expect(await screen.findByText(h.setup.title)).toBeTruthy();
+    expect(screen.getByText("已完成 2 / 3")).toBeTruthy();
+    const step = (label: string) => screen.getByText(label).closest("li") as HTMLElement;
+    expect(step(h.setup.org).getAttribute("data-state")).toBe("done");
+    expect(step(zh.chat.setup.model.label).getAttribute("data-state")).toBe("done");
+    expect(step(zh.chat.setup.agent.label).getAttribute("data-state")).toBe("todo");
+    const later = within(screen.getByRole("list", { name: h.setup.later }));
+    expect(later.getByRole("link", { name: h.setup.inviteMembers }).getAttribute("href")).toBe(
+      "/settings/members",
+    );
+    expect(screen.queryByRole("list", { name: h.inbox.title })).toBeNull();
   });
 
   it("概览页：切换当前组织调用 switchOrg", async () => {
@@ -129,9 +291,11 @@ describe("(app) 页面模板", () => {
   });
 
   it("the overview offers creating another organization in its header when allowed", async () => {
+    overviewApi();
     renderPage(<HomePage />);
     expect(screen.getByRole("button", { name: en.home.createOrg.open })).toBeTruthy();
     cleanup();
+    overviewApi();
     renderPage(<HomePage />, { me: { ...ME, canCreateOrg: false } });
     expect(screen.queryByRole("button", { name: en.home.createOrg.open })).toBeNull();
   });
