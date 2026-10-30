@@ -2,7 +2,9 @@ import { createHash } from "node:crypto";
 import {
   type ObjectStore,
   parseSkillMd,
+  renderSkillBody,
   SKILL_ENTRY_FILE,
+  SKILL_INVOCATION_LIMITS,
   SKILLS_SANDBOX_ROOT,
   skillSandboxPath,
   ToolError,
@@ -69,7 +71,8 @@ const SPEC: ToolSpec = {
     "skill's description, then follow the returned instructions. If the skill has scripts or other " +
     "files, they are copied read-only to /skills/<name>/ in this conversation's sandbox; run scripts " +
     "there with an interpreter (sh, python3, node). Call it again when the skills list changes or " +
-    "the sandbox was recreated. Do not use it for skills that are not in the list.",
+    "the sandbox was recreated. Pass args when the task gives the skill arguments (they replace " +
+    "$ARGUMENTS and $1, $2… in the instructions). Do not use it for skills that are not in the list.",
   inputSchema: {
     type: "object",
     properties: {
@@ -78,6 +81,11 @@ const SPEC: ToolSpec = {
         minLength: 1,
         maxLength: 64,
         description: 'The skill name exactly as listed, e.g. "pdf-report".',
+      },
+      args: {
+        type: "string",
+        maxLength: SKILL_INVOCATION_LIMITS.argumentsMaxChars,
+        description: 'Optional arguments for the skill, e.g. "123 api".',
       },
     },
     required: ["skill"],
@@ -463,7 +471,7 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
     // 可能要创建 / 恢复沙箱并复制文件：与沙箱工具同一时限
     timeoutMs: () => sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx: BuiltinCallContext) {
-      const asked = (input as { skill: string }).skill;
+      const { skill: asked, args } = input as { skill: string; args?: string };
       const snap = await deps.eventLog.latestOfType(ctx.conversationId, "skills_catalog");
       const skills = snap?.payload.skills ?? [];
       let entry = findEntry(skills, asked);
@@ -541,12 +549,20 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
           "or `node`; the files are not executable, so `./script` does not work. Write outputs under " +
           `/workspace, not ${SKILLS_SANDBOX_ROOT}.${stale}`;
       }
-      const fork = invocationOf(manifest).fork;
+      const invocation = invocationOf(manifest);
+      const fork = invocation.fork;
+      let instructions: string;
+      try {
+        instructions = renderSkillBody(parsed.body.trim(), invocation, args ?? "", name);
+      } catch (e) {
+        if (!(e instanceof RangeError)) throw e;
+        throw new ToolError(`Skill "${name}" cannot be rendered: ${e.message}.`);
+      }
       const text = [
         ...(fork ? [await forkLine(deps.db, ctx, fork, entry.plugin)] : []),
         `Loaded skill "${name}" (version ${entry.version}).`,
         filesText,
-        `<skill name="${name}" version="${entry.version}">\n${parsed.body.trim()}\n</skill>`,
+        `<skill name="${name}" version="${entry.version}">\n${instructions}\n</skill>`,
       ].join("\n\n");
       return {
         content: [{ type: "text", text: withNotices(notices, text) }],

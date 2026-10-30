@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ToolResult } from "@capybara-hq/plugin-sdk";
+import { renderSkillBody, renderSkillInvocation, type ToolResult } from "@capybara-hq/plugin-sdk";
 import {
   fakeExtensionEntry,
   startTestPostgres,
@@ -539,6 +539,62 @@ describe("Skill handler", { timeout: 60_000 }, () => {
     expect(text).toMatch(/no sandbox tools/i);
   });
 
+  describe("args", () => {
+    const run = async (body: string, args: string | undefined, name = "argskill") => {
+      const s = await seedSkill({ name, files: { "SKILL.md": skillMd(name, body) } });
+      const t = tool(
+        { skills: [{ id: s.id, name, description: "d", version: 1, source: s.prefix }] },
+        false,
+      );
+      const r = (await t.run(
+        args === undefined ? { skill: name } : { skill: name, args },
+        ctx(),
+      )) as ToolResult;
+      return (r.content[0] as { text: string }).text;
+    };
+
+    it("substitutes positional placeholders", async () => {
+      const text = await run("Fix issue $ARGUMENTS[0] in $1", "123 api");
+      expect(text).toContain("Fix issue 123 in api");
+    });
+
+    it("appends ARGUMENTS when the body has no placeholder", async () => {
+      const text = await run("Plain instructions.", "x y");
+      expect(text).toContain("ARGUMENTS: x y");
+    });
+
+    it("renders $ARGUMENTS empty without args", async () => {
+      const text = await run("Do it: [$ARGUMENTS]", undefined);
+      expect(text).toContain("Do it: []");
+      expect(text).not.toContain("$ARGUMENTS");
+    });
+
+    it("the schema limits args to 10 000 characters; the handler refuses more", async () => {
+      const props = skillLoadTool({} as never).spec.inputSchema.properties as Record<
+        string,
+        { maxLength?: number }
+      >;
+      expect(props.args?.maxLength).toBe(10_000);
+      await expect(run("b", "a".repeat(10_001), "toolong")).rejects.toThrow(/10000|10 000/);
+    });
+
+    it("renders the same body text as a person's /name invocation", async () => {
+      const body = "Fix issue $ARGUMENTS[0] in $1";
+      const text = await run(body, "123 api", "same");
+      const person = renderSkillInvocation({
+        name: "same",
+        skillName: "same",
+        version: 1,
+        body,
+        invocation: { model: true, user: true },
+        args: "123 api",
+        lines: {},
+      });
+      expect(person).toContain("Fix issue 123 in api");
+      expect(text).toContain(renderSkillBody(body, { model: true, user: true }, "123 api", "same"));
+    });
+  });
+
   it("a skill removed after the snapshot: actionable error", async () => {
     const s = await seedSkill({ name: "gone", files: { "SKILL.md": skillMd("gone", "x") } });
     await db.updateTable("skills").set({ deleted_at: new Date() }).where("id", "=", s.id).execute();
@@ -1037,6 +1093,6 @@ describe("phase D: Skill for invoked and forked skills", { timeout: 90_000 }, ()
   });
 
   it("the Skill spec hash is pinned (it changes only with a reviewed rename of the tool or its parameters)", () => {
-    expect(specHash(skillLoadTool({} as never).spec)).toBe("c365433b66afc57b");
+    expect(specHash(skillLoadTool({} as never).spec)).toBe("78575374b49ee409");
   });
 });

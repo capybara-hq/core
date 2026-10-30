@@ -44,7 +44,7 @@ import {
  * `commands-demo` Claude Code plugin (a checked-in fixture on a local fake git server, no network)
  * and an org installs it; an agent selects all its skills. The model's catalog lists the command
  * `fix-issue` and the forked `review`, never the manual-only `manual-script`; the model loads
- * `fix-issue` with `$ARGUMENTS` as written; the person invokes `/fix-issue 123` inline,
+ * `fix-issue` with `args: "123"`; the person invokes `/fix-issue 123` inline,
  * `/manual-script` (the model then copies its script to the sandbox) and the forked `/review src`
  * (a `commands-demo:code-reviewer` sub-agent reports, the parent answers); every model request of
  * the conversation and of the sub-agent reconstructs from the log with `drift: []`.
@@ -71,7 +71,7 @@ const RULES: ScriptRule[] = [
   { when: { lastUserIncludes: "Report from the sub-agent" }, reply: { text: "parent answered" } },
   {
     when: { lastUserIncludes: "LOAD fix-issue" },
-    reply: { toolCalls: [{ name: "Skill", input: { skill: "fix-issue" } }] },
+    reply: { toolCalls: [{ name: "Skill", input: { skill: "fix-issue", args: "123" } }] },
   },
   {
     when: { lastUserIncludes: '<skill_invocation name="manual-script"' },
@@ -285,7 +285,7 @@ describe("phase D acceptance: commands, manual-only and forked skills", {
     ]);
   });
 
-  it("the catalog lists fix-issue and review, not manual-script; the model's Skill returns $ARGUMENTS as written", async () => {
+  it("the catalog lists fix-issue and review, not manual-script; the model's Skill renders it with args", async () => {
     capture.reset();
     state.convId = await createConv(admin, orgId, state.agentId as string);
     await send({ text: "LOAD fix-issue" });
@@ -300,7 +300,7 @@ describe("phase D acceptance: commands, manual-only and forked skills", {
     expect(loaded?.payload.toolKey).toBe("Skill");
     expect(loaded?.payload.isError, loaded?.payload.content).toBe(false);
     expect(loaded?.payload.content).toContain(
-      "Fix GitHub issue $ARGUMENTS following our coding standards.",
+      "Fix GitHub issue 123 following our coding standards.",
     );
     expect(lastReply(events)).toBe("loaded fix-issue");
   });
