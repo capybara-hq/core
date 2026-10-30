@@ -61,16 +61,11 @@
   "home": {
     "title": "工作台",
     "greeting": "你好，{name}",
-    "currentOrg": "当前组织",
-    "selectOrg": "选择组织",
     "noMemberships": "还没有加入任何组织",
     "agents": "Agents",
-    "openAgents": "查看与新建 Agent",
     "noMembershipsHint": "请联系组织管理员邀请你加入。",
-    "noCurrentOrg": "请选择当前组织，之后即可查看与新建 Agent。",
     "role": "角色",
     "slug": "标识",
-    "orgCard": "组织",
     "noMembershipsCreateHint": "创建一个组织开始使用，或者请组织管理员邀请你加入。",
     "createOrg": {
       "open": "创建组织",
@@ -822,7 +817,8 @@
   },
   "shell": {
     "noOrg": "选择组织",
-    "orgMenu": "切换组织"
+    "orgMenu": "切换组织",
+    "createOrg": "创建组织…"
   },
   "notFound": {
     "title": "页面不存在",
@@ -3172,5 +3168,18 @@
     },
     "contextTotal": "含子代理的 token 总数 {n}",
     "background": "后台任务"
+  },
+  "orgChooser": {
+    "title": "选择组织",
+    "titleNone": "创建组织",
+    "subtitle": "{name}，选择要进入的组织。下次登录会直接进入它，之后可以在左下角的账户菜单里切换。",
+    "subtitleCreate": "你还不属于任何组织。创建一个组织开始使用。",
+    "subtitleAsk": "你还不属于任何组织。",
+    "listLabel": "你的组织",
+    "enter": "进入",
+    "create": "创建组织",
+    "askHint": "请组织管理员邀请你加入。",
+    "admin": "进入管理后台",
+    "logout": "退出登录"
   }
 }

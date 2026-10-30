@@ -81,10 +81,30 @@ export class SessionService {
         user_agent: meta.userAgent ?? null,
         ip: meta.ip ?? null,
         expires_at: sql<Date>`now() + make_interval(days => ${refreshTtlDays})`,
+        current_org_id: await this.startingOrg(accountId),
       })
       .returning(["expires_at"])
       .executeTakeFirstOrThrow();
     return this.issue(id, accountId, refreshToken, row.expires_at);
+  }
+
+  /**
+   * The org a new session starts in: the account's last chosen one while it is still a member of it
+   * (and the org is not deleted), else its only org when it has exactly one, else none (the web
+   * app then asks to choose or create one).
+   */
+  private async startingOrg(accountId: string): Promise<string | null> {
+    const orgs = await this.db
+      .selectFrom("memberships as m")
+      .innerJoin("orgs as o", "o.id", "m.org_id")
+      .innerJoin("accounts as a", "a.id", "m.account_id")
+      .select(["m.org_id as orgId", "a.last_org_id as lastOrgId"])
+      .where("m.account_id", "=", accountId)
+      .where("o.deleted_at", "is", null)
+      .execute();
+    const last = orgs.find((o) => o.orgId === o.lastOrgId);
+    if (last) return last.orgId;
+    return orgs.length === 1 ? (orgs[0]?.orgId ?? null) : null;
   }
 
   async refresh(
@@ -299,6 +319,13 @@ export class SessionService {
         .forShare()
         .executeTakeFirst());
     if (!m) throw new ApiError("org.not_found", "Organization not found");
+    // remembered for the next sign-in; the account row before the session row, the order a
+    // password change takes (account, then its sessions)
+    await this.db
+      .updateTable("accounts")
+      .set({ last_org_id: orgId })
+      .where("id", "=", accountId)
+      .execute();
     const r = await this.db
       .updateTable("sessions")
       .set({ current_org_id: orgId })

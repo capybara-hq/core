@@ -16,8 +16,9 @@ test("初始化向导：未初始化的部署打开首页 → 初始化页（可
 }) => {
   await page.goto("/");
   await expect(page).toHaveURL(/\/setup$/);
-  // 认证页也能切换语言
-  await expect(page.getByRole("link", { name: zh.common.localeName.en })).toBeVisible();
+  // the auth pages switch language and theme too
+  await expect(page.getByRole("combobox", { name: zh.common.language })).toBeVisible();
+  await expect(page.getByRole("radiogroup", { name: zh.common.theme })).toBeVisible();
   await page.getByLabel(zh.setup.loginLabel).fill(LOGIN);
   await page.getByLabel(zh.setup.passwordLabel).fill(PASSWORD);
   await page.getByLabel(zh.setup.displayNameLabel).fill("Admin");

@@ -241,65 +241,6 @@ describe("(app) 页面模板", () => {
     expect(screen.queryByRole("list", { name: h.inbox.title })).toBeNull();
   });
 
-  it("概览页：切换当前组织调用 switchOrg", async () => {
-    const switchOrg = vi.fn(async () => {});
-    const me = {
-      ...ME,
-      currentOrgId: null,
-      memberships: [...ME.memberships, { orgId: "o2", slug: "b", name: "Beta", role: "member" }],
-    };
-    renderPage(<HomePage />, { me, session: { switchOrg } });
-    expect(screen.queryByRole("link", { name: en.home.openAgents })).toBeNull();
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: en.home.currentOrg }), "o2");
-    expect(switchOrg).toHaveBeenCalledWith("o2");
-  });
-
-  it("没有任何组织：StatusPage disabled「还没有加入任何组织」", () => {
-    renderPage(<HomePage />, {
-      locale: "zh",
-      me: { ...ME, currentOrgId: null, memberships: [], canCreateOrg: false },
-    });
-    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("disabled");
-    expect(screen.getByText("还没有加入任何组织")).toBeTruthy();
-    // the deployment lets only enterprise admins create organizations: no create button
-    expect(screen.getByText(zh.home.noMembershipsHint)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: zh.home.createOrg.open })).toBeNull();
-  });
-
-  it("no organization but allowed to create one: the status page creates it and makes it current", async () => {
-    const calls = stubApi({
-      "POST /api/v1/orgs": () =>
-        json(201, { org: { id: "o9", slug: "acme", name: "Acme" }, role: "owner" }),
-    });
-    const switchOrg = vi.fn(async () => {});
-    renderPage(<HomePage />, {
-      me: { ...ME, currentOrgId: null, memberships: [], canCreateOrg: true },
-      session: { switchOrg },
-    });
-    expect(screen.getByText(en.home.noMembershipsCreateHint)).toBeTruthy();
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: en.home.createOrg.open }));
-    const dialog = await screen.findByRole("dialog", { name: en.home.createOrg.title });
-    // an empty name is refused before any request
-    await user.click(within(dialog).getByRole("button", { name: en.home.createOrg.submit }));
-    expect(within(dialog).getByText(en.home.createOrg.nameRequired)).toBeTruthy();
-    expect(calls).toEqual([]);
-    await user.type(within(dialog).getByRole("textbox"), "  Acme ");
-    await user.click(within(dialog).getByRole("button", { name: en.home.createOrg.submit }));
-    expect(calls).toEqual([{ method: "POST", url: "/api/v1/orgs", body: { name: "Acme" } }]);
-    expect(switchOrg).toHaveBeenCalledWith("o9");
-  });
-
-  it("the overview offers creating another organization in its header when allowed", async () => {
-    overviewApi();
-    renderPage(<HomePage />);
-    expect(screen.getByRole("button", { name: en.home.createOrg.open })).toBeTruthy();
-    cleanup();
-    overviewApi();
-    renderPage(<HomePage />, { me: { ...ME, canCreateOrg: false } });
-    expect(screen.queryByRole("button", { name: en.home.createOrg.open })).toBeNull();
-  });
-
   it("a page that needs an organization keeps its own title and offers creating one", () => {
     resetNavigation("/agents");
     renderPage(<AgentsPage />, {
@@ -536,12 +477,110 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(within(region).queryByText("还没有会话，从 Agents 里选一个开始。")).toBeNull();
   });
 
-  it("memberships but no current org: the account reads 选择组织 (m3)", async () => {
+  it("signed in without a current org: the chooser covers the whole shell; opening an org enters the app", async () => {
     resetNavigation("/");
-    stubApi({ "GET /api/v1/me": () => json(200, { ...ME, currentOrgId: null }) });
+    const me = {
+      ...ME,
+      currentOrgId: null,
+      memberships: [...ME.memberships, { orgId: "o2", slug: "b", name: "Beta", role: "member" }],
+    };
+    let current: string | null = null;
+    const calls = stubApi({
+      "GET /api/v1/me": () => json(200, { ...me, currentOrgId: current }),
+      "PUT /api/v1/me/current-org": (init) => {
+        current = (JSON.parse(String(init?.body)) as { orgId: string }).orgId;
+        return new Response(null, { status: 204 });
+      },
+      "GET /api/v1/orgs/o2/inbox": () => json(200, { items: [], truncated: false }),
+      "GET /api/v1/orgs/o2/conversations/groups": () => json(200, { groups: [], next: null }),
+    });
     renderFrame();
+    const c = zh.orgChooser;
+    expect(await screen.findByRole("heading", { name: c.title })).toBeTruthy();
+    expect(document.querySelector('[data-template="AuthPage"]')).not.toBeNull();
+    expect(screen.queryByRole("navigation", { name: "主导航" })).toBeNull();
+    expect(screen.queryByText("page body")).toBeNull();
+    const orgs = within(screen.getByRole("list", { name: c.listLabel })).getAllByRole("listitem");
+    expect(orgs.map((o) => o.textContent)).toEqual([
+      expect.stringContaining("Acme"),
+      expect.stringContaining("Beta"),
+    ]);
+    // can create one too, and an enterprise admin can reach the admin console
+    expect(screen.getByRole("button", { name: c.create })).toBeTruthy();
+    expect(screen.getByRole("link", { name: c.admin }).getAttribute("href")).toBe("/admin");
+    await userEvent.click(within(orgs[1] as HTMLElement).getByRole("button", { name: c.enter }));
     expect(await screen.findByText("page body")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /^账户: Grant · 选择组织/ })).toBeTruthy();
+    expect(calls.find((x) => x.method === "PUT")?.body).toEqual({ orgId: "o2" });
+    expect(screen.getByRole("button", { name: /^账户: Grant · Beta/ })).toBeTruthy();
+  });
+
+  it("no org at all: the chooser creates one and enters it", async () => {
+    resetNavigation("/");
+    let me: typeof ME = { ...ME, currentOrgId: null, memberships: [] };
+    const calls = stubApi({
+      "GET /api/v1/me": () => json(200, me),
+      "POST /api/v1/orgs": () => {
+        me = { ...me, memberships: [{ orgId: "o9", slug: "new", name: "New", role: "owner" }] };
+        return json(201, { org: { id: "o9", slug: "new", name: "New" }, role: "owner" });
+      },
+      "PUT /api/v1/me/current-org": () => {
+        me = { ...me, currentOrgId: "o9" };
+        return new Response(null, { status: 204 });
+      },
+      "GET /api/v1/orgs/o9/inbox": () => json(200, { items: [], truncated: false }),
+      "GET /api/v1/orgs/o9/conversations/groups": () => json(200, { groups: [], next: null }),
+    });
+    renderFrame();
+    const c = zh.orgChooser;
+    expect(await screen.findByRole("heading", { name: c.titleNone })).toBeTruthy();
+    expect(screen.queryByRole("list", { name: c.listLabel })).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: c.create }));
+    const dialog = await screen.findByRole("dialog", { name: zh.home.createOrg.title });
+    await user.type(within(dialog).getByRole("textbox"), "New");
+    await user.click(within(dialog).getByRole("button", { name: zh.home.createOrg.submit }));
+    expect(await screen.findByText("page body")).toBeTruthy();
+    expect(calls.filter((x) => x.method !== "GET").map((x) => [x.method, x.url])).toEqual([
+      ["POST", "/api/v1/orgs"],
+      ["PUT", "/api/v1/me/current-org"],
+    ]);
+  });
+
+  it("no org and not allowed to create one: the chooser says to ask for an invitation", async () => {
+    resetNavigation("/");
+    stubApi({
+      "GET /api/v1/me": () =>
+        json(200, {
+          ...ME,
+          account: { ...ME.account, isEnterpriseAdmin: false },
+          currentOrgId: null,
+          memberships: [],
+          canCreateOrg: false,
+        }),
+    });
+    renderFrame();
+    expect(await screen.findByText(zh.orgChooser.askHint)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: zh.orgChooser.create })).toBeNull();
+    expect(screen.queryByRole("link", { name: zh.orgChooser.admin })).toBeNull();
+    expect(screen.getByRole("button", { name: zh.orgChooser.logout })).toBeTruthy();
+  });
+
+  it("the account menu's Organization submenu ends with Create organization", async () => {
+    resetNavigation("/");
+    stubApi({
+      "GET /api/v1/me": () => json(200, ME),
+      "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
+      "GET /api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
+    });
+    renderFrame();
+    await screen.findByText("page body");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /^账户: Grant · Acme/ }));
+    await user.click(screen.getByRole("menuitem", { name: zh.shell.orgMenu }));
+    // jsdom has no layout: pick submenu items with the keyboard (see design menu-submenu tests)
+    (await screen.findByRole("menuitem", { name: zh.shell.createOrg })).focus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("dialog", { name: zh.home.createOrg.title })).toBeTruthy();
   });
 
   it("the group ＋ opens a new conversation with that agent picked", async () => {
@@ -581,8 +620,8 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(within(nav).getByRole("link", { name: zh.nav.evals })).toBeTruthy();
   });
 
-  it("没有任何组织的企业管理员也看得到「管理」", async () => {
-    resetNavigation("/");
+  it("an enterprise admin without an org still reaches the admin console in the shell", async () => {
+    resetNavigation("/admin");
     stubApi({
       "GET /api/v1/me": () => json(200, { ...ME, currentOrgId: null, memberships: [] }),
     });

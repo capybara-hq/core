@@ -3,16 +3,13 @@
 import {
   Button,
   Card,
-  Field,
   Grid,
   ItemList,
   type ItemListRow,
   KeyValue,
   OverviewPage,
-  Select,
   Skeleton,
   Stack,
-  StatusPage,
   StepList,
   Text,
   TextLink,
@@ -21,7 +18,6 @@ import {
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
-import { CreateOrgDialog } from "../../components/CreateOrgDialog";
 import { setupReady, useSetupSteps } from "../../components/conversation/SetupGuide";
 import { RequireSession, useSession } from "../../components/shell/session";
 import { useRouter } from "../../i18n/navigation";
@@ -40,8 +36,8 @@ import { useLoad } from "../../lib/use-load";
  * `/`: the overview. With a current organization: what waits on me (the inbox, approvals approvable
  * in place), the conversations to pick up, the organization at a glance and the agents I use most;
  * until a model and an agent exist, the setup checklist instead (the new-conversation page shows
- * the same steps). Without a current organization: pick one; without any membership: a StatusPage
- * that offers creating one (or says to ask for an invitation). Signed-out visitors are sent to
+ * the same steps). Without a current organization the app frame shows the org chooser instead
+ * (`OrgChooser`); creating another org is in the account menu. Signed-out visitors are sent to
  * login by (app).
  */
 export default function HomePage() {
@@ -53,76 +49,10 @@ export default function HomePage() {
 }
 
 function Home() {
-  const t = useTranslations("home");
-  const { me, switchOrg } = useSession();
-  const [creating, setCreating] = useState(false);
-  const dialog = me.canCreateOrg ? (
-    <CreateOrgDialog open={creating} onOpenChange={setCreating} />
-  ) : null;
-  const createAction = me.canCreateOrg
-    ? [
-        {
-          label: t("createOrg.open"),
-          icon: "plus" as const,
-          variant: "default" as const,
-          onSelect: () => setCreating(true),
-        },
-      ]
-    : [];
-
-  if (me.memberships.length === 0) {
-    return (
-      <>
-        <StatusPage
-          header={{ title: t("title") }}
-          kind="disabled"
-          title={t("noMemberships")}
-          description={me.canCreateOrg ? t("noMembershipsCreateHint") : t("noMembershipsHint")}
-          action={
-            me.canCreateOrg ? (
-              <Button variant="primary" onClick={() => setCreating(true)}>
-                {t("createOrg.open")}
-              </Button>
-            ) : undefined
-          }
-        />
-        {dialog}
-      </>
-    );
-  }
-
-  if (me.currentOrgId === null) {
-    const options = [
-      { value: "", label: t("selectOrg") },
-      ...me.memberships.map((m) => ({ value: m.orgId, label: m.name })),
-    ];
-    return (
-      <OverviewPage
-        header={{ title: t("greeting", { name: me.account.displayName }), actions: createAction }}
-      >
-        <Card title={t("orgCard")}>
-          <Stack gap={16}>
-            <Field label={t("currentOrg")}>
-              <Select
-                options={options}
-                value=""
-                onChange={(e) => void switchOrg(e.target.value === "" ? null : e.target.value)}
-              />
-            </Field>
-            <Text tone="muted">{t("noCurrentOrg")}</Text>
-          </Stack>
-        </Card>
-        {dialog}
-      </OverviewPage>
-    );
-  }
-
-  return (
-    <>
-      <Overview key={me.currentOrgId} orgId={me.currentOrgId} createAction={createAction} />
-      {dialog}
-    </>
-  );
+  const { me } = useSession();
+  // Without a current org the app frame shows the org chooser over the whole shell instead.
+  if (me.currentOrgId === null) return null;
+  return <Overview key={me.currentOrgId} orgId={me.currentOrgId} />;
 }
 
 type OverviewData = {
@@ -166,13 +96,7 @@ async function loadOverview(orgId: string): Promise<OverviewData> {
   };
 }
 
-function Overview({
-  orgId,
-  createAction,
-}: {
-  orgId: string;
-  createAction: { label: string; icon: "plus"; variant: "default"; onSelect(): void }[];
-}) {
+function Overview({ orgId }: { orgId: string }) {
   const t = useTranslations("home");
   const { me } = useSession();
   const { state, reload } = useLoad(() => loadOverview(orgId), [orgId]);
@@ -182,9 +106,7 @@ function Overview({
 
   if (state.kind === "loading") {
     return (
-      <OverviewPage
-        header={{ title: t("greeting", { name: me.account.displayName }), actions: createAction }}
-      >
+      <OverviewPage header={{ title: t("greeting", { name: me.account.displayName }) }}>
         <Skeleton rows={6} />
       </OverviewPage>
     );
@@ -231,9 +153,7 @@ function Overview({
   );
 
   if (!setupReady(data.agents, data.providers)) {
-    return (
-      <SetupOverview data={data} orgName={orgName} createAction={createAction} orgCard={orgCard} />
-    );
+    return <SetupOverview data={data} orgName={orgName} orgCard={orgCard} />;
   }
   return (
     <DailyOverview
@@ -241,7 +161,6 @@ function Overview({
       data={data}
       orgName={orgName}
       role={role}
-      createAction={createAction}
       orgCard={orgCard}
       onChanged={reload}
     />
@@ -252,12 +171,10 @@ function Overview({
 function SetupOverview({
   data,
   orgName,
-  createAction,
   orgCard,
 }: {
   data: OverviewData;
   orgName: string;
-  createAction: { label: string; icon: "plus"; variant: "default"; onSelect(): void }[];
   orgCard: React.ReactNode;
 }) {
   const t = useTranslations("home");
@@ -287,7 +204,6 @@ function SetupOverview({
       header={{
         title: t("greeting", { name: me.account.displayName }),
         description: t("setup.description", { org: orgName }),
-        actions: createAction,
       }}
     >
       <Grid columns="main-side">
@@ -314,7 +230,6 @@ function DailyOverview({
   data,
   orgName,
   role,
-  createAction,
   orgCard,
   onChanged,
 }: {
@@ -322,7 +237,6 @@ function DailyOverview({
   data: OverviewData;
   orgName: string;
   role: string;
-  createAction: { label: string; icon: "plus"; variant: "default"; onSelect(): void }[];
   orgCard: React.ReactNode;
   onChanged(): void;
 }) {
@@ -441,7 +355,6 @@ function DailyOverview({
             ? t("dailyDescriptionPending", { org: orgName, role, count: pending })
             : t("dailyDescription", { org: orgName, role }),
         actions: [
-          ...createAction,
           { label: t("newAgent"), variant: "default", href: "/agents/new" },
           { label: t("newConversation"), variant: "primary", href: "/chat" },
         ],

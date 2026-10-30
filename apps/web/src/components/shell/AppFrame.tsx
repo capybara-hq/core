@@ -18,6 +18,7 @@ import { useConnectResultToast } from "../../lib/connect";
 import { usePreferences } from "../../lib/preferences";
 import { getMe, logout, type Me, setCurrentOrg } from "../../lib/session";
 import { useErrorMessage } from "../../lib/use-error-message";
+import { CreateOrgDialog } from "../CreateOrgDialog";
 import { useConversationGroups } from "./conversations";
 import {
   activeNavOf,
@@ -27,6 +28,7 @@ import {
   useNav,
   usePendingApprovals,
 } from "./nav";
+import { OrgChooser } from "./OrgChooser";
 import { type Session, SessionContext } from "./session";
 
 /** 本地时区，如 `UTC+8`、`UTC-3:30`（StatusBar 右侧，spec §4.4）。 */
@@ -82,6 +84,7 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   const extensions = useExtensions(me?.currentOrgId ?? null, locale);
   const [error, setError] = useState<string>();
   const preferences = usePreferences();
+  const [creatingOrg, setCreatingOrg] = useState(false);
   const timeZone = useTimeZoneLabel();
   useConnectResultToast();
 
@@ -140,18 +143,27 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   const currentOrg = me?.memberships.find((m) => m.orgId === me.currentOrgId);
   // The account menu: Organization ▸ (the current one checked) and Language ▸ above sign-out; the
   // theme is the switch after the account (spec §6.13).
+  const createOrgItem: MenuItem[] = me?.canCreateOrg
+    ? [{ label: t("shell.createOrg"), onSelect: () => setCreatingOrg(true) }]
+    : [];
   const orgMenu: MenuItem[] =
-    me === undefined || me.memberships.length === 0
+    me === undefined || (me.memberships.length === 0 && !me.canCreateOrg)
       ? []
       : [
           {
             label: t("shell.orgMenu"),
-            submenu: me.memberships.map((m) => ({
-              label: m.name,
-              checked: m.orgId === me.currentOrgId,
-              disabled: m.orgId === me.currentOrgId,
-              onSelect: () => void switchOrg(m.orgId),
-            })),
+            submenu: [
+              ...me.memberships.map((m) => ({
+                label: m.name,
+                checked: m.orgId === me.currentOrgId,
+                disabled: m.orgId === me.currentOrgId,
+                onSelect: () => void switchOrg(m.orgId),
+              })),
+              ...(me.memberships.length > 0 && createOrgItem.length > 0
+                ? ["separator" as const]
+                : []),
+              ...createOrgItem,
+            ],
           },
         ];
   const languageMenu: MenuItem = {
@@ -210,8 +222,23 @@ export function AppFrame({ version, children }: { version: string; children: Rea
         }
       />
     ) : (
-      <SessionContext.Provider value={session ?? null}>{children}</SessionContext.Provider>
+      <SessionContext.Provider value={session ?? null}>
+        {children}
+        {session?.me.canCreateOrg ? (
+          <CreateOrgDialog open={creatingOrg} onOpenChange={setCreatingOrg} />
+        ) : null}
+      </SessionContext.Provider>
     );
+
+  // Signed in without a current org: the chooser covers the whole shell (the admin console, which
+  // needs no org, stays reachable for enterprise admins).
+  if (session !== undefined && session.me.currentOrgId === null && !pathname.startsWith("/admin")) {
+    return (
+      <SessionContext.Provider value={session}>
+        <OrgChooser onLogout={() => void onLogout()} />
+      </SessionContext.Provider>
+    );
+  }
 
   return (
     // The conversation page draws its own status bar under its middle column (spec §5.2).

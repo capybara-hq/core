@@ -78,9 +78,12 @@ export class MeController {
       name: o.name,
       role: o.role,
     }));
+    // a session's org the account has since left reads as none (removal clears it, but a session
+    // created at that moment may still name it)
+    const current = memberships.some((m) => m.orgId === currentOrgId) ? currentOrgId : null;
     const { orgCreation } = await this.settings.get();
     const canCreateOrg = orgCreation === "anyone" || p.account.isEnterpriseAdmin;
-    return { account: p.account, via: p.via, currentOrgId, memberships, canCreateOrg };
+    return { account: p.account, via: p.via, currentOrgId: current, memberships, canCreateOrg };
   }
 
   /** 切换当前组织（仅 Web 会话）；`null` 清空。非成员或已软删除的组织 → `org.not_found`。 */

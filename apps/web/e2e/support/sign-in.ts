@@ -12,9 +12,11 @@ export const PASSWORD = "correct-horse-battery";
 export const ORG_NAME = "Acme";
 
 /**
- * 幂等登录：未初始化时走初始化向导（同时建组织 Acme），已初始化时走登录页；然后默认选中组织 Acme，
- * 并等 `/me` 里出现当前组织（选组织是异步请求，紧接着读 `/me` 可能还是 null）。
- * 正常情况下 `setup` 项目（`setup.spec.ts`）已经完成初始化，这里走登录；单独跑某个用例时也能自己初始化。
+ * Idempotent sign-in: the setup wizard when not set up yet (it creates the org Acme), else the login
+ * page. A new session starts in the org last chosen (or the only one); when the org chooser covers
+ * the app instead, open Acme there. With `org` (the default) it then waits until `/me` names the
+ * current org. Normally the `setup` project (`setup.spec.ts`) has already set up; a spec run alone
+ * sets up itself.
  */
 export async function signIn(page: Page, { org = true }: { org?: boolean } = {}): Promise<void> {
   await page.goto("/");
@@ -35,8 +37,18 @@ export async function signIn(page: Page, { org = true }: { org?: boolean } = {})
     await page.getByRole("button", { name: zh.login.submit, exact: true }).click();
   }
   await expect(page).toHaveURL(/\/$/);
+  const chooser = page.getByRole("list", { name: zh.orgChooser.listLabel });
+  const overview = page.locator('[data-template="OverviewPage"]');
+  await expect(chooser.or(overview)).toBeVisible();
+  if (await chooser.isVisible()) {
+    await chooser
+      .getByRole("listitem")
+      .filter({ hasText: ORG_NAME })
+      .getByRole("button", { name: zh.orgChooser.enter })
+      .click();
+    await expect(overview).toBeVisible();
+  }
   if (!org) return;
-  await page.getByRole("combobox", { name: zh.home.currentOrg }).selectOption({ label: ORG_NAME });
   await expect
     .poll(async () => {
       const me = await page.request.get("/api/v1/me");

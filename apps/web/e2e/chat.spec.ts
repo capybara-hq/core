@@ -15,7 +15,10 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
   // 1. 登录（初始化由 setup 项目完成）→ 选当前组织 → 新建 agent（model-fake / fake-1）
   await signIn(page);
   await expect(page.locator('[data-template="OverviewPage"]')).toBeVisible();
-  await page.getByRole("link", { name: zh.home.openAgents }).click();
+  await page
+    .getByRole("navigation", { name: "主导航" })
+    .getByRole("link", { name: zh.nav.agents })
+    .click();
   await expect(page).toHaveURL(/\/agents$/);
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
   await page.getByRole("link", { name: zh.agents.new }).click();

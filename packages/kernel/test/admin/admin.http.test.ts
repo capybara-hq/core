@@ -161,9 +161,15 @@ describe("初始化向导（配置了 auth.setupToken）", () => {
     expect(setCookies(ok).map((c) => c.name)).toEqual(expect.arrayContaining(["cap_at", "cap_rt"]));
     const me = await req({ method: "GET", url: "/api/v1/me" });
     expect(me.statusCode).toBe(200);
-    const meBody = me.json() as { account: Account; memberships: { role: string }[] };
+    const meBody = me.json() as {
+      account: Account;
+      memberships: { orgId: string; role: string }[];
+      currentOrgId: string | null;
+    };
     expect(meBody.account.isEnterpriseAdmin).toBe(true);
     expect(meBody.memberships.map((m) => m.role)).toEqual(["owner"]);
+    // the org named at setup is the session's current org at once
+    expect(meBody.currentOrgId).toBe(meBody.memberships[0]?.orgId);
 
     expect((await anon({ method: "GET", url: "/api/v1/setup" })).json()).toEqual({
       needsSetup: false,

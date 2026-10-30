@@ -16,6 +16,8 @@ export interface AccountsTable {
   is_enterprise_admin: Generated<boolean>;
   created_at: Ts;
   updated_at: Ts;
+  /** 0063: the org the account last chose as current; a new session starts in it. */
+  last_org_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 export interface IdentitiesTable {
