@@ -17,7 +17,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   and all its inputs come from the log: the `model_call` event records `toSeq`, `absorbedUpToSeq`, `params`, `toolChoice`, `maxOutputTokens`,
   `mediaBudgetBytes`, the sequence of tool specHashes and the system fingerprint; tool definitions are fetched from the snapshot by specHash.
 - **Run both zero-drift test groups before and after changing request building**:
-  - `packages/kernel/test/evals/reconstruct.test.ts` ("baseline zero drift": multi-step tools, `tool_search` loading, approval resume, skill catalog snapshot,
+  - `packages/kernel/test/evals/reconstruct.test.ts` ("baseline zero drift": multi-step tools, `ToolSearch` loading, approval resume, skill catalog snapshot,
     reminders, mid-run messages, compaction, images / placeholders, and so on; it reconstructs from logs produced by real runs and requires `drift` to be empty and the reconstructed request to equal the one sent to the model at the time);
   - `packages/kernel/test/tools/rename-compat.test.ts` (fixtures recorded before the T22 rename, in `test/evals/fixtures/pre-rename/`; the old form
     `{kind:"app", appId}` and `appId` event fields must show zero drift).
@@ -31,7 +31,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
 - Display-only `tool_result` fields: request building reads only `callId` / `content` / `isError` (plus `loadedTools` for the loaded set),
   so `display` (the bilingual summary) and `view` (UI refresh B: `command` exit code and description, `edit` line diff, `read` range)
   never reach a request, are not in compaction records and need no `DriftReason`. A tool's input schema change (such as
-  `sandbox_bash`'s required `description`) needs none either: definitions are fetched from the snapshot by the recorded specHash.
+  `Bash`'s required `description`) needs none either: definitions are fetched from the snapshot by the recorded specHash.
 
 ## Queued messages (UI refresh B)
 
@@ -90,7 +90,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
 - Full-run replay copies the run's `skills_catalog` (with `pinned` and `toolMap`) unchanged into the eval conversation.
 - Zero-drift coverage: `reconstruct.test.ts` "pinned skills, a pinned version change mid-conversation, a claude-code skill with the tool map,
   and a compaction" and the drift-group `pinned_changed` cases; the phase B acceptance `packages/kernel/test/catalog/claude-superpowers.e2e.test.ts`
-  (a superpowers import, an agent pinning `using-superpowers`, `skill_load` by qualified and plain name, then every `model_call`
+  (a superpowers import, an agent pinning `using-superpowers`, `Skill` by qualified and plain name, then every `model_call`
   reconstructed with `drift: []` and equal to what the provider received, and a full-run replay sending the same requests).
   Both capture provider requests with `packages/kernel/test/helpers/provider-capture.ts`.
 
@@ -153,13 +153,13 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   report was logged (that request already sent the turn: append-only). Compaction records render it as `User: …`. The
   fallback reports (nothing dispatched before the run ended, an unreadable SKILL.md, storage down at dispatch) are fixed
   English texts in `runtime/subagents/skill-fork.ts`, logged like any report.
-- **The compaction line** (`Skills the user invoked earlier in this conversation: {names}. Call skill_load …`) follows the restored
+- **The compaction line** (`Skills the user invoked earlier in this conversation: {names}. Call Skill …`) follows the restored
   catalog after a summary whose range holds inline invocations. It is computed from the log only (`invokedSkillNames`, the
   `skill` fields of covered messages), so replay renders it identically; logs without invocations render as before.
 - **No new `DriftReason`**: the invocation text and the fork report are inputs fixed in the log, like the `@` resource bodies read
   with the person's credentials at send time. A baseline reconstructs them byte for byte, and a candidate agent version that no
   longer selects the invoked skill still replays the recorded message (a person's input is not the agent's to change).
-  `skill_load` of an invoked manual-only skill is an ordinary logged tool result.
+  `Skill` of an invoked manual-only skill is an ordinary logged tool result.
 - **Full-run replay** of a run triggered by a fork invocation never dispatches (spec A5): `runReplay` gives the loop
   `recordedSkillForks` (`runtime/subagents/skill-fork.ts`) in place of the live `skillForks`, which appends the recorded
   `skill_fork_result` and writes no `subagent_*` event, `subagent_dispatches` row or child run. A recording without a report (the
@@ -172,7 +172,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `parent.callId` is `skill-<seq>`. Never rendered.
 - **Trajectory**: a fork invocation's run carries `skillFork: { invokedSeq, skill: { name, plugin?, arguments }, subagent?:
   { subagentId, childRunId, agentType, status }, report }` (the dispatch is at step 0 with no tool call, so it is not in `steps`).
-- Coverage: `reconstruct.test.ts` (the "phase D" cases: inline invocations with a compaction, a manual-only skill's `skill_load`,
+- Coverage: `reconstruct.test.ts` (the "phase D" cases: inline invocations with a compaction, a manual-only skill's `Skill`,
   a fork with its report, and all of them together with a candidate that deselects the skills), `run-replay.test.ts` (recorded
   report, no report), `subagents-replay.test.ts` ("forked skills (phase D)": full-run replay of the parent, the child case with
   `invokedSkill`, the trajectory span) and `trajectory.test.ts`.
@@ -195,11 +195,11 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `RecordedToolPipeline` (`recorded-tools.ts`):
   - **Never executes any tool**: no policy, approval, sandbox or connector, and no handler is called; it matches the first unused recording exactly on (toolKey, normalized arguments),
     and if nothing matches it returns the English error result `REPLAY_NO_RECORDING` (`isError: true`) and records `tool_unmatched`.
-  - Normalized arguments leave out display-only arguments (`MATCH_IGNORED_FIELDS` in `recorded-tools.ts`: `sandbox_bash` `description`),
+  - Normalized arguments leave out display-only arguments (`MATCH_IGNORED_FIELDS` in `recorded-tools.ts`: `Bash` `description`),
     so recordings made before the argument existed match calls that pass it, and the reverse; the structural diff (`diff.ts`) compares
     calls the same way (`matchKey`).
   - A recording made under the release-candidate tool names (old builtin keys and parameters, `<x>__<tool>` keys of connectors and extensions) is read in the current names on the **recorded side only** (`currentCall` in `recorded-tools.ts`: `legacyToolKey` / `legacyToolInput`, with the connectors and extensions read from the snapshot alone, `legacyScopeOf`) before matching and in the baseline summary, so the diff shows only real differences; the candidate's calls are never altered. A run that matched such a recording has `legacyKeyMatch: true` in its candidate result. Fixture `test/evals/fixtures/pre-tool-rename/` (a real rc recording, see its README); coverage in `reconstruct.test.ts`, `run-replay.test.ts`, `tools/rename-compat.test.ts`.
-  - The candidate sees the **current** tool definitions (builtins are deployment-wide, not per agent version), so a builtin schema change (e.g. `sandbox_bash` gaining `description`) is not drift and records no `tools_changed`; step replay instead pins the recorded definitions (C5). `RecordedToolPipeline` does not validate input either, so a replayed call missing a now-required argument still gets the recorded result.
+  - The candidate sees the **current** tool definitions (builtins are deployment-wide, not per agent version), so a builtin schema change (e.g. `Bash` gaining `description`) is not drift and records no `tools_changed`; step replay instead pins the recorded definitions (C5). `RecordedToolPipeline` does not validate input either, so a replayed call missing a now-required argument still gets the recorded result.
   - Seed events keep their original seq; mid-run messages absorbed during the original run are fed in at the original absorption step; after a crash, that case's old eval conversation is deleted and the case reruns from the start.
   - Eval conversations always return 404 on the ordinary conversation endpoints; there is no real-tool replay (D2).
 - Scoring (`diff.ts`, `judge.ts`): structural diff (tool calls / arguments, text LCS similarity, C8) + an optional LLM judge + manual pass / fail in the viewer.

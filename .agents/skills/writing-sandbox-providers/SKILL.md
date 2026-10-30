@@ -5,8 +5,8 @@ description: 'Use when changing the kernel side of sandbox@1 or anything that dr
 
 # Sandboxes: the kernel side of `sandbox@1`
 
-One sandbox per conversation (D4), shared by its sub-agents. The kernel's sandbox tools (`sandbox_bash` / `read` / `write` / `edit` / `glob` / `grep` / `deliver`),
-attachment sync and `skill_load` all use it through `SandboxService`. `sandbox@1` is a **single-choice, brokered** extension point: a deployment installs only one sandbox extension,
+One sandbox per conversation (D4), shared by its sub-agents. The kernel's sandbox tools (`Bash` / `Read` / `Write` / `Edit` / `Glob` / `Grep` / `Deliver`),
+attachment sync and `Skill` all use it through `SandboxService`. `sandbox@1` is a **single-choice, brokered** extension point: a deployment installs only one sandbox extension,
 and other extensions cannot `requires` it. For the extension host see `.agents/skills/writing-extensions`; for the tools side see `.agents/skills/writing-tools`.
 
 This skill covers what core owns: the contract as the kernel relies on it, `SandboxService` (leases, fencing, suspension, destruction), the builtin `sandbox_*` tools,
@@ -84,7 +84,7 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
 - **Output**: `maxOutputBytes` is the **combined** limit on stdout + stderr; excess is discarded and `truncated` is set; truncation backs off to a full UTF-8 character boundary.
 - **`/skills` is read-only**: mounted read-only for the sandbox user (or owned by root with 0755), and `writeFile("/skills/…")` is written by the provider as root,
   and must not be redirected elsewhere by a symlink the sandbox user places. The kernel's `/skills` write protection judges only the path string and can be bypassed by symlinks; the real
-  defense is in the provider. Skill files have no executable bit, and `skill_load` tells the model to run them with an interpreter (`sh /skills/x/run.sh`).
+  defense is in the provider. Skill files have no executable bit, and `Skill` tells the model to run them with an interpreter (`sh /skills/x/run.sh`).
 - **File operations resolve as the sandbox user**: permissions and symlinks are resolved as the non-root user, never as root through the daemon.
 - Paths have already passed `validateSandboxPath` (only `/workspace`, `/skills`, `/tmp` are accepted); the working directory is `/workspace` and attachments are in
   `/workspace/attachments/`.
@@ -118,7 +118,7 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   created lazily: `create` runs only on the first sandbox tool call.
 - **Leases** (phase C, `packages/kernel/src/sandbox/leases.ts`, spec `docs/superpowers/specs/2026-10-26-subagents-design.md` §10): using a sandbox recorded
   `running` takes a **shared** lease (up to `sandbox.maxConcurrentCommands`, default 6, hot; 1 for a provider without `concurrentExec` + `killTagged`):
-  every `sandbox_*` tool, attachment sync, `skill_load` copies. Every lifecycle change (create, first use, rebuild after `gone`, `resume`, provider switch,
+  every `sandbox_*` tool, attachment sync, `Skill` copies. Every lifecycle change (create, first use, rebuild after `gone`, `resume`, provider switch,
   `suspend`, `destroy`, `killAll` after resume) takes the **exclusive** lease, alone. Keys: `capk:sandbox:<conv>` (the old lock key, kept for rolling
   upgrades: an exclusive token or the literal `shared`), `capk:sandbox-users:<conv>` (zset of shared tokens by expiry), `capk:sandbox-intent:<conv>`
   (an exclusive waiter's intent: new shared leases wait, writer preference), `capk:sandbox-holders:<conv>` (holder records), `capk:sandbox-path:<conv>:<sha256>`.
@@ -145,9 +145,9 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   is still read, and claimed only by the caller holding the exclusive lease: it sends the next use down the exclusive path, which `killAll`s. Holders of this
   kernel also write that marker with the value `v2` while any holder record exists (this kernel ignores `v2`), so a replica from before phase C that takes
   the lock after a new holder crashed still kills the leftovers during a rolling upgrade. A sandbox just resumed from `suspended` is `killAll`ed too.
-- **Kernel file writes per path**: `sandbox_write`, `sandbox_edit`, attachment sync (its marker) and `skill_load` copies (the skill's marker) take a per-path
+- **Kernel file writes per path**: `Write`, `Edit`, attachment sync (its marker) and `Skill` copies (the skill's marker) take a per-path
   lease (30 s, renewed, waited for up to 30 s, then the tool error "Another sub-agent is writing this file; wait a moment and retry."). What shell commands write is not
-  serialized; the `sandbox_bash` description says other sub-agents may run commands at the same time.
+  serialized; the `Bash` description says other sub-agents may run commands at the same time.
 - **Fencing generation**: each lease acquisition (shared ones too) first increments `generation`, and later state writes (exclusive holders only; shared holders only move `last_used_at` forward with `GREATEST`) compare against it, so an old exclusive holder's writes necessarily fail (`SandboxLockLostError`).
 - **Suspension**: a `@LockedCron` (`sandbox-suspend-idle`, once per minute across replicas) calls `suspend` on sandboxes idle longer than `suspendAfterIdleMinutes` (default 10), or running continuously longer than `maxRunningMinutes`
   (default 120, Ruling M1). Those with any holder are skipped until the next time (one try at the exclusive lease, no intent); one past `maxRunningMinutes`
@@ -158,7 +158,7 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   `SandboxJobs`).
 - **Transparent recovery**: a suspended sandbox is `resume`d on next use; on `gone`, destroyed, or a recorded provider that is not the current provider, an empty sandbox is rebuilt and the tool result carries
   an English notice. Switching providers leaks old instances (the new provider cannot destroy them; they are recorded in the `prev_*` columns and cleaned up only while the old extension is still loaded).
-- **Per-command** limit `sandbox.limits.maxCommandSeconds` (default 7200); `sandbox_bash` defaults to 120 seconds. A command timeout is also tightened to
+- **Per-command** limit `sandbox.limits.maxCommandSeconds` (default 7200); `Bash` defaults to 120 seconds. A command timeout is also tightened to
   the time remaining in the owning run minus 30 seconds (`runtime.maxRunSeconds`, default 900, Ruling M20; the built-in tool context's `runDeadline`), and the result
   tells the model it was due to the run time limit. Long commands need `maxRunSeconds ≥ maxCommandSeconds`, otherwise startup logs a warn.
 

@@ -404,7 +404,7 @@ export const FORM_PAGE_FIXTURE: {
           kind: "switches",
           id: "tools",
           rows: [
-            { name: "sandbox_bash", description: "在沙箱里运行命令", policy: "自动", on: true },
+            { name: "Bash", description: "在沙箱里运行命令", policy: "自动", on: true },
             {
               name: "mcp__acme_docs__search",
               description: "检索产品文档",

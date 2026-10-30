@@ -152,7 +152,7 @@ The types and `validateUiView` are in `packages/plugin-sdk/src/ui.ts`; the kerne
 | `image` | `url`, `alt` | **Absolute http(s) addresses only** (<= 2000 characters, Ruling A34); a relative address under the extension's own routes is rejected |
 | `chart` | `kind: bar / line`, `series[{ label, value }]` | bar chart / line chart; `value` must be a finite number |
 | `actions` | `buttons[{ actionId, label, payload?, danger? }]` (non-empty) | a group of buttons, calling back into `ctx.ui.action` |
-| `form` | `form: InputForm`, `actionId`, `submitLabel` | reuses the form fields of `ask_user`; submitting goes through `action` (with `answer`); it does not submit while a required field is empty |
+| `form` | `form: InputForm`, `actionId`, `submitLabel` | reuses the form fields of `AskUserQuestion`; submitting goes through `action` (with `answer`); it does not submit while a required field is empty |
 
 A view may carry a `badge` (<= 32 characters), shown on the tab, such as todo's "2/4".
 

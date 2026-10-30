@@ -31,6 +31,7 @@ const CHECKS = [
   "Extension permissions",
   "Plugin pack",
   "Tool design",
+  "Tool key length",
   "Plugin test imports",
   "Plugin release metadata",
 ];
@@ -77,7 +78,7 @@ export default defineExtension({
 });
 `;
 
-/** One violation per check: a kernel import, module state, an undeclared hook, a short tool description. */
+/** One violation per check: a kernel import, module state, an undeclared hook, a short tool description, a too long tool key. */
 const BAD_TOOL = `import type { KernelConfig } from "@capybara-hq/kernel";
 import { defineExtension } from "@capybara-hq/plugin-sdk";
 
@@ -89,8 +90,16 @@ export default defineExtension({
   version: "0.1.0",
   sdk: "^0.1.0-rc.0",
   provides: [],
-  permissions: { tools: ["greet"] },
+  permissions: { tools: ["greet", "a_tool_name_that_makes_the_key_longer_than_sixty_four_chars"] },
   setup(ctx) {
+    ctx.tools.register(
+      {
+        name: "a_tool_name_that_makes_the_key_longer_than_sixty_four_chars",
+        description: "Does a thing for the model; use it when asked.",
+        inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      },
+      async () => ({ content: [] }),
+    );
     ctx.hooks.on("model.request", () => undefined, { mode: "observe" });
     ctx.tools.register(
       {
@@ -181,6 +190,7 @@ describe("capybara-plugin check outside this repository", () => {
       "perm-hooks", // Extension permissions
       "plugin-pack-dropped", // Plugin pack
       "tool-description", // Tool design
+      "plugin-tool-key-length", // Tool key length
       "plugin-test-imports", // Plugin test imports
       "plugin-release-metadata", // Plugin release metadata
     ]) {

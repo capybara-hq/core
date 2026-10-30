@@ -108,7 +108,21 @@ interface Manifest {
   caps: Set<string>;
   storage: boolean;
   models: boolean;
+  /** The literal extension name, when it is one. */
+  name: string | undefined;
   setup: Node | undefined;
+}
+
+/** A `ctx.tools.register({ name })` call found in an extension's setup. */
+export interface ToolRegistration {
+  file: string;
+  line: number;
+  /** The extension name of the enclosing defineExtension (undefined: not a literal). */
+  extension: string | undefined;
+  /** The tool name (undefined: not a literal or same-file const). */
+  tool: string | undefined;
+  /** The call carries a `capybara:allow-dynamic-permission <reason>` marker. */
+  allowed: boolean;
 }
 
 const strings = (n: Node | undefined, decls: Map<string, Node>): string[] => {
@@ -140,6 +154,9 @@ function readManifest(obj: Node, decls: Map<string, Node>): Manifest {
     caps: new Set(),
     storage: false,
     models: false,
+    name: stringValue(
+      prop(obj, "name")?.value ? resolve(prop(obj, "name")?.value as Node, decls) : undefined,
+    ),
     setup: undefined,
   };
   for (const key of ["requires", "optional", "provides"]) {
@@ -191,7 +208,12 @@ interface Scope {
   names: Set<string>;
 }
 
-function scanSetup(f: ParsedFile, m: Manifest, decls: Map<string, Node>): Finding[] {
+function scanSetup(
+  f: ParsedFile,
+  m: Manifest,
+  decls: Map<string, Node>,
+  onTool?: (r: ToolRegistration) => void,
+): Finding[] {
   const out: Finding[] = [];
   /** 明确的违规：豁免注释不起作用。 */
   const add = (at: Node, rule: string, message: string): void => {
@@ -279,6 +301,13 @@ function scanSetup(f: ParsedFile, m: Manifest, decls: Map<string, Node>): Findin
           const spec = args[0] ? resolve(args[0], decls) : undefined;
           const nameProp = spec?.type === "ObjectExpression" ? prop(spec, "name") : undefined;
           const name = nameProp ? stringValue(resolve(nameProp.value as Node, decls)) : undefined;
+          onTool?.({
+            file: f.file,
+            line: f.lineOf(n.start),
+            extension: m.name,
+            tool: name,
+            allowed: !!findMarker(f, n)?.reason,
+          });
           if (name === undefined) return dynamic(n, "perm-tools", "the tool name");
           if (!m.tools.has(name)) {
             add(
@@ -390,7 +419,7 @@ function scanSetup(f: ParsedFile, m: Manifest, decls: Map<string, Node>): Findin
   return out;
 }
 
-function scanFile(f: ParsedFile): Finding[] {
+function scanFile(f: ParsedFile, onTool?: (r: ToolRegistration) => void): Finding[] {
   const decls = buildDecls(f);
   const out: Finding[] = [];
   walk(f.program, (n) => {
@@ -400,7 +429,7 @@ function scanFile(f: ParsedFile): Finding[] {
     const arg = (n.arguments as Node[])[0];
     const obj = arg ? resolve(arg, decls) : undefined;
     if (obj?.type !== "ObjectExpression") return;
-    out.push(...scanSetup(f, readManifest(obj, decls), decls));
+    out.push(...scanSetup(f, readManifest(obj, decls), decls, onTool));
   });
   return out;
 }
@@ -438,4 +467,22 @@ export function checkPluginPermissions(pluginDirs: string[]): Finding[] {
     }
   }
   return findings;
+}
+
+/**
+ * Every `ctx.tools.register({ name })` of the non-test sources under `pluginDirs`, found by the
+ * same scanner as {@link checkPluginPermissions} (so it follows ctx aliases and same-file helpers).
+ * Unparseable files are skipped here; the permissions check reports them.
+ */
+export function findToolRegistrations(pluginDirs: string[]): ToolRegistration[] {
+  const out: ToolRegistration[] = [];
+  for (const dir of pluginDirs) {
+    for (const { file, isTest } of listSourceFiles(dir)) {
+      if (isTest) continue;
+      const parsed = parseFile(file);
+      if (isParseError(parsed)) continue;
+      scanFile(parsed, (r) => out.push(r));
+    }
+  }
+  return out.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
 }
