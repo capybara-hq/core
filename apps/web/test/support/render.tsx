@@ -14,6 +14,7 @@ export const ME: Me = {
   via: "session",
   currentOrgId: "o1",
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "owner" }],
+  canCreateOrg: true,
 };
 
 /** 页面测试的外层：next-intl、设计系统上下文与会话（代替 (app) 布局里的 AppFrame）。 */

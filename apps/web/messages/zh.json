@@ -67,7 +67,17 @@
     "noCurrentOrg": "请选择当前组织，之后即可查看与新建 Agent。",
     "role": "角色",
     "slug": "标识",
-    "orgCard": "组织"
+    "orgCard": "组织",
+    "noMembershipsCreateHint": "创建一个组织开始使用，或者请组织管理员邀请你加入。",
+    "createOrg": {
+      "open": "创建组织",
+      "title": "创建组织",
+      "nameLabel": "组织名称",
+      "nameHint": "最多 100 个字符，之后可以在组织设置里修改。",
+      "nameRequired": "请填写组织名称。",
+      "submit": "创建",
+      "cancel": "取消"
+    }
   },
   "errors": {
     "unknown": "出错了，请稍后重试。",

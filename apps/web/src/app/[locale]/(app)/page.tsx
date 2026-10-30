@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Button,
   Card,
   Field,
   KeyValue,
@@ -11,11 +12,15 @@ import {
   Text,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
+import { useState } from "react";
+import { CreateOrgDialog } from "../../../components/CreateOrgDialog";
 import { RequireSession, useSession } from "../../../components/shell/session";
 
 /**
- * `/[locale]`：概览——问候、当前组织（可切换）与进入 Agents 的入口；
- * 不属于任何组织时显示 StatusPage（未开通）。未登录由 (app) 布局跳转登录页。
+ * `/[locale]`: the overview — greeting, the current organization (switchable), "Create an
+ * organization" when the account may, and the way into Agents. Without any membership it shows a
+ * StatusPage that offers creating one (or says to ask for an invitation when the deployment only
+ * lets enterprise admins create organizations). Signed-out visitors are sent to login by (app).
  */
 export default function HomePage() {
   return (
@@ -28,15 +33,29 @@ export default function HomePage() {
 function Home() {
   const t = useTranslations("home");
   const { me, switchOrg } = useSession();
+  const [creating, setCreating] = useState(false);
+  const dialog = me.canCreateOrg ? (
+    <CreateOrgDialog open={creating} onOpenChange={setCreating} />
+  ) : null;
 
   if (me.memberships.length === 0) {
     return (
-      <StatusPage
-        header={{ title: t("title") }}
-        kind="disabled"
-        title={t("noMemberships")}
-        description={t("noMembershipsHint")}
-      />
+      <>
+        <StatusPage
+          header={{ title: t("title") }}
+          kind="disabled"
+          title={t("noMemberships")}
+          description={me.canCreateOrg ? t("noMembershipsCreateHint") : t("noMembershipsHint")}
+          action={
+            me.canCreateOrg ? (
+              <Button variant="primary" onClick={() => setCreating(true)}>
+                {t("createOrg.open")}
+              </Button>
+            ) : undefined
+          }
+        />
+        {dialog}
+      </>
     );
   }
 
@@ -50,10 +69,21 @@ function Home() {
     <OverviewPage
       header={{
         title: t("greeting", { name: me.account.displayName }),
-        actions:
-          current === undefined
+        actions: [
+          ...(me.canCreateOrg
+            ? [
+                {
+                  label: t("createOrg.open"),
+                  icon: "plus" as const,
+                  variant: "default" as const,
+                  onSelect: () => setCreating(true),
+                },
+              ]
+            : []),
+          ...(current === undefined
             ? []
-            : [{ label: t("openAgents"), variant: "primary", href: "/agents" }],
+            : [{ label: t("openAgents"), variant: "primary" as const, href: "/agents" }]),
+        ],
       }}
     >
       <Card title={t("orgCard")}>
@@ -77,6 +107,7 @@ function Home() {
           )}
         </Stack>
       </Card>
+      {dialog}
     </OverviewPage>
   );
 }

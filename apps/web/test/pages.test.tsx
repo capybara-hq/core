@@ -93,9 +93,58 @@ describe("(app) 页面模板", () => {
   });
 
   it("没有任何组织：StatusPage disabled「还没有加入任何组织」", () => {
-    renderPage(<HomePage />, { locale: "zh", me: { ...ME, currentOrgId: null, memberships: [] } });
+    renderPage(<HomePage />, {
+      locale: "zh",
+      me: { ...ME, currentOrgId: null, memberships: [], canCreateOrg: false },
+    });
     expect(template("StatusPage")?.getAttribute("data-kind")).toBe("disabled");
     expect(screen.getByText("还没有加入任何组织")).toBeTruthy();
+    // the deployment lets only enterprise admins create organizations: no create button
+    expect(screen.getByText(zh.home.noMembershipsHint)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: zh.home.createOrg.open })).toBeNull();
+  });
+
+  it("no organization but allowed to create one: the status page creates it and makes it current", async () => {
+    const calls = stubApi({
+      "POST /api/v1/orgs": () =>
+        json(201, { org: { id: "o9", slug: "acme", name: "Acme" }, role: "owner" }),
+    });
+    const switchOrg = vi.fn(async () => {});
+    renderPage(<HomePage />, {
+      me: { ...ME, currentOrgId: null, memberships: [], canCreateOrg: true },
+      session: { switchOrg },
+    });
+    expect(screen.getByText(en.home.noMembershipsCreateHint)).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: en.home.createOrg.open }));
+    const dialog = await screen.findByRole("dialog", { name: en.home.createOrg.title });
+    // an empty name is refused before any request
+    await user.click(within(dialog).getByRole("button", { name: en.home.createOrg.submit }));
+    expect(within(dialog).getByText(en.home.createOrg.nameRequired)).toBeTruthy();
+    expect(calls).toEqual([]);
+    await user.type(within(dialog).getByRole("textbox"), "  Acme ");
+    await user.click(within(dialog).getByRole("button", { name: en.home.createOrg.submit }));
+    expect(calls).toEqual([{ method: "POST", url: "/api/v1/orgs", body: { name: "Acme" } }]);
+    expect(switchOrg).toHaveBeenCalledWith("o9");
+  });
+
+  it("the overview offers creating another organization in its header when allowed", async () => {
+    renderPage(<HomePage />);
+    expect(screen.getByRole("button", { name: en.home.createOrg.open })).toBeTruthy();
+    cleanup();
+    renderPage(<HomePage />, { me: { ...ME, canCreateOrg: false } });
+    expect(screen.queryByRole("button", { name: en.home.createOrg.open })).toBeNull();
+  });
+
+  it("a page that needs an organization keeps its own title and offers creating one", () => {
+    resetNavigation("/agents");
+    renderPage(<AgentsPage />, {
+      locale: "zh",
+      me: { ...ME, currentOrgId: null, memberships: [], canCreateOrg: true },
+    });
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(zh.nav.agents);
+    expect(screen.getByText("还没有加入任何组织")).toBeTruthy();
+    expect(screen.getByRole("button", { name: zh.home.createOrg.open })).toBeTruthy();
   });
 
   it("Agents 页：ListPage + DataTable（名称、模型），header 主操作「新建 Agent」，行菜单「开始对话」", async () => {

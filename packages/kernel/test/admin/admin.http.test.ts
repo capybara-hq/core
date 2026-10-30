@@ -499,6 +499,10 @@ describe("企业管理员端点", () => {
   it("PUT /admin/settings { orgCreation: enterprise_admin } 后普通用户 POST /orgs → 403 org.creation_disabled", async () => {
     const adminReq = await session("admin");
     const userReq = await session("user");
+    const canCreate = async (req: typeof userReq) =>
+      ((await req({ method: "GET", url: "/api/v1/me" })).json() as { canCreateOrg: boolean })
+        .canCreateOrg;
+    expect(await canCreate(userReq)).toBe(true);
     expect((await adminReq({ method: "GET", url: "/api/v1/admin/settings" })).json()).toEqual({
       orgCreation: "anyone",
       runConcurrencyOverrides: {},
@@ -529,6 +533,9 @@ describe("企业管理员端点", () => {
       payload: { orgCreation: "nobody" },
     });
     expect(bad.statusCode).toBe(400);
+    // /me tells the web app whether to offer "create an organization"
+    expect(await canCreate(userReq)).toBe(false);
+    expect(await canCreate(adminReq)).toBe(true);
     const denied = await userReq({ method: "POST", url: "/api/v1/orgs", payload: { name: "X" } });
     expect(denied.statusCode).toBe(403);
     expect(errCode(denied)).toBe("org.creation_disabled");

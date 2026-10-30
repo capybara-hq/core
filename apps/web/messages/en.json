@@ -67,7 +67,17 @@
     "noCurrentOrg": "Select a current organization to view and create agents.",
     "role": "Role",
     "slug": "Slug",
-    "orgCard": "Organization"
+    "orgCard": "Organization",
+    "noMembershipsCreateHint": "Create an organization to get started, or ask an organization admin to invite you.",
+    "createOrg": {
+      "open": "Create organization",
+      "title": "Create an organization",
+      "nameLabel": "Organization name",
+      "nameHint": "Up to 100 characters. You can change it later in the organization settings.",
+      "nameRequired": "Enter a name for the organization.",
+      "submit": "Create",
+      "cancel": "Cancel"
+    }
   },
   "errors": {
     "unknown": "Something went wrong. Please try again later.",

@@ -20,6 +20,8 @@ export interface Me {
   via: "session" | "pat";
   currentOrgId: string | null;
   memberships: Membership[];
+  /** Whether this account may create an organization (the deployment's `orgCreation` setting). */
+  canCreateOrg: boolean;
 }
 
 export interface SetupInput {
@@ -39,6 +41,10 @@ export const login = (loginName: string, password: string) =>
 export const logout = () => apiFetch<void>("/api/v1/auth/logout", { method: "POST" });
 
 export const getMe = () => apiFetch<Me>("/api/v1/me");
+
+/** Creates an organization owned by the current account. */
+export const createOrg = (name: string) =>
+  apiFetch<{ org: { id: string; slug: string; name: string } }>("/api/v1/orgs", post({ name }));
 
 /** 切换当前组织（仅 Web 会话）。 */
 export const setCurrentOrg = (orgId: string | null) =>
