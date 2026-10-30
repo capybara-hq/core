@@ -50,11 +50,19 @@ import type { QueueItem, QueuePauseReason } from "./queue.js";
 import { ConversationQueue } from "./queue.service.js";
 import { ConversationSandboxStatus, type SandboxStatusView } from "./sandbox-status.js";
 
+/** Shared by the list and groups queries: title search, run activity and the archived list. */
+const searchFields = {
+  q: z.string().min(1).max(100).optional(),
+  state: z.enum(["running", "waiting"]).optional(),
+  archived: z.enum(["1"]).optional(),
+};
+
 const ListQuery = z.object({
   after: z.string().min(1).max(100).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   /** Only this agent's conversations (the sidebar's per-group "More"). */
   agentId: z.string().min(1).max(100).optional(),
+  ...searchFields,
 });
 
 const GroupsQuery = z.object({
@@ -62,6 +70,7 @@ const GroupsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(20),
   /** The last group's agent id from the previous page (`next`). */
   after: z.string().min(1).max(100).optional(),
+  ...searchFields,
 });
 
 const SubagentsQuery = z.object({
@@ -354,6 +363,9 @@ export class ConversationsController {
       limit: q.limit + 1,
       ...(q.after !== undefined && { after: q.after }),
       ...(q.agentId !== undefined && { agentId: q.agentId }),
+      ...(q.q !== undefined && { q: q.q }),
+      ...(q.state !== undefined && { state: q.state }),
+      ...(q.archived !== undefined && { archived: true }),
     });
     const conversations = rows.slice(0, q.limit);
     const next = rows.length > q.limit ? (conversations.at(-1)?.id ?? null) : null;
@@ -371,12 +383,15 @@ export class ConversationsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @ZQuery(ConversationGroupsQueryDto) q: z.infer<typeof GroupsQuery>,
-  ): Promise<{ groups: ConversationGroup[]; next: string | null }> {
+  ): Promise<{ groups: ConversationGroup[]; next: string | null; archivedCount: number }> {
     const p = requireUser(principal);
     return this.conversations.listGroups(org.orgId, p.account.id, {
       perGroup: q.perGroup,
       limit: q.limit,
       ...(q.after !== undefined && { after: q.after }),
+      ...(q.q !== undefined && { q: q.q }),
+      ...(q.state !== undefined && { state: q.state }),
+      ...(q.archived !== undefined && { archived: true }),
     });
   }
 

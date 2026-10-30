@@ -43,6 +43,27 @@ export interface ConversationView {
   subagentType: string | null;
   /** When the owner archived it; null = not archived (hidden from the default lists). */
   archivedAt: Date | null;
+  /**
+   * What the latest run is doing: `running` (queued or running), `waiting` (an approval or a
+   * question), else null. Only the list queries compute it; other responses carry null.
+   */
+  activity: "running" | "waiting" | null;
+}
+
+/** Escapes `\`, `%` and `_` so user text is matched literally by `LIKE … ESCAPE '\'`. */
+export function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
+/** SQL for the activity of the conversation row aliased/named `ref` (a correlated subquery). */
+function activitySql(ref: string) {
+  const id = sql.ref(`${ref}.id`);
+  return sql<"running" | "waiting" | null>`(
+    SELECT CASE lr.status WHEN 'queued' THEN 'running' WHEN 'running' THEN 'running'
+      WHEN 'waiting' THEN 'waiting' END
+    FROM capybara.runs lr WHERE lr.conversation_id = ${id}
+    ORDER BY lr.created_at DESC, lr.id DESC LIMIT 1
+  )`;
 }
 
 /** One agent's group in the sidebar list: the caller's newest conversations with that agent. */
@@ -149,6 +170,7 @@ function toView(r: {
   parent_conversation_id: string | null;
   subagent_type: string | null;
   archived_at: Date | null;
+  activity?: "running" | "waiting" | null;
 }): ConversationView {
   return {
     id: r.id,
@@ -164,6 +186,7 @@ function toView(r: {
     parentConversationId: r.parent_conversation_id,
     subagentType: r.subagent_type,
     archivedAt: r.archived_at,
+    activity: r.activity ?? null,
   };
 }
 
@@ -509,11 +532,19 @@ export class ConversationsService {
   async listMine(
     orgId: string,
     accountId: string,
-    opts: { after?: string; limit: number; agentId?: string; archived?: boolean },
+    opts: {
+      after?: string;
+      limit: number;
+      agentId?: string;
+      archived?: boolean;
+      q?: string;
+      state?: "running" | "waiting";
+    },
   ): Promise<ConversationView[]> {
     let q = this.db
       .selectFrom("conversations")
       .select(COLUMNS)
+      .select(activitySql("conversations").as("activity"))
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
       // 评测回放的隐藏对话（kind = 'eval'）不在「我的对话」里
@@ -534,6 +565,12 @@ export class ConversationsService {
       .orderBy("id", "desc")
       .limit(opts.limit);
     if (opts.agentId !== undefined) q = q.where("agent_id", "=", opts.agentId);
+    if (opts.q !== undefined) {
+      q = q.where(sql<boolean>`conversations.title ILIKE ${`%${escapeLike(opts.q)}%`} ESCAPE '\\'`);
+    }
+    if (opts.state !== undefined) {
+      q = q.where(sql<boolean>`${activitySql("conversations")} = ${opts.state}`);
+    }
     if (opts.after !== undefined) {
       const after = opts.after;
       q = q.where(
@@ -557,8 +594,15 @@ export class ConversationsService {
   async listGroups(
     orgId: string,
     accountId: string,
-    opts: { perGroup: number; limit: number; after?: string; archived?: boolean },
-  ): Promise<{ groups: ConversationGroup[]; next: string | null }> {
+    opts: {
+      perGroup: number;
+      limit: number;
+      after?: string;
+      archived?: boolean;
+      q?: string;
+      state?: "running" | "waiting";
+    },
+  ): Promise<{ groups: ConversationGroup[]; next: string | null; archivedCount: number }> {
     const visibleAgents = this.db
       .selectFrom("agents")
       .select("agents.id")
@@ -567,6 +611,12 @@ export class ConversationsService {
       .where(visibleTo(accountId));
     const archivedFilter =
       opts.archived === true ? sql`c.archived_at IS NOT NULL` : sql`c.archived_at IS NULL`;
+    const searchFilter =
+      opts.q === undefined
+        ? sql``
+        : sql`AND c.title ILIKE ${`%${escapeLike(opts.q)}%`} ESCAPE '\\'`;
+    const stateFilter =
+      opts.state === undefined ? sql`` : sql`AND ${activitySql("c")} = ${opts.state}`;
     const cursor =
       opts.after === undefined
         ? sql``
@@ -589,12 +639,13 @@ export class ConversationsService {
       parent_conversation_id: string | null;
       subagent_type: string | null;
       archived_at: Date | null;
+      activity: "running" | "waiting" | null;
     }>`
       WITH g AS (
         SELECT c.agent_id, max(c.updated_at) AS latest_at
         FROM capybara.conversations c
         WHERE c.org_id = ${orgId} AND c.account_id = ${accountId} AND c.kind = 'chat'
-          AND c.deleted_at IS NULL AND ${archivedFilter}
+          AND c.deleted_at IS NULL AND ${archivedFilter} ${searchFilter} ${stateFilter}
           AND c.agent_id IN ${visibleAgents}
         GROUP BY c.agent_id
       ), page AS (
@@ -606,17 +657,17 @@ export class ConversationsService {
       SELECT page.agent_id, page.latest_at, v.definition ->> 'name' AS agent_name,
         cs.id, cs.org_id, cs.account_id, cs.title, cs.title_source, cs.selection, cs.last_seq,
         cs.created_at, cs.updated_at, cs.parent_conversation_id, cs.subagent_type,
-        cs.archived_at
+        cs.archived_at, cs.activity
       FROM page
       JOIN capybara.agents a ON a.id = page.agent_id
       JOIN capybara.agent_versions v ON v.agent_id = a.id AND v.version = a.current_version
       CROSS JOIN LATERAL (
         SELECT c.id, c.org_id, c.account_id, c.title, c.title_source, c.selection, c.last_seq,
           c.created_at, c.updated_at, c.parent_conversation_id, c.subagent_type,
-          c.archived_at
+          c.archived_at, ${activitySql("c")} AS activity
         FROM capybara.conversations c
         WHERE c.org_id = ${orgId} AND c.account_id = ${accountId} AND c.kind = 'chat'
-          AND c.deleted_at IS NULL AND ${archivedFilter}
+          AND c.deleted_at IS NULL AND ${archivedFilter} ${searchFilter} ${stateFilter}
           AND c.agent_id = page.agent_id
         ORDER BY c.updated_at DESC, c.id DESC
         LIMIT ${opts.perGroup + 1}
@@ -641,7 +692,14 @@ export class ConversationsService {
     }
     const page = groups.slice(0, opts.limit);
     const next = groups.length > opts.limit ? (page.at(-1)?.agent.id ?? null) : null;
-    return { groups: page, next };
+    // The archived entry's count ignores `q` and `state`
+    const counted = await sql<{ n: string }>`
+      SELECT count(*) AS n FROM capybara.conversations c
+      WHERE c.org_id = ${orgId} AND c.account_id = ${accountId} AND c.kind = 'chat'
+        AND c.deleted_at IS NULL AND c.archived_at IS NOT NULL
+        AND c.agent_id IN ${visibleAgents}
+    `.execute(this.db.db);
+    return { groups: page, next, archivedCount: Number(counted.rows[0]?.n ?? 0) };
   }
 
   /**

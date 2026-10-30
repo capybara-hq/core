@@ -173,7 +173,7 @@ describe("GET /conversations/groups", () => {
   it("zero conversations -> { groups: [], next: null } (not captured by GET /conversations/:id)", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);
-    expect(await groups(req, orgId)).toEqual({ groups: [], next: null });
+    expect(await groups(req, orgId)).toEqual({ groups: [], next: null, archivedCount: 0 });
   });
 
   it("groups by agent, ordered by latest activity; perGroup newest first with `more`", async () => {
@@ -222,7 +222,11 @@ describe("GET /conversations/groups", () => {
     expect(p2.groups.map((g) => g.agent.id)).toEqual([c]);
     expect(p2.next).toBeNull();
     // A cursor agent that is no longer listed (no conversations of mine) -> empty page.
-    expect(await groups(req, orgId, `?after=${randomUUID()}`)).toEqual({ groups: [], next: null });
+    expect(await groups(req, orgId, `?after=${randomUUID()}`)).toEqual({
+      groups: [],
+      next: null,
+      archivedCount: 0,
+    });
   });
 
   it("never lists other users' conversations or eval conversations", async () => {
@@ -330,7 +334,11 @@ describe("GET /conversations/groups", () => {
       [a2, [c2]],
     ]);
     // A cursor from the other org finds nothing here.
-    expect(await groups(req, org1, `?after=${a2}`)).toEqual({ groups: [], next: null });
+    expect(await groups(req, org1, `?after=${a2}`)).toEqual({
+      groups: [],
+      next: null,
+      archivedCount: 0,
+    });
   });
 
   it("a cursor group with new activity after page 1 is re-evaluated: groups may repeat", async () => {
