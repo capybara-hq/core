@@ -186,6 +186,7 @@ describe("GET /conversations/:id/tools", () => {
       key: "sandbox_bash",
       title: null,
       kind: "command",
+      sandbox: true,
       keyArgs: ["command"],
       source: { kind: "builtin" },
     });
@@ -195,6 +196,10 @@ describe("GET /conversations/:id/tools", () => {
     expect(t.sandbox_glob).toMatchObject({ kind: "search", keyArgs: ["pattern"] });
     expect(t.sandbox_grep).toMatchObject({ kind: "search", keyArgs: ["pattern", "path"] });
     expect(t.sandbox_deliver).toMatchObject({ kind: "tool", keyArgs: ["path"] });
+    expect(t.sandbox_deliver).toMatchObject({ sandbox: true });
+    for (const k of ["skill_load", "tool_search", "ask_user", "agent"]) {
+      expect(t[k]?.sandbox, k).toBe(false);
+    }
     expect(t.skill_load).toMatchObject({ kind: "meta", keyArgs: ["name"] });
     expect(t.tool_search).toMatchObject({ kind: "meta", keyArgs: ["query"] });
     expect(t.ask_user).toMatchObject({ kind: "meta", keyArgs: [], title: null });
@@ -224,6 +229,7 @@ describe("GET /conversations/:id/tools", () => {
         key: "mcp__chat__search",
         title: "Search messages",
         kind: "connector",
+        sandbox: false,
         keyArgs: ["query", "channel"],
         source: { kind: "connector", id: connectorId, name: "Acme Chat" },
       },
@@ -231,6 +237,7 @@ describe("GET /conversations/:id/tools", () => {
         key: "mcp__chat__post",
         title: null,
         kind: "connector",
+        sandbox: false,
         keyArgs: [],
         source: { kind: "connector", id: connectorId, name: "Acme Chat" },
       },
@@ -278,6 +285,7 @@ describe("GET /conversations/:id/tools", () => {
       key: "plugin__mem-connector__echo",
       title: "Echo",
       kind: "tool",
+      sandbox: false,
       keyArgs: ["text"],
       source: { kind: "extension", name: "mem-connector" },
     });
@@ -293,8 +301,22 @@ describe("GET /conversations/:id/tools", () => {
     ]);
     expect(res.statusCode, res.body).toBe(200);
     expect((res.json() as { tools: ToolInfo[] }).tools).toEqual([
-      { key: "mcp__nope__x", title: null, kind: "tool", keyArgs: [], source: { kind: "unknown" } },
-      { key: "mystery", title: null, kind: "tool", keyArgs: [], source: { kind: "unknown" } },
+      {
+        key: "mcp__nope__x",
+        title: null,
+        kind: "tool",
+        sandbox: false,
+        keyArgs: [],
+        source: { kind: "unknown" },
+      },
+      {
+        key: "mystery",
+        title: null,
+        kind: "tool",
+        sandbox: false,
+        keyArgs: [],
+        source: { kind: "unknown" },
+      },
       expect.objectContaining({ key: "ask_user", kind: "meta" }),
     ]);
   });

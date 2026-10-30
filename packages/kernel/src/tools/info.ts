@@ -10,6 +10,7 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { UUID_RE } from "../ui/registry.js";
+import { SANDBOX_TOOL_NAMES } from "./builtins/sandbox/names.js";
 import { ToolRegistry } from "./registry.js";
 
 /**
@@ -25,6 +26,8 @@ export interface ToolInfo {
   /** The declared display title (`ToolSpec.title`), or null. */
   title: string | null;
   kind: ToolKind;
+  /** True exactly for the builtin tools that run in the conversation's sandbox. */
+  sandbox: boolean;
   /** The declared key arguments (`ToolSpec.keyArgs`), or []. */
   keyArgs: string[];
   source:
@@ -120,6 +123,7 @@ export async function toolInfo(
         key,
         ...display(b),
         kind: BUILTIN_TOOL_KINDS[key] ?? "tool",
+        sandbox: (SANDBOX_TOOL_NAMES as readonly string[]).includes(key),
         source: { kind: "builtin" },
       };
     }
@@ -129,6 +133,7 @@ export async function toolInfo(
         key,
         ...display(e.spec),
         kind: "tool",
+        sandbox: false,
         source: { kind: "extension", name: e.plugin },
       };
     const c = connectorTools.get(key);
@@ -138,10 +143,18 @@ export async function toolInfo(
         key,
         ...display(c.spec as ToolSpec),
         kind: "connector",
+        sandbox: false,
         source: { kind: "connector", id: c.id, name: c.name },
       };
     }
-    return { key, title: null, kind: "tool", keyArgs: [], source: { kind: "unknown" } };
+    return {
+      key,
+      title: null,
+      kind: "tool",
+      sandbox: false,
+      keyArgs: [],
+      source: { kind: "unknown" },
+    };
   });
 }
 

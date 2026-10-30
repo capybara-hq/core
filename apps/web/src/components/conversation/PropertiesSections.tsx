@@ -55,18 +55,23 @@ export function connectorsUsed(
   return out;
 }
 
-/** The kinds of the builtin tools that run in the sandbox (kernel `BUILTIN_TOOL_KINDS`). */
-const SANDBOX_KINDS: ReadonlySet<string> = new Set(["command", "read", "edit", "search"]);
-
+/**
+ * How many sandbox tool results the events hold, or null while the metadata of any result key is
+ * still unknown (so the count never jumps when it arrives).
+ */
 const sandboxUses = (
   events: readonly ConversationEvent[],
   info: ReadonlyMap<string, ToolInfo>,
-): number =>
-  events.filter((e) => {
-    if (e.type !== "tool_result") return false;
+): number | null => {
+  let n = 0;
+  for (const e of events) {
+    if (e.type !== "tool_result") continue;
     const i = info.get(e.payload.toolKey);
-    return i !== undefined && i.source.kind === "builtin" && SANDBOX_KINDS.has(i.kind);
-  }).length;
+    if (i === undefined) return null;
+    if (i.sandbox) n++;
+  }
+  return n;
+};
 
 /**
  * The built-in Context section (the old Context tab): the context ratio of the latest step's usage,
@@ -108,12 +113,14 @@ export function ContextSection({
   );
   const toolInfo = useToolInfo(orgId, conversationId, resultKeys);
   const uses = useMemo(() => sandboxUses(events, toolInfo), [events, toolInfo]);
-  const seen = useRef(uses);
+  const seen = useRef<number | null>(null);
   const { reload } = sandbox;
   useEffect(() => {
-    if (uses === seen.current) return;
+    if (uses === null) return;
+    const prev = seen.current;
     seen.current = uses;
-    reload();
+    // The first resolved count is the baseline, not a change.
+    if (prev !== null && uses !== prev) reload();
   }, [uses, reload]);
   const s = sandbox.state;
   const sandboxText =

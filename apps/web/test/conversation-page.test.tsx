@@ -852,6 +852,7 @@ describe("tool rows read the tool info API", () => {
               key: "plugin__slack__search",
               title: "Search messages",
               kind: "connector",
+              sandbox: false,
               keyArgs: ["query"],
               source: { kind: "connector", id: "k1", name: "Slack" },
             },

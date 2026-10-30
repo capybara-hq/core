@@ -617,6 +617,8 @@ export interface ToolInfo {
   key: string;
   title: string | null;
   kind: "command" | "read" | "edit" | "search" | "connector" | "meta" | "tool";
+  /** True exactly for the builtin tools that run in the conversation's sandbox. */
+  sandbox: boolean;
   keyArgs: string[];
   source:
     | { kind: "builtin" }

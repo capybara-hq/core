@@ -43,6 +43,7 @@ const INFO: ToolInfo = {
   key: "mcp__fixture__delete_item",
   title: "Delete item",
   kind: "connector",
+  sandbox: false,
   keyArgs: ["id"],
   source: { kind: "connector", id: "app1", name: "Fixture" },
 };

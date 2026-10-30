@@ -1,11 +1,11 @@
-import { cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ChatPage from "../src/app/[locale]/(app)/chat/[conversationId]/page";
 import { formatRightHash, parseRightHash } from "../src/lib/right-area";
 import type { UiView } from "../src/lib/ui";
 import { type Call, json, stubApi } from "./support/api";
-import { AGENTS, CONV, FakeEventSource, MODELS, userMsg } from "./support/conversation";
+import { AGENTS, CONV, ev, FakeEventSource, MODELS, userMsg } from "./support/conversation";
 import { resetNavigation } from "./support/navigation";
 import { renderPage } from "./support/render";
 
@@ -285,5 +285,47 @@ describe("the output panel", () => {
     const panel = await screen.findByRole("complementary", { name: "Full output" });
     expect(await within(panel).findByText("the whole output")).toBeTruthy();
     expect(window.location.hash).toBe("#output=call_1");
+  });
+});
+
+describe("the Context section's sandbox status", () => {
+  const toolInfo = (key: string, sandbox: boolean) => ({
+    key,
+    title: null,
+    kind: sandbox ? "command" : "tool",
+    sandbox,
+    keyArgs: [],
+    source: { kind: "builtin" },
+  });
+  const result = (seq: number, toolKey: string) =>
+    ev(seq, "tool_result", { step: 0, callId: `c${seq}`, toolKey, content: "ok", isError: false });
+
+  it("existing sandbox calls do not reload on first load; a later sandbox_deliver result does", async () => {
+    const calls = api("c1", {
+      [`GET ${conv("c1")}/events`]: () =>
+        json(200, { events: [userMsg(1, "go"), result(2, "sandbox_bash")] }),
+      [`GET ${conv("c1")}/tools`]: (c) => {
+        const keys = (new URL(c.url, "http://x").searchParams.get("keys") ?? "").split(",");
+        return json(200, {
+          tools: keys.map((k) => toolInfo(k, k === "sandbox_bash" || k === "sandbox_deliver")),
+        });
+      },
+    });
+    const sandboxGets = () => calls.filter((c) => c.url.endsWith("/c1/sandbox")).length;
+    const toolGets = () => calls.filter((c) => c.url.includes("/c1/tools")).length;
+    renderPage(<ChatPage />, { locale: "en" });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Properties" }));
+    await waitFor(() => expect(sandboxGets()).toBe(1));
+    await waitFor(() => expect(toolGets()).toBeGreaterThan(0));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(sandboxGets()).toBe(1);
+
+    act(() => {
+      FakeEventSource.instances[0]?.emit("event", result(3, "sandbox_deliver"));
+    });
+    await waitFor(() => expect(sandboxGets()).toBe(2));
   });
 });
