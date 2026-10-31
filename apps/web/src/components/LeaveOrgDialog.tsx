@@ -13,8 +13,8 @@ import { FormError } from "./form-error";
 /**
  * 退出组织… (any member; the kernel refuses the last owner): a confirmation saying what leaving
  * does. An owner's dialog first counts the owners; the only owner is told to transfer ownership
- * and gets no confirm button. The kernel ends every session of the account when it offboards, so
- * `onLeft` signs out.
+ * and gets no confirm button. Leaving keeps the sign-in (only this org's access ends), so
+ * `onLeft` moves to another org or the chooser.
  */
 export function LeaveOrgDialog({
   orgId,

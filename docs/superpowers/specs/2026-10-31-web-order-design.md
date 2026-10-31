@@ -356,8 +356,9 @@ console only). Hiding is cosmetic: every route keeps its `@OrgAction` / owner ch
 | `/admin/*` | enterprise admins only, whatever the org role | | | |
 
 - **退出组织** (`POST /orgs/:id/leave`, `org.read`): a confirmation saying what leaving does. The
-  kernel offboards the member, which ends **every session of the account** (sessions are
-  account-level), so leaving signs out and returns to the sign-in page.
+  kernel offboards the member but keeps the account's sessions and personal tokens (a removal by an
+  admin and directory offboarding still revoke them): access ends with the membership, so the web
+  switches to another org of the account, or opens the org chooser when none is left.
 - **删除组织** (`DELETE /orgs/:id`, `org.delete`): typing the slug confirms (`DangerConfirm`);
   afterwards no org is current and the org chooser opens.
 - **服务令牌** (`/orgs/:id/service-tokens`, `org.tokens.manage`, web sessions only): §3.4.

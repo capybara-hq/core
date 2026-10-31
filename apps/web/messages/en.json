@@ -3328,10 +3328,11 @@
     "leave": {
       "action": "Leave organization…",
       "title": "Leave organization",
-      "description": "You lose access to this organization, and the agents you own go to its owner. Leaving ends your sign-in on every device; sign in again afterwards.",
+      "description": "You lose access to this organization, and the agents you own go to its owner. Your other organizations are not affected.",
       "confirm": "Leave organization",
       "lastOwner": "You are the only owner of this organization. Transfer ownership to someone else under Members before leaving.",
-      "toMembers": "Go to Members"
+      "toMembers": "Go to Members",
+      "left": "You left {name}"
     },
     "danger": {
       "title": "Danger zone"

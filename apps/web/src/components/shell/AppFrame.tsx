@@ -175,6 +175,19 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   }
 
   const currentOrg = me?.memberships.find((m) => m.orgId === me.currentOrgId);
+
+  // Leaving keeps the sign-in (web order §9): the kernel already cleared the current org, so move
+  // to another org of the account, or reload into the org chooser when none is left.
+  async function onLeftOrg() {
+    const left = currentOrg;
+    setLeavingOrg(false);
+    if (left) toast.success(t("orgLifecycle.leave.left", { name: left.name }));
+    const next = me?.memberships.find((m) => m.orgId !== left?.orgId);
+    if (next) await switchOrg(next.orgId);
+    else await load();
+    // the page belonged to the org just left
+    router.replace("/");
+  }
   // The account menu (web order §2.1): Organization ▸ (the current one checked), Language ▸,
   // Personal settings, sign out; the theme is the switch after the account.
   const createOrgItem: MenuItem[] = me?.canCreateOrg
@@ -310,7 +323,7 @@ export function AppFrame({ version, children }: { version: string; children: Rea
             orgId={session.me.currentOrgId}
             owner={currentOrg?.role === "owner"}
             onClose={() => setLeavingOrg(false)}
-            onLeft={() => void onLogout()}
+            onLeft={() => void onLeftOrg()}
           />
         ) : null}
       </SessionContext.Provider>
@@ -408,7 +421,7 @@ export function AppFrame({ version, children }: { version: string; children: Rea
               orgId={session.me.currentOrgId}
               owner={currentOrg?.role === "owner"}
               onClose={() => setLeavingOrg(false)}
-              onLeft={() => void onLogout()}
+              onLeft={() => void onLeftOrg()}
             />
           ) : null}
         </SetupContext.Provider>
