@@ -10,7 +10,6 @@ import {
   OverviewPage,
   Skeleton,
   Stack,
-  StepList,
   Text,
   TextLink,
   untitledLabel,
@@ -18,7 +17,6 @@ import {
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
-import { setupReady, useSetupSteps } from "../../components/conversation/SetupGuide";
 import { usePagePath } from "../../components/shell/path";
 import { RequireSession, useSession } from "../../components/shell/session";
 import { useRouter } from "../../i18n/navigation";
@@ -35,9 +33,9 @@ import { useLoad } from "../../lib/use-load";
 
 /**
  * `/`: the overview. With a current organization: what waits on me (the inbox, approvals approvable
- * in place), the conversations to pick up, the organization at a glance and the agents I use most;
- * until a model and an agent exist, the setup checklist instead (the new-conversation page shows
- * the same steps). Without a current organization the app frame shows the org chooser instead
+ * in place), the conversations to pick up, the organization at a glance and the agents I use most.
+ * Until a model and an agent exist the app frame draws the setup layout here instead (web-order
+ * spec §3.8). Without a current organization the app frame shows the org chooser instead
  * (`OrgChooser`); creating another org is in the account menu. Signed-out visitors are sent to
  * login by (app).
  */
@@ -154,9 +152,6 @@ function Overview({ orgId }: { orgId: string }) {
     </Card>
   );
 
-  if (!setupReady(data.agents, data.providers)) {
-    return <SetupOverview data={data} orgName={orgName} orgCard={orgCard} />;
-  }
   return (
     <DailyOverview
       orgId={orgId}
@@ -166,62 +161,6 @@ function Overview({ orgId }: { orgId: string }) {
       orgCard={orgCard}
       onChanged={reload}
     />
-  );
-}
-
-/** Before a model and an agent exist: the setup checklist, then what can wait. */
-function SetupOverview({
-  data,
-  orgName,
-  orgCard,
-}: {
-  data: OverviewData;
-  orgName: string;
-  orgCard: React.ReactNode;
-}) {
-  const home = usePagePath("home");
-  const t = useTranslations("home");
-  const { me } = useSession();
-  const steps = useSetupSteps(data.agents, data.providers);
-  const done = steps.filter((s) => s.done).length;
-  const later: ItemListRow[] = [
-    {
-      id: "members",
-      title: t("setup.inviteMembers"),
-      meta: t("setup.inviteMembersWhere"),
-      href: "/settings/members",
-    },
-    {
-      id: "channels",
-      title: t("setup.channels"),
-      meta: t("setup.channelsWhere"),
-      href: "/channels",
-    },
-    { id: "catalog", title: t("setup.catalog"), meta: t("setup.catalogWhere"), href: "/catalog" },
-  ];
-  return (
-    <OverviewPage
-      header={{
-        path: home,
-        title: t("greeting", { name: me.account.displayName }),
-        description: t("setup.description", { org: orgName }),
-      }}
-    >
-      <Grid columns="main-side">
-        <Stack gap={16}>
-          <Card
-            title={t("setup.title")}
-            actions={<Text tone="muted">{t("setup.progress", { done, total: steps.length })}</Text>}
-          >
-            <StepList steps={steps} inset="card" />
-          </Card>
-          <Card title={t("setup.later")}>
-            <ItemList label={t("setup.later")} rows={later} />
-          </Card>
-        </Stack>
-        {orgCard}
-      </Grid>
-    </OverviewPage>
   );
 }
 

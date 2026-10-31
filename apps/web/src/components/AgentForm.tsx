@@ -115,6 +115,8 @@ export type AgentFormView = {
   errors: number;
   /** 保存成功但有警告：主操作改为「继续」（调用 onDone），不再重复创建。 */
   saved: boolean;
+  /** The agent the last save returned (for "Continue" after warnings). */
+  savedAgent?: Agent;
   submit(): void;
   pending: boolean;
   canSubmit: boolean;
@@ -127,7 +129,11 @@ export type AgentFormView = {
  * 警告时调用 `onDone`；有警告（如 `fallback_same_provider`）时在表单顶部以 danger 卡片列出，
  * 由用户点「继续」再调用 `onDone`。
  */
-export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent): AgentFormView {
+export function useAgentForm(
+  orgId: string,
+  onDone: (agent?: Agent) => void,
+  existing?: Agent,
+): AgentFormView {
   const t = useTranslations("agents");
   const locale = useLocale();
   const errorMessage = useErrorMessage();
@@ -147,6 +153,7 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>(NO_FIELD_ERRORS);
   const [otherErrors, setOtherErrors] = useState<string[]>([]);
   const [warnings, setWarnings] = useState<AgentWarning[]>();
+  const [savedAgent, setSavedAgent] = useState<Agent>();
   const [builtins, setBuiltins] = useState<string[]>(initial.builtins);
   const [apps, setApps] = useState<ConnectorSummary[]>();
   const [selectedConnectors, setSelectedConnectors] = useState<string[]>(initial.apps);
@@ -405,7 +412,8 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
             ...(visibility !== existing.visibility ? { visibility } : {}),
           })
         : await createAgent(orgId, { definition, visibility });
-      if (res.warnings.length === 0) onDone();
+      setSavedAgent(res.agent);
+      if (res.warnings.length === 0) onDone(res.agent);
       else setWarnings(res.warnings);
     } catch (err) {
       setError(errorMessage(err));
@@ -722,6 +730,7 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
     unsaved,
     errors,
     saved: warnings !== undefined,
+    ...(savedAgent ? { savedAgent } : {}),
     submit: () => void save(),
     pending,
     canSubmit,

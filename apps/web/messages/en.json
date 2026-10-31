@@ -3280,5 +3280,23 @@
     "askHint": "Ask an organization admin to invite you.",
     "admin": "Open the admin console",
     "logout": "Sign out"
+  },
+  "setupLayout": {
+    "back": "Before you start",
+    "model": {
+      "needsDeploymentAdmin": "A deployment admin needs to set up a model service",
+      "waitingForAdmin": "Waiting for an admin to set up a model",
+      "orgDescription": "The deployment has a model service; choose the models this organization uses."
+    },
+    "agent": {
+      "needsModel": "Set up a model first",
+      "waitingForAdmin": "Waiting for an admin to create an agent"
+    },
+    "waiting": "The organization is still being set up. You can start chatting once an admin finishes.",
+    "refresh": "Refresh",
+    "later": {
+      "connections": "Connect your accounts",
+      "connectionsWhere": "Personal settings · My connections"
+    }
   }
 }

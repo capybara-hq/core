@@ -182,6 +182,7 @@ describe("extension pages in the sidebar's More group", () => {
         }),
     });
     renderFrame();
+    await screen.findByRole("navigation", { name: "Main navigation" });
     await userEvent.setup().click(await within(nav()).findByRole("button", { name: "More" }));
     await vi.waitFor(() =>
       expect(pageLinks().map((l) => [l.textContent, l.getAttribute("href")])).toEqual([

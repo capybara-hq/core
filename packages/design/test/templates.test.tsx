@@ -1,7 +1,7 @@
 // biome-ignore-all lint/correctness/useJsxKeyInIterable: 用例表是 [名称, 元素] 元组，不是渲染列表
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as design from "../src/index";
@@ -17,7 +17,9 @@ import {
   OnboardingPage,
   OverviewPage,
   PAGE_TEMPLATES,
+  PendingState,
   SettingsPage,
+  SetupPage,
   StatusPage,
   TracePage,
   WizardPage,
@@ -447,9 +449,10 @@ describe("其他模板行为", () => {
 });
 
 describe("PAGE_TEMPLATES", () => {
-  // 12 templates; ConversationPage replaced PlaygroundPage when the conversation page moved over.
-  it("has 12 entries, each an exported component", () => {
-    expect(PAGE_TEMPLATES.length).toBe(12);
+  // 13 templates; ConversationPage replaced PlaygroundPage when the conversation page moved over;
+  // SetupPage is the guided setup layout (acceptance round 2, D).
+  it("has 13 entries, each an exported component", () => {
+    expect(PAGE_TEMPLATES.length).toBe(13);
     for (const n of PAGE_TEMPLATES) {
       expect(typeof (design as Record<string, unknown>)[n]).toBe("function");
     }
@@ -564,5 +567,87 @@ describe("SettingsPage column (blind round 2)", () => {
     expect(screen.queryByRole("button", { name: "收起侧栏" })).toBeNull();
     const nav = screen.getByRole("navigation", { name: "设置导航" });
     expect(nav.querySelector('[aria-current="page"]')?.textContent).toBe("组织");
+  });
+});
+
+describe("SetupPage (the guided setup layout)", () => {
+  const org = {
+    name: "Acme",
+    slug: "acme",
+    role: "所有者",
+    menu: [{ label: "Beta", checked: false, onSelect: vi.fn() }],
+  };
+  const account = { name: "Grant", menu: [{ label: "退出登录", onSelect: vi.fn() }] };
+  const status = { context: "grant@acme:~/setup", version: "v1.0.0" };
+
+  it("no sidebar; a top bar with the brand, the org, the account; a centered column; the status bar", () => {
+    zh(
+      <SetupPage
+        org={org}
+        account={account}
+        status={status}
+        header={{ path: [{ label: "acme" }, { label: "开始之前" }], title: "开始之前" }}
+      >
+        <p>清单</p>
+      </SetupPage>,
+    );
+    const root = document.querySelector('[data-template="SetupPage"]') as HTMLElement;
+    expect(root.querySelector('[data-part="sidebar"]')).toBeNull();
+    const top = root.querySelector('[data-part="setup-top-bar"]') as HTMLElement;
+    expect(top.querySelector(".cb-logo-word")?.textContent).toBe("CAPYBARA");
+    expect(top.textContent).toContain("Acme");
+    expect(top.textContent).toContain("~/acme · 所有者");
+    expect(screen.getByRole("button", { name: "账户: Grant" })).toBeTruthy();
+    const column = root.querySelector('[data-part="setup-column"]') as HTMLElement;
+    expect(column.getAttribute("data-width")).toBe("column");
+    expect(screen.getByRole("heading", { level: 1, name: "开始之前" })).toBeTruthy();
+    expect(screen.getByText("清单")).toBeTruthy();
+    expect(screen.getByText("grant@acme:~/setup")).toBeTruthy();
+  });
+
+  it("the org opens its menu; the account opens its menu", async () => {
+    zh(<SetupPage org={org} account={account} status={status} />);
+    await userEvent.click(screen.getByRole("button", { name: "当前组织：Acme，切换组织" }));
+    await userEvent.click(await screen.findByRole("menuitemradio", { name: "Beta" }));
+    expect(org.menu[0]?.onSelect).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole("button", { name: "账户: Grant" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "退出登录" }));
+    expect(account.menu[0]?.onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it("a step page: the back link above the page, in the content width", () => {
+    zh(
+      <SetupPage
+        org={{ ...org, menu: [] }}
+        account={account}
+        status={status}
+        back={{ label: "开始之前", href: "/" }}
+        width="content"
+      >
+        <p>页面</p>
+      </SetupPage>,
+    );
+    expect(screen.getByRole("link", { name: "开始之前" }).getAttribute("href")).toBe("/");
+    // a static org block without menu items
+    expect(screen.queryByRole("button", { name: /切换组织/ })).toBeNull();
+    expect(document.querySelector('[data-part="setup-column"]')?.getAttribute("data-width")).toBe(
+      "content",
+    );
+  });
+});
+
+describe("PendingState (the neutral loading state)", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("is empty at first and shows a quiet skeleton only after 300 ms", () => {
+    vi.useFakeTimers();
+    zh(<PendingState frame="app" />);
+    const el = screen.getByRole("status");
+    expect(el.getAttribute("aria-busy")).toBe("true");
+    expect(el.querySelectorAll('[data-part="pending-bar"]')).toHaveLength(0);
+    act(() => vi.advanceTimersByTime(299));
+    expect(el.querySelectorAll('[data-part="pending-bar"]')).toHaveLength(0);
+    act(() => vi.advanceTimersByTime(1));
+    expect(el.querySelectorAll('[data-part="pending-bar"]').length).toBeGreaterThan(0);
   });
 });

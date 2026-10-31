@@ -175,9 +175,9 @@ For a set of settings pages under one title: **组织设置** (`/settings/*`) an
 
 - Home (`/`): the overview from rc.2 acceptance (#9) in the shell above: waiting for you (tabs with counts),
   pick up where you left off (state labels), your agents, the org at a glance.
-- **One setup checklist** component, used by the home page and the new-conversation page alike (today they
-  differ): steps org / model / agent, each with its action; the new-conversation page shows it full width in
-  place of the composer.
+- **One setup checklist** (org / model / agent, each with the action this viewer may take), drawn by the
+  setup layout (§3.8) on `/` and `/chat` while the org is not ready; the shell's home and new-conversation
+  pages no longer draw it.
 - One empty state (§3.7), one loading state (skeleton in the frame's shape, never shaped like one of
   two possible outcomes), one error state with retry.
 
@@ -190,6 +190,45 @@ inbox, `compact` (left-aligned, small illustration) for the DataTable's empty ar
 sidebar's conversation list ("还没有会话" + 新会话; a filter matching nothing: "没有匹配的会话" +
 清除筛选). An inbox with nothing in it is one full-width empty state, not a list + detail split
 around an empty table.
+
+### 3.8 Setup layout (acceptance round 2, user decisions D and D2)
+
+A third layout beside the auth layout (sign-in, initialization, the org chooser) and the shell: the
+**setup layout** (`SetupPage`, design spec §5.5), drawn while the current org is not ready
+(`setupReady(agents, providers)` is false for this viewer: no usable model or no agent).
+
+- **Frame**: no sidebar; a 48 px top bar (pixel capybara + `CAPYBARA`; at the right the current org
+  with its menu when there are several orgs or creating one is allowed, the account with 语言 ▸ /
+  个人设置 / 退出登录, the theme toggle); a centered column; the status bar
+  (`<login>@<slug>:~/setup` on the setup home, the pathname elsewhere).
+- **Scope**: every workspace route while not ready. `/admin/*` keeps the admin console context (that
+  is where an enterprise admin configures the model provider); the auth screens and the org chooser
+  keep the auth layout.
+  - `/` and `/chat`: the **setup home**: path `<slug> / 开始之前`, h1 开始之前, "还差几步才能开始对话", the
+    checklist card ("开始之前 · 已完成 n / 3"), then "可以稍后再做" with only what the viewer can act
+    on. The org summary card of the old overview is dropped.
+  - Step pages render their normal content in the setup frame (content width) under a back link
+    "← 开始之前": `/settings/models`, `/settings/members`, `/agents/new`, `/agents/<id>`,
+    `/channels/new`, `/catalog`, `/catalog/<id>`, `/catalog/<id>/install`, and `/account/*`.
+  - Any other workspace route is replaced by `/`.
+  - Readiness is read again on every navigation while in setup; once ready the next navigation draws
+    the shell. Creating the agent that makes the org ready re-reads readiness and lands on
+    `/chat?agent=<id>` in the shell.
+- **Deciding the layout**: until the session and the readiness are known a workspace route shows only
+  the neutral PendingState (design spec §6.20): never the shell first and then the setup layout. A
+  failed readiness read counts as ready (the shell's pages report their own errors); an org switch
+  keeps a ready shell until the new org is read. The server render of a workspace route is the
+  neutral state too.
+- **Roles** (cosmetic; the kernel decides):
+
+  | Step | Enterprise admin | Org admin | Member | Guest |
+  |---|---|---|---|---|
+  | Model | 去配置 → `/admin/extensions` | 去配置 → `/settings/models` when the deployment has a provider but the org no usable model; else "需要部署管理员配置模型服务" | "等待管理员配置模型" | same as member |
+  | Agent | 新建 → `/agents/new` once a model exists; before that disabled with "先配置模型" | same | same | "等待管理员创建 agent" |
+  | 可以稍后再做 | invite members, channels, plugins (when also an org admin) | invite members, channels, plugins | 我的连接 | — |
+
+  A viewer with nothing to do right now also sees "组织还在配置中，管理员完成后你就能开始对话" and a
+  刷新 button that re-reads readiness.
 
 ## 4. Where every page goes
 

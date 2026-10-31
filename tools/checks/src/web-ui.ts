@@ -27,6 +27,7 @@ export const WEB_UI_TEMPLATES = [
   "AuthPage",
   "StatusPage",
   "OnboardingPage",
+  "SetupPage",
 ] as const;
 
 /** design 包内用：color-mix( 等在 CSS 里合法地引用 token，所以这里只认字面量写法。 */

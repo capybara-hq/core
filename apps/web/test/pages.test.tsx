@@ -220,27 +220,6 @@ describe("(app) 页面模板", () => {
     expect(screen.getByText(en.home.skills)).toBeTruthy();
   });
 
-  it("before a model and an agent exist the overview is the setup checklist", async () => {
-    overviewApi({
-      "GET /api/v1/orgs/o1/agents": () => json(200, { agents: [] }),
-      "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
-      "GET /api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
-    });
-    renderPage(<HomePage />, { locale: "zh" });
-    const h = zh.home;
-    expect(await screen.findByText(h.setup.title)).toBeTruthy();
-    expect(screen.getByText("已完成 2 / 3")).toBeTruthy();
-    const step = (label: string) => screen.getByText(label).closest("li") as HTMLElement;
-    expect(step(h.setup.org).getAttribute("data-state")).toBe("done");
-    expect(step(zh.chat.setup.model.label).getAttribute("data-state")).toBe("done");
-    expect(step(zh.chat.setup.agent.label).getAttribute("data-state")).toBe("todo");
-    const later = within(screen.getByRole("list", { name: h.setup.later }));
-    expect(later.getByRole("link", { name: h.setup.inviteMembers }).getAttribute("href")).toBe(
-      "/settings/members",
-    );
-    expect(screen.queryByRole("list", { name: h.inbox.title })).toBeNull();
-  });
-
   it("a page that needs an organization keeps its own title and offers creating one", () => {
     resetNavigation("/agents");
     renderPage(<AgentsPage />, {
@@ -475,8 +454,17 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(within(menu).getByRole("menuitem", { name: zh.nav.skills })).toBeTruthy();
   });
 
-  it("while /me is pending the conversation section is busy, without the empty hint (I2)", async () => {
+  it("while /me is pending a workspace route shows only the neutral state (setup layout, D)", () => {
     resetNavigation("/");
+    stubApi({ "GET /api/v1/me": () => new Promise<Response>(() => {}) as unknown as Response });
+    renderFrame();
+    expect(document.querySelector('[data-part="pending-state"]')).not.toBeNull();
+    expect(screen.queryByRole("navigation", { name: "主导航" })).toBeNull();
+    expect(document.querySelector('[data-template="SetupPage"]')).toBeNull();
+  });
+
+  it("while /me is pending on /admin the conversation section is busy, without the empty hint (I2)", async () => {
+    resetNavigation("/admin");
     stubApi({ "GET /api/v1/me": () => new Promise<Response>(() => {}) as unknown as Response });
     renderFrame();
     const region = screen.getByRole("region", { name: "会话" });
@@ -791,7 +779,8 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/login"));
   });
 
-  it("while the session loads: the content shows loading, the status bar no context", () => {
+  it("while the session loads (/admin keeps the shell): the content shows loading, the status bar no context", () => {
+    resetNavigation("/admin");
     stubApi({ "GET /api/v1/me": () => new Promise<Response>(() => {}) as unknown as Response });
     renderFrame();
     expect(screen.getAllByText(zh.common.loading).length).toBeGreaterThan(0);
@@ -804,6 +793,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
   });
 
   it("服务端渲染不含时区（避免与浏览器时区不同导致的水合不一致）", () => {
+    resetNavigation("/admin");
     stubApi({ "GET /api/v1/me": () => json(200, ME) });
     const html = renderToString(
       <NextIntlClientProvider locale="zh" messages={zh}>
@@ -822,7 +812,24 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(html).not.toContain("UTC");
   });
 
-  it("不需要会话的内容（404）在服务端渲染时即输出，无需等待 /me", () => {
+  it("a workspace route server-renders the neutral state: the layout waits for the org's readiness", () => {
+    const html = renderToString(
+      <NextIntlClientProvider locale="zh" messages={zh}>
+        <DesignProvider locale="zh" link={Link as LinkComponent}>
+          <ToastProvider>
+            <AppFrame version="v9.9.9">
+              <NotFound />
+            </AppFrame>
+          </ToastProvider>
+        </DesignProvider>
+      </NextIntlClientProvider>,
+    );
+    expect(html).toContain('data-part="pending-state"');
+    expect(html).not.toContain('data-part="sidebar"');
+  });
+
+  it("不需要会话的内容（404）在 /admin 下服务端渲染时即输出，无需等待 /me", () => {
+    resetNavigation("/admin/nope");
     const html = renderToString(
       <NextIntlClientProvider locale="zh" messages={zh}>
         <DesignProvider locale="zh" link={Link as LinkComponent}>

@@ -567,3 +567,145 @@ a.cb-object-name:hover {
   flex: 1;
   min-width: 0;
 }
+
+/* PendingState (spec §6.20): only the background, then quiet bars in a centered column. */
+.cb-pending {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--cb-bg);
+}
+.cb-pending[data-frame="app"] {
+  height: 100vh;
+}
+.cb-pending-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+  box-sizing: border-box;
+  width: 100%;
+  max-width: calc(var(--cb-layout-chat) + 2 * var(--cb-space-4));
+  margin: 0 auto;
+  padding: var(--cb-space-8) var(--cb-space-4);
+}
+.cb-pending-bar {
+  display: block;
+  height: 12px;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-hover);
+}
+.cb-pending-bar[data-line="title"] {
+  width: 30%;
+}
+.cb-pending-bar[data-line="text"] {
+  width: 70%;
+}
+.cb-pending-bar[data-line="short"] {
+  width: 45%;
+}
+
+/* SetupPage (T13, web-order spec §3.8): top bar, a centered column, the status bar; no sidebar. */
+.cb-setup {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 0;
+  background: var(--cb-bg);
+  color: var(--cb-ink);
+}
+.cb-ref-block .cb-setup {
+  height: 100%;
+}
+.cb-setup-top {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cb-space-3);
+  box-sizing: border-box;
+  height: var(--cb-layout-title-bar);
+  padding: 0 var(--cb-space-4);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.cb-setup-top-end {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-width: 0;
+}
+.cb-setup-org,
+.cb-setup-account {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+  height: var(--cb-control-prominent);
+  padding: 0 var(--cb-space-2);
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: transparent;
+  color: var(--cb-ink);
+  font: inherit;
+  text-align: left;
+}
+button.cb-setup-org:hover,
+button.cb-setup-account:hover {
+  background: var(--cb-hover);
+}
+.cb-setup-org-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.cb-setup-org-name,
+.cb-setup-account-name {
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cb-setup-account-name {
+  font-weight: 400;
+}
+.cb-setup-org-meta {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+  white-space: nowrap;
+}
+.cb-setup-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+}
+/* A step page brings its own template, which scrolls its body itself (as in the shell). */
+.cb-setup-main:has(> .cb-setup-column[data-width="content"]) {
+  overflow: hidden;
+}
+.cb-setup-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-4);
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0 auto;
+}
+.cb-setup-column[data-width="column"] {
+  max-width: calc(var(--cb-layout-chat) + 2 * var(--cb-space-4));
+  padding: var(--cb-space-8) var(--cb-space-4) var(--cb-space-8);
+}
+.cb-setup-column[data-width="content"] {
+  flex: 1;
+  gap: 0;
+  min-height: 0;
+}
+.cb-setup-column[data-width="content"] > 
+@media (max-width: 639px) {
+  .cb-setup-org-text,
+  .cb-setup-account-name {
+    display: none;
+  }
+}

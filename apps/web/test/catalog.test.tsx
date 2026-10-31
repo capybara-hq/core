@@ -65,7 +65,7 @@ function renderRoute(route: string) {
 }
 
 describe("/dev/ui 目录页", () => {
-  it("路由覆盖 12 个模板（kebab 名去掉 Page 后缀）", () => {
+  it("路由覆盖 13 个模板（kebab 名去掉 Page 后缀）", () => {
     const kebab = PAGE_TEMPLATES.map((n) =>
       n
         .replace(/Page$/, "")

@@ -3280,5 +3280,23 @@
     "askHint": "请组织管理员邀请你加入。",
     "admin": "进入管理后台",
     "logout": "退出登录"
+  },
+  "setupLayout": {
+    "back": "开始之前",
+    "model": {
+      "needsDeploymentAdmin": "需要部署管理员配置模型服务",
+      "waitingForAdmin": "等待管理员配置模型",
+      "orgDescription": "部署里已有模型服务；为本组织选好要用的模型。"
+    },
+    "agent": {
+      "needsModel": "先配置模型",
+      "waitingForAdmin": "等待管理员创建 agent"
+    },
+    "waiting": "组织还在配置中，管理员完成后你就能开始对话",
+    "refresh": "刷新",
+    "later": {
+      "connections": "连接你的账号",
+      "connectionsWhere": "个人设置 · 我的连接"
+    }
   }
 }

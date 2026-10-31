@@ -18,6 +18,7 @@ export { PAGE_TEMPLATES, type PageTemplateName } from "./names";
 export { OnboardingPage } from "./onboarding-page";
 export { OverviewPage } from "./overview-page";
 export { SettingsPage } from "./settings-page";
+export { SetupPage, type SetupPageProps } from "./setup-page";
 export { StatusPage } from "./status-page";
 export { TracePage } from "./trace-page";
 export { WizardPage } from "./wizard-page";

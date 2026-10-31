@@ -15,6 +15,7 @@ export const TEMPLATE_ROUTES = [
   "templates/auth",
   "templates/status",
   "templates/onboarding",
+  "templates/setup",
 ] as const;
 
 export const OVERLAY_ROUTES = [

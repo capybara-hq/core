@@ -5,6 +5,8 @@ import {
   Button,
   initialOf,
   type MenuItem,
+  PendingState,
+  SetupPage,
   type SidebarContext,
   StatusPage,
   useToast,
@@ -41,6 +43,7 @@ import {
 } from "./nav";
 import { OrgChooser } from "./OrgChooser";
 import { type Session, SessionContext } from "./session";
+import { SetupContext, SetupHome, setupRouteOf, useReadiness } from "./setup";
 
 /** 本地时区，如 `UTC+8`、`UTC-3:30`（StatusBar 右侧，spec §4.4）。 */
 function timeZoneLabel(): string {
@@ -103,6 +106,14 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   const [creatingOrg, setCreatingOrg] = useState(false);
   const timeZone = useTimeZoneLabel();
   useConnectResultToast();
+  // The setup layout (web-order spec §3.8): while the org lacks a model or an agent, workspace
+  // routes render in it instead of the shell; the layout is decided before anything is painted.
+  const setupRoute = setupRouteOf(pathname);
+  const readiness = useReadiness(me === undefined ? undefined : me.currentOrgId, pathname);
+  const inSetup = setupRoute !== "outside" && readiness.state.kind === "setup";
+  useEffect(() => {
+    if (inSetup && setupRoute === "redirect") router.replace("/");
+  }, [inSetup, setupRoute, router]);
 
   const load = useCallback(async () => {
     try {
@@ -285,6 +296,81 @@ export function AppFrame({ version, children }: { version: string; children: Rea
     return (
       <SessionContext.Provider value={session}>
         <OrgChooser onLogout={() => void onLogout()} />
+      </SessionContext.Provider>
+    );
+  }
+
+  // Until the session and the org's readiness are known, a workspace route shows only the neutral
+  // state both layouts share (never the shell first, then the setup layout).
+  if (
+    setupRoute !== "outside" &&
+    error === undefined &&
+    (session === undefined || readiness.state.kind === "unknown")
+  ) {
+    return <PendingState frame="app" />;
+  }
+
+  if (session !== undefined && readiness.state.kind === "setup" && setupRoute !== "outside") {
+    if (setupRoute === "redirect") return <PendingState frame="app" />;
+    const multiOrg = session.me.memberships.length > 1 || session.me.canCreateOrg;
+    const setupStatus = {
+      ...status,
+      context: statusPrompt(
+        session.me.account.displayName,
+        currentOrg?.slug ?? null,
+        setupRoute === "home" ? "/setup" : pathname,
+      ),
+    };
+    const setupFrame = {
+      org: currentOrg
+        ? {
+            name: currentOrg.name,
+            slug: currentOrg.slug,
+            role: roles[currentOrg.role] ?? currentOrg.role,
+            menu: multiOrg ? orgItems : [],
+          }
+        : null,
+      account: {
+        name: session.me.account.displayName,
+        // Language ▸, personal settings, sign out: the org has its own menu in the top bar.
+        menu: accountMenu.filter((i) => !orgMenu.includes(i)),
+      },
+      theme: preferences.theme,
+      status: setupStatus,
+    };
+    const { agents, providers } = readiness.state;
+    return (
+      <SessionContext.Provider value={session}>
+        <SetupContext.Provider value={{ active: true, recheck: readiness.recheck }}>
+          {setupRoute === "home" ? (
+            <SetupPage
+              {...setupFrame}
+              header={{
+                path: [{ label: currentOrg?.slug ?? "~" }, { label: t("chat.setup.title") }],
+                title: t("chat.setup.title"),
+                description: t("chat.setup.description"),
+              }}
+            >
+              <SetupHome
+                me={session.me}
+                agents={agents}
+                providers={providers}
+                onRefresh={() => void readiness.recheck()}
+              />
+            </SetupPage>
+          ) : (
+            <SetupPage
+              {...setupFrame}
+              width="content"
+              back={{ label: t("setupLayout.back"), href: "/" }}
+            >
+              {children}
+            </SetupPage>
+          )}
+          {session.me.canCreateOrg ? (
+            <CreateOrgDialog open={creatingOrg} onOpenChange={setCreatingOrg} />
+          ) : null}
+        </SetupContext.Provider>
       </SessionContext.Provider>
     );
   }
