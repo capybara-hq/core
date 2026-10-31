@@ -53,7 +53,7 @@ export function RoleGate({
   min: Exclude<OrgRole, "guest">;
   children: (orgId: string, role: OrgRole) => ReactNode;
 }) {
-  return <OrgGate>{(orgId) => <RoleGateInner min={min}>{children}</RoleGateInner>}</OrgGate>;
+  return <OrgGate>{() => <RoleGateInner min={min}>{children}</RoleGateInner>}</OrgGate>;
 }
 
 function RoleGateInner({

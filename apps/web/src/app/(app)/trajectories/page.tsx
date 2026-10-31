@@ -39,7 +39,13 @@ const PAGE = 50;
  * （agent 详情页的「运行记录」入口）。列表只有元数据，不写审计；打开一行进详情。
  */
 export default function TrajectoriesPage() {
-  return <RoleGate min="member">{(orgId) => <Trajectories key={orgId} orgId={orgId} />}</RoleGate>;
+  return (
+    <RoleGate min="member">
+      {(orgId, role) => (
+        <Trajectories key={orgId} orgId={orgId} admin={role === "admin" || role === "owner"} />
+      )}
+    </RoleGate>
+  );
 }
 
 /** 查询串只在浏览器里读（会话加载前不渲染本组件，所以不涉及服务端渲染）。 */
@@ -48,7 +54,11 @@ const initialAgent = (): string => {
   return new URLSearchParams(window.location.search).get("agentId") ?? "";
 };
 
-function Trajectories({ orgId }: { orgId: string }) {
+/**
+ * `admin`: org admins see both views of 评测与运行 (eval sets are evals.manage); a member who owns
+ * agents sees only their runs, titled 运行记录, with no tabs (R1).
+ */
+function Trajectories({ orgId, admin }: { orgId: string; admin: boolean }) {
   const scope = usePagePath("org");
   const t = useTranslations("trajectories");
   const [agentId, setAgentId] = useState(initialAgent);
@@ -69,9 +79,9 @@ function Trajectories({ orgId }: { orgId: string }) {
     <ListPage
       header={{
         path: [...scope, { label: "trajectories" }],
-        title: t("title"),
-        tabs: evalsTabs(t),
-        activeTab: "runs",
+        ...(admin
+          ? { title: t("title"), tabs: evalsTabs(t), activeTab: "runs" }
+          : { title: t("tabs.runs") }),
       }}
     >
       <Stack gap={12}>

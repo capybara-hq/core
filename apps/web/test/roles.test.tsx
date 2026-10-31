@@ -289,3 +289,19 @@ describe("agents: edit, read-only and 更换负责人", () => {
     });
   }
 });
+
+describe("trajectories: only the tabs the role can use", () => {
+  for (const role of ["member", "admin", "owner"] as const) {
+    const admin = role !== "member";
+    it(`/trajectories · ${role}: ${admin ? "评测集 · 运行记录 tabs" : "运行记录 only"}`, async () => {
+      routes = { [`GET ${O}/agents`]: { agents: [] } };
+      resetNavigation("/trajectories");
+      renderPage(<TrajectoriesPage />, { locale: "zh", me: meAs(role) });
+      const h1 = screen.getByRole("heading", { level: 1 });
+      expect(h1.textContent).toBe(admin ? zh.trajectories.title : zh.trajectories.tabs.runs);
+      expect(screen.queryByRole("link", { name: new RegExp(zh.evals.tabs.sets) }) !== null).toBe(
+        admin,
+      );
+    });
+  }
+});
