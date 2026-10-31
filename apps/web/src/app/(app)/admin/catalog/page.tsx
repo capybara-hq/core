@@ -56,7 +56,10 @@ function AdminDirectory() {
     title: t("title"),
     tabs: catalogTabs(t, { plugins: all.length }),
     activeTab: "plugins",
-    ...(all.length > 0 ? { search: { label: t("search"), value: q, onChange: setQ } } : {}),
+    // The search keeps its place while loading; an empty catalog has nothing to search.
+    ...(state.kind !== "ready" || all.length > 0
+      ? { search: { label: t("search"), value: q, onChange: setQ } }
+      : {}),
     actions: [
       { label: t("actions.import"), variant: "primary" as const, href: "/admin/catalog/import" },
       {

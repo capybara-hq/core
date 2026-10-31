@@ -96,23 +96,30 @@
 }
 
 /* The tabs row (spec §2.4): the views with counts, the search at the right end. */
+/* The tabs row has one height with or without the search (a default control + space.1 above and
+   below); the tabs sit at its bottom and overlap its border by 1 px, so the selected tab's
+   underline lies on the border; the search is centered in the row (spec §6.4). */
 .cb-pageheader-tabs {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
   gap: var(--cb-space-3);
+  box-sizing: content-box;
+  height: calc(var(--cb-control-default) + 2 * var(--cb-space-1));
   margin-top: var(--cb-space-3);
   border-bottom: 1px solid var(--cb-line-soft);
 }
 .cb-pageheader-tabs .cb-tabs {
+  position: relative;
+  margin-bottom: -1px;
   border-bottom: 0;
 }
 .cb-pageheader-search {
   flex: none;
+  align-self: center;
   margin-left: auto;
   width: 240px;
   max-width: 100%;
-  padding: var(--cb-space-1) 0;
 }
 
 /* Template head: the PageHeader in the content width, fixed above the body. */
@@ -309,6 +316,10 @@ a.cb-pageheader-path-seg:hover {
   display: flex;
   flex: 1;
   min-height: 0;
+}
+/* InboxPage: the split starts at the gutter, the head's left edge. */
+.cb-template[data-template="InboxPage"] .cb-body-row {
+  padding: 0 var(--cb-layout-gutter);
 }
 .cb-body-rail {
   flex: none;

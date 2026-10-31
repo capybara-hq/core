@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { Button, IconButton } from "../controls/index";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
@@ -17,8 +17,11 @@ export type ObjectRowProps = {
   chips?: { label: string; tone?: "neutral" | "warn" }[];
   /** One line in `muted`. */
   description?: string;
-  /** One mono line in `faint`. */
-  meta?: string;
+  /**
+   * One mono line in `faint`; as a list, the parts are joined with " · " and a `{ label, tone:
+   * "warn" }` part is drawn in `warn` (a sensitive-permission count).
+   */
+  meta?: string | (string | { label: string; tone: "warn" })[];
   /** A mono state label with its color. */
   state?: { label: string; tone: "ok" | "warn" | "fail" | "muted" };
   /** A short mono text at the right (last use). */
@@ -111,7 +114,25 @@ export function ObjectRow({
           ))}
         </span>
         {description ? <span className="cb-object-desc">{description}</span> : null}
-        {meta ? <span className="cb-object-meta">{meta}</span> : null}
+        {meta && meta.length > 0 ? (
+          <span className="cb-object-meta">
+            {typeof meta === "string"
+              ? meta
+              : meta.map((m, i) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: the parts are positional
+                  <Fragment key={i}>
+                    {i > 0 ? " · " : null}
+                    {typeof m === "string" ? (
+                      m
+                    ) : (
+                      <span className="cb-object-meta-part" data-tone={m.tone}>
+                        {m.label}
+                      </span>
+                    )}
+                  </Fragment>
+                ))}
+          </span>
+        ) : null}
       </span>
       {state ? (
         <span className="cb-object-state" data-tone={state.tone}>

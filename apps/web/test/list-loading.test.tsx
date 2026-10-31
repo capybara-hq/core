@@ -53,3 +53,35 @@ describe("object list pages while loading", () => {
     expect(screen.getAllByText("Loading").length).toBeGreaterThan(0);
   });
 });
+
+describe("the head keeps its real layout while loading (acceptance round 2, A4)", () => {
+  it("agents: the tabs (counts pending) and the search are there before the first answer", async () => {
+    resetNavigation("/agents");
+    renderPage(<AgentsPage />);
+    const tabs = await vi.waitFor(() => {
+      const found = screen.getAllByRole("tab");
+      if (found.length === 0) throw new Error("no tabs");
+      return found;
+    });
+    expect(tabs).toHaveLength(3);
+    for (const tab of tabs)
+      expect(tab.querySelector(".cb-tab-count")?.getAttribute("data-pending")).toBe("true");
+    expect(screen.getByRole("searchbox")).toBeTruthy();
+    expect(document.querySelector('.cb-object-list[aria-busy="true"]')).not.toBeNull();
+  });
+
+  it("evals: the view tabs are there before the first answer", async () => {
+    resetNavigation("/evals");
+    renderPage(<EvalsPage />);
+    await vi.waitFor(() => {
+      if (document.querySelector('[data-part="page-header-tabs"]') === null)
+        throw new Error("no tabs row");
+    });
+  });
+
+  it("admin catalog: the search is there before the first answer", async () => {
+    resetNavigation("/admin/catalog");
+    renderPage(<AdminCatalogPage />);
+    await vi.waitFor(() => screen.getByRole("searchbox"));
+  });
+});

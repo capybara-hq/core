@@ -1,4 +1,6 @@
 // biome-ignore-all lint/correctness/useJsxKeyInIterable: 用例表是 [名称, 元素] 元组，不是渲染列表
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -354,6 +356,29 @@ describe("其他模板行为", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: "关闭" }));
     expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it("InboxPage with no items: one full-width empty state instead of the list + detail split", () => {
+    zh(
+      <InboxPage header={header} list={<div>l</div>} empty={{ text: "没有待处理的事项" }}>
+        x
+      </InboxPage>,
+    );
+    expect(screen.getByText("没有待处理的事项")).toBeTruthy();
+    expect(document.querySelector('[data-part="empty-state"]')?.getAttribute("data-size")).toBe(
+      "page",
+    );
+    expect(document.querySelector(".cb-body-rail")).toBeNull();
+    expect(screen.queryByText("l")).toBeNull();
+    expect(screen.queryByText("x")).toBeNull();
+    expect(document.querySelector(".cb-body")?.getAttribute("data-layout")).toBe("single");
+  });
+
+  it("InboxPage: the head and the body share one left edge (the gutter)", () => {
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/shell.css"), "utf8");
+    expect(css).toMatch(
+      /\.cb-template\[data-template="InboxPage"\] \.cb-body-row \{\s*padding: 0 var\(--cb-layout-gutter\);/,
+    );
   });
 
   it("ListPage 无 rail 时为 single", () => {

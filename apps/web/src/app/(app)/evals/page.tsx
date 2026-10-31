@@ -48,7 +48,7 @@ function EvalSets({ orgId }: { orgId: string }) {
         path: [...scope, { label: "evals" }],
         title: t("title"),
         actions: [{ label: t("new"), variant: "primary", href: "/evals/new" }],
-        tabs: evalsTabs(t, state.kind === "ready" ? { sets: sets.length } : {}),
+        tabs: evalsTabs(t, { sets: sets.length }),
         activeTab: "sets",
       }}
       variant="objects"

@@ -101,6 +101,9 @@ function Requests() {
         tabs: catalogTabs(ta, state.kind === "ready" ? { requests: rows.length } : {}),
         activeTab: "requests",
       }}
+      {...(state.kind === "ready" && rows.length === 0
+        ? { empty: { text: t("empty"), hint: t("emptyHint") } }
+        : {})}
       list={
         <DataTable<CatalogRequest>
           label={t("listLabel")}

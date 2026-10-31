@@ -360,6 +360,38 @@ describe("PageHeader first paint (m6)", () => {
   });
 });
 
+describe("PageHeader tabs row (acceptance round 2, A5)", () => {
+  it("the tabs sit on the row's bottom border and the search is centered; one row height", () => {
+    zh(
+      <PageHeader
+        path={[{ label: "~" }]}
+        title="t"
+        tabs={[{ id: "a", label: "全部", count: 1 }]}
+        search={{ label: "搜索", value: "", onChange: () => {} }}
+      />,
+    );
+    const row = document.querySelector('[data-part="page-header-tabs"]') as HTMLElement;
+    expect(row.querySelector(".cb-tabs")).not.toBeNull();
+    expect(row.querySelector(".cb-pageheader-search")).not.toBeNull();
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/shell.css"), "utf8");
+    const rule = (sel: string) => {
+      const m = new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\{([^}]*)\\}`).exec(css);
+      return m?.[1] ?? "";
+    };
+    const tabsRow = rule(".cb-pageheader-tabs");
+    // the tabs are aligned to the row bottom, the row keeps one height with or without search
+    expect(tabsRow).toMatch(/align-items: flex-end;/);
+    expect(tabsRow).toMatch(
+      /height: calc\(var\(--cb-control-default\) \+ 2 \* var\(--cb-space-1\)\);/,
+    );
+    // the selected tab's underline overlaps the row's border
+    expect(rule(".cb-pageheader-tabs .cb-tabs")).toMatch(/margin-bottom: -1px;/);
+    const search = rule(".cb-pageheader-search");
+    expect(search).toMatch(/align-self: center;/);
+    expect(search).not.toMatch(/padding/);
+  });
+});
+
 describe("StatCards", () => {
   it("one card per metric: label then value; warn / fail tone only the value", () => {
     zh(

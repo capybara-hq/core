@@ -42,6 +42,9 @@
   font-size: var(--cb-type-small-size);
   font-variant-numeric: tabular-nums;
 }
+.cb-tab-count[data-pending="true"] {
+  color: var(--cb-faint);
+}
 .cb-tab-badge {
   padding: 0 4px;
   border: 1px solid var(--cb-line);

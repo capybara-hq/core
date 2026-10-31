@@ -173,13 +173,23 @@ describe("收件箱（InboxPage）", () => {
     expect(await screen.findByText(zh.errors.approval.already_decided)).toBeTruthy();
   });
 
-  it.each(LOCALES)("没有待处理：DataTable 空状态，没有 ActionRow（%s）", async (locale) => {
-    const m = msgs[locale];
-    stubApi({ [LIST]: () => json(200, inbox([])) });
-    renderPage(<InboxRoute />, { locale });
-    expect(await screen.findByText(m.inbox.empty)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: m.approval.approve })).toBeNull();
-  });
+  it.each(LOCALES)(
+    "nothing pending: one full-width empty state, no split, no ActionRow (%s)",
+    async (locale) => {
+      const m = msgs[locale];
+      stubApi({ [LIST]: () => json(200, inbox([])) });
+      renderPage(<InboxRoute />, { locale });
+      expect(await screen.findByText(m.inbox.empty)).toBeTruthy();
+      expect(screen.getByText(m.inbox.emptyHint)).toBeTruthy();
+      // no empty table header in a narrow list column
+      expect(screen.queryByRole("table")).toBeNull();
+      expect(document.querySelector(".cb-body-rail")).toBeNull();
+      expect(document.querySelector('[data-part="empty-state"]')?.getAttribute("data-size")).toBe(
+        "page",
+      );
+      expect(screen.queryByRole("button", { name: m.approval.approve })).toBeNull();
+    },
+  );
 
   it("按角色升级的审批只有「仅本次」", async () => {
     stubApi({

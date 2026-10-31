@@ -1,8 +1,13 @@
 import type { ReactNode } from "react";
+import { EmptyState, type EmptyStateProps } from "../display/index";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
 import { TemplateHead } from "./frame";
 
-/** T6 收件箱：Rail（列表）+ Content (+ Inspector)；决策时出现 ActionRow。 */
+/**
+ * T6 Inbox: Rail (the list) + Content (+ Inspector); an ActionRow while deciding. The head and
+ * the body share one left edge (the gutter). `empty` (no items, a failed load) draws one
+ * full-width EmptyState instead of the list + detail split.
+ */
 export function InboxPage({
   header,
   list,
@@ -10,6 +15,7 @@ export function InboxPage({
   inspectorTitle,
   onInspectorClose,
   actionRow,
+  empty,
   children,
 }: {
   header: PageHeaderProps;
@@ -18,8 +24,19 @@ export function InboxPage({
   inspectorTitle?: string;
   onInspectorClose?: () => void;
   actionRow?: ActionRowProps;
+  empty?: EmptyStateProps;
   children?: ReactNode;
 }) {
+  if (empty) {
+    return (
+      <div className="cb-template" data-template="InboxPage" data-width="full">
+        <TemplateHead header={header} statsInHead width="full" />
+        <Body layout="single">
+          <EmptyState {...empty} />
+        </Body>
+      </div>
+    );
+  }
   return (
     <div className="cb-template" data-template="InboxPage" data-width="full">
       <TemplateHead header={header} statsInHead width="full" />

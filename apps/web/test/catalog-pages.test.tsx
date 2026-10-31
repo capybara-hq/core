@@ -76,6 +76,8 @@ function orgItem(over: Record<string, unknown> = {}) {
   };
 }
 
+const escapeRe = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 describe("/catalog: actions follow installable", () => {
   it.each(LOCALES)(
     "org admins: the row action and state follow installable (%s)",
@@ -1000,15 +1002,24 @@ describe("/admin/catalog and marketplace entries", () => {
         .getByRole("link", { name: new RegExp(`^${en.catalog.admin.tabs.sources}`) })
         .getAttribute("href"),
     ).toBe("/admin/marketplaces");
-    expect(screen.getByText(fill(c.incompatible, { version: "3.0.0" }))).toBeTruthy();
-    const table = screen.getByRole("table", { name: c.title });
-    const row = (name: string) => within(table).getByText(name).closest("tr") as HTMLElement;
+    // object rows, not a table; no filter rail
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    const list = screen.getByRole("list", { name: c.title });
+    const row = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
+    expect(
+      within(row("old-a")).getByText(
+        new RegExp(escapeRe(fill(c.incompatible, { version: "3.0.0" }))),
+      ),
+    ).toBeTruthy();
     const git = row("git-a");
     const notAllowed = fill(c.reason.host_not_allowed, { host: "github.com" });
     expect(within(git).getByText(notAllowed)).toBeTruthy();
-    expect(within(git).getByText("https://github.com/acme/git-a.git")).toBeTruthy();
+    expect(within(git).getByText(/https:\/\/github\.com\/acme\/git-a\.git/)).toBeTruthy();
+    // nothing to import: no row action
+    expect(within(git).queryByRole("button", { name: c.import })).toBeNull();
     const user = userEvent.setup();
-    await user.click(within(git).getAllByRole("button").at(-1) as HTMLElement);
+    await user.click(within(git).getByRole("button", { name: "More actions" }));
     const item = await screen.findByRole("menuitem", { name: notAllowed });
     expect(
       item.getAttribute("aria-disabled") === "true" || item.hasAttribute("data-disabled"),
@@ -1032,12 +1043,13 @@ describe("/admin/catalog and marketplace entries", () => {
             }),
     });
     renderPage(<MarketplaceEntriesPage />);
-    const table = await screen.findByRole("table", { name: c.title });
+    const list = await screen.findByRole("list", { name: c.title });
     const user = userEvent.setup();
     const importIt = async () => {
-      await user.click(within(table).getAllByRole("button").at(-1) as HTMLElement);
       await user.click(
-        await screen.findByRole("menuitem", { name: fill(c.importVersion, { version: "2.0.0" }) }),
+        await within(list).findByRole("button", {
+          name: fill(c.importVersion, { version: "2.0.0" }),
+        }),
       );
     };
     await importIt();
@@ -1181,6 +1193,29 @@ describe("/admin/catalog and marketplace entries", () => {
     expect(screen.queryByRole("button", { name: en.catalog.admin.detail.deploy })).toBeNull();
   });
 
+  it("entries: the marketplaces are tabs above the list only when there is more than one", async () => {
+    const calls = stubApi({
+      "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+      "GET /api/v1/admin/marketplaces/entries": () =>
+        json(200, { items: [entry()], truncated: false }),
+    });
+    renderPage(<MarketplaceEntriesPage />);
+    const tabs = await screen.findByRole("tablist", { name: en.catalog.admin.filters.source });
+    expect(within(tabs).getAllByRole("tab")).toHaveLength(3);
+    await userEvent.setup().click(within(tabs).getAllByRole("tab")[2] as HTMLElement);
+    await waitFor(() => expect(calls.some((c) => c.url.includes("sourceId=s2"))).toBe(true));
+    cleanup();
+    stubApi({
+      "GET /api/v1/admin/marketplaces": () =>
+        json(200, { ...SOURCES, items: SOURCES.items.slice(0, 1) }),
+      "GET /api/v1/admin/marketplaces/entries": () =>
+        json(200, { items: [entry()], truncated: false }),
+    });
+    renderPage(<MarketplaceEntriesPage />);
+    await screen.findByText(/@acme\/plugin-cat-a/);
+    expect(screen.queryByRole("tablist", { name: en.catalog.admin.filters.source })).toBeNull();
+  });
+
   it("entries search is debounced: typing sends one request with the keyword", async () => {
     const calls = stubApi({
       "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
@@ -1188,10 +1223,10 @@ describe("/admin/catalog and marketplace entries", () => {
         json(200, { items: [entry()], truncated: false }),
     });
     renderPage(<MarketplaceEntriesPage />);
-    await screen.findByText("@acme/plugin-cat-a");
+    await screen.findByText(/@acme\/plugin-cat-a/);
     await userEvent
       .setup()
-      .type(screen.getByRole("textbox", { name: en.catalog.admin.entries.search }), "cat-a");
+      .type(screen.getByRole("searchbox", { name: en.catalog.admin.entries.search }), "cat-a");
     await waitFor(() => expect(calls.some((c) => c.url.includes("q=cat-a"))).toBe(true));
     expect(calls.filter((c) => c.url.includes("q=")).map((c) => c.url)).toEqual([
       "/api/v1/admin/marketplaces/entries?q=cat-a",
@@ -1320,6 +1355,16 @@ describe("安装向导的默认 slug", () => {
       exact: false,
     })) as HTMLInputElement;
     expect(slug.value).toBe("github_mcp");
+  });
+});
+
+describe("deployment requests with none pending", () => {
+  it("one full-width empty state, not a narrow empty table beside an empty detail", async () => {
+    stubApi({ "GET /api/v1/admin/catalog/requests": () => json(200, { requests: [] }) });
+    renderPage(<CatalogRequestsPage />);
+    expect(await screen.findByText(en.catalog.admin.requests.empty)).toBeTruthy();
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(document.querySelector(".cb-body-rail")).toBeNull();
   });
 });
 
@@ -1485,19 +1530,19 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
         json(200, { stagingId: "st7", review: REVIEW }),
     });
     renderPage(<MarketplaceEntriesPage />);
-    const table = await screen.findByRole("table", { name: c.title });
-    const row = (name: string) => within(table).getByText(name).closest("tr") as HTMLElement;
-    expect(within(row("pinned")).getByText(fill(c.gitPinned, { commit: "89abcde" }))).toBeTruthy();
-    expect(within(row("follows")).getByText(fill(c.gitFollows, { ref: "main" }))).toBeTruthy();
-    expect(
-      within(row("in-repo")).getByText(fill(c.pathSource, { path: "./plugins/x" })),
-    ).toBeTruthy();
+    const list = await screen.findByRole("list", { name: c.title });
+    const row = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
+    const meta = (name: string) => row(name).querySelector(".cb-object-meta")?.textContent ?? "";
+    expect(meta("pinned")).toContain(fill(c.gitPinned, { commit: "89abcde" }));
+    expect(meta("follows")).toContain(fill(c.gitFollows, { ref: "main" }));
+    expect(meta("in-repo")).toContain(fill(c.pathSource, { path: "./plugins/x" }));
     expect(within(row("in-repo")).getByText(en.catalog.contentChanged)).toBeTruthy();
     expect(within(row("http-path")).getByText(c.reason.path_needs_git_marketplace)).toBeTruthy();
     const user = userEvent.setup();
-    await user.click(within(row("in-repo")).getAllByRole("button").at(-1) as HTMLElement);
     await user.click(
-      await screen.findByRole("menuitem", { name: fill(c.importChanged, { version: "1.0.0" }) }),
+      within(row("in-repo")).getByRole("button", {
+        name: fill(c.importChanged, { version: "1.0.0" }),
+      }),
     );
     await waitFor(() =>
       expect(router.push).toHaveBeenCalledWith("/admin/catalog/import?staging=st7"),
@@ -1522,11 +1567,10 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
         }),
     });
     renderPage(<MarketplaceEntriesPage />);
-    const table = await screen.findByRole("table", { name: en.catalog.admin.entries.title });
+    const list = await screen.findByRole("list", { name: en.catalog.admin.entries.title });
     const user = userEvent.setup();
-    await user.click(within(table).getAllByRole("button").at(-1) as HTMLElement);
     await user.click(
-      await screen.findByRole("menuitem", {
+      within(list).getByRole("button", {
         name: fill(en.catalog.admin.entries.importVersion, { version: "1.0.0" }),
       }),
     );
@@ -1553,11 +1597,10 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
         }),
     });
     renderPage(<MarketplaceEntriesPage />);
-    const table = await screen.findByRole("table", { name: en.catalog.admin.entries.title });
+    const list = await screen.findByRole("list", { name: en.catalog.admin.entries.title });
     const user = userEvent.setup();
-    await user.click(within(table).getAllByRole("button").at(-1) as HTMLElement);
     await user.click(
-      await screen.findByRole("menuitem", {
+      within(list).getByRole("button", {
         name: fill(en.catalog.admin.entries.importVersion, { version: "1.0.0" }),
       }),
     );

@@ -1,22 +1,10 @@
 "use client";
 
-import {
-  Badge,
-  Card,
-  type Column,
-  DataTable,
-  Field,
-  Input,
-  ListPage,
-  RadioGroup,
-  Stack,
-  Text,
-} from "@capybara-hq/design";
+import { ListPage, type MenuItem, ObjectRow, Stack, Tabs, Text } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 import { AdminGate } from "../../../../../components/AdminGate";
 import { useCatalogErrorLines } from "../../../../../components/CatalogParts";
-import { FormError } from "../../../../../components/form-error";
 import { usePagePath } from "../../../../../components/shell/path";
 import { useRouter } from "../../../../../i18n/navigation";
 import { marketplaceTabs } from "../../../../../lib/admin-tabs";
@@ -35,18 +23,19 @@ import { useErrorMessage } from "../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../lib/use-load";
 
 /**
- * `/admin/marketplaces/entries`: browse marketplace entries (enterprise admins, ListPage).
- * One entry is one version of a plugin. Columns: name and its source (npm package, archive URL, a
- * git URL pinned to a commit or following a branch, a path in the marketplace's repository),
- * marketplace, summary, permission summary, version (incompatible ones marked), status (imported /
- * new version / content changed at the same version / why it cannot be imported: a host outside
- * `marketplaces.allowedHosts`, a path entry of an http marketplace); the Rail filters by marketplace
- * and keyword. Row menu "Import <version>" (or, when the content changed, "Import the changed
- * content"): downloads, verifies and stages the plugin, then opens the import review
- * (`/admin/catalog/import?staging=<id>`, which shows the marketplace's permission mismatch too).
- * Errors such as `marketplace.integrity_mismatch` use a prominent danger card (with the kernel's line
- * naming the host for network and git codes); a hint to narrow the filter when the entries are
- * truncated.
+ * `/admin/marketplaces/entries`: browse marketplace entries (enterprise admins), as object rows.
+ * One entry is one version of a plugin. A row: the mono name, the summary, a meta line (the
+ * marketplace, its source: npm package, archive URL, a git URL pinned to a commit or following a
+ * branch, a path in the marketplace's repository; the version, incompatible ones marked; the
+ * permission summary with the sensitive count in warn), the state (not imported / imported
+ * <version>, or why it cannot be imported: a host outside `marketplaces.allowedHosts`, a path
+ * entry of an http marketplace), chips for a newer version or changed content, one action and a
+ * menu. The action "Import <version>" (or, when the content changed, "Import the changed content")
+ * downloads, verifies and stages the plugin, then opens the import review
+ * (`/admin/catalog/import?staging=<id>`); an imported entry's action opens its catalog item. The
+ * search sits in the page head; the marketplaces become tabs above the list when there is more
+ * than one. Errors such as `marketplace.integrity_mismatch` are a fail callout (with the kernel's
+ * line naming the host for network and git codes); a warn callout when the entries are truncated.
  */
 export default function MarketplaceEntriesPage() {
   return (
@@ -129,84 +118,102 @@ function Catalog() {
     return s.git.ref !== undefined ? t("gitFollows", { ref: s.git.ref }) : t("gitFollowsDefault");
   };
 
-  const columns: Column<MarketplaceEntry>[] = [
-    {
-      key: "name",
-      header: t("columns.name"),
-      cell: (e) => {
-        const note = sourceNote(e);
-        return (
-          <Stack gap={0}>
-            <Text>{e.name}</Text>
-            {!("path" in e.source) && (
-              <Text variant="small" tone="muted">
-                {marketplaceSourceText(e.source)}
-              </Text>
-            )}
-            {note !== null && (
-              <Text variant="small" tone="muted">
-                {note}
-              </Text>
-            )}
-          </Stack>
-        );
-      },
-    },
-    { key: "source", header: t("columns.source"), tone: "muted", cell: (e) => e.sourceName },
-    { key: "summary", header: t("columns.summary"), cell: (e) => summaryOf(e) },
-    {
-      key: "permissions",
-      header: t("columns.permissions"),
-      cell: (e) =>
-        e.permissions === null ? (
-          <Text tone="muted">{t("permissionsNone")}</Text>
-        ) : (
-          <Stack gap={0}>
-            <Text>{t("permissionsCount", { n: e.permissions.keys.length })}</Text>
-            {e.permissions.sensitive.length > 0 && (
-              <Text variant="small" tone="warn">
-                {t("permissionsSensitive", { n: e.permissions.sensitive.length })}
-              </Text>
-            )}
-          </Stack>
-        ),
-    },
-    {
-      key: "version",
-      header: t("columns.version"),
-      cell: (e) =>
-        e.compatible ? (
-          <Text variant="small">{e.version ?? t("noVersion")}</Text>
-        ) : (
-          <Text variant="small" tone="faint">
-            {t("incompatible", { version: e.version ?? t("noVersion") })}
-          </Text>
-        ),
-    },
-    {
-      key: "status",
-      header: t("columns.status"),
-      cell: (e) =>
-        !e.importable ? (
-          <Text tone="muted">{reasonOf(e)}</Text>
-        ) : e.adopted === null ? (
-          <Text tone="muted">{t("notAdopted")}</Text>
-        ) : (
-          <Stack gap={4}>
-            <Stack direction="row" gap={8} align="center">
-              <Text>{t("adopted", { version: e.adopted.versions[0] ?? "" })}</Text>
-              {e.newerAvailable && <Badge tone="accent">{td("newer")}</Badge>}
-              {e.contentChanged && <Badge tone="accent">{td("contentChanged")}</Badge>}
-            </Stack>
-            {e.contentChanged && (
-              <Text variant="small" tone="muted">
-                {t("contentChangedHint")}
-              </Text>
-            )}
-          </Stack>
-        ),
-    },
+  const versionText = (e: MarketplaceEntry) =>
+    e.compatible
+      ? (e.version ?? t("noVersion"))
+      : t("incompatible", { version: e.version ?? t("noVersion") });
+  const metaOf = (e: MarketplaceEntry): (string | { label: string; tone: "warn" })[] => {
+    const note = sourceNote(e);
+    return [
+      e.sourceName,
+      ...("path" in e.source ? [] : [marketplaceSourceText(e.source)]),
+      ...(note !== null ? [note] : []),
+      versionText(e),
+      ...(e.permissions === null
+        ? [t("permissionsNone")]
+        : [
+            t("permissionsCount", { n: e.permissions.keys.length }),
+            ...(e.permissions.sensitive.length > 0
+              ? [
+                  {
+                    label: t("permissionsSensitive", { n: e.permissions.sensitive.length }),
+                    tone: "warn" as const,
+                  },
+                ]
+              : []),
+          ]),
+    ];
+  };
+  const importLabel = (e: MarketplaceEntry) =>
+    e.contentChanged
+      ? t("importChanged", { version: e.version ?? t("noVersion") })
+      : e.version === null
+        ? t("import")
+        : t("importVersion", { version: e.version });
+  /** The row's one action: import (again, when the content changed), or open the imported item. */
+  const actionOf = (e: MarketplaceEntry) => {
+    if (e.importable && e.compatible && (!imported(e) || e.contentChanged)) {
+      return {
+        label: importLabel(e),
+        onSelect: () => {
+          if (busy === undefined) void doImport(e);
+        },
+      };
+    }
+    if (e.adopted !== null) {
+      return { label: t("view"), href: `/admin/catalog/${encodeURIComponent(e.adopted.itemId)}` };
+    }
+    return undefined;
+  };
+  const menuOf = (e: MarketplaceEntry): MenuItem[] => [
+    ...(!e.importable
+      ? [{ label: reasonOf(e), disabled: true, onSelect: () => {} }]
+      : !e.compatible
+        ? [{ label: t("noCompatible"), disabled: true, onSelect: () => {} }]
+        : []),
+    ...(e.adopted !== null
+      ? [{ label: t("view"), href: `/admin/catalog/${encodeURIComponent(e.adopted.itemId)}` }]
+      : []),
+    ...(e.homepage !== null ? [{ label: t("homepage"), href: e.homepage }] : []),
   ];
+  const stateOf = (e: MarketplaceEntry) =>
+    !e.importable
+      ? { label: reasonOf(e), tone: "warn" as const }
+      : e.adopted === null
+        ? { label: t("notAdopted"), tone: "muted" as const }
+        : { label: t("adopted", { version: e.adopted.versions[0] ?? "" }), tone: "ok" as const };
+
+  const filtering = sourceId !== "" || query !== "";
+  const callout =
+    notice !== undefined
+      ? {
+          tone: "fail" as const,
+          children: (
+            <Stack gap={4}>
+              <Text tone="fail">{notice.message}</Text>
+              {notice.extra.map((m) => (
+                <Text key={m} variant="small" tone="fail">
+                  {m}
+                </Text>
+              ))}
+            </Stack>
+          ),
+        }
+      : truncated
+        ? { tone: "warn" as const, children: t("truncated") }
+        : undefined;
+  const empty =
+    state.kind === "error"
+      ? {
+          icon: "circle-alert" as const,
+          text: t("loadFailed"),
+          action: { label: t("retry"), variant: "default" as const, onSelect: reload },
+        }
+      : state.kind === "ready" && rows.length === 0
+        ? filtering
+          ? { icon: "search" as const, text: t("noResults") }
+          : { text: t("empty") }
+        : undefined;
 
   return (
     <ListPage
@@ -217,66 +224,56 @@ function Catalog() {
           { label: "entries" },
         ],
         title: ta("marketplaces.title"),
+        description: t("hint"),
         tabs: marketplaceTabs(ta),
         activeTab: "browse",
+        search: { label: t("search"), value: q, onChange: setQ },
         ...(state.kind === "ready" && { count: `${rows.length}${truncated ? "+" : ""}` }),
       }}
-      rail={
-        <Stack gap={16}>
-          <Field label={t("search")}>
-            <Input
-              value={q}
-              placeholder={t("searchPlaceholder")}
-              onChange={(e) => setQ(e.target.value)}
-            />
-          </Field>
-          <RadioGroup
-            label={ta("filters.source")}
-            value={sourceId}
-            onChange={setSourceId}
-            options={[
-              { value: "", label: ta("filters.allSources") },
-              ...sourceList.map((s) => ({ value: s.id, label: s.name })),
-            ]}
-          />
-        </Stack>
-      }
+      variant="objects"
+      listLabel={t("title")}
+      loading={state.kind === "loading"}
+      {...(callout ? { callout } : {})}
+      {...(empty ? { empty } : {})}
+      {...(sourceList.length > 1
+        ? {
+            filters: (
+              <Tabs
+                label={ta("filters.source")}
+                value={sourceId === "" ? "all" : sourceId}
+                onChange={(id) => setSourceId(id === "all" ? "" : id)}
+                items={[
+                  { id: "all", label: ta("filters.allSources") },
+                  ...sourceList.map((s) => ({ id: s.id, label: s.name })),
+                ]}
+              />
+            ),
+          }
+        : {})}
     >
-      <Stack gap={12}>
-        <Text tone="muted">{t("hint")}</Text>
-        {truncated && <Text tone="warn">{t("truncated")}</Text>}
-        {notice !== undefined && (
-          <Card tone="danger">
-            <FormError message={notice.message} extra={notice.extra} />
-          </Card>
-        )}
-        <DataTable
-          label={t("title")}
-          columns={columns}
-          rows={rows}
-          rowKey={keyOf}
-          rowLabel={(e) => (e.version === null ? e.name : `${e.name} ${e.version}`)}
-          state={state.kind === "loading" ? "loading" : state.kind === "error" ? "error" : "ready"}
-          error={{ code: state.kind === "error" ? state.code : "unknown", onRetry: reload }}
-          empty={{ title: sourceId === "" && query === "" ? t("empty") : t("noResults") }}
-          rowMenu={(e) => [
-            !e.importable
-              ? { label: reasonOf(e), disabled: true, onSelect: () => {} }
-              : !e.compatible
-                ? { label: t("noCompatible"), disabled: true, onSelect: () => {} }
-                : {
-                    label: e.contentChanged
-                      ? t("importChanged", { version: e.version ?? t("noVersion") })
-                      : e.version === null
-                        ? t("import")
-                        : t("importVersion", { version: e.version }),
-                    // Imported already: only again when its content changed at the same version
-                    disabled: busy === keyOf(e) || (imported(e) && !e.contentChanged),
-                    onSelect: () => void doImport(e),
-                  },
-          ]}
-        />
-      </Stack>
+      {rows.map((e) => {
+        const action = actionOf(e);
+        return (
+          <ObjectRow
+            key={keyOf(e)}
+            mark={{
+              text: Array.from(e.name)[0] ?? "?",
+              ...(!e.importable ? { tone: "warn" as const } : {}),
+            }}
+            name={e.name}
+            mono
+            chips={[
+              ...(e.newerAvailable ? [{ label: td("newer") }] : []),
+              ...(e.contentChanged ? [{ label: td("contentChanged"), tone: "warn" as const }] : []),
+            ]}
+            description={summaryOf(e)}
+            meta={metaOf(e)}
+            state={stateOf(e)}
+            {...(action ? { action } : {})}
+            menu={menuOf(e)}
+          />
+        );
+      })}
     </ListPage>
   );
 }

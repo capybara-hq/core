@@ -39,9 +39,10 @@ function Agents({ orgId }: { orgId: string }) {
     path: [...scope, { label: "agents" }],
     title: t("title"),
     actions: [{ label: t("new"), variant: "primary" as const, href: "/agents/new" }],
-    ...(agents.kind === "ready"
-      ? { tabs, activeTab: tab, search: { label: t("search"), value: query, onChange: setQuery } }
-      : {}),
+    // The tabs and the search keep their place while loading (counts pending).
+    tabs,
+    activeTab: tab,
+    search: { label: t("search"), value: query, onChange: setQuery },
   };
   if (agents.kind === "loading") return <ListPage header={header} variant="objects" loading />;
   if (agents.kind === "error") {

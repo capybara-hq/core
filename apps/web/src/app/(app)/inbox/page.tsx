@@ -172,6 +172,9 @@ function Inbox({ orgId }: { orgId: string }) {
         title: t("title"),
         ...(state.kind === "ready" ? { count: `${rows.length}${truncated ? "+" : ""}` } : {}),
       }}
+      {...(state.kind === "ready" && rows.length === 0
+        ? { empty: { text: t("empty"), hint: t("emptyHint") } }
+        : {})}
       list={
         <DataTable<InboxItem>
           label={t("listLabel")}

@@ -351,6 +351,10 @@ a.cb-item-list-title:hover {
 }
 
 /* ObjectList / ObjectRow (spec §6.17) */
+/* A second row of view tabs above an object list (ListPage `filters`). */
+.cb-list-filters .cb-tabs {
+  border-bottom: 0;
+}
 .cb-object-list {
   margin: 0;
   padding: 0;
@@ -424,6 +428,9 @@ a.cb-object-name:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.cb-object-meta-part[data-tone="warn"] {
+  color: var(--cb-warn);
 }
 .cb-object-desc {
   color: var(--cb-muted);

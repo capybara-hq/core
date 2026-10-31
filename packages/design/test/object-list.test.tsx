@@ -106,6 +106,30 @@ describe("EmptyState and Callout", () => {
 });
 
 describe("ListPage variants", () => {
+  it("loading keeps the head, the tabs (counts as a muted dash) and the search", () => {
+    zh(
+      <ListPage
+        header={{
+          ...header,
+          tabs: [
+            { id: "all", label: "全部", count: 0 },
+            { id: "mine", label: "我的", count: 0 },
+          ],
+          activeTab: "all",
+          search: { label: "搜索", value: "", onChange: () => {} },
+        }}
+        variant="objects"
+        listLabel="列表"
+        loading
+      />,
+    );
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.map((t) => t.textContent)).toEqual(["全部–", "我的–"]);
+    expect(tabs[0]?.querySelector(".cb-tab-count")?.getAttribute("data-pending")).toBe("true");
+    expect(screen.getByRole("searchbox", { name: "搜索" })).toBeTruthy();
+    expect(screen.getByRole("list", { name: "列表" }).getAttribute("aria-busy")).toBe("true");
+  });
+
   it("objects variant wraps rows in one panel", () => {
     zh(
       <ListPage header={header} variant="objects" listLabel="列表">

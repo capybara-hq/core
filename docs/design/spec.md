@@ -217,7 +217,7 @@ See §6.13 for the component. Width `layout.sidebar`; below 1280 an icon rail of
 
 ### 4.2 PageHeader
 
-- Four rows. Row 1: the **path** `scope / page [/ object]` (mono, `small`, `faint`; the last segment, the current page, in `ink` with `aria-current="page"`), inside a `nav` labelled "Path"; earlier segments with a link are links. The scope is the org slug for workspace pages (links to `/`), `~` for the home page, `/admin` for admin pages. Row 2: title (`h1`, single line with an ellipsis, full text in `title`) + count / status, actions on the right (at most one primary, rightmost). Row 3 (optional): a one-line description (`prose-small` `muted`, single line with an ellipsis). Row 4 (optional): **tabs** with counts (`全部 6 · 我的 3`) for pages with views, with the **search** field at the right end of the same row; a tab changes the view (`onSelect`) or links (`href`).
+- Four rows. Row 1: the **path** `scope / page [/ object]` (mono, `small`, `faint`; the last segment, the current page, in `ink` with `aria-current="page"`), inside a `nav` labelled "Path"; earlier segments with a link are links. The scope is the org slug for workspace pages (links to `/`), `~` for the home page, `/admin` for admin pages. Row 2: title (`h1`, single line with an ellipsis, full text in `title`) + count / status, actions on the right (at most one primary, rightmost). Row 3 (optional): a one-line description (`prose-small` `muted`, single line with an ellipsis). Row 4 (optional): **tabs** with counts (`全部 6 · 我的 3`) for pages with views, with the **search** field at the right end of the same row; a tab changes the view (`onSelect`) or links (`href`). The tab row has one height with or without the search (`control.default` + `space.1` above and below) and a 1 px `line-soft` bottom border; the tabs sit at its bottom and overlap the border by 1 px, so the selected tab's underline lies **on** the border; the search is centered vertically. While a ListPage loads, the tabs and the search keep their place and a tab's count is a `faint` "–" (§5.1).
 - No bottom line and no background; spacing separates it from the body.
 - Actions: at most 1 solid primary action + 2 secondary + a `more-horizontal` menu; the primary action is rightmost; all `default` density; an action may lead with a 14 icon (`plus` on a create action). The submit action of form pages **must not** go here; it goes in the ActionRow.
 - List-page key metrics are **not** in the header: the template renders them below the header as StatCards (§6.14), at most 4–5. List and overview pages draw them at the top of the body; detail, trace, inbox, onboarding and status templates draw them in the fixed header area under the PageHeader.
@@ -320,7 +320,7 @@ A new page **must** pick one of the following templates; a new template requires
 - Subordinate section (optional, at most one): below the main table with a `space.6` gap, an `h2` title + one DataTable listing secondary objects closely related to the main object and few in number (such as "Invitations" on the members page); it has no filters or metrics of its own, and the create entry stays in the PageHeader. When the secondary objects need their own filters or are numerous, make a separate list page.
 - PageHeader: title + total, description, secondary actions on the right + Create (primary); metrics ≤ 5 as StatCards.
 - StatusBar page status: the number of filter results.
-- **Variants** (`variant`): `records` (default) holds a DataTable; `objects` wraps its ObjectRows (§6.17) in one ObjectList panel (things people own and configure: agents, skills, connectors, plugins, extensions). The `callout` prop draws a Callout (§6.19) in the header between the title row and the tabs; `empty` draws an EmptyState (§6.18) instead of the content. `loading` draws skeleton rows (§6.17) instead of the content or `empty` until the first answer. An object list has no rail: tabs with counts in the header replace the filters.
+- **Variants** (`variant`): `records` (default) holds a DataTable; `objects` wraps its ObjectRows (§6.17) in one ObjectList panel (things people own and configure: agents, skills, connectors, plugins, extensions). The `callout` prop draws a Callout (§6.19) in the header between the title row and the tabs; `empty` draws an EmptyState (§6.18) instead of the content. `loading` draws skeleton rows (§6.17) instead of the content or `empty` until the first answer; the head keeps its real layout meanwhile (title, actions, tabs with counts shown as a `faint` "–", search), so nothing moves when the answer arrives. An object list has no rail: tabs with counts in the header replace the filters.
 
 <!-- states: template-list -->
 States: `page`
@@ -513,7 +513,7 @@ States: `default`, `selected`, `focus`
 | switch | focus | outline-width | 2 |
 
 ### 6.4 Tabs / Segmented / Pagination
-- Tabs: text + underline when selected (§2.3); hover `hover` ground; disabled `faint`.
+- Tabs: text + underline when selected (§2.3); hover `hover` ground; disabled `faint`. In the page head's tab row the underline sits on the row's bottom border (§4.2).
 - Segmented in a form field takes the field's width with equal segments (`fill`).
   - Count `count`: a small `muted` number after the name.
   - Badge `badge` (such as Inspector "Tasks 2/4"): 1px `line` border, small `muted`, radius `sm`; when selected `ink` text.

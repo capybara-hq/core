@@ -118,8 +118,13 @@ For things people own and configure: Agents, 技能, 连接器, 插件 (org cata
 - **Needs attention first**: a warn callout above the tabs names what needs action, with its button
   (canvas admin / extensions). Filter rails go away; tabs with counts replace them (a tab only when it
   holds something different from 全部).
-- **Empty**: one empty state component (icon, one sentence, the primary action), never a table header over
-  an icon.
+- **Empty**: the one empty state (§3.7), never a table header over an icon.
+- **Loading**: the head keeps its real layout (title, actions, tabs with a muted "–" for counts,
+  search); only the rows are skeletons (acceptance round 2).
+- **Marketplace entries** are object rows too (mono name, summary, meta = marketplace · source ·
+  version · permissions with the sensitive count in warn, state 未引入 / 已引入 <version>, one action
+  引入 or 查看, the rest in the menu); the search is the head's; the marketplaces are a second tab row
+  above the list only when there is more than one (the head's tab row holds 浏览 · 市场源).
 
 ### 3.2 Record table
 
@@ -166,7 +171,18 @@ For a set of settings pages under one title: **组织设置** (`/settings/*`) an
 - **One setup checklist** component, used by the home page and the new-conversation page alike (today they
   differ): steps org / model / agent, each with its action; the new-conversation page shows it full width in
   place of the composer.
-- One empty state, one loading state (skeleton in the frame's shape), one error state with retry.
+- One empty state (§3.7), one loading state (skeleton in the frame's shape, never shaped like one of
+  two possible outcomes), one error state with retry.
+
+### 3.7 Empty state (acceptance round 2)
+
+One component everywhere (`EmptyState`, design spec §6.18): the pixel capybara drawn in faint lines,
+one sentence in ink saying what will be here, an optional muted second line, and the action that
+fills it. Two sizes: `page` (centered in the content frame, generous space) for list pages and the
+inbox, `compact` (left-aligned, small illustration) for the DataTable's empty area, panels and the
+sidebar's conversation list ("还没有会话" + 新会话; a filter matching nothing: "没有匹配的会话" +
+清除筛选). An inbox with nothing in it is one full-width empty state, not a list + detail split
+around an empty table.
 
 ## 4. Where every page goes
 

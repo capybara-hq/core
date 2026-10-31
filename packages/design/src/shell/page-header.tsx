@@ -41,7 +41,15 @@ export type PageHeaderProps = {
   /** Between the title row and the tabs: a Callout naming what needs action (ListPage `callout`). */
   notice?: ReactNode;
   /** Row 4 (optional): the page's views with counts; the search sits at the row's right end. */
-  tabs?: { id: string; label: string; count?: number; href?: string; onSelect?(): void }[];
+  tabs?: {
+    id: string;
+    label: string;
+    count?: number;
+    /** The count is not known yet (ListPage `loading` sets it): a muted dash. */
+    pending?: boolean;
+    href?: string;
+    onSelect?(): void;
+  }[];
   /** The selected tab's id. */
   activeTab?: string;
   /** The search field at the right end of the tabs row. */
