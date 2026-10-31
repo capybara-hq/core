@@ -177,6 +177,7 @@ function DeleteOrg({ orgId }: { orgId: string }) {
   const toast = useToast();
   const router = useRouter();
   const { me, switchOrg } = useSession();
+  const errorMessage = useErrorMessage();
   const [open, setOpen] = useState(false);
   const org = me.memberships.find((m) => m.orgId === orgId);
   if (org === undefined) return null;
@@ -197,7 +198,12 @@ function DeleteOrg({ orgId }: { orgId: string }) {
         confirmName={org.slug}
         confirmLabel={t("delete.confirm")}
         onConfirm={async () => {
-          await deleteOrg(orgId);
+          try {
+            await deleteOrg(orgId);
+          } catch (e) {
+            // DangerConfirm shows the message: the localized one, never the kernel's English
+            throw new Error(errorMessage(e));
+          }
           setOpen(false);
           toast.success(t("delete.done"));
           await switchOrg(null);

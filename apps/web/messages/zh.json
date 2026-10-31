@@ -3382,6 +3382,7 @@
     "empty": "还没有服务令牌",
     "emptyHint": "新建一个令牌，给 CI 或集成调用组织的接口。",
     "loadFailed": "无法加载服务令牌。",
-    "retry": "重试"
+    "retry": "重试",
+    "expired": "已过期"
   }
 }

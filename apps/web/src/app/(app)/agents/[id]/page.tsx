@@ -189,6 +189,7 @@ function EditAgent({
           orgId={orgId}
           agentId={agent.id}
           ownerAccountId={agent.ownerAccountId}
+          needsReassignment={agent.needsReassignment === true}
           onClose={() => setReassigning(false)}
           onDone={onChanged}
         />

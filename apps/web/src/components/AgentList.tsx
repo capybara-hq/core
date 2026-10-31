@@ -106,6 +106,7 @@ export function AgentRow({ agent, onChanged }: { agent: Agent; onChanged?(): voi
           orgId={agent.orgId}
           agentId={agent.id}
           ownerAccountId={agent.ownerAccountId}
+          needsReassignment={agent.needsReassignment === true}
           onClose={() => setReassigning(false)}
           {...(onChanged ? { onDone: onChanged } : {})}
         />

@@ -101,6 +101,24 @@ describe("退出组织", () => {
     ).toBeNull();
   });
 
+  it("a failed owner count shows the error, not a bare confirm button", async () => {
+    stubApi({
+      "GET /api/v1/me": () => json(200, meAs("owner")),
+      [`GET ${O}/readiness`]: () => json(200, { modelProvider: "ready", agents: 1 }),
+      [`GET ${O}/inbox`]: () => json(200, { items: [], truncated: false }),
+      [`GET ${O}/conversations/groups`]: () =>
+        json(200, { groups: [], next: null, archivedCount: 0 }),
+      [`GET ${O}/ui/contributions`]: () => json(200, { items: [] }),
+      [`GET ${O}/members`]: () => json(500, { error: { code: "internal", message: "boom" } }),
+    });
+    renderFrame();
+    const dialog = await openLeave();
+    expect(await within(dialog).findByRole("alert")).toBeTruthy();
+    expect(
+      within(dialog).queryByRole("button", { name: zh.orgLifecycle.leave.confirm }),
+    ).toBeNull();
+  });
+
   it("an owner beside another owner may leave", async () => {
     api(meAs("owner"), [member("a1", "owner"), member("a2", "owner")]);
     renderFrame();
@@ -152,6 +170,26 @@ describe("删除组织 (组织设置 · 通用)", () => {
   });
 });
 
+describe("删除组织 errors", () => {
+  it("a refusal shows the localized message in the dialog, not the kernel's English", async () => {
+    stubApi({
+      [`GET ${O}/settings`]: () => json(200, { settings: { toolSearch: "on", locale: "en" } }),
+      [`DELETE ${O}`]: () =>
+        json(403, { error: { code: "forbidden", message: "Insufficient organization role" } }),
+    });
+    renderPage(<OrganizationSettingsPage />, { locale: "zh", me: meAs("owner") });
+    const user = userEvent.setup();
+    const zone = await screen.findByRole("region", { name: zh.orgLifecycle.danger.title });
+    await user.click(within(zone).getByRole("button", { name: zh.orgLifecycle.delete.action }));
+    const dialog = await screen.findByRole("dialog", { name: zh.orgLifecycle.delete.title });
+    await user.type(within(dialog).getByRole("textbox"), "acme");
+    await user.click(within(dialog).getByRole("button", { name: zh.orgLifecycle.delete.confirm }));
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert.textContent).not.toContain("Insufficient organization role");
+    expect(alert.textContent).toContain(zh.errors.forbidden);
+  });
+});
+
 describe("服务令牌", () => {
   const TOKEN = {
     id: "t1",
@@ -197,6 +235,17 @@ describe("服务令牌", () => {
     renderPage(<OrganizationSettingsPage />, { locale: "zh", me: meAs("admin") });
     const link = await screen.findByRole("link", { name: zh.connections.nav.tokens });
     expect(link.getAttribute("href")).toBe("/settings/tokens");
+  });
+
+  it("an expired token says 已过期", async () => {
+    stubApi({
+      [`GET ${O}/service-tokens`]: () =>
+        json(200, { tokens: [{ ...TOKEN, expiresAt: "2020-01-01T00:00:00Z" }] }),
+    });
+    resetNavigation("/settings/tokens");
+    renderPage(<TokensPage />, { locale: "zh", me: meAs("admin") });
+    const table = await screen.findByRole("table", { name: zh.tokens.title });
+    expect(within(table).getByText(zh.tokens.expired)).toBeTruthy();
   });
 
   for (const role of ["admin", "owner"] as const) {

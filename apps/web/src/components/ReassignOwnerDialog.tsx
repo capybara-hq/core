@@ -18,12 +18,15 @@ export function ReassignOwnerDialog({
   orgId,
   agentId,
   ownerAccountId,
+  needsReassignment = false,
   onClose,
   onDone,
 }: {
   orgId: string;
   agentId: string;
   ownerAccountId: string;
+  /** Confirming the current owner is a change then: the kernel clears the flag. */
+  needsReassignment?: boolean;
   onClose(): void;
   onDone?(): void;
 }) {
@@ -70,7 +73,7 @@ export function ReassignOwnerDialog({
           <Button
             variant="primary"
             loading={busy}
-            disabled={value === "" || value === ownerAccountId}
+            disabled={value === "" || (value === ownerAccountId && !needsReassignment)}
             onClick={() => void submit()}
           >
             {t("submit")}

@@ -123,6 +123,8 @@ export interface Agent {
   /** The member list when visibility is `members` (else null; older kernels leave it out). */
   memberIds?: string[] | null;
   currentVersion: number;
+  /** The owner left the org and the agent went to an owner of the org until an admin reassigns it. */
+  needsReassignment?: boolean;
   /** 定义里可能还有界面不认识的字段：修改时原样带回。 */
   definition: AgentDefinitionInput & { fallback: ModelRef | null } & Record<string, unknown>;
   updatedAt: string;

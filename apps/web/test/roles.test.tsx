@@ -28,6 +28,7 @@ import ModelsSettingsPage from "../src/app/(app)/settings/models/page";
 import OrganizationPage from "../src/app/(app)/settings/organization/page";
 import PluginsSettingsPage from "../src/app/(app)/settings/plugins/page";
 import SandboxPage from "../src/app/(app)/settings/sandbox/page";
+import TokensPage from "../src/app/(app)/settings/tokens/page";
 import SkillPage from "../src/app/(app)/skills/[id]/page";
 import SkillsPage from "../src/app/(app)/skills/page";
 import TrajectoryPage from "../src/app/(app)/trajectories/[conversationId]/page";
@@ -105,6 +106,7 @@ const PAGES: [string, ComponentType, "member" | "admin", string][] = [
   ["/settings/models", ModelsSettingsPage, "admin", zh.roles.need.admin],
   ["/settings/extensions", ExtensionsSettingsPage, "admin", zh.roles.need.admin],
   ["/settings/plugins", PluginsSettingsPage, "admin", zh.roles.need.admin],
+  ["/settings/tokens", TokensPage, "admin", zh.roles.need.admin],
   ["/settings/organization", OrganizationPage, "member", zh.roles.need.member],
   ["/settings/members", MembersPage, "member", zh.roles.need.member],
   ["/settings/sandbox", SandboxPage, "member", zh.roles.need.member],
@@ -139,6 +141,15 @@ describe("role gate: pages a role may not open", () => {
           expect(calls).toEqual([]);
         } else {
           expect(noAccess()).toBeNull();
+          // the page really loads: it asks the kernel for its data (the connector wizard asks
+          // nothing before its first step, so its first step's template stands in)
+          if (path === "/connectors/install") {
+            await vi.waitFor(() =>
+              expect(document.querySelector('[data-template="WizardPage"]')).toBeTruthy(),
+            );
+          } else {
+            await vi.waitFor(() => expect(calls.length).toBeGreaterThan(0));
+          }
         }
       });
     }
@@ -215,9 +226,9 @@ const MEMBERS = {
 };
 
 describe("agents: edit, read-only and 更换负责人", () => {
-  const agentPage = (role: OrgRole, owner: string) => {
+  const agentPage = (role: OrgRole, owner: string, extra: Record<string, unknown> = {}) => {
     routes = {
-      [`GET ${O}/agents/x1`]: { agent: AGENT("x1", owner) },
+      [`GET ${O}/agents/x1`]: { agent: { ...AGENT("x1", owner), ...extra } },
       [`GET ${O}/models`]: MODELS,
       [`GET ${O}/connectors`]: { connectors: [] },
       [`GET ${O}/skills`]: { skills: [] },
@@ -268,6 +279,30 @@ describe("agents: edit, read-only and 更换负责人", () => {
     await user.click(within(dialog).getByRole("button", { name: zh.agents.reassign.submit }));
     await vi.waitFor(() => expect(calls).toContain(`POST ${O}/agents/x1/owner`));
     expect(await screen.findByText(zh.agents.reassign.done)).toBeTruthy();
+  });
+
+  it("an agent that needs reassignment can be confirmed to its current owner", async () => {
+    agentPage("admin", "a2", { needsReassignment: true });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: zh.agents.reassign.action }));
+    const dialog = await screen.findByRole("dialog", { name: zh.agents.reassign.title });
+    await within(dialog).findByRole("combobox", { name: zh.agents.reassign.owner });
+    const submit = within(dialog).getByRole("button", { name: zh.agents.reassign.submit });
+    expect(submit).toHaveProperty("disabled", false);
+    await user.click(submit);
+    await vi.waitFor(() => expect(calls).toContain(`POST ${O}/agents/x1/owner`));
+  });
+
+  it("without needsReassignment the current owner is not a change", async () => {
+    agentPage("admin", "a2");
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: zh.agents.reassign.action }));
+    const dialog = await screen.findByRole("dialog", { name: zh.agents.reassign.title });
+    await within(dialog).findByRole("combobox", { name: zh.agents.reassign.owner });
+    expect(within(dialog).getByRole("button", { name: zh.agents.reassign.submit })).toHaveProperty(
+      "disabled",
+      true,
+    );
   });
 
   for (const role of ROLES) {

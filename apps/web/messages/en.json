@@ -3382,6 +3382,7 @@
     "empty": "No service tokens yet",
     "emptyHint": "Create a token for CI or an integration to call the organization’s API.",
     "loadFailed": "Couldn’t load service tokens.",
-    "retry": "Retry"
+    "retry": "Retry",
+    "expired": "Expired"
   }
 }

@@ -12,6 +12,7 @@ import {
   Select,
   SettingsPage,
   Stack,
+  StatusMark,
   Text,
   useToast,
 } from "@capybara-hq/design";
@@ -79,7 +80,14 @@ function Tokens({ orgId, actor }: { orgId: string; actor: OrgRole }) {
       key: "expires",
       header: t("columns.expires"),
       tone: "muted",
-      cell: (r) => (r.expiresAt === null ? t("noExpiry") : date(r.expiresAt, locale)),
+      cell: (r) =>
+        r.expiresAt === null ? (
+          t("noExpiry")
+        ) : Date.parse(r.expiresAt) <= Date.now() ? (
+          <StatusMark status="cancelled" label={t("expired")} />
+        ) : (
+          date(r.expiresAt, locale)
+        ),
     },
     {
       key: "lastUsed",
