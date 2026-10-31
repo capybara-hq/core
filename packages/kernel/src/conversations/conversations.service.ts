@@ -55,12 +55,19 @@ export function escapeLike(s: string): string {
   return s.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
-/** SQL for the activity of the conversation row aliased/named `ref` (a correlated subquery). */
+/**
+ * SQL for the activity of the conversation row aliased/named `ref` (a correlated subquery).
+ * A run waiting on its sub-agents (status waiting with `wait_expires_at`, set only for a
+ * `subagents` wait) is still working, so it reports `running`; only a wait for a person
+ * (approval, input) reports `waiting`.
+ */
 function activitySql(ref: string) {
   const id = sql.ref(`${ref}.id`);
   return sql<"running" | "waiting" | null>`(
-    SELECT CASE lr.status WHEN 'queued' THEN 'running' WHEN 'running' THEN 'running'
-      WHEN 'waiting' THEN 'waiting' END
+    SELECT CASE
+      WHEN lr.status IN ('queued', 'running') THEN 'running'
+      WHEN lr.status = 'waiting' AND lr.wait_expires_at IS NOT NULL THEN 'running'
+      WHEN lr.status = 'waiting' THEN 'waiting' END
     FROM capybara.runs lr WHERE lr.conversation_id = ${id}
     ORDER BY lr.created_at DESC, lr.id DESC LIMIT 1
   )`;

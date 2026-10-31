@@ -130,6 +130,20 @@ describe("conversation search, activity, archived count", { timeout: 60_000 }, (
     expect(gr.find((x) => x.id === c)?.activity).toBeNull();
   });
 
+  it("a run waiting on its sub-agents reports running, not waiting", async () => {
+    const a = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, a, "echo:hi");
+    await waitFor(async () => (await runsOf(db, a)).every((r) => r.status === "completed"));
+    // the shape Waits.suspend writes for a `subagents` wait: status waiting + wait_expires_at
+    await sql`UPDATE capybara.runs SET status = 'waiting', wait_expires_at = now() + interval '1 hour'
+      WHERE conversation_id = ${a}`.execute(raw);
+    const by = new Map((await list("")).conversations.map((x) => [x.id, x.activity]));
+    expect(by.get(a)).toBe("running");
+    expect((await list("?state=waiting")).conversations).toEqual([]);
+    expect((await list("?state=running")).conversations.map((c) => c.id)).toEqual([a]);
+    expect((await groups("?state=waiting")).groups).toEqual([]);
+  });
+
   it("archivedCount counts archived conversations", async () => {
     const a = await createConv(owner, orgId, agentId);
     const b = await createConv(owner, orgId, agentId);

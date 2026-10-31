@@ -258,6 +258,43 @@ describe("queued messages", { timeout: 60_000 }, () => {
     expect(await userTexts(conv)).toEqual([SLOW, "echo:two", "echo:one"]);
   });
 
+  it("a queued message sent to an archived conversation unarchives it, as a direct send does", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, SLOW);
+    await runStatus(conv, "running");
+    expect((await enqueue(conv, "echo:later")).statusCode).toBe(201);
+    const two = ((await (await enqueue(conv, "echo:now")).json()) as { item: Item }).item;
+    const archivedAt = async () =>
+      (
+        await db
+          .selectFrom("conversations")
+          .select("archived_at")
+          .where("id", "=", conv)
+          .executeTakeFirstOrThrow()
+      ).archived_at;
+    const archive = () =>
+      owner({
+        method: "PATCH",
+        url: `/api/v1/orgs/${orgId}/conversations/${conv}`,
+        payload: { archived: true },
+      });
+    // "send now" of an item
+    expect((await archive()).statusCode).toBe(200);
+    expect(await archivedAt()).not.toBeNull();
+    const sent = await owner({ method: "POST", url: `${base(conv)}/${two.id}/send` });
+    expect(sent.statusCode, sent.body).toBe(202);
+    expect(await archivedAt()).toBeNull();
+    // the queue head going out after the run
+    expect((await archive()).statusCode).toBe(200);
+    expect(await archivedAt()).not.toBeNull();
+    await waitFor(
+      async () => (await userTexts(conv)).includes("echo:later"),
+      30_000,
+      "queued message sent",
+    );
+    expect(await archivedAt()).toBeNull();
+  });
+
   it("a retried enqueue with the same clientMessageId keeps one item", async () => {
     const conv = await createConv(owner, orgId, agentId);
     await postMessage(owner, orgId, conv, "stall");

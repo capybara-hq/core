@@ -45,6 +45,7 @@ interface EnsureState {
   orphanRunId: string | null;
   dispatchedSeq: number | null;
   dispatchedSwitch: boolean;
+  dispatchedUnarchived: boolean;
   /** The queue paused in this transaction: the open pages hear it after the commit. */
   pausedNow: boolean;
   orphanStop: { beforeTerminal: () => Promise<void>; fire: () => void } | undefined;
@@ -123,11 +124,13 @@ export class RunQueue {
       orphanRunId: null,
       dispatchedSeq: null,
       dispatchedSwitch: false,
+      dispatchedUnarchived: false,
       pausedNow: false,
       orphanStop: undefined,
     };
     const created = await this.ensureRunIn(conversationId, st);
     const { orphanSeq, orphanRunId, dispatchedSeq, dispatchedSwitch, pausedNow, orphanStop } = st;
+    const { dispatchedUnarchived } = st;
     if (orphanSeq !== null) {
       await notifyFinished(this.eventLog, conversationId, orphanSeq, "failed");
       orphanStop?.fire();
@@ -138,6 +141,7 @@ export class RunQueue {
       await this.eventLog.notify(conversationId, dispatchedSeq);
       await this.eventLog.publishChanged(conversationId, "queue");
       if (dispatchedSwitch) await this.eventLog.publishChanged(conversationId, "selection");
+      if (dispatchedUnarchived) await this.eventLog.publishChanged(conversationId, "archived");
     }
     if (orphanRunId !== null) {
       await this.dropCheckpoints(orphanRunId);
@@ -236,6 +240,7 @@ export class RunQueue {
       }
       st.dispatchedSeq = sent.event.seq;
       st.dispatchedSwitch = sent.switched;
+      st.dispatchedUnarchived = sent.unarchived;
       last = { seq: String(sent.event.seq), payload: sent.event.payload };
     }
     const active = await this.activeRun(t, conversationId);
