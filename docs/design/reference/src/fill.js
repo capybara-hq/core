@@ -34,9 +34,9 @@
     enterprise: ["all", "member", "admin", "enterprise"],
   };
 
-  // ── Sidebar ───────────────────────────────────────────────────────────────
+  // ── Sidebar (v3: work and admin contexts) ─────────────────────────────────
 
-  function navItem(n, o) {
+  function navItem(n, o, extra = "") {
     const current = n.id === o.active ? ' aria-current="page"' : "";
     const st = o.hover === n.id ? "hover" : o.focus === n.id ? "focus" : "";
     const count =
@@ -44,11 +44,12 @@
         ? `<span class="r-nav-count" aria-hidden="true">${n.count}</span>`
         : "";
     const label = n.count !== undefined ? `${n.label}，${n.count} 项待处理` : n.label;
+    const size = extra.includes("r-nav-sub") ? 14 : 16;
     if (o.mode === "rail") {
       const badge = n.count !== undefined ? `<span class="r-rail-badge">${n.count}</span>` : "";
-      return `<a class="r-nav-item r-rail-item" href="#" aria-label="${esc(label)}"${current}${state(st)}>${icon(n.icon)}${badge}</a>`;
+      return `<a class="r-nav-item r-rail-item${extra}" href="#" aria-label="${esc(label)}"${current}${state(st)}>${icon(n.icon)}${badge}</a>`;
     }
-    return `<a class="r-nav-item" href="#" aria-label="${esc(label)}"${current}${state(st)}>${icon(n.icon)}<span class="r-ellipsis">${esc(n.label)}</span>${count}</a>`;
+    return `<a class="r-nav-item${extra}" href="#" aria-label="${esc(label)}"${current}${state(st)}>${icon(n.icon, size)}<span class="r-ellipsis">${esc(n.label)}</span>${count}</a>`;
   }
 
   function convRow(c, o) {
@@ -56,23 +57,32 @@
     const title = c.id === o.activeConversation && o.activeTitle ? o.activeTitle : c.title;
     const untitled = title === null;
     const text = untitled ? `${F.UNTITLED_CONVERSATION} · ${stamp(c.startedAt)}` : title;
-    const current = c.id === o.activeConversation ? ' aria-current="page"' : "";
+    const isCurrent = c.id === o.activeConversation;
     const st = o.hover === c.id ? "hover" : o.focus === c.id ? "focus" : "";
-    return `<a class="r-conv" href="#" title="${esc(text)}"${current}${state(st)}><span class="r-ellipsis">${esc(text)}</span></a>`;
+    const dot =
+      c.activity && !o.archived
+        ? `<span class="r-conv-dot" data-activity="${c.activity}" aria-hidden="true"></span>`
+        : "";
+    const menu = isCurrent
+      ? `<button class="r-row-menu" aria-label="会话操作">${icon("more-horizontal", 14)}</button>`
+      : "";
+    return `<div class="r-conv-row"${isCurrent ? ' data-current="true"' : ""}${state(st)}>${dot}<a class="r-conv" href="#" title="${esc(text)}"${isCurrent ? ' aria-current="page"' : ""}><span class="r-ellipsis">${esc(text)}</span></a>${menu}</div>`;
   }
 
   function group(g, o) {
     const collapsed = (o.collapsed || []).includes(g.agentId);
+    const plus = o.archived
+      ? ""
+      : `<button class="r-icon-btn" data-step="dense" aria-label="${esc(F.SIDEBAR_COPY.newConversationIn.replace("{agent}", g.agentName))}">${icon("plus", 14)}</button>`;
     const head = `<div class="r-group-head"${state(o.hover === g.agentId ? "hover" : "")}>
-      <button class="r-group-toggle" aria-expanded="${!collapsed}" title="${esc(g.agentName)}"><span class="r-ellipsis">${esc(g.agentName)}</span>${icon(collapsed ? "chevron-right" : "chevron-down", 12)}</button>
-      <button class="r-icon-btn" data-step="dense" aria-label="${esc(F.SIDEBAR_COPY.newConversationIn)}：${esc(g.agentName)}">${icon("plus", 14)}</button>
+      <button class="r-group-toggle" aria-expanded="${!collapsed}" title="${esc(g.agentName)}"><span class="r-ellipsis">${esc(g.agentName)}</span>${icon(collapsed ? "chevron-right" : "chevron-down", 12)}</button>${plus}
     </div>`;
     if (collapsed) return `<div class="r-group">${head}</div>`;
-    const more = g.more ? `<button class="r-conv r-conv-more">${esc(F.SIDEBAR_COPY.more)}</button>` : "";
+    const more = g.more ? `<button class="r-conv-more">${esc(F.SIDEBAR_COPY.more)}</button>` : "";
     return `<div class="r-group">${head}${g.conversations.map((c) => convRow(c, o)).join("")}${more}</div>`;
   }
 
-  function conversations(o) {
+  function conversationList(o) {
     if (o.state === "empty") return `<p class="r-sb-hint">${esc(F.SIDEBAR_COPY.empty)}</p>`;
     if (o.state === "loading") {
       const bars = [64, 88, 72, 0, 56, 80, 0, 60, 76]
@@ -87,50 +97,105 @@
     if (o.state === "error") {
       return `<div class="r-sb-error" role="alert"><span class="r-fail-text">${icon("circle-alert", 14)}${esc(F.SIDEBAR_COPY.error)}</span><button class="r-btn" data-variant="ghost" data-step="dense">${icon("refresh", 14)}${esc(F.SIDEBAR_COPY.retry)}</button></div>`;
     }
-    const groups =
-      o.groups === "long"
+    let groups = o.archived
+      ? F.GROUPS_FIXTURE.slice(1)
+      : o.groups === "long"
         ? [F.LONG_TITLE_GROUP_FIXTURE, ...F.GROUPS_FIXTURE.slice(1)]
         : o.groups === "many"
           ? F.MANY_GROUPS_FIXTURE
           : F.GROUPS_FIXTURE;
+    if (o.filter && o.filter !== "all") {
+      groups = groups
+        .map((g) => ({ ...g, more: false, conversations: g.conversations.filter((c) => c.activity === o.filter) }))
+        .filter((g) => g.conversations.length > 0);
+    }
     const moreGroups =
       o.groups === "many" && F.MANY_GROUPS_MORE
-        ? `<button class="r-conv r-conv-more">${esc(F.SIDEBAR_COPY.moreGroups)}</button>`
+        ? `<button class="r-conv-more">${esc(F.SIDEBAR_COPY.moreGroups)}</button>`
         : "";
     return groups.map((g) => group(g, o)).join("") + moreGroups;
   }
 
+  function conversations(o) {
+    const C = F.SIDEBAR_COPY;
+    const n = F.ARCHIVED_COUNT_FIXTURE;
+    const head = `<div class="r-sb-convs-head"><span class="r-sb-section">${esc(C.conversations)}</span><button class="r-icon-btn" data-step="dense" aria-label="${esc(C.filter)}"${o.filter ? ' data-active="true"' : ""}>${icon("filter", 14)}</button></div>`;
+    const filter = o.filter
+      ? `<div class="r-sb-filter"><input class="r-input r-sb-filter-input" placeholder="${esc(C.filterQuery)}" aria-label="${esc(C.filterQuery)}"><div class="r-seg r-seg-fill r-sb-filter-seg" role="radiogroup" aria-label="会话状态">${C.states
+          .map((label, i) => `<button role="radio" aria-checked="${["all", "running", "waiting"][i] === o.filter}">${esc(label)}</button>`)
+          .join("")}</div></div>`
+      : "";
+    const back = o.archived
+      ? `<button class="r-sb-archived" data-back="true">${icon("arrow-left", 14)}<span class="r-ellipsis">${esc(C.archived)} · ${n}</span></button>`
+      : "";
+    const entry =
+      !o.archived && !o.state
+        ? `<button class="r-sb-archived">${icon("archive", 14)}<span class="r-ellipsis">${esc(C.archived)} · ${n}</span></button>`
+        : "";
+    return `<div class="r-sb-convs" aria-label="${esc(C.conversations)}">${head}${filter}${back}${conversationList(o)}${entry}</div>`;
+  }
+
+  function orgBlock(o) {
+    const org = F.ORG_SWITCHER_FIXTURE;
+    if (o.mode === "rail") {
+      return `<button class="r-sb-org" data-rail="true" aria-label="当前组织：${esc(org.name)}，切换组织"><span class="r-sb-org-initial">${esc(org.initial)}</span></button>`;
+    }
+    return `<button class="r-sb-org" aria-label="当前组织：${esc(org.name)}，切换组织"><span class="r-sb-org-initial">${esc(org.initial)}</span><span class="r-sb-org-text"><span class="r-sb-org-name">${esc(org.name)}</span><span class="r-sb-org-meta">~/${esc(org.slug)} · ${esc(org.role)}</span></span>${icon("chevrons-up-down", 14)}</button>`;
+  }
+
+  function adminBlock(o) {
+    const C = F.SIDEBAR_COPY;
+    const slug = F.ORG_SWITCHER_FIXTURE.slug;
+    if (o.mode === "rail") {
+      return `<div class="r-sb-context"><div class="r-sb-org" data-static="true" data-rail="true"><span class="r-sb-org-initial" data-tone="accent">${icon("admin", 14)}</span></div><a class="r-sb-back r-rail-item" href="#" aria-label="${esc(C.back)} ~/${esc(slug)}">${icon("arrow-left", 14)}</a></div>`;
+    }
+    return `<div class="r-sb-context"><div class="r-sb-org" data-static="true"><span class="r-sb-org-initial" data-tone="accent">${icon("admin", 14)}</span><span class="r-sb-org-text"><span class="r-sb-org-name">${esc(F.ADMIN_LABEL)}</span><span class="r-sb-org-meta">${esc(C.adminScope)}</span></span></div><a class="r-sb-back" href="#">${icon("arrow-left", 14)}<span class="r-ellipsis">${esc(C.back)} ~/${esc(slug)}</span></a></div>`;
+  }
+
   function sidebar(o) {
     const level = o.level || "enterprise";
-    const visible = F.NAV_FIXTURE.filter((n) => VISIBLE[level].includes(n.audience));
-    const main = visible.filter((n) => n.id !== "settings" && n.id !== "admin");
-    const tail = visible.filter((n) => n.id === "settings" || n.id === "admin");
     const rail = o.mode === "rail";
-    const ext = F.EXTENSION_PAGES_FIXTURE.map((p) =>
-      navItem({ id: p.id, label: p.label, icon: "extension" }, o),
-    ).join("");
+    const admin = o.context === "admin";
+    const C = F.SIDEBAR_COPY;
     const top = rail
       ? `<div class="r-sb-top">${LOGO}</div>
-         <button class="r-icon-btn r-rail-item" aria-label="${esc(F.SIDEBAR_COPY.expand)}">${icon("panel-left")}</button>
-         <button class="r-icon-btn r-rail-item" aria-label="${esc(F.SIDEBAR_COPY.search)}">${icon("search")}</button>`
-      : `<div class="r-sb-top">${LOGO}<span class="r-wordmark">CAPYBARA</span>
-          <button class="r-icon-btn" aria-label="${esc(F.SIDEBAR_COPY.search)} ${esc(F.SIDEBAR_COPY.searchShortcut)}">${icon(o.mode === "drawer" ? "x" : "search")}</button></div>`;
-    const newConv = navItem({ id: "new", label: F.NEW_CONVERSATION_LABEL, icon: "plus" }, o).replace(
-      'class="r-nav-item',
-      'class="r-nav-item r-nav-new',
-    );
-    const extGroup =
-      F.EXTENSION_PAGES_FIXTURE.length === 0
-        ? ""
-        : rail
-          ? `<span class="r-rail-sep"></span>${ext}`
-          : `<div class="r-sb-label">${esc(F.EXTENSIONS_LABEL)}</div>${ext}`;
-    const nav = `<nav class="r-sb-nav" aria-label="主导航">${newConv}${main.map((n) => navItem(n, o)).join("")}${extGroup}${rail ? '<span class="r-rail-sep"></span>' : '<span class="r-sb-gap"></span>'}${tail.map((n) => navItem(n, o)).join("")}</nav>`;
-    const convs = rail ? "" : `<div class="r-sb-convs" aria-label="会话">${conversations(o)}</div>`;
+         <button class="r-icon-btn r-rail-item" aria-label="${esc(C.expand)}">${icon("panel-left")}</button>`
+      : `<div class="r-sb-top">${LOGO}<span class="r-wordmark">CAPYBARA</span>${o.mode === "drawer" ? `<button class="r-icon-btn" aria-label="关闭导航">${icon("x")}</button>` : ""}</div>`;
+    let nav;
+    if (admin) {
+      nav = F.ADMIN_NAV_FIXTURE.map((n) => navItem(n, o)).join("");
+    } else {
+      const visible = F.NAV_FIXTURE.filter((n) => VISIBLE[level].includes(n.audience));
+      const primary = visible.filter((n) => n.place === "primary");
+      const more = [
+        ...visible.filter((n) => n.place === "more"),
+        ...F.EXTENSION_PAGES_FIXTURE.map((p) => ({ id: p.id, label: p.label, icon: "extension" })),
+      ];
+      const moreOpen = o.moreOpen || more.some((n) => n.id === o.active);
+      const newConv = navItem({ id: "new", label: F.NEW_CONVERSATION_LABEL, icon: "plus" }, o);
+      const search = rail
+        ? `<button class="r-nav-item r-rail-item" aria-label="${esc(C.search)} ${esc(C.searchShortcut)}">${icon("search")}</button>`
+        : `<button class="r-nav-item" aria-label="${esc(C.search)} ${esc(C.searchShortcut)}">${icon("search")}<span class="r-ellipsis">${esc(C.search)}</span><span class="r-nav-kbd">${esc(C.searchShortcut)}</span></button>`;
+      const moreToggle = rail
+        ? `<button class="r-nav-item r-rail-item r-nav-more" aria-label="${esc(F.MORE_LABEL)}">${icon("more-horizontal")}</button>`
+        : `<button class="r-nav-item r-nav-more" aria-expanded="${moreOpen}">${icon("more-horizontal")}<span class="r-ellipsis">${esc(F.MORE_LABEL)}</span>${icon(moreOpen ? "chevron-down" : "chevron-right", 12)}</button>`;
+      const moreItems =
+        moreOpen && !rail ? `<div class="r-nav-subs">${more.map((n) => navItem(n, o, " r-nav-sub")).join("")}</div>` : "";
+      nav = `${newConv}${search}${primary.map((n) => navItem(n, o)).join("")}${moreToggle}${moreItems}`;
+    }
+    const navBlock = `<nav class="r-sb-nav" aria-label="主导航">${nav}</nav>`;
+    const context = admin ? adminBlock(o) : orgBlock(o);
+    const middle = admin || rail ? '<div class="r-sb-fill"></div>' : conversations(o);
+    const adminEntry =
+      !admin && level === "enterprise"
+        ? rail
+          ? `<a class="r-nav-item r-rail-item r-sb-admin" href="#" aria-label="${esc(F.ADMIN_LABEL)}">${icon("admin")}</a>`
+          : `<a class="r-nav-item r-sb-admin" href="#">${icon("admin")}<span class="r-ellipsis">${esc(F.ADMIN_LABEL)}</span>${icon("arrow-up-right", 14)}</a>`
+        : "";
     const foot = rail
-      ? `<div class="r-sb-foot"><span class="r-avatar" title="${esc(F.SIDEBAR_COPY.account)}">${F.FIXTURE_USER.initial}</span></div>`
-      : `<div class="r-sb-foot"><span class="r-avatar">${F.FIXTURE_USER.initial}</span><span class="r-ellipsis">${esc(F.SIDEBAR_COPY.account)}</span></div>`;
-    return `<aside class="r-sidebar" data-mode="${o.mode || "full"}">${top}${nav}${convs}${foot}</aside>`;
+      ? `<div class="r-sb-foot"><span class="r-avatar" title="${esc(C.account)}">${F.FIXTURE_USER.initial}</span></div>`
+      : `<div class="r-sb-foot"><span class="r-avatar">${F.FIXTURE_USER.initial}</span><span class="r-ellipsis">${esc(C.account)}</span><span class="r-theme">${icon("sun", 12)}${icon("moon", 12)}</span></div>`;
+    return `<aside class="r-sidebar" data-mode="${o.mode || "full"}">${top}${context}${navBlock}${middle}${adminEntry}${foot}</aside>`;
   }
 
   // ── Page header, stat cards, status bar, action row ──────────────────────

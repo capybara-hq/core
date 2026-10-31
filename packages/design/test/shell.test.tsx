@@ -39,21 +39,30 @@ function stubMedia(...matching: number[]) {
 const zh = (ui: React.ReactElement) => render(<DesignProvider locale="zh">{ui}</DesignProvider>);
 
 const sidebar = {
-  newConversation: { href: "/agents" },
-  nav: [
-    { id: "overview", label: "概览", href: "/", icon: "home" as const },
-    { id: "agents", label: "Agents", href: "/agents", icon: "agent" as const },
-  ],
+  context: {
+    kind: "work" as const,
+    org: { name: "Acme", initial: "A", slug: "acme", role: "所有者", menu: [] },
+    primary: [
+      { id: "overview", label: "首页", href: "/", icon: "home" as const },
+      { id: "agents", label: "Agents", href: "/agents", icon: "agent" as const },
+    ],
+    more: [{ id: "settings", label: "组织设置", href: "/settings", icon: "settings" as const }],
+  },
+  newConversation: { href: "/chat" },
   activeNav: "agents",
-  footerNav: [{ id: "settings", label: "设置", href: "/settings", icon: "settings" as const }],
   conversations: {
     state: "ready" as const,
     groups: [],
     moreGroups: false,
     onMoreGroups: () => {},
     onRetry: () => {},
+    filter: { q: "", state: "all" as const, onChange: () => {} },
+    archived: { count: 0, open: false, onOpenChange: () => {} },
+    onRename: async () => {},
+    onArchive: async () => {},
+    onDelete: async () => {},
   },
-  account: { name: "grant", org: "Acme", menu: [] },
+  account: { name: "grant", menu: [] },
 };
 const commands = [{ label: "跳转", items: [{ id: "go", label: "前往概览", onSelect: () => {} }] }];
 const status = { context: "grant@acme:/agents", version: "0.1.0", timeZone: "UTC+8" };

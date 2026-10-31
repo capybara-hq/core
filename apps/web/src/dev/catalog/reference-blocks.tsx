@@ -464,7 +464,7 @@ function sidebarBlocks(): ReactNode {
       <SidebarBlock
         id="sidebar-item-hover"
         {...base}
-        force={{ pseudo: ["hover"], selector: navAt("connectors") }}
+        force={{ pseudo: ["hover"], selector: navAt("overview") }}
       />
       <SidebarBlock
         id="sidebar-item-focus"
@@ -473,6 +473,9 @@ function sidebarBlocks(): ReactNode {
       />
       <SidebarBlock id="sidebar-conversation-active" activeConversation="cnv_r2" />
       <SidebarBlock id="sidebar-group-collapsed" {...base} collapsed={["agt_research"]} />
+      <SidebarBlock id="sidebar-more-open" active="connectors" activeConversation="cnv_r2" />
+      <SidebarBlock id="sidebar-filter" {...base} filter={{ q: "", state: "waiting" }} />
+      <SidebarBlock id="sidebar-archived" {...base} archived />
       <SidebarBlock id="sidebar-empty" {...base} state="empty" />
       <SidebarBlock id="sidebar-loading" {...base} state="loading" />
       <SidebarBlock id="sidebar-error" {...base} state="error" />
@@ -484,6 +487,7 @@ function sidebarBlocks(): ReactNode {
       />
       <SidebarBlock id="sidebar-many-groups" active="agents" groups="many" />
       <SidebarBlock id="sidebar-guest" {...base} level="guest" />
+      <SidebarBlock id="sidebar-admin" context="admin" active="accounts" />
       <RefBlock
         id="sidebar-rail"
         width={200}

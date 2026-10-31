@@ -1,5 +1,5 @@
 import { DesignProvider, type LinkComponent, ToastProvider } from "@capybara-hq/design";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { renderToString } from "react-dom/server";
@@ -398,6 +398,12 @@ describe("(auth) 页面模板", () => {
 });
 
 describe("AppFrame（(app) 布局的 App Shell）", () => {
+  /** Opens the sidebar's 更多 group (collapsed unless the current page is inside it). */
+  function openMore(nav: HTMLElement, name = "更多") {
+    const more = within(nav).getByRole("button", { name });
+    if (more.getAttribute("aria-expanded") === "false") fireEvent.click(more);
+  }
+
   function renderFrame(locale: "zh" | "en" = "zh") {
     return render(
       <NextIntlClientProvider locale={locale} messages={locale === "zh" ? zh : en}>
@@ -420,25 +426,26 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     renderFrame();
     expect(await screen.findByText("page body")).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "主导航" });
+    openMore(nav);
     const links = within(nav).getAllByRole("link");
     expect(links.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
       // A new conversation starts at the composer (UI refresh B)
       ["新会话", "/chat"],
       [zh.nav.overview, "/"],
-      [zh.nav.agents, "/agents"],
-      [zh.nav.skills, "/skills"],
       [zh.nav.inbox, "/inbox"],
+      [zh.nav.agents, "/agents"],
+      // 更多
+      [zh.nav.skills, "/skills"],
       [zh.nav.connectors, "/connectors"],
       // 企业目录：成员起
       [zh.nav.catalog, "/catalog"],
       // 管理员（owner）才看得到渠道与评测
       [zh.nav.channels, "/channels"],
       [zh.nav.evals, "/evals"],
-      // Settings for everyone, after the main items
       [zh.nav.settings, "/settings/connections"],
-      // 企业管理员（与组织角色无关）看得到「管理」
-      [zh.nav.admin, "/admin"],
     ]);
+    // 企业管理员（与组织角色无关）看得到管理后台的入口，在账户行之上
+    expect(screen.getByRole("link", { name: "管理后台" }).getAttribute("href")).toBe("/admin");
     expect(
       within(nav).getByRole("link", { name: zh.nav.agents }).getAttribute("aria-current"),
     ).toBe("page");
@@ -461,6 +468,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     renderFrame();
     expect(await screen.findByText("page body")).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "主导航" });
+    openMore(nav);
     expect(within(nav).queryByRole("link", { name: zh.nav.channels })).toBeNull();
     expect(within(nav).queryByRole("link", { name: zh.nav.evals })).toBeNull();
     expect(within(nav).getByRole("link", { name: zh.nav.connectors })).toBeTruthy();
@@ -511,7 +519,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     await userEvent.click(within(orgs[1] as HTMLElement).getByRole("button", { name: c.enter }));
     expect(await screen.findByText("page body")).toBeTruthy();
     expect(calls.find((x) => x.method === "PUT")?.body).toEqual({ orgId: "o2" });
-    expect(screen.getByRole("button", { name: /^账户: Grant · Beta/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "当前组织：Beta，切换组织" })).toBeTruthy();
   });
 
   it("no org at all: the chooser creates one and enters it", async () => {
@@ -575,7 +583,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     renderFrame();
     await screen.findByText("page body");
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /^账户: Grant · Acme/ }));
+    await user.click(screen.getByRole("button", { name: /^账户: Grant/ }));
     await user.click(screen.getByRole("menuitem", { name: zh.shell.orgMenu }));
     // jsdom has no layout: pick submenu items with the keyboard (see design menu-submenu tests)
     (await screen.findByRole("menuitem", { name: zh.shell.createOrg })).focus();
@@ -616,7 +624,8 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     renderFrame();
     expect(await screen.findByText("page body")).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "主导航" });
-    expect(within(nav).queryByRole("link", { name: zh.nav.admin })).toBeNull();
+    expect(screen.queryByRole("link", { name: "管理后台" })).toBeNull();
+    openMore(nav);
     expect(within(nav).getByRole("link", { name: zh.nav.evals })).toBeTruthy();
   });
 
@@ -627,10 +636,12 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     });
     renderFrame();
     expect(await screen.findByText("page body")).toBeTruthy();
+    // the admin context: its items, the current one marked
     const nav = screen.getByRole("navigation", { name: "主导航" });
-    expect(within(nav).getByRole("link", { name: zh.nav.admin }).getAttribute("href")).toBe(
-      "/admin",
-    );
+    const overview = within(nav).getByRole("link", { name: zh.admin.nav.overview });
+    expect(overview.getAttribute("href")).toBe("/admin");
+    expect(overview.getAttribute("aria-current")).toBe("page");
+    expect(screen.queryByRole("region", { name: "会话" })).toBeNull();
   });
 
   it("访客的顶栏不显示「技能」", async () => {
@@ -690,6 +701,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
           }),
         ).toBeTruthy(),
       );
+      openMore(nav, locale === "zh" ? "更多" : "More");
       expect(within(nav).getByRole("link", { name: m.nav.connectors })).toBeTruthy();
     },
   );
@@ -726,8 +738,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     renderFrame();
     await screen.findByText("page body");
     const user = userEvent.setup();
-    const account = () =>
-      screen.getByRole("button", { name: `账户: ${ME.account.displayName} · Acme` });
+    const account = () => screen.getByRole("button", { name: `账户: ${ME.account.displayName}` });
     // the account menu: Organization ▸ and Language ▸ above sign-out
     await user.click(account());
     expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual([

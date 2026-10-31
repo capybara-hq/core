@@ -83,22 +83,34 @@ describe("@capybara-hq/design/fixtures", () => {
     expect(fixtures.GROUPS_FIXTURE[2]?.conversations.some((c) => c.title === null)).toBe(true);
   });
 
-  it("nav items use known icons, unique ids, and follow the §4.4 order", () => {
+  it("nav items use known icons, unique ids, and follow the web-order §2.1 order", () => {
     const icons = new Set<string>(ICON_NAMES);
-    for (const n of fixtures.NAV_FIXTURE) expect(icons.has(n.icon), n.icon).toBe(true);
+    for (const n of [...fixtures.NAV_FIXTURE, ...fixtures.ADMIN_NAV_FIXTURE])
+      expect(icons.has(n.icon), n.icon).toBe(true);
     const ids = fixtures.NAV_FIXTURE.map((n) => n.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(ids).toEqual([
+    expect(fixtures.NAV_FIXTURE.filter((n) => n.place === "primary").map((n) => n.id)).toEqual([
       "overview",
-      "agents",
-      "skills",
       "inbox",
+      "agents",
+    ]);
+    expect(fixtures.NAV_FIXTURE.filter((n) => n.place === "more").map((n) => n.id)).toEqual([
+      "skills",
       "connectors",
       "catalog",
       "channels",
       "evals",
       "settings",
-      "admin",
+    ]);
+    expect(fixtures.ADMIN_NAV_FIXTURE.map((n) => n.label)).toEqual([
+      "概览",
+      "账号",
+      "组织",
+      "扩展",
+      "企业目录",
+      "市场",
+      "模型",
+      "部署设置",
     ]);
     expect(fixtures.EXTENSION_PAGES_FIXTURE).toHaveLength(2);
   });

@@ -1,6 +1,6 @@
 "use client";
 
-import type { SidebarGroup, SidebarProps } from "@capybara-hq/design";
+import type { SidebarConversations, SidebarGroup } from "@capybara-hq/design";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "../../i18n/navigation";
 import {
@@ -58,6 +58,12 @@ export function mergeRefresh(old: Loaded, fresh: Loaded): Loaded {
   };
 }
 
+/** What the hook provides; AppFrame adds the filter, the archived list and the row actions. */
+export type ConversationGroups = Omit<
+  SidebarConversations,
+  "filter" | "archived" | "onRename" | "onArchive" | "onDelete"
+>;
+
 export type ConversationGroupsOptions = {
   /** A failed action the viewer started (group ＋, More, More groups): AppFrame shows a toast. */
   onError?(e: unknown): void;
@@ -80,7 +86,7 @@ export function useConversationGroups(
   orgId: string | null | undefined,
   pathname: string,
   options: ConversationGroupsOptions = {},
-): SidebarProps["conversations"] {
+): ConversationGroups {
   const router = useRouter();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
@@ -201,6 +207,7 @@ export function useConversationGroups(
     title: c.title,
     startedAt: new Date(c.createdAt),
     href: `/chat/${encodeURIComponent(c.id)}`,
+    activity: c.activity ?? null,
   });
   const groups: SidebarGroup[] = (mine?.groups ?? []).map((g) => ({
     agentId: g.agent.id,

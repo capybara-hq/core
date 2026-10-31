@@ -1,6 +1,16 @@
 "use client";
 
-import { AppShell, Button, type MenuItem, StatusPage, useToast } from "@capybara-hq/design";
+import {
+  AppShell,
+  Button,
+  type IconName,
+  type MenuItem,
+  type SidebarContext,
+  type SidebarFilter,
+  type SidebarNavItem,
+  StatusPage,
+  useToast,
+} from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import {
   type ReactNode,
@@ -15,9 +25,16 @@ import { usePathname, useRouter } from "../../i18n/navigation";
 import { ApiClientError } from "../../lib/api";
 import { loginPathFor } from "../../lib/auth-sources";
 import { useConnectResultToast } from "../../lib/connect";
+import {
+  deleteConversation,
+  notifyConversationsChanged,
+  renameConversation,
+  setConversationArchived,
+} from "../../lib/conversations";
 import { usePreferences } from "../../lib/preferences";
 import { getMe, logout, type Me, setCurrentOrg } from "../../lib/session";
 import { useErrorMessage } from "../../lib/use-error-message";
+import { type AdminPageId, useAdminNav } from "../admin-nav";
 import { CreateOrgDialog } from "../CreateOrgDialog";
 import { useConversationGroups } from "./conversations";
 import {
@@ -41,6 +58,31 @@ function timeZoneLabel(): string {
 }
 
 const noSubscribe = () => () => {};
+
+/** The work context's primary items after New conversation and Search (web-order spec §2.1). */
+const PRIMARY = ["overview", "inbox", "agents"];
+
+const ADMIN_ICONS: Record<AdminPageId, IconName> = {
+  overview: "gauge",
+  accounts: "user",
+  orgs: "building",
+  extensions: "extension",
+  catalog: "catalog",
+  models: "cpu",
+  settings: "sliders",
+};
+
+/** The admin item a route belongs to: the longest matching href (`/admin` only by itself). */
+function activeAdminOf(pathname: string, items: { id: string; href: string }[]): string {
+  const hit = items
+    .filter((i) =>
+      i.href === "/admin"
+        ? pathname === i.href
+        : pathname === i.href || pathname.startsWith(`${i.href}/`),
+    )
+    .sort((a, b) => b.href.length - a.href.length)[0];
+  return hit?.id ?? "";
+}
 
 /**
  * 浏览器时区：服务端与水合时的首次渲染为空串（服务器时区与用户的不同，避免水合不一致），
@@ -82,6 +124,9 @@ export function AppFrame({ version, children }: { version: string; children: Rea
     me?.account.isEnterpriseAdmin === true,
   );
   const extensions = useExtensions(me?.currentOrgId ?? null, locale);
+  const adminNav = useAdminNav();
+  // The conversation filter; Task 6 passes it to the kernel (`?q=`, `?state=`).
+  const [filter, setFilter] = useState<SidebarFilter>({ q: "", state: "all" });
   const [error, setError] = useState<string>();
   const preferences = usePreferences();
   const [creatingOrg, setCreatingOrg] = useState(false);
@@ -146,26 +191,25 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   const createOrgItem: MenuItem[] = me?.canCreateOrg
     ? [{ label: t("shell.createOrg"), onSelect: () => setCreatingOrg(true) }]
     : [];
+  // The user's orgs as radio items, then "Create organization…": the org switcher's menu and the
+  // account menu's Organization submenu.
+  const orgItems: MenuItem[] =
+    me === undefined
+      ? []
+      : [
+          ...me.memberships.map((m) => ({
+            label: m.name,
+            checked: m.orgId === me.currentOrgId,
+            disabled: m.orgId === me.currentOrgId,
+            onSelect: () => void switchOrg(m.orgId),
+          })),
+          ...(me.memberships.length > 0 && createOrgItem.length > 0 ? ["separator" as const] : []),
+          ...createOrgItem,
+        ];
   const orgMenu: MenuItem[] =
     me === undefined || (me.memberships.length === 0 && !me.canCreateOrg)
       ? []
-      : [
-          {
-            label: t("shell.orgMenu"),
-            submenu: [
-              ...me.memberships.map((m) => ({
-                label: m.name,
-                checked: m.orgId === me.currentOrgId,
-                disabled: m.orgId === me.currentOrgId,
-                onSelect: () => void switchOrg(m.orgId),
-              })),
-              ...(me.memberships.length > 0 && createOrgItem.length > 0
-                ? ["separator" as const]
-                : []),
-              ...createOrgItem,
-            ],
-          },
-        ];
+      : [{ label: t("shell.orgMenu"), submenu: orgItems }];
   const languageMenu: MenuItem = {
     label: preferences.language.label,
     submenu: preferences.language.options.map((o) => ({
@@ -180,20 +224,74 @@ export function AppFrame({ version, children }: { version: string; children: Rea
     "separator",
     { label: t("common.logout"), onSelect: () => void onLogout() },
   ];
+  // A minimal adapter onto Sidebar v3 (Task 6 does the real wiring): today's nav split into the
+  // primary items and 更多 (then the extension pages); Admin becomes the entry above the account.
+  const inAdmin = pathname === "/admin" || pathname.startsWith("/admin/");
+  const adminItems: SidebarNavItem[] = adminNav
+    .flatMap((g) => g.items)
+    .map((i) => ({ ...i, icon: ADMIN_ICONS[i.id] }));
+  const adminHref = footerNav.find((n) => n.id === "admin")?.href;
+  const roles: Record<string, string> = {
+    owner: t("members.roles.owner"),
+    admin: t("members.roles.admin"),
+    member: t("members.roles.member"),
+    guest: t("members.roles.guest"),
+  };
+  const context: SidebarContext = inAdmin
+    ? {
+        kind: "admin",
+        back: { href: "/", slug: currentOrg?.slug ?? null },
+        items: adminItems,
+      }
+    : {
+        kind: "work",
+        org: currentOrg
+          ? {
+              name: currentOrg.name,
+              initial: (Array.from(currentOrg.name)[0] ?? "").toUpperCase(),
+              slug: currentOrg.slug,
+              role: roles[currentOrg.role] ?? currentOrg.role,
+              menu: orgItems,
+            }
+          : null,
+        primary: PRIMARY.flatMap((id) => nav.filter((n) => n.id === id)),
+        more: [
+          ...nav.filter((n) => !PRIMARY.includes(n.id)),
+          ...footerNav.filter((n) => n.id !== "admin"),
+          ...extensions.map((x) => ({ ...x, id: `ext:${x.id}`, icon: "extension" as const })),
+        ],
+        ...(adminHref === undefined ? {} : { adminHref }),
+      };
+  const orgId = me?.currentOrgId ?? null;
+  // The row actions: the kernel calls, then the list refreshes; a failure is a toast.
+  const act = async (call: () => Promise<unknown>, rethrow: boolean) => {
+    if (orgId === null) return;
+    try {
+      await call();
+      notifyConversationsChanged();
+    } catch (e) {
+      toast.error(errorMessage(e));
+      if (rethrow) throw e;
+    }
+  };
   const sidebar = {
+    context,
     // A new conversation starts at the composer; nothing is created before the first send.
     newConversation: { href: "/chat" },
-    nav,
-    activeNav: activeNavOf(pathname),
-    extensions,
-    footerNav,
-    conversations,
+    activeNav: inAdmin ? activeAdminOf(pathname, adminItems) : activeNavOf(pathname),
+    conversations: {
+      ...conversations,
+      filter: { ...filter, onChange: setFilter },
+      // The archived list is wired in the shell task.
+      archived: { count: 0, open: false, onOpenChange: () => {} },
+      onRename: (id: string, title: string) =>
+        act(() => renameConversation(orgId ?? "", id, title), true),
+      onArchive: (id: string, archived: boolean) =>
+        act(() => setConversationArchived(orgId ?? "", id, archived), false),
+      onDelete: (id: string) => act(() => deleteConversation(orgId ?? "", id), true),
+    },
     account: {
       name: me === undefined ? t("common.loading") : me.account.displayName,
-      // memberships but no current org: the footer asks to pick one (the old TopBar cue)
-      org:
-        currentOrg?.name ??
-        (me !== undefined && me.memberships.length > 0 ? t("shell.noOrg") : null),
       menu: me === undefined ? [] : accountMenu,
     },
     theme: preferences.theme,

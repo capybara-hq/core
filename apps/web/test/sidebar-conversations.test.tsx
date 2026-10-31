@@ -40,19 +40,26 @@ const group = (agentId: string, name: string, convs: ReturnType<typeof conv>[], 
 });
 
 const base: Omit<SidebarProps, "conversations"> = {
+  context: { kind: "work", org: null, primary: [], more: [] },
   newConversation: { href: "/agents" },
-  nav: [],
   activeNav: "",
-  footerNav: [],
-  account: { name: "Grant", org: "Acme", menu: [] },
+  account: { name: "Grant", menu: [] },
   onOpenCommands: () => {},
+};
+// The parts AppFrame adds to the hook's conversations.
+const extras = {
+  filter: { q: "", state: "all" as const, onChange: () => {} },
+  archived: { count: 0, open: false, onOpenChange: () => {} },
+  onRename: async () => {},
+  onArchive: async () => {},
+  onDelete: async () => {},
 };
 
 const onError = vi.fn();
 
 function Harness({ orgId, path = "/" }: { orgId: string | null | undefined; path?: string }) {
   const conversations = useConversationGroups(orgId, path, { onError });
-  return <Sidebar {...base} conversations={conversations} mode="full" />;
+  return <Sidebar {...base} conversations={{ ...conversations, ...extras }} mode="full" />;
 }
 
 const frame = (orgId: string | null | undefined, path?: string) => (
@@ -92,10 +99,10 @@ describe("useConversationGroups", () => {
     });
     show("o1");
     await screen.findByRole("link", { name: "一" });
-    await userEvent.click(within(section()).getByRole("button", { name: "更多" }));
+    await userEvent.click(within(section()).getByRole("button", { name: "显示更多" }));
     expect(await screen.findByRole("link", { name: "二" })).toBeTruthy();
     expect(calls.some((c) => c.url.endsWith("/conversations?agentId=a1&after=c1"))).toBe(true);
-    expect(within(section()).queryByRole("button", { name: "更多" })).toBeNull();
+    expect(within(section()).queryByRole("button", { name: "显示更多" })).toBeNull();
   });
 
   it("More groups appends the next page, de-duplicating groups by agent id", async () => {
@@ -250,7 +257,7 @@ describe("useConversationGroups refresh (I1)", () => {
     const { pageOneCalls } = api();
     const r = show("o1", "/agents");
     await screen.findByRole("link", { name: "一" });
-    await userEvent.click(within(section()).getByRole("button", { name: "更多" }));
+    await userEvent.click(within(section()).getByRole("button", { name: "显示更多" }));
     await screen.findByRole("link", { name: "二" });
     r.rerender(frame("o1", "/chat/c0"));
     await vi.waitFor(() => expect(pageOneCalls()).toBe(2));
@@ -258,14 +265,14 @@ describe("useConversationGroups refresh (I1)", () => {
     await act(async () => {});
     const row = screen.getByRole("link", { name: "二" });
     expect(row.getAttribute("aria-current")).toBe("page");
-    expect(within(section()).queryByRole("button", { name: "更多" })).toBeNull();
+    expect(within(section()).queryByRole("button", { name: "显示更多" })).toBeNull();
   });
 
   it("More, then window focus: the loaded rows stay; a new conversation shows first", async () => {
     const { pageOneCalls } = api({ fresh: true });
     show("o1");
     await screen.findByRole("link", { name: "一" });
-    await userEvent.click(within(section()).getByRole("button", { name: "更多" }));
+    await userEvent.click(within(section()).getByRole("button", { name: "显示更多" }));
     await screen.findByRole("link", { name: "二" });
     await act(async () => {
       window.dispatchEvent(new Event("focus"));
@@ -360,11 +367,11 @@ describe("useConversationGroups errors (I3)", () => {
     });
     show("o1");
     await screen.findByRole("link", { name: "一" });
-    await userEvent.click(within(section()).getByRole("button", { name: "更多" }));
+    await userEvent.click(within(section()).getByRole("button", { name: "显示更多" }));
     await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
     await userEvent.click(screen.getByRole("button", { name: "更多分组" }));
     await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(2));
     // the rows stay, so the viewer can try again
-    expect(within(section()).getByRole("button", { name: "更多" })).toBeTruthy();
+    expect(within(section()).getByRole("button", { name: "显示更多" })).toBeTruthy();
   });
 });

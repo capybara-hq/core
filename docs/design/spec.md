@@ -708,28 +708,38 @@ States: `set-16`, `set-14`, `set-12`
 
 ### 6.13 Sidebar (with the conversation list)
 
-The left sidebar replaces the TopBar on every page (UI refresh spec §4.4).
+The left sidebar replaces the TopBar on every page (UI refresh spec §4.4). Sidebar v3 (web-order spec `docs/superpowers/specs/2026-10-31-web-order-design.md` §2.1–§2.2, the approved canvas "侧边栏组件") has **two contexts** and changes as a whole between them: the **workspace** (one org at a time, `context.kind: "work"`) and the **admin console** (the whole deployment, `kind: "admin"`).
 
-- **Frame**: width `layout.sidebar`, `sidebar` ground, a `line-soft` right divider, padding `space.3` / `space.2`, the full window height. Sections, top to bottom:
-  1. Top row (`row.default`): logo (pixel unit 2) + wordmark `CAPYBARA` + a search icon button (`search`, opens ⌘K; accessible name includes "⌘K").
-  2. Navigation (`nav` labelled "Main navigation"): "New conversation" (`plus`, `ink`) first; then Overview · Agents · Skills · Inbox (count) · Connectors · Catalog · Channels · Evals (labels as the code names them); an **Extensions** group (label `small` `muted`) listing the org's extension pages, shown only when there are any; then, after `space.3`, Settings and Admin. Items follow `NavAudience` (all / member / admin / enterprise); hiding is cosmetic, the kernel decides.
-  3. Conversations: the current user's conversations **grouped by agent**, groups ordered by latest activity, the section scrolls on its own (`min-height: 0; overflow-y: auto`) after `space.4`.
-  4. Account footer, pinned at the bottom (`row.default`): a 24 round initial avatar on `selected` (the name's first grapheme) + "name · org" (no chevron, as the signed reference draws it), opening the account menu: "Organization ▸" (a submenu of the orgs as `menuitemradio` items, the current one checked) and "Language ▸" (the languages, each named in its own language, the current one checked), a separator, sign out. Menu items may open a submenu (`submenu`: a `chevron-right` mark, opens on hover, click or the right arrow). Its accessible name is "Account: name · org". After it, in the same row, `ThemeToggle`: the theme as a two-choice native radio group drawn as icon segments (`sun` light, `moon` dark; the chosen one on `selected`), one click away. The rail has no room for it, so there the theme leads the account menu ("Theme: Light"). The auth pages (`AuthPage`) show `PreferenceBar` (a dense language `Select` and the `ThemeToggle`) under their card, right-aligned, each control at its own width. The language is a cookie (`NEXT_LOCALE`), never part of the URL.
+- **Frame**: width `layout.sidebar`, `sidebar` ground, a `line-soft` right divider, the full window height; padding `space.3` / `space.2` / `space.2` (top / sides / bottom) and every block `space.2` apart (the 8 px rhythm).
+- **Workspace context**, top to bottom:
+  1. **Brand row** (`row.default`): logo (pixel unit 2) + wordmark `CAPYBARA`.
+  2. **Org switcher** (`org-switcher`): a 40 high block on `bg` with a `line` border and radius `md`: the org's initial in a 24 box (radius `sm`) on `ink` with `bg` text (mono, 700), the org's name (600) over `~/<slug> · <role>` (mono `micro`, `muted`), and a `chevrons-up-down` 14 icon. It opens the org menu (the user's orgs as `menuitemradio` items, then "创建组织…" when allowed); its accessible name is "当前组织：{org}，切换组织". This is the only place the current org is shown and switched. Without menu items it is static (not a button).
+  3. **Navigation** (`nav` labelled "Main navigation", gap 2): 新会话 (`plus`), 搜索 (`search`, a button opening the command palette, `⌘K` in mono `faint` at its right end; accessible name "搜索 ⌘K"), then the primary items 首页 · 收件箱 (count) · Agents.
+  4. **更多** (`more-toggle`, `more-horizontal` + label + a `chevron-right` / `chevron-down` 12, `muted`, `aria-expanded`): 技能, 连接器, 插件, 渠道, 评测与运行, 组织设置 (the last three for org admins only; hiding is cosmetic, the kernel decides), then the org's extension pages (`extension` icon). Its items (`more-item`, `row.dense`, icon 14) are indented `pad.default.x`. Collapsed by default; open while the current item is inside it; otherwise its open state is remembered per browser in `localStorage["cap.sidebar.more"]` (`"1"` / `"0"`, read and written in try/catch; storage errors mean collapsed).
+  5. **Conversations** (`section` labelled "会话"): take the rest of the height and scroll on their own, after a `line-soft` divider and `space.2`. See below.
+  6. **管理后台** (`admin-entry`, enterprise admins only, `context.adminHref`): `admin` icon (a shield), the label and an outward `arrow-up-right` 14, `muted`, directly above the account row; it enters the admin context.
+  7. **Account row** (`account`): a `line-soft` divider with `space.2` above (the block gap) and below; a 24 round initial avatar on `selected` (the name's first grapheme) + the name (no org: the switcher shows it), opening the account menu (切换组织 ▸, 语言 ▸, …, sign out); its accessible name is "账户: {name}". After it, in the same row, `ThemeToggle` (light / dark icon radio, the chosen one on `selected`). The rail has no room for it, so there the theme leads the account menu ("Theme: Light"). Menu items may open a submenu (`submenu`: a `chevron-right` mark, opens on hover, click or the right arrow). The auth pages (`AuthPage`) show `PreferenceBar` (a dense language `Select` and the `ThemeToggle`) under their card, right-aligned, each control at its own width. The language is a cookie (`NEXT_LOCALE`), never part of the URL.
+- **Admin context**, top to bottom: the brand row; the **context block** (`context-block`): the switcher's size and light style but static (no chevrons): a shield in the accent tint (`accent-tint` ground, `accent` icon), "管理后台" and `整个部署 · /admin` in mono; below it a link "← 回到工作区 ~/<slug>" (`back`, `row.dense`, `small` `muted`, `arrow-left` 14); the items 概览, 账号, 组织, 扩展, 企业目录, 市场, 模型, 部署设置; no conversations, no 新会话 / 搜索 (⌘K still opens the palette); the account row.
 
   The overview (`OverviewPage`) is built from `Grid columns="main-side"` (a main column twice the side column; one column below 960), Cards, `ItemList` (rows of a tag, a linked title with a muted meta line, a status and actions, split by `line-soft`; an empty list shows its muted empty text) and, until a model and an agent exist, `StepList inset="card"` (the checklist OnboardingPage centers, filling a Card).
-- **Nav items**: `row.default` high, radius `sm`, padding `pad.default.x`, icon 16 + label (`body`, single line with an ellipsis) + an optional count (`micro` `muted`, right-aligned). Others `muted`; the current item gets the `sidebar-active` ground + `ink` text (§2.3), hover the `hover` ground + `ink`. The inbox count shows `99+` above 99 and `n+` when truncated; the accessible name includes it ("Inbox, 3 pending").
-- **Groups**: a label row (`row.dense`): the agent name (`small` `muted`, essential text, never `faint`; single line with an ellipsis, full name in `title`) inside a toggle button with `aria-expanded` and a `chevron-down` / `chevron-right` 12 icon, and a dense `plus` icon button "New conversation with {agent}". Collapse is remembered per viewer in `localStorage["cap.sidebar.collapsed"]` (a JSON array of agent ids, read and written inside try/catch; renders expanded when storage throws).
-- **Conversation rows**: `row.dense` high, radius `sm`, padding `pad.default.x`, `muted` single line with an ellipsis and the full text in `title`; the active conversation gets `sidebar-active` + `ink`. An untitled conversation reads `未命名会话 · MM-DD HH:mm` / `Untitled conversation · MM-DD HH:mm` (its start time). Each group shows its 5 most recent conversations, then a "More" text row; the list shows 20 groups, then a "More" row for groups.
-- **States of the conversation section**: empty: one `small` `muted` line "还没有会话，从 Agents 里选一个开始。" / "No conversations yet. Pick an agent to start."; loading: skeleton bars (`space.3` high, `selected`, radius `sm`) in three groups (3, 2, 2), `aria-busy`, no spinner; error: `circle-alert` + "会话列表加载失败" / "Couldn't load conversations" in `fail` and a dense ghost "Retry" (`refresh`).
+- **Nav items**: `row.default` high, radius `sm`, padding `pad.dense.x`, icon 16 + label (`body`, `ink`, single line with an ellipsis). The current item gets the `sidebar-active` ground, `ink` and weight 600 (§2.3); hover the `hover` ground. The inbox count is an `accent` pill (18 high, radius 9, mono `micro`, `on-accent`): it needs attention; it shows `99+` above 99 and `n+` when truncated, and the accessible name includes it ("收件箱，3 项待处理").
+- **Conversation section**:
+  - A header: the label `会话` (mono `micro` `faint`, letter-spacing 0.06em) and a dense filter icon button (`filter`, "筛选会话", `aria-expanded`; `accent` while a filter applies). Open, it shows a dense search input ("按标题搜索", case-insensitive title substring) and a dense filled `Segmented` (全部 / 运行中 / 等待我). The filter is controlled (`conversations.filter`): the page asks the kernel with it (`?q=`, `?state=`) and the rows shown are narrowed at once; groups without a matching row hide; no match reads "没有符合条件的会话". Closing the filter (the button or Esc in the input) clears it.
+  - **Groups** by agent, most recent first: a label row (`row.dense`): the agent name (`small`, 600, `ink`; single line with an ellipsis, full name in `title`) inside a toggle button with `aria-expanded` and a `chevron-down` / `chevron-right` 12 icon, and a dense `plus` icon button "与 {agent} 新建会话". Collapse is remembered per viewer and org in `localStorage["cap.sidebar.collapsed.<orgId>"]` (a JSON array of agent ids, read and written inside try/catch; renders expanded when storage throws).
+  - **Rows** (`conversation-row`, `row.dense`, radius `sm`): a 6 px state dot only for running (`ok`) or waiting for me (`warn`) (`state-dot`, `role="img"` named "运行中" / "等待我"), the title link (`conversation`, `ink`, single line with an ellipsis, full text in `title`), and the `⋯` menu (`row-menu`, 22 square, `more-horizontal` 14): 改名 / 归档 / 删除 (danger, last). The menu button shows on hover, on focus within the row and on the current row; Tab reaches the menu of the row holding the list's tab stop. The current row gets the `sidebar-active` ground. An untitled conversation reads `未命名会话 · MM-DD HH:mm` / `Untitled conversation · MM-DD HH:mm` (its start time).
+  - **改名** is inline: a dense input with the title, focused and selected; Enter saves (trimmed; empty is not allowed and marks the input invalid), Escape cancels; focus returns to the row. **删除** asks first with `Dialog` (danger; "删除会话？", the title in the body; 取消 is focused). **归档** archives at once.
+  - Each group shows its 5 most recent conversations, then "显示更多" (or "再显示 N 个" when the count is known; `small` `faint`, 26 high); the list shows 20 groups, then "更多分组".
+  - **Archived**: `已归档 · N` (`archived-entry`, `archive` 14, `small` `faint`) at the end of the list when N > 0 swaps the list **in place** for the archived conversations: a header `← 已归档 · N` (`archived-back`, `ink`, 600; accessible name "返回会话列表：已归档 · N") returns; archived rows' menu offers 取消归档 and 删除; group ＋ buttons hide; the filter applies to it too. No separate page.
+- **States of the conversation section**: empty: one `small` `muted` line "还没有会话，从 Agents 里选一个开始。" / "No conversations yet. Pick an agent to start." (the archived list: "没有已归档的会话"); loading: skeleton bars (`space.3` high, `selected`, radius `sm`) in three groups (3, 2, 2), `aria-busy`, no spinner; error: `circle-alert` + "会话列表加载失败" / "Couldn't load conversations" in `fail` and a dense ghost "Retry" (`refresh`).
 - Long titles and agent names (40+ CJK characters without spaces) truncate to one line and never widen the sidebar.
-- **Rail** (below 1280): width `layout.sidebar-rail`, icons only (each item `row.default` square, accessible name kept, a Tooltip with the label to the right, past the rail's edge, on hover and focus), the inbox count as a small `selected` badge inset 2px from the icon box's top right corner (min width 14, padding 0 3px, as the signed reference draws it), hover over the current item takes the `hover` ground (the signed rail reference; the full sidebar keeps the current ground under hover), separators in `line-soft`; the conversation section is replaced by one icon button (`panel-left`, "Expand sidebar") that opens the drawer.
-- **Drawer** (below 960): the full sidebar slides in from the left over a `scrim`, with `shadow-float`, opened from the menu button in the drawer menu bar; the top row's search button becomes a close button (`x`), and the drawer menu bar carries the search button (`search`, at its right end) so the command palette stays reachable by pointer below 960. Esc, the close button and route changes close it; focus returns to the menu button.
-- **First paint**: the full / rail / drawer variant follows the window width through CSS media queries before hydration (both panels are drawn, one shown), so the server render never draws the full 256 sidebar at a narrow width. Remembered collapsed groups apply on the first client commit without the height motion; the motion runs only after the viewer toggles a group. The remembered list is kept per org (`cap.sidebar.collapsed.<orgId>`, the `scope` the page passes), keeps at most 100 ids and drops ids of agents no longer listed once every group of that org is loaded.
+- **Rail** (below 1280): width `layout.sidebar-rail`, icons only: the expand button (`panel-left`, "Expand sidebar", opens the drawer), the org initial (a button opening the org menu, named as the switcher; the admin context shows the shield and the back arrow), 新会话, 搜索, the primary items (each `row.default` square, accessible name kept, a Tooltip with the label to the right, past the rail's edge, on hover and focus), 更多 as one `more-horizontal` button whose menu lists its items (on `sidebar-active` while the current item is inside), the admin entry and the account. The inbox count is a small `selected` badge inset 2px from the icon box's top right corner (min width 14, padding 0 3px); hover over the current item takes the `hover` ground (the signed rail reference). No conversations.
+- **Drawer** (below 960): the full sidebar slides in from the left over a `scrim`, with `shadow-float`, opened from the menu button in the drawer menu bar; its brand row carries a close button (`x`), and the drawer menu bar carries the search button (`search`, at its right end) so the command palette stays reachable by pointer below 960. Esc, the close button and route changes close it; focus returns to the menu button.
+- **First paint**: the full / rail / drawer variant follows the window width through CSS media queries before hydration (both panels are drawn, one shown), so the server render never draws the full 256 sidebar at a narrow width. Remembered collapsed groups and the remembered 更多 state apply on the first client commit (layout effects) without the height motion; the motion runs only after the viewer toggles a group. The remembered collapsed list keeps at most 100 ids and drops ids of agents no longer listed once every group of that org is loaded.
 - Hover never replaces the current item's `sidebar-active` ground.
 - Interaction: §6.11.
 
 <!-- states: sidebar -->
-States: `default`, `item-hover`, `item-focus`, `conversation-active`, `group-collapsed`, `empty`, `loading`, `error`, `long-title`, `many-groups`, `guest`, `rail`, `drawer`
+States: `default`, `item-hover`, `item-focus`, `conversation-active`, `group-collapsed`, `more-open`, `filter`, `archived`, `empty`, `loading`, `error`, `long-title`, `many-groups`, `guest`, `admin`, `rail`, `drawer`
 
 <!-- size-table: sidebar -->
 | Part | State | Property | Value |
@@ -737,35 +747,58 @@ States: `default`, `item-hover`, `item-focus`, `conversation-active`, `group-col
 | sidebar | default | width | layout.sidebar |
 | sidebar | default | background-color | color.sidebar |
 | sidebar | default | border-right-color | color.line-soft |
+| sidebar | default | padding-top | space.3 |
+| sidebar | default | padding-left | space.2 |
+| org-switcher | default | height | 40 |
+| org-switcher | default | background-color | color.bg |
+| org-switcher | default | border-radius | radius.md |
+| org-initial | default | width | control.dense |
+| org-initial | default | background-color | color.ink |
 | new-conversation | default | color | color.ink |
 | nav-item | default | height | row.default |
 | nav-item | default | border-radius | radius.sm |
-| nav-item | default | padding-left | pad.default.x |
+| nav-item | default | padding-left | pad.dense.x |
 | nav-item | default | font-size | type.body |
-| nav-item | default | color | color.muted |
+| nav-item | default | color | color.ink |
 | nav-item[aria-current=page] | default | background-color | color.sidebar-active |
 | nav-item[aria-current=page] | default | color | color.ink |
+| nav-count | default | height | 18 |
+| nav-count | default | background-color | color.accent |
+| more-toggle | default | height | row.default |
+| more-toggle | default | color | color.muted |
+| admin-entry | default | height | row.default |
+| admin-entry | default | color | color.muted |
 | group-label | default | height | row.dense |
 | group-label | default | font-size | type.small |
-| group-label | default | color | color.muted |
-| conversation | default | height | row.dense |
-| conversation | default | padding-left | pad.default.x |
+| group-label | default | color | color.ink |
+| conversation-row | default | height | row.dense |
+| conversation-row | default | padding-left | pad.dense.x |
+| state-dot | default | width | 6 |
+| archived-entry | default | height | row.dense |
+| archived-entry | default | color | color.faint |
 | account | default | height | row.default |
 | avatar | default | width | control.dense |
 | nav-item[data-ref-forced=true] | item-hover | background-color | color.hover |
 | nav-item[data-ref-forced=true] | item-hover | color | color.ink |
 | nav-item[data-ref-forced=true] | item-focus | outline-color | color.accent |
 | nav-item[data-ref-forced=true] | item-focus | outline-width | 1 |
-| conversation[aria-current=page] | conversation-active | background-color | color.sidebar-active |
+| conversation-row[data-current=true] | conversation-active | background-color | color.sidebar-active |
 | conversation[aria-current=page] | conversation-active | color | color.ink |
-| group-label[aria-expanded=false] | group-collapsed | color | color.muted |
+| group-label[aria-expanded=false] | group-collapsed | color | color.ink |
+| more-item | more-open | height | row.dense |
+| more-item[aria-current=page] | more-open | background-color | color.sidebar-active |
+| archived-back | archived | height | row.dense |
+| archived-back | archived | color | color.ink |
+| context-block | admin | height | 40 |
+| back | admin | height | row.dense |
+| back | admin | color | color.muted |
 | empty-hint | empty | font-size | type.small |
 | empty-hint | empty | color | color.muted |
 | skeleton-bar | loading | height | space.3 |
 | skeleton-bar | loading | background-color | color.selected |
 | retry | error | height | control.dense |
 | sidebar | long-title | width | layout.sidebar |
-| conversation | long-title | height | row.dense |
+| conversation-row | long-title | height | row.dense |
 | sidebar | many-groups | width | layout.sidebar |
 | sidebar | guest | width | layout.sidebar |
 | sidebar | rail | width | layout.sidebar-rail |

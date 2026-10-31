@@ -57,15 +57,23 @@ export function Popover({
 export function Menu({
   trigger,
   items,
+  onCloseAutoFocus,
 }: {
   trigger: ReactElement<Record<string, unknown>>;
   items: MenuItem[];
+  /** Called before focus returns to the trigger; `preventDefault()` keeps focus where an item put it. */
+  onCloseAutoFocus?: (e: Event) => void;
 }) {
   return (
     <RM.Root>
       <RM.Trigger asChild>{cloneElement(trigger, { "data-cb-trigger": "menu" })}</RM.Trigger>
       <RM.Portal>
-        <RM.Content className="cb-menu" sideOffset={4} align="start">
+        <RM.Content
+          className="cb-menu"
+          sideOffset={4}
+          align="start"
+          {...(onCloseAutoFocus ? { onCloseAutoFocus } : {})}
+        >
           <MenuItems items={items} />
         </RM.Content>
       </RM.Portal>

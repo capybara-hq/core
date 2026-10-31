@@ -402,6 +402,8 @@ export interface Conversation {
   subagentType?: string | null;
   /** The conversation's owner. */
   accountId?: string;
+  /** What it is doing now: a run in progress, or waiting for me (absent on older kernels). */
+  activity?: "running" | "waiting" | null;
 }
 
 /** A parent conversation's sub-agent (`GET .../conversations/:id/subagents`). */
@@ -478,6 +480,17 @@ export const renameConversation = (orgId: string, id: string, title: string) =>
     method: "PATCH",
     body: JSON.stringify({ title }),
   });
+
+/** Archive or unarchive (owner only); archiving does not stop a running run. */
+export const setConversationArchived = (orgId: string, id: string, archived: boolean) =>
+  apiFetch<{ conversation: Conversation }>(one(orgId, id), {
+    method: "PATCH",
+    body: JSON.stringify({ archived }),
+  });
+
+/** Delete (owner only, soft): stops a running run first. */
+export const deleteConversation = (orgId: string, id: string) =>
+  apiFetch<void>(one(orgId, id), { method: "DELETE" });
 
 /** One agent's group of my conversations (`GET .../conversations/groups`, the sidebar). */
 export interface ConversationGroup {

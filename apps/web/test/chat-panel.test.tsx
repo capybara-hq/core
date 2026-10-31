@@ -1,5 +1,5 @@
 import { DesignProvider, type LinkComponent, ToastProvider } from "@capybara-hq/design";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -127,7 +127,7 @@ const panelOf = () => screen.getByRole("complementary");
 const _tabNamed = (name: RegExp | string) =>
   within(panelOf()).getByRole("tab", { name: typeof name === "string" ? new RegExp(name) : name });
 
-describe("the sidebar's Extensions group", () => {
+describe("extension pages in the sidebar's More group", () => {
   function renderFrame() {
     return render(
       <NextIntlClientProvider locale="en" messages={en}>
@@ -145,7 +145,12 @@ describe("the sidebar's Extensions group", () => {
   }
   const nav = () => screen.getByRole("navigation", { name: "Main navigation" });
 
-  it("is hidden without page contributions", async () => {
+  const pageLinks = () =>
+    within(nav())
+      .queryAllByRole("link")
+      .filter((l) => (l.getAttribute("href") ?? "").startsWith("/p/"));
+
+  it("none without page contributions", async () => {
     const calls = stubApi({
       "GET /api/v1/me": () => json(200, ME),
       [`GET ${ORG}/approvals`]: () => json(200, { approvals: [] }),
@@ -155,7 +160,8 @@ describe("the sidebar's Extensions group", () => {
     await screen.findByText("page body");
     await vi.waitFor(() => expect(calls.some((c) => c.url === `${UI}/contributions`)).toBe(true));
     await new Promise((r) => setTimeout(r, 20));
-    expect(within(nav()).queryByText("Extensions")).toBeNull();
+    fireEvent.click(within(nav()).getByRole("button", { name: "More" }));
+    expect(pageLinks()).toEqual([]);
   });
 
   it("lists the pages by title, linking to /p/<plugin>/<id>; a shared title gets its plugin", async () => {
@@ -174,16 +180,15 @@ describe("the sidebar's Extensions group", () => {
         }),
     });
     renderFrame();
-    expect(await within(nav()).findByText("Extensions")).toBeTruthy();
-    const links = within(nav())
-      .getAllByRole("link")
-      .filter((l) => (l.getAttribute("href") ?? "").startsWith("/p/"));
-    expect(links.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
-      ["Board · board", "/p/board/overview"],
-      ["Deals", "/p/crm/deals"],
-      ["Live", "/p/board/live"],
-      ["Board · crm", "/p/crm/board"],
-    ]);
+    fireEvent.click(await within(nav()).findByRole("button", { name: "More" }));
+    await vi.waitFor(() =>
+      expect(pageLinks().map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
+        ["Board · board", "/p/board/overview"],
+        ["Deals", "/p/crm/deals"],
+        ["Live", "/p/board/live"],
+        ["Board · crm", "/p/crm/board"],
+      ]),
+    );
   });
 });
 

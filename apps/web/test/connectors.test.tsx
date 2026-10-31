@@ -736,14 +736,16 @@ describe("连接器详情切换组织", () => {
     );
     expect(await screen.findByRole("heading", { name: "Fixture" })).toBeTruthy();
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /^Account: .* · Acme$/ }));
+    await user.click(screen.getByRole("button", { name: /^Account: / }));
     await user.click(await screen.findByRole("menuitem", { name: "Organization" }));
     // jsdom has no layout: pick the submenu item with the keyboard (see design menu-submenu tests)
     (await screen.findByRole("menuitemradio", { name: "Beta" })).focus();
     await user.keyboard("{Enter}");
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/connectors"));
     await vi.waitFor(() =>
-      expect(screen.getByRole("button", { name: /^Account: .* · Beta$/ })).toBeTruthy(),
+      expect(
+        screen.getByRole("button", { name: "Current organization: Beta, switch organization" }),
+      ).toBeTruthy(),
     );
     expect(screen.queryByRole("heading", { name: "Fixture" })).toBeNull();
     expect(calls.some((c) => c.url.includes("/orgs/o2/connectors"))).toBe(false);

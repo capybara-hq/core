@@ -91,6 +91,16 @@ const ICONS = {
   link: "link",
   "zoom-in": "zoom-in",
   "corner-down-right": "corner-down-right",
+  // Sidebar v3 (web order).
+  "chevrons-up-down": "chevrons-up-down",
+  "arrow-up-right": "arrow-up-right",
+  "arrow-left": "arrow-left",
+  archive: "archive",
+  filter: "list-filter",
+  gauge: "gauge",
+  store: "store",
+  cpu: "cpu",
+  sliders: "sliders-horizontal",
 };
 
 const entries = Object.entries(ICONS).map(([name, file]) => {
