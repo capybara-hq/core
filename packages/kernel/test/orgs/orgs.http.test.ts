@@ -382,6 +382,40 @@ describe("组织 HTTP", () => {
     expect(left.statusCode).toBe(204);
   });
 
+  it("leave by role: guest, member and admin leave (204); leaving signs the account out", async () => {
+    const ownerReq = await session("owner");
+    const id = await createOrg(ownerReq);
+    for (const role of ["guest", "member", "admin"] as const) {
+      const { req } = await memberAs(id, role, `leaver-${role}`);
+      const left = await req({ method: "POST", url: `/api/v1/orgs/${id}/leave` });
+      expect(left.statusCode).toBe(204);
+      // offboarding revokes every session of the account (account-level, conservative)
+      const after = await req({ method: "GET", url: `/api/v1/orgs/${id}` });
+      expect(after.statusCode).toBe(401);
+      const relogin = await session(`leaver-${role}`);
+      expect((await relogin({ method: "GET", url: `/api/v1/orgs/${id}` })).statusCode).toBe(404);
+    }
+    // one of two owners may leave; the last one may not
+    const { req: second } = await memberAs(id, "owner", "second-owner");
+    expect((await second({ method: "POST", url: `/api/v1/orgs/${id}/leave` })).statusCode).toBe(
+      204,
+    );
+    const last = await ownerReq({ method: "POST", url: `/api/v1/orgs/${id}/leave` });
+    expect(errCode(last)).toBe("org.last_owner");
+  });
+
+  it("DELETE /orgs/:id by role: guest, member and admin 403 (nothing deleted); owner 204", async () => {
+    const ownerReq = await session("owner");
+    const id = await createOrg(ownerReq);
+    for (const role of ["guest", "member", "admin"] as const) {
+      const { req } = await memberAs(id, role, `deleter-${role}`);
+      const denied = await req({ method: "DELETE", url: `/api/v1/orgs/${id}` });
+      expect(denied.statusCode).toBe(403);
+      expect((await req({ method: "GET", url: `/api/v1/orgs/${id}` })).statusCode).toBe(200);
+    }
+    expect((await ownerReq({ method: "DELETE", url: `/api/v1/orgs/${id}` })).statusCode).toBe(204);
+  });
+
   it("服务令牌：本组织 org.read 可用；HUMAN_ONLY → 403；他组织 → 404；POST /orgs → 403", async () => {
     const ownerReq = await session("owner");
     const id = await createOrg(ownerReq);

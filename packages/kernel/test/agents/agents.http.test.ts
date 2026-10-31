@@ -384,4 +384,34 @@ describe("Agent HTTP", () => {
     expect(second.json()).toEqual(first.json());
     expect(fakeBCalls(k.app.get(ExtensionHost)) - before).toBe(1);
   });
+
+  it("POST /agents/:id/owner by role: guest and member 403; admin and owner 200; non-members 404", async () => {
+    const ownerReq = await session("owner");
+    const orgId = await createOrg(ownerReq);
+    const { account: author, req: authorReq } = await memberSession(orgId, "author", "member");
+    const agent = await createAgent(authorReq, orgId);
+    const { account: next } = await memberSession(orgId, "next", "member");
+    const url = `/api/v1/orgs/${orgId}/agents/${agent.id}/owner`;
+    const { req: guestReq } = await memberSession(orgId, "gina", "guest");
+    for (const req of [guestReq, authorReq]) {
+      const denied = await req({ method: "POST", url, payload: { accountId: next.id } });
+      expect(denied.statusCode).toBe(403);
+    }
+    const { req: adminReq } = await memberSession(orgId, "ada", "admin");
+    const byAdmin = await adminReq({ method: "POST", url, payload: { accountId: next.id } });
+    expect(byAdmin.statusCode).toBe(200);
+    expect((byAdmin.json() as { agent: { ownerAccountId: string } }).agent.ownerAccountId).toBe(
+      next.id,
+    );
+    const byOwner = await ownerReq({ method: "POST", url, payload: { accountId: author.id } });
+    expect(byOwner.statusCode).toBe(200);
+    const stranger = await accounts.createLocal({
+      login: "stranger",
+      password: PW,
+      displayName: "Stranger",
+    });
+    const notMember = await ownerReq({ method: "POST", url, payload: { accountId: stranger.id } });
+    expect(notMember.statusCode).toBe(404);
+    expect(errCode(notMember)).toBe("member.not_found");
+  });
 });
