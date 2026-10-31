@@ -18,8 +18,11 @@ export type FixtureNavItem = {
   icon: IconName;
   count?: number;
   audience: "all" | "member" | "admin" | "enterprise";
-  /** After New conversation and Search (`primary`), or inside the 更多 group (`more`). */
-  place: "primary" | "more";
+  /**
+   * After New conversation (`primary`), inside the 更多 flyout (`more`), or an icon button in the
+   * brand row (`brand`: the inbox).
+   */
+  place: "primary" | "more" | "brand";
 };
 
 /** The work context's navigation in the web-order spec §2.1 order (extension pages follow 更多's). */
@@ -32,7 +35,7 @@ export const NAV_FIXTURE: FixtureNavItem[] = [
     icon: "inbox",
     count: 3,
     audience: "all",
-    place: "primary",
+    place: "brand",
   },
   {
     id: "agents",

@@ -19,8 +19,8 @@ export type NavLevel = "guest" | "member" | "admin";
 
 /**
  * The work context's navigation (web order §2.1): only routes that exist. `primary` items follow
- * New conversation and Search; `more` items sit in the collapsible 更多 group (then the extension
- * pages). Items are hidden by the current org role through `audience` (cosmetic only; the kernel
+ * New conversation; `more` items sit in the 更多 flyout (then the extension pages). Search and the
+ * inbox are icon buttons in the brand row. Items are hidden by the current org role through `audience` (cosmetic only; the kernel
  * decides). The admin console is the entry above the account row, for enterprise admins.
  */
 const NAV: readonly {
@@ -32,7 +32,6 @@ const NAV: readonly {
   section: "primary" | "more";
 }[] = [
   { id: "overview", key: "overview", href: "/", audience: "all", icon: "home", section: "primary" },
-  { id: "inbox", key: "inbox", href: "/inbox", audience: "all", icon: "inbox", section: "primary" },
   {
     id: "agents",
     key: "agents",
@@ -281,6 +280,8 @@ export function useNav(
 ): {
   primary: SidebarNavItem[];
   more: SidebarNavItem[];
+  /** The brand row's inbox button (count only while something is pending). */
+  inbox: { href: string; count?: number; countMore?: boolean };
   adminHref?: string;
   commands: CommandGroup[];
 } {
@@ -292,10 +293,11 @@ export function useNav(
     label: t(`nav.${n.key}`),
     href: n.href,
     icon: n.icon,
-    ...(n.id === "inbox" && pending > 0
-      ? { count: pending, ...(pendingMore ? { countMore: true } : {}) }
-      : {}),
   }));
+  const inbox = {
+    href: "/inbox",
+    ...(pending > 0 ? { count: pending, ...(pendingMore ? { countMore: true } : {}) } : {}),
+  };
   const strip = ({ section: _, ...item }: (typeof items)[number]): SidebarNavItem => item;
   const primary = items.filter((n) => n.section === "primary").map(strip);
   const more = items.filter((n) => n.section === "more").map(strip);
@@ -303,7 +305,12 @@ export function useNav(
   const commands: CommandGroup[] = [
     {
       label: t("nav.goto"),
-      items: [...primary, ...more, ...admin].map((n) => ({
+      items: [
+        ...primary,
+        { id: "inbox", label: t("nav.inbox"), href: inbox.href },
+        ...more,
+        ...admin,
+      ].map((n) => ({
         id: `goto-${n.id}`,
         label: n.label,
         onSelect: () => router.push(n.href),
@@ -321,5 +328,5 @@ export function useNav(
       ],
     },
   ];
-  return { primary, more, ...(enterpriseAdmin ? { adminHref: "/admin" } : {}), commands };
+  return { primary, more, inbox, ...(enterpriseAdmin ? { adminHref: "/admin" } : {}), commands };
 }

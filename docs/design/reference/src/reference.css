@@ -552,20 +552,40 @@ textarea {
 .r-sb-admin {
   color: var(--cb-muted);
 }
-.r-nav-subs {
+.r-nav-more[data-active="true"] {
+  background: var(--cb-sidebar-active);
+  color: var(--cb-ink);
+}
+/* The brand row's search and inbox icon buttons (web order §2.1, acceptance round 2). */
+.r-sb-top-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+.r-sb-inbox {
+  position: relative;
+}
+.r-sb-inbox[aria-current="page"] {
+  background: var(--cb-sidebar-active);
+  color: var(--cb-ink);
+}
+.r-sb-rail-tools {
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 2px;
-  padding-left: var(--cb-pad-default-x);
 }
-.r-nav-sub {
-  height: var(--cb-row-dense);
+/* The 更多 flyout: a menu to the right of the sidebar, anchored to the row. */
+.r-nav-more-wrap {
+  position: relative;
 }
-.r-nav-kbd {
-  margin-left: auto;
-  color: var(--cb-faint);
-  font-size: var(--cb-type-micro-size);
-  line-height: var(--cb-type-micro-line);
+.r-nav-flyout {
+  top: 0;
+  left: calc(100% + var(--cb-space-3));
+}
+.r-menu-item[aria-current="page"] {
+  background: var(--cb-selected);
 }
 .r-nav-count {
   margin-left: auto;
@@ -731,6 +751,18 @@ textarea {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
   text-align: left;
+}
+/* The conversation list's compact empty state (design spec §6.18). */
+.r-sb-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--cb-space-2);
+  padding: var(--cb-space-3) var(--cb-pad-dense-x);
+}
+.r-sb-empty-text {
+  margin: 0;
+  color: var(--cb-ink);
 }
 .r-sb-hint {
   margin: 0;

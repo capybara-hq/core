@@ -1,5 +1,5 @@
 import { DesignProvider, type LinkComponent, ToastProvider } from "@capybara-hq/design";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,6 +28,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** Opens the sidebar's 更多 flyout (a menu to the right of the sidebar). */
+async function openMore() {
+  const nav = screen.getByRole("navigation", { name: "主导航" });
+  await userEvent.setup().click(within(nav).getByRole("button", { name: "更多" }));
+  return screen.findByRole("menu", { name: "更多" });
+}
+
 function Probe({ level, enterprise }: { level: NavLevel; enterprise: boolean }) {
   const { primary, more, adminHref } = useNav(0, level, false, enterprise);
   return (
@@ -55,7 +62,8 @@ function ids(level: NavLevel, enterprise: boolean) {
 }
 
 describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
-  const primary = ["overview", "inbox", "agents"];
+  // the inbox is the brand row's button (acceptance round 2, B2)
+  const primary = ["overview", "agents"];
   const guest = ["connectors"];
   const member = ["skills", "connectors", "catalog"];
   const admin = [...member, "channels", "evals", "settings"];
@@ -98,7 +106,6 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
     expect(read("member")).toEqual({
       primary: [
         ["首页", "home", "/"],
-        ["收件箱", "inbox", "/inbox"],
         ["Agents", "agent", "/agents"],
       ],
       more: [
@@ -218,12 +225,12 @@ describe("AppFrame contexts", () => {
     renderFrame();
     expect(await screen.findByText("page body")).toBeTruthy();
     expect(within(screen.getByRole("contentinfo")).getByText("Grant@acme:~/agents/new"));
-    // the old footer item 设置 is gone
+    // the old footer item 设置 is gone; 组织设置 is in the 更多 flyout
     const nav = screen.getByRole("navigation", { name: "主导航" });
-    const more = within(nav).getByRole("button", { name: "更多" });
-    if (more.getAttribute("aria-expanded") === "false") fireEvent.click(more);
     expect(within(nav).queryByRole("link", { name: "设置" })).toBeNull();
-    expect(within(nav).getByRole("link", { name: "组织设置" })).toBeTruthy();
+    await openMore();
+    expect(screen.getByRole("menuitem", { name: "组织设置" })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: "设置" })).toBeNull();
   });
 
   it("account menu has 切换组织 ▸, 语言 ▸, 个人设置 → /account/connections, 退出登录", async () => {

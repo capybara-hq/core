@@ -473,7 +473,12 @@ function sidebarBlocks(): ReactNode {
       />
       <SidebarBlock id="sidebar-conversation-active" activeConversation="cnv_r2" />
       <SidebarBlock id="sidebar-group-collapsed" {...base} collapsed={["agt_research"]} />
-      <SidebarBlock id="sidebar-more-open" active="connectors" activeConversation="cnv_r2" />
+      <SidebarBlock
+        id="sidebar-more-open"
+        active="connectors"
+        activeConversation="cnv_r2"
+        moreOpen
+      />
       <SidebarBlock id="sidebar-filter" {...base} filter={{ q: "", state: "waiting" }} />
       <SidebarBlock id="sidebar-archived" {...base} archived />
       <SidebarBlock id="sidebar-empty" {...base} state="empty" />

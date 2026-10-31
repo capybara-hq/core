@@ -83,7 +83,8 @@
   }
 
   function conversationList(o) {
-    if (o.state === "empty") return `<p class="r-sb-hint">${esc(F.SIDEBAR_COPY.empty)}</p>`;
+    if (o.state === "empty")
+      return `<div class="r-sb-empty"><p class="r-sb-empty-text">${esc(F.SIDEBAR_COPY.empty)}</p><a class="r-btn" data-variant="default" data-step="dense" href="#">${esc(F.NEW_CONVERSATION_LABEL)}</a></div>`;
     if (o.state === "loading") {
       const bars = [64, 88, 72, 0, 56, 80, 0, 60, 76]
         .map((w) =>
@@ -157,31 +158,46 @@
     const rail = o.mode === "rail";
     const admin = o.context === "admin";
     const C = F.SIDEBAR_COPY;
+    // Search and the inbox: brand-row icon buttons (rail icons under the expand button).
+    const inboxItem = F.NAV_FIXTURE.find((n) => n.place === "brand");
+    const inboxLabel = inboxItem
+      ? inboxItem.count
+        ? `${inboxItem.label}，${inboxItem.count} 项待处理`
+        : inboxItem.label
+      : "";
+    const inboxBadge = inboxItem?.count ? `<span class="r-rail-badge">${inboxItem.count}</span>` : "";
+    const tools = admin
+      ? ""
+      : `<button class="r-icon-btn${rail ? " r-rail-item" : ""}" aria-label="${esc(C.search)} ${esc(C.searchShortcut)}">${icon("search")}</button>${
+          inboxItem
+            ? `<a class="r-icon-btn r-sb-inbox${rail ? " r-rail-item" : ""}" href="#" aria-label="${esc(inboxLabel)}"${o.active === "inbox" ? ' aria-current="page"' : ""}>${icon("inbox")}${inboxBadge}</a>`
+            : ""
+        }`;
     const top = rail
       ? `<div class="r-sb-top">${LOGO}</div>
-         <button class="r-icon-btn r-rail-item" aria-label="${esc(C.expand)}">${icon("panel-left")}</button>`
-      : `<div class="r-sb-top">${LOGO}<span class="r-wordmark">CAPYBARA</span>${o.mode === "drawer" ? `<button class="r-icon-btn" aria-label="关闭导航">${icon("x")}</button>` : ""}</div>`;
+         <div class="r-sb-rail-tools"><button class="r-icon-btn r-rail-item" aria-label="${esc(C.expand)}">${icon("panel-left")}</button>${tools}</div>`
+      : `<div class="r-sb-top">${LOGO}<span class="r-wordmark">CAPYBARA</span><span class="r-sb-top-tools">${tools}${o.mode === "drawer" ? `<button class="r-icon-btn" aria-label="关闭导航">${icon("x")}</button>` : ""}</span></div>`;
     let nav;
     if (admin) {
       nav = F.ADMIN_NAV_FIXTURE.map((n) => navItem(n, o)).join("");
     } else {
       const visible = F.NAV_FIXTURE.filter((n) => VISIBLE[level].includes(n.audience));
       const primary = visible.filter((n) => n.place === "primary");
-      const more = [
-        ...visible.filter((n) => n.place === "more"),
-        ...F.EXTENSION_PAGES_FIXTURE.map((p) => ({ id: p.id, label: p.label, icon: "extension" })),
-      ];
-      const moreOpen = o.moreOpen || more.some((n) => n.id === o.active);
+      const more = visible.filter((n) => n.place === "more");
+      const ext = F.EXTENSION_PAGES_FIXTURE.map((p) => ({ id: p.id, label: p.label }));
+      const activeInMore = [...more, ...ext].some((n) => n.id === o.active);
       const newConv = navItem({ id: "new", label: F.NEW_CONVERSATION_LABEL, icon: "plus" }, o);
-      const search = rail
-        ? `<button class="r-nav-item r-rail-item" aria-label="${esc(C.search)} ${esc(C.searchShortcut)}">${icon("search")}</button>`
-        : `<button class="r-nav-item" aria-label="${esc(C.search)} ${esc(C.searchShortcut)}">${icon("search")}<span class="r-ellipsis">${esc(C.search)}</span><span class="r-nav-kbd">${esc(C.searchShortcut)}</span></button>`;
+      const active = activeInMore ? ' data-active="true"' : "";
       const moreToggle = rail
-        ? `<button class="r-nav-item r-rail-item r-nav-more" aria-label="${esc(F.MORE_LABEL)}">${icon("more-horizontal")}</button>`
-        : `<button class="r-nav-item r-nav-more" aria-expanded="${moreOpen}">${icon("more-horizontal")}<span class="r-ellipsis">${esc(F.MORE_LABEL)}</span>${icon(moreOpen ? "chevron-down" : "chevron-right", 12)}</button>`;
-      const moreItems =
-        moreOpen && !rail ? `<div class="r-nav-subs">${more.map((n) => navItem(n, o, " r-nav-sub")).join("")}</div>` : "";
-      nav = `${newConv}${search}${primary.map((n) => navItem(n, o)).join("")}${moreToggle}${moreItems}`;
+        ? `<button class="r-nav-item r-rail-item r-nav-more" aria-label="${esc(F.MORE_LABEL)}" aria-haspopup="menu"${active}>${icon("more-horizontal")}</button>`
+        : `<button class="r-nav-item r-nav-more" aria-haspopup="menu" aria-expanded="${o.moreOpen === true}"${active}>${icon("more-horizontal")}<span class="r-ellipsis">${esc(F.MORE_LABEL)}</span>${icon("chevron-right", 12)}</button>`;
+      // 更多 opens a flyout menu to the right of the sidebar, extension pages after a separator.
+      const flyItem = (n) =>
+        `<a class="r-menu-item" href="#"${n.id === o.active ? ' aria-current="page"' : ""}><span class="r-menu-label">${esc(n.label)}</span></a>`;
+      const flyout = o.moreOpen
+        ? `<div class="r-menu r-nav-flyout" role="menu" aria-label="${esc(F.MORE_LABEL)}">${more.map(flyItem).join("")}${more.length > 0 && ext.length > 0 ? '<div class="r-menu-sep"></div>' : ""}${ext.map(flyItem).join("")}</div>`
+        : "";
+      nav = `${newConv}${primary.map((n) => navItem(n, o)).join("")}<div class="r-nav-more-wrap">${moreToggle}${flyout}</div>`;
     }
     const navBlock = `<nav class="r-sb-nav" aria-label="主导航">${nav}</nav>`;
     const context = admin ? adminBlock(o) : orgBlock(o);

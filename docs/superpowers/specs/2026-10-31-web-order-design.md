@@ -50,15 +50,19 @@ one page head, few frames), not its look.
 Top to bottom, every block on an 8 px rhythm (the sidebar's padding is 12 / 8 / 8; the account row has 8 px
 above its divider and 8 px below):
 
-1. **Brand row**: pixel capybara + `CAPYBARA`.
+1. **Brand row**: pixel capybara + `CAPYBARA`, then two icon buttons at its right end (acceptance round
+   2): **搜索** (magnifier, "搜索 ⌘K", opens the command palette) and **收件箱** (a link to `/inbox` with a
+   small count badge only while something is pending; accessible name "收件箱，3 项待处理").
 2. **Org switcher**: a 40 px bordered block on `bg`: the org's initial on `ink`, its name, and
    `~/<slug> · <role>` in mono; the chevrons open the org menu (the user's orgs as radio items, then
    "创建组织…" when allowed). This is the only place the current org is shown and switched.
-3. **Primary items**: 新会话, 搜索 (`⌘K`, opens the command palette), 首页, 收件箱 (pending count badge),
-   Agents.
-4. **更多** (collapsed by default, expanded while the current page is inside it): 技能, 连接器, 插件, 渠道,
-   评测与运行, 组织设置. 渠道, 评测与运行 and 组织设置 are shown to org admins only (as today); members see
-   技能, 连接器, 插件.
+3. **Primary items**: 新会话, 首页, Agents, 更多 (search and the inbox moved to the brand row).
+4. **更多** opens a **flyout menu to the right of the sidebar**, anchored to its row: 技能, 连接器, 插件,
+   渠道, 评测与运行, 组织设置, then the org's extension pages after a separator. 渠道, 评测与运行 and
+   组织设置 are shown to org admins only (as today); members see 技能, 连接器, 插件. The 更多 row is
+   active while the current page is one of its items (that item is marked current in the flyout).
+   Enter / Space / → open it, Escape closes it and returns focus. Nothing is remembered; it never
+   opens by itself.
 5. **Conversations** take the rest of the height and scroll on their own:
    - A section label `会话` with a filter button (search by title, filter: running / waiting / all).
    - Groups by agent, most recent first; a group header (agent name, collapse caret, `＋` = new
@@ -71,6 +75,9 @@ above its divider and 8 px below):
 6. **管理后台** (enterprise admins only), with an outward arrow: enters the admin context.
 7. **Account row**: avatar + name (opens the account menu: 切换组织 ▸, 语言 ▸, 个人设置, 退出登录) and the
    theme toggle (light / dark radio) after it.
+
+In the rail (below 1280) the brand row is the logo alone; search and the inbox are rail icons at
+the top of the rail; 更多 opens the same flyout.
 
 ### 2.2 Sidebar, admin context (canvas "管理后台 · 扩展")
 
@@ -222,7 +229,7 @@ Language and theme stay where #9 put them (language in the account menu, theme a
 ## 6. Design system changes
 
 - **Sidebar v3** (`packages/design/src/shell/sidebar.tsx`): org switcher / admin context block props,
-  primary items, a collapsible "更多" group, conversation groups with collapse, `＋`, row state dots, the
+  brand-row search and inbox buttons, primary items, a "更多" flyout menu, conversation groups with collapse, `＋`, row state dots, the
   `⋯` row menu, "再显示 N 个", archived entry, filter button; the admin entry above the account row.
   `docs/design/spec.md` §6.13 rewritten; the reference set re-rendered for the sidebar.
 - **PageHeader**: a `path` (segments with optional hrefs) replaces `breadcrumb`; one form for every frame.

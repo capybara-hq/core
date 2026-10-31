@@ -16,6 +16,8 @@ export type MenuItem =
        * `aria-checked`, also when it is a link (`href`).
        */
       checked?: boolean;
+      /** The current page (a navigation menu such as the sidebar's 更多): `aria-current="page"`. */
+      current?: boolean;
     } & (
       | { onSelect(): void; href?: undefined; submenu?: undefined }
       /** 导航项：以 DesignProvider 的 link 渲染。 */
@@ -58,20 +60,42 @@ export function Menu({
   trigger,
   items,
   onCloseAutoFocus,
+  side,
+  sideOffset = 4,
+  open,
+  onOpenChange,
+  label,
+  modal,
 }: {
   trigger: ReactElement<Record<string, unknown>>;
   items: MenuItem[];
   /** Called before focus returns to the trigger; `preventDefault()` keeps focus where an item put it. */
   onCloseAutoFocus?: (e: Event) => void;
+  /** Where the menu opens (default below the trigger); `right` for a flyout beside a sidebar row. */
+  side?: "bottom" | "right";
+  sideOffset?: number;
+  /** Controlled open state (a trigger that also opens on → ). */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** The menu's accessible name. */
+  label?: string;
+  /** Default true; false leaves the page usable while it is open (drawn open in the catalog). */
+  modal?: boolean;
 }) {
   return (
-    <RM.Root>
+    <RM.Root
+      {...(modal !== undefined ? { modal } : {})}
+      {...(open !== undefined ? { open } : {})}
+      {...(onOpenChange ? { onOpenChange } : {})}
+    >
       <RM.Trigger asChild>{cloneElement(trigger, { "data-cb-trigger": "menu" })}</RM.Trigger>
       <RM.Portal>
         <RM.Content
           className="cb-menu"
-          sideOffset={4}
+          sideOffset={sideOffset}
           align="start"
+          {...(side ? { side } : {})}
+          {...(label ? { "aria-label": label } : {})}
           {...(onCloseAutoFocus ? { onCloseAutoFocus } : {})}
         >
           <MenuItems items={items} />
@@ -121,6 +145,7 @@ function MenuItems({ items }: { items: MenuItem[] }) {
         {...(item.checked !== undefined
           ? { role: "menuitemradio", "aria-checked": item.checked }
           : {})}
+        {...(item.current ? { "aria-current": "page" as const, "data-current": "true" } : {})}
       >
         {item.href !== undefined && !item.disabled ? (
           <Link href={item.href} className="cb-menu-item cb-menu-link">

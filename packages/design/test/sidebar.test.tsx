@@ -48,9 +48,9 @@ function props(over: Partial<SidebarProps> = {}): SidebarProps {
       org: { name: "示例组织", initial: "示", slug: "demo", role: "所有者", menu: [] },
       primary: [
         { id: "overview", label: "首页", href: "/", icon: "home" },
-        { id: "inbox", label: "收件箱", href: "/inbox", icon: "inbox", count: 120 },
         { id: "agents", label: "Agents", href: "/agents", icon: "agent" },
       ],
+      inbox: { href: "/inbox", count: 120 },
       more: [
         { id: "skills", label: "技能", href: "/skills", icon: "skills" },
         { id: "connectors", label: "连接器", href: "/connectors", icon: "connector" },
@@ -85,18 +85,18 @@ const workOf = (p: SidebarProps) => {
 };
 
 describe("Sidebar navigation (work context)", () => {
-  it("new conversation, search, primary items, then 更多; aria-current on activeNav", () => {
+  it("new conversation, primary items, then 更多; aria-current on activeNav", () => {
     zh(<Sidebar {...props()} />);
     const nav = mainNav();
     expect(
       within(nav)
         .getAllByRole("link")
         .map((l) => l.textContent),
-    ).toEqual(["新会话", "首页", "收件箱99+", "Agents"]);
-    expect(within(nav).getByRole("button", { name: "搜索 ⌘K" })).toBeTruthy();
-    expect(within(nav).getByRole("button", { name: "更多" }).getAttribute("aria-expanded")).toBe(
-      "false",
-    );
+    ).toEqual(["新会话", "首页", "Agents"]);
+    // search and the inbox are not menu items any more
+    expect(within(nav).queryByRole("button", { name: "搜索 ⌘K" })).toBeNull();
+    expect(within(nav).queryByRole("link", { name: /收件箱/ })).toBeNull();
+    expect(within(nav).getByRole("button", { name: "更多" })).toBeTruthy();
     expect(within(nav).getByRole("link", { name: "Agents" }).getAttribute("aria-current")).toBe(
       "page",
     );
@@ -104,30 +104,32 @@ describe("Sidebar navigation (work context)", () => {
     expect(within(nav).getByRole("link", { name: "新会话" }).getAttribute("href")).toBe("/chat");
   });
 
-  it("inbox count: 99+ above 99, n+ when truncated; the accessible name includes it", () => {
+  it("the brand row holds the logo, then the search and inbox icon buttons", () => {
     zh(<Sidebar {...props()} />);
-    expect(screen.getByRole("link", { name: "收件箱，99+ 项待处理" })).toBeTruthy();
-    cleanup();
+    const top = document.querySelector('[data-part="brand-row"]') as HTMLElement;
+    expect(top.querySelector(".cb-logo")).not.toBeNull();
+    const search = within(top).getByRole("button", { name: "搜索 ⌘K" });
+    const inbox = within(top).getByRole("link", { name: "收件箱，99+ 项待处理" });
+    expect(inbox.getAttribute("href")).toBe("/inbox");
+    expect(inbox.querySelector('[data-part="inbox-badge"]')?.textContent).toBe("99+");
+    expect(search.compareDocumentPosition(inbox) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("inbox: a badge only with pending items; n+ when truncated; current on /inbox", () => {
     const p = props();
+    zh(<Sidebar {...p} context={{ ...workOf(p), inbox: { href: "/inbox", count: 0 } }} />);
+    const inbox = screen.getByRole("link", { name: "收件箱" });
+    expect(inbox.querySelector('[data-part="inbox-badge"]')).toBeNull();
+    cleanup();
     zh(
       <Sidebar
         {...p}
-        context={{
-          ...workOf(p),
-          primary: [
-            {
-              id: "inbox",
-              label: "收件箱",
-              href: "/inbox",
-              icon: "inbox",
-              count: 3,
-              countMore: true,
-            },
-          ],
-        }}
+        activeNav="inbox"
+        context={{ ...workOf(p), inbox: { href: "/inbox", count: 3, countMore: true } }}
       />,
     );
-    expect(screen.getByRole("link", { name: "收件箱，3+ 项待处理" })).toBeTruthy();
+    const more = screen.getByRole("link", { name: "收件箱，3+ 项待处理" });
+    expect(more.getAttribute("aria-current")).toBe("page");
   });
 
   it("search opens the command palette", async () => {
@@ -166,44 +168,60 @@ describe("Sidebar navigation (work context)", () => {
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
-  it("更多 is collapsed and opens when the active item is inside", async () => {
-    zh(<Sidebar {...props()} />);
+  it("更多 opens a flyout menu to the right, extension pages after a separator", async () => {
+    const p = props();
+    zh(
+      <Sidebar
+        {...p}
+        context={{
+          ...workOf(p),
+          moreExtensions: [
+            { id: "ext:todo/board", label: "看板", href: "/p/todo/board", icon: "extension" },
+          ],
+        }}
+      />,
+    );
     const more = within(mainNav()).getByRole("button", { name: "更多" });
+    expect(more.getAttribute("aria-haspopup")).toBe("menu");
+    // no inline group
     expect(within(mainNav()).queryByRole("link", { name: "技能" })).toBeNull();
     await userEvent.click(more);
-    expect(more.getAttribute("aria-expanded")).toBe("true");
-    expect(within(mainNav()).getByRole("link", { name: "技能" })).toBeTruthy();
-    // remembered per browser
-    expect(localStorage.getItem("cap.sidebar.more")).toBe("1");
-    cleanup();
-    localStorage.clear();
-    zh(<Sidebar {...props({ activeNav: "connectors" })} />);
+    const menu = await screen.findByRole("menu");
+    expect(menu.getAttribute("data-side")).toBe("right");
     expect(
-      within(mainNav()).getByRole("button", { name: "更多" }).getAttribute("aria-expanded"),
-    ).toBe("true");
-    expect(
-      within(mainNav()).getByRole("link", { name: "连接器" }).getAttribute("aria-current"),
-    ).toBe("page");
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((i) => i.textContent),
+    ).toEqual(["技能", "连接器", "看板"]);
+    expect(within(menu).getAllByRole("separator")).toHaveLength(1);
+    // nothing remembered
+    expect(localStorage.getItem("cap.sidebar.more")).toBeNull();
   });
 
-  it("更多 remembers its open state; storage errors mean collapsed", () => {
-    localStorage.setItem("cap.sidebar.more", "1");
-    zh(<Sidebar {...props()} />);
-    expect(
-      within(mainNav()).getByRole("button", { name: "更多" }).getAttribute("aria-expanded"),
-    ).toBe("true");
-    cleanup();
-    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
-      throw new Error("denied");
-    });
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-      throw new Error("denied");
-    });
+  it("更多 is active when the current page is one of its items, marked current inside", async () => {
+    zh(<Sidebar {...props({ activeNav: "connectors" })} />);
+    const more = within(mainNav()).getByRole("button", { name: "更多" });
+    expect(more.getAttribute("data-active")).toBe("true");
+    // still closed: no "open while active"
+    expect(screen.queryByRole("menu")).toBeNull();
+    await userEvent.click(more);
+    const item = await screen.findByRole("menuitem", { name: "连接器" });
+    expect(item.getAttribute("aria-current")).toBe("page");
+    expect(screen.getByRole("menuitem", { name: "技能" }).getAttribute("aria-current")).toBeNull();
+  });
+
+  it("更多: → opens the flyout, Escape closes it and returns focus", async () => {
+    const user = userEvent.setup();
     zh(<Sidebar {...props()} />);
     const more = within(mainNav()).getByRole("button", { name: "更多" });
-    expect(more.getAttribute("aria-expanded")).toBe("false");
-    fireEvent.click(more);
-    expect(more.getAttribute("aria-expanded")).toBe("true");
+    more.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(await screen.findByRole("menu")).toBeTruthy();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(more);
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("menu")).toBeTruthy();
   });
 
   it("admin entry sits above the account row", () => {
@@ -816,14 +834,7 @@ describe("Sidebar keyboard", () => {
     const user = userEvent.setup();
     zh(<Sidebar {...props({ activeNav: "" })} />);
     const items = Array.from(mainNav().querySelectorAll<HTMLElement>("[data-rove]"));
-    expect(items.map((i) => i.textContent)).toEqual([
-      "新会话",
-      "搜索⌘K",
-      "首页",
-      "收件箱99+",
-      "Agents",
-      "更多",
-    ]);
+    expect(items.map((i) => i.textContent)).toEqual(["新会话", "首页", "Agents", "更多"]);
     expect(items.filter((l) => l.tabIndex === 0)).toEqual([items[0]]);
     (items[0] as HTMLElement).focus();
     await user.keyboard("{ArrowDown}");
@@ -841,7 +852,12 @@ describe("Sidebar keyboard", () => {
     zh(<Sidebar {...props()} />);
     const agents = within(mainNav()).getByRole("link", { name: "Agents" });
     expect(agents.tabIndex).toBe(0);
-    // the org switcher has no menu here, so it is not a tab stop
+    // the brand row's search and inbox come first; the org switcher has no menu here, so it is
+    // not a tab stop
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "搜索 ⌘K" }));
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByRole("link", { name: /^收件箱/ }));
     await user.tab();
     expect(document.activeElement).toBe(agents);
   });
@@ -874,8 +890,14 @@ describe("Sidebar rail", () => {
   it("icons only; links keep their accessible names; conversations behind the expand button", () => {
     zh(<Sidebar {...props()} mode="rail" />);
     expect(within(mainNav()).getByRole("link", { name: "Agents" })).toBeTruthy();
-    expect(within(mainNav()).getByRole("link", { name: "收件箱，99+ 项待处理" })).toBeTruthy();
     expect(within(mainNav()).queryByText("Agents")).toBeNull();
+    // the brand row is the logo alone; search and inbox are rail icons at the top
+    const top = document.querySelector('[data-part="brand-row"]') as HTMLElement;
+    expect(within(top).queryByRole("button")).toBeNull();
+    expect(within(top).queryByRole("link")).toBeNull();
+    const tools = document.querySelector(".cb-sidebar-rail-tools") as HTMLElement;
+    expect(within(tools).getByRole("button", { name: "搜索 ⌘K" })).toBeTruthy();
+    expect(within(tools).getByRole("link", { name: "收件箱，99+ 项待处理" })).toBeTruthy();
     expect(screen.queryByRole("region", { name: "会话" })).toBeNull();
     expect(screen.getByRole("button", { name: "展开侧栏" })).toBeTruthy();
   });
@@ -899,13 +921,14 @@ describe("Sidebar rail", () => {
     const nav = mainNav();
     for (const name of ["新会话", "首页", "Agents"])
       expect(within(nav).getByRole("link", { name })).toBeTruthy();
-    expect(within(nav).getByRole("button", { name: "搜索 ⌘K" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "搜索 ⌘K" })).toBeTruthy();
     expect(within(nav).queryByText("首页")).toBeNull();
     const sw = screen.getByRole("button", { name: "当前组织：示例组织，切换组织" });
     expect(sw.textContent).toBe("示");
     expect(screen.getByRole("link", { name: "管理后台" })).toBeTruthy();
-    // 更多 is one button with a menu of its items
+    // 更多 opens the same flyout
     await userEvent.click(within(nav).getByRole("button", { name: "更多" }));
+    expect((await screen.findByRole("menu")).getAttribute("data-side")).toBe("right");
     expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["技能", "连接器"]);
   });
 

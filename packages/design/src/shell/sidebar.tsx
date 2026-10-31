@@ -4,7 +4,6 @@ import {
   type ReactElement,
   type ReactNode,
   useEffect,
-  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -59,10 +58,17 @@ export type SidebarContext =
   | {
       kind: "work";
       org: SidebarOrg | null;
-      /** After New conversation and Search: Home, Inbox, Agents. */
+      /** After New conversation: Home, Agents. */
       primary: SidebarNavItem[];
-      /** The 更多 group: the fixed items, then extension pages. */
+      /** The 更多 flyout's fixed items. */
       more: SidebarNavItem[];
+      /** Extension pages, in the 更多 flyout after a separator. */
+      moreExtensions?: SidebarNavItem[];
+      /**
+       * The inbox: an icon button in the brand row (a rail icon below 1280), with a count badge
+       * only while something is pending; current when `activeNav` is `inbox`.
+       */
+      inbox?: { href: string; count?: number; countMore?: boolean };
       /** The admin console (enterprise admins): the entry above the account row. */
       adminHref?: string;
     }
@@ -103,7 +109,7 @@ export type SidebarProps = {
   drawerInline?: boolean;
   /** The rail item whose tooltip is drawn open (the reference set and the catalog only). */
   railTooltip?: string;
-  /** Draw 更多 open (the reference set and the catalog only). */
+  /** Draw the 更多 flyout open (the reference set and the catalog only). */
   moreOpen?: boolean;
 };
 
@@ -120,39 +126,6 @@ export function initialOf(name: string): string {
         .value?.segment
     : Array.from(name)[0];
   return (first ?? "").toUpperCase();
-}
-
-const MORE_KEY = "cap.sidebar.more";
-
-/**
- * The 更多 group's open state: open while the current item is inside it; otherwise remembered per
- * browser in localStorage (read in a layout effect, so it applies before the first paint; storage
- * errors mean collapsed).
- */
-function useMoreOpen(activeInside: boolean, forced: boolean | undefined): [boolean, () => void] {
-  const [open, setOpen] = useState(forced ?? activeInside);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: read on mount only
-  useLayoutEffect(() => {
-    if (forced !== undefined || activeInside) return;
-    try {
-      setOpen(localStorage.getItem(MORE_KEY) === "1");
-    } catch {
-      // Storage blocked: collapsed.
-    }
-  }, []);
-  useEffect(() => {
-    if (activeInside) setOpen(true);
-  }, [activeInside]);
-  const toggle = () => {
-    const next = !open;
-    setOpen(next);
-    try {
-      localStorage.setItem(MORE_KEY, next ? "1" : "0");
-    } catch {
-      // Not remembered; the toggle still applies.
-    }
-  };
-  return [open, toggle];
 }
 
 /**
@@ -283,15 +256,20 @@ function SidebarPanel({
       data-context={ctx.kind}
       data-responsive={responsive ? "true" : undefined}
     >
-      <div className="cb-sidebar-top">
+      <div className="cb-sidebar-top" data-part="brand-row">
         <Logo scale={2} wordmark={!rail} />
-        {variant === "panel" ? (
-          <IconButton
-            label={t("sidebar.close")}
-            icon={<Icon name="x" />}
-            onClick={() => onClose?.()}
-          />
-        ) : null}
+        {rail ? null : (
+          <span className="cb-sidebar-top-tools">
+            {ctx.kind === "work" ? <BrandTools p={p} rail={false} /> : null}
+            {variant === "panel" ? (
+              <IconButton
+                label={t("sidebar.close")}
+                icon={<Icon name="x" />}
+                onClick={() => onClose?.()}
+              />
+            ) : null}
+          </span>
+        )}
       </div>
       {rail ? (
         <div className="cb-sidebar-rail-tools">
@@ -302,6 +280,7 @@ function SidebarPanel({
               onClick={() => onExpand?.()}
             />
           </Tooltip>
+          {ctx.kind === "work" ? <BrandTools p={p} rail /> : null}
         </div>
       ) : null}
       {ctx.kind === "work" ? (
@@ -326,6 +305,71 @@ function SidebarPanel({
         trailing={p.theme && !rail ? <ThemeToggle {...p.theme} /> : null}
       />
     </aside>
+  );
+}
+
+/**
+ * Search (opens the command palette) and the inbox (a link with a count badge while something is
+ * pending): icon buttons in the brand row, rail icons at the top of the rail (web order §2.1).
+ */
+function BrandTools({ p, rail }: { p: SidebarProps; rail: boolean }) {
+  const t = useDesignT();
+  const Link = useDesignLink();
+  const ctx = p.context;
+  const inbox = ctx.kind === "work" ? ctx.inbox : undefined;
+  const search = `${t("shell.searchShort")} ⌘K`;
+  const tip = (key: string, label: string, node: ReactElement) =>
+    rail ? (
+      <RailTip label={label} open={p.railTooltip === key}>
+        {node}
+      </RailTip>
+    ) : (
+      // In the brand row the native title is the tooltip: a Radix Tooltip opened by focus would
+      // take the drawer's Escape.
+      node
+    );
+  const pending = inbox && (inbox.count ?? 0) > 0 ? countText(inbox) : null;
+  const inboxLabel = t("sidebar.inbox");
+  const inboxName =
+    pending === null
+      ? inboxLabel
+      : t("shell.navCount").replace("{label}", inboxLabel).replace("{n}", pending);
+  return (
+    <>
+      {tip(
+        "search",
+        search,
+        <IconButton
+          label={search}
+          icon={<Icon name="search" />}
+          part="search"
+          onClick={p.onOpenCommands}
+        />,
+      )}
+      {inbox
+        ? tip(
+            "inbox",
+            inboxLabel,
+            <Link
+              href={inbox.href}
+              className="cb-btn cb-icon-btn cb-sidebar-inbox"
+              data-part="inbox"
+              data-variant="ghost"
+              data-density="default"
+              aria-label={inboxName}
+              title={inboxName}
+              {...(p.activeNav === "inbox" ? { "aria-current": "page" as const } : {})}
+            >
+              <Icon name="inbox" />
+              {pending === null ? null : (
+                <span className="cb-sidebar-badge" data-part="inbox-badge" aria-hidden="true">
+                  {pending}
+                </span>
+              )}
+            </Link>,
+          )
+        : null}
+    </>
   );
 }
 
@@ -472,17 +516,16 @@ function SidebarNav({ p, rail }: { p: SidebarProps; rail: boolean }) {
   const work = ctx.kind === "work";
   const primary = work ? ctx.primary : ctx.items;
   const more = work ? ctx.more : [];
-  const activeInMore = more.some((n) => n.id === p.activeNav);
-  const [moreOpen, toggleMore] = useMoreOpen(activeInMore, p.moreOpen);
-  const showMoreItems = work && more.length > 0 && moreOpen && !rail;
+  const moreExtensions = work ? (ctx.moreExtensions ?? []) : [];
+  const hasMore = work && more.length + moreExtensions.length > 0;
+  const activeInMore = [...more, ...moreExtensions].some((n) => n.id === p.activeNav);
+  const [moreOpen, setMoreOpen] = useState(p.moreOpen ?? false);
   const keys = [
-    ...(work ? ["new", "search"] : []),
+    ...(work ? ["new"] : []),
     ...primary.map((n) => n.id),
-    ...(work && more.length > 0 ? ["more"] : []),
-    ...(showMoreItems ? more.map((n) => n.id) : []),
+    ...(hasMore ? ["more"] : []),
   ];
   const roving = useRoving(p.activeNav === "" ? undefined : p.activeNav);
-  const search = `${t("shell.searchShort")} ⌘K`;
   const tip = (key: string, label: string, node: ReactElement) =>
     rail ? (
       <RailTip key={key} label={label} open={p.railTooltip === key}>
@@ -494,7 +537,7 @@ function SidebarNav({ p, rail }: { p: SidebarProps; rail: boolean }) {
   const item = (
     key: string,
     n: { label: string; href: string; icon: IconName; count?: number; countMore?: boolean },
-    part: "nav-item" | "new-conversation" | "more-item" = "nav-item",
+    part: "nav-item" | "new-conversation" = "nav-item",
   ) => {
     const count = n.count ? countText(n) : null;
     const name =
@@ -512,7 +555,7 @@ function SidebarNav({ p, rail }: { p: SidebarProps; rail: boolean }) {
         {...(key === p.activeNav ? { "aria-current": "page" as const } : {})}
         {...(rail ? { "aria-label": name ?? n.label } : name ? { "aria-label": name } : {})}
       >
-        <Icon name={n.icon} size={part === "more-item" ? 14 : 16} />
+        <Icon name={n.icon} size={16} />
         {rail ? null : <span className="cb-sidebar-label">{n.label}</span>}
         {count === null ? null : rail ? (
           <span className="cb-sidebar-badge" data-part="rail-badge" aria-hidden="true">
@@ -528,39 +571,41 @@ function SidebarNav({ p, rail }: { p: SidebarProps; rail: boolean }) {
     return tip(key, n.label, link);
   };
   const moreLabel = t("sidebar.moreGroup");
-  const moreToggle = rail ? (
-    <Menu
-      key="more"
-      items={more.map((n) => ({ label: n.label, href: n.href }))}
-      trigger={
-        <button
-          type="button"
-          className="cb-sidebar-item"
-          data-part="more-toggle"
-          data-rove="more"
-          data-active={activeInMore ? "true" : undefined}
-          tabIndex={roving.tabIndexOf("more", keys)}
-          aria-label={moreLabel}
-          title={moreLabel}
-        >
-          <Icon name="more-horizontal" />
-        </button>
-      }
-    />
-  ) : (
+  const toMenu = (n: SidebarNavItem): MenuItem => ({
+    label: n.label,
+    href: n.href,
+    ...(n.id === p.activeNav ? { current: true } : {}),
+  });
+  const moreItems: MenuItem[] = [
+    ...more.map(toMenu),
+    ...(more.length > 0 && moreExtensions.length > 0 ? ["separator" as const] : []),
+    ...moreExtensions.map(toMenu),
+  ];
+  // 更多 opens a flyout to the right of the sidebar (Enter / Space / → open it, Escape closes it
+  // and returns focus); it is active while the current page is one of its items.
+  const moreTrigger = (
     <button
-      key="more"
       type="button"
       className="cb-sidebar-item"
       data-part="more-toggle"
       data-rove="more"
+      data-active={activeInMore ? "true" : undefined}
       tabIndex={roving.tabIndexOf("more", keys)}
-      aria-expanded={moreOpen}
-      onClick={toggleMore}
+      onKeyDown={(e) => {
+        if (e.key === "ArrowRight") {
+          e.preventDefault();
+          setMoreOpen(true);
+        }
+      }}
+      {...(rail ? { "aria-label": moreLabel, title: moreLabel } : {})}
     >
       <Icon name="more-horizontal" />
-      <span className="cb-sidebar-label">{moreLabel}</span>
-      <Icon name={moreOpen ? "chevron-down" : "chevron-right"} size={12} />
+      {rail ? null : (
+        <>
+          <span className="cb-sidebar-label">{moreLabel}</span>
+          <Icon name="chevron-right" size={12} />
+        </>
+      )}
     </button>
   );
   return (
@@ -570,49 +615,27 @@ function SidebarNav({ p, rail }: { p: SidebarProps; rail: boolean }) {
       onKeyDown={roving.onKeyDown}
       onFocus={roving.onFocus}
     >
-      {work ? (
-        <>
-          {item(
+      {work
+        ? item(
             "new",
             { label: t("sidebar.new"), href: p.newConversation.href, icon: "plus" },
             "new-conversation",
-          )}
-          {tip(
-            "search",
-            search,
-            <button
-              key="search"
-              type="button"
-              className="cb-sidebar-item"
-              data-part="nav-item"
-              data-rove="search"
-              tabIndex={roving.tabIndexOf("search", keys)}
-              aria-label={search}
-              onClick={p.onOpenCommands}
-            >
-              <Icon name="search" />
-              {rail ? null : (
-                <>
-                  <span className="cb-sidebar-label">{t("shell.searchShort")}</span>
-                  <span className="cb-sidebar-kbd" aria-hidden="true">
-                    ⌘K
-                  </span>
-                </>
-              )}
-            </button>,
-          )}
-        </>
-      ) : null}
+          )
+        : null}
       {primary.map((n) => item(n.id, n))}
-      {work && more.length > 0 ? (
-        <>
-          {moreToggle}
-          {showMoreItems ? (
-            <div className="cb-sidebar-more-items" data-part="more-items">
-              {more.map((n) => item(n.id, n, "more-item"))}
-            </div>
-          ) : null}
-        </>
+      {hasMore ? (
+        <Menu
+          key="more"
+          items={moreItems}
+          side="right"
+          sideOffset={SIZES.space[3]}
+          label={moreLabel}
+          open={moreOpen}
+          onOpenChange={setMoreOpen}
+          // Drawn open for the reference set: it must not lock the rest of the page.
+          {...(p.moreOpen ? { modal: false } : {})}
+          trigger={moreTrigger}
+        />
       ) : null}
     </nav>
   );

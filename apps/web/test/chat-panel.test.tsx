@@ -1,5 +1,6 @@
 import { DesignProvider, type LinkComponent, ToastProvider } from "@capybara-hq/design";
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -145,9 +146,10 @@ describe("extension pages in the sidebar's More group", () => {
   }
   const nav = () => screen.getByRole("navigation", { name: "Main navigation" });
 
+  // extension pages sit in the 更多 flyout, after a separator
   const pageLinks = () =>
-    within(nav())
-      .queryAllByRole("link")
+    screen
+      .queryAllByRole("menuitem")
       .filter((l) => (l.getAttribute("href") ?? "").startsWith("/p/"));
 
   it("none without page contributions", async () => {
@@ -160,7 +162,7 @@ describe("extension pages in the sidebar's More group", () => {
     await screen.findByText("page body");
     await vi.waitFor(() => expect(calls.some((c) => c.url === `${UI}/contributions`)).toBe(true));
     await new Promise((r) => setTimeout(r, 20));
-    fireEvent.click(within(nav()).getByRole("button", { name: "More" }));
+    await userEvent.setup().click(within(nav()).getByRole("button", { name: "More" }));
     expect(pageLinks()).toEqual([]);
   });
 
@@ -180,7 +182,7 @@ describe("extension pages in the sidebar's More group", () => {
         }),
     });
     renderFrame();
-    fireEvent.click(await within(nav()).findByRole("button", { name: "More" }));
+    await userEvent.setup().click(await within(nav()).findByRole("button", { name: "More" }));
     await vi.waitFor(() =>
       expect(pageLinks().map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
         ["Board · board", "/p/board/overview"],

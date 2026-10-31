@@ -228,6 +228,11 @@
   color: inherit;
   text-decoration: none;
 }
+/* The current page in a navigation menu (the sidebar's 更多 flyout). */
+.cb-menu-item[data-current="true"] {
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+}
 .cb-menu-item[data-danger="true"] {
   color: var(--cb-fail);
 }

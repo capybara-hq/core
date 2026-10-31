@@ -43,7 +43,7 @@ export type SidebarFixture = {
   collapsed?: string[];
   /** The admin console's context instead of the workspace's. */
   context?: "admin";
-  /** Draw 更多 open. */
+  /** Draw the 更多 flyout open. */
   moreOpen?: boolean;
   /** Draw the conversation filter open with this query and state. */
   filter?: { q: string; state: "all" | "running" | "waiting" };
@@ -65,6 +65,10 @@ export function sidebarProps(o: SidebarFixture, href: (id: string) => string): S
     icon: n.icon,
     ...(n.count !== undefined ? { count: n.count } : {}),
   });
+  const inboxOf = (n: FixtureNavItem | undefined) =>
+    n === undefined
+      ? {}
+      : { inbox: { href: href(n.id), ...(n.count !== undefined ? { count: n.count } : {}) } };
   const toGroup = (g: FixtureGroup): SidebarGroup => ({
     agentId: g.agentId,
     agentName: g.agentName,
@@ -102,15 +106,14 @@ export function sidebarProps(o: SidebarFixture, href: (id: string) => string): S
             kind: "work",
             org: { ...ORG_SWITCHER_FIXTURE, menu: [] },
             primary: visible.filter((n) => n.place === "primary").map(item),
-            more: [
-              ...visible.filter((n) => n.place === "more").map(item),
-              ...EXTENSION_PAGES_FIXTURE.map((x) => ({
-                id: `ext:${x.id}`,
-                label: x.label,
-                href: href(x.id),
-                icon: "extension" as const,
-              })),
-            ],
+            more: visible.filter((n) => n.place === "more").map(item),
+            moreExtensions: EXTENSION_PAGES_FIXTURE.map((x) => ({
+              id: `ext:${x.id}`,
+              label: x.label,
+              href: href(x.id),
+              icon: "extension" as const,
+            })),
+            ...inboxOf(visible.find((n) => n.place === "brand")),
             ...(level === "enterprise" ? { adminHref: href("admin") } : {}),
           },
     newConversation: { href: href("new") },

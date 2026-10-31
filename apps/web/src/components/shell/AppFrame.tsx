@@ -90,7 +90,7 @@ export function AppFrame({ version, children }: { version: string; children: Rea
     },
   );
   const pending = usePendingApprovals(me?.currentOrgId ?? null, pathname);
-  const { primary, more, adminHref, commands } = useNav(
+  const { primary, more, inbox, adminHref, commands } = useNav(
     pending.count,
     me === undefined ? "guest" : navLevelOf(me),
     pending.more,
@@ -225,10 +225,13 @@ export function AppFrame({ version, children }: { version: string; children: Rea
             }
           : null,
         primary,
-        more: [
-          ...more,
-          ...extensions.map((x) => ({ ...x, id: `ext:${x.id}`, icon: "extension" as const })),
-        ],
+        more,
+        moreExtensions: extensions.map((x) => ({
+          ...x,
+          id: `ext:${x.id}`,
+          icon: "extension" as const,
+        })),
+        inbox,
         ...(adminHref === undefined ? {} : { adminHref }),
       };
   const sidebar = {

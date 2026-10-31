@@ -91,8 +91,11 @@ describe("@capybara-hq/design/fixtures", () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(fixtures.NAV_FIXTURE.filter((n) => n.place === "primary").map((n) => n.id)).toEqual([
       "overview",
-      "inbox",
       "agents",
+    ]);
+    // the inbox is a brand-row icon button (acceptance round 2, B2)
+    expect(fixtures.NAV_FIXTURE.filter((n) => n.place === "brand").map((n) => n.id)).toEqual([
+      "inbox",
     ]);
     expect(fixtures.NAV_FIXTURE.filter((n) => n.place === "more").map((n) => n.id)).toEqual([
       "skills",

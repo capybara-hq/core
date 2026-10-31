@@ -1,5 +1,5 @@
 import { DesignProvider, type LinkComponent, ToastProvider } from "@capybara-hq/design";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { renderToString } from "react-dom/server";
@@ -392,9 +392,10 @@ describe("(auth) 页面模板", () => {
 
 describe("AppFrame（(app) 布局的 App Shell）", () => {
   /** Opens the sidebar's 更多 group (collapsed unless the current page is inside it). */
-  function openMore(nav: HTMLElement, name = "更多") {
-    const more = within(nav).getByRole("button", { name });
-    if (more.getAttribute("aria-expanded") === "false") fireEvent.click(more);
+  /** Opens the 更多 flyout (a menu to the right of the sidebar) and returns it. */
+  async function openMore(nav: HTMLElement, name = "更多") {
+    await userEvent.setup().click(within(nav).getByRole("button", { name }));
+    return screen.findByRole("menu", { name });
   }
 
   function renderFrame(locale: "zh" | "en" = "zh") {
@@ -419,14 +420,18 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     renderFrame();
     expect(await screen.findByText("page body")).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "主导航" });
-    openMore(nav);
     const links = within(nav).getAllByRole("link");
     expect(links.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
       // A new conversation starts at the composer (UI refresh B)
       ["新会话", "/chat"],
       [zh.nav.overview, "/"],
-      [zh.nav.inbox, "/inbox"],
       [zh.nav.agents, "/agents"],
+    ]);
+    // the inbox is the brand row's icon button
+    expect(screen.getByRole("link", { name: zh.nav.inbox }).getAttribute("href")).toBe("/inbox");
+    const menu = await openMore(nav);
+    const items = within(menu).getAllByRole("menuitem");
+    expect(items.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
       // 更多
       [zh.nav.skills, "/skills"],
       [zh.nav.connectors, "/connectors"],
@@ -437,6 +442,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
       [zh.nav.evals, "/evals"],
       [zh.nav.settings, "/settings/organization"],
     ]);
+    await userEvent.setup().keyboard("{Escape}");
     // 企业管理员（与组织角色无关）看得到管理后台的入口，在账户行之上
     expect(screen.getByRole("link", { name: "管理后台" }).getAttribute("href")).toBe("/admin");
     expect(
@@ -461,12 +467,12 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     renderFrame();
     expect(await screen.findByText("page body")).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "主导航" });
-    openMore(nav);
-    expect(within(nav).queryByRole("link", { name: zh.nav.channels })).toBeNull();
-    expect(within(nav).queryByRole("link", { name: zh.nav.evals })).toBeNull();
-    expect(within(nav).getByRole("link", { name: zh.nav.connectors })).toBeTruthy();
+    const menu = await openMore(nav);
+    expect(within(menu).queryByRole("menuitem", { name: zh.nav.channels })).toBeNull();
+    expect(within(menu).queryByRole("menuitem", { name: zh.nav.evals })).toBeNull();
+    expect(within(menu).getByRole("menuitem", { name: zh.nav.connectors })).toBeTruthy();
     // 成员能浏览技能库
-    expect(within(nav).getByRole("link", { name: zh.nav.skills })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: zh.nav.skills })).toBeTruthy();
   });
 
   it("while /me is pending the conversation section is busy, without the empty hint (I2)", async () => {
@@ -618,8 +624,8 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(await screen.findByText("page body")).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "主导航" });
     expect(screen.queryByRole("link", { name: "管理后台" })).toBeNull();
-    openMore(nav);
-    expect(within(nav).getByRole("link", { name: zh.nav.evals })).toBeTruthy();
+    const menu = await openMore(nav);
+    expect(within(menu).getByRole("menuitem", { name: zh.nav.evals })).toBeTruthy();
   });
 
   it("an enterprise admin without an org still reaches the admin console in the shell", async () => {
@@ -704,13 +710,13 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
       });
       await vi.waitFor(() =>
         expect(
-          within(nav).getByRole("link", {
+          screen.getByRole("link", {
             name: locale === "zh" ? `${m.nav.inbox}，2 项待处理` : `${m.nav.inbox}, 2 pending`,
           }),
         ).toBeTruthy(),
       );
-      openMore(nav, locale === "zh" ? "更多" : "More");
-      expect(within(nav).getByRole("link", { name: m.nav.connectors })).toBeTruthy();
+      const menu = await openMore(nav, locale === "zh" ? "更多" : "More");
+      expect(within(menu).getByRole("menuitem", { name: m.nav.connectors })).toBeTruthy();
     },
   );
 
@@ -728,8 +734,8 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
         }),
     });
     renderFrame("en");
-    const nav = await screen.findByRole("navigation", { name: "Main navigation" });
-    const link = await within(nav).findByRole("link", { name: `${en.nav.inbox}, 2+ pending` });
+    await screen.findByRole("navigation", { name: "Main navigation" });
+    const link = await screen.findByRole("link", { name: `${en.nav.inbox}, 2+ pending` });
     expect(within(link).getByText("2+")).toBeTruthy();
   });
 

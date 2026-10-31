@@ -32,6 +32,23 @@
   height: var(--cb-row-default);
   padding-left: var(--cb-pad-dense-x);
 }
+/* Search and the inbox: icon buttons at the brand row's right end (web order §2.1). */
+.cb-sidebar-top-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.cb-sidebar-inbox {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+.cb-sidebar-inbox[aria-current="page"] {
+  background: var(--cb-sidebar-active);
+  color: var(--cb-ink);
+}
 
 /* The org switcher and the admin context block: 40 high on bg, the 24 initial on ink. */
 .cb-sidebar-org {
@@ -194,15 +211,6 @@
   font-family: var(--cb-font);
   font-size: var(--cb-type-micro-size);
   line-height: var(--cb-type-micro-line);
-}
-.cb-sidebar-more-items {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding-left: var(--cb-pad-default-x);
-}
-.cb-sidebar-item[data-part="more-item"] {
-  height: var(--cb-row-dense);
 }
 .cb-sidebar-admin {
   display: flex;
@@ -606,6 +614,9 @@
 }
 .cb-sidebar[data-mode="rail"] .cb-sidebar-foot {
   padding: var(--cb-space-2) 0 0;
+}
+.cb-sidebar-rail-tools {
+  gap: 2px;
 }
 .cb-sidebar-rail-tools .cb-icon-btn {
   width: var(--cb-row-default);
