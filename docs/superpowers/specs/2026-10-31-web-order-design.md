@@ -127,7 +127,9 @@ For things people own and configure: Agents, 技能, 连接器, 插件 (org cata
   holds something different from 全部).
 - **Empty**: the one empty state (§3.7), never a table header over an icon.
 - **Loading**: the head keeps its real layout (title, actions, tabs with a muted "–" for counts,
-  search); only the rows are skeletons (acceptance round 2).
+  search); only the rows are skeletons (acceptance round 2). The exception: tabs that exist only
+  when the data holds something different from 全部 (connectors, plugins, channels, admin
+  extensions) cannot be known before the answer and appear after it.
 - **Marketplace entries** are object rows too (mono name, summary, meta = marketplace · source ·
   version · permissions with the sensitive count in warn, state 未引入 / 已引入 <version>, one action
   引入 or 查看, the rest in the menu); the search is the head's; the marketplaces are a second tab row
@@ -194,12 +196,17 @@ around an empty table.
 ### 3.8 Setup layout (acceptance round 2, user decisions D and D2)
 
 A third layout beside the auth layout (sign-in, initialization, the org chooser) and the shell: the
-**setup layout** (`SetupPage`, design spec §5.5), drawn while the current org is not ready
-(`setupReady(agents, providers)` is false for this viewer: no usable model or no agent).
+**setup layout** (`SetupPage`, design spec §5.5), drawn while the current org is not ready.
+Readiness comes from one cheap kernel read, `GET /api/v1/orgs/:orgId/readiness` (`org.read`) →
+`{ modelProvider: "ready" | "none", agents }`: `modelProvider` is `ready` when a model-provider
+extension is loaded (enabled and configured), read from extension state and never from a vendor
+(a provider whose vendor is down still counts); `agents` counts the agents the caller can see.
+Ready = `modelProvider === "ready" && agents > 0`. The app frame reads it once and shares it with
+pages through `SetupContext`; pages never read it themselves.
 
 - **Frame**: no sidebar; a 48 px top bar (pixel capybara + `CAPYBARA`; at the right the current org
   with its menu when there are several orgs or creating one is allowed, the account with 语言 ▸ /
-  个人设置 / 退出登录, the theme toggle); a centered column; the status bar
+  个人设置 / 退出登录 (and 管理后台 first for enterprise admins), the theme toggle); a centered column; the status bar
   (`<login>@<slug>:~/setup` on the setup home, the pathname elsewhere).
 - **Scope**: every workspace route while not ready. `/admin/*` keeps the admin console context (that
   is where an enterprise admin configures the model provider); the auth screens and the org chooser
@@ -211,24 +218,28 @@ A third layout beside the auth layout (sign-in, initialization, the org chooser)
     "← 开始之前": `/settings/models`, `/settings/members`, `/agents/new`, `/agents/<id>`,
     `/channels/new`, `/catalog`, `/catalog/<id>`, `/catalog/<id>/install`, and `/account/*`.
   - Any other workspace route is replaced by `/`.
-  - Readiness is read again on every navigation while in setup; once ready the next navigation draws
-    the shell. Creating the agent that makes the org ready re-reads readiness and lands on
-    `/chat?agent=<id>` in the shell.
+  - Readiness is read again on every workspace navigation while in setup (admin console
+    navigations never read); once ready the next navigation draws the shell. Creating an agent in
+    the setup layout navigates to `/chat?agent=<id>`; that navigation's re-read flips the layout to
+    the shell.
 - **Deciding the layout**: until the session and the readiness are known a workspace route shows only
   the neutral PendingState (design spec §6.20): never the shell first and then the setup layout. A
   failed readiness read counts as ready (the shell's pages report their own errors); an org switch
-  keeps a ready shell until the new org is read. The server render of a workspace route is the
-  neutral state too.
+  keeps a ready shell until the new org is read. An org seen ready in this tab is remembered in
+  `sessionStorage` (`cap.ready.<orgId>`): its next load paints the shell at once and re-validates in
+  the background, switching to the setup layout only if the re-read says not ready. The server
+  render of a workspace route is the neutral state.
 - **Roles** (cosmetic; the kernel decides):
 
   | Step | Enterprise admin | Org admin | Member | Guest |
   |---|---|---|---|---|
-  | Model | 去配置 → `/admin/extensions` | 去配置 → `/settings/models` when the deployment has a provider but the org no usable model; else "需要部署管理员配置模型服务" | "等待管理员配置模型" | same as member |
+  | Model | 去配置 → `/admin/extensions` | "需要部署管理员配置模型服务" (no action: models are deployment-wide; org model purposes cannot add a provider) | "等待管理员配置模型" | same as member |
   | Agent | 新建 → `/agents/new` once a model exists; before that disabled with "先配置模型" | same | same | "等待管理员创建 agent" |
   | 可以稍后再做 | invite members, channels, plugins (when also an org admin) | invite members, channels, plugins | 我的连接 | — |
 
-  A viewer with nothing to do right now also sees "组织还在配置中，管理员完成后你就能开始对话" and a
-  刷新 button that re-reads readiness.
+  A viewer with nothing to do right now also sees why, with a 刷新 button that re-reads readiness:
+  an org admin blocked on the model "需要部署管理员配置模型服务后才能继续", anyone else
+  "组织还在配置中，管理员完成后你就能开始对话".
 
 ## 4. Where every page goes
 

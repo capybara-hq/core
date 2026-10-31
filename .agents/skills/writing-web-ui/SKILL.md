@@ -40,8 +40,8 @@ The sidebar has two contexts: the workspace (conversations, Agents, 更多 with 
 
 | Frame | Template | Use |
 |---|---|---|
-| Object list | `ListPage` with `variant="objects"`: `ObjectRow` children inside one `ObjectList` (mark, name + chips, description, mono meta, state, one action, row menu) | Things a person picks and opens: agents, skills, connectors, channels, evals, catalog, admin extensions / catalog |
-| Record list | `ListPage` with `variant="records"` (default): a `DataTable` | Tabular records: members, accounts, orgs, trajectories, marketplace entries |
+| Object list | `ListPage` with `variant="objects"`: `ObjectRow` children inside one `ObjectList` (mark, name + chips, description, mono meta, state, one action, row menu) | Things a person picks and opens: agents, skills, connectors, channels, evals, catalog, admin extensions / catalog, marketplace entries |
+| Record list | `ListPage` with `variant="records"` (default): a `DataTable` | Tabular records: members, accounts, orgs, trajectories |
 | Detail / form | `DetailPage` (Content + Inspector, `PageTabs`) / `FormPage` / `WizardPage` | One object; create or edit; multi-step setup |
 | Settings | `SettingsPage` with the grouped secondary nav | Org settings, personal settings, deployment settings |
 
