@@ -25,8 +25,11 @@ export function activeIdFrom(pathname: string): string | undefined {
 
 type Loaded = {
   orgId: string;
-  /** The view the groups belong to (`viewKey`): another view starts over. */
+  /** The view the groups belong to (`viewKey`): a refresh merges only into the same view. */
   view: string;
+  /** The archived list (else the live one): until a new filter's answer arrives, the rows of the
+   * same list stay shown (the design narrows them locally). */
+  archived: boolean;
   groups: ConversationGroup[];
   next: string | null;
 };
@@ -40,13 +43,28 @@ const searchOf = (v: View): ConversationSearch => ({
   ...(v.archived ? { archived: true } : {}),
 });
 
-/** The loaded list without one conversation; a group left empty goes too. */
+/**
+ * The loaded list without one conversation; a group left empty goes too (also one with `more`:
+ * the reload brings it back with its next rows).
+ */
 function withoutRow(l: Loaded, id: string): Loaded {
   const groups = l.groups
     .map((g) => ({ ...g, conversations: g.conversations.filter((c) => c.id !== id) }))
-    .filter((g) => g.conversations.length > 0 || g.more);
+    .filter((g) => g.conversations.length > 0);
   return { ...l, groups };
 }
+
+type ViewState = {
+  orgId: string | null | undefined;
+  filter: SidebarFilter;
+  archivedOpen: boolean;
+  settledQ: string;
+};
+const DEFAULT_VIEW: Omit<ViewState, "orgId"> = {
+  filter: { q: "", state: "all" },
+  archivedOpen: false,
+  settledQ: "",
+};
 
 /** Typing in the filter asks the kernel once the input settles (the rows narrow at once). */
 const QUERY_SETTLE_MS = 200;
@@ -57,31 +75,44 @@ function mergeGroups(a: ConversationGroup[], b: ConversationGroup[]): Conversati
   return [...a, ...b.filter((g) => !seen.has(g.agent.id))];
 }
 
+/** Rows sort by `updatedAt` then `id`, both descending (the kernel's order within a group). */
+const rowAfter = (c: Conversation, last: Conversation) =>
+  c.updatedAt < last.updatedAt || (c.updatedAt === last.updatedAt && c.id < last.id);
+/** Groups sort by `latestAt` then agent id, both descending (the kernel's group order). */
+const groupAfter = (g: ConversationGroup, last: ConversationGroup) =>
+  g.latestAt < last.latestAt || (g.latestAt === last.latestAt && g.agent.id < last.agent.id);
+
 /**
- * A refresh (route, focus) merged into what the viewer has opened (review I1): the fresh first
- * page leads; per group its fresh rows come first, then the rows loaded before ("More") that the
- * fresh page lacks; groups loaded beyond page 1 ("More groups") stay after it, and the groups
- * cursor stays the loaded one while they do.
+ * A refresh (route, focus, a row action) merged into what the viewer has opened (review I1): the
+ * fresh first page leads and is the truth for the range it covers, so a row or group that left
+ * the view (archived, deleted, stopped running) goes. Per group, the rows loaded before ("More")
+ * stay only when the group has more than the fresh page and they sort after its last row; groups
+ * loaded beyond page 1 ("More groups") likewise stay only after the fresh page's last group, and
+ * the groups cursor stays the loaded one while they do.
  */
 export function mergeRefresh(old: Loaded, fresh: Loaded): Loaded {
   const before = new Map(old.groups.map((g) => [g.agent.id, g]));
   const groups = fresh.groups.map((g) => {
     const prev = before.get(g.agent.id);
-    if (!prev) return g;
+    const last = g.conversations.at(-1);
+    if (!prev || !g.more || last === undefined) return g;
     const shown = new Set(g.conversations.map((c) => c.id));
-    // Rows the fresh page lacks were loaded before (More, or pushed past page 1 by a newer one);
-    // after them the old `more` holds, as it was computed after the old last row.
-    const extra = prev.conversations.filter((c) => !shown.has(c.id));
+    // Paged-in rows past the fresh page; after them the old `more` holds, as it was computed
+    // after the old last row.
+    const extra = prev.conversations.filter((c) => !shown.has(c.id) && rowAfter(c, last));
     return extra.length === 0
       ? g
       : { ...g, conversations: [...g.conversations, ...extra], more: prev.more };
   });
   const freshIds = new Set(fresh.groups.map((g) => g.agent.id));
-  // Groups the fresh page lacks: loaded with More groups, or pushed past page 1 by newer activity.
-  const beyond = old.groups.filter((g) => !freshIds.has(g.agent.id));
+  const lastGroup = fresh.groups.at(-1);
+  // Groups loaded with More groups past the fresh page (only when there are more groups at all).
+  const beyond =
+    fresh.next === null || lastGroup === undefined
+      ? []
+      : old.groups.filter((g) => !freshIds.has(g.agent.id) && groupAfter(g, lastGroup));
   return {
-    orgId: fresh.orgId,
-    view: fresh.view,
+    ...fresh,
     groups: [...groups, ...beyond],
     next: beyond.length > 0 ? old.next : fresh.next,
   };
@@ -103,8 +134,8 @@ export type ConversationGroupsOptions = {
  *
  * `orgId`: `undefined` while the session loads (the section shows its skeleton), `null` when the
  * account has no current org (an empty list), else the org. A refresh keeps the rows and groups
- * the viewer opened with More / More groups (`mergeRefresh`); an org or view change starts over.
- * Only the latest load applies.
+ * the viewer opened with More / More groups past the fresh page (`mergeRefresh`); an org or view
+ * change starts over. Only the latest load applies.
  *
  * The filter (`q`, `state`) is sent to the kernel; the archived list loads `…/groups?archived=1`
  * and swaps the list in place. The archived count is the `archivedCount` of the latest load (the
@@ -122,14 +153,21 @@ export function useConversationGroups(
   const router = useRouter();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
-  const [filter, setFilter] = useState<SidebarFilter>({ q: "", state: "all" });
-  const [archivedOpen, setArchivedOpen] = useState(false);
+  // The filter and archived view belong to one org: another org reads the defaults at once, so
+  // its first load never carries the old org's view.
+  const [viewState, setViewState] = useState<ViewState>({ orgId, ...DEFAULT_VIEW });
+  const effective: ViewState = viewState.orgId === orgId ? viewState : { orgId, ...DEFAULT_VIEW };
+  const { filter, archivedOpen, settledQ } = effective;
+  const setView = (patch: Partial<Omit<ViewState, "orgId">>) =>
+    setViewState((v) => ({ ...(v.orgId === orgId ? v : { orgId, ...DEFAULT_VIEW }), ...patch }));
+  const setFilter = (f: SidebarFilter) => setView({ filter: f });
+  const setArchivedOpen = (open: boolean) => setView({ archivedOpen: open });
   const [archivedCount, setArchivedCount] = useState<{ orgId: string; n: number } | null>(null);
   // The q sent to the kernel: the filter's once typing settles.
-  const [settledQ, setSettledQ] = useState("");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: setView reads the current org
   useEffect(() => {
     if (filter.q === settledQ) return;
-    const timer = setTimeout(() => setSettledQ(filter.q), QUERY_SETTLE_MS);
+    const timer = setTimeout(() => setView({ settledQ: filter.q }), QUERY_SETTLE_MS);
     return () => clearTimeout(timer);
   }, [filter.q, settledQ]);
   const view = useMemo<View>(
@@ -157,7 +195,13 @@ export function useConversationGroups(
       const page = await listConversationGroups(org, searchOf(v));
       if (current.current !== org || mine !== seq.current) return;
       if (page.archivedCount !== undefined) setArchivedCount({ orgId: org, n: page.archivedCount });
-      const fresh = { orgId: org, view: k, groups: page.groups, next: page.next };
+      const fresh = {
+        orgId: org,
+        view: k,
+        archived: v.archived,
+        groups: page.groups,
+        next: page.next,
+      };
       setLoaded((l) =>
         l !== null && l.orgId === org && l.view === k ? mergeRefresh(l, fresh) : fresh,
       );
@@ -168,17 +212,14 @@ export function useConversationGroups(
     }
   }, []);
 
-  // A new org: drop the old org's groups, filter and archived view at once, then load.
+  // A new org: drop the old org's groups at once (its view resets by itself, see viewState).
   useEffect(() => {
     setFailed(null);
-    setFilter({ q: "", state: "all" });
-    setSettledQ("");
-    setArchivedOpen(false);
     if (orgId === null || orgId === undefined) return;
     setLoaded((l) => (l?.orgId === orgId ? l : null));
   }, [orgId]);
 
-  // A new org or view: load it (the old view's rows stay until the answer replaces them).
+  // A new org or view: load it (rows of the same list stay until the answer replaces them).
   // biome-ignore lint/correctness/useExhaustiveDependencies: key names the view load reads
   useEffect(() => {
     if (orgId === null || orgId === undefined) return;
@@ -315,9 +356,10 @@ export function useConversationGroups(
       ...(activeId ? { activeId } : {}),
     };
   }
-  // The rows of this org; a view switch keeps the old view's rows until its answer arrives
-  // only when the view is the same (otherwise the section shows its skeleton).
-  const mine = loaded?.orgId === orgId && loaded.view === key ? loaded : null;
+  // The rows of this org and list (live or archived). While a new filter loads, the previous
+  // filter's rows stay shown (the design narrows them locally); switching between the live and
+  // the archived list, or the org, shows the skeleton until the answer arrives.
+  const mine = loaded?.orgId === orgId && loaded.archived === archivedOpen ? loaded : null;
   const state = failed === orgId && mine === null ? "error" : mine === null ? "loading" : "ready";
   const toRow = (c: Conversation) => ({
     id: c.id,

@@ -32,7 +32,8 @@ const conv = (id: string, agentId: string, title: string | null = null) => ({
   createdAt: "2026-10-20T06:32:00.000Z",
   updatedAt: "2026-10-20T06:32:00.000Z",
 });
-const group = (agentId: string, name: string, convs: ReturnType<typeof conv>[], more = false) => ({
+type Row = ReturnType<typeof conv> & { activity?: "running" | "waiting" | null };
+const group = (agentId: string, name: string, convs: Row[], more = false) => ({
   agent: { id: agentId, name },
   latestAt: "2026-10-20T06:32:00.000Z",
   conversations: convs,
@@ -238,8 +239,17 @@ describe("useConversationGroups refresh (I1)", () => {
       },
       "GET /api/v1/orgs/o1/conversations?agentId=a1&after=c1": () =>
         json(200, { conversations: [conv("c0", "a1", "二")], next: null }),
+      // a later page: an older latest activity than page 1's groups (the kernel's order)
       "GET /api/v1/orgs/o1/conversations/groups?after=a1": () =>
-        json(200, { groups: [group("a2", "客服分流", [conv("c9", "a2", "九")])], next: null }),
+        json(200, {
+          groups: [
+            {
+              ...group("a2", "客服分流", [conv("c9", "a2", "九")]),
+              latestAt: "2026-10-19T00:00:00.000Z",
+            },
+          ],
+          next: null,
+        }),
     });
     return { calls, pageOneCalls: () => pageOne };
   }
@@ -521,5 +531,258 @@ describe("useConversationGroups filter, archived list and row actions (web order
     await user.click(await screen.findByRole("menuitem", { name: "归档" }));
     await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
     expect(screen.getByRole("link", { name: "一" })).toBeTruthy();
+  });
+});
+
+describe("useConversationGroups refresh drops rows that left the view (review r1)", () => {
+  const groupsUrl = "GET /api/v1/orgs/o1/conversations/groups";
+  const at = (id: string, agentId: string, title: string, updatedAt: string) => ({
+    ...conv(id, agentId, title),
+    updatedAt,
+  });
+
+  it("an external archive disappears after the refresh; an older More row stays", async () => {
+    // pages of two rows: c4 c3 | c2 c1; c3 is archived elsewhere, so page 1 becomes c4 c2
+    const c4 = at("c4", "a1", "四", "2026-10-20T10:00:00.000Z");
+    const c3 = at("c3", "a1", "三", "2026-10-20T09:00:00.000Z");
+    const c2 = at("c2", "a1", "二", "2026-10-20T08:00:00.000Z");
+    const c1 = at("c1", "a1", "一", "2026-10-20T07:00:00.000Z");
+    let archivedElsewhere = false;
+    stubApi({
+      [groupsUrl]: () =>
+        json(200, {
+          groups: [group("a1", "研究助手", archivedElsewhere ? [c4, c2] : [c4, c3], true)],
+          next: null,
+          archivedCount: archivedElsewhere ? 1 : 0,
+        }),
+      "GET /api/v1/orgs/o1/conversations?agentId=a1&after=c3": () =>
+        json(200, { conversations: [c2, c1], next: null }),
+    });
+    show("o1");
+    await screen.findByRole("link", { name: "三" });
+    await userEvent.click(within(section()).getByRole("button", { name: "显示更多" }));
+    await screen.findByRole("link", { name: "一" });
+    archivedElsewhere = true;
+    await act(async () => {
+      window.dispatchEvent(new Event("cap:conversations-changed"));
+    });
+    await vi.waitFor(() => expect(screen.queryByRole("link", { name: "三" })).toBeNull());
+    const names = within(section())
+      .getAllByRole("link")
+      .map((l) => l.textContent);
+    expect(names).toEqual(["四", "二", "一"]);
+  });
+
+  it("a fresh page that is complete (no more) drops every row it lacks", async () => {
+    let stopped = false;
+    stubApi({
+      [groupsUrl]: () =>
+        json(200, {
+          groups: [
+            group(
+              "a1",
+              "研究助手",
+              stopped
+                ? [at("c3", "a1", "三", "2026-10-20T09:00:00.000Z")]
+                : [
+                    at("c3", "a1", "三", "2026-10-20T09:00:00.000Z"),
+                    at("c1", "a1", "一", "2026-10-20T07:00:00.000Z"),
+                  ],
+            ),
+          ],
+          next: null,
+          archivedCount: 0,
+        }),
+    });
+    show("o1");
+    await screen.findByRole("link", { name: "一" });
+    stopped = true;
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await vi.waitFor(() => expect(screen.queryByRole("link", { name: "一" })).toBeNull());
+  });
+
+  it("a group loaded with More groups that the server no longer returns goes", async () => {
+    let gone = false;
+    stubApi({
+      [groupsUrl]: () =>
+        json(200, {
+          groups: [group("a1", "研究助手", [conv("c1", "a1", "一")])],
+          next: gone ? null : "a1",
+          archivedCount: 0,
+        }),
+      "GET /api/v1/orgs/o1/conversations/groups?after=a1": () =>
+        json(200, { groups: [group("a2", "客服分流", [conv("c9", "a2", "九")])], next: null }),
+    });
+    show("o1");
+    await screen.findByRole("link", { name: "一" });
+    await userEvent.click(screen.getByRole("button", { name: "更多分组" }));
+    await screen.findByRole("link", { name: "九" });
+    gone = true;
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await vi.waitFor(() => expect(screen.queryByRole("link", { name: "九" })).toBeNull());
+  });
+
+  it("archiving the only row of a group with more drops the group header at once", async () => {
+    let n = 0;
+    stubApi({
+      [groupsUrl]: () => {
+        n += 1;
+        if (n > 1) return new Promise<Response>(() => {});
+        return json(200, {
+          groups: [
+            group("a1", "研究助手", [conv("c1", "a1", "一")]),
+            group("a2", "客服分流", [conv("c9", "a2", "九")], true),
+          ],
+          next: null,
+          archivedCount: 0,
+        });
+      },
+      "PATCH /api/v1/orgs/o1/conversations/c9": () =>
+        json(200, { conversation: conv("c9", "a2", "九") }),
+    });
+    show("o1");
+    await screen.findByRole("link", { name: "九" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "会话操作：九" }));
+    await user.click(await screen.findByRole("menuitem", { name: "归档" }));
+    await vi.waitFor(() => expect(screen.queryByRole("button", { name: "客服分流" })).toBeNull());
+    expect(screen.getByRole("button", { name: "研究助手" })).toBeTruthy();
+  });
+});
+
+describe("useConversationGroups filter races (review r1)", () => {
+  const groupsUrl = "GET /api/v1/orgs/o1/conversations/groups";
+
+  it("a filter change keeps the rows shown while the new answer loads", async () => {
+    stubApi({
+      [groupsUrl]: () =>
+        json(200, {
+          groups: [group("a1", "研究助手", [conv("c1", "a1", "一")])],
+          next: null,
+          archivedCount: 0,
+        }),
+      "GET /api/v1/orgs/o1/conversations/groups?state=running": () =>
+        new Promise<Response>(() => {}),
+    });
+    show("o1");
+    await screen.findByRole("link", { name: "一" });
+    const user = userEvent.setup();
+    await user.click(within(section()).getByRole("button", { name: "筛选会话" }));
+    await user.click(screen.getByRole("radio", { name: "全部" }));
+    await user.click(screen.getByRole("radio", { name: "运行中" }));
+    expect(section().getAttribute("aria-busy")).not.toBe("true");
+    // the rows narrow locally (c1 has no activity) but the section is not a skeleton
+    expect(within(section()).getByText("没有符合条件的会话")).toBeTruthy();
+  });
+
+  it("an answer for the previous filter arriving last is dropped", async () => {
+    let releaseOld: (r: Response) => void = () => {};
+    let first = true;
+    stubApi({
+      [groupsUrl]: () => {
+        if (first) {
+          first = false;
+          return json(200, {
+            groups: [group("a1", "研究助手", [conv("c1", "a1", "一")])],
+            next: null,
+            archivedCount: 0,
+          });
+        }
+        return new Promise<Response>((r) => {
+          releaseOld = r;
+        });
+      },
+      "GET /api/v1/orgs/o1/conversations/groups?state=waiting": () =>
+        json(200, {
+          groups: [group("a1", "研究助手", [{ ...conv("c5", "a1", "等我"), activity: "waiting" }])],
+          next: null,
+          archivedCount: 0,
+        }),
+    });
+    show("o1");
+    await screen.findByRole("link", { name: "一" });
+    // a refresh of the unfiltered list is in flight
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    const user = userEvent.setup();
+    await user.click(within(section()).getByRole("button", { name: "筛选会话" }));
+    await user.click(screen.getByRole("radio", { name: "等待我" }));
+    await screen.findByRole("link", { name: "等我" });
+    await act(async () => {
+      releaseOld(
+        json(200, {
+          groups: [group("b9", "旧答复", [{ ...conv("c8", "b9", "过期"), activity: "waiting" }])],
+          next: null,
+          archivedCount: 0,
+        }),
+      );
+    });
+    expect(screen.queryByRole("link", { name: "过期" })).toBeNull();
+    expect(screen.getByRole("link", { name: "等我" })).toBeTruthy();
+  });
+
+  it("an org switch resets the filter and the archived view", async () => {
+    const calls = stubApi({
+      [groupsUrl]: () => json(200, { groups: [], next: null, archivedCount: 2 }),
+      "GET /api/v1/orgs/o1/conversations/groups?archived=1": () =>
+        json(200, {
+          groups: [group("a1", "研究助手", [conv("c1", "a1", "旧的")])],
+          next: null,
+          archivedCount: 2,
+        }),
+      "GET /api/v1/orgs/o2/conversations/groups": () =>
+        json(200, {
+          groups: [group("b1", "客服分流", [conv("d1", "b1", "B 的会话")])],
+          next: null,
+          archivedCount: 0,
+        }),
+    });
+    const r = show("o1");
+    const user = userEvent.setup();
+    await user.click(await within(section()).findByRole("button", { name: "已归档 · 2" }));
+    await screen.findByRole("link", { name: "旧的" });
+    r.rerender(frame("o2"));
+    expect(await screen.findByRole("link", { name: "B 的会话" })).toBeTruthy();
+    expect(within(section()).queryByRole("button", { name: /返回会话列表/ })).toBeNull();
+    expect(calls.some((c) => c.url.includes("/orgs/o2/") && c.url.includes("archived"))).toBe(
+      false,
+    );
+  });
+
+  it("a More answer arriving after a view change is ignored", async () => {
+    let releaseMore: (r: Response) => void = () => {};
+    stubApi({
+      [groupsUrl]: () =>
+        json(200, {
+          groups: [group("a1", "研究助手", [conv("c1", "a1", "一")], true)],
+          next: null,
+          archivedCount: 1,
+        }),
+      "GET /api/v1/orgs/o1/conversations?agentId=a1&after=c1": () =>
+        new Promise<Response>((r) => {
+          releaseMore = r;
+        }),
+      "GET /api/v1/orgs/o1/conversations/groups?archived=1": () =>
+        json(200, {
+          groups: [group("a1", "研究助手", [conv("c7", "a1", "归档的")])],
+          next: null,
+          archivedCount: 1,
+        }),
+    });
+    show("o1");
+    await screen.findByRole("link", { name: "一" });
+    const user = userEvent.setup();
+    await user.click(within(section()).getByRole("button", { name: "显示更多" }));
+    await user.click(within(section()).getByRole("button", { name: "已归档 · 1" }));
+    await screen.findByRole("link", { name: "归档的" });
+    await act(async () => {
+      releaseMore(json(200, { conversations: [conv("c0", "a1", "迟到的")], next: null }));
+    });
+    expect(screen.queryByRole("link", { name: "迟到的" })).toBeNull();
   });
 });

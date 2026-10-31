@@ -2,6 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useRouter } from "../../i18n/navigation";
 import { ApiClientError } from "../../lib/api";
 import {
   abortRun,
@@ -73,6 +74,7 @@ export type ConversationState = {
  */
 export function useConversation(orgId: string, conversationId: string): ConversationState {
   const t = useTranslations("chat");
+  const router = useRouter();
   const errorMessage = useErrorMessage();
   const [state, dispatch] = useReducer(reduceChat, initialChatState);
   const [error, setErrorText] = useState<string>();
@@ -141,8 +143,13 @@ export function useConversation(orgId: string, conversationId: string): Conversa
       // The sidebar rereads on `title` itself: the row read below may be superseded by a later
       // read (only the latest is applied), which would hide the change from the comparison.
       if (what === "title") notifyConversationsChanged();
-      // Archived or deleted elsewhere (another tab, the CLI): only the sidebar's lists change.
-      if (what === "archived" || what === "deleted") return notifyConversationsChanged();
+      // Archived or deleted elsewhere (another tab, the CLI): the sidebar's lists change; a deleted
+      // conversation is gone, so the page goes to a new one (an archived one stays open).
+      if (what === "archived" || what === "deleted") {
+        notifyConversationsChanged();
+        if (what === "deleted") router.push("/chat");
+        return;
+      }
       if (what === "title" || what === "selection") loadConversation();
       else setChanges((c) => ({ ...c, [what]: c[what] + 1 }));
     };
@@ -198,7 +205,7 @@ export function useConversation(orgId: string, conversationId: string): Conversa
       if (scheduled !== null) cancelFrame(scheduled);
       close?.();
     };
-  }, [orgId, conversationId, errorMessage, t, bumpUi, loadConversation]);
+  }, [orgId, conversationId, errorMessage, t, bumpUi, loadConversation, router]);
 
   const send = useCallback(
     async (m: MessageInput): Promise<SendResult> => {

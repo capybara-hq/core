@@ -17,8 +17,9 @@ export const ADMIN_PAGES = [
 export type AdminPageId = (typeof ADMIN_PAGES)[number]["id"];
 
 /**
- * The admin console's (enterprise admins) navigation: overview, accounts, orgs, extensions,
- * catalog, marketplaces, models, deployment settings (the sidebar's admin context). Settings pages (SettingsPage) use it as the left
+ * The admin console's (enterprise admins) navigation: overview, accounts, orgs,
+ * extensions, catalog, marketplaces, models, deployment settings (the sidebar's admin
+ * context). Settings pages (SettingsPage) use it as the left
  * navigation; list pages go back to the overview through the header's path. An org's own
  * settings stay under `/settings/*`.
  */

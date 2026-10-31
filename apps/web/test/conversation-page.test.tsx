@@ -420,6 +420,17 @@ describe("the conversation page (ConversationPage)", () => {
     },
   );
 
+  it("the open conversation deleted elsewhere goes to /chat", async () => {
+    api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${BASE}`]: () => json(200, CONV("c1", { title: "Kept" })),
+    });
+    renderChat();
+    await screen.findByText("hi");
+    act(() => FakeEventSource.instances[0]?.emit("changed", { what: "deleted" }));
+    expect(router.push).toHaveBeenCalledWith("/chat");
+  });
+
   it("overlapping reads of the conversation: the latest request wins, not the latest answer (m7)", async () => {
     let n = 0;
     let releaseSlow!: () => void;
