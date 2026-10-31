@@ -9,7 +9,7 @@ const zh = JSON.parse(
 
 const S = zh.agents.form.subagents;
 /** The DataTable row menu trigger (design copy table.rowActions, zh). */
-const ROW_ACTIONS = "行操作";
+const ROW_ACTIONS = "更多操作";
 
 /** A new model-fake agent with the agent tool switched on in the Sub-agents section. */
 async function createLead(page: Page, name: string) {
@@ -29,7 +29,7 @@ async function createLead(page: Page, name: string) {
 async function openAgent(page: Page, name: string) {
   await page.goto("/agents");
   await page
-    .getByRole("row")
+    .getByRole("listitem")
     .filter({ hasText: name })
     .getByRole("button", { name: ROW_ACTIONS })
     .click();

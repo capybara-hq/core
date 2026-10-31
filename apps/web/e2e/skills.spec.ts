@@ -120,7 +120,7 @@ test("管理员上传技能包，agent 选用它；对话里 skill_load 的时�
     .locator('input[type="file"]')
     .setInputFiles({ name: "e2e-notes-main.zip", mimeType: "application/zip", buffer: zip });
   await expect(page.getByText(fill(zh.skills.upload.created, { name: SKILL }))).toBeVisible();
-  const table = page.getByRole("table", { name: zh.skills.listLabel });
+  const table = page.getByRole("list", { name: zh.skills.listLabel });
   await table.getByText(SKILL, { exact: true }).click();
 
   // 2. 详情：SKILL.md 正文按纯文本显示

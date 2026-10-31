@@ -105,11 +105,11 @@ test("catalog: refresh the official marketplace -> import a dependency plugin wi
 
   // 6. Org catalog: crm is installable -> install wizard
   await page.goto("/catalog");
-  const appRow = page.getByRole("row").filter({ hasText: "CRM 套件" });
-  await expect(appRow.getByRole("button", { name: D.org.action.install })).toBeVisible({
+  const appRow = page.getByRole("listitem").filter({ hasText: "CRM 套件" });
+  await expect(appRow.getByRole("link", { name: D.org.action.install })).toBeVisible({
     timeout: 60_000,
   });
-  await appRow.getByRole("button", { name: D.org.action.install }).click();
+  await appRow.getByRole("link", { name: D.org.action.install }).click();
   await expect(page).toHaveURL(/\/catalog\/[0-9a-f-]{36}\/install$/);
   // The connector step: url is editable (the template's only field), no auth
   await expect(page.getByLabel("url", { exact: true })).toBeEditable();
@@ -189,8 +189,8 @@ test("git marketplace: add a repository in the admin console -> refresh -> impor
   // 2. Import notes 1.0.0 and install it in the org (a skills-only plugin: just confirm)
   await importNotes(page, "1.0.0");
   await page.goto("/catalog");
-  const row = page.getByRole("row").filter({ hasText: "notes" });
-  await row.getByRole("button", { name: D.org.action.install }).click();
+  const row = page.getByRole("listitem").filter({ hasText: "notes" });
+  await row.getByRole("link", { name: D.org.action.install }).click();
   await expect(page).toHaveURL(/\/catalog\/[0-9a-f-]{36}\/install$/);
   await page.getByRole("button", { name: D.org.install.submit }).click();
   await expect(page).toHaveURL(/\/settings\/plugins$/, { timeout: 60_000 });
