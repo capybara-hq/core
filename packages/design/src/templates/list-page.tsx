@@ -5,6 +5,7 @@ import {
   EmptyState,
   type EmptyStateProps,
   ObjectList,
+  Skeleton,
 } from "../display/index";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
 import { TemplateHead, WithStats } from "./frame";
@@ -13,7 +14,8 @@ import { TemplateHead, WithStats } from "./frame";
  * T2 List: Rail + Content (Single without a rail), list width; StatCards from `metrics`.
  * `variant="objects"` wraps the children (ObjectRows) in one ObjectList panel; `records` (default)
  * leaves them to the caller (a DataTable). `callout` is drawn between the title row and the tabs;
- * `empty` is drawn instead of the children.
+ * `empty` is drawn instead of the children. `loading` draws skeleton rows (objects: in the 64 px
+ * row shape inside the panel; records: a Skeleton) instead of the children or `empty`.
  */
 export function ListPage({
   header,
@@ -23,6 +25,7 @@ export function ListPage({
   listLabel,
   callout,
   empty,
+  loading = false,
   children,
 }: {
   header: PageHeaderProps;
@@ -33,10 +36,18 @@ export function ListPage({
   listLabel?: string;
   callout?: CalloutProps;
   empty?: EmptyStateProps;
+  /** The list's first answer is still loading. */
+  loading?: boolean;
   children?: ReactNode;
 }) {
   const head = callout ? { ...header, notice: <Callout {...callout} /> } : header;
-  const content = empty ? (
+  const content = loading ? (
+    variant === "objects" ? (
+      <ObjectList label={listLabel ?? header.title} loading />
+    ) : (
+      <Skeleton rows={4} />
+    )
+  ) : empty ? (
     <EmptyState {...empty} />
   ) : variant === "objects" ? (
     <ObjectList label={listLabel ?? header.title}>{children}</ObjectList>

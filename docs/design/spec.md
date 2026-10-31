@@ -320,7 +320,7 @@ A new page **must** pick one of the following templates; a new template requires
 - Subordinate section (optional, at most one): below the main table with a `space.6` gap, an `h2` title + one DataTable listing secondary objects closely related to the main object and few in number (such as "Invitations" on the members page); it has no filters or metrics of its own, and the create entry stays in the PageHeader. When the secondary objects need their own filters or are numerous, make a separate list page.
 - PageHeader: title + total, description, secondary actions on the right + Create (primary); metrics ≤ 5 as StatCards.
 - StatusBar page status: the number of filter results.
-- **Variants** (`variant`): `records` (default) holds a DataTable; `objects` wraps its ObjectRows (§6.17) in one ObjectList panel (things people own and configure: agents, skills, connectors, plugins, extensions). The `callout` prop draws a Callout (§6.19) in the header between the title row and the tabs; `empty` draws an EmptyState (§6.18) instead of the content. An object list has no rail: tabs with counts in the header replace the filters.
+- **Variants** (`variant`): `records` (default) holds a DataTable; `objects` wraps its ObjectRows (§6.17) in one ObjectList panel (things people own and configure: agents, skills, connectors, plugins, extensions). The `callout` prop draws a Callout (§6.19) in the header between the title row and the tabs; `empty` draws an EmptyState (§6.18) instead of the content. `loading` draws skeleton rows (§6.17) instead of the content or `empty` until the first answer. An object list has no rail: tabs with counts in the header replace the filters.
 
 <!-- states: template-list -->
 States: `page`
@@ -1546,6 +1546,7 @@ States: `image`, `text`, `markdown`, `csv`, `none`, `failed`
 - A 36 px mark (radius `md`, `selected` ground): initials in 700 (mono like the whole UI) or an icon; `tone="warn"` tints it with `warn` at 15% when the object needs attention.
 - Text column: line 1 the name (700; a link when `href`; `mono` for package names) and chips (`small`, 1px `line` border, radius `sm`; `tone="warn"` draws the warn tint without a border); line 2 the description in `muted`, one line with an ellipsis; line 3 the meta in `faint`, `small`, one line.
 - At the right: a state label (`state`: `ok` / `warn` / `fail` colored, `muted` in `faint`), a short `trailing` text in `faint`, one row action (`action`: a `default` or `primary` dense button, or a link) and the `more-horizontal` overflow menu (`menu`). Below 640 the row wraps.
+- **Loading** (`ObjectList.loading`, `true` for 3 rows or a row count; `ListPage.loading` on a list page): the panel draws skeleton rows in the row shape instead of its rows — a 36 px mark and two 12 px bars (30% and 55% wide) on the `hover` ground, radius `sm` — and the list is `aria-busy` with a hidden "正在加载 / Loading". It wins over `empty`, so no empty state flashes before the first answer; a `records` ListPage draws a Skeleton instead.
 
 ### 6.18 EmptyState
 

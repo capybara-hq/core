@@ -28,11 +28,45 @@ export type ObjectRowProps = {
   menu?: MenuItem[];
 };
 
-/** The panel of an object list: rows split by `line-soft` (spec §6.17). */
-export function ObjectList({ label, children }: { label: string; children?: ReactNode }) {
+/** Skeleton rows an object list shows while it loads (spec §6.17). */
+const SKELETON_ROWS = 3;
+
+/**
+ * The panel of an object list: rows split by `line-soft` (spec §6.17). `loading` (true, or a row
+ * count) draws skeleton rows in the 64 px row shape instead of the children, and marks the list
+ * busy.
+ */
+export function ObjectList({
+  label,
+  loading,
+  children,
+}: {
+  label: string;
+  loading?: boolean | number;
+  children?: ReactNode;
+}) {
+  const t = useDesignT();
+  if (loading === undefined || loading === false) {
+    return (
+      <ul className="cb-object-list" aria-label={label}>
+        {children}
+      </ul>
+    );
+  }
+  const rows = loading === true ? SKELETON_ROWS : loading;
   return (
-    <ul className="cb-object-list" aria-label={label}>
-      {children}
+    <ul className="cb-object-list" aria-label={label} aria-busy="true">
+      {Array.from({ length: rows }, (_, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: the skeleton rows are positional
+        <li key={i} className="cb-object-row" data-skeleton="true">
+          <span className="cb-object-mark" aria-hidden="true" />
+          <span className="cb-object-text" aria-hidden="true">
+            <span className="cb-object-bar" data-line="name" />
+            <span className="cb-object-bar" data-line="desc" />
+          </span>
+          {i === 0 ? <span className="cb-sr-only">{t("table.loading")}</span> : null}
+        </li>
+      ))}
     </ul>
   );
 }

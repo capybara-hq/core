@@ -97,6 +97,53 @@ describe("ListPage variants", () => {
     expect(screen.getAllByRole("listitem")).toHaveLength(2);
   });
 
+  it("loading draws skeleton rows in the object row shape, busy, in place of the rows", () => {
+    zh(
+      <ListPage header={header} variant="objects" listLabel="列表" loading>
+        <ObjectRow mark={{ text: "a" }} name="a" />
+      </ListPage>,
+    );
+    const list = screen.getByRole("list", { name: "列表" });
+    expect(list.getAttribute("aria-busy")).toBe("true");
+    const rows = within(list).getAllByRole("listitem");
+    expect(rows.length).toBe(3);
+    for (const r of rows) {
+      expect(r.classList.contains("cb-object-row")).toBe(true);
+      expect(r.getAttribute("data-skeleton")).toBe("true");
+      expect(r.querySelector(".cb-object-mark")).not.toBeNull();
+    }
+    expect(screen.queryByText("a")).toBeNull();
+    expect(screen.getByText("正在加载")).toBeTruthy();
+  });
+
+  it("loading wins over empty: no empty state flashes before the first answer", () => {
+    zh(
+      <ListPage
+        header={header}
+        variant="objects"
+        loading
+        empty={{ icon: "empty", text: "还没有 agent" }}
+      />,
+    );
+    expect(screen.queryByText("还没有 agent")).toBeNull();
+    expect(document.querySelectorAll('[data-skeleton="true"]').length).toBe(3);
+  });
+
+  it("ObjectList takes the row count of its skeleton", () => {
+    zh(<ObjectList label="l" loading={5} />);
+    expect(screen.getAllByRole("listitem")).toHaveLength(5);
+  });
+
+  it("a records list page shows a skeleton while loading", () => {
+    zh(
+      <ListPage header={header} loading>
+        <table />
+      </ListPage>,
+    );
+    expect(document.querySelector("table")).toBeNull();
+    expect(document.querySelector(".cb-skeleton")).not.toBeNull();
+  });
+
   it("empty replaces the content", () => {
     zh(
       <ListPage
