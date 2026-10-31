@@ -62,7 +62,7 @@ const date = (iso: string, locale: string) =>
 function Members({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("members");
-  const tn = useTranslations("connections.nav");
+  const tr = useTranslations("roles");
   const locale = useLocale();
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -175,6 +175,10 @@ function Members({ orgId }: { orgId: string }) {
           { label: "members" },
         ],
         title: t("title"),
+        // Members read the list; managing it is for admins (R3: say why it is read-only)
+        ...(manage || role === undefined
+          ? {}
+          : { description: tr("readOnly", { role: t(`roles.${role}`) }) }),
         count: members.state.kind === "ready" ? String(rows.length) : undefined,
         actions: manage
           ? [{ label: t("invite"), variant: "primary", onSelect: () => setInviting(true) }]

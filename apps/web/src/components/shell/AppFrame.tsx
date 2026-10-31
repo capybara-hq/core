@@ -30,6 +30,7 @@ import { usePreferences } from "../../lib/preferences";
 import { getMe, logout, type Me, setCurrentOrg } from "../../lib/session";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { CreateOrgDialog } from "../CreateOrgDialog";
+import { LeaveOrgDialog } from "../LeaveOrgDialog";
 import { useConversationGroups } from "./conversations";
 import {
   activeAdminOf,
@@ -104,6 +105,7 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   const [error, setError] = useState<string>();
   const preferences = usePreferences();
   const [creatingOrg, setCreatingOrg] = useState(false);
+  const [leavingOrg, setLeavingOrg] = useState(false);
   const timeZone = useTimeZoneLabel();
   useConnectResultToast();
   // The setup layout (web-order spec §3.8): while the org lacks a model or an agent, workspace
@@ -192,6 +194,13 @@ export function AppFrame({ version, children }: { version: string; children: Rea
           })),
           ...(me.memberships.length > 0 && createOrgItem.length > 0 ? ["separator" as const] : []),
           ...createOrgItem,
+          // 退出组织… (any member; the dialog tells the only owner to transfer ownership first)
+          ...(me.currentOrgId !== null && me.memberships.some((m) => m.orgId === me.currentOrgId)
+            ? [
+                "separator" as const,
+                { label: t("orgLifecycle.leave.action"), onSelect: () => setLeavingOrg(true) },
+              ]
+            : []),
         ];
   const orgMenu: MenuItem[] =
     me === undefined || (me.memberships.length === 0 && !me.canCreateOrg)
@@ -296,6 +305,14 @@ export function AppFrame({ version, children }: { version: string; children: Rea
         {session?.me.canCreateOrg ? (
           <CreateOrgDialog open={creatingOrg} onOpenChange={setCreatingOrg} />
         ) : null}
+        {session?.me.currentOrgId && leavingOrg ? (
+          <LeaveOrgDialog
+            orgId={session.me.currentOrgId}
+            owner={currentOrg?.role === "owner"}
+            onClose={() => setLeavingOrg(false)}
+            onLeft={() => void onLogout()}
+          />
+        ) : null}
       </SessionContext.Provider>
     );
 
@@ -385,6 +402,14 @@ export function AppFrame({ version, children }: { version: string; children: Rea
           )}
           {session.me.canCreateOrg ? (
             <CreateOrgDialog open={creatingOrg} onOpenChange={setCreatingOrg} />
+          ) : null}
+          {session?.me.currentOrgId && leavingOrg ? (
+            <LeaveOrgDialog
+              orgId={session.me.currentOrgId}
+              owner={currentOrg?.role === "owner"}
+              onClose={() => setLeavingOrg(false)}
+              onLeft={() => void onLogout()}
+            />
           ) : null}
         </SetupContext.Provider>
       </SessionContext.Provider>

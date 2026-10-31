@@ -148,7 +148,11 @@ describe("/admin/accounts（ListPage）", () => {
 
   it("取消确认：不发请求", async () => {
     const calls = stubApi({
-      "GET /api/v1/admin/accounts": () => json(200, { accounts: ACCOUNTS, next: null }),
+      "GET /api/v1/admin/accounts": () =>
+        json(200, {
+          accounts: [ACCOUNTS[0], { ...ACCOUNTS[1], isEnterpriseAdmin: true }],
+          next: null,
+        }),
     });
     renderPage(<AdminAccountsPage />);
     const a = en.admin.accounts;
@@ -163,9 +167,38 @@ describe("/admin/accounts（ListPage）", () => {
     expect(calls.filter((c) => c.method !== "GET")).toEqual([]);
   });
 
-  it("撤销最后一个企业管理员：显示 account.last_enterprise_admin 的文案，对话框保持打开", async () => {
+  it("the only active enterprise admin of the full list: no 撤销 and no 停用 in its menu", async () => {
     stubApi({
-      "GET /api/v1/admin/accounts": () => json(200, { accounts: ACCOUNTS, next: null }),
+      "GET /api/v1/admin/accounts": () =>
+        json(200, {
+          accounts: [
+            ...ACCOUNTS,
+            {
+              ...ACCOUNTS[1],
+              id: "a3",
+              displayName: "Old",
+              isEnterpriseAdmin: true,
+              status: "disabled",
+            },
+          ],
+          next: null,
+        }),
+    });
+    renderPage(<AdminAccountsPage />, { locale: "zh" });
+    const a = zh.admin.accounts;
+    const table = await screen.findByRole("table", { name: a.title });
+    const grant = within(table).getByText("Grant").closest("tr") as HTMLElement;
+    await userEvent.setup().click(within(grant).getByRole("button", { name: ROW_ACTIONS.zh }));
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).queryByRole("menuitem", { name: a.menu.revoke })).toBeNull();
+    expect(within(menu).queryByRole("menuitem", { name: a.menu.disable })).toBeNull();
+    expect(within(menu).getByText(a.lastAdmin)).toBeTruthy();
+  });
+
+  it("撤销最后一个企业管理员：显示 account.last_enterprise_admin 的文案，对话框保持打开", async () => {
+    // a partial list (more pages) cannot tell the last admin: the kernel's refusal shows
+    stubApi({
+      "GET /api/v1/admin/accounts": () => json(200, { accounts: ACCOUNTS, next: "c2" }),
       "PATCH /api/v1/admin/accounts/a1": () =>
         json(409, { error: { code: "account.last_enterprise_admin", message: "x" } }),
     });
@@ -247,6 +280,15 @@ const ORGS = [
 ];
 
 describe("/admin/orgs（ListPage）", () => {
+  it("says that org settings need an org admin of that org", async () => {
+    stubApi({
+      "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS }),
+      "GET /api/v1/admin/settings": () => json(200, SETTINGS),
+    });
+    renderPage(<AdminOrgsPage />, { locale: "zh" });
+    expect(await screen.findByText(zh.admin.orgs.memberHint)).toBeTruthy();
+  });
+
   it.each(LOCALES)("显示覆盖值；设置运行并发与沙箱限额 → PUT settings（%s）", async (locale) => {
     const o = msgs[locale].admin.orgs;
     const calls = stubApi({

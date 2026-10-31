@@ -108,6 +108,8 @@ function AdminOrgs() {
     >
       <Stack gap={12}>
         <Text tone="muted">{t("hint")}</Text>
+        {/* The admin console sets deployment-level limits; inside an org only its admins act */}
+        <Text tone="muted">{t("memberHint")}</Text>
         <DataTable
           label={t("title")}
           columns={columns}

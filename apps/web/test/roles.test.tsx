@@ -305,3 +305,16 @@ describe("trajectories: only the tabs the role can use", () => {
     });
   }
 });
+
+describe("read-only pages say why (R3)", () => {
+  for (const role of ["member", "admin"] as const) {
+    it(`/settings/members · ${role}: ${role === "member" ? "a read-only line" : "no line"}`, async () => {
+      routes = { [`GET ${O}/members`]: MEMBERS, [`GET ${O}/invitations`]: { invitations: [] } };
+      resetNavigation("/settings/members");
+      renderPage(<MembersPage />, { locale: "zh", me: meAs(role) });
+      await screen.findByText("Mia");
+      const line = zh.roles.readOnly.replace("{role}", zh.members.roles.member);
+      expect(screen.queryByText(line) !== null).toBe(role === "member");
+    });
+  }
+});

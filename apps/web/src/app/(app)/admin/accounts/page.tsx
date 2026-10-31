@@ -124,27 +124,39 @@ function AdminAccounts() {
           error={{ code: errorCode, onRetry: reload }}
           empty={{ title: t("empty") }}
           isDisabled={(a) => a.status === "disabled"}
-          rowMenu={(a) => [
-            a.isEnterpriseAdmin
-              ? {
-                  label: t("menu.revoke"),
-                  onSelect: () => setPending({ account: a, action: "revoke" }),
-                }
-              : {
-                  label: t("menu.grant"),
-                  onSelect: () => setPending({ account: a, action: "grant" }),
-                },
-            a.status === "active"
-              ? {
-                  label: t("menu.disable"),
-                  danger: true,
-                  onSelect: () => setPending({ account: a, action: "disable" }),
-                }
-              : {
-                  label: t("menu.enable"),
-                  onSelect: () => setPending({ account: a, action: "enable" }),
-                },
-          ]}
+          rowMenu={(a) => {
+            // The kernel refuses to revoke or disable the last active enterprise admin
+            // (account.last_enterprise_admin): with the whole list loaded the page knows it and
+            // offers neither, saying why; a partial list leaves it to the kernel's refusal.
+            const activeAdmins = rows.filter((r) => r.isEnterpriseAdmin && r.status === "active");
+            const last =
+              next === null &&
+              a.isEnterpriseAdmin &&
+              a.status === "active" &&
+              activeAdmins.length <= 1;
+            if (last) return [{ label: t("lastAdmin"), disabled: true, onSelect: () => {} }];
+            return [
+              a.isEnterpriseAdmin
+                ? {
+                    label: t("menu.revoke"),
+                    onSelect: () => setPending({ account: a, action: "revoke" }),
+                  }
+                : {
+                    label: t("menu.grant"),
+                    onSelect: () => setPending({ account: a, action: "grant" }),
+                  },
+              a.status === "active"
+                ? {
+                    label: t("menu.disable"),
+                    danger: true,
+                    onSelect: () => setPending({ account: a, action: "disable" }),
+                  }
+                : {
+                    label: t("menu.enable"),
+                    onSelect: () => setPending({ account: a, action: "enable" }),
+                  },
+            ];
+          }}
         />
         {next !== null && state === "ready" && (
           <Stack direction="row">

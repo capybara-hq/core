@@ -1,6 +1,9 @@
 "use client";
 
 import {
+  DangerConfirm,
+  DangerZone,
+  DangerZoneItem,
   Field,
   FormSection,
   RadioGroup,
@@ -18,7 +21,9 @@ import { RoleGate } from "../../../../components/RoleGate";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
+import { useRouter } from "../../../../i18n/navigation";
 import { ApiClientError } from "../../../../lib/api";
+import { myRole } from "../../../../lib/members";
 import {
   canUpdateOrg,
   getOrgSettings,
@@ -26,6 +31,7 @@ import {
   type OrgSettingsPatch,
   updateOrgSettings,
 } from "../../../../lib/org-settings";
+import { deleteOrg } from "../../../../lib/orgs";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import { useLoad } from "../../../../lib/use-load";
 
@@ -157,6 +163,47 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
           </Field>
         </FormSection>
       )}
+      {myRole(me) === "owner" ? <DeleteOrg orgId={orgId} /> : null}
     </SettingsPage>
+  );
+}
+
+/**
+ * 删除组织 (owners only, `org.delete`): the danger zone at the bottom of 通用, confirmed by typing
+ * the org's slug; afterwards no org is current, so the org chooser opens.
+ */
+function DeleteOrg({ orgId }: { orgId: string }) {
+  const t = useTranslations("orgLifecycle");
+  const toast = useToast();
+  const router = useRouter();
+  const { me, switchOrg } = useSession();
+  const [open, setOpen] = useState(false);
+  const org = me.memberships.find((m) => m.orgId === orgId);
+  if (org === undefined) return null;
+  return (
+    <>
+      <DangerZone title={t("danger.title")}>
+        <DangerZoneItem
+          title={t("delete.item")}
+          description={t("delete.hint")}
+          action={{ label: t("delete.action"), onSelect: () => setOpen(true) }}
+        />
+      </DangerZone>
+      <DangerConfirm
+        open={open}
+        onOpenChange={setOpen}
+        title={t("delete.title")}
+        description={t("delete.description", { name: org.name })}
+        confirmName={org.slug}
+        confirmLabel={t("delete.confirm")}
+        onConfirm={async () => {
+          await deleteOrg(orgId);
+          setOpen(false);
+          toast.success(t("delete.done"));
+          await switchOrg(null);
+          router.replace("/");
+        }}
+      />
+    </>
   );
 }
