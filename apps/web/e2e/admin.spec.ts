@@ -15,7 +15,8 @@ const fill = (s: string, vars: Record<string, string | number>) =>
   s.replace(/\{(\w+)\}/g, (_, k: string) => String(vars[k]));
 
 test("企业管理员：顶栏「管理」→ 组织 → 设置运行并发并保存成功", async ({ page }) => {
-  await signIn(page, { org: false });
+  // the shell (an org with an agent), whose sidebar carries the admin console's entry
+  await signIn(page);
 
   // the admin console's entry sits above the account row (enterprise admins)
   await page.getByRole("link", { name: "管理后台" }).click();

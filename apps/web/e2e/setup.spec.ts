@@ -11,7 +11,7 @@ const zh = JSON.parse(
  * `setup` 项目（playwright.config.ts）：在全新内核上走一遍初始化向导，其余用例都依赖它先跑完
  * （之后它们用 `support/sign-in.ts` 登录）。初始化页的断言只在这里。
  */
-test("初始化向导：未初始化的部署打开首页 → 初始化页（可切换语言）→ 建企业管理员与组织 → 进概览", async ({
+test("初始化向导：未初始化的部署打开首页 → 初始化页（可切换语言）→ 建企业管理员与组织 → 引导设置 → 新建 agent → 对话", async ({
   page,
 }) => {
   await page.goto("/");
@@ -26,5 +26,27 @@ test("初始化向导：未初始化的部署打开首页 → 初始化页（可
   await page.getByRole("button", { name: zh.setup.submit }).click();
 
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.locator('[data-template="OverviewPage"]')).toBeVisible();
+  // a new org has no agent: the setup layout (no sidebar), not the overview (web-order §3.8)
+  const setup = page.locator('[data-template="SetupPage"]');
+  await expect(setup).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "主导航" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { level: 1, name: zh.chat.setup.title })).toBeVisible();
+  // the e2e stack loads model-fake: the model step is done, creating an agent is next
+  const agentStep = page.getByRole("listitem").filter({ hasText: zh.chat.setup.agent.label });
+  await agentStep.getByRole("button", { name: zh.chat.setup.agent.action }).click();
+  await expect(page).toHaveURL(/\/agents\/new$/);
+  // the step page renders inside the setup frame with the way back
+  await expect(setup).toBeVisible();
+  await expect(page.getByRole("link", { name: zh.setupLayout.back })).toBeVisible();
+  await page
+    .getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true })
+    .fill("Setup agent");
+  await page
+    .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
+    .selectOption("model-fake/fake-1");
+  await page.getByRole("button", { name: zh.agents.form.submit }).click();
+  // the new agent makes the org ready: a new conversation with it, in the shell
+  await expect(page).toHaveURL(/\/chat\?agent=[^&]+$/);
+  await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
 });

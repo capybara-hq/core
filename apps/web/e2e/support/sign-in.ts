@@ -11,14 +11,43 @@ export const LOGIN = "admin";
 export const PASSWORD = "correct-horse-battery";
 export const ORG_NAME = "Acme";
 
+const CSRF = { "X-Capybara-Csrf": "1" };
+
+/**
+ * Makes sure the current org has an agent, so the workspace renders the shell instead of the
+ * setup layout (web-order spec §3.8): creates a private model-fake agent "E2E agent" when the
+ * readiness endpoint counts none. The deployment's model-fake provider is loaded by the e2e stack.
+ */
+export async function ensureAgent(page: Page, orgId: string): Promise<void> {
+  const r = await page.request.get(`/api/v1/orgs/${orgId}/readiness`);
+  expect(r.ok(), await r.text()).toBe(true);
+  if (((await r.json()) as { agents: number }).agents > 0) return;
+  const res = await page.request.post(`/api/v1/orgs/${orgId}/agents`, {
+    headers: CSRF,
+    data: {
+      definition: {
+        name: "E2E agent",
+        instructions: "Help.",
+        model: { provider: "model-fake", model: "fake-1" },
+      },
+      visibility: "private",
+    },
+  });
+  expect(res.status(), await res.text()).toBe(201);
+}
+
 /**
  * Idempotent sign-in: the setup wizard when not set up yet (it creates the org Acme), else the login
  * page. A new session starts in the org last chosen (or the only one); when the org chooser covers
  * the app instead, open Acme there. With `org` (the default) it then waits until `/me` names the
- * current org. Normally the `setup` project (`setup.spec.ts`) has already set up; a spec run alone
- * sets up itself.
+ * current org and, with `agent` (the default), makes sure an agent exists ({@link ensureAgent})
+ * and that the shell (not the setup layout) is on screen. Normally the `setup` project
+ * (`setup.spec.ts`) has already set up; a spec run alone sets up itself.
  */
-export async function signIn(page: Page, { org = true }: { org?: boolean } = {}): Promise<void> {
+export async function signIn(
+  page: Page,
+  { org = true, agent = true }: { org?: boolean; agent?: boolean } = {},
+): Promise<void> {
   await page.goto("/");
   const setupButton = page.getByRole("button", { name: zh.setup.submit });
   const loginButton = page.getByRole("button", { name: zh.login.submit, exact: true });
@@ -39,20 +68,32 @@ export async function signIn(page: Page, { org = true }: { org?: boolean } = {})
   await expect(page).toHaveURL(/\/$/);
   const chooser = page.getByRole("list", { name: zh.orgChooser.listLabel });
   const overview = page.locator('[data-template="OverviewPage"]');
-  await expect(chooser.or(overview)).toBeVisible();
+  // an org without an agent shows the setup layout instead of the shell
+  const setup = page.locator('[data-template="SetupPage"]');
+  const landed = overview.or(setup);
+  await expect(chooser.or(landed)).toBeVisible();
   if (await chooser.isVisible()) {
     await chooser
       .getByRole("listitem")
       .filter({ hasText: ORG_NAME })
       .getByRole("button", { name: zh.orgChooser.enter })
       .click();
-    await expect(overview).toBeVisible();
+    await expect(landed).toBeVisible();
   }
   if (!org) return;
+  let orgId: string | null = null;
   await expect
     .poll(async () => {
       const me = await page.request.get("/api/v1/me");
-      return me.ok() ? ((await me.json()) as { currentOrgId: string | null }).currentOrgId : null;
+      orgId = me.ok() ? ((await me.json()) as { currentOrgId: string | null }).currentOrgId : null;
+      return orgId;
     })
     .not.toBeNull();
+  if (!agent) return;
+  await ensureAgent(page, orgId as unknown as string);
+  if (await setup.isVisible()) {
+    // a fresh page load reads readiness again: the org can run now
+    await page.goto("/");
+    await expect(overview).toBeVisible();
+  }
 }
