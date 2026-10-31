@@ -802,7 +802,7 @@
     "liveLost": "Live updates stopped. Reload the page for the latest content."
   },
   "nav": {
-    "overview": "Overview",
+    "overview": "Home",
     "agents": "Agents",
     "goto": "Go to",
     "actions": "Actions",
@@ -810,15 +810,17 @@
     "connectors": "Connectors",
     "channels": "Channels",
     "skills": "Skills",
-    "evals": "Evals",
-    "settings": "Settings",
+    "evals": "Evals & runs",
+    "settings": "Organization settings",
     "admin": "Admin",
-    "catalog": "Catalog"
+    "catalog": "Plugins"
   },
   "shell": {
     "noOrg": "Select organization",
     "orgMenu": "Organization",
-    "createOrg": "Create organization…"
+    "createOrg": "Create organization…",
+    "accountSettings": "Personal settings",
+    "noCurrentOrg": "There is no current organization to act on."
   },
   "notFound": {
     "title": "Page not found",
@@ -2098,7 +2100,8 @@
       "settings": "Deployment settings",
       "extensions": "Extensions",
       "models": "Models",
-      "catalog": "Catalog"
+      "catalog": "Catalog",
+      "marketplaces": "Marketplaces"
     },
     "forbidden": {
       "title": "Enterprise admin required",

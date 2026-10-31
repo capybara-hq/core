@@ -141,6 +141,8 @@ export function useConversation(orgId: string, conversationId: string): Conversa
       // The sidebar rereads on `title` itself: the row read below may be superseded by a later
       // read (only the latest is applied), which would hide the change from the comparison.
       if (what === "title") notifyConversationsChanged();
+      // Archived or deleted elsewhere (another tab, the CLI): only the sidebar's lists change.
+      if (what === "archived" || what === "deleted") return notifyConversationsChanged();
       if (what === "title" || what === "selection") loadConversation();
       else setChanges((c) => ({ ...c, [what]: c[what] + 1 }));
     };

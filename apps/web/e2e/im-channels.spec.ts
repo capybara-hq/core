@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { mainNavLink } from "./support/nav";
 import { signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -90,10 +91,7 @@ test("假渠道：启用插件 → 建渠道连接 → IM 里未绑定的人收�
   await expect(page).toHaveURL(/\/agents$/);
 
   // 3. 渠道（管理员可见的一级导航）→ 新建连接
-  await page
-    .getByRole("navigation", { name: "主导航" })
-    .getByRole("link", { name: zh.nav.channels })
-    .click();
+  await (await mainNavLink(page, zh.nav.channels)).click();
   await expect(page).toHaveURL(/\/channels$/);
   await page.getByRole("link", { name: zh.channels.new }).click();
   await expect(page.locator('[data-template="FormPage"]')).toBeVisible();

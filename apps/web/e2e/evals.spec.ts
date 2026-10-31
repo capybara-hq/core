@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
 import { replies, send, startChat } from "./support/chat";
+import { mainNavLink } from "./support/nav";
 import { signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -35,10 +36,7 @@ test("建评测集 → 从对话抽样 → 单步运行 → 标注，汇总随�
   await expect(page.locator('[data-streaming="true"]')).toHaveCount(0);
 
   // 2. 顶栏「评测」→ 新建评测集
-  await page
-    .getByRole("navigation", { name: "主导航" })
-    .getByRole("link", { name: zh.nav.evals })
-    .click();
+  await (await mainNavLink(page, zh.nav.evals)).click();
   await expect(page).toHaveURL(/\/evals$/);
   await expect(page.getByRole("link", { name: E.runHistory })).toBeVisible();
   await page.getByRole("link", { name: E.new }).click();

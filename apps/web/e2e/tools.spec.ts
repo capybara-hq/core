@@ -1,5 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 import { composer, designZh, replies, startChat, toolGroup, zh } from "./support/chat";
+import { mainNavLink } from "./support/nav";
 import { signIn } from "./support/sign-in";
 
 /** 安装向导的 ActionRow（主操作 / 上一步都在这里）。 */
@@ -56,10 +57,7 @@ test("MCP 连接器 → agent 引用 → destructive 工具触发审批 → 批�
   await signIn(page);
 
   // 1. 安装连接器（MCP，无需认证）→ 详情页的工具页签列出 destructive 工具，默认策略为「需审批」
-  await page
-    .getByRole("navigation", { name: "主导航" })
-    .getByRole("link", { name: zh.nav.connectors })
-    .click();
+  await (await mainNavLink(page, zh.nav.connectors)).click();
   await expect(page).toHaveURL(/\/connectors$/);
   await page.getByRole("link", { name: zh.connectors.new }).click();
   await expect(page).toHaveURL(/\/connectors\/install$/);
@@ -181,10 +179,7 @@ test("带工具的对话结束后，管理员打开运行记录：瀑布里有�
   await expect(replies(page).last()).toHaveText(/deleted t1/);
 
   // 2. 顶栏「评测」→「运行记录」→ 按 agent 筛选 → 运行结束后打开该对话
-  await page
-    .getByRole("navigation", { name: "主导航" })
-    .getByRole("link", { name: zh.nav.evals })
-    .click();
+  await (await mainNavLink(page, zh.nav.evals)).click();
   await expect(page).toHaveURL(/\/evals$/);
   await page.getByRole("link", { name: zh.evals.runHistory }).click();
   await expect(page).toHaveURL(/\/trajectories$/);

@@ -9,6 +9,7 @@ export const ADMIN_PAGES = [
   { id: "orgs", href: "/admin/orgs" },
   { id: "extensions", href: "/admin/extensions" },
   { id: "catalog", href: "/admin/catalog" },
+  { id: "marketplaces", href: "/admin/marketplaces" },
   { id: "models", href: "/admin/models" },
   { id: "settings", href: "/admin/settings" },
 ] as const;
@@ -16,8 +17,8 @@ export const ADMIN_PAGES = [
 export type AdminPageId = (typeof ADMIN_PAGES)[number]["id"];
 
 /**
- * The admin console's (enterprise admins) second-level navigation: overview, accounts, orgs,
- * extensions, catalog, models, deployment settings. Settings pages (SettingsPage) use it as the left
+ * The admin console's (enterprise admins) navigation: overview, accounts, orgs, extensions,
+ * catalog, marketplaces, models, deployment settings (the sidebar's admin context). Settings pages (SettingsPage) use it as the left
  * navigation; list pages go back to the overview through the header's path. An org's own
  * settings stay under `/settings/*`.
  */

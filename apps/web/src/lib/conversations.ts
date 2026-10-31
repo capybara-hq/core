@@ -482,7 +482,7 @@ export const renameConversation = (orgId: string, id: string, title: string) =>
   });
 
 /** Archive or unarchive (owner only); archiving does not stop a running run. */
-export const setConversationArchived = (orgId: string, id: string, archived: boolean) =>
+export const archiveConversation = (orgId: string, id: string, archived: boolean) =>
   apiFetch<{ conversation: Conversation }>(one(orgId, id), {
     method: "PATCH",
     body: JSON.stringify({ archived }),
@@ -512,7 +512,28 @@ function query(opts: Record<string, string | number | undefined>): string {
 }
 
 /**
+ * What narrows my conversations (web order §2.1): a title substring (`q`, case-insensitive), a run
+ * state, and the archived list instead of the live one. A blank `q` and state `all` are omitted
+ * (the kernel rejects `?q=`); `q` is cut to the kernel's 100 characters.
+ */
+export type ConversationSearch = {
+  q?: string;
+  state?: "all" | "running" | "waiting";
+  archived?: boolean;
+};
+
+const searchQuery = (s: ConversationSearch) => {
+  const q = s.q?.trim().slice(0, 100);
+  return {
+    q: q === "" ? undefined : q,
+    state: s.state === undefined || s.state === "all" ? undefined : s.state,
+    archived: s.archived === true ? "1" : undefined,
+  };
+};
+
+/**
  * My conversations grouped by agent, by latest activity; `next` is passed back as `after`.
+ * `archivedCount` counts my archived conversations whatever the search (the archived entry).
  *
  * The cursor is the last group's agent id, re-read at that group's latest activity when the next
  * page is asked for: a group that gets new activity between two pages can come back on the next
@@ -521,19 +542,29 @@ function query(opts: Record<string, string | number | undefined>): string {
  */
 export const listConversationGroups = (
   orgId: string,
-  opts: { perGroup?: number; limit?: number; after?: string } = {},
+  opts: { perGroup?: number; limit?: number; after?: string } & ConversationSearch = {},
 ) =>
-  apiFetch<{ groups: ConversationGroup[]; next: string | null }>(
-    `${base(orgId)}/groups${query({ perGroup: opts.perGroup, limit: opts.limit, after: opts.after })}`,
+  apiFetch<{ groups: ConversationGroup[]; next: string | null; archivedCount?: number }>(
+    `${base(orgId)}/groups${query({
+      perGroup: opts.perGroup,
+      limit: opts.limit,
+      after: opts.after,
+      ...searchQuery(opts),
+    })}`,
   );
 
 /** My conversations, newest first; `agentId` keeps one agent's (a group's "More"). */
 export const listConversations = (
   orgId: string,
-  opts: { agentId?: string; after?: string; limit?: number } = {},
+  opts: { agentId?: string; after?: string; limit?: number } & ConversationSearch = {},
 ) =>
   apiFetch<{ conversations: Conversation[]; next: string | null }>(
-    `${base(orgId)}${query({ agentId: opts.agentId, after: opts.after, limit: opts.limit })}`,
+    `${base(orgId)}${query({
+      agentId: opts.agentId,
+      after: opts.after,
+      limit: opts.limit,
+      ...searchQuery(opts),
+    })}`,
   );
 
 export const getConversation = (orgId: string, id: string) =>
@@ -702,7 +733,18 @@ export const toolOutputSize = (orgId: string, conversationId: string, outputId: 
     `${one(orgId, conversationId)}/outputs/${encodeURIComponent(outputId)}?limit=1`,
   ).then((r) => r.output.totalChars);
 
-/** Fired on `window` when the sidebar's conversation list should reload (a title changed). */
+/** A row action without a current org: AppFrame shows `shell.noCurrentOrg`. */
+export class NoCurrentOrgError extends Error {
+  constructor() {
+    super("no current organization");
+    this.name = "NoCurrentOrgError";
+  }
+}
+
+/**
+ * Fired on `window` when the sidebar's conversation list should reload (a title changed, a
+ * conversation was archived or deleted).
+ */
 export const CONVERSATIONS_CHANGED = "cap:conversations-changed";
 export const notifyConversationsChanged = () => {
   if (typeof window !== "undefined") window.dispatchEvent(new Event(CONVERSATIONS_CHANGED));

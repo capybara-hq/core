@@ -8,7 +8,7 @@ import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConversationGroups } from "../src/components/shell/conversations";
-import { json, stubApi } from "./support/api";
+import { bodyOf, json, noContent, stubApi } from "./support/api";
 import { Link, router } from "./support/navigation";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -46,20 +46,11 @@ const base: Omit<SidebarProps, "conversations"> = {
   account: { name: "Grant", menu: [] },
   onOpenCommands: () => {},
 };
-// The parts AppFrame adds to the hook's conversations.
-const extras = {
-  filter: { q: "", state: "all" as const, onChange: () => {} },
-  archived: { count: 0, open: false, onOpenChange: () => {} },
-  onRename: async () => {},
-  onArchive: async () => {},
-  onDelete: async () => {},
-};
-
 const onError = vi.fn();
 
 function Harness({ orgId, path = "/" }: { orgId: string | null | undefined; path?: string }) {
   const conversations = useConversationGroups(orgId, path, { onError });
-  return <Sidebar {...base} conversations={{ ...conversations, ...extras }} mode="full" />;
+  return <Sidebar {...base} conversations={conversations} mode="full" />;
 }
 
 const frame = (orgId: string | null | undefined, path?: string) => (
@@ -373,5 +364,162 @@ describe("useConversationGroups errors (I3)", () => {
     await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(2));
     // the rows stay, so the viewer can try again
     expect(within(section()).getByRole("button", { name: "显示更多" })).toBeTruthy();
+  });
+});
+
+describe("useConversationGroups filter, archived list and row actions (web order §2.1)", () => {
+  const groupsUrl = "GET /api/v1/orgs/o1/conversations/groups";
+
+  it("the filter asks the kernel with q and state; an empty q is omitted", async () => {
+    const calls = stubApi({
+      [groupsUrl]: () =>
+        json(200, {
+          groups: [group("a1", "研究助手", [conv("c1", "a1", "整理要点")])],
+          next: null,
+          archivedCount: 0,
+        }),
+    });
+    show("o1");
+    await screen.findByRole("link", { name: "整理要点" });
+    const user = userEvent.setup();
+    await user.click(within(section()).getByRole("button", { name: "筛选会话" }));
+    await user.type(screen.getByRole("textbox", { name: "按标题搜索" }), "要点");
+    await vi.waitFor(() =>
+      expect(calls.at(-1)?.url).toBe("/api/v1/orgs/o1/conversations/groups?q=%E8%A6%81%E7%82%B9"),
+    );
+    await user.clear(screen.getByRole("textbox", { name: "按标题搜索" }));
+    await user.click(screen.getByRole("radio", { name: "运行中" }));
+    await vi.waitFor(() =>
+      expect(calls.at(-1)?.url).toBe("/api/v1/orgs/o1/conversations/groups?state=running"),
+    );
+    expect(calls.some((c) => c.url.includes("q=&") || c.url.endsWith("q="))).toBe(false);
+  });
+
+  it("archive refreshes the groups and the archived count", async () => {
+    let archived = false;
+    const calls = stubApi({
+      [groupsUrl]: () =>
+        json(200, {
+          groups: archived ? [] : [group("a1", "研究助手", [conv("c1", "a1", "一")])],
+          next: null,
+          archivedCount: archived ? 1 : 0,
+        }),
+      "PATCH /api/v1/orgs/o1/conversations/c1": () => {
+        archived = true;
+        return json(200, { conversation: conv("c1", "a1", "一") });
+      },
+    });
+    show("o1");
+    await screen.findByRole("link", { name: "一" });
+    expect(within(section()).queryByRole("button", { name: /已归档/ })).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "会话操作：一" }));
+    await user.click(await screen.findByRole("menuitem", { name: "归档" }));
+    expect(await within(section()).findByRole("button", { name: "已归档 · 1" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "一" })).toBeNull();
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ archived: true });
+  });
+
+  it("the archived list loads ?archived=1 groups in place; unarchive returns the row", async () => {
+    let archived = true;
+    const calls = stubApi({
+      [groupsUrl]: () =>
+        json(200, {
+          groups: archived ? [] : [group("a1", "研究助手", [conv("c1", "a1", "旧的")])],
+          next: null,
+          archivedCount: archived ? 1 : 0,
+        }),
+      "GET /api/v1/orgs/o1/conversations/groups?archived=1": () =>
+        json(200, {
+          groups: archived ? [group("a1", "研究助手", [conv("c1", "a1", "旧的")])] : [],
+          next: null,
+          archivedCount: archived ? 1 : 0,
+        }),
+      "PATCH /api/v1/orgs/o1/conversations/c1": () => {
+        archived = false;
+        return json(200, { conversation: conv("c1", "a1", "旧的") });
+      },
+    });
+    show("o1");
+    const user = userEvent.setup();
+    await user.click(await within(section()).findByRole("button", { name: "已归档 · 1" }));
+    expect(await screen.findByRole("link", { name: "旧的" })).toBeTruthy();
+    expect(calls.some((c) => c.url.endsWith("/groups?archived=1"))).toBe(true);
+    await user.click(screen.getByRole("button", { name: "会话操作：旧的" }));
+    await user.click(await screen.findByRole("menuitem", { name: "取消归档" }));
+    await vi.waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ archived: false }),
+    );
+    // the archived view stays open, now empty, and its count follows
+    expect(await within(section()).findByText("没有已归档的会话")).toBeTruthy();
+    expect(
+      within(section()).getByRole("button", { name: "返回会话列表：已归档 · 0" }),
+    ).toBeTruthy();
+  });
+
+  it("deleting the open conversation navigates to /chat", async () => {
+    let deleted = false;
+    const calls = stubApi({
+      [groupsUrl]: () =>
+        json(200, {
+          groups: deleted ? [] : [group("a1", "研究助手", [conv("c1", "a1", "当前的")])],
+          next: null,
+          archivedCount: 0,
+        }),
+      "DELETE /api/v1/orgs/o1/conversations/c1": () => {
+        deleted = true;
+        return noContent();
+      },
+    });
+    show("o1", "/chat/c1");
+    await screen.findByRole("link", { name: "当前的" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "会话操作：当前的" }));
+    await user.click(await screen.findByRole("menuitem", { name: "删除" }));
+    const dialog = await screen.findByRole("dialog", { name: "删除会话？" });
+    await user.click(within(dialog).getByRole("button", { name: "删除" }));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/chat"));
+    expect(calls.some((c) => c.method === "DELETE")).toBe(true);
+  });
+
+  it("deleting another conversation stays on the page", async () => {
+    stubApi({
+      [groupsUrl]: () =>
+        json(200, {
+          groups: [group("a1", "研究助手", [conv("c1", "a1", "当前的"), conv("c2", "a1", "别的")])],
+          next: null,
+          archivedCount: 0,
+        }),
+      "DELETE /api/v1/orgs/o1/conversations/c2": () => noContent(),
+    });
+    show("o1", "/chat/c1");
+    await screen.findByRole("link", { name: "别的" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "会话操作：别的" }));
+    await user.click(await screen.findByRole("menuitem", { name: "删除" }));
+    const dialog = await screen.findByRole("dialog", { name: "删除会话？" });
+    await user.click(within(dialog).getByRole("button", { name: "删除" }));
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it("a failed action reports the error", async () => {
+    stubApi({
+      [groupsUrl]: () =>
+        json(200, {
+          groups: [group("a1", "研究助手", [conv("c1", "a1", "一")])],
+          next: null,
+          archivedCount: 0,
+        }),
+      "PATCH /api/v1/orgs/o1/conversations/c1": () =>
+        json(500, { error: { code: "internal", message: "x" } }),
+    });
+    show("o1");
+    await screen.findByRole("link", { name: "一" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "会话操作：一" }));
+    await user.click(await screen.findByRole("menuitem", { name: "归档" }));
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("link", { name: "一" })).toBeTruthy();
   });
 });

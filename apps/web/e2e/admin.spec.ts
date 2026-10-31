@@ -17,10 +17,8 @@ const fill = (s: string, vars: Record<string, string | number>) =>
 test("企业管理员：顶栏「管理」→ 组织 → 设置运行并发并保存成功", async ({ page }) => {
   await signIn(page, { org: false });
 
-  await page
-    .getByRole("navigation", { name: "主导航" })
-    .getByRole("link", { name: zh.nav.admin })
-    .click();
+  // the admin console's entry sits above the account row (enterprise admins)
+  await page.getByRole("link", { name: "管理后台" }).click();
   await expect(page).toHaveURL(/\/admin$/);
   await expect(page.locator('[data-template="OverviewPage"]')).toBeVisible();
   await page.getByRole("link", { name: A.overview.orgs.open }).click();

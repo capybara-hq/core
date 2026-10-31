@@ -9,6 +9,8 @@ const monorepoRoot = new URL("../..", import.meta.url).pathname;
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // The dev indicator would cover the sidebar's account row.
+  devIndicators: false,
   transpilePackages: ["@capybara-hq/design"],
   turbopack: {
     root: monorepoRoot,

@@ -3,12 +3,9 @@
 import {
   AppShell,
   Button,
-  type IconName,
   initialOf,
   type MenuItem,
   type SidebarContext,
-  type SidebarFilter,
-  type SidebarNavItem,
   StatusPage,
   useToast,
 } from "@capybara-hq/design";
@@ -26,22 +23,18 @@ import { usePathname, useRouter } from "../../i18n/navigation";
 import { ApiClientError } from "../../lib/api";
 import { loginPathFor } from "../../lib/auth-sources";
 import { useConnectResultToast } from "../../lib/connect";
-import {
-  deleteConversation,
-  notifyConversationsChanged,
-  renameConversation,
-  setConversationArchived,
-} from "../../lib/conversations";
+import { NoCurrentOrgError } from "../../lib/conversations";
 import { usePreferences } from "../../lib/preferences";
 import { getMe, logout, type Me, setCurrentOrg } from "../../lib/session";
 import { useErrorMessage } from "../../lib/use-error-message";
-import { type AdminPageId, useAdminNav } from "../admin-nav";
 import { CreateOrgDialog } from "../CreateOrgDialog";
 import { useConversationGroups } from "./conversations";
 import {
+  activeAdminOf,
   activeNavOf,
   navLevelOf,
-  routeLabel,
+  statusPrompt,
+  useAdminItems,
   useExtensions,
   useNav,
   usePendingApprovals,
@@ -60,31 +53,6 @@ function timeZoneLabel(): string {
 
 const noSubscribe = () => () => {};
 
-/** The work context's primary items after New conversation and Search (web-order spec §2.1). */
-const PRIMARY = ["overview", "inbox", "agents"];
-
-const ADMIN_ICONS: Record<AdminPageId, IconName> = {
-  overview: "gauge",
-  accounts: "user",
-  orgs: "building",
-  extensions: "extension",
-  catalog: "catalog",
-  models: "cpu",
-  settings: "sliders",
-};
-
-/** The admin item a route belongs to: the longest matching href (`/admin` only by itself). */
-function activeAdminOf(pathname: string, items: { id: string; href: string }[]): string {
-  const hit = items
-    .filter((i) =>
-      i.href === "/admin"
-        ? pathname === i.href
-        : pathname === i.href || pathname.startsWith(`${i.href}/`),
-    )
-    .sort((a, b) => b.href.length - a.href.length)[0];
-  return hit?.id ?? "";
-}
-
 /**
  * 浏览器时区：服务端与水合时的首次渲染为空串（服务器时区与用户的不同，避免水合不一致），
  * 水合后取浏览器的值。
@@ -95,10 +63,11 @@ function useTimeZoneLabel(): string {
 
 /**
  * The (app) route group's frame: reads `GET /api/v1/me` (401 → sign-in), provides it to pages
- * through {@link SessionContext}, and renders the App Shell: the sidebar (navigation, extension
- * pages, my conversations grouped by agent, the account menu with the org switch, language, theme
- * and sign out) and the status bar (`account@org:route` · version · time zone). Pages that need
- * the session wait for it.
+ * through {@link SessionContext}, and renders the App Shell: the sidebar in one of its two
+ * contexts (web order §2.1–§2.2: the workspace with the org switcher, navigation, 更多 with the
+ * extension pages and my conversations; or the admin console under `/admin`), the account menu
+ * (org switch, language, personal settings, sign out) and the status bar
+ * (`<login>@<slug>:<path>` · version · time zone). Pages that need the session wait for it.
  */
 export function AppFrame({ version, children }: { version: string; children: ReactNode }) {
   const t = useTranslations();
@@ -115,19 +84,20 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   const conversations = useConversationGroups(
     me === undefined ? undefined : me.currentOrgId,
     pathname,
-    { onError: (e) => toast.error(errorMessage(e)) },
+    {
+      onError: (e) =>
+        toast.error(e instanceof NoCurrentOrgError ? t("shell.noCurrentOrg") : errorMessage(e)),
+    },
   );
   const pending = usePendingApprovals(me?.currentOrgId ?? null, pathname);
-  const { nav, footerNav, commands } = useNav(
+  const { primary, more, adminHref, commands } = useNav(
     pending.count,
     me === undefined ? "guest" : navLevelOf(me),
     pending.more,
     me?.account.isEnterpriseAdmin === true,
   );
   const extensions = useExtensions(me?.currentOrgId ?? null, locale);
-  const adminNav = useAdminNav();
-  // The conversation filter; Task 6 passes it to the kernel (`?q=`, `?state=`).
-  const [filter, setFilter] = useState<SidebarFilter>({ q: "", state: "all" });
+  const adminItems = useAdminItems();
   const [error, setError] = useState<string>();
   const preferences = usePreferences();
   const [creatingOrg, setCreatingOrg] = useState(false);
@@ -187,8 +157,8 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   }
 
   const currentOrg = me?.memberships.find((m) => m.orgId === me.currentOrgId);
-  // The account menu: Organization ▸ (the current one checked) and Language ▸ above sign-out; the
-  // theme is the switch after the account (spec §6.13).
+  // The account menu (web order §2.1): Organization ▸ (the current one checked), Language ▸,
+  // Personal settings, sign out; the theme is the switch after the account.
   const createOrgItem: MenuItem[] = me?.canCreateOrg
     ? [{ label: t("shell.createOrg"), onSelect: () => setCreatingOrg(true) }]
     : [];
@@ -222,16 +192,12 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   const accountMenu: MenuItem[] = [
     ...orgMenu,
     languageMenu,
+    { label: t("shell.accountSettings"), href: "/account/connections" },
     "separator",
     { label: t("common.logout"), onSelect: () => void onLogout() },
   ];
-  // A minimal adapter onto Sidebar v3 (Task 6 does the real wiring): today's nav split into the
-  // primary items and 更多 (then the extension pages); Admin becomes the entry above the account.
+  // The admin context under /admin (web order §2.2), else the workspace of the current org.
   const inAdmin = pathname === "/admin" || pathname.startsWith("/admin/");
-  const adminItems: SidebarNavItem[] = adminNav
-    .flatMap((g) => g.items)
-    .map((i) => ({ ...i, icon: ADMIN_ICONS[i.id] }));
-  const adminHref = footerNav.find((n) => n.id === "admin")?.href;
   const roles: Record<string, string> = {
     owner: t("members.roles.owner"),
     admin: t("members.roles.admin"),
@@ -255,54 +221,31 @@ export function AppFrame({ version, children }: { version: string; children: Rea
               menu: orgItems,
             }
           : null,
-        primary: PRIMARY.flatMap((id) => nav.filter((n) => n.id === id)),
+        primary,
         more: [
-          ...nav.filter((n) => !PRIMARY.includes(n.id)),
-          ...footerNav.filter((n) => n.id !== "admin"),
+          ...more,
           ...extensions.map((x) => ({ ...x, id: `ext:${x.id}`, icon: "extension" as const })),
         ],
         ...(adminHref === undefined ? {} : { adminHref }),
       };
-  const orgId = me?.currentOrgId ?? null;
-  // The row actions: the kernel calls, then the list refreshes; a failure is a toast.
-  const act = async (call: () => Promise<unknown>, rethrow: boolean) => {
-    try {
-      // Without a current org there is nothing to act on: fail, so the row stays as it was.
-      if (orgId === null) throw new Error("no current organization");
-      await call();
-      notifyConversationsChanged();
-    } catch (e) {
-      toast.error(errorMessage(e));
-      if (rethrow) throw e;
-    }
-  };
   const sidebar = {
     context,
     // A new conversation starts at the composer; nothing is created before the first send.
     newConversation: { href: "/chat" },
     activeNav: inAdmin ? activeAdminOf(pathname, adminItems) : activeNavOf(pathname),
-    conversations: {
-      ...conversations,
-      filter: { ...filter, onChange: setFilter },
-      // The archived list is wired in the shell task.
-      archived: { count: 0, open: false, onOpenChange: () => {} },
-      onRename: (id: string, title: string) =>
-        act(() => renameConversation(orgId ?? "", id, title), true),
-      onArchive: (id: string, archived: boolean) =>
-        act(() => setConversationArchived(orgId ?? "", id, archived), false),
-      onDelete: (id: string) => act(() => deleteConversation(orgId ?? "", id), true),
-    },
+    conversations,
     account: {
       name: me === undefined ? t("common.loading") : me.account.displayName,
       menu: me === undefined ? [] : accountMenu,
     },
     theme: preferences.theme,
   };
-  const who =
-    me === undefined ? "" : `${me.account.displayName}${currentOrg ? `@${currentOrg.name}` : ""}`;
   const status = {
-    // 会话加载前不显示上下文路径
-    context: me === undefined ? "" : `${who}:${routeLabel(pathname)}`,
+    // No prompt before the session loads. /me carries no login name: the display name stands in.
+    context:
+      me === undefined
+        ? ""
+        : statusPrompt(me.account.displayName, currentOrg?.slug ?? null, pathname),
     version,
     ...(timeZone === "" ? {} : { timeZone }),
   };

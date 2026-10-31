@@ -6,19 +6,22 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "../../i18n/navigation";
 import { listInbox } from "../../lib/inbox";
 import { listUiContributions, type UiContributionItem, uiLocale } from "../../lib/ui";
+import { ADMIN_PAGES, type AdminPageId } from "../admin-nav";
 
 /**
- * 导航项的可见范围：`all` 所有人，`member` 成员以上（访客看不到），`admin` 管理员以上；
- * `enterprise` 只给企业管理员（`me.account.isEnterpriseAdmin`，与组织角色无关）。
+ * Who sees a nav item: `all` everyone, `member` members and up (not guests), `admin` org admins
+ * and owners. The admin console is for enterprise admins (`me.account.isEnterpriseAdmin`, apart
+ * from the org role).
  */
-type NavAudience = "all" | "member" | "admin" | "enterprise";
+type NavAudience = "all" | "member" | "admin";
 /** 当前用户在当前组织里能看到哪一档导航项。 */
 export type NavLevel = "guest" | "member" | "admin";
 
 /**
- * The sidebar navigation (design spec §6.13): only routes that exist. Items are hidden by the
- * current org role through `audience` (cosmetic only; the kernel decides). `footer` items (Settings,
- * Admin) sit after the Extensions group.
+ * The work context's navigation (web order §2.1): only routes that exist. `primary` items follow
+ * New conversation and Search; `more` items sit in the collapsible 更多 group (then the extension
+ * pages). Items are hidden by the current org role through `audience` (cosmetic only; the kernel
+ * decides). The admin console is the entry above the account row, for enterprise admins.
  */
 const NAV: readonly {
   id: string;
@@ -26,36 +29,62 @@ const NAV: readonly {
   href: string;
   audience: NavAudience;
   icon: IconName;
-  footer?: true;
+  section: "primary" | "more";
 }[] = [
-  { id: "overview", key: "overview", href: "/", audience: "all", icon: "home" },
-  { id: "agents", key: "agents", href: "/agents", audience: "all", icon: "agent" },
-  // Skills sit beside agents: members browse them, guests don't
-  { id: "skills", key: "skills", href: "/skills", audience: "member", icon: "skills" },
-  { id: "inbox", key: "inbox", href: "/inbox", audience: "all", icon: "inbox" },
-  { id: "connectors", key: "connectors", href: "/connectors", audience: "all", icon: "connector" },
-  // The catalog (org view): members browse and request, org admins install
-  { id: "catalog", key: "catalog", href: "/catalog", audience: "member", icon: "catalog" },
-  { id: "channels", key: "channels", href: "/channels", audience: "admin", icon: "channel" },
-  // Evals: sets and runs (agent owners reach their runs from the agent page)
-  { id: "evals", key: "evals", href: "/evals", audience: "admin", icon: "evals" },
-  // Settings: my connections first; the settings rail lists the rest by role
+  { id: "overview", key: "overview", href: "/", audience: "all", icon: "home", section: "primary" },
+  { id: "inbox", key: "inbox", href: "/inbox", audience: "all", icon: "inbox", section: "primary" },
+  {
+    id: "agents",
+    key: "agents",
+    href: "/agents",
+    audience: "all",
+    icon: "agent",
+    section: "primary",
+  },
+  // Skills: members browse them, guests don't
+  {
+    id: "skills",
+    key: "skills",
+    href: "/skills",
+    audience: "member",
+    icon: "skills",
+    section: "more",
+  },
+  {
+    id: "connectors",
+    key: "connectors",
+    href: "/connectors",
+    audience: "all",
+    icon: "connector",
+    section: "more",
+  },
+  // Plugins (the org's catalog view): members browse and request, org admins install
+  {
+    id: "catalog",
+    key: "catalog",
+    href: "/catalog",
+    audience: "member",
+    icon: "catalog",
+    section: "more",
+  },
+  {
+    id: "channels",
+    key: "channels",
+    href: "/channels",
+    audience: "admin",
+    icon: "channel",
+    section: "more",
+  },
+  // Evals and runs: sets and runs (agent owners reach their runs from the agent page)
+  { id: "evals", key: "evals", href: "/evals", audience: "admin", icon: "evals", section: "more" },
+  // Organization settings; personal settings are the account menu's
   {
     id: "settings",
     key: "settings",
-    href: "/settings/connections",
-    audience: "all",
+    href: "/settings/organization",
+    audience: "admin",
     icon: "settings",
-    footer: true,
-  },
-  // Admin (deployment settings, every org and account): enterprise admins
-  {
-    id: "admin",
-    key: "admin",
-    href: "/admin",
-    audience: "enterprise",
-    icon: "admin",
-    footer: true,
+    section: "more",
   },
 ];
 
@@ -90,7 +119,7 @@ const decode = (s: string) => {
 };
 
 /**
- * The nav item the route belongs to: `/settings/*` is Settings, trajectories are Evals, an
+ * The nav item the route belongs to: `/settings/*` is Organization settings, trajectories are Evals, an
  * extension page `/p/<plugin>/<id>` is its Extensions item `ext:<plugin>/<id>`; a conversation
  * (`/chat/*`) is none (its sidebar row is current instead).
  */
@@ -199,29 +228,66 @@ export function useExtensions(
   });
 }
 
-/** StatusBar 上下文路径里的路由段：去掉开头的 `/`，首页记为 `~`。 */
-export function routeLabel(pathname: string): string {
-  const p = pathname.replace(/^\/+/, "");
-  return p === "" ? "~" : p;
+/**
+ * The status bar prompt (web order §2.3): `<login>@<org-slug>:<path>`, the path `~` + the
+ * pathname in the workspace and the pathname as-is under `/admin`; without a current org there
+ * is no `@<slug>`.
+ */
+export function statusPrompt(login: string, slug: string | null, pathname: string): string {
+  const path = under(pathname, "/admin") ? pathname : `~${pathname === "/" ? "" : pathname}`;
+  return `${login}${slug === null ? "" : `@${slug}`}:${path}`;
+}
+
+const ADMIN_ICONS: Record<AdminPageId, IconName> = {
+  overview: "gauge",
+  accounts: "user",
+  orgs: "building",
+  extensions: "extension",
+  catalog: "catalog",
+  marketplaces: "store",
+  models: "cpu",
+  settings: "sliders",
+};
+
+/** The admin context's items (web order §2.2), from the admin pages. */
+export function useAdminItems(): SidebarNavItem[] {
+  const t = useTranslations("admin.nav");
+  return ADMIN_PAGES.map((p) => ({
+    id: p.id,
+    label: t(p.id),
+    href: p.href,
+    icon: ADMIN_ICONS[p.id],
+  }));
+}
+
+/** The admin item a route belongs to: the longest matching href (`/admin` only by itself). */
+export function activeAdminOf(pathname: string, items: { id: string; href: string }[]): string {
+  const hit = items
+    .filter((i) => (i.href === "/admin" ? pathname === i.href : under(pathname, i.href)))
+    .sort((a, b) => b.href.length - a.href.length)[0];
+  return hit?.id ?? "";
 }
 
 /**
- * The sidebar navigation (main and footer items) and the command palette. `enterpriseAdmin`: the
- * account is an enterprise admin, so Admin shows (cosmetic; `/api/v1/admin/*` is decided by the
- * kernel).
+ * The work context's navigation (primary items, 更多, the admin entry) and the command palette.
+ * `enterpriseAdmin`: the account is an enterprise admin, so the admin entry shows (cosmetic;
+ * `/api/v1/admin/*` is decided by the kernel).
  */
 export function useNav(
   pending = 0,
   level: NavLevel = "guest",
   pendingMore = false,
   enterpriseAdmin = false,
-): { nav: SidebarNavItem[]; footerNav: SidebarNavItem[]; commands: CommandGroup[] } {
+): {
+  primary: SidebarNavItem[];
+  more: SidebarNavItem[];
+  adminHref?: string;
+  commands: CommandGroup[];
+} {
   const t = useTranslations();
   const router = useRouter();
-  const visible = (a: NavAudience) =>
-    a === "enterprise" ? enterpriseAdmin : VISIBLE[level].includes(a);
-  const items = NAV.filter((n) => visible(n.audience)).map((n) => ({
-    footer: n.footer === true,
+  const items = NAV.filter((n) => VISIBLE[level].includes(n.audience)).map((n) => ({
+    section: n.section,
     id: n.id,
     label: t(`nav.${n.key}`),
     href: n.href,
@@ -230,13 +296,14 @@ export function useNav(
       ? { count: pending, ...(pendingMore ? { countMore: true } : {}) }
       : {}),
   }));
-  const strip = ({ footer: _, ...item }: (typeof items)[number]): SidebarNavItem => item;
-  const nav = items.filter((n) => !n.footer).map(strip);
-  const footerNav = items.filter((n) => n.footer).map(strip);
+  const strip = ({ section: _, ...item }: (typeof items)[number]): SidebarNavItem => item;
+  const primary = items.filter((n) => n.section === "primary").map(strip);
+  const more = items.filter((n) => n.section === "more").map(strip);
+  const admin = enterpriseAdmin ? [{ id: "admin", label: t("nav.admin"), href: "/admin" }] : [];
   const commands: CommandGroup[] = [
     {
       label: t("nav.goto"),
-      items: [...nav, ...footerNav].map((n) => ({
+      items: [...primary, ...more, ...admin].map((n) => ({
         id: `goto-${n.id}`,
         label: n.label,
         onSelect: () => router.push(n.href),
@@ -254,5 +321,5 @@ export function useNav(
       ],
     },
   ];
-  return { nav, footerNav, commands };
+  return { primary, more, ...(enterpriseAdmin ? { adminHref: "/admin" } : {}), commands };
 }

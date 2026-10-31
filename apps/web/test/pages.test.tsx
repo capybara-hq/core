@@ -437,12 +437,12 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
       // 更多
       [zh.nav.skills, "/skills"],
       [zh.nav.connectors, "/connectors"],
-      // 企业目录：成员起
+      // plugins: members and up
       [zh.nav.catalog, "/catalog"],
-      // 管理员（owner）才看得到渠道与评测
+      // org admins (owner) see channels, evals and organization settings
       [zh.nav.channels, "/channels"],
       [zh.nav.evals, "/evals"],
-      [zh.nav.settings, "/settings/connections"],
+      [zh.nav.settings, "/settings/organization"],
     ]);
     // 企业管理员（与组织角色无关）看得到管理后台的入口，在账户行之上
     expect(screen.getByRole("link", { name: "管理后台" }).getAttribute("href")).toBe("/admin");
@@ -450,7 +450,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
       within(nav).getByRole("link", { name: zh.nav.agents }).getAttribute("aria-current"),
     ).toBe("page");
     const status = screen.getByRole("contentinfo");
-    expect(within(status).getByText("Grant@Acme:agents/new")).toBeTruthy();
+    expect(within(status).getByText("Grant@acme:~/agents/new")).toBeTruthy();
     expect(within(status).getByText("v9.9.9")).toBeTruthy();
     expect(status.textContent).not.toContain(">");
   });
@@ -744,6 +744,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual([
       zh.shell.orgMenu,
       zh.common.language,
+      zh.shell.accountSettings,
       zh.common.logout,
     ]);
     await user.click(screen.getByRole("menuitem", { name: zh.shell.orgMenu }));
