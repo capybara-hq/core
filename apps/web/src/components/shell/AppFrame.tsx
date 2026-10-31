@@ -43,7 +43,7 @@ import {
 } from "./nav";
 import { OrgChooser } from "./OrgChooser";
 import { type Session, SessionContext } from "./session";
-import { SetupContext, SetupHome, setupRouteOf, useReadiness } from "./setup";
+import { clearReadyMarks, SetupContext, SetupHome, setupRouteOf, useReadiness } from "./setup";
 
 /** 本地时区，如 `UTC+8`、`UTC-3:30`（StatusBar 右侧，spec §4.4）。 */
 function timeZoneLabel(): string {
@@ -109,7 +109,11 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   // The setup layout (web-order spec §3.8): while the org lacks a model or an agent, workspace
   // routes render in it instead of the shell; the layout is decided before anything is painted.
   const setupRoute = setupRouteOf(pathname);
-  const readiness = useReadiness(me === undefined ? undefined : me.currentOrgId, pathname);
+  const readiness = useReadiness(
+    me?.account.id,
+    me === undefined ? undefined : me.currentOrgId,
+    pathname,
+  );
   const inSetup = setupRoute !== "outside" && readiness.state.kind === "setup";
   useEffect(() => {
     if (inSetup && setupRoute === "redirect") router.replace("/");
@@ -160,6 +164,7 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   );
 
   async function onLogout() {
+    clearReadyMarks();
     try {
       await logout();
     } finally {

@@ -200,7 +200,10 @@ A third layout beside the auth layout (sign-in, initialization, the org chooser)
 Readiness comes from one cheap kernel read, `GET /api/v1/orgs/:orgId/readiness` (`org.read`) →
 `{ modelProvider: "ready" | "none", agents }`: `modelProvider` is `ready` when a model-provider
 extension is loaded (enabled and configured), read from extension state and never from a vendor
-(a provider whose vendor is down still counts); `agents` counts the agents the caller can see.
+(a provider whose vendor is down still counts); it is **deployment-wide** (model providers are
+not org-scoped, so every org reads the same value) and read per replica, from that replica's
+provider registry (a replica that has not reconciled a just-enabled provider answers `none` for
+a moment); `agents` counts the agents the caller can see.
 Ready = `modelProvider === "ready" && agents > 0`. The app frame reads it once and shares it with
 pages through `SetupContext`; pages never read it themselves.
 
@@ -226,7 +229,8 @@ pages through `SetupContext`; pages never read it themselves.
   the neutral PendingState (design spec §6.20): never the shell first and then the setup layout. A
   failed readiness read counts as ready (the shell's pages report their own errors); an org switch
   keeps a ready shell until the new org is read. An org seen ready in this tab is remembered in
-  `sessionStorage` (`cap.ready.<orgId>`): its next load paints the shell at once and re-validates in
+  `sessionStorage` (`cap.ready.<accountId>.<orgId>`, so another account signing in to the tab
+  never inherits it; signing out clears every `cap.ready.*`): its next load paints the shell at once and re-validates in
   the background, switching to the setup layout only if the re-read says not ready. The server
   render of a workspace route is the neutral state.
 - **Roles** (cosmetic; the kernel decides):

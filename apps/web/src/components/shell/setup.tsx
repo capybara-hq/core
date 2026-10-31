@@ -41,24 +41,40 @@ export type Readiness =
   | { kind: "ready" }
   | ({ kind: "setup" } & OrgReadiness);
 
-const READY_KEY = (orgId: string) => `cap.ready.${orgId}`;
+const READY_PREFIX = "cap.ready.";
+/** Per account and org: another account signing in to the same tab never inherits the mark. */
+const READY_KEY = (accountId: string, orgId: string) => `${READY_PREFIX}${accountId}.${orgId}`;
 const noSubscribe = () => () => {};
 
 /** An org seen ready in this tab (sessionStorage; storage errors mean "not known"). */
-function storedReady(orgId: string): boolean {
+function storedReady(accountId: string, orgId: string): boolean {
   try {
-    return sessionStorage.getItem(READY_KEY(orgId)) === "1";
+    return sessionStorage.getItem(READY_KEY(accountId, orgId)) === "1";
   } catch {
     return false;
   }
 }
 
-function storeReady(orgId: string, ready: boolean): void {
+function storeReady(accountId: string, orgId: string, ready: boolean): void {
   try {
-    if (ready) sessionStorage.setItem(READY_KEY(orgId), "1");
-    else sessionStorage.removeItem(READY_KEY(orgId));
+    if (ready) sessionStorage.setItem(READY_KEY(accountId, orgId), "1");
+    else sessionStorage.removeItem(READY_KEY(accountId, orgId));
   } catch {
     // Not remembered: the next load reads again before painting.
+  }
+}
+
+/** Forget every readiness mark of the tab (sign-out). */
+export function clearReadyMarks(): void {
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i);
+      if (key?.startsWith(READY_PREFIX)) keys.push(key);
+    }
+    for (const key of keys) sessionStorage.removeItem(key);
+  } catch {
+    // Storage unavailable: nothing was remembered.
   }
 }
 
@@ -77,6 +93,7 @@ function storeReady(orgId: string, ready: boolean): void {
  * `recheck()` reads again and resolves once the new state is set (ignored for a stale org).
  */
 export function useReadiness(
+  accountId: string | undefined,
   orgId: string | null | undefined,
   pathname: string,
 ): { state: Readiness; recheck(): Promise<void> } {
@@ -88,19 +105,23 @@ export function useReadiness(
   // The server render and the first hydration know nothing stored (the neutral state).
   const known = useSyncExternalStore(
     noSubscribe,
-    () => (typeof orgId === "string" ? storedReady(orgId) : false),
+    () =>
+      typeof orgId === "string" && accountId !== undefined ? storedReady(accountId, orgId) : false,
     () => false,
   );
-  const read = useCallback(async (org: string): Promise<Readiness> => {
-    try {
-      const r = await getReadiness(org);
-      const ready = setupReady(r);
-      storeReady(org, ready);
-      return ready ? { kind: "ready" } : { kind: "setup", ...r };
-    } catch {
-      return { kind: "ready" };
-    }
-  }, []);
+  const read = useCallback(
+    async (org: string): Promise<Readiness> => {
+      try {
+        const r = await getReadiness(org);
+        const ready = setupReady(r);
+        if (accountId !== undefined) storeReady(accountId, org, ready);
+        return ready ? { kind: "ready" } : { kind: "setup", ...r };
+      } catch {
+        return { kind: "ready" };
+      }
+    },
+    [accountId],
+  );
   // Admin console routes need no readiness: their navigations do not trigger a read.
   const trigger = setupRouteOf(pathname) === "outside" ? "outside" : pathname;
   // biome-ignore lint/correctness/useExhaustiveDependencies: trigger only triggers a re-read

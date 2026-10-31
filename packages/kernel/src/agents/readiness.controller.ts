@@ -13,6 +13,12 @@ const viewerOf = (p: Principal): string | null => (p.kind === "user" ? p.account
  * model-provider extension is loaded (enabled and configured), from extension state only, never
  * a vendor call; `agents` is the number of agents the caller can see (the agent list's
  * visibility). Humans and service tokens (`org.read`).
+ *
+ * `modelProvider` is deployment-wide, not about this org: model providers are not org-scoped
+ * (an org's model purposes map onto the deployment's providers but cannot add one), so every org
+ * of the deployment reads the same value. It is read from this replica's provider registry, which
+ * follows the per-replica extension reconcile: right after a provider is enabled, a replica that
+ * has not reconciled yet may still answer `none` for a moment.
  */
 @Controller("api/v1/orgs/:orgId/readiness")
 export class ReadinessController {

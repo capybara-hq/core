@@ -295,7 +295,7 @@ describe("the checklist by role", () => {
 
 describe("readiness reads", () => {
   it("an org seen ready in this tab paints the shell at once and re-validates in the background", async () => {
-    sessionStorage.setItem("cap.ready.o1", "1");
+    sessionStorage.setItem("cap.ready.a1.o1", "1");
     let answer: (r: Response) => void = () => {};
     api({ readiness: () => new Promise<Response>((res) => (answer = res)) });
     renderFrame();
@@ -305,14 +305,40 @@ describe("readiness reads", () => {
     // the re-read says it is not ready any more: the setup layout replaces the shell
     answer(json(200, NONE));
     expect(await screen.findByRole("heading", { level: 1, name: s.title })).toBeTruthy();
-    expect(sessionStorage.getItem("cap.ready.o1")).toBeNull();
+    expect(sessionStorage.getItem("cap.ready.a1.o1")).toBeNull();
+  });
+
+  it("the mark is per account: another account's mark for the org is not used", async () => {
+    sessionStorage.setItem("cap.ready.someone.o1", "1");
+    api({ readiness: () => new Promise<Response>(() => {}) });
+    renderFrame();
+    // the read never answers and nothing of this account is stored: only the neutral state
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText("page body")).toBeNull();
+  });
+
+  it("signing out forgets every readiness mark of the tab", async () => {
+    sessionStorage.setItem("cap.ready.someone.o9", "1");
+    sessionStorage.setItem("other", "kept");
+    api({
+      readiness: READY,
+      extra: { "POST /api/v1/auth/logout": () => new Response(null, { status: 204 }) },
+    });
+    renderFrame();
+    await screen.findByText("page body");
+    expect(sessionStorage.getItem("cap.ready.a1.o1")).toBe("1");
+    await userEvent.setup().click(await screen.findByRole("button", { name: "账户: Grant" }));
+    await userEvent.setup().click(await screen.findByRole("menuitem", { name: zh.common.logout }));
+    await vi.waitFor(() => expect(sessionStorage.getItem("cap.ready.a1.o1")).toBeNull());
+    expect(sessionStorage.getItem("cap.ready.someone.o9")).toBeNull();
+    expect(sessionStorage.getItem("other")).toBe("kept");
   });
 
   it("a ready answer is remembered for the tab", async () => {
     api({ readiness: READY });
     renderFrame();
     await screen.findByText("page body");
-    expect(sessionStorage.getItem("cap.ready.o1")).toBe("1");
+    expect(sessionStorage.getItem("cap.ready.a1.o1")).toBe("1");
   });
 
   it("admin console navigations do not read readiness again", async () => {
