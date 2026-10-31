@@ -4,7 +4,7 @@ import { Input } from "../controls/inputs";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { Dialog } from "../overlays/dialog";
-import { useDesignT } from "../provider";
+import { useDesignLink, useDesignT } from "../provider";
 import { ConvMenu, type ConvMenuEntry } from "./menu";
 
 // The conversation title bar (spec §6.16.1): the middle column's own 48-high bar with the title
@@ -28,6 +28,8 @@ export type TitleBarPanel = {
 };
 
 export type TitleBarProps = {
+  /** The path before the title, `<org> / <agent> /` (mono, faint); a segment with `href` links. */
+  path?: { label: string; href?: string }[];
   /** The title; null until one is generated or given. */
   title: string | null;
   /** Shown while `title` is null: "未命名会话 · 10-26 14:02" (`untitledLabel`). */
@@ -54,6 +56,7 @@ export function titleBarFit(width: number, count: number): number {
 }
 
 export function TitleBar({
+  path,
   title,
   untitled,
   menu,
@@ -62,6 +65,7 @@ export function TitleBar({
   reference,
 }: TitleBarProps): JSX.Element {
   const t = useDesignT();
+  const Link = useDesignLink();
   const ref = useRef<HTMLElement>(null);
   const [width, setWidth] = useState(0);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -99,6 +103,25 @@ export function TitleBar({
   );
   return (
     <header ref={ref} className="cb-title-bar" data-part="title-bar">
+      {path !== undefined && path.length > 0 ? (
+        <nav className="cb-title-path" data-part="title-path" aria-label={t("shell.path")}>
+          {path.map((c, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional (labels may repeat)
+            <span key={`${i}-${c.label}`} className="cb-title-path-item">
+              {c.href !== undefined ? (
+                <Link href={c.href} className="cb-title-path-seg">
+                  {c.label}
+                </Link>
+              ) : (
+                <span className="cb-title-path-seg">{c.label}</span>
+              )}
+              <span className="cb-title-path-sep" aria-hidden="true">
+                /
+              </span>
+            </span>
+          ))}
+        </nav>
+      ) : null}
       <ConvMenu
         inline={reference?.titleMenu === true}
         label={t("titlebar.menu")}

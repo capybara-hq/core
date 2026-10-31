@@ -78,6 +78,29 @@ describe("the conversation page (ConversationPage)", () => {
     expect(screen.getByText("hi").closest("[data-entry]")?.getAttribute("data-entry")).toBe("user");
   });
 
+  it("the title bar path is <org slug> / <agent> / before the title; the agent links to its page", async () => {
+    api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }) });
+    const { container } = renderChat("en");
+    await screen.findByText("hi");
+    const bar = container.querySelector('[data-part="title-bar"]') as HTMLElement;
+    const nav = await within(bar).findByRole("navigation", { name: "Path" });
+    const link = await within(nav).findByRole("link", { name: "Echo agent" });
+    expect(link.getAttribute("href")).toBe("/agents/ag1");
+    expect(nav.textContent).toBe("acme/Echo agent/");
+  });
+
+  it("the composer is a sibling of the scrolling thread, not inside it", async () => {
+    api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }) });
+    const { container } = renderChat("en");
+    await screen.findByText("hi");
+    const scroll = container.querySelector(".cb-conv-scroll") as HTMLElement;
+    const slot = container.querySelector(".cb-conv-composer") as HTMLElement;
+    expect(slot.parentElement).toBe(scroll.parentElement);
+    expect(scroll.contains(slot)).toBe(false);
+    expect(scroll.contains(input())).toBe(false);
+    expect(slot.contains(input())).toBe(true);
+  });
+
   it.each(["zh", "en"] as const)(
     "while running, Stop calls abort; the input stays enabled; a stop divider follows (%s)",
     async (locale) => {
@@ -728,6 +751,9 @@ describe("the new conversation before anything is set up", () => {
     expect(await screen.findByRole("heading", { name: m.title })).toBeTruthy();
     expect(container.querySelector('[data-template="OnboardingPage"]')).not.toBeNull();
     expect(container.querySelector('[data-template="ConversationPage"]')).toBeNull();
+    // the same checklist as the overview: organization (done), model, agent, each with its action
+    expect(container.querySelectorAll("li[data-state]")).toHaveLength(3);
+    expect(step(zh.home.setup.org).getAttribute("data-state")).toBe("done");
     expect(step(m.model.label).getAttribute("data-state")).toBe("todo");
     expect(step(m.agent.label).getAttribute("data-state")).toBe("todo");
     expect(within(step(m.model.label)).getByText(m.model.description)).toBeTruthy();

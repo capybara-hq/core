@@ -4,6 +4,7 @@ import { FormPage, Skeleton } from "@capybara-hq/design";
 import { useParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { AgentChannels } from "../../../../components/AgentChannels";
 import { useAgentForm } from "../../../../components/AgentForm";
 import { FormError } from "../../../../components/form-error";
 import { OrgGate } from "../../../../components/OrgGate";
@@ -111,6 +112,7 @@ function EditAgent({ orgId, agent }: { orgId: string; agent: Agent }) {
       }}
     >
       {form.sections}
+      <AgentChannels orgId={orgId} agentId={agent.id} />
     </FormPage>
   );
 }

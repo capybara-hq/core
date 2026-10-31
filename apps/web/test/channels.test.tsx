@@ -244,6 +244,69 @@ describe("新建渠道连接（FormPage）", () => {
   });
 });
 
+describe("the channel form opened from an agent page", () => {
+  const withQuery = (qs: string) => window.history.replaceState(null, "", `/channels/new${qs}`);
+  afterEach(() => window.history.replaceState(null, "", "/"));
+  const fill = async (user: ReturnType<typeof userEvent.setup>, agentPreset: boolean) => {
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: new RegExp(`^${en.channels.form.pluginLabel}`) }),
+      "fake-im",
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: new RegExp(`^${en.channels.form.nameLabel}`) }),
+      "Bot",
+    );
+    await user.type(await screen.findByRole("textbox", { name: /^platformUrl/ }), "http://im.test");
+    await user.type(screen.getByRole("textbox", { name: /^appId/ }), "cli");
+    await user.type(screen.getByLabelText(/^appSecret/), "secret");
+    if (!agentPreset) {
+      await user.selectOptions(
+        screen.getByRole("combobox", { name: new RegExp(`^${en.channels.form.agentLabel}`) }),
+        "ag1",
+      );
+    }
+  };
+  const routes = () =>
+    stubApi({
+      [`GET ${BASE}/extensions`]: () => json(200, { extensions: PLUGINS }),
+      [`GET ${BASE}/agents`]: () => json(200, { agents: AGENTS }),
+      [`GET ${BASE}/channels/schema/fake-im`]: () =>
+        json(200, { plugin: "fake-im", schema: SCHEMA }),
+      [`POST ${BASE}/channels`]: (c) =>
+        json(201, { channel: { ...CHANNEL, ...(bodyOf(c) as object) } }),
+    });
+
+  it("?agentId= presets the agent and saving returns to ?returnTo=", async () => {
+    withQuery("?agentId=ag1&returnTo=%2Fagents%2Fag1");
+    const calls = routes();
+    renderPage(<NewChannelPage />);
+    const user = userEvent.setup();
+    await fill(user, true);
+    const agent = screen.getByRole("combobox", {
+      name: new RegExp(`^${en.channels.form.agentLabel}`),
+    }) as HTMLSelectElement;
+    expect(agent.value).toBe("ag1");
+    await user.click(screen.getByRole("button", { name: en.channels.form.submit }));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents/ag1"));
+    expect((bodyOf(calls.find((c) => c.method === "POST")) as { agentId: string }).agentId).toBe(
+      "ag1",
+    );
+  });
+
+  it.each(["//evil.example/x", "https://evil.example", "agents/ag1", "/a\\b"])(
+    "a returnTo that is not a same-origin relative path (%s) is ignored",
+    async (bad) => {
+      withQuery(`?agentId=ag1&returnTo=${encodeURIComponent(bad)}`);
+      routes();
+      renderPage(<NewChannelPage />);
+      const user = userEvent.setup();
+      await fill(user, true);
+      await user.click(screen.getByRole("button", { name: en.channels.form.submit }));
+      await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/channels/ch1"));
+    },
+  );
+});
+
 describe("渠道连接详情（DetailPage）", () => {
   const routes = (extra: Record<string, Parameters<typeof stubApi>[0][string]> = {}) =>
     stubApi({

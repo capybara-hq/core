@@ -600,7 +600,14 @@
     },
     "noMatch": "No agents match.",
     "loadFailed": "Could not load agents.",
-    "retry": "Retry"
+    "retry": "Retry",
+    "channels": {
+      "title": "Channels",
+      "hint": "IM bots bound to this agent. People chat with the agent through them.",
+      "empty": "No channel is connected to this agent.",
+      "connect": "Connect a channel",
+      "loadFailed": "Could not load the channels."
+    }
   },
   "skills": {
     "title": "Skills",
@@ -776,10 +783,6 @@
         "label": "Create an agent",
         "description": "An agent sets the model it uses and the tools and skills it can use.",
         "action": "Create"
-      },
-      "chat": {
-        "label": "Start a conversation",
-        "description": "When the first two steps are done, come back here, pick an agent and send the first message."
       }
     }
   },

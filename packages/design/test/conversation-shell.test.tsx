@@ -159,7 +159,44 @@ describe("ConversationPage (§5.4)", () => {
   });
 });
 
+describe("ConversationPage composer", () => {
+  it("is a sibling of the scrolling thread, never inside it", () => {
+    const { container } = wrap(<ConversationPage {...page()} />);
+    const scroll = container.querySelector(".cb-conv-scroll") as HTMLElement;
+    const composerSlot = container.querySelector(".cb-conv-composer") as HTMLElement;
+    expect(scroll).not.toBeNull();
+    expect(composerSlot.parentElement).toBe(scroll.parentElement);
+    expect(scroll.contains(composerSlot)).toBe(false);
+    expect(scroll.contains(screen.getByTestId("composer"))).toBe(false);
+    expect(composerSlot.contains(screen.getByTestId("composer"))).toBe(true);
+  });
+});
+
 describe("TitleBar (§6.16.1)", () => {
+  it("shows the path before the title; a segment with an href links", () => {
+    wrap(
+      <TitleBar
+        {...titleBar({
+          path: [{ label: "acme" }, { label: "研究助手", href: "/agents/a1" }],
+        })}
+      />,
+    );
+    const nav = screen.getByRole("navigation", { name: "路径" });
+    expect(nav.textContent).toBe("acme/研究助手/");
+    expect(within(nav).getByRole("link", { name: "研究助手" }).getAttribute("href")).toBe(
+      "/agents/a1",
+    );
+    expect(within(nav).queryByRole("link", { name: "acme" })).toBeNull();
+    // the path precedes the title button
+    const title = screen.getByRole("button", { name: /分析 9 月示例表差异/ });
+    expect(nav.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("without a path there is no path nav", () => {
+    wrap(<TitleBar {...titleBar()} />);
+    expect(screen.queryByRole("navigation", { name: "路径" })).toBeNull();
+  });
+
   it("the open item's icon is pressed", () => {
     wrap(<TitleBar {...titleBar({ properties: { pressed: true, onToggle: noop } })} />);
     expect(screen.getByRole("button", { name: "属性面板" }).getAttribute("aria-pressed")).toBe(

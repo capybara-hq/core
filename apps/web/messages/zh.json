@@ -600,7 +600,14 @@
     },
     "noMatch": "没有符合的 Agent。",
     "loadFailed": "无法加载 Agent。",
-    "retry": "重试"
+    "retry": "重试",
+    "channels": {
+      "title": "渠道",
+      "hint": "绑定到这个 agent 的 IM 机器人，人们通过它们和 agent 对话。",
+      "empty": "这个 agent 还没有接入渠道。",
+      "connect": "接入渠道",
+      "loadFailed": "渠道加载失败。"
+    }
   },
   "skills": {
     "title": "技能",
@@ -776,10 +783,6 @@
         "label": "新建 agent",
         "description": "agent 决定用哪个模型、能用哪些工具和技能。",
         "action": "新建"
-      },
-      "chat": {
-        "label": "开始对话",
-        "description": "前两步完成后回到这里，选一个 agent 发第一条消息。"
       }
     }
   },

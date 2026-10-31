@@ -13,18 +13,21 @@ export function setupReady(agents: Agent[], providers: ProviderModels[]): boolea
 }
 
 /**
- * The two steps a conversation needs, as checklist steps: a model (an enterprise admin sets it up;
- * everyone else is told to ask) and an agent. Shared by the new-conversation page and the
- * overview.
+ * The one setup checklist (spec §3.6), shared by the overview and the new-conversation page: the
+ * organization (always done), a model (an enterprise admin sets it up; everyone else is told to
+ * ask) and an agent, each with its action.
  */
 export function useSetupSteps(agents: Agent[], providers: ProviderModels[]): Step[] {
   const t = useTranslations("chat.setup");
+  const th = useTranslations("home.setup");
   const { me } = useSession();
+  const orgName = me.memberships.find((m) => m.orgId === me.currentOrgId)?.name ?? "";
   const router = useRouter();
   const hasModel = providers.some((p) => p.models.length > 0);
   const hasAgent = agents.length > 0;
   const admin = me.account.isEnterpriseAdmin;
   return [
+    { label: th("org"), description: orgName, done: true },
     {
       label: t("model.label"),
       description: admin ? t("model.description") : t("model.askAdmin"),
@@ -80,10 +83,7 @@ export function SetupGuide({
   return (
     <OnboardingPage
       header={{ path: scope, title: t("title"), description: t("description") }}
-      steps={[
-        ...steps,
-        { label: t("chat.label"), description: t("chat.description"), done: false },
-      ]}
+      steps={steps}
     />
   );
 }

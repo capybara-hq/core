@@ -3,11 +3,14 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
+import EditAgentPage from "../src/app/(app)/agents/[id]/page";
 import NewAgentPage from "../src/app/(app)/agents/new/page";
+import { json as apiJson, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { renderPage } from "./support/render";
+import { ME, renderPage } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+vi.mock("next/navigation", () => ({ useParams: () => ({ id: "ag1" }) }));
 
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -178,4 +181,96 @@ describe("新建 Agent 页（FormPage）", () => {
       expect(posts).toHaveLength(1);
     },
   );
+});
+
+describe("the agent page lists its channels (spec 3.3.1)", () => {
+  const ORG = "/api/v1/orgs/o1";
+  const T = "2026-10-20T08:00:00.000Z";
+  const AGENT = {
+    id: "ag1",
+    orgId: "o1",
+    ownerAccountId: "a1",
+    visibility: "org",
+    currentVersion: 1,
+    memberIds: null,
+    needsReassignment: false,
+    createdAt: T,
+    updatedAt: T,
+    definition: {
+      name: "Helper",
+      instructions: "",
+      model: { provider: "model-fake", model: "fake-1" },
+      fallback: null,
+      modelParams: {},
+      fallbackParams: {},
+      tools: [],
+      toolPolicies: {},
+    },
+  };
+  const channel = (id: string, name: string, agentId: string, status = "active") => ({
+    id,
+    orgId: "o1",
+    plugin: "slack",
+    name,
+    agentId,
+    unboundPolicy: "bind",
+    status,
+    inboundMode: "long_connection",
+    webhookSupported: false,
+    webhookUrl: null,
+    lastError: null,
+    botUserId: null,
+    tenantId: null,
+    config: {},
+    secrets: [],
+    createdBy: "a1",
+    createdAt: T,
+    updatedAt: T,
+  });
+  const routes = () => ({
+    [`GET ${ORG}/agents/ag1`]: () => apiJson(200, { agent: AGENT }),
+    [`GET ${ORG}/models`]: () => apiJson(200, MODELS),
+    [`GET ${ORG}/connectors`]: () => apiJson(200, { connectors: [] }),
+    [`GET ${ORG}/skills`]: () => apiJson(200, { skills: [] }),
+    [`GET ${ORG}/agents/ag1/skills`]: () => apiJson(200, { skills: [] }),
+    [`GET ${ORG}/channels`]: () =>
+      apiJson(200, {
+        channels: [
+          channel("c1", "Team Slack", "ag1"),
+          channel("c2", "Other bot", "ag2"),
+          channel("c3", "Broken bot", "ag1", "error"),
+        ],
+      }),
+  });
+
+  it("lists only this agent's connections; 接入渠道 presets the agent and the way back", async () => {
+    stubApi(routes());
+    renderPage(<EditAgentPage />, { locale: "zh" });
+    const section = await screen.findByRole("region", { name: zh.agents.channels.title });
+    const list = await within(section).findByRole("list", { name: zh.agents.channels.title });
+    expect(within(list).getByRole("link", { name: "Team Slack" }).getAttribute("href")).toBe(
+      "/channels/c1",
+    );
+    expect(within(list).getByText("Broken bot")).toBeTruthy();
+    expect(within(list).queryByText("Other bot")).toBeNull();
+    expect(within(list).getByText(zh.channels.status.error)).toBeTruthy();
+    await userEvent
+      .setup()
+      .click(within(section).getByRole("button", { name: zh.agents.channels.connect }));
+    expect(router.push).toHaveBeenCalledWith("/channels/new?agentId=ag1&returnTo=%2Fagents%2Fag1");
+  });
+
+  it("members see the list read-only: no connect button, no links", async () => {
+    stubApi(routes());
+    const member = {
+      ...ME,
+      account: { ...ME.account, isEnterpriseAdmin: false },
+      memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],
+    };
+    renderPage(<EditAgentPage />, { me: member });
+    const section = await screen.findByRole("region", { name: en.agents.channels.title });
+    await within(section).findByText("Team Slack");
+    expect(within(section).queryByRole("button", { name: en.agents.channels.connect })).toBeNull();
+    expect(within(section).queryByRole("link")).toBeNull();
+  });
 });

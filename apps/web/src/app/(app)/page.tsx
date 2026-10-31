@@ -182,10 +182,7 @@ function SetupOverview({
   const home = usePagePath("home");
   const t = useTranslations("home");
   const { me } = useSession();
-  const steps = [
-    { label: t("setup.org"), description: orgName, done: true },
-    ...useSetupSteps(data.agents, data.providers),
-  ];
+  const steps = useSetupSteps(data.agents, data.providers);
   const done = steps.filter((s) => s.done).length;
   const later: ItemListRow[] = [
     {

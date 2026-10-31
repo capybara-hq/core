@@ -32,6 +32,7 @@ import {
 import { useToolInfo } from "../../lib/tool-info";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { FormError } from "../form-error";
+import { usePagePath } from "../shell/path";
 import { useSession } from "../shell/session";
 import { ComposerBar, type ComposerMessage, newClientMessageId } from "./ComposerBar";
 import { useRightAreaSlot } from "./RightArea";
@@ -138,6 +139,11 @@ export function useConversationPage(
   const conv = useConversation(orgId, conversationId);
   const agents = useAgentList(orgId);
   const agent = agents?.find((a) => a.id === conv.conversation?.agentId);
+  // The title bar path `<org slug> / <agent> /` before the title (spec §3.5).
+  const path = usePagePath(
+    "org",
+    ...(agent ? [{ label: agent.definition.name, href: `/agents/${agent.id}` }] : []),
+  );
   const providers = useModels(orgId);
   const selection = useSelection(providers, agent, conv.conversation?.selection);
   const keys = useMemo(() => toolKeysOf(conv.events), [conv.events]);
@@ -280,6 +286,7 @@ export function useConversationPage(
   const createdAt = conv.conversation ? new Date(conv.conversation.createdAt) : new Date();
   const page: ConversationPageProps = {
     titleBar: {
+      path,
       title: conv.conversation?.title ?? null,
       untitled: untitledLabel(createdAt, locale),
       menu,

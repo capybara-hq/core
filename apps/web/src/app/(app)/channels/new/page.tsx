@@ -28,6 +28,7 @@ import { useRouter } from "../../../../i18n/navigation";
 import { listAgents } from "../../../../lib/agents";
 import { ApiClientError, issueLines } from "../../../../lib/api";
 import { createChannel, getChannelSchema, type UnboundPolicy } from "../../../../lib/channels";
+import { channelFormPreset } from "../../../../lib/channels-preset";
 import { listOrgExtensions, provides } from "../../../../lib/extensions";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import { useLoad } from "../../../../lib/use-load";
@@ -60,7 +61,9 @@ function NewChannel({ orgId }: { orgId: string }) {
   const options = useLoad(() => loadOptions(orgId), [orgId]);
   const [plugin, setPlugin] = useState("");
   const [name, setName] = useState("");
-  const [agentId, setAgentId] = useState("");
+  // `?agentId=<id>&returnTo=/agents/<id>`: opened from an agent page, which it returns to.
+  const [preset] = useState(channelFormPreset);
+  const [agentId, setAgentId] = useState(preset.agentId);
   const [policy, setPolicy] = useState<UnboundPolicy>("bind");
   // 草稿属于当时所选的插件：换插件后回到新 schema 的初始草稿
   const [stored, setStored] = useState<{ plugin: string; draft: SchemaDraft }>();
@@ -88,7 +91,7 @@ function NewChannel({ orgId }: { orgId: string }) {
     schema.state.kind !== "ready",
     configInvalid,
   ].filter(Boolean).length;
-  const back = () => router.push("/channels");
+  const back = () => router.push(preset.returnTo ?? "/channels");
 
   async function submit() {
     setAttempted(true);
@@ -103,7 +106,7 @@ function NewChannel({ orgId }: { orgId: string }) {
         config,
         unboundPolicy: policy,
       });
-      router.push(`/channels/${channel.id}`);
+      router.push(preset.returnTo ?? `/channels/${channel.id}`);
     } catch (e) {
       setError({
         message: errorMessage(e),
