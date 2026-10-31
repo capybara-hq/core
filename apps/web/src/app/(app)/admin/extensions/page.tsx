@@ -1,26 +1,13 @@
 "use client";
 
-import {
-  Badge,
-  type Column,
-  DataTable,
-  ListPage,
-  RadioGroup,
-  Stack,
-  Text,
-} from "@capybara-hq/design";
+import { ListPage, ObjectRow } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
-import { ExtensionStatusMark } from "../../../../components/AdminExtensionParts";
 import { AdminGate } from "../../../../components/AdminGate";
 import { usePagePath } from "../../../../components/shell/path";
-import { useRouter } from "../../../../i18n/navigation";
 import {
   type AdminExtension,
   displaySource,
-  EXTENSION_SOURCES,
-  EXTENSION_STATUSES,
-  type ExtensionSource,
   type ExtensionStatus,
   listAdminExtensions,
   replicaSummary,
@@ -28,11 +15,12 @@ import {
 import { useLoad } from "../../../../lib/use-load";
 
 /**
- * `/admin/extensions`: every extension on the deployment (enterprise admins, ListPage).
- * Columns: name (with a "required" badge for required bootstrap plugins), version, source
- * (bootstrap / config / installed), status, sensitive, whether the replicas agree; the Rail filters
- * by status and source. A row opens the detail page; "Install extension" in the header opens the
- * install wizard.
+ * `/admin/extensions`: every extension on the deployment as object rows (enterprise admins). A
+ * warn callout above the tabs names the extensions that need attention (anything that is neither
+ * enabled nor disabled, such as a required extension without config); tabs All / Needs attention /
+ * Enabled / Disabled carry counts and appear only when they hold something different from All.
+ * A row: mark, mono name, version and chips, description-free meta (extension points, source,
+ * replicas, permissions: only what the API returns), state label, one action and a menu.
  */
 export default function AdminExtensionsPage() {
   return (
@@ -42,117 +30,160 @@ export default function AdminExtensionsPage() {
   );
 }
 
+type TabId = "all" | "attention" | "enabled" | "disabled";
+
+/** An extension that is neither running nor deliberately off needs an admin. */
+const needsAttention = (p: AdminExtension) => p.status !== "enabled" && p.status !== "disabled";
+
+const STATE_TONE: Record<ExtensionStatus, "ok" | "warn" | "fail" | "muted"> = {
+  enabled: "ok",
+  disabled: "muted",
+  pending_approval: "warn",
+  pending_config: "warn",
+  pending_migration: "warn",
+  converging: "warn",
+  failed: "fail",
+  dependency: "fail",
+  legacy_format: "fail",
+};
+
 function AdminPlugins() {
   const scope = usePagePath("admin");
   const t = useTranslations("admin.extensions");
-  const router = useRouter();
   const { state, reload } = useLoad(listAdminExtensions, []);
-  const [status, setStatus] = useState<ExtensionStatus | "">("");
-  const [source, setSource] = useState<ExtensionSource | "">("");
+  const [tab, setTab] = useState<TabId>("all");
   const all = state.kind === "ready" ? state.data.extensions : [];
-  const rows = all.filter(
-    (p) => (status === "" || p.status === status) && (source === "" || displaySource(p) === source),
+  const groups: Record<Exclude<TabId, "all">, AdminExtension[]> = {
+    attention: all.filter(needsAttention),
+    enabled: all.filter((p) => p.status === "enabled"),
+    disabled: all.filter((p) => p.status === "disabled"),
+  };
+  // A tab only when it holds something different from "all".
+  const tabIds = (Object.keys(groups) as Exclude<TabId, "all">[]).filter(
+    (id) => groups[id].length > 0 && groups[id].length < all.length,
   );
+  const active: TabId = tab !== "all" && tabIds.includes(tab) ? tab : "all";
+  const rows = active === "all" ? all : groups[active];
+  const attention = groups.attention;
 
-  const columns: Column<AdminExtension>[] = [
-    {
-      key: "name",
-      header: t("columns.name"),
-      cell: (p) =>
-        p.required ? (
-          <Stack direction="row" gap={8}>
-            <Text>{p.name}</Text>
-            <Badge>{t("required")}</Badge>
-          </Stack>
-        ) : (
-          p.name
-        ),
-    },
-    { key: "version", header: t("columns.version"), tone: "muted", cell: (p) => p.version },
-    {
-      key: "source",
-      header: t("columns.source"),
-      cell: (p) => t(`source.${displaySource(p)}`),
-    },
-    {
-      key: "status",
-      header: t("columns.status"),
-      cell: (p) => <ExtensionStatusMark status={p.status} />,
-    },
-    {
-      key: "sensitive",
-      header: t("columns.sensitive"),
-      cell: (p) => (p.sensitive ? <Badge tone="accent">{t("sensitive")}</Badge> : "—"),
-    },
-    {
-      key: "replicas",
-      header: t("columns.replicas"),
-      cell: (p) => {
-        const r = replicaSummary(p);
-        if (r.total === 0) return <Text tone="muted">{t("replicas.none")}</Text>;
-        return r.consistent ? (
-          t("replicas.consistent", { n: r.total })
-        ) : (
-          <Text tone="warn">{t("replicas.diverged", { n: r.total })}</Text>
-        );
-      },
-    },
-  ];
+  const header = {
+    path: [...scope, { label: "extensions" }],
+    title: t("title"),
+    actions: [
+      { label: t("install"), variant: "primary" as const, href: "/admin/extensions/install" },
+    ],
+    ...(tabIds.length > 0
+      ? {
+          tabs: [
+            { id: "all", label: t("tabs.all"), count: all.length, onSelect: () => setTab("all") },
+            ...tabIds.map((id) => ({
+              id,
+              label: t(`tabs.${id}`),
+              count: groups[id].length,
+              onSelect: () => setTab(id),
+            })),
+          ],
+          activeTab: active,
+        }
+      : {}),
+  };
+
+  const callout =
+    attention.length > 0
+      ? {
+          tone: "warn" as const,
+          children: t("callout", {
+            n: attention.length,
+            names: attention.map((p) => p.name).join(", "),
+          }),
+          action: {
+            label: t("calloutFix"),
+            ...(attention.length === 1
+              ? { href: `/admin/extensions/${encodeURIComponent(attention[0]?.name ?? "")}` }
+              : { onSelect: () => setTab("attention") }),
+          },
+        }
+      : undefined;
+
+  const empty =
+    state.kind === "error"
+      ? {
+          icon: "circle-alert" as const,
+          text: t("loadFailed"),
+          action: { label: t("retry"), variant: "default" as const, onSelect: reload },
+        }
+      : state.kind === "ready" && all.length === 0
+        ? {
+            icon: "extension" as const,
+            text: t("empty"),
+            action: {
+              label: t("install"),
+              variant: "primary" as const,
+              href: "/admin/extensions/install",
+            },
+          }
+        : undefined;
 
   return (
     <ListPage
-      header={{
-        path: [...scope, { label: "extensions" }],
-        title: t("title"),
-        count: String(all.length),
-        actions: [{ label: t("install"), variant: "primary", href: "/admin/extensions/install" }],
-      }}
-      rail={
-        <Stack gap={16}>
-          <RadioGroup
-            label={t("filters.status")}
-            value={status}
-            onChange={(v) => setStatus(v as ExtensionStatus | "")}
-            options={[
-              { value: "", label: t("filters.allStatuses") },
-              ...EXTENSION_STATUSES.map((s) => ({ value: s, label: t(`status.${s}`) })),
-            ]}
-          />
-          <RadioGroup
-            label={t("filters.source")}
-            value={source}
-            onChange={(v) => setSource(v as ExtensionSource | "")}
-            options={[
-              { value: "", label: t("filters.allSources") },
-              ...EXTENSION_SOURCES.map((s) => ({ value: s, label: t(`source.${s}`) })),
-            ]}
-          />
-        </Stack>
-      }
+      header={header}
+      variant="objects"
+      {...(callout ? { callout } : {})}
+      {...(empty ? { empty } : {})}
     >
-      <Stack gap={12}>
-        <Text tone="muted">{t("hint")}</Text>
-        <DataTable
-          label={t("title")}
-          columns={columns}
-          rows={rows}
-          rowKey={(p) => p.name}
-          state={state.kind === "loading" ? "loading" : state.kind === "error" ? "error" : "ready"}
-          error={{ code: state.kind === "error" ? state.code : "unknown", onRetry: reload }}
-          empty={{ title: t("empty") }}
-          {...(all.length > 0 && {
-            noResults: {
-              description: t("noResults"),
-              onClear: () => {
-                setStatus("");
-                setSource("");
-              },
-            },
-          })}
-          onOpen={(p) => router.push(`/admin/extensions/${encodeURIComponent(p.name)}`)}
-          rowLabel={(p) => p.name}
-        />
-      </Stack>
+      {rows.map((p) => {
+        const detail = `/admin/extensions/${encodeURIComponent(p.name)}`;
+        const attn = needsAttention(p);
+        const points = p.permissions
+          .filter((g) => g.category === "provides")
+          .reduce((n, g) => n + g.items.length, 0);
+        const perms = p.permissions
+          .filter((g) => g.category !== "provides")
+          .reduce((n, g) => n + g.items.length, 0);
+        const r = replicaSummary(p);
+        const meta = [
+          points > 0 ? t("meta.points", { n: points }) : null,
+          t(`source.${displaySource(p)}`),
+          r.total > 0
+            ? t(r.consistent ? "replicas.consistent" : "replicas.diverged", { n: r.total })
+            : null,
+          perms > 0 ? t("meta.permissions", { n: perms }) : null,
+        ]
+          .filter((x): x is string => x !== null)
+          .join(" · ");
+        return (
+          <ObjectRow
+            key={p.name}
+            mark={{ icon: "extension", tone: attn ? "warn" : "neutral" }}
+            name={p.name}
+            mono
+            href={detail}
+            chips={[
+              { label: `v${p.version}` },
+              ...(p.required ? [{ label: t("required") }] : []),
+              ...(p.sensitive ? [{ label: t("sensitive"), tone: "warn" as const }] : []),
+            ]}
+            meta={meta}
+            state={{ label: t(`status.${p.status}`), tone: STATE_TONE[p.status] }}
+            action={{
+              label: p.status === "pending_config" ? t("configure") : t("settings"),
+              href: detail,
+              ...(p.status === "pending_config" ? { primary: true } : {}),
+            }}
+            menu={[
+              { label: t("details"), href: detail },
+              ...(p.source === "install"
+                ? [
+                    {
+                      label: t("upgrade"),
+                      href: `/admin/extensions/install?upgrade=${encodeURIComponent(p.name)}`,
+                    },
+                  ]
+                : []),
+            ]}
+          />
+        );
+      })}
     </ListPage>
   );
 }

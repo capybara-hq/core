@@ -17,18 +17,15 @@ export const ADMIN_PAGES = [
 export type AdminPageId = (typeof ADMIN_PAGES)[number]["id"];
 
 /**
- * The admin console's (enterprise admins) navigation: overview, accounts, orgs,
- * extensions, catalog, marketplaces, models, deployment settings (the sidebar's admin
- * context). Settings pages (SettingsPage) use it as the left
- * navigation; list pages go back to the overview through the header's path. An org's own
- * settings stay under `/settings/*`.
+ * The admin console's (enterprise admins) navigation: overview, accounts, orgs, extensions,
+ * catalog, marketplaces, models, deployment settings. It feeds the sidebar's admin context only;
+ * admin pages carry no inner navigation. An org's own settings stay under `/settings/*`.
  */
 export function useAdminNav(): {
   group: string;
   items: { id: AdminPageId; label: string; href: string }[];
 }[] {
   const t = useTranslations("admin.nav");
-  // One group until Task 10 removes the inner nav of the admin pages.
   return [
     {
       group: t("group"),

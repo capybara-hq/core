@@ -384,9 +384,9 @@ describe("/admin/orgs（ListPage）", () => {
   });
 });
 
-describe("/admin/settings（SettingsPage）", () => {
+describe("/admin/settings（FormPage）", () => {
   it.each(LOCALES)(
-    "部署设置：二级导航；改自建连接器为「禁止」→ ActionRow → PUT 只含改动项（%s）",
+    "部署设置：无二级导航；改自建连接器为「禁止」→ ActionRow → PUT 只含改动项（%s）",
     async (locale) => {
       const m = msgs[locale];
       const s = m.admin.settings;
@@ -396,10 +396,8 @@ describe("/admin/settings（SettingsPage）", () => {
       });
       resetNavigation("/admin/settings");
       const { container } = renderPage(<AdminSettingsPage />, { locale });
-      expect(template("SettingsPage")).not.toBeNull();
-      const current = container.querySelector('.cb-settings-nav [aria-current="page"]');
-      expect(current?.textContent).toBe(m.admin.nav.settings);
-      expect(current?.getAttribute("href")).toBe("/admin/settings");
+      expect(template("FormPage")).not.toBeNull();
+      expect(container.querySelector(".cb-settings-nav")).toBeNull();
       const group = await screen.findByRole("radiogroup", { name: s.customConnectors.title });
       expect(within(group).getByRole("radio", { name: new RegExp(`^${s.allow}`) })).toHaveProperty(
         "checked",

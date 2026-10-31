@@ -6,8 +6,8 @@ import {
   Field,
   FormSection,
   Input,
+  ListPage,
   RadioGroup,
-  SettingsPage,
   Skeleton,
   Stack,
   Switch,
@@ -18,10 +18,10 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { AdminGate } from "../../../../components/AdminGate";
 import { formatTime } from "../../../../components/ApprovalCard";
-import { useAdminNav } from "../../../../components/admin-nav";
 import { useCatalogErrorLines } from "../../../../components/CatalogParts";
 import { FormError } from "../../../../components/form-error";
 import { usePagePath } from "../../../../components/shell/path";
+import { marketplaceTabs } from "../../../../lib/admin-tabs";
 import { ApiClientError, issueLines } from "../../../../lib/api";
 import {
   addMarketplace,
@@ -37,7 +37,7 @@ import { useErrorMessage } from "../../../../lib/use-error-message";
 import { useLoad } from "../../../../lib/use-load";
 
 /**
- * `/admin/marketplaces`: marketplaces (enterprise admins, SettingsPage). The official
+ * `/admin/marketplaces`: marketplaces (enterprise admins, ListPage with the tabs Browse / Sources). The official
  * marketplace: the enable switch (offline mode with a read-only switch when the deployment config
  * turns it off) and its read-only address; enterprise marketplaces: add, edit, remove (name,
  * address, enabled, token); each marketplace's status and "Refresh now". An enterprise marketplace
@@ -65,7 +65,7 @@ function useProblem(): (e: unknown) => Problem {
 function Sources() {
   const scope = usePagePath("admin");
   const t = useTranslations("catalog.admin.marketplaces");
-  const nav = useAdminNav();
+  const ta = useTranslations("catalog.admin");
   const errorMessage = useErrorMessage();
   const { state, reload, set } = useLoad(listMarketplaces, []);
   const replace = (next: Marketplace) => {
@@ -76,10 +76,13 @@ function Sources() {
   const enterprise = state.kind === "ready" ? state.data.items.filter((s) => !s.builtin) : [];
 
   return (
-    <SettingsPage
-      header={{ path: [...scope, { label: "marketplaces" }], title: t("title") }}
-      nav={nav}
-      activeNav="catalog"
+    <ListPage
+      header={{
+        path: [...scope, { label: "marketplaces" }],
+        title: t("title"),
+        tabs: marketplaceTabs(ta),
+        activeTab: "sources",
+      }}
     >
       {state.kind === "loading" ? (
         <Skeleton rows={6} />
@@ -109,7 +112,7 @@ function Sources() {
           </FormSection>
         </>
       )}
-    </SettingsPage>
+    </ListPage>
   );
 }
 

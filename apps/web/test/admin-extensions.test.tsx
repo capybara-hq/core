@@ -143,9 +143,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("/admin/extensions (ListPage)", () => {
+describe("/admin/extensions (ListPage, object rows)", () => {
   it.each(LOCALES)(
-    "列出来源、状态、敏感与副本是否一致；Rail 按状态与来源筛选（%s）",
+    "warn callout first, tabs with counts, rows with chips, meta, state and one action (%s)",
     async (locale) => {
       const p = msgs[locale].admin.extensions;
       const diverged = plugin({
@@ -161,38 +161,71 @@ describe("/admin/extensions (ListPage)", () => {
           },
         ],
       });
+      const off = plugin({
+        name: "quiet",
+        status: "disabled",
+        desired: { version: "1.0.0", sha256: SHA, state: "disabled" },
+      });
       stubApi({
         "GET /api/v1/admin/extensions": () =>
-          json(200, { extensions: [plugin(), diverged, S3], drainSeconds: 30 }),
+          json(200, { extensions: [plugin(), diverged, S3, off], drainSeconds: 30 }),
       });
       renderPage(<AdminExtensionsPage />, { locale });
       expect(template("ListPage")).not.toBeNull();
-      const table = await screen.findByRole("table", { name: p.title });
-      const row = (name: string) => within(table).getByText(name).closest("tr") as HTMLElement;
-      expect(within(row("demo")).getByText(p.source.install)).toBeTruthy();
-      expect(within(row("demo")).getByText(fill(p.replicas.consistent, { n: 2 }))).toBeTruthy();
-      expect(within(row("demo")).getByText(p.sensitive)).toBeTruthy();
-      expect(within(row("split")).getByText(fill(p.replicas.diverged, { n: 2 }))).toBeTruthy();
-      expect(within(row("object-store-s3")).getByText(p.source.bootstrap)).toBeTruthy();
+      const list = await screen.findByRole("list", { name: p.title });
+      const row = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
+      // The callout names the two extensions that need attention, above the tabs
+      const callout = document.querySelector(".cb-callout") as HTMLElement;
+      expect(callout.textContent).toContain("split");
+      expect(callout.textContent).toContain("object-store-s3");
+      expect(callout.textContent).not.toContain("quiet");
+      // Tabs with counts: all 4, needs attention 2, enabled 1, disabled 1
+      const tabs = screen.getByRole("tablist");
+      for (const [id, n] of [
+        ["all", 4],
+        ["attention", 2],
+        ["enabled", 1],
+        ["disabled", 1],
+      ] as const) {
+        const tab = within(tabs).getByRole("tab", { name: new RegExp(`^${p.tabs[id]}`) });
+        expect(tab.textContent).toContain(String(n));
+      }
+      // Rows: required chip, state label, one action (configure when pending)
       expect(within(row("object-store-s3")).getByText(p.required)).toBeTruthy();
-      expect(within(row("demo")).queryByText(p.required)).toBeNull();
+      expect(within(row("object-store-s3")).getByText(p.status.pending_config)).toBeTruthy();
       expect(
-        within(row("object-store-s3")).getByText(new RegExp(escapeRe(p.status.pending_config))),
+        within(row("object-store-s3"))
+          .getByRole("link", { name: p.configure })
+          .getAttribute("href"),
+      ).toBe("/admin/extensions/object-store-s3");
+      expect(within(row("demo")).getByText(p.status.enabled)).toBeTruthy();
+      expect(within(row("demo")).getByRole("link", { name: p.settings })).toBeTruthy();
+      expect(within(row("demo")).queryByText(p.required)).toBeNull();
+      expect(within(row("demo")).getByText(new RegExp(escapeRe(p.source.install)))).toBeTruthy();
+      expect(
+        within(row("split")).getByText(new RegExp(escapeRe(fill(p.replicas.diverged, { n: 2 })))),
+      ).toBeTruthy();
+      expect(
+        within(row("object-store-s3")).getByText(new RegExp(escapeRe(p.source.bootstrap))),
       ).toBeTruthy();
 
       const user = userEvent.setup();
-      await user.click(screen.getByRole("radio", { name: p.status.failed }));
-      expect(within(table).queryByText("demo")).toBeNull();
-      expect(within(table).getByText("split")).toBeTruthy();
-      await user.click(screen.getByRole("radio", { name: p.filters.allStatuses }));
-      await user.click(screen.getByRole("radio", { name: p.source.bootstrap }));
-      expect(within(table).queryByText("demo")).toBeNull();
-      expect(within(table).getByText("object-store-s3")).toBeTruthy();
-      await user.click(screen.getByRole("radio", { name: p.source.install }));
-      expect(within(table).getByText("demo")).toBeTruthy();
-      expect(within(table).queryByText("object-store-s3")).toBeNull();
+      await user.click(within(tabs).getByRole("tab", { name: new RegExp(`^${p.tabs.disabled}`) }));
+      expect(within(list).queryByText("demo")).toBeNull();
+      expect(within(list).getByText("quiet")).toBeTruthy();
     },
   );
+
+  it("nothing needs attention: no callout, no tab that equals All", async () => {
+    stubApi({
+      "GET /api/v1/admin/extensions": () =>
+        json(200, { extensions: [plugin(), plugin({ name: "other" })], drainSeconds: 30 }),
+    });
+    renderPage(<AdminExtensionsPage />);
+    await screen.findByRole("list", { name: en.admin.extensions.title });
+    expect(document.querySelector(".cb-callout")).toBeNull();
+    expect(screen.queryByRole("tablist")).toBeNull();
+  });
 });
 
 /** 只给详情页用的路由：列表（详情页从列表取，带 drainSeconds）与配置。 */

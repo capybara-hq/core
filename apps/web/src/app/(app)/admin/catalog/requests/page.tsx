@@ -17,6 +17,7 @@ import { formatTime } from "../../../../../components/ApprovalCard";
 import { FormError } from "../../../../../components/form-error";
 import { usePagePath } from "../../../../../components/shell/path";
 import { Link } from "../../../../../i18n/navigation";
+import { catalogTabs } from "../../../../../lib/admin-tabs";
 import {
   type CatalogRequest,
   decideDeploymentRequest,
@@ -96,8 +97,9 @@ function Requests() {
     <InboxPage
       header={{
         path: [...scope, { label: "catalog", href: "/admin/catalog" }, { label: "requests" }],
-        title: t("title"),
-        ...(state.kind === "ready" && { count: String(rows.length) }),
+        title: ta("title"),
+        tabs: catalogTabs(ta, state.kind === "ready" ? { requests: rows.length } : {}),
+        activeTab: "requests",
       }}
       list={
         <DataTable<CatalogRequest>

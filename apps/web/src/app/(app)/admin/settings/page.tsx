@@ -2,17 +2,16 @@
 
 import {
   Field,
+  FormPage,
   FormSection,
   Input,
   RadioGroup,
-  SettingsPage,
   Skeleton,
   useToast,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { AdminGate } from "../../../../components/AdminGate";
-import { useAdminNav } from "../../../../components/admin-nav";
 import { FormError } from "../../../../components/form-error";
 import { usePagePath } from "../../../../components/shell/path";
 import {
@@ -51,7 +50,6 @@ function AdminSettings() {
   const scope = usePagePath("admin");
   const t = useTranslations("admin.settings");
   const tc = useTranslations("common");
-  const nav = useAdminNav();
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const { state, set } = useLoad(getDeploymentSettings, []);
@@ -101,25 +99,19 @@ function AdminSettings() {
   );
 
   return (
-    <SettingsPage
+    <FormPage
       header={{ path: [...scope, { label: "settings" }], title: t("title") }}
-      nav={nav}
-      activeNav="settings"
-      {...(unsaved > 0
-        ? {
-            actionRow: {
-              unsaved,
-              ...(currencyValid ? {} : { errors: 1 }),
-              cancel: { label: tc("cancel"), onSelect: () => setDraft({}) },
-              primary: {
-                label: t("save"),
-                onSelect: () => void save(),
-                loading: pending,
-                disabled: !currencyValid,
-              },
-            },
-          }
-        : {})}
+      actionRow={{
+        unsaved,
+        ...(currencyValid ? {} : { errors: 1 }),
+        cancel: { label: tc("cancel"), onSelect: () => setDraft({}) },
+        primary: {
+          label: t("save"),
+          onSelect: () => void save(),
+          loading: pending,
+          disabled: !currencyValid || unsaved === 0,
+        },
+      }}
     >
       {state.kind === "loading" ? (
         <Skeleton rows={4} />
@@ -167,6 +159,6 @@ function AdminSettings() {
           {policy("customSkills")}
         </>
       )}
-    </SettingsPage>
+    </FormPage>
   );
 }

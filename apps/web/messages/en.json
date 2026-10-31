@@ -2515,7 +2515,25 @@
         "save": "Save config",
         "saving": "Saving; reloading the extension can take up to about {seconds} seconds.",
         "saved": "Config saved."
-      }
+      },
+      "tabs": {
+        "all": "All",
+        "attention": "Needs attention",
+        "enabled": "Enabled",
+        "disabled": "Disabled"
+      },
+      "callout": "{n, plural, one {# extension needs attention} other {# extensions need attention}}: {names}",
+      "calloutFix": "Fix now",
+      "configure": "Configure",
+      "settings": "Settings",
+      "details": "Details",
+      "upgrade": "Upgrade",
+      "meta": {
+        "points": "{n, plural, one {# extension point} other {# extension points}}",
+        "permissions": "{n, plural, one {# permission} other {# permissions}}"
+      },
+      "loadFailed": "Could not load extensions.",
+      "retry": "Retry"
     }
   },
   "members": {
@@ -2992,7 +3010,16 @@
         "reject": "Reject",
         "approved": "Approved",
         "rejected": "Rejected"
-      }
+      },
+      "tabs": {
+        "plugins": "Plugins",
+        "requests": "Deployment requests",
+        "browse": "Browse",
+        "sources": "Sources"
+      },
+      "search": "Search plugins",
+      "loadFailed": "Could not load the catalog.",
+      "retry": "Retry"
     },
     "org": {
       "title": "Plugins",

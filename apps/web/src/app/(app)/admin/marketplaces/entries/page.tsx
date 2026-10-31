@@ -19,6 +19,7 @@ import { useCatalogErrorLines } from "../../../../../components/CatalogParts";
 import { FormError } from "../../../../../components/form-error";
 import { usePagePath } from "../../../../../components/shell/path";
 import { useRouter } from "../../../../../i18n/navigation";
+import { marketplaceTabs } from "../../../../../lib/admin-tabs";
 import { issueLines } from "../../../../../lib/api";
 import {
   entryHost,
@@ -215,7 +216,9 @@ function Catalog() {
           { label: "marketplaces", href: "/admin/marketplaces" },
           { label: "entries" },
         ],
-        title: t("title"),
+        title: ta("marketplaces.title"),
+        tabs: marketplaceTabs(ta),
+        activeTab: "browse",
         ...(state.kind === "ready" && { count: `${rows.length}${truncated ? "+" : ""}` }),
       }}
       rail={

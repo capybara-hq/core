@@ -1,37 +1,22 @@
 "use client";
 
-import {
-  Badge,
-  type Column,
-  DataTable,
-  ListPage,
-  RadioGroup,
-  Stack,
-  Text,
-} from "@capybara-hq/design";
+import { ListPage, ObjectRow } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { AdminGate } from "../../../../components/AdminGate";
-import { PolicyBadge, useSourceLabel } from "../../../../components/CatalogParts";
+import { useSourceLabel } from "../../../../components/CatalogParts";
 import { usePagePath } from "../../../../components/shell/path";
-import { useRouter } from "../../../../i18n/navigation";
-import {
-  type CatalogItem,
-  displayNameOf,
-  listCatalogItems,
-  listMarketplaces,
-  sourceKeyOf,
-} from "../../../../lib/catalog";
+import { catalogTabs } from "../../../../lib/admin-tabs";
+import { displayNameOf, listCatalogItems, listMarketplaces } from "../../../../lib/catalog";
 import { useLoad } from "../../../../lib/use-load";
 
 /**
- * `/admin/catalog`: the catalog (enterprise admins, ListPage). Every item is a plugin.
- * Columns: name, version (marked "new version" when the marketplace has a newer compatible version,
- * from the kernel's newerInMarketplace, and "content changed at the same version" from
- * contentChanged), source (manual / official marketplace / enterprise
- * marketplace), policy, number of orgs that installed it; the Rail filters by source. The header's
- * "Import" goes to the plugin import review (upload a file or an npm package name), "Browse
- * marketplaces" to the marketplace entries, and the menu holds marketplaces and deployment requests.
+ * `/admin/catalog`: the catalog (enterprise admins, ListPage). Every item is a plugin, shown as
+ * an object row: name, version chips (marked "new version" when the marketplace has a newer
+ * compatible version and "content changed" at the same version), source and number of orgs that
+ * installed it, the policy as the state label. The tabs Plugins / Deployment requests link the two
+ * routes; the search narrows by name. "Import" goes to the plugin import review (upload a file
+ * or an npm package name); the menu holds the marketplace links.
  */
 export default function AdminCatalogPage() {
   return (
@@ -41,113 +26,90 @@ export default function AdminCatalogPage() {
   );
 }
 
+const POLICY_TONE = { allow: "ok", needs_approval: "warn", disabled: "muted" } as const;
+
 function AdminDirectory() {
   const scope = usePagePath("admin");
   const t = useTranslations("catalog.admin");
   const td = useTranslations("catalog");
   const locale = useLocale();
-  const router = useRouter();
   const { state, reload } = useLoad(listCatalogItems, []);
   const sources = useLoad(
     () => listMarketplaces().catch(() => ({ items: [], offline: false })),
     [],
   );
-  const sourceList = sources.state.kind === "ready" ? sources.state.data.items : [];
-  const sourceLabel = useSourceLabel(sourceList);
-  const [source, setSource] = useState("");
+  const sourceLabel = useSourceLabel(
+    sources.state.kind === "ready" ? sources.state.data.items : [],
+  );
+  const [q, setQ] = useState("");
   const all = state.kind === "ready" ? state.data.items : [];
-  const rows = all.filter((i) => source === "" || sourceKeyOf(i) === source);
-  const sourceOptions = [
-    { value: "manual", label: td("source.manual") },
-    ...sourceList.map((s) => ({
-      value: `marketplace:${s.id}`,
-      label: s.builtin ? td("source.official") : s.name,
-    })),
-  ];
+  const needle = q.trim().toLowerCase();
+  const rows = all.filter(
+    (i) =>
+      needle === "" ||
+      i.name.toLowerCase().includes(needle) ||
+      displayNameOf(i, locale).toLowerCase().includes(needle),
+  );
 
-  const columns: Column<CatalogItem>[] = [
-    {
-      key: "name",
-      header: t("columns.name"),
-      cell: (i) => (
-        <Stack gap={0}>
-          <Text>{displayNameOf(i, locale)}</Text>
-          {i.displayName !== null && (
-            <Text variant="small" tone="muted">
-              {i.name}
-            </Text>
-          )}
-        </Stack>
-      ),
-    },
-    {
-      key: "version",
-      header: t("columns.version"),
-      cell: (i) => (
-        <Stack direction="row" gap={8} align="center">
-          <Text tone="muted">{i.latestVersion}</Text>
-          {i.newerInMarketplace && <Badge tone="accent">{td("newer")}</Badge>}
-          {i.contentChanged && <Badge tone="accent">{td("contentChanged")}</Badge>}
-        </Stack>
-      ),
-    },
-    { key: "source", header: t("columns.source"), cell: (i) => sourceLabel(i) },
-    { key: "policy", header: t("columns.policy"), cell: (i) => <PolicyBadge policy={i.policy} /> },
-    {
-      key: "installs",
-      header: t("columns.installs"),
-      tone: "muted",
-      cell: (i) => String(i.installs),
-    },
-  ];
+  const header = {
+    path: [...scope, { label: "catalog" }],
+    title: t("title"),
+    tabs: catalogTabs(t, { plugins: all.length }),
+    activeTab: "plugins",
+    ...(all.length > 0 ? { search: { label: t("search"), value: q, onChange: setQ } } : {}),
+    actions: [
+      { label: t("actions.import"), variant: "primary" as const, href: "/admin/catalog/import" },
+      {
+        label: t("actions.more"),
+        menu: [
+          { label: t("actions.entries"), href: "/admin/marketplaces/entries" },
+          { label: t("actions.marketplaces"), href: "/admin/marketplaces" },
+        ],
+      },
+    ],
+  };
+  const empty =
+    state.kind === "error"
+      ? {
+          icon: "circle-alert" as const,
+          text: t("loadFailed"),
+          action: { label: t("retry"), variant: "default" as const, onSelect: reload },
+        }
+      : state.kind === "ready" && all.length === 0
+        ? {
+            icon: "catalog" as const,
+            text: t("empty"),
+            action: {
+              label: t("actions.import"),
+              variant: "primary" as const,
+              href: "/admin/catalog/import",
+            },
+          }
+        : state.kind === "ready" && rows.length === 0
+          ? { icon: "catalog" as const, text: t("noResults") }
+          : undefined;
 
   return (
-    <ListPage
-      header={{
-        path: [...scope, { label: "catalog" }],
-        title: t("title"),
-        count: String(all.length),
-        actions: [
-          { label: t("actions.import"), variant: "primary", href: "/admin/catalog/import" },
-          { label: t("actions.entries"), variant: "default", href: "/admin/marketplaces/entries" },
-          {
-            label: t("actions.more"),
-            menu: [
-              { label: t("actions.marketplaces"), href: "/admin/marketplaces" },
-              { label: t("actions.requests"), href: "/admin/catalog/requests" },
-            ],
-          },
-        ],
-      }}
-      rail={
-        <RadioGroup
-          label={t("filters.source")}
-          value={source}
-          onChange={setSource}
-          options={[{ value: "", label: t("filters.allSources") }, ...sourceOptions]}
-        />
-      }
-    >
-      <Stack gap={12}>
-        <Text tone="muted">{t("hint")}</Text>
-        <DataTable
-          label={t("title")}
-          columns={columns}
-          rows={rows}
-          rowKey={(i) => i.id}
-          state={state.kind === "loading" ? "loading" : state.kind === "error" ? "error" : "ready"}
-          error={{ code: state.kind === "error" ? state.code : "unknown", onRetry: reload }}
-          empty={{ title: t("empty") }}
-          {...(all.length > 0 && {
-            noResults: {
-              description: t("noResults"),
-              onClear: () => setSource(""),
-            },
-          })}
-          onOpen={(i) => router.push(`/admin/catalog/${i.id}`)}
-          rowLabel={(i) => i.name}
-        />
-      </Stack>
+    <ListPage header={header} variant="objects" {...(empty ? { empty } : {})}>
+      {rows.map((i) => {
+        const name = displayNameOf(i, locale);
+        return (
+          <ObjectRow
+            key={i.id}
+            mark={{ text: Array.from(name)[0] ?? "?" }}
+            name={name}
+            href={`/admin/catalog/${encodeURIComponent(i.id)}`}
+            chips={[
+              { label: `v${i.latestVersion}` },
+              ...(i.newerInMarketplace ? [{ label: td("newer"), tone: "warn" as const }] : []),
+              ...(i.contentChanged ? [{ label: td("contentChanged"), tone: "warn" as const }] : []),
+            ]}
+            description={i.description}
+            meta={[i.name, sourceLabel(i), `${t("columns.installs")} ${i.installs}`].join(" · ")}
+            state={{ label: td(`policy.${i.policy}`), tone: POLICY_TONE[i.policy] }}
+          />
+        );
+      })}
     </ListPage>
   );
 }

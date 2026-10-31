@@ -819,7 +819,7 @@ const SOURCES = {
   ],
 };
 
-describe("/admin/marketplaces (SettingsPage)", () => {
+describe("/admin/marketplaces (ListPage)", () => {
   it.each(LOCALES)(
     "官方地址只读、离线模式说明；企业清单可改，显示状态与刷新（%s）",
     async (locale) => {
@@ -830,7 +830,14 @@ describe("/admin/marketplaces (SettingsPage)", () => {
           json(200, { ...SOURCES.items[1], lastStatus: "ok", lastError: null }),
       });
       renderPage(<MarketplacesPage />, { locale });
-      expect(template("SettingsPage")).not.toBeNull();
+      expect(template("ListPage")).not.toBeNull();
+      const tab = msgs[locale].catalog.admin.tabs;
+      expect(
+        screen.getByRole("link", { name: new RegExp(`^${tab.browse}`) }).getAttribute("href"),
+      ).toBe("/admin/marketplaces/entries");
+      expect(
+        screen.getByRole("link", { name: new RegExp(`^${tab.sources}`) }).getAttribute("href"),
+      ).toBe("/admin/marketplaces");
       expect(await screen.findByText(s.offline)).toBeTruthy();
       const official = screen.getByDisplayValue(
         SOURCES.items[0]?.url as string,
@@ -929,18 +936,33 @@ describe("/admin/catalog and marketplace entries", () => {
       "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
     });
     renderPage(<AdminCatalogPage />);
-    const table = await screen.findByRole("table", { name: t.admin.title });
-    const row = (name: string) => within(table).getByText(name).closest("tr") as HTMLElement;
-    expect(within(row("cat-a")).getByText(t.source.official)).toBeTruthy();
+    const list = await screen.findByRole("list", { name: t.admin.title });
+    const row = (name: string) =>
+      within(list)
+        .getAllByText(new RegExp(name))
+        .map((n) => n.closest("li") as HTMLElement)[0] as HTMLElement;
+    expect(within(row("cat-a")).getByText(new RegExp(t.source.official))).toBeTruthy();
     expect(await within(row("cat-a")).findByText(t.newer)).toBeTruthy();
-    expect(within(row("manual-skill")).getByText(t.source.manual)).toBeTruthy();
+    expect(within(row("manual-skill")).getByText(new RegExp(t.source.manual))).toBeTruthy();
     expect(within(row("manual-skill")).queryByText(t.newer)).toBeNull();
-    expect(screen.queryByRole("columnheader", { name: "Kind" })).toBeNull();
     expect(screen.getByRole("link", { name: t.admin.actions.import }).getAttribute("href")).toBe(
       "/admin/catalog/import",
     );
-    await userEvent.setup().click(screen.getByRole("radio", { name: t.source.manual }));
-    expect(within(table).queryByText("cat-a")).toBeNull();
+    // Tabs: plugins (with the count) and deployment requests, linking the two routes
+    expect(template("ListPage")).not.toBeNull();
+    expect(
+      screen
+        .getByRole("link", { name: new RegExp(`^${t.admin.tabs.requests}`) })
+        .getAttribute("href"),
+    ).toBe("/admin/catalog/requests");
+    expect(
+      screen
+        .getByRole("link", { name: new RegExp(`^${t.admin.tabs.plugins}`) })
+        .getAttribute("href"),
+    ).toBe("/admin/catalog");
+    // The search narrows by name
+    await userEvent.setup().type(screen.getByRole("searchbox", { name: t.admin.search }), "manual");
+    expect(within(list).queryByText(/cat-a/)).toBeNull();
   });
 
   it("entries: incompatible marked; a git entry on a host outside allowedHosts names the host and cannot be imported; truncation hint", async () => {
@@ -967,6 +989,17 @@ describe("/admin/catalog and marketplace entries", () => {
     });
     renderPage(<MarketplaceEntriesPage />);
     expect(await screen.findByText(c.truncated)).toBeTruthy();
+    // One title 市场/Marketplaces with the tabs Browse (active) and Sources
+    expect(
+      screen
+        .getByRole("link", { name: new RegExp(`^${en.catalog.admin.tabs.browse}`) })
+        .getAttribute("aria-current"),
+    ).toBeTruthy();
+    expect(
+      screen
+        .getByRole("link", { name: new RegExp(`^${en.catalog.admin.tabs.sources}`) })
+        .getAttribute("href"),
+    ).toBe("/admin/marketplaces");
     expect(screen.getByText(fill(c.incompatible, { version: "3.0.0" }))).toBeTruthy();
     const table = screen.getByRole("table", { name: c.title });
     const row = (name: string) => within(table).getByText(name).closest("tr") as HTMLElement;
@@ -1319,6 +1352,16 @@ describe("部署申请页显示申请人", () => {
     renderPage(<CatalogRequestsPage />);
     expect(await screen.findByText("Mia")).toBeTruthy();
     expect(screen.getByText(en.catalog.admin.requests.fields.requester)).toBeTruthy();
+    // One title with the catalog tabs; this page is the active "requests" tab
+    const tab = en.catalog.admin.tabs;
+    expect(
+      screen.getByRole("link", { name: new RegExp(`^${tab.plugins}`) }).getAttribute("href"),
+    ).toBe("/admin/catalog");
+    expect(
+      screen
+        .getByRole("link", { name: new RegExp(`^${tab.requests}`) })
+        .getAttribute("aria-current"),
+    ).toBeTruthy();
   });
 });
 
@@ -1760,8 +1803,8 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
       "GET /api/v1/admin/marketplaces": () => json(200, { offline: false, items: [GIT_SOURCE] }),
     });
     renderPage(<AdminCatalogPage />);
-    const table = await screen.findByRole("table", { name: en.catalog.admin.title });
-    expect(within(table).getByText(en.catalog.contentChanged)).toBeTruthy();
+    const list = await screen.findByRole("list", { name: en.catalog.admin.title });
+    expect(within(list).getByText(en.catalog.contentChanged)).toBeTruthy();
   });
 });
 

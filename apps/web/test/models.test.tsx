@@ -137,15 +137,14 @@ describe("导航", () => {
   });
 });
 
-describe("/admin/models（SettingsPage）", () => {
+describe("/admin/models（ListPage）", () => {
   it.each(LOCALES)("供应商、模型的能力、上下文长度与价格（%s）", async (locale) => {
     const m = msgs[locale];
     adminRoutes();
     const { container } = renderPage(<AdminModelsPage />, { locale });
-    expect(template("SettingsPage")).not.toBeNull();
-    const current = container.querySelector('.cb-settings-nav [aria-current="page"]');
-    expect(current?.textContent).toBe(m.admin.nav.models);
-    expect(current?.getAttribute("href")).toBe("/admin/models");
+    // One frame: no inner navigation (the sidebar's admin context navigates)
+    expect(template("ListPage")).not.toBeNull();
+    expect(container.querySelector(".cb-settings-nav")).toBeNull();
     const table = await screen.findByRole("table", { name: "alpha" });
     const large = within(table).getByText("Alpha Large").closest("tr") as HTMLElement;
     expect(within(large).getByText(m.models.capability.vision)).toBeTruthy();

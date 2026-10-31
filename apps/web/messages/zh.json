@@ -2515,7 +2515,25 @@
         "save": "保存配置",
         "saving": "正在保存；扩展重新加载最多需要约 {seconds} 秒。",
         "saved": "配置已保存。"
-      }
+      },
+      "tabs": {
+        "all": "全部",
+        "attention": "需要处理",
+        "enabled": "已启用",
+        "disabled": "已停用"
+      },
+      "callout": "{n} 个扩展需要处理：{names}",
+      "calloutFix": "去处理",
+      "configure": "配置",
+      "settings": "设置",
+      "details": "查看详情",
+      "upgrade": "升级",
+      "meta": {
+        "points": "{n} 个扩展点",
+        "permissions": "{n} 项权限"
+      },
+      "loadFailed": "扩展没有加载出来。",
+      "retry": "重试"
     }
   },
   "members": {
@@ -2992,7 +3010,16 @@
         "reject": "拒绝",
         "approved": "已批准",
         "rejected": "已拒绝"
-      }
+      },
+      "tabs": {
+        "plugins": "插件",
+        "requests": "部署申请",
+        "browse": "浏览",
+        "sources": "市场源"
+      },
+      "search": "搜索插件",
+      "loadFailed": "目录没有加载出来。",
+      "retry": "重试"
     },
     "org": {
       "title": "插件",
