@@ -206,7 +206,8 @@ export function connectorInput(t: OrgCatalogTemplate, d: TemplateDraft): Connect
 
 /** 向导交给页面放进 WizardPage 的部分（页面文件自己渲染模板，见 check:web-ui 的 web-ui-template）。 */
 export interface WizardView {
-  header: PageHeaderProps;
+  path: PageHeaderProps["path"];
+  title: string;
   steps: string[];
   current: number;
   actionRow: ActionRowProps;
@@ -254,7 +255,7 @@ export function CatalogInstallWizard({
   });
   if (detail.state.kind !== "ready" || extensions.state.kind !== "ready") {
     return frame({
-      header: header(to("title")),
+      ...header(to("title")),
       steps: [t("confirmStep")],
       current: 0,
       actionRow: { primary: { label: t("submit"), onSelect: () => {}, disabled: true } },
@@ -434,7 +435,7 @@ function Wizard({
   };
 
   return frame({
-    header: header(t("title", { name })),
+    ...header(t("title", { name })),
     steps,
     current: step,
     actionRow,

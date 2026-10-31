@@ -168,6 +168,92 @@ function propKey(prop: Node): string | undefined {
   return undefined;
 }
 
+/** Templates whose head is not the shared page head with a breadcrumb path. */
+const PATH_EXEMPT_TEMPLATES = new Set([
+  "ConversationPage",
+  "AuthPage",
+  "OnboardingPage",
+  "StatusPage",
+  "TracePage",
+  "InboxPage",
+]);
+const PAGE_PATH_RULE = "web-ui-page-path";
+
+/**
+ * In an app page, the object passed as `header` to a design page template must have a `path`
+ * property (the breadcrumb of the shared page head). Follows a same-file const bound to an object
+ * literal; a top-level spread, a call result, an import or anything else is reported as
+ * "cannot be confirmed statically".
+ */
+function pagePathFindings(file: string, p: ParsedFile): Finding[] {
+  const named = new Map<string, string>();
+  const namespaces = new Set<string>();
+  const consts = new Map<string, Node>();
+  walk(p.program, (n) => {
+    if (n.type === "ImportDeclaration" && (n.source as Node).value === DESIGN_PKG) {
+      for (const sp of n.specifiers as Node[]) {
+        const local = (sp.local as Node).name as string;
+        if (sp.type === "ImportSpecifier") {
+          const im = sp.imported as Node;
+          named.set(local, (im.name ?? im.value) as string);
+        } else if (sp.type === "ImportNamespaceSpecifier") namespaces.add(local);
+      }
+    } else if (n.type === "VariableDeclarator") {
+      const id = n.id as Node;
+      if (id.type === "Identifier" && n.init) consts.set(id.name as string, n.init as Node);
+    }
+  });
+  const templates: readonly string[] = WEB_UI_TEMPLATES;
+  const out: Finding[] = [];
+  const add = (at: Node, message: string) =>
+    out.push({ file, line: p.lineOf(at.start), rule: PAGE_PATH_RULE, message });
+  const unconfirmed = (at: Node, why: string) =>
+    add(
+      at,
+      `the header of this page template cannot be confirmed statically (${why}); write an object literal with a \`path\` (inline or a same-file const)`,
+    );
+  walk(p.program, (n) => {
+    if (n.type !== "JSXOpeningElement") return;
+    const name = n.name as Node;
+    let template: string | undefined;
+    if (name.type === "JSXIdentifier") template = named.get(name.name as string);
+    else if (
+      name.type === "JSXMemberExpression" &&
+      (name.object as Node).type === "JSXIdentifier" &&
+      namespaces.has((name.object as Node).name as string)
+    )
+      template = (name.property as Node).name as string;
+    if (template === undefined || !templates.includes(template)) return;
+    if (PATH_EXEMPT_TEMPLATES.has(template)) return;
+    const attrs = n.attributes as Node[];
+    const attr = attrs.find((a) => a.type === "JSXAttribute" && (a.name as Node).name === "header");
+    if (!attr && attrs.some((a) => a.type === "JSXSpreadAttribute")) {
+      unconfirmed(n, "no explicit header attribute and a spread attribute");
+      return;
+    }
+    if (!attr) {
+      add(n, `${template} has no \`header\`; pass header={{ path: [...], title }}`);
+      return;
+    }
+    const value = attr.value as Node | null;
+    let expr: Node | undefined =
+      value?.type === "JSXExpressionContainer" ? (value.expression as Node) : undefined;
+    if (expr?.type === "Identifier") {
+      const bound = consts.get(expr.name as string);
+      if (bound === undefined)
+        return unconfirmed(attr, `\`${expr.name}\` is not a same-file const`);
+      expr = bound;
+    }
+    if (expr?.type !== "ObjectExpression") return unconfirmed(attr, "not an object literal");
+    const props = expr.properties as Node[];
+    if (props.some((q) => propKey(q) === "path")) return;
+    if (props.some((q) => q.type !== "Property"))
+      return unconfirmed(attr, "a spread at the top level of the header and no literal path");
+    add(attr, `the header of ${template} has no \`path\`; every app page sets the breadcrumb path`);
+  });
+  return out;
+}
+
 function checkWebFile(file: string, isTest: boolean, webSrcDir: string): Finding[] {
   if (isTest) return [];
   const p = parseFile(file);
@@ -268,6 +354,8 @@ function checkWebFile(file: string, isTest: boolean, webSrcDir: string): Finding
       });
     }
   }
+  if (segs[0] === "app" && segs[1] === "(app)" && /^page\.[jt]sx?$/.test(segs.at(-1) ?? ""))
+    out.push(...pagePathFindings(file, p));
   return out;
 }
 

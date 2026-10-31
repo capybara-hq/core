@@ -72,6 +72,15 @@ describe("checkWebUi", () => {
   it("dev 目录豁免模板规则，其他规则仍生效", () => {
     expect(run("dev-exempt")).toEqual([]);
   });
+  it("web-ui-page-path flags a page without a header path", () =>
+    one("page-path-missing", "web-ui-page-path", 4));
+  it("web-ui-page-path reports a top-level spread as unconfirmable", () => {
+    const f = run("page-path-spread");
+    expect(f.map((x) => x.rule)).toEqual(["web-ui-page-path"]);
+    expect(f[0]?.message).toContain("cannot be confirmed statically");
+  });
+  it("web-ui-page-path follows a const and exempts conversation/auth templates", () =>
+    expect(run("page-path-ok")).toEqual([]));
   it("{...{ className }} 展开 -> web-ui-class-name", () =>
     one("spread-class", "web-ui-class-name", 6));
   it("createElement 的 style -> web-ui-style", () =>

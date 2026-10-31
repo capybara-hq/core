@@ -38,7 +38,12 @@ function Install({ orgId }: { orgId: string }) {
       orgId={orgId}
       itemId={template}
       frame={(v) => (
-        <WizardPage header={v.header} steps={v.steps} current={v.current} actionRow={v.actionRow}>
+        <WizardPage
+          header={{ path: v.path, title: v.title }}
+          steps={v.steps}
+          current={v.current}
+          actionRow={v.actionRow}
+        >
           {v.body}
         </WizardPage>
       )}

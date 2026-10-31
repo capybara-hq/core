@@ -21,7 +21,7 @@ export default function CatalogInstallPage() {
           itemId={itemId}
           frame={(v) => (
             <WizardPage
-              header={v.header}
+              header={{ path: v.path, title: v.title }}
               steps={v.steps}
               current={v.current}
               actionRow={v.actionRow}
