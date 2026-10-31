@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
+import { RECORD_ROW_MENU } from "./support/chat";
 import { signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -8,7 +9,6 @@ const zh = JSON.parse(
 ) as typeof import("../messages/zh.json");
 
 /** DataTable 行菜单的触发按钮名称（设计系统文案 table.rowActions，zh）。 */
-const ROW_ACTIONS = "行操作";
 const M = zh.models;
 const P = M.purpose;
 
@@ -27,7 +27,7 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
   await expect(page.locator('[data-template="SettingsPage"]')).toBeVisible();
   const table = page.getByRole("table", { name: "model-fake" });
   const row = table.getByRole("row").filter({ hasText: "fake-1" });
-  await row.getByRole("button", { name: ROW_ACTIONS }).click();
+  await row.getByRole("button", { name: RECORD_ROW_MENU }).click();
   await page.getByRole("menuitem", { name: M.admin.menu.editPrice }).click();
   await page.getByRole("textbox", { name: M.admin.price.input }).fill("2");
   await page.getByRole("textbox", { name: M.admin.price.output }).fill("8");
@@ -80,7 +80,7 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
     .getByRole("table", { name: "model-fake" })
     .getByRole("row")
     .filter({ hasText: "fake-1" });
-  await priced.getByRole("button", { name: ROW_ACTIONS }).click();
+  await priced.getByRole("button", { name: RECORD_ROW_MENU }).click();
   await page.getByRole("menuitem", { name: M.admin.menu.clearPrice }).click();
   await expect(priced.getByRole("cell", { name: "8", exact: true })).toHaveCount(0);
 });

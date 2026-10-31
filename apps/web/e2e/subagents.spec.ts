@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
+import { OBJECT_ROW_MENU } from "./support/chat";
 import { signIn } from "./support/sign-in";
 
 /** UI copy from the zh message file (not repeated here). */
@@ -9,7 +10,6 @@ const zh = JSON.parse(
 
 const S = zh.agents.form.subagents;
 /** The DataTable row menu trigger (design copy table.rowActions, zh). */
-const ROW_ACTIONS = "更多操作";
 
 /** A new model-fake agent with the agent tool switched on in the Sub-agents section. */
 async function createLead(page: Page, name: string) {
@@ -31,7 +31,7 @@ async function openAgent(page: Page, name: string) {
   await page
     .getByRole("listitem")
     .filter({ hasText: name })
-    .getByRole("button", { name: ROW_ACTIONS })
+    .getByRole("button", { name: OBJECT_ROW_MENU })
     .click();
   await page.getByRole("menuitem", { name: zh.agents.edit }).click();
   await expect(page.locator('[data-template="FormPage"]')).toBeVisible();

@@ -138,8 +138,8 @@ detail / run, catalog item and install, admin extension detail and install, cata
 
 A channel connection already belongs to one agent (`channel_connections.agent_id`). The agent edit page
 gets a 渠道 section listing the connections bound to it (kind, name, state) with "接入渠道", which opens
-the channel form with the agent preset and returns to the agent afterwards. The section is shown to users who may manage channels (org admins); members see none, because the
-kernel's channel list requires `channels.manage`. The 更多 · 渠道 page stays as the org-wide list.
+the channel form with the agent preset and returns to the agent afterwards. The section is shown to users who may manage channels (org admins);
+members see none, because the kernel's channel list requires `channels.manage`. The 更多 · 渠道 page stays as the org-wide list.
 
 ### 3.4 Settings (canvas "组织 · 设置 / 成员")
 

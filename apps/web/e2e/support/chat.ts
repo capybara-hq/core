@@ -17,8 +17,10 @@ export function designZh(key: string): string {
   return m[1];
 }
 
-/** DataTable's row menu trigger (design `table.rowActions`, zh). */
-export const ROW_ACTIONS = "行操作";
+/** Row menu trigger of a DataTable (record lists: members, orgs, models; design `table.rowActions`). */
+export const RECORD_ROW_MENU = "行操作";
+/** Row menu trigger of an ObjectRow (object lists: agents, skills, ...; design `shell.moreActions`). */
+export const OBJECT_ROW_MENU = "更多操作";
 
 /** The composer's textarea. */
 export const composer = (page: Page): Locator =>
@@ -40,9 +42,9 @@ export const toolGroup = (page: Page, key: string): Locator =>
 export async function startChat(page: Page, agentName: string): Promise<void> {
   if (!/\/agents$/.test(page.url())) await page.goto("/agents");
   await page
-    .getByRole("row")
+    .getByRole("listitem")
     .filter({ hasText: agentName })
-    .getByRole("button", { name: ROW_ACTIONS })
+    .getByRole("button", { name: OBJECT_ROW_MENU })
     .click();
   await page.getByRole("menuitem", { name: zh.agents.startChat }).click();
   await expect(page).toHaveURL(/\/chat\?agent=[^&]+$/);
