@@ -210,6 +210,20 @@ describe("Sidebar navigation (work context)", () => {
     expect(screen.getByRole("menuitem", { name: "技能" }).getAttribute("aria-current")).toBeNull();
   });
 
+  it("更多: ↑ / ↓ move along the nav and never open the flyout", async () => {
+    const user = userEvent.setup();
+    zh(<Sidebar {...props({ activeNav: "" })} />);
+    const more = within(mainNav()).getByRole("button", { name: "更多" });
+    more.focus();
+    await user.keyboard("{ArrowUp}");
+    expect(document.activeElement).toBe(within(mainNav()).getByRole("link", { name: "Agents" }));
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(more);
+    await user.keyboard("{ArrowDown}");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(more);
+  });
+
   it("更多: → opens the flyout, Escape closes it and returns focus", async () => {
     const user = userEvent.setup();
     zh(<Sidebar {...props()} />);

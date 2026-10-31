@@ -636,6 +636,16 @@ describe("SetupPage (the guided setup layout)", () => {
   });
 });
 
+describe("SetupPage styles", () => {
+  it("the back link has its own rule and the content-width placement", () => {
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
+    expect(css).toMatch(/\n\.cb-setup-back \{\s*display: inline-flex;/);
+    expect(css).toMatch(
+      /\.cb-setup-column\[data-width="content"\] > \.cb-setup-back \{\s*box-sizing: border-box;/,
+    );
+  });
+});
+
 describe("PendingState (the neutral loading state)", () => {
   afterEach(() => vi.useRealTimers());
 

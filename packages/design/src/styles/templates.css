@@ -702,7 +702,25 @@ button.cb-setup-account:hover {
   gap: 0;
   min-height: 0;
 }
-.cb-setup-column[data-width="content"] > 
+.cb-setup-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-decoration: none;
+}
+.cb-setup-back:hover {
+  color: var(--cb-ink);
+}
+.cb-setup-column[data-width="content"] > .cb-setup-back {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: calc(var(--cb-layout-content) + 2 * var(--cb-layout-content-pad));
+  margin: var(--cb-space-5) auto 0;
+  padding: 0 var(--cb-layout-content-pad);
+}
 @media (max-width: 639px) {
   .cb-setup-org-text,
   .cb-setup-account-name {

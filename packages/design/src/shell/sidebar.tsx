@@ -595,6 +595,10 @@ function SidebarNav({ p, rail }: { p: SidebarProps; rail: boolean }) {
         if (e.key === "ArrowRight") {
           e.preventDefault();
           setMoreOpen(true);
+        } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          // ↑ / ↓ belong to the nav's roving focus (it handles the bubbling event); prevented
+          // here so the Radix trigger does not open the flyout as well.
+          e.preventDefault();
         }
       }}
       {...(rail ? { "aria-label": moreLabel, title: moreLabel } : {})}
