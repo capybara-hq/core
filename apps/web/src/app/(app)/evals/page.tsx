@@ -54,6 +54,7 @@ function EvalSets({ orgId }: { orgId: string }) {
       }}
       variant="objects"
       listLabel={t("tabs.sets")}
+      loading={state.kind === "loading"}
       {...(empty ? { empty } : {})}
     >
       {sets.map((s) => (

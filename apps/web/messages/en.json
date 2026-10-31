@@ -825,6 +825,7 @@
     "sandboxFailed": "Status unavailable"
   },
   "pluginPage": {
+    "pathLabel": "Extension page",
     "liveLost": "Live updates stopped. Reload the page for the latest content."
   },
   "nav": {

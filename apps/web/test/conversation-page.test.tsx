@@ -424,6 +424,46 @@ describe("the conversation page (ConversationPage)", () => {
     window.removeEventListener("cap:conversations-changed", changed);
   });
 
+  it("a run starting, waiting and ending tells the sidebar (its state dot follows)", async () => {
+    api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${BASE}`]: () => json(200, CONV("c1", { title: "Kept" })),
+    });
+    const changed = vi.fn();
+    window.addEventListener("cap:conversations-changed", changed);
+    renderChat();
+    await screen.findByText("hi");
+    await screen.findByRole("button", { name: /Kept/ });
+    changed.mockClear();
+    const es = FakeEventSource.instances[0] as FakeEventSource;
+    act(() => es.emit("event", runStarted(2)));
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
+    act(() =>
+      es.emit(
+        "event",
+        ev(
+          3,
+          "question_asked",
+          {
+            step: 0,
+            callId: "c2",
+            questionId: "q1",
+            form: { title: "t", fields: [] },
+            expiresAt: "2026-10-19T00:00:00.000Z",
+          },
+          "r1",
+        ),
+      ),
+    );
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(2));
+    act(() => es.emit("event", ev(4, "run_aborted", { byAccountId: "a1", reason: "user" }, "r1")));
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(3));
+    // an event that leaves the run phase as it was sends no further notice
+    act(() => es.emit("event", userMsg(5, "again")));
+    expect(changed).toHaveBeenCalledTimes(3);
+    window.removeEventListener("cap:conversations-changed", changed);
+  });
+
   it.each(["archived", "deleted"])(
     "a conversation %s elsewhere tells the sidebar (changed on the stream)",
     async (what) => {

@@ -196,8 +196,11 @@ export function AppFrame({ version, children }: { version: string; children: Rea
     "separator",
     { label: t("common.logout"), onSelect: () => void onLogout() },
   ];
-  // The admin context under /admin (web order §2.2), else the workspace of the current org.
-  const inAdmin = pathname === "/admin" || pathname.startsWith("/admin/");
+  // The admin context under /admin (web order §2.2), else the workspace of the current org. Only
+  // for an enterprise admin: anyone else gets the 403 beside the workspace sidebar.
+  const inAdmin =
+    me?.account.isEnterpriseAdmin === true &&
+    (pathname === "/admin" || pathname.startsWith("/admin/"));
   const roles: Record<string, string> = {
     owner: t("members.roles.owner"),
     admin: t("members.roles.admin"),

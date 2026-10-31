@@ -90,7 +90,12 @@ function Catalog({ orgId }: { orgId: string }) {
         ? { icon: "catalog" as const, text: t("empty") }
         : undefined;
   return (
-    <ListPage header={header} variant="objects" {...(empty ? { empty } : {})}>
+    <ListPage
+      header={header}
+      variant="objects"
+      loading={state.kind === "loading"}
+      {...(empty ? { empty } : {})}
+    >
       {rows.map((i) => {
         const action = rowAction(i);
         const name = displayNameOf(i, locale);

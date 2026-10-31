@@ -128,6 +128,7 @@ function AdminPlugins() {
     <ListPage
       header={header}
       variant="objects"
+      loading={state.kind === "loading"}
       {...(callout ? { callout } : {})}
       {...(empty ? { empty } : {})}
     >

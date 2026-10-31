@@ -71,7 +71,12 @@ function Channels({ orgId }: { orgId: string }) {
           }
         : undefined;
   return (
-    <ListPage header={header} variant="objects" {...(empty ? { empty } : {})}>
+    <ListPage
+      header={header}
+      variant="objects"
+      loading={state.kind === "loading"}
+      {...(empty ? { empty } : {})}
+    >
       {rows.map((c) => (
         <ObjectRow
           key={c.id}

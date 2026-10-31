@@ -43,7 +43,7 @@ function Agents({ orgId }: { orgId: string }) {
       ? { tabs, activeTab: tab, search: { label: t("search"), value: query, onChange: setQuery } }
       : {}),
   };
-  if (agents.kind === "loading") return <ListPage header={header} variant="objects" />;
+  if (agents.kind === "loading") return <ListPage header={header} variant="objects" loading />;
   if (agents.kind === "error") {
     return (
       <ListPage

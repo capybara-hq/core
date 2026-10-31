@@ -102,7 +102,7 @@ function PluginPageInOrg({ orgId, plugin, id }: { orgId: string; plugin: string;
 
   return (
     <DetailPage
-      header={{ path: [...scope, { label: "p" }, { label: title }], title }}
+      header={{ path: [...scope, { label: t("pluginPage.pathLabel") }, { label: title }], title }}
       tabs={{ label: title, items: [{ id: "view", label: title }], value: "view" }}
     >
       <Stack gap={12}>

@@ -257,6 +257,17 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     }
   }, []);
 
+  // The open conversation's run started, began or stopped waiting, or ended: the sidebar's state
+  // dot for it changes. The first phase read (the history) is the baseline, not a change.
+  const phase = state.waiting ? "waiting" : state.running ? "running" : "idle";
+  const lastPhase = useRef<{ id: string; phase: string } | null>(null);
+  useEffect(() => {
+    const last = lastPhase.current;
+    lastPhase.current = { id: conversationId, phase };
+    if (last !== null && last.id === conversationId && last.phase !== phase)
+      notifyConversationsChanged();
+  }, [conversationId, phase]);
+
   return {
     state,
     events: state.events,

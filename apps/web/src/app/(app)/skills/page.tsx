@@ -83,6 +83,7 @@ function Skills({ orgId }: { orgId: string }) {
         }}
         variant="objects"
         listLabel={t("listLabel")}
+        loading={state.kind === "loading"}
         {...(empty ? { empty } : {})}
       >
         {rows.map((s) => (

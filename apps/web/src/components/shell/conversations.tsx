@@ -126,10 +126,13 @@ export type ConversationGroupsOptions = {
   onError?(e: unknown): void;
 };
 
+/** The periodic reload of the groups (state dots of background conversations). */
+const GROUPS_POLL_MS = 30_000;
+
 /**
  * The sidebar's conversation section for the current user (web order §2.1): my conversations
  * grouped by agent, loaded on an org change, refreshed on a route into `/chat/*` (a new
- * conversation shows), when the window gets focus and after a row action. State lives in this
+ * conversation shows), when the window gets focus, every 30 s and after a row action. State lives in this
  * browser only.
  *
  * `orgId`: `undefined` while the session loads (the section shows its skeleton), `null` when the
@@ -242,11 +245,19 @@ export function useConversationGroups(
     if (orgId === null || orgId === undefined) return;
     const onFocus = () => void load(orgId);
     window.addEventListener("focus", onFocus);
-    // A title changed (generated or renamed), a conversation was archived or deleted.
+    // A title changed (generated or renamed), a conversation was archived or deleted, the open
+    // conversation's run started, ended or began waiting.
     window.addEventListener(CONVERSATIONS_CHANGED, onFocus);
+    // Conversations in the background have no stream here: a cheap periodic reload keeps their
+    // state dots current (the inbox count polls at the same pace). Skipped while the tab is hidden.
+    const timer = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      void load(orgId);
+    }, GROUPS_POLL_MS);
     return () => {
       window.removeEventListener("focus", onFocus);
       window.removeEventListener(CONVERSATIONS_CHANGED, onFocus);
+      clearInterval(timer);
     };
   }, [orgId, load]);
 

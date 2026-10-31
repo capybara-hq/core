@@ -194,6 +194,31 @@ describe("useConversationGroups", () => {
     expect(await screen.findByRole("link", { name: "新的标题" })).toBeTruthy();
   });
 
+  it("reloads every 30 s, so a background conversation's state dot follows its runs", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let activity: "running" | null = null;
+      const calls = stubApi({
+        "GET /api/v1/orgs/o1/conversations/groups": () =>
+          json(200, {
+            groups: [group("a1", "研究助手", [{ ...conv("c1", "a1", "一"), activity }])],
+            next: null,
+          }),
+      });
+      show("o1");
+      await screen.findByRole("link", { name: "一" });
+      const loads = () => calls.filter((c) => c.url.includes("/conversations/groups")).length;
+      const before = loads();
+      activity = "running";
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(loads()).toBe(before + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("collapsed groups are remembered per org (m4)", async () => {
     stubApi({
       "GET /api/v1/orgs/o1/conversations/groups": () =>

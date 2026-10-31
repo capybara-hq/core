@@ -637,6 +637,21 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(screen.queryByRole("region", { name: "会话" })).toBeNull();
   });
 
+  it("a person who is not an enterprise admin keeps the workspace sidebar under /admin", async () => {
+    resetNavigation("/admin/accounts");
+    stubApi({
+      "GET /api/v1/me": () =>
+        json(200, { ...ME, account: { ...ME.account, isEnterpriseAdmin: false } }),
+      "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
+    });
+    renderFrame();
+    expect(await screen.findByText("page body")).toBeTruthy();
+    const nav = screen.getByRole("navigation", { name: "主导航" });
+    // the 403 page stands beside the workspace sidebar, never the admin context
+    expect(within(nav).queryByRole("link", { name: zh.admin.nav.overview })).toBeNull();
+    expect(within(nav).getByRole("link", { name: zh.nav.agents })).toBeTruthy();
+  });
+
   it("访客的顶栏不显示「技能」", async () => {
     resetNavigation("/");
     stubApi({

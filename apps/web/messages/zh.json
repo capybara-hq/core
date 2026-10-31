@@ -825,6 +825,7 @@
     "sandboxFailed": "状态读取失败"
   },
   "pluginPage": {
+    "pathLabel": "扩展页",
     "liveLost": "实时刷新已断开，刷新页面以获取最新内容。"
   },
   "nav": {

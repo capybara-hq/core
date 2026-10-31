@@ -90,7 +90,12 @@ function AdminDirectory() {
           : undefined;
 
   return (
-    <ListPage header={header} variant="objects" {...(empty ? { empty } : {})}>
+    <ListPage
+      header={header}
+      variant="objects"
+      loading={state.kind === "loading"}
+      {...(empty ? { empty } : {})}
+    >
       {rows.map((i) => {
         const name = displayNameOf(i, locale);
         return (
