@@ -41,7 +41,7 @@ describe("组织设置（SettingsPage）", () => {
       const { container } = renderPage(<OrganizationSettingsPage />, { locale });
       expect(container.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
       // 二级导航与个人设置页一致，当前项为组织设置
-      const current = container.querySelector('[aria-current="page"]');
+      const current = container.querySelector('.cb-settings-nav [aria-current="page"]');
       expect(current?.textContent).toBe(m.connections.nav.organization);
       expect(current?.getAttribute("href")).toBe("/settings/organization");
       const on = await screen.findByRole("radio", { name: new RegExp(`^${o.toolSearch.on}`) });

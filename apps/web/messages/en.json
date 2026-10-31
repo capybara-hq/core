@@ -1222,6 +1222,8 @@
   "connections": {
     "title": "My settings",
     "nav": {
+      "groupPersonal": "Personal",
+      "groupOrg": "Organization",
       "connections": "My connections",
       "grants": "Remembered approvals",
       "organization": "Organization",
@@ -2089,6 +2091,7 @@
   "admin": {
     "title": "Admin",
     "nav": {
+      "group": "Admin",
       "overview": "Overview",
       "accounts": "Accounts",
       "orgs": "Organizations",

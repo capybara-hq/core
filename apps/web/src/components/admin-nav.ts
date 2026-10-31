@@ -21,7 +21,16 @@ export type AdminPageId = (typeof ADMIN_PAGES)[number]["id"];
  * navigation; list pages go back to the overview through the header's path. An org's own
  * settings stay under `/settings/*`.
  */
-export function useAdminNav(): { id: AdminPageId; label: string; href: string }[] {
+export function useAdminNav(): {
+  group: string;
+  items: { id: AdminPageId; label: string; href: string }[];
+}[] {
   const t = useTranslations("admin.nav");
-  return ADMIN_PAGES.map((p) => ({ id: p.id, label: t(p.id), href: p.href }));
+  // One group until Task 10 removes the inner nav of the admin pages.
+  return [
+    {
+      group: t("group"),
+      items: ADMIN_PAGES.map((p) => ({ id: p.id, label: t(p.id), href: p.href })),
+    },
+  ];
 }

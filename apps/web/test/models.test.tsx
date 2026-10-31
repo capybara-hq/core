@@ -143,7 +143,7 @@ describe("/admin/models（SettingsPage）", () => {
     adminRoutes();
     const { container } = renderPage(<AdminModelsPage />, { locale });
     expect(template("SettingsPage")).not.toBeNull();
-    const current = container.querySelector('[aria-current="page"]');
+    const current = container.querySelector('.cb-settings-nav [aria-current="page"]');
     expect(current?.textContent).toBe(m.admin.nav.models);
     expect(current?.getAttribute("href")).toBe("/admin/models");
     const table = await screen.findByRole("table", { name: "alpha" });
@@ -385,7 +385,7 @@ describe("/settings/models（组织管理员）", () => {
       });
       const { container } = renderPage(<OrgModelsPage />, { locale });
       expect(template("SettingsPage")).not.toBeNull();
-      const current = container.querySelector('[aria-current="page"]');
+      const current = container.querySelector('.cb-settings-nav [aria-current="page"]');
       expect(current?.textContent).toBe(m.connections.nav.models);
       expect(current?.getAttribute("href")).toBe("/settings/models");
       const ev = await purposeBox("eval");

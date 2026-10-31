@@ -1222,6 +1222,8 @@
   "connections": {
     "title": "个人设置",
     "nav": {
+      "groupPersonal": "个人",
+      "groupOrg": "组织",
       "connections": "我的连接",
       "grants": "已记住的授权",
       "organization": "组织设置",
@@ -2089,6 +2091,7 @@
   "admin": {
     "title": "管理",
     "nav": {
+      "group": "管理后台",
       "overview": "概览",
       "accounts": "账号",
       "orgs": "组织",

@@ -304,7 +304,7 @@ A new page **must** pick one of the following templates; a new template requires
 | T2 | List | Rail + Content | — | During bulk edits | list | Agents, connectors, extensions, members |
 | T3 | Detail | Content + Inspector | Yes | — | full | Agent, connector, extension details |
 | T4 | Form | Centered | — | Always (submit actions) | form | Create / edit Agent |
-| T5 | Settings | Rail (second-level navigation, named "Settings navigation", not collapsible, its first item level with the header) + one content column holding the PageHeader and the content at the form width, so the title lines up with the content | — | When there are changes | form | Org, environment, security |
+| T5 | Settings | The PageHeader across the full content width, then below it a 200 px sub-nav (named "Settings navigation"; groups with a mono `faint` label, 30 px items, the current item on `sidebar-active`, optional mono counts) beside the content column (below 960 the nav stacks above the content) | — | When there are changes | form | Org, environment, security |
 | T6 | Inbox | Rail + Content (+ Inspector) | — | During decisions | full | Human approval, alert handling |
 | T7 | Conversation | Title bar + thread + composer, with the properties panel or one right panel (§5.4) | — | — | own columns | The conversation page (`/chat`, `/chat/<id>`) |
 | T8 | Trace | Single (top: span waterfall, bottom: span detail) | — | — | full | Single run detail |
@@ -320,6 +320,7 @@ A new page **must** pick one of the following templates; a new template requires
 - Subordinate section (optional, at most one): below the main table with a `space.6` gap, an `h2` title + one DataTable listing secondary objects closely related to the main object and few in number (such as "Invitations" on the members page); it has no filters or metrics of its own, and the create entry stays in the PageHeader. When the secondary objects need their own filters or are numerous, make a separate list page.
 - PageHeader: title + total, description, secondary actions on the right + Create (primary); metrics ≤ 5 as StatCards.
 - StatusBar page status: the number of filter results.
+- **Variants** (`variant`): `records` (default) holds a DataTable; `objects` wraps its ObjectRows (§6.17) in one ObjectList panel (things people own and configure: agents, skills, connectors, plugins, extensions). The `callout` prop draws a Callout (§6.19) in the header between the title row and the tabs; `empty` draws an EmptyState (§6.18) instead of the content. An object list has no rail: tabs with counts in the header replace the filters.
 
 <!-- states: template-list -->
 States: `page`
@@ -1504,6 +1505,22 @@ States: `image`, `text`, `markdown`, `csv`, `none`, `failed`
 | no-preview | failed | background-color | color.raised |
 
 ---
+
+### 6.17 ObjectList and ObjectRow
+
+`ObjectList({ label, children })` is the panel of an object list: a `ul` on the `panel` ground, 1px `line-soft` border, radius `md`, rows split by `line-soft`. `ObjectRow` is one `li`, at least 64 px high, padding `space.3` / `space.4`, `space.3` between its parts:
+
+- A 36 px mark (radius `md`, `selected` ground): initials in 700 (mono like the whole UI) or an icon; `tone="warn"` tints it with `warn` at 15% when the object needs attention.
+- Text column: line 1 the name (700; a link when `href`; `mono` for package names) and chips (`small`, 1px `line` border, radius `sm`; `tone="warn"` draws the warn tint without a border); line 2 the description in `muted`, one line with an ellipsis; line 3 the meta in `faint`, `small`, one line.
+- At the right: a state label (`state`: `ok` / `warn` / `fail` colored, `muted` in `faint`), a short `trailing` text in `faint`, one row action (`action`: a `default` or `primary` dense button, or a link) and the `more-horizontal` overflow menu (`menu`). Below 640 the row wraps.
+
+### 6.18 EmptyState
+
+`EmptyState({ icon, text, action? })`: one framed panel (`panel`, 1px `line-soft`, radius `md`, padding `space.8` / `space.4`), centered: a 16 px icon, one sentence in `muted`, the primary action. It replaces the list (never a table header over an icon); the DataTable keeps its own empty area (§6.6).
+
+### 6.19 Callout
+
+`Callout({ tone, action?, children })`: a `role="status"` bar naming what needs action, radius `md`, padding `space.3` / `space.4`: a `circle-alert` icon, the sentence, and one dense button or link. `warn` uses the `warn` tint (15%) and a `warn` icon; `fail` the `fail` tint (12%) and icon. On list pages it sits in the header between the title row and the tabs (`ListPage.callout`).
 
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.

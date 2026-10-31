@@ -38,6 +38,8 @@ export type PageHeaderProps = {
   metrics?: MetricProps[];
   /** Row 2 right; at most one primary, rightmost. */
   actions?: HeaderAction[];
+  /** Between the title row and the tabs: a Callout naming what needs action (ListPage `callout`). */
+  notice?: ReactNode;
   /** Row 4 (optional): the page's views with counts; the search sits at the row's right end. */
   tabs?: { id: string; label: string; count?: number; href?: string; onSelect?(): void }[];
   /** The selected tab's id. */
@@ -208,6 +210,7 @@ export function PageHeader(p: PageHeaderProps) {
           </div>
         ) : null}
       </div>
+      {p.notice ?? null}
       {tabItems.length > 0 || p.search ? (
         <div className="cb-pageheader-tabs" data-part="page-header-tabs">
           {tabItems.length > 0 ? (

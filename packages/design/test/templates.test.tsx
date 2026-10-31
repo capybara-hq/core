@@ -64,7 +64,7 @@ describe("页面模板根节点与页头", () => {
       "SettingsPage",
       <SettingsPage
         header={header}
-        nav={[{ id: "org", label: "组织", href: "/org" }]}
+        nav={[{ group: "g", items: [{ id: "org", label: "组织", href: "/org" }] }]}
         activeNav="org"
       >
         x
@@ -204,7 +204,11 @@ describe("widths, stat cards and the form without anchors", () => {
     ],
     [
       "SettingsPage",
-      <SettingsPage header={header} nav={[{ id: "o", label: "组织", href: "/o" }]} activeNav="o">
+      <SettingsPage
+        header={header}
+        nav={[{ group: "g", items: [{ id: "o", label: "组织", href: "/o" }] }]}
+        activeNav="o"
+      >
         x
       </SettingsPage>,
       "content",
@@ -362,8 +366,13 @@ describe("其他模板行为", () => {
       <SettingsPage
         header={header}
         nav={[
-          { id: "org", label: "组织", href: "/org" },
-          { id: "sec", label: "安全", href: "/sec" },
+          {
+            group: "g",
+            items: [
+              { id: "org", label: "组织", href: "/org" },
+              { id: "sec", label: "安全", href: "/sec" },
+            ],
+          },
         ]}
         activeNav="sec"
       >
@@ -500,8 +509,13 @@ describe("SettingsPage column (blind round 2)", () => {
       <SettingsPage
         header={{ path: [], title: "组织设置" }}
         nav={[
-          { id: "org", label: "组织", href: "/org" },
-          { id: "members", label: "成员", href: "/members" },
+          {
+            group: "g",
+            items: [
+              { id: "org", label: "组织", href: "/org" },
+              { id: "members", label: "成员", href: "/members" },
+            ],
+          },
         ]}
         activeNav="org"
       >
@@ -509,21 +523,18 @@ describe("SettingsPage column (blind round 2)", () => {
       </SettingsPage>,
     );
 
-  it("the header sits in the content column, beside the rail, not above it", () => {
+  it("the header spans the content width above the sub-nav and the content", () => {
     settings();
     const title = screen.getByRole("heading", { name: "组织设置" });
+    const nav = screen.getByRole("navigation", { name: "设置导航" });
     const content = document.querySelector('[data-part="content"]') as HTMLElement;
-    const main = title.closest(".cb-body-main");
-    expect(main).not.toBeNull();
-    expect(main?.contains(content)).toBe(true);
-    const rail = document.querySelector(".cb-body-rail") as HTMLElement;
-    expect(rail.contains(title)).toBe(false);
-    expect(rail.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // the header frame has the form width, like the content frame
+    expect(content.contains(nav)).toBe(true);
+    expect(content.contains(title)).toBe(false);
+    expect(title.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(title.closest(".cb-template-head-frame")?.getAttribute("data-width")).toBe("content");
   });
 
-  it("the nav starts the rail: no collapse button above it; the nav has a name", () => {
+  it("the sub-nav has a name and no collapse button", () => {
     settings();
     expect(screen.queryByRole("button", { name: "收起侧栏" })).toBeNull();
     const nav = screen.getByRole("navigation", { name: "设置导航" });

@@ -18,18 +18,29 @@ export function useSettingsNav() {
   const session = useContext(SessionContext);
   const admin = session !== null && canUpdateOrg(session.me);
   const member = session !== null && roleAtLeast(myRole(session.me), "member");
+  // Mechanical grouping; Task 9 regroups the settings pages properly.
   return [
-    { id: "connections", label: t("connections"), href: "/settings/connections" },
-    { id: "grants", label: t("grants"), href: "/settings/grants" },
-    { id: "identities", label: t("identities"), href: "/settings/identities" },
-    { id: "organization", label: t("organization"), href: "/settings/organization" },
-    ...(member ? [{ id: "members", label: t("members"), href: "/settings/members" }] : []),
-    ...(admin
-      ? [
-          { id: "extensions", label: t("extensions"), href: "/settings/extensions" },
-          { id: "plugins", label: t("plugins"), href: "/settings/plugins" },
-          { id: "models", label: t("models"), href: "/settings/models" },
-        ]
-      : []),
+    {
+      group: t("groupPersonal"),
+      items: [
+        { id: "connections", label: t("connections"), href: "/settings/connections" },
+        { id: "grants", label: t("grants"), href: "/settings/grants" },
+        { id: "identities", label: t("identities"), href: "/settings/identities" },
+      ],
+    },
+    {
+      group: t("groupOrg"),
+      items: [
+        { id: "organization", label: t("organization"), href: "/settings/organization" },
+        ...(member ? [{ id: "members", label: t("members"), href: "/settings/members" }] : []),
+        ...(admin
+          ? [
+              { id: "extensions", label: t("extensions"), href: "/settings/extensions" },
+              { id: "plugins", label: t("plugins"), href: "/settings/plugins" },
+              { id: "models", label: t("models"), href: "/settings/models" },
+            ]
+          : []),
+      ],
+    },
   ];
 }

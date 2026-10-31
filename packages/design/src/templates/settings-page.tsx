@@ -3,9 +3,15 @@ import { useDesignLink, useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
 import { TemplateHead } from "./frame";
 
+export type SettingsNavGroup = {
+  group: string;
+  items: { id: string; label: string; href: string; count?: number }[];
+};
+
 /**
- * T5 Settings: the second-level navigation rail beside one content column that holds the header
- * and the content at the form width (the title lines up with the content); ActionRow on changes.
+ * T5 Settings (spec §5.5, canvas "组织 · 设置"): the head across the full content width, then a
+ * 200 px sub-nav (mono group labels, 30 px items, the current one on `sidebar-active`, mono
+ * counts) beside the section content; ActionRow on changes.
  */
 export function SettingsPage({
   header,
@@ -15,7 +21,7 @@ export function SettingsPage({
   children,
 }: {
   header: PageHeaderProps;
-  nav: { id: string; label: string; href: string }[];
+  nav: SettingsNavGroup[];
   activeNav: string;
   actionRow?: ActionRowProps;
   children?: ReactNode;
@@ -24,31 +30,35 @@ export function SettingsPage({
   const t = useDesignT();
   const rail = (
     <nav className="cb-settings-nav" aria-label={t("settings.nav")}>
-      {nav.map((n) => (
-        <Link
-          key={n.id}
-          href={n.href}
-          className="cb-settings-nav-item"
-          data-current={n.id === activeNav ? "true" : undefined}
-          {...(n.id === activeNav ? { "aria-current": "page" as const } : {})}
-        >
-          {n.label}
-        </Link>
+      {nav.map((g) => (
+        <div key={g.group} className="cb-settings-nav-section">
+          <span className="cb-settings-nav-group">{g.group}</span>
+          {g.items.map((n) => (
+            <Link
+              key={n.id}
+              href={n.href}
+              className="cb-settings-nav-item"
+              data-current={n.id === activeNav ? "true" : undefined}
+              {...(n.id === activeNav ? { "aria-current": "page" as const } : {})}
+            >
+              <span>{n.label}</span>
+              {n.count !== undefined ? (
+                <span className="cb-settings-nav-count">{n.count}</span>
+              ) : null}
+            </Link>
+          ))}
+        </div>
       ))}
     </nav>
   );
   return (
     <div className="cb-template" data-template="SettingsPage" data-width="content">
-      <Body
-        layout="rail"
-        rail={rail}
-        railFlush
-        railCollapsible={false}
-        head={<TemplateHead header={header} loose />}
-        loose
-        width="content"
-      >
-        {children}
+      <TemplateHead header={header} />
+      <Body layout="single" width="content">
+        <div className="cb-settings-grid">
+          {rail}
+          <div className="cb-settings-content">{children}</div>
+        </div>
       </Body>
       {actionRow ? <ActionRow {...actionRow} /> : null}
     </div>
