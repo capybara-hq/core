@@ -65,8 +65,9 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
   // the inbox is the brand row's button (acceptance round 2, B2)
   const primary = ["overview", "agents"];
   const guest = ["connectors"];
-  const member = ["skills", "connectors", "catalog"];
-  const admin = [...member, "channels", "evals", "settings"];
+  // 组织设置 is shown to members too (read-only for them; user decision, role pass item 8)
+  const member = ["skills", "connectors", "catalog", "settings"];
+  const admin = ["skills", "connectors", "catalog", "channels", "evals", "settings"];
   const cases: [NavLevel, boolean, string[]][] = [
     ["guest", false, guest],
     ["member", false, member],
@@ -84,7 +85,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
     });
   }
 
-  it("members see 技能 连接器 插件 under 更多; org admins also 渠道 评测与运行 组织设置", () => {
+  it("members see 技能 连接器 插件 组织设置 under 更多; org admins also 渠道 评测与运行", () => {
     function Labels({ level }: { level: NavLevel }) {
       const { primary, more } = useNav(0, level, false, false);
       return (
@@ -112,6 +113,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
         ["技能", "skills", "/skills"],
         ["连接器", "connector", "/connectors"],
         ["插件", "catalog", "/catalog"],
+        ["组织设置", "settings", "/settings/organization"],
       ],
     });
     expect(read("admin").more).toEqual([
@@ -122,6 +124,25 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
       ["评测与运行", "evals", "/evals"],
       ["组织设置", "settings", "/settings/organization"],
     ]);
+  });
+
+  it("⌘K actions follow the role: 新建 Agent from member, 添加连接器 for org admins only", () => {
+    function Actions({ level }: { level: NavLevel }) {
+      const { commands } = useNav(0, level, false, false);
+      const actions = commands.find((g) => g.label === zh.nav.actions)?.items ?? [];
+      return <pre data-testid={level}>{JSON.stringify(actions.map((i) => i.id))}</pre>;
+    }
+    render(
+      <NextIntlClientProvider locale="zh" messages={zh}>
+        <Actions level="guest" />
+        <Actions level="member" />
+        <Actions level="admin" />
+      </NextIntlClientProvider>,
+    );
+    const read = (id: string) => JSON.parse(screen.getByTestId(id).textContent ?? "[]");
+    expect(read("guest")).toEqual([]);
+    expect(read("member")).toEqual(["new-agent"]);
+    expect(read("admin")).toEqual(["new-agent", "new-app"]);
   });
 
   it("the admin context lists 概览 账号 组织 扩展 企业目录 市场 模型 部署设置", () => {

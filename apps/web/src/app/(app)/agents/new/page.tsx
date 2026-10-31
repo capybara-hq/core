@@ -3,7 +3,7 @@
 import { FormPage } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useAgentForm } from "../../../../components/AgentForm";
-import { OrgGate } from "../../../../components/OrgGate";
+import { RoleGate } from "../../../../components/RoleGate";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSetup } from "../../../../components/shell/setup";
 import { useRouter } from "../../../../i18n/navigation";
@@ -15,7 +15,7 @@ import type { Agent } from "../../../../lib/agents";
  * page lands on a new conversation with that agent; that navigation re-reads readiness.
  */
 export default function NewAgentPage() {
-  return <OrgGate>{(orgId) => <NewAgent orgId={orgId} />}</OrgGate>;
+  return <RoleGate min="member">{(orgId) => <NewAgent orgId={orgId} />}</RoleGate>;
 }
 
 function NewAgent({ orgId }: { orgId: string }) {

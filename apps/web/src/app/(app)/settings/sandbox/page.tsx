@@ -15,7 +15,7 @@ import {
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { FormError } from "../../../../components/form-error";
-import { OrgGate } from "../../../../components/OrgGate";
+import { RoleGate } from "../../../../components/RoleGate";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
@@ -47,7 +47,9 @@ const sameList = (a: readonly string[], b: readonly string[]) =>
   a.length === b.length && a.every((v, i) => v === b[i]);
 
 export default function SandboxSettingsPage() {
-  return <OrgGate>{(orgId) => <SandboxSettings key={orgId} orgId={orgId} />}</OrgGate>;
+  return (
+    <RoleGate min="member">{(orgId) => <SandboxSettings key={orgId} orgId={orgId} />}</RoleGate>
+  );
 }
 
 function SandboxSettings({ orgId }: { orgId: string }) {

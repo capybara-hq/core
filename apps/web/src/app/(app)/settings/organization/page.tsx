@@ -14,7 +14,7 @@ import {
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { FormError } from "../../../../components/form-error";
-import { OrgGate } from "../../../../components/OrgGate";
+import { RoleGate } from "../../../../components/RoleGate";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
@@ -36,7 +36,11 @@ import { useLoad } from "../../../../lib/use-load";
  */
 
 export default function OrganizationSettingsPage() {
-  return <OrgGate>{(orgId) => <OrganizationSettings key={orgId} orgId={orgId} />}</OrgGate>;
+  return (
+    <RoleGate min="member">
+      {(orgId) => <OrganizationSettings key={orgId} orgId={orgId} />}
+    </RoleGate>
+  );
 }
 
 function OrganizationSettings({ orgId }: { orgId: string }) {

@@ -7,6 +7,8 @@ import { useRouter } from "../i18n/navigation";
 import { type Agent, listAgents } from "../lib/agents";
 import { ApiClientError } from "../lib/api";
 import { canUpdateOrg } from "../lib/org-settings";
+import { ReassignOwnerDialog } from "./ReassignOwnerDialog";
+import { navLevelOf } from "./shell/nav";
 import { SessionContext } from "./shell/session";
 
 type AgentsState =
@@ -62,13 +64,18 @@ export function matchesAgent(a: Agent, query: string): boolean {
  * conversation with that agent picked (`/chat?agent=`, created on the first send). The API returns
  * no last-use time, so there is no trailing text.
  */
-export function AgentRow({ agent }: { agent: Agent }) {
+export function AgentRow({ agent, onChanged }: { agent: Agent; onChanged?(): void }) {
   const t = useTranslations("agents");
   const router = useRouter();
   const session = useContext(SessionContext);
+  const [reassigning, setReassigning] = useState(false);
+  // The kernel lets the owner (agents.create: members up) or an org admin change an agent;
+  // 更换负责人 is agents.manage (org admins).
+  const admin = session !== null && canUpdateOrg(session.me);
   const canEdit =
     session !== null &&
-    (agent.ownerAccountId === session.me.account.id || canUpdateOrg(session.me));
+    navLevelOf(session.me) !== "guest" &&
+    (agent.ownerAccountId === session.me.account.id || admin);
   const def = agent.definition;
   const skills = def.skills?.orgSkills.length ?? 0;
   const tools = def.tools?.length ?? 0;
@@ -80,17 +87,29 @@ export function AgentRow({ agent }: { agent: Agent }) {
   const editHref = `/agents/${encodeURIComponent(agent.id)}`;
   const start = () => router.push(`/chat?agent=${encodeURIComponent(agent.id)}`);
   return (
-    <ObjectRow
-      mark={{ text: Array.from(def.name)[0] ?? "?" }}
-      name={def.name}
-      {...(canEdit ? { href: editHref } : {})}
-      chips={[{ label: t(`scope.${agent.visibility}`) }]}
-      meta={meta}
-      action={{ label: t("chat"), onSelect: start }}
-      menu={[
-        { label: t("startChat"), onSelect: start },
-        ...(canEdit ? [{ label: t("edit"), onSelect: () => router.push(editHref) }] : []),
-      ]}
-    />
+    <>
+      <ObjectRow
+        mark={{ text: Array.from(def.name)[0] ?? "?" }}
+        name={def.name}
+        {...(canEdit ? { href: editHref } : {})}
+        chips={[{ label: t(`scope.${agent.visibility}`) }]}
+        meta={meta}
+        action={{ label: t("chat"), onSelect: start }}
+        menu={[
+          { label: t("startChat"), onSelect: start },
+          ...(canEdit ? [{ label: t("edit"), onSelect: () => router.push(editHref) }] : []),
+          ...(admin ? [{ label: t("reassign.action"), onSelect: () => setReassigning(true) }] : []),
+        ]}
+      />
+      {reassigning ? (
+        <ReassignOwnerDialog
+          orgId={agent.orgId}
+          agentId={agent.id}
+          ownerAccountId={agent.ownerAccountId}
+          onClose={() => setReassigning(false)}
+          {...(onChanged ? { onDone: onChanged } : {})}
+        />
+      ) : null}
+    </>
   );
 }

@@ -96,7 +96,7 @@ describe("组织设置（SettingsPage）", () => {
     }
   });
 
-  it("二级导航：成员起有「成员」（访客没有）", async () => {
+  it("二级导航：成员起有「成员」；访客打不开组织设置（没有访问权限）", async () => {
     stubApi({ [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }) });
     renderPage(<OrganizationSettingsPage />, { me: MEMBER });
     const link = await screen.findByRole("link", { name: en.connections.nav.members });
@@ -106,7 +106,9 @@ describe("组织设置（SettingsPage）", () => {
     renderPage(<OrganizationSettingsPage />, {
       me: { ...ME, memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "guest" }] },
     });
-    await screen.findByText(en.orgSettings.readonly);
+    expect(
+      document.querySelector('[data-template="StatusPage"][data-kind="no-access"]'),
+    ).toBeTruthy();
     expect(screen.queryByRole("link", { name: en.connections.nav.members })).toBeNull();
   });
 

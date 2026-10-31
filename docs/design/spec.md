@@ -310,7 +310,7 @@ A new page **must** pick one of the following templates; a new template requires
 | T8 | Trace | Single (top: span waterfall, bottom: span detail) | — | — | full | Single run detail |
 | T9 | Wizard | Centered + step bar | — | Always (Previous / Next) | form | First-time model, connector and extension setup |
 | T10 | Auth | No Shell, centered card + dither dot matrix on both sides | — | — | — | Sign in, password recovery, accept invitation, initialization |
-| T11 | System status | Single centered | — | — | — | 404, 403, under maintenance, not enabled, no access (`kind="no-access"`: a 24 px `lock` in `faint` instead of the code, the title, what the page is, `need` as a mono chip "需要：组织管理员" / "Requires: Org admin" (1px `line`, radius `sm`, `small`), `ask` in `muted` (who to ask); never an action or a retry; the web app's one role gate draws it, web-order spec §9) |
+| T11 | System status | Single centered | — | — | — | 404, 403, under maintenance, not enabled, no access (`kind="no-access"`: a 16 px `lock` in `faint` instead of the code, the title, what the page is, `need` as a mono chip "需要：组织管理员" / "Requires: Org admin" (1px `line`, radius `sm`, `small`), `ask` in `muted` (who to ask); never an action or a retry; the web app's one role gate draws it, web-order spec §9) |
 | T12 | Onboarding | Single centered checklist | — | — | — | New org, empty environment |
 | T13 | Setup | No Shell: a 48 px top bar (brand; the org, the account and the theme at its right end, `line-soft` below), a centered column, the status bar (§5.5) | — | — | chat column (home) / content (step pages) | The workspace while the org has no model or no agent (web-order spec §3.8) |
 

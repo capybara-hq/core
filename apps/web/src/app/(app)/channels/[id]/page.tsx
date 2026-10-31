@@ -19,7 +19,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { AgentSelect, ChannelStatusMark, PolicyRadio } from "../../../../components/ChannelFields";
 import { FormError } from "../../../../components/form-error";
-import { OrgGate } from "../../../../components/OrgGate";
+import { RoleGate } from "../../../../components/RoleGate";
 import {
   changedCount,
   draftToConfig,
@@ -53,7 +53,7 @@ type Tab = (typeof TABS)[number];
  */
 export default function ChannelDetailPage() {
   const { id } = useParams<{ id: string }>();
-  return <OrgGate>{(orgId) => <ChannelInOrg orgId={orgId} id={id} />}</OrgGate>;
+  return <RoleGate min="admin">{(orgId) => <ChannelInOrg orgId={orgId} id={id} />}</RoleGate>;
 }
 
 /** 连接属于打开它时的组织：切换组织后不再以新组织 + 旧连接 id 渲染。 */

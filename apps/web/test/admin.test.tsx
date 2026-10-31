@@ -88,11 +88,14 @@ describe("/admin 概览（OverviewPage）", () => {
     }
   });
 
-  it("非企业管理员：StatusPage 403，不请求后台接口", () => {
+  it("非企业管理员：没有访问权限（需要企业管理员），不请求后台接口", () => {
     const calls = stubApi({});
     renderPage(<AdminOverviewPage />, { locale: "zh", me: NOT_ADMIN });
-    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("403");
-    expect(screen.getAllByText(zh.admin.forbidden.title).length).toBeGreaterThan(0);
+    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
+    expect(document.querySelector('[data-part="status-need"]')?.textContent).toBe(
+      `需要：${zh.roles.need.enterprise}`,
+    );
+    expect(screen.getByText(zh.roles.noAccess.askEnterprise)).toBeTruthy();
     expect(calls).toEqual([]);
   });
 });

@@ -41,7 +41,7 @@ export function StatusPage({
           <Logo scale={3} tone="muted" />
           {kind === "no-access" ? (
             <span className="cb-status-lock" data-part="status-lock" aria-hidden="true">
-              <Icon name="lock" size={24} />
+              <Icon name="lock" size={16} />
             </span>
           ) : (
             <Text variant="h1" tone="faint" as="p">

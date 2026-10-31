@@ -3,8 +3,8 @@
 import { FormSection, SettingsPage, Skeleton, Text } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { FormError } from "../../../../components/form-error";
-import { OrgGate } from "../../../../components/OrgGate";
 import { PurposeEditor } from "../../../../components/PurposeEditor";
+import { RoleGate } from "../../../../components/RoleGate";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { listModels } from "../../../../lib/agents";
@@ -23,7 +23,7 @@ import { useLoad } from "../../../../lib/use-load";
  * 组织可以覆盖（选模型与参数）或恢复默认；`eval` 没有生效的映射时提示评测不能开评委（评测向导链到这里）。
  */
 export default function OrgModelsPage() {
-  return <OrgGate>{(orgId) => <OrgModels key={orgId} orgId={orgId} />}</OrgGate>;
+  return <RoleGate min="admin">{(orgId) => <OrgModels key={orgId} orgId={orgId} />}</RoleGate>;
 }
 
 function OrgModels({ orgId }: { orgId: string }) {

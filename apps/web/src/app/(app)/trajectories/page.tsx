@@ -15,7 +15,7 @@ import {
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { formatTime } from "../../../components/ApprovalCard";
-import { OrgGate } from "../../../components/OrgGate";
+import { RoleGate } from "../../../components/RoleGate";
 import { usePagePath } from "../../../components/shell/path";
 import { useRouter } from "../../../i18n/navigation";
 import { listAgents } from "../../../lib/agents";
@@ -39,7 +39,7 @@ const PAGE = 50;
  * （agent 详情页的「运行记录」入口）。列表只有元数据，不写审计；打开一行进详情。
  */
 export default function TrajectoriesPage() {
-  return <OrgGate>{(orgId) => <Trajectories key={orgId} orgId={orgId} />}</OrgGate>;
+  return <RoleGate min="member">{(orgId) => <Trajectories key={orgId} orgId={orgId} />}</RoleGate>;
 }
 
 /** 查询串只在浏览器里读（会话加载前不渲染本组件，所以不涉及服务端渲染）。 */

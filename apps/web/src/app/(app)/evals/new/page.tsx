@@ -13,7 +13,7 @@ import {
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { FormError } from "../../../../components/form-error";
-import { OrgGate } from "../../../../components/OrgGate";
+import { RoleGate } from "../../../../components/RoleGate";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import { listAgents } from "../../../../lib/agents";
@@ -26,7 +26,7 @@ import { useLoad } from "../../../../lib/use-load";
  * 创建后进评测集详情。
  */
 export default function NewEvalSetPage() {
-  return <OrgGate>{(orgId) => <NewEvalSet key={orgId} orgId={orgId} />}</OrgGate>;
+  return <RoleGate min="admin">{(orgId) => <NewEvalSet key={orgId} orgId={orgId} />}</RoleGate>;
 }
 
 function NewEvalSet({ orgId }: { orgId: string }) {

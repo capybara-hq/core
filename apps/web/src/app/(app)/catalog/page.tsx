@@ -4,7 +4,7 @@ import { ListPage, ObjectRow } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { useOrgItemStatus } from "../../../components/CatalogInstallAction";
-import { OrgGate } from "../../../components/OrgGate";
+import { RoleGate } from "../../../components/RoleGate";
 import { usePagePath } from "../../../components/shell/path";
 import { useSession } from "../../../components/shell/session";
 import { displayNameOf, listOrgCatalog, type OrgCatalogItem } from "../../../lib/catalog";
@@ -17,7 +17,7 @@ import { useLoad } from "../../../lib/use-load";
  * and upgrades open the detail page, which carries the full action (CatalogInstallAction).
  */
 export default function CatalogPage() {
-  return <OrgGate>{(orgId) => <Catalog key={orgId} orgId={orgId} />}</OrgGate>;
+  return <RoleGate min="member">{(orgId) => <Catalog key={orgId} orgId={orgId} />}</RoleGate>;
 }
 
 function Catalog({ orgId }: { orgId: string }) {

@@ -15,8 +15,8 @@ import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { FilePreviewersSection } from "../../../../components/FilePreviewersSection";
 import { FormError } from "../../../../components/form-error";
-import { OrgGate } from "../../../../components/OrgGate";
 import { PermissionReview } from "../../../../components/PermissionReview";
+import { RoleGate } from "../../../../components/RoleGate";
 import {
   changedCount,
   draftToConfig,
@@ -50,7 +50,7 @@ import { useLoad } from "../../../../lib/use-load";
  * extensions, the org's file previewers (`file-preview@1`) in order, when any is provided.
  */
 export default function ExtensionsPage() {
-  return <OrgGate>{(orgId) => <Plugins key={orgId} orgId={orgId} />}</OrgGate>;
+  return <RoleGate min="admin">{(orgId) => <Plugins key={orgId} orgId={orgId} />}</RoleGate>;
 }
 
 function Plugins({ orgId }: { orgId: string }) {

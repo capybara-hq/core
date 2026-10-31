@@ -9,7 +9,7 @@ import {
 } from "../../../../components/CatalogInstallAction";
 import { CatalogIcon, ComponentSection } from "../../../../components/CatalogParts";
 import { FormError } from "../../../../components/form-error";
-import { OrgGate } from "../../../../components/OrgGate";
+import { RoleGate } from "../../../../components/RoleGate";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import { ApiClientError } from "../../../../lib/api";
@@ -34,7 +34,11 @@ import { useLoad } from "../../../../lib/use-load";
  */
 export default function OrgCatalogItemPage() {
   const { itemId } = useParams<{ itemId: string }>();
-  return <OrgGate>{(orgId) => <ItemDetail key={orgId} orgId={orgId} itemId={itemId} />}</OrgGate>;
+  return (
+    <RoleGate min="member">
+      {(orgId) => <ItemDetail key={orgId} orgId={orgId} itemId={itemId} />}
+    </RoleGate>
+  );
 }
 
 function ItemDetail({ orgId, itemId }: { orgId: string; itemId: string }) {

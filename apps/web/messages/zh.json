@@ -17,7 +17,8 @@
     "language": "语言",
     "theme": "主题",
     "themeLight": "浅色",
-    "themeDark": "深色"
+    "themeDark": "深色",
+    "back": "返回"
   },
   "login": {
     "title": "登录",
@@ -607,6 +608,16 @@
       "empty": "这个 agent 还没有接入渠道。",
       "connect": "接入渠道",
       "loadFailed": "渠道加载失败。"
+    },
+    "readOnly": "只有这个 agent 的负责人和组织管理员能修改它；你可以和它对话。",
+    "reassign": {
+      "action": "更换负责人…",
+      "title": "更换负责人",
+      "owner": "新负责人",
+      "help": "负责人可以修改和删除这个 agent。",
+      "submit": "更换",
+      "done": "负责人已更换",
+      "none": "没有可选的成员"
     }
   },
   "skills": {
@@ -2159,10 +2170,6 @@
       "catalog": "企业目录",
       "marketplaces": "市场"
     },
-    "forbidden": {
-      "title": "需要企业管理员",
-      "hint": "只有企业管理员能打开管理后台。可以请企业管理员授予，或在服务器上运行 capybara admin grant 加登录名。"
-    },
     "overview": {
       "intro": "企业管理员在这里管理整个部署：账号、组织、扩展与部署设置。各组织自己的设置仍在组织的「设置」里。企业管理员不能查看对话内容。",
       "metrics": {
@@ -3298,5 +3305,20 @@
       "connectionsWhere": "个人设置 · 我的连接"
     },
     "waitingDeployment": "需要部署管理员配置模型服务后才能继续"
+  },
+  "roles": {
+    "need": {
+      "member": "组织成员",
+      "admin": "组织管理员",
+      "owner": "组织所有者",
+      "enterprise": "企业管理员"
+    },
+    "noAccess": {
+      "title": "没有访问权限",
+      "description": "「{page}」只对{role}开放。",
+      "askOrg": "如需访问，请联系本组织的管理员或所有者。",
+      "askEnterprise": "如需访问，请联系企业管理员授予，或在服务器上运行 capybara admin grant 加登录名。"
+    },
+    "readOnly": "你在本组织是{role}，这里只能查看；修改需要组织管理员。"
   }
 }

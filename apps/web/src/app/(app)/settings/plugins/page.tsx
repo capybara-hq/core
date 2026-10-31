@@ -5,8 +5,8 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { formatTime } from "../../../../components/ApprovalCard";
 import { FormError } from "../../../../components/form-error";
-import { OrgGate } from "../../../../components/OrgGate";
 import { PluginUpgradeDialog } from "../../../../components/PluginUpgradeDialog";
+import { RoleGate } from "../../../../components/RoleGate";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { ApiClientError } from "../../../../lib/api";
@@ -31,7 +31,7 @@ import { useLoad } from "../../../../lib/use-load";
  * confirm with the preview's diffHash); a component an upgrade dropped but kept is marked.
  */
 export default function PluginsPage() {
-  return <OrgGate>{(orgId) => <Apps key={orgId} orgId={orgId} />}</OrgGate>;
+  return <RoleGate min="admin">{(orgId) => <Apps key={orgId} orgId={orgId} />}</RoleGate>;
 }
 
 function Apps({ orgId }: { orgId: string }) {

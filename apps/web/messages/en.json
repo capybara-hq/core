@@ -17,7 +17,8 @@
     "language": "Language",
     "theme": "Theme",
     "themeLight": "Light",
-    "themeDark": "Dark"
+    "themeDark": "Dark",
+    "back": "Back"
   },
   "login": {
     "title": "Sign in",
@@ -607,6 +608,16 @@
       "empty": "No channel is connected to this agent.",
       "connect": "Connect a channel",
       "loadFailed": "Could not load the channels."
+    },
+    "readOnly": "Only the agent's owner and org admins can change it; you can chat with it.",
+    "reassign": {
+      "action": "Change owner…",
+      "title": "Change owner",
+      "owner": "New owner",
+      "help": "The owner can change and delete this agent.",
+      "submit": "Change",
+      "done": "Owner changed",
+      "none": "No members to choose from"
     }
   },
   "skills": {
@@ -2159,10 +2170,6 @@
       "catalog": "Catalog",
       "marketplaces": "Marketplaces"
     },
-    "forbidden": {
-      "title": "Enterprise admin required",
-      "hint": "Only enterprise admins can open the admin console. Ask an enterprise admin to grant it, or run capybara admin grant with your login on the server."
-    },
     "overview": {
       "intro": "Manage the deployment: accounts, organizations, extensions and settings. Each organization's own settings stay in its Settings; admins cannot read conversations.",
       "metrics": {
@@ -3298,5 +3305,20 @@
       "connectionsWhere": "Personal settings · My connections"
     },
     "waitingDeployment": "A deployment admin needs to set up a model service before you can continue"
+  },
+  "roles": {
+    "need": {
+      "member": "Org member",
+      "admin": "Org admin",
+      "owner": "Org owner",
+      "enterprise": "Enterprise admin"
+    },
+    "noAccess": {
+      "title": "You don't have access",
+      "description": "{page} is open to {role} only.",
+      "askOrg": "To get access, ask an admin or the owner of this organization.",
+      "askEnterprise": "To get access, ask an enterprise admin to grant it, or run capybara admin grant with your login on the server."
+    },
+    "readOnly": "Read-only for your role ({role}); changes need an org admin."
   }
 }

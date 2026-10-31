@@ -3,7 +3,7 @@
 import { WizardPage } from "@capybara-hq/design";
 import { useParams } from "next/navigation";
 import { CatalogInstallWizard } from "../../../../../components/CatalogInstallWizard";
-import { OrgGate } from "../../../../../components/OrgGate";
+import { RoleGate } from "../../../../../components/RoleGate";
 
 /**
  * `/catalog/[itemId]/install`: install a connector template or a plugin from the catalog
@@ -13,7 +13,7 @@ import { OrgGate } from "../../../../../components/OrgGate";
 export default function CatalogInstallPage() {
   const { itemId } = useParams<{ itemId: string }>();
   return (
-    <OrgGate>
+    <RoleGate min="admin">
       {(orgId) => (
         <CatalogInstallWizard
           key={orgId}
@@ -31,6 +31,6 @@ export default function CatalogInstallPage() {
           )}
         />
       )}
-    </OrgGate>
+    </RoleGate>
   );
 }

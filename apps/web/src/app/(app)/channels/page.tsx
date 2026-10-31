@@ -3,7 +3,7 @@
 import { ListPage, ObjectRow } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
-import { OrgGate } from "../../../components/OrgGate";
+import { RoleGate } from "../../../components/RoleGate";
 import { usePagePath } from "../../../components/shell/path";
 import { listAgents } from "../../../lib/agents";
 import { listChannels } from "../../../lib/channels";
@@ -11,7 +11,7 @@ import { useLoad } from "../../../lib/use-load";
 
 /** `/channels`: the org's channel connections as object rows (admins); a name opens the detail. */
 export default function ChannelsPage() {
-  return <OrgGate>{(orgId) => <Channels key={orgId} orgId={orgId} />}</OrgGate>;
+  return <RoleGate min="admin">{(orgId) => <Channels key={orgId} orgId={orgId} />}</RoleGate>;
 }
 
 async function load(orgId: string) {

@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { FormError } from "../../../../../../components/form-error";
-import { OrgGate } from "../../../../../../components/OrgGate";
+import { RoleGate } from "../../../../../../components/RoleGate";
 import { usePagePath } from "../../../../../../components/shell/path";
 import {
   ParentTrajectoryLink,
@@ -26,11 +26,11 @@ import { useLoad } from "../../../../../../lib/use-load";
 export default function EvalCasePage() {
   const { setId, caseId } = useParams<{ setId: string; caseId: string }>();
   return (
-    <OrgGate>
+    <RoleGate min="admin">
       {(orgId) => (
         <CaseInOrg key={`${orgId}\n${setId}\n${caseId}`} orgId={orgId} setId={setId} id={caseId} />
       )}
-    </OrgGate>
+    </RoleGate>
   );
 }
 

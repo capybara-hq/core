@@ -321,10 +321,10 @@ describe("/admin/models（ListPage）", () => {
     expect(await ev.findByText(`${en.agents.params.invalid}`)).toBeTruthy();
   });
 
-  it("非企业管理员：StatusPage 403，不请求后台接口", () => {
+  it("非企业管理员：没有访问权限，不请求后台接口", () => {
     const calls = stubApi({});
     renderPage(<AdminModelsPage />, { me: NOT_ADMIN });
-    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("403");
+    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
     expect(calls).toEqual([]);
   });
 });

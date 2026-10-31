@@ -22,7 +22,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { formatTime } from "../../../../../components/ApprovalCard";
 import { FormError } from "../../../../../components/form-error";
-import { OrgGate } from "../../../../../components/OrgGate";
+import { RoleGate } from "../../../../../components/RoleGate";
 import { usePagePath } from "../../../../../components/shell/path";
 import { grouped, useFormatCost } from "../../../../../components/TrajectoryParts";
 import { Link } from "../../../../../i18n/navigation";
@@ -70,9 +70,9 @@ type Tab = (typeof TABS)[number];
 export default function EvalRunPage() {
   const { runId } = useParams<{ runId: string }>();
   return (
-    <OrgGate>
+    <RoleGate min="admin">
       {(orgId) => <EvalRunInOrg key={`${orgId}\n${runId}`} orgId={orgId} runId={runId} />}
-    </OrgGate>
+    </RoleGate>
   );
 }
 

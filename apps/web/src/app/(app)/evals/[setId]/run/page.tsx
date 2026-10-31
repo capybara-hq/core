@@ -21,7 +21,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { FormError } from "../../../../../components/form-error";
 import { ModelParams } from "../../../../../components/ModelParams";
-import { OrgGate } from "../../../../../components/OrgGate";
+import { RoleGate } from "../../../../../components/RoleGate";
 import { usePagePath } from "../../../../../components/shell/path";
 import { grouped, useFormatCost } from "../../../../../components/TrajectoryParts";
 import { Link, useRouter } from "../../../../../i18n/navigation";
@@ -71,9 +71,9 @@ const PURPOSES_HREF = "/settings/models";
 export default function RunWizardPage() {
   const { setId } = useParams<{ setId: string }>();
   return (
-    <OrgGate>
+    <RoleGate min="admin">
       {(orgId) => <RunWizardInOrg key={`${orgId}\n${setId}`} orgId={orgId} setId={setId} />}
-    </OrgGate>
+    </RoleGate>
   );
 }
 

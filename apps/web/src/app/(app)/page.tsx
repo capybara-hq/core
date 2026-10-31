@@ -17,6 +17,7 @@ import {
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
+import { navLevelOf } from "../../components/shell/nav";
 import { usePagePath } from "../../components/shell/path";
 import { RequireSession, useSession } from "../../components/shell/session";
 import { useRouter } from "../../i18n/navigation";
@@ -125,10 +126,14 @@ function Overview({ orgId }: { orgId: string }) {
   }
   const data = state.data;
   const orgName = membership?.name ?? "";
+  // Org settings open from member up (guests get the no-access page there, R4)
+  const member = navLevelOf(me) !== "guest";
   const orgCard = (
     <Card
       title={orgName}
-      actions={<TextLink href="/settings/organization">{t("orgSettings")}</TextLink>}
+      {...(member
+        ? { actions: <TextLink href="/settings/organization">{t("orgSettings")}</TextLink> }
+        : {})}
     >
       <KeyValue
         rows={[
@@ -297,8 +302,11 @@ function DailyOverview({
             ? t("dailyDescriptionPending", { org: orgName, role, count: pending })
             : t("dailyDescription", { org: orgName, role }),
         actions: [
-          { label: t("newAgent"), variant: "default", href: "/agents/new" },
-          { label: t("newConversation"), variant: "primary", href: "/chat" },
+          // agents.create: members up (R1)
+          ...(navLevelOf(me) !== "guest"
+            ? [{ label: t("newAgent"), variant: "default" as const, href: "/agents/new" }]
+            : []),
+          { label: t("newConversation"), variant: "primary" as const, href: "/chat" },
         ],
       }}
     >

@@ -311,10 +311,10 @@ describe("编辑 agent（FormPage）", () => {
     renderPage(<EditAgentPage />, { me: member });
     expect(await screen.findByRole("link", { name: en.agents.runHistory })).toBeTruthy();
     cleanup();
-    // 普通成员、不是负责人：不可见
+    // a member who doesn't own it gets the read-only view, without the entry
     stubApi(routes({ ownerAccountId: "someone-else" }));
     renderPage(<EditAgentPage />, { me: member });
-    await screen.findByRole("group", { name: en.agents.form.ownSkillsLabel });
+    await screen.findByText(en.agents.readOnly);
     expect(screen.queryByRole("link", { name: en.agents.runHistory })).toBeNull();
   });
 

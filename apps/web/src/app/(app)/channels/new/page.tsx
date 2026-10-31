@@ -15,7 +15,7 @@ import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { AgentSelect, PolicyRadio } from "../../../../components/ChannelFields";
 import { FormError } from "../../../../components/form-error";
-import { OrgGate } from "../../../../components/OrgGate";
+import { RoleGate } from "../../../../components/RoleGate";
 import {
   draftToConfig,
   initialDraft,
@@ -38,7 +38,7 @@ import { useLoad } from "../../../../lib/use-load";
  * 按插件的连接 schema 填写配置 → 绑定 agent → 未绑定策略。保存时内核先向平台校验凭据。
  */
 export default function NewChannelPage() {
-  return <OrgGate>{(orgId) => <NewChannel key={orgId} orgId={orgId} />}</OrgGate>;
+  return <RoleGate min="admin">{(orgId) => <NewChannel key={orgId} orgId={orgId} />}</RoleGate>;
 }
 
 async function loadOptions(orgId: string) {

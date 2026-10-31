@@ -3,7 +3,7 @@
 import { ListPage, ObjectRow } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { formatTime } from "../../../components/ApprovalCard";
-import { OrgGate } from "../../../components/OrgGate";
+import { RoleGate } from "../../../components/RoleGate";
 import { usePagePath } from "../../../components/shell/path";
 import { listAgents } from "../../../lib/agents";
 import { listEvalSets } from "../../../lib/evals";
@@ -15,7 +15,7 @@ import { useLoad } from "../../../lib/use-load";
  * 打开一行进评测集详情。
  */
 export default function EvalsPage() {
-  return <OrgGate>{(orgId) => <EvalSets key={orgId} orgId={orgId} />}</OrgGate>;
+  return <RoleGate min="admin">{(orgId) => <EvalSets key={orgId} orgId={orgId} />}</RoleGate>;
 }
 
 function EvalSets({ orgId }: { orgId: string }) {

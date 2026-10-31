@@ -76,12 +76,13 @@ const NAV: readonly {
   },
   // Evals and runs: sets and runs (agent owners reach their runs from the agent page)
   { id: "evals", key: "evals", href: "/evals", audience: "admin", icon: "evals", section: "more" },
-  // Organization settings; personal settings are the account menu's
+  // Organization settings (members read General, Members and Sandbox; admins change them);
+  // personal settings are the account menu's
   {
     id: "settings",
     key: "settings",
     href: "/settings/organization",
-    audience: "admin",
+    audience: "member",
     icon: "settings",
     section: "more",
   },
@@ -318,15 +319,28 @@ export function useNav(
     },
     {
       label: t("nav.actions"),
+      // agents.create is for members up; installing a connector (connectors.manage) for org admins
       items: [
-        { id: "new-agent", label: t("agents.new"), onSelect: () => router.push("/agents/new") },
-        {
-          id: "new-app",
-          label: t("connectors.new"),
-          onSelect: () => router.push("/connectors/install"),
-        },
+        ...(level !== "guest"
+          ? [
+              {
+                id: "new-agent",
+                label: t("agents.new"),
+                onSelect: () => router.push("/agents/new"),
+              },
+            ]
+          : []),
+        ...(level === "admin"
+          ? [
+              {
+                id: "new-app",
+                label: t("connectors.new"),
+                onSelect: () => router.push("/connectors/install"),
+              },
+            ]
+          : []),
       ],
     },
-  ];
+  ].filter((g) => g.items.length > 0);
   return { primary, more, inbox, ...(enterpriseAdmin ? { adminHref: "/admin" } : {}), commands };
 }

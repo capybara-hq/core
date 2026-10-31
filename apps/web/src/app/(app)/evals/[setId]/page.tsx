@@ -22,7 +22,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { formatTime } from "../../../../components/ApprovalCard";
 import { FormError } from "../../../../components/form-error";
-import { OrgGate } from "../../../../components/OrgGate";
+import { RoleGate } from "../../../../components/RoleGate";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import { getAgent } from "../../../../lib/agents";
@@ -54,9 +54,9 @@ const grouped = new Intl.NumberFormat("en-US");
 export default function EvalSetPage() {
   const { setId } = useParams<{ setId: string }>();
   return (
-    <OrgGate>
+    <RoleGate min="admin">
       {(orgId) => <EvalSetView key={`${orgId}\n${setId}`} orgId={orgId} setId={setId} />}
-    </OrgGate>
+    </RoleGate>
   );
 }
 

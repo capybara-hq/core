@@ -19,7 +19,7 @@ import {
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { FormError } from "../../../../components/form-error";
-import { OrgGate } from "../../../../components/OrgGate";
+import { RoleGate } from "../../../../components/RoleGate";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import {
@@ -51,7 +51,7 @@ import { useLoad } from "../../../../lib/use-load";
  * 没有移出与转让，带「匿名访客」Badge。界面只是隐藏，最终由内核判定。
  */
 export default function MembersPage() {
-  return <OrgGate>{(orgId) => <Members key={orgId} orgId={orgId} />}</OrgGate>;
+  return <RoleGate min="member">{(orgId) => <Members key={orgId} orgId={orgId} />}</RoleGate>;
 }
 
 type Pending = { member: Member; action: "remove" | "transfer" };

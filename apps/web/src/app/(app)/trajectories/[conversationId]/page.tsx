@@ -17,7 +17,7 @@ import { useParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { FormError } from "../../../../components/form-error";
-import { OrgGate } from "../../../../components/OrgGate";
+import { RoleGate } from "../../../../components/RoleGate";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import {
@@ -49,11 +49,11 @@ const RUN_PAGE = 10;
 export default function TrajectoryPage() {
   const { conversationId } = useParams<{ conversationId: string }>();
   return (
-    <OrgGate>
+    <RoleGate min="member">
       {(orgId) => (
         <TrajectoryInOrg key={`${orgId}\n${conversationId}`} orgId={orgId} id={conversationId} />
       )}
-    </OrgGate>
+    </RoleGate>
   );
 }
 

@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 import { CatalogInstallWizard } from "../../../../components/CatalogInstallWizard";
 import { useConnectorWizard } from "../../../../components/ConnectorWizard";
-import { OrgGate } from "../../../../components/OrgGate";
+import { RoleGate } from "../../../../components/RoleGate";
 import { usePagePath } from "../../../../components/shell/path";
 
 /** `?template=<目录条目 id>`：挂载后在 effect 里读（客户端跳转时渲染那一刻地址栏可能还没更新）。 */
@@ -25,7 +25,7 @@ const templateParam = (): string | null => {
  * the key).
  */
 export default function InstallAppPage() {
-  return <OrgGate>{(orgId) => <Install key={orgId} orgId={orgId} />}</OrgGate>;
+  return <RoleGate min="admin">{(orgId) => <Install key={orgId} orgId={orgId} />}</RoleGate>;
 }
 
 function Install({ orgId }: { orgId: string }) {

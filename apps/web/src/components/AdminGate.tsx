@@ -1,14 +1,12 @@
 "use client";
 
-import { StatusPage } from "@capybara-hq/design";
-import { useTranslations } from "next-intl";
 import type { ReactNode } from "react";
-import { usePagePath } from "./shell/path";
+import { NoAccess } from "./RoleGate";
 import { RequireSession, useSession } from "./shell/session";
 
 /**
- * 管理后台的页面：当前账号不是企业管理员时显示 StatusPage 403（不请求 `/api/v1/admin/*`），否则渲染 children。
- * 只是界面上的拦截，最终由内核判定。会话加载前显示加载中（RequireSession）。
+ * 管理后台的页面：当前账号不是企业管理员时显示统一的「没有访问权限」（不请求 `/api/v1/admin/*`），否则渲染
+ * children。只是界面上的拦截，最终由内核判定。会话加载前显示加载中（RequireSession）。
  */
 export function AdminGate({ children }: { children: ReactNode }) {
   return (
@@ -19,18 +17,7 @@ export function AdminGate({ children }: { children: ReactNode }) {
 }
 
 function AdminGateInner({ children }: { children: ReactNode }) {
-  const scope = usePagePath("admin");
-  const t = useTranslations("admin.forbidden");
   const { me } = useSession();
-  if (!me.account.isEnterpriseAdmin) {
-    return (
-      <StatusPage
-        header={{ path: scope, title: t("title") }}
-        kind="403"
-        title={t("title")}
-        description={t("hint")}
-      />
-    );
-  }
+  if (!me.account.isEnterpriseAdmin) return <NoAccess need="enterprise" />;
   return children;
 }

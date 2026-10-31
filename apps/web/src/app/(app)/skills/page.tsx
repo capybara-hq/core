@@ -15,7 +15,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useRef, useState } from "react";
 import { formatTime } from "../../../components/ApprovalCard";
 import { FormError } from "../../../components/form-error";
-import { OrgGate } from "../../../components/OrgGate";
+import { RoleGate } from "../../../components/RoleGate";
 import { usePagePath } from "../../../components/shell/path";
 import { useSession } from "../../../components/shell/session";
 import { issueLines } from "../../../lib/api";
@@ -29,7 +29,7 @@ import { useLoad } from "../../../lib/use-load";
  * （选 / 拖入 .zip → 登记 → 直传 → 解包校验，同名技能新增版本）。
  */
 export default function SkillsPage() {
-  return <OrgGate>{(orgId) => <Skills key={orgId} orgId={orgId} />}</OrgGate>;
+  return <RoleGate min="member">{(orgId) => <Skills key={orgId} orgId={orgId} />}</RoleGate>;
 }
 
 function Skills({ orgId }: { orgId: string }) {

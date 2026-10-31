@@ -255,5 +255,12 @@ export const updateAgent = (
     { method: "PATCH", body: JSON.stringify(input) },
   );
 
+/** Change the agent's owner (`agents.manage`, org admins); clears `needsReassignment`. */
+export const reassignAgentOwner = (orgId: string, agentId: string, accountId: string) =>
+  apiFetch<{ agent: Agent }>(`${base(orgId)}/agents/${encodeURIComponent(agentId)}/owner`, {
+    method: "POST",
+    body: JSON.stringify({ accountId }),
+  });
+
 export const listModels = (orgId: string) =>
   apiFetch<{ providers: ProviderModels[] }>(`${base(orgId)}/models`);

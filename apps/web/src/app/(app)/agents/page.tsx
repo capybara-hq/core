@@ -11,6 +11,7 @@ import {
   useAgents,
 } from "../../../components/AgentList";
 import { OrgGate } from "../../../components/OrgGate";
+import { navLevelOf } from "../../../components/shell/nav";
 import { usePagePath } from "../../../components/shell/path";
 import { useSession } from "../../../components/shell/session";
 
@@ -24,6 +25,8 @@ function Agents({ orgId }: { orgId: string }) {
   const t = useTranslations("agents");
   const { me } = useSession();
   const agents = useAgents(orgId);
+  // agents.create is for members up: guests never see 新建 (R1)
+  const canCreate = navLevelOf(me) !== "guest";
   const [tab, setTab] = useState<AgentScope>("all");
   const [query, setQuery] = useState("");
   const all = agents.kind === "ready" ? agents.agents : [];
@@ -38,7 +41,9 @@ function Agents({ orgId }: { orgId: string }) {
   const header = {
     path: [...scope, { label: "agents" }],
     title: t("title"),
-    actions: [{ label: t("new"), variant: "primary" as const, href: "/agents/new" }],
+    ...(canCreate
+      ? { actions: [{ label: t("new"), variant: "primary" as const, href: "/agents/new" }] }
+      : {}),
     // The tabs and the search keep their place while loading (counts pending).
     tabs,
     activeTab: tab,
@@ -68,14 +73,22 @@ function Agents({ orgId }: { orgId: string }) {
               all.length === 0
                 ? {
                     text: t("empty"),
-                    action: { label: t("new"), variant: "primary" as const, href: "/agents/new" },
+                    ...(canCreate
+                      ? {
+                          action: {
+                            label: t("new"),
+                            variant: "primary" as const,
+                            href: "/agents/new",
+                          },
+                        }
+                      : {}),
                   }
                 : { icon: "search" as const, text: t("noMatch") },
           }
         : {})}
     >
       {rows.map((a) => (
-        <AgentRow key={a.id} agent={a} />
+        <AgentRow key={a.id} agent={a} onChanged={agents.reload} />
       ))}
     </ListPage>
   );

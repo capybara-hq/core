@@ -1,6 +1,6 @@
 "use client";
 
-import { FormPage, Skeleton } from "@capybara-hq/design";
+import { FormPage, FormSection, KeyValue, Skeleton, Text } from "@capybara-hq/design";
 import { useParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
@@ -8,12 +8,14 @@ import { AgentChannels } from "../../../../components/AgentChannels";
 import { useAgentForm } from "../../../../components/AgentForm";
 import { FormError } from "../../../../components/form-error";
 import { OrgGate } from "../../../../components/OrgGate";
+import { ReassignOwnerDialog } from "../../../../components/ReassignOwnerDialog";
 import { navLevelOf } from "../../../../components/shell/nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import { useRouter } from "../../../../i18n/navigation";
 import { type Agent, getAgent } from "../../../../lib/agents";
 import { ApiClientError } from "../../../../lib/api";
+import { canUpdateOrg } from "../../../../lib/org-settings";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import { useLoad } from "../../../../lib/use-load";
 
@@ -39,10 +41,18 @@ function LoadAgent({ orgId, id }: { orgId: string; id: string }) {
   const t = useTranslations();
   const router = useRouter();
   const errorMessage = useErrorMessage();
-  const { state } = useLoad(() => getAgent(orgId, id).then((r) => r.agent), [orgId, id]);
+  const { me } = useSession();
+  const { state, reload } = useLoad(() => getAgent(orgId, id).then((r) => r.agent), [orgId, id]);
   const back = () => router.push("/agents");
   if (state.kind === "ready") {
-    return <EditAgent key={state.data.updatedAt} orgId={orgId} agent={state.data} />;
+    // The kernel lets the owner (members up) or an org admin change the agent; others read it (R3)
+    const canEdit =
+      navLevelOf(me) !== "guest" &&
+      (state.data.ownerAccountId === me.account.id || canUpdateOrg(me));
+    if (!canEdit) return <ViewAgent agent={state.data} />;
+    return (
+      <EditAgent key={state.data.updatedAt} orgId={orgId} agent={state.data} onChanged={reload} />
+    );
   }
   return (
     <FormPage
@@ -68,11 +78,58 @@ function LoadAgent({ orgId, id }: { orgId: string; id: string }) {
   );
 }
 
-function EditAgent({ orgId, agent }: { orgId: string; agent: Agent }) {
+/** The agent read-only, for viewers who may use it but not change it (R3): one line says why. */
+function ViewAgent({ agent }: { agent: Agent }) {
+  const scope = usePagePath("org");
+  const t = useTranslations();
+  const router = useRouter();
+  const def = agent.definition;
+  return (
+    <FormPage
+      header={{
+        path: [...scope, { label: "agents", href: "/agents" }, { label: def.name }],
+        title: def.name,
+      }}
+      actionRow={{
+        cancel: { label: t("common.back"), onSelect: () => router.push("/agents") },
+        primary: {
+          label: t("agents.chat"),
+          onSelect: () => router.push(`/chat?agent=${encodeURIComponent(agent.id)}`),
+        },
+      }}
+    >
+      <FormSection id="basic" title={t("agents.form.basicSection")}>
+        <Text tone="muted">{t("agents.readOnly")}</Text>
+        <KeyValue
+          rows={[
+            { k: t("agents.form.nameLabel"), v: def.name },
+            {
+              k: t("agents.form.modelLabel"),
+              v: `${def.model.provider} / ${def.model.model}`,
+            },
+            { k: t("agents.form.visibilityLabel"), v: t(`agents.scope.${agent.visibility}`) },
+          ]}
+        />
+      </FormSection>
+    </FormPage>
+  );
+}
+
+function EditAgent({
+  orgId,
+  agent,
+  onChanged,
+}: {
+  orgId: string;
+  agent: Agent;
+  onChanged(): void;
+}) {
   const scope = usePagePath("org");
   const t = useTranslations();
   const router = useRouter();
   const { me } = useSession();
+  const [reassigning, setReassigning] = useState(false);
+  const admin = canUpdateOrg(me);
   const done = () => router.push("/agents");
   const form = useAgentForm(orgId, done, agent);
   const level = navLevelOf(me);
@@ -87,13 +144,27 @@ function EditAgent({ orgId, agent }: { orgId: string; agent: Agent }) {
           { label: agent.definition.name || t("agents.form.editTitle") },
         ],
         title: agent.definition.name || t("agents.form.editTitle"),
-        ...(canViewRuns && {
+        ...((canViewRuns || admin) && {
           actions: [
-            {
-              label: t("agents.runHistory"),
-              variant: "default",
-              href: `/trajectories?agentId=${encodeURIComponent(agent.id)}`,
-            },
+            ...(canViewRuns
+              ? [
+                  {
+                    label: t("agents.runHistory"),
+                    variant: "default" as const,
+                    href: `/trajectories?agentId=${encodeURIComponent(agent.id)}`,
+                  },
+                ]
+              : []),
+            // agents.manage: org admins only
+            ...(admin
+              ? [
+                  {
+                    label: t("agents.reassign.action"),
+                    variant: "default" as const,
+                    onSelect: () => setReassigning(true),
+                  },
+                ]
+              : []),
           ],
         }),
       }}
@@ -113,6 +184,15 @@ function EditAgent({ orgId, agent }: { orgId: string; agent: Agent }) {
     >
       {form.sections}
       <AgentChannels orgId={orgId} agentId={agent.id} />
+      {reassigning ? (
+        <ReassignOwnerDialog
+          orgId={orgId}
+          agentId={agent.id}
+          ownerAccountId={agent.ownerAccountId}
+          onClose={() => setReassigning(false)}
+          onDone={onChanged}
+        />
+      ) : null}
     </FormPage>
   );
 }
