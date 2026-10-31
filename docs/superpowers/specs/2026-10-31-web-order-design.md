@@ -58,8 +58,9 @@ above its divider and 8 px below):
    "创建组织…" when allowed). This is the only place the current org is shown and switched.
 3. **Primary items**: 新会话, 首页, Agents, 更多 (search and the inbox moved to the brand row).
 4. **更多** opens a **flyout menu to the right of the sidebar**, anchored to its row: 技能, 连接器, 插件,
-   渠道, 评测与运行, 组织设置, then the org's extension pages after a separator. 渠道, 评测与运行 and
-   组织设置 are shown to org admins only (as today); members see 技能, 连接器, 插件. The 更多 row is
+   渠道, 评测与运行, 组织设置, then the org's extension pages after a separator. 渠道 and 评测与运行
+   are shown to org admins only; members see 技能, 连接器, 插件 and 组织设置 (read-only for them,
+   role pass §9); guests see 连接器 only. The 更多 row is
    active while the current page is one of its items (that item is marked current in the flyout).
    Enter / Space / → open it, Escape closes it and returns focus. Nothing is remembered; it never
    opens by itself.
@@ -74,7 +75,8 @@ above its divider and 8 px below):
      filter applies to it too). No separate page.
 6. **管理后台** (enterprise admins only), with an outward arrow: enters the admin context.
 7. **Account row**: avatar + name (opens the account menu: 切换组织 ▸, 语言 ▸, 个人设置, 退出登录) and the
-   theme toggle (light / dark radio) after it.
+   theme toggle (light / dark radio) after it. The org menu (the switcher's and 切换组织 ▸) ends
+   with "退出组织…" (§9).
 
 In the rail (below 1280) the brand row is the logo alone; search and the inbox are rail icons at
 the top of the rail; 更多 opens the same flyout.
@@ -163,6 +165,11 @@ For a set of settings pages under one title: **组织设置** (`/settings/*`) an
 - Below it, inside the content width: a 200 px sub-nav (group labels in mono, items 30 px, current item on
   `sidebar-active`, counts in mono) and the section content.
 - Section content: its own h2 + description + actions row, then forms (settings sections) or a record table.
+- 组织设置's sub-nav: 组织 [通用, 成员, 模型用途, 服务令牌] and 能力 [扩展, 已安装的插件, 沙箱]; members
+  see 通用, 成员 and 沙箱 read-only; guests never open `/settings/*` (§9). 通用 ends with a danger
+  zone for owners (删除组织…, design spec §6.21); 服务令牌 lists the org's service tokens (name,
+  role, created, expires, last used), creates one (name, a role up to the creator's, optional
+  expiry) whose token is shown once (design spec §6.22) and revokes after a confirmation.
 - The admin console has no inner sub-nav: its pages are in the sidebar (today's inner nav on admin models /
   settings / marketplaces is removed).
 
@@ -305,7 +312,60 @@ Language and theme stay where #9 put them (language in the account menu, theme a
 
 ## 8. Decisions (2026-10-31)
 
-1. 渠道, 评测与运行 and 组织设置 under 更多 are for org admins only; channels are also managed from each
-   agent's settings (§3.3.1).
+1. 渠道 and 评测与运行 under 更多 are for org admins only; channels are also managed from each
+   agent's settings (§3.3.1). 组织设置 was admin-only too until the role pass (2026-11-01): members
+   now see it read-only (§9).
 2. The archived list swaps the sidebar's conversation list in place; no `/chat/archived` page.
 3. Soft-deleted conversations stay visible through the trajectory audit path to org roles holding `trajectories.read`.
+
+## 9. Roles (role pass, user decision 2026-11-01)
+
+The kernel decides; the UI never offers what the kernel refuses, never hides what the role may do,
+and every refusal has a designed state. Roles: guest < member < admin < owner
+(`packages/kernel/src/orgs/roles.ts`), plus the enterprise admin (an account flag, the admin
+console only). Hiding is cosmetic: every route keeps its `@OrgAction` / owner check.
+
+- **R1 Actions.** Never show an action the kernel will refuse for the viewer's role: header
+  buttons, row menus, ⌘K commands, overview and setup links. ⌘K 新建 Agent is for members up,
+  添加连接器 for org admins; a group with nothing left is dropped.
+- **R2 No access.** A page the role may not open shows the one no-access state (`StatusPage`
+  `kind="no-access"`, design spec §5 T11): what the page is, the role it needs ("需要：组织管理员"),
+  who to ask; no retry. The gate decides client-side from the session's role before loading
+  anything (`RoleGate min=…` in `apps/web/src/components/RoleGate.tsx`, which wraps `OrgGate`;
+  the admin console's `AdminGate` draws the same state with "企业管理员").
+- **R3 Read-only.** A page the role may read but not change is read-only with one line saying why
+  (组织设置 · 通用 / 沙箱 for members, 成员 for members, an agent the viewer neither owns nor
+  administers: name, model, scope, 对话).
+- **R4 Entry points follow permissions**: the sidebar and 更多 (§2.1), ⌘K, the overview, the setup
+  checklist and "可以稍后再做" (§3.8).
+- **R5 Tests per role**: every gated page and every role-dependent action has a test for each role
+  where the behaviour differs (`apps/web/test/roles.test.tsx`, `org-lifecycle.test.tsx`), and the
+  kernel routes the features call have role tests.
+
+| Page / action | Guest | Member | Admin | Owner |
+|---|---|---|---|---|
+| `/agents/new`, 新建 Agent (list, overview, ⌘K) | no access / hidden | yes | yes | yes |
+| `/agents/<id>` | read-only | form if owner, else read-only | form + 更换负责人… | same as admin |
+| Agent row menu | 对话 | + 编辑 (own) | + 编辑, 更换负责人… | same as admin |
+| `/skills*`, `/catalog`, `/catalog/<id>`, `/trajectories*` | no access | yes (runs only: no 评测集 tab, title 运行记录) | yes | yes |
+| `/catalog/<id>/install`, `/connectors/install`, `/channels*`, `/evals*` | no access | no access | yes | yes |
+| `/settings/organization`, `/settings/members`, `/settings/sandbox` | no access | read-only | yes | yes |
+| `/settings/models`, `/settings/extensions`, `/settings/plugins`, `/settings/tokens` | no access | no access | yes | yes |
+| 删除组织 (danger zone in 通用) | — | — | — | yes |
+| 退出组织… (org menu) | yes | yes | yes | yes, unless the only owner (the dialog says to transfer first) |
+| `/admin/*` | enterprise admins only, whatever the org role | | | |
+
+- **退出组织** (`POST /orgs/:id/leave`, `org.read`): a confirmation saying what leaving does. The
+  kernel offboards the member, which ends **every session of the account** (sessions are
+  account-level), so leaving signs out and returns to the sign-in page.
+- **删除组织** (`DELETE /orgs/:id`, `org.delete`): typing the slug confirms (`DangerConfirm`);
+  afterwards no org is current and the org chooser opens.
+- **服务令牌** (`/orgs/:id/service-tokens`, `org.tokens.manage`, web sessions only): §3.4.
+- **更换负责人** (`POST /agents/:id/owner`, `agents.manage`): pick a member (anonymous guests are not
+  offered; the kernel refuses them).
+- **Admin console**: 组织 says "要管理组织内的设置，需要成为该组织的管理员" (the kernel keeps org
+  settings to org roles); 账号 offers neither 撤销企业管理员 nor 停用账号 for the last active
+  enterprise admin when the whole list is loaded (the kernel refuses it,
+  `account.last_enterprise_admin`), with a disabled line saying why; revoking yourself stays
+  possible while another admin exists (the kernel allows it).
+
