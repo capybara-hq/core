@@ -512,7 +512,7 @@ describe("安装向导（WizardPage）", () => {
       // 完成：个人 OAuth 连接器引导去连接自己的账号
       expect(await screen.findByText(w.doneOAuthCode)).toBeTruthy();
       await user.click(screen.getByRole("button", { name: w.connectNow }));
-      expect(router.push).toHaveBeenCalledWith("/settings/connections#connector-app1");
+      expect(router.push).toHaveBeenCalledWith("/account/connections#connector-app1");
     },
   );
 

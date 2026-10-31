@@ -325,7 +325,7 @@ describe("ConnectCard (design ConnectBlock)", () => {
         .setup()
         .click(screen.getByRole("button", { name: locale === "zh" ? "连接" : "Connect" }));
       await vi.waitFor(() =>
-        expect(router.push).toHaveBeenCalledWith("/settings/connections#connector-app2"),
+        expect(router.push).toHaveBeenCalledWith("/account/connections#connector-app2"),
       );
     },
   );

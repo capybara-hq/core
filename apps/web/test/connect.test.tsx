@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import ConnectionsPage from "../src/app/(app)/settings/connections/page";
+import ConnectionsPage from "../src/app/(app)/account/connections/page";
 import { ConnectCard } from "../src/components/ConnectCard";
 import { navigateBrowser } from "../src/lib/browser";
 import { parseConnectResult, useConnectResultToast } from "../src/lib/connect";
@@ -133,7 +133,7 @@ describe("回跳结果提示", () => {
   });
 
   it.each(LOCALES)("oauth_error：只显示自己的译文（%s）", async (locale) => {
-    window.history.replaceState(null, "", "/settings/connections?oauth_error=access_denied");
+    window.history.replaceState(null, "", "/account/connections?oauth_error=access_denied");
     renderPage(<ResultProbe />, { locale });
     expect(await screen.findByText(msgs[locale].connect.result.error.access_denied)).toBeTruthy();
     expect(window.location.search).toBe("");
@@ -150,7 +150,7 @@ describe("回跳结果提示", () => {
 describe("个人连接页：OAuth 连接器", () => {
   it.each(LOCALES)("连接 / 重新连接 / 断开连接（%s）", async (locale) => {
     const m = msgs[locale];
-    window.history.replaceState(null, "", `/${locale}/settings/connections`);
+    window.history.replaceState(null, "", `/${locale}/account/connections`);
     let status: "connected" | "missing" = "missing";
     const calls = stubApi({
       "GET /api/v1/orgs/o1/connectors": () =>
@@ -177,7 +177,7 @@ describe("个人连接页：OAuth 连接器", () => {
     await user.click(within(section).getByRole("button", { name: m.connections.oauthConnect }));
     await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith(AUTH_URL));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
-      returnTo: `/${locale}/settings/connections`,
+      returnTo: `/${locale}/account/connections`,
     });
 
     // 已连接：重新连接 + 断开连接

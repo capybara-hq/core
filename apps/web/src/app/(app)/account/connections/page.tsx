@@ -19,7 +19,7 @@ import {
 } from "../../../../components/ConnectorForm";
 import { FormError } from "../../../../components/form-error";
 import { OrgGate } from "../../../../components/OrgGate";
-import { useSettingsNav } from "../../../../components/settings-nav";
+import { useAccountNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { ApiClientError } from "../../../../lib/api";
 import { useStartConnect } from "../../../../lib/connect";
@@ -34,7 +34,7 @@ import { useErrorMessage } from "../../../../lib/use-error-message";
 import { useLoad } from "../../../../lib/use-load";
 
 /**
- * `/settings/connections`：个人连接（SettingsPage）——需要每人各自凭据的连接器，
+ * `/account/connections`：个人连接（SettingsPage）——需要每人各自凭据的连接器，
  * 逐个填写或清除自己的凭据。每个连接器一个分组，锚点 `connector-<connectorId>`（对话里的「连接」按钮跳到这里）。
  */
 export default function ConnectionsPage() {
@@ -51,17 +51,17 @@ async function personalConnectors(orgId: string): Promise<ConnectorDetail[]> {
 }
 
 function Connections({ orgId }: { orgId: string }) {
-  const scope = usePagePath("org");
+  const scope = usePagePath("home");
   const t = useTranslations("connections");
   const errorMessage = useErrorMessage();
-  const nav = useSettingsNav();
+  const nav = useAccountNav();
   const { state, reload } = useLoad(() => personalConnectors(orgId), [orgId]);
   return (
     <SettingsPage
       header={{
         path: [
           ...scope,
-          { label: "settings", href: "/settings/organization" },
+          { label: "account", href: "/account/connections" },
           { label: "connections" },
         ],
         title: t("title"),

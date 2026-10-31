@@ -1254,10 +1254,12 @@
     "title": "个人设置",
     "nav": {
       "groupPersonal": "个人",
+      "groupCapabilities": "能力",
       "groupOrg": "组织",
       "connections": "我的连接",
       "grants": "已记住的授权",
-      "organization": "组织设置",
+      "general": "通用",
+      "sandbox": "沙箱",
       "identities": "IM 身份",
       "extensions": "扩展",
       "models": "模型用途",
@@ -1290,6 +1292,10 @@
     "oauthConnect": "连接",
     "disconnect": "断开连接",
     "oauthHint": "用你自己的账号登录此连接器；其他成员各用各的。"
+  },
+  "sandboxSettings": {
+    "title": "沙箱",
+    "saved": "沙箱设置已保存。"
   },
   "orgSettings": {
     "title": "组织设置",

@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { FormError } from "../../../../components/form-error";
 import { OrgGate } from "../../../../components/OrgGate";
 import { PurposeEditor } from "../../../../components/PurposeEditor";
-import { useSettingsNav } from "../../../../components/settings-nav";
+import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { listModels } from "../../../../lib/agents";
 import { ApiClientError } from "../../../../lib/api";
@@ -29,7 +29,7 @@ export default function OrgModelsPage() {
 function OrgModels({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("models");
-  const nav = useSettingsNav();
+  const nav = useOrgSettingsNav();
   const errorMessage = useErrorMessage();
   const { state, set } = useLoad(async () => {
     const [{ purposes }, { providers }] = await Promise.all([

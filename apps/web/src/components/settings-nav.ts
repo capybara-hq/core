@@ -6,40 +6,54 @@ import { myRole, roleAtLeast } from "../lib/members";
 import { canUpdateOrg } from "../lib/org-settings";
 import { SessionContext } from "./shell/session";
 
+type NavGroup = { group: string; items: { id: string; label: string; href: string }[] };
+
 /**
- * The settings' second-level navigation: connected connectors / remembered approvals / linked IM
- * identities (personal), then org settings, members, the org's extensions, installed plugins and
- * model purposes (members from the member role up; extensions, plugins and model purposes for
- * admins only; this only hides them, the kernel decides). These pages all sit under the
- * "Connectors" top-level item (see activeNavOf in shell/nav.tsx).
+ * The organization settings' second-level navigation (`/settings/*`): Organization [General,
+ * Members, Models] and Capabilities [Extensions, Plugins, Sandbox]. Members see General, Members
+ * and Sandbox (read-only); Models, Extensions and Plugins are for admins. This only hides items,
+ * the kernel decides. Groups without items are dropped.
  */
-export function useSettingsNav() {
+export function useOrgSettingsNav(): NavGroup[] {
   const t = useTranslations("connections.nav");
   const session = useContext(SessionContext);
   const admin = session !== null && canUpdateOrg(session.me);
   const member = session !== null && roleAtLeast(myRole(session.me), "member");
-  // Mechanical grouping; Task 9 regroups the settings pages properly.
-  return [
-    {
-      group: t("groupPersonal"),
-      items: [
-        { id: "connections", label: t("connections"), href: "/settings/connections" },
-        { id: "grants", label: t("grants"), href: "/settings/grants" },
-        { id: "identities", label: t("identities"), href: "/settings/identities" },
-      ],
-    },
+  const groups: NavGroup[] = [
     {
       group: t("groupOrg"),
       items: [
-        { id: "organization", label: t("organization"), href: "/settings/organization" },
+        { id: "organization", label: t("general"), href: "/settings/organization" },
         ...(member ? [{ id: "members", label: t("members"), href: "/settings/members" }] : []),
+        ...(admin ? [{ id: "models", label: t("models"), href: "/settings/models" }] : []),
+      ],
+    },
+    {
+      group: t("groupCapabilities"),
+      items: [
         ...(admin
           ? [
               { id: "extensions", label: t("extensions"), href: "/settings/extensions" },
               { id: "plugins", label: t("plugins"), href: "/settings/plugins" },
-              { id: "models", label: t("models"), href: "/settings/models" },
             ]
           : []),
+        { id: "sandbox", label: t("sandbox"), href: "/settings/sandbox" },
+      ],
+    },
+  ];
+  return groups.filter((g) => g.items.length > 0);
+}
+
+/** The personal settings' navigation (`/account/*`): one group. */
+export function useAccountNav(): NavGroup[] {
+  const t = useTranslations("connections.nav");
+  return [
+    {
+      group: t("groupPersonal"),
+      items: [
+        { id: "connections", label: t("connections"), href: "/account/connections" },
+        { id: "grants", label: t("grants"), href: "/account/grants" },
+        { id: "identities", label: t("identities"), href: "/account/identities" },
       ],
     },
   ];

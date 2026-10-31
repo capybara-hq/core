@@ -27,6 +27,15 @@ const nextConfig = {
   // 第一段的安装表单已由向导取代（否则 /apps/new 会落到应用详情的动态路由）
   redirects: async () => [
     { source: "/:locale(zh|en)/apps/new", destination: "/:locale/apps/install", permanent: false },
+    // Personal settings moved from /settings/* to /account/* (old links, bookmarks, return URLs)
+    ...["connections", "grants", "identities"].flatMap((page) => [
+      { source: `/settings/${page}`, destination: `/account/${page}`, permanent: true },
+      {
+        source: `/:locale(zh|en)/settings/${page}`,
+        destination: `/:locale/account/${page}`,
+        permanent: true,
+      },
+    ]),
   ],
 };
 

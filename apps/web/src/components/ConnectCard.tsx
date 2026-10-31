@@ -11,7 +11,7 @@ import { useErrorMessage } from "../lib/use-error-message";
 
 /** 个人连接页中某个连接器的位置（静态凭据在这里填写 token）。 */
 export const connectionHref = (connectorId: string) =>
-  `/settings/connections#connector-${encodeURIComponent(connectorId)}`;
+  `/account/connections#connector-${encodeURIComponent(connectorId)}`;
 
 /**
  * The connect request (design `ConnectBlock`): the service, why, "only affects you" and Connect; once

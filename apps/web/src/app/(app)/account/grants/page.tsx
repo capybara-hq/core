@@ -5,13 +5,13 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { formatTime } from "../../../../components/ApprovalCard";
 import { OrgGate } from "../../../../components/OrgGate";
-import { useSettingsNav } from "../../../../components/settings-nav";
+import { useAccountNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { listToolGrants, revokeToolGrant, type ToolGrant } from "../../../../lib/approvals";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import { useLoad } from "../../../../lib/use-load";
 
-/** `/settings/grants`：本人「以后都允许」的授权（SettingsPage），可逐条撤销。 */
+/** `/account/grants`：本人「以后都允许」的授权（SettingsPage），可逐条撤销。 */
 export default function GrantsPage() {
   return <OrgGate>{(orgId) => <Grants orgId={orgId} />}</OrgGate>;
 }
@@ -19,12 +19,12 @@ export default function GrantsPage() {
 const keyOf = (g: ToolGrant) => `${g.agentId}/${g.toolKey}`;
 
 function Grants({ orgId }: { orgId: string }) {
-  const scope = usePagePath("org");
+  const scope = usePagePath("home");
   const t = useTranslations("connections");
   const locale = useLocale();
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const nav = useSettingsNav();
+  const nav = useAccountNav();
   const { state, reload } = useLoad(() => listToolGrants(orgId).then((r) => r.grants), [orgId]);
   const [revoking, setRevoking] = useState<string>();
 
@@ -72,11 +72,7 @@ function Grants({ orgId }: { orgId: string }) {
   return (
     <SettingsPage
       header={{
-        path: [
-          ...scope,
-          { label: "settings", href: "/settings/organization" },
-          { label: "grants" },
-        ],
+        path: [...scope, { label: "account", href: "/account/connections" }, { label: "grants" }],
         title: t("title"),
       }}
       nav={nav}

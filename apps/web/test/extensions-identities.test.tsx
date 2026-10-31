@@ -3,8 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
+import IdentitiesPage from "../src/app/(app)/account/identities/page";
 import ExtensionsPage from "../src/app/(app)/settings/extensions/page";
-import IdentitiesPage from "../src/app/(app)/settings/identities/page";
 import OrganizationSettingsPage from "../src/app/(app)/settings/organization/page";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, noContent, stubApi } from "./support/api";
@@ -280,7 +280,7 @@ describe("组织插件（SettingsPage）", () => {
     renderPage(<OrganizationSettingsPage />, { me: MEMBER });
     await screen.findByText(en.orgSettings.readonly);
     expect(screen.queryByRole("link", { name: en.connections.nav.extensions })).toBeNull();
-    expect(screen.getByRole("link", { name: en.connections.nav.identities })).toBeTruthy();
+    expect(screen.getByRole("link", { name: en.connections.nav.sandbox })).toBeTruthy();
   });
 });
 
@@ -338,7 +338,7 @@ const BOUND = {
 };
 
 describe("已绑定的 IM 身份（SettingsPage）", () => {
-  beforeEach(() => resetNavigation("/settings/identities"));
+  beforeEach(() => resetNavigation("/account/identities"));
 
   it.each(["zh", "en"] as const)("列出身份（来源、租户）；解绑 → DELETE（%s）", async (locale) => {
     const m = msgs[locale].identities;
@@ -390,7 +390,7 @@ describe("已绑定的 IM 身份（SettingsPage）", () => {
       await user.click(within(bound).getByRole("button", { name: rowActions }));
       await user.click(await screen.findByRole("menuitem", { name: m.verify }));
       expect(navigateBrowser).toHaveBeenCalledWith(
-        "/api/v1/auth/sso/fake-im/start?returnTo=%2Fsettings%2Fidentities",
+        "/api/v1/auth/sso/fake-im/start?returnTo=%2Faccount%2Fidentities",
       );
     },
   );

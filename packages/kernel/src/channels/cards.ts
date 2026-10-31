@@ -91,7 +91,7 @@ export const conversationUrl = (base: string, conversationId: string) =>
 
 /** 个人连接页里某个连接器的位置（与网页 ConnectCard 的链接一致）。 */
 export const connectUrl = (base: string, connectorId: string) =>
-  `${base}/settings/connections#connector-${encodeURIComponent(connectorId)}`;
+  `${base}/account/connections#connector-${encodeURIComponent(connectorId)}`;
 
 /** 来源内的工具名：连接器工具去掉 `<slug>__`（审批详情已处理），插件工具去掉 `<插件>__`。 */
 function shortToolName(v: ApprovalView): string {

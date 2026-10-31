@@ -355,7 +355,7 @@ function CredentialsTab({
       <Stack gap={12}>
         <Text tone="muted">{t("credential.personalHint")}</Text>
         <Stack direction="row">
-          <Button onClick={() => router.push("/settings/connections")}>
+          <Button onClick={() => router.push("/account/connections")}>
             {t("credential.openConnections")}
           </Button>
         </Stack>

@@ -439,7 +439,7 @@ describe("M3 第二段双副本验收", () => {
     const back = new URL(authorize.headers.get("location") as string);
     const cb = await at(1, "GET", `${back.pathname}${back.search}`);
     expect(cb.status).toBe(302);
-    expect(cb.location).toBe(`${PUBLIC_URL}/settings/connections?connected=${connectorId}`);
+    expect(cb.location).toBe(`${PUBLIC_URL}/account/connections?connected=${connectorId}`);
     expect(await toolStatus(connectorId, "whoami")).toBe("enabled");
 
     const agentId = await createAgent(1, connectorId);

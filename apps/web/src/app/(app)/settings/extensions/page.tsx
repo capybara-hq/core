@@ -24,7 +24,7 @@ import {
   SchemaForm,
   schemaFields,
 } from "../../../../components/SchemaForm";
-import { useSettingsNav } from "../../../../components/settings-nav";
+import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { Link } from "../../../../i18n/navigation";
 import { ApiClientError, issueLines } from "../../../../lib/api";
@@ -57,7 +57,7 @@ function Plugins({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("extensions");
   const errorMessage = useErrorMessage();
-  const nav = useSettingsNav();
+  const nav = useOrgSettingsNav();
   const { state, set } = useLoad(() => listOrgExtensions(orgId).then((r) => r.extensions), [orgId]);
   const replace = (next: OrgExtension) => {
     if (state.kind !== "ready") return;

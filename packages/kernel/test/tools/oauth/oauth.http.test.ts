@@ -285,7 +285,7 @@ describe("安装", () => {
     expect(ok.statusCode, ok.body).toBe(201);
     const connectorId = (ok.json() as { connector: AppJson }).connector.id;
     const back = await connectFully(connectorId);
-    expect(back).toBe(`${PUBLIC_URL}/settings/connections?connected=${connectorId}`);
+    expect(back).toBe(`${PUBLIC_URL}/account/connections?connected=${connectorId}`);
   });
 
   it("手填 client 但没给 credential → validation_failed；DCR 必须配合 MCP 发现", async () => {
@@ -409,7 +409,7 @@ describe("连接（授权码 + PKCE）", () => {
     expect(url.toString()).not.toContain("verifier");
 
     const back = await callback(await approve(url));
-    expect(back).toBe(`${PUBLIC_URL}/settings/connections?connected=${app.id}`);
+    expect(back).toBe(`${PUBLIC_URL}/account/connections?connected=${app.id}`);
     expect(await redis.exists(`capk:oauth-state:${state}`)).toBe(0);
     const tokenReq = as.tokenRequests.find((r) => r.grantType === "authorization_code");
     expect(tokenReq).toMatchObject({ status: 200, resource: mcp.url });
@@ -448,20 +448,20 @@ describe("连接（授权码 + PKCE）", () => {
     const { as, mcp } = await servers();
     const app = await installDcr(mcp);
     const forged = await callback("/api/v1/oauth/callback?code=abc&state=forged-state-value");
-    expect(forged).toBe(`${PUBLIC_URL}/settings/connections?oauth_error=state_invalid`);
+    expect(forged).toBe(`${PUBLIC_URL}/account/connections?oauth_error=state_invalid`);
 
     const path = await approve(await connect(app.id));
     expect(await callback(path)).toContain("connected=");
     // 同一 state 第二次使用（重放）
     expect(await callback(path)).toBe(
-      `${PUBLIC_URL}/settings/connections?oauth_error=state_invalid`,
+      `${PUBLIC_URL}/account/connections?oauth_error=state_invalid`,
     );
 
     // 过期：Redis 键到期即不存在
     const url = await connect(app.id);
     await redis.del(`capk:oauth-state:${url.searchParams.get("state")}`);
     expect(await callback(await approve(url))).toBe(
-      `${PUBLIC_URL}/settings/connections?oauth_error=state_invalid`,
+      `${PUBLIC_URL}/account/connections?oauth_error=state_invalid`,
     );
     expect(as.tokenRequests.filter((r) => r.grantType === "authorization_code")).toHaveLength(1);
   });
@@ -474,7 +474,7 @@ describe("连接（授权码 + PKCE）", () => {
     const path = await approve(await connect(app.id));
     // 发起者把回跳链接发给另一个浏览器
     expect(await callback(path, victim)).toBe(
-      `${PUBLIC_URL}/settings/connections?oauth_error=session_mismatch`,
+      `${PUBLIC_URL}/account/connections?oauth_error=session_mismatch`,
     );
     expect(as.tokenRequests).toEqual([]);
   });
@@ -484,10 +484,10 @@ describe("连接（授权码 + PKCE）", () => {
     const app = await installDcr(mcp);
     as.denyNext("access_denied", "<script>alert(1)</script>");
     const back = await callback(await approve(await connect(app.id)));
-    expect(back).toBe(`${PUBLIC_URL}/settings/connections?oauth_error=access_denied`);
+    expect(back).toBe(`${PUBLIC_URL}/account/connections?oauth_error=access_denied`);
     as.denyNext("temporarily_unavailable", "nope");
     const back2 = await callback(await approve(await connect(app.id)));
-    expect(back2).toBe(`${PUBLIC_URL}/settings/connections?oauth_error=provider_error`);
+    expect(back2).toBe(`${PUBLIC_URL}/account/connections?oauth_error=provider_error`);
     expect((await getConnector(app.id)).credential.status).toBe("missing");
   });
 
@@ -739,7 +739,7 @@ describe("轮换客户端与其他校验", () => {
     const app = await installDcr(mcp);
     as.forgeIssNext("https://evil.example.com");
     const back = await callback(await approve(await connect(app.id)));
-    expect(back).toBe(`${PUBLIC_URL}/settings/connections?oauth_error=issuer_mismatch`);
+    expect(back).toBe(`${PUBLIC_URL}/account/connections?oauth_error=issuer_mismatch`);
     expect(as.tokenRequests.filter((r) => r.grantType === "authorization_code")).toEqual([]);
   });
 

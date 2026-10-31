@@ -33,7 +33,7 @@ function Connectors({ orgId }: { orgId: string }) {
       ...(manage
         ? [{ label: t("new"), variant: "primary" as const, href: "/connectors/install" }]
         : []),
-      { label: t("myConnections"), variant: "default" as const, href: "/settings/connections" },
+      { label: t("myConnections"), variant: "default" as const, href: "/account/connections" },
     ],
     ...(state.kind === "ready" && disabled.length > 0
       ? {

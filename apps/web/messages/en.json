@@ -1254,10 +1254,12 @@
     "title": "My settings",
     "nav": {
       "groupPersonal": "Personal",
+      "groupCapabilities": "Capabilities",
       "groupOrg": "Organization",
       "connections": "My connections",
       "grants": "Remembered approvals",
-      "organization": "Organization",
+      "general": "General",
+      "sandbox": "Sandbox",
       "identities": "IM identities",
       "extensions": "Extensions",
       "models": "Model purposes",
@@ -1290,6 +1292,10 @@
     "oauthConnect": "Connect",
     "disconnect": "Disconnect",
     "oauthHint": "Sign in to this connector with your own account; other members use theirs."
+  },
+  "sandboxSettings": {
+    "title": "Sandbox",
+    "saved": "Sandbox settings saved."
   },
   "orgSettings": {
     "title": "Organization settings",

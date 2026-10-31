@@ -273,7 +273,7 @@ test("questions with options and Other; URL elicitation; a connect card", async 
   const connect = page.locator('[data-role="connect"]');
   await expect(connect).toBeVisible();
   await connect.getByRole("button", { name: designZh("hitl.connect") }).click();
-  await expect(page).toHaveURL(new RegExp(`/settings/connections#connector-${personal}$`));
+  await expect(page).toHaveURL(new RegExp(`/account/connections#connector-${personal}$`));
 });
 
 test("reconnect: a stream dropped mid-run reopens from the last seq; nothing arrives twice", async ({

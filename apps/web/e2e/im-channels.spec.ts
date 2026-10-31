@@ -152,7 +152,7 @@ test("假渠道：启用插件 → 建渠道连接 → IM 里未绑定的人收�
     .toBe("hello from IM");
 
   // 7. 个人设置里能看到这条已绑定的 IM 身份
-  await visitor.goto("/settings/identities");
+  await visitor.goto("/account/identities");
   await expect(visitor.getByRole("row").filter({ hasText: "u-e2e" })).toBeVisible();
   await context.close();
 });

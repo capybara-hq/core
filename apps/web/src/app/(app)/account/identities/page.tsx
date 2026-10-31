@@ -14,7 +14,7 @@ import {
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { FormError } from "../../../../components/form-error";
-import { useSettingsNav } from "../../../../components/settings-nav";
+import { useAccountNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { RequireSession } from "../../../../components/shell/session";
 import { listAuthSources, ssoStartUrl } from "../../../../lib/auth-sources";
@@ -29,7 +29,7 @@ import { useErrorMessage } from "../../../../lib/use-error-message";
 import { useLoad } from "../../../../lib/use-load";
 
 /**
- * `/settings/identities`：本人已绑定的外部身份（IM 账号、第三方登录）（SettingsPage）：列表与解绑。
+ * `/account/identities`：本人已绑定的外部身份（IM 账号、第三方登录）（SettingsPage）：列表与解绑。
  * 不属于某个组织，只要已登录。账号没有密码时解绑最后一个登录方式会被拒（`identity.last_login_method`）。
  * 经 IM 绑定链接建立的身份（`linkedVia: "bind"`）标为未验证；该插件是可用的登录方式（`GET /auth/sources`）时
  * 行菜单提供「验证」：整页跳到该插件的第三方登录，
@@ -46,13 +46,13 @@ export default function IdentitiesPage() {
 const rowKey = (x: LinkedIdentity) => `${x.source}\u0000${x.externalId}`;
 
 function Identities() {
-  const scope = usePagePath("org");
+  const scope = usePagePath("home");
   const t = useTranslations("identities");
   const tc = useTranslations("common");
   const locale = useLocale();
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const nav = useSettingsNav();
+  const nav = useAccountNav();
   const { state, reload } = useLoad(() => listIdentities().then((r) => r.identities), []);
   // 「验证」只对可用的登录方式提供（插件在 `auth.loginSources` 中且已加载）；读不到时都不提供
   const sources = useLoad(
@@ -132,7 +132,7 @@ function Identities() {
       header={{
         path: [
           ...scope,
-          { label: "settings", href: "/settings/organization" },
+          { label: "account", href: "/account/connections" },
           { label: "identities" },
         ],
         title: t("title"),
@@ -158,7 +158,7 @@ function Identities() {
                     label: t("verify"),
                     onSelect: () =>
                       navigateBrowser(
-                        ssoStartUrl(splitSource(x.source).plugin, "/settings/identities"),
+                        ssoStartUrl(splitSource(x.source).plugin, "/account/identities"),
                       ),
                   },
                 ]

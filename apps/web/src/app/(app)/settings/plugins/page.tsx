@@ -7,7 +7,7 @@ import { formatTime } from "../../../../components/ApprovalCard";
 import { FormError } from "../../../../components/form-error";
 import { OrgGate } from "../../../../components/OrgGate";
 import { PluginUpgradeDialog } from "../../../../components/PluginUpgradeDialog";
-import { useSettingsNav } from "../../../../components/settings-nav";
+import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { ApiClientError } from "../../../../lib/api";
 import {
@@ -37,7 +37,7 @@ export default function PluginsPage() {
 function Apps({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("catalog.plugins");
-  const nav = useSettingsNav();
+  const nav = useOrgSettingsNav();
   const errorMessage = useErrorMessage();
   const { state, reload } = useLoad(
     () => listPluginInstalls(orgId).then((r) => r.installs),

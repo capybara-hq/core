@@ -836,10 +836,8 @@ describe("activeNavOf", () => {
     expect(activeNavOf("/connectors/install")).toBe("connectors");
     for (const p of [
       "/settings",
-      "/settings/connections",
-      "/settings/grants",
       "/settings/organization",
-      "/settings/identities",
+      "/settings/sandbox",
       "/settings/extensions",
       "/settings/plugins",
     ]) {
