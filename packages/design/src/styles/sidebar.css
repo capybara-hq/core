@@ -459,6 +459,9 @@
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
+.cb-sidebar-empty {
+  padding: 0 var(--cb-space-1);
+}
 .cb-sidebar-loading {
   display: flex;
   flex-direction: column;

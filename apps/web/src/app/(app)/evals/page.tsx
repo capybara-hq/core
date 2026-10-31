@@ -38,7 +38,6 @@ function EvalSets({ orgId }: { orgId: string }) {
         }
       : state.kind === "ready" && sets.length === 0
         ? {
-            icon: "evals" as const,
             text: t("empty"),
             action: { label: t("new"), variant: "primary" as const, href: "/evals/new" },
           }

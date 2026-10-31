@@ -475,7 +475,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     renderFrame();
     const region = screen.getByRole("region", { name: "会话" });
     expect(region.getAttribute("aria-busy")).toBe("true");
-    expect(within(region).queryByText("还没有会话，从 Agents 里选一个开始。")).toBeNull();
+    expect(within(region).queryByText("还没有会话")).toBeNull();
   });
 
   it("signed in without a current org: the chooser covers the whole shell; opening an org enters the app", async () => {

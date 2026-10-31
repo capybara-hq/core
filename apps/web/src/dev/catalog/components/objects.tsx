@@ -72,10 +72,16 @@ export function ObjectsSection() {
       <Row label="EmptyState">
         <Grid columns={1}>
           <EmptyState
-            icon="empty"
-            text="还没有 agent。"
+            text="还没有 agent"
+            hint="新建一个 agent，就能和它对话。"
             action={{ label: "新建 Agent", icon: "plus", variant: "primary", onSelect: noop }}
           />
+          <EmptyState
+            size="compact"
+            text="还没有会话"
+            action={{ label: "新会话", variant: "default", onSelect: noop }}
+          />
+          <EmptyState size="compact" icon="search-x" text="没有匹配的会话" />
         </Grid>
       </Row>
     </Section>

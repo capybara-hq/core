@@ -59,7 +59,6 @@ function Connectors({ orgId }: { orgId: string }) {
         }
       : state.kind === "ready" && all.length === 0
         ? {
-            icon: "connector" as const,
             text: t("empty"),
             ...(manage
               ? {

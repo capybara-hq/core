@@ -313,7 +313,7 @@ function SidebarPanel({
       )}
       <SidebarNav p={p} rail={rail} />
       {ctx.kind === "work" && !rail ? (
-        <Conversations c={p.conversations} />
+        <Conversations c={p.conversations} newHref={p.newConversation.href} />
       ) : (
         <div className="cb-sidebar-fill" />
       )}

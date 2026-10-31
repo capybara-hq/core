@@ -94,7 +94,10 @@ describe("DataTable density and parts", () => {
       "default",
     );
     expect(r.container.querySelector('[data-part="table-empty"]')).toBeTruthy();
-    expect(screen.getByText("还没有连接器").getAttribute("data-part")).toBe("table-empty-title");
+    // the one empty state, compact, inside the table's empty area (spec §6.18)
+    const es = r.container.querySelector('[data-part="table-empty"] [data-part="empty-state"]');
+    expect(es?.getAttribute("data-size")).toBe("compact");
+    expect(screen.getByText("还没有连接器").getAttribute("data-part")).toBe("empty-state-text");
     cleanup();
     const l = plain({ state: "loading" });
     expect(l.container.querySelectorAll('[data-part="skeleton-bar"]').length).toBeGreaterThan(0);

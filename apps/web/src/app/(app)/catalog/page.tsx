@@ -87,7 +87,7 @@ function Catalog({ orgId }: { orgId: string }) {
           action: { label: t("retry"), variant: "default" as const, onSelect: reload },
         }
       : state.kind === "ready" && all.length === 0
-        ? { icon: "catalog" as const, text: t("empty") }
+        ? { text: t("empty") }
         : undefined;
   return (
     <ListPage

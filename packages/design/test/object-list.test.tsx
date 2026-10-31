@@ -73,6 +73,26 @@ describe("EmptyState and Callout", () => {
     expect(screen.getByRole("link", { name: "新建" })).toBeTruthy();
   });
 
+  it("EmptyState: the pixel capybara by default, the sentence in ink, a muted hint, page size", () => {
+    zh(<EmptyState text="还没有 agent" hint="新建一个开始对话" />);
+    const el = document.querySelector('[data-part="empty-state"]') as HTMLElement;
+    expect(el.getAttribute("data-size")).toBe("page");
+    expect(el.querySelector('[data-part="empty-illustration"] svg')).not.toBeNull();
+    expect(el.querySelector(".cb-icon")).toBeNull();
+    expect(el.querySelector('[data-part="empty-state-text"]')?.textContent).toBe("还没有 agent");
+    expect(el.querySelector('[data-part="empty-state-hint"]')?.textContent).toBe(
+      "新建一个开始对话",
+    );
+  });
+
+  it("EmptyState compact: a smaller illustration; an icon overrides it", () => {
+    zh(<EmptyState size="compact" text="没有匹配的会话" icon="search" />);
+    const el = document.querySelector('[data-part="empty-state"]') as HTMLElement;
+    expect(el.getAttribute("data-size")).toBe("compact");
+    expect(el.querySelector('[data-part="empty-illustration"]')).toBeNull();
+    expect(el.querySelector('[data-part="empty-state-icon"]')).not.toBeNull();
+  });
+
   it("Callout is a status with the tone and its button", () => {
     zh(
       <Callout tone="warn" action={{ label: "去配置", href: "/c" }}>

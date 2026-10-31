@@ -190,7 +190,7 @@ function TrajectoryTable({
   ];
 
   if (first.state.kind === "ready" && rows.length === 0 && !filtered) {
-    return <EmptyState icon="evals" text={t("empty")} />;
+    return <EmptyState text={t("empty")} />;
   }
   return (
     <Stack gap={12}>

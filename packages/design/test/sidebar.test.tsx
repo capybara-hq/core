@@ -683,7 +683,7 @@ describe("Sidebar conversations", () => {
         .map((l) => l.textContent),
     ).toEqual(["研究助手 会话 1"]);
     await user.type(screen.getByRole("textbox", { name: "按标题搜索" }), "没有这个");
-    expect(within(sec).getByText("没有符合条件的会话")).toBeTruthy();
+    expect(within(sec).getByText("没有匹配的会话")).toBeTruthy();
     // closing the filter clears it
     await user.click(toggle);
     expect(onChange).toHaveBeenLastCalledWith({ q: "", state: "all" });
@@ -780,10 +780,34 @@ describe("Sidebar conversations", () => {
     ).toEqual(["旧助手 会话 2"]);
   });
 
-  it("ready with no groups: one muted hint line", () => {
+  it("ready with no groups: the compact empty state with a New conversation link", () => {
     const p = props();
     zh(<Sidebar {...p} conversations={{ ...p.conversations, groups: [] }} />);
-    expect(within(convSection()).getByText(/还没有会话/)).toBeTruthy();
+    const sec = convSection();
+    const es = sec.querySelector('[data-part="empty-state"]');
+    expect(es?.getAttribute("data-size")).toBe("compact");
+    expect(within(sec).getByText("还没有会话")).toBeTruthy();
+    expect(within(sec).getByRole("link", { name: "新会话" }).getAttribute("href")).toBe("/chat");
+  });
+
+  it("a filter that matches nothing: the empty state with Clear filter", async () => {
+    const p = props();
+    const onChange = vi.fn();
+    zh(
+      <Sidebar
+        {...p}
+        conversations={{
+          ...p.conversations,
+          groups: [],
+          filter: { q: "zzz", state: "all", onChange },
+          filterOpen: true,
+        }}
+      />,
+    );
+    const sec = convSection();
+    expect(within(sec).getByText("没有匹配的会话")).toBeTruthy();
+    await userEvent.click(within(sec).getByRole("button", { name: "清除筛选" }));
+    expect(onChange).toHaveBeenCalledWith({ q: "", state: "all" });
   });
 });
 

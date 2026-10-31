@@ -259,6 +259,15 @@
   color: var(--cb-muted);
   text-align: center;
 }
+/* Empty and no results hold the compact EmptyState, left-aligned at the first-column edge. */
+.cb-table-empty[data-empty="empty"],
+.cb-table-empty[data-empty="no-results"] {
+  align-items: stretch;
+  text-align: left;
+}
+.cb-table-empty .cb-empty-state[data-size="compact"] {
+  padding: 0;
+}
 .cb-table-empty[data-empty="loading"] {
   align-items: stretch;
   gap: 0;

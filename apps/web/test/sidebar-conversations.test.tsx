@@ -233,7 +233,7 @@ describe("useConversationGroups", () => {
   it("no current org (null): an empty ready list, no request", () => {
     const calls = stubApi({});
     show(null);
-    expect(within(section()).getByText("还没有会话，从 Agents 里选一个开始。")).toBeTruthy();
+    expect(within(section()).getByText("还没有会话")).toBeTruthy();
     expect(calls).toHaveLength(0);
   });
 
@@ -241,7 +241,7 @@ describe("useConversationGroups", () => {
     const calls = stubApi({});
     show(undefined);
     expect(section().getAttribute("aria-busy")).toBe("true");
-    expect(within(section()).queryByText("还没有会话，从 Agents 里选一个开始。")).toBeNull();
+    expect(within(section()).queryByText("还没有会话")).toBeNull();
     expect(calls).toHaveLength(0);
   });
 });
@@ -701,7 +701,7 @@ describe("useConversationGroups filter races (review r1)", () => {
     await user.click(screen.getByRole("radio", { name: "运行中" }));
     expect(section().getAttribute("aria-busy")).not.toBe("true");
     // the rows narrow locally (c1 has no activity) but the section is not a skeleton
-    expect(within(section()).getByText("没有符合条件的会话")).toBeTruthy();
+    expect(within(section()).getByText("没有匹配的会话")).toBeTruthy();
   });
 
   it("an answer for the previous filter arriving last is dropped", async () => {

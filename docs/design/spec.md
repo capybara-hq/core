@@ -569,9 +569,9 @@ Structure, top to bottom: toolbar / bulk action bar → the table (header and ro
 - Expanded row: `panel-2` ground, indentation and a `└` leader, showing a summary (such as the first few steps of an execution trace).
 - Empty states (inside the panel, under the header):
   - Loading: skeleton rows (`row.dense` high, `space.3` bars in `selected` with radius `sm`), no spinner; the bars are hidden from assistive tech and a `status` region reads "Loading".
-  - Empty (first time): the `empty` icon + one `muted` sentence + the next action (`default`), `space.8` padding above and below.
+  - Empty (first time): the compact EmptyState (§6.18) left-aligned in the area: the line capybara, one `ink` sentence (+ an optional `muted` hint) and the next action (`default`), `space.8` padding above and below.
   - The empty states and the skeleton rows keep a row cell's horizontal padding: `space.3` at the first-column edge (left) and `space.2` on the right, as the signed reference draws its full-width cell, so their content centers 2px right of the panel's middle.
-  - No results (caused by filters): the `search-x` icon + a description of the current filters + "Clear filters".
+  - No results (caused by filters): the compact EmptyState with the `search-x` icon, "No matching results", a description of the current filters and "Clear filters".
   - Error: `circle-x` + "Failed to load" in `fail`, the error code · request ID (muted) + "Retry" (`refresh`).
 - Keyboard: ↑↓ move focus, Space checks, ↵ opens, Esc deselects.
 - The header is sticky; when scrolling horizontally the first column sticks to the left.
@@ -595,7 +595,7 @@ States: `default`, `row-hover`, `row-selected`, `loading`, `empty`
 | skeleton-bar | loading | height | space.3 |
 | skeleton-bar | loading | background-color | color.selected |
 | table-empty | empty | padding-top | space.8 |
-| table-empty-title | empty | color | color.muted |
+| table-empty empty-state-text | empty | color | color.ink |
 | table-empty button | empty | height | control.default |
 | menu-cell | default | width | 48 |
 | menu-cell icon-button | default | height | control.dense |
@@ -1550,7 +1550,12 @@ States: `image`, `text`, `markdown`, `csv`, `none`, `failed`
 
 ### 6.18 EmptyState
 
-`EmptyState({ icon, text, action? })`: one framed panel (`panel`, 1px `line-soft`, radius `md`, padding `space.8` / `space.4`), centered: a 16 px icon, one sentence in `muted`, the primary action. It replaces the list (never a table header over an icon); the DataTable keeps its own empty area (§6.6).
+One empty state for the whole product. `EmptyState({ text, hint?, action?, icon?, size? })`:
+
+- **Illustration**: the pixel capybara of §3 drawn as a line (`LogoLine`: the outer edges of the bitmap's cells, the eye included, 1 px `faint` stroke, no fill), decorative. `icon` replaces it where an object icon reads better (a failed load: `circle-alert`; a search that matched nothing: `search` / `search-x`), drawn in `faint`.
+- **Copy**: one sentence in `ink` saying what will be here ("还没有 agent" / "No agents yet"), an optional second line in `muted` (`small`), and at most one action, the primary next step (a `default` or `primary` button or link). Never a table header over an icon, never a sentence about the absence of data in general ("暂无数据" is only the DataTable's fallback).
+- **Sizes**: `page` (default) is centered in the content frame, no frame of its own, `space.8` × 2 above and below, the illustration at scale 6 (85 × 61). `compact` (panels, the DataTable's empty area, the sidebar's conversation list) is left-aligned with `space.3` padding and `space.2` gaps, the illustration at scale 3, the action `dense`.
+- **Where**: every ListPage / ObjectList empty (`ListPage.empty`), the InboxPage with no items (the full-width page state instead of the list + detail split, §5), the DataTable's empty and no-results areas (§6.6, compact), the sidebar's conversation list (compact: "还没有会话" + 新会话; a filter matching nothing: "没有匹配的会话" + 清除筛选).
 
 ### 6.19 Callout
 

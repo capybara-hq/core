@@ -114,7 +114,6 @@ function AdminPlugins() {
         }
       : state.kind === "ready" && all.length === 0
         ? {
-            icon: "extension" as const,
             text: t("empty"),
             action: {
               label: t("install"),

@@ -66,7 +66,6 @@ function Agents({ orgId }: { orgId: string }) {
             empty:
               all.length === 0
                 ? {
-                    icon: "agent" as const,
                     text: t("empty"),
                     action: { label: t("new"), variant: "primary" as const, href: "/agents/new" },
                   }

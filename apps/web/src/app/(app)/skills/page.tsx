@@ -50,7 +50,6 @@ function Skills({ orgId }: { orgId: string }) {
         }
       : state.kind === "ready" && rows.length === 0
         ? {
-            icon: "skills" as const,
             text: t("empty"),
             ...(admin
               ? {

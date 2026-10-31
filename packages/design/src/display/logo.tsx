@@ -46,3 +46,40 @@ export function Logo({
     </span>
   );
 }
+
+/**
+ * The pixel capybara as a line drawing (the empty state's illustration, spec §6.18): the outer
+ * edges of the bitmap's cells, the eye included, stroked 1 px in `faint`. Decorative.
+ */
+export function LogoLine({ scale = 6 }: { scale?: 3 | 4 | 6 }) {
+  const filled = (x: number, y: number) => CAPYBARA_BITMAP[y]?.[x] === "X";
+  const segs: string[] = [];
+  CAPYBARA_BITMAP.forEach((row, y) => {
+    for (let x = 0; x < row.length; x++) {
+      if (!filled(x, y)) continue;
+      const l = x * scale + 0.5;
+      const t = y * scale + 0.5;
+      const r = l + scale;
+      const b = t + scale;
+      if (!filled(x, y - 1)) segs.push(`M${l} ${t}H${r}`);
+      if (!filled(x, y + 1)) segs.push(`M${l} ${b}H${r}`);
+      if (!filled(x - 1, y)) segs.push(`M${l} ${t}V${b}`);
+      if (!filled(x + 1, y)) segs.push(`M${r} ${t}V${b}`);
+    }
+  });
+  const w = COLS * scale + 1;
+  const h = ROWS * scale + 1;
+  return (
+    <svg
+      className="cb-logo-line"
+      width={w}
+      height={h}
+      viewBox={`0 0 ${w} ${h}`}
+      shapeRendering="crispEdges"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d={segs.join("")} />
+    </svg>
+  );
+}

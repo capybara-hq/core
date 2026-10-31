@@ -65,7 +65,6 @@ function Channels({ orgId }: { orgId: string }) {
         }
       : state.kind === "ready" && all.length === 0
         ? {
-            icon: "channel" as const,
             text: t("empty"),
             action: { label: t("new"), variant: "primary" as const, href: "/channels/new" },
           }

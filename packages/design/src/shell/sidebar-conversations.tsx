@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { Button, IconButton, Input } from "../controls/index";
+import { EmptyState } from "../display/empty-state";
 import { Segmented } from "../display/tabs";
 import { type Locale, messages } from "../i18n";
 import { Icon } from "../icons/icon";
@@ -193,7 +194,14 @@ const fill = (s: string, vars: Record<string, string | number>) =>
  * agent (collapse, ＋, rows with a state dot and the `⋯` menu, "Show more"), and the archived
  * entry, which swaps the list in place for the archived conversations.
  */
-export function Conversations({ c }: { c: SidebarConversations }) {
+export function Conversations({
+  c,
+  newHref,
+}: {
+  c: SidebarConversations;
+  /** The empty list's New conversation link. */
+  newHref?: string;
+}) {
   const t = useDesignT();
   const locale = useDesignLocale();
   const known = c.state === "ready" && !c.moreGroups ? c.groups.map((g) => g.agentId) : null;
@@ -286,13 +294,30 @@ export function Conversations({ c }: { c: SidebarConversations }) {
     );
   } else if (groups.length === 0) {
     body = (
-      <p className="cb-sidebar-hint" data-part="empty-hint">
-        {filtering
-          ? t("sidebar.noMatch")
-          : archivedList
-            ? t("sidebar.archivedEmpty")
-            : t("sidebar.empty")}
-      </p>
+      <div className="cb-sidebar-empty" data-part="empty-hint">
+        {filtering ? (
+          <EmptyState
+            size="compact"
+            icon="search-x"
+            text={t("sidebar.noMatch")}
+            action={{
+              label: t("sidebar.clearFilter"),
+              variant: "default",
+              onSelect: () => f.onChange({ q: "", state: "all" }),
+            }}
+          />
+        ) : archivedList ? (
+          <EmptyState size="compact" text={t("sidebar.archivedEmpty")} />
+        ) : (
+          <EmptyState
+            size="compact"
+            text={t("sidebar.empty")}
+            {...(newHref !== undefined
+              ? { action: { label: t("sidebar.new"), variant: "default", href: newHref } }
+              : {})}
+          />
+        )}
+      </div>
     );
   } else {
     body = (

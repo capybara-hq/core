@@ -1,4 +1,5 @@
 import { Button } from "../controls/button";
+import { EmptyState } from "../display/empty-state";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import type { DataTableProps } from "./types";
@@ -50,26 +51,30 @@ export function EmptyArea<T>({
       </div>
     );
   }
+  // Empty and no results: the one empty state, compact, inside the table (spec §6.6, §6.18).
   if (kind === "no-results") {
     return (
       <div className="cb-table-empty" data-part="table-empty" data-empty="no-results">
-        <Icon name="search-x" size={16} />
-        <div className="cb-table-empty-title" data-part="table-empty-title">
-          {t("table.noResults")}
-        </div>
-        <div className="cb-table-empty-hint">{noResults?.description}</div>
-        {noResults ? <Button onClick={noResults.onClear}>{t("table.clearFilters")}</Button> : null}
+        <EmptyState
+          size="compact"
+          icon="search-x"
+          text={t("table.noResults")}
+          {...(noResults?.description ? { hint: noResults.description } : {})}
+          {...(noResults
+            ? { action: <Button onClick={noResults.onClear}>{t("table.clearFilters")}</Button> }
+            : {})}
+        />
       </div>
     );
   }
   return (
     <div className="cb-table-empty" data-part="table-empty" data-empty="empty">
-      <Icon name="empty" size={16} />
-      <div className="cb-table-empty-title" data-part="table-empty-title">
-        {empty?.title ?? t("table.noData")}
-      </div>
-      {empty?.hint ? <div className="cb-table-empty-hint">{empty.hint}</div> : null}
-      {empty?.action}
+      <EmptyState
+        size="compact"
+        text={empty?.title ?? t("table.noData")}
+        {...(empty?.hint ? { hint: empty.hint } : {})}
+        {...(empty?.action != null ? { action: <>{empty.action}</> } : {})}
+      />
     </div>
   );
 }

@@ -77,7 +77,6 @@ function AdminDirectory() {
         }
       : state.kind === "ready" && all.length === 0
         ? {
-            icon: "catalog" as const,
             text: t("empty"),
             action: {
               label: t("actions.import"),
@@ -86,7 +85,7 @@ function AdminDirectory() {
             },
           }
         : state.kind === "ready" && rows.length === 0
-          ? { icon: "catalog" as const, text: t("noResults") }
+          ? { icon: "search" as const, text: t("noResults") }
           : undefined;
 
   return (

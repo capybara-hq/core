@@ -243,7 +243,7 @@ export const SIDEBAR_COPY = {
   newConversationIn: "与 {agent} 新建会话",
   more: "显示更多",
   moreGroups: "更多分组",
-  empty: "还没有会话，从 Agents 里选一个开始。",
+  empty: "还没有会话",
   error: "会话列表加载失败",
   retry: "重试",
   expand: "展开侧栏",
