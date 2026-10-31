@@ -310,7 +310,7 @@ A new page **must** pick one of the following templates; a new template requires
 | T8 | Trace | Single (top: span waterfall, bottom: span detail) | — | — | full | Single run detail |
 | T9 | Wizard | Centered + step bar | — | Always (Previous / Next) | form | First-time model, connector and extension setup |
 | T10 | Auth | No Shell, centered card + dither dot matrix on both sides | — | — | — | Sign in, password recovery, accept invitation, initialization |
-| T11 | System status | Single centered | — | — | — | 404, 403, under maintenance, not enabled |
+| T11 | System status | Single centered | — | — | — | 404, 403, under maintenance, not enabled, no access (`kind="no-access"`: a 24 px `lock` in `faint` instead of the code, the title, what the page is, `need` as a mono chip "需要：组织管理员" / "Requires: Org admin" (1px `line`, radius `sm`, `small`), `ask` in `muted` (who to ask); never an action or a retry; the web app's one role gate draws it, web-order spec §9) |
 | T12 | Onboarding | Single centered checklist | — | — | — | New org, empty environment |
 | T13 | Setup | No Shell: a 48 px top bar (brand; the org, the account and the theme at its right end, `line-soft` below), a centered column, the status bar (§5.5) | — | — | chat column (home) / content (step pages) | The workspace while the org has no model or no agent (web-order spec §3.8) |
 
@@ -1571,6 +1571,14 @@ One empty state for the whole product. `EmptyState({ text, hint?, action?, icon?
 ### 6.19 Callout
 
 `Callout({ tone, action?, children })`: a `role="status"` bar naming what needs action, radius `md`, padding `space.3` / `space.4`: a `circle-alert` icon, the sentence, and one dense button or link. `warn` uses the `warn` tint (15%) and a `warn` icon; `fail` the `fail` tint (12%) and icon. On list pages it sits in the header between the title row and the tabs (`ListPage.callout`).
+
+### 6.21 DangerZone
+
+`DangerZone({ title, children })` with `DangerZoneItem({ title, description, action })` (role pass): the irreversible actions at the bottom of a settings section (organization deletion). A `region` named by its title, `space.8` above, a 1px border of `fail` at 45 %, radius `md`; the title (`body`, 600, `fail`) in a head row split from the items by `fail` at 25 %. Each item: the title (600, `ink`) over the description (`small`, `muted`), and one dense `danger` button at the right that opens a confirmation (`DangerConfirm`, §6.7), never acts at once; items are split by `line-soft`.
+
+### 6.22 SecretReveal
+
+`SecretReveal({ label, value })` (role pass): a secret the kernel returns only once (a service token). The label (600), a read-only `Input` holding the value (selected on focus) with a default "复制" / "Copy" button (`copy` icon; "已复制" / "Copied" with `check` for 2 s after copying), and below it a `warn` line with `circle-alert`: "只会显示这一次，请立即复制并妥善保存。" / "Shown only this once. Copy it now and keep it safe." Used inside the dialog that created the secret, replacing its form.
 
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.

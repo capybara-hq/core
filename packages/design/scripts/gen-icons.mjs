@@ -101,6 +101,8 @@ const ICONS = {
   store: "store",
   cpu: "cpu",
   sliders: "sliders-horizontal",
+  // Role pass: the no-access state.
+  lock: "lock",
 };
 
 const entries = Object.entries(ICONS).map(([name, file]) => {

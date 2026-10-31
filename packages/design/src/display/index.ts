@@ -34,6 +34,7 @@ export {
   type ToolCallRowProps,
   type ToolCallStatus,
 } from "./chat";
+export { DangerZone, DangerZoneItem, type DangerZoneItemProps } from "./danger-zone";
 export { Disclosure, type DisclosureProps } from "./disclosure";
 export { EMBED_SANDBOX, EmbedFrame, type EmbedFrameProps } from "./embed";
 export { EmptyState, type EmptyStateProps } from "./empty-state";
@@ -51,6 +52,7 @@ export {
 export { ObjectList, ObjectRow, type ObjectRowProps } from "./object-list";
 export { Pagination, type PaginationProps } from "./pagination";
 export { PENDING_DELAY_MS, PendingState } from "./pending-state";
+export { SecretReveal, type SecretRevealProps } from "./secret-reveal";
 export { StatCards } from "./stat-cards";
 export { type Step, StepList } from "./step-list";
 export { Segmented, type TabItem, Tabs, type TabsProps } from "./tabs";

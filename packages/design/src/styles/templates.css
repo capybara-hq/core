@@ -727,3 +727,87 @@ button.cb-setup-account:hover {
     display: none;
   }
 }
+
+/* StatusPage no-access (role pass): a lock instead of the code, the role it needs in mono. */
+.cb-status-lock {
+  display: inline-flex;
+  color: var(--cb-faint);
+}
+.cb-status-need {
+  padding: var(--cb-space-1) var(--cb-space-2);
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-ink);
+  font-family: var(--cb-font);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+
+/* DangerZone (spec §6.21) */
+.cb-danger-zone {
+  margin-top: var(--cb-space-8);
+  border: 1px solid color-mix(in srgb, var(--cb-fail) 45%, transparent);
+  border-radius: var(--cb-radius-md);
+}
+.cb-danger-zone-title {
+  margin: 0;
+  padding: var(--cb-space-3) var(--cb-space-4);
+  border-bottom: 1px solid color-mix(in srgb, var(--cb-fail) 25%, transparent);
+  color: var(--cb-fail);
+  font-size: var(--cb-type-body-size);
+  font-weight: 600;
+  line-height: var(--cb-type-body-line);
+}
+.cb-danger-zone-item {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-4);
+  padding: var(--cb-space-3) var(--cb-space-4);
+}
+.cb-danger-zone-item + .cb-danger-zone-item {
+  border-top: 1px solid var(--cb-line-soft);
+}
+.cb-danger-zone-words {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.cb-danger-zone-item-title {
+  color: var(--cb-ink);
+  font-weight: 600;
+}
+.cb-danger-zone-desc {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+
+/* SecretReveal (spec §6.22) */
+.cb-secret {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+}
+.cb-secret-label {
+  color: var(--cb-ink);
+  font-weight: 600;
+}
+.cb-secret-row {
+  display: flex;
+  gap: var(--cb-space-2);
+}
+.cb-secret-value {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--cb-font);
+}
+.cb-secret-once {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  color: var(--cb-warn);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}

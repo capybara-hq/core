@@ -75,6 +75,7 @@ export const ICON_NAMES = [
   "store",
   "cpu",
   "sliders",
+  "lock",
 ] as const;
 
 export type IconName = (typeof ICON_NAMES)[number];
@@ -495,5 +496,9 @@ export const ICON_NODES: Record<IconName, readonly IconNode[]> = {
     ["path", { d: "M21 5h-7" }],
     ["path", { d: "M8 10v4" }],
     ["path", { d: "M8 12H3" }],
+  ],
+  lock: [
+    ["rect", { width: "18", height: "11", x: "3", y: "11", rx: "2", ry: "2" }],
+    ["path", { d: "M7 11V7a5 5 0 0 1 10 0v4" }],
   ],
 };
