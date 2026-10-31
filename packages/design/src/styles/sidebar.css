@@ -430,6 +430,12 @@
 .cb-sidebar-row-menu[data-state="open"] {
   opacity: 1;
 }
+/* Touch screens have no hover: the row menu is always shown. */
+@media (hover: none) {
+  .cb-sidebar-row-menu {
+    opacity: 1;
+  }
+}
 .cb-sidebar-rename {
   flex: 1;
   min-width: 0;

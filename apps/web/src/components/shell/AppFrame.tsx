@@ -4,6 +4,7 @@ import {
   AppShell,
   Button,
   type IconName,
+  initialOf,
   type MenuItem,
   type SidebarContext,
   type SidebarFilter,
@@ -248,7 +249,7 @@ export function AppFrame({ version, children }: { version: string; children: Rea
         org: currentOrg
           ? {
               name: currentOrg.name,
-              initial: (Array.from(currentOrg.name)[0] ?? "").toUpperCase(),
+              initial: initialOf(currentOrg.name),
               slug: currentOrg.slug,
               role: roles[currentOrg.role] ?? currentOrg.role,
               menu: orgItems,
@@ -265,8 +266,9 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   const orgId = me?.currentOrgId ?? null;
   // The row actions: the kernel calls, then the list refreshes; a failure is a toast.
   const act = async (call: () => Promise<unknown>, rethrow: boolean) => {
-    if (orgId === null) return;
     try {
+      // Without a current org there is nothing to act on: fail, so the row stays as it was.
+      if (orgId === null) throw new Error("no current organization");
       await call();
       notifyConversationsChanged();
     } catch (e) {

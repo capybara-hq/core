@@ -10,6 +10,7 @@ export {
 export { PageTabs } from "./page-tabs";
 export { PreferenceBar, type PreferenceBarProps, ThemeToggle } from "./preference-bar";
 export {
+  initialOf,
   Sidebar,
   type SidebarActivity,
   type SidebarContext,

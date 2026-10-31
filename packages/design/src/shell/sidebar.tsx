@@ -113,7 +113,7 @@ const countText = (n: { count?: number; countMore?: boolean }): string =>
 type Variant = "full" | "rail" | "panel";
 
 /** The first grapheme of a name, upper-cased (an emoji or a CJK character stays whole). */
-function initialOf(name: string): string {
+export function initialOf(name: string): string {
   const Segmenter = (Intl as { Segmenter?: typeof Intl.Segmenter }).Segmenter;
   const first = Segmenter
     ? new Segmenter(undefined, { granularity: "grapheme" }).segment(name)[Symbol.iterator]().next()
@@ -241,6 +241,11 @@ function DrawerLayer({
           else focusReturn.capture();
         }}
         onCloseAutoFocus={focusReturn.restore}
+        onEscapeKeyDown={(e) => {
+          // Esc in the rename or filter input belongs to that input, not to the drawer.
+          const target = e.target as HTMLElement | null;
+          if (target?.closest('[data-part="rename"], [data-part="filter"]')) e.preventDefault();
+        }}
         onClick={(e: MouseEvent<HTMLElement>) => {
           // Following a link closes the drawer (the route changes).
           if ((e.target as HTMLElement).closest("a[href]")) onClose();

@@ -508,6 +508,8 @@ describe("Sidebar conversations", () => {
     await user.click(await screen.findByRole("menuitem", { name: "改名" }));
     const input = await screen.findByRole("textbox", { name: "会话标题" });
     expect((input as HTMLInputElement).value).toBe("研究助手 会话 1");
+    // focus moves into the input (the menu does not take it back)
+    await vi.waitFor(() => expect(document.activeElement).toBe(input));
     await user.clear(input);
     await user.keyboard("{Enter}");
     // empty is not allowed: still editing, nothing saved
@@ -515,8 +517,10 @@ describe("Sidebar conversations", () => {
     expect(screen.getByRole("textbox", { name: "会话标题" })).toBeTruthy();
     await user.type(input, "  季度核对  {Enter}");
     expect(p.conversations.onRename).toHaveBeenCalledWith("agt_a-c1", "季度核对");
-    expect(await screen.findByRole("link", { name: "研究助手 会话 1" })).toBeTruthy();
+    const row1 = await screen.findByRole("link", { name: "研究助手 会话 1" });
     expect(screen.queryByRole("textbox", { name: "会话标题" })).toBeNull();
+    // back on the row
+    await vi.waitFor(() => expect(document.activeElement).toBe(row1));
 
     await user.click(screen.getByRole("button", { name: "会话操作：研究助手 会话 2" }));
     await user.click(await screen.findByRole("menuitem", { name: "改名" }));
@@ -525,6 +529,78 @@ describe("Sidebar conversations", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("textbox", { name: "会话标题" })).toBeNull();
     expect(p.conversations.onRename).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("link", { name: "研究助手 会话 2" })),
+    );
+  });
+
+  it("rename ignores Enter and Escape while an IME composes", async () => {
+    const user = userEvent.setup();
+    const p = props();
+    zh(<Sidebar {...p} />);
+    await user.click(screen.getByRole("button", { name: "会话操作：研究助手 会话 1" }));
+    await user.click(await screen.findByRole("menuitem", { name: "改名" }));
+    const input = await screen.findByRole("textbox", { name: "会话标题" });
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    expect(p.conversations.onRename).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Escape", isComposing: true });
+    expect(screen.getByRole("textbox", { name: "会话标题" })).toBe(input);
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(p.conversations.onRename).toHaveBeenCalledWith("agt_a-c1", "研究助手 会话 1");
+  });
+
+  it("a failed rename keeps editing with focus in the input", async () => {
+    const user = userEvent.setup();
+    const p = props();
+    p.conversations.onRename = vi.fn(async () => {
+      throw new Error("nope");
+    });
+    zh(<Sidebar {...p} />);
+    await user.click(screen.getByRole("button", { name: "会话操作：研究助手 会话 1" }));
+    await user.click(await screen.findByRole("menuitem", { name: "改名" }));
+    const input = await screen.findByRole("textbox", { name: "会话标题" });
+    await vi.waitFor(() => expect(document.activeElement).toBe(input));
+    await user.keyboard("{Enter}");
+    await vi.waitFor(() => expect((input as HTMLInputElement).readOnly).toBe(false));
+    expect(screen.getByRole("textbox", { name: "会话标题" })).toBe(input);
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("a rename ends when its row is filtered out", async () => {
+    const user = userEvent.setup();
+    const p = props();
+    const r = zh(<Sidebar {...p} />);
+    await user.click(screen.getByRole("button", { name: "会话操作：研究助手 会话 1" }));
+    await user.click(await screen.findByRole("menuitem", { name: "改名" }));
+    expect(await screen.findByRole("textbox", { name: "会话标题" })).toBeTruthy();
+    const filtered = { ...p.conversations, filter: { ...p.conversations.filter, q: "客服" } };
+    r.rerender(
+      <DesignProvider locale="zh">
+        <Sidebar {...p} conversations={filtered} />
+      </DesignProvider>,
+    );
+    r.rerender(
+      <DesignProvider locale="zh">
+        <Sidebar {...p} />
+      </DesignProvider>,
+    );
+    expect(screen.queryByRole("textbox", { name: "会话标题" })).toBeNull();
+    expect(screen.getByRole("link", { name: "研究助手 会话 1" })).toBeTruthy();
+  });
+
+  it("archive failures are swallowed by the row (the caller reports them)", async () => {
+    const user = userEvent.setup();
+    const p = props();
+    p.conversations.onArchive = vi.fn(() => Promise.reject(new Error("nope")));
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    zh(<Sidebar {...p} />);
+    await user.click(screen.getByRole("button", { name: "会话操作：客服分流 会话 1" }));
+    await user.click(await screen.findByRole("menuitem", { name: "归档" }));
+    await new Promise((r) => setTimeout(r, 0));
+    process.off("unhandledRejection", unhandled);
+    expect(p.conversations.onArchive).toHaveBeenCalledWith("agt_b-c1", true);
+    expect(unhandled).not.toHaveBeenCalled();
   });
 
   it("row menu archives and deletes (delete asks to confirm)", async () => {
@@ -658,6 +734,52 @@ describe("Sidebar conversations", () => {
     expect(onOpenChange).toHaveBeenLastCalledWith(false);
   });
 
+  it("the archived list keeps its way back while loading or on error", async () => {
+    const onOpenChange = vi.fn();
+    const p = props();
+    for (const state of ["error", "loading"] as const) {
+      zh(
+        <Sidebar
+          {...p}
+          conversations={{
+            ...p.conversations,
+            state,
+            groups: [],
+            archived: { count: 7, open: true, onOpenChange },
+          }}
+        />,
+      );
+      await userEvent.click(
+        within(convSection()).getByRole("button", { name: "返回会话列表：已归档 · 7" }),
+      );
+      expect(onOpenChange).toHaveBeenLastCalledWith(false);
+      cleanup();
+    }
+  });
+
+  it("the filter applies to the archived list", () => {
+    const p = props();
+    zh(
+      <Sidebar
+        {...p}
+        conversations={{
+          ...p.conversations,
+          groups: [group("agt_x", "旧助手", 2)],
+          filter: { q: "会话 2", state: "all", onChange: vi.fn() },
+          filterOpen: true,
+          archived: { count: 2, open: true, onOpenChange: vi.fn() },
+        }}
+      />,
+    );
+    const sec = convSection();
+    expect(within(sec).getByRole("button", { name: "返回会话列表：已归档 · 2" })).toBeTruthy();
+    expect(
+      within(sec)
+        .getAllByRole("link")
+        .map((l) => l.textContent),
+    ).toEqual(["旧助手 会话 2"]);
+  });
+
   it("ready with no groups: one muted hint line", () => {
     const p = props();
     zh(<Sidebar {...p} conversations={{ ...p.conversations, groups: [] }} />);
@@ -774,6 +896,27 @@ describe("Sidebar rail", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(document.activeElement).toBe(expand);
+  });
+
+  it("Esc in the drawer's rename or filter input stays with the input", async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    zh(<Sidebar {...props()} mode="drawer" drawer={{ open: true, onOpenChange }} />);
+    const drawer = await screen.findByRole("dialog");
+    await user.click(within(drawer).getByRole("button", { name: "会话操作：研究助手 会话 1" }));
+    await user.click(await screen.findByRole("menuitem", { name: "改名" }));
+    const input = await within(drawer).findByRole("textbox", { name: "会话标题" });
+    await vi.waitFor(() => expect(document.activeElement).toBe(input));
+    await user.keyboard("{Escape}");
+    expect(within(drawer).queryByRole("textbox", { name: "会话标题" })).toBeNull();
+    await user.click(within(drawer).getByRole("button", { name: "筛选会话" }));
+    await user.click(within(drawer).getByRole("textbox", { name: "按标题搜索" }));
+    await user.keyboard("{Escape}");
+    expect(within(drawer).queryByRole("textbox", { name: "按标题搜索" })).toBeNull();
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    // elsewhere Esc still closes it
+    await user.keyboard("{Escape}");
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
   it("drawer mode is controlled through `drawer`; its close button closes it", async () => {

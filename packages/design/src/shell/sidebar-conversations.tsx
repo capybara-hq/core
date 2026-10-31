@@ -219,9 +219,22 @@ export function Conversations({ c }: { c: SidebarConversations }) {
     .filter((g) => !filtering || g.conversations.length > 0);
   const archivedList = c.archived.open;
 
+  // A rename whose row left the list (filtered out, another view) ends.
+  const shownIds = groups.flatMap((g) => g.conversations.map((x) => x.id));
+  const renamingShown = renaming !== null && shownIds.includes(renaming);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: ends a rename when its row goes away
+  useEffect(() => {
+    if (renaming !== null && !renamingShown) setRenaming(null);
+  }, [renamingShown]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a view or filter change ends a rename
+  useEffect(() => {
+    setRenaming(null);
+  }, [archivedList, f.q, f.state]);
+
   const keys: string[] = [];
+  // The way back from the archived list is there in every state (loading, error too).
+  if (archivedList) keys.push("ab");
   if (c.state === "ready") {
-    if (archivedList) keys.push("ab");
     for (const g of groups) {
       keys.push(`t:${g.agentId}`);
       if (!archivedList) keys.push(`n:${g.agentId}`);
@@ -350,7 +363,7 @@ export function Conversations({ c }: { c: SidebarConversations }) {
             value={f.q}
             onChange={(e) => f.onChange({ q: e.target.value, state: f.state })}
             onKeyDown={(e) => {
-              if (e.key === "Escape") {
+              if (e.key === "Escape" && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 closeFilter();
               }
@@ -370,7 +383,7 @@ export function Conversations({ c }: { c: SidebarConversations }) {
           />
         </div>
       ) : null}
-      {archivedList && c.state === "ready" ? (
+      {archivedList ? (
         <button
           type="button"
           className="cb-sidebar-archived"
@@ -546,9 +559,13 @@ function Row({
       rowRef.current?.querySelector<HTMLElement>("[data-rove]")?.focus();
     wasRenaming.current = renaming;
   }, [renaming]);
+  // The caller reports a failure (toast); the menu has nothing left to do with it.
+  const archive = (to: boolean) => {
+    c.onArchive(x.id, to).catch(() => {});
+  };
   const items: MenuItem[] = archived
     ? [
-        { label: t("sidebar.unarchive"), onSelect: () => void c.onArchive(x.id, false) },
+        { label: t("sidebar.unarchive"), onSelect: () => archive(false) },
         { label: t("sidebar.delete"), danger: true, onSelect: onDelete },
       ]
     : [
@@ -559,7 +576,7 @@ function Row({
             onRenameStart();
           },
         },
-        { label: t("sidebar.archive"), onSelect: () => void c.onArchive(x.id, true) },
+        { label: t("sidebar.archive"), onSelect: () => archive(true) },
         { label: t("sidebar.delete"), danger: true, onSelect: onDelete },
       ];
   const dot =
@@ -655,19 +672,24 @@ function RenameInput({
         aria-label={t("sidebar.renameLabel")}
         value={value}
         invalid={invalid}
-        disabled={busy}
+        // Read-only while saving, not disabled: focus stays in the input, also after a failure.
+        readOnly={busy}
+        aria-busy={busy || undefined}
         maxLength={200}
         onChange={(e) => {
           setValue(e.target.value);
           setInvalid(false);
         }}
         onKeyDown={(e) => {
+          // An IME composition takes Enter and Escape for itself.
+          if (e.nativeEvent.isComposing) return;
           if (e.key === "Escape") {
             e.preventDefault();
             e.stopPropagation();
             onCancel();
           } else if (e.key === "Enter") {
             e.preventDefault();
+            if (busy) return;
             const title = value.trim();
             if (title === "") {
               setInvalid(true);
