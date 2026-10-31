@@ -612,7 +612,7 @@ describe("运行记录列表（ListPage）", () => {
     lastRun: status === null ? null : { runId: `run-${id}`, status, startedAt: at(0) },
   });
 
-  it("Rail 按 agent、状态筛选；打开一行进详情", async () => {
+  it("工具栏按 agent、状态筛选；页头标签链到评测集；打开一行进详情", async () => {
     resetNavigation("/trajectories");
     const calls = stubApi({
       [`GET ${ORG}/agents`]: () =>
@@ -641,6 +641,18 @@ describe("运行记录列表（ListPage）", () => {
     expect(within(table).getByText(`${zh.trajectories.status.completed}`)).toBeTruthy();
     const lastList = () => calls.filter((c) => c.url.startsWith(LIST)).at(-1)?.url;
     expect(lastList()).toBe(`${LIST}?limit=50`);
+    // One page title "评测与运行" with tabs linking the two routes; no filter rail.
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(zh.trajectories.title);
+    expect(
+      screen
+        .getByRole("link", { name: new RegExp(zh.trajectories.tabs.sets) })
+        .getAttribute("href"),
+    ).toBe("/evals");
+    expect(
+      screen
+        .getByRole("link", { name: new RegExp(zh.trajectories.tabs.runs) })
+        .getAttribute("aria-current"),
+    ).toBe("page");
 
     const user = userEvent.setup();
     await user.selectOptions(
@@ -648,7 +660,10 @@ describe("运行记录列表（ListPage）", () => {
       "ag1",
     );
     await waitFor(() => expect(lastList()).toBe(`${LIST}?limit=50&agentId=ag1`));
-    await user.click(screen.getByRole("radio", { name: zh.trajectories.status.failed }));
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: zh.trajectories.filters.status }),
+      "failed",
+    );
     await waitFor(() => expect(lastList()).toBe(`${LIST}?limit=50&agentId=ag1&status=failed`));
 
     await user.click(await screen.findByText("Clean up"));

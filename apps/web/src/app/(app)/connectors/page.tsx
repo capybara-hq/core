@@ -1,19 +1,15 @@
 "use client";
 
-import { Button, type Column, DataTable, ListPage, StatusMark } from "@capybara-hq/design";
+import { ListPage, ObjectRow } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
+import { useState } from "react";
 import { OrgGate } from "../../../components/OrgGate";
 import { usePagePath } from "../../../components/shell/path";
 import { useSession } from "../../../components/shell/session";
-import { useRouter } from "../../../i18n/navigation";
-import {
-  type ConnectorSummary,
-  canManageConnectors,
-  listConnectors,
-} from "../../../lib/connectors";
+import { canManageConnectors, listConnectors } from "../../../lib/connectors";
 import { useLoad } from "../../../lib/use-load";
 
-/** `/connectors`：当前组织安装的连接器（ListPage + DataTable），点击行进入详情。 */
+/** `/connectors`: the connectors installed in the org as object rows; a name opens the detail. */
 export default function AppsPage() {
   return <OrgGate>{(orgId) => <Connectors orgId={orgId} />}</OrgGate>;
 }
@@ -21,68 +17,78 @@ export default function AppsPage() {
 function Connectors({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("connectors");
-  const router = useRouter();
   const { me } = useSession();
   const manage = canManageConnectors(me);
   const { state, reload } = useLoad(() => listConnectors(orgId).then((r) => r.connectors), [orgId]);
-  const open = (a: ConnectorSummary) => router.push(`/connectors/${encodeURIComponent(a.id)}`);
-
-  const columns: Column<ConnectorSummary>[] = [
-    { key: "name", header: t("columns.name"), cell: (a) => a.name },
-    { key: "slug", header: t("columns.slug"), tone: "muted", cell: (a) => a.slug },
-    {
-      key: "auth",
-      header: t("columns.auth"),
-      tone: "muted",
-      cell: (a) => t(`auth.${a.auth.type}`),
-    },
-    {
-      key: "status",
-      header: t("columns.status"),
-      cell: (a) =>
-        a.status === "active" ? (
-          <StatusMark status="success" label={t("status.active")} />
-        ) : (
-          <StatusMark status="cancelled" label={t("status.disabled")} />
-        ),
-    },
-  ];
-
+  const [tab, setTab] = useState<"all" | "disabled">("all");
+  const all = state.kind === "ready" ? state.data : [];
+  const disabled = all.filter((c) => c.status === "disabled");
+  // A tab only when it holds something different from "all".
+  const active = tab === "disabled" && disabled.length > 0 ? "disabled" : "all";
+  const rows = active === "disabled" ? disabled : all;
+  const header = {
+    path: [...scope, { label: "connectors" }],
+    title: t("title"),
+    actions: [
+      ...(manage
+        ? [{ label: t("new"), variant: "primary" as const, href: "/connectors/install" }]
+        : []),
+      { label: t("myConnections"), variant: "default" as const, href: "/settings/connections" },
+    ],
+    ...(state.kind === "ready" && disabled.length > 0
+      ? {
+          tabs: [
+            { id: "all", label: t("tabs.all"), count: all.length, onSelect: () => setTab("all") },
+            {
+              id: "disabled",
+              label: t("tabs.disabled"),
+              count: disabled.length,
+              onSelect: () => setTab("disabled"),
+            },
+          ],
+          activeTab: active,
+        }
+      : {}),
+  };
+  const empty =
+    state.kind === "error"
+      ? {
+          icon: "circle-alert" as const,
+          text: t("loadFailed"),
+          action: { label: t("retry"), variant: "default" as const, onSelect: reload },
+        }
+      : state.kind === "ready" && all.length === 0
+        ? {
+            icon: "connector" as const,
+            text: t("empty"),
+            ...(manage
+              ? {
+                  action: {
+                    label: t("new"),
+                    variant: "primary" as const,
+                    href: "/connectors/install",
+                  },
+                }
+              : {}),
+          }
+        : undefined;
   return (
-    <ListPage
-      header={{
-        path: [...scope, { label: "connectors" }],
-        title: t("title"),
-        count: state.kind === "ready" ? String(state.data.length) : undefined,
-        actions: [
-          ...(manage
-            ? [{ label: t("new"), variant: "primary" as const, href: "/connectors/install" }]
-            : []),
-          { label: t("myConnections"), variant: "default" as const, href: "/settings/connections" },
-        ],
-      }}
-    >
-      <DataTable<ConnectorSummary>
-        label={t("title")}
-        columns={columns}
-        rows={state.kind === "ready" ? state.data : []}
-        rowKey={(a) => a.id}
-        rowLabel={(a) => a.name}
-        onOpen={open}
-        state={state.kind === "ready" ? "ready" : state.kind}
-        {...(state.kind === "error" ? { error: { code: state.code, onRetry: reload } } : {})}
-        empty={{
-          title: t("empty"),
-          hint: t("emptyHint"),
-          ...(manage
-            ? {
-                action: (
-                  <Button onClick={() => router.push("/connectors/install")}>{t("new")}</Button>
-                ),
-              }
-            : {}),
-        }}
-      />
+    <ListPage header={header} variant="objects" {...(empty ? { empty } : {})}>
+      {rows.map((c) => (
+        <ObjectRow
+          key={c.id}
+          mark={{ text: Array.from(c.name)[0] ?? "?" }}
+          name={c.name}
+          href={`/connectors/${encodeURIComponent(c.id)}`}
+          chips={[{ label: t(`auth.${c.auth.type}`) }]}
+          meta={[c.slug, c.endpoint.url].filter(Boolean).join(" · ")}
+          state={
+            c.status === "active"
+              ? { label: t("status.active"), tone: "ok" }
+              : { label: t("status.disabled"), tone: "muted" }
+          }
+        />
+      ))}
     </ListPage>
   );
 }

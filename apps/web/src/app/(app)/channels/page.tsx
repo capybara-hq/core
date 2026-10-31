@@ -1,16 +1,15 @@
 "use client";
 
-import { type Column, DataTable, ListPage, Stack, Text } from "@capybara-hq/design";
+import { ListPage, ObjectRow } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { ChannelStatusMark } from "../../../components/ChannelFields";
+import { useState } from "react";
 import { OrgGate } from "../../../components/OrgGate";
 import { usePagePath } from "../../../components/shell/path";
-import { useRouter } from "../../../i18n/navigation";
 import { listAgents } from "../../../lib/agents";
-import { type ChannelConnection, listChannels } from "../../../lib/channels";
+import { listChannels } from "../../../lib/channels";
 import { useLoad } from "../../../lib/use-load";
 
-/** `/channels`：组织的渠道连接（ListPage + DataTable，管理员）。点一行进详情。 */
+/** `/channels`: the org's channel connections as object rows (admins); a name opens the detail. */
 export default function ChannelsPage() {
   return <OrgGate>{(orgId) => <Channels key={orgId} orgId={orgId} />}</OrgGate>;
 }
@@ -18,7 +17,7 @@ export default function ChannelsPage() {
 async function load(orgId: string) {
   const [{ channels }, agents] = await Promise.all([
     listChannels(orgId),
-    // agent 名只用于显示：读不到时显示 id
+    // Agent names are display only: show the id when they cannot be read.
     listAgents(orgId).then(
       (r) => r.agents,
       () => [],
@@ -30,64 +29,70 @@ async function load(orgId: string) {
 function Channels({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("channels");
-  const router = useRouter();
   const { state, reload } = useLoad(() => load(orgId), [orgId]);
+  const [tab, setTab] = useState<"all" | "error">("all");
+  const all = state.kind === "ready" ? state.data.channels : [];
   const agentNames = state.kind === "ready" ? state.data.agentNames : new Map<string, string>();
-  const columns: Column<ChannelConnection>[] = [
-    {
-      key: "name",
-      header: t("columns.name"),
-      cell: (c) => (
-        <Stack gap={0}>
-          <Text>{c.name}</Text>
-          {c.status === "error" && c.lastError !== null && (
-            <Text variant="small" tone="fail" truncate>
-              {c.lastError}
-            </Text>
-          )}
-        </Stack>
-      ),
-    },
-    { key: "plugin", header: t("columns.plugin"), tone: "muted", cell: (c) => c.plugin },
-    {
-      key: "agent",
-      header: t("columns.agent"),
-      cell: (c) => agentNames.get(c.agentId) ?? c.agentId,
-    },
-    {
-      key: "policy",
-      header: t("columns.policy"),
-      tone: "muted",
-      width: 140,
-      cell: (c) => t(`policy.${c.unboundPolicy}`),
-    },
-    {
-      key: "status",
-      header: t("columns.status"),
-      width: 120,
-      cell: (c) => <ChannelStatusMark status={c.status} />,
-    },
-  ];
+  const failing = all.filter((c) => c.status === "error");
+  // A tab only when it holds something different from "all".
+  const active = tab === "error" && failing.length > 0 ? "error" : "all";
+  const rows = active === "error" ? failing : all;
+  const header = {
+    path: [...scope, { label: "channels" }],
+    title: t("title"),
+    actions: [{ label: t("new"), variant: "primary" as const, href: "/channels/new" }],
+    ...(state.kind === "ready" && failing.length > 0
+      ? {
+          tabs: [
+            { id: "all", label: t("tabs.all"), count: all.length, onSelect: () => setTab("all") },
+            {
+              id: "error",
+              label: t("tabs.error"),
+              count: failing.length,
+              onSelect: () => setTab("error"),
+            },
+          ],
+          activeTab: active,
+        }
+      : {}),
+  };
+  const empty =
+    state.kind === "error"
+      ? {
+          icon: "circle-alert" as const,
+          text: t("loadFailed"),
+          action: { label: t("retry"), variant: "default" as const, onSelect: reload },
+        }
+      : state.kind === "ready" && all.length === 0
+        ? {
+            icon: "channel" as const,
+            text: t("empty"),
+            action: { label: t("new"), variant: "primary" as const, href: "/channels/new" },
+          }
+        : undefined;
   return (
-    <ListPage
-      header={{
-        path: [...scope, { label: "channels" }],
-        title: t("title"),
-        count: state.kind === "ready" ? String(state.data.channels.length) : undefined,
-        actions: [{ label: t("new"), variant: "primary", href: "/channels/new" }],
-      }}
-    >
-      <DataTable<ChannelConnection>
-        label={t("title")}
-        columns={columns}
-        rows={state.kind === "ready" ? state.data.channels : []}
-        rowKey={(c) => c.id}
-        rowLabel={(c) => c.name}
-        state={state.kind === "loading" ? "loading" : state.kind === "error" ? "error" : "ready"}
-        {...(state.kind === "error" ? { error: { code: state.code, onRetry: reload } } : {})}
-        empty={{ title: t("empty"), hint: t("emptyHint") }}
-        onOpen={(c) => router.push(`/channels/${c.id}`)}
-      />
+    <ListPage header={header} variant="objects" {...(empty ? { empty } : {})}>
+      {rows.map((c) => (
+        <ObjectRow
+          key={c.id}
+          mark={{
+            text: Array.from(c.name)[0] ?? "?",
+            ...(c.status === "error" ? { tone: "warn" as const } : {}),
+          }}
+          name={c.name}
+          href={`/channels/${c.id}`}
+          chips={[{ label: c.plugin }]}
+          {...(c.status === "error" && c.lastError !== null ? { description: c.lastError } : {})}
+          meta={`${agentNames.get(c.agentId) ?? c.agentId} · ${t(`policy.${c.unboundPolicy}`)}`}
+          state={
+            c.status === "active"
+              ? { label: t("status.active"), tone: "ok" }
+              : c.status === "error"
+                ? { label: t("status.error"), tone: "fail" }
+                : { label: t("status.disabled"), tone: "muted" }
+          }
+        />
+      ))}
     </ListPage>
   );
 }

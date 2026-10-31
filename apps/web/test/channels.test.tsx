@@ -131,14 +131,17 @@ describe("渠道连接列表（ListPage）", () => {
     });
     const { container } = renderPage(<ChannelsPage />, { locale });
     expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
-    const table = await screen.findByRole("table", { name: m.title });
-    const row = await within(table).findByRole("row", { name: /Acme Bot/ });
-    expect(within(row).getByText("Helper")).toBeTruthy();
+    const list = await screen.findByRole("list", { name: m.title });
+    const row = await within(list).findByRole("listitem");
+    expect(within(row).getByText(/Helper/)).toBeTruthy();
     expect(within(row).getByText(`${m.status.error}`)).toBeTruthy();
     expect(within(row).getByText("connect failed with status 503")).toBeTruthy();
     expect(screen.getByRole("link", { name: m.new }).getAttribute("href")).toBe("/channels/new");
-    await userEvent.setup().click(within(row).getByText("Acme Bot"));
-    expect(router.push).toHaveBeenCalledWith("/channels/ch1");
+    expect(within(row).getByRole("link", { name: "Acme Bot" }).getAttribute("href")).toBe(
+      "/channels/ch1",
+    );
+    // A tab only when it holds something different from "all": one failing channel of one.
+    expect(screen.queryByRole("link", { name: new RegExp(m.tabs.error) })).toBeNull();
   });
 });
 

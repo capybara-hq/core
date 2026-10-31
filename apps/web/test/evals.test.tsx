@@ -250,16 +250,23 @@ describe("评测集列表（ListPage）", () => {
       });
       const { container } = renderPage(<EvalsPage />, { locale });
       expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
-      const table = await screen.findByRole("table", { name: m.title });
-      const row = await within(table).findByRole("row", { name: /Regression/ });
-      await waitFor(() => expect(within(row).getByText("Helper")).toBeTruthy());
-      expect(within(row).getByText("2")).toBeTruthy();
+      const list = await screen.findByRole("list", { name: m.tabs.sets });
+      const row = await within(list).findByRole("listitem");
+      await waitFor(() => expect(within(row).getByText(/Helper · .*2/)).toBeTruthy());
       expect(screen.getByRole("link", { name: m.new }).getAttribute("href")).toBe("/evals/new");
-      expect(screen.getByRole("link", { name: m.runHistory }).getAttribute("href")).toBe(
-        "/trajectories",
+      // One page title, tabs linking the two routes.
+      expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(m.title);
+      expect(
+        screen.getByRole("link", { name: new RegExp(`^${m.tabs.runs}`) }).getAttribute("href"),
+      ).toBe("/trajectories");
+      expect(
+        screen
+          .getByRole("link", { name: new RegExp(`^${m.tabs.sets}`) })
+          .getAttribute("aria-current"),
+      ).toBe("page");
+      expect(within(row).getByRole("link", { name: "Regression" }).getAttribute("href")).toBe(
+        "/evals/s1",
       );
-      await userEvent.setup().click(within(row).getByText("Regression"));
-      expect(router.push).toHaveBeenCalledWith("/evals/s1");
     },
   );
 

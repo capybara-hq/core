@@ -4,9 +4,9 @@ import {
   Button,
   type Column,
   DataTable,
+  EmptyState,
   Field,
   ListPage,
-  RadioGroup,
   Select,
   Stack,
   StatusMark,
@@ -19,6 +19,7 @@ import { OrgGate } from "../../../components/OrgGate";
 import { usePagePath } from "../../../components/shell/path";
 import { useRouter } from "../../../i18n/navigation";
 import { listAgents } from "../../../lib/agents";
+import { evalsTabs } from "../../../lib/evals-tabs";
 import {
   listTrajectories,
   RUN_STATUSES,
@@ -34,7 +35,7 @@ const PAGE = 50;
 
 /**
  * `/trajectories`：运行记录（轨迹查看器的列表，ListPage）。组织管理员看全部对话，agent 负责人只看
- * 自己负责的 agent（由内核判定）。Rail 按 agent 与最近一次运行的状态筛选；`?agentId=` 预选 agent
+ * 自己负责的 agent（由内核判定）。页头标签链到评测集；表上方按 agent 与最近一次运行的状态筛选；`?agentId=` 预选 agent
  * （agent 详情页的「运行记录」入口）。列表只有元数据，不写审计；打开一行进详情。
  */
 export default function TrajectoriesPage() {
@@ -66,9 +67,15 @@ function Trajectories({ orgId }: { orgId: string }) {
   }
   return (
     <ListPage
-      header={{ path: [...scope, { label: "trajectories" }], title: t("title") }}
-      rail={
-        <Stack gap={16}>
+      header={{
+        path: [...scope, { label: "trajectories" }],
+        title: t("title"),
+        tabs: evalsTabs(t),
+        activeTab: "runs",
+      }}
+    >
+      <Stack gap={12}>
+        <Stack direction="row" gap={12} align="end">
           <Field label={t("filters.agent")}>
             <Select
               value={agentId}
@@ -76,28 +83,28 @@ function Trajectories({ orgId }: { orgId: string }) {
               options={agentOptions}
             />
           </Field>
-          <RadioGroup
-            label={t("filters.status")}
-            value={status}
-            onChange={(v) => setStatus(v as RunStatus | "")}
-            options={[
-              { value: "", label: t("filters.allStatuses") },
-              ...RUN_STATUSES.map((s) => ({ value: s, label: t(`status.${s}`) })),
-            ]}
-          />
+          <Field label={t("filters.status")}>
+            <Select
+              value={status}
+              onChange={(e) => setStatus(e.target.value as RunStatus | "")}
+              options={[
+                { value: "", label: t("filters.allStatuses") },
+                ...RUN_STATUSES.map((s) => ({ value: s, label: t(`status.${s}`) })),
+              ]}
+            />
+          </Field>
         </Stack>
-      }
-    >
-      <TrajectoryTable
-        key={`${agentId}\n${status}`}
-        orgId={orgId}
-        agentId={agentId}
-        status={status}
-        onClear={() => {
-          setAgentId("");
-          setStatus("");
-        }}
-      />
+        <TrajectoryTable
+          key={`${agentId}\n${status}`}
+          orgId={orgId}
+          agentId={agentId}
+          status={status}
+          onClear={() => {
+            setAgentId("");
+            setStatus("");
+          }}
+        />
+      </Stack>
     </ListPage>
   );
 }
@@ -182,6 +189,9 @@ function TrajectoryTable({
     },
   ];
 
+  if (first.state.kind === "ready" && rows.length === 0 && !filtered) {
+    return <EmptyState icon="evals" text={t("empty")} />;
+  }
   return (
     <Stack gap={12}>
       <DataTable<TrajectoryListItem>

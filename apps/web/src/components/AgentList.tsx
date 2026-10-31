@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, type Column, DataTable } from "@capybara-hq/design";
+import { ObjectRow } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useCallback, useContext, useEffect, useState } from "react";
 import { useRouter } from "../i18n/navigation";
@@ -39,64 +39,57 @@ export function useAgents(orgId: string): AgentsState & { reload(): void } {
   return { ...state, reload };
 }
 
+export type AgentScope = "all" | "mine" | "shared";
+
+/** Whether the agent belongs to the "mine" / "shared" tab (the kernel decides who can see what). */
+export function inScope(a: Agent, scope: AgentScope, accountId: string | undefined): boolean {
+  if (scope === "mine") return a.ownerAccountId === accountId;
+  if (scope === "shared") return a.visibility !== "private";
+  return true;
+}
+
+/** Name or model matches the search text (case-insensitive). */
+export function matchesAgent(a: Agent, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (q === "") return true;
+  const model = `${a.definition.model.provider} / ${a.definition.model.model}`;
+  return `${a.definition.name} ${model}`.toLowerCase().includes(q);
+}
+
 /**
- * The agents table: name and model; a row (click / Enter) or its menu "Start chat" opens a new
- * conversation with that agent picked (`/chat?agent=`), created on the first send.负责人与组织管理员的行菜单另有「编辑」
- * （界面上的隐藏，最终由内核判定）。空状态带「新建 Agent」。
+ * One agent as an object row: mark, name (links to the edit page for the owner and org admins),
+ * scope chip, a meta line (model, skills, tools) and the row action "Chat", which opens a new
+ * conversation with that agent picked (`/chat?agent=`, created on the first send). The API returns
+ * no last-use time, so there is no trailing text.
  */
-export function AgentTable({ agents }: { orgId: string; agents: ReturnType<typeof useAgents> }) {
+export function AgentRow({ agent }: { agent: Agent }) {
   const t = useTranslations("agents");
   const router = useRouter();
   const session = useContext(SessionContext);
-  const canEdit = (a: Agent) =>
-    session !== null && (a.ownerAccountId === session.me.account.id || canUpdateOrg(session.me));
-  // A new conversation with this agent picked: created on the first send (spec §5.2).
-  function onStart(agentId: string) {
-    router.push(`/chat?agent=${encodeURIComponent(agentId)}`);
-  }
-
-  const columns: Column<Agent>[] = [
-    {
-      key: "name",
-      header: t("columns.name"),
-      cell: (a) => a.definition.name,
-    },
-    {
-      key: "model",
-      header: t("columns.model"),
-      tone: "muted",
-      cell: (a) => `${a.definition.model.provider} / ${a.definition.model.model}`,
-    },
-  ];
-
+  const canEdit =
+    session !== null &&
+    (agent.ownerAccountId === session.me.account.id || canUpdateOrg(session.me));
+  const def = agent.definition;
+  const skills = def.skills?.orgSkills.length ?? 0;
+  const tools = def.tools?.length ?? 0;
+  const meta = [
+    `${def.model.provider} / ${def.model.model}`,
+    ...(skills > 0 ? [t("meta.skills", { n: skills })] : []),
+    ...(tools > 0 ? [t("meta.tools", { n: tools })] : []),
+  ].join(" · ");
+  const editHref = `/agents/${encodeURIComponent(agent.id)}`;
+  const start = () => router.push(`/chat?agent=${encodeURIComponent(agent.id)}`);
   return (
-    <DataTable<Agent>
-      label={t("title")}
-      columns={columns}
-      rows={agents.kind === "ready" ? agents.agents : []}
-      rowKey={(a) => a.id}
-      rowLabel={(a) => a.definition.name}
-      onOpen={(a) => onStart(a.id)}
-      state={agents.kind === "ready" ? "ready" : agents.kind}
-      {...(agents.kind === "error" ? { error: { code: agents.code, onRetry: agents.reload } } : {})}
-      empty={{
-        title: t("empty"),
-        hint: t("emptyHint"),
-        action: <Button onClick={() => router.push("/agents/new")}>{t("new")}</Button>,
-      }}
-      rowMenu={(a) => [
-        {
-          label: t("startChat"),
-          onSelect: () => onStart(a.id),
-        },
-        ...(canEdit(a)
-          ? [
-              {
-                label: t("edit"),
-                onSelect: () => router.push(`/agents/${encodeURIComponent(a.id)}`),
-              },
-            ]
-          : []),
+    <ObjectRow
+      mark={{ text: Array.from(def.name)[0] ?? "?" }}
+      name={def.name}
+      {...(canEdit ? { href: editHref } : {})}
+      chips={[{ label: t(`scope.${agent.visibility}`) }]}
+      meta={meta}
+      action={{ label: t("chat"), onSelect: start }}
+      menu={[
+        { label: t("startChat"), onSelect: start },
+        ...(canEdit ? [{ label: t("edit"), onSelect: () => router.push(editHref) }] : []),
       ]}
     />
   );

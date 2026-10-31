@@ -78,9 +78,10 @@ function orgItem(over: Record<string, unknown> = {}) {
 
 describe("/catalog: actions follow installable", () => {
   it.each(LOCALES)(
-    "org admins: available / needs approval / approved / disabled / not deployed / installed / requested (%s)",
+    "org admins: the row action and state follow installable (%s)",
     async (locale) => {
       const a = msgs[locale].catalog.org.action;
+      const st = msgs[locale].catalog.org.status;
       const items = [
         orgItem({ id: "a", name: "yes-skill" }),
         orgItem({ id: "b", name: "approval", installable: "needs_approval" }),
@@ -98,54 +99,44 @@ describe("/catalog: actions follow installable", () => {
           installable: "needs_approval",
           request: { id: "r1", stage: "deployment", status: "pending" },
         }),
+        orgItem({
+          id: "h",
+          name: "old",
+          installed: { pluginInstallId: "i2", version: "1.0.0", upgradeAvailable: "1.1.0" },
+        }),
       ];
-      const calls = stubApi({
-        [`GET ${ORG}/catalog`]: () => json(200, { items }),
-        [`POST ${ORG}/catalog/b/install`]: () =>
-          json(202, { request: { id: "r2", stage: "deployment", status: "pending" } }),
-      });
+      stubApi({ [`GET ${ORG}/catalog`]: () => json(200, { items }) });
       renderPage(<CatalogPage />, { locale });
       expect(template("ListPage")).not.toBeNull();
-      const table = await screen.findByRole("table");
-      const row = (name: string) => within(table).getByText(name).closest("tr") as HTMLElement;
-      expect(within(row("yes-skill")).getByRole("button", { name: a.install })).toBeTruthy();
-      expect(within(row("approval")).getByRole("button", { name: a.requestApproval })).toBeTruthy();
-      expect(within(row("granted-tpl")).getByRole("button", { name: a.install })).toBeTruthy();
-      expect(within(row("off")).queryByRole("button")).toBeNull();
-      expect(within(row("off")).getByText(a.disabledHint)).toBeTruthy();
-      expect(within(row("missing")).queryByRole("button")).toBeNull();
-      expect(within(row("missing")).getByText(a.notDeployedHint)).toBeTruthy();
-      expect(within(row("done")).queryByRole("button")).toBeNull();
-      expect(
-        within(row("done")).getByRole("link", { name: a.openPlugins }).getAttribute("href"),
-      ).toBe("/settings/plugins");
-      expect(within(row("asked")).queryByRole("button")).toBeNull();
-      expect(
-        within(row("asked")).getByText(fill(a.pendingHint, { stage: a.stage.deployment })),
-      ).toBeTruthy();
-
-      const user = userEvent.setup();
-      // Every install goes through the wizard (it lists the components and dependencies)
-      await user.click(within(row("granted-tpl")).getByRole("button", { name: a.install }));
-      expect(router.push).toHaveBeenCalledWith("/catalog/c/install");
-      await user.click(within(row("yes-skill")).getByRole("button", { name: a.install }));
-      expect(router.push).toHaveBeenCalledWith("/catalog/a/install");
-      // needs_approval asks an enterprise admin directly (202, a request is created)
-      await user.click(within(row("approval")).getByRole("button", { name: a.requestApproval }));
-      await waitFor(() =>
-        expect(calls.some((c) => c.url === `${ORG}/catalog/b/install`)).toBe(true),
-      );
-      expect(bodyOf(calls.find((c) => c.url === `${ORG}/catalog/b/install`))).toEqual({});
+      const list = await screen.findByRole("list", { name: msgs[locale].catalog.org.title });
+      const row = (name: string) =>
+        within(list)
+          .getAllByRole("listitem")
+          .find((r) => within(r).queryByRole("link", { name }) !== null) as HTMLElement;
+      const action = (name: string, label: string) =>
+        within(row(name)).getByRole("link", { name: label }).getAttribute("href");
+      // Installing goes through the wizard; requests and upgrades open the detail page.
+      expect(action("yes-skill", a.install)).toBe("/catalog/a/install");
+      expect(action("granted-tpl", a.install)).toBe("/catalog/c/install");
+      expect(action("approval", a.requestApproval)).toBe("/catalog/b");
+      expect(action("old", a.upgrade)).toBe("/catalog/h");
+      for (const name of ["off", "missing", "done", "asked"]) {
+        // Only the name link: no action button or link.
+        expect(within(row(name)).getAllByRole("link")).toHaveLength(1);
+      }
+      expect(within(row("off")).getByText(st.disabled)).toBeTruthy();
+      expect(within(row("missing")).getByText(st.not_deployed)).toBeTruthy();
+      expect(within(row("done")).getByText(fill(st.installed, { version: "1.0.0" }))).toBeTruthy();
+      expect(within(row("asked")).getByText(st.requested)).toBeTruthy();
     },
   );
 
-  it("成员：可装的条目只能申请（进组织管理员收件箱）", async () => {
-    const a = en.catalog.org.action;
-    const calls = stubApi({
+  it("tabs only when installed holds something different from all", async () => {
+    stubApi({
       [`GET ${ORG}/catalog`]: () =>
         json(200, {
           items: [
-            orgItem(),
+            orgItem({ id: "a", name: "yes-skill" }),
             orgItem({
               id: "f",
               name: "done",
@@ -153,26 +144,39 @@ describe("/catalog: actions follow installable", () => {
             }),
           ],
         }),
-      [`POST ${ORG}/catalog/${ID}/requests`]: () =>
-        json(201, { request: { id: "r" }, created: true }),
     });
+    renderPage(<CatalogPage />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: /Installed/ }));
+    expect(screen.queryByText("yes-skill")).toBeNull();
+    expect(screen.getByText("done")).toBeTruthy();
+    expect(screen.getByRole("tab", { name: /All/ }).textContent).toContain("2");
+  });
+
+  it("members: an installable item offers a request that opens the detail page", async () => {
+    const a = en.catalog.org.action;
+    stubApi({ [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }) });
     renderPage(<CatalogPage />, { me: MEMBER });
-    const btn = await screen.findByRole("button", { name: a.request });
-    expect(screen.queryByRole("button", { name: a.install })).toBeNull();
-    // Installed plugins are an org admin page: members get no link to it
-    expect(screen.queryByRole("link", { name: a.openPlugins })).toBeNull();
-    await userEvent.setup().click(btn);
-    await waitFor(() =>
-      expect(calls.find((c) => c.url.endsWith("/requests"))?.method).toBe("POST"),
-    );
+    const link = await screen.findByRole("link", { name: a.request });
+    expect(link.getAttribute("href")).toBe(`/catalog/${ID}`);
+    expect(screen.queryByRole("link", { name: a.install })).toBeNull();
   });
 });
 
 describe("/catalog: dependency errors", () => {
   it("asking for approval when a dependency cannot be resolved names it (409 catalog.dependency_unresolved)", async () => {
+    params.current = { itemId: "b" };
     stubApi({
-      [`GET ${ORG}/catalog`]: () =>
-        json(200, { items: [orgItem({ id: "b", installable: "needs_approval" })] }),
+      [`GET ${ORG}/catalog/b`]: () =>
+        json(200, {
+          item: orgItem({ id: "b", installable: "needs_approval" }),
+          hasIcon: false,
+          extension: null,
+          templates: [],
+          dependencies: [],
+          skills: [],
+        }),
+      [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
       [`POST ${ORG}/catalog/b/install`]: () =>
         json(409, {
           error: {
@@ -182,7 +186,7 @@ describe("/catalog: dependency errors", () => {
           },
         }),
     });
-    renderPage(<CatalogPage />);
+    renderPage(<OrgCatalogItemPage />);
     await userEvent
       .setup()
       .click(await screen.findByRole("button", { name: en.catalog.org.action.requestApproval }));

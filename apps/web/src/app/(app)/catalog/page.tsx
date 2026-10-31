@@ -1,20 +1,20 @@
 "use client";
 
-import { type Column, DataTable, ListPage, Stack, Text } from "@capybara-hq/design";
+import { ListPage, ObjectRow } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
-import { CatalogInstallAction, useOrgItemStatus } from "../../../components/CatalogInstallAction";
+import { useState } from "react";
+import { useOrgItemStatus } from "../../../components/CatalogInstallAction";
 import { OrgGate } from "../../../components/OrgGate";
 import { usePagePath } from "../../../components/shell/path";
 import { useSession } from "../../../components/shell/session";
-import { useRouter } from "../../../i18n/navigation";
 import { displayNameOf, listOrgCatalog, type OrgCatalogItem } from "../../../lib/catalog";
 import { canUpdateOrg } from "../../../lib/org-settings";
 import { useLoad } from "../../../lib/use-load";
 
 /**
- * `/catalog`: the plugins in the catalog available to this org (ListPage, members and up).
- * Columns: name, summary, status, action (install / request by `installable`, see
- * CatalogInstallAction). A row opens the detail page.
+ * `/catalog`: the plugins in the catalog available to this org (members and up), as object rows.
+ * The row action follows `installable` (the kernel decides): install opens the wizard, requests
+ * and upgrades open the detail page, which carries the full action (CatalogInstallAction).
  */
 export default function CatalogPage() {
   return <OrgGate>{(orgId) => <Catalog key={orgId} orgId={orgId} />}</OrgGate>;
@@ -24,67 +24,89 @@ function Catalog({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("catalog.org");
   const locale = useLocale();
-  const router = useRouter();
   const status = useOrgItemStatus();
   const { me } = useSession();
   const admin = canUpdateOrg(me);
   const { state, reload } = useLoad(() => listOrgCatalog(orgId), [orgId]);
-  const rows = state.kind === "ready" ? state.data.items : [];
+  const [tab, setTab] = useState<"all" | "installed">("all");
+  const all = state.kind === "ready" ? state.data.items : [];
+  const installed = all.filter((i) => i.installed !== null);
+  // A tab only when it holds something different from "all".
+  const showTabs = installed.length > 0 && installed.length < all.length;
+  const active = showTabs && tab === "installed" ? "installed" : "all";
+  const rows = active === "installed" ? installed : all;
 
-  const columns: Column<OrgCatalogItem>[] = [
-    {
-      key: "name",
-      header: t("columns.name"),
-      cell: (i) => (
-        <Stack gap={0}>
-          <Text>{displayNameOf(i, locale)}</Text>
-          <Text variant="small" tone="muted">
-            {i.publisher}
-          </Text>
-        </Stack>
-      ),
-    },
-    {
-      key: "description",
-      header: t("columns.description"),
-      tone: "muted",
-      cell: (i) => i.description,
-    },
-    { key: "status", header: t("columns.status"), cell: (i) => status(i) },
-    {
-      key: "action",
-      header: "",
-      // 操作按钮不触发打开整行
-      cell: (i) => (
-        <div data-no-open="">
-          <CatalogInstallAction orgId={orgId} item={i} admin={admin} onChanged={reload} />
-        </div>
-      ),
-    },
-  ];
+  const rowAction = (i: OrgCatalogItem) => {
+    const detail = `/catalog/${encodeURIComponent(i.id)}`;
+    if (i.installed !== null) {
+      return admin && i.installed.upgradeAvailable !== null
+        ? { label: t("action.upgrade"), href: detail }
+        : undefined;
+    }
+    if (i.request?.status === "pending") return undefined;
+    if (i.installable === "disabled" || i.installable === "not_deployed") return undefined;
+    if (!admin) return { label: t("action.request"), href: detail };
+    if (i.installable === "needs_approval") {
+      return { label: t("action.requestApproval"), href: detail };
+    }
+    return { label: t("action.install"), primary: true, href: `${detail}/install` };
+  };
+  const tone = (i: OrgCatalogItem) =>
+    i.installed !== null
+      ? i.installed.upgradeAvailable !== null
+        ? ("warn" as const)
+        : ("ok" as const)
+      : i.installable === "not_deployed"
+        ? ("warn" as const)
+        : ("muted" as const);
 
+  const header = {
+    path: [...scope, { label: "catalog" }],
+    title: t("title"),
+    description: t("hint"),
+    ...(state.kind === "ready" && showTabs
+      ? {
+          tabs: [
+            { id: "all", label: t("tabs.all"), count: all.length, onSelect: () => setTab("all") },
+            {
+              id: "installed",
+              label: t("tabs.installed"),
+              count: installed.length,
+              onSelect: () => setTab("installed"),
+            },
+          ],
+          activeTab: active,
+        }
+      : {}),
+  };
+  const empty =
+    state.kind === "error"
+      ? {
+          icon: "circle-alert" as const,
+          text: t("loadFailed"),
+          action: { label: t("retry"), variant: "default" as const, onSelect: reload },
+        }
+      : state.kind === "ready" && all.length === 0
+        ? { icon: "catalog" as const, text: t("empty") }
+        : undefined;
   return (
-    <ListPage
-      header={{
-        path: [...scope, { label: "catalog" }],
-        title: t("title"),
-        count: String(rows.length),
-      }}
-    >
-      <Stack gap={12}>
-        <Text tone="muted">{t("hint")}</Text>
-        <DataTable
-          label={t("title")}
-          columns={columns}
-          rows={rows}
-          rowKey={(i) => i.id}
-          rowLabel={(i) => i.name}
-          state={state.kind === "loading" ? "loading" : state.kind === "error" ? "error" : "ready"}
-          error={{ code: state.kind === "error" ? state.code : "unknown", onRetry: reload }}
-          empty={{ title: t("empty") }}
-          onOpen={(i) => router.push(`/catalog/${i.id}`)}
-        />
-      </Stack>
+    <ListPage header={header} variant="objects" {...(empty ? { empty } : {})}>
+      {rows.map((i) => {
+        const action = rowAction(i);
+        const name = displayNameOf(i, locale);
+        return (
+          <ObjectRow
+            key={i.id}
+            mark={{ text: Array.from(name)[0] ?? "?" }}
+            name={name}
+            href={`/catalog/${encodeURIComponent(i.id)}`}
+            description={i.description}
+            meta={i.publisher}
+            state={{ label: status(i), tone: tone(i) }}
+            {...(action ? { action } : {})}
+          />
+        );
+      })}
     </ListPage>
   );
 }

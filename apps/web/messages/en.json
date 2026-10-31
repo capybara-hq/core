@@ -581,7 +581,26 @@
     "emptyHint": "Create an agent, then start a conversation.",
     "noOrgHint": "Pick one on the home page or from the account menu at the bottom of the sidebar.",
     "edit": "Edit",
-    "runHistory": "Run history"
+    "runHistory": "Run history",
+    "tabs": {
+      "all": "All",
+      "mine": "Mine",
+      "shared": "Shared with org"
+    },
+    "search": "Search by name or model",
+    "scope": {
+      "private": "Only me",
+      "org": "Organization",
+      "members": "Selected members"
+    },
+    "chat": "Chat",
+    "meta": {
+      "skills": "{n, plural, one {# skill} other {# skills}}",
+      "tools": "{n, plural, one {# tool} other {# tools}}"
+    },
+    "noMatch": "No agents match.",
+    "loadFailed": "Could not load agents.",
+    "retry": "Retry"
   },
   "skills": {
     "title": "Skills",
@@ -609,7 +628,9 @@
       "tooLarge": "The zip file is larger than 50 MB.",
       "cancel": "Cancel",
       "cancelled": "Upload cancelled.",
-      "retry": "Retry"
+      "retry": "Retry",
+      "open": "Upload skill",
+      "close": "Close"
     },
     "detail": {
       "tabsLabel": "Skill sections",
@@ -641,7 +662,9 @@
       "deleteTitle": "Delete {name}?",
       "deleteHint": "Agents stop loading this skill. Agent definitions keep the reference, which shows as deleted until their owners remove it.",
       "deleted": "Skill {name} deleted."
-    }
+    },
+    "loadFailed": "Could not load this list.",
+    "retry": "Retry"
   },
   "chat": {
     "title": "Chat",
@@ -1219,7 +1242,13 @@
       "rejected": "Rejected {tool}; the tool is disabled.",
       "missingTitle": "No longer provided",
       "missingHint": "These tools are disabled; if the server provides them again they go to review."
-    }
+    },
+    "tabs": {
+      "all": "All",
+      "disabled": "Disabled"
+    },
+    "loadFailed": "Could not load this list.",
+    "retry": "Retry"
   },
   "connections": {
     "title": "My settings",
@@ -1445,7 +1474,13 @@
     "inboundModeHint": {
       "long_connection": "The bot keeps a connection open to the platform (default; no public address needed).",
       "webhook": "The platform calls this deployment for every event; needs a public address."
-    }
+    },
+    "tabs": {
+      "all": "All",
+      "error": "Errors"
+    },
+    "loadFailed": "Could not load this list.",
+    "retry": "Retry"
   },
   "extensions": {
     "title": "Extensions",
@@ -1556,7 +1591,7 @@
     "goHome": "Go to Capybara"
   },
   "trajectories": {
-    "title": "Run history",
+    "title": "Evals & runs",
     "untitled": "Untitled conversation",
     "noRun": "No runs",
     "empty": "No run history to view yet",
@@ -1725,10 +1760,14 @@
       "shutdown": "worker shut down",
       "wait_timeout": "stopped: sub-agent wait timed out"
     },
-    "parentLink": "Open the parent conversation's trajectory"
+    "parentLink": "Open the parent conversation's trajectory",
+    "tabs": {
+      "sets": "Eval sets",
+      "runs": "Runs"
+    }
   },
   "evals": {
-    "title": "Evals",
+    "title": "Evals & runs",
     "runHistory": "Run history",
     "new": "New eval set",
     "empty": "No eval sets yet",
@@ -2010,7 +2049,14 @@
       "tool_unmatched": "A tool call had no recorded result",
       "subagent_changed": "A sub-agent's definition changed since the recording",
       "model_switched": "The candidate model replaces a model switch made in the conversation"
-    }
+    },
+    "tabs": {
+      "sets": "Eval sets",
+      "runs": "Runs"
+    },
+    "loadFailed": "Could not load this list.",
+    "retry": "Retry",
+    "setMeta": "{agent} · {n, plural, one {# case} other {# cases}}"
   },
   "models": {
     "admin": {
@@ -2943,7 +2989,7 @@
       }
     },
     "org": {
-      "title": "Catalog",
+      "title": "Plugins",
       "hint": "Plugins provided by your enterprise admins.",
       "empty": "There are no items in the catalog yet.",
       "columns": {
@@ -3029,7 +3075,13 @@
           "finish": "finish"
         },
         "notInstallable": "This plugin cannot be installed right now."
-      }
+      },
+      "tabs": {
+        "all": "All",
+        "installed": "Installed"
+      },
+      "loadFailed": "Could not load this list.",
+      "retry": "Retry"
     },
     "plugins": {
       "title": "Installed plugins",

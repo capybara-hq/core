@@ -73,15 +73,16 @@ describe("连接器列表（ListPage）", () => {
     stubApi({ "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [summary()] }) });
     const { container } = renderPage(<AppsPage />, { locale });
     expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
-    const table = await screen.findByRole("table", { name: m.connectors.title });
-    expect(table.closest("[data-framed]")?.getAttribute("data-framed")).toBe("true");
-    expect(within(table).getByText("Fixture")).toBeTruthy();
-    expect(within(table).getByText(m.connectors.auth.none)).toBeTruthy();
+    const list = await screen.findByRole("list", { name: m.connectors.title });
+    const row = within(list).getByRole("listitem");
+    expect(within(row).getByText(m.connectors.auth.none)).toBeTruthy();
+    expect(within(row).getByText(m.connectors.status.active)).toBeTruthy();
     expect(screen.getByRole("link", { name: m.connectors.new }).getAttribute("href")).toBe(
       "/connectors/install",
     );
-    await userEvent.setup().click(within(table).getByText("Fixture"));
-    expect(router.push).toHaveBeenCalledWith("/connectors/app1");
+    expect(within(row).getByRole("link", { name: "Fixture" }).getAttribute("href")).toBe(
+      "/connectors/app1",
+    );
   });
 
   it("普通成员看不到「添加连接器」；空状态", async () => {

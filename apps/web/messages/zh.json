@@ -581,7 +581,26 @@
     "emptyHint": "新建一个 Agent，然后开始对话。",
     "noOrgHint": "请在工作台或侧栏底部的账户菜单中选择组织。",
     "edit": "编辑",
-    "runHistory": "运行记录"
+    "runHistory": "运行记录",
+    "tabs": {
+      "all": "全部",
+      "mine": "我的",
+      "shared": "组织共享"
+    },
+    "search": "搜索名称或模型",
+    "scope": {
+      "private": "仅自己",
+      "org": "组织共享",
+      "members": "指定成员"
+    },
+    "chat": "对话",
+    "meta": {
+      "skills": "{n} 技能",
+      "tools": "{n} 工具"
+    },
+    "noMatch": "没有符合的 Agent。",
+    "loadFailed": "无法加载 Agent。",
+    "retry": "重试"
   },
   "skills": {
     "title": "技能",
@@ -609,7 +628,9 @@
       "tooLarge": "zip 文件超过 50 MB。",
       "cancel": "取消",
       "cancelled": "已取消上传。",
-      "retry": "重试"
+      "retry": "重试",
+      "open": "上传技能",
+      "close": "关闭"
     },
     "detail": {
       "tabsLabel": "技能分区",
@@ -641,7 +662,9 @@
       "deleteTitle": "删除 {name}？",
       "deleteHint": "agent 将不再加载这个技能。agent 定义里的引用会保留并显示为「已删除」，直到负责人移除。",
       "deleted": "已删除技能 {name}。"
-    }
+    },
+    "loadFailed": "无法加载。",
+    "retry": "重试"
   },
   "chat": {
     "title": "对话",
@@ -1219,7 +1242,13 @@
       "rejected": "已拒绝 {tool}，工具已停用。",
       "missingTitle": "服务已不再提供",
       "missingHint": "这些工具已停用；服务再次提供时会进入复核。"
-    }
+    },
+    "tabs": {
+      "all": "全部",
+      "disabled": "已停用"
+    },
+    "loadFailed": "无法加载。",
+    "retry": "重试"
   },
   "connections": {
     "title": "个人设置",
@@ -1445,7 +1474,13 @@
     "inboundModeHint": {
       "long_connection": "机器人与平台保持一条连接（默认，无需公网地址）。",
       "webhook": "平台每个事件都回调本部署，需要公网地址。"
-    }
+    },
+    "tabs": {
+      "all": "全部",
+      "error": "出错"
+    },
+    "loadFailed": "无法加载。",
+    "retry": "重试"
   },
   "extensions": {
     "title": "扩展",
@@ -1556,7 +1591,7 @@
     "goHome": "进入 Capybara"
   },
   "trajectories": {
-    "title": "运行记录",
+    "title": "评测与运行",
     "untitled": "未命名对话",
     "noRun": "没有运行",
     "empty": "还没有可查看的运行记录",
@@ -1725,10 +1760,14 @@
       "shutdown": "worker 停机",
       "wait_timeout": "子 agent 等待超时被停止"
     },
-    "parentLink": "打开父对话的轨迹"
+    "parentLink": "打开父对话的轨迹",
+    "tabs": {
+      "sets": "评测集",
+      "runs": "运行记录"
+    }
   },
   "evals": {
-    "title": "评测",
+    "title": "评测与运行",
     "runHistory": "运行记录",
     "new": "新建评测集",
     "empty": "还没有评测集",
@@ -2010,7 +2049,14 @@
       "tool_unmatched": "有工具调用没有对应的记录",
       "subagent_changed": "子代理的定义与记录时不同",
       "model_switched": "候选模型替换了会话中切换的模型"
-    }
+    },
+    "tabs": {
+      "sets": "评测集",
+      "runs": "运行记录"
+    },
+    "loadFailed": "无法加载。",
+    "retry": "重试",
+    "setMeta": "{agent} · {n} 个用例"
   },
   "models": {
     "admin": {
@@ -2943,7 +2989,7 @@
       }
     },
     "org": {
-      "title": "企业目录",
+      "title": "插件",
       "hint": "企业管理员提供的插件。",
       "empty": "企业目录里还没有可用的条目。",
       "columns": {
@@ -3029,7 +3075,13 @@
           "finish": "收尾"
         },
         "notInstallable": "这个插件现在不能安装。"
-      }
+      },
+      "tabs": {
+        "all": "全部",
+        "installed": "已安装"
+      },
+      "loadFailed": "无法加载。",
+      "retry": "重试"
     },
     "plugins": {
       "title": "已安装的插件",

@@ -1,17 +1,17 @@
 "use client";
 
-import { type Column, DataTable, ListPage } from "@capybara-hq/design";
+import { ListPage, ObjectRow } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { formatTime } from "../../../components/ApprovalCard";
 import { OrgGate } from "../../../components/OrgGate";
 import { usePagePath } from "../../../components/shell/path";
-import { useRouter } from "../../../i18n/navigation";
 import { listAgents } from "../../../lib/agents";
-import { type EvalSet, listEvalSets } from "../../../lib/evals";
+import { listEvalSets } from "../../../lib/evals";
+import { evalsTabs } from "../../../lib/evals-tabs";
 import { useLoad } from "../../../lib/use-load";
 
 /**
- * `/evals`：评测集列表（ListPage，组织管理员）。页头有「新建评测集」与「运行记录」（轨迹查看器）入口；
+ * `/evals`：评测集列表（ListPage，组织管理员）。页头标签「评测集 · 运行记录」链到两个路由；
  * 打开一行进评测集详情。
  */
 export default function EvalsPage() {
@@ -22,55 +22,50 @@ function EvalSets({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("evals");
   const locale = useLocale();
-  const router = useRouter();
   const { state, reload } = useLoad(() => listEvalSets(orgId).then((r) => r.sets), [orgId]);
-  // agent 名称只用于显示：读不到时显示 id
+  // Agent names are display only: show the id when they cannot be read.
   const agents = useLoad(() => listAgents(orgId).then((r) => r.agents), [orgId]);
   const agentName = (id: string) =>
     (agents.state.kind === "ready" ? agents.state.data : []).find((a) => a.id === id)?.definition
       .name || id;
   const sets = state.kind === "ready" ? state.data : [];
-  const columns: Column<EvalSet>[] = [
-    { key: "name", header: t("columns.name"), cell: (s) => s.name },
-    { key: "agent", header: t("columns.agent"), cell: (s) => agentName(s.agentId) },
-    {
-      key: "cases",
-      header: t("columns.cases"),
-      align: "right",
-      width: 100,
-      cell: (s) => String(s.caseCount),
-    },
-    {
-      key: "created",
-      header: t("columns.created"),
-      tone: "muted",
-      width: 180,
-      cell: (s) => formatTime(s.createdAt, locale),
-    },
-  ];
+  const empty =
+    state.kind === "error"
+      ? {
+          icon: "circle-alert" as const,
+          text: t("loadFailed"),
+          action: { label: t("retry"), variant: "default" as const, onSelect: reload },
+        }
+      : state.kind === "ready" && sets.length === 0
+        ? {
+            icon: "evals" as const,
+            text: t("empty"),
+            action: { label: t("new"), variant: "primary" as const, href: "/evals/new" },
+          }
+        : undefined;
   return (
     <ListPage
       header={{
         path: [...scope, { label: "evals" }],
         title: t("title"),
-        ...(state.kind === "ready" && { count: String(sets.length) }),
-        actions: [
-          { label: t("runHistory"), variant: "default", href: "/trajectories" },
-          { label: t("new"), variant: "primary", href: "/evals/new" },
-        ],
+        actions: [{ label: t("new"), variant: "primary", href: "/evals/new" }],
+        tabs: evalsTabs(t, state.kind === "ready" ? { sets: sets.length } : {}),
+        activeTab: "sets",
       }}
+      variant="objects"
+      listLabel={t("tabs.sets")}
+      {...(empty ? { empty } : {})}
     >
-      <DataTable<EvalSet>
-        label={t("title")}
-        columns={columns}
-        rows={sets}
-        rowKey={(s) => s.id}
-        rowLabel={(s) => s.name}
-        state={state.kind === "loading" ? "loading" : state.kind === "error" ? "error" : "ready"}
-        {...(state.kind === "error" && { error: { code: state.code, onRetry: reload } })}
-        empty={{ title: t("empty"), hint: t("emptyHint") }}
-        onOpen={(s) => router.push(`/evals/${encodeURIComponent(s.id)}`)}
-      />
+      {sets.map((s) => (
+        <ObjectRow
+          key={s.id}
+          mark={{ icon: "evals" }}
+          name={s.name}
+          href={`/evals/${encodeURIComponent(s.id)}`}
+          meta={t("setMeta", { agent: agentName(s.agentId), n: s.caseCount })}
+          trailing={formatTime(s.createdAt, locale)}
+        />
+      ))}
     </ListPage>
   );
 }

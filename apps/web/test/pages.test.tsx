@@ -252,79 +252,72 @@ describe("(app) 页面模板", () => {
     expect(screen.getByRole("button", { name: zh.home.createOrg.open })).toBeTruthy();
   });
 
-  it("Agents 页：ListPage + DataTable（名称、模型），header 主操作「新建 Agent」，行菜单「开始对话」", async () => {
+  const agentRow = (id: string, name: string, over: Record<string, unknown> = {}) => ({
+    id,
+    ownerAccountId: "someone-else",
+    visibility: "org",
+    definition: {
+      name,
+      model: { provider: "model-fake", model: "fake-1" },
+      skills: { orgSkills: ["s1", "s2"] },
+      tools: [{ kind: "builtin", name: "ask_user" }],
+    },
+    ...over,
+  });
+
+  it("Agents page: object rows with scope chip, meta line and the row action Chat", async () => {
     const calls = stubApi({
-      "GET /api/v1/orgs/o1/agents": () =>
-        json(200, {
-          agents: [
-            {
-              id: "ag1",
-              definition: {
-                name: "Echo agent",
-                model: { provider: "model-fake", model: "fake-1" },
-              },
-            },
-          ],
-        }),
-      "POST /api/v1/orgs/o1/conversations": () => json(201, { conversation: { id: "c 1" } }),
+      "GET /api/v1/orgs/o1/agents": () => json(200, { agents: [agentRow("ag1", "Echo agent")] }),
     });
     renderPage(<AgentsPage />, { locale: "zh" });
     expect(template("ListPage")).not.toBeNull();
-    const table = await screen.findByRole("table", { name: zh.agents.title });
-    // the signed reference: a list page's table sits on the panel ground
-    expect(table.closest("[data-framed]")?.getAttribute("data-framed")).toBe("true");
-    const headers = within(table)
-      .getAllByRole("columnheader")
-      .map((h) => h.textContent);
-    expect(headers).toEqual(
-      expect.arrayContaining([zh.agents.columns.name, zh.agents.columns.model]),
+    const list = await screen.findByRole("list", { name: zh.agents.title });
+    const row = within(list).getAllByRole("listitem")[0] as HTMLElement;
+    expect(within(row).getByText("Echo agent")).toBeTruthy();
+    expect(within(row).getByText(zh.agents.scope.org)).toBeTruthy();
+    expect(within(row).getByText("model-fake / fake-1 · 2 技能 · 1 工具")).toBeTruthy();
+    expect(screen.getByRole("link", { name: zh.agents.new }).getAttribute("href")).toBe(
+      "/agents/new",
     );
-    expect(within(table).getByText("Echo agent")).toBeTruthy();
-    expect(within(table).getByText("model-fake / fake-1")).toBeTruthy();
-    const create = screen.getByRole("link", { name: zh.agents.new });
-    expect(create.getAttribute("href")).toBe("/agents/new");
-
-    const user = userEvent.setup();
-    await user.click(within(table).getByRole("button", { name: "行操作" }));
-    await user.click(await screen.findByRole("menuitem", { name: zh.agents.startChat }));
+    await userEvent.setup().click(within(row).getByRole("button", { name: zh.agents.chat }));
     // A new conversation with the agent picked: nothing is created before the first send.
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/chat?agent=ag1"));
+    expect(router.push).toHaveBeenCalledWith("/chat?agent=ag1");
     expect(calls.some((c) => c.method === "POST")).toBe(false);
   });
 
-  const oneAgent = () =>
-    json(200, {
-      agents: [
-        { id: "ag1", definition: { name: "Echo agent", model: { provider: "p", model: "m" } } },
-      ],
+  it("Agents page: tabs with counts (all / mine / shared) and a local search", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/agents": () =>
+        json(200, {
+          agents: [
+            agentRow("ag1", "Alpha"),
+            agentRow("ag2", "Beta", { ownerAccountId: ME.account.id, visibility: "private" }),
+            agentRow("ag3", "Gamma", { ownerAccountId: ME.account.id }),
+          ],
+        }),
     });
-
-  it("Agents 页：点击行即开始对话（新会话，选好该 agent）", async () => {
-    stubApi({ "GET /api/v1/orgs/o1/agents": oneAgent });
-    renderPage(<AgentsPage />, { locale: "zh" });
-    await userEvent.setup().click(await screen.findByText("Echo agent"));
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/chat?agent=ag1"));
+    renderPage(<AgentsPage />, { locale: "en" });
+    const user = userEvent.setup();
+    await screen.findByText("Alpha");
+    await user.click(screen.getByRole("tab", { name: /Mine/ }));
+    expect(screen.queryByText("Alpha")).toBeNull();
+    expect(screen.getByText("Beta")).toBeTruthy();
+    expect(screen.getByRole("tab", { name: /Mine/ }).textContent).toContain("2");
+    await user.click(screen.getByRole("tab", { name: /Shared with org/ }));
+    expect(screen.queryByText("Beta")).toBeNull();
+    expect(screen.getByRole("tab", { name: /Shared with org/ }).textContent).toContain("2");
+    await user.click(screen.getByRole("tab", { name: /All/ }));
+    await user.type(screen.getByRole("searchbox", { name: en.agents.search }), "gam");
+    expect(screen.getByText("Gamma")).toBeTruthy();
+    expect(screen.queryByText("Alpha")).toBeNull();
   });
 
-  it("Agents 页：行获得焦点后按 Enter 开始对话", async () => {
-    stubApi({ "GET /api/v1/orgs/o1/agents": oneAgent });
-    renderPage(<AgentsPage />, { locale: "zh" });
-    const cell = await screen.findByText("Echo agent");
-    cell.closest("tr")?.focus();
-    await userEvent.keyboard("{Enter}");
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/chat?agent=ag1"));
-  });
-
-  it("Agents 页：空状态带「新建 Agent」", async () => {
+  it("Agents page: the empty state is one sentence and the primary action", async () => {
     stubApi({ "GET /api/v1/orgs/o1/agents": () => json(200, { agents: [] }) });
     renderPage(<AgentsPage />);
     expect(await screen.findByText(en.agents.empty)).toBeTruthy();
-    const emptyCreate = screen.getByRole("button", { name: en.agents.new });
-    // 一个视图只有一个主操作（spec §6.1）：页头的「新建 Agent」是主操作，空状态里的用 default
-    expect(emptyCreate.getAttribute("data-variant")).toBe("default");
-    expect(screen.getByRole("link", { name: en.agents.new })).toBeTruthy();
-    await userEvent.click(emptyCreate);
-    expect(router.push).toHaveBeenCalledWith("/agents/new");
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.getAllByRole("link", { name: en.agents.new }).length).toBeGreaterThan(0);
   });
 
   it("需要组织的页面在未选组织时显示 StatusPage disabled", () => {

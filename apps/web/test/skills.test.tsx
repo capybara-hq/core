@@ -75,8 +75,15 @@ class FakeXhr {
 const zipFile = (name = "pdf-tools.zip", size = 4) =>
   new File([new Uint8Array(size)], name, { type: "application/zip" });
 
-const fileInput = (container: HTMLElement) =>
-  container.querySelector('input[type="file"]') as HTMLInputElement;
+/** The upload lives in a dialog opened by the header action "Upload skill". */
+const fileInput = () => document.querySelector('input[type="file"]') as HTMLInputElement;
+const openUpload = async (locale: "zh" | "en" = "en") => {
+  await userEvent
+    .setup()
+    .click(
+      screen.getAllByRole("button", { name: msgs[locale].skills.upload.open })[0] as HTMLElement,
+    );
+};
 
 beforeEach(() => {
   resetNavigation("/skills");
@@ -96,22 +103,24 @@ describe("技能库列表（ListPage）", () => {
     stubApi({ [`GET ${BASE}`]: () => json(200, { skills: [skill("s1", "pdf-tools")] }) });
     const { container } = renderPage(<SkillsPage />, { locale });
     expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
-    const table = await screen.findByRole("table", { name: m.skills.listLabel });
-    expect(within(table).getByText("pdf-tools")).toBeTruthy();
-    expect(within(table).getByText("Use for pdf-tools.")).toBeTruthy();
+    const list = await screen.findByRole("list", { name: m.skills.listLabel });
+    expect(within(list).getByText("pdf-tools")).toBeTruthy();
+    expect(within(list).getByText("Use for pdf-tools.")).toBeTruthy();
+    expect(within(list).getByRole("link", { name: "pdf-tools" }).getAttribute("href")).toBe(
+      "/skills/s1",
+    );
+    await openUpload(locale);
     expect(screen.getByText(m.skills.upload.layoutHint)).toBeTruthy();
     expect(screen.getByText(m.skills.upload.limits)).toBeTruthy();
     expect(screen.getByRole("button", { name: m.skills.upload.choose })).toBeTruthy();
     // 打开一行 → 详情页
-    await userEvent.setup().click(within(table).getByText("pdf-tools"));
-    expect(router.push).toHaveBeenCalledWith("/skills/s1");
   });
 
   it("成员只能查看：没有上传入口", async () => {
     stubApi({ [`GET ${BASE}`]: () => json(200, { skills: [skill("s1", "pdf-tools")] }) });
     renderPage(<SkillsPage />, { me: MEMBER });
     await screen.findByText("pdf-tools");
-    expect(screen.queryByRole("button", { name: en.skills.upload.choose })).toBeNull();
+    expect(screen.queryByRole("button", { name: en.skills.upload.open })).toBeNull();
     expect(screen.queryByText(en.skills.upload.layoutHint)).toBeNull();
   });
 
@@ -130,9 +139,10 @@ describe("技能库列表（ListPage）", () => {
         return json(201, { skill: skills[0], version: 2, created: false });
       },
     });
-    const { container } = renderPage(<SkillsPage />);
+    renderPage(<SkillsPage />);
     await screen.findByText("pdf-tools");
-    await userEvent.setup().upload(fileInput(container), zipFile());
+    await openUpload();
+    await userEvent.setup().upload(fileInput(), zipFile());
     expect(
       await screen.findByText(
         en.skills.upload.versionCreated.replace("{name}", "pdf-tools").replace("{version}", "2"),
@@ -149,7 +159,7 @@ describe("技能库列表（ListPage）", () => {
     expect(bodyOf(calls.find((c) => c.method === "POST" && c.url === BASE))).toEqual({
       uploadId: "up1",
     });
-    await vi.waitFor(() => expect(screen.getByText("v2")).toBeTruthy());
+    await vi.waitFor(() => expect(screen.getByText(/^v2 · /)).toBeTruthy());
   });
 
   it.each(LOCALES)(
@@ -173,9 +183,10 @@ describe("技能库列表（ListPage）", () => {
             },
           }),
       });
-      const { container } = renderPage(<SkillsPage />, { locale });
+      renderPage(<SkillsPage />, { locale });
       await screen.findByText(m.skills.empty);
-      await userEvent.setup().upload(fileInput(container), zipFile("bad.zip"));
+      await openUpload(locale);
+      await userEvent.setup().upload(fileInput(), zipFile("bad.zip"));
       const alert = await screen.findByRole("alert");
       expect(within(alert).getByText(`${m.errors.skill.invalid_package}`)).toBeTruthy();
       expect(within(alert).getByText("SKILL.md is missing at the package root")).toBeTruthy();
@@ -191,11 +202,12 @@ describe("技能库列表（ListPage）", () => {
       [`POST ${BASE}`]: () =>
         json(201, { skill: skill("s1", "pdf-tools"), version: 1, created: true }),
     });
-    const { container } = renderPage(<SkillsPage />, { locale });
+    renderPage(<SkillsPage />, { locale });
     await screen.findByText(msgs[locale].skills.empty);
+    await openUpload(locale);
     FakeXhr.hold = true;
     const user = userEvent.setup();
-    await user.upload(fileInput(container), zipFile());
+    await user.upload(fileInput(), zipFile());
     const uploading = (pct: number) =>
       u.uploading.replace("{name}", "pdf-tools.zip").replace("{percent}", String(pct));
     expect(await screen.findByText(uploading(0))).toBeTruthy();
@@ -222,14 +234,15 @@ describe("技能库列表（ListPage）", () => {
 
   it("前端预检：不是 zip、超过 50MB 不发请求", async () => {
     const calls = stubApi({ [`GET ${BASE}`]: () => json(200, { skills: [] }) });
-    const { container } = renderPage(<SkillsPage />);
+    renderPage(<SkillsPage />);
     await screen.findByText(en.skills.empty);
+    await openUpload();
     const user = userEvent.setup({ applyAccept: false });
-    await user.upload(fileInput(container), new File(["x"], "notes.txt", { type: "text/plain" }));
+    await user.upload(fileInput(), new File(["x"], "notes.txt", { type: "text/plain" }));
     expect(await screen.findByText(`${en.skills.upload.notZip}`)).toBeTruthy();
     const big = zipFile("big.zip");
     Object.defineProperty(big, "size", { value: 50 * 1024 * 1024 + 1 });
-    await user.upload(fileInput(container), big);
+    await user.upload(fileInput(), big);
     expect(await screen.findByText(`${en.skills.upload.tooLarge}`)).toBeTruthy();
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
   });
