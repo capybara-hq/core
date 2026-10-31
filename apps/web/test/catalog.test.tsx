@@ -1,7 +1,12 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DesignProvider, PAGE_TEMPLATES, ToastProvider } from "@capybara-hq/design";
-import { missingStates, parseStateLists } from "@capybara-hq/design/reference";
+import {
+  missingStates,
+  parseSizeTables,
+  parseStateLists,
+  partSelector,
+} from "@capybara-hq/design/reference";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Catalog } from "../src/dev/catalog";
@@ -135,6 +140,29 @@ describe("/dev/ui/reference (the reference-set blocks, spec §9.2)", () => {
       expect(missingStates(lists, ids, [c])).toEqual([]);
       cleanup();
     }
+  });
+
+  // What visual/fidelity.spec.ts measures must exist before it can be measured: every size-table
+  // row's `<component>-<state>` block and its part (sizes and colors stay Playwright's). A forced
+  // pseudo-state is marked `data-ref-forced` by Playwright (reference-page.ts), so here the part
+  // itself is looked up; image parts render only once their image has loaded, which jsdom never
+  // does, so they are left to Playwright.
+  it("renders the block and part of every size-table row of every accepted component", () => {
+    const tables = parseSizeTables(spec);
+    const afterImageLoad = new Set(["image-frame", "preview-image", "icon-button"]);
+    const missing: string[] = [];
+    for (const c of ACCEPTED) {
+      const { container } = renderRoute(`reference/${c}`);
+      for (const r of tables.find((t) => t.component === c)?.rows ?? []) {
+        if (c.startsWith("file-") && afterImageLoad.has(r.part)) continue;
+        const block = container.querySelector(`[data-ref-block="${c}-${r.state}"]`);
+        const sel = partSelector(r.part.replace("[data-ref-forced=true]", ""));
+        const el = block === null ? null : sel === ":scope" ? block : block.querySelector(sel);
+        if (el === null) missing.push(`${c}-${r.state} ${r.part} (spec.md:${r.line})`);
+      }
+      cleanup();
+    }
+    expect(missing).toEqual([]);
   });
 
   it("is served by the dev/ui page", async () => {

@@ -1,8 +1,8 @@
 import { expect, type Page, test } from "@playwright/test";
 
 /**
- * Sidebar interaction (design spec §6.11, §6.13; §9.5): keyboard path, group collapse motion and
- * its reduced-motion form, the rail's drawer. Runs on the live `/dev/ui/reference/sidebar`
+ * Sidebar v3 interaction (design spec §6.11, §6.13; §9.5): keyboard path, group collapse motion
+ * and its reduced-motion form, the admin entry, the rail's drawer. Runs on the live `/dev/ui/reference/sidebar`
  * blocks. The viewport cases (rail below 1280, drawer below 960, no horizontal page scroll, the
  * first paint) run on `/dev/ui/templates/list`, whose FixtureShell is the AppShell.
  */
@@ -21,8 +21,11 @@ test("keyboard: Tab enters the nav at the current item, ↓ moves, Enter follows
   await b.getByRole("button", { name: /搜索/ }).focus();
   await page.keyboard.press("Tab");
   await expect(b.getByRole("link", { name: "Agents" })).toBeFocused();
+  // Sidebar v3 order: 新会话, 搜索, 首页, 收件箱, Agents, then the 更多 toggle.
   await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("ArrowDown");
+  await expect(b.getByRole("button", { name: "更多", exact: true })).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowUp");
   await expect(b.getByRole("link", { name: /^收件箱/ })).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/at=inbox/);
@@ -95,10 +98,37 @@ test("Home / End go to the first and last nav item", async ({ page }) => {
   await open(page);
   const b = block(page, "sidebar-default");
   await b.getByRole("link", { name: "Agents" }).focus();
+  // 更多 is collapsed here: its toggle is the nav's last item (管理后台 sits outside the nav,
+  // above the account row).
   await page.keyboard.press("End");
-  await expect(b.getByRole("link", { name: "管理" })).toBeFocused();
+  await expect(b.getByRole("button", { name: "更多", exact: true })).toBeFocused();
   await page.keyboard.press("Home");
   await expect(b.getByRole("link", { name: "新会话" })).toBeFocused();
+});
+
+test("更多 open: End reaches its last item, the org's last extension page", async ({ page }) => {
+  await open(page);
+  const b = block(page, "sidebar-more-open");
+  await expect(b.getByRole("button", { name: "更多", exact: true })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  await b.getByRole("link", { name: "新会话" }).focus();
+  await page.keyboard.press("End");
+  await expect(b.locator('[data-part="more-item"]').last()).toBeFocused();
+});
+
+test("管理后台 sits directly above the account row, outside the nav", async ({ page }) => {
+  await open(page);
+  const b = block(page, "sidebar-default");
+  const entry = b.locator('[data-part="admin-entry"]');
+  await expect(entry).toHaveAccessibleName(/管理后台/);
+  expect(await entry.evaluate((e) => e.closest("nav") === null)).toBe(true);
+  const box = await entry.boundingBox();
+  const account = await b.locator('[data-part="account"]').boundingBox();
+  // Above it, with only the block gap and the account divider between them (no other item).
+  expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual(account?.y ?? 0);
+  expect((account?.y ?? 0) - ((box?.y ?? 0) + (box?.height ?? 0))).toBeLessThanOrEqual(24);
 });
 
 test("many groups: the conversation section scrolls on its own, the account stays pinned", async ({
@@ -123,8 +153,9 @@ test("many groups: the conversation section scrolls on its own, the account stay
   const after = await account.boundingBox();
   const box = await sidebar.boundingBox();
   expect(after?.y).toBe(before?.y);
-  // Pinned at the bottom: the footer ends inside the sidebar, within its padding.
-  expect((box?.y ?? 0) + (box?.height ?? 0) - ((after?.y ?? 0) + (after?.height ?? 0))).toBe(12);
+  // Pinned at the bottom: the footer ends inside the sidebar, within its bottom padding
+  // (sidebar v3: space.2, the 8 px rhythm).
+  expect((box?.y ?? 0) + (box?.height ?? 0) - ((after?.y ?? 0) + (after?.height ?? 0))).toBe(8);
 });
 
 test("a long agent name truncates in its group toggle, full name in title", async ({ page }) => {
