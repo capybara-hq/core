@@ -33,6 +33,21 @@ Tokens: `docs/design/tokens.json` is the source; `pnpm gen:tokens` writes `token
 | 404 / 403 / under maintenance | `StatusPage` | Single, centered |
 | New org, empty environment | `OnboardingPage` | Single, centered checklist |
 
+### The web order: contexts and frames (spec `docs/superpowers/specs/2026-10-31-web-order-design.md`)
+
+The sidebar has two contexts: the workspace (conversations, Agents, 更多 with connectors / channels / skills / evals / catalog, org settings) and the admin console (`/admin/*`, entered from the account row, enterprise admins only). Personal settings are `/account/*` (connections, grants, IM identities), org settings `/settings/*`. Every page uses one of three frames and one page head (`PageHeader`: `path` required, `title`, optional `description` / `actions` / `tabs` + `activeTab` / `search`).
+
+| Frame | Template | Use |
+|---|---|---|
+| Object list | `ListPage` with `variant="objects"`: `ObjectRow` children inside one `ObjectList` (mark, name + chips, description, mono meta, state, one action, row menu) | Things a person picks and opens: agents, skills, connectors, channels, evals, catalog, admin extensions / catalog |
+| Record list | `ListPage` with `variant="records"` (default): a `DataTable` | Tabular records: members, accounts, orgs, trajectories, marketplace entries |
+| Detail / form | `DetailPage` (Content + Inspector, `PageTabs`) / `FormPage` / `WizardPage` | One object; create or edit; multi-step setup |
+| Settings | `SettingsPage` with the grouped secondary nav | Org settings, personal settings, deployment settings |
+
+- `ListPage` takes `listLabel` (the list's accessible name), `callout` (a `Callout` between the title row and the tabs) and `empty` (an `EmptyState`, drawn instead of the rows: loading failed, nothing yet, no match). Use these instead of drawing your own notices; an object list is a `ul` (role `list` / `listitem`), not a table.
+- `ObjectRow.action` is the row's most common action (a link when it has `href`), `menu` holds the rest; the menu button is named 更多操作.
+- A header's `path` comes from `usePagePath("org" | "home" | "admin", ...)`; `web-ui-page-path` rejects a page head without it.
+
 ### Templates for the admin console, evals and the catalog (ready-made M6 examples)
 
 | Page | Route | Template |

@@ -1,6 +1,6 @@
 # Web order: one shell, three frames, two contexts
 
-- Status: accepted (2026-10-31)
+- Status: implemented (2026-10-31)
 - Canvas: https://claude.ai/artifact/UDaSLEyGqqtGP8TXsndoJq ("Capybara 页面秩序": home, Agents, org settings /
   members, admin / extensions, conversation, the shared sidebar). The canvas is the visual reference; this
   document is the rule set.
@@ -138,8 +138,8 @@ detail / run, catalog item and install, admin extension detail and install, cata
 
 A channel connection already belongs to one agent (`channel_connections.agent_id`). The agent edit page
 gets a 渠道 section listing the connections bound to it (kind, name, state) with "接入渠道", which opens
-the channel form with the agent preset and returns to the agent afterwards. Who may add or edit stays as
-today (org admins); others see the list read-only. The 更多 · 渠道 page stays as the org-wide list.
+the channel form with the agent preset and returns to the agent afterwards. The section is shown to users who may manage channels (org admins); members see none, because the
+kernel's channel list requires `channels.manage`. The 更多 · 渠道 page stays as the org-wide list.
 
 ### 3.4 Settings (canvas "组织 · 设置 / 成员")
 
@@ -199,7 +199,7 @@ Language and theme stay where #9 put them (language in the account menu, theme a
 |---|---|---|
 | Rename a conversation | `PATCH …/conversations/:id` | the `⋯` menu item and an inline edit |
 | Archive / unarchive | none | `conversations.archived_at` (expand-only migration), `PATCH` `{ archived }`, lists exclude archived by default, `?archived=1` for the in-place archived list (with a count); archiving does not stop a running run |
-| Delete | none | soft delete (`deleted_at`, `DELETE …/conversations/:id`, stops a running run first): hidden everywhere for the owner and from org lists, kept for audit; enterprise admins still see it through the trajectory audit path (decided 2026-10-31); hard deletion stays out of scope |
+| Delete | none | soft delete (`deleted_at`, `DELETE …/conversations/:id`, stops a running run first): hidden everywhere for the owner and from org lists, kept for audit; org roles holding `trajectories.read` still see it through the trajectory audit path (decided 2026-10-31); hard deletion stays out of scope |
 | Search / filter | `?agentId` only | `?q=` (title, case-insensitive substring) and `?state=running|waiting` on `GET …/conversations` and `…/groups` |
 | Org menu "创建组织…" | done (#10) | — |
 
@@ -231,4 +231,4 @@ Language and theme stay where #9 put them (language in the account menu, theme a
 1. 渠道, 评测与运行 and 组织设置 under 更多 are for org admins only; channels are also managed from each
    agent's settings (§3.3.1).
 2. The archived list swaps the sidebar's conversation list in place; no `/chat/archived` page.
-3. Soft-deleted conversations stay visible to enterprise admins through the trajectory audit path.
+3. Soft-deleted conversations stay visible through the trajectory audit path to org roles holding `trajectories.read`.
