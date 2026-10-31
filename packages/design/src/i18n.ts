@@ -8,6 +8,7 @@ const zh = {
   "secret.copy": "复制",
   "secret.copied": "已复制",
   "secret.once": "只会显示这一次，请立即复制并妥善保存。",
+  "secret.copyManual": "无法自动复制：已选中令牌，请按 Ctrl+C（⌘C）复制。只会显示这一次。",
   "field.reset": "↺ 恢复默认",
   "field.optional": "选填",
   "stepper.decrease": "减少",
@@ -309,6 +310,8 @@ const en: Record<DesignKey, string> = {
   "secret.copy": "Copy",
   "secret.copied": "Copied",
   "secret.once": "Shown only this once. Copy it now and keep it safe.",
+  "secret.copyManual":
+    "Couldn't copy automatically: the token is selected, press Ctrl+C (⌘C). Shown only this once.",
   "field.reset": "↺ Reset to default",
   "field.optional": "optional",
   "stepper.decrease": "Decrease",

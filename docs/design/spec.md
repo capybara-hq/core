@@ -1576,9 +1576,57 @@ One empty state for the whole product. `EmptyState({ text, hint?, action?, icon?
 
 `DangerZone({ title, children })` with `DangerZoneItem({ title, description, action })` (role pass): the irreversible actions at the bottom of a settings section (organization deletion). A `region` named by its title, `space.8` above, a 1px border of `fail` at 45 %, radius `md`; the title (`body`, 600, `fail`) in a head row split from the items by `fail` at 25 %. Each item: the title (600, `ink`) over the description (`small`, `muted`), and one dense `danger` button at the right that opens a confirmation (`DangerConfirm`, §6.7), never acts at once; items are split by `line-soft`.
 
+<!-- states: danger-zone -->
+States: `default`, `two-items`
+
+<!-- size-table: danger-zone -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| danger-zone | default | border-radius | radius.md |
+| danger-zone-title | default | color | color.fail |
+| danger-zone-title | default | font-size | type.body |
+| danger-zone-title | default | padding-left | space.4 |
+| danger-zone-item | default | padding-top | space.3 |
+| danger-zone-item | default | padding-left | space.4 |
+| danger-zone-desc | default | font-size | type.small |
+| danger-zone-desc | default | color | color.muted |
+| button[data-variant=danger] | default | height | control.dense |
+| danger-zone-item | two-items | padding-top | space.3 |
+
 ### 6.22 SecretReveal
 
-`SecretReveal({ label, value })` (role pass): a secret the kernel returns only once (a service token). The label (600), a read-only `Input` holding the value (selected on focus) with a default "复制" / "Copy" button (`copy` icon; "已复制" / "Copied" with `check` for 2 s after copying), and below it a `warn` line with `circle-alert`: "只会显示这一次，请立即复制并妥善保存。" / "Shown only this once. Copy it now and keep it safe." Used inside the dialog that created the secret, replacing its form.
+`SecretReveal({ label, value })` (role pass): a secret the kernel returns only once (a service token). The label (600), a read-only `Input` holding the value (selected on focus) with a default "复制" / "Copy" button (`copy` icon; "已复制" / "Copied" with `check` for 2 s after copying), and below it a `warn` line with `circle-alert`: "只会显示这一次，请立即复制并妥善保存。" / "Shown only this once. Copy it now and keep it safe." Used inside the dialog that created the secret, replacing its form. Without a usable clipboard (an insecure origin, a refused permission) the copy button selects the field instead and the `warn` line says to copy it by hand ("无法自动复制：已选中令牌，请按 Ctrl+C（⌘C）复制。…").
+
+<!-- states: secret-reveal -->
+States: `default`, `copied`
+
+<!-- size-table: secret-reveal -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| secret-reveal | default | row-gap | space.2 |
+| input | default | height | control.default |
+| input | default | border-radius | radius.sm |
+| input-control | default | font-size | type.body |
+| secret-once | default | color | color.warn |
+| secret-once | default | font-size | type.small |
+| button | copied | height | control.default |
+
+### 6.23 No-access state
+
+The T11 `StatusPage` with `kind="no-access"` (§5, role pass): the logo, a 16 px `lock` in `faint` instead of a code, the title (`h2`), the description (`muted`), the role it needs as a chip (`need`: `small`, 1px `line` border, radius `sm`, padding `space.1` / `space.2`, `ink`: "需要：组织管理员" / "Requires: Org admin") and who to ask (`ask`, `muted`). Never an action or a retry.
+
+<!-- states: no-access -->
+States: `default`
+
+<!-- size-table: no-access -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| status-lock | default | color | color.faint |
+| status-need | default | font-size | type.small |
+| status-need | default | border-radius | radius.sm |
+| status-need | default | border-top-color | color.line |
+| status-need | default | padding-left | space.2 |
+| status-need | default | color | color.ink |
 
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.

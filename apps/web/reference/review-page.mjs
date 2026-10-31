@@ -59,6 +59,10 @@ const GROUPS = [
       "file-preview",
     ],
   },
+  {
+    title: "Role pass: no access, danger zone, secret reveal",
+    components: ["no-access", "danger-zone", "secret-reveal"],
+  },
 ];
 const COMPONENTS = GROUPS.flatMap((g) => g.components);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);

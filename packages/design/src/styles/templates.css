@@ -799,9 +799,12 @@ button.cb-setup-account:hover {
   gap: var(--cb-space-2);
 }
 .cb-secret-value {
+  display: flex;
   flex: 1;
   min-width: 0;
-  font-family: var(--cb-font);
+}
+.cb-secret-value > .cb-input {
+  flex: 1;
 }
 .cb-secret-once {
   display: inline-flex;

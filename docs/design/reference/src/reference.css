@@ -2781,3 +2781,97 @@ textarea {
     animation: none !important;
   }
 }
+
+/* ── Roles (role pass): no-access state, danger zone, secret reveal ─────── */
+
+.r-no-access {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--cb-space-3);
+  padding: var(--cb-space-6) var(--cb-space-4);
+  text-align: center;
+}
+.r-no-access .r-logo {
+  fill: var(--cb-muted);
+}
+.r-no-access-lock {
+  display: inline-flex;
+  color: var(--cb-faint);
+}
+.r-no-access-title {
+  margin: 0;
+  font-size: var(--cb-type-h2-size);
+  line-height: var(--cb-type-h2-line);
+  font-weight: 600;
+}
+.r-no-access-muted {
+  margin: 0;
+  color: var(--cb-muted);
+}
+.r-no-access-need {
+  padding: var(--cb-space-1) var(--cb-space-2);
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-ink);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-danger-zone {
+  border: 1px solid color-mix(in srgb, var(--cb-fail) 45%, transparent);
+  border-radius: var(--cb-radius-md);
+}
+.r-danger-zone-title {
+  margin: 0;
+  padding: var(--cb-space-3) var(--cb-space-4);
+  border-bottom: 1px solid color-mix(in srgb, var(--cb-fail) 25%, transparent);
+  color: var(--cb-fail);
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+  font-weight: 600;
+}
+.r-danger-zone-item {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-4);
+  padding: var(--cb-space-3) var(--cb-space-4);
+}
+.r-danger-zone-item + .r-danger-zone-item {
+  border-top: 1px solid var(--cb-line-soft);
+}
+.r-danger-zone-words {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.r-danger-zone-item-title {
+  font-weight: 600;
+}
+.r-danger-zone-desc {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-secret {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+}
+.r-secret-row {
+  display: flex;
+  gap: var(--cb-space-2);
+}
+.r-secret-row .r-input {
+  flex: 1;
+  min-width: 0;
+}
+.r-secret-once {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  color: var(--cb-warn);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}

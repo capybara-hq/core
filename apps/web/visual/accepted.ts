@@ -43,4 +43,9 @@ export const ACCEPTED: string[] = [
   "property-section",
   "right-panel",
   "template-conversation",
+  // the role pass: blocks and size tables in place; the reference PNGs and the side-by-side review
+  // wait for the reference-update and visual-update workflows
+  "no-access",
+  "danger-zone",
+  "secret-reveal",
 ];

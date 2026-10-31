@@ -89,4 +89,29 @@ describe("SecretReveal", () => {
     expect(writeText).toHaveBeenCalledWith("cap_svc_abc");
     expect(await screen.findByRole("button", { name: "已复制" })).toBeTruthy();
   });
+
+  it("copied pins the 已复制 look", () => {
+    wrap(<SecretReveal label="令牌" value="x" copied />);
+    expect(screen.getByRole("button", { name: "已复制" })).toBeTruthy();
+  });
+
+  it("without a usable clipboard selects the field and says to copy by hand", async () => {
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: { writeText: vi.fn(async () => Promise.reject(new Error("denied"))) },
+    });
+    wrap(<SecretReveal label="令牌" value="cap_svc_abc" />);
+    await userEvent.click(screen.getByRole("button", { name: "复制" }));
+    expect(
+      await screen.findByText("无法自动复制：已选中令牌，请按 Ctrl+C（⌘C）复制。只会显示这一次。"),
+    ).toBeTruthy();
+    const field = screen.getByRole("textbox", { name: "令牌" }) as HTMLInputElement;
+    expect(document.activeElement).toBe(field);
+    expect([field.selectionStart, field.selectionEnd]).toEqual([0, "cap_svc_abc".length]);
+    cleanup();
+    vi.stubGlobal("navigator", { ...navigator, clipboard: undefined });
+    wrap(<SecretReveal label="令牌" value="x" />);
+    await userEvent.click(screen.getByRole("button", { name: "复制" }));
+    expect(await screen.findByText(/无法自动复制/)).toBeTruthy();
+  });
 });

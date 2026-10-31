@@ -15,7 +15,9 @@ export type DangerZoneItemProps = {
 export function DangerZone({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="cb-danger-zone" data-part="danger-zone" aria-label={title}>
-      <h2 className="cb-danger-zone-title">{title}</h2>
+      <h2 className="cb-danger-zone-title" data-part="danger-zone-title">
+        {title}
+      </h2>
       <div className="cb-danger-zone-items">{children}</div>
     </section>
   );
@@ -26,7 +28,9 @@ export function DangerZoneItem({ title, description, action }: DangerZoneItemPro
     <div className="cb-danger-zone-item" data-part="danger-zone-item">
       <div className="cb-danger-zone-words">
         <span className="cb-danger-zone-item-title">{title}</span>
-        <span className="cb-danger-zone-desc">{description}</span>
+        <span className="cb-danger-zone-desc" data-part="danger-zone-desc">
+          {description}
+        </span>
       </div>
       <Button
         variant="danger"

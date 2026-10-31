@@ -6,6 +6,8 @@ import {
   Button,
   CellTitle,
   type Column,
+  DangerZone,
+  DangerZoneItem,
   DataTable,
   Field,
   FilterChip,
@@ -20,6 +22,7 @@ import {
   Input,
   ListPage,
   PageHeader,
+  SecretReveal,
   Segmented,
   Select,
   SIZES,
@@ -27,6 +30,7 @@ import {
   Stack,
   StatCards,
   StatusBar,
+  StatusPage,
   SwitchField,
   SwitchList,
   Text,
@@ -810,6 +814,64 @@ function templateFormBlocks(): ReactNode {
   );
 }
 
+// ── Role pass ───────────────────────────────────────────────────────────────
+
+function noAccessBlocks(): ReactNode {
+  return (
+    <RefBlock id="no-access-default" width={720} pad>
+      <StatusPage
+        header={{ path: [{ label: "capybara" }, { label: "channels" }], title: "渠道" }}
+        kind="no-access"
+        title="没有访问权限"
+        description="「渠道」只对组织管理员开放。"
+        need="组织管理员"
+        ask="如需访问，请联系本组织的管理员或所有者。"
+      />
+    </RefBlock>
+  );
+}
+
+const DELETE_ITEM = (
+  <DangerZoneItem
+    title="删除组织"
+    description="所有成员都会失去这个组织的访问，agent、会话与设置不再可用。"
+    action={{ label: "删除组织…", onSelect: noop }}
+  />
+);
+
+function dangerZoneBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="danger-zone-default" width={720} pad>
+        <DangerZone title="危险操作">{DELETE_ITEM}</DangerZone>
+      </RefBlock>
+      <RefBlock id="danger-zone-two-items" width={720} pad>
+        <DangerZone title="危险操作">
+          <DangerZoneItem
+            title="转让所有权"
+            description="对方成为所有者，你成为管理员。"
+            action={{ label: "转让…", onSelect: noop }}
+          />
+          {DELETE_ITEM}
+        </DangerZone>
+      </RefBlock>
+    </>
+  );
+}
+
+function secretRevealBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="secret-reveal-default" width={480} pad>
+        <SecretReveal label="令牌" value="cap_svc_4f9c2a7e1b8d" />
+      </RefBlock>
+      <RefBlock id="secret-reveal-copied" width={480} pad>
+        <SecretReveal label="令牌" value="cap_svc_4f9c2a7e1b8d" copied />
+      </RefBlock>
+    </>
+  );
+}
+
 export const REFERENCE_BLOCKS = {
   button: buttonBlocks,
   input: inputBlocks,
@@ -827,4 +889,7 @@ export const REFERENCE_BLOCKS = {
   "template-form": templateFormBlocks,
   ...CONVERSATION_BLOCKS,
   ...CONVERSATION_PAGE_BLOCKS,
+  "no-access": noAccessBlocks,
+  "danger-zone": dangerZoneBlocks,
+  "secret-reveal": secretRevealBlocks,
 } as const;

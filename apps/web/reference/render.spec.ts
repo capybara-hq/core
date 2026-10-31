@@ -43,6 +43,8 @@ const PAGES = [
   "file-outputs",
   "attachment-strip",
   "file-preview",
+  // the role pass: no-access state, danger zone, secret reveal
+  "roles",
 ];
 const THEMES = ["dark", "light"] as const;
 const BLOCK_ID = /^[a-z-]+-[a-z0-9-]+$/;

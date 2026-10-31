@@ -79,6 +79,10 @@ export const REFERENCE_COMPONENTS = [
   "property-section",
   "right-panel",
   "template-conversation",
+  // the role pass
+  "no-access",
+  "danger-zone",
+  "secret-reveal",
 ] as const;
 
 export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];
