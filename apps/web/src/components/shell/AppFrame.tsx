@@ -283,7 +283,11 @@ export function AppFrame({ version, children }: { version: string; children: Rea
       />
     ) : (
       <SessionContext.Provider value={session ?? null}>
-        {children}
+        <SetupContext.Provider
+          value={{ active: false, readiness: readiness.state, recheck: readiness.recheck }}
+        >
+          {children}
+        </SetupContext.Provider>
         {session?.me.canCreateOrg ? (
           <CreateOrgDialog open={creatingOrg} onOpenChange={setCreatingOrg} />
         ) : null}
@@ -332,16 +336,24 @@ export function AppFrame({ version, children }: { version: string; children: Rea
         : null,
       account: {
         name: session.me.account.displayName,
-        // Language ▸, personal settings, sign out: the org has its own menu in the top bar.
-        menu: accountMenu.filter((i) => !orgMenu.includes(i)),
+        // Language ▸, personal settings, sign out: the org has its own menu in the top bar. An
+        // enterprise admin also reaches the admin console here (where the model provider is set up).
+        menu: [
+          ...(session.me.account.isEnterpriseAdmin
+            ? [{ label: t("nav.admin"), href: "/admin" }, "separator" as const]
+            : []),
+          ...accountMenu.filter((i) => !orgMenu.includes(i)),
+        ],
       },
       theme: preferences.theme,
       status: setupStatus,
     };
-    const { agents, providers } = readiness.state;
+    const { modelProvider, agents } = readiness.state;
     return (
       <SessionContext.Provider value={session}>
-        <SetupContext.Provider value={{ active: true, recheck: readiness.recheck }}>
+        <SetupContext.Provider
+          value={{ active: true, readiness: readiness.state, recheck: readiness.recheck }}
+        >
           {setupRoute === "home" ? (
             <SetupPage
               {...setupFrame}
@@ -353,8 +365,7 @@ export function AppFrame({ version, children }: { version: string; children: Rea
             >
               <SetupHome
                 me={session.me}
-                agents={agents}
-                providers={providers}
+                readiness={{ modelProvider, agents }}
                 onRefresh={() => void readiness.recheck()}
               />
             </SetupPage>

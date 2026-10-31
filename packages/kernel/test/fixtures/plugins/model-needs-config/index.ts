@@ -21,6 +21,7 @@ export default defineExtension({
       async listModels() {
         throw new Error("the vendor is down");
       },
+      // biome-ignore lint/correctness/useYield: the vendor is down, it never yields
       async *stream() {
         throw new Error("the vendor is down");
       },

@@ -5,6 +5,7 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import EditAgentPage from "../src/app/(app)/agents/[id]/page";
 import NewAgentPage from "../src/app/(app)/agents/new/page";
+import { SetupContext } from "../src/components/shell/setup";
 import { json as apiJson, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
@@ -105,6 +106,27 @@ describe("新建 Agent 页（FormPage）", () => {
     });
     expect(router.push).toHaveBeenCalledTimes(1);
     expect(router.push).toHaveBeenCalledWith("/agents");
+  });
+
+  it("inside the setup layout a saved agent lands on a new conversation with it", async () => {
+    stub([]);
+    renderPage(
+      <SetupContext.Provider
+        value={{ active: true, readiness: { kind: "unknown" }, recheck: async () => {} }}
+      >
+        <NewAgentPage />
+      </SetupContext.Provider>,
+    );
+    const user = userEvent.setup();
+    await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
+    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), "Echo");
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: en.agents.form.modelLabel }),
+      "model-fake/fake-1",
+    );
+    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/chat?agent=ag1"));
+    expect(router.push).toHaveBeenCalledTimes(1);
   });
 
   it("在名称框按 Enter 即保存（只提交一次）；在指令多行框按 Enter 只换行", async () => {

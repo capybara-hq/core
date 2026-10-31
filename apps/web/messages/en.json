@@ -3285,8 +3285,7 @@
     "back": "Before you start",
     "model": {
       "needsDeploymentAdmin": "A deployment admin needs to set up a model service",
-      "waitingForAdmin": "Waiting for an admin to set up a model",
-      "orgDescription": "The deployment has a model service; choose the models this organization uses."
+      "waitingForAdmin": "Waiting for an admin to set up a model"
     },
     "agent": {
       "needsModel": "Set up a model first",
@@ -3297,6 +3296,7 @@
     "later": {
       "connections": "Connect your accounts",
       "connectionsWhere": "Personal settings · My connections"
-    }
+    },
+    "waitingDeployment": "A deployment admin needs to set up a model service before you can continue"
   }
 }

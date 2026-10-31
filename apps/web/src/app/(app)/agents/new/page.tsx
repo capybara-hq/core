@@ -11,8 +11,8 @@ import type { Agent } from "../../../../lib/agents";
 
 /**
  * `/agents/new`: create an agent (FormPage), then back to the list. Inside the setup layout
- * (web-order spec §3.8) the new agent may make the org ready: readiness is read again and the
- * page lands on a new conversation with that agent, in the shell.
+ * (web-order spec §3.8) the new agent may make the org ready, so the
+ * page lands on a new conversation with that agent; that navigation re-reads readiness.
  */
 export default function NewAgentPage() {
   return <OrgGate>{(orgId) => <NewAgent orgId={orgId} />}</OrgGate>;
@@ -23,11 +23,14 @@ function NewAgent({ orgId }: { orgId: string }) {
   const t = useTranslations();
   const router = useRouter();
   const setup = useSetup();
-  const done = (agent?: Agent) => {
-    if (setup.active && agent !== undefined) {
-      void setup.recheck().then(() => router.push(`/chat?agent=${encodeURIComponent(agent.id)}`));
-    } else router.push("/agents");
-  };
+  // In the setup layout the new agent may make the org ready: go to a new conversation with it;
+  // the navigation re-reads readiness and the layout flips to the shell there.
+  const done = (agent?: Agent) =>
+    router.push(
+      setup.active && agent !== undefined
+        ? `/chat?agent=${encodeURIComponent(agent.id)}`
+        : "/agents",
+    );
   const form = useAgentForm(orgId, done);
   return (
     <FormPage

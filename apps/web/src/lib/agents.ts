@@ -212,6 +212,17 @@ export function findModel(providers: ProviderModels[], ref: ModelRef): ModelInfo
 
 const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}`;
 
+/**
+ * Whether the org can run (`GET /orgs/:id/readiness`): a loaded model-provider extension (never a
+ * vendor call) and the number of agents the caller can see.
+ */
+export interface OrgReadiness {
+  modelProvider: "ready" | "none";
+  agents: number;
+}
+
+export const getReadiness = (orgId: string) => apiFetch<OrgReadiness>(`${base(orgId)}/readiness`);
+
 export const listAgents = (orgId: string) => apiFetch<{ agents: Agent[] }>(`${base(orgId)}/agents`);
 
 export const createAgent = (

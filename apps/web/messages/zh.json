@@ -3285,8 +3285,7 @@
     "back": "开始之前",
     "model": {
       "needsDeploymentAdmin": "需要部署管理员配置模型服务",
-      "waitingForAdmin": "等待管理员配置模型",
-      "orgDescription": "部署里已有模型服务；为本组织选好要用的模型。"
+      "waitingForAdmin": "等待管理员配置模型"
     },
     "agent": {
       "needsModel": "先配置模型",
@@ -3297,6 +3296,7 @@
     "later": {
       "connections": "连接你的账号",
       "connectionsWhere": "个人设置 · 我的连接"
-    }
+    },
+    "waitingDeployment": "需要部署管理员配置模型服务后才能继续"
   }
 }

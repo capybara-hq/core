@@ -40,30 +40,17 @@ function stubApi(routes: Record<string, Handler>) {
 
 const s = zh.chat.setup;
 const sl = zh.setupLayout;
-const AGENT = {
-  id: "a1",
-  ownerAccountId: "a1",
-  visibility: "org",
-  currentVersion: 1,
-  definition: { name: "Helper", model: { provider: "model-fake", model: "fake-1" } },
-};
-const MODELS = { providers: [{ provider: "model-fake", models: [{ id: "fake-1" }] }] };
+const READY = { modelProvider: "ready", agents: 1 };
+const NONE = { modelProvider: "none", agents: 0 };
+const PROVIDER_ONLY = { modelProvider: "ready", agents: 0 };
 
-/** The org's reads: `agents` / `models` bodies (or a handler, e.g. a pending one). */
-function api(
-  o: {
-    me?: Me;
-    agents?: unknown;
-    models?: unknown | Handler;
-    extra?: Record<string, Handler>;
-  } = {},
-) {
-  const models = o.models ?? { providers: [] };
+/** The org's readiness read (a body, or a handler such as a pending one), and other routes. */
+function api(o: { me?: Me; readiness?: unknown | Handler; extra?: Record<string, Handler> } = {}) {
+  const readiness = o.readiness ?? NONE;
   return stubApi({
     "GET /api/v1/me": () => json(200, o.me ?? ME),
-    "GET /api/v1/orgs/o1/agents": () => json(200, o.agents ?? { agents: [] }),
-    "GET /api/v1/orgs/o1/models":
-      typeof models === "function" ? (models as Handler) : () => json(200, models),
+    "GET /api/v1/orgs/o1/readiness":
+      typeof readiness === "function" ? (readiness as Handler) : () => json(200, readiness),
     "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
     "GET /api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
     "GET /api/v1/orgs/o1/ui/contributions": () => json(200, { items: [] }),
@@ -95,7 +82,10 @@ const memberMe = (role: string, enterprise = false): Me => ({
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
 });
 
-beforeEach(() => resetNavigation("/"));
+beforeEach(() => {
+  resetNavigation("/");
+  sessionStorage.clear();
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -134,15 +124,17 @@ describe("setup layout scope", () => {
   });
 
   it("ready: the shell renders, no setup layout", async () => {
-    api({ agents: { agents: [AGENT] }, models: MODELS });
+    const calls = api({ readiness: READY });
     renderFrame();
     expect(await screen.findByText("page body")).toBeTruthy();
+    // one cheap read decides the layout: no agent list, no vendor model listing
+    expect(calls.some((c) => c.url.endsWith("/models") || c.url.endsWith("/agents"))).toBe(false);
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeTruthy();
     expect(setupPage()).toBeNull();
   });
 
   it("while readiness loads on /: neither the sidebar nor the checklist, only the neutral state", async () => {
-    api({ models: () => new Promise<Response>(() => {}) });
+    api({ readiness: () => new Promise<Response>(() => {}) });
     renderFrame();
     await vi.waitFor(() => {
       if (document.querySelector('[data-part="pending-state"]') === null) throw new Error("no");
@@ -245,21 +237,16 @@ describe("the checklist by role", () => {
     expect(screen.queryByText(sl.waiting)).toBeNull();
   });
 
-  it("an org admin: the org's models when the deployment has a provider, else a deployment admin is needed", async () => {
-    api({
-      me: memberMe("admin"),
-      models: { providers: [{ provider: "model-fake", models: [] }] },
-    });
-    renderFrame();
-    const model = await vi.waitFor(() => step(s.model.label));
-    await userEvent.setup().click(within(model).getByRole("button", { name: s.model.action }));
-    expect(router.push).toHaveBeenCalledWith("/settings/models");
-    cleanup();
+  it("an org admin cannot fix a missing model provider: a deployment admin is needed", async () => {
     api({ me: memberMe("admin") });
     renderFrame();
-    const none = await vi.waitFor(() => step(s.model.label));
-    expect(within(none).queryByRole("button")).toBeNull();
-    expect(within(none).getByText(sl.model.needsDeploymentAdmin)).toBeTruthy();
+    const model = await vi.waitFor(() => step(s.model.label));
+    expect(within(model).queryByRole("button")).toBeNull();
+    expect(within(model).getByText(sl.model.needsDeploymentAdmin)).toBeTruthy();
+    // the role-specific line, with Refresh
+    expect(screen.getByText(sl.waitingDeployment)).toBeTruthy();
+    expect(screen.queryByText(sl.waiting)).toBeNull();
+    expect(screen.getByRole("button", { name: sl.refresh })).toBeTruthy();
   });
 
   it("a member waits: no model action, the waiting line with Refresh, only personal items later", async () => {
@@ -277,14 +264,14 @@ describe("the checklist by role", () => {
   });
 
   it("a member with a model creates the agent; a guest waits for an admin", async () => {
-    api({ me: memberMe("member"), models: MODELS });
+    api({ me: memberMe("member"), readiness: PROVIDER_ONLY });
     renderFrame();
     const agent = await vi.waitFor(() => step(s.agent.label));
     await userEvent.setup().click(within(agent).getByRole("button", { name: s.agent.action }));
     expect(router.push).toHaveBeenCalledWith("/agents/new");
     expect(screen.queryByText(sl.waiting)).toBeNull();
     cleanup();
-    api({ me: memberMe("guest"), models: MODELS });
+    api({ me: memberMe("guest"), readiness: PROVIDER_ONLY });
     renderFrame();
     const waiting = await vi.waitFor(() => step(s.agent.label));
     expect(within(waiting).queryByRole("button")).toBeNull();
@@ -294,21 +281,76 @@ describe("the checklist by role", () => {
   });
 
   it("after readiness flips, Refresh renders the shell", async () => {
-    let agents: unknown[] = [];
-    stubApi({
-      "GET /api/v1/me": () => json(200, memberMe("guest")),
-      "GET /api/v1/orgs/o1/agents": () => json(200, { agents }),
-      "GET /api/v1/orgs/o1/models": () => json(200, MODELS),
-      "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
-      "GET /api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
-      "GET /api/v1/orgs/o1/ui/contributions": () => json(200, { items: [] }),
-    });
+    let r: unknown = PROVIDER_ONLY;
+    api({ me: memberMe("guest"), readiness: () => json(200, r) });
     renderFrame();
     const refresh = await screen.findByRole("button", { name: sl.refresh });
-    agents = [AGENT];
+    r = READY;
     await userEvent.setup().click(refresh);
     expect(await screen.findByText("page body")).toBeTruthy();
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeTruthy();
     expect(setupPage()).toBeNull();
+  });
+});
+
+describe("readiness reads", () => {
+  it("an org seen ready in this tab paints the shell at once and re-validates in the background", async () => {
+    sessionStorage.setItem("cap.ready.o1", "1");
+    let answer: (r: Response) => void = () => {};
+    api({ readiness: () => new Promise<Response>((res) => (answer = res)) });
+    renderFrame();
+    // the shell before the read answers
+    expect(await screen.findByText("page body")).toBeTruthy();
+    expect(screen.getByRole("navigation", { name: "主导航" })).toBeTruthy();
+    // the re-read says it is not ready any more: the setup layout replaces the shell
+    answer(json(200, NONE));
+    expect(await screen.findByRole("heading", { level: 1, name: s.title })).toBeTruthy();
+    expect(sessionStorage.getItem("cap.ready.o1")).toBeNull();
+  });
+
+  it("a ready answer is remembered for the tab", async () => {
+    api({ readiness: READY });
+    renderFrame();
+    await screen.findByText("page body");
+    expect(sessionStorage.getItem("cap.ready.o1")).toBe("1");
+  });
+
+  it("admin console navigations do not read readiness again", async () => {
+    resetNavigation("/admin/extensions");
+    const calls = api();
+    const view = renderFrame();
+    await screen.findByText("page body");
+    const reads = () => calls.filter((c) => c.url.endsWith("/readiness")).length;
+    const before = reads();
+    resetNavigation("/admin/accounts");
+    view.rerender(
+      <NextIntlClientProvider locale="zh" messages={zh}>
+        <DesignProvider locale="zh" link={Link as LinkComponent}>
+          <ToastProvider>
+            <AppFrame version="v9.9.9">
+              <RequireSession>
+                <p>page body</p>
+              </RequireSession>
+            </AppFrame>
+          </ToastProvider>
+        </DesignProvider>
+      </NextIntlClientProvider>,
+    );
+    await new Promise((r) => setTimeout(r, 30));
+    expect(reads()).toBe(before);
+  });
+
+  it("an enterprise admin reaches the admin console from the setup layout", async () => {
+    api();
+    renderFrame();
+    await userEvent.setup().click(await screen.findByRole("button", { name: "账户: Grant" }));
+    const item = await screen.findByRole("menuitem", { name: zh.nav.admin });
+    expect(item.getAttribute("href")).toBe("/admin");
+    cleanup();
+    api({ me: memberMe("admin") });
+    renderFrame();
+    await userEvent.setup().click(await screen.findByRole("button", { name: "账户: Grant" }));
+    await screen.findByRole("menuitem", { name: zh.common.logout });
+    expect(screen.queryByRole("menuitem", { name: zh.nav.admin })).toBeNull();
   });
 });

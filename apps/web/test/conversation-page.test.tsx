@@ -837,8 +837,7 @@ describe("the conversation page in the app frame", () => {
           !c.url.includes("/orgs/o2/ui/contributions") &&
           !c.url.includes("/orgs/o2/conversations/groups") &&
           // the app frame reads the new org's readiness (setup layout, web-order §3.8)
-          !c.url.endsWith("/orgs/o2/agents") &&
-          !c.url.endsWith("/orgs/o2/models"),
+          !c.url.endsWith("/orgs/o2/readiness"),
       ),
     ).toBe(false);
   });
