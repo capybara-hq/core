@@ -6,9 +6,15 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import AdminAccountsPage from "../src/app/(app)/admin/accounts/page";
+import AdminCatalogItemPage from "../src/app/(app)/admin/catalog/[itemId]/page";
+import PluginImportPage from "../src/app/(app)/admin/catalog/import/page";
+import AdminCatalogPage from "../src/app/(app)/admin/catalog/page";
+import CatalogRequestsPage from "../src/app/(app)/admin/catalog/requests/page";
 import ExtensionDetailPage from "../src/app/(app)/admin/extensions/[name]/page";
 import ExtensionInstallPage from "../src/app/(app)/admin/extensions/install/page";
 import AdminExtensionsPage from "../src/app/(app)/admin/extensions/page";
+import MarketplaceEntriesPage from "../src/app/(app)/admin/marketplaces/entries/page";
+import MarketplacesPage from "../src/app/(app)/admin/marketplaces/page";
 import AdminModelsPage from "../src/app/(app)/admin/models/page";
 import AdminOrgsPage from "../src/app/(app)/admin/orgs/page";
 import AdminOverviewPage from "../src/app/(app)/admin/page";
@@ -88,7 +94,130 @@ const CONFIG = {
   issues: [],
 };
 
+const ITEM_ID = "11111111-1111-4111-8111-111111111111";
+const catalogItem = (over: Record<string, unknown> = {}) => ({
+  id: ITEM_ID,
+  name: "crm",
+  publisher: "Acme",
+  displayName: null,
+  description: "",
+  policy: "allow",
+  latestVersion: "1.0.0",
+  versions: ["1.0.0"],
+  installs: 2,
+  source: "marketplace",
+  marketplaceId: "official",
+  latestMarketplaceVersion: "1.0.0",
+  newerInMarketplace: false,
+  contentChanged: false,
+  updatedAt: T,
+  ...over,
+});
+const MARKETPLACE = {
+  id: "official",
+  name: "Capybara official marketplace",
+  url: "https://example.com/index.json",
+  mirrors: [],
+  builtin: true,
+  enabled: true,
+  disabledByConfig: false,
+  hasToken: false,
+  lastRefreshedAt: null,
+  lastStatus: "never",
+  lastError: null,
+  entryCount: 1,
+};
+const ENTRY = {
+  sourceId: "official",
+  sourceName: "Official",
+  name: "crm",
+  version: "1.0.0",
+  summary: { en: "CRM plugin" },
+  minKernel: null,
+  homepage: null,
+  permissions: null,
+  source: {
+    npm: { package: "@acme/plugin-crm", version: "1.0.0", integrity: `sha512-${"a".repeat(86)}==` },
+  },
+  compatible: true,
+  importable: true,
+  adopted: null,
+  newerAvailable: false,
+  contentChanged: false,
+};
+const PREPARED = {
+  stagingId: "st1",
+  permissionsMismatch: null,
+  review: {
+    name: "crm",
+    version: "1.0.0",
+    packageName: "@acme/plugin-crm",
+    publisher: "Acme",
+    description: "CRM plugin",
+    connectorTemplates: [],
+    skills: [],
+    agents: [],
+    dependencies: [],
+    source: { kind: "npm", ref: "@acme/plugin-crm@1.0.0" },
+    provenance: { checked: false, reason: "none" },
+    contentDigest: "d".repeat(64),
+    sensitive: false,
+    reviewHash: "h1",
+  },
+};
+
 const ROUTES: Routes = {
+  "GET /api/v1/admin/catalog/items": () => json(200, { items: [catalogItem()], nextOffset: null }),
+  [`GET /api/v1/admin/catalog/items/${ITEM_ID}`]: () =>
+    json(200, {
+      item: { ...catalogItem(), packageName: null, deletedAt: null },
+      versions: [
+        {
+          version: "1.0.0",
+          source: "file",
+          sourceRef: "upload",
+          integrity: null,
+          contentDigest: null,
+          sourceDetail: null,
+          manifest: {
+            name: "crm",
+            version: "1.0.0",
+            publisher: "Acme",
+            description: "CRM plugin",
+            dependencies: [{ name: "crm-core", version: "^1.0.0" }],
+          },
+          size: 1024,
+          extensionSha256: null,
+          importedAt: T,
+        },
+      ],
+      hasIcon: false,
+    }),
+  "GET /api/v1/admin/catalog/requests": () =>
+    json(200, {
+      requests: [
+        {
+          id: "r1",
+          orgId: "o1",
+          orgName: "Acme",
+          item: { id: ITEM_ID, name: "crm", displayName: null },
+          version: null,
+          stage: "deployment",
+          status: "pending",
+          note: "",
+          requestedBy: "a2",
+          requestedByName: "Mia",
+          decidedBy: null,
+          decidedAt: null,
+          orgDecidedBy: null,
+          orgDecidedAt: null,
+          createdAt: T,
+        },
+      ],
+    }),
+  "GET /api/v1/admin/marketplaces": () => json(200, { items: [MARKETPLACE], offline: false }),
+  "GET /api/v1/admin/marketplaces/entries": () => json(200, { items: [ENTRY] }),
+  "GET /api/v1/admin/catalog/imports/st1": () => json(200, PREPARED),
   "GET /api/v1/admin/extensions": () => json(200, { extensions: [ext()], drainSeconds: 45 }),
   "GET /api/v1/admin/extensions/demo/config": () => json(200, CONFIG),
   "GET /api/v1/admin/overview": () =>
@@ -217,6 +346,120 @@ describe("first paint comes from the server (no browser fetch)", () => {
     expect(browser.map((c) => c.method)).toEqual(["POST"]);
   });
 
+  it("/admin/catalog: the items, with their source from the marketplaces", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRoute(() => AdminCatalogPage(), ROUTES);
+    expect(screen.getByText(/^crm · .*Organizations 2$/)).toBeTruthy();
+    expect(browser).toEqual([]);
+  });
+
+  it("/admin/catalog: marketplaces the kernel fails only drop the source labels", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRoute(() => AdminCatalogPage(), {
+      ...ROUTES,
+      "GET /api/v1/admin/marketplaces": failing,
+    });
+    expect(screen.getByText(/^crm · .*Organizations 2$/)).toBeTruthy();
+    expect(browser).toEqual([]);
+  });
+
+  it("/admin/catalog/[itemId]: the item, the dependency lookup and the sources", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRoute(item(ITEM_ID), ROUTES);
+    expect(screen.getByRole("heading", { name: "crm" })).toBeTruthy();
+    expect(screen.getByText(/crm-core/)).toBeTruthy();
+    expect(browser).toEqual([]);
+  });
+
+  it("/admin/catalog/[itemId]: a missing item is not found; a failing catalog only leaves dependencies unchecked", async () => {
+    expectNoFirstPaintFetch();
+    await expect(
+      renderRoute(item(ITEM_ID), {
+        ...ROUTES,
+        [`GET /api/v1/admin/catalog/items/${ITEM_ID}`]: () =>
+          json(404, { error: { code: "catalog.item_not_found", message: "x" } }),
+      }),
+    ).rejects.toThrow("NOT_FOUND");
+    await renderRoute(item(ITEM_ID), { ...ROUTES, "GET /api/v1/admin/catalog/items": failing });
+    expect(screen.getByText(/crm-core/)).toBeTruthy();
+    expect(screen.queryByText(/not in the catalog/)).toBeNull();
+  });
+
+  it("/admin/catalog/requests: the pending requests", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRoute(() => CatalogRequestsPage(), ROUTES);
+    expect(screen.getAllByText("Acme · crm").length).toBeGreaterThan(0);
+    expect(browser).toEqual([]);
+  });
+
+  it("/admin/catalog/import: no staging starts at the source step; ?staging= opens the review", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRoute(() => PluginImportPage({ searchParams: Promise.resolve({}) }), ROUTES);
+    expect(
+      screen.getByLabelText(en.catalog.admin.review.sourceLabel, { exact: false }),
+    ).toBeTruthy();
+    cleanup();
+    const { calls } = await renderRoute(
+      () => PluginImportPage({ searchParams: Promise.resolve({ staging: "st1" }) }),
+      ROUTES,
+    );
+    expect(calls.map((c) => c.url)).toContain("/api/v1/admin/catalog/imports/st1");
+    expect(screen.queryByText(en.catalog.admin.review.loadingStaged)).toBeNull();
+    expect(screen.getByText("@acme/plugin-crm", { exact: false })).toBeTruthy();
+    expect(browser).toEqual([]);
+  });
+
+  it("/admin/catalog/import: an expired staging is the page's own problem with a restart, not a not-found", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRoute(
+      () => PluginImportPage({ searchParams: Promise.resolve({ staging: "gone" }) }),
+      {
+        ...ROUTES,
+        "GET /api/v1/admin/catalog/imports/gone": () =>
+          json(404, { error: { code: "plugin.staging_not_found", message: "gone" } }),
+      },
+    );
+    expect(screen.getByText(en.catalog.admin.review.gone)).toBeTruthy();
+    expect(screen.getByRole("button", { name: en.catalog.admin.review.restart })).toBeTruthy();
+    expect(browser).toEqual([]);
+  });
+
+  it("/admin/marketplaces: the sources and the offline flag", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRoute(() => MarketplacesPage(), ROUTES);
+    expect(screen.getByText("Official marketplace")).toBeTruthy();
+    expect(browser).toEqual([]);
+  });
+
+  it("/admin/marketplaces/entries: the entries for the query's source and search", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const { calls } = await renderRoute(
+      () =>
+        MarketplaceEntriesPage({
+          searchParams: Promise.resolve({ sourceId: "official", q: " crm " }),
+        }),
+      ROUTES,
+    );
+    expect(calls.map((c) => c.url)).toContain(
+      "/api/v1/admin/marketplaces/entries?sourceId=official&q=crm",
+    );
+    expect(screen.getByText("crm")).toBeTruthy();
+    expect((screen.getByRole("searchbox") as HTMLInputElement).value).toBe("crm");
+    expect(browser).toEqual([]);
+  });
+
+  it("/admin/marketplaces/entries: typing in the search reads in the browser (user-triggered)", async () => {
+    expectNoFirstPaintFetch();
+    await renderRoute(() => MarketplaceEntriesPage({ searchParams: Promise.resolve({}) }), ROUTES);
+    const browser = stubApi({
+      "GET /api/v1/admin/marketplaces/entries": () => json(200, { items: [] }),
+    });
+    await userEvent.setup().type(screen.getByRole("searchbox"), "zzz");
+    await vi.waitFor(() =>
+      expect(browser.map((c) => c.url)).toEqual(["/api/v1/admin/marketplaces/entries?q=zzz"]),
+    );
+  });
+
   it("a failing required read is an error, not an empty page", async () => {
     expectNoFirstPaintFetch();
     await expect(
@@ -230,12 +473,25 @@ const detail =
   (name: string): Page =>
   () =>
     ExtensionDetailPage({ params: Promise.resolve({ name }) });
+const item =
+  (itemId: string): Page =>
+  () =>
+    AdminCatalogItemPage({ params: Promise.resolve({ itemId }) });
 const PAGES: [string, Page][] = [
   ["/admin", () => AdminOverviewPage()],
   ["/admin/accounts", () => AdminAccountsPage()],
   ["/admin/orgs", () => AdminOrgsPage()],
   ["/admin/settings", () => AdminSettingsPage()],
   ["/admin/models", () => AdminModelsPage()],
+  ["/admin/catalog", () => AdminCatalogPage()],
+  ["/admin/catalog/[itemId]", item(ITEM_ID)],
+  ["/admin/catalog/import", () => PluginImportPage({ searchParams: Promise.resolve({}) })],
+  ["/admin/catalog/requests", () => CatalogRequestsPage()],
+  ["/admin/marketplaces", () => MarketplacesPage()],
+  [
+    "/admin/marketplaces/entries",
+    () => MarketplaceEntriesPage({ searchParams: Promise.resolve({}) }),
+  ],
   ["/admin/extensions", () => AdminExtensionsPage()],
   ["/admin/extensions/install", () => ExtensionInstallPage({ searchParams: Promise.resolve({}) })],
   ["/admin/extensions/[name]", detail("demo")],

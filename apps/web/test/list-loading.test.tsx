@@ -1,7 +1,6 @@
 import { cleanup, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import AdminCatalogPage from "../src/app/(app)/admin/catalog/page";
 import EvalsPage from "../src/app/(app)/evals/page";
 import { resetNavigation } from "./support/navigation";
 import { renderPage } from "./support/render";
@@ -24,10 +23,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const pages: [string, string, () => ReactNode][] = [
-  ["evals", "/evals", () => <EvalsPage />],
-  ["admin catalog", "/admin/catalog", () => <AdminCatalogPage />],
-];
+const pages: [string, string, () => ReactNode][] = [["evals", "/evals", () => <EvalsPage />]];
 
 describe("object list pages while loading", () => {
   it.each(pages)("%s: skeleton rows in a busy list", async (_name, path, page) => {
@@ -51,11 +47,5 @@ describe("the head keeps its real layout while loading (acceptance round 2, A4)"
       if (document.querySelector('[data-part="page-header-tabs"]') === null)
         throw new Error("no tabs row");
     });
-  });
-
-  it("admin catalog: the search is there before the first answer", async () => {
-    resetNavigation("/admin/catalog");
-    renderPage(<AdminCatalogPage />);
-    await vi.waitFor(() => screen.getByRole("searchbox"));
   });
 });
