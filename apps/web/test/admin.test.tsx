@@ -9,9 +9,10 @@ import AdminOverviewPage from "../src/app/(app)/admin/page";
 import AdminSettingsPage from "../src/app/(app)/admin/settings/page";
 import { activeNavOf } from "../src/components/shell/nav";
 import type { Me } from "../src/lib/session";
-import { bodyOf, json, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
-import { ME, renderPage } from "./support/render";
+import { ME } from "./support/render";
+import { renderRoute } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -53,7 +54,7 @@ describe("/admin 概览（OverviewPage）", () => {
       "GET /api/v1/admin/overview": () =>
         json(200, { extensionsNeedingAction: 3, catalogRequestsPending: 0, orgs: 2, accounts: 7 }),
     });
-    const { container } = renderPage(<AdminOverviewPage />, { locale });
+    const { container } = await renderRoute(AdminOverviewPage, lastStubRoutes(), { locale });
     expect(template("OverviewPage")).not.toBeNull();
     const metrics = await vi.waitFor(() => {
       const m = container.querySelector('[data-part="stat-cards"]');
@@ -88,9 +89,9 @@ describe("/admin 概览（OverviewPage）", () => {
     }
   });
 
-  it("非企业管理员：没有访问权限（需要企业管理员），不请求后台接口", () => {
+  it("非企业管理员：没有访问权限（需要企业管理员），不请求后台接口", async () => {
     const calls = stubApi({});
-    renderPage(<AdminOverviewPage />, { locale: "zh", me: NOT_ADMIN });
+    await renderRoute(AdminOverviewPage, lastStubRoutes(), { locale: "zh", me: NOT_ADMIN });
     expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
     expect(document.querySelector('[data-part="status-need"]')?.textContent).toBe(
       `需要：${zh.roles.need.enterprise}`,
@@ -127,7 +128,7 @@ describe("/admin/accounts（ListPage）", () => {
       "PATCH /api/v1/admin/accounts/a2": (c) =>
         json(200, { account: { ...ACCOUNTS[1], ...(bodyOf(c) as object) } }),
     });
-    renderPage(<AdminAccountsPage />, { locale });
+    await renderRoute(AdminAccountsPage, lastStubRoutes(), { locale });
     expect(template("ListPage")).not.toBeNull();
     const table = await screen.findByRole("table", { name: a.title });
     const alice = within(table).getByText("Alice").closest("tr") as HTMLElement;
@@ -154,7 +155,7 @@ describe("/admin/accounts（ListPage）", () => {
           next: null,
         }),
     });
-    renderPage(<AdminAccountsPage />);
+    await renderRoute(AdminAccountsPage, lastStubRoutes());
     const a = en.admin.accounts;
     const table = await screen.findByRole("table", { name: a.title });
     const grant = within(table).getByText("Grant").closest("tr") as HTMLElement;
@@ -184,7 +185,7 @@ describe("/admin/accounts（ListPage）", () => {
           next: null,
         }),
     });
-    renderPage(<AdminAccountsPage />, { locale: "zh" });
+    await renderRoute(AdminAccountsPage, lastStubRoutes(), { locale: "zh" });
     const a = zh.admin.accounts;
     const table = await screen.findByRole("table", { name: a.title });
     const grant = within(table).getByText("Grant").closest("tr") as HTMLElement;
@@ -202,7 +203,7 @@ describe("/admin/accounts（ListPage）", () => {
       "PATCH /api/v1/admin/accounts/a1": () =>
         json(409, { error: { code: "account.last_enterprise_admin", message: "x" } }),
     });
-    renderPage(<AdminAccountsPage />, { locale: "zh" });
+    await renderRoute(AdminAccountsPage, lastStubRoutes(), { locale: "zh" });
     const a = zh.admin.accounts;
     const table = await screen.findByRole("table", { name: a.title });
     const grant = within(table).getByText("Grant").closest("tr") as HTMLElement;
@@ -229,7 +230,7 @@ describe("/admin/accounts（ListPage）", () => {
       "GET /api/v1/admin/accounts": () => json(200, { accounts: ACCOUNTS, next: null }),
       "POST /api/v1/admin/accounts": () => json(201, { account: created }),
     });
-    renderPage(<AdminAccountsPage />);
+    await renderRoute(AdminAccountsPage, lastStubRoutes());
     const a = en.admin.accounts;
     await screen.findByRole("table", { name: a.title });
     const user = userEvent.setup();
@@ -259,7 +260,7 @@ describe("/admin/accounts（ListPage）", () => {
       "PATCH /api/v1/admin/accounts/a2": (c) =>
         json(200, { account: { ...ACCOUNTS[1], ...(bodyOf(c) as object) } }),
     });
-    renderPage(<AdminAccountsPage />);
+    await renderRoute(AdminAccountsPage, lastStubRoutes());
     const a = en.admin.accounts;
     const table = await screen.findByRole("table", { name: a.title });
     const alice = within(table).getByText("Alice").closest("tr") as HTMLElement;
@@ -285,7 +286,7 @@ describe("/admin/orgs（ListPage）", () => {
       "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS }),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
     });
-    renderPage(<AdminOrgsPage />, { locale: "zh" });
+    await renderRoute(AdminOrgsPage, lastStubRoutes(), { locale: "zh" });
     expect(await screen.findByText(zh.admin.orgs.memberHint)).toBeTruthy();
   });
 
@@ -301,7 +302,7 @@ describe("/admin/orgs（ListPage）", () => {
           sandboxLimitOverrides: { o1: { cpu: 1.5, memoryMb: 4096 }, o2: { cpu: 2 } },
         }),
     });
-    renderPage(<AdminOrgsPage />, { locale });
+    await renderRoute(AdminOrgsPage, lastStubRoutes(), { locale });
     expect(template("ListPage")).not.toBeNull();
     const table = await screen.findByRole("table", { name: o.title });
     const beta = within(table).getByText("Beta").closest("tr") as HTMLElement;
@@ -338,7 +339,7 @@ describe("/admin/orgs（ListPage）", () => {
       "PUT /api/v1/admin/settings": () =>
         json(200, { ...SETTINGS, runConcurrencyOverrides: {}, sandboxLimitOverrides: {} }),
     });
-    renderPage(<AdminOrgsPage />);
+    await renderRoute(AdminOrgsPage, lastStubRoutes());
     const o = en.admin.orgs;
     const table = await screen.findByRole("table", { name: o.title });
     const beta = within(table).getByText("Beta").closest("tr") as HTMLElement;
@@ -375,7 +376,7 @@ describe("/admin/orgs（ListPage）", () => {
           json(200, { ...SETTINGS, subagentLimitOverrides: { o2: { maxDispatchesPerRun: 9 } } }),
         "PUT /api/v1/admin/settings": () => json(200, SETTINGS),
       });
-      renderPage(<AdminOrgsPage />, { locale });
+      await renderRoute(AdminOrgsPage, lastStubRoutes(), { locale });
       const table = await screen.findByRole("table", { name: o.title });
       const user = userEvent.setup();
       const beta = within(table).getByText("Beta").closest("tr") as HTMLElement;
@@ -415,7 +416,7 @@ describe("/admin/orgs（ListPage）", () => {
       "PUT /api/v1/admin/settings": () =>
         json(400, { error: { code: "validation_failed", message: "x" } }),
     });
-    renderPage(<AdminOrgsPage />);
+    await renderRoute(AdminOrgsPage, lastStubRoutes());
     const o = en.admin.orgs;
     const table = await screen.findByRole("table", { name: o.title });
     const acme = within(table).getByText("Acme").closest("tr") as HTMLElement;
@@ -440,7 +441,7 @@ describe("/admin/settings（FormPage）", () => {
         "PUT /api/v1/admin/settings": (c) => json(200, { ...SETTINGS, ...(bodyOf(c) as object) }),
       });
       resetNavigation("/admin/settings");
-      const { container } = renderPage(<AdminSettingsPage />, { locale });
+      const { container } = await renderRoute(AdminSettingsPage, lastStubRoutes(), { locale });
       expect(template("FormPage")).not.toBeNull();
       expect(container.querySelector(".cb-settings-nav")).toBeNull();
       const group = await screen.findByRole("radiogroup", { name: s.customConnectors.title });
@@ -465,7 +466,7 @@ describe("/admin/settings（FormPage）", () => {
 
   it("币种不合法时不能保存", async () => {
     const calls = stubApi({ "GET /api/v1/admin/settings": () => json(200, SETTINGS) });
-    renderPage(<AdminSettingsPage />);
+    await renderRoute(AdminSettingsPage, lastStubRoutes());
     const s = en.admin.settings;
     const input = (await screen.findByRole("textbox", {
       name: s.currency.label,
