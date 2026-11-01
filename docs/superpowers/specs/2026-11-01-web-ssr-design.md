@@ -186,8 +186,8 @@ A failure of the last three draws that section's own error state (the conversati
 | Create org | `POST /orgs`, then `PUT /me/current-org` | the same. The dialog's submit stays pending until the new document (usually the setup frame) replaces the page. |
 | Leave org | `POST /orgs/:o/leave` | switch to another org (as above), or, when none is left, the broadcast and a full navigation to `/` (the chooser); the dialog stays pending. |
 | Delete org (owner) | `DELETE /orgs/:o` (the kernel clears the current org) | the broadcast and a full navigation to `/` (the chooser); the dialog stays busy until then, and a refusal shows in the dialog. |
-| Sign out | `POST /auth/logout` | full navigation to `/login`, then the cross-tab broadcast. |
-| Sign in / set up | `POST /auth/login`, `POST /setup` | full navigation to `returnTo`, then the cross-tab broadcast. |
+| Sign out | `POST /auth/logout` | the cross-tab broadcast, then a full navigation to `/login`. |
+| Sign in / set up | `POST /auth/login`, `POST /setup` | the cross-tab broadcast, then a full navigation to `returnTo`. |
 | Readiness-changing work (create or delete an agent, enable a model provider) | its own call | `router.refresh()` |
 
 **Cross-tab sync** (borrowed from octok's `auth-sync`): signing in, signing out and switching org
