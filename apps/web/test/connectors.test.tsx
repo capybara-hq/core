@@ -7,6 +7,7 @@ import ConnectionsPage from "../src/app/(app)/account/connections/page";
 import NewAgentPage from "../src/app/(app)/agents/new/page";
 import ConnectorDetailPage from "../src/app/(app)/connectors/[connectorId]/page";
 import AppsPage from "../src/app/(app)/connectors/page";
+import { navigateBrowser } from "../src/lib/browser";
 import type { Me } from "../src/lib/session";
 import { useLoad } from "../src/lib/use-load";
 import { bodyOf, json, noContent, stubApi } from "./support/api";
@@ -15,6 +16,7 @@ import { ME, renderPage } from "./support/render";
 import { renderFrame, shellOf } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+vi.mock("../src/lib/browser", () => ({ navigateBrowser: vi.fn() }));
 vi.mock("next/navigation", () => ({ useParams: () => ({ connectorId: "app1" }) }));
 
 const msgs = { zh, en } as const;
@@ -59,7 +61,10 @@ const detail = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-beforeEach(() => resetNavigation("/connectors"));
+beforeEach(() => {
+  resetNavigation("/connectors");
+  vi.mocked(navigateBrowser).mockReset();
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -704,7 +709,7 @@ describe("useLoad", () => {
 });
 
 describe("连接器详情切换组织", () => {
-  it("switching org opens the new org's home in one transition; the old connector is never read with the new org", async () => {
+  it("switching org opens the new org's home with a full navigation; the old connector is never read with the new org", async () => {
     resetNavigation("/connectors/app1");
     const me = (current: string) => ({
       ...ME,
@@ -715,7 +720,7 @@ describe("连接器详情切换组织", () => {
       "PUT /api/v1/me/current-org": () => noContent(),
       "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }),
     });
-    const view = renderFrame(shellOf(me("o1")), <ConnectorDetailPage />, {
+    renderFrame(shellOf(me("o1")), <ConnectorDetailPage />, {
       locale: "en",
       version: "v0",
     });
@@ -726,15 +731,10 @@ describe("连接器详情切换组织", () => {
     // jsdom has no layout: pick the submenu item with the keyboard (see design menu-submenu tests)
     (await screen.findByRole("menuitemradio", { name: "Beta" })).focus();
     await user.keyboard("{Enter}");
-    await vi.waitFor(() => expect(router.refresh).toHaveBeenCalled());
-    expect(router.push).toHaveBeenCalledWith("/");
-    // the server's answer: the new org's frame with its home page
-    resetNavigation("/");
-    view.update(shellOf(me("o2")), <p>home</p>);
-    expect(
-      screen.getByRole("button", { name: "Current organization: Beta, switch organization" }),
-    ).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: "Fixture" })).toBeNull();
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    expect(router.push).not.toHaveBeenCalled();
+    // the old org's page stays until the new document replaces it
+    expect(screen.getByRole("heading", { name: "Fixture" })).toBeTruthy();
     expect(calls.some((c) => c.url.includes("/orgs/o2/connectors"))).toBe(false);
   });
 });

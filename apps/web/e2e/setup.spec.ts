@@ -33,7 +33,7 @@ test("初始化向导：未初始化的部署打开首页 → 初始化页（可
   await expect(page.locator('[data-part="sidebar"][data-context="work"]')).toHaveCount(0);
   await expect(page.getByRole("heading", { level: 1, name: zh.chat.setup.title })).toBeVisible();
   // the e2e stack loads model-fake: the model step is done, creating an agent is next
-  const agentStep = page.getByRole("listitem").filter({ hasText: zh.chat.setup.agent.label });
+  const agentStep = page.getByRole("listitem").filter({ hasText: zh.setupLayout.steps.agent });
   await agentStep.getByRole("button", { name: zh.chat.setup.agent.action }).click();
   await expect(page).toHaveURL(/\/agents\/new$/);
   // the step page renders inside the setup frame; the sidebar's setup home is the way back

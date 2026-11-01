@@ -121,25 +121,43 @@ describe("first paint from the layout's props", () => {
   });
 });
 
+/** A BroadcastChannel that records what this tab posts. */
+function fakeChannel(): unknown[] {
+  const posted: unknown[] = [];
+  class FakeChannel {
+    onmessage: ((e: MessageEvent) => void) | null = null;
+    postMessage(m: unknown) {
+      posted.push(m);
+    }
+    close() {}
+  }
+  vi.stubGlobal("BroadcastChannel", FakeChannel);
+  return posted;
+}
+
 describe("session-changing actions", () => {
-  it("switching org: PUT, then push('/') and refresh in one transition; the old page stays until the props change", async () => {
+  it("switching org: PUT, a broadcast, then a full navigation to /; the old page stays meanwhile (ruling R4)", async () => {
+    const posted = fakeChannel();
     const calls = stubApi({ "PUT /api/v1/me/current-org": () => noContent() });
     const view = renderFrame(shellOf(twoOrgs));
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "当前组织：Acme，切换组织" }));
     await user.click(await screen.findByRole("menuitemradio", { name: "Beta" }));
-    await vi.waitFor(() => expect(router.refresh).toHaveBeenCalled());
-    expect(router.push).toHaveBeenCalledWith("/");
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    expect(router.push).not.toHaveBeenCalled();
     expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ orgId: "o2" });
-    // no /me read in the browser; the old org's page and shell stay until the server answers
+    expect(posted).toEqual([expect.objectContaining({ kind: "org-switched" })]);
+    // no client navigation, no /me read; the old org's page and shell stay until the unload
     expect(calls.map((c) => c.method)).toEqual(["PUT"]);
     expect(screen.getByText("page body")).toBeTruthy();
     expect(screen.getByRole("button", { name: "当前组织：Acme，切换组织" })).toBeTruthy();
+    expect(router.refresh).not.toHaveBeenCalled();
+    // the new document
     view.update(shellOf({ ...twoOrgs, currentOrgId: "o2" }));
     expect(screen.getByRole("button", { name: "当前组织：Beta，切换组织" })).toBeTruthy();
   });
 
-  it("creating an org from the chooser: the dialog stays pending, then the setup frame, never the shell between", async () => {
+  it("creating an org from the chooser: the dialog stays pending until the new document, which is the setup frame", async () => {
     const none: Me = { ...ME, currentOrgId: null, memberships: [] };
     const calls = stubApi({
       "POST /api/v1/orgs": () =>
@@ -155,7 +173,7 @@ describe("session-changing actions", () => {
     const dialog = await screen.findByRole("dialog", { name: zh.home.createOrg.title });
     await user.type(within(dialog).getByRole("textbox"), "New");
     await user.click(within(dialog).getByRole("button", { name: zh.home.createOrg.submit }));
-    await vi.waitFor(() => expect(router.refresh).toHaveBeenCalled());
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
     expect(calls.map((c) => [c.method, c.url])).toEqual([
       ["POST", "/api/v1/orgs"],
       ["PUT", "/api/v1/me/current-org"],
@@ -184,15 +202,7 @@ describe("session-changing actions", () => {
   });
 
   it("signing out: a full navigation to /login and a broadcast to other tabs", async () => {
-    const posted: unknown[] = [];
-    class FakeChannel {
-      onmessage: ((e: MessageEvent) => void) | null = null;
-      postMessage(m: unknown) {
-        posted.push(m);
-      }
-      close() {}
-    }
-    vi.stubGlobal("BroadcastChannel", FakeChannel);
+    const posted = fakeChannel();
     stubApi({ "POST /api/v1/auth/logout": () => noContent() });
     renderFrame(shellOf(ME));
     const user = userEvent.setup();
@@ -417,15 +427,16 @@ describe("cross-tab session sync", () => {
     expect(signed).not.toHaveBeenCalled();
   });
 
-  it("the frame follows: an org switch elsewhere refreshes; a sign-out elsewhere reloads /", () => {
+  it("the frame follows: an org switch or a sign-out elsewhere reloads /", () => {
     Bus.all = [];
     vi.stubGlobal("BroadcastChannel", Bus);
     renderFrame(shellOf(ME));
     const other = new Bus("capybara-session");
     act(() => other.postMessage({ kind: "org-switched", from: "another-tab", at: 1 }));
-    expect(router.push).toHaveBeenCalledWith("/");
-    expect(router.refresh).toHaveBeenCalled();
-    act(() => other.postMessage({ kind: "signed-out", from: "another-tab", at: 2 }));
+    expect(navigateBrowser).toHaveBeenCalledTimes(1);
     expect(navigateBrowser).toHaveBeenCalledWith("/");
+    expect(router.push).not.toHaveBeenCalled();
+    act(() => other.postMessage({ kind: "signed-out", from: "another-tab", at: 2 }));
+    expect(navigateBrowser).toHaveBeenCalledTimes(2);
   });
 });

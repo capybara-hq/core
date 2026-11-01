@@ -12,7 +12,7 @@ import {
   Text,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { createContext, useContext } from "react";
+import { createContext, type ReactNode, useContext } from "react";
 import { useRouter } from "../../i18n/navigation";
 import { type OrgReadiness, setupReady } from "../../lib/agents";
 import { canUpdateOrg } from "../../lib/org-settings";
@@ -75,87 +75,6 @@ function setupRoleOf(me: Me): SetupRole {
   if (me.account.isEnterpriseAdmin) return "enterprise";
   if (canUpdateOrg(me)) return "orgAdmin";
   return navLevelOf(me) === "member" ? "member" : "guest";
-}
-
-/**
- * The one setup checklist (web-order spec §3.6, §3.8): the organization (always done), the model
- * and an agent, each with the action this viewer may take. Models are deployment-wide: only an
- * enterprise admin can configure the provider (in the admin console); an org admin is told a
- * deployment admin must; members and guests wait. The agent: whoever may create agents (members
- * and up) once a model exists; others wait. `blocked` says why nothing can be done now.
- */
-export function useSetupChecklist(
-  me: Me,
-  r: OrgReadiness,
-): { steps: Step[]; blocked: "deployment" | "admin" | null } {
-  const t = useTranslations("chat.setup");
-  const th = useTranslations("home.setup");
-  const ts = useTranslations("setupLayout");
-  const router = useRouter();
-  const orgName = me.memberships.find((m) => m.orgId === me.currentOrgId)?.name ?? "";
-  const role = setupRoleOf(me);
-  const hasModel = r.modelProvider === "ready";
-  const hasAgent = r.agents > 0;
-  const canCreateAgent = navLevelOf(me) !== "guest";
-  const modelAction =
-    role === "enterprise" ? (
-      <Button variant="primary" onClick={() => router.push("/admin/extensions")}>
-        {t("model.action")}
-      </Button>
-    ) : null;
-  const modelWaiting =
-    role === "orgAdmin" ? ts("model.needsDeploymentAdmin") : ts("model.waitingForAdmin");
-  const agentAction = canCreateAgent ? (
-    hasModel ? (
-      <Button variant="primary" onClick={() => router.push("/agents/new")}>
-        {t("agent.action")}
-      </Button>
-    ) : (
-      <Stack direction="row" gap={8} align="center">
-        <Button disabled>{t("agent.action")}</Button>
-        <Text variant="small" tone="muted">
-          {ts("agent.needsModel")}
-        </Text>
-      </Stack>
-    )
-  ) : null;
-  const steps: Step[] = [
-    { label: th("org"), description: orgName, done: true },
-    {
-      label: t("model.label"),
-      description: role === "enterprise" ? t("model.description") : t("model.askAdmin"),
-      done: hasModel,
-      ...(hasModel
-        ? {}
-        : {
-            action: modelAction ?? (
-              <Text variant="small" tone="muted">
-                {modelWaiting}
-              </Text>
-            ),
-          }),
-    },
-    {
-      label: t("agent.label"),
-      description: t("agent.description"),
-      done: hasAgent,
-      ...(hasAgent
-        ? {}
-        : {
-            action: agentAction ?? (
-              <Text variant="small" tone="muted">
-                {ts("agent.waitingForAdmin")}
-              </Text>
-            ),
-          }),
-    },
-  ];
-  // Nothing this viewer can do now: the model is missing and only a deployment admin can add it
-  // (an org admin is blocked on them), or an agent is missing and someone else must create it.
-  const actionable =
-    (!hasModel && modelAction !== null) || (hasModel && !hasAgent && canCreateAgent);
-  const blocked = actionable ? null : !hasModel && role === "orgAdmin" ? "deployment" : "admin";
-  return { steps, blocked };
 }
 
 /**
@@ -234,11 +153,20 @@ export function activeStepOf(pathname: string, steps: SetupStep[]): string {
   return steps.find((s) => s.href !== undefined && under(pathname, s.href))?.id ?? "";
 }
 
+/** Where each optional step is done (the second line of its row on the setup home). */
+const LATER_WHERE: Record<string, string> = {
+  members: "home.setup.inviteMembersWhere",
+  channels: "home.setup.channelsWhere",
+  catalog: "home.setup.catalogWhere",
+  connections: "setupLayout.later.connectionsWhere",
+};
+
 /**
- * The setup home (`/`, `/chat` while not ready): the checklist card ("开始之前 · 已完成 n / 3"),
- * then "可以稍后再做" with only what this viewer can act on (admins: invite members, channels,
- * plugins; members: their connections). A viewer with nothing to do is told why (role-specific),
- * with a refresh that re-reads readiness.
+ * The setup home (`/`, `/chat` while not ready): the same steps as the setup sidebar
+ * ({@link useSetupSteps}: ids, labels, order, states). The required ones in the checklist card
+ * ("开始之前 · 已完成 n / 2"), each with a description and the action this viewer may take (or
+ * why it waits); then "可以稍后再做" with the optional ones. A viewer with nothing to do now is told
+ * why (role-specific), with a refresh that re-reads readiness.
  */
 export function SetupHome({
   me,
@@ -252,58 +180,96 @@ export function SetupHome({
   /** The refresh is waiting for the server. */
   refreshing?: boolean;
 }) {
-  const th = useTranslations("home.setup");
-  const ts = useTranslations("setupLayout");
-  const { steps, blocked } = useSetupChecklist(me, readiness);
-  const done = steps.filter((s) => s.done).length;
-  const admin = canUpdateOrg(me);
-  const later: ItemListRow[] = admin
-    ? [
-        {
-          id: "members",
-          title: th("inviteMembers"),
-          meta: th("inviteMembersWhere"),
-          href: "/settings/members",
-        },
-        {
-          id: "channels",
-          title: th("channels"),
-          meta: th("channelsWhere"),
-          href: "/channels/new",
-        },
-        { id: "catalog", title: th("catalog"), meta: th("catalogWhere"), href: "/catalog" },
-      ]
-    : navLevelOf(me) === "member"
-      ? [
-          {
-            id: "connections",
-            title: ts("later.connections"),
-            meta: ts("later.connectionsWhere"),
-            href: "/account/connections",
-          },
-        ]
-      : [];
+  const t = useTranslations();
+  const router = useRouter();
+  const all = useSetupSteps(me, readiness);
+  const required = all.filter((s) => !s.optional);
+  const optional = all.filter((s) => s.optional);
+  const enterprise = setupRoleOf(me) === "enterprise";
+  const canCreateAgent = navLevelOf(me) !== "guest";
+  const description: Record<string, string> = {
+    model: enterprise ? t("chat.setup.model.description") : t("chat.setup.model.askAdmin"),
+    agent: t("chat.setup.agent.description"),
+  };
+  const actionLabel: Record<string, string> = {
+    model: t("chat.setup.model.action"),
+    agent: t("chat.setup.agent.action"),
+  };
+  const actionOf = (s: SetupStep): ReactNode => {
+    if (s.state === "done") return undefined;
+    if (s.state === "todo" && s.href !== undefined) {
+      const href = s.href;
+      return (
+        <Button variant="primary" onClick={() => router.push(href)}>
+          {actionLabel[s.id]}
+        </Button>
+      );
+    }
+    // Creating an agent waits for the model: the action shows, disabled, with the reason.
+    if (s.id === "agent" && canCreateAgent) {
+      return (
+        <Stack direction="row" gap={8} align="center">
+          <Button disabled>{actionLabel[s.id]}</Button>
+          <Text variant="small" tone="muted">
+            {s.reason}
+          </Text>
+        </Stack>
+      );
+    }
+    return (
+      <Text variant="small" tone="muted">
+        {s.reason}
+      </Text>
+    );
+  };
+  const steps: Step[] = required.map((s) => {
+    const action = actionOf(s);
+    return {
+      label: s.label,
+      description: description[s.id] ?? "",
+      done: s.state === "done",
+      ...(action === undefined ? {} : { action }),
+    };
+  });
+  const done = required.filter((s) => s.state === "done").length;
+  // Nothing this viewer can do now: an org admin waits for a deployment admin's model, anyone else
+  // for an org admin.
+  const blocked = required.some((s) => s.state === "todo")
+    ? null
+    : required.some((s) => s.id === "model" && s.state === "waiting") && canUpdateOrg(me)
+      ? "deployment"
+      : "admin";
+  const later: ItemListRow[] = optional.map((s) => ({
+    id: s.id,
+    title: s.label,
+    ...(LATER_WHERE[s.id] !== undefined ? { meta: t(LATER_WHERE[s.id] as "common.retry") } : {}),
+    ...(s.href !== undefined ? { href: s.href } : {}),
+  }));
   return (
     <Stack gap={16}>
       <Card
-        title={th("title")}
-        actions={<Text tone="muted">{th("progress", { done, total: steps.length })}</Text>}
+        title={t("home.setup.title")}
+        actions={
+          <Text tone="muted">{t("home.setup.progress", { done, total: required.length })}</Text>
+        }
       >
         <StepList steps={steps} inset="card" />
       </Card>
       {blocked === null ? null : (
         <Stack direction="row" gap={12} align="center">
           <Text tone="muted">
-            {blocked === "deployment" ? ts("waitingDeployment") : ts("waiting")}
+            {blocked === "deployment"
+              ? t("setupLayout.waitingDeployment")
+              : t("setupLayout.waiting")}
           </Text>
           <Button loading={refreshing} onClick={onRefresh}>
-            {ts("refresh")}
+            {t("setupLayout.refresh")}
           </Button>
         </Stack>
       )}
       {later.length > 0 ? (
-        <Card title={th("later")}>
-          <ItemList label={th("later")} rows={later} />
+        <Card title={t("home.setup.later")}>
+          <ItemList label={t("home.setup.later")} rows={later} />
         </Card>
       ) : null}
     </Stack>

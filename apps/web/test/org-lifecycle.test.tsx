@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zh from "../messages/zh.json";
 import OrganizationSettingsPage from "../src/app/(app)/settings/organization/page";
 import TokensPage from "../src/app/(app)/settings/tokens/page";
+import { navigateBrowser } from "../src/lib/browser";
 import type { OrgRole } from "../src/lib/members";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, noContent, stubApi } from "./support/api";
@@ -13,6 +14,7 @@ import { ME, renderPage } from "./support/render";
 import { renderFrame, shellOf } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+vi.mock("../src/lib/browser", () => ({ navigateBrowser: vi.fn() }));
 
 const O = "/api/v1/orgs/o1";
 const meAs = (role: OrgRole): Me => ({
@@ -29,6 +31,7 @@ const member = (id: string, role: OrgRole) => ({
 
 beforeEach(() => {
   resetNavigation("/");
+  vi.mocked(navigateBrowser).mockReset();
 });
 afterEach(() => {
   cleanup();
@@ -62,8 +65,8 @@ describe("退出组织", () => {
         .setup()
         .click(within(dialog).getByRole("button", { name: zh.orgLifecycle.leave.confirm }));
       // the kernel cleared the current org: the server renders the chooser at /
-      await vi.waitFor(() => expect(router.refresh).toHaveBeenCalled());
-      expect(router.push).toHaveBeenCalledWith("/");
+      await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+      expect(router.push).not.toHaveBeenCalled();
       expect(calls.some((c) => c.method === "PUT")).toBe(false);
       // the dialog stays pending until the new frame arrives
       expect(
@@ -91,7 +94,7 @@ describe("退出组织", () => {
     await userEvent
       .setup()
       .click(within(dialog).getByRole("button", { name: zh.orgLifecycle.leave.confirm }));
-    await vi.waitFor(() => expect(router.refresh).toHaveBeenCalled());
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
     const put = calls.find((c) => c.method === "PUT" && c.url === "/api/v1/me/current-org");
     expect(bodyOf(put)).toEqual({ orgId: "o2" });
     expect(calls.some((c) => c.url === "/api/v1/auth/logout")).toBe(false);
@@ -151,14 +154,9 @@ describe("删除组织 (组织设置 · 通用)", () => {
     });
   }
 
-  it("the owner types the slug to delete; then the org chooser (no current org)", async () => {
+  it("the owner types the slug to delete; then a full navigation to the chooser, the dialog busy until then", async () => {
     const calls = api();
-    const switchOrg = vi.fn(async () => {});
-    renderPage(<OrganizationSettingsPage />, {
-      locale: "zh",
-      me: meAs("owner"),
-      session: { switchOrg },
-    });
+    renderPage(<OrganizationSettingsPage />, { locale: "zh", me: meAs("owner") });
     const user = userEvent.setup();
     const zone = await screen.findByRole("region", { name: zh.orgLifecycle.danger.title });
     await user.click(within(zone).getByRole("button", { name: zh.orgLifecycle.delete.action }));
@@ -168,8 +166,16 @@ describe("删除组织 (组织设置 · 通用)", () => {
     await user.type(within(dialog).getByRole("textbox"), "acme");
     await user.click(confirm);
     await vi.waitFor(() => expect(calls.some((c) => c.method === "DELETE")).toBe(true));
-    await vi.waitFor(() => expect(switchOrg).toHaveBeenCalledWith(null));
-    expect(router.replace).toHaveBeenCalledWith("/");
+    // the kernel cleared the current org with the org: no PUT, no client navigation
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    expect(calls.some((c) => c.method === "PUT")).toBe(false);
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
+    expect(
+      within(screen.getByRole("dialog", { name: zh.orgLifecycle.delete.title }))
+        .getByRole("button", { name: zh.orgLifecycle.delete.confirm })
+        .getAttribute("aria-busy"),
+    ).toBe("true");
   });
 });
 
@@ -190,6 +196,8 @@ describe("删除组织 errors", () => {
     const alert = await within(dialog).findByRole("alert");
     expect(alert.textContent).not.toContain("Insufficient organization role");
     expect(alert.textContent).toContain(zh.errors.forbidden);
+    // the dialog stays open and nothing navigates
+    expect(navigateBrowser).not.toHaveBeenCalled();
   });
 });
 

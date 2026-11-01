@@ -92,13 +92,9 @@
       "title": "Before you start",
       "description": "{org} is new. Finish these steps and your team can start working with agents.",
       "progress": "{done} of {total} done",
-      "org": "Organization created",
       "later": "Can wait",
-      "inviteMembers": "Invite members",
       "inviteMembersWhere": "Settings · Members",
-      "channels": "Connect Lark or Slack to use agents in chat",
       "channelsWhere": "Channels",
-      "catalog": "Install plugins (skills, connectors) from the catalog",
       "catalogWhere": "Catalog"
     },
     "inbox": {
@@ -792,14 +788,12 @@
       "title": "Before you start",
       "description": "A few steps are left before you can start a conversation.",
       "model": {
-        "label": "Set up a model",
         "description": "Configure at least one model provider (such as the openai-compatible extension) so agents can answer.",
         "askAdmin": "No model is available yet. Enterprise admins configure models under Admin → Extensions.",
         "action": "Set up",
         "waiting": "Waiting for an enterprise admin"
       },
       "agent": {
-        "label": "Create an agent",
         "description": "An agent sets the model it uses and the tools and skills it can use.",
         "action": "Create"
       }
@@ -3312,7 +3306,6 @@
     "waiting": "The organization is still being set up. You can start chatting once an admin finishes.",
     "refresh": "Refresh",
     "later": {
-      "connections": "Connect your accounts",
       "connectionsWhere": "Personal settings · My connections"
     },
     "waitingDeployment": "A deployment admin needs to set up a model service before you can continue",

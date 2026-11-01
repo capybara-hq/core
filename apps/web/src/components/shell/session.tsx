@@ -9,14 +9,18 @@ import type { Me } from "../../lib/session";
  */
 export type Session = {
   me: Me;
-  /** Reads the session again: re-renders the route on the server (`router.refresh()`). */
+  /**
+   * Reads the session again: starts a server re-render of the route (`router.refresh()`) and
+   * resolves at once, before the new props arrive. Callers must not rely on awaiting it.
+   */
   reload(): Promise<void>;
   /**
-   * Makes `orgId` the current org (`null` clears it), then opens its home in a transition: the
-   * current page stays until the new org's frame is ready. Rejects when the kernel refuses.
+   * Makes `orgId` the current org (`null` clears it), tells the other tabs, then opens `/` with a
+   * full navigation (ruling R4): the current page stays until the new document arrives. Rejects
+   * when the kernel refuses (nothing navigates then).
    */
   switchOrg(orgId: string | null): Promise<void>;
-  /** An org switch (or another session change) is waiting for the server's new frame. */
+  /** An org change is waiting for the new document (the page is about to unload). */
   switching?: boolean;
   /** Reads the sidebar's pending count again now (after handling an approval). */
   refreshPending?(): void;

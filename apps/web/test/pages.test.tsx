@@ -49,7 +49,10 @@ function stubApi(routes: Record<string, (init?: RequestInit) => Response>) {
 
 const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
 
-beforeEach(() => resetNavigation("/"));
+beforeEach(() => {
+  resetNavigation("/");
+  vi.mocked(navigateBrowser).mockReset();
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -461,7 +464,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(screen.getByRole("button", { name: c.create })).toBeTruthy();
     expect(screen.getByRole("link", { name: c.admin }).getAttribute("href")).toBe("/admin");
     await userEvent.click(within(orgs[1] as HTMLElement).getByRole("button", { name: c.enter }));
-    await vi.waitFor(() => expect(router.refresh).toHaveBeenCalled());
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
     expect(calls.find((x) => x.method === "PUT")?.body).toEqual({ orgId: "o2" });
     // the button stays pending until the server's new frame arrives
     expect(

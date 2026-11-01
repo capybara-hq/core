@@ -92,10 +92,11 @@ const under = (pathname: string, prefix: string) =>
  * 3. otherwise the App Shell: the sidebar in its work or admin context (web order §2.1–§2.2), the
  *    account menu and the status bar (`<login>@<slug>:<path>` · version · time zone).
  *
- * It provides the session to pages ({@link SessionContext}). Session changes re-render the route on
- * the server (`router.refresh()`), in a transition, so the current frame stays until the new one
- * is ready; the conversation list, the pending count and the extension pages start from the props
- * and keep their live updates (polls, focus, `cap:conversations-changed`).
+ * It provides the session to pages ({@link SessionContext}). An org change is a full navigation to
+ * `/` (ruling R4), so the current page stays until the new document arrives; `reload()` re-renders
+ * the route on the server (`router.refresh()`). The conversation list, the pending count and the
+ * extension pages start from the props and keep their live updates (polls, focus,
+ * `cap:conversations-changed`).
  */
 export function AppFrame({
   initial,
@@ -141,17 +142,17 @@ export function AppFrame({
   const timeZone = useTimeZoneLabel();
   useConnectResultToast();
 
-  const [switching, startSwitch] = useTransition();
+  const [switching, setSwitching] = useState(false);
   const [refreshing, startRefresh] = useTransition();
-  /** The current org changed (here or in another tab): its home, rendered on the server. */
-  const openHome = useCallback(
-    () =>
-      startSwitch(() => {
-        router.push("/");
-        router.refresh();
-      }),
-    [router],
-  );
+  /**
+   * The current org changed (here or in another tab): a full navigation to its home (ruling R4).
+   * The browser keeps this page until the new server-rendered document arrives, so nothing of the
+   * new org paints inside the old org's shell; the control stays pending until the unload.
+   */
+  const openHome = useCallback(() => {
+    setSwitching(true);
+    navigateBrowser("/");
+  }, []);
   const reload = useCallback(async () => startRefresh(() => router.refresh()), [router]);
   const switchOrg = useCallback(
     async (next: string | null) => {
@@ -190,13 +191,16 @@ export function AppFrame({
 
   // Leaving keeps the sign-in (web order §9): the kernel already cleared the current org, so move
   // to another org of the account, or to the org chooser when none is left. The dialog stays
-  // pending until the new frame replaces the page.
+  // pending until the new document replaces the page.
   function onLeftOrg() {
     const left = currentOrg;
     if (left) toast.success(t("orgLifecycle.leave.left", { name: left.name }));
     const next = me.memberships.find((m) => m.orgId !== left?.orgId);
     if (next) selectOrg(next.orgId);
-    else openHome();
+    else {
+      broadcastSession("org-switched");
+      openHome();
+    }
   }
 
   // The setup frame (web-SSR spec §4): while the org lacks a model or an agent, setup routes render

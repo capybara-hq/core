@@ -182,10 +182,10 @@ A failure of the last three draws that section's own error state (the conversati
 
 | Action | Kernel call | Then |
 |---|---|---|
-| Switch org | `PUT /me/current-org` | `router.push("/")` and `router.refresh()` in one transition. The org menu item shows pending; the current page stays until the new org's home is ready. |
-| Create org | `POST /orgs`, then `PUT /me/current-org` | the same. The dialog's submit stays pending until the new frame (usually setup) replaces the page. |
-| Leave org | `POST /orgs/:o/leave` | switch to another org, or show the chooser, with the same transition. |
-| Delete org (owner) | `DELETE /orgs/:o` | the same. |
+| Switch org | `PUT /me/current-org` | the cross-tab broadcast, then a full navigation to `/` (ruling R4). The browser keeps the current page until the new server-rendered document arrives; the control stays pending until the unload. |
+| Create org | `POST /orgs`, then `PUT /me/current-org` | the same. The dialog's submit stays pending until the new document (usually the setup frame) replaces the page. |
+| Leave org | `POST /orgs/:o/leave` | switch to another org (as above), or, when none is left, the broadcast and a full navigation to `/` (the chooser); the dialog stays pending. |
+| Delete org (owner) | `DELETE /orgs/:o` (the kernel clears the current org) | the broadcast and a full navigation to `/` (the chooser); the dialog stays busy until then, and a refusal shows in the dialog. |
 | Sign out | `POST /auth/logout` | full navigation to `/login`, then the cross-tab broadcast. |
 | Sign in / set up | `POST /auth/login`, `POST /setup` | full navigation to `returnTo`, then the cross-tab broadcast. |
 | Readiness-changing work (create or delete an agent, enable a model provider) | its own call | `router.refresh()` |
@@ -193,8 +193,14 @@ A failure of the last three draws that section's own error state (the conversati
 **Cross-tab sync** (borrowed from octok's `auth-sync`): signing in, signing out and switching org
 broadcast on a `BroadcastChannel("capybara-session")`, with a `storage`-event fallback.
 - A tab that receives sign-in or sign-out does a full navigation to `/`, which resets client state.
-- A tab that receives an org switch does `router.push("/")` plus `router.refresh()`: the current org
-  belongs to the session, which tabs share.
+- A tab that receives an org switch also does a full navigation to `/`: the current org belongs to
+  the session, which tabs share.
+
+**Ruling R4** (fix round 1): org changes never use `router.push("/")` + `router.refresh()`. The
+shared `(app)` layout is not re-rendered by a client navigation, so the push could commit before the
+refresh and paint the new org's `/` inside the old org's shell for a frame. A full navigation keeps
+the old page until the new document arrives, so nothing intermediate paints. `reload()` stays
+`router.refresh()` (it resolves at once).
 
 While the setup frame is shown, the setup home re-reads readiness with `router.refresh()`: every
 30 s, on window focus, and from its 刷新 button. This lets a member see the shell appear once an
@@ -260,6 +266,13 @@ Steps per role, taken from the existing table:
 | 邀请成员 (optional) | when also org admin: `/settings/members` | `/settings/members` | — | — |
 | 安装插件 (optional) | when also org admin: `/catalog` | `/catalog` | — | — |
 | 我的连接 (optional) | — | — | `/account/connections` | — |
+
+The columns are the viewer's highest role; the optional steps follow the org role, so an enterprise
+admin who is a plain member of the org gets 我的连接 (and one who is a guest, nothing).
+
+The setup home's checklist card renders from the same step list as the sidebar (same ids, labels,
+order and states): the required steps, counted "已完成 n / 2", each with a description and its
+action or reason; then "可以稍后再做" with the optional steps.
 
 **Content area**: the shell's content area with the page head (path, title) and the content width.
 - The setup home (`/`, `/chat`): path `<slug> / 开始之前`, h1 开始之前, the checklist card and the

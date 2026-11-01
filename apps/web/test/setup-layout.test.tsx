@@ -3,13 +3,15 @@ import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zh from "../messages/zh.json";
 import { setupRouteOf } from "../src/components/shell/setup";
+import { navigateBrowser } from "../src/lib/browser";
 import type { Me } from "../src/lib/session";
 import { bodyOf, noContent, stubApi } from "./support/api";
-import { resetNavigation, router } from "./support/navigation";
+import { pathname, resetNavigation, router } from "./support/navigation";
 import { ME } from "./support/render";
 import { NOT_READY, PROVIDER_ONLY, READY, renderFrame as render, shellOf } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+vi.mock("../src/lib/browser", () => ({ navigateBrowser: vi.fn() }));
 
 // Acceptance round 2, D + D2: the guided setup layout. While the current org has no usable model or
 // no agent, workspace routes render in the setup layout (the shell's geometry with the setup
@@ -36,6 +38,7 @@ const memberMe = (role: string, enterprise = false): Me => ({
 
 beforeEach(() => {
   resetNavigation("/");
+  vi.mocked(navigateBrowser).mockReset();
 });
 afterEach(() => {
   cleanup();
@@ -58,8 +61,9 @@ describe("setup layout scope", () => {
     const path = screen.getByRole("navigation", { name: "路径" });
     expect(path.textContent).toContain("acme");
     expect(screen.getByText(s.description)).toBeTruthy();
-    expect(step(zh.home.setup.org).getAttribute("data-state")).toBe("done");
-    expect(step(s.model.label).getAttribute("data-state")).toBe("todo");
+    expect(step(sl.steps.model).getAttribute("data-state")).toBe("todo");
+    // the count is over the required steps (no "organization created" item)
+    expect(screen.getByText(zh.home.setup.progress.replace("{done}", "0").replace("{total}", "2")));
     // the account menu holds sign-out
     await userEvent.setup().click(screen.getByRole("button", { name: "账户: Grant" }));
     expect(await screen.findByRole("menuitem", { name: zh.common.logout })).toBeTruthy();
@@ -124,7 +128,7 @@ describe("setup layout scope", () => {
     await vi.waitFor(() =>
       expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ orgId: "o2" }),
     );
-    await vi.waitFor(() => expect(router.refresh).toHaveBeenCalled());
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
   });
 
   it("routes: home, steps, redirects and the admin console", () => {
@@ -149,22 +153,69 @@ describe("setup layout scope", () => {
   });
 });
 
+describe("one step list: the setup home's card and the sidebar agree", () => {
+  const sidebarSteps = () =>
+    [...document.querySelectorAll<HTMLElement>('[data-part="step-item"]')].map((el) => ({
+      label: el.querySelector(".cb-sidebar-label")?.textContent ?? "",
+      done: el.getAttribute("data-state") === "done",
+      optional: el.getAttribute("data-optional") === "true",
+    }));
+  for (const [who, me, readiness] of [
+    ["enterprise admin", ME, NOT_READY],
+    ["org admin", memberMe("admin"), PROVIDER_ONLY],
+    ["member", memberMe("member"), PROVIDER_ONLY],
+    ["guest", memberMe("guest"), NOT_READY],
+  ] as const) {
+    it(`${who}: the same labels, order and states; the count over the required steps`, () => {
+      renderFrame({ me, readiness });
+      const main = screen.getByRole("main");
+      const side = sidebarSteps();
+      const required = side.filter((x) => !x.optional);
+      const card = within(main)
+        .getAllByRole("listitem")
+        .filter((li) => li.hasAttribute("data-state"));
+      expect(card).toHaveLength(required.length);
+      required.forEach((r, i) => {
+        expect(card[i]?.textContent).toContain(r.label);
+        expect(card[i]?.getAttribute("data-state") === "done").toBe(r.done);
+      });
+      const done = required.filter((r) => r.done).length;
+      expect(
+        within(main).getByText(
+          zh.home.setup.progress
+            .replace("{done}", String(done))
+            .replace("{total}", String(required.length)),
+        ),
+      ).toBeTruthy();
+      const later = side.filter((x) => x.optional).map((x) => x.label);
+      const list = screen.queryByRole("list", { name: zh.home.setup.later });
+      expect(
+        list === null
+          ? []
+          : within(list)
+              .getAllByRole("link")
+              .map((l) => l.querySelector('[data-part="title"]')?.textContent ?? l.textContent),
+      ).toEqual(later.map((l) => expect.stringContaining(l)));
+    });
+  }
+});
+
 describe("the checklist by role", () => {
   it("an enterprise admin configures the model in the admin console", async () => {
     renderFrame();
-    const model = step(s.model.label);
+    const model = step(sl.steps.model);
     await userEvent.setup().click(within(model).getByRole("button", { name: s.model.action }));
     expect(router.push).toHaveBeenCalledWith("/admin/extensions");
     // creating an agent waits for the model: disabled with the reason
-    const agent = step(s.agent.label);
+    const agent = step(sl.steps.agent);
     expect(
       (within(agent).getByRole("button", { name: s.agent.action }) as HTMLButtonElement).disabled,
     ).toBe(true);
     expect(within(agent).getByText(sl.agent.needsModel)).toBeTruthy();
     // admins can act on the later items
     const later = within(screen.getByRole("list", { name: zh.home.setup.later }));
-    expect(later.getByRole("link", { name: zh.home.setup.inviteMembers })).toBeTruthy();
-    expect(later.getByRole("link", { name: zh.home.setup.channels }).getAttribute("href")).toBe(
+    expect(later.getByRole("link", { name: sl.steps.members })).toBeTruthy();
+    expect(later.getByRole("link", { name: sl.steps.channels }).getAttribute("href")).toBe(
       "/channels/new",
     );
     expect(screen.queryByText(sl.waiting)).toBeNull();
@@ -172,7 +223,7 @@ describe("the checklist by role", () => {
 
   it("an org admin cannot fix a missing model provider: a deployment admin is needed", () => {
     renderFrame({ me: memberMe("admin") });
-    const model = step(s.model.label);
+    const model = step(sl.steps.model);
     expect(within(model).queryByRole("button")).toBeNull();
     expect(within(model).getByText(sl.model.needsDeploymentAdmin)).toBeTruthy();
     // the role-specific line, with Refresh
@@ -183,7 +234,7 @@ describe("the checklist by role", () => {
 
   it("a member waits: no model action, the waiting line with Refresh, only personal items later", () => {
     renderFrame({ me: memberMe("member") });
-    const model = step(s.model.label);
+    const model = step(sl.steps.model);
     expect(within(model).queryByRole("button")).toBeNull();
     expect(within(model).getByText(sl.model.waitingForAdmin)).toBeTruthy();
     expect(screen.getByText(sl.waiting)).toBeTruthy();
@@ -196,13 +247,13 @@ describe("the checklist by role", () => {
 
   it("a member with a model creates the agent; a guest waits for an admin", async () => {
     renderFrame({ me: memberMe("member"), readiness: PROVIDER_ONLY });
-    const agent = step(s.agent.label);
+    const agent = step(sl.steps.agent);
     await userEvent.setup().click(within(agent).getByRole("button", { name: s.agent.action }));
     expect(router.push).toHaveBeenCalledWith("/agents/new");
     expect(screen.queryByText(sl.waiting)).toBeNull();
     cleanup();
     renderFrame({ me: memberMe("guest"), readiness: PROVIDER_ONLY });
-    const waiting = step(s.agent.label);
+    const waiting = step(sl.steps.agent);
     expect(within(waiting).queryByRole("button")).toBeNull();
     expect(within(waiting).getByText(sl.agent.waitingForAdmin)).toBeTruthy();
     expect(screen.getByText(sl.waiting)).toBeTruthy();
@@ -219,18 +270,36 @@ describe("the checklist by role", () => {
     expect(setupPage()).toBeNull();
   });
 
-  it("a navigation while in setup reads readiness again; the admin console does not", () => {
+  it("in the setup frame each navigation refreshes once, never the first render; elsewhere none", () => {
+    const go = (path: string) => {
+      pathname.current = path;
+    };
     resetNavigation("/settings/models");
     const view = renderFrame();
     expect(router.refresh).not.toHaveBeenCalled();
-    resetNavigation("/agents/new");
+    // new props on the same route (a refresh's answer): no further refresh
+    view.update(shellOf(ME, { readiness: NOT_READY }));
+    expect(router.refresh).not.toHaveBeenCalled();
+    go("/agents/new");
     view.update(shellOf(ME, { readiness: NOT_READY }));
     expect(router.refresh).toHaveBeenCalledTimes(1);
+    view.update(shellOf(ME, { readiness: NOT_READY }));
+    expect(router.refresh).toHaveBeenCalledTimes(1);
+    go("/catalog");
+    view.update(shellOf(ME, { readiness: NOT_READY }));
+    expect(router.refresh).toHaveBeenCalledTimes(2);
     cleanup();
+    // the admin console while not ready, and a ready shell: navigations do not refresh
     resetNavigation("/admin/extensions");
     const admin = renderFrame();
-    resetNavigation("/admin/accounts");
+    go("/admin/accounts");
     admin.update(shellOf(ME, { readiness: NOT_READY }));
+    expect(router.refresh).not.toHaveBeenCalled();
+    cleanup();
+    resetNavigation("/agents");
+    const shell = renderFrame({ readiness: READY });
+    go("/skills");
+    shell.update(shellOf(ME, { readiness: READY }));
     expect(router.refresh).not.toHaveBeenCalled();
   });
 

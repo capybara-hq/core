@@ -92,13 +92,9 @@
       "title": "开始之前",
       "description": "{org} 刚建好。完成下面几步，团队就能开始用 agent 干活。",
       "progress": "已完成 {done} / {total}",
-      "org": "组织已建好",
       "later": "可以稍后再做",
-      "inviteMembers": "邀请成员",
       "inviteMembersWhere": "设置 · 成员",
-      "channels": "接入飞书或 Slack，在 IM 里用 agent",
       "channelsWhere": "渠道",
-      "catalog": "从企业目录装插件（技能、连接器）",
       "catalogWhere": "企业目录"
     },
     "inbox": {
@@ -792,14 +788,12 @@
       "title": "开始之前",
       "description": "还差几步才能开始对话。",
       "model": {
-        "label": "配置模型",
         "description": "至少配置一个模型提供方（例如 openai-compatible 扩展），agent 才能回答。",
         "askAdmin": "还没有可用的模型。模型由企业管理员在「管理 → 扩展」里配置。",
         "action": "去配置",
         "waiting": "等待企业管理员配置"
       },
       "agent": {
-        "label": "新建 agent",
         "description": "agent 决定用哪个模型、能用哪些工具和技能。",
         "action": "新建"
       }
@@ -3312,7 +3306,6 @@
     "waiting": "组织还在配置中，管理员完成后你就能开始对话",
     "refresh": "刷新",
     "later": {
-      "connections": "连接你的账号",
       "connectionsWhere": "个人设置 · 我的连接"
     },
     "waitingDeployment": "需要部署管理员配置模型服务后才能继续",

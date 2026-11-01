@@ -7,6 +7,7 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import ChatPage from "../src/app/(app)/chat/[conversationId]/page";
 import NewChatPage from "../src/app/(app)/chat/page";
+import { navigateBrowser } from "../src/lib/browser";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
 import {
   AGENTS,
@@ -24,6 +25,7 @@ import { renderFrame, shellOf } from "./support/shell";
 const params = { conversationId: "c1" };
 const search = new URLSearchParams();
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+vi.mock("../src/lib/browser", () => ({ navigateBrowser: vi.fn() }));
 vi.mock("next/navigation", () => ({
   useParams: () => params,
   useSearchParams: () => search,
@@ -50,6 +52,7 @@ const posts = (calls: Call[], path: string) =>
   calls.filter((c) => c.method === "POST" && c.url.split("?")[0] === path);
 
 beforeEach(() => {
+  vi.mocked(navigateBrowser).mockReset();
   params.conversationId = "c1";
   for (const k of [...search.keys()]) search.delete(k);
   resetNavigation("/chat/c1");
@@ -798,12 +801,12 @@ describe("the conversation page in the app frame", () => {
     memberships: [...ME.memberships, { orgId: "o2", slug: "b", name: "Beta", role: "member" }],
   });
 
-  it("switching org opens the new org's home and never reads the conversation with the new org", async () => {
+  it("switching org opens the new org's home with a full navigation and never reads the conversation with the new org", async () => {
     const calls = api({
       "PUT /api/v1/me/current-org": () => new Response(null, { status: 204 }),
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
     });
-    const view = renderFrame(shellOf(twoOrgs("o1")), <ChatPage />, {
+    renderFrame(shellOf(twoOrgs("o1")), <ChatPage />, {
       locale: "en",
       version: "v0",
     });
@@ -816,12 +819,10 @@ describe("the conversation page in the app frame", () => {
     // jsdom has no layout: pick the submenu item with the keyboard (see design menu-submenu tests)
     (await screen.findByRole("menuitemradio", { name: "Beta" })).focus();
     await user.keyboard("{Enter}");
-    await vi.waitFor(() => expect(router.refresh).toHaveBeenCalled());
-    expect(router.push).toHaveBeenCalledWith("/");
-    // the server's answer: the new org's frame with its home page, in one render
-    resetNavigation("/");
-    view.update(shellOf(twoOrgs("o2")), <p>home</p>);
-    expect(screen.queryByText("hi")).toBeNull();
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    expect(router.push).not.toHaveBeenCalled();
+    // the old org's conversation stays until the new document replaces it
+    expect(screen.getByText("hi")).toBeTruthy();
     expect(calls.some((c) => c.url.includes("/orgs/o2/"))).toBe(false);
   });
 });

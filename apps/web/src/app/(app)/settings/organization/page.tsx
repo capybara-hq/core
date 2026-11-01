@@ -21,8 +21,8 @@ import { RoleGate } from "../../../../components/RoleGate";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
-import { useRouter } from "../../../../i18n/navigation";
 import { ApiClientError } from "../../../../lib/api";
+import { navigateBrowser } from "../../../../lib/browser";
 import { myRole } from "../../../../lib/members";
 import {
   canUpdateOrg,
@@ -32,6 +32,7 @@ import {
   updateOrgSettings,
 } from "../../../../lib/org-settings";
 import { deleteOrg } from "../../../../lib/orgs";
+import { broadcastSession } from "../../../../lib/session-sync";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import { useLoad } from "../../../../lib/use-load";
 
@@ -175,8 +176,7 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
 function DeleteOrg({ orgId }: { orgId: string }) {
   const t = useTranslations("orgLifecycle");
   const toast = useToast();
-  const router = useRouter();
-  const { me, switchOrg } = useSession();
+  const { me } = useSession();
   const errorMessage = useErrorMessage();
   const [open, setOpen] = useState(false);
   const org = me.memberships.find((m) => m.orgId === orgId);
@@ -204,10 +204,12 @@ function DeleteOrg({ orgId }: { orgId: string }) {
             // DangerConfirm shows the message: the localized one, never the kernel's English
             throw new Error(errorMessage(e));
           }
-          setOpen(false);
+          // The kernel cleared the current org with the org: a full navigation to `/` (the org
+          // chooser), told to the other tabs (ruling R4). The dialog stays busy until the unload.
           toast.success(t("delete.done"));
-          await switchOrg(null);
-          router.replace("/");
+          broadcastSession("org-switched");
+          navigateBrowser("/");
+          await new Promise<never>(() => {});
         }}
       />
     </>
