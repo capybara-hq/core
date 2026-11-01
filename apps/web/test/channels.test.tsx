@@ -6,12 +6,36 @@ import zh from "../messages/zh.json";
 import ChannelDetailPage from "../src/app/(app)/channels/[id]/page";
 import NewChannelPage from "../src/app/(app)/channels/new/page";
 import ChannelsPage from "../src/app/(app)/channels/page";
-import { bodyOf, json, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { renderPage } from "./support/render";
+import { ME } from "./support/render";
+import { expectNoFirstPaintFetch, renderRoute } from "./support/server";
+import { NOT_READY } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
-vi.mock("next/navigation", () => ({ useParams: () => ({ id: "ch1" }) }));
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
+
+type RenderOpts = Parameters<typeof renderRoute>[2];
+const listPage = () => ChannelsPage();
+const newPage =
+  (query: Record<string, string> = {}) =>
+  () =>
+    NewChannelPage({ searchParams: Promise.resolve(query) });
+const detailPage = () => ChannelDetailPage({ params: Promise.resolve({ id: "ch1" }) });
+/** The pages read on the server from the latest `stubApi` routes (the browser's). */
+const renderList = (opts: RenderOpts = {}) => renderRoute(listPage, lastStubRoutes(), opts);
+const renderNew = (opts: RenderOpts & { query?: Record<string, string> } = {}) => {
+  const { query, ...rest } = opts;
+  return renderRoute(newPage(query), lastStubRoutes(), rest);
+};
+const renderDetail = (opts: RenderOpts = {}) => renderRoute(detailPage, lastStubRoutes(), opts);
 
 const msgs = { zh, en } as const;
 const BASE = "/api/v1/orgs/o1";
@@ -129,7 +153,7 @@ describe("渠道连接列表（ListPage）", () => {
       [`GET ${BASE}/channels`]: () => json(200, { channels: [CHANNEL] }),
       [`GET ${BASE}/agents`]: () => json(200, { agents: AGENTS }),
     });
-    const { container } = renderPage(<ChannelsPage />, { locale });
+    const { container } = await renderList({ locale });
     expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
     const list = await screen.findByRole("list", { name: m.title });
     const row = await within(list).findByRole("listitem");
@@ -155,7 +179,7 @@ describe("新建渠道连接（FormPage）", () => {
       [`POST ${BASE}/channels`]: (c) =>
         json(201, { channel: { ...CHANNEL, ...(bodyOf(c) as object) } }),
     });
-    const { container } = renderPage(<NewChannelPage />);
+    const { container } = await renderNew();
     expect(container.querySelector('[data-template="FormPage"]')).not.toBeNull();
     const f = en.channels.form;
     const pluginSelect = await screen.findByRole("combobox", {
@@ -207,7 +231,7 @@ describe("新建渠道连接（FormPage）", () => {
       [`POST ${BASE}/channels`]: () =>
         json(502, { error: { code: "channel.verify_failed", message: "x" } }),
     });
-    renderPage(<NewChannelPage />, { locale: "zh" });
+    await renderNew({ locale: "zh" });
     const f = zh.channels.form;
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: f.submit }));
@@ -235,7 +259,7 @@ describe("新建渠道连接（FormPage）", () => {
       [`GET ${BASE}/extensions`]: () => json(200, { extensions: [PLUGINS[1]] }),
       [`GET ${BASE}/agents`]: () => json(200, { agents: AGENTS }),
     });
-    renderPage(<NewChannelPage />);
+    await renderNew();
     expect(await screen.findByText(en.channels.form.noExtensions)).toBeTruthy();
     await userEvent
       .setup()
@@ -245,8 +269,6 @@ describe("新建渠道连接（FormPage）", () => {
 });
 
 describe("the channel form opened from an agent page", () => {
-  const withQuery = (qs: string) => window.history.replaceState(null, "", `/channels/new${qs}`);
-  afterEach(() => window.history.replaceState(null, "", "/"));
   const fill = async (user: ReturnType<typeof userEvent.setup>, agentPreset: boolean) => {
     await user.selectOptions(
       await screen.findByRole("combobox", { name: new RegExp(`^${en.channels.form.pluginLabel}`) }),
@@ -277,9 +299,8 @@ describe("the channel form opened from an agent page", () => {
     });
 
   it("?agentId= presets the agent and saving returns to ?returnTo=", async () => {
-    withQuery("?agentId=ag1&returnTo=%2Fagents%2Fag1");
     const calls = routes();
-    renderPage(<NewChannelPage />);
+    await renderNew({ query: { agentId: "ag1", returnTo: "/agents/ag1" } });
     const user = userEvent.setup();
     await fill(user, true);
     const agent = screen.getByRole("combobox", {
@@ -296,9 +317,8 @@ describe("the channel form opened from an agent page", () => {
   it.each(["//evil.example/x", "https://evil.example", "agents/ag1", "/a\\b"])(
     "a returnTo that is not a same-origin relative path (%s) is ignored",
     async (bad) => {
-      withQuery(`?agentId=ag1&returnTo=${encodeURIComponent(bad)}`);
       routes();
-      renderPage(<NewChannelPage />);
+      await renderNew({ query: { agentId: "ag1", returnTo: bad } });
       const user = userEvent.setup();
       await fill(user, true);
       await user.click(screen.getByRole("button", { name: en.channels.form.submit }));
@@ -324,7 +344,7 @@ describe("渠道连接详情（DetailPage）", () => {
           channel: { ...CHANNEL, ...(bodyOf(c) as object), lastError: null },
         }),
     });
-    const { container } = renderPage(<ChannelDetailPage />);
+    const { container } = await renderDetail();
     expect(container.querySelector('[data-template="DetailPage"]')).not.toBeNull();
     const d = en.channels.detail;
     expect(await screen.findByText("connect failed with status 503")).toBeTruthy();
@@ -339,7 +359,7 @@ describe("渠道连接详情（DetailPage）", () => {
       [`PATCH ${BASE}/channels/ch1`]: (c) =>
         json(200, { channel: { ...CHANNEL, ...(bodyOf(c) as object) } }),
     });
-    renderPage(<ChannelDetailPage />);
+    await renderDetail();
     const d = en.channels.detail;
     const user = userEvent.setup();
     const save = await screen.findByRole("button", { name: d.saveInbound });
@@ -363,14 +383,14 @@ describe("渠道连接详情（DetailPage）", () => {
       [`GET ${BASE}/channels/ch1`]: () =>
         json(200, { channel: { ...CHANNEL, webhookSupported: false, webhookUrl: null } }),
     });
-    renderPage(<ChannelDetailPage />);
+    await renderDetail();
     expect(await screen.findByText(d.inboundUnsupported)).toBeTruthy();
     expect(screen.queryByRole("button", { name: d.saveInbound })).toBeNull();
     cleanup();
     routes({
       [`GET ${BASE}/channels/ch1`]: () => json(200, { channel: { ...CHANNEL, webhookUrl: null } }),
     });
-    renderPage(<ChannelDetailPage />);
+    await renderDetail();
     expect(await screen.findByText(d.inboundNoBaseUrl)).toBeTruthy();
     expect(screen.queryByRole("radiogroup", { name: d.inboundLabel })).toBeNull();
     expect(screen.queryByText(`! ${d.webhookNoUrlWarning}`)).toBeNull();
@@ -380,7 +400,7 @@ describe("渠道连接详情（DetailPage）", () => {
       [`GET ${BASE}/channels/ch1`]: () =>
         json(200, { channel: { ...CHANNEL, inboundMode: "webhook", webhookUrl: null } }),
     });
-    renderPage(<ChannelDetailPage />);
+    await renderDetail();
     expect(await screen.findByText(`! ${d.webhookNoUrlWarning}`)).toBeTruthy();
     expect(screen.getByRole("radiogroup", { name: d.inboundLabel })).toBeTruthy();
   });
@@ -389,7 +409,7 @@ describe("渠道连接详情（DetailPage）", () => {
     const calls = routes({
       [`PATCH ${BASE}/channels/ch1`]: () => json(200, { channel: CHANNEL }),
     });
-    renderPage(<ChannelDetailPage />);
+    await renderDetail();
     const d = en.channels.detail;
     const user = userEvent.setup();
     await user.click(await screen.findByRole("tab", { name: d.tabs.credentials }));
@@ -417,7 +437,7 @@ describe("渠道连接详情（DetailPage）", () => {
         json(200, { channel: { ...CHANNEL, ...(bodyOf(c) as object) } }),
       [`DELETE ${BASE}/channels/ch1`]: () => new Response(null, { status: 204 }),
     });
-    renderPage(<ChannelDetailPage />);
+    await renderDetail();
     const d = en.channels.detail;
     const user = userEvent.setup();
     await user.click(await screen.findByRole("tab", { name: d.tabs.settings }));
@@ -437,4 +457,89 @@ describe("渠道连接详情（DetailPage）", () => {
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/channels"));
     expect(calls.some((c) => c.method === "DELETE")).toBe(true);
   });
+});
+
+describe("the channel pages render on the server (web-SSR spec §6)", () => {
+  const MEMBER = {
+    ...ME,
+    account: { ...ME.account, isEnterpriseAdmin: false },
+    memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],
+  };
+  const routes = {
+    [`GET ${BASE}/channels`]: () => json(200, { channels: [CHANNEL] }),
+    [`GET ${BASE}/channels/ch1`]: () => json(200, { channel: CHANNEL }),
+    [`GET ${BASE}/channels/schema/fake-im`]: () => json(200, { plugin: "fake-im", schema: SCHEMA }),
+    [`GET ${BASE}/agents`]: () => json(200, { agents: AGENTS }),
+    [`GET ${BASE}/extensions`]: () => json(200, { extensions: PLUGINS }),
+  };
+  const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
+
+  it("/channels: the list with the agent names is the first paint", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRoute(listPage, routes);
+    expect(screen.getByText(/Helper/)).toBeTruthy();
+    expect(browser).toEqual([]);
+  });
+
+  it("/channels: agent names the kernel fails fall back to the id", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRoute(listPage, {
+      ...routes,
+      [`GET ${BASE}/agents`]: () => json(500, { error: { code: "internal" } }),
+    });
+    expect(screen.getByText(new RegExp(CHANNEL.agentId))).toBeTruthy();
+    expect(browser).toEqual([]);
+  });
+
+  it("/channels/new: the plugins and agents are the first paint, the preset from searchParams; it is a setup step", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRoute(newPage({ agentId: "ag1" }), routes, { readiness: NOT_READY });
+    expect(
+      (
+        screen.getByRole("combobox", {
+          name: new RegExp(`^${en.channels.form.agentLabel}`),
+        }) as HTMLSelectElement
+      ).value,
+    ).toBe("ag1");
+    expect(screen.getByRole("option", { name: "fake-im" })).toBeTruthy();
+    expect(browser).toEqual([]);
+  });
+
+  it("/channels/<id>: the connection, its schema and the agents are the first paint; a missing one is not found", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRoute(detailPage, routes);
+    expect(screen.getByRole("heading", { level: 1, name: CHANNEL.name })).toBeTruthy();
+    expect(screen.getByText("Helper")).toBeTruthy();
+    expect(browser).toEqual([]);
+    await expect(
+      renderRoute(detailPage, {
+        ...routes,
+        [`GET ${BASE}/channels/ch1`]: () =>
+          json(404, { error: { code: "channel.not_found", message: "x" } }),
+      }),
+    ).rejects.toThrow("NOT_FOUND");
+  });
+
+  it.each([
+    ["/channels", listPage, false],
+    ["/channels/new", newPage(), true],
+    ["/channels/<id>", detailPage, false],
+  ] as const)(
+    "%s: a member gets no access and nothing is read; no org renders nothing; setup",
+    async (_p, page, step) => {
+      const member = await renderRoute(page, routes, { me: MEMBER });
+      expect(new Set(member.calls.map((c) => c.url))).toEqual(
+        new Set(["/api/v1/me", `${BASE}/readiness`]),
+      );
+      expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
+      cleanup();
+      const none = await renderRoute(page, routes, { me: { ...ME, currentOrgId: null } });
+      expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+      cleanup();
+      if (!step)
+        await expect(renderRoute(page, routes, { readiness: NOT_READY })).rejects.toThrow(
+          "REDIRECT /",
+        );
+    },
+  );
 });

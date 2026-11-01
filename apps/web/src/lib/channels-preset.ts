@@ -4,15 +4,16 @@ import { safeReturnTo } from "./auth-sources";
  * What the channel form is opened with from an agent page: `?agentId=<id>` presets the agent,
  * `?returnTo=<path>` is where saving or cancelling goes back to. `returnTo` is kept only when it is
  * a same-origin relative path (a single leading `/`, see {@link safeReturnTo}); anything else is
- * dropped. Read in the browser only (the query string is not available while rendering on the
- * server; the page renders after the session loads).
+ * dropped. Read from the page's `searchParams` on the server.
  */
-export function channelFormPreset(): { agentId: string; returnTo: string | undefined } {
-  if (typeof window === "undefined") return { agentId: "", returnTo: undefined };
-  const q = new URLSearchParams(window.location.search);
-  const raw = q.get("returnTo");
-  const returnTo = raw !== null && safeReturnTo(raw) === raw ? raw : undefined;
-  return { agentId: q.get("agentId") ?? "", returnTo };
+export function channelFormPreset(query: {
+  agentId?: string | string[];
+  returnTo?: string | string[];
+}): { agentId: string; returnTo: string | undefined } {
+  const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+  const raw = one(query.returnTo);
+  const returnTo = raw !== undefined && safeReturnTo(raw) === raw ? raw : undefined;
+  return { agentId: one(query.agentId) ?? "", returnTo };
 }
 
 /** The channel form link from an agent page. */
