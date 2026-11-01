@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
+import { designZh } from "./support/chat";
 import { LOGIN, ORG_NAME, PASSWORD } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -38,7 +39,10 @@ test("初始化向导：未初始化的部署打开首页 → 初始化页（可
   await expect(page).toHaveURL(/\/agents\/new$/);
   // the step page renders inside the setup frame; the sidebar's setup home is the way back
   await expect(setup).toBeVisible();
-  await expect(page.getByRole("link", { name: zh.setupLayout.back })).toBeVisible();
+  const setupSidebar = page.locator('[data-part="sidebar"][data-context="setup"]');
+  await expect(
+    setupSidebar.getByRole("link", { name: designZh("sidebar.setupHome"), exact: true }),
+  ).toBeVisible();
   await page
     .getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true })
     .fill("Setup agent");

@@ -408,7 +408,7 @@ describe("(auth) 页面模板", () => {
     );
     await user.type(screen.getByRole("textbox", { name: en.setup.displayNameLabel }), "Admin");
     await user.click(screen.getByRole("button", { name: en.setup.submit }));
-    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
     expect(calls.find((c) => c.method === "POST")?.body).toEqual({
       login: "admin",
       password: "correct-horse-battery",

@@ -29,12 +29,13 @@ export function SetupForm({ onSuccess }: { onSuccess: () => void }) {
     setError(undefined);
     try {
       await completeSetup(input);
-      onSuccess();
     } catch (err) {
       setError(errorMessage(err));
-    } finally {
       setPending(false);
+      return;
     }
+    // Signed in: the caller loads a new document, so the button stays pending until it unloads.
+    onSuccess();
   }
 
   return (

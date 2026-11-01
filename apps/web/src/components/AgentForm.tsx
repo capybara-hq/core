@@ -643,7 +643,6 @@ export function useAgentForm(
             <OrgSkillsPicker skills={orgSkills} value={skillIds} onChange={onOrgSkillsChange} />
             <PinnedSkillsPicker
               skills={pinnable}
-              unavailable={orgList.failed || own.failed}
               selected={[...skillIds, ...own.skills.map((s) => s.id)]}
               value={pinned}
               onChange={setPinned}

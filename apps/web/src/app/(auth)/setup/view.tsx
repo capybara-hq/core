@@ -6,6 +6,7 @@ import { useContext, useEffect, useState } from "react";
 import { FormError } from "../../../components/form-error";
 import { SetupForm } from "../../../components/setup-form";
 import { useRouter } from "../../../i18n/navigation";
+import { navigateBrowser } from "../../../lib/browser";
 import { usePreferences } from "../../../lib/preferences";
 import { getSetupStatus } from "../../../lib/session";
 import { broadcastSession } from "../../../lib/session-sync";
@@ -20,7 +21,7 @@ type State =
 /**
  * `/setup`: the setup wizard (AuthPage; `GET` / `POST /api/v1/setup`). The layout already asked the
  * kernel on the server; only when it couldn't answer (starting, unreachable) the browser asks.
- * Setting up signs the new admin in: the other tabs are told before the page goes home.
+ * Setting up signs the new admin in: the other tabs are told, then home loads as a new document.
  */
 export default function SetupView() {
   const initial = useContext(ServerSetupStatus);
@@ -57,7 +58,8 @@ export default function SetupView() {
       <SetupForm
         onSuccess={() => {
           broadcastSession("signed-in");
-          router.replace("/");
+          // A new session: load the new document (ruling R4).
+          navigateBrowser("/");
         }}
       />
     );

@@ -135,9 +135,8 @@ export function useAgentOwnSkills(
  * limit (the current versions' sizes) a warning: when the list is unchanged runs keep what fits
  * (the kernel only refuses a changed list); when it changed, saving is refused. A pinned id that
  * is no longer selectable (its skill was deleted) stays ticked as a deleted skill until unticked.
- * `skills` is undefined while either skill list loads (`unavailable` when one could not be read):
- * the pins are then kept as they are and only a status line shows, so a live pin never looks
- * deleted.
+ * `skills` is undefined when either skill list could not be read: the pins are then kept as they
+ * are and only a status line shows, so a live pin never looks deleted.
  */
 export function PinnedSkillsPicker({
   skills,
@@ -145,11 +144,9 @@ export function PinnedSkillsPicker({
   value,
   onChange,
   changed = false,
-  unavailable = false,
 }: {
+  /** Undefined when a skill list could not be read. */
   skills: SkillSummary[] | undefined;
-  /** A skill list could not be read (with `skills` undefined). */
-  unavailable?: boolean;
   /** Ids of the selected skills (org skills in `orgSkills`, then the agent's own). */
   selected: string[];
   value: string[];
@@ -167,7 +164,7 @@ export function PinnedSkillsPicker({
             {t("pinnedLabel")}
           </Text>
           <Text variant="small" tone="faint">
-            {unavailable ? t("pinnedUnavailable") : t("pinnedLoading")}
+            {t("pinnedUnavailable")}
           </Text>
         </Stack>
       </div>

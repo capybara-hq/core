@@ -404,7 +404,6 @@ describe("first paint comes from the server (no browser fetch)", () => {
       ROUTES,
     );
     expect(calls.map((c) => c.url)).toContain("/api/v1/admin/catalog/imports/st1");
-    expect(screen.queryByText(en.catalog.admin.review.loadingStaged)).toBeNull();
     expect(screen.getByText("@acme/plugin-crm", { exact: false })).toBeTruthy();
     expect(browser).toEqual([]);
   });

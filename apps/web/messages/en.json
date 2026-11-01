@@ -13,7 +13,6 @@
     },
     "cancel": "Cancel",
     "retry": "Retry",
-    "loadFailed": "Failed to load",
     "language": "Language",
     "theme": "Theme",
     "themeLight": "Light",
@@ -475,7 +474,6 @@
       "deleteOwnSkillHint": "The agent stops loading this skill, and pending changes to it are cancelled.",
       "ownSkillDeleted": "Skill {name} deleted.",
       "pinnedLabel": "Pinned skills",
-      "pinnedLoading": "Loading skills…",
       "pinnedUnavailable": "The skill lists could not be read; the pinned skills are kept as they are.",
       "pinnedHint": "A pinned skill's instructions are always in the model's context, without skill_load. Pin at most 3 of the selected skills, with SKILL.md files of at most 32 KB in total.",
       "noPinnable": "Select skills above to pin them.",
@@ -602,8 +600,6 @@
       "tools": "{n, plural, one {# tool} other {# tools}}"
     },
     "noMatch": "No agents match.",
-    "loadFailed": "Could not load agents.",
-    "retry": "Retry",
     "channels": {
       "title": "Channels",
       "hint": "IM bots bound to this agent. People chat with the agent through them.",
@@ -676,15 +672,12 @@
         "files": "Files",
         "created": "Created"
       },
-      "retry": "Retry",
       "dangerTitle": "Danger zone",
       "delete": "Delete skill",
       "deleteTitle": "Delete {name}?",
       "deleteHint": "Agents stop loading this skill. Agent definitions keep the reference, which shows as deleted until their owners remove it.",
       "deleted": "Skill {name} deleted."
-    },
-    "loadFailed": "Could not load this list.",
-    "retry": "Retry"
+    }
   },
   "chat": {
     "title": "Chat",
@@ -1078,8 +1071,7 @@
       },
       "inspectorTitle": "Connector",
       "refresh": "Refresh tools",
-      "refreshed": "Tool list refreshed.",
-      "retry": "Retry"
+      "refreshed": "Tool list refreshed."
     },
     "inspector": {
       "slug": "Slug",
@@ -1261,9 +1253,7 @@
     "tabs": {
       "all": "All",
       "disabled": "Disabled"
-    },
-    "loadFailed": "Could not load this list.",
-    "retry": "Retry"
+    }
   },
   "connections": {
     "title": "My settings",
@@ -1456,7 +1446,6 @@
         "settings": "Settings"
       },
       "inspectorTitle": "Details",
-      "retry": "Retry",
       "statusTitle": "Status",
       "lastError": "Last error",
       "noError": "No recent errors.",
@@ -1500,9 +1489,7 @@
     "tabs": {
       "all": "All",
       "error": "Errors"
-    },
-    "loadFailed": "Could not load this list.",
-    "retry": "Retry"
+    }
   },
   "extensions": {
     "title": "Extensions",
@@ -1598,7 +1585,6 @@
   "bind": {
     "title": "Link IM account",
     "subtitle": "An IM account is asking to link to your Capybara account.",
-    "loading": "Loading…",
     "source": "Source",
     "tenant": "Tenant",
     "externalId": "Account ID",
@@ -2077,8 +2063,6 @@
       "sets": "Eval sets",
       "runs": "Runs"
     },
-    "loadFailed": "Could not load this list.",
-    "retry": "Retry",
     "setMeta": "{agent} · {n, plural, one {# case} other {# cases}}"
   },
   "models": {
@@ -2623,7 +2607,6 @@
   },
   "invite": {
     "title": "Accept invitation",
-    "loading": "Loading…",
     "subtitle": "You are invited to join {org}",
     "role": "Role",
     "expires": "Valid until",
@@ -2718,7 +2701,6 @@
           "overview": "Overview",
           "versions": "Versions"
         },
-        "notFound": "The item does not exist.",
         "deleted": "This item was deleted. Organizations can no longer see it; installed components are not affected.",
         "fields": {
           "package": "npm package",
@@ -2800,7 +2782,6 @@
         "openItem": "Open item",
         "gone": "The staged import has expired or was already confirmed. Start the import again.",
         "restart": "Start a new import",
-        "loadingStaged": "Loading the staged import…",
         "sourceGit": "Git repository",
         "gitUrl": "Repository",
         "gitUrlHelp": "An https git URL or owner/repo on GitHub. A one-off import: no marketplace is added and updates are not tracked.",
@@ -3036,9 +3017,7 @@
         "browse": "Browse",
         "sources": "Sources"
       },
-      "search": "Search plugins",
-      "loadFailed": "Could not load the catalog.",
-      "retry": "Retry"
+      "search": "Search plugins"
     },
     "org": {
       "title": "Plugins",
@@ -3077,7 +3056,6 @@
         "upgrade": "Upgrade"
       },
       "detail": {
-        "notFound": "The item does not exist or you cannot see it.",
         "tabsLabel": "Item details",
         "tabs": {
           "overview": "Overview"
@@ -3131,9 +3109,7 @@
       "tabs": {
         "all": "All",
         "installed": "Installed"
-      },
-      "loadFailed": "Could not load this list.",
-      "retry": "Retry"
+      }
     },
     "plugins": {
       "title": "Installed plugins",
@@ -3293,7 +3269,6 @@
     "logout": "Sign out"
   },
   "setupLayout": {
-    "back": "Before you start",
     "model": {
       "needsDeploymentAdmin": "A deployment admin needs to set up a model service",
       "waitingForAdmin": "Waiting for an admin to set up a model"

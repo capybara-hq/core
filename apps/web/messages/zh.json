@@ -13,7 +13,6 @@
     },
     "cancel": "取消",
     "retry": "重试",
-    "loadFailed": "加载失败",
     "language": "语言",
     "theme": "主题",
     "themeLight": "浅色",
@@ -475,7 +474,6 @@
       "deleteOwnSkillHint": "agent 不再加载这个技能，针对它的待处理改动会一并取消。",
       "ownSkillDeleted": "已删除技能 {name}。",
       "pinnedLabel": "置顶的技能",
-      "pinnedLoading": "正在读取技能…",
       "pinnedUnavailable": "读不到技能列表；置顶的技能保持不变。",
       "pinnedHint": "置顶技能的说明始终在模型的上下文里，不用 skill_load。最多从已选技能里置顶 3 个，SKILL.md 合计不超过 32 KB。",
       "noPinnable": "先在上面选择技能，才能置顶。",
@@ -602,8 +600,6 @@
       "tools": "{n} 工具"
     },
     "noMatch": "没有符合的 Agent。",
-    "loadFailed": "无法加载 Agent。",
-    "retry": "重试",
     "channels": {
       "title": "渠道",
       "hint": "绑定到这个 agent 的 IM 机器人，人们通过它们和 agent 对话。",
@@ -676,15 +672,12 @@
         "files": "文件数",
         "created": "创建时间"
       },
-      "retry": "重试",
       "dangerTitle": "危险操作",
       "delete": "删除技能",
       "deleteTitle": "删除 {name}？",
       "deleteHint": "agent 将不再加载这个技能。agent 定义里的引用会保留并显示为「已删除」，直到负责人移除。",
       "deleted": "已删除技能 {name}。"
-    },
-    "loadFailed": "无法加载。",
-    "retry": "重试"
+    }
   },
   "chat": {
     "title": "对话",
@@ -1078,8 +1071,7 @@
       },
       "inspectorTitle": "连接器",
       "refresh": "刷新工具",
-      "refreshed": "工具列表已刷新。",
-      "retry": "重试"
+      "refreshed": "工具列表已刷新。"
     },
     "inspector": {
       "slug": "Slug",
@@ -1261,9 +1253,7 @@
     "tabs": {
       "all": "全部",
       "disabled": "已停用"
-    },
-    "loadFailed": "无法加载。",
-    "retry": "重试"
+    }
   },
   "connections": {
     "title": "个人设置",
@@ -1456,7 +1446,6 @@
         "settings": "设置"
       },
       "inspectorTitle": "详情",
-      "retry": "重试",
       "statusTitle": "状态",
       "lastError": "最近错误",
       "noError": "最近没有错误。",
@@ -1500,9 +1489,7 @@
     "tabs": {
       "all": "全部",
       "error": "出错"
-    },
-    "loadFailed": "无法加载。",
-    "retry": "重试"
+    }
   },
   "extensions": {
     "title": "扩展",
@@ -1598,7 +1585,6 @@
   "bind": {
     "title": "绑定 IM 账号",
     "subtitle": "一个 IM 账号请求绑定到你的 Capybara 账号。",
-    "loading": "加载中…",
     "source": "来源",
     "tenant": "租户",
     "externalId": "账号 ID",
@@ -2077,8 +2063,6 @@
       "sets": "评测集",
       "runs": "运行记录"
     },
-    "loadFailed": "无法加载。",
-    "retry": "重试",
     "setMeta": "{agent} · {n} 个用例"
   },
   "models": {
@@ -2623,7 +2607,6 @@
   },
   "invite": {
     "title": "接受邀请",
-    "loading": "加载中…",
     "subtitle": "你被邀请加入「{org}」",
     "role": "角色",
     "expires": "有效期至",
@@ -2718,7 +2701,6 @@
           "overview": "概要",
           "versions": "版本"
         },
-        "notFound": "条目不存在。",
         "deleted": "这个条目已删除，组织不再能看到它；已安装的组件不受影响。",
         "fields": {
           "package": "npm 包",
@@ -2800,7 +2782,6 @@
         "openItem": "查看条目",
         "gone": "暂存的导入已过期或已确认。请重新导入。",
         "restart": "重新导入",
-        "loadingStaged": "正在读取暂存的导入…",
         "sourceGit": "Git 仓库",
         "gitUrl": "仓库",
         "gitUrlHelp": "https 的 git 地址，或 GitHub 上的 owner/repo。一次性导入：不会添加市场，也不跟踪更新。",
@@ -3036,9 +3017,7 @@
         "browse": "浏览",
         "sources": "市场源"
       },
-      "search": "搜索插件",
-      "loadFailed": "目录没有加载出来。",
-      "retry": "重试"
+      "search": "搜索插件"
     },
     "org": {
       "title": "插件",
@@ -3077,7 +3056,6 @@
         "upgrade": "升级"
       },
       "detail": {
-        "notFound": "条目不存在或你看不到它。",
         "tabsLabel": "条目详情",
         "tabs": {
           "overview": "概要"
@@ -3131,9 +3109,7 @@
       "tabs": {
         "all": "全部",
         "installed": "已安装"
-      },
-      "loadFailed": "无法加载。",
-      "retry": "重试"
+      }
     },
     "plugins": {
       "title": "已安装的插件",
@@ -3293,7 +3269,6 @@
     "logout": "退出登录"
   },
   "setupLayout": {
-    "back": "开始之前",
     "model": {
       "needsDeploymentAdmin": "需要部署管理员配置模型服务",
       "waitingForAdmin": "等待管理员配置模型"

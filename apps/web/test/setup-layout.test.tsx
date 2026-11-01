@@ -101,7 +101,7 @@ describe("setup layout scope", () => {
     expect(setupPage()).not.toBeNull();
     expect(workSidebar()).toBeNull();
     const home = setupSidebar()?.querySelector('[data-part="nav-item"]') as HTMLElement;
-    expect(home.textContent).toBe(sl.back);
+    expect(home.textContent).toBe("开始之前");
     expect(home.getAttribute("href")).toBe("/");
     expect(router.replace).not.toHaveBeenCalled();
   });

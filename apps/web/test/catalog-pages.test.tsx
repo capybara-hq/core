@@ -26,7 +26,7 @@ import {
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { ME, renderPage } from "./support/render";
+import { ME } from "./support/render";
 import { expectNoFirstPaintFetch, renderRoute } from "./support/server";
 import { NOT_READY } from "./support/shell";
 

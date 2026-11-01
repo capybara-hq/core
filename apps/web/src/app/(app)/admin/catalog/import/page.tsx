@@ -29,5 +29,6 @@ export default async function PluginImportPage({
       },
     ),
   );
-  return <PluginImportWizard initial={staged} />;
+  // Keyed by the staged import: back / forward between two `?staging=` values remounts the wizard.
+  return <PluginImportWizard key={staging} initial={staged} />;
 }

@@ -58,8 +58,8 @@ export default function OrganizationSettings({
   const [pending, setPending] = useState(false);
 
   const saved = data.settings;
-  const toolSearch = draft.toolSearch ?? saved?.toolSearch ?? "on";
-  const locale = draft.locale ?? saved?.locale ?? "en";
+  const toolSearch = draft.toolSearch ?? saved.toolSearch ?? "on";
+  const locale = draft.locale ?? saved.locale ?? "en";
   // 只提交改过的项
   const patch: OrgSettingsPatch = {
     ...(toolSearch !== saved.toolSearch ? { toolSearch } : {}),

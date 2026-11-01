@@ -11,7 +11,7 @@ import {
   ssoStartUrl,
 } from "../src/lib/auth-sources";
 import { json, lastStubRoutes, stubApi } from "./support/api";
-import { resetNavigation, router } from "./support/navigation";
+import { resetNavigation } from "./support/navigation";
 import { renderRoute } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -121,7 +121,7 @@ describe("第三方登录按钮", () => {
     await user.type(screen.getByRole("textbox", { name: en.login.loginLabel }), "alice");
     await user.type(screen.getByLabelText(en.login.passwordLabel), "pw-123456789");
     await user.click(screen.getByRole("button", { name: en.login.submit }));
-    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/bind/cap_bind_x"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/bind/cap_bind_x"));
   });
 
   it("safeReturnTo / ssoStartUrl", () => {

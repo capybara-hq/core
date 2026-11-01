@@ -7,6 +7,7 @@ import { FormError } from "../../../../components/form-error";
 import { useRouter } from "../../../../i18n/navigation";
 import { ApiClientError } from "../../../../lib/api";
 import { loginPathFor } from "../../../../lib/auth-sources";
+import { navigateBrowser } from "../../../../lib/browser";
 import {
   acceptInvitation,
   type InvitationPreview,
@@ -42,7 +43,7 @@ const deadLink = (e: unknown) =>
  * `/invite/[token]`: accept an org invitation (AuthPage). The server read the public preview (org
  * name, role, expiry) and whether there is a session: signed in → "Accept"; signed out → "Sign in
  * to accept" (sign-in comes back here), or create an account and join. Accepting switches to the
- * org and goes home; the other tabs are told first (a sign-up signs in, an accept switches the
+ * org and loads home as a new document; the other tabs are told first (a sign-up signs in, an accept switches the
  * org). The token is single-use and time-limited; the kernel decides and rate-limits.
  */
 export default function InviteView({ token, initial }: { token: string; initial: InviteInitial }) {
@@ -77,13 +78,13 @@ export default function InviteView({ token, initial }: { token: string; initial:
       await setCurrentOrg(orgId).catch(() => {});
       // A sign-up signed in; an accept switched the org: the other tabs follow (spec §3.2)
       broadcastSession(input === undefined ? "org-switched" : "signed-in");
-      router.replace("/");
+      // A new session or org: load the new document (ruling R4); the button stays pending until then.
+      navigateBrowser("/");
     } catch (e) {
+      setPending(false);
       if (deadLink(e)) setState({ kind: "error", error: e });
       else if (input === undefined && unauthenticated(e)) router.push(loginPathFor(here));
       else setActionError(errorMessage(e));
-    } finally {
-      setPending(false);
     }
   }
 

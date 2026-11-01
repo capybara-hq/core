@@ -1,6 +1,7 @@
 // The auth pages render on the server (web-SSR spec §6.3, task 11): /login takes its query from the
 // server and sends a signed-in visitor on, /setup keeps the layout's status, /invite and /bind read
-// their token preview on the server. A sign-in tells the other tabs (§3.2) before navigating.
+// their token preview on the server. A sign-in tells the other tabs (§3.2), then navigates the whole
+// document (ruling R4: the new session's frame is server-rendered, never a client navigation).
 import { cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -26,6 +27,8 @@ vi.mock("next/navigation", () => ({
 }));
 const broadcastSession = vi.hoisted(() => vi.fn());
 vi.mock("../src/lib/session-sync", () => ({ broadcastSession, useSessionSync: () => {} }));
+const navigateBrowser = vi.hoisted(() => vi.fn());
+vi.mock("../src/lib/browser", () => ({ navigateBrowser }));
 
 const unauthenticated = () => json(401, { error: { code: "auth.required", message: "x" } });
 const SOURCES = [{ plugin: "fake-im", label: { zh: "假 IM", en: "Fake IM" } }];
@@ -61,6 +64,7 @@ const before = (a: { mock: { invocationCallOrder: number[] } }, b: typeof a) =>
 beforeEach(() => {
   resetNavigation("/login");
   broadcastSession.mockReset();
+  navigateBrowser.mockReset();
 });
 afterEach(() => {
   cleanup();
@@ -105,16 +109,16 @@ describe("/login", () => {
     );
   });
 
-  it("signing in tells the other tabs, then goes to returnTo", async () => {
+  it("signing in tells the other tabs, then loads returnTo as a new document", async () => {
     stubApi({ "POST /api/v1/auth/login": () => json(200, { account: { id: "a1" } }) });
     await renderRoute(login({ returnTo: "/bind/x" }), ROUTES);
     const user = userEvent.setup();
     await user.type(screen.getByRole("textbox", { name: en.login.loginLabel }), "alice");
     await user.type(screen.getByLabelText(en.login.passwordLabel), "pw-123456789");
     await user.click(screen.getByRole("button", { name: en.login.submit }));
-    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/bind/x"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/bind/x"));
     expect(broadcastSession).toHaveBeenCalledWith("signed-in");
-    expect(before(broadcastSession, router.replace)).toBe(true);
+    expect(before(broadcastSession, navigateBrowser)).toBe(true);
   });
 });
 
@@ -135,9 +139,9 @@ describe("/setup", () => {
     );
     await user.type(screen.getByRole("textbox", { name: en.setup.displayNameLabel }), "Admin");
     await user.click(screen.getByRole("button", { name: en.setup.submit }));
-    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
     expect(broadcastSession).toHaveBeenCalledWith("signed-in");
-    expect(before(broadcastSession, router.replace)).toBe(true);
+    expect(before(broadcastSession, navigateBrowser)).toBe(true);
   });
 });
 
@@ -182,9 +186,9 @@ describe("/invite/[token]", () => {
     await user.type(screen.getByLabelText(en.invite.passwordLabel), "a-very-long-password");
     await user.type(screen.getByLabelText(en.invite.displayNameLabel), "Carol");
     await user.click(screen.getByRole("button", { name: en.invite.signup }));
-    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
     expect(broadcastSession).toHaveBeenCalledWith("signed-in");
-    expect(before(broadcastSession, router.replace)).toBe(true);
+    expect(before(broadcastSession, navigateBrowser)).toBe(true);
   });
 
   it("accepting while signed in switches the org and tells the other tabs", async () => {
@@ -195,8 +199,9 @@ describe("/invite/[token]", () => {
     });
     await renderRoute(invite, { ...ROUTES, "GET /api/v1/me": () => json(200, ME) });
     await userEvent.setup().click(screen.getByRole("button", { name: en.invite.accept }));
-    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
     expect(broadcastSession).toHaveBeenCalledWith("org-switched");
+    expect(router.replace).not.toHaveBeenCalled();
   });
 });
 
