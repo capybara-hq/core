@@ -7,7 +7,7 @@ import { isPublicPath } from "./lib/routes";
 import { ACCESS_COOKIE, serverNeedsSetup } from "./lib/server-setup";
 import { renewSession, setCookieValue } from "./lib/session-renewal";
 
-/** The kernel's refresh-token cookie (`cap_rt`, Path=/). */
+/** The kernel's refresh-token cookie (`cap_rt`, Path=/, SameSite=Lax). */
 const REFRESH_COOKIE = "cap_rt";
 /** Marks a request redirected once after losing a refresh race to another web replica. */
 const RETRY_COOKIE = "cap_retry";
@@ -15,7 +15,7 @@ const RETRY_SET = `${RETRY_COOKIE}=1; Path=/; Max-Age=10; HttpOnly; SameSite=Lax
 const RETRY_CLEAR = `${RETRY_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`;
 const SESSION_CLEARS = [
   `${ACCESS_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`,
-  `${REFRESH_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict`,
+  `${REFRESH_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`,
 ];
 
 /** The `name=value` pairs of a raw `cookie` header, values as sent. */

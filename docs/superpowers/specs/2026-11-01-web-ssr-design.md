@@ -98,7 +98,11 @@ that is present but revoked gets 401 there and redirects to sign-in (§2.3).
 
 Today `cap_rt` is `Path=/api/v1/auth`, so page requests never carry it and the server cannot renew
 an expired session. Change (user decision 2026-11-01): `REFRESH_COOKIE_PATH = "/"`. The cookie stays
-`HttpOnly`, `SameSite=Strict` and host-only. It now reaches the web tier on page requests too; the
+`HttpOnly` and host-only, and becomes `SameSite=Lax` (review ruling R6): with `Strict` a top-level
+navigation from another site (an IM card link, an email, an OAuth return) carries no `cap_rt`, so a
+person with a valid session would be sent to sign in once `cap_at` expired; the refresh endpoint is
+POST-only and requires `X-Capybara-Csrf`, and Lax cookies are not sent on cross-site POSTs, so CSRF
+exposure does not change. It now reaches the web tier on page requests too; the
 web tier already proxies every `/api` request.
 
 **Migration**: browsers still hold the old `Path=/api/v1/auth` cookie. On `/api/v1/auth/*` requests

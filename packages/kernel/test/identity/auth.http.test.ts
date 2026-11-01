@@ -82,7 +82,7 @@ async function login(jar: CookieJar, loginName = "alice", password = PW) {
 }
 
 describe("POST /api/v1/auth/login", () => {
-  it("成功：200，设 cap_at 与 cap_rt；无 Domain；cap_rt 限 Path 与 SameSite=Strict；都 HttpOnly", async () => {
+  it("成功：200，设 cap_at 与 cap_rt；无 Domain；cap_rt Path=/ and SameSite=Lax; both HttpOnly", async () => {
     const jar = cookieJar();
     const res = await login(jar);
     expect(res.statusCode).toBe(200);
@@ -104,7 +104,7 @@ describe("POST /api/v1/auth/login", () => {
     const legacy = cs.find((c) => c.name === "cap_rt" && c.attrs.path === "/api/v1/auth");
     expect(legacy?.value).toBe("");
     expect(rt?.value).not.toBe("");
-    expect(String(rt?.attrs.samesite).toLowerCase()).toBe("strict");
+    expect(String(rt?.attrs.samesite).toLowerCase()).toBe("lax");
     expect(rt?.attrs["max-age"]).toBe(String(30 * 86400));
   });
 
@@ -773,7 +773,7 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
     expect(row.created_by).toBe(alice.id);
   });
 
-  it("清 Cookie 的 set-cookie 带正确的 Path（cap_at 为 /，cap_rt 为 /api/v1/auth）", async () => {
+  it("clearing cookies uses the right Paths (cap_at on /, cap_rt on / and the legacy /api/v1/auth)", async () => {
     const jar = cookieJar();
     await login(jar);
     const res = await asUser(k.http, jar)({ method: "POST", url: "/api/v1/auth/logout" });

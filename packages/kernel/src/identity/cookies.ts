@@ -4,7 +4,12 @@ import type { IssuedSession } from "./sessions.js";
 
 /** access token Cookie：随所有请求发送。 */
 export const ACCESS_COOKIE = "cap_at";
-/** refresh token Cookie：只发往认证端点。 */
+/**
+ * The refresh-token cookie: SameSite=Lax so a top-level navigation from another site (an IM card
+ * link, an email, an OAuth return) carries it and the web tier can renew the session. The refresh
+ * endpoint is POST-only and requires `X-Capybara-Csrf`, and Lax cookies are not sent on cross-site
+ * POSTs, so this does not widen CSRF exposure.
+ */
 export const REFRESH_COOKIE = "cap_rt";
 /**
  * Path of the refresh Cookie: `/`, so the web tier sees it on page requests and can renew the
@@ -15,8 +20,8 @@ export const REFRESH_COOKIE_PATH = "/";
 export const LEGACY_REFRESH_COOKIE_PATH = "/api/v1/auth";
 
 /**
- * 写会话 Cookie。两个 Cookie 都 HttpOnly、都**不设 Domain**（只属于当前主机）；
- * `cap_at` 为 SameSite=Lax、Path=/；`cap_rt` 为 SameSite=Strict、Path=/；同时清掉旧 Path 上的 `cap_rt`。
+ * Writes the session cookies. Both are HttpOnly, host-only (no Domain), SameSite=Lax and Path=/;
+ * the `cap_rt` on the legacy Path is cleared at the same time.
  */
 export function setSessionCookies(reply: FastifyReply, s: IssuedSession, cfg: KernelConfig): void {
   const secure = cfg.auth.cookieSecure;
@@ -30,7 +35,7 @@ export function setSessionCookies(reply: FastifyReply, s: IssuedSession, cfg: Ke
   reply.setCookie(REFRESH_COOKIE, s.refreshToken, {
     path: REFRESH_COOKIE_PATH,
     httpOnly: true,
-    sameSite: "strict",
+    sameSite: "lax",
     secure,
     maxAge: cfg.auth.refreshTokenTtlDays * 86400,
   });

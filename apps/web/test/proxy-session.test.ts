@@ -13,7 +13,7 @@ const WEB = "http://web.example";
 /** The Set-Cookie headers the kernel answers a successful refresh with. */
 const RENEWED_COOKIES = [
   "cap_at=new-at; Max-Age=900; Path=/; HttpOnly; SameSite=Lax",
-  "cap_rt=new-rt; Max-Age=2592000; Path=/; HttpOnly; SameSite=Strict",
+  "cap_rt=new-rt; Max-Age=2592000; Path=/; HttpOnly; SameSite=Lax",
   "cap_rt=; Max-Age=0; Path=/api/v1/auth; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
 ];
 
@@ -134,6 +134,21 @@ describe("proxy: session renewal", () => {
     const set = res.headers.getSetCookie();
     expect(set.slice(0, 3)).toEqual(RENEWED_COOKIES);
     expect(set).toContainEqual(expect.stringMatching(/^cap_retry=; .*Max-Age=0/));
+  });
+
+  it("a cross-site navigation (an IM card link) with cap_rt and no cap_at is renewed", async () => {
+    // cap_rt is SameSite=Lax, so a top-level GET from another site carries it (spec §2.2)
+    const res = await proxy(
+      page("/chat/c1", "cap_rt=old-rt", {
+        "sec-fetch-site": "cross-site",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-dest": "document",
+      }),
+    );
+    expect(refreshCalls()).toHaveLength(1);
+    expect(res.headers.get("x-middleware-next")).toBe("1");
+    expect(forwarded(res, "cookie")).toBe("cap_at=new-at; cap_rt=new-rt");
+    expect(res.headers.getSetCookie().slice(0, 3)).toEqual(RENEWED_COOKIES);
   });
 
   it("passes the browser's user agent to the kernel, which records it on the session", async () => {
