@@ -4,12 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import ConnectionsPage from "../src/app/(app)/account/connections/page";
-import NewAgentPage from "../src/app/(app)/agents/new/page";
 import ConnectorDetailPage from "../src/app/(app)/connectors/[connectorId]/page";
 import AppsPage from "../src/app/(app)/connectors/page";
 import { navigateBrowser } from "../src/lib/browser";
 import type { Me } from "../src/lib/session";
 import { useLoad } from "../src/lib/use-load";
+import { renderNewAgent } from "./support/agents";
 import { bodyOf, json, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
@@ -17,7 +17,15 @@ import { renderFrame, shellOf } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("../src/lib/browser", () => ({ navigateBrowser: vi.fn() }));
-vi.mock("next/navigation", () => ({ useParams: () => ({ connectorId: "app1" }) }));
+vi.mock("next/navigation", () => ({
+  useParams: () => ({ connectorId: "app1" }),
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
 
 const msgs = { zh, en } as const;
 const LOCALES = ["zh", "en"] as const;
@@ -617,7 +625,7 @@ describe("新建 agent：工具选择与策略收紧", () => {
         return json(201, { agent: { id: "ag1" }, warnings: [] });
       },
     });
-    renderPage(<NewAgentPage />, { locale });
+    await renderNewAgent({ locale });
     const user = userEvent.setup();
     expect(await screen.findByRole("region", { name: m.agents.form.toolsSection })).toBeTruthy();
     await user.type(screen.getByRole("textbox", { name: m.agents.form.nameLabel }), "Tooly");

@@ -2,45 +2,14 @@
 
 import { Badge, Button, Checkbox, DangerConfirm, Stack, Text, useToast } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   deleteAgentSkill,
   listAgentSkills,
-  listSkills,
   PINNED_SKILLS_LIMITS,
   type SkillSummary,
 } from "../lib/skills";
 import { useErrorMessage } from "../lib/use-error-message";
-
-/**
- * 组织技能库（`GET /skills`）：读不到（如访客、接口出错）时为空列表，表单照常可用。
- * `undefined` 表示还在读取。
- */
-export function useOrgSkills(orgId: string): {
-  skills: SkillSummary[] | undefined;
-  /** The list could not be read (`skills` is then empty). */
-  failed: boolean;
-} {
-  const [state, setState] = useState<{ skills: SkillSummary[] | undefined; failed: boolean }>({
-    skills: undefined,
-    failed: false,
-  });
-  useEffect(() => {
-    let disposed = false;
-    listSkills(orgId).then(
-      (r) => {
-        if (!disposed) setState({ skills: r.skills, failed: false });
-      },
-      () => {
-        if (!disposed) setState({ skills: [], failed: true });
-      },
-    );
-    return () => {
-      disposed = true;
-    };
-  }, [orgId]);
-  return state;
-}
 
 /**
  * 组织技能多选：每个技能一个复选框（名称 · 描述）。已选但不在库里的 id（技能已被删除）显示为
@@ -139,40 +108,23 @@ export function SkillWriteSwitch({
 }
 
 /**
- * The agent's own skills (`GET /agents/:id/skills`; none for a new agent, `undefined` while
- * loading, empty and `failed` when unreadable) and a reload after a change.
+ * The agent's own skills, seeded from the server's read (`[]` for a new agent; `null` when it could
+ * not be read: then empty and `failed`), and a reload after a change (a delete).
  */
 export function useAgentOwnSkills(
   orgId: string,
   agentId: string | undefined,
-): { skills: SkillSummary[] | undefined; failed: boolean; reload(): void } {
-  const [skills, setSkills] = useState<SkillSummary[] | undefined>(
-    agentId === undefined ? [] : undefined,
-  );
-  const [failed, setFailed] = useState(false);
-  const [nonce, setNonce] = useState(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: nonce only triggers a reload
-  useEffect(() => {
+  initial: SkillSummary[] | null,
+): { skills: SkillSummary[]; failed: boolean; reload(): void } {
+  const [state, setState] = useState({ skills: initial ?? [], failed: initial === null });
+  const reload = useCallback(() => {
     if (agentId === undefined) return;
-    let disposed = false;
     listAgentSkills(orgId, agentId).then(
-      (r) => {
-        if (disposed) return;
-        setSkills(r.skills);
-        setFailed(false);
-      },
-      () => {
-        if (disposed) return;
-        setSkills([]);
-        setFailed(true);
-      },
+      (r) => setState({ skills: r.skills, failed: false }),
+      () => setState({ skills: [], failed: true }),
     );
-    return () => {
-      disposed = true;
-    };
-  }, [orgId, agentId, nonce]);
-  const reload = useCallback(() => setNonce((n) => n + 1), []);
-  return { skills, failed, reload };
+  }, [orgId, agentId]);
+  return { ...state, reload };
 }
 
 /**

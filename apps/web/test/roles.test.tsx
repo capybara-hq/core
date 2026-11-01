@@ -2,7 +2,7 @@
 // before loading anything; every role that may open it gets the page.
 import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zh from "../messages/zh.json";
 import EditAgentPage from "../src/app/(app)/agents/[id]/page";
@@ -33,11 +33,13 @@ import SkillPage from "../src/app/(app)/skills/[id]/page";
 import SkillsPage from "../src/app/(app)/skills/page";
 import TrajectoryPage from "../src/app/(app)/trajectories/[conversationId]/page";
 import TrajectoriesPage from "../src/app/(app)/trajectories/page";
+import { setApiTransport } from "../src/lib/api";
 import type { OrgRole } from "../src/lib/members";
 import type { Me } from "../src/lib/session";
+import { agentFormDefaults } from "./support/agents";
 import { resetNavigation } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
-import { renderRoute } from "./support/server";
+import { type Routes, renderRoute } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -50,6 +52,12 @@ vi.mock("next/navigation", () => ({
     conversationId: "cv1",
   }),
   useSearchParams: () => new URLSearchParams(),
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
 }));
 
 const ROLES = ["guest", "member", "admin", "owner"] as const;
@@ -92,8 +100,41 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const PAGES: [string, ComponentType, "member" | "admin", string][] = [
-  ["/agents/new", NewAgentPage, "member", zh.roles.need.member],
+/** A server page (gate and reads on the server), as the role pass runs it. */
+type ServerPage = { server: () => Promise<ReactNode> };
+const server = (page: () => Promise<ReactNode>): ServerPage => ({ server: page });
+const params = <T,>(p: T) => ({ params: Promise.resolve(p) });
+
+/**
+ * Runs a server page's gate for `me`: the session reads answer, every other read is a 404. Returns
+ * the reads past the gate's own and what the page rendered (none when a read threw).
+ */
+async function runServerPage(
+  page: ServerPage,
+  me: Me,
+): Promise<{ reads: string[]; element: ReactNode | undefined }> {
+  const reads: string[] = [];
+  setApiTransport(
+    async (path) => {
+      if (path === "/api/v1/me") return reply(200, me);
+      if (path === "/api/v1/orgs/o1/readiness")
+        return reply(200, { modelProvider: "ready", agents: 1 });
+      reads.push(path);
+      return reply(404, { error: { code: "not_found", message: "x" } });
+    },
+    { everywhere: true },
+  );
+  try {
+    return { reads, element: await page.server() };
+  } catch {
+    return { reads, element: undefined };
+  } finally {
+    setApiTransport(null);
+  }
+}
+
+const PAGES: [string, ComponentType | ServerPage, "member" | "admin", string][] = [
+  ["/agents/new", server(() => NewAgentPage()), "member", zh.roles.need.member],
   ["/connectors/install", ConnectorInstallPage, "admin", zh.roles.need.admin],
   ["/channels", ChannelsPage, "admin", zh.roles.need.admin],
   ["/channels/new", NewChannelPage, "admin", zh.roles.need.admin],
@@ -129,6 +170,24 @@ describe("role gate: pages a role may not open", () => {
       const denied = RANK[role] < RANK[min];
       it(`${path} · ${role} → ${denied ? "no access, nothing loaded" : "the page"}`, async () => {
         resetNavigation(path);
+        if ("server" in Page) {
+          const { reads, element } = await runServerPage(Page, meAs(role));
+          if (element !== undefined) renderPage(element, { locale: "zh", me: meAs(role) });
+          if (denied) {
+            expect(reads).toEqual([]);
+            expect(noAccess()).toBeTruthy();
+            expect(document.querySelector('[data-part="status-need"]')?.textContent).toBe(
+              `需要：${need}`,
+            );
+          } else {
+            expect(noAccess()).toBeNull();
+            // past the gate: the page reads its data, or renders without reading
+            expect(reads.length > 0 || element !== undefined).toBe(true);
+          }
+          await Promise.resolve();
+          expect(calls).toEqual([]);
+          return;
+        }
         renderPage(<Page />, { locale: "zh", me: meAs(role) });
         if (denied) {
           expect(noAccess()).toBeTruthy();
@@ -157,6 +216,15 @@ describe("role gate: pages a role may not open", () => {
   }
 });
 
+/** The `routes` body map as server routes (a `null` body is a 204). */
+const served = (): Routes =>
+  Object.fromEntries(
+    Object.entries(routes).map(([k, body]) => [
+      k,
+      () => (body === null ? new Response(null, { status: 204 }) : reply(200, body)),
+    ]),
+  );
+
 const AGENT = (id: string, owner = "someone") => ({
   id,
   orgId: "o1",
@@ -174,7 +242,7 @@ describe("role-dependent actions", () => {
     it(`/agents · ${role}: 新建 Agent ${canCreate ? "shown" : "hidden"}`, async () => {
       routes = { [`GET ${O}/agents`]: { agents: [] } };
       resetNavigation("/agents");
-      renderPage(<AgentsPage />, { locale: "zh", me: meAs(role) });
+      await renderRoute(() => AgentsPage(), served(), { locale: "zh", me: meAs(role) });
       await screen.findByText(zh.agents.empty);
       expect(screen.queryAllByRole("link", { name: zh.agents.new }).length > 0).toBe(canCreate);
     });
@@ -235,7 +303,7 @@ const MEMBERS = {
 };
 
 describe("agents: edit, read-only and 更换负责人", () => {
-  const agentPage = (role: OrgRole, owner: string, extra: Record<string, unknown> = {}) => {
+  const agentPage = async (role: OrgRole, owner: string, extra: Record<string, unknown> = {}) => {
     routes = {
       [`GET ${O}/agents/x1`]: { agent: { ...AGENT("x1", owner), ...extra } },
       [`GET ${O}/models`]: MODELS,
@@ -247,13 +315,17 @@ describe("agents: edit, read-only and 更换负责人", () => {
       [`POST ${O}/agents/x1/owner`]: { agent: AGENT("x1", "a2") },
     };
     resetNavigation("/agents/x1");
-    renderPage(<EditAgentPage />, { locale: "zh", me: meAs(role) });
+    await renderRoute(
+      () => EditAgentPage(params({ id: "x1" })),
+      { ...agentFormDefaults("x1"), ...served() },
+      { locale: "zh", me: meAs(role) },
+    );
   };
 
   for (const role of ROLES) {
     const edits = role === "admin" || role === "owner";
     it(`/agents/<id> of someone else · ${role}: ${edits ? "the form" : "read-only"}`, async () => {
-      agentPage(role, "someone");
+      await agentPage(role, "someone");
       if (edits) {
         expect(await screen.findByRole("button", { name: zh.agents.form.submit })).toBeTruthy();
         expect(screen.getByRole("button", { name: zh.agents.reassign.action })).toBeTruthy();
@@ -267,18 +339,18 @@ describe("agents: edit, read-only and 更换负责人", () => {
   }
 
   it("a member who owns the agent edits it, without 更换负责人", async () => {
-    agentPage("member", "a1");
+    await agentPage("member", "a1");
     expect(await screen.findByRole("button", { name: zh.agents.form.submit })).toBeTruthy();
     expect(screen.queryByRole("button", { name: zh.agents.reassign.action })).toBeNull();
   });
 
   it("a guest who still owns an agent cannot edit it (agents.create is member up)", async () => {
-    agentPage("guest", "a1");
+    await agentPage("guest", "a1");
     expect(await screen.findByText(zh.agents.readOnly)).toBeTruthy();
   });
 
   it("an admin changes the owner: picks a member (no anonymous guests) and posts it", async () => {
-    agentPage("admin", "someone");
+    await agentPage("admin", "someone");
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: zh.agents.reassign.action }));
     const dialog = await screen.findByRole("dialog", { name: zh.agents.reassign.title });
@@ -291,7 +363,7 @@ describe("agents: edit, read-only and 更换负责人", () => {
   });
 
   it("an agent that needs reassignment can be confirmed to its current owner", async () => {
-    agentPage("admin", "a2", { needsReassignment: true });
+    await agentPage("admin", "a2", { needsReassignment: true });
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: zh.agents.reassign.action }));
     const dialog = await screen.findByRole("dialog", { name: zh.agents.reassign.title });
@@ -303,7 +375,7 @@ describe("agents: edit, read-only and 更换负责人", () => {
   });
 
   it("without needsReassignment the current owner is not a change", async () => {
-    agentPage("admin", "a2");
+    await agentPage("admin", "a2");
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: zh.agents.reassign.action }));
     const dialog = await screen.findByRole("dialog", { name: zh.agents.reassign.title });
@@ -319,7 +391,7 @@ describe("agents: edit, read-only and 更换负责人", () => {
     it(`agent row menu · ${role}: 更换负责人 ${admin ? "shown" : "hidden"}`, async () => {
       routes = { [`GET ${O}/agents`]: { agents: [AGENT("ag1", "a1")] } };
       resetNavigation("/agents");
-      renderPage(<AgentsPage />, { locale: "zh", me: meAs(role) });
+      await renderRoute(() => AgentsPage(), served(), { locale: "zh", me: meAs(role) });
       await screen.findByText("Agent ag1");
       await userEvent.setup().click(screen.getByRole("button", { name: "更多操作" }));
       const menu = await screen.findByRole("menu");

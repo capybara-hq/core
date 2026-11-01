@@ -5,12 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import CatchAllPage from "../src/app/(app)/[...rest]/page";
-import NewAgentPage from "../src/app/(app)/agents/new/page";
 import AgentsPage from "../src/app/(app)/agents/page";
 import NotFound from "../src/app/(app)/not-found";
 import HomePage from "../src/app/(app)/page";
 import LoginPage from "../src/app/(auth)/login/page";
 import SetupPage from "../src/app/(auth)/setup/page";
+import { OrgGate } from "../src/components/OrgGate";
 import { activeNavOf } from "../src/components/shell/nav";
 import { navigateBrowser } from "../src/lib/browser";
 import type { Me } from "../src/lib/session";
@@ -257,7 +257,7 @@ describe("(app) 页面模板", () => {
 
   it("a page that needs an organization keeps its own title and offers creating one", () => {
     resetNavigation("/agents");
-    renderPage(<AgentsPage />, {
+    renderPage(<OrgGate>{() => null}</OrgGate>, {
       locale: "zh",
       me: { ...ME, currentOrgId: null, memberships: [], canCreateOrg: true },
     });
@@ -280,10 +280,14 @@ describe("(app) 页面模板", () => {
   });
 
   it("Agents page: object rows with scope chip, meta line and the row action Chat", async () => {
-    const calls = stubApi({
-      "GET /api/v1/orgs/o1/agents": () => json(200, { agents: [agentRow("ag1", "Echo agent")] }),
-    });
-    renderPage(<AgentsPage />, { locale: "zh" });
+    const calls = stubApi({});
+    await renderRoute(
+      () => AgentsPage(),
+      {
+        "GET /api/v1/orgs/o1/agents": () => json(200, { agents: [agentRow("ag1", "Echo agent")] }),
+      },
+      { locale: "zh" },
+    );
     expect(template("ListPage")).not.toBeNull();
     const list = await screen.findByRole("list", { name: zh.agents.title });
     const row = within(list).getAllByRole("listitem")[0] as HTMLElement;
@@ -300,7 +304,8 @@ describe("(app) 页面模板", () => {
   });
 
   it("Agents page: tabs with counts (all / mine / shared) and a local search", async () => {
-    stubApi({
+    stubApi({});
+    await renderRoute(() => AgentsPage(), {
       "GET /api/v1/orgs/o1/agents": () =>
         json(200, {
           agents: [
@@ -310,7 +315,6 @@ describe("(app) 页面模板", () => {
           ],
         }),
     });
-    renderPage(<AgentsPage />, { locale: "en" });
     const user = userEvent.setup();
     await screen.findByText("Alpha");
     await user.click(screen.getByRole("tab", { name: /Mine/ }));
@@ -327,15 +331,18 @@ describe("(app) 页面模板", () => {
   });
 
   it("Agents page: the empty state is one sentence and the primary action", async () => {
-    stubApi({ "GET /api/v1/orgs/o1/agents": () => json(200, { agents: [] }) });
-    renderPage(<AgentsPage />);
+    stubApi({});
+    await renderRoute(() => AgentsPage(), {
+      "GET /api/v1/orgs/o1/agents": () => json(200, { agents: [] }),
+    });
     expect(await screen.findByText(en.agents.empty)).toBeTruthy();
     expect(screen.queryByRole("table")).toBeNull();
     expect(screen.getAllByRole("link", { name: en.agents.new }).length).toBeGreaterThan(0);
   });
 
   it("需要组织的页面在未选组织时显示 StatusPage disabled", () => {
-    renderPage(<NewAgentPage />, { me: { ...ME, currentOrgId: null } });
+    resetNavigation("/agents/new");
+    renderPage(<OrgGate>{() => null}</OrgGate>, { me: { ...ME, currentOrgId: null } });
     expect(template("StatusPage")?.getAttribute("data-kind")).toBe("disabled");
     expect(screen.getByRole("heading", { level: 2, name: en.agents.noOrg })).toBeTruthy();
   });

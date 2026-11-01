@@ -2,44 +2,13 @@
 
 import { ObjectRow } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useCallback, useContext, useEffect, useState } from "react";
+import { useContext, useState } from "react";
 import { useRouter } from "../i18n/navigation";
-import { type Agent, listAgents } from "../lib/agents";
-import { ApiClientError } from "../lib/api";
+import type { Agent } from "../lib/agents";
 import { canUpdateOrg } from "../lib/org-settings";
 import { ReassignOwnerDialog } from "./ReassignOwnerDialog";
 import { navLevelOf } from "./shell/nav";
 import { SessionContext } from "./shell/session";
-
-type AgentsState =
-  | { kind: "loading" }
-  | { kind: "ready"; agents: Agent[] }
-  | { kind: "error"; code: string };
-
-/** 当前组织中可见的 agent（`GET /orgs/:orgId/agents`）；`reload` 重新读取。 */
-export function useAgents(orgId: string): AgentsState & { reload(): void } {
-  const [state, setState] = useState<AgentsState>({ kind: "loading" });
-  const [nonce, setNonce] = useState(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: nonce 只用于触发重新读取
-  useEffect(() => {
-    let disposed = false;
-    setState({ kind: "loading" });
-    listAgents(orgId).then(
-      (r) => {
-        if (!disposed) setState({ kind: "ready", agents: r.agents });
-      },
-      (e: unknown) => {
-        if (!disposed)
-          setState({ kind: "error", code: e instanceof ApiClientError ? e.code : "unknown" });
-      },
-    );
-    return () => {
-      disposed = true;
-    };
-  }, [orgId, nonce]);
-  const reload = useCallback(() => setNonce((n) => n + 1), []);
-  return { ...state, reload };
-}
 
 export type AgentScope = "all" | "mine" | "shared";
 

@@ -14,7 +14,7 @@ import {
   Textarea,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useState } from "react";
 import {
   AGENT_TIERS,
   type Agent,
@@ -23,13 +23,11 @@ import {
   type AgentTier,
   type AgentVisibility,
   type InlineAgentTemplate,
-  listAgents,
-  listAgentTemplates,
   SUBAGENTS_INVALID_REASONS,
   type SubagentsInvalidReason,
 } from "../lib/agents";
 import { ApiClientError } from "../lib/api";
-import { listMembers } from "../lib/members";
+import type { Member } from "../lib/members";
 
 /** The builtin tool that dispatches sub-agents. */
 export const AGENT_TOOL = "agent";
@@ -147,6 +145,16 @@ function buildSubagents(
   return out;
 }
 
+/**
+ * The lists the section offers, as the server read them (`null`: could not be read, left empty):
+ * the plugin agent templates, the org agents and the members (for the owners' names).
+ */
+export interface SubagentsFormData {
+  templates: AgentTemplateView[] | null;
+  agents: Agent[] | null;
+  members: Member[] | null;
+}
+
 /** What {@link useSubagentsForm} gives the agent form. */
 export interface SubagentsForm {
   /** The FormSection. */
@@ -173,9 +181,9 @@ export interface SubagentsForm {
  * left empty; the kernel checks every selection on save.
  */
 export function useSubagentsForm(
-  orgId: string,
   existing: Agent | undefined,
   visibility: AgentVisibility,
+  data: SubagentsFormData,
 ): SubagentsForm {
   const t = useTranslations("agents.form.subagents");
   const initial = existing?.definition.subagents;
@@ -191,36 +199,11 @@ export function useSubagentsForm(
   const [agents, setAgents] = useState<AllowedAgent[]>(initial?.agents ?? []);
   const [dispatchable, setDispatchable] = useState(initial?.dispatchable === true);
   const [problems, setProblems] = useState<SubagentsProblem[]>([]);
-  const [templateList, setTemplateList] = useState<AgentTemplateView[]>([]);
-  const [orgAgents, setOrgAgents] = useState<Agent[]>([]);
-  const [names, setNames] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    let disposed = false;
-    listAgentTemplates(orgId).then(
-      (r) => {
-        if (!disposed) setTemplateList(r.templates);
-      },
-      () => {},
-    );
-    listAgents(orgId).then(
-      (r) => {
-        if (!disposed) setOrgAgents(r.agents);
-      },
-      () => {},
-    );
-    listMembers(orgId).then(
-      (r) => {
-        if (!disposed) {
-          setNames(Object.fromEntries(r.members.map((m) => [m.account.id, m.account.displayName])));
-        }
-      },
-      () => {},
-    );
-    return () => {
-      disposed = true;
-    };
-  }, [orgId]);
+  const templateList = data.templates ?? [];
+  const orgAgents = data.agents ?? [];
+  const names: Record<string, string> = Object.fromEntries(
+    (data.members ?? []).map((m) => [m.account.id, m.account.displayName]),
+  );
 
   const value = buildSubagents(initial, {
     general,

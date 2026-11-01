@@ -6,13 +6,21 @@ import { type ReactNode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import NewAgentPage from "../src/app/(app)/agents/new/page";
 import { ModelParams } from "../src/components/ModelParams";
 import type { ModelParameter, ParamValue } from "../src/lib/agents";
+import { renderNewAgent } from "./support/agents";
+import { stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { renderPage } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
 
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -342,28 +350,24 @@ const MODELS = {
   ],
 };
 
+/** The browser answers the create (`posts`); the server reads the models from the same routes. */
 function stub(post: (body: unknown) => Response) {
   const posts: unknown[] = [];
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url === "/api/v1/orgs/o1/models") return json(200, MODELS);
-      if (url === "/api/v1/orgs/o1/agents" && init?.method === "POST") {
-        const body = JSON.parse(String(init.body));
-        posts.push(body);
-        return post(body);
-      }
-      throw new Error(`unexpected ${url}`);
-    }),
-  );
+  stubApi({
+    "GET /api/v1/orgs/o1/models": () => json(200, MODELS),
+    "POST /api/v1/orgs/o1/agents": (c) => {
+      const body = JSON.parse(String(c.body));
+      posts.push(body);
+      return post(body);
+    },
+  });
   return posts;
 }
 
 const ok = () => json(201, { agent: { id: "ag1" }, warnings: [] });
 
 function renderForm(locale: "zh" | "en") {
-  renderPage(<NewAgentPage />, { locale });
+  return renderNewAgent({ locale });
 }
 
 const nameBox = (locale: "zh" | "en") =>
@@ -381,7 +385,7 @@ const paramBox = (control: HTMLElement) => control.closest("[data-param]") as HT
 describe("AgentForm 模型参数", () => {
   it("切换主模型时重新渲染参数区并丢弃新模型没有声明（或不再合法）的键；保存提交 modelParams / fallbackParams", async () => {
     const posts = stub(ok);
-    renderForm("en");
+    await renderForm("en");
     const user = userEvent.setup();
     const main = await screen.findByRole("region", { name: en.agents.form.modelParamsTitle });
     await user.type(nameBox("en"), "Echo");
@@ -400,7 +404,7 @@ describe("AgentForm 模型参数", () => {
 
   it("切换到不再声明该档位的模型时丢弃旧值；切到无参数模型时参数区消失", async () => {
     const posts = stub(ok);
-    renderForm("en");
+    await renderForm("en");
     const user = userEvent.setup();
     const main = await screen.findByRole("region", { name: en.agents.form.modelParamsTitle });
     await user.type(nameBox("en"), "Echo");
@@ -414,7 +418,7 @@ describe("AgentForm 模型参数", () => {
 
   it("兜底模型有自己的参数区；去掉兜底模型时清空 fallbackParams", async () => {
     const posts = stub(ok);
-    renderForm("en");
+    await renderForm("en");
     const user = userEvent.setup();
     await screen.findByRole("region", { name: en.agents.form.modelParamsTitle });
     await user.type(nameBox("en"), "Echo");
@@ -452,7 +456,7 @@ describe("AgentForm 模型参数", () => {
           },
         }),
       );
-      renderForm(locale);
+      await renderForm(locale);
       const user = userEvent.setup();
       const main = await screen.findByRole("region", { name: m.agents.form.modelParamsTitle });
       await user.type(nameBox(locale), "Echo");

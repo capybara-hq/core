@@ -3,13 +3,19 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import EditAgentPage from "../src/app/(app)/agents/[id]/page";
+import { renderEditAgent } from "./support/agents";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
-import { renderPage } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
-vi.mock("next/navigation", () => ({ useParams: () => ({ id: "ag1" }) }));
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
 
 /**
  * Phase C Task 19: the agent page's Sub-agents section (the agent tool, general-purpose, plugin
@@ -113,7 +119,7 @@ describe("the agent page's Sub-agents section", () => {
       ...routes(),
       [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: LEAD, warnings: [] }),
     });
-    renderPage(<EditAgentPage />);
+    await renderEditAgent();
     const user = userEvent.setup();
     const s = await section();
     await user.click(within(s).getByRole("checkbox", { name: S.agentTool }));
@@ -164,7 +170,7 @@ describe("the agent page's Sub-agents section", () => {
       ...routes(),
       [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: LEAD, warnings: [] }),
     });
-    renderPage(<EditAgentPage />);
+    await renderEditAgent();
     await section();
     await userEvent.setup().click(screen.getByRole("button", { name: en.agents.form.submit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
@@ -201,7 +207,7 @@ describe("the agent page's Sub-agents section", () => {
             },
           }),
       });
-      renderPage(<EditAgentPage />, { locale });
+      await renderEditAgent({ locale });
       const s = await section(m.section);
       await userEvent
         .setup()
@@ -233,7 +239,7 @@ describe("the agent page's Sub-agents section", () => {
           },
         }),
     });
-    renderPage(<EditAgentPage />);
+    await renderEditAgent();
     const s = await section();
     await userEvent.setup().click(screen.getByRole("button", { name: en.agents.form.submit }));
     const description = within(s).getByRole("textbox", { name: S.inlineDescription });
@@ -259,7 +265,7 @@ describe("the agent page's Sub-agents section", () => {
       ...routes(lead),
       [`GET ${ORG}/agents`]: () => json(200, { agents: [lead, analyst, QUIET] }),
     });
-    renderPage(<EditAgentPage />);
+    await renderEditAgent();
     const s = await section();
     const warning = S.widerWarning.replaceAll("{name}", "Data analyst");
     await vi.waitFor(() => expect(s.textContent).toContain(warning));
@@ -270,7 +276,7 @@ describe("the agent page's Sub-agents section", () => {
       ...routes(),
       [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: LEAD, warnings: [] }),
     });
-    renderPage(<EditAgentPage />);
+    await renderEditAgent();
     const s = await section();
     const user = userEvent.setup();
     await user.click(within(s).getByRole("switch", { name: S.dispatchable }));
@@ -298,7 +304,7 @@ describe("the agent page's Sub-agents section", () => {
       },
     });
     stubApi(routes(lead));
-    renderPage(<EditAgentPage />);
+    await renderEditAgent();
     const s = await section();
     await vi.waitFor(() =>
       expect(within(s).getByRole("textbox", { name: S.inlineName })).toBeTruthy(),
@@ -310,7 +316,7 @@ describe("the agent page's Sub-agents section", () => {
   it("settings without the agent tool are kept, with a warning that they are unused", async () => {
     const lead = agent("ag1", "Lead", { definition: { subagents: { general: false } } });
     stubApi(routes(lead));
-    renderPage(<EditAgentPage />);
+    await renderEditAgent();
     const s = await section();
     expect(s.textContent).toContain(S.unused);
   });

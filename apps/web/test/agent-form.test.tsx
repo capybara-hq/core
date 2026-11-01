@@ -3,15 +3,25 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import EditAgentPage from "../src/app/(app)/agents/[id]/page";
 import NewAgentPage from "../src/app/(app)/agents/new/page";
+import AgentsPage from "../src/app/(app)/agents/page";
 import { SetupContext } from "../src/components/shell/setup";
+import { agentFormDefaults, renderEditAgent, renderNewAgent } from "./support/agents";
 import { json as apiJson, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
+import { expectNoFirstPaintFetch, onServer, renderRoute } from "./support/server";
+import { NOT_READY } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
-vi.mock("next/navigation", () => ({ useParams: () => ({ id: "ag1" }) }));
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
 
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -36,20 +46,18 @@ const MODELS = {
   ],
 };
 
+/**
+ * The browser answers only the create (`posts`); the server reads the models from the same routes.
+ */
 function stub(warnings: string[], models: unknown = MODELS) {
   const posts: unknown[] = [];
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url === "/api/v1/orgs/o1/models") return json(200, models);
-      if (url === "/api/v1/orgs/o1/agents" && init?.method === "POST") {
-        posts.push(JSON.parse(String(init.body)));
-        return json(201, { agent: { id: "ag1" }, warnings });
-      }
-      throw new Error(`unexpected ${url}`);
-    }),
-  );
+  stubApi({
+    "GET /api/v1/orgs/o1/models": () => json(200, models),
+    "POST /api/v1/orgs/o1/agents": (c) => {
+      posts.push(JSON.parse(String(c.body)));
+      return json(201, { agent: { id: "ag1" }, warnings });
+    },
+  });
   return posts;
 }
 
@@ -65,7 +73,7 @@ afterEach(() => {
 describe("新建 Agent 页（FormPage）", () => {
   it("使用 FormPage 模板，分组「基本信息」「模型」，ActionRow 中「保存」为主操作", async () => {
     stub([]);
-    const { container } = renderPage(<NewAgentPage />, { locale: "zh" });
+    const { container } = await renderNewAgent({ locale: "zh" });
     await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
     expect(container.querySelector('[data-template="FormPage"]')).not.toBeNull();
     expect(screen.getByRole("region", { name: zh.agents.form.basicSection })).toBeTruthy();
@@ -78,7 +86,7 @@ describe("新建 Agent 页（FormPage）", () => {
 
   it("模型下拉框来自 /models；保存发送定义，没有警告时直接回到列表", async () => {
     const posts = stub([]);
-    renderPage(<NewAgentPage />);
+    await renderNewAgent();
     const user = userEvent.setup();
     await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
     await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), "Echo");
@@ -110,11 +118,15 @@ describe("新建 Agent 页（FormPage）", () => {
 
   it("inside the setup layout a saved agent lands on a new conversation with it", async () => {
     stub([]);
+    const { element } = await onServer(() => NewAgentPage(), {
+      ...agentFormDefaults(),
+      "GET /api/v1/orgs/o1/models": () => json(200, MODELS),
+    });
     renderPage(
       <SetupContext.Provider
         value={{ active: true, readiness: { kind: "unknown" }, recheck: async () => {} }}
       >
-        <NewAgentPage />
+        {element}
       </SetupContext.Provider>,
     );
     const user = userEvent.setup();
@@ -147,7 +159,7 @@ describe("新建 Agent 页（FormPage）", () => {
         },
       ],
     });
-    renderPage(<NewAgentPage />);
+    await renderNewAgent();
     const user = userEvent.setup();
     await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
     await user.type(
@@ -168,7 +180,7 @@ describe("新建 Agent 页（FormPage）", () => {
 
   it("名称为空时不提交，名称字段显示错误", async () => {
     const posts = stub([]);
-    renderPage(<NewAgentPage />);
+    await renderNewAgent();
     const user = userEvent.setup();
     await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
     await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
@@ -183,7 +195,7 @@ describe("新建 Agent 页（FormPage）", () => {
     async (locale) => {
       const m = locale === "zh" ? zh : en;
       const posts = stub(["fallback_same_provider"]);
-      renderPage(<NewAgentPage />, { locale });
+      await renderNewAgent({ locale });
       const user = userEvent.setup();
       await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
       await user.type(screen.getByRole("textbox", { name: m.agents.form.nameLabel }), "Echo");
@@ -267,7 +279,7 @@ describe("the agent page lists its channels (spec 3.3.1)", () => {
 
   it("lists only this agent's connections; 接入渠道 presets the agent and the way back", async () => {
     stubApi(routes());
-    renderPage(<EditAgentPage />, { locale: "zh" });
+    await renderEditAgent({ locale: "zh" });
     const section = await screen.findByRole("region", { name: zh.agents.channels.title });
     const list = await within(section).findByRole("list", { name: zh.agents.channels.title });
     expect(within(list).getByRole("link", { name: "Team Slack" }).getAttribute("href")).toBe(
@@ -289,10 +301,168 @@ describe("the agent page lists its channels (spec 3.3.1)", () => {
       account: { ...ME.account, isEnterpriseAdmin: false },
       memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],
     };
-    renderPage(<EditAgentPage />, { me: member });
+    await renderEditAgent({ me: member });
     const section = await screen.findByRole("region", { name: en.agents.channels.title });
     await within(section).findByText("Team Slack");
     expect(within(section).queryByRole("button", { name: en.agents.channels.connect })).toBeNull();
     expect(within(section).queryByRole("link")).toBeNull();
+  });
+});
+
+describe("the agent pages render on the server (web-SSR spec §6)", () => {
+  const ORG = "/api/v1/orgs/o1";
+  const T = "2026-10-20T08:00:00.000Z";
+  const as = (role: "guest" | "member" | "admin") => ({
+    ...ME,
+    account: { ...ME.account, isEnterpriseAdmin: false },
+    memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
+  });
+  const agent = (id: string, name: string, owner = "a1") => ({
+    id,
+    orgId: "o1",
+    ownerAccountId: owner,
+    visibility: "org",
+    currentVersion: 1,
+    memberIds: null,
+    needsReassignment: false,
+    createdAt: T,
+    updatedAt: T,
+    definition: {
+      name,
+      instructions: "",
+      model: { provider: "model-fake", model: "fake-1" },
+      fallback: null,
+      modelParams: {},
+      fallbackParams: {},
+      tools: [{ kind: "connector", connectorId: "cn1", tools: "all" }],
+      toolPolicies: {},
+    },
+  });
+  const connector = {
+    id: "cn1",
+    name: "Tracker",
+    status: "active",
+    tools: [{ key: "tracker__find", status: "enabled" }],
+  };
+  const ok = (body: unknown) => () => apiJson(200, body);
+  const formRoutes = {
+    [`GET ${ORG}/models`]: ok(MODELS),
+    [`GET ${ORG}/connectors`]: ok({ connectors: [connector] }),
+    [`GET ${ORG}/connectors/cn1`]: ok({ connector }),
+    [`GET ${ORG}/skills`]: ok({
+      skills: [{ id: "s1", name: "notes-style", description: "Notes.", source: "org" }],
+    }),
+  };
+  const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
+
+  it("/agents: the list is the first paint, guests included", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const { calls } = await renderRoute(
+      () => AgentsPage(),
+      { [`GET ${ORG}/agents`]: ok({ agents: [agent("ag1", "Echo agent")] }) },
+      { me: as("guest") },
+    );
+    expect(calls.map((c) => c.url)).toContain(`${ORG}/agents`);
+    expect(screen.getByText("Echo agent")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: en.agents.new })).toBeNull();
+    expect(browser).toEqual([]);
+  });
+
+  it("/agents: without a current org it renders nothing; while the org is in setup it redirects home", async () => {
+    const none = await renderRoute(() => AgentsPage(), {}, { me: { ...ME, currentOrgId: null } });
+    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+    expect(template("ListPage")).toBeNull();
+    await expect(renderRoute(() => AgentsPage(), {}, { readiness: NOT_READY })).rejects.toThrow(
+      "REDIRECT /",
+    );
+  });
+
+  it("/agents/new: models, connectors and skills are in the first paint", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderNewAgent({ routes: formRoutes });
+    expect(
+      (screen.getByRole("combobox", { name: en.agents.form.modelLabel }) as HTMLSelectElement)
+        .value,
+    ).toBe("model-fake/fake-1");
+    expect(screen.getByRole("checkbox", { name: /Tracker/ })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: /notes-style/ })).toBeTruthy();
+    expect(browser).toEqual([]);
+  });
+
+  it("/agents/new: a guest gets no access and nothing is read; it is a setup step", async () => {
+    const guest = await renderNewAgent({ routes: formRoutes, me: as("guest") });
+    expect(new Set(guest.calls.map((c) => c.url))).toEqual(
+      new Set(["/api/v1/me", `${ORG}/readiness`]),
+    );
+    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
+    cleanup();
+    expectNoFirstPaintFetch();
+    await renderNewAgent({ routes: formRoutes, readiness: NOT_READY });
+    expect(template("FormPage")).not.toBeNull();
+    cleanup();
+    const none = await renderNewAgent({ me: { ...ME, currentOrgId: null } });
+    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+    expect(template("FormPage")).toBeNull();
+  });
+
+  it("/agents/new: a section the kernel fails (agent templates) still renders the form", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderNewAgent({
+      routes: {
+        ...formRoutes,
+        [`GET ${ORG}/agent-templates`]: () => apiJson(500, { error: { code: "internal" } }),
+      },
+    });
+    expect(screen.getByRole("button", { name: en.agents.form.submit })).toBeTruthy();
+    expect(browser).toEqual([]);
+  });
+
+  it("/agents/<id>: the form, the selected connector's tools and the channels are the first paint", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderEditAgent({
+      routes: { ...formRoutes, [`GET ${ORG}/agents/ag1`]: ok({ agent: agent("ag1", "Helper") }) },
+      readiness: NOT_READY,
+    });
+    expect(screen.getByRole("heading", { level: 1, name: "Helper" })).toBeTruthy();
+    expect(document.querySelector('[data-policy="tracker__find"]')).not.toBeNull();
+    expect(screen.getByRole("region", { name: en.agents.channels.title })).toBeTruthy();
+    expect(browser).toEqual([]);
+  });
+
+  it("/agents/<id>: someone who may not change it reads only the agent (read-only view)", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const { calls } = await renderEditAgent({
+      routes: { [`GET ${ORG}/agents/ag1`]: ok({ agent: agent("ag1", "Helper", "someone") }) },
+      me: as("member"),
+    });
+    expect(new Set(calls.map((c) => c.url))).toEqual(
+      new Set(["/api/v1/me", `${ORG}/readiness`, `${ORG}/agents/ag1`]),
+    );
+    expect(screen.getByText(en.agents.readOnly)).toBeTruthy();
+    expect(browser).toEqual([]);
+  });
+
+  it("/agents/<id>: an agent the kernel does not find is the not-found page", async () => {
+    await expect(
+      renderEditAgent({
+        routes: {
+          [`GET ${ORG}/agents/ag1`]: () =>
+            apiJson(404, { error: { code: "agent.not_found", message: "x" } }),
+        },
+      }),
+    ).rejects.toThrow("NOT_FOUND");
+  });
+
+  it("/agents/<id>: channels the kernel fails show the section's own error to an admin", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderEditAgent({
+      routes: {
+        ...formRoutes,
+        [`GET ${ORG}/agents/ag1`]: ok({ agent: agent("ag1", "Helper") }),
+        [`GET ${ORG}/channels`]: () => apiJson(500, { error: { code: "internal" } }),
+      },
+    });
+    expect(screen.getByText(en.agents.channels.loadFailed)).toBeTruthy();
+    expect(browser).toEqual([]);
   });
 });

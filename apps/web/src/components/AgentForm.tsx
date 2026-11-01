@@ -12,7 +12,7 @@ import {
   Textarea,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
-import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useState } from "react";
+import { type FormEvent, type KeyboardEvent, type ReactNode, useState } from "react";
 import {
   type Agent,
   type AgentDefinitionInput,
@@ -24,7 +24,6 @@ import {
   DEFAULT_BUILTIN_TOOLS,
   findModel,
   keepDeclared,
-  listModels,
   type ModelParameter,
   type ParamValue,
   type ProviderModels,
@@ -32,12 +31,7 @@ import {
   updateAgent,
 } from "../lib/agents";
 import { ApiClientError } from "../lib/api";
-import {
-  type ConnectorDetail,
-  type ConnectorSummary,
-  getConnector,
-  listConnectors,
-} from "../lib/connectors";
+import { type ConnectorDetail, type ConnectorSummary, getConnector } from "../lib/connectors";
 import type { ModelRef } from "../lib/conversations";
 import { PINNED_SKILLS_LIMITS, pinnedProblemsOf, type SkillSummary } from "../lib/skills";
 import { useErrorMessage } from "../lib/use-error-message";
@@ -47,9 +41,8 @@ import {
   PinnedSkillsPicker,
   SkillWriteSwitch,
   useAgentOwnSkills,
-  useOrgSkills,
 } from "./AgentSkills";
-import { AGENT_TOOL, useSubagentsForm } from "./AgentSubagents";
+import { AGENT_TOOL, type SubagentsFormData, useSubagentsForm } from "./AgentSubagents";
 import { FormError } from "./form-error";
 import { ModelParams } from "./ModelParams";
 import { useSession } from "./shell/session";
@@ -62,15 +55,37 @@ const isFormTool = (r: AgentToolRef) =>
   (r.kind === "builtin" && (BUILTIN_SET.has(r.name) || r.name === AGENT_TOOL)) ||
   (r.kind === "connector" && r.tools === "all");
 
-/** 由已有定义得到表单的初始值；新建时为默认值。 */
-function initialOf(existing: Agent | undefined) {
+/**
+ * What the server read for the agent form's first paint (`lib/server/agent-form.ts`). A `null` list
+ * could not be read (the kernel refused or failed it): that part shows its own empty or unavailable
+ * state.
+ */
+export interface AgentFormData {
+  providers: ProviderModels[];
+  connectors: ConnectorSummary[] | null;
+  /** The tools of the connectors the edited agent already uses (those that could be read). */
+  connectorDetails: Record<string, ConnectorDetail>;
+  orgSkills: SkillSummary[] | null;
+  /** The agent's own skills (`[]` for a new agent). */
+  ownSkills: SkillSummary[] | null;
+  subagents: SubagentsFormData;
+}
+
+/** 由已有定义得到表单的初始值；新建时为默认值（主模型默认为第一个模型）。 */
+function initialOf(existing: Agent | undefined, providers: ProviderModels[]) {
   const d = existing?.definition;
+  const first = providers.find((p) => p.models.length > 0);
+  const firstModel = first?.models[0];
   const tools = d?.tools ?? [];
   return {
     name: d?.name ?? "",
     instructions: d?.instructions ?? "",
     visibility: existing?.visibility ?? ("private" as AgentVisibility),
-    model: d ? encode(d.model) : "",
+    model: d
+      ? encode(d.model)
+      : first && firstModel
+        ? encode({ provider: first.provider, model: firstModel.id })
+        : "",
     fallback: d?.fallback ? encode(d.fallback) : "",
     modelParams: { ...(d?.modelParams ?? {}) } as Params,
     fallbackParams: { ...(d?.fallbackParams ?? {}) } as Params,
@@ -132,14 +147,15 @@ export type AgentFormView = {
 export function useAgentForm(
   orgId: string,
   onDone: (agent?: Agent) => void,
+  data: AgentFormData,
   existing?: Agent,
 ): AgentFormView {
   const t = useTranslations("agents");
   const locale = useLocale();
   const errorMessage = useErrorMessage();
   const { me } = useSession();
-  const [initial] = useState(() => initialOf(existing));
-  const [providers, setProviders] = useState<ProviderModels[]>();
+  const providers = data.providers;
+  const [initial] = useState(() => initialOf(existing, providers));
   const [name, setName] = useState(initial.name);
   const [instructions, setInstructions] = useState(initial.instructions);
   const [visibility, setVisibility] = useState<AgentVisibility>(initial.visibility);
@@ -155,24 +171,26 @@ export function useAgentForm(
   const [warnings, setWarnings] = useState<AgentWarning[]>();
   const [savedAgent, setSavedAgent] = useState<Agent>();
   const [builtins, setBuiltins] = useState<string[]>(initial.builtins);
-  const [apps, setApps] = useState<ConnectorSummary[]>();
+  // The connectors on offer: the active ones (none when the list could not be read; the builtin
+  // tools stay available).
+  const apps = (data.connectors ?? []).filter((a) => a.status === "active");
   const [selectedConnectors, setSelectedConnectors] = useState<string[]>(initial.apps);
-  const [connectorDetails, setConnectorDetails] = useState<Record<string, ConnectorDetail>>({});
+  const [connectorDetails, setConnectorDetails] = useState<Record<string, ConnectorDetail>>(
+    data.connectorDetails,
+  );
   const [policies, setPolicies] = useState<Record<string, TightenedPolicy>>(initial.policies);
-  const orgList = useOrgSkills(orgId);
+  // The org skill library: empty and `failed` when it could not be read (the form still works).
+  const orgList = { skills: data.orgSkills ?? [], failed: data.orgSkills === null };
   const orgSkills = orgList.skills;
   const [skillIds, setSkillIds] = useState<string[]>(initial.orgSkills);
   const [confirmSkillWrite, setConfirmSkillWrite] = useState(initial.confirmSkillWrite);
-  const own = useAgentOwnSkills(orgId, existing?.id);
+  const own = useAgentOwnSkills(orgId, existing?.id, data.ownSkills);
   const [pinned, setPinned] = useState<string[]>(initial.pinned);
-  const subagents = useSubagentsForm(orgId, existing, visibility);
+  const subagents = useSubagentsForm(existing, visibility, data.subagents);
   /** Every skill the form knows (org library and the agent's own), for names and pinning. */
-  const allSkills: SkillSummary[] = [...(orgSkills ?? []), ...(own.skills ?? [])];
+  const allSkills: SkillSummary[] = [...orgSkills, ...own.skills];
   /** What the pinned picker may judge (stale pins): both lists read, undefined otherwise. */
-  const pinnable =
-    orgSkills === undefined || own.skills === undefined || orgList.failed || own.failed
-      ? undefined
-      : allSkills;
+  const pinnable = orgList.failed || own.failed ? undefined : allSkills;
   const nameOfSkill = (id: string) => allSkills.find((s) => s.id === id)?.name ?? id;
 
   /**
@@ -186,7 +204,7 @@ export function useAgentForm(
     setPinned((cur) => {
       const kept = cur.filter((id) => !removed.includes(id));
       for (const id of added) {
-        const s = orgSkills?.find((x) => x.id === id);
+        const s = orgSkills.find((x) => x.id === id);
         if (
           s?.suggestPinned === true &&
           !kept.includes(id) &&
@@ -198,34 +216,12 @@ export function useAgentForm(
     });
   }
 
-  // 可选的连接器（读不到时不提供连接器工具，内置工具照常可选）
-  useEffect(() => {
-    let disposed = false;
-    listConnectors(orgId).then(
-      (r) => {
-        if (!disposed) setApps(r.connectors.filter((a) => a.status === "active"));
-      },
-      () => {
-        if (!disposed) setApps([]);
-      },
-    );
-    return () => {
-      disposed = true;
-    };
-  }, [orgId]);
-
   // 连接器的工具列表只用于收紧策略：读不到时只是不显示该连接器的策略选项
   const loadConnectorDetail = (connectorId: string) =>
     getConnector(orgId, connectorId).then(
       ({ connector }) => setConnectorDetails((d) => ({ ...d, [connectorId]: connector })),
       () => {},
     );
-
-  // 修改时：已选连接器的工具列表（策略选项要用）
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 只在打开表单时读一次
-  useEffect(() => {
-    for (const id of initial.apps) void loadConnectorDetail(id);
-  }, [orgId]);
 
   function toggleConnector(connectorId: string, on: boolean) {
     setSelectedConnectors((cur) =>
@@ -242,30 +238,10 @@ export function useAgentForm(
     ),
   ];
 
-  useEffect(() => {
-    let disposed = false;
-    listModels(orgId).then(
-      (r) => {
-        if (disposed) return;
-        setProviders(r.providers);
-        // 与原生下拉框一致：默认选中第一个模型（修改时保留原模型）
-        const first = r.providers.find((p) => p.models.length > 0);
-        const m = first?.models[0];
-        if (first && m) setModel((cur) => cur || encode({ provider: first.provider, model: m.id }));
-      },
-      (e: unknown) => {
-        if (!disposed) setError(errorMessage(e));
-      },
-    );
-    return () => {
-      disposed = true;
-    };
-  }, [orgId, errorMessage]);
-
   /** 下拉框值对应模型的参数声明（未选或找不到时为空）。 */
   const declOf = (v: string): ModelParameter[] => {
     const ref = decode(v);
-    return (ref && providers && findModel(providers, ref)?.parameters) || [];
+    return (ref && findModel(providers, ref)?.parameters) || [];
   };
   const modelDecl = declOf(model);
   const fallbackDecl = declOf(fallback);
@@ -305,14 +281,14 @@ export function useAgentForm(
     setOtherErrors(others);
   }
 
-  const options = (providers ?? []).flatMap((p) =>
+  const options = providers.flatMap((p) =>
     p.models.map((m) => ({
       value: encode({ provider: p.provider, model: m.id }),
       label: `${p.provider} / ${m.displayName || m.id}`,
     })),
   );
-  const noModels = providers !== undefined && options.length === 0;
-  const canSubmit = !pending && providers !== undefined && !noModels;
+  const noModels = options.length === 0;
+  const canSubmit = !pending && !noModels;
 
   /**
    * 保存的工具引用：表单里的内置工具与连接器，加上修改时原样保留的其他引用。修改时按原定义的顺序保留仍选着的
@@ -569,7 +545,7 @@ export function useAgentForm(
             >
               <Select
                 name="model"
-                disabled={providers === undefined}
+                disabled={noModels}
                 value={model}
                 onChange={(e) => onModelChange(e.target.value)}
                 options={options}
@@ -613,12 +589,12 @@ export function useAgentForm(
                 <Text variant="small" tone="muted">
                   {t("form.connectorsLabel")}
                 </Text>
-                {apps !== undefined && apps.length === 0 && (
+                {apps.length === 0 && (
                   <Text variant="small" tone="faint">
                     {t("form.noConnectors")}
                   </Text>
                 )}
-                {(apps ?? []).map((a) => (
+                {apps.map((a) => (
                   <Checkbox
                     key={a.id}
                     label={t("form.connectorTools", { name: a.name })}
@@ -668,7 +644,7 @@ export function useAgentForm(
             <PinnedSkillsPicker
               skills={pinnable}
               unavailable={orgList.failed || own.failed}
-              selected={[...skillIds, ...(own.skills ?? []).map((s) => s.id)]}
+              selected={[...skillIds, ...own.skills.map((s) => s.id)]}
               value={pinned}
               onChange={setPinned}
               changed={!sameJson(pinned, initial.pinned)}
