@@ -1,5 +1,5 @@
 import { DesignProvider, type LinkComponent, ToastProvider } from "@capybara-hq/design";
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,7 +7,6 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import ChatPage from "../src/app/(app)/chat/[conversationId]/page";
 import NewChatPage from "../src/app/(app)/chat/page";
-import { AppFrame } from "../src/components/shell/AppFrame";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
 import {
   AGENTS,
@@ -20,6 +19,7 @@ import {
 } from "./support/conversation";
 import { Link, resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
+import { renderFrame, shellOf } from "./support/shell";
 
 const params = { conversationId: "c1" };
 const search = new URLSearchParams();
@@ -798,27 +798,15 @@ describe("the conversation page in the app frame", () => {
     memberships: [...ME.memberships, { orgId: "o2", slug: "b", name: "Beta", role: "member" }],
   });
 
-  it("switching org goes back to /agents and never reads the conversation with the new org", async () => {
-    let current = "o1";
+  it("switching org opens the new org's home and never reads the conversation with the new org", async () => {
     const calls = api({
-      "GET /api/v1/me": () => json(200, twoOrgs(current)),
-      "PUT /api/v1/me/current-org": () => {
-        current = "o2";
-        return new Response(null, { status: 204 });
-      },
+      "PUT /api/v1/me/current-org": () => new Response(null, { status: 204 }),
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
     });
-    render(
-      <NextIntlClientProvider locale="en" messages={en}>
-        <DesignProvider locale="en" link={Link as LinkComponent}>
-          <ToastProvider>
-            <AppFrame version="v0">
-              <ChatPage />
-            </AppFrame>
-          </ToastProvider>
-        </DesignProvider>
-      </NextIntlClientProvider>,
-    );
+    const view = renderFrame(shellOf(twoOrgs("o1")), <ChatPage />, {
+      locale: "en",
+      version: "v0",
+    });
     await screen.findByText("hi");
     // The page draws its own status bar with the version.
     expect(screen.getAllByText("v0").length).toBeGreaterThan(0);
@@ -828,18 +816,13 @@ describe("the conversation page in the app frame", () => {
     // jsdom has no layout: pick the submenu item with the keyboard (see design menu-submenu tests)
     (await screen.findByRole("menuitemradio", { name: "Beta" })).focus();
     await user.keyboard("{Enter}");
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
-    expect(
-      calls.some(
-        (c) =>
-          c.url.includes("/orgs/o2/") &&
-          !c.url.includes("/orgs/o2/inbox") &&
-          !c.url.includes("/orgs/o2/ui/contributions") &&
-          !c.url.includes("/orgs/o2/conversations/groups") &&
-          // the app frame reads the new org's readiness (setup layout, web-order §3.8)
-          !c.url.endsWith("/orgs/o2/readiness"),
-      ),
-    ).toBe(false);
+    await vi.waitFor(() => expect(router.refresh).toHaveBeenCalled());
+    expect(router.push).toHaveBeenCalledWith("/");
+    // the server's answer: the new org's frame with its home page, in one render
+    resetNavigation("/");
+    view.update(shellOf(twoOrgs("o2")), <p>home</p>);
+    expect(screen.queryByText("hi")).toBeNull();
+    expect(calls.some((c) => c.url.includes("/orgs/o2/"))).toBe(false);
   });
 });
 

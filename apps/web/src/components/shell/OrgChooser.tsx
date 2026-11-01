@@ -1,9 +1,10 @@
 "use client";
 
-import { AuthPage, Button, ItemList, Stack, Text, TextLink } from "@capybara-hq/design";
+import { AuthPage, Button, ItemList, Stack, Text, TextLink, useToast } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { usePreferences } from "../../lib/preferences";
+import { useErrorMessage } from "../../lib/use-error-message";
 import { CreateOrgDialog } from "../CreateOrgDialog";
 import { useSession } from "./session";
 
@@ -18,6 +19,8 @@ export function OrgChooser({ onLogout }: { onLogout(): void }) {
   const tRoles = useTranslations("members.roles");
   const { me, switchOrg } = useSession();
   const preferences = usePreferences();
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
   const [creating, setCreating] = useState(false);
   const [entering, setEntering] = useState<string>();
   const none = me.memberships.length === 0;
@@ -25,9 +28,11 @@ export function OrgChooser({ onLogout }: { onLogout(): void }) {
   async function enter(orgId: string) {
     setEntering(orgId);
     try {
+      // Stays pending until the org's frame replaces the chooser.
       await switchOrg(orgId);
-    } finally {
+    } catch (e) {
       setEntering(undefined);
+      toast.error(errorMessage(e));
     }
   }
 

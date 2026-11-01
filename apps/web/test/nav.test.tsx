@@ -1,10 +1,8 @@
-import { DesignProvider, type LinkComponent, ToastProvider } from "@capybara-hq/design";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zh from "../messages/zh.json";
-import { AppFrame } from "../src/components/shell/AppFrame";
 import {
   activeNavOf,
   type NavLevel,
@@ -12,10 +10,9 @@ import {
   useAdminItems,
   useNav,
 } from "../src/components/shell/nav";
-import { RequireSession } from "../src/components/shell/session";
-import { json, stubApi } from "./support/api";
-import { Link, resetNavigation } from "./support/navigation";
+import { resetNavigation } from "./support/navigation";
 import { ME } from "./support/render";
+import { renderFrame as renderShell, shellOf } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -202,35 +199,12 @@ describe("statusPrompt", () => {
 });
 
 describe("AppFrame contexts", () => {
-  function renderFrame() {
-    return render(
-      <NextIntlClientProvider locale="zh" messages={zh}>
-        <DesignProvider locale="zh" link={Link as LinkComponent}>
-          <ToastProvider>
-            <AppFrame version="v9.9.9">
-              <RequireSession>
-                <p>page body</p>
-              </RequireSession>
-            </AppFrame>
-          </ToastProvider>
-        </DesignProvider>
-      </NextIntlClientProvider>,
-    );
-  }
-  const api = () =>
-    stubApi({
-      "GET /api/v1/me": () => json(200, ME),
-      "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
-      "GET /api/v1/orgs/o1/conversations/groups": () =>
-        json(200, { groups: [], next: null, archivedCount: 0 }),
-      "GET /api/v1/orgs/o1/ui/contributions": () => json(200, { items: [] }),
-    });
+  const renderFrame = () => renderShell(shellOf(ME));
 
   it("/admin/* renders the admin context: its items, the way back, no conversations", async () => {
     resetNavigation("/admin/marketplaces");
-    api();
     renderFrame();
-    expect(await screen.findByText("page body")).toBeTruthy();
+    expect(screen.getByText("page body")).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "主导航" });
     const market = within(nav).getByRole("link", { name: "市场" });
     expect(market.getAttribute("href")).toBe("/admin/marketplaces");
@@ -242,9 +216,8 @@ describe("AppFrame contexts", () => {
 
   it("the workspace status bar prompt is <login>@<slug>:~<path>", async () => {
     resetNavigation("/agents/new");
-    api();
     renderFrame();
-    expect(await screen.findByText("page body")).toBeTruthy();
+    expect(screen.getByText("page body")).toBeTruthy();
     expect(within(screen.getByRole("contentinfo")).getByText("Grant@acme:~/agents/new"));
     // the old footer item 设置 is gone; 组织设置 is in the 更多 flyout
     const nav = screen.getByRole("navigation", { name: "主导航" });
@@ -256,9 +229,8 @@ describe("AppFrame contexts", () => {
 
   it("account menu has 切换组织 ▸, 语言 ▸, 个人设置 → /account/connections, 退出登录", async () => {
     resetNavigation("/");
-    api();
     renderFrame();
-    await screen.findByText("page body");
+    screen.getByText("page body");
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /^账户: Grant/ }));
     expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual([

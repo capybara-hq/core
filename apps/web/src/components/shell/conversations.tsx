@@ -8,6 +8,7 @@ import {
   CONVERSATIONS_CHANGED,
   type Conversation,
   type ConversationGroup,
+  type ConversationGroupsPage,
   type ConversationSearch,
   deleteConversation,
   listConversationGroups,
@@ -65,6 +66,17 @@ const DEFAULT_VIEW: Omit<ViewState, "orgId"> = {
   archivedOpen: false,
   settledQ: "",
 };
+/** The view the `(app)` layout reads on the server (the sidebar's defaults). */
+const DEFAULT_KEY = viewKey({ archived: false, q: "", state: "all" });
+
+/** The server's page as the loaded default view of `orgId`. */
+const seedOf = (orgId: string, page: ConversationGroupsPage): Loaded => ({
+  orgId,
+  view: DEFAULT_KEY,
+  archived: false,
+  groups: page.groups,
+  next: page.next,
+});
 
 /** Typing in the filter asks the kernel once the input settles (the rows narrow at once). */
 const QUERY_SETTLE_MS = 200;
@@ -120,6 +132,13 @@ export function mergeRefresh(old: Loaded, fresh: Loaded): Loaded {
 
 export type ConversationGroupsOptions = {
   /**
+   * The default view as the `(app)` layout read it on the server: shown at first paint with no
+   * browser read, and merged in again whenever the server sends a new one (`router.refresh()`).
+   * `null`: the server read failed (the section's error state with 重试). Omitted: the hook loads
+   * on mount.
+   */
+  initial?: ConversationGroupsPage | null;
+  /**
    * A failed action the viewer started (group ＋, More, More groups, rename, archive, delete):
    * AppFrame shows a toast.
    */
@@ -131,9 +150,9 @@ const GROUPS_POLL_MS = 30_000;
 
 /**
  * The sidebar's conversation section for the current user (web order §2.1): my conversations
- * grouped by agent, loaded on an org change, refreshed on a route into `/chat/*` (a new
- * conversation shows), when the window gets focus, every 30 s and after a row action. State lives in this
- * browser only.
+ * grouped by agent, seeded from the server (`options.initial`) or loaded on an org change,
+ * refreshed on a route into `/chat/*` (a new conversation shows), when the window gets focus, every
+ * 30 s and after a row action. State lives in this browser only.
  *
  * `orgId`: `undefined` while the session loads (the section shows its skeleton), `null` when the
  * account has no current org (an empty list), else the org. A refresh keeps the rows and groups
@@ -154,8 +173,13 @@ export function useConversationGroups(
   options: ConversationGroupsOptions = {},
 ): SidebarConversations {
   const router = useRouter();
-  const [loaded, setLoaded] = useState<Loaded | null>(null);
-  const [failed, setFailed] = useState<string | null>(null);
+  const initial = options.initial;
+  const [loaded, setLoaded] = useState<Loaded | null>(() =>
+    orgId != null && initial != null ? seedOf(orgId, initial) : null,
+  );
+  const [failed, setFailed] = useState<string | null>(() =>
+    orgId != null && initial === null ? orgId : null,
+  );
   // The filter and archived view belong to one org: another org reads the defaults at once, so
   // its first load never carries the old org's view.
   const [viewState, setViewState] = useState<ViewState>({ orgId, ...DEFAULT_VIEW });
@@ -165,7 +189,33 @@ export function useConversationGroups(
     setViewState((v) => ({ ...(v.orgId === orgId ? v : { orgId, ...DEFAULT_VIEW }), ...patch }));
   const setFilter = (f: SidebarFilter) => setView({ filter: f });
   const setArchivedOpen = (open: boolean) => setView({ archivedOpen: open });
-  const [archivedCount, setArchivedCount] = useState<{ orgId: string; n: number } | null>(null);
+  const [archivedCount, setArchivedCount] = useState<{ orgId: string; n: number } | null>(() =>
+    orgId != null && initial?.archivedCount !== undefined
+      ? { orgId, n: initial.archivedCount }
+      : null,
+  );
+  // The org and view whose rows came from the server: the load effect skips them (no browser read
+  // at first paint, nor after a refresh); any other view loads.
+  const seededFor = useRef<string | null>(
+    orgId != null && initial !== undefined ? `${orgId}|${DEFAULT_KEY}` : null,
+  );
+  // New props from the server: merge the fresh default page into what is shown (the same org and
+  // view), replace another org's rows, keep a filtered view the viewer opened.
+  const [seed, setSeed] = useState(initial);
+  if (initial !== undefined && seed !== initial) {
+    setSeed(initial);
+    const filtered = loaded !== null && loaded.orgId === orgId && loaded.view !== DEFAULT_KEY;
+    if (orgId != null && initial === null) {
+      if (loaded?.orgId !== orgId) setFailed(orgId);
+    } else if (orgId != null && initial !== null && !filtered) {
+      seededFor.current = `${orgId}|${DEFAULT_KEY}`;
+      const fresh = seedOf(orgId, initial);
+      setLoaded(loaded?.orgId === orgId ? mergeRefresh(loaded, fresh) : fresh);
+      setFailed(null);
+      if (initial.archivedCount !== undefined)
+        setArchivedCount({ orgId, n: initial.archivedCount });
+    }
+  }
   // The q sent to the kernel: the filter's once typing settles.
   // biome-ignore lint/correctness/useExhaustiveDependencies: setView reads the current org
   useEffect(() => {
@@ -215,17 +265,12 @@ export function useConversationGroups(
     }
   }, []);
 
-  // A new org: drop the old org's groups at once (its view resets by itself, see viewState).
-  useEffect(() => {
-    setFailed(null);
-    if (orgId === null || orgId === undefined) return;
-    setLoaded((l) => (l?.orgId === orgId ? l : null));
-  }, [orgId]);
-
-  // A new org or view: load it (rows of the same list stay until the answer replaces them).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: key names the view load reads
+  // A new org or view: load it (rows of the same list stay until the answer replaces them; another
+  // org's rows are never shown, see `mine`), unless the server already sent it.
   useEffect(() => {
     if (orgId === null || orgId === undefined) return;
+    if (seededFor.current === `${orgId}|${key}`) return;
+    seededFor.current = null;
     void load(orgId);
   }, [orgId, key, load]);
 

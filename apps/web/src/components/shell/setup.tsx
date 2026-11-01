@@ -5,23 +5,16 @@ import {
   Card,
   ItemList,
   type ItemListRow,
+  type SetupStep,
   Stack,
   type Step,
   StepList,
   Text,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { createContext, useContext } from "react";
 import { useRouter } from "../../i18n/navigation";
-import { getReadiness, type OrgReadiness, setupReady } from "../../lib/agents";
+import { type OrgReadiness, setupReady } from "../../lib/agents";
 import { canUpdateOrg } from "../../lib/org-settings";
 import type { Me } from "../../lib/session";
 import { navLevelOf } from "./nav";
@@ -29,131 +22,14 @@ import { navLevelOf } from "./nav";
 export { setupReady };
 
 /**
- * Whether the current org can run (web-order spec §3.8), from `GET /orgs/:id/readiness`:
- * `unknown` until it answers, `setup` while the model provider or an agent is missing (with the
- * answer), else `ready`.
+ * Whether the current org can run (web-order spec §3.8), from `GET /orgs/:id/readiness` as the
+ * `(app)` layout read it: `setup` while the model provider or an agent is missing (with the answer),
+ * else `ready`; `unknown` only outside the layout.
  */
 export type Readiness =
   | { kind: "unknown" }
   | { kind: "ready" }
   | ({ kind: "setup" } & OrgReadiness);
-
-const READY_PREFIX = "cap.ready.";
-/** Per account and org: another account signing in to the same tab never inherits the mark. */
-const READY_KEY = (accountId: string, orgId: string) => `${READY_PREFIX}${accountId}.${orgId}`;
-const noSubscribe = () => () => {};
-
-/** An org seen ready in this tab (sessionStorage; storage errors mean "not known"). */
-function storedReady(accountId: string, orgId: string): boolean {
-  try {
-    return sessionStorage.getItem(READY_KEY(accountId, orgId)) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function storeReady(accountId: string, orgId: string, ready: boolean): void {
-  try {
-    if (ready) sessionStorage.setItem(READY_KEY(accountId, orgId), "1");
-    else sessionStorage.removeItem(READY_KEY(accountId, orgId));
-  } catch {
-    // Not remembered: the next load reads again before painting.
-  }
-}
-
-/** Forget every readiness mark of the tab (sign-out). */
-export function clearReadyMarks(): void {
-  try {
-    const keys: string[] = [];
-    for (let i = 0; i < sessionStorage.length; i++) {
-      const key = sessionStorage.key(i);
-      if (key?.startsWith(READY_PREFIX)) keys.push(key);
-    }
-    for (const key of keys) sessionStorage.removeItem(key);
-  } catch {
-    // Storage unavailable: nothing was remembered.
-  }
-}
-
-/**
- * The readiness of the current org (`undefined` while /me loads, `null` without an org, which the
- * org chooser handles), from the cheap readiness endpoint (no vendor call).
- *
- * - An org seen ready in this tab (sessionStorage) is ready at once, re-validated in the
- *   background; the setup layout replaces the shell only if the re-read says so.
- * - `ready` is then kept until the org changes; while in setup every workspace navigation reads
- *   again (the step pages change it), keeping the setup state meanwhile so nothing flips. Admin
- *   console navigations never read.
- * - A failed read counts as ready: the shell's pages report their own errors.
- * - An org switch keeps a ready shell until the new org is read.
- *
- * `recheck()` reads again and resolves once the new state is set (ignored for a stale org).
- */
-export function useReadiness(
-  accountId: string | undefined,
-  orgId: string | null | undefined,
-  pathname: string,
-): { state: Readiness; recheck(): Promise<void> } {
-  const [held, setHeld] = useState<{ orgId: string | null; r: Readiness } | null>(null);
-  const heldRef = useRef(held);
-  heldRef.current = held;
-  const orgRef = useRef(orgId);
-  orgRef.current = orgId;
-  // The server render and the first hydration know nothing stored (the neutral state).
-  const known = useSyncExternalStore(
-    noSubscribe,
-    () =>
-      typeof orgId === "string" && accountId !== undefined ? storedReady(accountId, orgId) : false,
-    () => false,
-  );
-  const read = useCallback(
-    async (org: string): Promise<Readiness> => {
-      try {
-        const r = await getReadiness(org);
-        const ready = setupReady(r);
-        if (accountId !== undefined) storeReady(accountId, org, ready);
-        return ready ? { kind: "ready" } : { kind: "setup", ...r };
-      } catch {
-        return { kind: "ready" };
-      }
-    },
-    [accountId],
-  );
-  // Admin console routes need no readiness: their navigations do not trigger a read.
-  const trigger = setupRouteOf(pathname) === "outside" ? "outside" : pathname;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: trigger only triggers a re-read
-  useEffect(() => {
-    if (orgId === undefined) return;
-    if (orgId === null) {
-      setHeld({ orgId, r: { kind: "ready" } });
-      return;
-    }
-    const prev = heldRef.current;
-    if (prev?.orgId === orgId && prev.r.kind === "ready") return;
-    let live = true;
-    void read(orgId).then((r) => {
-      if (live && orgRef.current === orgId) setHeld({ orgId, r });
-    });
-    return () => {
-      live = false;
-    };
-  }, [orgId, trigger, read]);
-  const recheck = useCallback(async () => {
-    const org = orgRef.current;
-    if (org === undefined || org === null) return;
-    const r = await read(org);
-    if (orgRef.current === org) setHeld({ orgId: org, r });
-  }, [read]);
-  const state: Readiness =
-    orgId === undefined
-      ? { kind: "unknown" }
-      : held !== null && held.orgId === orgId
-        ? held.r
-        : known || held?.r.kind === "ready"
-          ? { kind: "ready" }
-          : { kind: "unknown" };
-  return { state, recheck };
-}
 
 const under = (pathname: string, prefix: string) =>
   pathname === prefix || pathname.startsWith(`${prefix}/`);
@@ -161,8 +37,7 @@ const under = (pathname: string, prefix: string) =>
 /**
  * Where a route stands while the org is not ready (web-order spec §3.8): `outside` keeps its own
  * frame (the admin console); `home` is the setup home (`/`, `/chat`); `step` renders inside the
- * setup frame with a back link (the pages a step needs, personal settings); anything else
- * `redirect`s to `/`.
+ * setup frame (the pages a step needs, personal settings); anything else `redirect`s to `/`.
  */
 export function setupRouteOf(pathname: string): "outside" | "home" | "step" | "redirect" {
   if (under(pathname, "/admin")) return "outside";
@@ -182,8 +57,8 @@ export function setupRouteOf(pathname: string): "outside" | "home" | "step" | "r
 }
 
 /**
- * The layout decision for pages (one read, shared): whether the setup layout is drawn, the org's
- * readiness as the app frame read it, and a re-read. Pages never read readiness themselves.
+ * The layout decision for pages: whether the setup frame is drawn, the org's readiness as the
+ * layout read it, and a re-read (`router.refresh()`). Pages never read readiness themselves.
  */
 export const SetupContext = createContext<{
   active: boolean;
@@ -209,7 +84,7 @@ function setupRoleOf(me: Me): SetupRole {
  * deployment admin must; members and guests wait. The agent: whoever may create agents (members
  * and up) once a model exists; others wait. `blocked` says why nothing can be done now.
  */
-export function useSetupSteps(
+export function useSetupChecklist(
   me: Me,
   r: OrgReadiness,
 ): { steps: Step[]; blocked: "deployment" | "admin" | null } {
@@ -284,6 +159,82 @@ export function useSetupSteps(
 }
 
 /**
+ * The setup sidebar's steps (web-SSR spec §4), by what the viewer may do (cosmetic; the kernel
+ * decides). The model is deployment-wide: an enterprise admin configures it in the admin console,
+ * everyone else waits (an org admin for a deployment admin). The agent: members and up create it
+ * once a model exists, guests wait for an admin. Then the optional steps: org admins invite
+ * members, connect a channel and install plugins; members connect their own accounts.
+ */
+export function useSetupSteps(me: Me, r: OrgReadiness): SetupStep[] {
+  const t = useTranslations("setupLayout");
+  const role = setupRoleOf(me);
+  const hasModel = r.modelProvider === "ready";
+  const canCreateAgent = navLevelOf(me) !== "guest";
+  const model: SetupStep = hasModel
+    ? {
+        id: "model",
+        label: t("steps.model"),
+        state: "done",
+        ...(role === "enterprise" ? { href: "/admin/extensions" } : {}),
+      }
+    : role === "enterprise"
+      ? { id: "model", label: t("steps.model"), state: "todo", href: "/admin/extensions" }
+      : {
+          id: "model",
+          label: t("steps.model"),
+          state: "waiting",
+          reason:
+            role === "orgAdmin" ? t("model.needsDeploymentAdmin") : t("model.waitingForAdmin"),
+        };
+  const agent: SetupStep =
+    r.agents > 0
+      ? {
+          id: "agent",
+          label: t("steps.agent"),
+          state: "done",
+          ...(canCreateAgent ? { href: "/agents/new" } : {}),
+        }
+      : !canCreateAgent
+        ? {
+            id: "agent",
+            label: t("steps.agent"),
+            state: "waiting",
+            reason: t("agent.waitingForAdmin"),
+          }
+        : hasModel
+          ? { id: "agent", label: t("steps.agent"), state: "todo", href: "/agents/new" }
+          : {
+              id: "agent",
+              label: t("steps.agent"),
+              state: "waiting",
+              reason: t("agent.needsModel"),
+            };
+  const later = (id: string, href: string): SetupStep => ({
+    id,
+    label: t(`steps.${id}` as "steps.model"),
+    state: "todo",
+    href,
+    optional: true,
+  });
+  const optional = canUpdateOrg(me)
+    ? [
+        later("channels", "/channels/new"),
+        later("members", "/settings/members"),
+        later("catalog", "/catalog"),
+      ]
+    : navLevelOf(me) === "member"
+      ? [later("connections", "/account/connections")]
+      : [];
+  return [model, agent, ...optional];
+}
+
+/** The setup sidebar's current item for a route: `home`, the step whose page it is, or none. */
+export function activeStepOf(pathname: string, steps: SetupStep[]): string {
+  if (setupRouteOf(pathname) !== "step") return "home";
+  return steps.find((s) => s.href !== undefined && under(pathname, s.href))?.id ?? "";
+}
+
+/**
  * The setup home (`/`, `/chat` while not ready): the checklist card ("开始之前 · 已完成 n / 3"),
  * then "可以稍后再做" with only what this viewer can act on (admins: invite members, channels,
  * plugins; members: their connections). A viewer with nothing to do is told why (role-specific),
@@ -293,14 +244,17 @@ export function SetupHome({
   me,
   readiness,
   onRefresh,
+  refreshing = false,
 }: {
   me: Me;
   readiness: OrgReadiness;
   onRefresh(): void;
+  /** The refresh is waiting for the server. */
+  refreshing?: boolean;
 }) {
   const th = useTranslations("home.setup");
   const ts = useTranslations("setupLayout");
-  const { steps, blocked } = useSetupSteps(me, readiness);
+  const { steps, blocked } = useSetupChecklist(me, readiness);
   const done = steps.filter((s) => s.done).length;
   const admin = canUpdateOrg(me);
   const later: ItemListRow[] = admin
@@ -342,7 +296,9 @@ export function SetupHome({
           <Text tone="muted">
             {blocked === "deployment" ? ts("waitingDeployment") : ts("waiting")}
           </Text>
-          <Button onClick={onRefresh}>{ts("refresh")}</Button>
+          <Button loading={refreshing} onClick={onRefresh}>
+            {ts("refresh")}
+          </Button>
         </Stack>
       )}
       {later.length > 0 ? (

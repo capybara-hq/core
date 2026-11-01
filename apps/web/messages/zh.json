@@ -401,6 +401,14 @@
     },
     "tool_output": {
       "not_found": "工具输出不存在或已过期。"
+    },
+    "page": {
+      "title": "加载失败",
+      "description": "页面没有加载出来。可以重试；问题持续时请联系管理员。",
+      "retry": "重试",
+      "starting": "内核正在启动…",
+      "startingDescription": "后端服务还没就绪，页面会自动重试。",
+      "startingStill": "后端服务仍未就绪。稍后再试，或联系管理员。"
     }
   },
   "agents": {
@@ -3307,7 +3315,15 @@
       "connections": "连接你的账号",
       "connectionsWhere": "个人设置 · 我的连接"
     },
-    "waitingDeployment": "需要部署管理员配置模型服务后才能继续"
+    "waitingDeployment": "需要部署管理员配置模型服务后才能继续",
+    "steps": {
+      "model": "配置模型",
+      "agent": "创建 agent",
+      "channels": "连接渠道",
+      "members": "邀请成员",
+      "catalog": "安装插件",
+      "connections": "我的连接"
+    }
   },
   "roles": {
     "need": {

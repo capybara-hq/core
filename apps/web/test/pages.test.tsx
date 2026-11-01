@@ -1,7 +1,5 @@
-import { DesignProvider, type LinkComponent, ToastProvider } from "@capybara-hq/design";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { NextIntlClientProvider } from "next-intl";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -13,13 +11,15 @@ import NotFound from "../src/app/(app)/not-found";
 import HomePage from "../src/app/(app)/page";
 import LoginPage from "../src/app/(auth)/login/page";
 import SetupPage from "../src/app/(auth)/setup/page";
-import { AppFrame } from "../src/components/shell/AppFrame";
 import { activeNavOf } from "../src/components/shell/nav";
-import { RequireSession } from "../src/components/shell/session";
-import { Link, resetNavigation, router } from "./support/navigation";
+import { navigateBrowser } from "../src/lib/browser";
+import type { Me } from "../src/lib/session";
+import { resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
+import { frameElement, renderFrame, shellOf } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+vi.mock("../src/lib/browser", () => ({ navigateBrowser: vi.fn() }));
 const notFound = vi.hoisted(() =>
   vi.fn(() => {
     throw new Error("NEXT_NOT_FOUND");
@@ -370,34 +370,21 @@ describe("(auth) 页面模板", () => {
 });
 
 describe("AppFrame（(app) 布局的 App Shell）", () => {
-  /** Opens the sidebar's 更多 group (collapsed unless the current page is inside it). */
   /** Opens the 更多 flyout (a menu to the right of the sidebar) and returns it. */
   async function openMore(nav: HTMLElement, name = "更多") {
     await userEvent.setup().click(within(nav).getByRole("button", { name }));
     return screen.findByRole("menu", { name });
   }
-
-  function renderFrame(locale: "zh" | "en" = "zh") {
-    return render(
-      <NextIntlClientProvider locale={locale} messages={locale === "zh" ? zh : en}>
-        <DesignProvider locale={locale} link={Link as LinkComponent}>
-          <ToastProvider>
-            <AppFrame version="v9.9.9">
-              <RequireSession>
-                <p>page body</p>
-              </RequireSession>
-            </AppFrame>
-          </ToastProvider>
-        </DesignProvider>
-      </NextIntlClientProvider>,
-    );
-  }
+  const as = (role: string): Me => ({
+    ...ME,
+    memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
+  });
+  const notEnterprise: Me = { ...ME, account: { ...ME.account, isEnterpriseAdmin: false } };
 
   it("the sidebar lists existing routes only; the status bar reads account@org:route and the version", async () => {
     resetNavigation("/agents/new");
-    stubApi({ "GET /api/v1/me": () => json(200, ME) });
-    renderFrame();
-    expect(await screen.findByText("page body")).toBeTruthy();
+    renderFrame(shellOf(ME));
+    expect(screen.getByText("page body")).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "主导航" });
     const links = within(nav).getAllByRole("link");
     expect(links.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
@@ -434,17 +421,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
   });
 
   it("普通成员的顶栏不显示管理员才能用的「渠道」", async () => {
-    resetNavigation("/");
-    stubApi({
-      "GET /api/v1/me": () =>
-        json(200, {
-          ...ME,
-          memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],
-        }),
-      "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
-    });
-    renderFrame();
-    expect(await screen.findByText("page body")).toBeTruthy();
+    renderFrame(shellOf(as("member")));
     const nav = screen.getByRole("navigation", { name: "主导航" });
     const menu = await openMore(nav);
     expect(within(menu).queryByRole("menuitem", { name: zh.nav.channels })).toBeNull();
@@ -454,44 +431,24 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(within(menu).getByRole("menuitem", { name: zh.nav.skills })).toBeTruthy();
   });
 
-  it("while /me is pending a workspace route shows only the neutral state (setup layout, D)", () => {
-    resetNavigation("/");
-    stubApi({ "GET /api/v1/me": () => new Promise<Response>(() => {}) as unknown as Response });
-    renderFrame();
-    expect(document.querySelector('[data-part="pending-state"]')).not.toBeNull();
-    expect(screen.queryByRole("navigation", { name: "主导航" })).toBeNull();
-    expect(document.querySelector('[data-template="SetupPage"]')).toBeNull();
-  });
-
-  it("while /me is pending on /admin the conversation section is busy, without the empty hint (I2)", async () => {
-    resetNavigation("/admin");
-    stubApi({ "GET /api/v1/me": () => new Promise<Response>(() => {}) as unknown as Response });
-    renderFrame();
+  it("a failed conversation read on the server: the section's error state with 重试", () => {
+    renderFrame(shellOf(ME, { groups: null }));
     const region = screen.getByRole("region", { name: "会话" });
-    expect(region.getAttribute("aria-busy")).toBe("true");
-    expect(within(region).queryByText("还没有会话")).toBeNull();
+    expect(within(region).getByRole("button", { name: zh.common.retry })).toBeTruthy();
   });
 
   it("signed in without a current org: the chooser covers the whole shell; opening an org enters the app", async () => {
-    resetNavigation("/");
-    const me = {
+    const me: Me = {
       ...ME,
       currentOrgId: null,
       memberships: [...ME.memberships, { orgId: "o2", slug: "b", name: "Beta", role: "member" }],
     };
-    let current: string | null = null;
     const calls = stubApi({
-      "GET /api/v1/me": () => json(200, { ...me, currentOrgId: current }),
-      "PUT /api/v1/me/current-org": (init) => {
-        current = (JSON.parse(String(init?.body)) as { orgId: string }).orgId;
-        return new Response(null, { status: 204 });
-      },
-      "GET /api/v1/orgs/o2/inbox": () => json(200, { items: [], truncated: false }),
-      "GET /api/v1/orgs/o2/conversations/groups": () => json(200, { groups: [], next: null }),
+      "PUT /api/v1/me/current-org": () => new Response(null, { status: 204 }),
     });
-    renderFrame();
+    const view = renderFrame(shellOf(me));
     const c = zh.orgChooser;
-    expect(await screen.findByRole("heading", { name: c.title })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: c.title })).toBeTruthy();
     expect(document.querySelector('[data-template="AuthPage"]')).not.toBeNull();
     expect(screen.queryByRole("navigation", { name: "主导航" })).toBeNull();
     expect(screen.queryByText("page body")).toBeNull();
@@ -504,71 +461,31 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(screen.getByRole("button", { name: c.create })).toBeTruthy();
     expect(screen.getByRole("link", { name: c.admin }).getAttribute("href")).toBe("/admin");
     await userEvent.click(within(orgs[1] as HTMLElement).getByRole("button", { name: c.enter }));
-    expect(await screen.findByText("page body")).toBeTruthy();
+    await vi.waitFor(() => expect(router.refresh).toHaveBeenCalled());
     expect(calls.find((x) => x.method === "PUT")?.body).toEqual({ orgId: "o2" });
+    // the button stays pending until the server's new frame arrives
+    expect(
+      within(orgs[1] as HTMLElement)
+        .getByRole("button", { name: c.enter })
+        .getAttribute("aria-busy"),
+    ).toBe("true");
+    view.update(shellOf({ ...me, currentOrgId: "o2" }));
+    expect(screen.getByText("page body")).toBeTruthy();
     expect(screen.getByRole("button", { name: "当前组织：Beta，切换组织" })).toBeTruthy();
   });
 
-  it("no org at all: the chooser creates one and enters it", async () => {
-    resetNavigation("/");
-    let me: typeof ME = { ...ME, currentOrgId: null, memberships: [] };
-    const calls = stubApi({
-      "GET /api/v1/me": () => json(200, me),
-      "POST /api/v1/orgs": () => {
-        me = { ...me, memberships: [{ orgId: "o9", slug: "new", name: "New", role: "owner" }] };
-        return json(201, { org: { id: "o9", slug: "new", name: "New" }, role: "owner" });
-      },
-      "PUT /api/v1/me/current-org": () => {
-        me = { ...me, currentOrgId: "o9" };
-        return new Response(null, { status: 204 });
-      },
-      "GET /api/v1/orgs/o9/inbox": () => json(200, { items: [], truncated: false }),
-      "GET /api/v1/orgs/o9/conversations/groups": () => json(200, { groups: [], next: null }),
-    });
-    renderFrame();
-    const c = zh.orgChooser;
-    expect(await screen.findByRole("heading", { name: c.titleNone })).toBeTruthy();
-    expect(screen.queryByRole("list", { name: c.listLabel })).toBeNull();
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: c.create }));
-    const dialog = await screen.findByRole("dialog", { name: zh.home.createOrg.title });
-    await user.type(within(dialog).getByRole("textbox"), "New");
-    await user.click(within(dialog).getByRole("button", { name: zh.home.createOrg.submit }));
-    expect(await screen.findByText("page body")).toBeTruthy();
-    expect(calls.filter((x) => x.method !== "GET").map((x) => [x.method, x.url])).toEqual([
-      ["POST", "/api/v1/orgs"],
-      ["PUT", "/api/v1/me/current-org"],
-    ]);
-  });
-
-  it("no org and not allowed to create one: the chooser says to ask for an invitation", async () => {
-    resetNavigation("/");
-    stubApi({
-      "GET /api/v1/me": () =>
-        json(200, {
-          ...ME,
-          account: { ...ME.account, isEnterpriseAdmin: false },
-          currentOrgId: null,
-          memberships: [],
-          canCreateOrg: false,
-        }),
-    });
-    renderFrame();
-    expect(await screen.findByText(zh.orgChooser.askHint)).toBeTruthy();
+  it("no org and not allowed to create one: the chooser says to ask for an invitation", () => {
+    renderFrame(
+      shellOf({ ...notEnterprise, currentOrgId: null, memberships: [], canCreateOrg: false }),
+    );
+    expect(screen.getByText(zh.orgChooser.askHint)).toBeTruthy();
     expect(screen.queryByRole("button", { name: zh.orgChooser.create })).toBeNull();
     expect(screen.queryByRole("link", { name: zh.orgChooser.admin })).toBeNull();
     expect(screen.getByRole("button", { name: zh.orgChooser.logout })).toBeTruthy();
   });
 
   it("the account menu's Organization submenu ends with Create organization", async () => {
-    resetNavigation("/");
-    stubApi({
-      "GET /api/v1/me": () => json(200, ME),
-      "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
-      "GET /api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
-    });
-    renderFrame();
-    await screen.findByText("page body");
+    renderFrame(shellOf(ME));
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /^账户: Grant/ }));
     await user.click(screen.getByRole("menuitem", { name: zh.shell.orgMenu }));
@@ -579,12 +496,9 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
   });
 
   it("the group ＋ opens a new conversation with that agent picked", async () => {
-    resetNavigation("/");
-    stubApi({
-      "GET /api/v1/me": () => json(200, ME),
-      "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
-      "GET /api/v1/orgs/o1/conversations/groups": () =>
-        json(200, {
+    renderFrame(
+      shellOf(ME, {
+        groups: {
           groups: [
             {
               agent: { id: "a1", name: "研究助手" },
@@ -594,35 +508,25 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
             },
           ],
           next: null,
-        }),
-    });
-    renderFrame();
-    await userEvent.click(await screen.findByRole("button", { name: "与 研究助手 新建会话" }));
+        },
+      }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "与 研究助手 新建会话" }));
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/chat?agent=a1"));
   });
 
   it("非企业管理员看不到一级导航「管理」（组织 owner 也不行）", async () => {
-    resetNavigation("/");
-    stubApi({
-      "GET /api/v1/me": () =>
-        json(200, { ...ME, account: { ...ME.account, isEnterpriseAdmin: false } }),
-      "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
-    });
-    renderFrame();
-    expect(await screen.findByText("page body")).toBeTruthy();
+    renderFrame(shellOf(notEnterprise));
     const nav = screen.getByRole("navigation", { name: "主导航" });
     expect(screen.queryByRole("link", { name: "管理后台" })).toBeNull();
     const menu = await openMore(nav);
     expect(within(menu).getByRole("menuitem", { name: zh.nav.evals })).toBeTruthy();
   });
 
-  it("an enterprise admin without an org still reaches the admin console in the shell", async () => {
+  it("an enterprise admin without an org still reaches the admin console in the shell", () => {
     resetNavigation("/admin");
-    stubApi({
-      "GET /api/v1/me": () => json(200, { ...ME, currentOrgId: null, memberships: [] }),
-    });
-    renderFrame();
-    expect(await screen.findByText("page body")).toBeTruthy();
+    renderFrame(shellOf({ ...ME, currentOrgId: null, memberships: [] }));
+    expect(screen.getByText("page body")).toBeTruthy();
     // the admin context: its items, the current one marked
     const nav = screen.getByRole("navigation", { name: "主导航" });
     const overview = within(nav).getByRole("link", { name: zh.admin.nav.overview });
@@ -631,99 +535,44 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(screen.queryByRole("region", { name: "会话" })).toBeNull();
   });
 
-  it("a person who is not an enterprise admin keeps the workspace sidebar under /admin", async () => {
+  it("a person who is not an enterprise admin keeps the workspace sidebar under /admin", () => {
     resetNavigation("/admin/accounts");
-    stubApi({
-      "GET /api/v1/me": () =>
-        json(200, { ...ME, account: { ...ME.account, isEnterpriseAdmin: false } }),
-      "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
-    });
-    renderFrame();
-    expect(await screen.findByText("page body")).toBeTruthy();
+    renderFrame(shellOf(notEnterprise));
+    expect(screen.getByText("page body")).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "主导航" });
     // the 403 page stands beside the workspace sidebar, never the admin context
     expect(within(nav).queryByRole("link", { name: zh.admin.nav.overview })).toBeNull();
     expect(within(nav).getByRole("link", { name: zh.nav.agents })).toBeTruthy();
   });
 
-  it("访客的顶栏不显示「技能」", async () => {
-    resetNavigation("/");
-    stubApi({
-      "GET /api/v1/me": () =>
-        json(200, {
-          ...ME,
-          memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "guest" }],
-        }),
-      "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
-    });
-    renderFrame();
-    expect(await screen.findByText("page body")).toBeTruthy();
+  it("访客的顶栏不显示「技能」", () => {
+    renderFrame(shellOf(as("guest")));
     const nav = screen.getByRole("navigation", { name: "主导航" });
     expect(within(nav).queryByRole("link", { name: zh.nav.skills })).toBeNull();
     expect(within(nav).getByRole("link", { name: zh.nav.agents })).toBeTruthy();
-  });
-
-  it("未登录访问某页（401）：去登录页并带回该页", async () => {
-    resetNavigation("/channels/c1");
-    stubApi({
-      "GET /api/v1/me": () => json(401, { error: { code: "auth.required", message: "x" } }),
-      "POST /api/v1/auth/refresh": () =>
-        json(401, { error: { code: "auth.refresh_invalid", message: "x" } }),
-    });
-    renderFrame();
-    await vi.waitFor(() =>
-      expect(router.replace).toHaveBeenCalledWith("/login?returnTo=%2Fchannels%2Fc1"),
-    );
   });
 
   it.each(["zh", "en"] as const)(
     "顶栏「收件箱」带待处理数 Badge（收件箱汇总：工具审批 + 技能变更）（%s）",
     async (locale) => {
       const m = locale === "zh" ? zh : en;
-      resetNavigation("/");
-      stubApi({
-        "GET /api/v1/me": () => json(200, ME),
-        "GET /api/v1/orgs/o1/inbox": () =>
-          json(200, {
-            items: [
-              { type: "tool_approval", id: "x" },
-              { type: "skill_change", id: "y" },
-            ],
-            truncated: false,
-          }),
-      });
-      renderFrame(locale);
-      const nav = await screen.findByRole("navigation", {
+      renderFrame(shellOf(ME, { pending: { count: 2, more: false } }), undefined, { locale });
+      const nav = screen.getByRole("navigation", {
         name: locale === "zh" ? "主导航" : "Main navigation",
       });
-      await vi.waitFor(() =>
-        expect(
-          screen.getByRole("link", {
-            name: locale === "zh" ? `${m.nav.inbox}，2 项待处理` : `${m.nav.inbox}, 2 pending`,
-          }),
-        ).toBeTruthy(),
-      );
+      expect(
+        screen.getByRole("link", {
+          name: locale === "zh" ? `${m.nav.inbox}，2 项待处理` : `${m.nav.inbox}, 2 pending`,
+        }),
+      ).toBeTruthy();
       const menu = await openMore(nav, locale === "zh" ? "更多" : "More");
       expect(within(menu).getByRole("menuitem", { name: m.nav.connectors })).toBeTruthy();
     },
   );
 
-  it("收件箱被截断（truncated）：Badge 显示「<数量>+」", async () => {
-    resetNavigation("/");
-    stubApi({
-      "GET /api/v1/me": () => json(200, ME),
-      "GET /api/v1/orgs/o1/inbox": () =>
-        json(200, {
-          items: [
-            { type: "tool_approval", id: "x" },
-            { type: "skill_change", id: "y" },
-          ],
-          truncated: true,
-        }),
-    });
-    renderFrame("en");
-    await screen.findByRole("navigation", { name: "Main navigation" });
-    const link = await screen.findByRole("link", { name: `${en.nav.inbox}, 2+ pending` });
+  it("收件箱被截断（truncated）：Badge 显示「<数量>+」", () => {
+    renderFrame(shellOf(ME, { pending: { count: 2, more: true } }), undefined, { locale: "en" });
+    const link = screen.getByRole("link", { name: `${en.nav.inbox}, 2+ pending` });
     expect(within(link).getByText("2+")).toBeTruthy();
   });
 
@@ -733,12 +582,10 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
       memberships: [...ME.memberships, { orgId: "o2", slug: "b", name: "Beta", role: "member" }],
     };
     const calls = stubApi({
-      "GET /api/v1/me": () => json(200, me),
       "PUT /api/v1/me/current-org": () => new Response(null, { status: 204 }),
       "POST /api/v1/auth/logout": () => new Response(null, { status: 204 }),
     });
-    renderFrame();
-    await screen.findByText("page body");
+    renderFrame(shellOf(me));
     const user = userEvent.setup();
     const account = () => screen.getByRole("button", { name: `账户: ${ME.account.displayName}` });
     // the account menu: Organization ▸ and Language ▸ above sign-out
@@ -776,84 +623,28 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
 
     await user.click(account());
     await user.click(await screen.findByRole("menuitem", { name: zh.common.logout }));
-    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/login"));
-  });
-
-  it("while the session loads (/admin keeps the shell): the content shows loading, the status bar no context", () => {
-    resetNavigation("/admin");
-    stubApi({ "GET /api/v1/me": () => new Promise<Response>(() => {}) as unknown as Response });
-    renderFrame();
-    expect(screen.getAllByText(zh.common.loading).length).toBeGreaterThan(0);
-    expect(within(screen.getByRole("main")).getByText(zh.common.loading)).toBeTruthy();
-    const statusBar = screen.getByRole("contentinfo");
-    expect(statusBar.textContent).not.toContain("@");
-    expect(statusBar.textContent).toContain("v9.9.9");
-    // 用户菜单在会话就绪前不可点击（不渲染空下拉）
-    expect(screen.queryByRole("button", { name: /账户/ })).toBeNull();
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/login"));
   });
 
   it("服务端渲染不含时区（避免与浏览器时区不同导致的水合不一致）", () => {
     resetNavigation("/admin");
-    stubApi({ "GET /api/v1/me": () => json(200, ME) });
-    const html = renderToString(
-      <NextIntlClientProvider locale="zh" messages={zh}>
-        <DesignProvider locale="zh" link={Link as LinkComponent}>
-          <ToastProvider>
-            <AppFrame version="v9.9.9">
-              <RequireSession>
-                <p>page body</p>
-              </RequireSession>
-            </AppFrame>
-          </ToastProvider>
-        </DesignProvider>
-      </NextIntlClientProvider>,
-    );
+    const html = renderToString(frameElement(shellOf(ME)));
     expect(html).toContain("v9.9.9");
     expect(html).not.toContain("UTC");
   });
 
-  it("a workspace route server-renders the neutral state: the layout waits for the org's readiness", () => {
-    const html = renderToString(
-      <NextIntlClientProvider locale="zh" messages={zh}>
-        <DesignProvider locale="zh" link={Link as LinkComponent}>
-          <ToastProvider>
-            <AppFrame version="v9.9.9">
-              <NotFound />
-            </AppFrame>
-          </ToastProvider>
-        </DesignProvider>
-      </NextIntlClientProvider>,
-    );
-    expect(html).toContain('data-part="pending-state"');
-    expect(html).not.toContain('data-part="sidebar"');
+  it("a workspace route server-renders its frame, never a neutral state", () => {
+    const html = renderToString(frameElement(shellOf(ME), <NotFound />));
+    expect(html).toContain('data-part="sidebar"');
+    expect(html).toContain('data-kind="404"');
+    expect(html).not.toContain('data-part="pending-state"');
   });
 
-  it("不需要会话的内容（404）在 /admin 下服务端渲染时即输出，无需等待 /me", () => {
+  it("the not-found page renders inside the admin shell on the server", () => {
     resetNavigation("/admin/nope");
-    const html = renderToString(
-      <NextIntlClientProvider locale="zh" messages={zh}>
-        <DesignProvider locale="zh" link={Link as LinkComponent}>
-          <ToastProvider>
-            <AppFrame version="v9.9.9">
-              <NotFound />
-            </AppFrame>
-          </ToastProvider>
-        </DesignProvider>
-      </NextIntlClientProvider>,
-    );
+    const html = renderToString(frameElement(shellOf(ME), <NotFound />));
     expect(html).toContain('data-template="StatusPage"');
     expect(html).toContain('data-kind="404"');
-  });
-
-  it("未登录（401）时跳转到登录页", async () => {
-    stubApi({
-      "GET /api/v1/me": () => json(401, { error: { code: "auth.required", message: "x" } }),
-      "POST /api/v1/auth/refresh": () =>
-        json(401, { error: { code: "auth.refresh_invalid", message: "x" } }),
-    });
-    renderFrame();
-    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/login"));
-    expect(screen.queryByText("page body")).toBeNull();
   });
 });
 

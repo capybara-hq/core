@@ -2,7 +2,7 @@
 
 import type { CommandGroup, IconName, SidebarNavItem } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "../../i18n/navigation";
 import { listInbox } from "../../lib/inbox";
 import { listUiContributions, type UiContributionItem, uiLocale } from "../../lib/ui";
@@ -140,18 +140,36 @@ export function activeNavOf(pathname: string): string {
   return pathname === "/" ? "overview" : "";
 }
 
+type PendingCount = { count: number; more: boolean };
+
 /**
- * 当前用户收件箱里的待处理数（`GET /inbox`：工具审批 + 技能变更）：组织或路由变化时、每 30 秒、以及调用
- * `refresh()` 时重读；没有当前组织或读取失败时为 0。`more`：收件箱被截断（实际不止 `count` 项）。
+ * The current user's pending inbox count (`GET /inbox`: tool approvals and skill changes), read
+ * again when the org or the route changes, every 30 s and on `refresh()`; 0 without an org or when
+ * the read fails. `more`: the inbox was truncated (more than `count` items).
+ *
+ * `options.initial` is the count the `(app)` layout read on the server (`null`: that read failed):
+ * shown at first paint with no browser read, and again whenever the server sends a new one.
  */
 export function usePendingApprovals(
   orgId: string | null,
   pathname: string,
+  options: { initial?: PendingCount | null } = {},
 ): { count: number; more: boolean; refresh(): void } {
-  const [count, setCount] = useState(0);
-  const [more, setMore] = useState(false);
+  const { initial } = options;
+  const [count, setCount] = useState(initial?.count ?? 0);
+  const [more, setMore] = useState(initial?.more ?? false);
   const [nonce, setNonce] = useState(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: pathname 与 nonce 只用于触发重读
+  // The org, route and refresh the server's count stands for: the effect does not read it again.
+  const seededFor = useRef<string | null>(
+    initial !== undefined ? `${orgId}|${pathname}|${nonce}` : null,
+  );
+  const [seed, setSeed] = useState(initial);
+  if (initial !== undefined && seed !== initial) {
+    setSeed(initial);
+    setCount(initial?.count ?? 0);
+    setMore(initial?.more ?? false);
+    seededFor.current = `${orgId}|${pathname}|${nonce}`;
+  }
   useEffect(() => {
     if (orgId === null) {
       setCount(0);
@@ -171,7 +189,10 @@ export function usePendingApprovals(
           setMore(false);
         },
       );
-    void load();
+    if (seededFor.current !== `${orgId}|${pathname}|${nonce}`) {
+      seededFor.current = null;
+      void load();
+    }
     const timer = setInterval(() => void load(), PENDING_POLL_MS);
     return () => {
       disposed = true;
@@ -190,18 +211,30 @@ export const pluginPageHref = (plugin: string, id: string) =>
  * The sidebar's Extensions group: the page contributions (`place: "page"`) of the current org's
  * enabled extensions, schema views and embeds alike, labelled by the page title; when two pages
  * share a title, each label gets its plugin name. Empty without an org, pages or on a failed read
- * (the group is then hidden).
+ * (the group is then hidden). `options.initial`: the pages the `(app)` layout read on the server
+ * (`null`: that read failed), used instead of a browser read and again on every new one.
  */
 export function useExtensions(
   orgId: string | null,
   locale: string,
+  options: { initial?: UiContributionItem[] | null } = {},
 ): { id: string; label: string; href: string }[] {
-  const [pages, setPages] = useState<UiContributionItem[]>([]);
+  const { initial } = options;
+  const [pages, setPages] = useState<UiContributionItem[]>(initial ?? []);
+  const seededFor = useRef<string | null>(initial !== undefined ? `${orgId}` : null);
+  const [seed, setSeed] = useState(initial);
+  if (initial !== undefined && seed !== initial) {
+    setSeed(initial);
+    setPages(initial ?? []);
+    seededFor.current = `${orgId}`;
+  }
   useEffect(() => {
     if (orgId === null) {
       setPages([]);
       return;
     }
+    if (seededFor.current === orgId) return;
+    seededFor.current = null;
     let disposed = false;
     listUiContributions(orgId).then(
       ({ items }) => {

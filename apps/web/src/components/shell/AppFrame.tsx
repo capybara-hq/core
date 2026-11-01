@@ -2,14 +2,11 @@
 
 import {
   AppShell,
-  Button,
   initialOf,
   type MenuItem,
   OverviewPage,
-  PendingState,
   SetupPage,
   type SidebarContext,
-  StatusPage,
   useToast,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
@@ -21,14 +18,19 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  useTransition,
 } from "react";
 import { usePathname, useRouter } from "../../i18n/navigation";
+import { type OrgReadiness, setupReady } from "../../lib/agents";
 import { ApiClientError } from "../../lib/api";
 import { loginPathFor } from "../../lib/auth-sources";
+import { navigateBrowser } from "../../lib/browser";
 import { useConnectResultToast } from "../../lib/connect";
 import { NoCurrentOrgError } from "../../lib/conversations";
 import { usePreferences } from "../../lib/preferences";
-import { getMe, logout, type Me, setCurrentOrg } from "../../lib/session";
+import type { ShellData } from "../../lib/server/session";
+import { logout, setCurrentOrg } from "../../lib/session";
+import { broadcastSession, useSessionSync } from "../../lib/session-sync";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { CreateOrgDialog } from "../CreateOrgDialog";
 import { LeaveOrgDialog } from "../LeaveOrgDialog";
@@ -45,9 +47,16 @@ import {
 } from "./nav";
 import { OrgChooser } from "./OrgChooser";
 import { type Session, SessionContext } from "./session";
-import { clearReadyMarks, SetupContext, SetupHome, setupRouteOf, useReadiness } from "./setup";
+import {
+  activeStepOf,
+  type Readiness,
+  SetupContext,
+  SetupHome,
+  setupRouteOf,
+  useSetupSteps,
+} from "./setup";
 
-/** 本地时区，如 `UTC+8`、`UTC-3:30`（StatusBar 右侧，spec §4.4）。 */
+/** The local time zone, e.g. `UTC+8`, `UTC-3:30` (the status bar's right side, spec §4.4). */
 function timeZoneLabel(): string {
   const offset = -new Date().getTimezoneOffset();
   const sign = offset < 0 ? "-" : "+";
@@ -59,165 +68,196 @@ function timeZoneLabel(): string {
 const noSubscribe = () => () => {};
 
 /**
- * 浏览器时区：服务端与水合时的首次渲染为空串（服务器时区与用户的不同，避免水合不一致），
- * 水合后取浏览器的值。
+ * The browser's time zone: empty in the server render and the first hydration (the server's zone
+ * is not the viewer's), the browser's afterwards.
  */
 function useTimeZoneLabel(): string {
   return useSyncExternalStore(noSubscribe, timeZoneLabel, () => "");
 }
 
+/** The setup frame re-reads readiness this often (and on focus), so a member sees the shell appear. */
+const SETUP_REFRESH_MS = 30_000;
+/** Stands in for readiness when there is no org (the setup steps are then not drawn). */
+const NO_ORG_READINESS: OrgReadiness = { modelProvider: "ready", agents: 1 };
+
+const under = (pathname: string, prefix: string) =>
+  pathname === prefix || pathname.startsWith(`${prefix}/`);
+
 /**
- * The (app) route group's frame: reads `GET /api/v1/me` (401 → sign-in), provides it to pages
- * through {@link SessionContext}, and renders the App Shell: the sidebar in one of its two
- * contexts (web order §2.1–§2.2: the workspace with the org switcher, navigation, 更多 with the
- * extension pages and my conversations; or the admin console under `/admin`), the account menu
- * (org switch, language, personal settings, sign out) and the status bar
- * (`<login>@<slug>:<path>` · version · time zone). Pages that need the session wait for it.
+ * The `(app)` route group's frame (web-SSR spec §3), drawn from what the layout read on the server
+ * (`initial`, `getShell()`), with no browser read on mount. The frame is chosen at first paint from
+ * the props and the route:
+ * 1. the org chooser, without a current org (outside `/admin`);
+ * 2. the setup frame, while the org is not ready on a setup route (web-SSR spec §4);
+ * 3. otherwise the App Shell: the sidebar in its work or admin context (web order §2.1–§2.2), the
+ *    account menu and the status bar (`<login>@<slug>:<path>` · version · time zone).
+ *
+ * It provides the session to pages ({@link SessionContext}). Session changes re-render the route on
+ * the server (`router.refresh()`), in a transition, so the current frame stays until the new one
+ * is ready; the conversation list, the pending count and the extension pages start from the props
+ * and keep their live updates (polls, focus, `cap:conversations-changed`).
  */
-export function AppFrame({ version, children }: { version: string; children: ReactNode }) {
+export function AppFrame({
+  initial,
+  version,
+  children,
+}: {
+  initial: ShellData;
+  version: string;
+  children: ReactNode;
+}) {
   const t = useTranslations();
   const locale = useLocale();
   const router = useRouter();
   const pathname = usePathname();
-  // 回跳路径只在读取 /me 失败时取；换路由不应重读 /me，所以不放进 load 的依赖
-  const pathnameRef = useRef(pathname);
-  pathnameRef.current = pathname;
   const errorMessage = useErrorMessage();
   const toast = useToast();
-  const [me, setMe] = useState<Me>();
-  // undefined while /me loads (the section shows its skeleton), null when there is no current org
-  const conversations = useConversationGroups(
-    me === undefined ? undefined : me.currentOrgId,
-    pathname,
-    {
-      onError: (e) =>
-        toast.error(e instanceof NoCurrentOrgError ? t("shell.noCurrentOrg") : errorMessage(e)),
-    },
-  );
-  const pending = usePendingApprovals(me?.currentOrgId ?? null, pathname);
+  const { me, org: currentOrg, readiness } = initial;
+  const orgId = currentOrg?.orgId ?? null;
+  const conversations = useConversationGroups(orgId, pathname, {
+    initial: initial.groups,
+    onError: (e) =>
+      toast.error(e instanceof NoCurrentOrgError ? t("shell.noCurrentOrg") : errorMessage(e)),
+  });
+  const pending = usePendingApprovals(orgId, pathname, { initial: initial.pending });
   const { primary, more, inbox, adminHref, commands } = useNav(
     pending.count,
-    me === undefined ? "guest" : navLevelOf(me),
+    navLevelOf(me),
     pending.more,
-    me?.account.isEnterpriseAdmin === true,
+    me.account.isEnterpriseAdmin,
   );
-  const extensions = useExtensions(me?.currentOrgId ?? null, locale);
+  const extensions = useExtensions(orgId, locale, { initial: initial.extensions });
   const adminItems = useAdminItems();
-  const [error, setError] = useState<string>();
   const preferences = usePreferences();
   const [creatingOrg, setCreatingOrg] = useState(false);
   const [leavingOrg, setLeavingOrg] = useState(false);
+  // The org dialogs stay open (pending) until the new org's frame arrives, then close.
+  const [dialogOrg, setDialogOrg] = useState(orgId);
+  if (dialogOrg !== orgId) {
+    setDialogOrg(orgId);
+    setCreatingOrg(false);
+    setLeavingOrg(false);
+  }
   const timeZone = useTimeZoneLabel();
   useConnectResultToast();
-  // The setup layout (web-order spec §3.8): while the org lacks a model or an agent, workspace
-  // routes render in it instead of the shell; the layout is decided before anything is painted.
-  const setupRoute = setupRouteOf(pathname);
-  const readiness = useReadiness(
-    me?.account.id,
-    me === undefined ? undefined : me.currentOrgId,
-    pathname,
-  );
-  const inSetup = setupRoute !== "outside" && readiness.state.kind === "setup";
-  useEffect(() => {
-    if (inSetup && setupRoute === "redirect") router.replace("/");
-  }, [inSetup, setupRoute, router]);
 
-  const load = useCallback(async () => {
-    try {
-      setMe(await getMe());
-      setError(undefined);
-    } catch (e) {
-      // 未登录：去登录页，登录后回到当前页
-      if (e instanceof ApiClientError && e.status === 401)
-        router.replace(loginPathFor(`${pathnameRef.current}${window.location.search}`));
-      else setError(errorMessage(e));
-    }
-  }, [router, errorMessage]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const switchOrg = useCallback(
-    async (orgId: string | null) => {
-      try {
-        await setCurrentOrg(orgId);
-        // 会话属于原组织：先回到列表，再换会话（对话页也不会以新组织 + 旧会话渲染，见 chat 页）
-        if (pathname.startsWith("/chat")) router.push("/agents");
-        // 连接器详情同理：连接器属于原组织
-        else if (pathname.startsWith("/connectors/") && pathname !== "/connectors/install")
-          router.push("/connectors");
-        // 这里直接读 /me 而不走 load：刷新失败要以 toast 告知，而不是被 load 吞掉
-        setMe(await getMe());
-        setError(undefined);
-      } catch (e) {
-        if (e instanceof ApiClientError && e.status === 401) router.replace("/login");
-        else toast.error(errorMessage(e));
-      }
-    },
-    [pathname, router, toast, errorMessage],
-  );
-
-  const session = useMemo<Session | undefined>(
+  const [switching, startSwitch] = useTransition();
+  const [refreshing, startRefresh] = useTransition();
+  /** The current org changed (here or in another tab): its home, rendered on the server. */
+  const openHome = useCallback(
     () =>
-      me === undefined
-        ? undefined
-        : { me, reload: load, switchOrg, refreshPending: pending.refresh, version },
-    [me, load, switchOrg, pending.refresh, version],
+      startSwitch(() => {
+        router.push("/");
+        router.refresh();
+      }),
+    [router],
+  );
+  const reload = useCallback(async () => startRefresh(() => router.refresh()), [router]);
+  const switchOrg = useCallback(
+    async (next: string | null) => {
+      try {
+        await setCurrentOrg(next);
+      } catch (e) {
+        if (e instanceof ApiClientError && e.status === 401)
+          navigateBrowser(loginPathFor(`${window.location.pathname}${window.location.search}`));
+        throw e;
+      }
+      broadcastSession("org-switched");
+      openHome();
+    },
+    [openHome],
+  );
+  // A failed switch from a menu says why (the menu has closed).
+  const selectOrg = (next: string) =>
+    void switchOrg(next).catch((e: unknown) => toast.error(errorMessage(e)));
+  // Another tab signed in or out: start over from `/`; it switched org: follow (the current org
+  // belongs to the session the tabs share).
+  useSessionSync(() => navigateBrowser("/"), openHome);
+
+  const session = useMemo<Session>(
+    () => ({ me, reload, switchOrg, switching, refreshPending: pending.refresh, version }),
+    [me, reload, switchOrg, switching, pending.refresh, version],
   );
 
   async function onLogout() {
-    clearReadyMarks();
     try {
       await logout();
     } finally {
-      router.replace("/login");
+      broadcastSession("signed-out");
+      navigateBrowser("/login");
     }
   }
 
-  const currentOrg = me?.memberships.find((m) => m.orgId === me.currentOrgId);
-
   // Leaving keeps the sign-in (web order §9): the kernel already cleared the current org, so move
-  // to another org of the account, or reload into the org chooser when none is left.
-  async function onLeftOrg() {
+  // to another org of the account, or to the org chooser when none is left. The dialog stays
+  // pending until the new frame replaces the page.
+  function onLeftOrg() {
     const left = currentOrg;
-    setLeavingOrg(false);
     if (left) toast.success(t("orgLifecycle.leave.left", { name: left.name }));
-    const next = me?.memberships.find((m) => m.orgId !== left?.orgId);
-    if (next) await switchOrg(next.orgId);
-    else await load();
-    // the page belonged to the org just left
-    router.replace("/");
+    const next = me.memberships.find((m) => m.orgId !== left?.orgId);
+    if (next) selectOrg(next.orgId);
+    else openHome();
   }
+
+  // The setup frame (web-SSR spec §4): while the org lacks a model or an agent, setup routes render
+  // in it; the admin console keeps its own context.
+  const setupRoute = setupRouteOf(pathname);
+  const ready = readiness === null || setupReady(readiness);
+  const inSetup = currentOrg !== null && !ready && setupRoute !== "outside";
+  const setupState: Readiness =
+    readiness === null || ready ? { kind: "ready" } : { kind: "setup", ...readiness };
+  const steps = useSetupSteps(me, readiness ?? NO_ORG_READINESS);
+  // Until the pages redirect on the server (`workspace()`), a route that is no setup route goes home.
+  useEffect(() => {
+    if (inSetup && setupRoute === "redirect") router.replace("/");
+  }, [inSetup, setupRoute, router]);
+  // While in setup, read readiness again every 30 s, on focus and on every navigation (a step page
+  // may have changed it): the shell replaces the setup frame once the org is ready.
+  useEffect(() => {
+    if (!inSetup) return;
+    const refresh = () => router.refresh();
+    window.addEventListener("focus", refresh);
+    const timer = setInterval(() => {
+      if (document.visibilityState !== "hidden") refresh();
+    }, SETUP_REFRESH_MS);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      clearInterval(timer);
+    };
+  }, [inSetup, router]);
+  const lastPath = useRef(pathname);
+  useEffect(() => {
+    if (lastPath.current === pathname) return;
+    lastPath.current = pathname;
+    if (inSetup) router.refresh();
+  }, [pathname, inSetup, router]);
+
   // The account menu (web order §2.1): Organization ▸ (the current one checked), Language ▸,
   // Personal settings, sign out; the theme is the switch after the account.
-  const createOrgItem: MenuItem[] = me?.canCreateOrg
+  const createOrgItem: MenuItem[] = me.canCreateOrg
     ? [{ label: t("shell.createOrg"), onSelect: () => setCreatingOrg(true) }]
     : [];
   // The user's orgs as radio items, then "Create organization…": the org switcher's menu and the
   // account menu's Organization submenu.
-  const orgItems: MenuItem[] =
-    me === undefined
-      ? []
-      : [
-          ...me.memberships.map((m) => ({
-            label: m.name,
-            checked: m.orgId === me.currentOrgId,
-            disabled: m.orgId === me.currentOrgId,
-            onSelect: () => void switchOrg(m.orgId),
-          })),
-          ...(me.memberships.length > 0 && createOrgItem.length > 0 ? ["separator" as const] : []),
-          ...createOrgItem,
-          // 退出组织… (any member; the dialog tells the only owner to transfer ownership first)
-          ...(me.currentOrgId !== null && me.memberships.some((m) => m.orgId === me.currentOrgId)
-            ? [
-                "separator" as const,
-                { label: t("orgLifecycle.leave.action"), onSelect: () => setLeavingOrg(true) },
-              ]
-            : []),
-        ];
+  const orgItems: MenuItem[] = [
+    ...me.memberships.map((m) => ({
+      label: m.name,
+      checked: m.orgId === orgId,
+      disabled: m.orgId === orgId || switching,
+      onSelect: () => selectOrg(m.orgId),
+    })),
+    ...(me.memberships.length > 0 && createOrgItem.length > 0 ? ["separator" as const] : []),
+    ...createOrgItem,
+    // 退出组织… (any member; the dialog tells the only owner to transfer ownership first)
+    ...(currentOrg !== null
+      ? [
+          "separator" as const,
+          { label: t("orgLifecycle.leave.action"), onSelect: () => setLeavingOrg(true) },
+        ]
+      : []),
+  ];
   const orgMenu: MenuItem[] =
-    me === undefined || (me.memberships.length === 0 && !me.canCreateOrg)
+    me.memberships.length === 0 && !me.canCreateOrg
       ? []
       : [{ label: t("shell.orgMenu"), submenu: orgItems }];
   const languageMenu: MenuItem = {
@@ -228,41 +268,119 @@ export function AppFrame({ version, children }: { version: string; children: Rea
       onSelect: () => preferences.language.onChange(o.value),
     })),
   };
-  const accountMenu: MenuItem[] = [
-    ...orgMenu,
+  const personalMenu: MenuItem[] = [
     languageMenu,
     { label: t("shell.accountSettings"), href: "/account/connections" },
     "separator",
     { label: t("common.logout"), onSelect: () => void onLogout() },
   ];
-  // The admin context under /admin (web order §2.2), else the workspace of the current org. Only
-  // for an enterprise admin: anyone else gets the 403 beside the workspace sidebar.
-  const inAdmin =
-    me?.account.isEnterpriseAdmin === true &&
-    (pathname === "/admin" || pathname.startsWith("/admin/"));
   const roles: Record<string, string> = {
     owner: t("members.roles.owner"),
     admin: t("members.roles.admin"),
     member: t("members.roles.member"),
     guest: t("members.roles.guest"),
   };
+  const sidebarOrg = (menu: MenuItem[]) =>
+    currentOrg
+      ? {
+          name: currentOrg.name,
+          initial: initialOf(currentOrg.name),
+          slug: currentOrg.slug,
+          role: roles[currentOrg.role] ?? currentOrg.role,
+          menu,
+        }
+      : null;
+  const status = {
+    context: statusPrompt(me.account.displayName, currentOrg?.slug ?? null, pathname),
+    version,
+    ...(timeZone === "" ? {} : { timeZone }),
+  };
+
+  const dialogs = (
+    <>
+      {me.canCreateOrg ? (
+        <CreateOrgDialog open={creatingOrg} onOpenChange={setCreatingOrg} />
+      ) : null}
+      {currentOrg !== null && leavingOrg ? (
+        <LeaveOrgDialog
+          orgId={currentOrg.orgId}
+          owner={currentOrg.role === "owner"}
+          onClose={() => setLeavingOrg(false)}
+          onLeft={onLeftOrg}
+        />
+      ) : null}
+    </>
+  );
+
+  // Signed in without a current org: the chooser covers the whole shell (the admin console, which
+  // needs no org, stays reachable for enterprise admins).
+  if (currentOrg === null && !under(pathname, "/admin")) {
+    return (
+      <SessionContext.Provider value={session}>
+        <OrgChooser onLogout={() => void onLogout()} />
+      </SessionContext.Provider>
+    );
+  }
+
+  if (inSetup && readiness !== null) {
+    const home = setupRoute === "home" || setupRoute === "redirect";
+    const multiOrg = me.memberships.length > 1 || me.canCreateOrg;
+    return (
+      <SessionContext.Provider value={session}>
+        <SetupContext.Provider value={{ active: true, readiness: setupState, recheck: reload }}>
+          <SetupPage
+            sidebar={{
+              org: sidebarOrg(multiOrg ? orgItems : []),
+              home: { href: "/" },
+              steps,
+              activeNav: activeStepOf(pathname, steps),
+              // The org has its own menu in the switcher.
+              account: { name: me.account.displayName, menu: personalMenu },
+              theme: preferences.theme,
+              ...(me.account.isEnterpriseAdmin ? { adminHref: "/admin" } : {}),
+            }}
+            status={{
+              ...status,
+              context: statusPrompt(
+                me.account.displayName,
+                currentOrg?.slug ?? null,
+                home ? "/setup" : pathname,
+              ),
+            }}
+          >
+            {home ? (
+              <OverviewPage
+                header={{
+                  path: [{ label: currentOrg?.slug ?? "~" }, { label: t("chat.setup.title") }],
+                  title: t("chat.setup.title"),
+                  description: t("chat.setup.description"),
+                }}
+              >
+                <SetupHome
+                  me={me}
+                  readiness={readiness}
+                  refreshing={refreshing}
+                  onRefresh={() => void reload()}
+                />
+              </OverviewPage>
+            ) : (
+              children
+            )}
+          </SetupPage>
+          {dialogs}
+        </SetupContext.Provider>
+      </SessionContext.Provider>
+    );
+  }
+
+  // The admin context under /admin (web order §2.2), else the workspace of the current org. Only
+  // for an enterprise admin: anyone else gets the 403 beside the workspace sidebar.
+  const inAdmin = me.account.isEnterpriseAdmin && under(pathname, "/admin");
   const context: SidebarContext = inAdmin
-    ? {
-        kind: "admin",
-        back: { href: "/", slug: currentOrg?.slug ?? null },
-        items: adminItems,
-      }
+    ? { kind: "admin", back: { href: "/", slug: currentOrg?.slug ?? null }, items: adminItems }
     : {
         kind: "work",
-        org: currentOrg
-          ? {
-              name: currentOrg.name,
-              initial: initialOf(currentOrg.name),
-              slug: currentOrg.slug,
-              role: roles[currentOrg.role] ?? currentOrg.role,
-              menu: orgItems,
-            }
-          : null,
+        org: sidebarOrg(orgItems),
         primary,
         more,
         moreExtensions: extensions.map((x) => ({
@@ -273,172 +391,28 @@ export function AppFrame({ version, children }: { version: string; children: Rea
         inbox,
         ...(adminHref === undefined ? {} : { adminHref }),
       };
-  const sidebar = {
-    context,
-    // A new conversation starts at the composer; nothing is created before the first send.
-    newConversation: { href: "/chat" },
-    activeNav: inAdmin ? activeAdminOf(pathname, adminItems) : activeNavOf(pathname),
-    conversations,
-    account: {
-      name: me === undefined ? t("common.loading") : me.account.displayName,
-      menu: me === undefined ? [] : accountMenu,
-    },
-    theme: preferences.theme,
-  };
-  const status = {
-    // No prompt before the session loads. /me carries no login name: the display name stands in.
-    context:
-      me === undefined
-        ? ""
-        : statusPrompt(me.account.displayName, currentOrg?.slug ?? null, pathname),
-    version,
-    ...(timeZone === "" ? {} : { timeZone }),
-  };
-
-  // 会话由页面内的 RequireSession 等待；不需要会话的内容（如 404）在服务端即可渲染。
-  const body: ReactNode =
-    error !== undefined && session === undefined ? (
-      <StatusPage
-        header={{ path: [{ label: "~" }], title: t("common.loadFailed") }}
-        kind="maintenance"
-        title={t("common.loadFailed")}
-        description={error}
-        action={
-          <Button variant="primary" onClick={() => void load()}>
-            {t("common.retry")}
-          </Button>
-        }
-      />
-    ) : (
-      <SessionContext.Provider value={session ?? null}>
-        <SetupContext.Provider
-          value={{ active: false, readiness: readiness.state, recheck: readiness.recheck }}
-        >
-          {children}
-        </SetupContext.Provider>
-        {session?.me.canCreateOrg ? (
-          <CreateOrgDialog open={creatingOrg} onOpenChange={setCreatingOrg} />
-        ) : null}
-        {session?.me.currentOrgId && leavingOrg ? (
-          <LeaveOrgDialog
-            orgId={session.me.currentOrgId}
-            owner={currentOrg?.role === "owner"}
-            onClose={() => setLeavingOrg(false)}
-            onLeft={() => void onLeftOrg()}
-          />
-        ) : null}
-      </SessionContext.Provider>
-    );
-
-  // Signed in without a current org: the chooser covers the whole shell (the admin console, which
-  // needs no org, stays reachable for enterprise admins).
-  if (session !== undefined && session.me.currentOrgId === null && !pathname.startsWith("/admin")) {
-    return (
-      <SessionContext.Provider value={session}>
-        <OrgChooser onLogout={() => void onLogout()} />
-      </SessionContext.Provider>
-    );
-  }
-
-  // Until the session and the org's readiness are known, a workspace route shows only the neutral
-  // state both layouts share (never the shell first, then the setup layout).
-  if (
-    setupRoute !== "outside" &&
-    error === undefined &&
-    (session === undefined || readiness.state.kind === "unknown")
-  ) {
-    return <PendingState frame="app" />;
-  }
-
-  if (session !== undefined && readiness.state.kind === "setup" && setupRoute !== "outside") {
-    if (setupRoute === "redirect") return <PendingState frame="app" />;
-    const multiOrg = session.me.memberships.length > 1 || session.me.canCreateOrg;
-    const setupStatus = {
-      ...status,
-      context: statusPrompt(
-        session.me.account.displayName,
-        currentOrg?.slug ?? null,
-        setupRoute === "home" ? "/setup" : pathname,
-      ),
-    };
-    // Task 5 rewires this frame (the steps per role in the sidebar, the setup home's own page);
-    // until then the sidebar carries only the setup home.
-    const setupSidebar = {
-      org: currentOrg
-        ? {
-            name: currentOrg.name,
-            initial: initialOf(currentOrg.name),
-            slug: currentOrg.slug,
-            role: roles[currentOrg.role] ?? currentOrg.role,
-            menu: multiOrg ? orgItems : [],
-          }
-        : null,
-      home: { href: "/" },
-      steps: [],
-      activeNav: setupRoute === "home" ? "home" : "",
-      account: {
-        name: session.me.account.displayName,
-        // Language ▸, personal settings, sign out: the org has its own menu in the top bar. An
-        // enterprise admin also reaches the admin console here (where the model provider is set up).
-        menu: [
-          ...(session.me.account.isEnterpriseAdmin
-            ? [{ label: t("nav.admin"), href: "/admin" }, "separator" as const]
-            : []),
-          ...accountMenu.filter((i) => !orgMenu.includes(i)),
-        ],
-      },
-      theme: preferences.theme,
-    };
-    const { modelProvider, agents } = readiness.state;
-    return (
-      <SessionContext.Provider value={session}>
-        <SetupContext.Provider
-          value={{ active: true, readiness: readiness.state, recheck: readiness.recheck }}
-        >
-          <SetupPage sidebar={setupSidebar} status={setupStatus}>
-            {setupRoute === "home" ? (
-              <OverviewPage
-                header={{
-                  path: [{ label: currentOrg?.slug ?? "~" }, { label: t("chat.setup.title") }],
-                  title: t("chat.setup.title"),
-                  description: t("chat.setup.description"),
-                }}
-              >
-                <SetupHome
-                  me={session.me}
-                  readiness={{ modelProvider, agents }}
-                  onRefresh={() => void readiness.recheck()}
-                />
-              </OverviewPage>
-            ) : (
-              children
-            )}
-          </SetupPage>
-          {session.me.canCreateOrg ? (
-            <CreateOrgDialog open={creatingOrg} onOpenChange={setCreatingOrg} />
-          ) : null}
-          {session?.me.currentOrgId && leavingOrg ? (
-            <LeaveOrgDialog
-              orgId={session.me.currentOrgId}
-              owner={currentOrg?.role === "owner"}
-              onClose={() => setLeavingOrg(false)}
-              onLeft={() => void onLeftOrg()}
-            />
-          ) : null}
-        </SetupContext.Provider>
-      </SessionContext.Provider>
-    );
-  }
-
   return (
     // The conversation page draws its own status bar under its middle column (spec §5.2).
     <AppShell
-      sidebar={sidebar}
+      sidebar={{
+        context,
+        // A new conversation starts at the composer; nothing is created before the first send.
+        newConversation: { href: "/chat" },
+        activeNav: inAdmin ? activeAdminOf(pathname, adminItems) : activeNavOf(pathname),
+        conversations,
+        account: { name: me.account.displayName, menu: [...orgMenu, ...personalMenu] },
+        theme: preferences.theme,
+      }}
       commands={commands}
       status={status}
-      ownStatusBar={pathname === "/chat" || pathname.startsWith("/chat/")}
+      ownStatusBar={under(pathname, "/chat")}
     >
-      {body}
+      <SessionContext.Provider value={session}>
+        <SetupContext.Provider value={{ active: false, readiness: setupState, recheck: reload }}>
+          {children}
+        </SetupContext.Provider>
+        {dialogs}
+      </SessionContext.Provider>
     </AppShell>
   );
 }

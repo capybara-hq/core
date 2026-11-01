@@ -8,6 +8,7 @@ import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConversationGroups } from "../src/components/shell/conversations";
+import type { ConversationGroupsPage } from "../src/lib/conversations";
 import { bodyOf, json, noContent, stubApi } from "./support/api";
 import { Link, router } from "./support/navigation";
 
@@ -49,8 +50,19 @@ const base: Omit<SidebarProps, "conversations"> = {
 };
 const onError = vi.fn();
 
-function Harness({ orgId, path = "/" }: { orgId: string | null | undefined; path?: string }) {
-  const conversations = useConversationGroups(orgId, path, { onError });
+function Harness({
+  orgId,
+  path = "/",
+  initial,
+}: {
+  orgId: string | null | undefined;
+  path?: string;
+  initial?: ConversationGroupsPage | null;
+}) {
+  const conversations = useConversationGroups(orgId, path, {
+    onError,
+    ...(initial !== undefined ? { initial } : {}),
+  });
   return <Sidebar {...base} conversations={conversations} mode="full" />;
 }
 
@@ -243,6 +255,60 @@ describe("useConversationGroups", () => {
     expect(section().getAttribute("aria-busy")).toBe("true");
     expect(within(section()).queryByText("还没有会话")).toBeNull();
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("useConversationGroups seeded from the server (web-SSR §3.1)", () => {
+  const seeded = (orgId: string, initial: ConversationGroupsPage | null, path = "/") => (
+    <DesignProvider locale="zh" link={Link as LinkComponent}>
+      <Harness orgId={orgId} path={path} initial={initial} />
+    </DesignProvider>
+  );
+  const page = (title: string): ConversationGroupsPage => ({
+    groups: [group("a1", "研究助手", [conv("c1", "a1", title)])],
+    next: null,
+    archivedCount: 3,
+  });
+
+  it("the server's page paints at once, with no browser read", async () => {
+    const calls = stubApi({});
+    render(seeded("o1", page("一")));
+    expect(screen.getByRole("link", { name: "一" })).toBeTruthy();
+    expect(within(section()).getByRole("button", { name: /已归档/ })).toBeTruthy();
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(calls).toEqual([]);
+  });
+
+  it("a failed server read: the error state, and 重试 loads", async () => {
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/conversations/groups": () => json(200, page("重试后")),
+    });
+    render(seeded("o1", null));
+    expect(calls).toEqual([]);
+    await userEvent.click(within(section()).getByRole("button", { name: "重试" }));
+    expect(await screen.findByRole("link", { name: "重试后" })).toBeTruthy();
+  });
+
+  it("new props from the server replace the rows; another org's page never shows the old rows", () => {
+    stubApi({});
+    const r = render(seeded("o1", page("一")));
+    r.rerender(seeded("o1", page("刷新后")));
+    expect(screen.getByRole("link", { name: "刷新后" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "一" })).toBeNull();
+    r.rerender(seeded("o2", { groups: [], next: null }));
+    expect(screen.queryByRole("link", { name: "刷新后" })).toBeNull();
+  });
+
+  it("live updates continue: focus and the 30 s poll read again", async () => {
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/conversations/groups": () => json(200, page("新")),
+    });
+    render(seeded("o1", page("一")));
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(await screen.findByRole("link", { name: "新" })).toBeTruthy();
+    expect(calls).toHaveLength(1);
   });
 });
 

@@ -1,7 +1,5 @@
-import { DesignProvider, type LinkComponent, ToastProvider } from "@capybara-hq/design";
-import { act, cleanup, render, renderHook, screen, within } from "@testing-library/react";
+import { act, cleanup, renderHook, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
@@ -9,12 +7,12 @@ import ConnectionsPage from "../src/app/(app)/account/connections/page";
 import NewAgentPage from "../src/app/(app)/agents/new/page";
 import ConnectorDetailPage from "../src/app/(app)/connectors/[connectorId]/page";
 import AppsPage from "../src/app/(app)/connectors/page";
-import { AppFrame } from "../src/components/shell/AppFrame";
 import type { Me } from "../src/lib/session";
 import { useLoad } from "../src/lib/use-load";
 import { bodyOf, json, noContent, stubApi } from "./support/api";
-import { Link, resetNavigation, router } from "./support/navigation";
+import { resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
+import { renderFrame, shellOf } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({ useParams: () => ({ connectorId: "app1" }) }));
@@ -706,35 +704,21 @@ describe("useLoad", () => {
 });
 
 describe("连接器详情切换组织", () => {
-  it("切到其他组织：跳回 /apps，且不以新组织读取旧连接器", async () => {
+  it("switching org opens the new org's home in one transition; the old connector is never read with the new org", async () => {
     resetNavigation("/connectors/app1");
-    let current = "o1";
-    const me = () => ({
+    const me = (current: string) => ({
       ...ME,
       currentOrgId: current,
       memberships: [...ME.memberships, { orgId: "o2", slug: "b", name: "Beta", role: "owner" }],
     });
     const calls = stubApi({
-      "GET /api/v1/me": () => json(200, me()),
-      "PUT /api/v1/me/current-org": () => {
-        current = "o2";
-        return noContent();
-      },
+      "PUT /api/v1/me/current-org": () => noContent(),
       "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }),
-      "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
-      "GET /api/v1/orgs/o2/inbox": () => json(200, { items: [], truncated: false }),
     });
-    render(
-      <NextIntlClientProvider locale="en" messages={en}>
-        <DesignProvider locale="en" link={Link as LinkComponent}>
-          <ToastProvider>
-            <AppFrame version="v0">
-              <ConnectorDetailPage />
-            </AppFrame>
-          </ToastProvider>
-        </DesignProvider>
-      </NextIntlClientProvider>,
-    );
+    const view = renderFrame(shellOf(me("o1")), <ConnectorDetailPage />, {
+      locale: "en",
+      version: "v0",
+    });
     expect(await screen.findByRole("heading", { name: "Fixture" })).toBeTruthy();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /^Account: / }));
@@ -742,12 +726,14 @@ describe("连接器详情切换组织", () => {
     // jsdom has no layout: pick the submenu item with the keyboard (see design menu-submenu tests)
     (await screen.findByRole("menuitemradio", { name: "Beta" })).focus();
     await user.keyboard("{Enter}");
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/connectors"));
-    await vi.waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Current organization: Beta, switch organization" }),
-      ).toBeTruthy(),
-    );
+    await vi.waitFor(() => expect(router.refresh).toHaveBeenCalled());
+    expect(router.push).toHaveBeenCalledWith("/");
+    // the server's answer: the new org's frame with its home page
+    resetNavigation("/");
+    view.update(shellOf(me("o2")), <p>home</p>);
+    expect(
+      screen.getByRole("button", { name: "Current organization: Beta, switch organization" }),
+    ).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Fixture" })).toBeNull();
     expect(calls.some((c) => c.url.includes("/orgs/o2/connectors"))).toBe(false);
   });

@@ -1,19 +1,16 @@
 // Role pass item 9: leave an organization, delete it, service tokens.
-import { DesignProvider, type LinkComponent, ToastProvider } from "@capybara-hq/design";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zh from "../messages/zh.json";
 import OrganizationSettingsPage from "../src/app/(app)/settings/organization/page";
 import TokensPage from "../src/app/(app)/settings/tokens/page";
-import { AppFrame } from "../src/components/shell/AppFrame";
-import { RequireSession } from "../src/components/shell/session";
 import type { OrgRole } from "../src/lib/members";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, noContent, stubApi } from "./support/api";
-import { Link, resetNavigation, router } from "./support/navigation";
+import { resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
+import { renderFrame, shellOf } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -32,7 +29,6 @@ const member = (id: string, role: OrgRole) => ({
 
 beforeEach(() => {
   resetNavigation("/");
-  sessionStorage.clear();
 });
 afterEach(() => {
   cleanup();
@@ -40,36 +36,16 @@ afterEach(() => {
 });
 
 describe("退出组织", () => {
-  function renderFrame() {
-    return render(
-      <NextIntlClientProvider locale="zh" messages={zh}>
-        <DesignProvider locale="zh" link={Link as LinkComponent}>
-          <ToastProvider>
-            <AppFrame version="v9.9.9">
-              <RequireSession>
-                <p>page body</p>
-              </RequireSession>
-            </AppFrame>
-          </ToastProvider>
-        </DesignProvider>
-      </NextIntlClientProvider>,
-    );
-  }
-  const api = (me: Me, members: unknown[] = []) =>
+  const api = (members: unknown[] = []) =>
     stubApi({
-      "GET /api/v1/me": () => json(200, me),
-      [`GET ${O}/readiness`]: () => json(200, { modelProvider: "ready", agents: 1 }),
-      [`GET ${O}/inbox`]: () => json(200, { items: [], truncated: false }),
-      [`GET ${O}/conversations/groups`]: () =>
-        json(200, { groups: [], next: null, archivedCount: 0 }),
-      [`GET ${O}/ui/contributions`]: () => json(200, { items: [] }),
       [`GET ${O}/members`]: () => json(200, { members }),
       [`POST ${O}/leave`]: () => noContent(),
+      "PUT /api/v1/me/current-org": () => noContent(),
       "POST /api/v1/auth/logout": () => noContent(),
     });
   async function openLeave() {
     const user = userEvent.setup();
-    await screen.findByText("page body");
+    screen.getByText("page body");
     await user.click(screen.getByRole("button", { name: /当前组织：Acme/ }));
     await user.click(await screen.findByRole("menuitem", { name: zh.orgLifecycle.leave.action }));
     return screen.findByRole("dialog", { name: zh.orgLifecycle.leave.title });
@@ -77,75 +53,56 @@ describe("退出组织", () => {
 
   for (const role of ["guest", "member", "admin"] as const) {
     it(`${role}: the org menu offers 退出组织…; leaving keeps the sign-in and opens the chooser`, async () => {
-      let me = meAs(role);
-      stubApi({
-        "GET /api/v1/me": () => json(200, me),
-        [`GET ${O}/readiness`]: () => json(200, { modelProvider: "ready", agents: 1 }),
-        [`GET ${O}/inbox`]: () => json(200, { items: [], truncated: false }),
-        [`GET ${O}/conversations/groups`]: () =>
-          json(200, { groups: [], next: null, archivedCount: 0 }),
-        [`GET ${O}/ui/contributions`]: () => json(200, { items: [] }),
-        [`POST ${O}/leave`]: () => {
-          // the kernel clears the session's current org with the membership
-          me = { ...me, memberships: [], currentOrgId: null };
-          return noContent();
-        },
-      });
-      renderFrame();
+      const calls = api();
+      const me = meAs(role);
+      const view = renderFrame(shellOf(me));
       const dialog = await openLeave();
       expect(within(dialog).getByText(zh.orgLifecycle.leave.description)).toBeTruthy();
       await userEvent
         .setup()
         .click(within(dialog).getByRole("button", { name: zh.orgLifecycle.leave.confirm }));
-      expect(await screen.findByRole("heading", { name: zh.orgChooser.titleNone })).toBeTruthy();
-      expect(router.replace).toHaveBeenCalledWith("/");
-      expect(router.replace).not.toHaveBeenCalledWith("/login");
+      // the kernel cleared the current org: the server renders the chooser at /
+      await vi.waitFor(() => expect(router.refresh).toHaveBeenCalled());
+      expect(router.push).toHaveBeenCalledWith("/");
+      expect(calls.some((c) => c.method === "PUT")).toBe(false);
+      // the dialog stays pending until the new frame arrives
+      expect(
+        within(screen.getByRole("dialog", { name: zh.orgLifecycle.leave.title }))
+          .getByRole("button", { name: zh.orgLifecycle.leave.confirm })
+          .getAttribute("aria-busy"),
+      ).toBe("true");
+      view.update(shellOf({ ...me, memberships: [], currentOrgId: null }));
+      expect(screen.getByRole("heading", { name: zh.orgChooser.titleNone })).toBeTruthy();
+      expect(calls.some((c) => c.url === "/api/v1/auth/logout")).toBe(false);
     });
   }
 
   it("leaving one of two orgs switches to the other", async () => {
-    let me: Me = {
+    const me: Me = {
       ...meAs("member"),
       memberships: [
         { orgId: "o1", slug: "acme", name: "Acme", role: "member" },
         { orgId: "o2", slug: "beta", name: "Beta", role: "member" },
       ],
     };
-    const calls = stubApi({
-      "GET /api/v1/me": () => json(200, me),
-      [`GET ${O}/readiness`]: () => json(200, { modelProvider: "ready", agents: 1 }),
-      [`GET ${O}/inbox`]: () => json(200, { items: [], truncated: false }),
-      [`GET ${O}/conversations/groups`]: () =>
-        json(200, { groups: [], next: null, archivedCount: 0 }),
-      [`GET ${O}/ui/contributions`]: () => json(200, { items: [] }),
-      [`POST ${O}/leave`]: () => {
-        me = { ...me, memberships: me.memberships.slice(1), currentOrgId: null };
-        return noContent();
-      },
-      "PUT /api/v1/me/current-org": () => {
-        me = { ...me, currentOrgId: "o2" };
-        return noContent();
-      },
-      "GET /api/v1/orgs/o2/readiness": () => json(200, { modelProvider: "ready", agents: 1 }),
-      "GET /api/v1/orgs/o2/inbox": () => json(200, { items: [], truncated: false }),
-      "GET /api/v1/orgs/o2/conversations/groups": () =>
-        json(200, { groups: [], next: null, archivedCount: 0 }),
-      "GET /api/v1/orgs/o2/ui/contributions": () => json(200, { items: [] }),
-    });
-    renderFrame();
+    const calls = api();
+    const view = renderFrame(shellOf(me));
     const dialog = await openLeave();
     await userEvent
       .setup()
       .click(within(dialog).getByRole("button", { name: zh.orgLifecycle.leave.confirm }));
-    expect(await screen.findByRole("button", { name: /当前组织：Beta/ })).toBeTruthy();
+    await vi.waitFor(() => expect(router.refresh).toHaveBeenCalled());
     const put = calls.find((c) => c.method === "PUT" && c.url === "/api/v1/me/current-org");
     expect(bodyOf(put)).toEqual({ orgId: "o2" });
     expect(calls.some((c) => c.url === "/api/v1/auth/logout")).toBe(false);
+    view.update(shellOf({ ...me, memberships: me.memberships.slice(1), currentOrgId: "o2" }));
+    expect(screen.getByRole("button", { name: /当前组织：Beta/ })).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("the only owner is told to transfer ownership first: no confirm button", async () => {
-    api(meAs("owner"), [member("a1", "owner"), member("a2", "member")]);
-    renderFrame();
+    api([member("a1", "owner"), member("a2", "member")]);
+    renderFrame(shellOf(meAs("owner")));
     const dialog = await openLeave();
     expect(await within(dialog).findByText(zh.orgLifecycle.leave.lastOwner)).toBeTruthy();
     expect(
@@ -155,15 +112,9 @@ describe("退出组织", () => {
 
   it("a failed owner count shows the error, not a bare confirm button", async () => {
     stubApi({
-      "GET /api/v1/me": () => json(200, meAs("owner")),
-      [`GET ${O}/readiness`]: () => json(200, { modelProvider: "ready", agents: 1 }),
-      [`GET ${O}/inbox`]: () => json(200, { items: [], truncated: false }),
-      [`GET ${O}/conversations/groups`]: () =>
-        json(200, { groups: [], next: null, archivedCount: 0 }),
-      [`GET ${O}/ui/contributions`]: () => json(200, { items: [] }),
       [`GET ${O}/members`]: () => json(500, { error: { code: "internal", message: "boom" } }),
     });
-    renderFrame();
+    renderFrame(shellOf(meAs("owner")));
     const dialog = await openLeave();
     expect(await within(dialog).findByRole("alert")).toBeTruthy();
     expect(
@@ -172,8 +123,8 @@ describe("退出组织", () => {
   });
 
   it("an owner beside another owner may leave", async () => {
-    api(meAs("owner"), [member("a1", "owner"), member("a2", "owner")]);
-    renderFrame();
+    api([member("a1", "owner"), member("a2", "owner")]);
+    renderFrame(shellOf(meAs("owner")));
     const dialog = await openLeave();
     expect(
       await within(dialog).findByRole("button", { name: zh.orgLifecycle.leave.confirm }),

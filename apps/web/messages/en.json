@@ -401,6 +401,14 @@
     },
     "tool_output": {
       "not_found": "The tool output does not exist or has expired."
+    },
+    "page": {
+      "title": "Failed to load",
+      "description": "The page didn't load. Try again; if it keeps failing, contact your administrator.",
+      "retry": "Retry",
+      "starting": "The kernel is starting…",
+      "startingDescription": "The backend isn't ready yet. The page retries by itself.",
+      "startingStill": "The backend still isn't ready. Try again later, or contact your administrator."
     }
   },
   "agents": {
@@ -3307,7 +3315,15 @@
       "connections": "Connect your accounts",
       "connectionsWhere": "Personal settings · My connections"
     },
-    "waitingDeployment": "A deployment admin needs to set up a model service before you can continue"
+    "waitingDeployment": "A deployment admin needs to set up a model service before you can continue",
+    "steps": {
+      "model": "Configure a model",
+      "agent": "Create an agent",
+      "channels": "Connect a channel",
+      "members": "Invite members",
+      "catalog": "Install plugins",
+      "connections": "My connections"
+    }
   },
   "roles": {
     "need": {

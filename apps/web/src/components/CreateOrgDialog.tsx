@@ -9,7 +9,8 @@ import { useSession } from "./shell/session";
 
 /**
  * "Create an organization": a name, then `POST /api/v1/orgs`; the new org becomes the current one.
- * Rendered only when `/me` says the account may create one (`canCreateOrg`).
+ * Rendered only when `/me` says the account may create one (`canCreateOrg`). The submit stays
+ * pending until the new org's frame (usually the setup frame) replaces the page, which closes it.
  */
 export function CreateOrgDialog({
   open,
@@ -24,6 +25,16 @@ export function CreateOrgDialog({
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  // Opened again: start from an empty form.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    if (open) {
+      setName("");
+      setBusy(false);
+      setError(undefined);
+    }
+  }
 
   async function submit() {
     const trimmed = name.trim();
@@ -35,12 +46,10 @@ export function CreateOrgDialog({
     setError(undefined);
     try {
       const { org } = await createOrg(trimmed);
+      // Stays busy: the frame closes the dialog once the new org's frame arrives.
       await switchOrg(org.id);
-      setName("");
-      onOpenChange(false);
     } catch (e) {
       setError(errorMessage(e));
-    } finally {
       setBusy(false);
     }
   }

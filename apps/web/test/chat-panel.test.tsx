@@ -8,12 +8,12 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import PluginPage from "../src/app/(app)/p/[plugin]/[id]/page";
 import { EmbedTab } from "../src/components/extension-ui/EmbedTab";
-import { AppFrame } from "../src/components/shell/AppFrame";
-import { RequireSession } from "../src/components/shell/session";
+import type { ShellData } from "../src/lib/server/session";
 import type { UiView } from "../src/lib/ui";
 import { bodyOf, json, stubApi } from "./support/api";
 import { Link, resetNavigation } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
+import { renderFrame, shellOf } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 const params = vi.hoisted(() => ({ current: {} as Record<string, string> }));
@@ -129,21 +129,6 @@ const _tabNamed = (name: RegExp | string) =>
   within(panelOf()).getByRole("tab", { name: typeof name === "string" ? new RegExp(name) : name });
 
 describe("extension pages in the sidebar's More group", () => {
-  function renderFrame() {
-    return render(
-      <NextIntlClientProvider locale="en" messages={en}>
-        <DesignProvider locale="en" link={Link as LinkComponent}>
-          <ToastProvider>
-            <AppFrame version="v0">
-              <RequireSession>
-                <p>page body</p>
-              </RequireSession>
-            </AppFrame>
-          </ToastProvider>
-        </DesignProvider>
-      </NextIntlClientProvider>,
-    );
-  }
   const nav = () => screen.getByRole("navigation", { name: "Main navigation" });
 
   // extension pages sit in the 更多 flyout, after a separator
@@ -152,46 +137,35 @@ describe("extension pages in the sidebar's More group", () => {
       .queryAllByRole("menuitem")
       .filter((l) => (l.getAttribute("href") ?? "").startsWith("/p/"));
 
-  it("none without page contributions", async () => {
-    const calls = stubApi({
-      "GET /api/v1/me": () => json(200, ME),
-      [`GET ${ORG}/approvals`]: () => json(200, { approvals: [] }),
-      [`GET ${UI}/contributions`]: () => json(200, { items: [TASKS, EMBED] }),
-    });
-    renderFrame();
-    await screen.findByText("page body");
-    await vi.waitFor(() => expect(calls.some((c) => c.url === `${UI}/contributions`)).toBe(true));
-    await new Promise((r) => setTimeout(r, 20));
+  it("none without page contributions (the layout keeps only place: page)", async () => {
+    const calls = stubApi({});
+    renderFrame(shellOf(ME, { extensions: [] }), undefined, { locale: "en", version: "v0" });
     await userEvent.setup().click(within(nav()).getByRole("button", { name: "More" }));
     expect(pageLinks()).toEqual([]);
+    expect(calls).toEqual([]);
   });
 
   it("lists the pages by title, linking to /p/<plugin>/<id>; a shared title gets its plugin", async () => {
-    stubApi({
-      "GET /api/v1/me": () => json(200, ME),
-      [`GET ${ORG}/approvals`]: () => json(200, { approvals: [] }),
-      [`GET ${UI}/contributions`]: () =>
-        json(200, {
-          items: [
-            BOARD_PAGE,
-            TASKS,
-            { ...BOARD_PAGE, plugin: "crm", id: "deals", title: { zh: "商机", en: "Deals" } },
-            { ...BOARD_PAGE, id: "live", kind: "embed", title: { zh: "实时", en: "Live" } },
-            { ...BOARD_PAGE, plugin: "crm", id: "board" },
-          ],
-        }),
-    });
-    renderFrame();
-    await screen.findByRole("navigation", { name: "Main navigation" });
-    await userEvent.setup().click(await within(nav()).findByRole("button", { name: "More" }));
-    await vi.waitFor(() =>
-      expect(pageLinks().map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
-        ["Board · board", "/p/board/overview"],
-        ["Deals", "/p/crm/deals"],
-        ["Live", "/p/board/live"],
-        ["Board · crm", "/p/crm/board"],
-      ]),
+    stubApi({});
+    renderFrame(
+      shellOf(ME, {
+        extensions: [
+          BOARD_PAGE,
+          { ...BOARD_PAGE, plugin: "crm", id: "deals", title: { zh: "商机", en: "Deals" } },
+          { ...BOARD_PAGE, id: "live", kind: "embed", title: { zh: "实时", en: "Live" } },
+          { ...BOARD_PAGE, plugin: "crm", id: "board" },
+        ] as ShellData["extensions"],
+      }),
+      undefined,
+      { locale: "en", version: "v0" },
     );
+    await userEvent.setup().click(within(nav()).getByRole("button", { name: "More" }));
+    expect(pageLinks().map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
+      ["Board · board", "/p/board/overview"],
+      ["Deals", "/p/crm/deals"],
+      ["Live", "/p/board/live"],
+      ["Board · crm", "/p/crm/board"],
+    ]);
   });
 });
 
