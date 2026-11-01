@@ -5,9 +5,9 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import GrantsPage from "../src/app/(app)/account/grants/page";
 import InboxRoute from "../src/app/(app)/inbox/page";
-import { bodyOf, json, noContent, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { renderPage } from "./support/render";
+import type { renderPage } from "./support/render";
 import { expectNoFirstPaintFetch, renderRoute } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -401,7 +401,7 @@ describe("已记住的授权（SettingsPage）", () => {
         return noContent();
       },
     });
-    const { container } = renderPage(<GrantsPage />, { locale });
+    const { container } = await renderRoute(GrantsPage, lastStubRoutes(), { locale });
     expect(container.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
     expect(
       screen.getByRole("link", { name: m.connections.nav.grants }).getAttribute("aria-current"),

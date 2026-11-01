@@ -400,9 +400,6 @@ export interface SsrPending {
 }
 const PENDING_REASON = "not migrated yet (web SSR plan Tasks 7-11)";
 export const SSR_PENDING: readonly SsrPending[] = [
-  { path: "app/(app)/account/connections/page.tsx", reason: PENDING_REASON },
-  { path: "app/(app)/account/grants/page.tsx", reason: PENDING_REASON },
-  { path: "app/(app)/account/identities/page.tsx", reason: PENDING_REASON },
   { path: "app/(app)/admin/accounts/page.tsx", reason: PENDING_REASON },
   { path: "app/(app)/admin/catalog/[itemId]/page.tsx", reason: PENDING_REASON },
   { path: "app/(app)/admin/catalog/import/page.tsx", reason: PENDING_REASON },

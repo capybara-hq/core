@@ -12,7 +12,7 @@ import { useLoad } from "../src/lib/use-load";
 import { renderNewAgent } from "./support/agents";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { ME, renderPage } from "./support/render";
+import { ME } from "./support/render";
 import { expectNoFirstPaintFetch, onServer, renderRoute } from "./support/server";
 import { NOT_READY, renderFrame, shellOf } from "./support/shell";
 
@@ -570,7 +570,7 @@ describe("个人连接（SettingsPage）", () => {
           return noContent();
         },
       });
-      const { container } = renderPage(<ConnectionsPage />, { locale });
+      const { container } = await renderRoute(ConnectionsPage, lastStubRoutes(), { locale });
       expect(container.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
       const section = await screen.findByRole("region", { name: "Fixture" });
       // 每个连接器一个分组：页面上没有多个主操作

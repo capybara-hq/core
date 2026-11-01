@@ -1,0 +1,191 @@
+"use client";
+
+import {
+  Button,
+  FormSection,
+  SettingsPage,
+  Stack,
+  StatusMark,
+  Text,
+  useToast,
+} from "@capybara-hq/design";
+import { useTranslations } from "next-intl";
+import { useState, useTransition } from "react";
+import {
+  buildCredential,
+  CredentialFields,
+  EMPTY_CREDENTIAL,
+} from "../../../../components/ConnectorForm";
+import { useAccountNav } from "../../../../components/settings-nav";
+import { usePagePath } from "../../../../components/shell/path";
+import { useRouter } from "../../../../i18n/navigation";
+import { useStartConnect } from "../../../../lib/connect";
+import {
+  type ConnectorDetail,
+  clearMyCredential,
+  setMyCredential,
+} from "../../../../lib/connectors";
+import { useErrorMessage } from "../../../../lib/use-error-message";
+
+/**
+ * `/account/connections`：个人连接（SettingsPage）——需要每人各自凭据的连接器，
+ * 逐个填写或清除自己的凭据。Read on the server (`page.tsx`); a change re-renders the page there。每个连接器一个分组，锚点 `connector-<connectorId>`（对话里的「连接」按钮跳到这里）。
+ */
+export default function Connections({
+  orgId,
+  initial,
+}: {
+  orgId: string;
+  initial: ConnectorDetail[];
+}) {
+  const scope = usePagePath("home");
+  const t = useTranslations("connections");
+  const nav = useAccountNav();
+  const router = useRouter();
+  const [, startTransition] = useTransition();
+  const reload = () => startTransition(() => router.refresh());
+  return (
+    <SettingsPage
+      header={{
+        path: [
+          ...scope,
+          { label: "account", href: "/account/connections" },
+          { label: "connections" },
+        ],
+        title: t("title"),
+      }}
+      nav={nav}
+      activeNav="connections"
+    >
+      {initial.length === 0 ? (
+        <Stack gap={4}>
+          <Text>{t("empty")}</Text>
+          <Text variant="small" tone="muted">
+            {t("emptyHint")}
+          </Text>
+        </Stack>
+      ) : (
+        initial.map((app) => (
+          <ConnectorConnection key={app.id} orgId={orgId} app={app} onChanged={reload} />
+        ))
+      )}
+    </SettingsPage>
+  );
+}
+
+function ConnectorConnection({
+  orgId,
+  app,
+  onChanged,
+}: {
+  orgId: string;
+  app: ConnectorDetail;
+  onChanged(): void;
+}) {
+  const t = useTranslations("connections");
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const [values, setValues] = useState(EMPTY_CREDENTIAL);
+  const [pending, setPending] = useState<"save" | "clear">();
+  const { start, starting } = useStartConnect(orgId);
+  const auth = app.auth;
+  if (auth.type === "none" || auth.type === "oauth_client") return null;
+  const connected = app.credential.status === "connected";
+
+  if (auth.type === "oauth_code") {
+    // OAuth：没有可填的凭据，只有授权（连接 / 重新连接）与断开
+    async function disconnect() {
+      setPending("clear");
+      try {
+        await clearMyCredential(orgId, app.id);
+        toast.success(t("cleared", { connector: app.name }));
+        onChanged();
+      } catch (e) {
+        toast.error(errorMessage(e));
+      } finally {
+        setPending(undefined);
+      }
+    }
+    return (
+      <FormSection id={`app-${app.id}`} title={app.name} description={t("oauthHint")}>
+        <StatusMark
+          status={connected ? "success" : "waiting"}
+          label={connected ? t("connected") : t("missing")}
+        />
+        <Stack direction="row" gap={8}>
+          <Button
+            variant="secondary"
+            loading={starting}
+            disabled={pending !== undefined}
+            onClick={() => void start(app.id)}
+          >
+            {connected ? t("reconnect") : t("oauthConnect")}
+          </Button>
+          {connected && (
+            <Button
+              variant="danger"
+              loading={pending === "clear"}
+              disabled={starting || pending !== undefined}
+              onClick={() => void disconnect()}
+            >
+              {t("disconnect")}
+            </Button>
+          )}
+        </Stack>
+      </FormSection>
+    );
+  }
+
+  const names = auth.type === "headers" ? auth.names : [];
+  const credential = buildCredential(auth.type, values, names);
+
+  async function run(kind: "save" | "clear") {
+    setPending(kind);
+    try {
+      if (kind === "save" && credential !== undefined) {
+        await setMyCredential(orgId, app.id, credential);
+        setValues(EMPTY_CREDENTIAL);
+        toast.success(t("saved", { connector: app.name }));
+      } else if (kind === "clear") {
+        await clearMyCredential(orgId, app.id);
+        toast.success(t("cleared", { connector: app.name }));
+      }
+      onChanged();
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setPending(undefined);
+    }
+  }
+
+  return (
+    <FormSection id={`app-${app.id}`} title={app.name} description={t("sectionHint")}>
+      <StatusMark
+        status={connected ? "success" : "waiting"}
+        label={connected ? t("connected") : t("missing")}
+      />
+      <CredentialFields auth={auth} values={values} onChange={setValues} />
+      <Stack direction="row" gap={8}>
+        {/* 每个连接器一个分组：保存按钮用次级样式，页面不出现多个主操作 */}
+        <Button
+          variant="secondary"
+          loading={pending === "save"}
+          disabled={credential === undefined || pending !== undefined}
+          onClick={() => void run("save")}
+        >
+          {t("save")}
+        </Button>
+        {connected && (
+          <Button
+            variant="danger"
+            loading={pending === "clear"}
+            disabled={pending !== undefined}
+            onClick={() => void run("clear")}
+          >
+            {t("clear")}
+          </Button>
+        )}
+      </Stack>
+    </FormSection>
+  );
+}

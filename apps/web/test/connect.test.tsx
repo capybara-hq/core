@@ -7,9 +7,10 @@ import ConnectionsPage from "../src/app/(app)/account/connections/page";
 import { ConnectCard } from "../src/components/ConnectCard";
 import { navigateBrowser } from "../src/lib/browser";
 import { parseConnectResult, useConnectResultToast } from "../src/lib/connect";
-import { bodyOf, json, noContent, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderPage } from "./support/render";
+import { renderRoute } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("../src/lib/browser", () => ({ navigateBrowser: vi.fn() }));
@@ -165,7 +166,7 @@ describe("个人连接页：OAuth 连接器", () => {
         return noContent();
       },
     });
-    const { container } = renderPage(<ConnectionsPage />, { locale });
+    const { container } = await renderRoute(ConnectionsPage, lastStubRoutes(), { locale });
     const section = await screen.findByRole("region", { name: "Docs" });
     // 没有 token 输入框；页面没有多个主操作
     expect(within(section).queryByLabelText(m.connectors.form.tokenLabel)).toBeNull();
@@ -183,7 +184,7 @@ describe("个人连接页：OAuth 连接器", () => {
     // 已连接：重新连接 + 断开连接
     cleanup();
     status = "connected";
-    renderPage(<ConnectionsPage />, { locale });
+    await renderRoute(ConnectionsPage, lastStubRoutes(), { locale });
     const again = await screen.findByRole("region", { name: "Docs" });
     expect(within(again).getByRole("button", { name: m.connections.reconnect })).toBeTruthy();
     await user.click(within(again).getByRole("button", { name: m.connections.disconnect }));
