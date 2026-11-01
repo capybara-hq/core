@@ -75,8 +75,9 @@ describe("/plugin-ui/[...path] 代理", () => {
   });
 
   it("Next's Proxy (old language-prefixed links) never sees /plugin-ui", () => {
-    expect(proxyConfig.matcher.some((m) => m.startsWith("/plugin-ui"))).toBe(false);
-    expect(proxyConfig.matcher).toEqual(["/zh", "/zh/:path*", "/en", "/en/:path*"]);
+    expect(proxyConfig.matcher).toEqual([
+      "/((?!api(?:/|$)|plugin-ui(?:/|$)|_next(?:/|$)|dev(?:/|$)|.*\\.).*)",
+    ]);
   });
 
   it("GET 转发到内核 /plugins/<plugin>/ui/<rest>（带查询串）；不转发 Cookie 与非白名单请求头", async () => {

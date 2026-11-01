@@ -20,21 +20,23 @@ describe("negotiateLocale (Accept-Language)", () => {
 });
 
 describe("proxy: old links with a language prefix", () => {
-  it("redirects to the same path without the prefix and keeps the language in the cookie", () => {
-    const res = proxy(new NextRequest("http://localhost:3000/en/agents/new?agent=a1"));
+  it("redirects to the same path without the prefix and keeps the language in the cookie", async () => {
+    const res = await proxy(new NextRequest("http://localhost:3000/en/agents/new?agent=a1"));
     expect(res.status).toBe(308);
     expect(res.headers.get("location")).toBe("http://localhost:3000/agents/new?agent=a1");
     expect(res.cookies.get("NEXT_LOCALE")?.value).toBe("en");
   });
 
-  it("a bare prefix goes to the overview", () => {
-    const res = proxy(new NextRequest("http://localhost:3000/zh"));
+  it("a bare prefix goes to the overview", async () => {
+    const res = await proxy(new NextRequest("http://localhost:3000/zh"));
     expect(res.headers.get("location")).toBe("http://localhost:3000/");
     expect(res.cookies.get("NEXT_LOCALE")?.value).toBe("zh");
   });
 
-  it("other paths pass through untouched", () => {
-    const res = proxy(new NextRequest("http://localhost:3000/zhong/agents"));
+  it("other paths are not redirected for their language", async () => {
+    const res = await proxy(
+      new NextRequest("http://localhost:3000/zhong/agents", { headers: { cookie: "cap_at=at" } }),
+    );
     expect(res.headers.get("location")).toBeNull();
     expect(res.headers.get("x-middleware-next")).toBe("1");
   });

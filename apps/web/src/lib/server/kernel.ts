@@ -2,17 +2,17 @@ import "server-only";
 import { headers } from "next/headers";
 import { cache } from "react";
 import { ApiClientError, type ApiTransport } from "../api";
+import { SESSION_STATE_HEADER } from "../headers";
 import { kernelUrl } from "../kernel-proxy";
 import { trustedPeer } from "../peer";
+
+export { SESSION_STATE_HEADER };
 
 /** How long a server read waits for the kernel. */
 const SERVER_READ_TIMEOUT_MS = 10_000;
 
 /** Request headers passed on to the kernel as they are. */
 const FORWARDED = ["cookie", "accept-language", "x-request-id"] as const;
-
-/** Set by the proxy on the request when the kernel could not renew or check the session. */
-export const SESSION_STATE_HEADER = "x-cap-session";
 
 /** A kernel answer read once and replayed to every caller of the same path in one request. */
 interface Answer {

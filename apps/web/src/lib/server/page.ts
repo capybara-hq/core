@@ -3,9 +3,9 @@ import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { ApiClientError } from "../api";
 import { loginPathFor } from "../auth-sources";
+import { PATH_HEADER } from "../headers";
 
-/** The request's path and query, as the proxy recorded it (`x-cap-path`). */
-export const PATH_HEADER = "x-cap-path";
+export { PATH_HEADER };
 
 /** The path (with its query) of the page being rendered; `/` when the proxy did not record it. */
 export async function currentPath(): Promise<string> {
