@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import {
   collectImports,
   type Finding,
@@ -346,7 +346,7 @@ function checkWebFile(file: string, isTest: boolean, webSrcDir: string): Finding
   const segs = relative(webSrcDir, file).split(sep);
   const exempt = TEMPLATE_EXEMPT_PREFIX.every((s, i) => segs[i] === s);
   if (segs[0] === "app" && /^page\.[jt]sx?$/.test(segs.at(-1) ?? "") && !exempt) {
-    if (!usesDesignTemplate(p) && !isNotFoundOnlyPage(p)) {
+    if (!usesDesignTemplate(p) && !isNotFoundOnlyPage(p) && !viewUsesTemplate(file, p)) {
       out.push({
         file,
         line: 1,
@@ -355,8 +355,357 @@ function checkWebFile(file: string, isTest: boolean, webSrcDir: string): Finding
       });
     }
   }
-  if (segs[0] === "app" && segs[1] === "(app)" && /^page\.[jt]sx?$/.test(segs.at(-1) ?? ""))
+  if (
+    segs[0] === "app" &&
+    segs[1] === "(app)" &&
+    /^(?:page|view)\.[jt]sx?$/.test(segs.at(-1) ?? "")
+  )
     out.push(...pagePathFindings(file, p));
+  out.push(...ssrFindings(file, p, segs));
+  return out;
+}
+
+/**
+ * A server page that renders its client view: `import X from "./view"` whose sibling `view.tsx`
+ * (or .jsx/.ts/.js) uses a design page template. The page itself then needs no template.
+ */
+function viewUsesTemplate(file: string, p: ParsedFile): boolean {
+  let imported = false;
+  walk(p.program, (n) => {
+    if (n.type !== "ImportDeclaration") return;
+    const spec = (n.source as Node).value;
+    if (spec === "./view" || /^\.\/view\.[jt]sx?$/.test(String(spec))) imported = true;
+  });
+  if (!imported) return false;
+  for (const ext of ["tsx", "jsx", "ts", "js"]) {
+    const view = join(dirname(file), `view.${ext}`);
+    if (!existsSync(view)) continue;
+    const v = parseFile(view);
+    return !isParseError(v) && usesDesignTemplate(v);
+  }
+  return false;
+}
+
+/**
+ * Server-rendered pages (spec docs/superpowers/specs/2026-11-01-web-ssr-design.md §9).
+ * `SSR_PENDING` lists the page files not migrated yet. It is a ratchet: a listed file is exempt from
+ * the `web-ssr-*` rules (not from other web-ui rules), an entry whose file no longer violates one
+ * (or no longer exists) fails as `web-ssr-stale-pending`, and nothing may be added: a new page
+ * is written server-first. Each migration batch removes its entries.
+ */
+export interface SsrPending {
+  /** Relative to apps/web/src, with `/` separators. */
+  path: string;
+  reason: string;
+}
+const PENDING_REASON = "not migrated yet (web SSR plan Tasks 7-11)";
+export const SSR_PENDING: readonly SsrPending[] = [
+  { path: "app/(app)/account/connections/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/account/grants/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/account/identities/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/admin/accounts/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/admin/catalog/[itemId]/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/admin/catalog/import/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/admin/catalog/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/admin/catalog/requests/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/admin/extensions/[name]/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/admin/extensions/install/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/admin/extensions/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/admin/marketplaces/entries/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/admin/marketplaces/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/admin/models/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/admin/orgs/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/admin/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/admin/settings/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/agents/[id]/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/agents/new/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/agents/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/catalog/[itemId]/install/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/catalog/[itemId]/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/catalog/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/channels/[id]/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/channels/new/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/channels/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/chat/[conversationId]/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/chat/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/connectors/[connectorId]/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/connectors/install/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/connectors/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/evals/[setId]/cases/[caseId]/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/evals/[setId]/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/evals/[setId]/run/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/evals/new/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/evals/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/evals/runs/[runId]/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/inbox/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/p/[plugin]/[id]/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/settings/extensions/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/settings/members/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/settings/models/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/settings/organization/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/settings/plugins/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/settings/sandbox/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/settings/tokens/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/skills/[id]/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/skills/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/trajectories/[conversationId]/page.tsx", reason: PENDING_REASON },
+  { path: "app/(app)/trajectories/page.tsx", reason: PENDING_REASON },
+  { path: "app/(auth)/bind/[token]/page.tsx", reason: PENDING_REASON },
+  { path: "app/(auth)/invite/[token]/page.tsx", reason: PENDING_REASON },
+  { path: "app/(auth)/login/page.tsx", reason: PENDING_REASON },
+  { path: "app/(auth)/setup/page.tsx", reason: PENDING_REASON },
+];
+
+const SSR_RULES = {
+  loading: "web-ssr-loading-file",
+  client: "web-ssr-client-page",
+  firstPaint: "web-ssr-first-paint",
+  location: "web-ssr-location",
+  stale: "web-ssr-stale-pending",
+} as const;
+const SSR_EXEMPT = /\/\/\s*ssr-exempt:(.*)$/;
+const LOADER_NAME = /^(?:list|get|load|fetch)/;
+/** Hooks whose function argument runs during render (so a location read there is a render read). */
+const RENDER_CALLBACK_HOOKS = new Set(["useState", "useMemo", "useReducer"]);
+
+function isUseClient(p: ParsedFile): boolean {
+  const body = p.program.body as Node[] | undefined;
+  for (const st of body ?? []) {
+    if (st.type !== "ExpressionStatement") return false;
+    if (st.directive === "use client") return true;
+    const e = st.expression as Node;
+    if (e.type === "Literal" && e.value === "use client") return true;
+    if (typeof st.directive !== "string" && e.type !== "Literal") return false;
+  }
+  return false;
+}
+
+function calleeName(n: Node): string | undefined {
+  const c = n.callee as Node;
+  if (c.type === "Identifier") return c.name as string;
+  if (c.type === "MemberExpression" && !c.computed) return (c.property as Node).name as string;
+  return undefined;
+}
+
+function isLocationRead(n: Node): boolean {
+  if (n.type !== "MemberExpression" || n.computed) return false;
+  const prop = (n.property as Node).name;
+  if (prop !== "search" && prop !== "pathname") return false;
+  const o = n.object as Node;
+  if (o.type === "Identifier") return o.name === "location";
+  return (
+    o.type === "MemberExpression" &&
+    !o.computed &&
+    (o.object as Node).type === "Identifier" &&
+    ["window", "globalThis", "self"].includes((o.object as Node).name as string) &&
+    (o.property as Node).name === "location"
+  );
+}
+
+/**
+ * Location reads during render. A text-free AST pass with a function-nesting heuristic: a read is
+ * flagged when it is at module level, directly in a component or hook body (a function that is
+ * not nested in another function, named with a capital or `use`, or anonymous), or in a callback
+ * handed to `useState` / `useMemo` / `useReducer` (initializers run during render). Reads inside
+ * any other nested function (handlers, effects, helpers) are not flagged. Limits: a module-level
+ * helper that a component calls during render is not followed, and components wrapped in
+ * `memo` / `forwardRef` count as anonymous top-level functions. `// ssr-exempt: <reason>`
+ * covers a false positive.
+ */
+function locationReads(p: ParsedFile): Node[] {
+  const hits: Node[] = [];
+  const fnNames = new Map<Node, string>();
+  type Kind = "component" | "init" | "other";
+  const visit = (n: Node, stack: Kind[], init: Set<Node>): void => {
+    let next = stack;
+    let nextInit = init;
+    if (n.type === "VariableDeclarator") {
+      const id = n.id as Node;
+      const v = n.init as Node | null;
+      if (id.type === "Identifier" && v && /Function/.test(v.type)) {
+        fnNames.set(v, id.name as string);
+      }
+    } else if (n.type === "CallExpression") {
+      const name = calleeName(n);
+      if (name !== undefined && RENDER_CALLBACK_HOOKS.has(name)) {
+        nextInit = new Set(init);
+        for (const a of n.arguments as Node[]) nextInit.add(a);
+      }
+    } else if (
+      n.type === "FunctionDeclaration" ||
+      n.type === "FunctionExpression" ||
+      n.type === "ArrowFunctionExpression"
+    ) {
+      const name =
+        n.type === "FunctionDeclaration"
+          ? ((n.id as Node | null)?.name as string | undefined)
+          : fnNames.get(n);
+      let kind: Kind = "other";
+      if (init.has(n) && !stack.includes("other")) kind = "init";
+      else if (stack.length === 0 && (name === undefined || /^(?:[A-Z]|use[A-Z])/.test(name)))
+        kind = "component";
+      next = [...stack, kind];
+    }
+    if (isLocationRead(n) && !next.includes("other")) hits.push(n);
+    for (const v of Object.values(n)) {
+      if (Array.isArray(v)) {
+        for (const c of v)
+          if (c && typeof c === "object" && "type" in c) visit(c as Node, next, nextInit);
+      } else if (v && typeof v === "object" && "type" in v) visit(v as Node, next, nextInit);
+    }
+  };
+  visit(p.program, [], new Set());
+  return hits;
+}
+
+/** Names bound by imports from a `/lib/` module that look like loaders (list*, get*, load*, fetch*). */
+function libLoaders(p: ParsedFile): { names: Set<string>; namespaces: Set<string> } {
+  const names = new Set<string>();
+  const namespaces = new Set<string>();
+  walk(p.program, (n) => {
+    if (n.type !== "ImportDeclaration" || !String((n.source as Node).value).includes("/lib/"))
+      return;
+    for (const sp of n.specifiers as Node[]) {
+      const local = (sp.local as Node).name as string;
+      if (sp.type === "ImportNamespaceSpecifier") namespaces.add(local);
+      else if (sp.type === "ImportSpecifier") {
+        const im = sp.imported as Node;
+        if (LOADER_NAME.test(String(im.name ?? im.value))) names.add(local);
+      }
+    }
+  });
+  return { names, namespaces };
+}
+
+function hasInitial(call: Node): boolean {
+  return (call.arguments as Node[]).some(
+    (a) =>
+      a.type === "ObjectExpression" &&
+      (a.properties as Node[]).some((q) => propKey(q) === "initial"),
+  );
+}
+
+function ssrFindings(file: string, p: ParsedFile, segs: string[]): Finding[] {
+  if (segs[0] !== "app") return [];
+  const out: Finding[] = [];
+  const base = segs.at(-1) ?? "";
+  const lines = readFileSync(file, "utf8").split("\n");
+  /** An exemption comment on the line or the line above: "none" | "ok" | "empty". */
+  const exemption = (line: number): "none" | "ok" | "empty" => {
+    for (const i of [line - 1, line - 2]) {
+      const m = SSR_EXEMPT.exec(lines[i] ?? "");
+      if (m) return (m[1] ?? "").trim() === "" ? "empty" : "ok";
+    }
+    return "none";
+  };
+  const flag = (rule: string, at: Node, message: string) => {
+    const line = p.lineOf(at.start);
+    const ex = exemption(line);
+    if (ex === "ok") return;
+    out.push({
+      file,
+      line,
+      rule,
+      message: ex === "empty" ? "`// ssr-exempt:` needs a reason after the colon" : message,
+    });
+  };
+
+  if (/^loading\.[jt]sx?$/.test(base))
+    out.push({
+      file,
+      line: 1,
+      rule: SSR_RULES.loading,
+      message:
+        "no loading.tsx: it would hide the server-rendered page behind a fallback; the page renders its data on the server (docs/superpowers/specs/2026-11-01-web-ssr-design.md §5)",
+    });
+
+  const group = segs[1];
+  if (/^page\.[jt]sx?$/.test(base) && (group === "(app)" || group === "(auth)") && isUseClient(p))
+    out.push({
+      file,
+      line: 1,
+      rule: SSR_RULES.client,
+      message:
+        'a page.tsx is a server component (gate and reads); move the template and interaction into view.tsx with "use client" and pass the data as `initial` props',
+    });
+
+  if (/^view\.[jt]sx?$/.test(base)) {
+    const loaders = libLoaders(p);
+    walk(p.program, (n) => {
+      if (n.type !== "CallExpression") return;
+      const c = n.callee as Node;
+      if (c.type !== "Identifier") return;
+      if (c.name === "useLoad" && !hasInitial(n)) {
+        flag(
+          SSR_RULES.firstPaint,
+          n,
+          "useLoad without `initial` fetches after mount, so the first paint is empty; pass the server read as `{ initial }` (or `// ssr-exempt: <reason>`)",
+        );
+      } else if (c.name === "useEffect") {
+        const cb = (n.arguments as Node[])[0];
+        if (!cb) return;
+        let loader: string | undefined;
+        walk(cb, (m) => {
+          if (m.type !== "CallExpression" || loader !== undefined) return;
+          const mc = m.callee as Node;
+          if (mc.type === "Identifier" && loaders.names.has(mc.name as string))
+            loader = mc.name as string;
+          else if (
+            mc.type === "MemberExpression" &&
+            (mc.object as Node).type === "Identifier" &&
+            loaders.namespaces.has((mc.object as Node).name as string) &&
+            LOADER_NAME.test(String((mc.property as Node).name))
+          )
+            loader = String((mc.property as Node).name);
+        });
+        if (loader !== undefined)
+          flag(
+            SSR_RULES.firstPaint,
+            n,
+            `useEffect calls the loader ${loader}(): the first paint would be empty; read it on the server and pass it as \`initial\` (or \`// ssr-exempt: <reason>\`)`,
+          );
+      }
+    });
+  }
+
+  for (const hit of locationReads(p))
+    flag(
+      SSR_RULES.location,
+      hit,
+      "location.search / location.pathname read during render: it differs on the server; take `searchParams` in page.tsx or use `usePathname()` (or `// ssr-exempt: <reason>`)",
+    );
+  return out;
+}
+
+/** Drops the web-ssr findings of the pending files; reports stale and missing entries. */
+function applySsrPending(
+  findings: Finding[],
+  webSrcDir: string,
+  pending: readonly SsrPending[],
+): Finding[] {
+  const isSsr = (f: Finding) => f.rule.startsWith("web-ssr-");
+  const abs = (path: string) => join(webSrcDir, ...path.split("/"));
+  const listed = new Set(pending.map((e) => abs(e.path)));
+  const out = findings.filter((f) => !(isSsr(f) && listed.has(f.file)));
+  for (const e of pending) {
+    const file = abs(e.path);
+    const hit = findings.some((f) => isSsr(f) && f.file === file);
+    if (!existsSync(file))
+      out.push({
+        file,
+        line: 1,
+        rule: SSR_RULES.stale,
+        message: `SSR_PENDING entry ${e.path} does not exist; remove it from SSR_PENDING in tools/checks/src/web-ui.ts`,
+      });
+    else if (!hit)
+      out.push({
+        file,
+        line: 1,
+        rule: SSR_RULES.stale,
+        message: `${e.path} no longer violates a web-ssr rule; remove its SSR_PENDING entry in tools/checks/src/web-ui.ts (the list only shrinks)`,
+      });
+  }
   return out;
 }
 
@@ -479,7 +828,11 @@ function checkDesign(designSrcDir: string): Finding[] {
  * 界面规范：apps/web/src 只能用 @capybara-hq/design 搭界面（导入边界、样式归属、页面模板、颜色字面量），
  * packages/design/src 的颜色字面量只能在 styles/tokens.css。
  */
-export function checkWebUi(webSrcDir: string, designSrcDir: string): Finding[] {
+export function checkWebUi(
+  webSrcDir: string,
+  designSrcDir: string,
+  pending: readonly SsrPending[] = SSR_PENDING,
+): Finding[] {
   const findings: Finding[] = [];
   for (const { file, isTest } of listSourceFiles(webSrcDir)) {
     findings.push(...checkWebFile(file, isTest, webSrcDir));
@@ -494,5 +847,5 @@ export function checkWebUi(webSrcDir: string, designSrcDir: string): Finding[] {
   }
   findings.push(...charIconMessageFindings(join(webSrcDir, "..", "messages")));
   findings.push(...checkDesign(designSrcDir));
-  return findings;
+  return applySsrPending(findings, webSrcDir, pending);
 }

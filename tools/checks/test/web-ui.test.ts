@@ -3,11 +3,11 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 // design 是浏览器包（无扩展名导入）；names.ts 无 React 依赖，直接按相对路径取常量。
 import { PAGE_TEMPLATES } from "../../../packages/design/src/templates/names.js";
-import { checkWebUi, WEB_UI_TEMPLATES } from "../src/web-ui.js";
+import { checkWebUi, type SsrPending, WEB_UI_TEMPLATES } from "../src/web-ui.js";
 
-const run = (name: string) => {
+const run = (name: string, pending: SsrPending[] = []) => {
   const dir = fileURLToPath(new URL(`../fixtures/web-ui/${name}`, import.meta.url));
-  return checkWebUi(join(dir, "apps/web/src"), join(dir, "packages/design/src"));
+  return checkWebUi(join(dir, "apps/web/src"), join(dir, "packages/design/src"), pending);
 };
 
 describe("checkWebUi", () => {
@@ -130,6 +130,46 @@ describe("checkWebUi", () => {
       expect(f.map((x) => [x.rule, x.file.split("/").at(-1), x.line])).toEqual([
         ["design-char-icon", "zh.json", 3],
       ]);
+    });
+  });
+
+  describe("server-rendered pages (web-ssr-*)", () => {
+    const at = (name: string, pending: SsrPending[] = []) =>
+      run(name, pending).map((x) => [x.rule, x.file.split("/").at(-1), x.line]);
+    it("web-ssr-loading-file flags a loading.tsx", () =>
+      expect(at("ssr-loading-file")).toEqual([["web-ssr-loading-file", "loading.tsx", 1]]));
+    it("web-ssr-client-page flags a use-client page under (app)", () =>
+      expect(at("ssr-client-page")).toEqual([["web-ssr-client-page", "page.tsx", 1]]));
+    it("web-ssr-first-paint flags useLoad without initial and effects calling lib loaders", () =>
+      expect(at("ssr-first-paint")).toEqual([
+        ["web-ssr-first-paint", "view.tsx", 8],
+        ["web-ssr-first-paint", "view.tsx", 12],
+        ["web-ssr-first-paint", "view.tsx", 13],
+      ]));
+    it("web-ssr-location flags reads during render and in useState initializers", () =>
+      expect(at("ssr-location")).toEqual([
+        ["web-ssr-location", "view.tsx", 8],
+        ["web-ssr-location", "view.tsx", 9],
+        ["web-ssr-location", "view.tsx", 10],
+      ]));
+    it("a server page rendering ./view passes web-ui-template when the view has a template", () =>
+      expect(run("ssr-template-view")).toEqual([]));
+    it("a server page whose ./view has no template fails web-ui-template", () =>
+      one("ssr-template-view-missing", "web-ui-template"));
+    it("SSR_PENDING exempts a listed file from the web-ssr rules", () =>
+      expect(
+        run("ssr-pending", [{ path: "app/(app)/x/page.tsx", reason: "not migrated" }]),
+      ).toEqual([]));
+    it("an unlisted client page still fails", () =>
+      expect(run("ssr-pending").map((x) => x.rule)).toEqual(["web-ssr-client-page"]));
+    it("web-ssr-stale-pending: a listed file without a violation fails", () => {
+      const f = run("ssr-pending-stale", [{ path: "app/(app)/x/page.tsx", reason: "r" }]);
+      expect(f.map((x) => x.rule)).toEqual(["web-ssr-stale-pending"]);
+    });
+    it("web-ssr-stale-pending: a listed file that does not exist fails", () => {
+      const f = run("ssr-pending-stale", [{ path: "app/(app)/gone/page.tsx", reason: "r" }]);
+      expect(f.map((x) => x.rule)).toEqual(["web-ssr-stale-pending"]);
+      expect(f[0]?.message).toContain("does not exist");
     });
   });
 });
