@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AdminCatalogPage from "../src/app/(app)/admin/catalog/page";
 import AdminExtensionsPage from "../src/app/(app)/admin/extensions/page";
-import CatalogPage from "../src/app/(app)/catalog/page";
 import ChannelsPage from "../src/app/(app)/channels/page";
 import EvalsPage from "../src/app/(app)/evals/page";
 import { resetNavigation } from "./support/navigation";
@@ -28,7 +27,6 @@ afterEach(() => {
 });
 
 const pages: [string, string, () => ReactNode][] = [
-  ["catalog", "/catalog", () => <CatalogPage />],
   ["channels", "/channels", () => <ChannelsPage />],
   ["evals", "/evals", () => <EvalsPage />],
   ["admin extensions", "/admin/extensions", () => <AdminExtensionsPage />],

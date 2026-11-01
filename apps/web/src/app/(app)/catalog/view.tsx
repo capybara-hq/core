@@ -1,0 +1,97 @@
+"use client";
+
+import { ListPage, ObjectRow } from "@capybara-hq/design";
+import { useLocale, useTranslations } from "next-intl";
+import { useState } from "react";
+import { useOrgItemStatus } from "../../../components/CatalogInstallAction";
+import { usePagePath } from "../../../components/shell/path";
+import { useSession } from "../../../components/shell/session";
+import { displayNameOf, type OrgCatalogItem } from "../../../lib/catalog";
+import { canUpdateOrg } from "../../../lib/org-settings";
+
+/**
+ * `/catalog`: the plugins in the catalog available to this org (members and up), as object rows.
+ * The row action follows `installable` (the kernel decides): install opens the wizard, requests
+ * and upgrades open the detail page, which carries the full action (CatalogInstallAction). Read on
+ * the server (`page.tsx`).
+ */
+export default function CatalogView({ initial }: { initial: OrgCatalogItem[] }) {
+  const scope = usePagePath("org");
+  const t = useTranslations("catalog.org");
+  const locale = useLocale();
+  const status = useOrgItemStatus();
+  const { me } = useSession();
+  const admin = canUpdateOrg(me);
+  const [tab, setTab] = useState<"all" | "installed">("all");
+  const all = initial;
+  const installed = all.filter((i) => i.installed !== null);
+  // A tab only when it holds something different from "all".
+  const showTabs = installed.length > 0 && installed.length < all.length;
+  const active = showTabs && tab === "installed" ? "installed" : "all";
+  const rows = active === "installed" ? installed : all;
+
+  const rowAction = (i: OrgCatalogItem) => {
+    const detail = `/catalog/${encodeURIComponent(i.id)}`;
+    if (i.installed !== null) {
+      return admin && i.installed.upgradeAvailable !== null
+        ? { label: t("action.upgrade"), href: detail }
+        : undefined;
+    }
+    if (i.request?.status === "pending") return undefined;
+    if (i.installable === "disabled" || i.installable === "not_deployed") return undefined;
+    if (!admin) return { label: t("action.request"), href: detail };
+    if (i.installable === "needs_approval") {
+      return { label: t("action.requestApproval"), href: detail };
+    }
+    return { label: t("action.install"), primary: true, href: `${detail}/install` };
+  };
+  const tone = (i: OrgCatalogItem) =>
+    i.installed !== null
+      ? i.installed.upgradeAvailable !== null
+        ? ("warn" as const)
+        : ("ok" as const)
+      : i.installable === "not_deployed"
+        ? ("warn" as const)
+        : ("muted" as const);
+
+  const header = {
+    path: [...scope, { label: "catalog" }],
+    title: t("title"),
+    description: t("hint"),
+    ...(showTabs
+      ? {
+          tabs: [
+            { id: "all", label: t("tabs.all"), count: all.length, onSelect: () => setTab("all") },
+            {
+              id: "installed",
+              label: t("tabs.installed"),
+              count: installed.length,
+              onSelect: () => setTab("installed"),
+            },
+          ],
+          activeTab: active,
+        }
+      : {}),
+  };
+  const empty = all.length === 0 ? { text: t("empty") } : undefined;
+  return (
+    <ListPage header={header} variant="objects" {...(empty ? { empty } : {})}>
+      {rows.map((i) => {
+        const action = rowAction(i);
+        const name = displayNameOf(i, locale);
+        return (
+          <ObjectRow
+            key={i.id}
+            mark={{ text: Array.from(name)[0] ?? "?" }}
+            name={name}
+            href={`/catalog/${encodeURIComponent(i.id)}`}
+            description={i.description}
+            meta={i.publisher}
+            state={{ label: status(i), tone: tone(i) }}
+            {...(action ? { action } : {})}
+          />
+        );
+      })}
+    </ListPage>
+  );
+}

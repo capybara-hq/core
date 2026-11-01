@@ -45,6 +45,13 @@ vi.mock("next/navigation", () => ({
 type RenderOpts = Parameters<typeof renderRoute>[2];
 const installPage = () =>
   InstallPage({ params: Promise.resolve({ itemId: params.current.itemId ?? "" }) });
+/** `/catalog` read on the server from the latest `stubApi` routes (the browser's). */
+const renderCatalog = (opts: RenderOpts = {}) =>
+  renderRoute(() => CatalogPage(), lastStubRoutes(), opts);
+const itemPage = () =>
+  OrgCatalogItemPage({ params: Promise.resolve({ itemId: params.current.itemId ?? "" }) });
+/** `/catalog/<id>` read on the server from the latest `stubApi` routes. */
+const renderItem = (opts: RenderOpts = {}) => renderRoute(itemPage, lastStubRoutes(), opts);
 /** `/catalog/<id>/install` read on the server from the latest `stubApi` routes (the browser's). */
 const renderInstall = (opts: RenderOpts = {}) => renderRoute(installPage, lastStubRoutes(), opts);
 
@@ -124,7 +131,7 @@ describe("/catalog: actions follow installable", () => {
         }),
       ];
       stubApi({ [`GET ${ORG}/catalog`]: () => json(200, { items }) });
-      renderPage(<CatalogPage />, { locale });
+      await renderCatalog({ locale });
       expect(template("ListPage")).not.toBeNull();
       const list = await screen.findByRole("list", { name: msgs[locale].catalog.org.title });
       const row = (name: string) =>
@@ -163,7 +170,7 @@ describe("/catalog: actions follow installable", () => {
           ],
         }),
     });
-    renderPage(<CatalogPage />);
+    await renderCatalog();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("tab", { name: /Installed/ }));
     expect(screen.queryByText("yes-skill")).toBeNull();
@@ -174,7 +181,7 @@ describe("/catalog: actions follow installable", () => {
   it("members: an installable item offers a request that opens the detail page", async () => {
     const a = en.catalog.org.action;
     stubApi({ [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }) });
-    renderPage(<CatalogPage />, { me: MEMBER });
+    await renderCatalog({ me: MEMBER });
     const link = await screen.findByRole("link", { name: a.request });
     expect(link.getAttribute("href")).toBe(`/catalog/${ID}`);
     expect(screen.queryByRole("link", { name: a.install })).toBeNull();
@@ -204,7 +211,7 @@ describe("/catalog: dependency errors", () => {
           },
         }),
     });
-    renderPage(<OrgCatalogItemPage />);
+    await renderItem();
     await userEvent
       .setup()
       .click(await screen.findByRole("button", { name: en.catalog.org.action.requestApproval }));
@@ -2049,7 +2056,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
         json(202, { request: { id: "r1", stage: "deployment", status: "pending" } }),
     });
-    renderPage(<OrgCatalogItemPage />);
+    await renderItem();
     expect(
       await screen.findByText(fill(m.org.action.upgradeAvailable, { version: "1.1.0" })),
     ).toBeTruthy();
@@ -2187,7 +2194,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
   it("catalog item: members see the upgrade but no button", async () => {
     params.current = { itemId: ID };
     stubApi({ [`GET ${ORG}/catalog/${ID}`]: () => json(200, DETAIL) });
-    renderPage(<OrgCatalogItemPage />, { me: MEMBER });
+    await renderItem({ me: MEMBER });
     expect(
       await screen.findByText(fill(en.catalog.org.action.upgradeAvailable, { version: "1.1.0" })),
     ).toBeTruthy();
@@ -2200,7 +2207,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       [`GET ${ORG}/catalog/${ID}`]: () =>
         json(200, { ...DETAIL, agents: ["agents/reviewer.md", "agents/tester.md"] }),
     });
-    renderPage(<OrgCatalogItemPage />, { me: MEMBER });
+    await renderItem({ me: MEMBER });
     expect(await screen.findByText("· reviewer")).toBeTruthy();
     expect(screen.getByText("· tester")).toBeTruthy();
     expect(screen.getByText(en.catalog.components.agentTemplates)).toBeTruthy();
@@ -2820,5 +2827,62 @@ describe("/catalog/[itemId]/install renders on the server (web-SSR spec §6)", (
     cleanup();
     const none = await renderRoute(installPage, routes, { me: { ...ME, currentOrgId: null } });
     expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+  });
+});
+
+describe("/catalog and /catalog/[itemId] render on the server (web-SSR spec §6)", () => {
+  const detail = {
+    item: orgItem({ name: "crm" }),
+    hasIcon: false,
+    extension: "crm",
+    templates: [],
+    dependencies: [],
+    skills: [],
+  };
+  const routes = {
+    [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),
+    [`GET ${ORG}/catalog/${ID}`]: () => json(200, detail),
+  };
+  const GUEST: Me = {
+    ...ME,
+    account: { ...ME.account, isEnterpriseAdmin: false },
+    memberships: [{ ...ME.memberships[0], role: "guest" } as Me["memberships"][number]],
+  };
+  const item = () => OrgCatalogItemPage({ params: Promise.resolve({ itemId: ID }) });
+
+  it("/catalog: the list is the first paint; it is a setup step", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRoute(() => CatalogPage(), routes, { readiness: NOT_READY });
+    expect(within(screen.getByRole("list", { name: en.catalog.org.title })).getByText("pdf-tools"));
+    expect(browser).toEqual([]);
+  });
+
+  it("/catalog/<id>: the item is the first paint; it is a setup step; a missing one is not found", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRoute(item, routes, { readiness: NOT_READY });
+    expect(screen.getByRole("heading", { level: 1, name: "crm" })).toBeTruthy();
+    expect(screen.getByText("· crm")).toBeTruthy();
+    expect(browser).toEqual([]);
+    await expect(
+      renderRoute(item, {
+        [`GET ${ORG}/catalog/${ID}`]: () =>
+          json(404, { error: { code: "catalog.item_not_found", message: "x" } }),
+      }),
+    ).rejects.toThrow("NOT_FOUND");
+  });
+
+  it.each([
+    ["/catalog", () => CatalogPage()],
+    ["/catalog/<id>", item],
+  ])("%s: a guest gets no access and nothing is read; no org renders nothing", async (_p, page) => {
+    const guest = await renderRoute(page, routes, { me: GUEST });
+    expect(new Set(guest.calls.map((c) => c.url))).toEqual(
+      new Set(["/api/v1/me", `${ORG}/readiness`]),
+    );
+    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
+    cleanup();
+    const none = await renderRoute(page, routes, { me: { ...ME, currentOrgId: null } });
+    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+    expect(document.body.textContent).toBe("");
   });
 });

@@ -417,8 +417,6 @@ export const SSR_PENDING: readonly SsrPending[] = [
   { path: "app/(app)/admin/orgs/page.tsx", reason: PENDING_REASON },
   { path: "app/(app)/admin/page.tsx", reason: PENDING_REASON },
   { path: "app/(app)/admin/settings/page.tsx", reason: PENDING_REASON },
-  { path: "app/(app)/catalog/[itemId]/page.tsx", reason: PENDING_REASON },
-  { path: "app/(app)/catalog/page.tsx", reason: PENDING_REASON },
   { path: "app/(app)/channels/[id]/page.tsx", reason: PENDING_REASON },
   { path: "app/(app)/channels/new/page.tsx", reason: PENDING_REASON },
   { path: "app/(app)/channels/page.tsx", reason: PENDING_REASON },

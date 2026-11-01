@@ -159,8 +159,13 @@ const PAGES: [string, ComponentType | ServerPage, "member" | "admin", string][] 
   ["/settings/sandbox", SandboxPage, "member", zh.roles.need.member],
   ["/skills", server(() => SkillsPage()), "member", zh.roles.need.member],
   ["/skills/x1", server(() => SkillPage(params({ id: "x1" }))), "member", zh.roles.need.member],
-  ["/catalog", CatalogPage, "member", zh.roles.need.member],
-  ["/catalog/i1", CatalogItemPage, "member", zh.roles.need.member],
+  ["/catalog", server(() => CatalogPage()), "member", zh.roles.need.member],
+  [
+    "/catalog/i1",
+    server(() => CatalogItemPage(params({ itemId: "i1" }))),
+    "member",
+    zh.roles.need.member,
+  ],
   [
     "/catalog/i1/install",
     server(() => CatalogInstallPage(params({ itemId: "i1" }))),
