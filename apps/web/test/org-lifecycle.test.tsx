@@ -8,9 +8,10 @@ import TokensPage from "../src/app/(app)/settings/tokens/page";
 import { navigateBrowser } from "../src/lib/browser";
 import type { OrgRole } from "../src/lib/members";
 import type { Me } from "../src/lib/session";
-import { bodyOf, json, noContent, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { ME, renderPage } from "./support/render";
+import { ME } from "./support/render";
+import { renderRoute } from "./support/server";
 import { renderFrame, shellOf } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -146,7 +147,10 @@ describe("删除组织 (组织设置 · 通用)", () => {
     it(`${role}: the danger zone is ${owner ? "shown" : "absent"}`, async () => {
       api();
       resetNavigation("/settings/organization");
-      renderPage(<OrganizationSettingsPage />, { locale: "zh", me: meAs(role) });
+      await renderRoute(OrganizationSettingsPage, lastStubRoutes(), {
+        locale: "zh",
+        me: meAs(role),
+      });
       await screen.findByText(zh.orgSettings.toolSearch.title, { selector: "h2" });
       expect(screen.queryByRole("region", { name: zh.orgLifecycle.danger.title }) !== null).toBe(
         owner,
@@ -156,7 +160,10 @@ describe("删除组织 (组织设置 · 通用)", () => {
 
   it("the owner types the slug to delete; then a full navigation to the chooser, the dialog busy until then", async () => {
     const calls = api();
-    renderPage(<OrganizationSettingsPage />, { locale: "zh", me: meAs("owner") });
+    await renderRoute(OrganizationSettingsPage, lastStubRoutes(), {
+      locale: "zh",
+      me: meAs("owner"),
+    });
     const user = userEvent.setup();
     const zone = await screen.findByRole("region", { name: zh.orgLifecycle.danger.title });
     await user.click(within(zone).getByRole("button", { name: zh.orgLifecycle.delete.action }));
@@ -186,7 +193,10 @@ describe("删除组织 errors", () => {
       [`DELETE ${O}`]: () =>
         json(403, { error: { code: "forbidden", message: "Insufficient organization role" } }),
     });
-    renderPage(<OrganizationSettingsPage />, { locale: "zh", me: meAs("owner") });
+    await renderRoute(OrganizationSettingsPage, lastStubRoutes(), {
+      locale: "zh",
+      me: meAs("owner"),
+    });
     const user = userEvent.setup();
     const zone = await screen.findByRole("region", { name: zh.orgLifecycle.danger.title });
     await user.click(within(zone).getByRole("button", { name: zh.orgLifecycle.delete.action }));
@@ -222,10 +232,10 @@ describe("服务令牌", () => {
     });
 
   for (const role of ["guest", "member"] as const) {
-    it(`${role}: no access, nothing loaded`, () => {
+    it(`${role}: no access, nothing loaded`, async () => {
       const calls = api();
       resetNavigation("/settings/tokens");
-      renderPage(<TokensPage />, { locale: "zh", me: meAs(role) });
+      await renderRoute(TokensPage, lastStubRoutes(), { locale: "zh", me: meAs(role) });
       expect(
         document.querySelector('[data-template="StatusPage"][data-kind="no-access"]'),
       ).toBeTruthy();
@@ -239,11 +249,17 @@ describe("服务令牌", () => {
     stubApi({
       [`GET ${O}/settings`]: () => json(200, { settings: { toolSearch: "on", locale: "en" } }),
     });
-    renderPage(<OrganizationSettingsPage />, { locale: "zh", me: meAs("member") });
+    await renderRoute(OrganizationSettingsPage, lastStubRoutes(), {
+      locale: "zh",
+      me: meAs("member"),
+    });
     await screen.findByRole("link", { name: zh.connections.nav.general });
     expect(screen.queryByRole("link", { name: zh.connections.nav.tokens })).toBeNull();
     cleanup();
-    renderPage(<OrganizationSettingsPage />, { locale: "zh", me: meAs("admin") });
+    await renderRoute(OrganizationSettingsPage, lastStubRoutes(), {
+      locale: "zh",
+      me: meAs("admin"),
+    });
     const link = await screen.findByRole("link", { name: zh.connections.nav.tokens });
     expect(link.getAttribute("href")).toBe("/settings/tokens");
   });
@@ -254,7 +270,7 @@ describe("服务令牌", () => {
         json(200, { tokens: [{ ...TOKEN, expiresAt: "2020-01-01T00:00:00Z" }] }),
     });
     resetNavigation("/settings/tokens");
-    renderPage(<TokensPage />, { locale: "zh", me: meAs("admin") });
+    await renderRoute(TokensPage, lastStubRoutes(), { locale: "zh", me: meAs("admin") });
     const table = await screen.findByRole("table", { name: zh.tokens.title });
     expect(within(table).getByText(zh.tokens.expired)).toBeTruthy();
   });
@@ -263,7 +279,7 @@ describe("服务令牌", () => {
     it(`${role}: lists, creates (roles up to its own, shown once) and revokes`, async () => {
       const calls = api();
       resetNavigation("/settings/tokens");
-      renderPage(<TokensPage />, { locale: "zh", me: meAs(role) });
+      await renderRoute(TokensPage, lastStubRoutes(), { locale: "zh", me: meAs(role) });
       const table = await screen.findByRole("table", { name: zh.tokens.title });
       expect(within(table).getByText("ci")).toBeTruthy();
       const user = userEvent.setup();

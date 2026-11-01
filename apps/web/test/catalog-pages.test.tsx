@@ -760,7 +760,7 @@ describe("/settings/plugins: installed plugins and uninstall", () => {
           });
         },
       });
-      renderPage(<PluginsPage />, { locale });
+      await renderRoute(PluginsPage, lastStubRoutes(), { locale });
       expect(template("SettingsPage")).not.toBeNull();
       expect(
         await screen.findByText(`· ${a.componentKind.plugin} crm-core — ${a.created}`),
@@ -797,7 +797,7 @@ describe("/settings/plugins: installed plugins and uninstall", () => {
       [`DELETE ${ORG}/plugin-installs/i1`]: () =>
         json(409, { error: { code: "plugin.install_in_progress", message: "x" } }),
     });
-    renderPage(<PluginsPage />);
+    await renderRoute(PluginsPage, lastStubRoutes());
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: en.catalog.plugins.cleanup }));
     await user.click(
@@ -1307,6 +1307,7 @@ describe("组织插件：启用被目录条目拒绝", () => {
   it.each(LOCALES)("approval_required 显示翻译后的原因与去目录的入口（%s）", async (locale) => {
     const m = msgs[locale];
     stubApi({
+      [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }),
       [`GET ${ORG}/extensions`]: () =>
         json(200, {
           extensions: [
@@ -1325,7 +1326,7 @@ describe("组织插件：启用被目录条目拒绝", () => {
       [`PUT ${ORG}/extensions/crm-core`]: () =>
         json(403, { error: { code: "catalog.approval_required", message: "x" } }),
     });
-    renderPage(<ExtensionsPage />, { locale });
+    await renderRoute(ExtensionsPage, lastStubRoutes(), { locale });
     await userEvent.setup().click(
       await screen.findByRole("switch", {
         name: fill(m.extensions.enableLabel, { plugin: "crm-core" }),
@@ -1943,7 +1944,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
           return json(200, { install: { ...UPGRADABLE, version: "1.1.0" } });
         },
       });
-      renderPage(<PluginsPage />, { locale });
+      await renderRoute(PluginsPage, lastStubRoutes(), { locale });
       expect(
         await screen.findByText(fill(m.plugins.upgradeAvailable, { version: "1.1.0" })),
       ).toBeTruthy();
@@ -2022,7 +2023,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
         json(409, { error: { code: "plugin.upgrade_stale", message: "x" } }),
     });
-    renderPage(<PluginsPage />);
+    await renderRoute(PluginsPage, lastStubRoutes());
     expect(await screen.findByText(m.plugins.deploymentPending)).toBeTruthy();
     expect(screen.getByText(new RegExp(`^${m.plugins.status.upgrading}`))).toBeTruthy();
     const user = userEvent.setup();
@@ -2101,7 +2102,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
             },
           }),
       });
-      renderPage(<PluginsPage />, { locale });
+      await renderRoute(PluginsPage, lastStubRoutes(), { locale });
       const user = userEvent.setup();
       await user.click(await screen.findByRole("button", { name: m.plugins.upgrade }));
       const dialog = await screen.findByRole("dialog");
@@ -2139,7 +2140,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
             error: { code: "plugin.upgrade_target_invalid", message: "English", details },
           }),
       });
-      renderPage(<PluginsPage />, { locale });
+      await renderRoute(PluginsPage, lastStubRoutes(), { locale });
       const user = userEvent.setup();
       await user.click(await screen.findByRole("button", { name: m.catalog.plugins.upgrade }));
       const dialog = await screen.findByRole("dialog");
@@ -2176,7 +2177,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
         json(409, { error: { code: "plugin.upgrade_stale", message: "x" } }),
     });
-    renderPage(<PluginsPage />);
+    await renderRoute(PluginsPage, lastStubRoutes());
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: m.plugins.upgrade }));
     const dialog = await screen.findByRole("dialog");

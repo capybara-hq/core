@@ -7,9 +7,10 @@ import AdminModelsPage from "../src/app/(app)/admin/models/page";
 import OrgModelsPage from "../src/app/(app)/settings/models/page";
 import { activeNavOf } from "../src/components/shell/nav";
 import type { Me } from "../src/lib/session";
-import { bodyOf, type Call, json, stubApi } from "./support/api";
+import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
+import { renderRoute } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -346,7 +347,7 @@ describe("sub-agent model tiers on the purposes page", () => {
         }),
       "GET /api/v1/orgs/o1/models": () => json(200, { providers: [ALPHA] }),
     });
-    renderPage(<OrgModelsPage />, { locale });
+    await renderRoute(OrgModelsPage, lastStubRoutes(), { locale });
     const box = (p: string) =>
       vi.waitFor(() => {
         const el = document.querySelector(`[data-purpose="${p}"]`);
@@ -382,7 +383,7 @@ describe("/settings/models（组织管理员）", () => {
           });
         },
       });
-      const { container } = renderPage(<OrgModelsPage />, { locale });
+      const { container } = await renderRoute(OrgModelsPage, lastStubRoutes(), { locale });
       expect(template("SettingsPage")).not.toBeNull();
       const current = container.querySelector('.cb-settings-nav [aria-current="page"]');
       expect(current?.textContent).toBe(m.connections.nav.models);
@@ -427,7 +428,7 @@ describe("/settings/models（组织管理员）", () => {
   it("部署默认未设置、组织也未覆盖：显示 eval 未映射提示", async () => {
     resetNavigation("/settings/models");
     orgRoutes([evalView()]);
-    renderPage(<OrgModelsPage />);
+    await renderRoute(OrgModelsPage, lastStubRoutes());
     expect(await screen.findByText(en.models.evalUnmapped)).toBeTruthy();
     const ev = await purposeBox("eval");
     expect(
@@ -438,7 +439,7 @@ describe("/settings/models（组织管理员）", () => {
   it("设置导航：管理员看到「模型用途」", async () => {
     resetNavigation("/settings/models");
     orgRoutes([evalView()]);
-    renderPage(<OrgModelsPage />);
+    await renderRoute(OrgModelsPage, lastStubRoutes());
     expect(await screen.findByRole("link", { name: en.connections.nav.models })).toBeTruthy();
   });
 });

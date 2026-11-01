@@ -5,9 +5,10 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import MembersPage from "../src/app/(app)/settings/members/page";
 import type { Me } from "../src/lib/session";
-import { bodyOf, json, noContent, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
-import { ME, renderPage } from "./support/render";
+import { ME } from "./support/render";
+import { renderRoute } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -72,7 +73,7 @@ describe("成员页（ListPage）", () => {
         [`GET ${BASE}/members`]: () => json(200, { members: MEMBERS }),
         [`GET ${BASE}/invitations`]: () => json(200, { invitations: [] }),
       });
-      const { container } = renderPage(<MembersPage />, { locale });
+      const { container } = await renderRoute(MembersPage, lastStubRoutes(), { locale });
       expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
       expect(await screen.findByText("IM visitor")).toBeTruthy();
       const anon = rowOf("IM visitor");
@@ -99,7 +100,7 @@ describe("成员页（ListPage）", () => {
       [`GET ${BASE}/invitations`]: () => json(200, { invitations: [] }),
       [`PATCH ${BASE}/members/a2`]: (c) => json(200, { accountId: "a2", ...(bodyOf(c) as object) }),
     });
-    renderPage(<MembersPage />, { me: asRole("admin") });
+    await renderRoute(MembersPage, lastStubRoutes(), { me: asRole("admin") });
     await screen.findByText("Bob");
     const select = within(rowOf("Bob")).getByRole("combobox", {
       name: m.roleOf.replace("{name}", "Bob"),
@@ -129,7 +130,7 @@ describe("成员页（ListPage）", () => {
         }),
       [`GET ${BASE}/invitations`]: () => json(200, { invitations: [] }),
     });
-    renderPage(<MembersPage />, { me: admin });
+    await renderRoute(MembersPage, lastStubRoutes(), { me: admin });
     await screen.findByText("IM visitor");
     const owner = rowOf("Grant");
     expect(
@@ -152,7 +153,7 @@ describe("成员页（ListPage）", () => {
       [`GET ${BASE}/invitations`]: () => json(200, { invitations: [] }),
       [`DELETE ${BASE}/members/a2`]: () => noContent(),
     });
-    renderPage(<MembersPage />, { locale });
+    await renderRoute(MembersPage, lastStubRoutes(), { locale });
     await screen.findByText("Bob");
     const user = userEvent.setup();
     await user.click(within(rowOf("Bob")).getByRole("button", { name: ROW_ACTIONS[locale] }));
@@ -184,7 +185,7 @@ describe("成员页（ListPage）", () => {
         return noContent();
       },
     });
-    const { container } = renderPage(<MembersPage />);
+    const { container } = await renderRoute(MembersPage, lastStubRoutes());
     await screen.findByText("Bob");
     const user = userEvent.setup();
     await user.click(within(rowOf("Bob")).getByRole("button", { name: ROW_ACTIONS.en }));
@@ -213,7 +214,7 @@ describe("成员页（ListPage）", () => {
     const calls = stubApi({
       [`GET ${BASE}/members`]: () => json(200, { members: MEMBERS }),
     });
-    renderPage(<MembersPage />, { me: asRole("member") });
+    await renderRoute(MembersPage, lastStubRoutes(), { me: asRole("member") });
     await screen.findByText("Bob");
     expect(screen.queryByRole("combobox")).toBeNull();
     expect(within(rowOf("Bob")).getByText(m.roles.member)).toBeTruthy();
@@ -242,7 +243,7 @@ describe("成员页（ListPage）", () => {
           return noContent();
         },
       });
-      renderPage(<MembersPage />, { locale });
+      await renderRoute(MembersPage, lastStubRoutes(), { locale });
       expect(await screen.findByText(m.invitations.empty)).toBeTruthy();
       const user = userEvent.setup();
       await user.click(screen.getByRole("button", { name: m.invite }));

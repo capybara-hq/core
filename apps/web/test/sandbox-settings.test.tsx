@@ -4,9 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import SandboxSettingsPage from "../src/app/(app)/settings/sandbox/page";
-import { bodyOf, json, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
-import { renderPage } from "./support/render";
+import { renderRoute } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -39,7 +39,7 @@ describe("沙箱设置（SettingsPage）", () => {
         [`PATCH ${SETTINGS}`]: (c) =>
           json(200, { settings: { toolSearch: "on", ...(bodyOf(c) as object) } }),
       });
-      const { container } = renderPage(<SandboxSettingsPage />, { locale });
+      const { container } = await renderRoute(SandboxSettingsPage, lastStubRoutes(), { locale });
       await screen.findByRole("radio", { name: new RegExp(`^${m.orgSettings.sandbox.allow}`) });
       const current = container.querySelector('.cb-settings-nav [aria-current="page"]');
       expect(current?.textContent).toBe(m.connections.nav.sandbox);
@@ -71,7 +71,7 @@ describe("沙箱设置（SettingsPage）", () => {
             settings: { toolSearch: "on", locale: "en", ...(bodyOf(c) as object) },
           }),
       });
-      renderPage(<SandboxSettingsPage />, { locale });
+      await renderRoute(SandboxSettingsPage, lastStubRoutes(), { locale });
       const allow = await screen.findByRole("radio", { name: new RegExp(`^${o.sandbox.allow}`) });
       expect(allow).toHaveProperty("checked", true);
       const user = userEvent.setup();
@@ -90,7 +90,7 @@ describe("沙箱设置（SettingsPage）", () => {
 
   it("沙箱工具策略缺省（旧内核没有这个字段）按 allow 显示", async () => {
     stubApi({ [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }) });
-    renderPage(<SandboxSettingsPage />);
+    await renderRoute(SandboxSettingsPage, lastStubRoutes());
     const allow = await screen.findByRole("radio", {
       name: new RegExp(`^${en.orgSettings.sandbox.allow}`),
     });
@@ -116,7 +116,7 @@ describe("沙箱设置（SettingsPage）", () => {
           return json(200, { settings: current, deployment: DEPLOYMENT });
         },
       });
-      renderPage(<SandboxSettingsPage />, { locale });
+      await renderRoute(SandboxSettingsPage, lastStubRoutes(), { locale });
       const def = await screen.findByRole("radio", { name: new RegExp(`^${o.egress.default}`) });
       expect(def).toHaveProperty("checked", true);
       expect(screen.getByText(o.egress.newOnly)).toBeTruthy();
@@ -156,7 +156,7 @@ describe("沙箱设置（SettingsPage）", () => {
         json(200, { settings: { toolSearch: "on", ...(bodyOf(c) as object) } }),
     });
     const o = en.orgSettings;
-    renderPage(<SandboxSettingsPage />);
+    await renderRoute(SandboxSettingsPage, lastStubRoutes());
     expect(await screen.findByText(o.egress.defaultHint.none)).toBeTruthy();
     expect(screen.queryByRole("radio", { name: new RegExp(`^${o.egress.allowlist}`) })).toBeNull();
     const user = userEvent.setup();
@@ -185,7 +185,7 @@ describe("沙箱设置（SettingsPage）", () => {
         }),
     });
     const o = en.orgSettings;
-    renderPage(<SandboxSettingsPage />);
+    await renderRoute(SandboxSettingsPage, lastStubRoutes());
     const none = await screen.findByRole("radio", { name: new RegExp(`^${o.egress.none}`) });
     expect(none).toHaveProperty("checked", true);
     expect(screen.queryByRole("textbox", { name: o.egress.hosts })).toBeNull();
@@ -194,7 +194,7 @@ describe("沙箱设置（SettingsPage）", () => {
 
   it("旧内核不返回 deployment：不显示沙箱网络一节", async () => {
     stubApi({ [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }) });
-    renderPage(<SandboxSettingsPage />);
+    await renderRoute(SandboxSettingsPage, lastStubRoutes());
     await screen.findByRole("radio", { name: new RegExp(`^${en.orgSettings.sandbox.allow}`) });
     expect(screen.queryByText(en.orgSettings.egress.title)).toBeNull();
   });
@@ -211,7 +211,7 @@ describe("沙箱设置（SettingsPage）", () => {
             sandboxLimits: { cpu: 2.5, memoryMb: 4096, source: "override" },
           }),
       });
-      renderPage(<SandboxSettingsPage />, { locale });
+      await renderRoute(SandboxSettingsPage, lastStubRoutes(), { locale });
       expect(await screen.findByText(o.title)).toBeTruthy();
       expect(screen.getByText(o.cpuValue.replace("{cpu}", "2.5"))).toBeTruthy();
       expect(screen.getByText(o.memoryValue.replace("{mb}", "4096"))).toBeTruthy();
@@ -232,11 +232,11 @@ describe("沙箱设置（SettingsPage）", () => {
           sandboxLimits: { cpu: 1, memoryMb: 2048, source: "deployment" },
         }),
     });
-    renderPage(<SandboxSettingsPage />);
+    await renderRoute(SandboxSettingsPage, lastStubRoutes());
     expect(await screen.findByText(o.source.deployment)).toBeTruthy();
     cleanup();
     stubApi({ [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }) });
-    renderPage(<SandboxSettingsPage />);
+    await renderRoute(SandboxSettingsPage, lastStubRoutes());
     await screen.findByRole("radio", { name: new RegExp(`^${en.orgSettings.sandbox.allow}`) });
     expect(screen.queryByText(o.title)).toBeNull();
   });

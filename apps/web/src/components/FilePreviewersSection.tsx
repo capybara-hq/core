@@ -3,31 +3,32 @@
 import { FormSection, Icon, IconButton, Stack, Switch, Text, useToast } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
-import {
-  getOrgFilePreviewers,
-  type OrgFilePreviewer,
-  putOrgFilePreviewers,
-  reorder,
-} from "../lib/previewers";
+import { type OrgFilePreviewer, putOrgFilePreviewers, reorder } from "../lib/previewers";
 import { uiLocale } from "../lib/ui";
 import { useErrorMessage } from "../lib/use-error-message";
-import { useLoad } from "../lib/use-load";
+import { useServerState } from "../lib/use-server-state";
 
 /**
  * The org's file previewers (`file-preview@1`, UI refresh B Task 11) on the org extensions page:
  * one row per previewer of an enabled extension, in the org's order, with up / down and an enable
  * switch; every change is saved at once (PUT). Hidden when no enabled extension provides one or the
  * list cannot be read.
+ * The list is read on the server (`initial`; `null` when it could not be read).
  */
-export function FilePreviewersSection({ orgId }: { orgId: string }) {
+export function FilePreviewersSection({
+  orgId,
+  initial,
+}: {
+  orgId: string;
+  initial: OrgFilePreviewer[] | null;
+}) {
   const t = useTranslations("filePreviewers");
   const locale = uiLocale(useLocale());
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const { state, set } = useLoad(() => getOrgFilePreviewers(orgId).then((r) => r.items), [orgId]);
+  const [items, set] = useServerState(initial);
   const [busy, setBusy] = useState(false);
-  if (state.kind !== "ready" || state.data.length === 0) return null;
-  const items = state.data;
+  if (items === null || items.length === 0) return null;
 
   async function save(next: { plugin: string; id: string; disabled: boolean }[]) {
     setBusy(true);

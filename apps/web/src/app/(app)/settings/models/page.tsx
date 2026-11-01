@@ -1,86 +1,21 @@
-"use client";
-
-import { FormSection, SettingsPage, Skeleton, Text } from "@capybara-hq/design";
-import { useTranslations } from "next-intl";
-import { FormError } from "../../../../components/form-error";
-import { PurposeEditor } from "../../../../components/PurposeEditor";
-import { RoleGate } from "../../../../components/RoleGate";
-import { useOrgSettingsNav } from "../../../../components/settings-nav";
-import { usePagePath } from "../../../../components/shell/path";
+import { NoAccess } from "../../../../components/RoleGate";
 import { listModels } from "../../../../lib/agents";
-import { ApiClientError } from "../../../../lib/api";
-import {
-  EVAL_PURPOSE,
-  listOrgPurposes,
-  type PurposeView,
-  putOrgPurpose,
-} from "../../../../lib/models";
-import { useErrorMessage } from "../../../../lib/use-error-message";
-import { useLoad } from "../../../../lib/use-load";
+import { listOrgPurposes } from "../../../../lib/models";
+import { read } from "../../../../lib/server/page";
+import { workspace } from "../../../../lib/server/session";
+import OrgModels from "./view";
 
 /**
- * `/settings/models`：模型用途（组织管理员，SettingsPage）。每个用途显示企业管理员设的部署默认，
- * 组织可以覆盖（选模型与参数）或恢复默认；`eval` 没有生效的映射时提示评测不能开评委（评测向导链到这里）。
+ * `/settings/models` (org admins; a setup step): the org's model purposes and the models they can
+ * map to (both required), read on the server.
  */
-export default function OrgModelsPage() {
-  return <RoleGate min="admin">{(orgId) => <OrgModels key={orgId} orgId={orgId} />}</RoleGate>;
-}
-
-function OrgModels({ orgId }: { orgId: string }) {
-  const scope = usePagePath("org");
-  const t = useTranslations("models");
-  const nav = useOrgSettingsNav();
-  const errorMessage = useErrorMessage();
-  const { state, set } = useLoad(async () => {
-    const [{ purposes }, { providers }] = await Promise.all([
-      listOrgPurposes(orgId),
-      listModels(orgId),
-    ]);
-    return { purposes, providers };
-  }, [orgId]);
-
-  let body: React.ReactNode;
-  if (state.kind === "loading") body = <Skeleton rows={6} />;
-  else if (state.kind === "error")
-    body = <FormError message={errorMessage(new ApiClientError(0, state.code, state.code))} />;
-  else {
-    const data = state.data;
-    const evalView = data.purposes.find((p) => p.purpose === EVAL_PURPOSE);
-    const replace = (v: PurposeView) =>
-      set({ ...data, purposes: data.purposes.map((p) => (p.purpose === v.purpose ? v : p)) });
-    body = (
-      <FormSection id="purposes" title={t("org.title")} description={t("org.description")}>
-        {evalView !== undefined && evalView.effective === null ? (
-          <Text tone="warn">{t("evalUnmapped")}</Text>
-        ) : null}
-        {data.purposes.map((v) => (
-          <PurposeEditor
-            key={v.purpose}
-            view={v}
-            providers={data.providers}
-            scope="org"
-            save={(target) => putOrgPurpose(orgId, v.purpose, target).then((r) => r.purpose)}
-            onSaved={replace}
-          />
-        ))}
-      </FormSection>
-    );
-  }
-
-  return (
-    <SettingsPage
-      header={{
-        path: [
-          ...scope,
-          { label: "settings", href: "/settings/organization" },
-          { label: "models" },
-        ],
-        title: t("org.title"),
-      }}
-      nav={nav}
-      activeNav="models"
-    >
-      {body}
-    </SettingsPage>
-  );
+export default async function OrgModelsPage() {
+  const ws = await workspace({ min: "admin", setup: "step" });
+  if (ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  const [{ purposes }, { providers }] = await Promise.all([
+    read(listOrgPurposes(ws.orgId)),
+    read(listModels(ws.orgId)),
+  ]);
+  return <OrgModels orgId={ws.orgId} initial={{ purposes, providers }} />;
 }

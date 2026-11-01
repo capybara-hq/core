@@ -160,13 +160,13 @@ const PAGES: [string, ComponentType | ServerPage, "member" | "admin", string][] 
   ["/evals/s1/run", EvalRunWizardPage, "admin", zh.roles.need.admin],
   ["/evals/s1/cases/c1", EvalCasePage, "admin", zh.roles.need.admin],
   ["/evals/runs/r1", EvalRunPage, "admin", zh.roles.need.admin],
-  ["/settings/models", ModelsSettingsPage, "admin", zh.roles.need.admin],
-  ["/settings/extensions", ExtensionsSettingsPage, "admin", zh.roles.need.admin],
-  ["/settings/plugins", PluginsSettingsPage, "admin", zh.roles.need.admin],
-  ["/settings/tokens", TokensPage, "admin", zh.roles.need.admin],
-  ["/settings/organization", OrganizationPage, "member", zh.roles.need.member],
-  ["/settings/members", MembersPage, "member", zh.roles.need.member],
-  ["/settings/sandbox", SandboxPage, "member", zh.roles.need.member],
+  ["/settings/models", server(() => ModelsSettingsPage()), "admin", zh.roles.need.admin],
+  ["/settings/extensions", server(() => ExtensionsSettingsPage()), "admin", zh.roles.need.admin],
+  ["/settings/plugins", server(() => PluginsSettingsPage()), "admin", zh.roles.need.admin],
+  ["/settings/tokens", server(() => TokensPage()), "admin", zh.roles.need.admin],
+  ["/settings/organization", server(() => OrganizationPage()), "member", zh.roles.need.member],
+  ["/settings/members", server(() => MembersPage()), "member", zh.roles.need.member],
+  ["/settings/sandbox", server(() => SandboxPage()), "member", zh.roles.need.member],
   ["/skills", server(() => SkillsPage()), "member", zh.roles.need.member],
   ["/skills/x1", server(() => SkillPage(params({ id: "x1" }))), "member", zh.roles.need.member],
   ["/catalog", server(() => CatalogPage()), "member", zh.roles.need.member],
@@ -452,7 +452,7 @@ describe("read-only pages say why (R3)", () => {
     it(`/settings/members · ${role}: ${role === "member" ? "a read-only line" : "no line"}`, async () => {
       routes = { [`GET ${O}/members`]: MEMBERS, [`GET ${O}/invitations`]: { invitations: [] } };
       resetNavigation("/settings/members");
-      renderPage(<MembersPage />, { locale: "zh", me: meAs(role) });
+      await renderRoute(() => MembersPage(), served(), { locale: "zh", me: meAs(role) });
       await screen.findByText("Mia");
       const line = zh.roles.readOnly.replace("{role}", zh.members.roles.member);
       expect(screen.queryByText(line) !== null).toBe(role === "member");

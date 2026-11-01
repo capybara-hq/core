@@ -1,0 +1,200 @@
+"use client";
+
+import {
+  DangerConfirm,
+  DangerZone,
+  DangerZoneItem,
+  Field,
+  FormSection,
+  RadioGroup,
+  Select,
+  SettingsPage,
+  Stack,
+  Text,
+  useToast,
+} from "@capybara-hq/design";
+import { useTranslations } from "next-intl";
+import { useState } from "react";
+import { useOrgSettingsNav } from "../../../../components/settings-nav";
+import { usePagePath } from "../../../../components/shell/path";
+import { useSession } from "../../../../components/shell/session";
+import { navigateBrowser } from "../../../../lib/browser";
+import { myRole } from "../../../../lib/members";
+import {
+  canUpdateOrg,
+  type OrgSettings,
+  type OrgSettingsPatch,
+  type OrgSettingsResponse,
+  updateOrgSettings,
+} from "../../../../lib/org-settings";
+import { deleteOrg } from "../../../../lib/orgs";
+import { broadcastSession } from "../../../../lib/session-sync";
+import { useErrorMessage } from "../../../../lib/use-error-message";
+import { useServerState } from "../../../../lib/use-server-state";
+
+/**
+ * `/settings/organization`：组织设置（SettingsPage）——工具搜索开关、IM 语言（机器人固定话术的语言）、
+ * 沙箱的设置在 `/settings/sandbox`。
+ * 成员可看，管理员可改；有改动时出现 ActionRow。Read on the server (`page.tsx`); a save replaces it locally.
+ */
+
+export default function OrganizationSettings({
+  orgId,
+  initial,
+}: {
+  orgId: string;
+  initial: OrgSettingsResponse;
+}) {
+  const scope = usePagePath("org");
+  const t = useTranslations("orgSettings");
+  const tc = useTranslations("common");
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const nav = useOrgSettingsNav();
+  const { me } = useSession();
+  const manage = canUpdateOrg(me);
+  const [data, set] = useServerState(initial);
+  const [draft, setDraft] = useState<Pick<Partial<OrgSettings>, "toolSearch" | "locale">>({});
+  const [pending, setPending] = useState(false);
+
+  const saved = data.settings;
+  const toolSearch = draft.toolSearch ?? saved?.toolSearch ?? "on";
+  const locale = draft.locale ?? saved?.locale ?? "en";
+  // 只提交改过的项
+  const patch: OrgSettingsPatch = {
+    ...(toolSearch !== saved.toolSearch ? { toolSearch } : {}),
+    ...(locale !== (saved.locale ?? "en") ? { locale } : {}),
+  };
+  const unsaved = Object.keys(patch).length;
+  const dirty = unsaved > 0;
+
+  async function save() {
+    setPending(true);
+    try {
+      const res = await updateOrgSettings(orgId, patch);
+      // The response may leave out the read-only parts the sandbox page shows: keep the loaded ones
+      set({ ...data, ...res });
+      setDraft({});
+      toast.success(t("saved"));
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <SettingsPage
+      header={{
+        path: [
+          ...scope,
+          { label: "settings", href: "/settings/organization" },
+          { label: "organization" },
+        ],
+        title: t("title"),
+      }}
+      nav={nav}
+      activeNav="organization"
+      {...(dirty
+        ? {
+            actionRow: {
+              unsaved,
+              cancel: { label: tc("cancel"), onSelect: () => setDraft({}) },
+              primary: { label: t("save"), onSelect: () => void save(), loading: pending },
+            },
+          }
+        : {})}
+    >
+      <FormSection
+        id="tool-search"
+        title={t("toolSearch.title")}
+        description={t("toolSearch.description")}
+      >
+        <Stack gap={8}>
+          <RadioGroup
+            label={t("toolSearch.title")}
+            variant="card"
+            value={toolSearch}
+            disabled={!manage}
+            onChange={(v) =>
+              setDraft((d) => ({ ...d, toolSearch: v as OrgSettings["toolSearch"] }))
+            }
+            options={(["on", "off"] as const).map((v) => ({
+              value: v,
+              label: t(`toolSearch.${v}`),
+              description: t(`toolSearch.${v}Hint`),
+            }))}
+          />
+          {!manage && (
+            <Text variant="small" tone="muted">
+              {t("readonly")}
+            </Text>
+          )}
+        </Stack>
+      </FormSection>
+      <FormSection id="im-locale" title={t("locale.title")} description={t("locale.description")}>
+        <Field label={t("locale.label")}>
+          <Select
+            value={locale}
+            disabled={!manage}
+            onChange={(e) =>
+              setDraft((d) => ({ ...d, locale: e.target.value as OrgSettings["locale"] }))
+            }
+            options={(["en", "zh"] as const).map((v) => ({
+              value: v,
+              label: tc(`localeName.${v}`),
+            }))}
+          />
+        </Field>
+      </FormSection>
+      {myRole(me) === "owner" ? <DeleteOrg orgId={orgId} /> : null}
+    </SettingsPage>
+  );
+}
+
+/**
+ * 删除组织 (owners only, `org.delete`): the danger zone at the bottom of 通用, confirmed by typing
+ * the org's slug; afterwards no org is current, so the org chooser opens.
+ */
+function DeleteOrg({ orgId }: { orgId: string }) {
+  const t = useTranslations("orgLifecycle");
+  const toast = useToast();
+  const { me } = useSession();
+  const errorMessage = useErrorMessage();
+  const [open, setOpen] = useState(false);
+  const org = me.memberships.find((m) => m.orgId === orgId);
+  if (org === undefined) return null;
+  return (
+    <>
+      <DangerZone title={t("danger.title")}>
+        <DangerZoneItem
+          title={t("delete.item")}
+          description={t("delete.hint")}
+          action={{ label: t("delete.action"), onSelect: () => setOpen(true) }}
+        />
+      </DangerZone>
+      <DangerConfirm
+        open={open}
+        onOpenChange={setOpen}
+        title={t("delete.title")}
+        description={t("delete.description", { name: org.name })}
+        confirmName={org.slug}
+        confirmLabel={t("delete.confirm")}
+        onConfirm={async () => {
+          try {
+            await deleteOrg(orgId);
+          } catch (e) {
+            // DangerConfirm shows the message: the localized one, never the kernel's English
+            throw new Error(errorMessage(e));
+          }
+          // The kernel cleared the current org with the org: a full navigation to `/` (the org
+          // chooser), told to the other tabs (ruling R4). The dialog stays busy until the unload.
+          toast.success(t("delete.done"));
+          broadcastSession("org-switched");
+          navigateBrowser("/");
+          await new Promise<never>(() => {});
+        }}
+      />
+    </>
+  );
+}

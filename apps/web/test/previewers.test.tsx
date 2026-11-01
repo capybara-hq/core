@@ -11,9 +11,9 @@ import {
   type EmbedParentMessage,
 } from "../src/lib/embed-bridge";
 import { type OrgFilePreviewer, reorder } from "../src/lib/previewers";
-import { bodyOf, json, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
-import { renderPage } from "./support/render";
+import { renderRoute } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -179,7 +179,7 @@ describe("org file previewers section", () => {
         return json(200, { items: items.map((i, n) => P(i.id, n, i.disabled)) });
       },
     });
-    renderPage(<ExtensionsPage />, { locale });
+    await renderRoute(ExtensionsPage, lastStubRoutes(), { locale });
     const section = await screen.findByRole("region", { name: m.title });
     const user = userEvent.setup();
     await user.click(
@@ -214,7 +214,7 @@ describe("org file previewers section", () => {
       [`GET ${BASE}/extensions`]: () => json(200, { extensions: [] }),
       [`GET ${BASE}/file-previewers`]: () => json(200, { items: [] }),
     });
-    renderPage(<ExtensionsPage />, { locale: "en" });
+    await renderRoute(ExtensionsPage, lastStubRoutes(), { locale: "en" });
     await screen.findByText(en.extensions.empty);
     expect(screen.queryByRole("region", { name: en.filePreviewers.title })).toBeNull();
   });
