@@ -5,12 +5,33 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import SkillDetailPage from "../src/app/(app)/skills/[id]/page";
 import SkillsPage from "../src/app/(app)/skills/page";
-import { bodyOf, json, noContent, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { ME, renderPage } from "./support/render";
+import { ME } from "./support/render";
+import { expectNoFirstPaintFetch, renderRoute } from "./support/server";
+import { NOT_READY } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
-vi.mock("next/navigation", () => ({ useParams: () => ({ id: "s1" }) }));
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
+
+type RenderOpts = Parameters<typeof renderRoute>[2];
+/** `/skills` read on the server from the latest `stubApi` routes (the browser's). */
+const renderSkills = (opts: RenderOpts = {}) =>
+  renderRoute(() => SkillsPage(), lastStubRoutes(), opts);
+/** `/skills/s1` read on the server from the latest `stubApi` routes. */
+const renderSkill = (opts: RenderOpts = {}) =>
+  renderRoute(
+    () => SkillDetailPage({ params: Promise.resolve({ id: "s1" }) }),
+    lastStubRoutes(),
+    opts,
+  );
 
 const msgs = { zh, en } as const;
 const LOCALES = ["zh", "en"] as const;
@@ -101,7 +122,7 @@ describe("技能库列表（ListPage）", () => {
   it.each(LOCALES)("列出组织技能；管理员看到上传说明（布局与上限）（%s）", async (locale) => {
     const m = msgs[locale];
     stubApi({ [`GET ${BASE}`]: () => json(200, { skills: [skill("s1", "pdf-tools")] }) });
-    const { container } = renderPage(<SkillsPage />, { locale });
+    const { container } = await renderSkills({ locale });
     expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
     const list = await screen.findByRole("list", { name: m.skills.listLabel });
     expect(within(list).getByText("pdf-tools")).toBeTruthy();
@@ -118,7 +139,7 @@ describe("技能库列表（ListPage）", () => {
 
   it("成员只能查看：没有上传入口", async () => {
     stubApi({ [`GET ${BASE}`]: () => json(200, { skills: [skill("s1", "pdf-tools")] }) });
-    renderPage(<SkillsPage />, { me: MEMBER });
+    await renderSkills({ me: MEMBER });
     await screen.findByText("pdf-tools");
     expect(screen.queryByRole("button", { name: en.skills.upload.open })).toBeNull();
     expect(screen.queryByText(en.skills.upload.layoutHint)).toBeNull();
@@ -139,7 +160,7 @@ describe("技能库列表（ListPage）", () => {
         return json(201, { skill: skills[0], version: 2, created: false });
       },
     });
-    renderPage(<SkillsPage />);
+    await renderSkills();
     await screen.findByText("pdf-tools");
     await openUpload();
     await userEvent.setup().upload(fileInput(), zipFile());
@@ -183,7 +204,7 @@ describe("技能库列表（ListPage）", () => {
             },
           }),
       });
-      renderPage(<SkillsPage />, { locale });
+      await renderSkills({ locale });
       await screen.findByText(m.skills.empty);
       await openUpload(locale);
       await userEvent.setup().upload(fileInput(), zipFile("bad.zip"));
@@ -202,7 +223,7 @@ describe("技能库列表（ListPage）", () => {
       [`POST ${BASE}`]: () =>
         json(201, { skill: skill("s1", "pdf-tools"), version: 1, created: true }),
     });
-    renderPage(<SkillsPage />, { locale });
+    await renderSkills({ locale });
     await screen.findByText(msgs[locale].skills.empty);
     await openUpload(locale);
     FakeXhr.hold = true;
@@ -234,7 +255,7 @@ describe("技能库列表（ListPage）", () => {
 
   it("前端预检：不是 zip、超过 50MB 不发请求", async () => {
     const calls = stubApi({ [`GET ${BASE}`]: () => json(200, { skills: [] }) });
-    renderPage(<SkillsPage />);
+    await renderSkills();
     await screen.findByText(en.skills.empty);
     await openUpload();
     const user = userEvent.setup({ applyAccept: false });
@@ -281,7 +302,7 @@ describe("技能详情（DetailPage）", () => {
     async (locale) => {
       const m = msgs[locale];
       stubApi({ [`GET ${BASE}/s1`]: () => json(200, detail()) });
-      const { container } = renderPage(<SkillDetailPage />, { locale });
+      const { container } = await renderSkill({ locale });
       expect(container.querySelector('[data-template="DetailPage"]')).not.toBeNull();
       const pre = await vi.waitFor(() => {
         const el = container.querySelector("pre");
@@ -303,7 +324,7 @@ describe("技能详情（DetailPage）", () => {
 
   it("正文读不到：显示说明", async () => {
     stubApi({ [`GET ${BASE}/s1`]: () => json(200, detail({ body: null })) });
-    renderPage(<SkillDetailPage />);
+    await renderSkill();
     expect(await screen.findByText(en.skills.detail.bodyUnavailable)).toBeTruthy();
   });
 
@@ -312,7 +333,7 @@ describe("技能详情（DetailPage）", () => {
       [`GET ${BASE}/s1`]: () => json(200, detail()),
       [`DELETE ${BASE}/s1`]: () => noContent(),
     });
-    renderPage(<SkillDetailPage />);
+    await renderSkill();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: en.skills.detail.delete }));
     const dialog = await screen.findByRole("dialog");
@@ -326,16 +347,72 @@ describe("技能详情（DetailPage）", () => {
 
   it("成员没有删除入口", async () => {
     stubApi({ [`GET ${BASE}/s1`]: () => json(200, detail()) });
-    renderPage(<SkillDetailPage />, { me: MEMBER });
+    await renderSkill({ me: MEMBER });
     await screen.findByText("# PDF tools", { exact: false });
     expect(screen.queryByRole("button", { name: en.skills.detail.delete })).toBeNull();
   });
 
-  it("不存在：显示 skill.not_found 的文案", async () => {
+  it("a skill the kernel does not find is the not-found page", async () => {
     stubApi({
       [`GET ${BASE}/s1`]: () => json(404, { error: { code: "skill.not_found", message: "x" } }),
     });
-    renderPage(<SkillDetailPage />, { locale: "zh" });
-    expect(await screen.findByText(`${zh.errors.skill.not_found}`)).toBeTruthy();
+    await expect(renderSkill({ locale: "zh" })).rejects.toThrow("NOT_FOUND");
   });
+});
+
+describe("the skills pages render on the server (web-SSR spec §6)", () => {
+  const GUEST = {
+    ...ME,
+    account: { ...ME.account, isEnterpriseAdmin: false },
+    memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "guest" }],
+  };
+  const detail = {
+    ...skill("s1", "pdf-tools"),
+    body: "# PDF tools\n",
+    versions: [{ version: 1, description: "Use.", files: [], createdAt: T, createdBy: "a1" }],
+  };
+  const routes = {
+    [`GET ${BASE}`]: () => json(200, { skills: [skill("s1", "pdf-tools")] }),
+    [`GET ${BASE}/s1`]: () => json(200, detail),
+  };
+  const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
+
+  it("/skills: the list is the first paint", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRoute(() => SkillsPage(), routes);
+    expect(screen.getByRole("list", { name: en.skills.listLabel })).toBeTruthy();
+    expect(screen.getByText("pdf-tools")).toBeTruthy();
+    expect(browser).toEqual([]);
+  });
+
+  it("/skills/<id>: the skill is the first paint", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const { container } = await renderRoute(
+      () => SkillDetailPage({ params: Promise.resolve({ id: "s1" }) }),
+      routes,
+    );
+    expect(container.querySelector("pre")?.textContent).toBe("# PDF tools\n");
+    expect(browser).toEqual([]);
+  });
+
+  it.each([
+    ["/skills", () => SkillsPage()],
+    ["/skills/<id>", () => SkillDetailPage({ params: Promise.resolve({ id: "s1" }) })],
+  ])(
+    "%s: a guest gets no access and nothing is read; no org renders nothing; setup redirects home",
+    async (_path, page) => {
+      const guest = await renderRoute(page, routes, { me: GUEST });
+      expect(new Set(guest.calls.map((c) => c.url))).toEqual(
+        new Set(["/api/v1/me", "/api/v1/orgs/o1/readiness"]),
+      );
+      expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
+      cleanup();
+      const none = await renderRoute(page, routes, { me: { ...ME, currentOrgId: null } });
+      expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+      expect(document.body.textContent).toBe("");
+      await expect(renderRoute(page, routes, { readiness: NOT_READY })).rejects.toThrow(
+        "REDIRECT /",
+      );
+    },
+  );
 });

@@ -7,7 +7,6 @@ import CatalogPage from "../src/app/(app)/catalog/page";
 import ChannelsPage from "../src/app/(app)/channels/page";
 import ConnectorsPage from "../src/app/(app)/connectors/page";
 import EvalsPage from "../src/app/(app)/evals/page";
-import SkillsPage from "../src/app/(app)/skills/page";
 import { resetNavigation } from "./support/navigation";
 import { renderPage } from "./support/render";
 
@@ -30,7 +29,6 @@ afterEach(() => {
 });
 
 const pages: [string, string, () => ReactNode][] = [
-  ["skills", "/skills", () => <SkillsPage />],
   ["connectors", "/connectors", () => <ConnectorsPage />],
   ["catalog", "/catalog", () => <CatalogPage />],
   ["channels", "/channels", () => <ChannelsPage />],
