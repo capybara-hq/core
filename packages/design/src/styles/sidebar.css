@@ -764,12 +764,18 @@
 .cb-prefs-theme-option:has(input:focus-visible) {
   box-shadow: 0 0 0 3px var(--cb-focus-ring);
 }
-/* Auth pages: right-aligned under the card, each control at its own width (not stretched). */
+/* Auth pages: the bottom-right corner, just inside the right dither column (96 wide), each control
+   at its own width (not stretched); 16 from the edge when the columns are hidden. */
 .cb-auth-prefs {
+  position: absolute;
+  right: calc(96px + 16px);
+  bottom: 16px;
   display: flex;
-  justify-content: flex-end;
-  box-sizing: border-box;
-  width: min(400px, 100%);
+}
+@media (max-width: 639px) {
+  .cb-auth-prefs {
+    right: 16px;
+  }
 }
 .cb-auth-prefs .cb-select {
   flex: none;

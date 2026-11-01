@@ -5,7 +5,8 @@ import { PreferenceBar, type PreferenceBarProps } from "../shell/preference-bar"
 
 /**
  * T10 auth: no shell, a centered 400-wide card between two dither columns (Dither is used only
- * here). `preferences` (language and theme) sit under the card, above the optional `footer`.
+ * here), the optional `footer` under the card. `preferences` (language and theme) sit in the
+ * bottom-right corner, just inside the right dither column.
  */
 export function AuthPage({
   title,
@@ -40,13 +41,13 @@ export function AuthPage({
             {children}
           </Card>
         </div>
-        {preferences ? (
-          <div className="cb-auth-prefs">
-            <PreferenceBar {...preferences} />
-          </div>
-        ) : null}
         {footer ? <div className="cb-auth-footer">{footer}</div> : null}
       </main>
+      {preferences ? (
+        <div className="cb-auth-prefs">
+          <PreferenceBar {...preferences} />
+        </div>
+      ) : null}
       <div className="cb-auth-side" data-side="right">
         <Dither side="right" seed={2} />
       </div>

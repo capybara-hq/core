@@ -197,7 +197,8 @@
   justify-content: center;
   gap: 24px;
   min-width: 0;
-  padding: 24px 16px;
+  /* the bottom keeps the card clear of the corner preferences on short viewports */
+  padding: 24px 16px 72px;
 }
 .cb-auth-card {
   box-sizing: border-box;
@@ -213,7 +214,9 @@
   color: var(--cb-muted);
 }
 @media (max-width: 639px) {
-  .cb-auth-side {
+  /* both columns: the right one's [data-side] rule is more specific than a bare .cb-auth-side */
+  .cb-auth-side,
+  .cb-auth-side[data-side="right"] {
     display: none;
   }
 }
