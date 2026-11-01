@@ -1,6 +1,6 @@
 # Web: server-decided first paint
 
-Status: draft (acceptance round 3, user decisions 2026-11-01)
+Status: implemented (acceptance round 3, user decisions 2026-11-01)
 
 Related: `docs/superpowers/specs/2026-10-31-web-order-design.md` (the shell, frames, setup layout,
 roles), `docs/design/spec.md` (design system).
@@ -321,10 +321,11 @@ app/(app)/agents/view.tsx      "use client": the template and the interaction
 ```tsx
 // page.tsx
 export default async function AgentsPage() {
-  const ws = await workspace({});
-  if (ws.noAccess) return <NoAccess need={ws.need} />;
-  const agents = await listAgents(ws.orgId);
-  return <AgentsView orgId={ws.orgId} initial={agents} />;
+  const ws = await workspace();
+  if (ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  const { agents } = await read(listAgents(ws.orgId));
+  return <AgentsView initial={agents} />;
 }
 ```
 
@@ -343,7 +344,8 @@ export default async function AgentsPage() {
   `initial` when the server sends one. Views use it for data they also update locally after a
   mutation.
 - **Pagination.** The first page is read on the server. "Load more" and later pages load in the
-  browser with skeleton rows at the end of the list (`ListPage`'s `loadingMore`). This applies to
+  browser with skeleton rows at the end of the list (`ListPage`'s `loadingMore`) or, for a
+  `DataTable`, the load-more button's loading state. This applies to
   the trajectories, the admin accounts, the eval run results after the first 200, and the sidebar's
   group "更多".
 - **Live data** starts from the server snapshot: SSE `after=<last seq>`, the polling's

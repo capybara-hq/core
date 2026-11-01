@@ -202,6 +202,12 @@ around an empty table.
 
 ### 3.8 Setup layout (acceptance round 2, user decisions D and D2)
 
+> **Superseded in part** by the web-SSR spec
+> ([2026-11-01-web-ssr-design.md](2026-11-01-web-ssr-design.md)): the setup frame is now left /
+> right (the setup sidebar carries the setup home and the steps, no top bar and no back link; SSR
+> spec §4), and the server decides the layout on the first paint, so the "Deciding the layout"
+> paragraph below (PendingState, `cap.ready.*` in `sessionStorage`) is replaced by SSR spec §3.1.
+
 A third layout beside the auth layout (sign-in, initialization, the org chooser) and the shell: the
 **setup layout** (`SetupPage`, design spec §5.5), drawn while the current org is not ready.
 Readiness comes from one cheap kernel read, `GET /api/v1/orgs/:orgId/readiness` (`org.read`) →

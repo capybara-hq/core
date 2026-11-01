@@ -1,6 +1,6 @@
 ---
 name: writing-web-ui
-description: 'Use when adding or changing UI under apps/web or packages/design: page = page template + design components, which template each page uses, the skeletons for ListPage + DataTable and FormPage + FormSection + ActionRow, what check:web-ui forbids (className / style / .css / color literals / low-level UI packages), the change flow for adding a component or template, and how to use /dev/ui and screenshot tests (visual-update).'
+description: 'Use when adding or changing UI under apps/web or packages/design: page = page template + design components, server-rendered pages (server page.tsx + client view.tsx, workspace() / admin(), read / optional / section, no first-paint fetch), which template each page uses, the skeletons for ListPage + DataTable and FormPage + FormSection + ActionRow, what check:web-ui forbids (className / style / .css / color literals / low-level UI packages), the change flow for adding a component or template, and how to use /dev/ui and screenshot tests (visual-update).'
 ---
 
 # Writing UI
@@ -80,39 +80,94 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
 
 Submit actions go in the ActionRow (built into `FormPage`, `WizardPage` etc.) and **must not** go in the PageHeader; at most one `variant: "primary"` per view, and at most 5 metrics (`PageHeader` throws in development and tests).
 
-## Skeleton examples
+## Server-rendered pages (spec `docs/superpowers/specs/2026-11-01-web-ssr-design.md`)
 
-List (`apps/web/src/app/(app)/agents/page.tsx` is a real example):
+The server decides the first paint: what a page shows on load (its data, the frame, a not-found
+page, a no-access state, a redirect to sign-in) is decided before any HTML reaches the browser.
+Every route is two files:
+
+```
+app/(app)/agents/page.tsx      server: the gate, the reads, render the view
+app/(app)/agents/view.tsx      "use client": the template and the interaction, fed `initial`
+```
 
 ```tsx
+// page.tsx (no "use client")
+export default async function AgentsPage() {
+  const ws = await workspace();               // admin pages: `await admin()`
+  if (ws.kind === "noOrg") return null;       // the frame draws the org chooser
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  const { agents } = await read(listAgents(ws.orgId));
+  return <AgentsView initial={agents} />;
+}
+```
+
+- **Gates** (`lib/server/session.ts`): `workspace({ min?, setup? })` for workspace pages (no current
+  org → `noOrg`; below `min` → `noAccess`, read nothing else; a route without `setup` redirects to
+  `/` while the org is not ready, `setup: "home" | "step"` marks setup routes); `admin()` for
+  `/admin/*` (enterprise admins). Reads go through the same `lib/*` loaders as the browser
+  (`apiFetch` uses the server transport, `lib/server/kernel.ts`, forwarding the cookies).
+- **Wrap every read** (`lib/server/page.ts`):
+  - `read(p)`: required data. A 401 `auth.*` redirects to sign-in and back, a 404 is the page's
+    not-found page (`notFound()`), anything else throws to `error.tsx`.
+  - `optional(p)`: a role-dependent read; a 403 / 404 is `null`.
+  - `section(p)` (ruling R5): a secondary section; a 5xx / 403 / 404 is `null`, which the view
+    draws as that section's own error or empty state. It is never read again after mount.
+  - Never pass an error object to a view (it does not cross to the browser): map a refusal the page
+    shows itself to a plain `{ status, code, message }` (see `admin/catalog/import/page.tsx`).
+- **Params and query** come from the server props (`params`, `searchParams`), never from
+  `window.location` (`web-ssr-location`); query-string tabs and filters are navigations.
+- **In the view**: `useLoad(load, deps, { initial })` starts `ready` and fetches only when `deps`
+  change or on `reload()`; `useServerState(initial)` is local state that resets when the server
+  sends a new `initial`. After a mutation call `router.refresh()` (in a transition) so the server
+  reads again; never re-fetch the first-paint data in an effect.
+- **Session changes are full navigations** (ruling R4): sign-in, setup, an invitation sign-up or
+  accept, an org switch / create / leave / delete, sign-out broadcast to the other tabs
+  (`broadcastSession`) and then `navigateBrowser(...)` (`lib/browser.ts`), never
+  `router.push` + `router.refresh()`: the old page stays until the new document arrives, so no
+  frame pairs one org's shell with another's page. The control stays pending until the unload.
+- **No `loading.tsx`** (`web-ssr-loading-file`) and no `"use client"` page (`web-ssr-client-page`).
+- **Exceptions** (client-side loads after the first paint), each marked `// ssr-exempt: <reason>` on
+  the line or the line above (`web-ssr-first-paint`; an empty reason fails): live updates (SSE
+  after the snapshot's last seq, polling with `updatedSince`, the UI stream) and user-triggered
+  loads (a dialog's contents, a wizard step after input, search-as-you-type, "load more" pages, the
+  conversation's right panel, whose open state lives in the URL hash).
+- **Tests** (`apps/web/test/support/server.tsx`): `renderRoute(() => Page(props), routes)` runs the
+  server page against stubbed kernel routes (plus the gate's `sessionRoutes`) and mounts the result;
+  `serverRoutes` / `renderServer` are its two halves; `expectNoFirstPaintFetch()` makes any browser
+  fetch throw (assert the returned calls stay empty). The mocked `router.refresh` re-runs the page.
+- **`SSR_PENDING`** (`tools/checks/src/web-ui.ts`) is the ratchet of pages not migrated yet. It is
+  empty; new pages are never added to it.
+
+## Skeleton examples
+
+List (`apps/web/src/app/(app)/agents/page.tsx` + `view.tsx` are a real example; the server page is
+shown under "Server-rendered pages" below):
+
+```tsx
+// view.tsx
 "use client";
 
-import { type Column, DataTable, ListPage } from "@capybara-hq/design";
+import { ListPage } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 
-export default function AgentsPage() {
+export default function AgentsView({ initial }: { initial: Agent[] }) {
+  const scope = usePagePath("org");
   const t = useTranslations("agents");
-  const columns: Column<Agent>[] = [
-    { key: "name", header: t("columns.name"), cell: (a) => a.name },
-    { key: "model", header: t("columns.model"), tone: "muted", cell: (a) => a.model },
-  ];
   return (
     <ListPage
       header={{
+        path: [...scope, { label: "agents" }],
         title: t("title"),
-        count: String(agents.length),
         actions: [{ label: t("new"), variant: "primary", href: "/agents/new" }],
       }}
+      variant="objects"
+      listLabel={t("title")}
+      {...(initial.length === 0 ? { empty: { text: t("empty") } } : {})}
     >
-      <DataTable
-        label={t("title")}
-        columns={columns}
-        rows={agents}
-        rowKey={(a) => a.id}
-        state={loading ? "loading" : "ready"}
-        empty={{ title: t("empty") }}
-        rowMenu={(a) => [{ label: t("startChat"), onSelect: () => start(a.id) }]}
-      />
+      {initial.map((a) => (
+        <AgentRow key={a.id} agent={a} />
+      ))}
     </ListPage>
   );
 }
