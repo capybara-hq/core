@@ -2,32 +2,40 @@
 
 import { AuthPage, Button, Stack, Text } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { FormError } from "../../../components/form-error";
 import { SetupForm } from "../../../components/setup-form";
 import { useRouter } from "../../../i18n/navigation";
 import { usePreferences } from "../../../lib/preferences";
 import { getSetupStatus } from "../../../lib/session";
 import { useErrorMessage } from "../../../lib/use-error-message";
+import { ServerSetupStatus } from "./status";
 
 type State =
   | { kind: "loading" }
   | { kind: "ready"; needsSetup: boolean }
   | { kind: "error"; message: string };
 
-/** `/setup`：初始化向导（AuthPage；`GET` / `POST /api/v1/setup`）。 */
+/**
+ * `/setup`: the setup wizard (AuthPage; `GET` / `POST /api/v1/setup`). The layout already asked the
+ * kernel on the server; only when it couldn't answer (starting, unreachable) the browser asks.
+ */
 export default function SetupPage() {
+  const initial = useContext(ServerSetupStatus);
   const t = useTranslations();
   const errorMessage = useErrorMessage();
   const router = useRouter();
   const preferences = usePreferences();
-  const [state, setState] = useState<State>({ kind: "loading" });
+  const [state, setState] = useState<State>(
+    initial === undefined ? { kind: "loading" } : { kind: "ready", needsSetup: initial },
+  );
 
   useEffect(() => {
+    if (initial !== undefined) return;
     getSetupStatus()
       .then((s) => setState({ kind: "ready", needsSetup: s.needsSetup }))
       .catch((e: unknown) => setState({ kind: "error", message: errorMessage(e) }));
-  }, [errorMessage]);
+  }, [initial, errorMessage]);
 
   let body: React.ReactNode;
   if (state.kind === "loading") body = <Text tone="muted">{t("common.loading")}</Text>;
