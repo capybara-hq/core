@@ -1,4 +1,4 @@
-import { NoAccess } from "../../../../components/RoleGate";
+import { NoAccess } from "../../../../components/NoAccess";
 import { listOrgExtensions } from "../../../../lib/extensions";
 import { getOrgFilePreviewers } from "../../../../lib/previewers";
 import { read, section } from "../../../../lib/server/page";

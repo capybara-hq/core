@@ -1,4 +1,4 @@
-import { NoAccess } from "../../../../../components/RoleGate";
+import { NoAccess } from "../../../../../components/NoAccess";
 import { ApiClientError } from "../../../../../lib/api";
 import { getStagedImport } from "../../../../../lib/catalog";
 import { isKernelUnavailable, isSignedOut, read } from "../../../../../lib/server/page";

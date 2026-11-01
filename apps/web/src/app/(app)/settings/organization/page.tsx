@@ -1,4 +1,4 @@
-import { NoAccess } from "../../../../components/RoleGate";
+import { NoAccess } from "../../../../components/NoAccess";
 import { getOrgSettings } from "../../../../lib/org-settings";
 import { read } from "../../../../lib/server/page";
 import { workspace } from "../../../../lib/server/session";

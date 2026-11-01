@@ -10,13 +10,12 @@ import NotFound from "../src/app/(app)/not-found";
 import HomePage from "../src/app/(app)/page";
 import LoginPage from "../src/app/(auth)/login/page";
 import SetupPage from "../src/app/(auth)/setup/page";
-import { OrgGate } from "../src/components/OrgGate";
 import { activeNavOf } from "../src/components/shell/nav";
 import { navigateBrowser } from "../src/lib/browser";
 import type { Me } from "../src/lib/session";
 import { resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
-import { expectNoFirstPaintFetch, renderRoute } from "./support/server";
+import { expectNoFirstPaintFetch, onServer, renderRoute } from "./support/server";
 import { frameElement, NOT_READY, renderFrame, shellOf } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -242,12 +241,15 @@ describe("(app) 页面模板", () => {
     expect(browser).toEqual([]);
   });
 
-  it("without a current org or while the org is in setup, the page renders nothing (the frame draws it)", async () => {
+  it("without a current org or while the org is in setup, the page draws nothing itself (the frame draws it)", async () => {
     stubApi({});
     const none = await renderRoute(() => HomePage(), {}, { me: { ...ME, currentOrgId: null } });
     expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
     expect(template("OverviewPage")).toBeNull();
+    // outside a frame (no setup context) the page asks for one re-render
+    expect(router.refresh).toHaveBeenCalledTimes(1);
     cleanup();
+    router.refresh.mockReset();
     const setup = await renderRoute(() => HomePage(), {}, { readiness: NOT_READY });
     expect(new Set(setup.calls.map((c) => c.url))).toEqual(
       new Set(["/api/v1/me", "/api/v1/orgs/o1/readiness"]),
@@ -255,15 +257,49 @@ describe("(app) 页面模板", () => {
     expect(template("OverviewPage")).toBeNull();
   });
 
-  it("a page that needs an organization keeps its own title and offers creating one", () => {
-    resetNavigation("/agents");
-    renderPage(<OrgGate>{() => null}</OrgGate>, {
-      locale: "zh",
-      me: { ...ME, currentOrgId: null, memberships: [], canCreateOrg: true },
-    });
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(zh.nav.agents);
-    expect(screen.getByText("还没有加入任何组织")).toBeTruthy();
-    expect(screen.getByRole("button", { name: zh.home.createOrg.open })).toBeTruthy();
+  it("the org is not ready but the frame still draws the ready shell (stale layout props): refreshes once", async () => {
+    stubApi({});
+    // an admin removed the last model; a client navigation reused the layout's old props
+    const { element } = await onServer(() => HomePage(), {}, { readiness: NOT_READY });
+    const view = renderFrame(shellOf(), element);
+    await vi.waitFor(() => expect(router.refresh).toHaveBeenCalledTimes(1));
+    expect(template("OverviewPage")).toBeNull();
+    // the same output again (the refresh's answer before the layout's arrives): no second refresh
+    view.update(shellOf(), element);
+    expect(router.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("the org is not ready and the frame draws the setup home: no refresh", async () => {
+    stubApi({});
+    const { element } = await onServer(() => HomePage(), {}, { readiness: NOT_READY });
+    renderFrame(shellOf(ME, { readiness: NOT_READY }), element);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(router.refresh).not.toHaveBeenCalled();
+  });
+
+  it("the org was left but the frame still draws its shell: refreshes once", async () => {
+    stubApi({});
+    const { element } = await onServer(() => HomePage(), {}, { me: { ...ME, currentOrgId: null } });
+    renderFrame(shellOf(), element);
+    await vi.waitFor(() => expect(router.refresh).toHaveBeenCalledTimes(1));
+  });
+
+  it("the inbox and the conversations are sections: a failed read draws that panel's own state", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRoute(
+      () => HomePage(),
+      overviewRoutes({
+        "GET /api/v1/orgs/o1/inbox": () => json(500, { error: { code: "internal" } }),
+        "GET /api/v1/orgs/o1/conversations/groups": () =>
+          json(503, { error: { code: "unavailable" } }),
+      }),
+    );
+    expect(template("OverviewPage")).not.toBeNull();
+    expect(screen.getByText(en.home.inbox.unavailable)).toBeTruthy();
+    expect(screen.getByText(en.home.recent.unavailable)).toBeTruthy();
+    // the agents card still renders
+    expect(screen.getByRole("list", { name: en.home.agentsCard.title })).toBeTruthy();
+    expect(browser).toEqual([]);
   });
 
   const agentRow = (id: string, name: string, over: Record<string, unknown> = {}) => ({
@@ -338,13 +374,6 @@ describe("(app) 页面模板", () => {
     expect(await screen.findByText(en.agents.empty)).toBeTruthy();
     expect(screen.queryByRole("table")).toBeNull();
     expect(screen.getAllByRole("link", { name: en.agents.new }).length).toBeGreaterThan(0);
-  });
-
-  it("需要组织的页面在未选组织时显示 StatusPage disabled", () => {
-    resetNavigation("/agents/new");
-    renderPage(<OrgGate>{() => null}</OrgGate>, { me: { ...ME, currentOrgId: null } });
-    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("disabled");
-    expect(screen.getByRole("heading", { level: 2, name: en.agents.noOrg })).toBeTruthy();
   });
 
   it("(app)/[...rest] 未匹配的路径调用 notFound()（由 (app)/not-found 渲染 404）", () => {

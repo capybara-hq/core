@@ -43,6 +43,31 @@ export function resetRenewals(): void {
   flights.clear();
 }
 
+/**
+ * How close to its expiry an access token is renewed anyway: the `cap_at` cookie's Max-Age equals
+ * the token's lifetime but starts when the response arrives, so the cookie can outlive the token by
+ * the response latency, and the kernel would answer `auth.token_expired` for a request it carried.
+ */
+export const ACCESS_RENEW_MARGIN_MS = 30_000;
+
+/**
+ * Whether an access token (a JWT the kernel signs) expires within {@link ACCESS_RENEW_MARGIN_MS} of
+ * `now`. Reads `exp` without verifying (the kernel verifies; this only decides whether to renew
+ * early); a token that does not decode, or carries no numeric `exp`, counts as valid.
+ */
+export function accessTokenExpiresSoon(token: string, now: number): boolean {
+  const parts = token.split(".");
+  if (parts.length !== 3) return false;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1] ?? "", "base64url").toString("utf8")) as {
+      exp?: unknown;
+    };
+    return typeof payload.exp === "number" && payload.exp * 1000 - now < ACCESS_RENEW_MARGIN_MS;
+  } catch {
+    return false;
+  }
+}
+
 /** The value of the named cookie in a list of `Set-Cookie` headers, ignoring clears. */
 export function setCookieValue(setCookies: readonly string[], name: string): string | undefined {
   for (const c of setCookies) {

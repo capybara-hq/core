@@ -1,4 +1,4 @@
-import { NoAccess } from "../../../components/RoleGate";
+import { NoAccess } from "../../../components/NoAccess";
 import { listAgents, listModels, setupReady } from "../../../lib/agents";
 import { getAttachmentLimits } from "../../../lib/attachments";
 import { listConversationGroups } from "../../../lib/conversations";

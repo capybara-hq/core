@@ -59,7 +59,9 @@ Runs for every page request (matcher: everything except `/api`, `/plugin-ui`, `/
 paths with a file extension). In order:
 
 1. **Legacy locale prefix** (unchanged): `/zh/...`, `/en/...` → 308 to the path without it.
-2. **Session renewal.** When the request has no `cap_at` but has `cap_rt`, the proxy calls
+2. **Session renewal.** When the request has `cap_rt` and no `cap_at`, or a `cap_at` whose JWT
+   `exp` (read without verifying) is less than 30 s away (the cookie can outlive its token by the
+   response latency; an undecodable token counts as valid), the proxy calls
    `POST {kernel}/api/v1/auth/refresh` with that cookie (and the trusted peer address,
    `lib/peer.ts`).
    - **200**: the new cookies go both ways. The request continues with the new `cap_at` in its

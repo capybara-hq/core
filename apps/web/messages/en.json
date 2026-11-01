@@ -99,6 +99,7 @@
       "titleCount": "Waiting for you · {count}",
       "open": "Open inbox",
       "empty": "Nothing waits for you.",
+      "unavailable": "Couldn't read what waits for you. Refresh the page to try again.",
       "toolApproval": "Tool approval",
       "toolApprovalTitle": "{agent} wants to use {tool}",
       "view": "View",
@@ -113,6 +114,7 @@
     "recent": {
       "title": "Pick up where you left off",
       "empty": "No conversations yet. Pick an agent on the right to start.",
+      "unavailable": "Couldn't read your conversations. Refresh the page to try again.",
       "waiting": "Waiting for you"
     },
     "agentsCard": {

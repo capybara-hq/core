@@ -1,6 +1,6 @@
 import { getLocale } from "next-intl/server";
 import type { ViewState } from "../../../../../components/extension-ui/ExtensionViewTab";
-import { NoAccess } from "../../../../../components/RoleGate";
+import { NoAccess } from "../../../../../components/NoAccess";
 import { ApiClientError } from "../../../../../lib/api";
 import { isKernelUnavailable, isSignedOut, read } from "../../../../../lib/server/page";
 import { workspace } from "../../../../../lib/server/session";

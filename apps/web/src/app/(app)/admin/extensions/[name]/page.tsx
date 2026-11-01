@@ -1,4 +1,4 @@
-import { NoAccess } from "../../../../../components/RoleGate";
+import { NoAccess } from "../../../../../components/NoAccess";
 import { getExtensionConfig, listAdminExtensions } from "../../../../../lib/admin-extensions";
 import { read, section } from "../../../../../lib/server/page";
 import { admin } from "../../../../../lib/server/session";

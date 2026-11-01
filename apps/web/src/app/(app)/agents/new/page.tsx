@@ -1,4 +1,4 @@
-import { NoAccess } from "../../../../components/RoleGate";
+import { NoAccess } from "../../../../components/NoAccess";
 import { loadAgentForm } from "../../../../lib/server/agent-form";
 import { workspace } from "../../../../lib/server/session";
 import NewAgentView from "./view";

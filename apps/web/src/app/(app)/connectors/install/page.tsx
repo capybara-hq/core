@@ -1,4 +1,4 @@
-import { NoAccess } from "../../../../components/RoleGate";
+import { NoAccess } from "../../../../components/NoAccess";
 import { loadCatalogInstall } from "../../../../lib/server/catalog";
 import { workspace } from "../../../../lib/server/session";
 import InstallConnectorView from "./view";

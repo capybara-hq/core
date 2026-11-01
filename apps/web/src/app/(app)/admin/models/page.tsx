@@ -1,4 +1,4 @@
-import { NoAccess } from "../../../../components/RoleGate";
+import { NoAccess } from "../../../../components/NoAccess";
 import { getAdminModels, listAdminPurposes } from "../../../../lib/models";
 import { read } from "../../../../lib/server/page";
 import { admin } from "../../../../lib/server/session";

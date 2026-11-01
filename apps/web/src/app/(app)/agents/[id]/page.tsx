@@ -1,4 +1,4 @@
-import { NoAccess } from "../../../../components/RoleGate";
+import { NoAccess } from "../../../../components/NoAccess";
 import { getAgent } from "../../../../lib/agents";
 import { listChannels } from "../../../../lib/channels";
 import { canUpdateOrg } from "../../../../lib/org-settings";

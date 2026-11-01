@@ -1,4 +1,4 @@
-import { NoAccess } from "../../../../components/RoleGate";
+import { NoAccess } from "../../../../components/NoAccess";
 import { listAgents } from "../../../../lib/agents";
 import { channelFormPreset } from "../../../../lib/channels-preset";
 import { listOrgExtensions, provides } from "../../../../lib/extensions";

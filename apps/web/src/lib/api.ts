@@ -111,11 +111,18 @@ async function parse<T>(res: Response): Promise<T> {
  */
 let refreshing: Promise<void> | undefined;
 
+/**
+ * Refreshes the session once. `auth.refresh_race` counts as success: another renewer (the web proxy
+ * on a page request, or another tab) rotated the token first and its cookies are in the jar by now,
+ * so the caller retries its request once with them.
+ */
 function refreshOnce(): Promise<void> {
   refreshing ??= (async () => {
     try {
       const res = await send(REFRESH_PATH, { method: "POST" });
-      if (!res.ok) throw await toError(res);
+      if (res.ok) return;
+      const err = await toError(res);
+      if (err.code !== "auth.refresh_race") throw err;
     } finally {
       refreshing = undefined;
     }

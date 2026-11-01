@@ -1,4 +1,4 @@
-import { NoAccess } from "../../../../components/RoleGate";
+import { NoAccess } from "../../../../components/NoAccess";
 import { listModels } from "../../../../lib/agents";
 import { listOrgPurposes } from "../../../../lib/models";
 import { read } from "../../../../lib/server/page";

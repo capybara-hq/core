@@ -232,6 +232,51 @@ describe("proxy: session renewal", () => {
     expect(res.headers.getSetCookie()).toEqual([]);
   });
 
+  /** An unsigned JWT-shaped access token expiring `inSeconds` from now (the proxy never verifies). */
+  const jwt = (inSeconds: number) => {
+    const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString("base64url");
+    const exp = Math.floor(Date.now() / 1000) + inSeconds;
+    return `${b64({ alg: "HS256", kid: "k1" })}.${b64({ sub: "a1", sid: "s1", exp })}.sig`;
+  };
+
+  it("a cap_at that expires within 30 s is renewed (the cookie outlived its token by latency)", async () => {
+    const old = jwt(10);
+    const res = await proxy(page("/agents", `theme=dark; cap_at=${old}; cap_rt=old-rt`));
+    expect(refreshCalls()).toHaveLength(1);
+    expect(forwarded(res, "cookie")).toBe("theme=dark; cap_at=new-at; cap_rt=new-rt");
+    expect(res.headers.getSetCookie().slice(0, 3)).toEqual(RENEWED_COOKIES);
+    // already expired, cookie still sent: the same
+    resetRenewals();
+    await proxy(page("/agents", `cap_at=${jwt(-5)}; cap_rt=old-rt`));
+    expect(refreshCalls()).toHaveLength(2);
+  });
+
+  it("a cap_at with more than 30 s left, or one that does not decode, is not renewed", async () => {
+    await proxy(page("/agents", `cap_at=${jwt(600)}; cap_rt=old-rt`));
+    await proxy(page("/agents", "cap_at=not.a-jwt; cap_rt=old-rt"));
+    await proxy(page("/agents", "cap_at=opaque; cap_rt=old-rt"));
+    expect(refreshCalls()).toHaveLength(0);
+  });
+
+  it("an expiring cap_at whose renewal fails keeps the request signed in, unless the token is invalid", async () => {
+    const at = jwt(10);
+    refresh = async () => {
+      throw new TypeError("fetch failed");
+    };
+    const down = await proxy(page("/agents", `cap_at=${at}; cap_rt=old-rt`));
+    expect(down.headers.get("x-middleware-next")).toBe("1");
+    expect(forwarded(down, SESSION_STATE_HEADER)).toBeNull();
+    expect(forwarded(down, "cookie")).toBe(`cap_at=${at}; cap_rt=old-rt`);
+    refresh = async () => kernelError(401, "auth.refresh_race");
+    const raced = await proxy(page("/agents", `cap_at=${at}; cap_rt=old-rt; cap_retry=1`));
+    expect(raced.headers.get("x-middleware-next")).toBe("1");
+    refresh = async () => kernelError(401, "auth.refresh_invalid");
+    const gone = await proxy(page("/agents", `cap_at=${at}; cap_rt=old-rt`));
+    expect(gone.status).toBe(307);
+    expect(gone.headers.get("location")).toBe(`${WEB}/login?returnTo=%2Fagents`);
+    expect(gone.headers.getSetCookie()).toContainEqual(expect.stringMatching(/^cap_at=; /));
+  });
+
   it("a request carrying cap_at is not renewed and clears a leftover marker", async () => {
     const res = await proxy(page("/agents", "cap_at=at; cap_rt=rt; cap_retry=1"));
     expect(refreshCalls()).toHaveLength(0);

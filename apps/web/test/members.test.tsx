@@ -6,7 +6,7 @@ import zh from "../messages/zh.json";
 import MembersPage from "../src/app/(app)/settings/members/page";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
-import { resetNavigation } from "./support/navigation";
+import { resetNavigation, router } from "./support/navigation";
 import { ME } from "./support/render";
 import { renderRoute } from "./support/server";
 
@@ -207,6 +207,38 @@ describe("成员页（ListPage）", () => {
       ).toBe("owner"),
     );
     expect(container).toBeTruthy();
+  });
+
+  it("after a transfer, owner-only actions are gone at once, before the refreshed session arrives", async () => {
+    const m = en.members;
+    stubApi({
+      [`GET ${BASE}/members`]: () => json(200, { members: MEMBERS }),
+      [`GET ${BASE}/invitations`]: () => json(200, { invitations: [] }),
+      [`POST ${BASE}/transfer`]: () => noContent(),
+    });
+    await renderRoute(MembersPage, lastStubRoutes());
+    // the server's new props never arrive in this test: what shows is the local state
+    router.refresh.mockImplementation(() => {});
+    const user = userEvent.setup();
+    await user.click(within(rowOf("Bob")).getByRole("button", { name: ROW_ACTIONS.en }));
+    await user.click(await screen.findByRole("menuitem", { name: m.menu.transfer }));
+    const dialog = await screen.findByRole("dialog", {
+      name: m.confirm.transferTitle.replace("{name}", "Bob"),
+    });
+    await user.click(within(dialog).getByRole("button", { name: m.confirm.transfer }));
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const bob = within(rowOf("Bob")).getByRole("combobox", {
+      name: m.roleOf.replace("{name}", "Bob"),
+    }) as HTMLSelectElement;
+    expect(bob.value).toBe("owner");
+    // an admin may not change an owner's role, nor grant owner
+    expect(bob.disabled).toBe(true);
+    const mine = within(rowOf(`Grant (${m.you})`)).getByRole("combobox", {
+      name: m.roleOf.replace("{name}", "Grant"),
+    }) as HTMLSelectElement;
+    expect(mine.value).toBe("admin");
+    // Bob is an owner now: no row menu for an admin (no transfer, no remove)
+    expect(within(rowOf("Bob")).queryByRole("button", { name: ROW_ACTIONS.en })).toBeNull();
   });
 
   it("普通成员：只读角色，没有邀请按钮、行菜单，也不请求邀请列表", async () => {

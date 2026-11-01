@@ -1,4 +1,4 @@
-import { NoAccess } from "../../../../components/RoleGate";
+import { NoAccess } from "../../../../components/NoAccess";
 import { loadConversationSnapshot } from "../../../../lib/server/conversation";
 import { workspace } from "../../../../lib/server/session";
 import ChatView from "./view";

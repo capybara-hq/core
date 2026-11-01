@@ -1,4 +1,6 @@
 import "server-only";
+// Registers the server transport (idempotent), whatever module a page loads first.
+import "./register";
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { ApiClientError } from "../api";

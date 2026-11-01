@@ -99,6 +99,7 @@
       "titleCount": "等你处理 · {count}",
       "open": "打开收件箱",
       "empty": "没有要你处理的事。",
+      "unavailable": "暂时读不到待处理的事项，刷新页面重试。",
       "toolApproval": "工具审批",
       "toolApprovalTitle": "{agent} 想调用 {tool}",
       "view": "查看",
@@ -113,6 +114,7 @@
     "recent": {
       "title": "接着上次的会话",
       "empty": "还没有会话。从右边选一个 agent 开始。",
+      "unavailable": "暂时读不到对话列表，刷新页面重试。",
       "waiting": "等你处理"
     },
     "agentsCard": {

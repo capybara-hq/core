@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, type ReactNode, useContext } from "react";
+import { createContext, useContext } from "react";
 import type { Me } from "../../lib/session";
 
 /**
@@ -36,12 +36,4 @@ export function useSession(): Session {
   const s = useContext(SessionContext);
   if (s === null) throw new Error("useSession() must be used inside the (app) layout's AppFrame");
   return s;
-}
-
-/**
- * Kept for the pages not moved to server rendering yet: the `(app)` layout renders the session on
- * the server, so there is nothing to wait for.
- */
-export function RequireSession({ children }: { children: ReactNode }) {
-  return children;
 }

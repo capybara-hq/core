@@ -1,4 +1,4 @@
-import { NoAccess } from "../../../components/RoleGate";
+import { NoAccess } from "../../../components/NoAccess";
 import { listConnectors } from "../../../lib/connectors";
 import { read } from "../../../lib/server/page";
 import { workspace } from "../../../lib/server/session";

@@ -69,7 +69,12 @@ export default function Members({ orgId, initial }: { orgId: string; initial: Me
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const { me } = useSession();
-  const role = myRole(me);
+  const sessionRole = myRole(me);
+  // After a transfer this account is an admin, but the session's props say owner until the
+  // server's re-render arrives: act as an admin meanwhile (no owner-only actions).
+  const [transferredAs, setTransferredAs] = useState<OrgRole>();
+  const role: OrgRole | undefined =
+    transferredAs !== undefined && sessionRole === transferredAs ? "admin" : sessionRole;
   const manage = roleAtLeast(role, "admin");
   const owner = role === "owner";
   const router = useRouter();
@@ -220,7 +225,18 @@ export default function Members({ orgId, initial }: { orgId: string; initial: Me
             if (action === "remove") {
               setMembers(rows.filter((m) => m.account.id !== member.account.id));
             } else {
-              // 转让后自己降为 admin：服务端重读会话（导航与权限）与成员列表
+              // After a transfer this account is an admin: shown at once, then the server re-reads
+              // the session (navigation, permissions) and the members.
+              setTransferredAs(sessionRole);
+              setMembers(
+                rows.map((m) =>
+                  m.account.id === member.account.id
+                    ? { ...m, role: "owner" }
+                    : m.account.id === me.account.id
+                      ? { ...m, role: "admin" }
+                      : m,
+                ),
+              );
               refresh();
             }
           }}
@@ -246,7 +262,6 @@ function ConfirmDialog({
   const tc = useTranslations("common");
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const session = useSession();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { member, action } = pending;
@@ -263,7 +278,6 @@ function ConfirmDialog({
       } else {
         await transferOwnership(orgId, member.account.id);
         toast.success(t("transferred", { name }));
-        await session.reload();
       }
       onDone();
     } catch (e) {

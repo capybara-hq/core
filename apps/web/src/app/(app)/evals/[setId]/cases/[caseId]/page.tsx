@@ -1,4 +1,4 @@
-import { NoAccess } from "../../../../../../components/RoleGate";
+import { NoAccess } from "../../../../../../components/NoAccess";
 import { getEvalCase, getEvalSet } from "../../../../../../lib/evals";
 import { read, section } from "../../../../../../lib/server/page";
 import { workspace } from "../../../../../../lib/server/session";

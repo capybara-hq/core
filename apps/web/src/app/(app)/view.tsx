@@ -29,8 +29,10 @@ import { useErrorMessage } from "../../lib/use-error-message";
 export type OverviewData = {
   agents: Agent[];
   providers: ProviderModels[];
-  inbox: InboxItem[];
-  recent: (Conversation & { agentName: string })[];
+  /** `null` when the kernel could not read it (a section: the panel draws its own error). */
+  inbox: InboxItem[] | null;
+  /** `null` when the kernel could not read it (a section: the panel draws its own error). */
+  recent: (Conversation & { agentName: string })[] | null;
   /** Agent ids by latest activity (the groups' order). */
   recentAgents: string[];
   counts: { skills?: number; connectors?: number; members?: number };
@@ -123,7 +125,7 @@ function DailyOverview({
   const [approving, setApproving] = useState<string>();
   // Approvals decided here: hidden at once, before the server's new overview arrives.
   const [decided, setDecided] = useState<ReadonlySet<string>>(new Set());
-  const inbox = data.inbox.filter(
+  const inbox = (data.inbox ?? []).filter(
     (i) => !(i.type === "tool_approval" && decided.has(i.approval.id)),
   );
 
@@ -196,7 +198,7 @@ function DailyOverview({
     };
   });
 
-  const recentRows: ItemListRow[] = data.recent.map((c) => ({
+  const recentRows: ItemListRow[] = (data.recent ?? []).map((c) => ({
     id: c.id,
     title: c.title ?? untitledLabel(new Date(c.createdAt), locale === "zh" ? "zh" : "en"),
     meta: `${c.agentName} · ${ago(c.updatedAt, locale)}`,
@@ -250,10 +252,18 @@ function DailyOverview({
             title={pending > 0 ? t("inbox.titleCount", { count: pending }) : t("inbox.title")}
             actions={<TextLink href="/inbox">{t("inbox.open")}</TextLink>}
           >
-            <ItemList label={t("inbox.title")} rows={inboxRows} empty={t("inbox.empty")} />
+            <ItemList
+              label={t("inbox.title")}
+              rows={inboxRows}
+              empty={data.inbox === null ? t("inbox.unavailable") : t("inbox.empty")}
+            />
           </Card>
           <Card title={t("recent.title")}>
-            <ItemList label={t("recent.title")} rows={recentRows} empty={t("recent.empty")} />
+            <ItemList
+              label={t("recent.title")}
+              rows={recentRows}
+              empty={data.recent === null ? t("recent.unavailable") : t("recent.empty")}
+            />
           </Card>
         </Stack>
         <Stack gap={16}>

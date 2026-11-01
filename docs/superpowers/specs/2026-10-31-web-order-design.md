@@ -336,9 +336,10 @@ console only). Hiding is cosmetic: every route keeps its `@OrgAction` / owner ch
   添加连接器 for org admins; a group with nothing left is dropped.
 - **R2 No access.** A page the role may not open shows the one no-access state (`StatusPage`
   `kind="no-access"`, design spec §5 T11): what the page is, the role it needs ("需要：组织管理员"),
-  who to ask; no retry. The gate decides client-side from the session's role before loading
-  anything (`RoleGate min=…` in `apps/web/src/components/RoleGate.tsx`, which wraps `OrgGate`;
-  the admin console's `AdminGate` draws the same state with "企业管理员").
+  who to ask; no retry. The gate decides from the session's role before loading anything (since
+  the web-SSR spec `2026-11-01-web-ssr-design.md`: on the server, `workspace()` / `admin()` in
+  `apps/web/src/lib/server/session.ts`, drawn by `components/NoAccess.tsx`; the admin console's
+  state says "企业管理员").
 - **R3 Read-only.** A page the role may read but not change is read-only with one line saying why
   (组织设置 · 通用 / 沙箱 for members, 成员 for members, an agent the viewer neither owns nor
   administers: name, model, scope, 对话).

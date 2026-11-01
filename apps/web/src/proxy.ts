@@ -5,7 +5,7 @@ import { PATH_HEADER, SESSION_STATE_HEADER } from "./lib/headers";
 import { trustedPeer } from "./lib/peer";
 import { isPublicPath } from "./lib/routes";
 import { ACCESS_COOKIE, serverNeedsSetup } from "./lib/server-setup";
-import { renewSession, setCookieValue } from "./lib/session-renewal";
+import { accessTokenExpiresSoon, renewSession, setCookieValue } from "./lib/session-renewal";
 
 /** The kernel's refresh-token cookie (`cap_rt`, Path=/, SameSite=Lax). */
 const REFRESH_COOKIE = "cap_rt";
@@ -65,8 +65,9 @@ function withCookies(res: NextResponse, setCookies: readonly string[]): NextResp
  * Next's Proxy (formerly Middleware), for every page request (spec 2026-11-01-web-ssr §2.1):
  * 1. an old link with a language prefix redirects to the same path without it, keeping the language
  *    in the `NEXT_LOCALE` cookie;
- * 2. a request without `cap_at` but with `cap_rt` renews the session at the kernel, and the new
- *    cookies go both ways (the forwarded request and the response);
+ * 2. a request with `cap_rt` and without `cap_at` (or with one whose token expires within 30 s)
+ *    renews the session at the kernel, and the new cookies go both ways (the forwarded request and
+ *    the response);
  * 3. a protected page still without `cap_at` redirects to `/setup` (fresh deployment) or sign-in;
  * 4. the forwarded request carries `x-cap-path` (path + query), and `x-cap-session: unavailable`
  *    when the kernel could not be reached.
@@ -83,14 +84,19 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
 
   const pairs = parseCookies(req.headers.get("cookie"));
   const hasRetry = pairs.some(([n]) => n === RETRY_COOKIE);
-  let signedIn = cookieValue(pairs, ACCESS_COOKIE) !== undefined;
+  const accessToken = cookieValue(pairs, ACCESS_COOKIE);
+  let signedIn = accessToken !== undefined;
   let unavailable = false;
   const setCookies: string[] = [];
   const refreshToken = cookieValue(pairs, REFRESH_COOKIE);
+  // Renew without cap_at, and also when cap_at outlived its token or is about to expire.
+  const renew =
+    refreshToken !== undefined &&
+    (accessToken === undefined || accessTokenExpiresSoon(accessToken, Date.now()));
 
-  if (signedIn) {
-    if (hasRetry) setCookies.push(RETRY_CLEAR);
-  } else if (refreshToken !== undefined) {
+  if (!renew) {
+    if (signedIn && hasRetry) setCookies.push(RETRY_CLEAR);
+  } else {
     const renewal = await renewSession(refreshToken, {
       peer: trustedPeer(req.headers),
       userAgent: req.headers.get("user-agent") ?? undefined,
@@ -112,6 +118,7 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
       }
       case "race":
         // Another web replica rotated the token; the browser holds its cookies by now. Retry once.
+        // With the marker: give up, keeping an expiring cap_at if there is one.
         if (!hasRetry) return withCookies(NextResponse.redirect(req.nextUrl, 307), [RETRY_SET]);
         break;
       case "invalid": {
@@ -120,11 +127,15 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
         else headers.set("cookie", rest);
         // the kernel's clears carry its Secure attribute and the legacy-path cap_rt; ours are a fallback
         setCookies.push(...(renewal.setCookies.length > 0 ? renewal.setCookies : SESSION_CLEARS));
+        signedIn = false;
         break;
       }
       case "unavailable":
-        headers.set(SESSION_STATE_HEADER, "unavailable");
-        unavailable = true;
+        // An expiring cap_at still carries the request; without one the page renders "unavailable".
+        if (!signedIn) {
+          headers.set(SESSION_STATE_HEADER, "unavailable");
+          unavailable = true;
+        }
         break;
     }
   }
