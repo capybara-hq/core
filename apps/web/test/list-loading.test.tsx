@@ -2,7 +2,6 @@ import { cleanup, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AdminCatalogPage from "../src/app/(app)/admin/catalog/page";
-import AdminExtensionsPage from "../src/app/(app)/admin/extensions/page";
 import EvalsPage from "../src/app/(app)/evals/page";
 import { resetNavigation } from "./support/navigation";
 import { renderPage } from "./support/render";
@@ -27,7 +26,6 @@ afterEach(() => {
 
 const pages: [string, string, () => ReactNode][] = [
   ["evals", "/evals", () => <EvalsPage />],
-  ["admin extensions", "/admin/extensions", () => <AdminExtensionsPage />],
   ["admin catalog", "/admin/catalog", () => <AdminCatalogPage />],
 ];
 

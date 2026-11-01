@@ -1,18 +1,18 @@
 "use client";
 
-import { Button, Skeleton, Stack, Text, useToast } from "@capybara-hq/design";
+import { Button, Stack, Text, useToast } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useState } from "react";
+import { useState, useTransition } from "react";
+import { useRouter } from "../i18n/navigation";
 import {
   type DeploymentConfigField,
   type DeploymentConfigView,
-  getExtensionConfig,
   putExtensionConfig,
 } from "../lib/admin-extensions";
-import { ApiClientError, issueLines } from "../lib/api";
+import { issueLines } from "../lib/api";
 import type { JsonSchema } from "../lib/json-schema";
 import { useErrorMessage } from "../lib/use-error-message";
-import { useLoad } from "../lib/use-load";
+import { useServerState } from "../lib/use-server-state";
 import { FormError } from "./form-error";
 import {
   changedCount,
@@ -108,26 +108,42 @@ export function configPatch(
  * reload the extension after saving (up to about the drain time limit).
  */
 export function ExtensionDeploymentConfig({
-  name,
   drainSeconds,
+  initial,
+  onChanged,
 }: {
-  name: string;
   drainSeconds: number;
+  /** Read on the server; `null` when that read failed (the tab draws its own error). */
+  initial: DeploymentConfigView | null;
+  /** The config was saved: the page re-renders on the server (readiness may have changed). */
+  onChanged(): void;
 }) {
   const t = useTranslations("admin.extensions.config");
-  const errorMessage = useErrorMessage();
-  const { state, set } = useLoad(() => getExtensionConfig(name), [name]);
-  if (state.kind === "loading") return <Skeleton rows={4} />;
-  if (state.kind === "error")
-    return <FormError message={errorMessage(new ApiClientError(0, state.code, state.code))} />;
-  const view = state.data;
+  const te = useTranslations("admin.extensions");
+  const router = useRouter();
+  const [, startTransition] = useTransition();
+  const [view, set] = useServerState(initial);
+  if (view === null)
+    return (
+      <Stack gap={8}>
+        <FormError message={te("loadFailed")} />
+        <Stack direction="row">
+          <Button density="dense" onClick={() => startTransition(() => router.refresh())}>
+            {te("retry")}
+          </Button>
+        </Stack>
+      </Stack>
+    );
   if (!view.configurable || view.fields.length === 0) return <Text tone="muted">{t("none")}</Text>;
   return (
     <ConfigForm
       key={JSON.stringify(view.fields)}
       view={view}
       drainSeconds={drainSeconds}
-      onSaved={set}
+      onSaved={(next) => {
+        set(next);
+        onChanged();
+      }}
     />
   );
 }
