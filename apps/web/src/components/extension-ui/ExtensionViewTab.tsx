@@ -64,11 +64,18 @@ interface Run {
  * fetches once more; `setView` replaces a view with the one an action returned.
  * Refresh coalescing: at most one request per view is in flight; refreshes arriving meanwhile (any
  * number) cause one more fetch after it completes.
+ * `initial` holds views the server already read (by state key): they start in that state and are
+ * not fetched on mount, only on a refresh or a retry.
  */
 export function useExtensionViews(
   orgId: string,
   targets: readonly ViewTarget[],
-  opts: { conversationId?: string; locale: UiLocale; versions?: Readonly<Record<string, number>> },
+  opts: {
+    conversationId?: string;
+    locale: UiLocale;
+    versions?: Readonly<Record<string, number>>;
+    initial?: Readonly<Record<string, ViewState>>;
+  },
 ): {
   states: Readonly<Record<string, ViewState>>;
   retry(key: string): void;
@@ -76,7 +83,10 @@ export function useExtensionViews(
 } {
   const { conversationId, locale } = opts;
   const versions = opts.versions ?? NO_VERSIONS;
-  const [states, setStates] = useState<Record<string, ViewState>>({});
+  const [states, setStates] = useState<Record<string, ViewState>>(() => ({
+    ...opts.initial,
+  }));
+  const seeded = useRef(opts.initial ?? {});
   const [retries, setRetries] = useState<Record<string, number>>({});
   const runs = useRef<Record<string, Run>>({});
   const live = useRef(true);
@@ -142,7 +152,9 @@ export function useExtensionViews(
       };
       let run = runs.current[key];
       if (run === undefined) {
-        run = { want, sent: "", inflight: false, args };
+        // A view the server read counts as sent for the first version (no fetch on mount)
+        const fromServer = seeded.current[key] !== undefined && !(key in retries);
+        run = { want, sent: fromServer ? want : "", inflight: false, args };
         runs.current[key] = run;
       }
       run.want = want;

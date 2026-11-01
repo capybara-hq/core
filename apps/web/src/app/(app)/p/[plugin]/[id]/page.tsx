@@ -1,118 +1,51 @@
-"use client";
-
-import { Button, DetailPage, Skeleton, Stack, Text } from "@capybara-hq/design";
-import { useParams } from "next/navigation";
-import { useLocale, useTranslations } from "next-intl";
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import { EmbedTab } from "../../../../../components/extension-ui/EmbedTab";
-import {
-  ExtensionViewTab,
-  useExtensionViews,
-  useUiAction,
-} from "../../../../../components/extension-ui/ExtensionViewTab";
-import { FormError } from "../../../../../components/form-error";
-import { OrgGate } from "../../../../../components/OrgGate";
-import { usePagePath } from "../../../../../components/shell/path";
+import { getLocale } from "next-intl/server";
+import type { ViewState } from "../../../../../components/extension-ui/ExtensionViewTab";
+import { NoAccess } from "../../../../../components/RoleGate";
 import { ApiClientError } from "../../../../../lib/api";
-import { listUiContributions, openUiStream, uiKey, uiLocale } from "../../../../../lib/ui";
-import { useErrorMessage } from "../../../../../lib/use-error-message";
-import { useLoad } from "../../../../../lib/use-load";
+import { isKernelUnavailable, isSignedOut, read } from "../../../../../lib/server/page";
+import { workspace } from "../../../../../lib/server/session";
+import { getUiView, listUiContributions, uiLocale } from "../../../../../lib/ui";
+import PluginPageView from "./view";
 
 /**
- * `/p/[plugin]/[id]`：插件的组织页面（顶栏「扩展」菜单），DetailPage、不带 Inspector。
- * 渲染 schema 视图（kind view）由我们的组件画、经组织级刷新流实时刷新；嵌入应用（kind embed）在沙箱 iframe
- * 里打开插件自己的页面（`EmbedTab`），刷新由插件页面自己做。
+ * `/p/[plugin]/[id]` (anyone in the org): the org's UI contributions (required) and, for a view,
+ * the view itself, read on the server. A view the extension fails is that view's own error state
+ * (each extension block fails alone); an embed's token request stays in the browser.
  */
-export default function PluginPage() {
-  const { plugin, id } = useParams<{ plugin: string; id: string }>();
-  return (
-    <OrgGate>
-      {(orgId) => <PluginPageInOrg key={orgId} orgId={orgId} plugin={plugin} id={id} />}
-    </OrgGate>
-  );
-}
-
-function PluginPageInOrg({ orgId, plugin, id }: { orgId: string; plugin: string; id: string }) {
-  const scope = usePagePath("org");
-  const t = useTranslations();
-  const errorMessage = useErrorMessage();
-  const locale = uiLocale(useLocale());
-  const contributions = useLoad(() => listUiContributions(orgId), [orgId]);
-  const contribution =
-    contributions.state.kind === "ready"
-      ? contributions.state.data.items.find(
-          (c) => c.plugin === plugin && c.id === id && c.place === "page",
+export default async function PluginPage({
+  params,
+}: {
+  params: Promise<{ plugin: string; id: string }>;
+}) {
+  const ws = await workspace();
+  if (ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  const p = await params;
+  const plugin = decodeURIComponent(p.plugin);
+  const id = decodeURIComponent(p.id);
+  const { items } = await read(listUiContributions(ws.orgId));
+  const contribution = items.find((c) => c.plugin === plugin && c.id === id && c.place === "page");
+  const view: ViewState | undefined =
+    contribution?.kind === "view"
+      ? await read(
+          getUiView(ws.orgId, plugin, id, { locale: uiLocale(await getLocale()) }).then(
+            ({ view }): ViewState => ({ kind: "ready", view }),
+            (e: unknown): ViewState => {
+              if (!(e instanceof ApiClientError)) throw e;
+              const { code } = e;
+              if (isSignedOut(e) || isKernelUnavailable(e)) throw e;
+              return { kind: "error", code };
+            },
+          ),
         )
       : undefined;
-  const isView = contribution?.kind === "view";
-  const isEmbed = contribution?.kind === "embed";
-  const targets = useMemo(() => (isView ? [{ plugin, id }] : []), [isView, plugin, id]);
-
-  // 组织级刷新流：本页面的贡献变了就重取；断线重连后也重取一次（期间可能漏掉刷新）
-  const [versions, setVersions] = useState<Record<string, number>>({});
-  const bump = useCallback((key: string) => {
-    setVersions((v) => ({ ...v, [key]: (v[key] ?? 0) + 1 }));
-  }, []);
-  // 组织流终止（会话吊销、浏览器放弃重连）：内容照常显示，提示实时刷新已断开
-  const [liveLost, setLiveLost] = useState(false);
-  useEffect(() => {
-    if (!isView) return;
-    setLiveLost(false);
-    return openUiStream(orgId, {
-      onUi: (r) => {
-        if (r.plugin === plugin && r.contribution === id) bump(uiKey(plugin, id));
-      },
-      onReconnect: () => bump("*"),
-      onError: () => setLiveLost(true),
-    });
-  }, [orgId, plugin, id, isView, bump]);
-
-  const views = useExtensionViews(orgId, targets, { locale, versions });
-  const runAction = useUiAction(orgId, { locale, onView: views.setView });
-  const key = uiKey(plugin, id);
-  const title = contribution?.title[locale] ?? id;
-
-  let body: ReactNode;
-  if (contributions.state.kind === "loading") body = <Skeleton rows={4} />;
-  else if (contributions.state.kind === "error") {
-    body = (
-      <Stack gap={8}>
-        <FormError
-          message={errorMessage(
-            new ApiClientError(0, contributions.state.code, contributions.state.code),
-          )}
-        />
-        <Stack direction="row" gap={8}>
-          <Button onClick={contributions.reload}>{t("common.retry")}</Button>
-        </Stack>
-      </Stack>
-    );
-  } else if (isEmbed) {
-    body = <EmbedTab key={key} orgId={orgId} plugin={plugin} id={id} title={title} />;
-  } else if (!isView) body = <Text tone="muted">{t("errors.ui.not_found")}</Text>;
-  else {
-    body = (
-      <ExtensionViewTab
-        state={views.states[key]}
-        onRetry={() => views.retry(key)}
-        onAction={runAction({ plugin, id })}
-      />
-    );
-  }
-
   return (
-    <DetailPage
-      header={{ path: [...scope, { label: t("pluginPage.pathLabel") }, { label: title }], title }}
-      tabs={{ label: title, items: [{ id: "view", label: title }], value: "view" }}
-    >
-      <Stack gap={12}>
-        {liveLost && (
-          <Text variant="small" tone="warn">
-            {t("pluginPage.liveLost")}
-          </Text>
-        )}
-        {body}
-      </Stack>
-    </DetailPage>
+    <PluginPageView
+      orgId={ws.orgId}
+      plugin={plugin}
+      id={id}
+      contribution={contribution}
+      view={view}
+    />
   );
 }

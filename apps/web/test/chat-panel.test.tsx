@@ -10,14 +10,18 @@ import PluginPage from "../src/app/(app)/p/[plugin]/[id]/page";
 import { EmbedTab } from "../src/components/extension-ui/EmbedTab";
 import type { ShellData } from "../src/lib/server/session";
 import type { UiView } from "../src/lib/ui";
-import { bodyOf, json, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { Link, resetNavigation } from "./support/navigation";
-import { ME, renderPage } from "./support/render";
+import { ME } from "./support/render";
+import { renderRoute } from "./support/server";
 import { renderFrame, shellOf } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 const params = vi.hoisted(() => ({ current: {} as Record<string, string> }));
 vi.mock("next/navigation", () => ({ useParams: () => params.current }));
+vi.mock("next-intl/server", () => ({ getLocale: async () => "en" }));
+const pluginPage = () =>
+  PluginPage({ params: Promise.resolve(params.current as { plugin: string; id: string }) });
 
 const _msgs = { zh, en } as const;
 const ORG = "/api/v1/orgs/o1";
@@ -178,7 +182,9 @@ describe("插件页面 /p/<plugin>/<id>", () => {
       [`GET ${UI}/views/board/overview`]: () =>
         json(200, { view: { blocks: [{ type: "heading", text: `Cards ${n}` }] } }),
     });
-    const { container } = renderPage(<PluginPage />, { locale: "en" });
+    const { container, calls: server } = await renderRoute(pluginPage, lastStubRoutes(), {
+      locale: "en",
+    });
     expect(await screen.findByRole("heading", { name: "Cards 1" })).toBeTruthy();
     expect(container.querySelector('[data-template="DetailPage"]')).not.toBeNull();
     expect(screen.queryByRole("complementary")).toBeNull();
@@ -187,9 +193,11 @@ describe("插件页面 /p/<plugin>/<id>", () => {
     const path = screen.getByRole("navigation", { name: "Path" });
     expect(within(path).getByText(en.pluginPage.pathLabel)).toBeTruthy();
     expect(within(path).queryByText("p")).toBeNull();
-    expect(calls.find((c) => c.url.includes("/views/"))?.url).toBe(
+    // the view was read on the server, none in the browser before the stream says so
+    expect(server.find((c) => c.url.includes("/views/"))?.url).toBe(
       `${UI}/views/board/overview?locale=en`,
     );
+    expect(calls.some((c) => c.url.includes("/views/"))).toBe(false);
     const stream = FakeEventSource.instances.find((s) => s.url === `${UI}/stream`);
     expect(stream).toBeTruthy();
     n = 2;
@@ -212,7 +220,7 @@ describe("插件页面 /p/<plugin>/<id>", () => {
         });
       }) as unknown as () => Response,
     });
-    const { unmount } = renderPage(<PluginPage />, { locale: "en" });
+    const { unmount } = await renderRoute(pluginPage, lastStubRoutes(), { locale: "en" });
     await screen.findByRole("heading", { name: "Cards 1" });
     const stream = FakeEventSource.instances.find(
       (s) => s.url === `${UI}/stream`,
@@ -220,13 +228,14 @@ describe("插件页面 /p/<plugin>/<id>", () => {
     for (let i = 0; i < 8; i++) {
       act(() => stream.emit("ui", { plugin: "board", contribution: "overview" }));
     }
+    // the first read was the server's; the browser's reads follow the stream
     const gets = () => calls.filter((c) => c.url.includes("/views/board/overview")).length;
+    await vi.waitFor(() => expect(gets()).toBe(1));
+    await act(async () => pending.shift()?.());
     await vi.waitFor(() => expect(gets()).toBe(2));
     await act(async () => pending.shift()?.());
-    await vi.waitFor(() => expect(gets()).toBe(3));
-    await act(async () => pending.shift()?.());
     expect(await screen.findByRole("heading", { name: "Cards 3" })).toBeTruthy();
-    expect(gets()).toBe(3);
+    expect(gets()).toBe(2);
     expect(stream.readyState).toBe(1);
     unmount();
     expect(stream.readyState).toBe(2);
@@ -239,7 +248,7 @@ describe("插件页面 /p/<plugin>/<id>", () => {
       [`GET ${UI}/views/board/overview`]: () =>
         json(200, { view: { blocks: [{ type: "heading", text: "Cards" }] } }),
     });
-    renderPage(<PluginPage />, { locale: "en" });
+    await renderRoute(pluginPage, lastStubRoutes(), { locale: "en" });
     await screen.findByRole("heading", { name: "Cards" });
     const stream = FakeEventSource.instances.find(
       (s) => s.url === `${UI}/stream`,
@@ -257,7 +266,7 @@ describe("插件页面 /p/<plugin>/<id>", () => {
       [`GET ${UI}/views/board/overview`]: () =>
         json(502, { error: { code: "ui.render_failed", message: "x" } }),
     });
-    renderPage(<PluginPage />, { locale: "en" });
+    await renderRoute(pluginPage, lastStubRoutes(), { locale: "en" });
     expect(await screen.findByText(`${en.errors.ui.render_failed}`)).toBeTruthy();
     expect(screen.getByRole("button", { name: en.common.retry })).toBeTruthy();
   });
@@ -312,7 +321,7 @@ describe("嵌入应用（第二档）", () => {
         json(200, { items: [{ ...EMBED, place: "page", path: "/ui/live" }] }),
       [`POST ${UI}/embeds/board/live/token`]: () => issued("/plugin-ui/board/live"),
     });
-    const { container } = renderPage(<PluginPage />, { locale: "en" });
+    const { container } = await renderRoute(pluginPage, lastStubRoutes(), { locale: "en" });
     const frame = await vi.waitFor(() => {
       const f = container.querySelector("iframe");
       if (!f) throw new Error("no iframe yet");

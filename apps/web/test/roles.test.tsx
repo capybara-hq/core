@@ -197,8 +197,18 @@ const PAGES: [string, ComponentType | ServerPage, "member" | "admin", string][] 
     "admin",
     zh.roles.need.admin,
   ],
-  ["/trajectories", TrajectoriesPage, "member", zh.roles.need.member],
-  ["/trajectories/cv1", TrajectoryPage, "member", zh.roles.need.member],
+  [
+    "/trajectories",
+    server(() => TrajectoriesPage({ searchParams: Promise.resolve({}) })),
+    "member",
+    zh.roles.need.member,
+  ],
+  [
+    "/trajectories/cv1",
+    server(() => TrajectoryPage(params({ conversationId: "cv1" }))),
+    "member",
+    zh.roles.need.member,
+  ],
 ];
 
 const noAccess = () =>
@@ -450,9 +460,15 @@ describe("trajectories: only the tabs the role can use", () => {
   for (const role of ["member", "admin", "owner"] as const) {
     const admin = role !== "member";
     it(`/trajectories · ${role}: ${admin ? "评测集 · 运行记录 tabs" : "运行记录 only"}`, async () => {
-      routes = { [`GET ${O}/agents`]: { agents: [] } };
+      routes = {
+        [`GET ${O}/agents`]: { agents: [] },
+        [`GET ${O}/trajectories`]: { items: [], next: null },
+      };
       resetNavigation("/trajectories");
-      renderPage(<TrajectoriesPage />, { locale: "zh", me: meAs(role) });
+      await renderRoute(() => TrajectoriesPage({ searchParams: Promise.resolve({}) }), served(), {
+        locale: "zh",
+        me: meAs(role),
+      });
       const h1 = screen.getByRole("heading", { level: 1 });
       expect(h1.textContent).toBe(admin ? zh.trajectories.title : zh.trajectories.tabs.runs);
       expect(screen.queryByRole("link", { name: new RegExp(zh.evals.tabs.sets) }) !== null).toBe(
