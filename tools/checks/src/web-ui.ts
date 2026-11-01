@@ -465,7 +465,6 @@ const SSR_RULES = {
   stale: "web-ssr-stale-pending",
 } as const;
 const SSR_EXEMPT = /\/\/\s*ssr-exempt:(.*)$/;
-const LOADER_NAME = /^(?:list|get|load|fetch)/;
 /** Hooks whose function argument runs during render (so a location read there is a render read). */
 const RENDER_CALLBACK_HOOKS = new Set(["useState", "useMemo", "useReducer"]);
 
@@ -559,23 +558,38 @@ function locationReads(p: ParsedFile): Node[] {
   return hits;
 }
 
-/** Names bound by imports from a `/lib/` module that look like loaders (list*, get*, load*, fetch*). */
+/**
+ * Names bound by value imports from a `/lib/` module (any name: a loader, a stream, a poller) and
+ * every `apiFetch` import. Namespace imports are tracked too.
+ */
 function libLoaders(p: ParsedFile): { names: Set<string>; namespaces: Set<string> } {
   const names = new Set<string>();
   const namespaces = new Set<string>();
   walk(p.program, (n) => {
-    if (n.type !== "ImportDeclaration" || !String((n.source as Node).value).includes("/lib/"))
-      return;
+    if (n.type !== "ImportDeclaration" || n.importKind === "type") return;
+    const lib = String((n.source as Node).value).includes("/lib/");
     for (const sp of n.specifiers as Node[]) {
+      if (sp.importKind === "type") continue;
       const local = (sp.local as Node).name as string;
-      if (sp.type === "ImportNamespaceSpecifier") namespaces.add(local);
-      else if (sp.type === "ImportSpecifier") {
-        const im = sp.imported as Node;
-        if (LOADER_NAME.test(String(im.name ?? im.value))) names.add(local);
-      }
+      const im = sp.imported as Node | undefined;
+      const imported = im ? String(im.name ?? im.value) : "";
+      if (sp.type === "ImportNamespaceSpecifier") {
+        if (lib) namespaces.add(local);
+      } else if (lib || imported === "apiFetch") names.add(local);
     }
   });
   return { names, namespaces };
+}
+
+/** Same-file functions by name: declarations and consts bound to a function or a call wrapping one. */
+function localFunctions(p: ParsedFile): Map<string, Node> {
+  const fns = new Map<string, Node>();
+  walk(p.program, (n) => {
+    if (n.type === "FunctionDeclaration" && n.id) fns.set((n.id as Node).name as string, n);
+    else if (n.type === "VariableDeclarator" && (n.id as Node).type === "Identifier" && n.init)
+      fns.set((n.id as Node).name as string, n.init as Node);
+  });
+  return fns;
 }
 
 function hasInitial(call: Node): boolean {
@@ -630,8 +644,41 @@ function ssrFindings(file: string, p: ParsedFile, segs: string[]): Finding[] {
         'a page.tsx is a server component (gate and reads); move the template and interaction into view.tsx with "use client" and pass the data as `initial` props',
     });
 
-  if (/^view\.[jt]sx?$/.test(base)) {
+  if (isUseClient(p)) {
     const loaders = libLoaders(p);
+    const fns = localFunctions(p);
+    const loaderCall = (root: Node): string | undefined => {
+      let found: string | undefined;
+      walk(root, (m) => {
+        if (m.type !== "CallExpression" || found !== undefined) return;
+        const mc = m.callee as Node;
+        if (mc.type === "Identifier" && loaders.names.has(mc.name as string))
+          found = mc.name as string;
+        else if (
+          mc.type === "MemberExpression" &&
+          (mc.object as Node).type === "Identifier" &&
+          loaders.namespaces.has((mc.object as Node).name as string)
+        )
+          found = String((mc.property as Node).name);
+      });
+      return found;
+    };
+    /** A lib call in the callback, or in a same-file function it calls (one level). */
+    const effectLoader = (cb: Node): string | undefined => {
+      const direct = loaderCall(cb);
+      if (direct !== undefined) return direct;
+      let via: string | undefined;
+      walk(cb, (m) => {
+        if (m.type !== "CallExpression" || via !== undefined) return;
+        const mc = m.callee as Node;
+        const target = mc.type === "Identifier" ? fns.get(mc.name as string) : undefined;
+        if (target && target !== cb) {
+          const l = loaderCall(target);
+          if (l !== undefined) via = `${(mc as Node).name as string} -> ${l}`;
+        }
+      });
+      return via;
+    };
     walk(p.program, (n) => {
       if (n.type !== "CallExpression") return;
       const c = n.callee as Node;
@@ -642,28 +689,15 @@ function ssrFindings(file: string, p: ParsedFile, segs: string[]): Finding[] {
           n,
           "useLoad without `initial` fetches after mount, so the first paint is empty; pass the server read as `{ initial }` (or `// ssr-exempt: <reason>`)",
         );
-      } else if (c.name === "useEffect") {
+      } else if (c.name === "useEffect" || c.name === "useLayoutEffect") {
         const cb = (n.arguments as Node[])[0];
         if (!cb) return;
-        let loader: string | undefined;
-        walk(cb, (m) => {
-          if (m.type !== "CallExpression" || loader !== undefined) return;
-          const mc = m.callee as Node;
-          if (mc.type === "Identifier" && loaders.names.has(mc.name as string))
-            loader = mc.name as string;
-          else if (
-            mc.type === "MemberExpression" &&
-            (mc.object as Node).type === "Identifier" &&
-            loaders.namespaces.has((mc.object as Node).name as string) &&
-            LOADER_NAME.test(String((mc.property as Node).name))
-          )
-            loader = String((mc.property as Node).name);
-        });
+        const loader = effectLoader(cb);
         if (loader !== undefined)
           flag(
             SSR_RULES.firstPaint,
             n,
-            `useEffect calls the loader ${loader}(): the first paint would be empty; read it on the server and pass it as \`initial\` (or \`// ssr-exempt: <reason>\`)`,
+            `${c.name} calls ${loader}(): a lib call after mount leaves the first paint empty; read it on the server and pass it as \`initial\`, or \`// ssr-exempt: <reason>\` for live updates`,
           );
       }
     });

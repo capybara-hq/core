@@ -146,6 +146,15 @@ describe("checkWebUi", () => {
         ["web-ssr-first-paint", "view.tsx", 12],
         ["web-ssr-first-paint", "view.tsx", 13],
       ]));
+    it("web-ssr-first-paint follows one level of same-file calls and any lib import", () =>
+      expect(at("ssr-first-paint-indirect")).toEqual([
+        ["web-ssr-first-paint", "view.tsx", 11],
+        ["web-ssr-first-paint", "view.tsx", 14],
+      ]));
+    it("web-ssr-first-paint covers client files that are not views", () =>
+      expect(at("ssr-first-paint-client-file")).toEqual([["web-ssr-first-paint", "panel.tsx", 6]]));
+    it("web-ssr-first-paint: an exempted live-update effect passes", () =>
+      expect(run("ssr-first-paint-live")).toEqual([]));
     it("web-ssr-location flags reads during render and in useState initializers", () =>
       expect(at("ssr-location")).toEqual([
         ["web-ssr-location", "view.tsx", 8],
