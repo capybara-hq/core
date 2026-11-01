@@ -12,8 +12,13 @@ export async function currentPath(): Promise<string> {
   return (await headers()).get(PATH_HEADER) ?? "/";
 }
 
-const signedOut = (e: unknown): e is ApiClientError =>
+/** A 401 `auth.*`: the session is gone, the page signs in again. */
+export const isSignedOut = (e: unknown): e is ApiClientError =>
   e instanceof ApiClientError && e.status === 401 && e.code.startsWith("auth.");
+
+/** The kernel could not be reached (the proxy saw it down, or the read failed in transit). */
+export const isKernelUnavailable = (e: unknown): e is ApiClientError =>
+  e instanceof ApiClientError && (e.code === "upstream_unavailable" || e.code === "network");
 
 /**
  * A page's read: a 401 `auth.*` redirects to sign-in (back to this page afterwards), a 404 is the
@@ -23,19 +28,22 @@ export async function read<T>(p: Promise<T>): Promise<T> {
   try {
     return await p;
   } catch (e) {
-    if (signedOut(e)) redirect(loginPathFor(await currentPath()));
+    if (isSignedOut(e)) redirect(loginPathFor(await currentPath()));
     if (e instanceof ApiClientError && e.status === 404) notFound();
     throw e;
   }
 }
 
-/** A read the page can do without: a failure resolves to `null` (a 401 still signs in). */
+/**
+ * A read the page can do without when the kernel refuses it: a 403 or 404 resolves to `null`. A 401
+ * `auth.*` still signs in; anything else (kernel unavailable, network, 5xx, other 4xx) throws.
+ */
 export async function optional<T>(p: Promise<T>): Promise<T | null> {
   try {
     return await p;
   } catch (e) {
-    if (signedOut(e)) redirect(loginPathFor(await currentPath()));
-    if (e instanceof ApiClientError) return null;
+    if (isSignedOut(e)) redirect(loginPathFor(await currentPath()));
+    if (e instanceof ApiClientError && (e.status === 403 || e.status === 404)) return null;
     throw e;
   }
 }

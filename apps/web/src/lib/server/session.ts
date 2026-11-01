@@ -3,14 +3,14 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 import { getReadiness, type OrgReadiness, setupReady } from "../agents";
-import { ApiClientError } from "../api";
+import { loginPathFor } from "../auth-sources";
 import { type ConversationGroupsPage, listConversationGroups } from "../conversations";
 import { listInbox } from "../inbox";
 import { myRole, type OrgRole, roleAtLeast } from "../members";
 import { getMe, type Me, type Membership } from "../session";
 import { listUiContributions, type UiContributionItem } from "../ui";
 import { SESSION_STATE_HEADER } from "./kernel";
-import { read } from "./page";
+import { currentPath, isKernelUnavailable, isSignedOut, read } from "./page";
 
 /** The signed-in account and its current org (`null` when none is chosen). Once per request. */
 export const getSession = cache(async (): Promise<{ me: Me; org: Membership | null }> => {
@@ -38,14 +38,25 @@ export interface ShellData {
 
 export type Shell = { kind: "unavailable" } | ({ kind: "ready" } & ShellData);
 
-/** The kernel could not be reached (the proxy saw it down, or the read failed in transit). */
-const unavailable = (e: unknown) =>
-  e instanceof ApiClientError && (e.code === "upstream_unavailable" || e.code === "network");
+/**
+ * A shell section's read: a failure resolves to `null` (the section draws its own error state),
+ * except a 401 `auth.*` (sign in again) and an unavailable kernel (rethrown: the whole shell is
+ * `unavailable`).
+ */
+async function section<T>(p: Promise<T>): Promise<T | null> {
+  try {
+    return await p;
+  } catch (e) {
+    if (isSignedOut(e)) redirect(loginPathFor(await currentPath()));
+    if (isKernelUnavailable(e)) throw e;
+    return null;
+  }
+}
 
 /**
- * The shell data, read in parallel. A kernel that can't answer `me` gives `unavailable`; readiness
- * failing otherwise throws; the conversation groups, the pending count and the extension pages
- * resolve to `null` on failure (each section draws its own error state).
+ * The shell data, read in parallel. A kernel that can't answer (any of the reads) gives
+ * `unavailable`; readiness failing otherwise throws; the conversation groups, the pending count and
+ * the extension pages resolve to `null` on other failures (each section draws its own error state).
  */
 export async function getShell(): Promise<Shell> {
   if ((await headers()).get(SESSION_STATE_HEADER) === "unavailable") return { kind: "unavailable" };
@@ -53,7 +64,7 @@ export async function getShell(): Promise<Shell> {
   try {
     session = await getSession();
   } catch (e) {
-    if (unavailable(e)) return { kind: "unavailable" };
+    if (isKernelUnavailable(e)) return { kind: "unavailable" };
     throw e;
   }
   const { me, org } = session;
@@ -69,19 +80,22 @@ export async function getShell(): Promise<Shell> {
     };
   }
   const orgId = org.orgId;
-  const [readiness, groups, pending, extensions] = await Promise.all([
-    orgReadiness(orgId),
-    listConversationGroups(orgId).catch(() => null),
-    listInbox(orgId).then(
-      (r) => ({ count: r.items.length, more: r.truncated === true }),
-      () => null,
-    ),
-    listUiContributions(orgId).then(
-      ({ items }) => items.filter((c) => c.place === "page"),
-      () => null,
-    ),
-  ]);
-  return { kind: "ready", me, org, readiness, groups, pending, extensions };
+  try {
+    const [readiness, groups, pending, extensions] = await Promise.all([
+      orgReadiness(orgId),
+      section(listConversationGroups(orgId)),
+      section(
+        listInbox(orgId).then((r) => ({ count: r.items.length, more: r.truncated === true })),
+      ),
+      section(
+        listUiContributions(orgId).then(({ items }) => items.filter((c) => c.place === "page")),
+      ),
+    ]);
+    return { kind: "ready", me, org, readiness, groups, pending, extensions };
+  } catch (e) {
+    if (isKernelUnavailable(e)) return { kind: "unavailable" };
+    throw e;
+  }
 }
 
 export type Workspace =

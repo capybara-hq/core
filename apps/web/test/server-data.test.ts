@@ -179,12 +179,24 @@ describe("read / optional", () => {
     expect(await read(Promise.resolve(7))).toBe(7);
   });
 
-  it("optional resolves a failing read to null but still redirects on 401", async () => {
+  it("optional tolerates only refusals (403, 404) and still redirects on 401", async () => {
     expect(await optional(Promise.reject(new ApiClientError(403, "forbidden", "x")))).toBeNull();
+    expect(
+      await optional(Promise.reject(new ApiClientError(404, "skill.not_found", "x"))),
+    ).toBeNull();
     expect(await optional(Promise.resolve(3))).toBe(3);
     await expect(
       optional(Promise.reject(new ApiClientError(401, "auth.required", "x"))),
     ).rejects.toThrow(/REDIRECT/);
+    for (const e of [
+      new ApiClientError(0, "upstream_unavailable", "x"),
+      new ApiClientError(0, "network", "x"),
+      new ApiClientError(500, "internal", "x"),
+      new ApiClientError(503, "unavailable", "x"),
+      new ApiClientError(400, "validation_failed", "x"),
+    ]) {
+      await expect(optional(Promise.reject(e))).rejects.toBe(e);
+    }
   });
 });
 
@@ -297,6 +309,30 @@ describe("getShell", () => {
     expect(await getShell()).toEqual({ kind: "unavailable" });
     req.scope = new Map();
     req.headers.set("x-cap-session", "unavailable");
+    expect(await getShell()).toEqual({ kind: "unavailable" });
+  });
+
+  it("redirects to sign-in when an optional shell read gets 401 auth.*", async () => {
+    kernel({
+      "/api/v1/me": () => json(200, ME),
+      "/api/v1/orgs/o1/readiness": () => json(200, READY),
+      "/api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
+      "/api/v1/orgs/o1/inbox": () => err(401, "auth.required"),
+      "/api/v1/orgs/o1/ui/contributions": () => json(200, { items: [] }),
+    });
+    await expect(getShell()).rejects.toThrow(/REDIRECT \/login/);
+  });
+
+  it("returns unavailable when an optional shell read finds the kernel down", async () => {
+    kernel({
+      "/api/v1/me": () => json(200, ME),
+      "/api/v1/orgs/o1/readiness": () => json(200, READY),
+      "/api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
+      "/api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
+      "/api/v1/orgs/o1/ui/contributions": () => {
+        throw new TypeError("fetch failed");
+      },
+    });
     expect(await getShell()).toEqual({ kind: "unavailable" });
   });
 
