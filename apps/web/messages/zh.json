@@ -1965,6 +1965,7 @@
       },
       "resultsLabel": "结果",
       "resultsEmpty": "没有结果",
+      "loadMore": "加载更多",
       "columns": {
         "case": "用例",
         "step": "步骤",

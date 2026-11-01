@@ -1965,6 +1965,7 @@
       },
       "resultsLabel": "Results",
       "resultsEmpty": "No results",
+      "loadMore": "Load more",
       "columns": {
         "case": "Case",
         "step": "Step",

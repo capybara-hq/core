@@ -12,14 +12,21 @@ import EvalRunPage from "../src/app/(app)/evals/runs/[runId]/page";
 import { activeNavOf } from "../src/components/shell/nav";
 import { type EvalResult, type EvalRun, rowOf } from "../src/lib/evals";
 import type { TrajectoryRun } from "../src/lib/trajectories";
-import { bodyOf, type Call, json, noContent, stubApi } from "./support/api";
+import { bodyOf, type Call, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { renderPage } from "./support/render";
+import { renderRoute } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
-  useParams: () => ({ setId: "s1", runId: "er1", caseId: "k1" }),
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
 }));
+
+const params = <T,>(p: T) => ({ params: Promise.resolve(p) });
 
 const msgs = { zh, en } as const;
 const ORG = "/api/v1/orgs/o1";
@@ -248,7 +255,7 @@ describe("评测集列表（ListPage）", () => {
         [`GET ${SETS}`]: () => json(200, { sets: [SET] }),
         [`GET ${ORG}/agents`]: () => json(200, { agents: [AGENT] }),
       });
-      const { container } = renderPage(<EvalsPage />, { locale });
+      const { container } = await renderRoute(() => EvalsPage(), lastStubRoutes(), { locale });
       expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
       const list = await screen.findByRole("list", { name: m.tabs.sets });
       const row = await within(list).findByRole("listitem");
@@ -275,7 +282,7 @@ describe("评测集列表（ListPage）", () => {
       [`GET ${SETS}`]: () => json(200, { sets: [] }),
       [`GET ${ORG}/agents`]: () => json(200, { agents: [AGENT] }),
     });
-    renderPage(<EvalsPage />);
+    await renderRoute(() => EvalsPage(), lastStubRoutes());
     expect(await screen.findByText(E.empty)).toBeTruthy();
   });
 });
@@ -286,7 +293,7 @@ describe("新建评测集（FormPage）", () => {
       [`GET ${ORG}/agents`]: () => json(200, { agents: [AGENT] }),
       [`POST ${SETS}`]: () => json(201, { set: { ...SET, rubric: "Be exact." } }),
     });
-    const { container } = renderPage(<NewEvalSetPage />);
+    const { container } = await renderRoute(() => NewEvalSetPage(), lastStubRoutes());
     expect(container.querySelector('[data-template="FormPage"]')).not.toBeNull();
     const user = userEvent.setup();
     const agent = await screen.findByRole("combobox", { name: E.form.agentLabel });
@@ -325,7 +332,10 @@ describe("评测集详情（DetailPage）", () => {
 
   it("用例与运行两个标签页；点用例看快照轨迹，点运行看结果", async () => {
     stubApi(routes());
-    const { container } = renderPage(<EvalSetPage />);
+    const { container } = await renderRoute(
+      () => EvalSetPage(params({ setId: "s1" })),
+      lastStubRoutes(),
+    );
     expect(container.querySelector('[data-template="DetailPage"]')).not.toBeNull();
     const user = userEvent.setup();
     const cases = await screen.findByRole("table", { name: E.set.casesLabel });
@@ -353,7 +363,7 @@ describe("评测集详情（DetailPage）", () => {
         [`POST ${SETS}/s1/cases/sample`]: () => json(200, { added: 3, skipped: 1 }),
       }),
     );
-    renderPage(<EvalSetPage />);
+    await renderRoute(() => EvalSetPage(params({ setId: "s1" })), lastStubRoutes());
     await screen.findByRole("table", { name: E.set.casesLabel });
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: E.set.sample }));
@@ -374,7 +384,7 @@ describe("评测集详情（DetailPage）", () => {
 
   it("移除用例", async () => {
     const calls = stubApi(routes({ [`DELETE ${SETS}/s1/cases/k2`]: () => noContent() }));
-    renderPage(<EvalSetPage />);
+    await renderRoute(() => EvalSetPage(params({ setId: "s1" })), lastStubRoutes());
     const cases = await screen.findByRole("table", { name: E.set.casesLabel });
     const user = userEvent.setup();
     const row = within(cases).getByRole("row", { name: /Summarize the doc/ });
@@ -407,7 +417,10 @@ describe("用例快照轨迹（TracePage）", () => {
       [`GET ${SETS}/s1/cases/k1`]: () =>
         json(200, { case: CASES[0], trajectory: [run], currency: "USD" }),
     });
-    const { container } = renderPage(<EvalCasePage />);
+    const { container } = await renderRoute(
+      () => EvalCasePage(params({ setId: "s1", caseId: "k1" })),
+      lastStubRoutes(),
+    );
     expect(container.querySelector('[data-template="TracePage"]')).not.toBeNull();
     const tree = await screen.findByRole("tree", { name: en.trajectories.detail.waterfall });
     expect(within(tree).getByText("run · v2")).toBeTruthy();
@@ -435,8 +448,9 @@ describe("a sub-agent's eval case", () => {
           currency: "USD",
           parent: { conversationId: "p1", runId: "pr1", callId: "k1" },
         }),
+      [`GET ${SETS}/s1`]: () => json(200, { set: { ...SET, cases: CASES } }),
     });
-    renderPage(<EvalCasePage />);
+    await renderRoute(() => EvalCasePage(params({ setId: "s1", caseId: "k1" })), lastStubRoutes());
     const link = await screen.findByRole("link", { name: en.trajectories.parentLink });
     expect(link.getAttribute("href")).toBe("/trajectories/p1");
   });
@@ -476,7 +490,11 @@ describe("运行向导（WizardPage）", () => {
     async (locale) => {
       const m = msgs[locale].evals;
       const calls = stubApi(routes(true));
-      const { container } = renderPage(<RunWizardPage />, { locale });
+      const { container } = await renderRoute(
+        () => RunWizardPage(params({ setId: "s1" })),
+        lastStubRoutes(),
+        { locale },
+      );
       expect(container.querySelector('[data-template="WizardPage"]')).not.toBeNull();
       const user = userEvent.setup();
       // 1. 模式与候选
@@ -550,7 +568,7 @@ describe("运行向导（WizardPage）", () => {
 
   it("不填上限：确认步骤显示生效的部署默认上限；超过部署上限时不能开始", async () => {
     const calls = stubApi(routes(true));
-    renderPage(<RunWizardPage />);
+    await renderRoute(() => RunWizardPage(params({ setId: "s1" })), lastStubRoutes());
     const user = userEvent.setup();
     await screen.findByRole("combobox", { name: E.wizard.model });
     await user.click(within(actionRow()).getByRole("button", { name: E.wizard.next }));
@@ -598,7 +616,7 @@ describe("运行向导（WizardPage）", () => {
         },
       }),
     );
-    renderPage(<RunWizardPage />);
+    await renderRoute(() => RunWizardPage(params({ setId: "s1" })), lastStubRoutes());
     const user = userEvent.setup();
     await screen.findByRole("combobox", { name: E.wizard.model });
     await user.click(within(actionRow()).getByRole("button", { name: E.wizard.next }));
@@ -622,22 +640,22 @@ describe("运行向导（WizardPage）", () => {
     stubApi(
       routes(true, {
         [`GET ${ORG}/model-purposes`]: () =>
-          json(503, { error: { code: "upstream_unavailable", message: "down" } }),
+          json(500, { error: { code: "internal", message: "x" } }),
       }),
     );
-    renderPage(<RunWizardPage />);
+    await renderRoute(() => RunWizardPage(params({ setId: "s1" })), lastStubRoutes());
     const user = userEvent.setup();
     await screen.findByRole("combobox", { name: E.wizard.model });
     await user.click(within(actionRow()).getByRole("button", { name: E.wizard.next }));
     const judge = await screen.findByRole("switch", { name: E.wizard.judge });
-    expect(await screen.findByText(`${en.errors.upstream_unavailable}`)).toBeTruthy();
+    expect(await screen.findByText(`${en.errors.unknown}`)).toBeTruthy();
     expect((judge as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByText(E.wizard.judgeUnmapped)).toBeNull();
   });
 
   it("eval 用途未映射：评委开关禁用，并给出去配置的链接", async () => {
     stubApi(routes(false));
-    renderPage(<RunWizardPage />);
+    await renderRoute(() => RunWizardPage(params({ setId: "s1" })), lastStubRoutes());
     const user = userEvent.setup();
     await screen.findByRole("combobox", { name: E.wizard.model });
     await user.click(within(actionRow()).getByRole("button", { name: E.wizard.next }));
@@ -662,7 +680,7 @@ describe("运行向导（WizardPage）", () => {
           }),
       }),
     );
-    renderPage(<RunWizardPage />);
+    await renderRoute(() => RunWizardPage(params({ setId: "s1" })), lastStubRoutes());
     const user = userEvent.setup();
     await screen.findByRole("combobox", { name: E.wizard.model });
     await user.click(screen.getByRole("radio", { name: new RegExp(E.mode.run) }));
@@ -705,7 +723,11 @@ describe("评测运行（DetailPage）", () => {
     async (locale) => {
       const m = msgs[locale].evals;
       stubApi(routes(() => evalRun(), [result()]));
-      const { container } = renderPage(<EvalRunPage />, { locale });
+      const { container } = await renderRoute(
+        () => EvalRunPage(params({ runId: "er1" })),
+        lastStubRoutes(),
+        { locale },
+      );
       expect(container.querySelector('[data-template="DetailPage"]')).not.toBeNull();
       const table = await screen.findByRole("table", { name: m.run.resultsLabel });
       const row = await within(table).findByRole("row", { name: /Delete the stale item/ });
@@ -774,7 +796,10 @@ describe("评测运行（DetailPage）", () => {
         },
       ),
     );
-    const { container } = renderPage(<EvalRunPage />);
+    const { container } = await renderRoute(
+      () => EvalRunPage(params({ runId: "er1" })),
+      lastStubRoutes(),
+    );
     const table = await screen.findByRole("table", { name: E.run.resultsLabel });
     const user = userEvent.setup();
     await user.click(await within(table).findByText("Delete the stale item"));
@@ -824,7 +849,7 @@ describe("评测运行（DetailPage）", () => {
         ],
       ),
     );
-    renderPage(<EvalRunPage />);
+    await renderRoute(() => EvalRunPage(params({ runId: "er1" })), lastStubRoutes());
     expect(
       await screen.findByText(fill(E.run.capped, { used: "1,200", cap: "1,000" })),
     ).toBeTruthy();
@@ -839,7 +864,7 @@ describe("评测运行（DetailPage）", () => {
         [],
       ),
     );
-    renderPage(<EvalRunPage />);
+    await renderRoute(() => EvalRunPage(params({ runId: "er1" })), lastStubRoutes());
     expect(
       await screen.findByText(fill(E.run.failed, { reason: en.errors.eval.too_many_errors })),
     ).toBeTruthy();
@@ -873,16 +898,16 @@ describe("评测运行（DetailPage）", () => {
         },
       ),
     );
-    renderPage(<EvalRunPage />);
+    await renderRoute(() => EvalRunPage(params({ runId: "er1" })), lastStubRoutes());
     await screen.findByRole("table", { name: E.run.resultsLabel });
     expect(screen.getByText(E.run.polling)).toBeTruthy();
     expect(runReads).toBe(1);
     await act(() => vi.advanceTimersByTimeAsync(5000));
     await waitFor(() => expect(runReads).toBe(2));
+    // the first read was the server's; the browser's poll reads the run and the results, not the set
     const resultReads = calls.filter((c) => c.url.includes("/results")).length;
-    expect(resultReads).toBe(2);
-    // 轮询只读运行与结果，不再读评测集
-    expect(calls.filter((c) => c.url === `${SETS}/s1`)).toHaveLength(1);
+    expect(resultReads).toBe(1);
+    expect(calls.filter((c) => c.url === `${SETS}/s1`)).toHaveLength(0);
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     await user.click(screen.getByRole("button", { name: E.run.cancel }));
     expect(await screen.findByText(E.run.cancelledNotice)).toBeTruthy();
@@ -899,17 +924,18 @@ describe("评测运行（DetailPage）", () => {
     const calls = stubApi(
       routes(() => evalRun({ status, casesDone: 1, summary: null, finishedAt: null }), [result()]),
     );
-    renderPage(<EvalRunPage />);
+    await renderRoute(() => EvalRunPage(params({ runId: "er1" })), lastStubRoutes());
     await screen.findByRole("table", { name: E.run.resultsLabel });
     status = "completed";
     await act(() => vi.advanceTimersByTimeAsync(5000));
     const resultUrls = () => calls.filter((c) => c.url.includes("/results")).map((c) => c.url);
-    await waitFor(() => expect(resultUrls()).toHaveLength(3));
-    const [, incremental, full] = resultUrls();
+    // (the first read was the server's)
+    await waitFor(() => expect(resultUrls()).toHaveLength(2));
+    const [incremental, full] = resultUrls();
     expect(incremental).toContain("updatedSince");
     expect(full).not.toContain("updatedSince");
     await act(() => vi.advanceTimersByTimeAsync(30_000));
-    expect(resultUrls()).toHaveLength(3);
+    expect(resultUrls()).toHaveLength(2);
   });
 
   it("轮询在上一次读完之后才排下一次：慢的读取不被下一拍取消；没有变化时逐步放慢", async () => {
@@ -948,7 +974,7 @@ describe("评测运行（DetailPage）", () => {
         },
       ),
     );
-    renderPage(<EvalRunPage />);
+    await renderRoute(() => EvalRunPage(params({ runId: "er1" })), lastStubRoutes());
     await screen.findByRole("table", { name: E.run.resultsLabel });
     expect(runReads).toBe(1);
     done = 1;
@@ -1009,7 +1035,7 @@ describe("评测运行（DetailPage）", () => {
         ],
       ),
     );
-    renderPage(<EvalRunPage />);
+    await renderRoute(() => EvalRunPage(params({ runId: "er1" })), lastStubRoutes());
     const table = await screen.findByRole("table", { name: E.run.resultsLabel });
     const row = await within(table).findByRole("row", { name: /Delete the stale item/ });
     expect(within(row).getByText(E.run.wholeRun)).toBeTruthy();
@@ -1025,7 +1051,7 @@ describe("评测运行（DetailPage）", () => {
   it.each(["zh", "en"] as const)("漂移原因走 i18n，不认识的显示原始码（%s）", async (locale) => {
     const m = msgs[locale].evals;
     stubApi(routes(() => evalRun(), [result({ drift: ["system_hash", "brand_new_reason"] })]));
-    renderPage(<EvalRunPage />, { locale });
+    await renderRoute(() => EvalRunPage(params({ runId: "er1" })), lastStubRoutes(), { locale });
     const table = await screen.findByRole("table", { name: m.run.resultsLabel });
     await userEvent.setup().click(await within(table).findByText(m.run.mismatch));
     const inspector = within(await screen.findByRole("region", { name: m.run.inspector.title }));
@@ -1066,10 +1092,14 @@ describe("评测运行（DetailPage）", () => {
         },
       ),
     );
-    renderPage(<EvalRunPage />);
+    const { calls: server } = await renderRoute(
+      () => EvalRunPage(params({ runId: "er1" })),
+      lastStubRoutes(),
+    );
     const table = await screen.findByRole("table", { name: E.run.resultsLabel });
-    // 首次读取是轻量视图，不带 updatedSince
-    const first = calls.filter((c) => c.url.includes("/results"));
+    // The first read (the server's) is the light view, without updatedSince
+    expect(calls.filter((c) => c.url.includes("/results"))).toHaveLength(0);
+    const first = server.filter((c) => c.url.includes("/results"));
     expect(first).toHaveLength(1);
     expect(first[0]?.url).toContain("view=light");
     expect(first[0]?.url).not.toContain("updatedSince");
@@ -1107,7 +1137,7 @@ describe("评测运行（DetailPage）", () => {
 
   it("汇总标签页：估算里评委的份额单列", async () => {
     stubApi(routes(() => evalRun(), [result()]));
-    renderPage(<EvalRunPage />);
+    await renderRoute(() => EvalRunPage(params({ runId: "er1" })), lastStubRoutes());
     await screen.findByRole("table", { name: E.run.resultsLabel });
     await userEvent.setup().click(screen.getByRole("tab", { name: E.run.tabs.summary }));
     expect(
