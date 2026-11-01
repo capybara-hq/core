@@ -2,7 +2,6 @@ import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import ChatPage from "../src/app/(app)/chat/[conversationId]/page";
 import type { UiView } from "../src/lib/ui";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
 import {
@@ -11,11 +10,11 @@ import {
   ev,
   FakeEventSource,
   MODELS,
+  renderChatRoute,
   runStarted,
   userMsg,
 } from "./support/conversation";
 import { resetNavigation, router } from "./support/navigation";
-import { renderPage } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({ useParams: () => ({ conversationId: "c1" }) }));
@@ -107,7 +106,7 @@ describe("extension slots fail alone (review focus 3)", () => {
           : json(200, { view: view("Later") }),
     });
     window.history.replaceState(null, "", "/chat/c1#properties");
-    renderPage(<ChatPage />, { locale: "zh" });
+    await renderChatRoute({ locale: "zh" });
     expect(await screen.findByText("待办 加载失败")).toBeTruthy();
     expect(screen.getByText(/没有及时响应|did not respond/)).toBeTruthy();
     const es = FakeEventSource.instances[0] as FakeEventSource;
@@ -129,7 +128,7 @@ describe("extension slots fail alone (review focus 3)", () => {
       [`GET ${UI}/views/todo/tasks-card`]: () =>
         json(502, { error: { code: "ui.render_failed", message: "x" } }),
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     const card = await vi.waitFor(() => {
       const el = document.querySelector('[data-extension-card="todo/tasks-card"]');
       if (!el) throw new Error("no card");
@@ -150,7 +149,7 @@ describe("extension slots fail alone (review focus 3)", () => {
       [`GET ${UI}/views/todo/tasks-section`]: () => json(200, { view: view("Section task") }),
     });
     window.history.replaceState(null, "", "/chat/c1#properties");
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     expect(await screen.findByText("Card task")).toBeTruthy();
     expect(await screen.findByText("Section task")).toBeTruthy();
     const bar = document.querySelector('[data-part="title-bar"]') as HTMLElement;
@@ -198,7 +197,7 @@ describe("inline cards load and refresh only while visible (final review I4)", (
       [`GET ${BASE}/events`]: () => json(200, { events: withCard() }),
       [`GET ${UI}/views/todo/tasks-card`]: () => json(200, { view: view("Card task") }),
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await vi.waitFor(() => {
       if (!document.querySelector('[data-extension-card="todo/tasks-card"]')) throw new Error("x");
     });
@@ -235,7 +234,7 @@ describe("embed panels (tier two)", () => {
       [`POST ${UI}/embeds/board/live/token`]: () => issued("/plugin-ui/board/live"),
     });
     window.history.replaceState(null, "", "/chat/c1#panel=board/live");
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     const frame = await vi.waitFor(() => {
       const f = document.querySelector('iframe[title="Live"]');
       if (!f) throw new Error("no iframe yet");
@@ -285,7 +284,7 @@ describe("embed panels (tier two)", () => {
           : issued("/plugin-ui/board/live"),
     });
     window.history.replaceState(null, "", "/chat/c1#panel=board/live");
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     const panel = await screen.findByRole("complementary", { name: "Live" });
     expect(await within(panel).findByText(en.errors.ui.not_found)).toBeTruthy();
     expect(screen.getByText("hi")).toBeTruthy();
@@ -301,7 +300,7 @@ describe("embed panels (tier two)", () => {
       [`POST ${UI}/embeds/board/live/token`]: () => issued("/plugin-ui/board/live"),
     });
     window.history.replaceState(null, "", "/chat/c1#panel=board/live");
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     const panel = await screen.findByRole("complementary", { name: "Live" });
     let prev: HTMLIFrameElement | undefined;
     for (let i = 0; i < 4; i++) {

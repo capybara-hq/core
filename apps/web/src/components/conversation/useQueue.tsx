@@ -2,7 +2,7 @@
 
 import { QueuedMessage, QueuePaused, Stack, useToast } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type ConversationEvent,
   deleteQueued,
@@ -29,8 +29,9 @@ export type QueueView = {
 };
 
 /**
- * The conversation's queued messages (kernel queue routes, spec §5.7): read at mount and again on
- * `changed: queue` (`version`), after each of this page's own changes. The queue lives in PG, so a
+ * The conversation's queued messages (kernel queue routes, spec §5.7): the server's read
+ * (`initial`, else read at mount), read again on `changed: queue` (`version`) and after each of
+ * this page's own changes. The queue lives in PG, so a
  * reload, another tab or another replica see the same list.
  */
 export function useQueue(
@@ -38,6 +39,7 @@ export function useQueue(
   conversationId: string,
   version: number,
   merge: (events: ConversationEvent[]) => void,
+  initial?: { items: QueueItem[]; paused: boolean; pauseReason?: QueuePauseReason } | null,
 ): QueueView & {
   reload(): void;
   edit(id: string, text: string): Promise<boolean>;
@@ -51,10 +53,9 @@ export function useQueue(
     items: QueueItem[];
     paused: boolean;
     pauseReason?: QueuePauseReason;
-  }>({
-    items: [],
-    paused: false,
-  });
+  }>(initial ?? { items: [], paused: false });
+  /** The `version` the server's read stands for: no read until it moves. */
+  const seeded = useRef<number | null>(initial != null ? version : null);
   const reload = useCallback(() => {
     listQueue(orgId, conversationId).then(
       (r) =>
@@ -68,8 +69,10 @@ export function useQueue(
       },
     );
   }, [orgId, conversationId]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `version` triggers a refetch
   useEffect(() => {
+    // ssr-exempt: live updates after first paint (`changed: queue` moves `version`)
+    if (seeded.current === version) return;
+    seeded.current = null;
     reload();
   }, [reload, version]);
 

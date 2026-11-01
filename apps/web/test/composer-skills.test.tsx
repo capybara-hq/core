@@ -3,7 +3,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import ChatPage from "../src/app/(app)/chat/[conversationId]/page";
 import NewChatPage from "../src/app/(app)/chat/page";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
 import {
@@ -12,11 +11,11 @@ import {
   ev,
   FakeEventSource,
   MODELS,
+  renderChatRoute,
   runStarted,
   userMsg,
 } from "./support/conversation";
 import { resetNavigation } from "./support/navigation";
-import { renderPage } from "./support/render";
 import { renderRoute } from "./support/server";
 
 /**
@@ -154,7 +153,7 @@ describe("the / menu", () => {
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "/");
@@ -183,7 +182,7 @@ describe("the / menu", () => {
 
   it("typing narrows the list; /superpowers:brainstorming finds brainstorming", async () => {
     api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }) });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "/");
@@ -210,7 +209,7 @@ describe("the / menu", () => {
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
       [`POST ${BASE}/messages`]: () => json(202, { event: invocation(2) }),
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "/");
@@ -239,7 +238,7 @@ describe("the / menu", () => {
           event: invocation(2, "x", skillRecord({ name: "release-check", arguments: "" })),
         }),
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "/");
@@ -262,7 +261,7 @@ describe("typed /name", () => {
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
       [`POST ${BASE}/messages`]: echo,
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
     // pasted, so the menu never opens
@@ -297,8 +296,10 @@ describe("a typed /name from a stale list", () => {
           ? json(400, { error: { code: "skill.not_invocable", message: "not invocable" } })
           : echo(c),
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    const { calls: server } = await renderChatRoute();
     await screen.findByText("hi");
+    // the first list comes with the server's snapshot
+    expect(server.filter((c) => c.url.split("?")[0] === INVOCABLE)).toHaveLength(1);
     const user = userEvent.setup();
     await user.click(input());
     await user.paste("/fix-issue 7");
@@ -311,10 +312,11 @@ describe("a typed /name from a stale list", () => {
     ]);
     const ids = sent.map((c) => (bodyOf(c) as { clientMessageId: string }).clientMessageId);
     expect(ids[0]).not.toBe(ids[1]);
+    // the refusal reads the list again in the browser
     await vi.waitFor(() =>
       expect(
         calls.filter((c) => c.method === "GET" && c.url.split("?")[0] === INVOCABLE),
-      ).toHaveLength(2),
+      ).toHaveLength(1),
     );
     await vi.waitFor(() => expect((input() as HTMLTextAreaElement).value).toBe(""));
   });
@@ -330,7 +332,7 @@ describe("a pending send", () => {
           release = () => resolve(echo(c));
         }),
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.click(input());
@@ -384,7 +386,7 @@ describe("queueing an invocation", () => {
         return json(201, { item });
       },
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "/");
@@ -407,7 +409,7 @@ describe("queueing an invocation", () => {
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
       [`POST ${BASE}/queue`]: () => json(201, { item: null }),
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.click(input());
@@ -443,7 +445,7 @@ describe("queueing an invocation", () => {
           pauseReason: "skill_not_invocable",
         }),
     });
-    renderPage(<ChatPage />, { locale: "zh" });
+    await renderChatRoute({ locale: "zh" });
     expect(await screen.findByText(zh.chat.queuePaused.skill_not_invocable)).toBeTruthy();
     expect(screen.queryByText(/运行已停止/)).toBeNull();
   });
@@ -452,7 +454,7 @@ describe("queueing an invocation", () => {
 describe("the invocation in the thread", () => {
   it("the bubble shows the chip and the arguments; the disclosure holds what was sent", async () => {
     api({ [`GET ${BASE}/events`]: () => json(200, { events: [invocation(1)] }) });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     const bubble = await vi.waitFor(() => {
       const b = document.querySelector('[data-entry="user"] [data-part="bubble"]');
       if (!b) throw new Error("no bubble");
@@ -521,7 +523,7 @@ describe("the invocation in the thread", () => {
           ],
         }),
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await screen.findByText("The review found nothing.");
     const kinds = [...document.querySelectorAll("[data-entry]")].map((e) =>
       e.getAttribute("data-entry"),
@@ -566,7 +568,7 @@ describe("the invocation in the thread", () => {
           ],
         }),
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     const plain = (await screen.findByText("also check the docs")).closest(
       "[data-entry]",
     ) as HTMLElement;
@@ -589,7 +591,7 @@ describe("the invocation in the thread", () => {
           ],
         }),
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await vi.waitFor(() => expect(document.querySelector('[data-entry="task"]')).not.toBeNull());
     expect(document.querySelector('[data-part="bubble-skill"]')).toBeNull();
   });

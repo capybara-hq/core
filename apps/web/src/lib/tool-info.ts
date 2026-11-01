@@ -9,23 +9,29 @@ const BATCH = 100;
 /**
  * Display metadata of the tools a conversation's calls name (`GET …/conversations/:id/tools`):
  * fetched in batches, kept in memory per conversation, and fetched again only for keys not seen
- * yet. A failed fetch leaves those rows on their keys (the timeline's fallback).
+ * yet. A failed fetch leaves those rows on their keys (the timeline's fallback). `initial` is the
+ * server's read (the keys it asked and the answer): those keys are not asked again.
  */
 export function useToolInfo(
   orgId: string,
   conversationId: string | null,
   keys: readonly string[],
+  initial?: { keys: readonly string[]; info: readonly ToolInfo[] } | null,
 ): ReadonlyMap<string, ToolInfo> {
-  const [info, setInfo] = useState<{ scope: string; map: ReadonlyMap<string, ToolInfo> }>({
-    scope: "",
-    map: new Map(),
-  });
-  const asked = useRef<{ scope: string; keys: Set<string> }>({ scope: "", keys: new Set() });
   const scope = `${orgId}/${conversationId ?? ""}`;
+  const [info, setInfo] = useState<{ scope: string; map: ReadonlyMap<string, ToolInfo> }>(() =>
+    initial != null
+      ? { scope, map: new Map(initial.info.map((t) => [t.key, t])) }
+      : { scope: "", map: new Map() },
+  );
+  const asked = useRef<{ scope: string; keys: Set<string> }>(
+    initial != null ? { scope, keys: new Set(initial.keys) } : { scope: "", keys: new Set() },
+  );
   const keyList = keys.join("\n");
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: keys are represented by keyList
   useEffect(() => {
+    // ssr-exempt: live updates after first paint (only keys the server did not ask)
     if (conversationId === null) return;
     if (asked.current.scope !== scope) asked.current = { scope, keys: new Set() };
     const missing = keys.filter((k) => !asked.current.keys.has(k));

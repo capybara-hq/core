@@ -3,9 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import ChatPage from "../src/app/(app)/chat/[conversationId]/page";
+import { CONV, renderChatRoute } from "./support/conversation";
 import { resetNavigation } from "./support/navigation";
-import { renderPage } from "./support/render";
+import type { Routes } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({ useParams: () => ({ conversationId: "c1" }) }));
@@ -88,6 +88,9 @@ const S3_URL = "http://s3.test:8333/capybara";
 const png = (name = "chart.png", size = 4) =>
   new File([new Uint8Array(size)], name, { type: "image/png" });
 
+/** The routes of the latest {@link stubApi}: the page's server reads are served from them too. */
+let served: Record<string, Handler> = {};
+
 /** 按 `METHOD path` 路由的 fetch 桩；登记附件依次发出 ID1、ID2。 */
 function stubApi(extra: Record<string, Handler> = {}): Call[] {
   const calls: Call[] = [];
@@ -113,6 +116,7 @@ function stubApi(extra: Record<string, Handler> = {}): Call[] {
       json(200, { id: ID2, name: "notes.txt", contentType: "text/plain", size: 4 }),
     ...extra,
   };
+  served = routes;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -138,7 +142,11 @@ const posted = (calls: Call[], url: string) =>
   calls.filter((c) => c.method === "POST" && c.url === url);
 
 async function renderChat(locale: "zh" | "en" = "en") {
-  const r = renderPage(<ChatPage />, { locale });
+  // The server reads the conversation and its snapshot (the browser's `/me` is for downloads).
+  const { "GET /api/v1/me": _me, ...rest } = served;
+  const routes: Routes = { [`GET ${BASE}`]: () => json(200, CONV()) };
+  for (const [k, h] of Object.entries(rest)) routes[k] = (c) => h(c as unknown as Call);
+  const r = await renderChatRoute({ locale, routes });
   await screen.findByText("hi");
   return r;
 }
@@ -372,8 +380,10 @@ describe("输入框：上传文件（修正轮 1）", () => {
           maxPerMessage: 2,
         }),
     });
-    const { container } = await renderChat("zh");
-    await vi.waitFor(() => expect(calls.some((c) => c.url === `${ATT}/limits`)).toBe(true));
+    const { container, calls: server } = await renderChat("zh");
+    // read on the server for the first paint, not in the browser
+    expect(server.some((c) => c.url === `${ATT}/limits`)).toBe(true);
+    expect(calls.some((c) => c.url === `${ATT}/limits`)).toBe(false);
     const input = fileInput(container);
     await vi.waitFor(() => expect(input.accept).toBe("image/png,text/plain"));
     const user = userEvent.setup({ applyAccept: false });

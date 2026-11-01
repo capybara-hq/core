@@ -1,36 +1,26 @@
-"use client";
-
-import { ConversationPage } from "@capybara-hq/design";
-import { useParams } from "next/navigation";
-import { useState } from "react";
-import { useConversationPage } from "../../../../components/conversation/ConversationView";
-import { OrgGate } from "../../../../components/OrgGate";
-
-/** `/chat/[conversationId]`: a conversation of the current org (ConversationPage). */
-export default function ChatPage() {
-  const { conversationId } = useParams<{ conversationId: string }>();
-  return (
-    <OrgGate>{(orgId) => <ChatInOrg orgId={orgId} conversationId={conversationId} />}</OrgGate>
-  );
-}
+import { NoAccess } from "../../../../components/RoleGate";
+import { loadConversationSnapshot } from "../../../../lib/server/conversation";
+import { workspace } from "../../../../lib/server/session";
+import ChatView from "./view";
 
 /**
- * A conversation belongs to the org it was opened in: after an org switch (AppFrame is going back
- * to the list) nothing renders with the new org and the old conversation. Keyed by the
- * conversation id, so nothing of one conversation (panel, queue, drafts, picks) shows under another.
+ * `/chat/[conversationId]`: a conversation of the current org, read on the server in one snapshot
+ * (web-SSR spec §6.2): the conversation, every event, the agents and models, the queue, the
+ * sub-agents and usage, the tool info, the UI contributions, the files, the sandbox and the
+ * composer's skills. A conversation the caller cannot read is the not-found page. The right panel
+ * (the URL hash) is not seen by the server and loads in the browser.
  */
-function ChatInOrg({ orgId, conversationId }: { orgId: string; conversationId: string }) {
-  const [openedIn] = useState(orgId);
-  if (orgId !== openedIn) return null;
-  return <Conversation key={conversationId} orgId={orgId} conversationId={conversationId} />;
-}
-
-function Conversation({ orgId, conversationId }: { orgId: string; conversationId: string }) {
-  const { page, dialogs } = useConversationPage(orgId, conversationId);
-  return (
-    <>
-      <ConversationPage {...page} />
-      {dialogs}
-    </>
-  );
+export default async function ChatPage({
+  params,
+}: {
+  params: Promise<{ conversationId: string }>;
+}) {
+  const ws = await workspace();
+  if (ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  const { conversationId } = await params;
+  const snapshot = await loadConversationSnapshot(ws.orgId, conversationId, {
+    accountId: ws.me.account.id,
+  });
+  return <ChatView orgId={ws.orgId} conversationId={conversationId} initial={snapshot} />;
 }

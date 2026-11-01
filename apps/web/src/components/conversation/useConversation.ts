@@ -66,20 +66,29 @@ export type ConversationState = {
 };
 
 /**
- * One conversation's live state: the history is read first, then the stream is opened from the
- * last seq; events and deltas go through {@link reduceChat}. `event: changed` refetches the row
- * (title, selection) or bumps the queue / files counters; a title change also tells the sidebar.
+ * One conversation's live state: the history (the server's read, `initial`, else read here first),
+ * then the stream opened from its last seq; events and deltas go through {@link reduceChat}.
+ * `event: changed` refetches the row (title, selection) or bumps the queue / files counters; a
+ * title change also tells the sidebar.
  * Reconnects (the browser's own, or a reopen after the browser gave up) resume from the last seq
  * the stream delivered and refetch everything outside the log.
  */
-export function useConversation(orgId: string, conversationId: string): ConversationState {
+export function useConversation(
+  orgId: string,
+  conversationId: string,
+  initial?: { conversation: Conversation; events: ConversationEvent[] },
+): ConversationState {
   const t = useTranslations("chat");
   const router = useRouter();
   const errorMessage = useErrorMessage();
-  const [state, dispatch] = useReducer(reduceChat, initialChatState);
+  const [state, dispatch] = useReducer(reduceChat, initial?.events, (events) =>
+    events === undefined
+      ? initialChatState
+      : reduceChat(initialChatState, { kind: "events", events }),
+  );
   const [error, setErrorText] = useState<string>();
   const [stopping, setStopping] = useState(false);
-  const [conversation, setConversation] = useState<Conversation>();
+  const [conversation, setConversation] = useState<Conversation | undefined>(initial?.conversation);
   const [changes, setChanges] = useState({ queue: 0, files: 0, reconnect: 0 });
   const [uiVersions, setUiVersions] = useState<Record<string, number>>({});
   const bumpUi = useCallback((key: string) => {
@@ -88,7 +97,14 @@ export function useConversation(orgId: string, conversationId: string): Conversa
   const setError = useCallback((e: unknown) => setErrorText(errorMessage(e)), [errorMessage]);
 
   /** The title last read (undefined before the first read): a change tells the sidebar. */
-  const lastTitle = useRef<string | null | undefined>(undefined);
+  const lastTitle = useRef<string | null | undefined>(initial?.conversation.title);
+  /**
+   * The last seq the page holds when the history came from the server: the stream opens from it
+   * (and from wherever the stream got to when the effect runs again). `null`: read the history.
+   */
+  const seeded = useRef<number | null>(
+    initial === undefined ? null : (initial.events.at(-1)?.seq ?? 0),
+  );
   /** Read counter: only the latest read's answer is applied (m7; answers can arrive late). */
   const reads = useRef(0);
   const loadConversation = useCallback(() => {
@@ -111,8 +127,9 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     );
   }, [orgId, conversationId]);
 
+  // Without the server's row, read it now (with it, the stream's open reads it again).
   useEffect(() => {
-    loadConversation();
+    if (seeded.current === null) loadConversation();
   }, [loadConversation]);
 
   useEffect(() => {
@@ -175,6 +192,7 @@ export function useConversation(orgId: string, conversationId: string): Conversa
         onChanged,
         onEvent: (e) => {
           streamSeq = Math.max(streamSeq, e.seq);
+          if (seeded.current !== null) seeded.current = streamSeq;
           flush();
           dispatch({ kind: "events", events: [e] });
         },
@@ -194,12 +212,18 @@ export function useConversation(orgId: string, conversationId: string): Conversa
         },
       });
     };
-    listAllEvents(orgId, conversationId).then((events) => {
-      if (disposed) return;
-      dispatch({ kind: "events", events });
-      streamSeq = events.at(-1)?.seq ?? 0;
+    // ssr-exempt: live updates after first paint (the stream starts from the server's last seq)
+    if (seeded.current !== null) {
+      streamSeq = seeded.current;
       open(streamSeq);
-    }, fail);
+    } else {
+      listAllEvents(orgId, conversationId).then((events) => {
+        if (disposed) return;
+        dispatch({ kind: "events", events });
+        streamSeq = events.at(-1)?.seq ?? 0;
+        open(streamSeq);
+      }, fail);
+    }
     return () => {
       disposed = true;
       if (scheduled !== null) cancelFrame(scheduled);

@@ -7,10 +7,18 @@ export const json = (status: number, body: unknown): Response =>
 
 export const noContent = () => new Response(null, { status: 204 });
 
+type Routes = Record<string, (call: Call) => Response | Promise<Response>>;
+let lastRoutes: Routes = {};
+
+/**
+ * The routes of the latest {@link stubApi} call: a page test that stubs the browser can serve the
+ * page's server reads from the same routes.
+ */
+export const lastStubRoutes = (): Routes => lastRoutes;
+
 /** 按 `METHOD path` 路由的 fetch 桩（path 含查询串时先按全路径匹配，再按不含查询串的路径匹配）。 */
-export function stubApi(
-  routes: Record<string, (call: Call) => Response | Promise<Response>>,
-): Call[] {
+export function stubApi(routes: Routes): Call[] {
+  lastRoutes = routes;
   const calls: Call[] = [];
   vi.stubGlobal(
     "fetch",

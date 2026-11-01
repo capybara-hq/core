@@ -1,13 +1,18 @@
 import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import ChatPage from "../src/app/(app)/chat/[conversationId]/page";
 import { formatRightHash, parseRightHash } from "../src/lib/right-area";
 import type { UiView } from "../src/lib/ui";
 import { type Call, json, stubApi } from "./support/api";
-import { AGENTS, CONV, FakeEventSource, MODELS, userMsg } from "./support/conversation";
+import {
+  AGENTS,
+  CONV,
+  FakeEventSource,
+  MODELS,
+  renderChatRoute,
+  userMsg,
+} from "./support/conversation";
 import { resetNavigation } from "./support/navigation";
-import { renderPage } from "./support/render";
 
 const params = { conversationId: "c1" };
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -129,7 +134,7 @@ describe("right-area hash", () => {
 describe("the right area", () => {
   it("properties and one panel exclude each other; the open icon is pressed; the hash follows", async () => {
     api();
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await screen.findByText("in c1");
     const user = userEvent.setup();
     const props = screen.getByRole("button", { name: "Properties" });
@@ -152,7 +157,7 @@ describe("the right area", () => {
   it("a section item with an open target opens the panel with the item", async () => {
     const calls = api();
     window.history.replaceState(null, "", "/chat/c1#properties");
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Review" }));
     const panel = await screen.findByRole("complementary", { name: "Tasks" });
@@ -167,7 +172,7 @@ describe("the right area", () => {
   it("#file=<id> survives a reload: the file panel opens from the hash", async () => {
     api();
     window.history.replaceState(null, "", "/chat/c1#file=f1");
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     const panel = await screen.findByRole("complementary", { name: "out.txt" });
     expect(await within(panel).findByText("hello")).toBeTruthy();
   });
@@ -175,7 +180,7 @@ describe("the right area", () => {
   it("another conversation never shows the previous one's panel", async () => {
     api("c1");
     window.history.replaceState(null, "", "/chat/c1#panel=todo/tasks-panel");
-    const r = renderPage(<ChatPage />, { locale: "en" });
+    const r = await renderChatRoute();
     expect(await screen.findByRole("complementary", { name: "Tasks" })).toBeTruthy();
     // Navigating to /chat/c2 (a URL without the hash) remounts the page for c2.
     cleanup();
@@ -183,7 +188,7 @@ describe("the right area", () => {
     api("c2");
     params.conversationId = "c2";
     window.history.replaceState(null, "", "/chat/c2");
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute({ id: "c2" });
     await screen.findByText("in c2");
     expect(screen.queryByRole("complementary", { name: "Tasks" })).toBeNull();
   });
@@ -214,7 +219,7 @@ describe("the right area", () => {
         }),
     });
     window.history.replaceState(null, "", "/chat/c1#properties");
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     const meter = await screen.findByRole("meter", { name: "Context" });
     await vi.waitFor(() => expect(meter.getAttribute("aria-valuenow")).toBe("50"));
     // The status bar shows it too.
@@ -278,7 +283,7 @@ describe("the output panel", () => {
               },
             }),
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: /sandbox_bash/ }));
     await user.click(await screen.findByRole("button", { name: "View full text" }));

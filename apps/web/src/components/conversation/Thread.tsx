@@ -70,12 +70,20 @@ function useOutputSizes(
 
 /**
  * Display names of the org's members, read once when the thread shows a run another account
- * stopped (m8); empty while loading or when the caller cannot list members (a guest).
+ * stopped (m8); empty while loading or when the caller cannot list members (a guest). `initial`
+ * is the server's read: nothing is fetched then.
  */
-function useMemberNames(orgId: string, needed: boolean): ReadonlyMap<string, string> {
-  const [names, setNames] = useState<ReadonlyMap<string, string>>(new Map());
+function useMemberNames(
+  orgId: string,
+  needed: boolean,
+  initial: readonly { id: string; name: string }[] | null | undefined,
+): ReadonlyMap<string, string> {
+  const [names, setNames] = useState<ReadonlyMap<string, string>>(
+    () => new Map((initial ?? []).map((m) => [m.id, m.name])),
+  );
+  const seeded = useRef(initial != null);
   useEffect(() => {
-    if (!needed) return;
+    if (!needed || seeded.current) return;
     let live = true;
     listMembers(orgId).then(
       (r) => {
@@ -128,6 +136,8 @@ export type ThreadProps = {
    * false, so the page has one live thread (I2).
    */
   live?: boolean;
+  /** Members' names as the server read them (a run another account stopped); else read here. */
+  initialMembers?: readonly { id: string; name: string }[] | null | undefined;
 };
 
 /** The callbacks an entry calls, read through a ref so they never re-render the entries. */
@@ -190,6 +200,7 @@ export function Thread({
   onOpenSubagent,
   live = true,
   renderTask,
+  initialMembers,
 }: ThreadProps) {
   const t = useTranslations("chat");
   const [openSummaries, setOpenSummaries] = useState<ReadonlySet<string>>(new Set());
@@ -240,7 +251,7 @@ export function Thread({
       e.byAccountId !== null &&
       e.byAccountId !== me.account.id,
   );
-  const names = useMemberNames(orgId, stoppedByOther);
+  const names = useMemberNames(orgId, stoppedByOther, initialMembers);
   const cb = useRef<EntryCallbacks>({});
   cb.current = {
     onRetry,

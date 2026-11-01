@@ -2,7 +2,6 @@ import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import ChatPage from "../src/app/(app)/chat/[conversationId]/page";
 import type { ConversationEvent } from "../src/lib/conversations";
 import { initialChatState, reduceChat } from "../src/lib/stream";
 import { buildTimeline, type TimelineEntry } from "../src/lib/timeline";
@@ -12,12 +11,13 @@ import {
   CONV,
   ev,
   FakeEventSource,
+  LIMITS,
   MODELS,
+  renderChatRoute,
   runStarted,
   userMsg,
 } from "./support/conversation";
 import { resetNavigation } from "./support/navigation";
-import { renderPage } from "./support/render";
 
 /**
  * UI refresh B Task 21: sub-agents on the conversation page, wired to phase C's events and routes.
@@ -30,7 +30,15 @@ import { renderPage } from "./support/render";
 
 const params = { conversationId: "c1" };
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
-vi.mock("next/navigation", () => ({ useParams: () => params }));
+vi.mock("next/navigation", () => ({
+  useParams: () => params,
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
 
 const ORG = "/api/v1/orgs/o1";
 const PARENT = `${ORG}/conversations/c1`;
@@ -228,7 +236,14 @@ const TASKS_SECTION = {
 const sectionTitles = (props: HTMLElement) =>
   [...props.querySelectorAll('[data-part="property-title"]')].map((e) => e.textContent);
 
-const renderChat = () => renderPage(<ChatPage />, { locale: "en" });
+const renderChat = () => renderChatRoute();
+/** The child's right panel once `check` passes in it (queried afresh on each try). */
+const childPanelWith = (check: (panel: HTMLElement) => unknown) =>
+  vi.waitFor(() => {
+    const panel = screen.getByRole("complementary", { name: "Check tests" });
+    check(panel);
+    return panel;
+  });
 const group = () => document.querySelector('[data-entry="subagents"]') as HTMLElement | null;
 const rowOf = (name: string) =>
   screen.findByRole("button", { name: `Open ${name} on the right` }, { timeout: 3000 });
@@ -334,7 +349,7 @@ describe("the timeline's sub-agent groups", () => {
 describe("sub-agents on the conversation page", () => {
   it("renders the group; a row opens the child read-only on the right; stop aborts the child", async () => {
     const calls = api({ [`POST ${CHILD}/abort`]: () => json(202, { runId: "run-ch2" }) });
-    renderChat();
+    await renderChat();
     const row = await rowOf("Check tests");
     expect(group()?.textContent).toContain("1 subagents running");
     const user = userEvent.setup();
@@ -369,9 +384,9 @@ describe("sub-agents on the conversation page", () => {
   it("a finished child shows no stop", async () => {
     api({}, { child: childEvents(false) });
     window.history.replaceState(null, "", "/chat/c1#subagent=ch2");
-    renderChat();
-    const panel = await screen.findByRole("complementary", { name: "Check tests" });
-    expect(await within(panel).findByText("All tests pass.")).toBeTruthy();
+    await renderChat();
+    // the panel opens at once (the hash); its body re-renders when the child's log arrives
+    const panel = await childPanelWith((p) => within(p).getByText("All tests pass."));
     expect(within(panel).queryByRole("button", { name: en.subagents.view.stop })).toBeNull();
   });
 
@@ -390,18 +405,17 @@ describe("sub-agents on the conversation page", () => {
     );
     api({}, { child });
     window.history.replaceState(null, "", "/chat/c1#subagent=ch2");
-    renderChat();
-    const panel = await screen.findByRole("complementary", { name: "Check tests" });
-    const link = await within(panel).findByRole("link", { name: "Reviewer" });
+    await renderChat();
+    const panel = await childPanelWith((p) => within(p).getByRole("link", { name: "Reviewer" }));
+    const link = within(panel).getByRole("link", { name: "Reviewer" });
     expect(link.getAttribute("href")).toContain("/agents/ag1");
   });
 
   it("?subagent= (inbox and IM links) opens that child and becomes the hash", async () => {
     api();
     window.history.replaceState(null, "", "/chat/c1?subagent=ch2");
-    renderChat();
-    const panel = await screen.findByRole("complementary", { name: "Check tests" });
-    expect(await within(panel).findByText("All tests pass.")).toBeTruthy();
+    await renderChat();
+    await childPanelWith((p) => within(p).getByText("All tests pass."));
     expect(window.location.search).toBe("");
     expect(window.location.hash).toBe("#subagent=ch2");
   });
@@ -411,7 +425,7 @@ describe("sub-agents on the conversation page", () => {
       [`GET ${CHILD}`]: () => json(200, CONV("ch2", { parentConversationId: null })),
     });
     window.history.replaceState(null, "", "/chat/c1#subagent=ch2");
-    renderChat();
+    await renderChat();
     const panel = await screen.findByRole("complementary", { name: en.subagents.view.title });
     expect(await within(panel).findByText(en.subagents.view.loadFailed)).toBeTruthy();
     expect(within(panel).queryByRole("button", { name: en.subagents.view.stop })).toBeNull();
@@ -420,7 +434,7 @@ describe("sub-agents on the conversation page", () => {
 
   it("the parent's subagent_progress updates the row's calls", async () => {
     api();
-    renderChat();
+    await renderChat();
     const row = await rowOf("Check tests");
     const es = FakeEventSource.instances.find((s) => s.url.startsWith(`${PARENT}/stream`));
     act(() => es?.emit("subagent_progress", { subagentId: "ch2", step: 3, toolCalls: 5 }));
@@ -462,7 +476,7 @@ describe("sub-agents on the conversation page", () => {
       },
       { parent: [...parentEvents(), waiting(8, { kind: "approval", approvalId: "ap1" })] },
     );
-    renderChat();
+    await renderChat();
     const card = await vi.waitFor(() => {
       const c = document.querySelector('[data-entry="subagent-wait"]');
       if (c === null) throw new Error("no card yet");
@@ -487,7 +501,7 @@ describe("sub-agents on the conversation page", () => {
       },
       { parent: [...parentEvents(), waiting(8, { kind: "approval", approvalId: "ap1" })] },
     );
-    renderChat();
+    await renderChat();
     // the waiting line, once the read said no (pending, the block shows until then)
     const line = en.approval.otherApproverFor
       .replace("{tool}", "sandbox_bash")
@@ -528,7 +542,7 @@ describe("sub-agents on the conversation page", () => {
         ],
       },
     );
-    renderChat();
+    await renderChat();
     const card = await vi.waitFor(() => {
       const c = document.querySelector('[data-question-id="q1"]');
       if (c === null) throw new Error("no card yet");
@@ -546,7 +560,7 @@ describe("sub-agents on the conversation page", () => {
 
   it("a child that needs a connection: a line in the parent that opens the child", async () => {
     api({}, { parent: [...parentEvents(), waiting(8, { kind: "connect", toolKey: "gh__issue" })] });
-    renderChat();
+    await renderChat();
     const line = await vi.waitFor(() => {
       const c = document.querySelector('[data-role="subagent-connect"]');
       if (c === null) throw new Error("no line yet");
@@ -558,11 +572,47 @@ describe("sub-agents on the conversation page", () => {
   });
 });
 
+describe("the conversation page's server snapshot (web-SSR spec §6.2)", () => {
+  it("reads every first-paint piece on the server; the view mounts with it and reads nothing", async () => {
+    const calls = api({
+      [`GET ${ORG}/agents/ag1/invocable-skills`]: () => json(200, { skills: [] }),
+      [`GET ${ORG}/attachments/limits`]: () => json(200, LIMITS),
+    });
+    window.history.replaceState(null, "", "/chat/c1#properties");
+    const { calls: server } = await renderChat();
+    expect(server.map((c) => c.url.split("?")[0])).toEqual(
+      expect.arrayContaining([
+        PARENT,
+        `${PARENT}/events`,
+        `${ORG}/agents`,
+        `${ORG}/models`,
+        `${PARENT}/queue`,
+        `${PARENT}/subagents`,
+        `${PARENT}/usage`,
+        `${PARENT}/tools`,
+        `${ORG}/ui/contributions`,
+        `${PARENT}/files`,
+        `${PARENT}/sandbox`,
+        `${ORG}/connectors`,
+        `${ORG}/agents/ag1/invocable-skills`,
+        `${ORG}/attachments/limits`,
+      ]),
+    );
+    // the group, the sub-agents' progress and the properties panel (opened from the hash) are
+    // painted from the snapshot: Context shows "no sandbox" and the tokens with sub-agents
+    expect(group()?.textContent).toContain("1 subagents running");
+    const props = await screen.findByRole("complementary", { name: "Properties" });
+    expect(within(props).getByText(/1,234/)).toBeTruthy();
+    expect(within(props).getByText(new RegExp(en.chatPanel.sandboxNone))).toBeTruthy();
+    expect(calls).toEqual([]);
+  });
+});
+
 describe("the properties panel with sub-agents", () => {
   it("background tasks: running ones with stop and open, then the completed count", async () => {
     const calls = api({ [`POST ${CHILD}/abort`]: () => json(202, { runId: "run-ch2" }) });
     window.history.replaceState(null, "", "/chat/c1#properties");
-    renderChat();
+    await renderChat();
     const props = await screen.findByRole("complementary", { name: "Properties" });
     const section = (await within(props).findByText(en.subagents.background)).closest(
       '[data-part="property-section"]',
@@ -579,7 +629,7 @@ describe("the properties panel with sub-agents", () => {
   it("the Context section shows the total tokens with sub-agents from GET .../usage", async () => {
     api();
     window.history.replaceState(null, "", "/chat/c1#properties");
-    renderChat();
+    await renderChat();
     const props = await screen.findByRole("complementary", { name: "Properties" });
     expect(
       await within(props).findByText(en.subagents.contextTotal.replace("{n}", "1,234"), {
@@ -597,7 +647,7 @@ describe("the properties panel with sub-agents", () => {
         json(200, { view: { blocks: [{ type: "text", text: "nothing to do" }] } }),
     });
     window.history.replaceState(null, "", "/chat/c1#properties");
-    renderChat();
+    await renderChat();
     const props = await screen.findByRole("complementary", { name: "Properties" });
     await within(props).findByText(en.subagents.background);
     await within(props).findByText("out.txt");
@@ -611,12 +661,15 @@ describe("the properties panel with sub-agents", () => {
         json(200, { files: [fileOf("f1", "out.txt", "2026-10-26T06:00:00.000Z")], next: null }),
     });
     window.history.replaceState(null, "", "/chat/c1#properties");
-    renderChat();
+    const { calls: server } = await renderChat();
     const props = await screen.findByRole("complementary", { name: "Properties" });
     await within(props).findByText("out.txt");
     await within(props).findByText(en.subagents.background);
     expect(within(props).queryAllByText(/^from /)).toHaveLength(0);
-    const fileReads = calls.filter((c) => c.method === "GET" && /\/files(\?|$)/.test(c.url));
+    // read with the snapshot on the server, the parent's only
+    const fileReads = [...server, ...calls].filter(
+      (c) => c.method === "GET" && /\/files(\?|$)/.test(c.url),
+    );
     expect(fileReads.length).toBeGreaterThan(0);
     expect(fileReads.every((c) => c.url.startsWith(`${PARENT}/files`))).toBe(true);
   });
@@ -624,7 +677,7 @@ describe("the properties panel with sub-agents", () => {
   it("Back in a sub-agent opened from the properties panel returns to it", async () => {
     api({}, { child: childEvents(false) });
     window.history.replaceState(null, "", "/chat/c1#properties");
-    renderChat();
+    await renderChat();
     const props = await screen.findByRole("complementary", { name: "Properties" });
     const section = (await within(props).findByText(en.subagents.background)).closest(
       '[data-part="property-section"]',
@@ -640,7 +693,7 @@ describe("the properties panel with sub-agents", () => {
 
   it("Back in a sub-agent opened from the thread closes the panel", async () => {
     api({}, { child: childEvents(false) });
-    renderChat();
+    await renderChat();
     const user = userEvent.setup();
     await user.click(await rowOf("Check tests"));
     const panel = await screen.findByRole("complementary", { name: "Check tests" });
@@ -653,7 +706,7 @@ describe("the properties panel with sub-agents", () => {
   it("no sub-agents: no background section and no total", async () => {
     api({}, { parent: [userMsg(1, "hi")] });
     window.history.replaceState(null, "", "/chat/c1#properties");
-    renderChat();
+    await renderChat();
     const props = await screen.findByRole("complementary", { name: "Properties" });
     await within(props).findByText("Context");
     expect(within(props).queryByText(en.subagents.background)).toBeNull();

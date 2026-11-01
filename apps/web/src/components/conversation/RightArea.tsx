@@ -24,7 +24,7 @@ import { useErrorMessage } from "../../lib/use-error-message";
 import type { RightAreaSlot } from "./ConversationView";
 import { type BlockContext, ExtensionCard, ExtensionPanel, ICON_OF } from "./ExtensionBlocks";
 import { FilePanel } from "./FilePanel";
-import { PropertiesSections } from "./PropertiesSections";
+import { type ContextInitial, PropertiesSections } from "./PropertiesSections";
 import { SubagentPanel } from "./SubagentPanel";
 
 /**
@@ -78,20 +78,29 @@ export function useRightArea(): {
 }
 
 /**
- * The extensions' UI contributions for this org (enabled and loaded only). Read again after a
- * stream reconnect (`*`) and when the window gets focus: an extension disabled meanwhile loses
- * its icon, sections and cards. The last good list stays while reading.
+ * The extensions' UI contributions for this org (enabled and loaded only): the server's read
+ * (`initial`), read again after a stream reconnect (`*`) and when the window gets focus: an
+ * extension disabled meanwhile loses its icon, sections and cards. The last good list stays while
+ * reading.
  */
-function useContributions(orgId: string, version: number): UiContributionItem[] | null {
-  const [items, setItems] = useState<UiContributionItem[] | null>(null);
+function useContributions(
+  orgId: string,
+  version: number,
+  initial: UiContributionItem[] | null | undefined,
+): UiContributionItem[] | null {
+  const [items, setItems] = useState<UiContributionItem[] | null>(initial ?? null);
   const [focus, setFocus] = useState(0);
+  /** The read the server's list stands for (`version/focus`): skipped while current. */
+  const seeded = useRef<string | null>(initial != null ? `${version}/0` : null);
   useEffect(() => {
     const onFocus = () => setFocus((n) => n + 1);
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, []);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: version and focus trigger a reread
   useEffect(() => {
+    // ssr-exempt: live updates after first paint (reconnects and window focus)
+    if (seeded.current === `${version}/${focus}`) return;
+    seeded.current = null;
     let live = true;
     listUiContributions(orgId).then(
       (r) => {
@@ -110,15 +119,23 @@ function useContributions(orgId: string, version: number): UiContributionItem[] 
 }
 
 /**
- * The conversation's file outputs (the kernel's order); read again on `changed: files`
- * (and reconnects). Sub-agents cannot deliver files (`sandbox_deliver` is removed for children),
- * so their lists are not read (Task 22 ruling, final review I5); the Files rows' `from` marking
- * stays ready for when they can.
+ * The conversation's file outputs (the kernel's order): the server's read (`initial`), read again
+ * on `changed: files` (and reconnects). Sub-agents cannot deliver files (`sandbox_deliver` is
+ * removed for children), so their lists are not read (Task 22 ruling, final review I5); the Files
+ * rows' `from` marking stays ready for when they can.
  */
-function useFiles(orgId: string, conversationId: string, version: number): FileOutput[] {
-  const [files, setFiles] = useState<FileOutput[]>([]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: version triggers a reread
+function useFiles(
+  orgId: string,
+  conversationId: string,
+  version: number,
+  initial: FileOutput[] | null | undefined,
+): FileOutput[] {
+  const [files, setFiles] = useState<FileOutput[]>(initial ?? []);
+  const seeded = useRef<number | null>(initial != null ? version : null);
   useEffect(() => {
+    // ssr-exempt: live updates after first paint (`changed: files` moves `version`)
+    if (seeded.current === version) return;
+    seeded.current = null;
     let live = true;
     listFiles(orgId, conversationId).then(
       (mine) => {
@@ -223,12 +240,19 @@ export function useRightAreaSlot(p: {
   total?: string | undefined;
   contextWindowOf(m: ModelRef): number | undefined;
   reasoningOf(m: ModelRef): boolean | undefined;
+  /** The server's reads (each `null` when it could not read it: read after mount). */
+  initial?: {
+    contributions: UiContributionItem[] | null;
+    files: FileOutput[] | null;
+    sandbox: ContextInitial["sandbox"];
+    connectors: ContextInitial["connectors"];
+  };
 }): RightAreaSlot {
   const t = useTranslations("chat");
   const locale = uiLocale(useLocale());
   const { target, open, back } = useRightArea();
-  const contributions = useContributions(p.orgId, p.uiVersions["*"] ?? 0);
-  const files = useFiles(p.orgId, p.conversationId, p.filesVersion);
+  const contributions = useContributions(p.orgId, p.uiVersions["*"] ?? 0, p.initial?.contributions);
+  const files = useFiles(p.orgId, p.conversationId, p.filesVersion, p.initial?.files);
   const panels = useMemo(
     () => (contributions ?? []).filter((c) => c.place === "panel"),
     [contributions],
@@ -436,6 +460,9 @@ export function useRightAreaSlot(p: {
         files={files}
         sections={sections}
         onOpenFile={openFile}
+        {...(p.initial
+          ? { initial: { sandbox: p.initial.sandbox, connectors: p.initial.connectors } }
+          : {})}
         subagents={
           p.subagents
             ? {

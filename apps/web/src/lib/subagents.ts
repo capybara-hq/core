@@ -35,7 +35,8 @@ const dispatchedAny = (events: readonly ConversationEvent[]) =>
  * The conversation's sub-agents, newest first, read once a sub-agent was dispatched and again on
  * every `subagent_*` event, after a reconnect (`reconnect`), and when stream progress arrives for a
  * child the list shows as waiting or queued (it moved on: someone decided, or it got a slot).
- * `onLoad` gets each read (progress seeds). Undefined before the first read or without sub-agents.
+ * `onLoad` gets each read (progress seeds), the server's too. Undefined before the first read or
+ * without sub-agents. With `initial` (the server's read of the same log) the first read is skipped.
  */
 export function useSubagents(
   orgId: string,
@@ -44,17 +45,27 @@ export function useSubagents(
   progress: Readonly<Record<string, { step: number }>>,
   reconnect: number,
   onLoad?: (views: SubagentView[]) => void,
+  initial?: SubagentView[] | null,
 ): { views: SubagentView[] | undefined; refresh(): void } {
-  const [views, setViews] = useState<SubagentView[]>();
+  const [views, setViews] = useState<SubagentView[] | undefined>(initial ?? undefined);
   const [bump, setBump] = useState(0);
   // scans of the log: once per events change, not per render (final review I3)
   const dispatched = useMemo(() => dispatchedAny(events), [events]);
   const count = useMemo(() => subagentEventCount(events), [events]);
   const load = useRef(onLoad);
   load.current = onLoad;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: count, reconnect and bump trigger a reread
+  /** The read the server's list stands for (`count/reconnect/bump`): skipped while current. */
+  const seeded = useRef<string | null>(initial != null ? `${count}/${reconnect}/0` : null);
+  // The server's list seeds the stream progress once, as a read here would.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only the server's first list
+  useEffect(() => {
+    if (initial != null) load.current?.(initial);
+  }, []);
   useEffect(() => {
     if (!dispatched) return;
+    // ssr-exempt: live updates after first paint (every `subagent_*` event, reconnects, progress)
+    if (seeded.current === `${count}/${reconnect}/${bump}`) return;
+    seeded.current = null;
     let live = true;
     listSubagents(orgId, conversationId).then(
       (r) => {
@@ -89,19 +100,24 @@ export function useSubagents(
 
 /**
  * The conversation's tokens with its sub-agents' (`GET …/usage`), read only once a sub-agent was
- * dispatched and again when one finishes (its usage is final then). Undefined otherwise.
+ * dispatched and again when one finishes (its usage is final then). Undefined otherwise. With
+ * `initial` (the server's read of the same log) the first read is skipped.
  */
 export function useUsageWithSubagents(
   orgId: string,
   conversationId: string,
   events: readonly ConversationEvent[],
+  initial?: ConversationUsage | null,
 ): ConversationUsage | undefined {
   const dispatched = useMemo(() => dispatchedAny(events), [events]);
   const ends = useMemo(() => events.filter((e) => e.type === "subagent_finished").length, [events]);
-  const [usage, setUsage] = useState<ConversationUsage>();
-  // biome-ignore lint/correctness/useExhaustiveDependencies: ends triggers a reread
+  const [usage, setUsage] = useState<ConversationUsage | undefined>(initial ?? undefined);
+  const seeded = useRef<number | null>(initial != null ? ends : null);
   useEffect(() => {
     if (!dispatched) return;
+    // ssr-exempt: live updates after first paint (read again when a sub-agent finishes)
+    if (seeded.current === ends) return;
+    seeded.current = null;
     let live = true;
     getConversationUsage(orgId, conversationId).then(
       (r) => {

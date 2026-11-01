@@ -1,11 +1,17 @@
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import ChatPage from "../src/app/(app)/chat/[conversationId]/page";
 import { type Call, json, noContent, stubApi } from "./support/api";
-import { AGENTS, CONV, FakeEventSource, MODELS, runStarted, userMsg } from "./support/conversation";
+import {
+  AGENTS,
+  CONV,
+  FakeEventSource,
+  MODELS,
+  renderChatRoute,
+  runStarted,
+  userMsg,
+} from "./support/conversation";
 import { resetNavigation } from "./support/navigation";
-import { renderPage } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({ useParams: () => ({ conversationId: "c1" }) }));
@@ -59,7 +65,7 @@ describe("queued messages", () => {
         return noContent();
       },
     });
-    renderPage(<ChatPage />, { locale: "zh" });
+    await renderChatRoute({ locale: "zh" });
     const list = await screen.findByRole("group", { name: "排队的消息" });
     const bubbles = within(list).getAllByText(/queued$/);
     expect(bubbles.map((b) => b.textContent)).toEqual(["first queued", "second queued"]);
@@ -84,7 +90,7 @@ describe("queued messages", () => {
         return json(200, { item: item("q1", "edited", 1) });
       },
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     const list = await screen.findByRole("group", { name: "Queued messages" });
     const first = list.querySelector('[data-queue-item="q1"]') as HTMLElement;
     const user = userEvent.setup();
@@ -108,7 +114,7 @@ describe("queued messages", () => {
         return json(202, {});
       },
     });
-    renderPage(<ChatPage />, { locale: "zh" });
+    await renderChatRoute({ locale: "zh" });
     expect(await screen.findByText("运行已停止，队列已暂停（2 条）")).toBeTruthy();
     // Paused bubbles carry no actions.
     expect(screen.queryByRole("button", { name: "立即发送" })).toBeNull();
@@ -121,7 +127,7 @@ describe("queued messages", () => {
 
   it("reloads on changed: queue (another tab or the dispatcher changed it)", async () => {
     api();
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await screen.findByText("first queued");
     queue = { items: [item("q2", "second queued", 2)], paused: false };
     act(() => FakeEventSource.instances[0]?.emit("changed", { what: "queue" }));

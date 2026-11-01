@@ -970,16 +970,7 @@ export function runStats(events: readonly ConversationEvent[]): RunStats {
   return { turns, startedAt, endedAt, last };
 }
 
-/** The tool keys the timeline names (for `GET …/tools?keys=`), a sub-agent's waits' included. */
-export function toolKeysOf(events: readonly ConversationEvent[]): string[] {
-  const keys = new Set<string>();
-  for (const e of events) {
-    if (e.type === "subagent_waiting") keys.add(e.payload.toolKey);
-    if (e.type !== "assistant_message") continue;
-    for (const b of e.payload.content) if (b.type === "tool_call") keys.add(b.name);
-  }
-  return [...keys];
-}
+export { toolKeysOf } from "./tool-keys";
 
 /** The latest model the conversation used: the last model_call, else the last run_started. */
 export function latestModel(events: readonly ConversationEvent[]): ModelRef | null {

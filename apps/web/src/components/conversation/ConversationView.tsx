@@ -18,6 +18,7 @@ import {
   notifyConversationsChanged,
   renameConversation,
 } from "../../lib/conversations";
+import type { ConversationSnapshot } from "../../lib/server/conversation";
 import { usageTotal, useSubagents, useUsageWithSubagents } from "../../lib/subagents";
 import {
   buildEventTimeline,
@@ -129,11 +130,13 @@ export type RightAreaSlot = {
  * rename, properties, panels), the thread built by `lib/timeline.ts`, the queue, the composer
  * (pickers, ↵ / ⌘↵) and the status bar; `dialogs` go next to the page. Use it in a component keyed
  * by the conversation id: everything here (drafts, queue, picks, the right area) belongs to one
- * conversation and never shows under another.
+ * conversation and never shows under another. `initial` is the server's snapshot (web-SSR spec
+ * §6.2): every hook starts from it, and the stream opens at its last seq.
  */
 export function useConversationPage(
   orgId: string,
   conversationId: string,
+  initial?: ConversationSnapshot,
 ): { page: ConversationPageProps; dialogs: ReactNode } {
   const t = useTranslations("chat");
   const ts = useTranslations("subagents");
@@ -142,18 +145,22 @@ export function useConversationPage(
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const who = useWho();
-  const conv = useConversation(orgId, conversationId);
-  const agents = useAgentList(orgId);
+  const conv = useConversation(
+    orgId,
+    conversationId,
+    initial && { conversation: initial.conversation, events: initial.events },
+  );
+  const agents = useAgentList(orgId, initial?.agents);
   const agent = agents?.find((a) => a.id === conv.conversation?.agentId);
   // The title bar path `<org slug> / <agent> /` before the title (spec §3.5).
   const path = usePagePath(
     "org",
     ...(agent ? [{ label: agent.definition.name, href: `/agents/${agent.id}` }] : []),
   );
-  const providers = useModels(orgId);
+  const providers = useModels(orgId, initial?.providers);
   const selection = useSelection(providers, agent, conv.conversation?.selection);
   const keys = useMemo(() => toolKeysOf(conv.events), [conv.events]);
-  const info = useToolInfo(orgId, conversationId, keys);
+  const info = useToolInfo(orgId, conversationId, keys, initial?.tools);
   const subagents = useSubagents(
     orgId,
     conversationId,
@@ -161,8 +168,9 @@ export function useConversationPage(
     conv.state.progress,
     conv.changes.reconnect,
     conv.seedProgress,
+    initial?.subagents,
   );
-  const usageAll = useUsageWithSubagents(orgId, conversationId, conv.events);
+  const usageAll = useUsageWithSubagents(orgId, conversationId, conv.events, initial?.usage);
   const views = useMemo(
     () => (subagents.views ? new Map(subagents.views.map((v) => [v.id, v])) : undefined),
     [subagents.views],
@@ -177,7 +185,7 @@ export function useConversationPage(
     [conv.events, info, locale, conv.state.progress, views],
   );
   const entries = useMemo(() => withDrafts(base, conv.state.drafts), [base, conv.state.drafts]);
-  const queue = useQueue(orgId, conversationId, conv.changes.queue, conv.merge);
+  const queue = useQueue(orgId, conversationId, conv.changes.queue, conv.merge, initial?.queue);
   const [renaming, setRenaming] = useState(false);
   const [renameBusy, setRenameBusy] = useState(false);
   const active = conv.running || conv.waiting;
@@ -279,6 +287,16 @@ export function useConversationPage(
         : ts("contextTotal", { n: usageTotal(usageAll).toLocaleString(locale) }),
     contextWindowOf: selection.contextWindowOf,
     reasoningOf: selection.reasoningOf,
+    ...(initial
+      ? {
+          initial: {
+            contributions: initial.contributions,
+            files: initial.files,
+            sandbox: initial.sandbox,
+            connectors: initial.connectors,
+          },
+        }
+      : {}),
   });
 
   const agentPicker: PickerProps = {
@@ -307,6 +325,7 @@ export function useConversationPage(
           entries={entries}
           info={info}
           reasoningOf={selection.reasoningOf}
+          initialMembers={initial?.members}
           {...(active ? {} : { onRetry: retry })}
           {...(slot?.thread ?? {})}
         />
@@ -327,6 +346,8 @@ export function useConversationPage(
               : conversationId
           }
           running={active}
+          initialSkills={initial?.skills}
+          initialLimits={initial?.limits}
           stop={{ onStop: conv.stop, stopping: conv.stopping }}
           onSend={send}
           onQueue={enqueue}

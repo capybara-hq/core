@@ -9,8 +9,8 @@ import {
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useEffect, useMemo, useRef } from "react";
-import { getSandboxStatus } from "../../lib/artifacts";
-import { listConnectors } from "../../lib/connectors";
+import { getSandboxStatus, type SandboxStatus } from "../../lib/artifacts";
+import { type ConnectorSummary, listConnectors } from "../../lib/connectors";
 import type { ConversationEvent, ModelRef, SubagentView } from "../../lib/conversations";
 import type { FileOutput } from "../../lib/files";
 import type { UiContributionItem } from "../../lib/ui";
@@ -57,6 +57,16 @@ const sandboxUses = (events: readonly ConversationEvent[]): number =>
   events.filter((e) => e.type === "tool_result" && e.payload.toolKey.startsWith("sandbox_")).length;
 
 /**
+ * What the server read for the Context section (each `null` when it could not: read on open). The
+ * sandbox comes with the number of sandbox tool results it follows: opened after more of them, the
+ * section reads it again.
+ */
+export interface ContextInitial {
+  sandbox: { status: SandboxStatus | null; uses: number } | null;
+  connectors: ConnectorSummary[] | null;
+}
+
+/**
  * The built-in Context section (the old Context tab): the context ratio of the latest step's usage,
  * the model, the sandbox state (read again after each sandbox tool result) and the connectors used.
  */
@@ -67,6 +77,7 @@ export function ContextSection({
   model,
   contextPct,
   total,
+  initial,
 }: {
   orgId: string;
   conversationId: string;
@@ -75,9 +86,14 @@ export function ContextSection({
   contextPct: number | null;
   /** The tokens with sub-agents line, once there are any. */
   total?: string | undefined;
+  initial?: ContextInitial | undefined;
 }) {
   const t = useTranslations("chatPanel");
-  const connectors = useLoad(() => listConnectors(orgId), [orgId]);
+  const connectors = useLoad(
+    () => listConnectors(orgId),
+    [orgId],
+    initial?.connectors != null ? { initial: { connectors: initial.connectors } } : {},
+  );
   const nameOfSlug = useMemo(
     () =>
       new Map(
@@ -87,9 +103,14 @@ export function ContextSection({
       ),
     [connectors.state],
   );
-  const sandbox = useLoad(() => getSandboxStatus(orgId, conversationId), [orgId, conversationId]);
+  const sandbox = useLoad(
+    () => getSandboxStatus(orgId, conversationId),
+    [orgId, conversationId],
+    initial?.sandbox != null ? { initial: initial.sandbox.status } : {},
+  );
   const uses = useMemo(() => sandboxUses(events), [events]);
-  const seen = useRef(uses);
+  // From the server's read: sandbox results since then read the status again at once.
+  const seen = useRef(initial?.sandbox?.uses ?? uses);
   const { reload } = sandbox;
   useEffect(() => {
     if (uses === seen.current) return;
@@ -154,6 +175,7 @@ export function PropertiesSections({
   onOpenFile,
   subagents,
   total,
+  initial,
 }: {
   ctx: BlockContext;
   events: readonly ConversationEvent[];
@@ -166,6 +188,7 @@ export function PropertiesSections({
     | { views: readonly SubagentView[]; onStop(id: string): void; onOpen(id: string): void }
     | undefined;
   total?: string | undefined;
+  initial?: ContextInitial | undefined;
 }) {
   return (
     <PropertiesPanel>
@@ -176,6 +199,7 @@ export function PropertiesSections({
         model={model}
         contextPct={contextPct}
         total={total}
+        initial={initial}
       />
       {sections.map((c) => (
         <ExtensionSection key={`${c.plugin}/${c.id}`} ctx={ctx} c={c} />

@@ -1,14 +1,12 @@
-import { DesignProvider, type LinkComponent, ToastProvider } from "@capybara-hq/design";
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import ChatPage from "../src/app/(app)/chat/[conversationId]/page";
 import NewChatPage from "../src/app/(app)/chat/page";
 import { navigateBrowser } from "../src/lib/browser";
-import { bodyOf, type Call, json, stubApi } from "./support/api";
+import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
 import {
   AGENTS,
   CONV,
@@ -16,12 +14,13 @@ import {
   FakeEventSource,
   LIMITS,
   MODELS,
+  renderChatRoute,
   runStarted,
   userMsg,
 } from "./support/conversation";
-import { Link, resetNavigation, router } from "./support/navigation";
-import { ME, renderPage } from "./support/render";
-import { expectNoFirstPaintFetch, renderRoute } from "./support/server";
+import { resetNavigation, router } from "./support/navigation";
+import { ME, pageElement } from "./support/render";
+import { expectNoFirstPaintFetch, onServer, renderRoute } from "./support/server";
 import { renderFrame, shellOf } from "./support/shell";
 
 const params = { conversationId: "c1" };
@@ -50,11 +49,14 @@ function api(extra: Record<string, (c: Call) => Response | Promise<Response>>, i
     "GET /api/v1/orgs/o1/models": () => json(200, MODELS),
     [`GET ${base}/queue`]: () => json(200, { items: [], paused: false }),
     [`GET ${base}/tools`]: () => json(200, { tools: [] }),
+    [`GET ${base}/files`]: () => json(200, { files: [], next: null }),
+    "GET /api/v1/orgs/o1/ui/contributions": () => json(200, { items: [] }),
+    "GET /api/v1/orgs/o1/attachments/limits": () => json(200, LIMITS),
     ...extra,
   });
 }
 
-const renderChat = (locale: "zh" | "en" = "en") => renderPage(<ChatPage />, { locale });
+const renderChat = (locale: "zh" | "en" = "en") => renderChatRoute({ locale });
 const input = (m = en) => screen.getByRole("textbox", { name: m.chat.inputLabel, hidden: true });
 const posts = (calls: Call[], path: string) =>
   calls.filter((c) => c.method === "POST" && c.url.split("?")[0] === path);
@@ -75,15 +77,19 @@ afterEach(() => {
 
 describe("the conversation page (ConversationPage)", () => {
   it("renders the template with the untitled placeholder, the status bar and the thread", async () => {
-    const { container } = (() => {
-      api({
-        [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
-      });
-      return renderChat("zh");
-    })();
+    const calls = api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
+    });
+    const { container, calls: server } = await renderChat("zh");
+    // the first paint is the server's snapshot: the browser reads nothing, the stream opens at 2
+    expect(calls).toEqual([]);
+    expect(server.map((c) => c.url)).toEqual(
+      expect.arrayContaining([BASE, `${BASE}/events?after=0&limit=500`, `${BASE}/queue`]),
+    );
+    expect(FakeEventSource.instances.map((e) => e.url)).toEqual([`${BASE}/stream?after=2`]);
     expect(container.querySelector('[data-template="ConversationPage"]')).not.toBeNull();
-    expect(await screen.findByText("hi")).toBeTruthy();
-    expect(await screen.findByText(/^未命名会话 · /)).toBeTruthy();
+    expect(screen.getByText("hi")).toBeTruthy();
+    expect(screen.getByText(/^未命名会话 · /)).toBeTruthy();
     expect(screen.getByText(zh.chat.status.running)).toBeTruthy();
     expect(screen.getByText(/第 1 轮 · 已用/)).toBeTruthy();
     expect(screen.getByText("hi").closest("[data-entry]")?.getAttribute("data-entry")).toBe("user");
@@ -91,7 +97,7 @@ describe("the conversation page (ConversationPage)", () => {
 
   it("the title bar path is <org slug> / <agent> / before the title; the agent links to its page", async () => {
     api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }) });
-    const { container } = renderChat("en");
+    const { container } = await renderChat("en");
     await screen.findByText("hi");
     const bar = container.querySelector('[data-part="title-bar"]') as HTMLElement;
     const nav = await within(bar).findByRole("navigation", { name: "Path" });
@@ -102,7 +108,7 @@ describe("the conversation page (ConversationPage)", () => {
 
   it("the composer is a sibling of the scrolling thread, not inside it", async () => {
     api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }) });
-    const { container } = renderChat("en");
+    const { container } = await renderChat("en");
     await screen.findByText("hi");
     const scroll = container.querySelector(".cb-conv-scroll") as HTMLElement;
     const slot = container.querySelector(".cb-conv-composer") as HTMLElement;
@@ -120,7 +126,7 @@ describe("the conversation page (ConversationPage)", () => {
         [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
         [`POST ${BASE}/abort`]: () => json(202, { runId: "r1" }),
       });
-      renderChat(locale);
+      await renderChat(locale);
       const stop = await screen.findByRole("button", { name: m.chat.stop });
       expect(FakeEventSource.instances[0]?.url).toBe(`${BASE}/stream?after=2`);
       expect(input(m)).toHaveProperty("disabled", false);
@@ -163,7 +169,7 @@ describe("the conversation page (ConversationPage)", () => {
           ],
         }),
     });
-    renderChat();
+    await renderChat();
     await vi.waitFor(() =>
       expect(document.querySelectorAll('[data-divider="stopped"]')).toHaveLength(2),
     );
@@ -176,7 +182,7 @@ describe("the conversation page (ConversationPage)", () => {
 
   it("streams deltas with a cursor; the assistant_message replaces the draft", async () => {
     api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }) });
-    renderChat();
+    await renderChat();
     await screen.findByRole("button", { name: en.chat.stop });
     const es = FakeEventSource.instances[0] as FakeEventSource;
     const frames: FrameRequestCallback[] = [];
@@ -230,7 +236,7 @@ describe("the conversation page (ConversationPage)", () => {
           },
         }),
     });
-    renderChat();
+    await renderChat();
     await screen.findByRole("button", { name: en.chat.stop });
     expect(input().getAttribute("placeholder")).toMatch(/↵ to send now/);
     const user = userEvent.setup();
@@ -273,7 +279,7 @@ describe("the conversation page (ConversationPage)", () => {
           },
         }),
     });
-    renderChat();
+    await renderChat();
     await screen.findByRole("button", { name: en.chat.stop });
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: `${en.chat.pickModel}: Fake 1` }));
@@ -297,7 +303,7 @@ describe("the conversation page (ConversationPage)", () => {
 
   it("Shift+↵ is a newline and ↵ during IME composition sends nothing", async () => {
     const calls = api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }) });
-    renderChat();
+    await renderChat();
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "a{Shift>}{Enter}{/Shift}b");
@@ -316,7 +322,7 @@ describe("the conversation page (ConversationPage)", () => {
         return json(202, { event: userMsg(++seq, (bodyOf(c) as { text: string }).text) });
       },
     });
-    renderChat();
+    await renderChat();
     await screen.findByText("hi");
     const user = userEvent.setup();
     const send = () => user.click(screen.getByRole("button", { name: en.chat.send }));
@@ -338,7 +344,7 @@ describe("the conversation page (ConversationPage)", () => {
 
   it("a server error frame shows the translated error", async () => {
     api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }) });
-    renderChat("zh");
+    await renderChat("zh");
     await screen.findByText("hi");
     act(() => FakeEventSource.instances[0]?.emit("error", { code: "auth.session_revoked" }));
     expect((await screen.findByRole("alert")).textContent).toBe(
@@ -351,7 +357,7 @@ describe("the conversation page (ConversationPage)", () => {
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
       [`POST ${BASE}/messages`]: () => json(202, { event: userMsg(9, "later") }),
     });
-    renderChat();
+    await renderChat();
     await screen.findByRole("button", { name: en.chat.stop });
     const es = FakeEventSource.instances[0] as FakeEventSource;
     act(() => es.emit("event", ev(3, "model_call", { step: 0, provider: "p", model: "m" })));
@@ -380,7 +386,7 @@ describe("the conversation page (ConversationPage)", () => {
       [`POST ${BASE}/messages`]: (c) =>
         json(202, { event: userMsg(++seq, (bodyOf(c) as { text: string }).text) }),
     });
-    renderChat();
+    await renderChat();
     await screen.findByText("hi");
     const user = userEvent.setup();
     // fake-1 declares no effort: no effort picker
@@ -418,7 +424,7 @@ describe("the conversation page (ConversationPage)", () => {
     });
     const changed = vi.fn();
     window.addEventListener("cap:conversations-changed", changed);
-    renderChat();
+    await renderChat();
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /^Untitled conversation/ }));
@@ -442,7 +448,7 @@ describe("the conversation page (ConversationPage)", () => {
     });
     const changed = vi.fn();
     window.addEventListener("cap:conversations-changed", changed);
-    renderChat();
+    await renderChat();
     await screen.findByText("hi");
     await screen.findByRole("button", { name: /Kept/ });
     changed.mockClear();
@@ -484,7 +490,7 @@ describe("the conversation page (ConversationPage)", () => {
       });
       const changed = vi.fn();
       window.addEventListener("cap:conversations-changed", changed);
-      renderChat();
+      await renderChat();
       await screen.findByText("hi");
       await screen.findByRole("button", { name: /Kept/ });
       changed.mockClear();
@@ -499,7 +505,7 @@ describe("the conversation page (ConversationPage)", () => {
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
       [`GET ${BASE}`]: () => json(200, CONV("c1", { title: "Kept" })),
     });
-    renderChat();
+    await renderChat();
     await screen.findByText("hi");
     act(() => FakeEventSource.instances[0]?.emit("changed", { what: "deleted" }));
     expect(router.push).toHaveBeenCalledWith("/chat");
@@ -525,7 +531,7 @@ describe("the conversation page (ConversationPage)", () => {
     });
     const changed = vi.fn();
     window.addEventListener("cap:conversations-changed", changed);
-    renderChat();
+    await renderChat();
     await screen.findByText("hi");
     await vi.waitFor(() => expect(n).toBe(1));
     act(() => FakeEventSource.instances[0]?.emit("changed", { what: "title" }));
@@ -551,7 +557,7 @@ describe("the conversation page (ConversationPage)", () => {
     });
     const changed = vi.fn();
     window.addEventListener("cap:conversations-changed", changed);
-    renderChat();
+    await renderChat();
     await screen.findByText("hi");
     await screen.findByRole("button", { name: /^Untitled conversation/ });
     // generated (and its `changed: title` sent) before the stream was open
@@ -574,7 +580,7 @@ describe("the conversation page (ConversationPage)", () => {
         }),
       [`POST ${BASE}/messages`]: () => json(202, { event: userMsg(4, "hello", { retryOf: 1 }) }),
     });
-    renderChat();
+    await renderChat();
     const retry = await screen.findByRole("button", { name: "Retry" });
     await userEvent.setup().click(retry);
     expect(bodyOf(posts(calls, `${BASE}/messages`)[0])).toMatchObject({
@@ -617,7 +623,7 @@ describe("the conversation page (ConversationPage)", () => {
           ],
         }),
     });
-    renderChat();
+    await renderChat();
     await screen.findByText("again");
     expect(document.querySelector('[data-divider="hook-denied"]')?.textContent).toContain(
       en.errors.run.hook_denied.replace("{plugin}", "guard"),
@@ -661,9 +667,27 @@ describe("the conversation page (ConversationPage)", () => {
           ],
         }),
     });
-    renderChat();
+    await renderChat();
     await screen.findByText("answer");
     await vi.waitFor(() => expect(screen.queryByText(/^Thought for/)).toBeNull());
+  });
+});
+
+describe("the conversation page's server gate", () => {
+  it("a conversation the kernel does not show is the not-found page; without an org nothing renders", async () => {
+    stubApi({});
+    await expect(
+      renderChatRoute({
+        routes: {
+          [`GET ${BASE}`]: () =>
+            json(404, { error: { code: "conversation.not_found", message: "x" } }),
+          [`GET ${BASE}/events`]: () => json(200, { events: [] }),
+        },
+      }),
+    ).rejects.toThrow("NOT_FOUND");
+    const none = await renderChatRoute({ routes: {}, me: { ...ME, currentOrgId: null } });
+    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+    expect(document.querySelector('[data-template="ConversationPage"]')).toBeNull();
   });
 });
 
@@ -704,35 +728,21 @@ describe("switching conversations", () => {
         }),
       "GET /api/v1/orgs/o1/conversations/c2/queue": () => json(200, { items: [], paused: false }),
     });
-    const r = renderChat();
+    const r = await renderChat();
     expect(await screen.findByText("queued in one")).toBeTruthy();
     await userEvent.setup().type(input(), "draft for one");
-    params.conversationId = "c2";
-    r.rerender(
-      <NextIntlClientProvider locale="en" messages={en}>
-        <DesignProvider locale="en" link={Link as LinkComponent}>
-          <ToastProvider>
-            <ChatPageInSession />
-          </ToastProvider>
-        </DesignProvider>
-      </NextIntlClientProvider>,
+    // the navigation to c2: the server renders its page, the same view gets new props
+    const { element } = await onServer(
+      () => ChatPage({ params: Promise.resolve({ conversationId: "c2" }) }),
+      lastStubRoutes(),
     );
+    r.rerender(pageElement(element, { locale: "en" }));
     expect(await screen.findByText("in two")).toBeTruthy();
     expect(screen.queryByText("queued in one")).toBeNull();
     expect(screen.queryByText("in one")).toBeNull();
     expect(input()).toHaveProperty("value", "");
   });
 });
-
-import { SessionContext } from "../src/components/shell/session";
-
-function ChatPageInSession() {
-  return (
-    <SessionContext.Provider value={{ me: ME, reload: async () => {}, switchOrg: async () => {} }}>
-      <ChatPage />
-    </SessionContext.Provider>
-  );
-}
 
 /** The reads of `/chat` on the server. */
 const NEW_CHAT = {
@@ -836,7 +846,12 @@ describe("the conversation page in the app frame", () => {
       "PUT /api/v1/me/current-org": () => new Response(null, { status: 204 }),
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
     });
-    renderFrame(shellOf(twoOrgs("o1")), <ChatPage />, {
+    const { element } = await onServer(
+      () => ChatPage({ params: Promise.resolve({ conversationId: "c1" }) }),
+      lastStubRoutes(),
+      { me: twoOrgs("o1") },
+    );
+    renderFrame(shellOf(twoOrgs("o1")), element, {
       locale: "en",
       version: "v0",
     });
@@ -892,7 +907,7 @@ describe("composer: / prompts and @ resources", () => {
       [`POST ${APPS}/a1/prompts/summarize`]: () => json(200, { text: "Summarize cats please" }),
       "GET /api/v1/orgs/o1/agents/ag1/invocable-skills": () => json(200, { skills: [] }),
     });
-    renderChat();
+    await renderChat();
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "/");
@@ -937,7 +952,7 @@ describe("composer: / prompts and @ resources", () => {
           ),
         }),
     });
-    renderChat();
+    await renderChat();
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "read @");
@@ -988,8 +1003,10 @@ describe("tool rows read the tool info API", () => {
           ],
         }),
     });
-    renderChat("en");
-    expect(await screen.findByText(/Slack: Search messages/)).toBeTruthy();
-    expect(calls.some((c) => c.url.endsWith("/tools?keys=slack__search"))).toBe(true);
+    const { calls: server } = await renderChat("en");
+    // read with the snapshot on the server: the first paint already has the title
+    expect(screen.getByText(/Slack: Search messages/)).toBeTruthy();
+    expect(server.some((c) => c.url.endsWith("/tools?keys=slack__search"))).toBe(true);
+    expect(calls.some((c) => c.url.includes("/tools?"))).toBe(false);
   });
 });

@@ -1,5 +1,8 @@
 /** Shared helpers for the conversation page tests: events, a fake EventSource, routes. */
+import ChatPage from "../../src/app/(app)/chat/[conversationId]/page";
 import type { ConversationEvent } from "../../src/lib/conversations";
+import { lastStubRoutes } from "./api";
+import { renderRoute } from "./server";
 
 let seqTime = 0;
 export function ev(
@@ -148,3 +151,21 @@ export const LIMITS = {
   requestMediaBytes: 20_971_520,
   available: true,
 };
+
+/**
+ * `/chat/<id>` as the app renders it: the page reads its snapshot on the server from the routes of
+ * the latest `stubApi` call (the browser's), then the view mounts with it. Pass `routes` to serve
+ * the server from others.
+ */
+export function renderChatRoute(
+  opts: Parameters<typeof renderRoute>[2] & {
+    id?: string;
+    routes?: Parameters<typeof renderRoute>[1];
+  } = {},
+) {
+  const { id = "c1", routes = lastStubRoutes(), ...rest } = opts;
+  return renderRoute(() => ChatPage({ params: Promise.resolve({ conversationId: id }) }), routes, {
+    locale: "en",
+    ...rest,
+  });
+}

@@ -7,7 +7,8 @@ import { type Call, json, stubApi } from "./api";
 import { router } from "./navigation";
 import { ME, pageElement, renderPage } from "./render";
 
-type Routes = Record<string, (call: Call) => Response | Promise<Response>>;
+/** `METHOD path` (with or without the query) → the response. */
+export type Routes = Record<string, (call: Call) => Response | Promise<Response>>;
 
 /**
  * The server phase of a page test: installs a stub transport for the page's `apiFetch` reads
@@ -62,6 +63,23 @@ export function sessionRoutes(
       ? { [`GET /api/v1/orgs/${me.currentOrgId}/readiness`]: () => json(200, readiness) }
       : {}),
   };
+}
+
+/**
+ * Runs a server page against `routes` (plus the gate's {@link sessionRoutes}) and returns what it
+ * rendered, for a test that mounts it itself (inside the app frame, or as a `rerender`).
+ */
+export async function onServer(
+  page: () => Promise<ReactNode>,
+  routes: Routes,
+  opts: { me?: Me; readiness?: OrgReadiness } = {},
+): Promise<{ element: ReactNode; calls: Call[] }> {
+  const calls = serverRoutes({ ...sessionRoutes(opts.me, opts.readiness), ...routes });
+  try {
+    return { element: await page(), calls };
+  } finally {
+    setApiTransport(null);
+  }
 }
 
 /**
