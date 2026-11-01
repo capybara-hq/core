@@ -10,12 +10,11 @@ import { type Account, AccountsService } from "./accounts.js";
 import {
   ACCESS_COOKIE,
   clearSessionCookies,
-  REFRESH_COOKIE,
   refreshCookieValues,
   setSessionCookies,
 } from "./cookies.js";
 import { Public } from "./principal.js";
-import { type IssuedSession, SessionService } from "./sessions.js";
+import { SessionService } from "./sessions.js";
 
 const LoginBodySchema = z.object({ login: z.string().max(256), password: z.string() });
 class LoginBody extends createZodDto(LoginBodySchema, "LoginBody") {}
@@ -85,21 +84,15 @@ export class AuthController {
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<{ account: Account }> {
     try {
-      // the header may carry several cap_rt (legacy Path and Path=/): the first that verifies wins
+      // the header may carry several cap_rt (legacy Path and Path=/): the current one of a live session wins
       const candidates = refreshCookieValues(req.headers.cookie);
       if (candidates.length === 0) {
         throw new ApiError("auth.refresh_invalid", "Refresh token is missing");
       }
-      let session: IssuedSession | undefined;
-      for (const rt of candidates) {
-        try {
-          session = await this.sessions.refresh(rt, clientMeta(req));
-          break;
-        } catch (e) {
-          if (!(e instanceof ApiError && e.code === "auth.refresh_invalid")) throw e;
-        }
-      }
-      if (!session) throw new ApiError("auth.refresh_invalid", "Refresh token is invalid");
+      // none is current: the last one (the Path=/ cookie) goes through the usual replay handling
+      const rt =
+        (await this.sessions.pickCurrentRefresh(candidates)) ?? (candidates.at(-1) as string);
+      const session = await this.sessions.refresh(rt, clientMeta(req));
       const account = await this.accounts.get(session.accountId);
       if (!account) throw new ApiError("auth.refresh_invalid", "Refresh token is invalid");
       setSessionCookies(reply, session, this.config.get());
@@ -120,11 +113,11 @@ export class AuthController {
   ): Promise<void> {
     clearSessionCookies(reply);
     const at = req.cookies[ACCESS_COOKIE];
-    const rt = req.cookies[REFRESH_COOKIE];
+    const rts = refreshCookieValues(req.headers.cookie);
     if (at) {
       const sid = await this.sessions.sessionIdFromAccess(at);
       if (sid !== undefined) await this.sessions.revoke(sid);
     }
-    if (rt) await this.sessions.revokeByRefresh(rt);
+    for (const rt of rts) await this.sessions.revokeByRefresh(rt);
   }
 }

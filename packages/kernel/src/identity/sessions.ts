@@ -107,6 +107,28 @@ export class SessionService {
     return orgs.length === 1 ? (orgs[0]?.orgId ?? null) : null;
   }
 
+  /**
+   * Read-only: of several refresh tokens (a cookie header carrying the legacy and the `Path=/`
+   * cookie), the first that is the current token of a live session, if any. Choosing before
+   * rotating keeps a stale token from tripping replay detection on a still valid session.
+   */
+  async pickCurrentRefresh(candidates: readonly string[]): Promise<string | undefined> {
+    if (candidates.length === 0) return undefined;
+    const rows = await this.db
+      .selectFrom("sessions")
+      .select("refresh_hash")
+      .where(
+        "refresh_hash",
+        "in",
+        candidates.map((c) => sha256Hex(c)),
+      )
+      .where("revoked_at", "is", null)
+      .where("expires_at", ">", sql<Date>`now()`)
+      .execute();
+    const live = new Set(rows.map((r) => r.refresh_hash));
+    return candidates.find((c) => live.has(sha256Hex(c)));
+  }
+
   async refresh(
     refreshToken: string,
     meta: { userAgent?: string; ip?: string },

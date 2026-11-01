@@ -802,6 +802,60 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
     expect((res.json() as { account: Account }).account.id).toBe(alice.id);
   });
 
+  const rawRefresh = (cookie: string, url = "/api/v1/auth/refresh") =>
+    k.http.inject({ method: "POST", url, headers: { cookie, "x-capybara-csrf": "1" } });
+
+  it("refresh：过了宽限期的旧 cap_rt 在前、当前的在后 → 200，会话不被吊销", async () => {
+    const jar = cookieJar();
+    await login(jar);
+    const stale = jar.get("cap_rt") as string;
+    await asUser(k.http, jar)({ method: "POST", url: "/api/v1/auth/refresh" });
+    const current = jar.get("cap_rt") as string;
+    await sql`UPDATE capybara.sessions SET rotated_at = now() - interval '5 minutes'`.execute(raw);
+    const res = await rawRefresh(`cap_rt=${stale}; cap_rt=${encodeURIComponent(current)}`);
+    expect(res.statusCode).toBe(200);
+    const live = await db
+      .selectFrom("sessions")
+      .select("revoked_at")
+      .where("account_id", "=", alice.id)
+      .execute();
+    expect(live.every((r) => r.revoked_at === null)).toBe(true);
+  });
+
+  it("refresh：单独重放过了宽限期的旧 cap_rt → 401 并吊销会话", async () => {
+    const jar = cookieJar();
+    await login(jar);
+    const stale = jar.get("cap_rt") as string;
+    await asUser(k.http, jar)({ method: "POST", url: "/api/v1/auth/refresh" });
+    await sql`UPDATE capybara.sessions SET rotated_at = now() - interval '5 minutes'`.execute(raw);
+    const res = await rawRefresh(`cap_rt=${stale}`);
+    expect(res.statusCode).toBe(401);
+    expect(errCode(res)).toBe("auth.refresh_invalid");
+    const row = await db
+      .selectFrom("sessions")
+      .select("revoked_at")
+      .where("account_id", "=", alice.id)
+      .executeTakeFirstOrThrow();
+    expect(row.revoked_at).not.toBeNull();
+  });
+
+  it("logout：cookie 头带两个 cap_rt → 当前那个的会话被吊销", async () => {
+    const jar = cookieJar();
+    await login(jar);
+    const current = jar.get("cap_rt") as string;
+    const res = await rawRefresh(
+      `cap_rt=cap_rt_stale; cap_rt=${encodeURIComponent(current)}`,
+      "/api/v1/auth/logout",
+    );
+    expect(res.statusCode).toBe(204);
+    const row = await db
+      .selectFrom("sessions")
+      .select("revoked_at")
+      .where("account_id", "=", alice.id)
+      .executeTakeFirstOrThrow();
+    expect(row.revoked_at).not.toBeNull();
+  });
+
   it("refresh：两个 cap_rt 都无效 → 401 auth.refresh_invalid 并清两个 Path", async () => {
     const res = await k.http.inject({
       method: "POST",
