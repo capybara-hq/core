@@ -8,7 +8,7 @@ import InboxRoute from "../src/app/(app)/inbox/page";
 import { bodyOf, json, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderPage } from "./support/render";
-import { renderRoute } from "./support/server";
+import { expectNoFirstPaintFetch, renderRoute } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -365,6 +365,20 @@ describe("收件箱：技能变更", () => {
       en.inbox.skillChange.diffLabel.replace("{path}", "SKILL.md"),
     );
     expect(diff.textContent).toContain("+ # Notes");
+  });
+});
+
+describe("the inbox's server read", () => {
+  it("paints from the server with no browser call; a refused skill change detail shows its error", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const { container } = await renderRoute(() => InboxRoute(), {
+      [LIST]: () => json(200, inbox([], [skillChange("sc1")])),
+      "GET /api/v1/orgs/o1/skill-changes/sc1": () =>
+        json(404, { error: { code: "skill_change.not_found", message: "x" } }),
+    });
+    const card = container.querySelector('[data-skill-change-id="sc1"]') as HTMLElement;
+    expect(within(card).getByRole("alert")).toBeTruthy();
+    expect(browser).toEqual([]);
   });
 });
 

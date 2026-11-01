@@ -35,17 +35,20 @@ export async function read<T>(p: Promise<T>): Promise<T> {
 }
 
 /**
- * A read of something the page draws its own fallback for (a secondary section, a value with a
- * default): any failure resolves to `null` and the client view reads it again after mount or uses
- * its default. A 401 `auth.*` still signs in, and an unreachable kernel still throws.
+ * A secondary section's read (web-SSR spec §6.2, ruling R5): when the kernel fails it (5xx) or
+ * refuses it (403 / 404) it resolves to `null` and the view draws that section's own error or empty
+ * state, never a read after mount. A 401 `auth.*` still signs in, an unreachable kernel still
+ * throws, and anything else (another 4xx, a bug in the page's code) throws to `error.tsx`.
  */
-export async function soft<T>(p: Promise<T>): Promise<T | null> {
+export async function section<T>(p: Promise<T>): Promise<T | null> {
   try {
     return await p;
   } catch (e) {
     if (isSignedOut(e)) redirect(loginPathFor(await currentPath()));
     if (isKernelUnavailable(e)) throw e;
-    return null;
+    if (e instanceof ApiClientError && (e.status >= 500 || e.status === 403 || e.status === 404))
+      return null;
+    throw e;
   }
 }
 

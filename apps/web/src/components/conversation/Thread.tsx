@@ -81,7 +81,8 @@ function useMemberNames(
   const [names, setNames] = useState<ReadonlyMap<string, string>>(
     () => new Map((initial ?? []).map((m) => [m.id, m.name])),
   );
-  const seeded = useRef(initial != null);
+  // The server read them for this log (or was refused): never read at mount (R5).
+  const seeded = useRef(initial !== undefined && needed);
   useEffect(() => {
     if (!needed || seeded.current) return;
     let live = true;
@@ -136,7 +137,10 @@ export type ThreadProps = {
    * false, so the page has one live thread (I2).
    */
   live?: boolean;
-  /** Members' names as the server read them (a run another account stopped); else read here. */
+  /**
+   * Members' names as the server read them when the log already had a run another account stopped
+   * (`null`: refused for this role); a later such run reads them here.
+   */
   initialMembers?: readonly { id: string; name: string }[] | null | undefined;
 };
 

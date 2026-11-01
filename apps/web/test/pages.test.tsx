@@ -16,7 +16,7 @@ import { navigateBrowser } from "../src/lib/browser";
 import type { Me } from "../src/lib/session";
 import { resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
-import { renderRoute } from "./support/server";
+import { expectNoFirstPaintFetch, renderRoute } from "./support/server";
 import { frameElement, NOT_READY, renderFrame, shellOf } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -220,10 +220,16 @@ describe("(app) 页面模板", () => {
     );
     await vi.waitFor(() => expect(router.refresh).toHaveBeenCalled());
     expect(calls.filter((c) => c.method === "GET")).toEqual([]);
+    // the decided approval is gone at once, not when the server's new overview lands
+    expect(
+      within(screen.getByRole("list", { name: h.inbox.title }))
+        .getAllByRole("listitem")
+        .map((r) => r.textContent),
+    ).toEqual([expect.stringContaining("客服分流 想更新技能 refund-policy")]);
   });
 
   it("the overview hides counts this role may not read", async () => {
-    stubApi({});
+    const browser = expectNoFirstPaintFetch();
     await renderRoute(
       () => HomePage(),
       overviewRoutes({
@@ -233,6 +239,7 @@ describe("(app) 页面模板", () => {
     screen.getByRole("list", { name: en.home.inbox.title });
     expect(screen.queryByText(en.home.members)).toBeNull();
     expect(screen.getByText(en.home.skills)).toBeTruthy();
+    expect(browser).toEqual([]);
   });
 
   it("without a current org or while the org is in setup, the page renders nothing (the frame draws it)", async () => {

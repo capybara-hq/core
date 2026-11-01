@@ -55,8 +55,11 @@ export type ConversationState = {
   merge(events: ConversationEvent[]): void;
   error: string | undefined;
   setError(e: unknown): void;
-  /** Counters bumped by `event: changed` (queue, files) and reconnects: refetch when they move. */
-  changes: Readonly<Record<"queue" | "files" | "reconnect", number>>;
+  /**
+   * Counters bumped by `event: changed` (queue, files), reconnects and the first open after a
+   * server snapshot (sandbox too): refetch when they move.
+   */
+  changes: Readonly<Record<"queue" | "files" | "sandbox" | "reconnect", number>>;
   /** Raises the sub-agents' calls from `GET …/subagents` (no step: never beats stream progress). */
   seedProgress(views: readonly { id: string; toolCalls: number }[]): void;
   /** Extension view refresh counters: `plugin/contribution`, `*` for all (after a reconnect). */
@@ -89,7 +92,7 @@ export function useConversation(
   const [error, setErrorText] = useState<string>();
   const [stopping, setStopping] = useState(false);
   const [conversation, setConversation] = useState<Conversation | undefined>(initial?.conversation);
-  const [changes, setChanges] = useState({ queue: 0, files: 0, reconnect: 0 });
+  const [changes, setChanges] = useState({ queue: 0, files: 0, sandbox: 0, reconnect: 0 });
   const [uiVersions, setUiVersions] = useState<Record<string, number>>({});
   const bumpUi = useCallback((key: string) => {
     setUiVersions((v) => ({ ...v, [key]: (v[key] ?? 0) + 1 }));
@@ -139,6 +142,10 @@ export function useConversation(
     /** The last seq the stream (and the history) delivered: reopen from here. */
     let streamSeq = 0;
     let connected = false;
+    // The history came from the server: what lives outside the log (queue, files, extension
+    // views, sandbox, sub-agents) may have changed between that read and this open, so the first
+    // open catches up like a reconnect does.
+    const fromServer = seeded.current !== null;
     // Deltas are applied once per animation frame, together (final review I3): a fast stream
     // renders the page per frame, not per token. An event first flushes what is pending, so
     // deltas and events stay in stream order.
@@ -174,12 +181,15 @@ export function useConversation(
       close = openConversationStream(orgId, conversationId, after, {
         onOpen: () => {
           failures = 0;
-          if (connected) {
-            // A reconnect: frames may have been missed meanwhile.
+          // ssr-exempt: live updates after first paint (catch up on what changed outside the log)
+          if (connected || fromServer) {
+            // A reconnect (or the first open after the server's snapshot): frames may have been
+            // missed meanwhile.
             bumpUi("*");
             setChanges((c) => ({
               queue: c.queue + 1,
               files: c.files + 1,
+              sandbox: c.sandbox + 1,
               reconnect: c.reconnect + 1,
             }));
           }

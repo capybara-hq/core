@@ -10,7 +10,8 @@ const BATCH = 100;
  * Display metadata of the tools a conversation's calls name (`GET …/conversations/:id/tools`):
  * fetched in batches, kept in memory per conversation, and fetched again only for keys not seen
  * yet. A failed fetch leaves those rows on their keys (the timeline's fallback). `initial` is the
- * server's read (the keys it asked and the answer): those keys are not asked again.
+ * server's read (the keys it asked and the answer): those keys are not asked again; `null` (the
+ * kernel failed it) leaves the first keys on their keys too, without asking after mount.
  */
 export function useToolInfo(
   orgId: string,
@@ -25,7 +26,9 @@ export function useToolInfo(
       : { scope: "", map: new Map() },
   );
   const asked = useRef<{ scope: string; keys: Set<string> }>(
-    initial != null ? { scope, keys: new Set(initial.keys) } : { scope: "", keys: new Set() },
+    initial === undefined
+      ? { scope: "", keys: new Set() }
+      : { scope, keys: new Set(initial === null ? keys : initial.keys) },
   );
   const keyList = keys.join("\n");
 

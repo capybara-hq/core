@@ -23,7 +23,7 @@ import { listMembers } from "../members";
 import { type InvocableSkill, listInvocableSkills } from "../skills";
 import { toolKeysOf } from "../tool-keys";
 import { listUiContributions, type UiContributionItem } from "../ui";
-import { read, soft } from "./page";
+import { optional, read, section } from "./page";
 
 /** The most keys one `GET …/tools?keys=` takes (kernel `TOOL_INFO_MAX_KEYS`). */
 const TOOL_BATCH = 100;
@@ -36,16 +36,17 @@ export interface QueueSnapshot {
 
 /**
  * Everything the conversation page paints first (web-SSR spec §6.2), as plain JSON. The
- * conversation and its events are required (a 404 is the page's not-found); every other piece is
- * `null` when the server could not read it, and the view then reads it after mount (or, for the
- * sub-agents and the usage, when there is none to read).
+ * conversation, its events, the agents and the models are required (a 404 is the page's
+ * not-found). A secondary piece is `null` when the kernel failed or refused it (`section`), a
+ * role-dependent one when it refused it (`optional`); the view then draws that section's own error
+ * or empty state and never reads it after mount (ruling R5). Live changes read them again.
  */
 export interface ConversationSnapshot {
   conversation: Conversation;
   /** Every event, read page by page (500 each, as `listAllEvents` does). */
   events: ConversationEvent[];
-  agents: Agent[] | null;
-  providers: ProviderModels[] | null;
+  agents: Agent[];
+  providers: ProviderModels[];
   queue: QueueSnapshot | null;
   /** The sub-agents, newest first; `null` too when none was dispatched. */
   subagents: SubagentView[] | null;
@@ -108,14 +109,14 @@ export async function loadConversationSnapshot(
   ] = await Promise.all([
     read(getConversation(orgId, id)),
     read(listAllEvents(orgId, id)),
-    soft(listAgents(orgId)),
-    soft(listModels(orgId)),
-    soft(listQueue(orgId, id)),
-    soft(listUiContributions(orgId)),
-    soft(listFiles(orgId, id)),
-    soft(getSandboxStatus(orgId, id).then((status) => ({ status }))),
-    soft(listConnectors(orgId)),
-    soft(getAttachmentLimits(orgId)),
+    read(listAgents(orgId)),
+    read(listModels(orgId)),
+    section(listQueue(orgId, id)),
+    section(listUiContributions(orgId)),
+    section(listFiles(orgId, id)),
+    section(getSandboxStatus(orgId, id).then((status) => ({ status }))),
+    optional(listConnectors(orgId)),
+    section(getAttachmentLimits(orgId)),
   ]);
   const withSubagents = dispatched(events);
   const stoppedByOther = events.some(
@@ -127,17 +128,17 @@ export async function loadConversationSnapshot(
   // The composer lists with the conversation only when it is the caller's (its trial drafts).
   const mine = conversation.accountId === undefined || conversation.accountId === me.accountId;
   const [tools, subagents, usage, skills, members] = await Promise.all([
-    soft(toolInfo(orgId, id, toolKeysOf(events))),
-    withSubagents ? soft(listSubagents(orgId, id)) : null,
-    withSubagents ? soft(getConversationUsage(orgId, id)) : null,
-    soft(listInvocableSkills(orgId, conversation.agentId, mine ? id : undefined)),
-    stoppedByOther ? soft(listMembers(orgId)) : null,
+    section(toolInfo(orgId, id, toolKeysOf(events))),
+    withSubagents ? section(listSubagents(orgId, id)) : null,
+    withSubagents ? section(getConversationUsage(orgId, id)) : null,
+    optional(listInvocableSkills(orgId, conversation.agentId, mine ? id : undefined)),
+    stoppedByOther ? optional(listMembers(orgId)) : null,
   ]);
   return {
     conversation,
     events,
-    agents: agents?.agents ?? null,
-    providers: models?.providers ?? null,
+    agents: agents.agents,
+    providers: models.providers,
     queue:
       queue === null
         ? null

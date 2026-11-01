@@ -17,6 +17,7 @@ import { useRouter } from "../../i18n/navigation";
 import { type OrgReadiness, setupReady } from "../../lib/agents";
 import { canUpdateOrg } from "../../lib/org-settings";
 import type { Me } from "../../lib/session";
+import { setupRouteOf, under } from "../../lib/setup-routes";
 import { navLevelOf } from "./nav";
 
 export { setupReady };
@@ -31,30 +32,7 @@ export type Readiness =
   | { kind: "ready" }
   | ({ kind: "setup" } & OrgReadiness);
 
-const under = (pathname: string, prefix: string) =>
-  pathname === prefix || pathname.startsWith(`${prefix}/`);
-
-/**
- * Where a route stands while the org is not ready (web-order spec §3.8): `outside` keeps its own
- * frame (the admin console); `home` is the setup home (`/`, `/chat`); `step` renders inside the
- * setup frame (the pages a step needs, personal settings); anything else `redirect`s to `/`.
- */
-export function setupRouteOf(pathname: string): "outside" | "home" | "step" | "redirect" {
-  if (under(pathname, "/admin")) return "outside";
-  if (pathname === "/" || pathname === "/chat") return "home";
-  if (
-    pathname === "/settings/models" ||
-    pathname === "/settings/members" ||
-    pathname === "/channels/new" ||
-    under(pathname, "/agents") ||
-    under(pathname, "/catalog") ||
-    under(pathname, "/account")
-  ) {
-    // `/agents` itself is the list (not a step); `/agents/new` and `/agents/<id>` are.
-    return pathname === "/agents" ? "redirect" : "step";
-  }
-  return "redirect";
-}
+export { setupRouteOf };
 
 /**
  * The layout decision for pages: whether the setup frame is drawn, the org's readiness as the

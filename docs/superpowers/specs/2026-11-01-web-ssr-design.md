@@ -368,7 +368,18 @@ export default async function AgentsPage() {
 - the sandbox status;
 - the invocable skills for the composer.
 
-The view mounts with all of it, then opens the stream at the last `seq`.
+The view mounts with all of it, then opens the stream at the last `seq`. The first open catches
+up like a reconnect: the queue, the files, the extension views, the sandbox and the sub-agents are
+read again, since they may have changed between the server's read and the open.
+
+**Ruling R5 (failures are decided on the server).** The conversation, its events, the agents and
+the models are required (`read`). Role-dependent reads (members, connectors, invocable skills, the
+most recent agent) use `optional`: a 403 or 404 is `null`. Secondary sections (UI contributions,
+files, the sandbox, attachment limits, the queue, the sub-agents and the usage, tool info) use
+`section`: a 5xx, 403 or 404 is `null`; a sign-out and an unreachable kernel behave as everywhere,
+and anything else, including a bug in the page's own code, throws to `error.tsx`. A `null` piece is
+drawn as that section's own error or empty state. It is never read again after mount; only live
+changes (the stream, focus, a retry the person clicks) read it.
 
 `/chat` (a new conversation) reads the agents, the most recent agent and the models. The `?agent=`
 preset comes from `searchParams`.

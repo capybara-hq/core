@@ -86,12 +86,13 @@ export function useRightArea(): {
 function useContributions(
   orgId: string,
   version: number,
-  initial: UiContributionItem[] | null | undefined,
-): UiContributionItem[] | null {
-  const [items, setItems] = useState<UiContributionItem[] | null>(initial ?? null);
+  initial: UiContributionItem[] | null,
+): UiContributionItem[] {
+  // `null`: the kernel failed it: no extension blocks until the next read (focus, reconnect).
+  const [items, setItems] = useState<UiContributionItem[]>(initial ?? []);
   const [focus, setFocus] = useState(0);
   /** The read the server's list stands for (`version/focus`): skipped while current. */
-  const seeded = useRef<string | null>(initial != null ? `${version}/0` : null);
+  const seeded = useRef<string | null>(`${version}/0`);
   useEffect(() => {
     const onFocus = () => setFocus((n) => n + 1);
     window.addEventListener("focus", onFocus);
@@ -108,7 +109,6 @@ function useContributions(
       },
       () => {
         // Unreadable: keep what was shown (or none); the conversation carries on.
-        if (live) setItems((prev) => prev ?? []);
       },
     );
     return () => {
@@ -128,10 +128,11 @@ function useFiles(
   orgId: string,
   conversationId: string,
   version: number,
-  initial: FileOutput[] | null | undefined,
+  initial: FileOutput[] | null,
 ): FileOutput[] {
+  // `null`: the kernel failed it: no files until the next read (`changed: files`, reconnect).
   const [files, setFiles] = useState<FileOutput[]>(initial ?? []);
-  const seeded = useRef<number | null>(initial != null ? version : null);
+  const seeded = useRef<number | null>(version);
   useEffect(() => {
     // ssr-exempt: live updates after first paint (`changed: files` moves `version`)
     if (seeded.current === version) return;
@@ -232,6 +233,8 @@ export function useRightAreaSlot(p: {
   entries: readonly TimelineEntry[];
   uiVersions: Readonly<Record<string, number>>;
   filesVersion: number;
+  /** Moves when the sandbox may have changed outside the log (the stream's opens). */
+  sandboxVersion: number;
   model: ModelRef | null;
   contextPct: number | null;
   /** The conversation's sub-agents (`GET …/subagents`), once there are any. */
@@ -240,8 +243,8 @@ export function useRightAreaSlot(p: {
   total?: string | undefined;
   contextWindowOf(m: ModelRef): number | undefined;
   reasoningOf(m: ModelRef): boolean | undefined;
-  /** The server's reads (each `null` when it could not read it: read after mount). */
-  initial?: {
+  /** The server's reads (each `null` when the kernel failed or refused it: R5). */
+  initial: {
     contributions: UiContributionItem[] | null;
     files: FileOutput[] | null;
     sandbox: ContextInitial["sandbox"];
@@ -251,14 +254,11 @@ export function useRightAreaSlot(p: {
   const t = useTranslations("chat");
   const locale = uiLocale(useLocale());
   const { target, open, back } = useRightArea();
-  const contributions = useContributions(p.orgId, p.uiVersions["*"] ?? 0, p.initial?.contributions);
-  const files = useFiles(p.orgId, p.conversationId, p.filesVersion, p.initial?.files);
-  const panels = useMemo(
-    () => (contributions ?? []).filter((c) => c.place === "panel"),
-    [contributions],
-  );
+  const contributions = useContributions(p.orgId, p.uiVersions["*"] ?? 0, p.initial.contributions);
+  const files = useFiles(p.orgId, p.conversationId, p.filesVersion, p.initial.files);
+  const panels = useMemo(() => contributions.filter((c) => c.place === "panel"), [contributions]);
   const sections = useMemo(
-    () => (contributions ?? []).filter((c) => c.place === "section"),
+    () => contributions.filter((c) => c.place === "section"),
     [contributions],
   );
   const close = useCallback(() => open(null), [open]);
@@ -460,9 +460,8 @@ export function useRightAreaSlot(p: {
         files={files}
         sections={sections}
         onOpenFile={openFile}
-        {...(p.initial
-          ? { initial: { sandbox: p.initial.sandbox, connectors: p.initial.connectors } }
-          : {})}
+        initial={{ sandbox: p.initial.sandbox, connectors: p.initial.connectors }}
+        sandboxVersion={p.sandboxVersion}
         subagents={
           p.subagents
             ? {
@@ -489,7 +488,7 @@ export function useRightAreaSlot(p: {
       renderCard: (e) => (
         <ExtensionCard
           ctx={ctx}
-          contributions={contributions ?? []}
+          contributions={contributions}
           plugin={e.plugin}
           view={e.view}
           callId={e.callId}

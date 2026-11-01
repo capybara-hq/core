@@ -11,8 +11,7 @@ import {
   useToast,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { type Agent, listAgents } from "../../lib/agents";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   type ModelRef,
   notifyConversationsChanged,
@@ -40,33 +39,7 @@ import { useRightAreaSlot } from "./RightArea";
 import { Thread, type ThreadProps } from "./Thread";
 import { type SendResult, useConversation } from "./useConversation";
 import { QueueList, useQueue } from "./useQueue";
-import { useModels, useSelection } from "./useSelection";
-
-/**
- * The org's agents (for the agent's name, model and saved effort); undefined while loading. With
- * `initial` (the server's read) nothing is fetched; `null` (the server could not read them) reads
- * them after mount.
- */
-export function useAgentList(orgId: string, initial?: Agent[] | null): Agent[] | undefined {
-  const [agents, setAgents] = useState<Agent[] | undefined>(initial ?? undefined);
-  const seeded = useRef(initial != null);
-  useEffect(() => {
-    if (seeded.current) return;
-    let live = true;
-    listAgents(orgId).then(
-      (r) => {
-        if (live) setAgents(r.agents);
-      },
-      () => {
-        if (live) setAgents([]);
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [orgId]);
-  return agents;
-}
+import { useSelection } from "./useSelection";
 
 /** "user@org" for the status bar's context path. */
 export function useWho(): string {
@@ -136,7 +109,7 @@ export type RightAreaSlot = {
 export function useConversationPage(
   orgId: string,
   conversationId: string,
-  initial?: ConversationSnapshot,
+  initial: ConversationSnapshot,
 ): { page: ConversationPageProps; dialogs: ReactNode } {
   const t = useTranslations("chat");
   const ts = useTranslations("subagents");
@@ -145,22 +118,21 @@ export function useConversationPage(
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const who = useWho();
-  const conv = useConversation(
-    orgId,
-    conversationId,
-    initial && { conversation: initial.conversation, events: initial.events },
-  );
-  const agents = useAgentList(orgId, initial?.agents);
+  const conv = useConversation(orgId, conversationId, {
+    conversation: initial.conversation,
+    events: initial.events,
+  });
+  const agents = initial.agents;
   const agent = agents?.find((a) => a.id === conv.conversation?.agentId);
   // The title bar path `<org slug> / <agent> /` before the title (spec §3.5).
   const path = usePagePath(
     "org",
     ...(agent ? [{ label: agent.definition.name, href: `/agents/${agent.id}` }] : []),
   );
-  const providers = useModels(orgId, initial?.providers);
+  const providers = initial.providers;
   const selection = useSelection(providers, agent, conv.conversation?.selection);
   const keys = useMemo(() => toolKeysOf(conv.events), [conv.events]);
-  const info = useToolInfo(orgId, conversationId, keys, initial?.tools);
+  const info = useToolInfo(orgId, conversationId, keys, initial.tools);
   const subagents = useSubagents(
     orgId,
     conversationId,
@@ -168,9 +140,9 @@ export function useConversationPage(
     conv.state.progress,
     conv.changes.reconnect,
     conv.seedProgress,
-    initial?.subagents,
+    initial.subagents,
   );
-  const usageAll = useUsageWithSubagents(orgId, conversationId, conv.events, initial?.usage);
+  const usageAll = useUsageWithSubagents(orgId, conversationId, conv.events, initial.usage);
   const views = useMemo(
     () => (subagents.views ? new Map(subagents.views.map((v) => [v.id, v])) : undefined),
     [subagents.views],
@@ -185,7 +157,7 @@ export function useConversationPage(
     [conv.events, info, locale, conv.state.progress, views],
   );
   const entries = useMemo(() => withDrafts(base, conv.state.drafts), [base, conv.state.drafts]);
-  const queue = useQueue(orgId, conversationId, conv.changes.queue, conv.merge, initial?.queue);
+  const queue = useQueue(orgId, conversationId, conv.changes.queue, conv.merge, initial.queue);
   const [renaming, setRenaming] = useState(false);
   const [renameBusy, setRenameBusy] = useState(false);
   const active = conv.running || conv.waiting;
@@ -278,6 +250,7 @@ export function useConversationPage(
     entries,
     uiVersions: conv.uiVersions,
     filesVersion: conv.changes.files,
+    sandboxVersion: conv.changes.sandbox,
     model: usageModel,
     contextPct,
     subagents: subagents.views,
@@ -287,16 +260,12 @@ export function useConversationPage(
         : ts("contextTotal", { n: usageTotal(usageAll).toLocaleString(locale) }),
     contextWindowOf: selection.contextWindowOf,
     reasoningOf: selection.reasoningOf,
-    ...(initial
-      ? {
-          initial: {
-            contributions: initial.contributions,
-            files: initial.files,
-            sandbox: initial.sandbox,
-            connectors: initial.connectors,
-          },
-        }
-      : {}),
+    initial: {
+      contributions: initial.contributions,
+      files: initial.files,
+      sandbox: initial.sandbox,
+      connectors: initial.connectors,
+    },
   });
 
   const agentPicker: PickerProps = {
@@ -325,7 +294,7 @@ export function useConversationPage(
           entries={entries}
           info={info}
           reasoningOf={selection.reasoningOf}
-          initialMembers={initial?.members}
+          initialMembers={initial.members}
           {...(active ? {} : { onRetry: retry })}
           {...(slot?.thread ?? {})}
         />
@@ -346,8 +315,8 @@ export function useConversationPage(
               : conversationId
           }
           running={active}
-          initialSkills={initial?.skills}
-          initialLimits={initial?.limits}
+          initialSkills={initial.skills}
+          initialLimits={initial.limits}
           stop={{ onStop: conv.stop, stopping: conv.stopping }}
           onSend={send}
           onQueue={enqueue}

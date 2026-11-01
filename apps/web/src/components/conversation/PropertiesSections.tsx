@@ -78,6 +78,7 @@ export function ContextSection({
   contextPct,
   total,
   initial,
+  version,
 }: {
   orgId: string;
   conversationId: string;
@@ -86,14 +87,15 @@ export function ContextSection({
   contextPct: number | null;
   /** The tokens with sub-agents line, once there are any. */
   total?: string | undefined;
-  initial?: ContextInitial | undefined;
+  initial: ContextInitial;
+  /** Moves when the sandbox may have changed outside the log (the stream's opens). */
+  version: number;
 }) {
   const t = useTranslations("chatPanel");
-  const connectors = useLoad(
-    () => listConnectors(orgId),
-    [orgId],
-    initial?.connectors != null ? { initial: { connectors: initial.connectors } } : {},
-  );
+  // Refused for this role (`null`): no connector names, never read after mount (R5).
+  const connectors = useLoad(() => listConnectors(orgId), [orgId], {
+    initial: { connectors: initial.connectors ?? [] },
+  });
   const nameOfSlug = useMemo(
     () =>
       new Map(
@@ -103,29 +105,34 @@ export function ContextSection({
       ),
     [connectors.state],
   );
-  const sandbox = useLoad(
-    () => getSandboxStatus(orgId, conversationId),
+  // The server's read; `failed` when the kernel failed it (the section's error, R5).
+  const sandbox = useLoad<{ status: SandboxStatus | null } | { failed: true }>(
+    () => getSandboxStatus(orgId, conversationId).then((status) => ({ status })),
     [orgId, conversationId],
-    initial?.sandbox != null ? { initial: initial.sandbox.status } : {},
+    {
+      initial: initial.sandbox === null ? { failed: true } : { status: initial.sandbox.status },
+    },
   );
   const uses = useMemo(() => sandboxUses(events), [events]);
-  // From the server's read: sandbox results since then read the status again at once.
-  const seen = useRef(initial?.sandbox?.uses ?? uses);
+  // From the server's read: sandbox results since then, or a change outside the log (`version`,
+  // which starts at the snapshot's 0), read the status again at once.
+  const seen = useRef({ uses: initial.sandbox?.uses ?? uses, version: 0 });
   const { reload } = sandbox;
   useEffect(() => {
-    if (uses === seen.current) return;
-    seen.current = uses;
+    // ssr-exempt: live updates after first paint (sandbox results and reconnects)
+    if (uses === seen.current.uses && version === seen.current.version) return;
+    seen.current = { uses, version };
     reload();
-  }, [uses, reload]);
+  }, [uses, version, reload]);
   const s = sandbox.state;
   const sandboxText =
     s.kind === "loading"
       ? undefined
-      : s.kind === "error"
+      : s.kind === "error" || "failed" in s.data
         ? t("sandboxFailed")
-        : s.data === null
+        : s.data.status === null
           ? t("sandboxNone")
-          : t(s.data.status === "running" ? "sandboxRunning" : "sandboxSuspended");
+          : t(s.data.status.status === "running" ? "sandboxRunning" : "sandboxSuspended");
   return (
     <ContextBlock
       ratio={contextPct ?? 0}
@@ -176,6 +183,7 @@ export function PropertiesSections({
   subagents,
   total,
   initial,
+  sandboxVersion,
 }: {
   ctx: BlockContext;
   events: readonly ConversationEvent[];
@@ -188,7 +196,9 @@ export function PropertiesSections({
     | { views: readonly SubagentView[]; onStop(id: string): void; onOpen(id: string): void }
     | undefined;
   total?: string | undefined;
-  initial?: ContextInitial | undefined;
+  initial: ContextInitial;
+  /** See {@link ContextSection}'s `version`. */
+  sandboxVersion: number;
 }) {
   return (
     <PropertiesPanel>
@@ -200,6 +210,7 @@ export function PropertiesSections({
         contextPct={contextPct}
         total={total}
         initial={initial}
+        version={sandboxVersion}
       />
       {sections.map((c) => (
         <ExtensionSection key={`${c.plugin}/${c.id}`} ctx={ctx} c={c} />

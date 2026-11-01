@@ -77,8 +77,6 @@
       "submit": "创建",
       "cancel": "取消"
     },
-    "loadFailed": "概览没有加载出来。",
-    "retry": "重试",
     "orgSettings": "组织设置",
     "skills": "技能",
     "connectors": "连接器",

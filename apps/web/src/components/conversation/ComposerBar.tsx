@@ -177,7 +177,7 @@ export function ComposerBar({
   sendDisabled?: boolean;
   /** `agentId`'s invocable skills as the server read them (the menu still reads them on open). */
   initialSkills?: InvocableSkill[] | null | undefined;
-  /** The attachment limits as the server read them; `null` or absent reads them after mount. */
+  /** The attachment limits as the server read them (`null`: failed, the defaults apply). */
   initialLimits?: AttachmentLimits | null | undefined;
 }) {
   const t = useTranslations("chat");

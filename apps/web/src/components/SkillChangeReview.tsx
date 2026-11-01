@@ -24,7 +24,7 @@ import {
   type SkillChangeFile,
 } from "../lib/skills";
 import { useErrorMessage } from "../lib/use-error-message";
-import { useLoad } from "../lib/use-load";
+import { type Loaded, useLoad } from "../lib/use-load";
 import { FormError } from "./form-error";
 import { useSession } from "./shell/session";
 
@@ -95,8 +95,10 @@ function FileDiff({
 }
 
 /**
- * 收件箱里的技能变更卡片：agent、发起人、版本、描述、打开发起对话，以及每个文件相对当前版本的差异
- * （纯文本 `+ / -`）。详情（含文件文本与当前版本）按需读取 `GET /skill-changes/:id`。
+ * A skill change card in the inbox: agent, requester, version, description, open the conversation,
+ * and each file's plain-text diff against the current version. The detail (file texts and the
+ * current version) is `initial` when the server read it (the item shown first; `null`: the kernel
+ * refused it, shown as the files' error), else read when the card is shown (`GET /skill-changes/:id`).
  */
 export function SkillChangeReview({
   orgId,
@@ -105,19 +107,43 @@ export function SkillChangeReview({
 }: {
   orgId: string;
   change: SkillChange;
-  /** The detail the server read (the item shown first); otherwise it is read when shown. */
-  initial?: SkillChangeDetail | undefined;
+  initial?: SkillChangeDetail | null | undefined;
+}) {
+  if (initial === null) return <SkillChangeCard change={change} state={UNREADABLE} />;
+  return <LoadedSkillChange orgId={orgId} change={change} initial={initial} />;
+}
+
+const UNREADABLE: Loaded<SkillChangeDetail> = { kind: "error", code: "unknown" };
+
+function LoadedSkillChange({
+  orgId,
+  change,
+  initial,
+}: {
+  orgId: string;
+  change: SkillChange;
+  initial: SkillChangeDetail | undefined;
+}) {
+  const { state } = useLoad(
+    () => getSkillChange(orgId, change.id).then((r) => r.skillChange),
+    [orgId, change.id],
+    initial !== undefined ? { initial } : {},
+  );
+  return <SkillChangeCard change={change} state={state} />;
+}
+
+function SkillChangeCard({
+  change,
+  state,
+}: {
+  change: SkillChange;
+  state: Loaded<SkillChangeDetail>;
 }) {
   const t = useTranslations("inbox.skillChange");
   const ti = useTranslations("inbox");
   const router = useRouter();
   const errorMessage = useErrorMessage();
   const { me } = useSession();
-  const { state } = useLoad(
-    () => getSkillChange(orgId, change.id).then((r) => r.skillChange),
-    [orgId, change.id],
-    initial !== undefined ? { initial } : {},
-  );
   const detail = state.kind === "ready" ? state.data : undefined;
   const current = detail?.current ?? null;
   return (

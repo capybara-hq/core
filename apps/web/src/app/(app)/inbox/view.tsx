@@ -45,8 +45,11 @@ type InboxList = Awaited<ReturnType<typeof listInbox>>;
 /** What the server read for the first paint: the inbox and the first item's skill change detail. */
 export interface InboxData {
   inbox: InboxList;
-  /** The detail of the first item when it is a skill change (it shows at once); else null. */
-  firstChange: SkillChangeDetail | null;
+  /**
+   * The first item's detail when it is a skill change (it shows at once; `detail: null` when the
+   * kernel refused it); else null.
+   */
+  firstChange: { id: string; detail: SkillChangeDetail | null } | null;
 }
 
 /**
@@ -62,7 +65,10 @@ export default function InboxView({ orgId, initial }: { orgId: string; initial: 
   const ta = useTranslations("approval");
   const router = useRouter();
   const [, startTransition] = useTransition();
-  const rows = initial.inbox.items;
+  // Items decided here: hidden at once, before the server's new list arrives (its actions can't be
+  // pressed twice meanwhile).
+  const [decided, setDecided] = useState<ReadonlySet<string>>(new Set());
+  const rows = initial.inbox.items.filter((i) => !decided.has(subjectOf(i)));
   const truncated = initial.inbox.truncated === true;
   const [activeId, setActiveId] = useState<string>();
   const active = rows.find((a) => a.id === activeId) ?? rows[0];
@@ -104,11 +110,12 @@ export default function InboxView({ orgId, initial }: { orgId: string; initial: 
   ];
 
   /**
-   * An item was handled (or failed as already handled elsewhere: it is no longer pending): the
-   * server reads the page again, and the first item is selected.
+   * An item was handled (or failed as already handled elsewhere: it is no longer pending): it is
+   * hidden, the server reads the page again, and the first item is selected.
    */
-  const handled = (message: string | null) => {
+  const handled = (id: string, message: string | null) => {
     if (message !== null) toast.success(message);
+    setDecided((s) => new Set(s).add(id));
     setActiveId(undefined);
     startTransition(() => router.refresh());
   };
@@ -116,12 +123,13 @@ export default function InboxView({ orgId, initial }: { orgId: string; initial: 
   async function decideApproval(approval: Approval, decision: "approve" | "deny") {
     // 顶栏待处理数的刷新由 useDecide 负责
     const r = await approvals.decide(approval.id, decision, scope);
-    handled(r ? (decision === "approve" ? t("approved") : t("denied")) : null);
+    handled(approval.id, r ? (decision === "approve" ? t("approved") : t("denied")) : null);
   }
 
   async function decideChange(change: SkillChange, decision: "approve" | "reject") {
     const ok = await changes.decide(change.id, decision);
     handled(
+      change.id,
       ok ? (decision === "approve" ? t("skillChange.approved") : t("skillChange.rejected")) : null,
     );
   }
@@ -130,10 +138,10 @@ export default function InboxView({ orgId, initial }: { orgId: string; initial: 
     setRequestPending(decision);
     try {
       await decideOrgRequest(orgId, request.id, decision);
-      handled(decision === "approve" ? td("approved") : td("rejected"));
+      handled(request.id, decision === "approve" ? td("approved") : td("rejected"));
     } catch (e) {
       toast.error(errorMessage(e));
-      handled(null);
+      handled(request.id, null);
     } finally {
       setRequestPending(undefined);
     }
@@ -167,7 +175,9 @@ export default function InboxView({ orgId, initial }: { orgId: string; initial: 
               orgId,
               change: active.skillChange,
               initial:
-                initial.firstChange?.id === active.skillChange.id ? initial.firstChange : undefined,
+                initial.firstChange?.id === active.skillChange.id
+                  ? initial.firstChange.detail
+                  : undefined,
               pending: changes.pending,
               onDecide: (d) => void decideChange(active.skillChange, d),
               t,
@@ -216,6 +226,14 @@ export default function InboxView({ orgId, initial }: { orgId: string; initial: 
     </InboxPage>
   );
 }
+
+/** The id of what an item asks to decide (the approval, the skill change, the request). */
+const subjectOf = (i: InboxItem): string =>
+  i.type === "tool_approval"
+    ? i.approval.id
+    : i.type === "skill_change"
+      ? i.skillChange.id
+      : i.request.id;
 
 /**
  * 列表里的一行标题：工具审批为「连接器 · 工具」，技能变更为「技能变更 · 名称」，目录申请为「目录申请 · 条目」。
@@ -345,7 +363,7 @@ function skillChangeDetail({
 }: {
   orgId: string;
   change: SkillChange;
-  initial: SkillChangeDetail | undefined;
+  initial: SkillChangeDetail | null | undefined;
   pending: "approve" | "reject" | undefined;
   onDecide(decision: "approve" | "reject"): void;
   t: Translate;

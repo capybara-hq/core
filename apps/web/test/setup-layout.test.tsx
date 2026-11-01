@@ -85,13 +85,13 @@ describe("setup layout scope", () => {
     expect(setupPage()).toBeNull();
   });
 
-  it("a workspace route that is not a step redirects to / while not ready", async () => {
+  it("a workspace route that is not a step never shows its page or the shell while not ready", () => {
+    // The layout redirects it to / on the server (app-layout.test); the frame never navigates.
     resetNavigation("/connectors");
     renderFrame();
-    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
     expect(screen.queryByText("page body")).toBeNull();
-    // the setup home meanwhile, never the shell
     expect(setupPage()).not.toBeNull();
+    expect(router.replace).not.toHaveBeenCalled();
   });
 
   it("a step page (/settings/models) renders inside the setup frame; the sidebar leads back", () => {

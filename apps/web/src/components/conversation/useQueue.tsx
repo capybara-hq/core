@@ -30,8 +30,8 @@ export type QueueView = {
 
 /**
  * The conversation's queued messages (kernel queue routes, spec §5.7): the server's read
- * (`initial`, else read at mount), read again on `changed: queue` (`version`) and after each of
- * this page's own changes. The queue lives in PG, so a
+ * (`initial`; `null` when the kernel failed it: an empty queue until the next read), read again on
+ * `changed: queue` (`version`) and after each of this page's own changes. The queue lives in PG, so a
  * reload, another tab or another replica see the same list.
  */
 export function useQueue(
@@ -39,7 +39,7 @@ export function useQueue(
   conversationId: string,
   version: number,
   merge: (events: ConversationEvent[]) => void,
-  initial?: { items: QueueItem[]; paused: boolean; pauseReason?: QueuePauseReason } | null,
+  initial: { items: QueueItem[]; paused: boolean; pauseReason?: QueuePauseReason } | null,
 ): QueueView & {
   reload(): void;
   edit(id: string, text: string): Promise<boolean>;
@@ -55,7 +55,7 @@ export function useQueue(
     pauseReason?: QueuePauseReason;
   }>(initial ?? { items: [], paused: false });
   /** The `version` the server's read stands for: no read until it moves. */
-  const seeded = useRef<number | null>(initial != null ? version : null);
+  const seeded = useRef<number | null>(version);
   const reload = useCallback(() => {
     listQueue(orgId, conversationId).then(
       (r) =>

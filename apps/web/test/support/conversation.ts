@@ -1,5 +1,6 @@
 /** Shared helpers for the conversation page tests: events, a fake EventSource, routes. */
 import ChatPage from "../../src/app/(app)/chat/[conversationId]/page";
+import { DEFAULT_LIMITS } from "../../src/lib/attachments";
 import type { ConversationEvent } from "../../src/lib/conversations";
 import { lastStubRoutes } from "./api";
 import { renderRoute } from "./server";
@@ -142,20 +143,44 @@ export const MODELS = {
   ],
 };
 
-/** The kernel's attachment limits (its defaults). */
-export const LIMITS = {
-  types: ["image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf", "text/plain"],
-  maxBytes: 20_971_520,
-  imageMaxBytes: 5_242_880,
-  maxPerMessage: 10,
-  requestMediaBytes: 20_971_520,
-  available: true,
-};
+/** The kernel's attachment limits (its defaults, as the web app copies them). */
+export const LIMITS = { ...DEFAULT_LIMITS };
+
+/**
+ * What the conversation page's server snapshot reads besides the conversation and its events,
+ * answered empty (an org with nothing else): tests override what they are about.
+ */
+export function snapshotDefaults(id = "c1"): Parameters<typeof renderRoute>[1] {
+  const ok = (body: unknown) => () =>
+    new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
+  const base = `/api/v1/orgs/o1/conversations/${id}`;
+  return {
+    "GET /api/v1/orgs/o1/agents": ok(AGENTS),
+    "GET /api/v1/orgs/o1/models": ok(MODELS),
+    [`GET ${base}/queue`]: ok({ items: [], paused: false }),
+    [`GET ${base}/tools`]: ok({ tools: [] }),
+    [`GET ${base}/files`]: ok({ files: [], next: null }),
+    [`GET ${base}/subagents`]: ok({ subagents: [], next: null }),
+    [`GET ${base}/usage`]: ok({
+      usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    }),
+    [`GET ${base}/sandbox`]: () =>
+      new Response(JSON.stringify({ error: { code: "sandbox.not_found", message: "x" } }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      }),
+    "GET /api/v1/orgs/o1/ui/contributions": ok({ items: [] }),
+    "GET /api/v1/orgs/o1/connectors": ok({ connectors: [] }),
+    "GET /api/v1/orgs/o1/attachments/limits": ok(LIMITS),
+    "GET /api/v1/orgs/o1/agents/ag1/invocable-skills": ok({ skills: [] }),
+    "GET /api/v1/orgs/o1/agents/ag2/invocable-skills": ok({ skills: [] }),
+  };
+}
 
 /**
  * `/chat/<id>` as the app renders it: the page reads its snapshot on the server from the routes of
- * the latest `stubApi` call (the browser's), then the view mounts with it. Pass `routes` to serve
- * the server from others.
+ * the latest `stubApi` call (the browser's) over {@link snapshotDefaults}, then the view mounts
+ * with it. Pass `routes` to serve the server from others.
  */
 export function renderChatRoute(
   opts: Parameters<typeof renderRoute>[2] & {
@@ -164,8 +189,12 @@ export function renderChatRoute(
   } = {},
 ) {
   const { id = "c1", routes = lastStubRoutes(), ...rest } = opts;
-  return renderRoute(() => ChatPage({ params: Promise.resolve({ conversationId: id }) }), routes, {
-    locale: "en",
-    ...rest,
-  });
+  return renderRoute(
+    () => ChatPage({ params: Promise.resolve({ conversationId: id }) }),
+    { ...snapshotDefaults(id), ...routes },
+    {
+      locale: "en",
+      ...rest,
+    },
+  );
 }

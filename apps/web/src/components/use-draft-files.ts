@@ -63,8 +63,11 @@ export function useDraftFiles(orgId: string, initialLimits?: AttachmentLimits | 
   const [limits, setLimits] = useState<AttachmentLimits>(() =>
     initialLimits ? { ...DEFAULT_LIMITS, ...initialLimits } : DEFAULT_LIMITS,
   );
-  /** The server read the limits for the first paint: nothing to fetch. */
-  const seeded = useRef(initialLimits != null);
+  /**
+   * The server read the limits for the first paint (`null`: the kernel failed them, the defaults
+   * apply): nothing to fetch. Read here only without a server read at all.
+   */
+  const seeded = useRef(initialLimits !== undefined);
   const [files, setFilesState] = useState<DraftFile[]>([]);
   /** 与 `files` 同步的最新值：加文件时据此算剩余名额（state 在同一轮事件里还是旧值）。 */
   const filesRef = useRef<DraftFile[]>([]);

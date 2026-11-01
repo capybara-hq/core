@@ -10,6 +10,7 @@ import {
   CONV,
   ev,
   FakeEventSource,
+  LIMITS,
   MODELS,
   renderChatRoute,
   runStarted,
@@ -609,6 +610,7 @@ describe("a new conversation", () => {
       [`GET ${ORG}/agents`]: () => json(200, AGENTS),
       [`GET ${ORG}/models`]: () => json(200, MODELS),
       [`GET ${ORG}/conversations/groups`]: () => json(200, { groups: [] }),
+      [`GET ${ORG}/attachments/limits`]: () => json(200, LIMITS),
     });
     expect(input()).toHaveProperty("disabled", false);
     const user = userEvent.setup();

@@ -35,8 +35,9 @@ const dispatchedAny = (events: readonly ConversationEvent[]) =>
  * The conversation's sub-agents, newest first, read once a sub-agent was dispatched and again on
  * every `subagent_*` event, after a reconnect (`reconnect`), and when stream progress arrives for a
  * child the list shows as waiting or queued (it moved on: someone decided, or it got a slot).
- * `onLoad` gets each read (progress seeds), the server's too. Undefined before the first read or
- * without sub-agents. With `initial` (the server's read of the same log) the first read is skipped.
+ * `onLoad` gets each read (progress seeds), the server's too. `initial` is the server's read of
+ * the same log (`null`: none dispatched, or the kernel failed it: the rows keep what the log says
+ * until the next read); the list is never read at mount.
  */
 export function useSubagents(
   orgId: string,
@@ -44,8 +45,8 @@ export function useSubagents(
   events: readonly ConversationEvent[],
   progress: Readonly<Record<string, { step: number }>>,
   reconnect: number,
-  onLoad?: (views: SubagentView[]) => void,
-  initial?: SubagentView[] | null,
+  onLoad: ((views: SubagentView[]) => void) | undefined,
+  initial: SubagentView[] | null,
 ): { views: SubagentView[] | undefined; refresh(): void } {
   const [views, setViews] = useState<SubagentView[] | undefined>(initial ?? undefined);
   const [bump, setBump] = useState(0);
@@ -55,7 +56,7 @@ export function useSubagents(
   const load = useRef(onLoad);
   load.current = onLoad;
   /** The read the server's list stands for (`count/reconnect/bump`): skipped while current. */
-  const seeded = useRef<string | null>(initial != null ? `${count}/${reconnect}/0` : null);
+  const seeded = useRef<string | null>(`${count}/${reconnect}/0`);
   // The server's list seeds the stream progress once, as a read here would.
   // biome-ignore lint/correctness/useExhaustiveDependencies: only the server's first list
   useEffect(() => {
@@ -100,19 +101,19 @@ export function useSubagents(
 
 /**
  * The conversation's tokens with its sub-agents' (`GET …/usage`), read only once a sub-agent was
- * dispatched and again when one finishes (its usage is final then). Undefined otherwise. With
- * `initial` (the server's read of the same log) the first read is skipped.
+ * dispatched and again when one finishes (its usage is final then). Undefined otherwise. `initial`
+ * is the server's read of the same log (`null`: none dispatched or failed); never read at mount.
  */
 export function useUsageWithSubagents(
   orgId: string,
   conversationId: string,
   events: readonly ConversationEvent[],
-  initial?: ConversationUsage | null,
+  initial: ConversationUsage | null,
 ): ConversationUsage | undefined {
   const dispatched = useMemo(() => dispatchedAny(events), [events]);
   const ends = useMemo(() => events.filter((e) => e.type === "subagent_finished").length, [events]);
   const [usage, setUsage] = useState<ConversationUsage | undefined>(initial ?? undefined);
-  const seeded = useRef<number | null>(initial != null ? ends : null);
+  const seeded = useRef<number | null>(ends);
   useEffect(() => {
     if (!dispatched) return;
     // ssr-exempt: live updates after first paint (read again when a sub-agent finishes)

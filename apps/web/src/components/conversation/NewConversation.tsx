@@ -11,9 +11,9 @@ import { useErrorMessage } from "../../lib/use-error-message";
 import { FormError } from "../form-error";
 import { useSession } from "../shell/session";
 import { ComposerBar, type ComposerMessage } from "./ComposerBar";
-import { useAgentList, useWho } from "./ConversationView";
+import { useWho } from "./ConversationView";
 import type { SendResult } from "./useConversation";
-import { useModels, useSelection } from "./useSelection";
+import { useSelection } from "./useSelection";
 
 /** What `/chat` reads on the server for the first paint. */
 export interface NewConversationData {
@@ -21,7 +21,7 @@ export interface NewConversationData {
   providers: ProviderModels[];
   /** The agent most recently talked to (the first sidebar group), or null. */
   recent: string | null;
-  /** The attachment limits; null when the server could not read them (read after mount). */
+  /** The attachment limits; null when the kernel failed them (the defaults apply). */
   limits: AttachmentLimits | null;
 }
 
@@ -42,7 +42,7 @@ export function useNewConversationPage(
   const errorMessage = useErrorMessage();
   const session = useSession();
   const who = useWho();
-  const agents = useAgentList(orgId, initial.agents);
+  const agents = initial.agents;
   const recent = initial.recent;
   const [picked, setPicked] = useState<string | null>(null);
   const [error, setError] = useState<string>();
@@ -53,7 +53,7 @@ export function useNewConversationPage(
     usable.find((a) => a.id === preferredAgent) ??
     usable.find((a) => a.id === recent) ??
     usable[0];
-  const providers = useModels(orgId, initial.providers);
+  const providers = initial.providers;
   const selection = useSelection(providers, agent, undefined);
 
   const send = async (m: ComposerMessage): Promise<SendResult> => {

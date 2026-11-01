@@ -2,7 +2,7 @@ import { NoAccess } from "../../../components/RoleGate";
 import { listAgents, listModels, setupReady } from "../../../lib/agents";
 import { getAttachmentLimits } from "../../../lib/attachments";
 import { listConversationGroups } from "../../../lib/conversations";
-import { optional, read, soft } from "../../../lib/server/page";
+import { optional, read, section } from "../../../lib/server/page";
 import { orgReadiness, workspace } from "../../../lib/server/session";
 import NewChatView from "./view";
 
@@ -26,7 +26,7 @@ export default async function NewChatPage({
     read(listAgents(orgId)),
     read(listModels(orgId)),
     optional(listConversationGroups(orgId, { perGroup: 1, limit: 1 })),
-    soft(getAttachmentLimits(orgId)),
+    section(getAttachmentLimits(orgId)),
   ]);
   return (
     <NewChatView

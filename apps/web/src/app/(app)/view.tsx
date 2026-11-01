@@ -121,12 +121,18 @@ function DailyOverview({
   const errorMessage = useErrorMessage();
   const { me } = useSession();
   const [approving, setApproving] = useState<string>();
+  // Approvals decided here: hidden at once, before the server's new overview arrives.
+  const [decided, setDecided] = useState<ReadonlySet<string>>(new Set());
+  const inbox = data.inbox.filter(
+    (i) => !(i.type === "tool_approval" && decided.has(i.approval.id)),
+  );
 
   async function approve(id: string) {
     setApproving(id);
     try {
       await decideApproval(orgId, id, { decision: "approve", scope: "once" });
       toast.success(t("inbox.approved"));
+      setDecided((s) => new Set(s).add(id));
       onChanged();
     } catch (e) {
       toast.error(errorMessage(e));
@@ -136,9 +142,9 @@ function DailyOverview({
   }
 
   const waiting = new Set(
-    data.inbox.flatMap((i) => (i.type === "tool_approval" ? [i.approval.conversationId] : [])),
+    inbox.flatMap((i) => (i.type === "tool_approval" ? [i.approval.conversationId] : [])),
   );
-  const inboxRows: ItemListRow[] = data.inbox.slice(0, 5).map((item): ItemListRow => {
+  const inboxRows: ItemListRow[] = inbox.slice(0, 5).map((item): ItemListRow => {
     const when = ago(item.createdAt, locale);
     if (item.type === "tool_approval") {
       const a = item.approval;
@@ -219,7 +225,7 @@ function DailyOverview({
       ),
     }));
 
-  const pending = data.inbox.length;
+  const pending = inbox.length;
   return (
     <OverviewPage
       header={{

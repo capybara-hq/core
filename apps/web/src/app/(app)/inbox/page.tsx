@@ -18,7 +18,11 @@ export default async function InboxPage() {
   const first = inbox.items[0];
   const firstChange =
     first?.type === "skill_change"
-      ? ((await optional(getSkillChange(orgId, first.skillChange.id)))?.skillChange ?? null)
+      ? {
+          id: first.skillChange.id,
+          detail:
+            (await optional(getSkillChange(orgId, first.skillChange.id)))?.skillChange ?? null,
+        }
       : null;
   return <InboxView orgId={orgId} initial={{ inbox, firstChange }} />;
 }

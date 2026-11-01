@@ -16,6 +16,7 @@ import {
   MODELS,
   renderChatRoute,
   runStarted,
+  snapshotDefaults,
   userMsg,
 } from "./support/conversation";
 import { resetNavigation, router } from "./support/navigation";
@@ -691,6 +692,77 @@ describe("the conversation page's server gate", () => {
   });
 });
 
+describe("server-decided failures (ruling R5)", () => {
+  const failed = () => json(500, { error: { code: "internal", message: "x" } });
+
+  it("a secondary read the kernel fails draws its section's error state; the browser reads nothing", async () => {
+    const calls = api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${BASE}/sandbox`]: failed,
+      [`GET ${BASE}/files`]: failed,
+      [`GET ${BASE}/queue`]: failed,
+      "GET /api/v1/orgs/o1/ui/contributions": failed,
+      "GET /api/v1/orgs/o1/connectors": () =>
+        json(403, { error: { code: "forbidden", message: "x" } }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#properties");
+    await renderChat();
+    const props = await screen.findByRole("complementary", { name: "Properties" });
+    expect(within(props).getByText(new RegExp(en.chatPanel.sandboxFailed))).toBeTruthy();
+    expect(screen.getByText("hi")).toBeTruthy();
+    expect(calls).toEqual([]);
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("anything that is not a kernel refusal or failure propagates (a fetch bug, a mapper bug)", async () => {
+    stubApi({});
+    await expect(
+      renderChatRoute({
+        routes: {
+          [`GET ${BASE}`]: () => json(200, CONV()),
+          [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+          [`GET ${BASE}/files`]: () => {
+            throw new TypeError("boom");
+          },
+        },
+      }),
+    ).rejects.toThrow(TypeError);
+    // a member list without members: mapping it is a TypeError, not a missing section
+    await expect(
+      renderChatRoute({
+        routes: {
+          [`GET ${BASE}`]: () => json(200, CONV()),
+          [`GET ${BASE}/events`]: () =>
+            json(200, {
+              events: [
+                userMsg(1, "hi"),
+                runStarted(2),
+                ev(3, "run_aborted", { byAccountId: "acc-bo", reason: "user" }),
+              ],
+            }),
+          "GET /api/v1/orgs/o1/members": () => json(200, { members: null }),
+        },
+      }),
+    ).rejects.toThrow(TypeError);
+  });
+});
+
+describe("the first open after the server's snapshot (live catch-up)", () => {
+  it("reads again what lives outside the log: the queue, the files, the extension list, the row", async () => {
+    const calls = api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+    });
+    await renderChat();
+    expect(calls).toEqual([]);
+    act(() => FakeEventSource.instances[0]?.emit("open"));
+    await vi.waitFor(() =>
+      expect(new Set(calls.map((c) => c.url.split("?")[0]))).toEqual(
+        new Set([BASE, `${BASE}/queue`, `${BASE}/files`, "/api/v1/orgs/o1/ui/contributions"]),
+      ),
+    );
+  });
+});
+
 describe("switching conversations", () => {
   it("never shows the previous conversation's queue or draft under the new id", async () => {
     stubApi({
@@ -734,7 +806,7 @@ describe("switching conversations", () => {
     // the navigation to c2: the server renders its page, the same view gets new props
     const { element } = await onServer(
       () => ChatPage({ params: Promise.resolve({ conversationId: "c2" }) }),
-      lastStubRoutes(),
+      { ...snapshotDefaults("c2"), ...lastStubRoutes() },
     );
     r.rerender(pageElement(element, { locale: "en" }));
     expect(await screen.findByText("in two")).toBeTruthy();
@@ -848,7 +920,7 @@ describe("the conversation page in the app frame", () => {
     });
     const { element } = await onServer(
       () => ChatPage({ params: Promise.resolve({ conversationId: "c1" }) }),
-      lastStubRoutes(),
+      { ...snapshotDefaults("c1"), ...lastStubRoutes() },
       { me: twoOrgs("o1") },
     );
     renderFrame(shellOf(twoOrgs("o1")), element, {

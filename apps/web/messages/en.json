@@ -77,8 +77,6 @@
       "submit": "Create",
       "cancel": "Cancel"
     },
-    "loadFailed": "The overview didn't load.",
-    "retry": "Retry",
     "orgSettings": "Organization settings",
     "skills": "Skills",
     "connectors": "Connectors",
