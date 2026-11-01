@@ -3,12 +3,7 @@
 import { Button, Field, Input, Stack, Text } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { type FormEvent, useEffect, useState } from "react";
-import {
-  type AuthSource,
-  type LoginErrorCode,
-  listAuthSources,
-  ssoStartUrl,
-} from "../lib/auth-sources";
+import { type AuthSource, type LoginErrorCode, ssoStartUrl } from "../lib/auth-sources";
 import { navigateBrowser } from "../lib/browser";
 import { secureCookiesBlocked } from "../lib/secure-origin";
 import { login } from "../lib/session";
@@ -97,26 +92,13 @@ export function LoginErrorNotice({ code }: { code: LoginErrorCode }) {
 }
 
 /**
- * 第三方登录按钮：按 `GET /api/v1/auth/sources` 渲染，点击整页跳到内核的发起地址（带回跳页面）。
- * 没有可用的身份源（或读取失败）时不渲染任何东西。
+ * The third-party sign-in buttons for the sign-in sources (`GET /api/v1/auth/sources`, read by the
+ * page on the server); a click navigates the whole page to the kernel's start URL (with the return
+ * page). Renders nothing without a source (or when they could not be read).
  */
-export function SsoButtons({ returnTo }: { returnTo: string }) {
+export function SsoButtons({ returnTo, sources }: { returnTo: string; sources: AuthSource[] }) {
   const t = useTranslations("login");
   const locale = useLocale();
-  const [sources, setSources] = useState<AuthSource[]>([]);
-  useEffect(() => {
-    let disposed = false;
-    listAuthSources().then(
-      (r) => {
-        if (!disposed) setSources(r.sources);
-      },
-      // 读取失败不影响本地登录
-      () => {},
-    );
-    return () => {
-      disposed = true;
-    };
-  }, []);
   if (sources.length === 0) return null;
   return (
     <Stack gap={8}>

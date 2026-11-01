@@ -360,9 +360,16 @@ describe("(app) 页面模板", () => {
 });
 
 describe("(auth) 页面模板", () => {
-  it("登录页：AuthPage；未初始化时转到初始化向导", async () => {
-    stubApi({ "GET /api/v1/setup": () => json(200, { needsSetup: true }) });
-    renderPage(<LoginPage />, { locale: "zh" });
+  it("the sign-in page: AuthPage, rendered on the server (the layout sends setup to /setup)", async () => {
+    expectNoFirstPaintFetch();
+    await renderRoute(
+      () => LoginPage({ searchParams: Promise.resolve({}) }),
+      {
+        "GET /api/v1/me": () => json(401, { error: { code: "auth.required", message: "x" } }),
+        "GET /api/v1/auth/sources": () => json(200, { sources: [] }),
+      },
+      { locale: "zh" },
+    );
     expect(template("AuthPage")).not.toBeNull();
     expect(screen.getByRole("heading", { level: 1, name: zh.login.title })).toBeTruthy();
     // the auth pages switch language and theme too: a language dropdown and the theme radio
@@ -375,7 +382,6 @@ describe("(auth) 页面模板", () => {
       zh.common.localeName.en,
     ]);
     expect(screen.getByRole("radiogroup", { name: zh.common.theme })).toBeTruthy();
-    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/setup"));
   });
 
   it("初始化页：AuthPage + 表单；已初始化时提示前往登录", async () => {

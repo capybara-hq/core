@@ -398,13 +398,8 @@ export interface SsrPending {
   path: string;
   reason: string;
 }
-const PENDING_REASON = "not migrated yet (web SSR plan Tasks 7-11)";
-export const SSR_PENDING: readonly SsrPending[] = [
-  { path: "app/(auth)/bind/[token]/page.tsx", reason: PENDING_REASON },
-  { path: "app/(auth)/invite/[token]/page.tsx", reason: PENDING_REASON },
-  { path: "app/(auth)/login/page.tsx", reason: PENDING_REASON },
-  { path: "app/(auth)/setup/page.tsx", reason: PENDING_REASON },
-];
+/** Empty since the web SSR plan's last batch (Task 11): every page is server-first. */
+export const SSR_PENDING: readonly SsrPending[] = [];
 
 const SSR_RULES = {
   loading: "web-ssr-loading-file",

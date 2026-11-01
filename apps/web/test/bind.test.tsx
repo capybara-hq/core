@@ -4,12 +4,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import BindPage from "../src/app/(auth)/bind/[token]/page";
-import { json, stubApi } from "./support/api";
+import { json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { renderPage } from "./support/render";
+import { renderRoute } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
-vi.mock("next/navigation", () => ({ useParams: () => ({ token: "cap_bind_tok" }) }));
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
+
+const bindPage = () => BindPage({ params: Promise.resolve({ token: "cap_bind_tok" }) });
 
 const msgs = { zh, en } as const;
 const PATH = "/api/v1/bind/cap_bind_tok";
@@ -37,7 +46,7 @@ describe("绑定确认页（AuthPage）", () => {
         [`GET ${PATH}`]: () => json(200, { binding: BINDING }),
         [`POST ${PATH}`]: () => json(200, { binding: BINDING }),
       });
-      const { container } = renderPage(<BindPage />, { locale });
+      const { container } = await renderRoute(bindPage, lastStubRoutes(), { locale });
       expect(container.querySelector('[data-template="AuthPage"]')).not.toBeNull();
       expect(await screen.findByText("Alice Wong")).toBeTruthy();
       expect(screen.getByText("fake-im")).toBeTruthy();
@@ -57,21 +66,16 @@ describe("绑定确认页（AuthPage）", () => {
 
   it("取消：不绑定，回首页", async () => {
     const calls = stubApi({ [`GET ${PATH}`]: () => json(200, { binding: BINDING }) });
-    renderPage(<BindPage />);
+    await renderRoute(bindPage, lastStubRoutes());
     await userEvent.setup().click(await screen.findByRole("button", { name: en.bind.cancel }));
     expect(router.replace).toHaveBeenCalledWith("/");
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
   });
 
-  it("未登录：去登录页并带回本页", async () => {
-    stubApi({
-      [`GET ${PATH}`]: unauthenticated,
-      "POST /api/v1/auth/refresh": () =>
-        json(401, { error: { code: "auth.refresh_invalid", message: "x" } }),
-    });
-    renderPage(<BindPage />);
-    await vi.waitFor(() =>
-      expect(router.replace).toHaveBeenCalledWith("/login?returnTo=%2Fbind%2Fcap_bind_tok"),
+  it("signed out: to sign-in and back here, decided on the server", async () => {
+    stubApi({ [`GET ${PATH}`]: unauthenticated });
+    await expect(renderRoute(bindPage, lastStubRoutes())).rejects.toThrow(
+      "REDIRECT /login?returnTo=%2Fbind%2Fcap_bind_tok",
     );
   });
 
@@ -80,7 +84,7 @@ describe("绑定确认页（AuthPage）", () => {
     stubApi({
       [`GET ${PATH}`]: () => json(404, { error: { code: "bind.invalid", message: "x" } }),
     });
-    renderPage(<BindPage />, { locale });
+    await renderRoute(bindPage, lastStubRoutes(), { locale });
     expect(await screen.findByRole("alert")).toHaveProperty(
       "textContent",
       `${m.errors.bind.invalid}`,
@@ -94,7 +98,7 @@ describe("绑定确认页（AuthPage）", () => {
       [`GET ${PATH}`]: () => json(200, { binding: BINDING }),
       [`POST ${PATH}`]: () => json(409, { error: { code: "identity.taken", message: "x" } }),
     });
-    renderPage(<BindPage />);
+    await renderRoute(bindPage, lastStubRoutes());
     await userEvent.setup().click(await screen.findByRole("button", { name: en.bind.confirm }));
     expect(await screen.findByRole("alert")).toHaveProperty(
       "textContent",

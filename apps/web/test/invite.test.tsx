@@ -4,12 +4,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import InvitePage from "../src/app/(auth)/invite/[token]/page";
-import { bodyOf, json, noContent, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { ME, renderPage } from "./support/render";
+import { ME } from "./support/render";
+import { renderRoute } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
-vi.mock("next/navigation", () => ({ useParams: () => ({ token: "cap_inv_tok" }) }));
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
+
+const invitePage = () => InvitePage({ params: Promise.resolve({ token: "cap_inv_tok" }) });
 
 const msgs = { zh, en } as const;
 const PREVIEW = "/api/v1/invitations/cap_inv_tok";
@@ -39,7 +49,7 @@ describe("接受邀请页（AuthPage）", () => {
         [`POST ${ACCEPT}`]: () => json(200, { account: { id: "a1" }, orgId: "o9", role: "guest" }),
         "PUT /api/v1/me/current-org": () => noContent(),
       });
-      const { container } = renderPage(<InvitePage />, { locale });
+      const { container } = await renderRoute(invitePage, lastStubRoutes(), { locale });
       expect(container.querySelector('[data-template="AuthPage"]')).not.toBeNull();
       expect(await screen.findByText(m.invite.subtitle.replace("{org}", "Initech"))).toBeTruthy();
       expect(screen.getByText(m.members.roles.guest)).toBeTruthy();
@@ -61,7 +71,7 @@ describe("接受邀请页（AuthPage）", () => {
       "GET /api/v1/me": unauthenticated,
       "POST /api/v1/auth/refresh": refreshFails,
     });
-    renderPage(<InvitePage />);
+    await renderRoute(invitePage, lastStubRoutes());
     expect(await screen.findByText(m.signInHint)).toBeTruthy();
     await userEvent.setup().click(screen.getByRole("button", { name: m.signIn }));
     expect(router.push).toHaveBeenCalledWith(
@@ -78,7 +88,7 @@ describe("接受邀请页（AuthPage）", () => {
       [`POST ${ACCEPT}`]: () => json(200, { account: { id: "a7" }, orgId: "o9", role: "guest" }),
       "PUT /api/v1/me/current-org": () => noContent(),
     });
-    renderPage(<InvitePage />);
+    await renderRoute(invitePage, lastStubRoutes());
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: m.signupToggle }));
     await user.type(screen.getByLabelText(m.loginLabel), "carol");
@@ -102,7 +112,7 @@ describe("接受邀请页（AuthPage）", () => {
       "POST /api/v1/auth/refresh": refreshFails,
       [`POST ${ACCEPT}`]: () => json(409, { error: { code: "account.login_taken", message: "x" } }),
     });
-    renderPage(<InvitePage />);
+    await renderRoute(invitePage, lastStubRoutes());
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: m.signupToggle }));
     await user.type(screen.getByLabelText(m.loginLabel), "admin");
@@ -122,7 +132,7 @@ describe("接受邀请页（AuthPage）", () => {
       [`GET ${PREVIEW}`]: () => json(status, { error: { code, message: "x" } }),
       "GET /api/v1/me": () => json(200, ME),
     });
-    renderPage(<InvitePage />);
+    await renderRoute(invitePage, lastStubRoutes());
     expect(await screen.findByText(en.invite.invalidTitle)).toBeTruthy();
     const [group, key] = code.split(".") as ["invitation", "invalid" | "expired" | "used"];
     expect(screen.getByText(`${en.errors[group][key]}`)).toBeTruthy();
