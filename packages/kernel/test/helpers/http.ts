@@ -47,6 +47,9 @@ export function setCookies(res: LightMyRequestResponse): SetCookie[] {
 
 export function cookieJar(initial: Record<string, string> = {}): CookieJar {
   const m = new Map(Object.entries(initial));
+  // Path each stored cookie was set with: a removal for another Path (the legacy-path clear next
+  // to a fresh Path=/ cookie) must not delete it.
+  const paths = new Map<string, string>();
   const jar: CookieJar = {
     store(res) {
       for (const c of setCookies(res)) {
@@ -55,8 +58,16 @@ export function cookieJar(initial: Record<string, string> = {}): CookieJar {
           c.value === "" ||
           c.attrs["max-age"] === "0" ||
           (!Number.isNaN(expires) && expires <= Date.now());
-        if (removed) m.delete(c.name);
-        else m.set(c.name, c.value);
+        const path = typeof c.attrs.path === "string" ? c.attrs.path : "/";
+        if (removed) {
+          const have = paths.get(c.name);
+          if (have !== undefined && have !== path) continue;
+          m.delete(c.name);
+          paths.delete(c.name);
+        } else {
+          m.set(c.name, c.value);
+          paths.set(c.name, path);
+        }
       }
     },
     get: (name) => m.get(name),

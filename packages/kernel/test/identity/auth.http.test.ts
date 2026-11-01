@@ -89,7 +89,7 @@ describe("POST /api/v1/auth/login", () => {
     expect((res.json() as { account: Account }).account.id).toBe(alice.id);
     const cs = setCookies(res);
     const at = cs.find((c) => c.name === "cap_at");
-    const rt = cs.find((c) => c.name === "cap_rt");
+    const rt = cs.find((c) => c.name === "cap_rt" && c.attrs.path === "/");
     expect(at).toBeDefined();
     expect(rt).toBeDefined();
     for (const c of [at, rt]) {
@@ -100,7 +100,10 @@ describe("POST /api/v1/auth/login", () => {
     expect(at?.attrs.path).toBe("/");
     expect(String(at?.attrs.samesite).toLowerCase()).toBe("lax");
     expect(at?.attrs["max-age"]).toBe("900");
-    expect(rt?.attrs.path).toBe("/api/v1/auth");
+    expect(rt?.attrs.path).toBe("/");
+    const legacy = cs.find((c) => c.name === "cap_rt" && c.attrs.path === "/api/v1/auth");
+    expect(legacy?.value).toBe("");
+    expect(rt?.value).not.toBe("");
     expect(String(rt?.attrs.samesite).toLowerCase()).toBe("strict");
     expect(rt?.attrs["max-age"]).toBe(String(30 * 86400));
   });
@@ -306,7 +309,13 @@ describe("refresh / logout / 改密码 / 停用", () => {
       setCookies(res)
         .map((c) => c.name)
         .sort(),
-    ).toEqual(["cap_at", "cap_rt"]);
+    ).toEqual(["cap_at", "cap_rt", "cap_rt"]);
+    expect(
+      setCookies(res)
+        .filter((c) => c.name === "cap_rt")
+        .map((c) => c.attrs.path)
+        .sort(),
+    ).toEqual(["/", "/api/v1/auth"]);
     const replay = await asUser(k.http, old)({ method: "POST", url: "/api/v1/auth/refresh" });
     expect(replay.statusCode).toBe(401);
     expect(errCode(replay)).toBe("auth.refresh_race");
@@ -770,11 +779,42 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
     const res = await asUser(k.http, jar)({ method: "POST", url: "/api/v1/auth/logout" });
     const cs = setCookies(res);
     const at = cs.find((c) => c.name === "cap_at");
-    const rt = cs.find((c) => c.name === "cap_rt");
+    const rts = cs.filter((c) => c.name === "cap_rt");
     expect(at?.value).toBe("");
-    expect(rt?.value).toBe("");
     expect(at?.attrs.path).toBe("/");
-    expect(rt?.attrs.path).toBe("/api/v1/auth");
+    expect(rts.map((c) => c.attrs.path).sort()).toEqual(["/", "/api/v1/auth"]);
+    expect(rts.every((c) => c.value === "")).toBe(true);
+  });
+
+  it("refresh：cookie 头带两个 cap_rt（旧的在前、有效的在后）→ 200", async () => {
+    const jar = cookieJar();
+    await login(jar);
+    const good = jar.get("cap_rt") as string;
+    const res = await k.http.inject({
+      method: "POST",
+      url: "/api/v1/auth/refresh",
+      headers: {
+        cookie: `cap_rt=cap_rt_stale; cap_rt=${encodeURIComponent(good)}`,
+        "x-capybara-csrf": "1",
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { account: Account }).account.id).toBe(alice.id);
+  });
+
+  it("refresh：两个 cap_rt 都无效 → 401 auth.refresh_invalid 并清两个 Path", async () => {
+    const res = await k.http.inject({
+      method: "POST",
+      url: "/api/v1/auth/refresh",
+      headers: { cookie: "cap_rt=cap_rt_a; cap_rt=cap_rt_b", "x-capybara-csrf": "1" },
+    });
+    expect(errCode(res)).toBe("auth.refresh_invalid");
+    expect(
+      setCookies(res)
+        .filter((c) => c.name === "cap_rt")
+        .map((c) => c.attrs.path)
+        .sort(),
+    ).toEqual(["/", "/api/v1/auth"]);
   });
 
   it("PG 断开时访问 @Public 路由并携带 Cookie → 500（不是被当作匿名放行）", async () => {

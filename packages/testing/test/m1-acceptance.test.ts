@@ -33,9 +33,10 @@ async function harness(): Promise<Harness> {
   return h;
 }
 
-/** 简单 Cookie 罐：只记 name=value，不区分 Path；空值 / `Max-Age=0` / 已过期视为删除。 */
+/** 简单 Cookie 罐：记 name=value 与 Path（移除只认同 Path 的）；空值 / `Max-Age=0` / 已过期视为删除。 */
 class Jar {
   readonly cookies = new Map<string, string>();
+  private readonly paths = new Map<string, string>();
 
   store(res: Response): void {
     for (const raw of res.headers.getSetCookie()) {
@@ -49,8 +50,17 @@ class Jar {
         value === "" ||
         lower.includes("max-age=0") ||
         (expires !== undefined && Date.parse(expires.slice(8)) <= Date.now());
-      if (removed) this.cookies.delete(name);
-      else this.cookies.set(name, value);
+      const path = lower.find((a) => a.startsWith("path="))?.slice(5) ?? "/";
+      if (removed) {
+        // a removal for another Path (the legacy-path clear) must not delete the live cookie
+        const have = this.paths.get(name);
+        if (have !== undefined && have !== path) continue;
+        this.cookies.delete(name);
+        this.paths.delete(name);
+      } else {
+        this.cookies.set(name, value);
+        this.paths.set(name, path);
+      }
     }
   }
 
@@ -63,6 +73,7 @@ class Jar {
   clone(): Jar {
     const j = new Jar();
     for (const [k, v] of this.cookies) j.cookies.set(k, v);
+    for (const [k, v] of this.paths) j.paths.set(k, v);
     return j;
   }
 }

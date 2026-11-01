@@ -11,10 +11,11 @@ import {
   ACCESS_COOKIE,
   clearSessionCookies,
   REFRESH_COOKIE,
+  refreshCookieValues,
   setSessionCookies,
 } from "./cookies.js";
 import { Public } from "./principal.js";
-import { SessionService } from "./sessions.js";
+import { type IssuedSession, SessionService } from "./sessions.js";
 
 const LoginBodySchema = z.object({ login: z.string().max(256), password: z.string() });
 class LoginBody extends createZodDto(LoginBodySchema, "LoginBody") {}
@@ -84,9 +85,21 @@ export class AuthController {
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<{ account: Account }> {
     try {
-      const rt = req.cookies[REFRESH_COOKIE];
-      if (!rt) throw new ApiError("auth.refresh_invalid", "Refresh token is missing");
-      const session = await this.sessions.refresh(rt, clientMeta(req));
+      // the header may carry several cap_rt (legacy Path and Path=/): the first that verifies wins
+      const candidates = refreshCookieValues(req.headers.cookie);
+      if (candidates.length === 0) {
+        throw new ApiError("auth.refresh_invalid", "Refresh token is missing");
+      }
+      let session: IssuedSession | undefined;
+      for (const rt of candidates) {
+        try {
+          session = await this.sessions.refresh(rt, clientMeta(req));
+          break;
+        } catch (e) {
+          if (!(e instanceof ApiError && e.code === "auth.refresh_invalid")) throw e;
+        }
+      }
+      if (!session) throw new ApiError("auth.refresh_invalid", "Refresh token is invalid");
       const account = await this.accounts.get(session.accountId);
       if (!account) throw new ApiError("auth.refresh_invalid", "Refresh token is invalid");
       setSessionCookies(reply, session, this.config.get());
