@@ -10,15 +10,15 @@ import { navigateBrowser } from "../src/lib/browser";
 import type { Me } from "../src/lib/session";
 import { useLoad } from "../src/lib/use-load";
 import { renderNewAgent } from "./support/agents";
-import { bodyOf, json, noContent, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
-import { renderFrame, shellOf } from "./support/shell";
+import { expectNoFirstPaintFetch, onServer, renderRoute } from "./support/server";
+import { NOT_READY, renderFrame, shellOf } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("../src/lib/browser", () => ({ navigateBrowser: vi.fn() }));
 vi.mock("next/navigation", () => ({
-  useParams: () => ({ connectorId: "app1" }),
   redirect: (to: string) => {
     throw new Error(`REDIRECT ${to}`);
   },
@@ -26,6 +26,12 @@ vi.mock("next/navigation", () => ({
     throw new Error("NOT_FOUND");
   },
 }));
+type RenderOpts = Parameters<typeof renderRoute>[2];
+/** `/connectors` read on the server from the latest `stubApi` routes (the browser's). */
+const renderList = (opts: RenderOpts = {}) => renderRoute(() => AppsPage(), lastStubRoutes(), opts);
+const detailPage = () => ConnectorDetailPage({ params: Promise.resolve({ connectorId: "app1" }) });
+/** `/connectors/app1` read on the server from the latest `stubApi` routes. */
+const renderDetail = (opts: RenderOpts = {}) => renderRoute(detailPage, lastStubRoutes(), opts);
 
 const msgs = { zh, en } as const;
 const LOCALES = ["zh", "en"] as const;
@@ -82,7 +88,7 @@ describe("连接器列表（ListPage）", () => {
   it.each(LOCALES)("列出连接器；管理员有「添加连接器」，点击行进入详情（%s）", async (locale) => {
     const m = msgs[locale];
     stubApi({ "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [summary()] }) });
-    const { container } = renderPage(<AppsPage />, { locale });
+    const { container } = await renderList({ locale });
     expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
     const list = await screen.findByRole("list", { name: m.connectors.title });
     const row = within(list).getByRole("listitem");
@@ -98,7 +104,7 @@ describe("连接器列表（ListPage）", () => {
 
   it("普通成员看不到「添加连接器」；空状态", async () => {
     stubApi({ "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [] }) });
-    renderPage(<AppsPage />, { me: MEMBER });
+    await renderList({ me: MEMBER });
     expect(await screen.findByText(en.connectors.empty)).toBeTruthy();
     expect(screen.queryByRole("link", { name: en.connectors.new })).toBeNull();
     expect(screen.queryByRole("button", { name: en.connectors.new })).toBeNull();
@@ -120,7 +126,7 @@ describe("连接器详情（DetailPage）", () => {
         });
       },
     });
-    const { container } = renderPage(<ConnectorDetailPage />, { locale });
+    const { container } = await renderDetail({ locale });
     expect(container.querySelector('[data-template="DetailPage"]')).not.toBeNull();
     const policy = await screen.findByRole("combobox", {
       name: m.connectors.tools.policyLabel.replace("{tool}", "fixture__delete_item"),
@@ -168,7 +174,7 @@ describe("连接器详情（DetailPage）", () => {
           }),
         "PUT /api/v1/orgs/o1/connectors/app1/credentials/org": () => noContent(),
       });
-      renderPage(<ConnectorDetailPage />, { locale });
+      const { calls: server } = await renderDetail({ locale });
       const user = userEvent.setup();
       await user.click(
         await screen.findByRole("tab", { name: m.connectors.detail.tabs.credentials }),
@@ -180,7 +186,11 @@ describe("连接器详情（DetailPage）", () => {
       await user.click(screen.getByRole("button", { name: m.connectors.credential.save }));
       const put = calls.find((c) => c.method === "PUT");
       expect(bodyOf(put)).toEqual({ token: "tok" });
-      expect(calls.filter((c) => c.method === "GET")).toHaveLength(2);
+      // the page is read again on the server, not in the browser
+      expect(calls.filter((c) => c.method === "GET")).toHaveLength(0);
+      await vi.waitFor(() =>
+        expect(server.filter((c) => c.url === "/api/v1/orgs/o1/connectors/app1")).toHaveLength(2),
+      );
       // 保存成功后清空输入框（凭据值不留在页面上）
       await vi.waitFor(() =>
         expect(screen.getByLabelText(m.connectors.form.tokenLabel)).toHaveProperty("value", ""),
@@ -196,7 +206,7 @@ describe("连接器详情（DetailPage）", () => {
         "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }),
         "DELETE /api/v1/orgs/o1/connectors/app1": () => noContent(),
       });
-      renderPage(<ConnectorDetailPage />, { locale });
+      await renderDetail({ locale });
       const user = userEvent.setup();
       await user.click(await screen.findByRole("tab", { name: m.connectors.detail.tabs.settings }));
       await user.click(screen.getByRole("button", { name: m.connectors.settings.delete }));
@@ -212,7 +222,7 @@ describe("连接器详情（DetailPage）", () => {
 
   it("普通成员：工具策略只读，没有删除", async () => {
     stubApi({ "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }) });
-    renderPage(<ConnectorDetailPage />, { me: MEMBER });
+    await renderDetail({ me: MEMBER });
     expect(await screen.findByText(en.connectors.policy.allow)).toBeTruthy();
     expect(screen.queryByRole("combobox")).toBeNull();
     await userEvent
@@ -266,7 +276,7 @@ describe("连接器详情：复核页签（漂移检测）", () => {
         "POST /api/v1/orgs/o1/connectors/app1/tools/newOne/review": () =>
           json(409, { error: { code: "connector.tool_not_pending", message: "x" } }),
       });
-      renderPage(<ConnectorDetailPage />, { locale });
+      await renderDetail({ locale });
       const user = userEvent.setup();
       // 工具页签：待复核的工具显示状态而不是开关；不再提供的工具标注出来
       expect(await screen.findAllByText(`${m.connectors.tools.pendingReview}`)).toHaveLength(2);
@@ -373,7 +383,7 @@ describe("连接器详情：复核页签（漂移检测）", () => {
         "GET /api/v1/orgs/o1/connectors/app1": () =>
           json(200, { connector: detail({ tools: [legacy, rejected, broken] }) }),
       });
-      renderPage(<ConnectorDetailPage />, { locale });
+      await renderDetail({ locale });
       const user = userEvent.setup();
       expect(await screen.findByText(m.connectors.tools.neverReviewed)).toBeTruthy();
       expect(
@@ -430,7 +440,7 @@ describe("连接器详情：复核页签（漂移检测）", () => {
       "GET /api/v1/orgs/o1/connectors/app1": () =>
         json(200, { connector: detail({ tools: [added] }) }),
     });
-    renderPage(<ConnectorDetailPage />, { me: MEMBER });
+    await renderDetail({ me: MEMBER });
     const user = userEvent.setup();
     await user.click(
       await screen.findByRole("tab", { name: `${en.connectors.detail.tabs.review}1` }),
@@ -439,7 +449,7 @@ describe("连接器详情：复核页签（漂移检测）", () => {
     expect(screen.queryByRole("button", { name: en.connectors.review.approve })).toBeNull();
     cleanup();
     stubApi({ "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }) });
-    renderPage(<ConnectorDetailPage />);
+    await renderDetail();
     await user.click(await screen.findByRole("tab", { name: en.connectors.detail.tabs.review }));
     expect(screen.getByText(en.connectors.review.empty)).toBeTruthy();
   });
@@ -460,7 +470,7 @@ describe("连接器详情：OAuth 客户端轮换", () => {
           }),
         "PUT /api/v1/orgs/o1/connectors/app1/credentials/org": () => noContent(),
       });
-      renderPage(<ConnectorDetailPage />, { locale });
+      await renderDetail({ locale });
       const user = userEvent.setup();
       await user.click(
         await screen.findByRole("tab", { name: m.connectors.detail.tabs.credentials }),
@@ -507,7 +517,7 @@ describe("连接器详情：OAuth 客户端轮换", () => {
           }),
         "PUT /api/v1/orgs/o1/connectors/app1/credentials/org": () => noContent(),
       });
-      const { container } = renderPage(<ConnectorDetailPage />, { locale });
+      const { container } = await renderDetail({ locale });
       const user = userEvent.setup();
       await user.click(
         await screen.findByRole("tab", { name: m.connectors.detail.tabs.credentials }),
@@ -524,7 +534,7 @@ describe("连接器详情：OAuth 客户端轮换", () => {
 
       cleanup();
       client = "dcr";
-      renderPage(<ConnectorDetailPage />, { locale });
+      await renderDetail({ locale });
       await user.click(
         await screen.findByRole("tab", { name: m.connectors.detail.tabs.credentials }),
       );
@@ -673,7 +683,7 @@ describe("连接器详情的工具栏刷新", () => {
         throw new Error(`unexpected ${method} ${String(input)}`);
       }),
     );
-    renderPage(<ConnectorDetailPage />);
+    await renderDetail();
     const button = await screen.findByRole("button", { name: en.connectors.detail.refresh });
     await userEvent.setup().click(button);
     expect(button.getAttribute("aria-busy")).toBe("true");
@@ -728,7 +738,8 @@ describe("连接器详情切换组织", () => {
       "PUT /api/v1/me/current-org": () => noContent(),
       "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }),
     });
-    renderFrame(shellOf(me("o1")), <ConnectorDetailPage />, {
+    const { element } = await onServer(detailPage, lastStubRoutes(), { me: me("o1") });
+    renderFrame(shellOf(me("o1")), element, {
       locale: "en",
       version: "v0",
     });
@@ -744,5 +755,50 @@ describe("连接器详情切换组织", () => {
     // the old org's page stays until the new document replaces it
     expect(screen.getByRole("heading", { name: "Fixture" })).toBeTruthy();
     expect(calls.some((c) => c.url.includes("/orgs/o2/connectors"))).toBe(false);
+  });
+});
+
+describe("the connectors pages render on the server (web-SSR spec §6)", () => {
+  const GUEST = {
+    ...ME,
+    account: { ...ME.account, isEnterpriseAdmin: false },
+    memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "guest" }],
+  };
+  const routes = {
+    "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [summary()] }),
+    "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }),
+  };
+
+  it("/connectors: the list is the first paint, guests included", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRoute(() => AppsPage(), routes, { me: GUEST });
+    expect(within(screen.getByRole("list", { name: en.connectors.title })).getByText("Fixture"));
+    expect(browser).toEqual([]);
+  });
+
+  it("/connectors/<id>: the connector is the first paint, guests included", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRoute(detailPage, routes, { me: GUEST });
+    expect(screen.getByRole("heading", { level: 1, name: "Fixture" })).toBeTruthy();
+    expect(browser).toEqual([]);
+  });
+
+  it("/connectors/<id>: a connector the kernel does not find is the not-found page", async () => {
+    await expect(
+      renderRoute(detailPage, {
+        "GET /api/v1/orgs/o1/connectors/app1": () =>
+          json(404, { error: { code: "connector.not_found", message: "x" } }),
+      }),
+    ).rejects.toThrow("NOT_FOUND");
+  });
+
+  it.each([
+    ["/connectors", () => AppsPage()],
+    ["/connectors/<id>", detailPage],
+  ])("%s: no org renders nothing; setup redirects home", async (_path, page) => {
+    const none = await renderRoute(page, routes, { me: { ...ME, currentOrgId: null } });
+    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+    expect(document.body.textContent).toBe("");
+    await expect(renderRoute(page, routes, { readiness: NOT_READY })).rejects.toThrow("REDIRECT /");
   });
 });

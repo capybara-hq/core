@@ -5,7 +5,6 @@ import AdminCatalogPage from "../src/app/(app)/admin/catalog/page";
 import AdminExtensionsPage from "../src/app/(app)/admin/extensions/page";
 import CatalogPage from "../src/app/(app)/catalog/page";
 import ChannelsPage from "../src/app/(app)/channels/page";
-import ConnectorsPage from "../src/app/(app)/connectors/page";
 import EvalsPage from "../src/app/(app)/evals/page";
 import { resetNavigation } from "./support/navigation";
 import { renderPage } from "./support/render";
@@ -29,7 +28,6 @@ afterEach(() => {
 });
 
 const pages: [string, string, () => ReactNode][] = [
-  ["connectors", "/connectors", () => <ConnectorsPage />],
   ["catalog", "/catalog", () => <CatalogPage />],
   ["channels", "/channels", () => <ChannelsPage />],
   ["evals", "/evals", () => <EvalsPage />],

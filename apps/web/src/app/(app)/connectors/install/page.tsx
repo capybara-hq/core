@@ -1,73 +1,29 @@
-"use client";
-
-import { WizardPage } from "@capybara-hq/design";
-import { useTranslations } from "next-intl";
-import { useEffect, useState } from "react";
-import { CatalogInstallWizard } from "../../../../components/CatalogInstallWizard";
-import { useConnectorWizard } from "../../../../components/ConnectorWizard";
-import { RoleGate } from "../../../../components/RoleGate";
-import { usePagePath } from "../../../../components/shell/path";
-
-/** `?template=<目录条目 id>`：挂载后在 effect 里读（客户端跳转时渲染那一刻地址栏可能还没更新）。 */
-const templateParam = (): string | null => {
-  const v = new URLSearchParams(window.location.search).get("template");
-  return v === null || v === "" ? null : v;
-};
+import { NoAccess } from "../../../../components/RoleGate";
+import { loadCatalogInstall } from "../../../../lib/server/catalog";
+import { workspace } from "../../../../lib/server/session";
+import InstallConnectorView from "./view";
 
 /**
- * `/connectors/install`: the install-connector wizard (WizardPage): endpoint type ->
- * endpoint and docs -> auth -> tools and default policies -> done.
- * `?template=<catalog item id>`: prefilled from a connector template in the catalog (the template
- * decides the endpoint; only the fields the template allows and the credentials can change),
- * installed through the catalog (subject to the item's policy), the same wizard as
- * `/catalog/<id>/install`.
- * The wizard belongs to the org it was opened in: switching orgs starts over (rebuilt with orgId as
- * the key).
+ * `/connectors/install` (org admins): the install-connector wizard, or with
+ * `?template=<catalog item id>` the catalog install wizard for that template, whose item is read on
+ * the server.
  */
-export default function InstallAppPage() {
-  return <RoleGate min="admin">{(orgId) => <Install key={orgId} orgId={orgId} />}</RoleGate>;
-}
-
-function Install({ orgId }: { orgId: string }) {
-  // undefined：还没读查询串
-  const [template, setTemplate] = useState<string | null | undefined>(undefined);
-  useEffect(() => setTemplate(templateParam()), []);
-  if (template === undefined) return null;
-  return template !== null ? (
-    <CatalogInstallWizard
-      orgId={orgId}
-      itemId={template}
-      frame={(v) => (
-        <WizardPage
-          header={{ path: v.path, title: v.title }}
-          steps={v.steps}
-          current={v.current}
-          actionRow={v.actionRow}
-        >
-          {v.body}
-        </WizardPage>
-      )}
-    />
-  ) : (
-    <InstallApp orgId={orgId} />
-  );
-}
-
-function InstallApp({ orgId }: { orgId: string }) {
-  const scope = usePagePath("org");
-  const t = useTranslations("connectors");
-  const wizard = useConnectorWizard(orgId);
+export default async function InstallConnectorPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ template?: string | string[] }>;
+}) {
+  const ws = await workspace({ min: "admin" });
+  if (ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  const raw = (await searchParams).template;
+  const itemId = (Array.isArray(raw) ? raw[0] : raw) ?? "";
   return (
-    <WizardPage
-      header={{
-        path: [...scope, { label: "connectors", href: "/connectors" }, { label: "install" }],
-        title: t("wizard.title"),
-      }}
-      steps={wizard.steps}
-      current={wizard.current}
-      actionRow={wizard.actionRow}
-    >
-      {wizard.body}
-    </WizardPage>
+    <InstallConnectorView
+      orgId={ws.orgId}
+      template={
+        itemId === "" ? null : { itemId, initial: await loadCatalogInstall(ws.orgId, itemId) }
+      }
+    />
   );
 }

@@ -4,11 +4,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import InstallAppPage from "../src/app/(app)/connectors/install/page";
-import { bodyOf, type Call, json, stubApi } from "./support/api";
+import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { renderPage } from "./support/render";
+import { ME } from "./support/render";
+import { expectNoFirstPaintFetch, renderRoute } from "./support/server";
+import { NOT_READY } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
+
+const installPage = (template?: string) => () =>
+  InstallAppPage({ searchParams: Promise.resolve(template === undefined ? {} : { template }) });
+/** `/connectors/install` read on the server from the latest `stubApi` routes (the browser's). */
+const renderInstall = (opts: Parameters<typeof renderRoute>[2] = {}) =>
+  renderRoute(installPage(), lastStubRoutes(), opts);
 
 const msgs = { zh, en } as const;
 const LOCALES = ["zh", "en"] as const;
@@ -103,7 +119,7 @@ describe("安装向导（WizardPage）", () => {
             issues: [],
           }),
       });
-      const { container } = renderPage(<InstallAppPage />, { locale });
+      const { container } = await renderInstall({ locale });
       expect(container.querySelector('[data-template="WizardPage"]')).not.toBeNull();
       const user = userEvent.setup();
       expect(currentStep()).toBe(w.steps.type);
@@ -216,7 +232,7 @@ describe("安装向导（WizardPage）", () => {
             issues: [],
           }),
       });
-      renderPage(<InstallAppPage />, { locale });
+      await renderInstall({ locale });
       const user = userEvent.setup();
       await user.click(screen.getByRole("radio", { name: new RegExp(w.connector.openapi) }));
       await clickAction(user, locale, w.next);
@@ -287,7 +303,7 @@ describe("安装向导（WizardPage）", () => {
     const calls = stubApi({
       [PREVIEW]: () => json(200, { tools: [previewTool("search")], issues: [], authHints: [] }),
     });
-    renderPage(<InstallAppPage />, { locale: "en" });
+    await renderInstall({ locale: "en" });
     const user = userEvent.setup();
     await clickAction(user, "en", w.next);
     await user.type(screen.getByRole("textbox", { name: m.connectors.form.nameLabel }), "Fixture");
@@ -331,7 +347,7 @@ describe("安装向导（WizardPage）", () => {
         });
       },
     });
-    renderPage(<InstallAppPage />, { locale: "en" });
+    await renderInstall({ locale: "en" });
     const user = userEvent.setup();
     await user.click(screen.getByRole("radio", { name: new RegExp(w.connector.openapi) }));
     await clickAction(user, "en", w.next);
@@ -365,7 +381,7 @@ describe("安装向导（WizardPage）", () => {
       [PREVIEW]: () =>
         json(200, { tools: null, issues: [], authHints: [], operations: OPERATIONS }),
     });
-    renderPage(<InstallAppPage />);
+    await renderInstall();
     const user = userEvent.setup();
     await user.click(screen.getByRole("radio", { name: new RegExp(w.connector.openapi) }));
     await clickAction(user, "en", w.next);
@@ -438,7 +454,7 @@ describe("安装向导（WizardPage）", () => {
           });
         },
       });
-      renderPage(<InstallAppPage />, { locale });
+      await renderInstall({ locale });
       const user = userEvent.setup();
       await clickAction(user, locale, w.next);
       await user.type(
@@ -548,7 +564,7 @@ describe("安装向导（WizardPage）", () => {
           },
         }),
     });
-    renderPage(<InstallAppPage />);
+    await renderInstall();
     const user = userEvent.setup();
     await user.click(screen.getByRole("radio", { name: new RegExp(w.connector.openapi) }));
     await clickAction(user, "en", w.next);
@@ -616,7 +632,7 @@ describe("安装向导（WizardPage）", () => {
           },
         }),
     });
-    renderPage(<InstallAppPage />);
+    await renderInstall();
     const user = userEvent.setup();
     await clickAction(user, "en", w.next);
     await user.type(screen.getByRole("textbox", { name: en.connectors.form.nameLabel }), "Fixture");
@@ -646,7 +662,7 @@ describe("安装向导（WizardPage）", () => {
           },
         }),
     });
-    renderPage(<InstallAppPage />, { locale: "zh" });
+    await renderInstall({ locale: "zh" });
     const w = zh.connectors.wizard;
     const user = userEvent.setup();
     await clickAction(user, "zh", w.next);
@@ -663,5 +679,55 @@ describe("安装向导（WizardPage）", () => {
     // 上一步回到类型
     await clickAction(user, "zh", w.previous);
     expect(currentStep()).toBe(w.steps.type);
+  });
+});
+
+describe("/connectors/install renders on the server (web-SSR spec §6)", () => {
+  const as = (role: "member" | "admin") => ({
+    ...ME,
+    account: { ...ME.account, isEnterpriseAdmin: false },
+    memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
+  });
+
+  it("without ?template= the wizard's first step is the first paint; nothing is read", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const { calls } = await renderRoute(installPage(), {});
+    expect(document.querySelector('[data-template="WizardPage"]')).not.toBeNull();
+    expect(new Set(calls.map((c) => c.url))).toEqual(
+      new Set(["/api/v1/me", "/api/v1/orgs/o1/readiness"]),
+    );
+    expect(browser).toEqual([]);
+  });
+
+  it("?template= (from searchParams) reads the catalog item and the org extensions on the server", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const { calls } = await renderRoute(installPage("acme-crm"), {
+      "GET /api/v1/orgs/o1/catalog/acme-crm": () =>
+        json(200, {
+          item: { id: "acme-crm", name: "acme-crm", displayName: null, description: "" },
+          templates: [],
+          skills: [],
+          extension: null,
+          dependencies: [],
+        }),
+      "GET /api/v1/orgs/o1/extensions": () => json(200, { extensions: [] }),
+    });
+    expect(calls.map((c) => c.url)).toContain("/api/v1/orgs/o1/catalog/acme-crm");
+    expect(document.querySelector('[data-template="WizardPage"]')).not.toBeNull();
+    expect(browser).toEqual([]);
+  });
+
+  it("a member gets no access and nothing is read; no org renders nothing; setup redirects home", async () => {
+    const member = await renderRoute(installPage("x"), {}, { me: as("member") });
+    expect(new Set(member.calls.map((c) => c.url))).toEqual(
+      new Set(["/api/v1/me", "/api/v1/orgs/o1/readiness"]),
+    );
+    expect(document.querySelector('[data-kind="no-access"]')).not.toBeNull();
+    cleanup();
+    const none = await renderRoute(installPage(), {}, { me: { ...ME, currentOrgId: null } });
+    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+    await expect(renderRoute(installPage(), {}, { readiness: NOT_READY })).rejects.toThrow(
+      "REDIRECT /",
+    );
   });
 });

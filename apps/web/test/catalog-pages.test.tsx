@@ -24,14 +24,29 @@ import {
   TRANSLATION_GROUPS,
 } from "../src/lib/catalog";
 import type { Me } from "../src/lib/session";
-import { bodyOf, json, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
-import { renderRoute } from "./support/server";
+import { expectNoFirstPaintFetch, renderRoute } from "./support/server";
+import { NOT_READY } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 const params = { current: {} as Record<string, string> };
-vi.mock("next/navigation", () => ({ useParams: () => params.current }));
+vi.mock("next/navigation", () => ({
+  useParams: () => params.current,
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
+
+type RenderOpts = Parameters<typeof renderRoute>[2];
+const installPage = () =>
+  InstallPage({ params: Promise.resolve({ itemId: params.current.itemId ?? "" }) });
+/** `/catalog/<id>/install` read on the server from the latest `stubApi` routes (the browser's). */
+const renderInstall = (opts: RenderOpts = {}) => renderRoute(installPage, lastStubRoutes(), opts);
 
 const msgs = { zh, en } as const;
 const LOCALES = ["zh", "en"] as const;
@@ -520,7 +535,7 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
           },
         }),
     });
-    renderPage(<InstallPage />);
+    await renderInstall();
     expect(template("WizardPage")).not.toBeNull();
     const fixed = (await screen.findByLabelText("headers.X-Org")) as HTMLInputElement;
     expect(fixed.readOnly).toBe(true);
@@ -590,7 +605,7 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
             install: { id: "i1" },
           }),
       });
-      renderPage(<InstallPage />, { locale });
+      await renderInstall({ locale });
       expect(await screen.findByText(t.personalHint)).toBeTruthy();
       const next = screen.getByRole("button", { name: t.next }) as HTMLButtonElement;
       expect(next.disabled).toBe(true);
@@ -632,9 +647,8 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
           },
         }),
     });
-    renderPage(<InstallPage />);
-    // Wait for the wizard (the loading frame has a disabled submit button too)
-    await screen.findByText(t.summaryDependencies);
+    await renderInstall();
+    expect(screen.getByText(t.summaryDependencies)).toBeTruthy();
     await userEvent.setup().click(screen.getByRole("button", { name: t.submit }));
     expect(await screen.findByText(`${en.errors.catalog.dependency_unresolved}`)).toBeTruthy();
     expect(
@@ -682,7 +696,7 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
           install: { id: "i1" },
         }),
     });
-    renderPage(<InstallPage />);
+    await renderInstall();
     const user = userEvent.setup();
     await user.type(await screen.findByLabelText("Region", { exact: false }), "eu");
     await user.click(screen.getByRole("button", { name: t.next }));
@@ -1352,7 +1366,7 @@ describe("安装向导的默认 slug", () => {
         }),
       [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
     });
-    renderPage(<InstallPage />);
+    await renderInstall();
     const slug = (await screen.findByLabelText(en.catalog.org.install.slug, {
       exact: false,
     })) as HTMLInputElement;
@@ -2214,7 +2228,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
             },
           }),
       });
-      renderPage(<InstallPage />, { locale });
+      await renderInstall({ locale });
       await screen.findByText(m.catalog.org.install.summary);
       await userEvent
         .setup()
@@ -2749,5 +2763,62 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
     expect(screen.getByText(fill(s.skipped.more, { n: 5 }))).toBeTruthy();
     // no duplicate React keys
     expect(errors.mock.calls.some((c) => String(c[0]).includes("same key"))).toBe(false);
+  });
+});
+
+describe("/catalog/[itemId]/install renders on the server (web-SSR spec §6)", () => {
+  const detail = {
+    item: orgItem({ name: "crm" }),
+    hasIcon: false,
+    extension: null,
+    templates: [],
+    dependencies: [],
+    skills: ["skills/notes"],
+  };
+  const routes = {
+    [`GET ${ORG}/catalog/${ID}`]: () => json(200, detail),
+    [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+  };
+  const as = (role: "member" | "admin"): Me => ({
+    ...ME,
+    account: { ...ME.account, isEnterpriseAdmin: false },
+    memberships: [{ ...ME.memberships[0], role } as Me["memberships"][number]],
+  });
+
+  it("the item and the org extensions are the first paint; it is a setup step", async () => {
+    params.current = { itemId: ID };
+    const browser = expectNoFirstPaintFetch();
+    await renderRoute(installPage, routes, { readiness: NOT_READY });
+    expect(screen.getByText(en.catalog.org.install.summarySkills.replace("{n}", "1"))).toBeTruthy();
+    expect(browser).toEqual([]);
+  });
+
+  it("the org extensions failing still renders the wizard; a missing item is not found", async () => {
+    params.current = { itemId: ID };
+    const browser = expectNoFirstPaintFetch();
+    await renderRoute(installPage, {
+      ...routes,
+      [`GET ${ORG}/extensions`]: () => json(503, { error: { code: "internal" } }),
+    });
+    expect(template("WizardPage")).not.toBeNull();
+    expect(browser).toEqual([]);
+    await expect(
+      renderRoute(installPage, {
+        [`GET ${ORG}/catalog/${ID}`]: () => json(404, { error: { code: "catalog.not_found" } }),
+        [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+      }),
+    ).rejects.toThrow("NOT_FOUND");
+  });
+
+  it("a member gets no access and nothing is read; no org renders nothing", async () => {
+    params.current = { itemId: ID };
+    const member = await renderRoute(installPage, routes, { me: as("member") });
+    expect(new Set(member.calls.map((c) => c.url))).toEqual(
+      new Set(["/api/v1/me", `${ORG}/readiness`]),
+    );
+    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
+    cleanup();
+    const none = await renderRoute(installPage, routes, { me: { ...ME, currentOrgId: null } });
+    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
   });
 });

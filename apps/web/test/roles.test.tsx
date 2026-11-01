@@ -135,7 +135,12 @@ async function runServerPage(
 
 const PAGES: [string, ComponentType | ServerPage, "member" | "admin", string][] = [
   ["/agents/new", server(() => NewAgentPage()), "member", zh.roles.need.member],
-  ["/connectors/install", ConnectorInstallPage, "admin", zh.roles.need.admin],
+  [
+    "/connectors/install",
+    server(() => ConnectorInstallPage({ searchParams: Promise.resolve({}) })),
+    "admin",
+    zh.roles.need.admin,
+  ],
   ["/channels", ChannelsPage, "admin", zh.roles.need.admin],
   ["/channels/new", NewChannelPage, "admin", zh.roles.need.admin],
   ["/channels/x1", ChannelDetailPage, "admin", zh.roles.need.admin],
@@ -156,7 +161,12 @@ const PAGES: [string, ComponentType | ServerPage, "member" | "admin", string][] 
   ["/skills/x1", server(() => SkillPage(params({ id: "x1" }))), "member", zh.roles.need.member],
   ["/catalog", CatalogPage, "member", zh.roles.need.member],
   ["/catalog/i1", CatalogItemPage, "member", zh.roles.need.member],
-  ["/catalog/i1/install", CatalogInstallPage, "admin", zh.roles.need.admin],
+  [
+    "/catalog/i1/install",
+    server(() => CatalogInstallPage(params({ itemId: "i1" }))),
+    "admin",
+    zh.roles.need.admin,
+  ],
   ["/trajectories", TrajectoriesPage, "member", zh.roles.need.member],
   ["/trajectories/cv1", TrajectoryPage, "member", zh.roles.need.member],
 ];

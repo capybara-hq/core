@@ -6,7 +6,6 @@ import {
   Field,
   Input,
   type PageHeaderProps,
-  Skeleton,
   Stack,
   Text,
   useToast,
@@ -19,7 +18,6 @@ import {
   type ConnectorInstallInput,
   displayNameOf,
   endpointLeaves,
-  getOrgCatalogItem,
   getPath,
   installCatalogItem,
   isOAuth,
@@ -30,9 +28,8 @@ import {
   showValue,
 } from "../lib/catalog";
 import type { AuthType, ConnectorAuth } from "../lib/connectors";
-import { listOrgExtensions, type OrgExtension } from "../lib/extensions";
+import type { OrgExtension } from "../lib/extensions";
 import { useErrorMessage } from "../lib/use-error-message";
-import { useLoad } from "../lib/use-load";
 import { useCatalogErrorLines } from "./CatalogParts";
 import {
   buildCredential,
@@ -204,6 +201,15 @@ export function connectorInput(t: OrgCatalogTemplate, d: TemplateDraft): Connect
   };
 }
 
+/**
+ * What the install wizard starts from, read on the server: the catalog item and the org's
+ * extensions (`null` when they could not be read: no extension config step is offered then).
+ */
+export interface CatalogInstallData {
+  detail: OrgCatalogDetail;
+  extensions: OrgExtension[] | null;
+}
+
 /** 向导交给页面放进 WizardPage 的部分（页面文件自己渲染模板，见 check:web-ui 的 web-ui-template）。 */
 export interface WizardView {
   path: PageHeaderProps["path"];
@@ -226,23 +232,15 @@ export interface WizardView {
 export function CatalogInstallWizard({
   orgId,
   itemId,
+  initial,
   frame,
 }: {
   orgId: string;
   itemId: string;
+  /** What the server read (`lib/server/catalog.ts`): the item, and the org's extensions. */
+  initial: CatalogInstallData;
   frame(view: WizardView): ReactNode;
 }) {
-  const t = useTranslations("catalog.org.install");
-  const to = useTranslations("catalog.org");
-  const errorMessage = useErrorMessage();
-  const detail = useLoad(() => getOrgCatalogItem(orgId, itemId), [orgId, itemId]);
-  const extensions = useLoad(
-    () =>
-      listOrgExtensions(orgId)
-        .then((r) => r.extensions)
-        .catch(() => [] as OrgExtension[]),
-    [orgId],
-  );
   const scope = usePagePath("org");
   const header = (title: string) => ({
     path: [
@@ -253,27 +251,11 @@ export function CatalogInstallWizard({
     ],
     title,
   });
-  if (detail.state.kind !== "ready" || extensions.state.kind !== "ready") {
-    return frame({
-      ...header(to("title")),
-      steps: [t("confirmStep")],
-      current: 0,
-      actionRow: { primary: { label: t("submit"), onSelect: () => {}, disabled: true } },
-      body:
-        detail.state.kind === "error" ? (
-          <FormError
-            message={errorMessage(new ApiClientError(0, detail.state.code, detail.state.code))}
-          />
-        ) : (
-          <Skeleton rows={6} />
-        ),
-    });
-  }
   return (
     <Wizard
       orgId={orgId}
-      detail={detail.state.data}
-      orgExtensions={extensions.state.data}
+      detail={initial.detail}
+      orgExtensions={initial.extensions ?? []}
       header={header}
       frame={frame}
     />
