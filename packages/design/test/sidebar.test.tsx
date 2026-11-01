@@ -1211,6 +1211,16 @@ describe("Sidebar setup context", () => {
     expect(screen.queryByRole("button", { name: "搜索 ⌘K" })).toBeNull();
   });
 
+  it("rail: a waiting step's tooltip carries its reason; a done step's its state", async () => {
+    zh(<Sidebar {...setupProps()} mode="rail" railTooltip="members" />);
+    const tip = await screen.findByRole("tooltip");
+    expect(tip.textContent).toContain("等待管理员配置模型");
+    expect(tip.textContent).toContain("邀请成员");
+    cleanup();
+    zh(<Sidebar {...setupProps()} mode="rail" railTooltip="model" />);
+    expect((await screen.findByRole("tooltip")).textContent).toContain("配置模型，已完成");
+  });
+
   it("drawer: the full setup sidebar with its close button", async () => {
     const onOpenChange = vi.fn();
     zh(<Sidebar {...setupProps()} mode="drawer" drawer={{ open: true, onOpenChange }} />);
@@ -1258,6 +1268,14 @@ describe("Link pending state", () => {
       .getByRole("link", { name: "创建 agent，未完成" })
       .querySelector('[data-part="link-pending"]');
     expect(idle?.getAttribute("data-pending")).toBeNull();
+  });
+
+  it("under the default provider (no hook) the mark renders and is never pending", () => {
+    zh(<LinkPendingMark />);
+    const mark = document.querySelector('[data-part="link-pending"]');
+    expect(mark).not.toBeNull();
+    expect(mark?.getAttribute("data-pending")).toBeNull();
+    expect(mark?.getAttribute("aria-hidden")).toBe("true");
   });
 
   it("the mark sits inside the link (so the router's link status reaches it)", () => {

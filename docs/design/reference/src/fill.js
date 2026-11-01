@@ -176,7 +176,8 @@
         return `<span class="${cls}" role="link" aria-disabled="true" aria-label="${esc(name)}"${reason ? ' data-reason="true"' : ""}${state(st)}>${mark}${text}</span>`;
       }
       const current = s.id === o.active ? ' aria-current="page"' : "";
-      return `<a class="${cls}" href="#" aria-label="${esc(name)}"${current}${state(st)}>${mark}${text}</a>`;
+      const pending = o.pending === s.id ? '<span class="r-link-pending" aria-hidden="true"></span>' : "";
+      return `<a class="${cls}" href="#" aria-label="${esc(name)}"${current}${state(st)}>${mark}${text}${pending}</a>`;
     };
     const steps = F.SETUP_STEPS_FIXTURE[o.setup || "admin"];
     const required = steps.filter((s) => !s.optional);

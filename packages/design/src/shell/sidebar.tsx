@@ -728,7 +728,6 @@ function SetupNav({
       "data-rove": s.id,
       "data-state": s.state,
       "aria-label": name,
-      tabIndex: roving.tabIndexOf(s.id, keys),
       ...(s.optional ? { "data-optional": "true" } : {}),
     };
     const body = (
@@ -756,7 +755,7 @@ function SetupNav({
         <span
           key={s.id}
           {...common}
-          tabIndex={common.tabIndex}
+          tabIndex={roving.tabIndexOf(s.id, keys)}
           role="link"
           aria-disabled="true"
           data-reason={reason !== null ? "true" : undefined}
@@ -768,6 +767,7 @@ function SetupNav({
           key={s.id}
           href={s.href}
           {...common}
+          tabIndex={roving.tabIndexOf(s.id, keys)}
           {...(s.id === p.activeNav ? { "aria-current": "page" as const } : {})}
         >
           {body}

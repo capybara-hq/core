@@ -660,6 +660,18 @@ textarea {
   letter-spacing: 0.06em;
   line-height: var(--cb-type-micro-line);
 }
+/* A link's pending navigation: a 2px accent underline along its bottom (drawn still here). */
+.r-step {
+  position: relative;
+}
+.r-link-pending {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: var(--cb-accent);
+}
 .r-step-divider {
   flex: none;
   width: var(--cb-control-dense);

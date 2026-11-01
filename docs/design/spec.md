@@ -727,7 +727,7 @@ The left sidebar replaces the TopBar on every page (UI refresh spec §4.4). Side
 - **Admin context**, top to bottom: the brand row; the **context block** (`context-block`): the switcher's size and light style but static (no chevrons): a shield in the accent tint (`accent-tint` ground, `accent` icon), "管理后台" and `整个部署 · /admin` in mono; below it a link "← 回到工作区 ~/<slug>" (`back`, `row.dense`, `small` `muted`, `arrow-left` 14); the items 概览, 账号, 组织, 扩展, 企业目录, 市场, 模型, 部署设置; no conversations, no 新会话, no search or inbox buttons (⌘K still opens the palette); the account row.
 
 - **Setup context** (`kind: "setup"`, web-SSR spec §4), top to bottom: the brand row without the search and inbox buttons; the org switcher (`context.org`, as in the workspace); the navigation (`nav` "Main navigation"): **开始之前** (`nav-item`, `diamond`, the setup home `context.home`, current when `activeNav` is `home`), then the required steps, then the label **可以稍后再做** (`step-group-label`, mono `micro` `faint`, letter-spacing 0.06em, `row.dense` high with the text at its bottom; the optional steps form a `group` it names), then the optional steps; the fill; the admin entry (`context.adminHref`); the account row. No conversations, no 新会话, no command palette. A **step item** (`step-item`, `SetupStep { id, label, state, href?, reason?, optional? }`) has the nav item's box and a state mark (`step-mark`, an `Icon` 16, never a character): `done` a `check` in `ok` (still a link), `todo` a `circle` in `muted` (a link), `waiting` a `clock` in `muted`: not a link (`role="link"`, `aria-disabled="true"`, the label `muted`, no hover ground, still a roving stop so its reason can be read) with `reason` as its second line (`step-reason`, `micro` `muted`, one line with an ellipsis), which makes the item 48 high. The current step takes the nav item's current style. Its accessible name is "{label}，{state}" (已完成 / 未完成, or the reason of a waiting step; en "{label}, {state}"). In the rail the steps are their marks alone (`row.default` squares) with the accessible name in the Tooltip to the right; the group label becomes a `line-soft` divider (`step-divider`, 24 × 1). The drawer is the full setup sidebar.
-- **Pending navigation**: every design link (nav items, steps, the admin entry, the back link, conversation rows; object rows, item lists, tabs, breadcrumbs, the settings navigation) renders `LinkPendingMark` as its last child. It calls the `DesignProvider`'s `useLinkPending` (apps/web: `() => useLinkStatus().pending` from next/link, so it must sit inside the link) and, while that navigation is pending, carries `data-pending` and draws a 2 px `accent` underline along the link's bottom that sweeps left to right in `motion.cursor` (reduced motion: a still underline). Without the hook nothing is ever pending.
+- **Pending navigation**: every design link (nav items, steps, the admin entry, the back link, conversation rows; object rows, item lists, tabs, breadcrumbs, the settings navigation) renders `LinkPendingMark` as its last child. It calls the `DesignProvider`'s `useLinkPending` (apps/web: `() => useLinkStatus().pending` from next/link, so it must sit inside the link) and, while that navigation is pending, carries `data-pending` and draws a 2 px `accent` underline along the link's bottom that sweeps left to right in `motion.cursor` (reduced motion: a still underline). Without the hook nothing is ever pending. The reference block `sidebar-pending` is the setup sidebar with one step's navigation pending.
 
   The overview (`OverviewPage`) is built from `Grid columns="main-side"` (a main column twice the side column; one column below 960), Cards, `ItemList` (rows of a tag, a linked title with a muted meta line, a status and actions, split by `line-soft`; an empty list shows its muted empty text) and the setup layout (§5.5) uses `StepList inset="card"` (the checklist OnboardingPage centers, filling a Card) until a model and an agent exist.
 - **Nav items**: `row.default` high, radius `sm`, padding `pad.dense.x`, icon 16 + label (`body`, `ink`, single line with an ellipsis). The current item gets the `sidebar-active` ground, `ink` and weight 600 (§2.3); hover the `hover` ground. An item may still carry a count (`nav-count`, an `accent` pill, 18 high, radius 9, mono `micro`, `on-accent`; `99+` above 99, `n+` when truncated, the accessible name includes it); the inbox, the one item that had one, is now the brand row's button.
@@ -747,7 +747,7 @@ The left sidebar replaces the TopBar on every page (UI refresh spec §4.4). Side
 - Interaction: §6.11.
 
 <!-- states: sidebar -->
-States: `default`, `item-hover`, `item-focus`, `conversation-active`, `group-collapsed`, `more-open`, `filter`, `archived`, `empty`, `loading`, `error`, `long-title`, `many-groups`, `guest`, `admin`, `rail`, `drawer`, `setup`, `setup-waiting`, `setup-hover`, `setup-focus`, `setup-rail`, `setup-drawer`
+States: `default`, `item-hover`, `item-focus`, `conversation-active`, `group-collapsed`, `more-open`, `filter`, `archived`, `empty`, `loading`, `error`, `long-title`, `many-groups`, `guest`, `admin`, `rail`, `drawer`, `setup`, `setup-waiting`, `setup-hover`, `setup-focus`, `setup-rail`, `setup-drawer`, `pending`
 
 <!-- size-table: sidebar -->
 | Part | State | Property | Value |
@@ -825,6 +825,8 @@ States: `default`, `item-hover`, `item-focus`, `conversation-active`, `group-col
 | step-item | setup | font-size | type.body |
 | step-item[aria-current=page] | setup | background-color | color.sidebar-active |
 | step-item[aria-current=page] | setup | color | color.ink |
+| step-mark | setup | width | 16 |
+| step-mark | setup | height | 16 |
 | step-mark[data-state=done] | setup | color | color.ok |
 | step-mark[data-state=todo] | setup | color | color.muted |
 | step-group-label | setup | height | row.dense |
@@ -844,6 +846,8 @@ States: `default`, `item-hover`, `item-focus`, `conversation-active`, `group-col
 | step-divider | setup-rail | height | 1 |
 | step-divider | setup-rail | width | control.dense |
 | sidebar | setup-drawer | width | layout.sidebar |
+| link-pending[data-pending=true] | pending | height | 2 |
+| link-pending[data-pending=true] | pending | background-color | color.accent |
 
 ### 6.14 StatCards
 

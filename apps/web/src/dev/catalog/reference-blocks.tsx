@@ -9,6 +9,7 @@ import {
   DangerZone,
   DangerZoneItem,
   DataTable,
+  DesignProvider,
   Field,
   FilterChip,
   FormPage,
@@ -20,6 +21,7 @@ import {
   IconGallery,
   type IconName,
   Input,
+  type LinkComponent,
   ListPage,
   PageHeader,
   SecretReveal,
@@ -36,6 +38,7 @@ import {
   SwitchList,
   Text,
   Textarea,
+  useDesignLocale,
   useStatusBar,
 } from "@capybara-hq/design";
 import {
@@ -49,7 +52,7 @@ import {
   TABLE_HOVER_ROW,
   TABLE_SELECTED_ROW,
 } from "@capybara-hq/design/fixtures";
-import type { ReactNode } from "react";
+import { createContext, type ReactNode, useContext } from "react";
 import { CONVERSATION_BLOCKS } from "./conversation-blocks";
 import { CONVERSATION_PAGE_BLOCKS } from "./conversation-page-blocks";
 import { COMMANDS } from "./fixtures";
@@ -437,6 +440,35 @@ function SidebarBlock({
 const navAt = (id: string) => `[data-part="nav-item"][href*="at=${id}"]`;
 const stepAt = (id: string) => `[data-part="step-item"][href*="at=${id}"]`;
 
+/**
+ * One link's navigation pending, the way next/link does it: the link provides its status and the
+ * provider's `useLinkPending` reads it inside the link (LinkPendingMark).
+ */
+const PendingHere = createContext(false);
+const usePendingHere = () => useContext(PendingHere);
+function pendingLink(target: string): LinkComponent {
+  return function PendingLink({ href, children, ...rest }) {
+    return (
+      <PendingHere.Provider value={href === target}>
+        <a href={href} {...rest}>
+          {children}
+        </a>
+      </PendingHere.Provider>
+    );
+  };
+}
+const PENDING_LINK = pendingLink(here("channels"));
+
+/** The setup sidebar with the 连接渠道 step's navigation pending (its accent underline). */
+function PendingSidebar() {
+  const locale = useDesignLocale();
+  return (
+    <DesignProvider locale={locale} link={PENDING_LINK} useLinkPending={usePendingHere}>
+      <Sidebar {...sidebarProps({ context: "setup", active: "agent" }, here)} mode="full" />
+    </DesignProvider>
+  );
+}
+
 /** Below 960: the setup home behind the scrim, the setup drawer open over it. */
 function SetupDrawerPage() {
   return (
@@ -548,6 +580,9 @@ function sidebarBlocks(): ReactNode {
       </RefBlock>
       <RefBlock id="sidebar-setup-drawer" width={640} height={SIDEBAR_H}>
         <SetupDrawerPage />
+      </RefBlock>
+      <RefBlock id="sidebar-pending" width={SIDEBAR_W} height={SIDEBAR_H}>
+        <PendingSidebar />
       </RefBlock>
     </>
   );
