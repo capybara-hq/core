@@ -17,6 +17,7 @@ import {
 } from "./support/conversation";
 import { resetNavigation } from "./support/navigation";
 import { renderPage } from "./support/render";
+import { renderRoute } from "./support/server";
 
 /**
  * Phase D Task 11: the composer's `/` menu lists the agent's skills first (then the connector
@@ -31,6 +32,12 @@ vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
   useParams: () => params,
   useSearchParams: () => search,
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
 }));
 
 const ORG = "/api/v1/orgs/o1";
@@ -596,8 +603,12 @@ describe("a new conversation", () => {
       [`POST ${ORG}/conversations`]: () =>
         json(201, { conversation: CONV().conversation, event: invocation(1) }),
     });
-    renderPage(<NewChatPage />, { locale: "en" });
-    await vi.waitFor(() => expect(input()).toHaveProperty("disabled", false));
+    await renderRoute(() => NewChatPage({ searchParams: Promise.resolve({}) }), {
+      [`GET ${ORG}/agents`]: () => json(200, AGENTS),
+      [`GET ${ORG}/models`]: () => json(200, MODELS),
+      [`GET ${ORG}/conversations/groups`]: () => json(200, { groups: [] }),
+    });
+    expect(input()).toHaveProperty("disabled", false);
     const user = userEvent.setup();
     await user.type(input(), "/");
     await user.click(await screen.findByRole("option", { name: /^\/fix-issue/ }));

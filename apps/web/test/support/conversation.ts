@@ -138,3 +138,13 @@ export const MODELS = {
     },
   ],
 };
+
+/** The kernel's attachment limits (its defaults). */
+export const LIMITS = {
+  types: ["image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf", "text/plain"],
+  maxBytes: 20_971_520,
+  imageMaxBytes: 5_242_880,
+  maxPerMessage: 10,
+  requestMediaBytes: 20_971_520,
+  available: true,
+};

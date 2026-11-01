@@ -17,18 +17,21 @@ export const ME: Me = {
   canCreateOrg: true,
 };
 
+type PageOpts = {
+  locale?: "zh" | "en";
+  me?: Me;
+  session?: Partial<Session>;
+};
+
 /** 页面测试的外层：next-intl、设计系统上下文与会话（代替 (app) 布局里的 AppFrame）。 */
-export function renderPage(
+export function renderPage(ui: ReactNode, opts: PageOpts = {}) {
+  return render(pageElement(ui, opts));
+}
+
+/** `ui` inside the providers of {@link renderPage} (for `rerender`). */
+export function pageElement(
   ui: ReactNode,
-  {
-    locale = "en",
-    me = ME,
-    session = {},
-  }: {
-    locale?: "zh" | "en";
-    me?: Me;
-    session?: Partial<Session>;
-  } = {},
+  { locale = "en", me = ME, session = {} }: PageOpts = {},
 ) {
   const value: Session = {
     me,
@@ -36,13 +39,13 @@ export function renderPage(
     switchOrg: vi.fn(async () => {}),
     ...session,
   };
-  return render(
+  return (
     <NextIntlClientProvider locale={locale} messages={locale === "zh" ? zh : en}>
       <DesignProvider locale={locale} link={Link as LinkComponent}>
         <ToastProvider>
           <SessionContext.Provider value={value}>{ui}</SessionContext.Provider>
         </ToastProvider>
       </DesignProvider>
-    </NextIntlClientProvider>,
+    </NextIntlClientProvider>
   );
 }

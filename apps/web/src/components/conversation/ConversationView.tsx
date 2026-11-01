@@ -11,7 +11,7 @@ import {
   useToast,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { type Agent, listAgents } from "../../lib/agents";
 import {
   type ModelRef,
@@ -41,10 +41,16 @@ import { type SendResult, useConversation } from "./useConversation";
 import { QueueList, useQueue } from "./useQueue";
 import { useModels, useSelection } from "./useSelection";
 
-/** The org's agents (for the agent's name, model and saved effort); undefined while loading. */
-export function useAgentList(orgId: string): Agent[] | undefined {
-  const [agents, setAgents] = useState<Agent[]>();
+/**
+ * The org's agents (for the agent's name, model and saved effort); undefined while loading. With
+ * `initial` (the server's read) nothing is fetched; `null` (the server could not read them) reads
+ * them after mount.
+ */
+export function useAgentList(orgId: string, initial?: Agent[] | null): Agent[] | undefined {
+  const [agents, setAgents] = useState<Agent[] | undefined>(initial ?? undefined);
+  const seeded = useRef(initial != null);
   useEffect(() => {
+    if (seeded.current) return;
     let live = true;
     listAgents(orgId).then(
       (r) => {

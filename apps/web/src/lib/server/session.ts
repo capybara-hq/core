@@ -20,7 +20,7 @@ export const getSession = cache(async (): Promise<{ me: Me; org: Membership | nu
 });
 
 /** The current org's readiness (one kernel call per request: the shell and the page share it). */
-const orgReadiness = (orgId: string) => read(getReadiness(orgId));
+export const orgReadiness = (orgId: string) => read(getReadiness(orgId));
 
 /** What the `(app)` layout reads for the frame (spec web-ssr §3.1). */
 export interface ShellData {

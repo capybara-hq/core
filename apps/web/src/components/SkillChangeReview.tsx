@@ -20,6 +20,7 @@ import {
   decideSkillChange,
   getSkillChange,
   type SkillChange,
+  type SkillChangeDetail,
   type SkillChangeFile,
 } from "../lib/skills";
 import { useErrorMessage } from "../lib/use-error-message";
@@ -97,7 +98,16 @@ function FileDiff({
  * 收件箱里的技能变更卡片：agent、发起人、版本、描述、打开发起对话，以及每个文件相对当前版本的差异
  * （纯文本 `+ / -`）。详情（含文件文本与当前版本）按需读取 `GET /skill-changes/:id`。
  */
-export function SkillChangeReview({ orgId, change }: { orgId: string; change: SkillChange }) {
+export function SkillChangeReview({
+  orgId,
+  change,
+  initial,
+}: {
+  orgId: string;
+  change: SkillChange;
+  /** The detail the server read (the item shown first); otherwise it is read when shown. */
+  initial?: SkillChangeDetail | undefined;
+}) {
   const t = useTranslations("inbox.skillChange");
   const ti = useTranslations("inbox");
   const router = useRouter();
@@ -106,6 +116,7 @@ export function SkillChangeReview({ orgId, change }: { orgId: string; change: Sk
   const { state } = useLoad(
     () => getSkillChange(orgId, change.id).then((r) => r.skillChange),
     [orgId, change.id],
+    initial !== undefined ? { initial } : {},
   );
   const detail = state.kind === "ready" ? state.data : undefined;
   const current = detail?.current ?? null;

@@ -1,10 +1,12 @@
 "use client";
 
-import { type ConversationPageProps, Skeleton, Stack } from "@capybara-hq/design";
+import { type ConversationPageProps, Stack } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "../../i18n/navigation";
-import { createConversationWithMessage, listConversationGroups } from "../../lib/conversations";
+import type { Agent, ProviderModels } from "../../lib/agents";
+import type { AttachmentLimits } from "../../lib/attachments";
+import { createConversationWithMessage } from "../../lib/conversations";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { FormError } from "../form-error";
 import { useSession } from "../shell/session";
@@ -13,43 +15,35 @@ import { useAgentList, useWho } from "./ConversationView";
 import type { SendResult } from "./useConversation";
 import { useModels, useSelection } from "./useSelection";
 
-/** The agent most recently talked to (the first sidebar group), or null. */
-function useRecentAgent(orgId: string): string | null | undefined {
-  const [recent, setRecent] = useState<string | null>();
-  useEffect(() => {
-    let live = true;
-    listConversationGroups(orgId, { perGroup: 1, limit: 1 }).then(
-      (r) => {
-        if (live) setRecent(r.groups[0]?.agent.id ?? null);
-      },
-      () => {
-        if (live) setRecent(null);
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [orgId]);
-  return recent;
+/** What `/chat` reads on the server for the first paint. */
+export interface NewConversationData {
+  agents: Agent[];
+  providers: ProviderModels[];
+  /** The agent most recently talked to (the first sidebar group), or null. */
+  recent: string | null;
+  /** The attachment limits; null when the server could not read them (read after mount). */
+  limits: AttachmentLimits | null;
 }
 
 /**
  * A new conversation (`/chat`, spec §5.2): an empty page with the composer, the agent picker
  * enabled. The agent is `?agent=` when usable, else the one most recently talked to, else the
  * first. Nothing is created before the first send: it posts `POST /conversations` with the message
- * (and any model / effort pick), then replaces the URL with the new conversation's.
+ * (and any model / effort pick), then replaces the URL with the new conversation's. Everything it
+ * shows first comes from the server's read (`initial`).
  */
 export function useNewConversationPage(
   orgId: string,
   preferredAgent: string | null,
+  initial: NewConversationData,
 ): ConversationPageProps {
   const t = useTranslations("chat");
   const router = useRouter();
   const errorMessage = useErrorMessage();
   const session = useSession();
   const who = useWho();
-  const agents = useAgentList(orgId);
-  const recent = useRecentAgent(orgId);
+  const agents = useAgentList(orgId, initial.agents);
+  const recent = initial.recent;
   const [picked, setPicked] = useState<string | null>(null);
   const [error, setError] = useState<string>();
   const usable = agents ?? [];
@@ -57,8 +51,9 @@ export function useNewConversationPage(
   const agent =
     usable.find((a) => a.id === picked) ??
     usable.find((a) => a.id === preferredAgent) ??
-    (recent === undefined ? undefined : (usable.find((a) => a.id === recent) ?? usable[0]));
-  const providers = useModels(orgId);
+    usable.find((a) => a.id === recent) ??
+    usable[0];
+  const providers = useModels(orgId, initial.providers);
   const selection = useSelection(providers, agent, undefined);
 
   const send = async (m: ComposerMessage): Promise<SendResult> => {
@@ -77,25 +72,6 @@ export function useNewConversationPage(
   };
 
   const name = agent?.definition.name ?? "—";
-  // Until the agents, the models and the recent agent are known, the page shows a skeleton, never a
-  // composer of placeholders (the new-conversation page may still turn into the setup checklist).
-  const loading = agents === undefined || providers === undefined || recent === undefined;
-  if (loading) {
-    return {
-      titleBar: {
-        title: null,
-        untitled: "",
-        menu: [],
-        properties: { pressed: false, onToggle: () => {} },
-        panels: [],
-      },
-      newConversation: { agentName: "" },
-      composer: <Skeleton rows={3} />,
-      status: { context: `${who}:/chat`, version: session.version ?? "" },
-      right: "none",
-      onCloseRight: () => {},
-    };
-  }
   return {
     titleBar: {
       title: null,
@@ -114,6 +90,7 @@ export function useNewConversationPage(
           agentId={agent?.id}
           running={false}
           sendDisabled={!agent}
+          initialLimits={initial.limits}
           onSend={send}
           pickers={{
             agent: {

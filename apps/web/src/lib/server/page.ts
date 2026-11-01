@@ -35,6 +35,21 @@ export async function read<T>(p: Promise<T>): Promise<T> {
 }
 
 /**
+ * A read of something the page draws its own fallback for (a secondary section, a value with a
+ * default): any failure resolves to `null` and the client view reads it again after mount or uses
+ * its default. A 401 `auth.*` still signs in, and an unreachable kernel still throws.
+ */
+export async function soft<T>(p: Promise<T>): Promise<T | null> {
+  try {
+    return await p;
+  } catch (e) {
+    if (isSignedOut(e)) redirect(loginPathFor(await currentPath()));
+    if (isKernelUnavailable(e)) throw e;
+    return null;
+  }
+}
+
+/**
  * A read the page can do without when the kernel refuses it: a 403 or 404 resolves to `null`. A 401
  * `auth.*` still signs in; anything else (kernel unavailable, network, 5xx, other 4xx) throws.
  */

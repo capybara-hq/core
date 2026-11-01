@@ -16,7 +16,8 @@ import { navigateBrowser } from "../src/lib/browser";
 import type { Me } from "../src/lib/session";
 import { resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
-import { frameElement, renderFrame, shellOf } from "./support/shell";
+import { renderRoute } from "./support/server";
+import { frameElement, NOT_READY, renderFrame, shellOf } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("../src/lib/browser", () => ({ navigateBrowser: vi.fn() }));
@@ -25,7 +26,12 @@ const notFound = vi.hoisted(() =>
     throw new Error("NEXT_NOT_FOUND");
   }),
 );
-vi.mock("next/navigation", () => ({ notFound }));
+vi.mock("next/navigation", () => ({
+  notFound,
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+}));
 
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -65,8 +71,8 @@ describe("(app) 页面模板", () => {
     definition: { name, model: { provider: "model-fake", model: "fake-1" } },
   });
   const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
-  function overviewApi(over: Record<string, () => Response> = {}) {
-    return stubApi({
+  function overviewRoutes(over: Record<string, () => Response> = {}) {
+    return {
       "GET /api/v1/orgs/o1/agents": () =>
         json(200, {
           agents: [AGENT("ag1", "研究助手"), AGENT("ag2", "客服分流"), AGENT("ag3", "写作助手")],
@@ -139,20 +145,22 @@ describe("(app) 页面模板", () => {
       "GET /api/v1/orgs/o1/skills": () => json(200, { skills: [{}, {}, {}] }),
       "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [{}] }),
       "GET /api/v1/orgs/o1/members": () => json(200, { members: [{}, {}] }),
-      "POST /api/v1/orgs/o1/approvals/ap1/decision": () => json(200, { approval: { id: "ap1" } }),
       ...over,
-    });
+    };
   }
 
   it("the overview: what waits on me (allow once in place), conversations to pick up, the org, my agents", async () => {
-    const calls = overviewApi();
-    renderPage(<HomePage />, { locale: "zh" });
+    // the first paint is the server's: the browser only sends the decision
+    const calls = stubApi({
+      "POST /api/v1/orgs/o1/approvals/ap1/decision": () => json(200, { approval: { id: "ap1" } }),
+    });
+    await renderRoute(() => HomePage(), overviewRoutes(), { locale: "zh" });
     expect(template("OverviewPage")).not.toBeNull();
     const h = zh.home;
     expect(
       screen.getByRole("heading", { level: 1, name: h.greeting.replace("{name}", "Grant") }),
     ).toBeTruthy();
-    const inbox = await screen.findByRole("list", { name: h.inbox.title });
+    const inbox = screen.getByRole("list", { name: h.inbox.title });
     const rows = within(inbox).getAllByRole("listitem");
     expect(rows.map((r) => r.textContent)).toEqual([
       expect.stringContaining("研究助手 想调用 sandbox_bash"),
@@ -200,7 +208,7 @@ describe("(app) 页面模板", () => {
     expect(screen.getByRole("link", { name: h.newConversation }).getAttribute("href")).toBe(
       "/chat",
     );
-    // allowing an approval in place sends "approve once" and reloads
+    // allowing an approval in place sends "approve once" and re-renders the page on the server
     await user.click(
       within(rows[0] as HTMLElement).getByRole("button", { name: h.inbox.approveOnce }),
     );
@@ -210,17 +218,34 @@ describe("(app) 页面模板", () => {
         scope: "once",
       }),
     );
-    await vi.waitFor(() => expect(calls.filter((c) => c.url.endsWith("/inbox")).length).toBe(2));
+    await vi.waitFor(() => expect(router.refresh).toHaveBeenCalled());
+    expect(calls.filter((c) => c.method === "GET")).toEqual([]);
   });
 
   it("the overview hides counts this role may not read", async () => {
-    overviewApi({
-      "GET /api/v1/orgs/o1/members": () => json(403, { error: { code: "forbidden" } }),
-    });
-    renderPage(<HomePage />);
-    await screen.findByRole("list", { name: en.home.inbox.title });
+    stubApi({});
+    await renderRoute(
+      () => HomePage(),
+      overviewRoutes({
+        "GET /api/v1/orgs/o1/members": () => json(403, { error: { code: "forbidden" } }),
+      }),
+    );
+    screen.getByRole("list", { name: en.home.inbox.title });
     expect(screen.queryByText(en.home.members)).toBeNull();
     expect(screen.getByText(en.home.skills)).toBeTruthy();
+  });
+
+  it("without a current org or while the org is in setup, the page renders nothing (the frame draws it)", async () => {
+    stubApi({});
+    const none = await renderRoute(() => HomePage(), {}, { me: { ...ME, currentOrgId: null } });
+    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+    expect(template("OverviewPage")).toBeNull();
+    cleanup();
+    const setup = await renderRoute(() => HomePage(), {}, { readiness: NOT_READY });
+    expect(new Set(setup.calls.map((c) => c.url))).toEqual(
+      new Set(["/api/v1/me", "/api/v1/orgs/o1/readiness"]),
+    );
+    expect(template("OverviewPage")).toBeNull();
   });
 
   it("a page that needs an organization keeps its own title and offers creating one", () => {

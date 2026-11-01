@@ -8,8 +8,29 @@ import InboxRoute from "../src/app/(app)/inbox/page";
 import { bodyOf, json, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderPage } from "./support/render";
+import { renderRoute } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
+
+type Routes = Parameters<typeof stubApi>[0];
+
+/**
+ * The inbox rendered from the server's read (`server`); the browser answers `routes` afterwards
+ * (`calls`). `router.refresh()` reads the page on the server again.
+ */
+async function renderInbox(routes: Routes, opts: Parameters<typeof renderPage>[1] = {}) {
+  const calls = stubApi(routes);
+  const r = await renderRoute(() => InboxRoute(), routes, opts);
+  return { ...r, server: r.calls, calls };
+}
 
 const msgs = { zh, en } as const;
 const LOCALES = ["zh", "en"] as const;
@@ -97,8 +118,13 @@ describe("收件箱（InboxPage）", () => {
     "Rail 为待处理列表，内容区为第一条详情，ActionRow 有批准 / 拒绝（%s）",
     async (locale) => {
       const m = msgs[locale];
-      stubApi({ [LIST]: () => json(200, inbox([approval("a"), approval("b")])) });
-      const { container } = renderPage(<InboxRoute />, { locale });
+      const { container, server, calls } = await renderInbox(
+        { [LIST]: () => json(200, inbox([approval("a"), approval("b")])) },
+        { locale },
+      );
+      // the first paint is the server's read: nothing is fetched in the browser
+      expect(server.map((c) => c.url)).toContain("/api/v1/orgs/o1/inbox");
+      expect(calls).toEqual([]);
       expect(container.querySelector('[data-template="InboxPage"]')).not.toBeNull();
       const table = await screen.findByRole("table", { name: m.inbox.listLabel });
       expect(within(table).getByText("Fixture · tool_a")).toBeTruthy();
@@ -131,15 +157,17 @@ describe("收件箱（InboxPage）", () => {
   it.each(LOCALES)("选中第二条、选「以后都允许」批准 → POST 后重读列表（%s）", async (locale) => {
     const m = msgs[locale];
     let pending = [approval("a"), approval("b")];
-    const calls = stubApi({
-      [LIST]: () => json(200, inbox(pending)),
-      "POST /api/v1/orgs/o1/approvals/b/decision": () => {
-        pending = pending.filter((a) => a.id !== "b");
-        return json(200, { approval: { ...approval("b"), status: "approved", scope: "always" } });
-      },
-    });
     const refreshPending = vi.fn();
-    const { container } = renderPage(<InboxRoute />, { locale, session: { refreshPending } });
+    const { container, calls, server } = await renderInbox(
+      {
+        [LIST]: () => json(200, inbox(pending)),
+        "POST /api/v1/orgs/o1/approvals/b/decision": () => {
+          pending = pending.filter((a) => a.id !== "b");
+          return json(200, { approval: { ...approval("b"), status: "approved", scope: "always" } });
+        },
+      },
+      { locale, session: { refreshPending } },
+    );
     const user = userEvent.setup();
     const table = await screen.findByRole("table", { name: m.inbox.listLabel });
     await user.click(within(table).getByText("Fixture · tool_b"));
@@ -153,20 +181,25 @@ describe("收件箱（InboxPage）", () => {
       decision: "approve",
       scope: "always",
     });
+    // the page is read again on the server (router.refresh), not in the browser
     await vi.waitFor(() => expect(screen.queryByText("Fixture · tool_b")).toBeNull());
-    expect(calls.filter((c) => c.url.endsWith("/inbox"))).toHaveLength(2);
+    expect(router.refresh).toHaveBeenCalled();
+    expect(server.filter((c) => c.url.endsWith("/inbox"))).toHaveLength(2);
+    expect(calls.filter((c) => c.method === "GET")).toEqual([]);
     expect(await screen.findByText(m.inbox.approved)).toBeTruthy();
     // 顶栏的待处理数立即重读，不等 30 秒轮询
     expect(refreshPending).toHaveBeenCalledTimes(1);
   });
 
   it("已被别人处理：toast 显示 approval.already_decided 的文案并重读", async () => {
-    stubApi({
-      [LIST]: () => json(200, inbox([approval("a")])),
-      "POST /api/v1/orgs/o1/approvals/a/decision": () =>
-        json(409, { error: { code: "approval.already_decided", message: "x" } }),
-    });
-    renderPage(<InboxRoute />, { locale: "zh" });
+    await renderInbox(
+      {
+        [LIST]: () => json(200, inbox([approval("a")])),
+        "POST /api/v1/orgs/o1/approvals/a/decision": () =>
+          json(409, { error: { code: "approval.already_decided", message: "x" } }),
+      },
+      { locale: "zh" },
+    );
     await screen.findByRole("table", { name: zh.inbox.listLabel });
     const row = screen.getByRole("region", { name: "待提交改动" });
     await userEvent.setup().click(within(row).getByRole("button", { name: zh.approval.deny }));
@@ -177,8 +210,7 @@ describe("收件箱（InboxPage）", () => {
     "nothing pending: one full-width empty state, no split, no ActionRow (%s)",
     async (locale) => {
       const m = msgs[locale];
-      stubApi({ [LIST]: () => json(200, inbox([])) });
-      renderPage(<InboxRoute />, { locale });
+      await renderInbox({ [LIST]: () => json(200, inbox([])) }, { locale });
       expect(await screen.findByText(m.inbox.empty)).toBeTruthy();
       expect(screen.getByText(m.inbox.emptyHint)).toBeTruthy();
       // no empty table header in a narrow list column
@@ -192,11 +224,10 @@ describe("收件箱（InboxPage）", () => {
   );
 
   it("按角色升级的审批只有「仅本次」", async () => {
-    stubApi({
+    await renderInbox({
       [LIST]: () =>
         json(200, inbox([approval("a", { requestedFor: null, approverRole: "admin" })])),
     });
-    renderPage(<InboxRoute />);
     const scopes = await screen.findByRole("radiogroup", { name: en.approval.scopeLabel });
     expect(within(scopes).getAllByRole("radio")).toHaveLength(1);
   });
@@ -224,11 +255,13 @@ describe("收件箱：技能变更", () => {
     "工具审批与技能变更同在列表；技能变更卡片显示 agent、发起人、文件与纯文本差异（%s）",
     async (locale) => {
       const m = msgs[locale];
-      stubApi({
-        [LIST]: () => json(200, inbox([approval("a")], [skillChange("sc1")])),
-        [DETAIL]: () => json(200, { skillChange: detail() }),
-      });
-      const { container } = renderPage(<InboxRoute />, { locale });
+      const { container } = await renderInbox(
+        {
+          [LIST]: () => json(200, inbox([approval("a")], [skillChange("sc1")])),
+          [DETAIL]: () => json(200, { skillChange: detail() }),
+        },
+        { locale },
+      );
       const table = await screen.findByRole("table", { name: m.inbox.listLabel });
       expect(within(table).getByText("Fixture · tool_a")).toBeTruthy();
       await userEvent
@@ -266,16 +299,20 @@ describe("收件箱：技能变更", () => {
 
   it("批准：POST decide 后重读列表、顶栏待处理数刷新", async () => {
     let changes = [skillChange("sc1")];
-    const calls = stubApi({
-      [LIST]: () => json(200, inbox([], changes)),
-      [DETAIL]: () => json(200, { skillChange: detail() }),
-      "POST /api/v1/orgs/o1/skill-changes/sc1/decide": () => {
-        changes = [];
-        return json(200, { skillChange: { ...skillChange("sc1"), status: "approved" } });
-      },
-    });
     const refreshPending = vi.fn();
-    renderPage(<InboxRoute />, { session: { refreshPending } });
+    const { calls } = await renderInbox(
+      {
+        [LIST]: () => json(200, inbox([], changes)),
+        [DETAIL]: () => json(200, { skillChange: detail() }),
+        "POST /api/v1/orgs/o1/skill-changes/sc1/decide": () => {
+          changes = [];
+          return json(200, { skillChange: { ...skillChange("sc1"), status: "approved" } });
+        },
+      },
+      { session: { refreshPending } },
+    );
+    // the visible skill change's detail is read on the server too
+    expect(calls.filter((c) => c.method === "GET")).toEqual([]);
     const row = await screen.findByRole("region", { name: "Pending changes" });
     await userEvent
       .setup()
@@ -287,13 +324,15 @@ describe("收件箱：技能变更", () => {
   });
 
   it("拒绝失败（已被处理）：toast 显示 skill_change.already_decided 的文案", async () => {
-    stubApi({
-      [LIST]: () => json(200, inbox([], [skillChange("sc1")])),
-      [DETAIL]: () => json(200, { skillChange: detail() }),
-      "POST /api/v1/orgs/o1/skill-changes/sc1/decide": () =>
-        json(409, { error: { code: "skill_change.already_decided", message: "x" } }),
-    });
-    renderPage(<InboxRoute />, { locale: "zh" });
+    await renderInbox(
+      {
+        [LIST]: () => json(200, inbox([], [skillChange("sc1")])),
+        [DETAIL]: () => json(200, { skillChange: detail() }),
+        "POST /api/v1/orgs/o1/skill-changes/sc1/decide": () =>
+          json(409, { error: { code: "skill_change.already_decided", message: "x" } }),
+      },
+      { locale: "zh" },
+    );
     const row = await screen.findByRole("region", { name: "待提交改动" });
     await userEvent
       .setup()
@@ -302,7 +341,7 @@ describe("收件箱：技能变更", () => {
   });
 
   it("新技能（没有当前版本）：全部文件为新增；自己发起的显示「两步确认」说明；列表被截断时提示", async () => {
-    stubApi({
+    const { container } = await renderInbox({
       [LIST]: () =>
         json(
           200,
@@ -313,7 +352,6 @@ describe("收件箱：技能变更", () => {
           skillChange: detail({ skillId: null, version: 1, requestedBy: "a1", current: null }),
         }),
     });
-    const { container } = renderPage(<InboxRoute />);
     expect(await screen.findByText(en.inbox.truncated)).toBeTruthy();
     const card = await vi.waitFor(() => {
       const el = container.querySelector('[data-skill-change-id="sc1"]') as HTMLElement | null;

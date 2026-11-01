@@ -37,6 +37,7 @@ import type { OrgRole } from "../src/lib/members";
 import type { Me } from "../src/lib/session";
 import { resetNavigation } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
+import { renderRoute } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -179,15 +180,23 @@ describe("role-dependent actions", () => {
     });
 
     it(`overview · ${role}: 新建 Agent and 组织设置 ${canCreate ? "shown" : "hidden"}`, async () => {
-      routes = {
-        [`GET ${O}/agents`]: { agents: [AGENT("ag1")] },
-        [`GET ${O}/models`]: { providers: [] },
-        [`GET ${O}/inbox`]: { items: [], truncated: false },
-        [`GET ${O}/conversations/groups`]: { groups: [] },
-      };
+      const ok = (body: unknown) => () => reply(200, body);
+      const gone = () => reply(404, { error: { code: "not_found", message: "x" } });
       resetNavigation("/");
-      renderPage(<HomePage />, { locale: "zh", me: meAs(role) });
-      await screen.findByText("Agent ag1");
+      await renderRoute(
+        () => HomePage(),
+        {
+          [`GET ${O}/agents`]: ok({ agents: [AGENT("ag1")] }),
+          [`GET ${O}/models`]: ok({ providers: [] }),
+          [`GET ${O}/inbox`]: ok({ items: [], truncated: false }),
+          [`GET ${O}/conversations/groups`]: ok({ groups: [] }),
+          [`GET ${O}/skills`]: gone,
+          [`GET ${O}/connectors`]: gone,
+          [`GET ${O}/members`]: gone,
+        },
+        { locale: "zh", me: meAs(role) },
+      );
+      screen.getByText("Agent ag1");
       expect(screen.queryByRole("link", { name: zh.home.newAgent }) !== null).toBe(canCreate);
       expect(screen.queryByRole("link", { name: zh.home.orgSettings }) !== null).toBe(canCreate);
     });

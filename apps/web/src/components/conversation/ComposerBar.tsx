@@ -25,7 +25,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { ApiClientError } from "../../lib/api";
-import { fileContentType } from "../../lib/attachments";
+import { type AttachmentLimits, fileContentType } from "../../lib/attachments";
 import {
   type ConnectorPrompt,
   type ConnectorResource,
@@ -157,6 +157,8 @@ export function ComposerBar({
   pickers,
   placeholder,
   sendDisabled,
+  initialSkills,
+  initialLimits,
 }: {
   orgId: string;
   /** The conversation's agent (the `/` menu lists its skills); undefined while loading. */
@@ -173,6 +175,10 @@ export function ComposerBar({
   placeholder: string;
   /** Nothing can be sent yet (a new conversation whose agent is still loading). */
   sendDisabled?: boolean;
+  /** `agentId`'s invocable skills as the server read them (the menu still reads them on open). */
+  initialSkills?: InvocableSkill[] | null | undefined;
+  /** The attachment limits as the server read them; `null` or absent reads them after mount. */
+  initialLimits?: AttachmentLimits | null | undefined;
 }) {
   const t = useTranslations("chat");
   const tc = useTranslations("common");
@@ -184,8 +190,13 @@ export function ComposerBar({
   /** The picked skill (the chip), or null. */
   const [skill, setSkill] = useState<InvocableSkill | null>(null);
   /** The agent's invocable skills, read once per agent (and refreshed when the menu opens). */
-  const [skills, setSkills] = useState<{ agentId: string; items: InvocableSkill[] }>();
-  const drafts = useDraftFiles(orgId);
+  const [skills, setSkills] = useState<{ agentId: string; items: InvocableSkill[] } | undefined>(
+    () =>
+      initialSkills != null && agentId !== undefined
+        ? { agentId, items: initialSkills }
+        : undefined,
+  );
+  const drafts = useDraftFiles(orgId, initialLimits);
   const files = drafts.files;
   const previews = useObjectUrls(files);
   const fileInput = useRef<HTMLInputElement>(null);

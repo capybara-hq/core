@@ -14,12 +14,14 @@ import {
   CONV,
   ev,
   FakeEventSource,
+  LIMITS,
   MODELS,
   runStarted,
   userMsg,
 } from "./support/conversation";
 import { Link, resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
+import { expectNoFirstPaintFetch, renderRoute } from "./support/server";
 import { renderFrame, shellOf } from "./support/shell";
 
 const params = { conversationId: "c1" };
@@ -29,6 +31,12 @@ vi.mock("../src/lib/browser", () => ({ navigateBrowser: vi.fn() }));
 vi.mock("next/navigation", () => ({
   useParams: () => params,
   useSearchParams: () => search,
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
 }));
 
 const BASE = "/api/v1/orgs/o1/conversations/c1";
@@ -726,21 +734,37 @@ function ChatPageInSession() {
   );
 }
 
+/** The reads of `/chat` on the server. */
+const NEW_CHAT = {
+  "GET /api/v1/orgs/o1/attachments/limits": () => json(200, LIMITS),
+  "GET /api/v1/orgs/o1/agents": () => json(200, AGENTS),
+  "GET /api/v1/orgs/o1/models": () => json(200, MODELS),
+  "GET /api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
+};
+
 describe("a new conversation (/chat)", () => {
   it("?agent= picks the agent; the first send creates the conversation and replaces the URL", async () => {
-    search.set("agent", "ag2");
     resetNavigation("/chat");
     const calls = stubApi({
-      "GET /api/v1/orgs/o1/agents": () => json(200, AGENTS),
-      "GET /api/v1/orgs/o1/models": () => json(200, MODELS),
-      "GET /api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
       "POST /api/v1/orgs/o1/conversations": () =>
         json(201, { ...CONV("c9", { agentId: "ag2" }), event: userMsg(1, "start") }),
     });
-    renderPage(<NewChatPage />, { locale: "en" });
-    expect(await screen.findByRole("heading", { name: "Second agent" })).toBeTruthy();
-    // Nothing is created before the first send.
-    expect(calls.some((c) => c.method === "POST")).toBe(false);
+    const { calls: server } = await renderRoute(
+      () => NewChatPage({ searchParams: Promise.resolve({ agent: "ag2" }) }),
+      NEW_CHAT,
+    );
+    // the first paint is the server's: agents, the most recent agent and the models
+    expect(screen.getByRole("heading", { name: "Second agent" })).toBeTruthy();
+    expect(server.map((c) => c.url)).toEqual(
+      expect.arrayContaining([
+        "/api/v1/orgs/o1/agents",
+        "/api/v1/orgs/o1/models",
+        "/api/v1/orgs/o1/conversations/groups?perGroup=1&limit=1",
+        "/api/v1/orgs/o1/attachments/limits",
+      ]),
+    );
+    // Nothing is fetched in the browser, and nothing is created before the first send.
+    expect(calls).toEqual([]);
     await userEvent.setup().type(input(), "start{Enter}");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({
@@ -751,9 +775,9 @@ describe("a new conversation (/chat)", () => {
 
   it("without ?agent= the agent most recently talked to is picked, and can be changed", async () => {
     resetNavigation("/chat");
-    stubApi({
-      "GET /api/v1/orgs/o1/agents": () => json(200, AGENTS),
-      "GET /api/v1/orgs/o1/models": () => json(200, MODELS),
+    expectNoFirstPaintFetch();
+    await renderRoute(() => NewChatPage({ searchParams: Promise.resolve({}) }), {
+      ...NEW_CHAT,
       "GET /api/v1/orgs/o1/conversations/groups": () =>
         json(200, {
           groups: [
@@ -767,8 +791,7 @@ describe("a new conversation (/chat)", () => {
           next: null,
         }),
     });
-    renderPage(<NewChatPage />, { locale: "en" });
-    expect(await screen.findByRole("heading", { name: "Second agent" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Second agent" })).toBeTruthy();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: `${en.chat.pickAgent}: Second agent` }));
     await user.click(await screen.findByRole("menuitemradio", { name: /Echo agent/ }));
@@ -777,20 +800,27 @@ describe("a new conversation (/chat)", () => {
 });
 
 describe("the new conversation once the org can run", () => {
-  const setup = (agents: unknown, models: unknown) => {
-    resetNavigation("/chat");
-    stubApi({
-      "GET /api/v1/orgs/o1/agents": () => json(200, agents),
-      "GET /api/v1/orgs/o1/models": () => json(200, models),
-      "GET /api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
-    });
-  };
-
   it("with a model and an agent the composer shows as before", async () => {
-    setup(AGENTS, MODELS);
-    const { container } = renderPage(<NewChatPage />, { locale: "en" });
-    expect(await screen.findByRole("heading", { name: /agent/i })).toBeTruthy();
+    resetNavigation("/chat");
+    expectNoFirstPaintFetch();
+    const { container } = await renderRoute(
+      () => NewChatPage({ searchParams: Promise.resolve({}) }),
+      NEW_CHAT,
+    );
+    expect(screen.getByRole("heading", { name: /agent/i })).toBeTruthy();
     expect(container.querySelector('[data-template="OnboardingPage"]')).toBeNull();
+  });
+
+  it("while the org is in setup, the page renders nothing (the frame draws the setup home)", async () => {
+    resetNavigation("/chat");
+    expectNoFirstPaintFetch();
+    const { container, calls } = await renderRoute(
+      () => NewChatPage({ searchParams: Promise.resolve({}) }),
+      NEW_CHAT,
+      { readiness: { modelProvider: "none", agents: 0 } },
+    );
+    expect(container.querySelector('[data-template="ConversationPage"]')).toBeNull();
+    expect(calls.some((c) => c.url.endsWith("/agents"))).toBe(false);
   });
 });
 

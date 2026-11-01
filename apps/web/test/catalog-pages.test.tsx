@@ -27,6 +27,7 @@ import type { Me } from "../src/lib/session";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
+import { renderRoute } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 const params = { current: {} as Record<string, string> };
@@ -1255,7 +1256,7 @@ describe("inbox: catalog_request", () => {
       createdAt: "2026-10-22T00:00:00.000Z",
     };
     let done = false;
-    const calls = stubApi({
+    const routes = {
       [`GET ${ORG}/inbox`]: () =>
         json(200, {
           items: done
@@ -1267,8 +1268,9 @@ describe("inbox: catalog_request", () => {
         done = true;
         return json(200, { request: { ...request, status: "approved" } });
       },
-    });
-    renderPage(<InboxRoute />);
+    };
+    const calls = stubApi(routes);
+    await renderRoute(() => InboxRoute(), routes);
     expect(
       (await screen.findAllByText(fill(d.title, { name: "pdf-tools" }))).length,
     ).toBeGreaterThan(0);

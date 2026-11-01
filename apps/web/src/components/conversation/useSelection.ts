@@ -2,7 +2,7 @@
 
 import type { PickerProps } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type Agent,
   findModel,
@@ -27,10 +27,19 @@ export function declaredEfforts(m: ModelInfo | undefined): Effort[] {
   return EFFORTS.filter((e) => values.has(e));
 }
 
-/** The org's chat models (`GET /orgs/:orgId/models`); undefined while loading or unreadable. */
-export function useModels(orgId: string): ProviderModels[] | undefined {
-  const [providers, setProviders] = useState<ProviderModels[]>();
+/**
+ * The org's chat models (`GET /orgs/:orgId/models`); undefined while loading or unreadable. With
+ * `initial` (the server's read) nothing is fetched; `null` (the server could not read them) reads
+ * them after mount.
+ */
+export function useModels(
+  orgId: string,
+  initial?: ProviderModels[] | null,
+): ProviderModels[] | undefined {
+  const [providers, setProviders] = useState<ProviderModels[] | undefined>(initial ?? undefined);
+  const seeded = useRef(initial != null);
   useEffect(() => {
+    if (seeded.current) return;
     let live = true;
     listModels(orgId).then(
       (r) => {

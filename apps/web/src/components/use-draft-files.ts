@@ -56,11 +56,15 @@ function failedIds(e: unknown): Set<string> {
  * 输入框的上传文件：上限取自内核 `GET /attachments/limits`（取到之前用默认值兜底），加文件时先预检、
  * 通过的立即上传；条数按同步更新的 ref 计算，并发加文件（同时拖入、粘贴）也不会超过上限。
  */
-export function useDraftFiles(orgId: string) {
+export function useDraftFiles(orgId: string, initialLimits?: AttachmentLimits | null) {
   const t = useTranslations("chat");
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const [limits, setLimits] = useState<AttachmentLimits>(DEFAULT_LIMITS);
+  const [limits, setLimits] = useState<AttachmentLimits>(() =>
+    initialLimits ? { ...DEFAULT_LIMITS, ...initialLimits } : DEFAULT_LIMITS,
+  );
+  /** The server read the limits for the first paint: nothing to fetch. */
+  const seeded = useRef(initialLimits != null);
   const [files, setFilesState] = useState<DraftFile[]>([]);
   /** 与 `files` 同步的最新值：加文件时据此算剩余名额（state 在同一轮事件里还是旧值）。 */
   const filesRef = useRef<DraftFile[]>([]);
@@ -74,6 +78,7 @@ export function useDraftFiles(orgId: string) {
   }, []);
 
   useEffect(() => {
+    if (seeded.current) return;
     let live = true;
     getAttachmentLimits(orgId).then(
       (l) => {
