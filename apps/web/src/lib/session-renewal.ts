@@ -10,7 +10,7 @@ import { kernelUrl } from "./kernel-proxy";
 export type Renewal =
   | { kind: "renewed"; setCookies: string[]; accessToken: string }
   | { kind: "race" }
-  | { kind: "invalid" }
+  | { kind: "invalid"; setCookies: string[] }
   | { kind: "unavailable" };
 
 /**
@@ -18,6 +18,12 @@ export type Renewal =
  * and parallel tabs arriving with the old token get the same new pair.
  */
 export const REFRESH_RACE_GRACE_MS = 30_000;
+
+/** Who is renewing: the trusted client address (`lib/peer.ts`) and the browser's user agent. */
+export interface RenewalClient {
+  peer?: string | undefined;
+  userAgent?: string | undefined;
+}
 
 /** How long the proxy waits for the kernel before treating it as unavailable. */
 const REFRESH_TIMEOUT_MS = 5_000;
@@ -49,9 +55,11 @@ export function setCookieValue(setCookies: readonly string[], name: string): str
   return undefined;
 }
 
-async function callKernel(refreshToken: string, peer: string | undefined): Promise<Renewal> {
+async function callKernel(refreshToken: string, client: RenewalClient): Promise<Renewal> {
   const headers = new Headers({ cookie: `cap_rt=${refreshToken}`, "x-capybara-csrf": "1" });
-  if (peer !== undefined) headers.set("x-forwarded-for", peer);
+  if (client.peer !== undefined) headers.set("x-forwarded-for", client.peer);
+  // the kernel records the user agent on the session; without it Node's own would replace it
+  if (client.userAgent !== undefined) headers.set("user-agent", client.userAgent);
   let res: Response;
   try {
     res = await fetch(`${kernelUrl()}/api/v1/auth/refresh`, {
@@ -82,21 +90,23 @@ async function callKernel(refreshToken: string, peer: string | undefined): Promi
   } catch {
     code = undefined;
   }
-  return code === "auth.refresh_race" ? { kind: "race" } : { kind: "invalid" };
+  return code === "auth.refresh_race"
+    ? { kind: "race" }
+    : { kind: "invalid", setCookies: res.headers.getSetCookie() };
 }
 
 /**
  * Renews the session of `refreshToken`. Concurrent calls with one token share one kernel call; a
  * `renewed` result is reused for {@link REFRESH_RACE_GRACE_MS} after it settles, other results only
- * while in flight. `peer` is the trusted client address (`lib/peer.ts`), passed on to the kernel.
+ * while in flight. `client` is passed on to the kernel (concurrent callers share the first one's).
  */
-export function renewSession(refreshToken: string, peer: string | undefined): Promise<Renewal> {
+export function renewSession(refreshToken: string, client: RenewalClient): Promise<Renewal> {
   const now = Date.now();
   for (const [k, v] of flights) if (v.expires <= now) flights.delete(k);
   const key = renewalKey(refreshToken);
   const existing = flights.get(key);
   if (existing !== undefined) return existing.promise;
-  const entry = { promise: callKernel(refreshToken, peer), expires: Number.POSITIVE_INFINITY };
+  const entry = { promise: callKernel(refreshToken, client), expires: Number.POSITIVE_INFINITY };
   flights.set(key, entry);
   void entry.promise.then((r) => {
     if (flights.get(key) !== entry) return;

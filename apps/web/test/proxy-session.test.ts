@@ -27,8 +27,17 @@ const renewed = () => {
   for (const c of RENEWED_COOKIES) headers.append("set-cookie", c);
   return new Response(JSON.stringify({ account: { id: "a1" } }), { status: 200, headers });
 };
-const kernelError = (status: number, code: string) =>
-  Response.json({ error: { code, message: "x" } }, { status });
+/** The Set-Cookie headers the kernel clears the session with (its 401 on an invalid token). */
+const CLEARED_COOKIES = [
+  "cap_at=; Max-Age=0; Path=/; Secure",
+  "cap_rt=; Max-Age=0; Path=/; Secure",
+  "cap_rt=; Max-Age=0; Path=/api/v1/auth; Secure",
+];
+const kernelError = (status: number, code: string, setCookies: string[] = []) => {
+  const headers = new Headers({ "content-type": "application/json" });
+  for (const c of setCookies) headers.append("set-cookie", c);
+  return new Response(JSON.stringify({ error: { code, message: "x" } }), { status, headers });
+};
 
 beforeEach(() => {
   resetRenewals();
@@ -64,7 +73,7 @@ const refreshCalls = () => calls.filter((c) => c.url.endsWith("/api/v1/auth/refr
 
 describe("renewSession", () => {
   it("posts the refresh cookie with the CSRF header and the trusted peer; returns the new pair", async () => {
-    const r = await renewSession("old-rt", "203.0.113.9");
+    const r = await renewSession("old-rt", { peer: "203.0.113.9", userAgent: "Browser/1.0" });
     expect(r).toEqual({ kind: "renewed", setCookies: RENEWED_COOKIES, accessToken: "new-at" });
     const call = refreshCalls()[0] as Call;
     expect(call.init?.method).toBe("POST");
@@ -72,43 +81,42 @@ describe("renewSession", () => {
     expect(h.get("cookie")).toBe("cap_rt=old-rt");
     expect(h.get("x-capybara-csrf")).toBe("1");
     expect(h.get("x-forwarded-for")).toBe("203.0.113.9");
+    expect(h.get("user-agent")).toBe("Browser/1.0");
     expect(call.init?.cache).toBe("no-store");
   });
 
   it("five concurrent calls with one token make one kernel call and share its result", async () => {
-    const results = await Promise.all(
-      Array.from({ length: 5 }, () => renewSession("old-rt", undefined)),
-    );
+    const results = await Promise.all(Array.from({ length: 5 }, () => renewSession("old-rt", {})));
     expect(refreshCalls()).toHaveLength(1);
     for (const r of results) expect(r).toMatchObject({ kind: "renewed", accessToken: "new-at" });
   });
 
   it("keeps a renewal for the race grace period, then asks again", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
-    await renewSession("old-rt", undefined);
+    await renewSession("old-rt", {});
     vi.setSystemTime(Date.now() + REFRESH_RACE_GRACE_MS - 1);
-    await renewSession("old-rt", undefined);
+    await renewSession("old-rt", {});
     expect(refreshCalls()).toHaveLength(1);
     vi.setSystemTime(Date.now() + 2);
-    await renewSession("old-rt", undefined);
+    await renewSession("old-rt", {});
     expect(refreshCalls()).toHaveLength(2);
-    await renewSession("other-rt", undefined);
+    await renewSession("other-rt", {});
     expect(refreshCalls()).toHaveLength(3);
   });
 
   it("maps kernel answers: race, invalid, disabled, 5xx and network errors; none of them is kept", async () => {
     refresh = async () => kernelError(401, "auth.refresh_race");
-    expect(await renewSession("t", undefined)).toEqual({ kind: "race" });
+    expect(await renewSession("t", {})).toEqual({ kind: "race" });
     refresh = async () => kernelError(401, "auth.refresh_invalid");
-    expect(await renewSession("t", undefined)).toEqual({ kind: "invalid" });
-    refresh = async () => kernelError(401, "auth.account_disabled");
-    expect(await renewSession("t", undefined)).toEqual({ kind: "invalid" });
+    expect(await renewSession("t", {})).toEqual({ kind: "invalid", setCookies: [] });
+    refresh = async () => kernelError(401, "auth.account_disabled", CLEARED_COOKIES);
+    expect(await renewSession("t", {})).toEqual({ kind: "invalid", setCookies: CLEARED_COOKIES });
     refresh = async () => kernelError(503, "unavailable");
-    expect(await renewSession("t", undefined)).toEqual({ kind: "unavailable" });
+    expect(await renewSession("t", {})).toEqual({ kind: "unavailable" });
     refresh = async () => {
       throw new TypeError("fetch failed");
     };
-    expect(await renewSession("t", undefined)).toEqual({ kind: "unavailable" });
+    expect(await renewSession("t", {})).toEqual({ kind: "unavailable" });
     expect(refreshCalls()).toHaveLength(5);
   });
 
@@ -126,6 +134,13 @@ describe("proxy: session renewal", () => {
     const set = res.headers.getSetCookie();
     expect(set.slice(0, 3)).toEqual(RENEWED_COOKIES);
     expect(set).toContainEqual(expect.stringMatching(/^cap_retry=; .*Max-Age=0/));
+  });
+
+  it("passes the browser's user agent to the kernel, which records it on the session", async () => {
+    await proxy(page("/agents", "cap_rt=old-rt", { "user-agent": "Mozilla/5.0 Test" }));
+    expect(new Headers(refreshCalls()[0]?.init?.headers).get("user-agent")).toBe(
+      "Mozilla/5.0 Test",
+    );
   });
 
   it("passes the trusted peer address to the kernel", async () => {
@@ -170,7 +185,14 @@ describe("proxy: session renewal", () => {
     expect(pub.headers.get("x-middleware-next")).toBe("1");
   });
 
-  it("invalid: continues signed out and clears both cookies", async () => {
+  it("invalid: forwards the kernel's own cookie clears verbatim", async () => {
+    refresh = async () => kernelError(401, "auth.refresh_invalid", CLEARED_COOKIES);
+    const res = await proxy(page("/login", "cap_rt=old-rt"));
+    expect(res.headers.getSetCookie()).toEqual(CLEARED_COOKIES);
+    expect(forwarded(res, "cookie")).toBeNull();
+  });
+
+  it("invalid without kernel clears: continues signed out and clears both cookies", async () => {
     refresh = async () => kernelError(401, "auth.refresh_invalid");
     const res = await proxy(page("/login", "theme=dark; cap_rt=old-rt"));
     expect(res.headers.get("x-middleware-next")).toBe("1");

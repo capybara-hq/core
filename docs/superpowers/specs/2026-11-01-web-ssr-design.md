@@ -69,7 +69,9 @@ paths with a file extension). In order:
      `sha256(cap_rt)`. The result is kept for `REFRESH_RACE_GRACE_MS` (30 s, the kernel's own
      window), so prefetches and parallel tabs that arrive with the same old token reuse the same
      new pair. This is a per-process cache of a pure function of the token, not shared state:
-     another replica may refresh the same token.
+     another replica may refresh the same token. Accepted trade-off: for up to 30 s a request on the
+     same web process presenting the just-rotated old token receives the new pair (the kernel alone
+     would answer `auth.refresh_race`), so the old token stays usable for that window on that process.
    - **`auth.refresh_race`** (another web replica won): answer 307 to the same URL with a marker
      cookie `cap_retry=1` (Max-Age 10). By then the browser has the winner's cookies. A request that
      already carries the marker gives up and continues signed out; the marker is cleared on the next

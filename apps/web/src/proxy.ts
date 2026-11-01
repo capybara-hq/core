@@ -91,7 +91,10 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
   if (signedIn) {
     if (hasRetry) setCookies.push(RETRY_CLEAR);
   } else if (refreshToken !== undefined) {
-    const renewal = await renewSession(refreshToken, trustedPeer(req.headers));
+    const renewal = await renewSession(refreshToken, {
+      peer: trustedPeer(req.headers),
+      userAgent: req.headers.get("user-agent") ?? undefined,
+    });
     switch (renewal.kind) {
       case "renewed": {
         const rt = setCookieValue(renewal.setCookies, REFRESH_COOKIE) ?? refreshToken;
@@ -115,7 +118,8 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
         const rest = withSession(pairs, []);
         if (rest === "") headers.delete("cookie");
         else headers.set("cookie", rest);
-        setCookies.push(...SESSION_CLEARS);
+        // the kernel's clears carry its Secure attribute and the legacy-path cap_rt; ours are a fallback
+        setCookies.push(...(renewal.setCookies.length > 0 ? renewal.setCookies : SESSION_CLEARS));
         break;
       }
       case "unavailable":
