@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useDesignLink, useDesignT } from "../provider";
+import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
 import { TemplateHead } from "./frame";
 
@@ -45,6 +45,7 @@ export function SettingsPage({
               {n.count !== undefined ? (
                 <span className="cb-settings-nav-count">{n.count}</span>
               ) : null}
+              <LinkPendingMark />
             </Link>
           ))}
         </div>

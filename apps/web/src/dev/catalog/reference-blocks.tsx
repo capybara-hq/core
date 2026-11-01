@@ -25,6 +25,7 @@ import {
   SecretReveal,
   Segmented,
   Select,
+  SetupPage,
   SIZES,
   Sidebar,
   Stack,
@@ -54,6 +55,7 @@ import { CONVERSATION_PAGE_BLOCKS } from "./conversation-page-blocks";
 import { COMMANDS } from "./fixtures";
 import { RefBlock } from "./ref-block";
 import { type SidebarFixture, sidebarProps, statusFixture } from "./shell-fixture";
+import { SetupHomeBody, setupFrameProps } from "./templates/setup";
 
 // The /dev/ui side of the reference set (docs/design/reference/src): one RefBlock per state, with
 // the reference block's id, box and fixture copy. Pseudo-states are forced by the Playwright specs.
@@ -433,6 +435,20 @@ function SidebarBlock({
 }
 
 const navAt = (id: string) => `[data-part="nav-item"][href*="at=${id}"]`;
+const stepAt = (id: string) => `[data-part="step-item"][href*="at=${id}"]`;
+
+/** Below 960: the setup home behind the scrim, the setup drawer open over it. */
+function SetupDrawerPage() {
+  return (
+    <SetupPage
+      {...setupFrameProps(here, "admin", "home")}
+      title="开始之前"
+      reference={{ drawer: true }}
+    >
+      <SetupHomeBody />
+    </SetupPage>
+  );
+}
 
 /** Below 960: the list page behind the scrim, the drawer open over it (the reference's stage). */
 function DrawerPage() {
@@ -507,6 +523,31 @@ function sidebarBlocks(): ReactNode {
       </RefBlock>
       <RefBlock id="sidebar-drawer" width={640} height={SIDEBAR_H}>
         <DrawerPage />
+      </RefBlock>
+      {/* The setup context (web-SSR spec §4) */}
+      <SidebarBlock id="sidebar-setup" context="setup" active="agent" />
+      <SidebarBlock id="sidebar-setup-waiting" context="setup" setup="member" active="home" />
+      <SidebarBlock
+        id="sidebar-setup-hover"
+        context="setup"
+        active="agent"
+        force={{ pseudo: ["hover"], selector: stepAt("channels") }}
+      />
+      <SidebarBlock
+        id="sidebar-setup-focus"
+        context="setup"
+        active="agent"
+        force={{ pseudo: ["focus", "focus-visible"], selector: stepAt("model") }}
+      />
+      <RefBlock id="sidebar-setup-rail" width={240} height={SIDEBAR_H}>
+        <Sidebar
+          {...sidebarProps({ context: "setup", setup: "member", active: "home" }, here)}
+          mode="rail"
+          railTooltip="model"
+        />
+      </RefBlock>
+      <RefBlock id="sidebar-setup-drawer" width={640} height={SIDEBAR_H}>
+        <SetupDrawerPage />
       </RefBlock>
     </>
   );

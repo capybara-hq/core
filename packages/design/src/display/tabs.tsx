@@ -1,7 +1,7 @@
 import { type KeyboardEvent, useRef } from "react";
 import type { ControlA11y } from "../controls/a11y";
 import { type Density, useDensity } from "../controls/density";
-import { useDesignLink, useDesignT } from "../provider";
+import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 
 export type TabItem = {
   id: string;
@@ -79,6 +79,7 @@ export function Tabs({ items, value, onChange, label }: TabsProps) {
             >
               {it.label}
               <TabExtras it={it} />
+              <LinkPendingMark />
             </Link>
           );
         })}

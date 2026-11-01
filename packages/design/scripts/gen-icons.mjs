@@ -103,6 +103,8 @@ const ICONS = {
   sliders: "sliders-horizontal",
   // Role pass: the no-access state.
   lock: "lock",
+  // The setup frame: a step waiting for someone else.
+  clock: "clock",
 };
 
 const entries = Object.entries(ICONS).map(([name, file]) => {

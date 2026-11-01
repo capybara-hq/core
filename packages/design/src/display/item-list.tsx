@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useDesignLink } from "../provider";
+import { LinkPendingMark, useDesignLink } from "../provider";
 
 export type ItemListRow = {
   id: string;
@@ -47,6 +47,7 @@ export function ItemList({
             {r.href ? (
               <Link href={r.href} className="cb-item-list-title">
                 {r.title}
+                <LinkPendingMark />
               </Link>
             ) : (
               <span className="cb-item-list-title">{r.title}</span>

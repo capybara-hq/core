@@ -5,7 +5,7 @@ import { Tabs } from "../display/tabs";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { Menu, type MenuItem } from "../overlays/index";
-import { useDesignLink, useDesignT } from "../provider";
+import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { useHydrated, useMediaQuery } from "./use-media-query";
 
 type HeaderButton = {
@@ -178,6 +178,7 @@ export function PageHeader(p: PageHeaderProps) {
                 {c.href !== undefined && !last ? (
                   <Link href={c.href} className="cb-pageheader-path-seg">
                     {c.label}
+                    <LinkPendingMark />
                   </Link>
                 ) : (
                   <span

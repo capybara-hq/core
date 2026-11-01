@@ -32,11 +32,11 @@ Tokens: `docs/design/tokens.json` is the source; `pnpm gen:tokens` writes `token
 | Login, initialization, accept invitation | `AuthPage` | No Shell |
 | 404 / 403 / under maintenance | `StatusPage` | Single, centered |
 | New org, empty environment | `OnboardingPage` | Single, centered checklist |
-| The workspace while the org has no model or no agent | `SetupPage` | No shell: top bar + centered column + status bar; drawn by `AppFrame` (`components/shell/setup.tsx`), never by a page (web-order spec §3.8) |
+| The workspace while the org has no model or no agent | `SetupPage` | The shell's geometry with the setup sidebar (`context.kind: "setup"`: 开始之前 and the steps as navigation) + content area + status bar; the page brings its own template; drawn by `AppFrame` (`components/shell/setup.tsx`), never by a page (web-order spec §3.8, web-SSR spec §4) |
 
 ### The web order: contexts and frames (spec `docs/superpowers/specs/2026-10-31-web-order-design.md`)
 
-The sidebar has two contexts: the workspace (conversations, Agents, 更多 with connectors / channels / skills / evals / catalog, org settings) and the admin console (`/admin/*`, entered from the account row, enterprise admins only). Personal settings are `/account/*` (connections, grants, IM identities), org settings `/settings/*`. Every page uses one of three frames and one page head (`PageHeader`: `path` required, `title`, optional `description` / `actions` / `tabs` + `activeTab` / `search`).
+The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`): the workspace (conversations, Agents, 更多 with connectors / channels / skills / evals / catalog, org settings) and the admin console (`/admin/*`, entered from the account row, enterprise admins only). Personal settings are `/account/*` (connections, grants, IM identities), org settings `/settings/*`. Every page uses one of three frames and one page head (`PageHeader`: `path` required, `title`, optional `description` / `actions` / `tabs` + `activeTab` / `search`).
 
 | Frame | Template | Use |
 |---|---|---|

@@ -5,6 +5,7 @@ import {
   Button,
   initialOf,
   type MenuItem,
+  OverviewPage,
   PendingState,
   SetupPage,
   type SidebarContext,
@@ -360,15 +361,21 @@ export function AppFrame({ version, children }: { version: string; children: Rea
         setupRoute === "home" ? "/setup" : pathname,
       ),
     };
-    const setupFrame = {
+    // Task 5 rewires this frame (the steps per role in the sidebar, the setup home's own page);
+    // until then the sidebar carries only the setup home.
+    const setupSidebar = {
       org: currentOrg
         ? {
             name: currentOrg.name,
+            initial: initialOf(currentOrg.name),
             slug: currentOrg.slug,
             role: roles[currentOrg.role] ?? currentOrg.role,
             menu: multiOrg ? orgItems : [],
           }
         : null,
+      home: { href: "/" },
+      steps: [],
+      activeNav: setupRoute === "home" ? "home" : "",
       account: {
         name: session.me.account.displayName,
         // Language ▸, personal settings, sign out: the org has its own menu in the top bar. An
@@ -381,7 +388,6 @@ export function AppFrame({ version, children }: { version: string; children: Rea
         ],
       },
       theme: preferences.theme,
-      status: setupStatus,
     };
     const { modelProvider, agents } = readiness.state;
     return (
@@ -389,30 +395,25 @@ export function AppFrame({ version, children }: { version: string; children: Rea
         <SetupContext.Provider
           value={{ active: true, readiness: readiness.state, recheck: readiness.recheck }}
         >
-          {setupRoute === "home" ? (
-            <SetupPage
-              {...setupFrame}
-              header={{
-                path: [{ label: currentOrg?.slug ?? "~" }, { label: t("chat.setup.title") }],
-                title: t("chat.setup.title"),
-                description: t("chat.setup.description"),
-              }}
-            >
-              <SetupHome
-                me={session.me}
-                readiness={{ modelProvider, agents }}
-                onRefresh={() => void readiness.recheck()}
-              />
-            </SetupPage>
-          ) : (
-            <SetupPage
-              {...setupFrame}
-              width="content"
-              back={{ label: t("setupLayout.back"), href: "/" }}
-            >
-              {children}
-            </SetupPage>
-          )}
+          <SetupPage sidebar={setupSidebar} status={setupStatus}>
+            {setupRoute === "home" ? (
+              <OverviewPage
+                header={{
+                  path: [{ label: currentOrg?.slug ?? "~" }, { label: t("chat.setup.title") }],
+                  title: t("chat.setup.title"),
+                  description: t("chat.setup.description"),
+                }}
+              >
+                <SetupHome
+                  me={session.me}
+                  readiness={{ modelProvider, agents }}
+                  onRefresh={() => void readiness.recheck()}
+                />
+              </OverviewPage>
+            ) : (
+              children
+            )}
+          </SetupPage>
           {session.me.canCreateOrg ? (
             <CreateOrgDialog open={creatingOrg} onOpenChange={setCreatingOrg} />
           ) : null}

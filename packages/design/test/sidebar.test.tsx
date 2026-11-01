@@ -5,7 +5,10 @@ import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DesignProvider,
+  LinkPendingMark,
+  type SetupStep,
   Sidebar,
+  type SidebarConversations,
   type SidebarFilter,
   type SidebarGroup,
   type SidebarProps,
@@ -41,7 +44,10 @@ function group(agentId: string, agentName: string, n: number, more = false): Sid
   };
 }
 
-function props(over: Partial<SidebarProps> = {}): SidebarProps {
+/** Work-context props: the conversations are always there. */
+type WorkProps = SidebarProps & { conversations: SidebarConversations };
+
+function props(over: Partial<SidebarProps> = {}): WorkProps {
   return {
     context: {
       kind: "work",
@@ -1092,5 +1098,176 @@ describe("Sidebar first paint and remembered state", () => {
   it("the avatar initial is the first grapheme", () => {
     zh(<Sidebar {...props({ account: { name: "👩‍💻dev", menu: [] } })} />);
     expect(document.querySelector('[data-part="avatar"]')?.textContent).toBe("👩‍💻");
+  });
+});
+
+describe("Sidebar setup context", () => {
+  const steps: SetupStep[] = [
+    { id: "model", label: "配置模型", state: "done", href: "/admin/extensions" },
+    { id: "agent", label: "创建 agent", state: "todo", href: "/agents/new" },
+    { id: "members", label: "邀请成员", state: "waiting", reason: "等待管理员配置模型" },
+    { id: "channels", label: "连接渠道", state: "todo", href: "/channels/new", optional: true },
+  ];
+  const setupProps = (over: Partial<SidebarProps> = {}): SidebarProps => ({
+    context: {
+      kind: "setup",
+      org: { name: "示例组织", initial: "示", slug: "demo", role: "所有者", menu: [] },
+      home: { href: "/" },
+      steps,
+      adminHref: "/admin",
+    },
+    activeNav: "agent",
+    account: { name: "grant", menu: [] },
+    onOpenCommands: vi.fn(),
+    ...over,
+  });
+  const item = (label: string) =>
+    within(mainNav())
+      .getByText(label)
+      .closest('[data-part="step-item"], [data-part="nav-item"]') as HTMLElement;
+
+  it("the home item first, the required steps, the later group, then the optional steps", () => {
+    zh(<Sidebar {...setupProps()} mode="full" />);
+    const nav = mainNav();
+    const labels = [...nav.querySelectorAll(".cb-sidebar-label, [data-part=step-group-label]")].map(
+      (e) => e.textContent,
+    );
+    expect(labels).toEqual([
+      "开始之前",
+      "配置模型",
+      "创建 agent",
+      "邀请成员",
+      "可以稍后再做",
+      "连接渠道",
+    ]);
+    expect(item("开始之前").getAttribute("href")).toBe("/");
+    expect(item("开始之前").getAttribute("data-part")).toBe("nav-item");
+    expect(item("连接渠道").getAttribute("data-optional")).toBe("true");
+  });
+
+  it("state marks are icons: check (success), circle, clock; the waiting reason is a second line", () => {
+    zh(<Sidebar {...setupProps()} mode="full" />);
+    const mark = (label: string) =>
+      item(label).querySelector('[data-part="step-mark"]') as HTMLElement;
+    expect(mark("配置模型").getAttribute("data-state")).toBe("done");
+    expect(mark("配置模型").querySelector('svg[data-icon="check"]')).not.toBeNull();
+    expect(mark("创建 agent").querySelector('svg[data-icon="circle"]')).not.toBeNull();
+    expect(mark("邀请成员").querySelector('svg[data-icon="clock"]')).not.toBeNull();
+    const reason = item("邀请成员").querySelector('[data-part="step-reason"]');
+    expect(reason?.textContent).toBe("等待管理员配置模型");
+  });
+
+  it("done and to-do steps are links; a waiting step is not a link (aria-disabled)", () => {
+    zh(<Sidebar {...setupProps()} mode="full" />);
+    expect(item("配置模型").tagName).toBe("A");
+    expect(item("配置模型").getAttribute("href")).toBe("/admin/extensions");
+    expect(item("创建 agent").getAttribute("href")).toBe("/agents/new");
+    const waiting = item("邀请成员");
+    expect(waiting.tagName).not.toBe("A");
+    expect(waiting.getAttribute("href")).toBeNull();
+    expect(waiting.getAttribute("aria-disabled")).toBe("true");
+    // the accessible names carry the state, the waiting one its reason
+    expect(within(mainNav()).getByRole("link", { name: "配置模型，已完成" })).toBeTruthy();
+    expect(within(mainNav()).getByRole("link", { name: "创建 agent，未完成" })).toBeTruthy();
+    expect(
+      within(mainNav()).getByRole("link", { name: "邀请成员，等待管理员配置模型" }),
+    ).toBeTruthy();
+  });
+
+  it("activeNav marks a step or the home item current", () => {
+    zh(<Sidebar {...setupProps()} mode="full" />);
+    expect(item("创建 agent").getAttribute("aria-current")).toBe("page");
+    expect(item("开始之前").getAttribute("aria-current")).toBeNull();
+    cleanup();
+    zh(<Sidebar {...setupProps({ activeNav: "home" })} mode="full" />);
+    expect(item("开始之前").getAttribute("aria-current")).toBe("page");
+  });
+
+  it("no search, no inbox, no conversations, no new conversation; the org, the admin entry, the account", () => {
+    zh(<Sidebar {...setupProps()} mode="full" />);
+    expect(screen.queryByRole("button", { name: "搜索 ⌘K" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /收件箱/ })).toBeNull();
+    expect(screen.queryByRole("region", { name: "会话" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "新会话" })).toBeNull();
+    expect(document.querySelector('[data-part="org-switcher"]')?.textContent).toContain("示例组织");
+    expect(screen.getByRole("link", { name: "管理后台" }).getAttribute("href")).toBe("/admin");
+    expect(document.querySelector('[data-part="sidebar"]')?.getAttribute("data-context")).toBe(
+      "setup",
+    );
+  });
+
+  it("rail: step marks only, the label and state in a tooltip; the later group is a divider", async () => {
+    zh(<Sidebar {...setupProps()} mode="rail" railTooltip="members" />);
+    const nav = mainNav();
+    expect(within(nav).queryByText("配置模型")).toBeNull();
+    expect(within(nav).getByRole("link", { name: "配置模型，已完成" })).toBeTruthy();
+    expect(nav.querySelector('[data-part="step-reason"]')).toBeNull();
+    expect(nav.querySelector('[data-part="step-group-label"]')).toBeNull();
+    expect(nav.querySelector('[data-part="step-divider"]')).not.toBeNull();
+    // the open tooltip of the waiting step names it with its reason
+    expect((await screen.findByRole("tooltip")).textContent).toContain(
+      "邀请成员，等待管理员配置模型",
+    );
+    expect(screen.queryByRole("button", { name: "搜索 ⌘K" })).toBeNull();
+  });
+
+  it("drawer: the full setup sidebar with its close button", async () => {
+    const onOpenChange = vi.fn();
+    zh(<Sidebar {...setupProps()} mode="drawer" drawer={{ open: true, onOpenChange }} />);
+    const drawer = await screen.findByRole("dialog");
+    expect(within(drawer).getByText("可以稍后再做")).toBeTruthy();
+    expect(within(drawer).getByText("等待管理员配置模型")).toBeTruthy();
+    await userEvent.click(within(drawer).getByRole("button", { name: "关闭导航" }));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("roving focus walks every step, the waiting one included", async () => {
+    const user = userEvent.setup();
+    zh(<Sidebar {...setupProps()} mode="full" />);
+    await user.tab();
+    expect(document.activeElement).toBe(item("创建 agent"));
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(item("邀请成员"));
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(item("连接渠道"));
+  });
+});
+
+describe("Link pending state", () => {
+  it("design links carry a pending mark that follows the provider's hook", () => {
+    const steps: SetupStep[] = [{ id: "agent", label: "创建 agent", state: "todo", href: "/a" }];
+    const p: SidebarProps = {
+      context: { kind: "setup", org: null, home: { href: "/" }, steps },
+      activeNav: "home",
+      account: { name: "grant", menu: [] },
+      onOpenCommands: vi.fn(),
+    };
+    const { unmount } = render(
+      <DesignProvider locale="zh" useLinkPending={() => true}>
+        <Sidebar {...p} mode="full" />
+      </DesignProvider>,
+    );
+    const link = screen.getByRole("link", { name: "创建 agent，未完成" });
+    const mark = link.querySelector('[data-part="link-pending"]') as HTMLElement;
+    expect(mark.getAttribute("data-pending")).toBe("true");
+    expect(mark.getAttribute("aria-hidden")).toBe("true");
+    unmount();
+    // without a hook nothing is ever pending
+    zh(<Sidebar {...p} mode="full" />);
+    const idle = screen
+      .getByRole("link", { name: "创建 agent，未完成" })
+      .querySelector('[data-part="link-pending"]');
+    expect(idle?.getAttribute("data-pending")).toBeNull();
+  });
+
+  it("the mark sits inside the link (so the router's link status reaches it)", () => {
+    render(
+      <DesignProvider locale="zh" useLinkPending={() => true}>
+        <LinkPendingMark />
+      </DesignProvider>,
+    );
+    expect(document.querySelector('[data-part="link-pending"]')?.getAttribute("data-pending")).toBe(
+      "true",
+    );
   });
 });

@@ -312,11 +312,11 @@ A new page **must** pick one of the following templates; a new template requires
 | T10 | Auth | No Shell, centered card + dither dot matrix on both sides | — | — | — | Sign in, password recovery, accept invitation, initialization |
 | T11 | System status | Single centered | — | — | — | 404, 403, under maintenance, not enabled, no access (`kind="no-access"`: a 16 px `lock` in `faint` instead of the code, the title, what the page is, `need` as a mono chip "需要：组织管理员" / "Requires: Org admin" (1px `line`, radius `sm`, `small`), `ask` in `muted` (who to ask); never an action or a retry; the web app's one role gate draws it, web-order spec §9) |
 | T12 | Onboarding | Single centered checklist | — | — | — | New org, empty environment |
-| T13 | Setup | No Shell: a 48 px top bar (brand; the org, the account and the theme at its right end, `line-soft` below), a centered column, the status bar (§5.5) | — | — | chat column (home) / content (step pages) | The workspace while the org has no model or no agent (web-order spec §3.8) |
+| T13 | Setup | The Shell's geometry with the setup sidebar (§6.13 `context.kind: "setup"`: the setup home and the steps as navigation), the content area, the status bar (§5.5) | — | — | the page's own (content) | The workspace while the org has no model or no agent (web-order spec §3.8, web-SSR spec §4) |
 
 ### 5.5 Setup (T13)
 
-`SetupPage({ org, account, theme?, status, header?, back?, width?, children })` is the third layout beside the shell and the auth layout, drawn by the app frame while the current org cannot run yet. No sidebar. The top bar (`setup-top-bar`, `layout.title-bar` high, padding `space.4`): the logo (pixel unit 2) with the wordmark; at its right end the org (its initial on `ink`, the name in 600 over `~/<slug> · <role>` in mono `micro` `muted`, a `chevrons-up-down` 14 when it has a menu: the user's orgs and "创建组织…"; accessible name "当前组织：{org}，切换组织"), the account (avatar + name, opening language ▸, personal settings, sign out) and the `ThemeToggle`. The column (`setup-column`): `width="column"` is the chat column (`layout.chat`) with `space.8` above, holding the setup home's PageHeader and its cards; `width="content"` holds a step page's own template (FormPage, ListPage …) under a back link "← 开始之前" (`back`, `small` `muted`). The StatusBar sits at the bottom as in the shell. Below 640 the org and account texts hide (the initials stay).
+`SetupPage({ sidebar, status, title?, children })` is the layout the app frame draws while the current org cannot run yet (web-SSR spec `docs/superpowers/specs/2026-11-01-web-ssr-design.md` §4). It has the Shell's geometry and is built on `AppShell` (§4): the Sidebar on the left, the content area (the drawer menu bar below 960, the page, the StatusBar) on the right, the same rail below 1280 and drawer below 960. The sidebar is the setup context (§6.13): `sidebar` carries the org (the switcher, as in the workspace), `home` (the setup home's link), `steps`, `activeNav` (a step id or `home`), the account, the theme and `adminHref` (enterprise admins). There is no command palette: ⌘K opens nothing and the drawer menu bar has no search button. The page brings its own template and page head in the content width: the setup home (`/`, `/chat`) is an `OverviewPage` with the path `<slug> / 开始之前`, the h1 开始之前 and the checklist card; a step page is its own template exactly as in the shell. There is no back link (the sidebar is the way back) and no top bar.
 
 ### 5.1 List (T2)
 - Order in the content column: PageHeader → StatCards (when the header has `metrics`) → the DataTable (its toolbar above the table, pagination below), separated by `space.3`.
@@ -713,7 +713,7 @@ States: `set-16`, `set-14`, `set-12`
 
 ### 6.13 Sidebar (with the conversation list)
 
-The left sidebar replaces the TopBar on every page (UI refresh spec §4.4). Sidebar v3 (web-order spec `docs/superpowers/specs/2026-10-31-web-order-design.md` §2.1–§2.2, the approved canvas "侧边栏组件") has **two contexts** and changes as a whole between them: the **workspace** (one org at a time, `context.kind: "work"`) and the **admin console** (the whole deployment, `kind: "admin"`).
+The left sidebar replaces the TopBar on every page (UI refresh spec §4.4). Sidebar v3 (web-order spec `docs/superpowers/specs/2026-10-31-web-order-design.md` §2.1–§2.2, the approved canvas "侧边栏组件") has **three contexts** and changes as a whole between them: the **workspace** (one org at a time, `context.kind: "work"`), the **admin console** (the whole deployment, `kind: "admin"`) and the **setup** of an org that cannot run yet (`kind: "setup"`, drawn by `SetupPage`, §5.5).
 
 - **Frame**: width `layout.sidebar`, `sidebar` ground, a `line-soft` right divider, the full window height; padding `space.3` / `space.2` / `space.2` (top / sides / bottom) and every block `space.2` apart (the 8 px rhythm).
 - **Workspace context**, top to bottom:
@@ -725,6 +725,9 @@ The left sidebar replaces the TopBar on every page (UI refresh spec §4.4). Side
   6. **管理后台** (`admin-entry`, enterprise admins only, `context.adminHref`): `admin` icon (a shield), the label and an outward `arrow-up-right` 14, `muted`, directly above the account row; it enters the admin context.
   7. **Account row** (`account`): a `line-soft` divider with `space.2` above (the block gap) and below; a 24 round initial avatar on `selected` (the name's first grapheme) + the name (no org: the switcher shows it), opening the account menu (切换组织 ▸, 语言 ▸, …, sign out); its accessible name is "账户: {name}". After it, in the same row, `ThemeToggle` (light / dark icon radio, the chosen one on `selected`). The rail has no room for it, so there the theme leads the account menu ("Theme: Light"). Menu items may open a submenu (`submenu`: a `chevron-right` mark, opens on hover, click or the right arrow). The auth pages (`AuthPage`) show `PreferenceBar` (a dense language `Select` and the `ThemeToggle`) in the bottom-right corner, `space.4` (16) inside the right dither column (16 from the edge below 640, where the columns are hidden), each control at its own width. The language is a cookie (`NEXT_LOCALE`), never part of the URL.
 - **Admin context**, top to bottom: the brand row; the **context block** (`context-block`): the switcher's size and light style but static (no chevrons): a shield in the accent tint (`accent-tint` ground, `accent` icon), "管理后台" and `整个部署 · /admin` in mono; below it a link "← 回到工作区 ~/<slug>" (`back`, `row.dense`, `small` `muted`, `arrow-left` 14); the items 概览, 账号, 组织, 扩展, 企业目录, 市场, 模型, 部署设置; no conversations, no 新会话, no search or inbox buttons (⌘K still opens the palette); the account row.
+
+- **Setup context** (`kind: "setup"`, web-SSR spec §4), top to bottom: the brand row without the search and inbox buttons; the org switcher (`context.org`, as in the workspace); the navigation (`nav` "Main navigation"): **开始之前** (`nav-item`, `diamond`, the setup home `context.home`, current when `activeNav` is `home`), then the required steps, then the label **可以稍后再做** (`step-group-label`, mono `micro` `faint`, letter-spacing 0.06em, `row.dense` high with the text at its bottom; the optional steps form a `group` it names), then the optional steps; the fill; the admin entry (`context.adminHref`); the account row. No conversations, no 新会话, no command palette. A **step item** (`step-item`, `SetupStep { id, label, state, href?, reason?, optional? }`) has the nav item's box and a state mark (`step-mark`, an `Icon` 16, never a character): `done` a `check` in `ok` (still a link), `todo` a `circle` in `muted` (a link), `waiting` a `clock` in `muted`: not a link (`role="link"`, `aria-disabled="true"`, the label `muted`, no hover ground, still a roving stop so its reason can be read) with `reason` as its second line (`step-reason`, `micro` `muted`, one line with an ellipsis), which makes the item 48 high. The current step takes the nav item's current style. Its accessible name is "{label}，{state}" (已完成 / 未完成, or the reason of a waiting step; en "{label}, {state}"). In the rail the steps are their marks alone (`row.default` squares) with the accessible name in the Tooltip to the right; the group label becomes a `line-soft` divider (`step-divider`, 24 × 1). The drawer is the full setup sidebar.
+- **Pending navigation**: every design link (nav items, steps, the admin entry, the back link, conversation rows; object rows, item lists, tabs, breadcrumbs, the settings navigation) renders `LinkPendingMark` as its last child. It calls the `DesignProvider`'s `useLinkPending` (apps/web: `() => useLinkStatus().pending` from next/link, so it must sit inside the link) and, while that navigation is pending, carries `data-pending` and draws a 2 px `accent` underline along the link's bottom that sweeps left to right in `motion.cursor` (reduced motion: a still underline). Without the hook nothing is ever pending.
 
   The overview (`OverviewPage`) is built from `Grid columns="main-side"` (a main column twice the side column; one column below 960), Cards, `ItemList` (rows of a tag, a linked title with a muted meta line, a status and actions, split by `line-soft`; an empty list shows its muted empty text) and the setup layout (§5.5) uses `StepList inset="card"` (the checklist OnboardingPage centers, filling a Card) until a model and an agent exist.
 - **Nav items**: `row.default` high, radius `sm`, padding `pad.dense.x`, icon 16 + label (`body`, `ink`, single line with an ellipsis). The current item gets the `sidebar-active` ground, `ink` and weight 600 (§2.3); hover the `hover` ground. An item may still carry a count (`nav-count`, an `accent` pill, 18 high, radius 9, mono `micro`, `on-accent`; `99+` above 99, `n+` when truncated, the accessible name includes it); the inbox, the one item that had one, is now the brand row's button.
@@ -744,7 +747,7 @@ The left sidebar replaces the TopBar on every page (UI refresh spec §4.4). Side
 - Interaction: §6.11.
 
 <!-- states: sidebar -->
-States: `default`, `item-hover`, `item-focus`, `conversation-active`, `group-collapsed`, `more-open`, `filter`, `archived`, `empty`, `loading`, `error`, `long-title`, `many-groups`, `guest`, `admin`, `rail`, `drawer`
+States: `default`, `item-hover`, `item-focus`, `conversation-active`, `group-collapsed`, `more-open`, `filter`, `archived`, `empty`, `loading`, `error`, `long-title`, `many-groups`, `guest`, `admin`, `rail`, `drawer`, `setup`, `setup-waiting`, `setup-hover`, `setup-focus`, `setup-rail`, `setup-drawer`
 
 <!-- size-table: sidebar -->
 | Part | State | Property | Value |
@@ -816,6 +819,31 @@ States: `default`, `item-hover`, `item-focus`, `conversation-active`, `group-col
 | inbox-badge | rail | min-width | 14 |
 | inbox-badge | rail | padding-left | 3 |
 | sidebar | drawer | width | layout.sidebar |
+| step-item | setup | height | row.default |
+| step-item | setup | border-radius | radius.sm |
+| step-item | setup | padding-left | pad.dense.x |
+| step-item | setup | font-size | type.body |
+| step-item[aria-current=page] | setup | background-color | color.sidebar-active |
+| step-item[aria-current=page] | setup | color | color.ink |
+| step-mark[data-state=done] | setup | color | color.ok |
+| step-mark[data-state=todo] | setup | color | color.muted |
+| step-group-label | setup | height | row.dense |
+| step-group-label | setup | font-size | type.micro |
+| step-group-label | setup | color | color.faint |
+| step-item[aria-disabled=true] | setup-waiting | height | 48 |
+| step-item[aria-disabled=true] | setup-waiting | color | color.muted |
+| step-mark[data-state=waiting] | setup-waiting | color | color.muted |
+| step-reason | setup-waiting | font-size | type.micro |
+| step-reason | setup-waiting | color | color.muted |
+| step-item[data-ref-forced=true] | setup-hover | background-color | color.hover |
+| step-item[data-ref-forced=true] | setup-focus | outline-color | color.accent |
+| step-item[data-ref-forced=true] | setup-focus | outline-width | 1 |
+| sidebar | setup-rail | width | layout.sidebar-rail |
+| step-item | setup-rail | width | row.default |
+| step-item | setup-rail | height | row.default |
+| step-divider | setup-rail | height | 1 |
+| step-divider | setup-rail | width | control.dense |
+| sidebar | setup-drawer | width | layout.sidebar |
 
 ### 6.14 StatCards
 

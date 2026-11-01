@@ -153,9 +153,47 @@
     return `<div class="r-sb-context"><div class="r-sb-org" data-static="true"><span class="r-sb-org-initial" data-tone="accent">${icon("admin", 14)}</span><span class="r-sb-org-text"><span class="r-sb-org-name">${esc(F.ADMIN_LABEL)}</span><span class="r-sb-org-meta">${esc(C.adminScope)}</span></span></div><a class="r-sb-back" href="#">${icon("arrow-left", 14)}<span class="r-ellipsis">${esc(C.back)} ~/${esc(slug)}</span></a></div>`;
   }
 
+  // The setup context (web-SSR spec §4): the setup home, the steps with their state marks, the
+  // 可以稍后再做 label before the optional ones (a divider in the rail).
+  function setupNav(o) {
+    const S = F.SETUP_COPY;
+    const rail = o.mode === "rail";
+    const MARK = { done: "check", todo: "circle", waiting: "clock" };
+    const home = navItem({ id: "home", label: S.home, icon: "diamond" }, o);
+    const step = (s) => {
+      const st = o.hover === s.id ? "hover" : o.focus === s.id ? "focus" : "";
+      const stateText = s.state === "waiting" ? s.reason || S.waiting : S[s.state];
+      const name = `${s.label}，${stateText}`;
+      const mark = `<span class="r-step-mark" data-state="${s.state}">${icon(MARK[s.state])}</span>`;
+      const reason = !rail && s.state === "waiting" && s.reason;
+      const text = rail
+        ? ""
+        : reason
+          ? `<span class="r-step-text"><span class="r-ellipsis">${esc(s.label)}</span><span class="r-step-reason">${esc(s.reason)}</span></span>`
+          : `<span class="r-ellipsis">${esc(s.label)}</span>`;
+      const cls = `r-nav-item r-step${rail ? " r-rail-item" : ""}`;
+      if (s.state === "waiting") {
+        return `<span class="${cls}" role="link" aria-disabled="true" aria-label="${esc(name)}"${reason ? ' data-reason="true"' : ""}${state(st)}>${mark}${text}</span>`;
+      }
+      const current = s.id === o.active ? ' aria-current="page"' : "";
+      return `<a class="${cls}" href="#" aria-label="${esc(name)}"${current}${state(st)}>${mark}${text}</a>`;
+    };
+    const steps = F.SETUP_STEPS_FIXTURE[o.setup || "admin"];
+    const required = steps.filter((s) => !s.optional);
+    const optional = steps.filter((s) => s.optional);
+    const later =
+      optional.length === 0
+        ? ""
+        : rail
+          ? `<span class="r-step-divider" aria-hidden="true"></span>${optional.map(step).join("")}`
+          : `<div class="r-step-group" role="group" aria-label="${esc(S.later)}"><span class="r-step-group-label">${esc(S.later)}</span>${optional.map(step).join("")}</div>`;
+    return `${home}${required.map(step).join("")}${later}`;
+  }
+
   function sidebar(o) {
     const level = o.level || "enterprise";
     const rail = o.mode === "rail";
+    const setup = o.context === "setup";
     const admin = o.context === "admin";
     const C = F.SIDEBAR_COPY;
     // Search and the inbox: brand-row icon buttons (rail icons under the expand button).
@@ -166,7 +204,7 @@
         : inboxItem.label
       : "";
     const inboxBadge = inboxItem?.count ? `<span class="r-rail-badge">${inboxItem.count}</span>` : "";
-    const tools = admin
+    const tools = admin || setup
       ? ""
       : `<button class="r-icon-btn${rail ? " r-rail-item" : ""}" aria-label="${esc(C.search)} ${esc(C.searchShortcut)}">${icon("search")}</button>${
           inboxItem
@@ -178,7 +216,9 @@
          <div class="r-sb-rail-tools"><button class="r-icon-btn r-rail-item" aria-label="${esc(C.expand)}">${icon("panel-left")}</button>${tools}</div>`
       : `<div class="r-sb-top">${LOGO}<span class="r-wordmark">CAPYBARA</span><span class="r-sb-top-tools">${tools}${o.mode === "drawer" ? `<button class="r-icon-btn" aria-label="关闭导航">${icon("x")}</button>` : ""}</span></div>`;
     let nav;
-    if (admin) {
+    if (setup) {
+      nav = setupNav(o);
+    } else if (admin) {
       nav = F.ADMIN_NAV_FIXTURE.map((n) => navItem(n, o)).join("");
     } else {
       const visible = F.NAV_FIXTURE.filter((n) => VISIBLE[level].includes(n.audience));
@@ -201,9 +241,9 @@
     }
     const navBlock = `<nav class="r-sb-nav" aria-label="主导航">${nav}</nav>`;
     const context = admin ? adminBlock(o) : orgBlock(o);
-    const middle = admin || rail ? '<div class="r-sb-fill"></div>' : conversations(o);
+    const middle = admin || setup || rail ? '<div class="r-sb-fill"></div>' : conversations(o);
     const adminEntry =
-      !admin && level === "enterprise"
+      !admin && level === "enterprise" && (!setup || (o.setup || "admin") === "admin")
         ? rail
           ? `<a class="r-nav-item r-rail-item r-sb-admin" href="#" aria-label="${esc(F.ADMIN_LABEL)}">${icon("admin")}</a>`
           : `<a class="r-nav-item r-sb-admin" href="#">${icon("admin")}<span class="r-ellipsis">${esc(F.ADMIN_LABEL)}</span>${icon("arrow-up-right", 14)}</a>`
@@ -371,6 +411,14 @@
     return `<div class="r-drawer-stage"><div class="r-drawer-page"><div class="r-drawer-bar"><button class="r-icon-btn" aria-label="${esc(F.SIDEBAR_COPY.menu)}" aria-expanded="true">${icon("menu")}</button><span class="r-ellipsis">${esc(F.LIST_PAGE_FIXTURE.title)}</span><button class="r-icon-btn r-drawer-bar-end" aria-label="${esc(F.SIDEBAR_COPY.search)} ${esc(F.SIDEBAR_COPY.searchShortcut)}">${icon("search")}</button></div><div class="r-drawer-body">${pageHeader({ description: true })}${stats({})}</div>${statusBar({ noPageStatus: true })}</div><div class="r-scrim"></div><div class="r-drawer" role="dialog" aria-modal="true" aria-label="导航">${sidebar({ ...o, mode: "drawer" })}</div></div>`;
   }
 
+  // Below 960 in the setup frame: the setup home behind the scrim, the setup drawer over it; the
+  // drawer bar has no search (no command palette in the setup frame).
+  function setupDrawer(o) {
+    const S = F.SETUP_COPY;
+    const head = `<header class="r-ph"><nav class="r-ph-crumb" aria-label="路径"><span>${esc(F.ORG_SWITCHER_FIXTURE.slug)}</span><span aria-hidden="true">/</span><span class="r-ink">${esc(S.home)}</span></nav><div class="r-ph-row"><div class="r-ph-text"><h1 class="r-ph-title">${esc(S.home)}</h1></div></div></header>`;
+    return `<div class="r-drawer-stage"><div class="r-drawer-page"><div class="r-drawer-bar"><button class="r-icon-btn" aria-label="${esc(F.SIDEBAR_COPY.menu)}" aria-expanded="true">${icon("menu")}</button><span class="r-ellipsis">${esc(S.home)}</span></div><div class="r-drawer-body">${head}</div>${statusBar({ noPageStatus: true })}</div><div class="r-scrim"></div><div class="r-drawer" role="dialog" aria-modal="true" aria-label="导航">${sidebar({ ...o, context: "setup", mode: "drawer" })}</div></div>`;
+  }
+
   function rail(o) {
     const tip = o.tooltip
       ? `<span class="r-tooltip" role="tooltip" style="top:${o.tooltipTop}px">${esc(o.tooltip)}</span>`
@@ -387,6 +435,7 @@
   const RENDER = {
     sidebar,
     rail,
+    setupDrawer,
     drawer,
     "page-header": pageHeader,
     stats,

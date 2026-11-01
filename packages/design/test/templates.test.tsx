@@ -573,76 +573,70 @@ describe("SettingsPage column (blind round 2)", () => {
 describe("SetupPage (the guided setup layout)", () => {
   const org = {
     name: "Acme",
+    initial: "A",
     slug: "acme",
     role: "所有者",
     menu: [{ label: "Beta", checked: false, onSelect: vi.fn() }],
   };
   const account = { name: "Grant", menu: [{ label: "退出登录", onSelect: vi.fn() }] };
   const status = { context: "grant@acme:~/setup", version: "v1.0.0" };
+  const steps: design.SetupStep[] = [
+    { id: "model", label: "配置模型", state: "done", href: "/admin/extensions" },
+    { id: "agent", label: "创建 agent", state: "todo", href: "/agents/new" },
+    { id: "channels", label: "连接渠道", state: "todo", href: "/channels/new", optional: true },
+  ];
+  const sidebar = { org, home: { href: "/" }, steps, activeNav: "home", account };
 
-  it("no sidebar; a top bar with the brand, the org, the account; a centered column; the status bar", () => {
+  it("the shell's geometry: the setup sidebar, the content area, the status bar; no top bar", () => {
     zh(
-      <SetupPage
-        org={org}
-        account={account}
-        status={status}
-        header={{ path: [{ label: "acme" }, { label: "开始之前" }], title: "开始之前" }}
-      >
+      <SetupPage sidebar={sidebar} status={status}>
         <p>清单</p>
       </SetupPage>,
     );
     const root = document.querySelector('[data-template="SetupPage"]') as HTMLElement;
-    expect(root.querySelector('[data-part="sidebar"]')).toBeNull();
-    const top = root.querySelector('[data-part="setup-top-bar"]') as HTMLElement;
-    expect(top.querySelector(".cb-logo-word")?.textContent).toBe("CAPYBARA");
-    expect(top.textContent).toContain("Acme");
-    expect(top.textContent).toContain("~/acme · 所有者");
-    expect(screen.getByRole("button", { name: "账户: Grant" })).toBeTruthy();
-    const column = root.querySelector('[data-part="setup-column"]') as HTMLElement;
-    expect(column.getAttribute("data-width")).toBe("column");
-    expect(screen.getByRole("heading", { level: 1, name: "开始之前" })).toBeTruthy();
-    expect(screen.getByText("清单")).toBeTruthy();
+    expect(root.querySelector('[data-part="setup-top-bar"]')).toBeNull();
+    const shell = root.querySelector(".cb-shell") as HTMLElement;
+    const aside = shell.querySelector('[data-part="sidebar"]') as HTMLElement;
+    expect(aside.getAttribute("data-context")).toBe("setup");
+    const content = shell.querySelector('[data-part="shell-content"]') as HTMLElement;
+    expect(content.querySelector("main")?.textContent).toBe("清单");
     expect(screen.getByText("grant@acme:~/setup")).toBeTruthy();
+    // the steps are the navigation; no search, no inbox, no conversations
+    const nav = screen.getAllByRole("navigation", { name: "主导航" })[0] as HTMLElement;
+    expect(nav.textContent).toContain("配置模型");
+    expect(screen.queryByRole("button", { name: /搜索/ })).toBeNull();
+    expect(screen.queryByRole("region", { name: "会话" })).toBeNull();
   });
 
   it("the org opens its menu; the account opens its menu", async () => {
-    zh(<SetupPage org={org} account={account} status={status} />);
-    await userEvent.click(screen.getByRole("button", { name: "当前组织：Acme，切换组织" }));
-    await userEvent.click(await screen.findByRole("menuitemradio", { name: "Beta" }));
+    zh(<SetupPage sidebar={sidebar} status={status} />);
+    const user = userEvent.setup();
+    const [orgButton] = screen.getAllByRole("button", { name: "当前组织：Acme，切换组织" });
+    if (!orgButton) throw new Error("no org switcher");
+    await user.click(orgButton);
+    await user.click(await screen.findByRole("menuitemradio", { name: "Beta" }));
     expect(org.menu[0]?.onSelect).toHaveBeenCalledTimes(1);
-    await userEvent.click(screen.getByRole("button", { name: "账户: Grant" }));
-    await userEvent.click(await screen.findByRole("menuitem", { name: "退出登录" }));
+    const [accountButton] = screen.getAllByRole("button", { name: "账户: Grant" });
+    if (!accountButton) throw new Error("no account button");
+    await user.click(accountButton);
+    await user.click(await screen.findByRole("menuitem", { name: "退出登录" }));
     expect(account.menu[0]?.onSelect).toHaveBeenCalledTimes(1);
   });
 
-  it("a step page: the back link above the page, in the content width", () => {
-    zh(
-      <SetupPage
-        org={{ ...org, menu: [] }}
-        account={account}
-        status={status}
-        back={{ label: "开始之前", href: "/" }}
-        width="content"
-      >
-        <p>页面</p>
-      </SetupPage>,
-    );
-    expect(screen.getByRole("link", { name: "开始之前" }).getAttribute("href")).toBe("/");
-    // a static org block without menu items
-    expect(screen.queryByRole("button", { name: /切换组织/ })).toBeNull();
-    expect(document.querySelector('[data-part="setup-column"]')?.getAttribute("data-width")).toBe(
-      "content",
-    );
+  it("⌘K opens nothing (no command palette in the setup frame)", async () => {
+    zh(<SetupPage sidebar={sidebar} status={status} />);
+    await userEvent.keyboard("{Meta>}k{/Meta}");
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
-});
 
-describe("SetupPage styles", () => {
-  it("the back link has its own rule and the content-width placement", () => {
-    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
-    expect(css).toMatch(/\n\.cb-setup-back \{\s*display: inline-flex;/);
-    expect(css).toMatch(
-      /\.cb-setup-column\[data-width="content"\] > \.cb-setup-back \{\s*box-sizing: border-box;/,
+  it("the drawer bar below 960 has the menu button and no search", () => {
+    zh(
+      <SetupPage sidebar={sidebar} status={status} reference={{ drawer: true }} title="开始之前" />,
     );
+    const bar = document.querySelector('[data-part="drawer-bar"]') as HTMLElement;
+    expect(bar.querySelector('[aria-label="打开导航"]')).not.toBeNull();
+    expect(bar.querySelector('[aria-label^="搜索"]')).toBeNull();
+    expect(bar.textContent).toContain("开始之前");
   });
 });
 

@@ -10,7 +10,7 @@
 <body>
 <main class="r-page">
 <h1>Sidebar</h1>
-<p>Sidebar v3: the work and admin contexts; full (256), rail (48, below 1280) and drawer (below 960). The org switcher, 新会话 · 搜索 · primary items, 更多, conversations grouped by agent with state dots, the archived entry, 管理后台 above the account row.</p>
+<p>Sidebar v3: the work, admin and setup contexts; full (256), rail (48, below 1280) and drawer (below 960). The org switcher, 新会话 · 搜索 · primary items, 更多, conversations grouped by agent with state dots, the archived entry, 管理后台 above the account row.</p>
 <div class="r-blocks">
 <section data-ref-block="sidebar-default" style="width:var(--cb-layout-sidebar);height:820px">
   <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2"}'></template>
@@ -62,6 +62,24 @@
 </section>
 <section data-ref-block="sidebar-drawer" style="width:640px;height:820px">
   <template data-fixture="drawer" data-opts='{"active": "connectors", "activeConversation": "cnv_r2"}'></template>
+</section>
+<section data-ref-block="sidebar-setup" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"context": "setup", "active": "agent"}'></template>
+</section>
+<section data-ref-block="sidebar-setup-waiting" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"context": "setup", "setup": "member", "active": "home"}'></template>
+</section>
+<section data-ref-block="sidebar-setup-hover" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"context": "setup", "active": "agent", "hover": "channels"}'></template>
+</section>
+<section data-ref-block="sidebar-setup-focus" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"context": "setup", "active": "agent", "focus": "model"}'></template>
+</section>
+<section data-ref-block="sidebar-setup-rail" style="width:240px;height:820px">
+  <template data-fixture="rail" data-opts='{"context": "setup", "setup": "member", "active": "home", "tooltip": "配置模型，等待管理员配置模型", "tooltipTop": 159}'></template>
+</section>
+<section data-ref-block="sidebar-setup-drawer" style="width:640px;height:820px">
+  <template data-fixture="setupDrawer" data-opts='{"active": "home"}'></template>
 </section>
 </div>
 </main>

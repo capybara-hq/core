@@ -14,8 +14,9 @@ import { ME } from "./support/render";
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
 // Acceptance round 2, D + D2: the guided setup layout. While the current org has no usable model or
-// no agent, workspace routes render in the setup layout (top bar, centered column, status bar, no
-// sidebar); the admin console keeps its own context; the checklist differs by role.
+// no agent, workspace routes render in the setup layout (the shell's geometry with the setup
+// sidebar: no workspace navigation, no conversations); the admin console keeps its own context; the
+// checklist differs by role.
 
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -75,6 +76,8 @@ function renderFrame() {
 }
 
 const setupPage = () => document.querySelector('[data-template="SetupPage"]');
+const setupSidebar = () => document.querySelector('[data-part="sidebar"][data-context="setup"]');
+const workSidebar = () => document.querySelector('[data-part="sidebar"][data-context="work"]');
 const step = (label: string) => screen.getByText(label).closest("li") as HTMLElement;
 const memberMe = (role: string, enterprise = false): Me => ({
   ...ME,
@@ -92,16 +95,18 @@ afterEach(() => {
 });
 
 describe("setup layout scope", () => {
-  it("not ready on /: the setup home, no sidebar; top bar with the org and the account", async () => {
+  it("not ready on /: the setup home in the setup sidebar's frame, with the org and the account", async () => {
     api();
     renderFrame();
     expect(await screen.findByRole("heading", { level: 1, name: s.title })).toBeTruthy();
     expect(setupPage()).not.toBeNull();
-    expect(screen.queryByRole("navigation", { name: "主导航" })).toBeNull();
+    expect(setupSidebar()).not.toBeNull();
+    expect(workSidebar()).toBeNull();
+    expect(screen.queryByRole("region", { name: "会话" })).toBeNull();
     expect(screen.queryByText("page body")).toBeNull();
-    const top = document.querySelector('[data-part="setup-top-bar"]') as HTMLElement;
-    expect(top.textContent).toContain("Acme");
-    expect(top.textContent).toContain("~/acme");
+    const org = setupSidebar()?.querySelector('[data-part="org-switcher"]') as HTMLElement;
+    expect(org.textContent).toContain("Acme");
+    expect(org.textContent).toContain("~/acme");
     // the path line `<slug> / 开始之前`, the description, the checklist
     const path = screen.getByRole("navigation", { name: "路径" });
     expect(path.textContent).toContain("acme");
@@ -154,14 +159,16 @@ describe("setup layout scope", () => {
     expect(screen.queryByText("page body")).toBeNull();
   });
 
-  it("a step page (/settings/models) renders inside the setup frame with the back link", async () => {
+  it("a step page (/settings/models) renders inside the setup frame; the sidebar leads back", async () => {
     resetNavigation("/settings/models");
     api();
     renderFrame();
     expect(await screen.findByText("page body")).toBeTruthy();
     expect(setupPage()).not.toBeNull();
-    expect(screen.queryByRole("navigation", { name: "主导航" })).toBeNull();
-    expect(screen.getByRole("link", { name: sl.back }).getAttribute("href")).toBe("/");
+    expect(workSidebar()).toBeNull();
+    const home = setupSidebar()?.querySelector('[data-part="nav-item"]') as HTMLElement;
+    expect(home.textContent).toBe(sl.back);
+    expect(home.getAttribute("href")).toBe("/");
     expect(router.replace).not.toHaveBeenCalled();
   });
 

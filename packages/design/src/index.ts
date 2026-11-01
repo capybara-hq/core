@@ -10,6 +10,7 @@ export * from "./overlays/index";
 export {
   DesignProvider,
   type LinkComponent,
+  LinkPendingMark,
   useDesignLink,
   useDesignLocale,
   useDesignT,

@@ -4,6 +4,7 @@ import {
   type ReactElement,
   type ReactNode,
   useEffect,
+  useId,
   useRef,
   useState,
 } from "react";
@@ -14,7 +15,7 @@ import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { useFocusReturn } from "../overlays/focus-return";
 import { Menu, type MenuItem } from "../overlays/index";
-import { useDesignLink, useDesignT } from "../provider";
+import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { SIZES } from "../tokens";
 import { type PreferenceBarProps, ThemeToggle } from "./preference-bar";
 import { Conversations, type SidebarConversations, useRoving } from "./sidebar-conversations";
@@ -51,8 +52,25 @@ export type SidebarOrg = {
 };
 
 /**
- * Which context the sidebar shows (spec §2.1–§2.2 of the web order): the workspace of one org, or
- * the admin console of the whole deployment. The sidebar changes as a whole between them.
+ * One step of the guided setup (web-SSR spec §4), drawn as a navigation item of the setup context:
+ * `done` (a `check` in `ok`, still a link), `todo` (a `circle`, a link) or `waiting` (a `clock`,
+ * not a link, with `reason` as its second line). `optional` steps follow the "可以稍后再做" label.
+ */
+export type SetupStep = {
+  id: string;
+  label: string;
+  state: "done" | "todo" | "waiting";
+  /** Where the step is done; a waiting step has none. */
+  href?: string;
+  /** Why the step waits (shown under the label, and in the rail tooltip). */
+  reason?: string;
+  optional?: boolean;
+};
+
+/**
+ * Which context the sidebar shows (spec §2.1–§2.2 of the web order): the workspace of one org,
+ * the admin console of the whole deployment, or the guided setup of an org that cannot run yet
+ * (web-SSR spec §4). The sidebar changes as a whole between them.
  */
 export type SidebarContext =
   | {
@@ -77,16 +95,29 @@ export type SidebarContext =
       /** "← Back to workspace ~/<slug>". */
       back: { href: string; slug: string | null };
       items: SidebarNavItem[];
+    }
+  | {
+      kind: "setup";
+      org: SidebarOrg | null;
+      /** The setup home, the first item ("开始之前"; current when `activeNav` is `home`). */
+      home: { href: string };
+      /** The required steps, then (after the "可以稍后再做" label) the optional ones. */
+      steps: SetupStep[];
+      /** The admin console (enterprise admins): the entry above the account row. */
+      adminHref?: string;
     };
 
 export type SidebarProps = {
   context: SidebarContext;
   /** The "New conversation" item of the work context (label from design i18n). */
-  newConversation: { href: string };
-  /** The current item's id; "" when a conversation is the current page. */
+  newConversation?: { href: string };
+  /**
+   * The current item's id; "" when a conversation is the current page; in the setup context a
+   * step id or `home`.
+   */
   activeNav: string;
-  /** The work context's conversation section (unused in the admin context). */
-  conversations: SidebarConversations;
+  /** The work context's conversation section (unused in the admin and setup contexts). */
+  conversations?: SidebarConversations;
   /** The account row: the avatar and name open the account menu. */
   account: { name: string; menu: MenuItem[] };
   /**
@@ -150,7 +181,7 @@ export function Sidebar(p: SidebarProps) {
   };
 
   // A route change (another nav item or conversation becomes current) closes the drawer.
-  const route = `${p.activeNav}|${p.conversations.activeId ?? ""}`;
+  const route = `${p.activeNav}|${p.conversations?.activeId ?? ""}`;
   const lastRoute = useRef(route);
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs on route changes only
   useEffect(() => {
@@ -283,20 +314,22 @@ function SidebarPanel({
           {ctx.kind === "work" ? <BrandTools p={p} rail /> : null}
         </div>
       ) : null}
-      {ctx.kind === "work" ? (
-        ctx.org ? (
-          <OrgSwitcher org={ctx.org} rail={rail} />
-        ) : null
-      ) : (
+      {ctx.kind === "admin" ? (
         <AdminBlock back={ctx.back} rail={rail} />
+      ) : ctx.org ? (
+        <OrgSwitcher org={ctx.org} rail={rail} />
+      ) : null}
+      {ctx.kind === "setup" ? (
+        <SetupNav p={p} ctx={ctx} rail={rail} />
+      ) : (
+        <SidebarNav p={p} rail={rail} />
       )}
-      <SidebarNav p={p} rail={rail} />
-      {ctx.kind === "work" && !rail ? (
-        <Conversations c={p.conversations} newHref={p.newConversation.href} />
+      {ctx.kind === "work" && !rail && p.conversations ? (
+        <Conversations c={p.conversations} newHref={p.newConversation?.href ?? "/"} />
       ) : (
         <div className="cb-sidebar-fill" />
       )}
-      {ctx.kind === "work" && ctx.adminHref !== undefined ? (
+      {ctx.kind !== "admin" && ctx.adminHref !== undefined ? (
         <AdminEntry href={ctx.adminHref} rail={rail} />
       ) : null}
       <Account
@@ -471,12 +504,14 @@ function AdminBlock({
             aria-label={backLabel}
           >
             <Icon name="arrow-left" size={14} />
+            <LinkPendingMark />
           </Link>
         </RailTip>
       ) : (
         <Link href={back.href} className="cb-sidebar-back" data-part="back">
           <Icon name="arrow-left" size={14} />
           <span className="cb-sidebar-label">{backLabel}</span>
+          <LinkPendingMark />
         </Link>
       )}
     </div>
@@ -502,6 +537,7 @@ function AdminEntry({ href, rail }: { href: string; rail: boolean }) {
           <Icon name="arrow-up-right" size={14} />
         </>
       )}
+      <LinkPendingMark />
     </Link>
   );
   return (
@@ -514,14 +550,15 @@ function SidebarNav({ p, rail }: { p: SidebarProps; rail: boolean }) {
   const Link = useDesignLink();
   const ctx = p.context;
   const work = ctx.kind === "work";
-  const primary = work ? ctx.primary : ctx.items;
+  const primary = work ? ctx.primary : ctx.kind === "admin" ? ctx.items : [];
   const more = work ? ctx.more : [];
   const moreExtensions = work ? (ctx.moreExtensions ?? []) : [];
   const hasMore = work && more.length + moreExtensions.length > 0;
   const activeInMore = [...more, ...moreExtensions].some((n) => n.id === p.activeNav);
   const [moreOpen, setMoreOpen] = useState(p.moreOpen ?? false);
+  const newHref = work ? p.newConversation?.href : undefined;
   const keys = [
-    ...(work ? ["new"] : []),
+    ...(newHref !== undefined ? ["new"] : []),
     ...primary.map((n) => n.id),
     ...(hasMore ? ["more"] : []),
   ];
@@ -566,6 +603,7 @@ function SidebarNav({ p, rail }: { p: SidebarProps; rail: boolean }) {
             {count}
           </span>
         )}
+        <LinkPendingMark />
       </Link>
     );
     return tip(key, n.label, link);
@@ -619,12 +657,8 @@ function SidebarNav({ p, rail }: { p: SidebarProps; rail: boolean }) {
       onKeyDown={roving.onKeyDown}
       onFocus={roving.onFocus}
     >
-      {work
-        ? item(
-            "new",
-            { label: t("sidebar.new"), href: p.newConversation.href, icon: "plus" },
-            "new-conversation",
-          )
+      {newHref !== undefined
+        ? item("new", { label: t("sidebar.new"), href: newHref, icon: "plus" }, "new-conversation")
         : null}
       {primary.map((n) => item(n.id, n))}
       {hasMore ? (
@@ -640,6 +674,149 @@ function SidebarNav({ p, rail }: { p: SidebarProps; rail: boolean }) {
           {...(p.moreOpen ? { modal: false } : {})}
           trigger={moreTrigger}
         />
+      ) : null}
+    </nav>
+  );
+}
+
+const STEP_MARK: Record<SetupStep["state"], IconName> = {
+  done: "check",
+  todo: "circle",
+  waiting: "clock",
+};
+
+/**
+ * The setup context's navigation (web-SSR spec §4): the setup home, the required steps, then the
+ * "可以稍后再做" label and the optional steps. Each step carries its state mark; a waiting step is
+ * not a link (it stays focusable, `aria-disabled`, so its reason can be read). In the rail the
+ * label, the state and the reason move into the tooltip and the label becomes a divider.
+ */
+function SetupNav({
+  p,
+  ctx,
+  rail,
+}: {
+  p: SidebarProps;
+  ctx: Extract<SidebarContext, { kind: "setup" }>;
+  rail: boolean;
+}) {
+  const t = useDesignT();
+  const Link = useDesignLink();
+  const groupId = `cb-setup-later-${useId().replace(/[^\w-]/g, "")}`;
+  const required = ctx.steps.filter((s) => !s.optional);
+  const optional = ctx.steps.filter((s) => s.optional);
+  const keys = ["home", ...required.map((s) => s.id), ...optional.map((s) => s.id)];
+  const roving = useRoving(p.activeNav === "" ? undefined : p.activeNav);
+  const tip = (key: string, label: string, node: ReactElement) =>
+    rail ? (
+      <RailTip key={key} label={label} open={p.railTooltip === key}>
+        {node}
+      </RailTip>
+    ) : (
+      node
+    );
+  const stateText = (s: SetupStep) =>
+    s.state === "waiting"
+      ? (s.reason ?? t("sidebar.stepWaiting"))
+      : t(s.state === "done" ? "sidebar.stepDone" : "sidebar.stepTodo");
+  const step = (s: SetupStep) => {
+    const name = t("sidebar.stepName").replace("{label}", s.label).replace("{state}", stateText(s));
+    const reason = !rail && s.state === "waiting" && s.reason ? s.reason : null;
+    const common = {
+      className: "cb-sidebar-item",
+      "data-part": "step-item",
+      "data-rove": s.id,
+      "data-state": s.state,
+      "aria-label": name,
+      tabIndex: roving.tabIndexOf(s.id, keys),
+      ...(s.optional ? { "data-optional": "true" } : {}),
+    };
+    const body = (
+      <>
+        <span className="cb-sidebar-step-mark" data-part="step-mark" data-state={s.state}>
+          <Icon name={STEP_MARK[s.state]} size={16} />
+        </span>
+        {rail ? null : reason !== null ? (
+          <span className="cb-sidebar-step-text">
+            <span className="cb-sidebar-label">{s.label}</span>
+            <span className="cb-sidebar-step-reason" data-part="step-reason">
+              {reason}
+            </span>
+          </span>
+        ) : (
+          <span className="cb-sidebar-label">{s.label}</span>
+        )}
+      </>
+    );
+    const node =
+      s.state === "waiting" || s.href === undefined ? (
+        // Not a link: nothing to do here yet (the reason says who acts). A disabled link that stays
+        // a roving stop, so its name and reason can be read; an <a> without href has no link role.
+        // biome-ignore lint/a11y/useSemanticElements: a disabled link has no href, so no <a>
+        <span
+          key={s.id}
+          {...common}
+          tabIndex={common.tabIndex}
+          role="link"
+          aria-disabled="true"
+          data-reason={reason !== null ? "true" : undefined}
+        >
+          {body}
+        </span>
+      ) : (
+        <Link
+          key={s.id}
+          href={s.href}
+          {...common}
+          {...(s.id === p.activeNav ? { "aria-current": "page" as const } : {})}
+        >
+          {body}
+          <LinkPendingMark />
+        </Link>
+      );
+    return tip(s.id, name, node);
+  };
+  const homeLabel = t("sidebar.setupHome");
+  const home = (
+    <Link
+      key="home"
+      href={ctx.home.href}
+      className="cb-sidebar-item"
+      data-part="nav-item"
+      data-rove="home"
+      tabIndex={roving.tabIndexOf("home", keys)}
+      {...(p.activeNav === "home" ? { "aria-current": "page" as const } : {})}
+      {...(rail ? { "aria-label": homeLabel } : {})}
+    >
+      <Icon name="diamond" size={16} />
+      {rail ? null : <span className="cb-sidebar-label">{homeLabel}</span>}
+      <LinkPendingMark />
+    </Link>
+  );
+  return (
+    <nav
+      className="cb-sidebar-nav"
+      aria-label={t("shell.nav")}
+      onKeyDown={roving.onKeyDown}
+      onFocus={roving.onFocus}
+    >
+      {tip("home", homeLabel, home)}
+      {required.map(step)}
+      {optional.length > 0 ? (
+        rail ? (
+          <>
+            <span className="cb-sidebar-step-divider" data-part="step-divider" aria-hidden="true" />
+            {optional.map(step)}
+          </>
+        ) : (
+          // biome-ignore lint/a11y/useSemanticElements: a fieldset is a form control group
+          <div className="cb-sidebar-step-group" role="group" aria-labelledby={groupId}>
+            <span className="cb-sidebar-step-group-label" data-part="step-group-label" id={groupId}>
+              {t("sidebar.setupLater")}
+            </span>
+            {optional.map(step)}
+          </div>
+        )
       ) : null}
     </nav>
   );

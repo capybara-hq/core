@@ -14,7 +14,7 @@ import { Segmented } from "../display/tabs";
 import { type Locale, messages } from "../i18n";
 import { Icon } from "../icons/icon";
 import { Dialog, Menu, type MenuItem } from "../overlays/index";
-import { useDesignLink, useDesignLocale, useDesignT } from "../provider";
+import { LinkPendingMark, useDesignLink, useDesignLocale, useDesignT } from "../provider";
 
 /** What a conversation is doing: a state dot shows only for `running` (ok) and `waiting` (warn). */
 export type SidebarActivity = "running" | "waiting" | null;
@@ -643,6 +643,7 @@ function Row({
             {...(current ? { "aria-current": "page" as const } : {})}
           >
             <span className="cb-sidebar-label">{text}</span>
+            <LinkPendingMark />
           </Link>
           <Menu
             items={items}

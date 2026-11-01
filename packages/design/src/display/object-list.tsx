@@ -3,7 +3,7 @@ import { Button, IconButton } from "../controls/index";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { Menu, type MenuItem } from "../overlays/index";
-import { useDesignLink, useDesignT } from "../provider";
+import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 
 export type ObjectRowProps = {
   /** The 36 px mark: initials (mono) or the object's icon; `warn` when it needs attention. */
@@ -101,6 +101,7 @@ export function ObjectRow({
           {href ? (
             <Link href={href} className="cb-object-name" data-mono={mono ? "true" : undefined}>
               {name}
+              <LinkPendingMark />
             </Link>
           ) : (
             <span className="cb-object-name" data-mono={mono ? "true" : undefined}>

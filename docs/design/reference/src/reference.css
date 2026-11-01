@@ -615,6 +615,58 @@ textarea {
   outline: 1px solid var(--cb-accent);
   outline-offset: -1px;
 }
+/* The setup context (web-SSR spec §4): step marks, the waiting reason, the later group. */
+.r-step-mark {
+  display: inline-flex;
+  flex: none;
+  color: var(--cb-muted);
+}
+.r-step-mark[data-state="done"] {
+  color: var(--cb-ok);
+}
+.r-step[aria-disabled="true"] {
+  color: var(--cb-muted);
+}
+.r-step[data-reason="true"] {
+  height: 48px;
+}
+.r-step-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.r-step-reason {
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.r-step-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.r-step-group-label {
+  display: flex;
+  align-items: flex-end;
+  box-sizing: border-box;
+  height: var(--cb-row-dense);
+  padding: 0 var(--cb-pad-dense-x) var(--cb-space-1);
+  color: var(--cb-faint);
+  font-size: var(--cb-type-micro-size);
+  letter-spacing: 0.06em;
+  line-height: var(--cb-type-micro-line);
+}
+.r-step-divider {
+  flex: none;
+  width: var(--cb-control-dense);
+  height: 1px;
+  margin: var(--cb-space-1) 0;
+  background: var(--cb-line-soft);
+}
 .r-sb-convs {
   flex: 1;
   display: flex;

@@ -122,6 +122,44 @@ export const NEW_CONVERSATION_LABEL = "新会话";
 export const MORE_LABEL = "更多";
 export const ADMIN_LABEL = "管理后台";
 
+/** One step of the setup sidebar (web-SSR spec §4); the catalog adds the links. */
+export type FixtureSetupStep = {
+  id: string;
+  label: string;
+  state: "done" | "todo" | "waiting";
+  reason?: string;
+  optional?: boolean;
+};
+
+/**
+ * The setup sidebar's steps (web-SSR spec §4, per role): an enterprise admin who is also an org
+ * admin, after the model (done, an agent to create, the optional steps), and a member before any
+ * model (both steps waiting with their reasons, one optional step).
+ */
+export const SETUP_STEPS_FIXTURE: Record<"admin" | "member", FixtureSetupStep[]> = {
+  admin: [
+    { id: "model", label: "配置模型", state: "done" },
+    { id: "agent", label: "创建 agent", state: "todo" },
+    { id: "channels", label: "连接渠道", state: "todo", optional: true },
+    { id: "members", label: "邀请成员", state: "todo", optional: true },
+    { id: "catalog", label: "安装插件", state: "todo", optional: true },
+  ],
+  member: [
+    { id: "model", label: "配置模型", state: "waiting", reason: "等待管理员配置模型" },
+    { id: "agent", label: "创建 agent", state: "waiting", reason: "先配置模型" },
+    { id: "connections", label: "我的连接", state: "todo", optional: true },
+  ],
+};
+
+/** The setup sidebar's own copy (design i18n `sidebar.setup*`, `sidebar.step*`). */
+export const SETUP_COPY = {
+  home: "开始之前",
+  later: "可以稍后再做",
+  done: "已完成",
+  todo: "未完成",
+  waiting: "等待中",
+};
+
 /** Extension pages: the 更多 group lists them after its fixed items. */
 export const EXTENSION_PAGES_FIXTURE: { id: string; label: string; href: string }[] = [
   { id: "board", label: "任务看板", href: "/p/example-board/board" },

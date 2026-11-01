@@ -1,4 +1,4 @@
-import type { SidebarGroup, SidebarNavItem, SidebarProps } from "@capybara-hq/design";
+import type { SetupStep, SidebarGroup, SidebarNavItem, SidebarProps } from "@capybara-hq/design";
 import {
   ADMIN_NAV_FIXTURE,
   ARCHIVED_COUNT_FIXTURE,
@@ -13,6 +13,7 @@ import {
   MANY_GROUPS_MORE,
   NAV_FIXTURE,
   ORG_SWITCHER_FIXTURE,
+  SETUP_STEPS_FIXTURE,
   STATUS_FIXTURE,
 } from "@capybara-hq/design/fixtures";
 
@@ -41,8 +42,10 @@ export type SidebarFixture = {
   state?: "loading" | "error" | "empty";
   groups?: "long" | "many";
   collapsed?: string[];
-  /** The admin console's context instead of the workspace's. */
-  context?: "admin";
+  /** The admin console's or the guided setup's context instead of the workspace's. */
+  context?: "admin" | "setup";
+  /** The setup context's steps: the enterprise admin's (default) or a member's. */
+  setup?: "admin" | "member";
   /** Draw the 更多 flyout open. */
   moreOpen?: boolean;
   /** Draw the conversation filter open with this query and state. */
@@ -94,6 +97,7 @@ export function sidebarProps(o: SidebarFixture, href: (id: string) => string): S
         ? MANY_GROUPS_FIXTURE
         : GROUPS_FIXTURE;
   const filter = o.filter ?? { q: "", state: "all" as const };
+  if (o.context === "setup") return setupSidebarProps(o, href);
   return {
     context:
       o.context === "admin"
@@ -137,6 +141,33 @@ export function sidebarProps(o: SidebarFixture, href: (id: string) => string): S
     ...(o.moreOpen ? { moreOpen: true } : {}),
     onOpenCommands: noop,
   };
+}
+
+/** The setup context (web-SSR spec §4): the setup home, the steps, no conversations. */
+function setupSidebarProps(o: SidebarFixture, href: (id: string) => string): SidebarProps {
+  const who = o.setup ?? "admin";
+  return {
+    context: {
+      kind: "setup",
+      org: { ...ORG_SWITCHER_FIXTURE, menu: [] },
+      home: { href: href("home") },
+      steps: setupStepsFixture(who, href),
+      ...(who === "admin" ? { adminHref: href("admin") } : {}),
+    },
+    activeNav: o.active ?? "home",
+    account: { name: FIXTURE_USER.name, menu: [] },
+    onOpenCommands: noop,
+  };
+}
+
+/** The setup steps of `who` with links (a waiting step has none). */
+export function setupStepsFixture(
+  who: "admin" | "member",
+  href: (id: string) => string,
+): SetupStep[] {
+  return SETUP_STEPS_FIXTURE[who].map((s) =>
+    s.state === "waiting" ? { ...s } : { ...s, href: href(s.id) },
+  );
 }
 
 /** The status bar of a catalog page at `route` (`/connectors`, …). */

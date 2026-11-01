@@ -581,6 +581,67 @@
   line-height: var(--cb-type-micro-line);
 }
 
+/* Setup context (web-SSR spec §4): the steps are the navigation; each carries a state mark. */
+.cb-sidebar-step-mark {
+  display: inline-flex;
+  flex: none;
+  color: var(--cb-muted);
+}
+.cb-sidebar-step-mark[data-state="done"] {
+  color: var(--cb-ok);
+}
+/* A waiting step is not a link: muted, no pointer, no hover ground. */
+.cb-sidebar-item[data-part="step-item"][aria-disabled="true"] {
+  color: var(--cb-muted);
+  cursor: default;
+}
+.cb-sidebar-item[data-part="step-item"][aria-disabled="true"]:hover {
+  background: transparent;
+  color: var(--cb-muted);
+}
+/* With its reason the waiting step is two lines: 48 high. */
+.cb-sidebar-item[data-reason="true"] {
+  height: 48px;
+}
+.cb-sidebar-step-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.cb-sidebar-step-reason {
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-sidebar-step-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cb-sidebar-step-group-label {
+  display: flex;
+  align-items: flex-end;
+  height: var(--cb-row-dense);
+  padding: 0 var(--cb-pad-dense-x) var(--cb-space-1);
+  box-sizing: border-box;
+  color: var(--cb-faint);
+  font-family: var(--cb-font);
+  font-size: var(--cb-type-micro-size);
+  letter-spacing: 0.06em;
+  line-height: var(--cb-type-micro-line);
+}
+.cb-sidebar-step-divider {
+  flex: none;
+  width: var(--cb-control-dense);
+  height: 1px;
+  margin: var(--cb-space-1) 0;
+  background: var(--cb-line-soft);
+}
+
 /* Rail: icons only; conversations behind the expand button (it opens the drawer). */
 .cb-sidebar[data-mode="rail"] {
   align-items: center;
