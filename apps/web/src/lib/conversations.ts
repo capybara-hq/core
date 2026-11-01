@@ -531,6 +531,13 @@ const searchQuery = (s: ConversationSearch) => {
   };
 };
 
+/** One page of {@link listConversationGroups}. */
+export interface ConversationGroupsPage {
+  groups: ConversationGroup[];
+  next: string | null;
+  archivedCount?: number;
+}
+
 /**
  * My conversations grouped by agent, by latest activity; `next` is passed back as `after`.
  * `archivedCount` counts my archived conversations whatever the search (the archived entry).
@@ -544,7 +551,7 @@ export const listConversationGroups = (
   orgId: string,
   opts: { perGroup?: number; limit?: number; after?: string } & ConversationSearch = {},
 ) =>
-  apiFetch<{ groups: ConversationGroup[]; next: string | null; archivedCount?: number }>(
+  apiFetch<ConversationGroupsPage>(
     `${base(orgId)}/groups${query({
       perGroup: opts.perGroup,
       limit: opts.limit,

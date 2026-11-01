@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+// The loaders as the browser calls them (on the server, apiFetch goes through the server transport).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   archiveConversation,

@@ -21,15 +21,12 @@ import {
   useSyncExternalStore,
 } from "react";
 import { useRouter } from "../../i18n/navigation";
-import { getReadiness, type OrgReadiness } from "../../lib/agents";
+import { getReadiness, type OrgReadiness, setupReady } from "../../lib/agents";
 import { canUpdateOrg } from "../../lib/org-settings";
 import type { Me } from "../../lib/session";
 import { navLevelOf } from "./nav";
 
-/** Whether a conversation can start: a loaded model provider and an agent the viewer can see. */
-export function setupReady(r: OrgReadiness): boolean {
-  return r.modelProvider === "ready" && r.agents > 0;
-}
+export { setupReady };
 
 /**
  * Whether the current org can run (web-order spec §3.8), from `GET /orgs/:id/readiness`:

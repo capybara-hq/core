@@ -223,6 +223,11 @@ export interface OrgReadiness {
   agents: number;
 }
 
+/** Whether a conversation can start: a loaded model provider and an agent the viewer can see. */
+export function setupReady(r: OrgReadiness): boolean {
+  return r.modelProvider === "ready" && r.agents > 0;
+}
+
 export const getReadiness = (orgId: string) => apiFetch<OrgReadiness>(`${base(orgId)}/readiness`);
 
 export const listAgents = (orgId: string) => apiFetch<{ agents: Agent[] }>(`${base(orgId)}/agents`);

@@ -1,3 +1,8 @@
+import { vi } from "vitest";
+
+// `server-only` throws outside a server build; server modules (lib/server/*) are tested here too.
+vi.mock("server-only", () => ({}));
+
 // jsdom 缺少 Radix / cmdk 与设计系统依赖的若干浏览器 API（apps/web 的 jsdom 测试共用）。
 class RO {
   observe() {}

@@ -7,6 +7,8 @@ import { getLocale, getTranslations } from "next-intl/server";
 import type { ReactNode } from "react";
 import { DesignRoot } from "../components/design-root";
 import { isAppLocale, routing } from "../i18n/routing";
+// Server components' loaders (`apiFetch`) reach the kernel through the server transport.
+import "../lib/server/register";
 
 /**
  * The body font (Regular): the same file the design system's fonts.css `@font-face` points at, so

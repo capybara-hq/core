@@ -1,6 +1,6 @@
 "use client";
 
-import { type DependencyList, useCallback, useEffect, useState } from "react";
+import { type DependencyList, useCallback, useEffect, useRef, useState } from "react";
 import { ApiClientError } from "./api";
 
 export type Loaded<T> =
@@ -18,19 +18,28 @@ const keyOf = (deps: DependencyList) => JSON.stringify(deps);
  * - `reload()`：同一组依赖重读，期间保留上一次的数据（不闪回加载中）；
  * - `set`：用接口返回的新数据直接替换（如保存后）。
  * 错误以内核错误码表示。
+ *
+ * With `initial` (the server read it for the first paint) the state starts `ready` with it and
+ * nothing is fetched on mount; it fetches only when `deps` change after mount or on `reload()`.
  */
 export function useLoad<T>(
   load: () => Promise<T>,
   deps: DependencyList,
+  opts: { initial?: T } = {},
 ): { state: Loaded<T>; reload(): void; set(data: T): void } {
   const key = keyOf(deps);
-  const [stored, setStored] = useState<{ key: string; state: Loaded<T> }>({
+  const [stored, setStored] = useState<{ key: string; state: Loaded<T> }>(() => ({
     key,
-    state: { kind: "loading" },
-  });
+    state: opts.initial === undefined ? { kind: "loading" } : { kind: "ready", data: opts.initial },
+  }));
   const [nonce, setNonce] = useState(0);
+  // The deps key the server data belongs to: no fetch while it is current and nothing asked for a
+  // reload (a ref, not a flag, so StrictMode's second effect run skips too).
+  const seeded = useRef<string | null>(opts.initial === undefined ? null : key);
   // biome-ignore lint/correctness/useExhaustiveDependencies: 依赖由调用方给出（以 key 表示）；nonce 触发重读
   useEffect(() => {
+    if (seeded.current === key && nonce === 0) return;
+    seeded.current = null;
     let disposed = false;
     load().then(
       (data) => {
