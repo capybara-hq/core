@@ -178,12 +178,27 @@ describe("新建 Agent 页（FormPage）", () => {
     });
   });
 
-  it("名称为空时不提交，名称字段显示错误", async () => {
+  it("a create form: focus on the name, 保存 disabled until it has one, no 没有未保存的修改", async () => {
+    const posts = stub([]);
+    await renderNewAgent({ locale: "zh" });
+    const user = userEvent.setup();
+    await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
+    const name = screen.getByRole("textbox", { name: zh.agents.form.nameLabel });
+    expect(document.activeElement).toBe(name);
+    expect(screen.queryByText("没有未保存的修改")).toBeNull();
+    const save = screen.getByRole("button", { name: zh.agents.form.submit }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    await user.type(name, "Echo");
+    expect(save.disabled).toBe(false);
+    expect(posts).toHaveLength(0);
+  });
+
+  it("名称为空时按 Enter 不提交，名称字段显示错误", async () => {
     const posts = stub([]);
     await renderNewAgent();
     const user = userEvent.setup();
     await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
-    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
+    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), " {Enter}");
     expect(posts).toHaveLength(0);
     const name = screen.getByRole("textbox", { name: en.agents.form.nameLabel });
     expect(name.getAttribute("aria-invalid")).toBe("true");

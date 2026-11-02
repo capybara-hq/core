@@ -47,6 +47,8 @@ const PAGES = [
   "roles",
   // unslop fixes: a failure sentence with its raw text behind a toggle
   "error-detail",
+  // forms and flows: the one file pick
+  "file-picker",
 ];
 const THEMES = ["dark", "light"] as const;
 const BLOCK_ID = /^[a-z-]+-[a-z0-9-]+$/;

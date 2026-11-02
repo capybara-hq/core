@@ -133,7 +133,12 @@ describe("技能库列表（ListPage）", () => {
     await openUpload(locale);
     expect(screen.getByText(m.skills.upload.layoutHint)).toBeTruthy();
     expect(screen.getByText(m.skills.upload.limits)).toBeTruthy();
-    expect(screen.getByRole("button", { name: m.skills.upload.choose })).toBeTruthy();
+    // one design drop zone with a real button, not a bare "+"
+    const zone = document.querySelector('[data-part="file-picker"]') as HTMLElement;
+    expect(within(zone).getByRole("button", { name: m.skills.upload.choose }).textContent).toBe(
+      m.skills.upload.choose,
+    );
+    expect(within(zone).getByText(m.skills.upload.chooseHint)).toBeTruthy();
     // 打开一行 → 详情页
   });
 

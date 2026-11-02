@@ -331,7 +331,7 @@ describe("/admin/catalog/import (WizardPage)", () => {
     await renderRoute(importPage, lastStubRoutes(), { locale });
     const user = userEvent.setup();
     const r = msgs[locale].catalog.admin.review;
-    await user.click(await screen.findByRole("radio", { name: r.sourceNpm }));
+    await user.click(await screen.findByRole("radio", { name: new RegExp(`^${r.sourceNpm}`) }));
     await user.type(
       screen.getByRole("textbox", { name: msgs[locale].admin.extensions.wizard.npmPackage }),
       "@acme/plugin-crm",
@@ -362,7 +362,7 @@ describe("/admin/catalog/import (WizardPage)", () => {
       await renderRoute(importPage, lastStubRoutes(), { locale });
       expect(template("WizardPage")).not.toBeNull();
       const user = userEvent.setup();
-      await user.click(await screen.findByRole("radio", { name: r.sourceNpm }));
+      await user.click(await screen.findByRole("radio", { name: new RegExp(`^${r.sourceNpm}`) }));
       await user.type(screen.getByRole("textbox", { name: w.npmPackage }), "@acme/plugin-crm");
       await user.click(screen.getByRole("button", { name: r.fetch }));
       const ext = await screen.findByRole("region", { name: c.extension });
@@ -449,9 +449,9 @@ describe("/admin/catalog/import (WizardPage)", () => {
     await renderRoute(importPage, lastStubRoutes());
     expect(await screen.findByText(`${en.errors.plugin.staging_not_found}`)).toBeTruthy();
     expect(screen.getByText(r.gone)).toBeTruthy();
-    expect(screen.queryByRole("radio", { name: r.sourceNpm })).toBeNull();
+    expect(screen.queryByRole("radio", { name: new RegExp(`^${r.sourceNpm}`) })).toBeNull();
     await userEvent.setup().click(screen.getByRole("button", { name: r.restart }));
-    expect(await screen.findByRole("radio", { name: r.sourceNpm })).toBeTruthy();
+    expect(await screen.findByRole("radio", { name: new RegExp(`^${r.sourceNpm}`) })).toBeTruthy();
     expect(screen.queryByText(r.gone)).toBeNull();
     expect(router.replace).toHaveBeenCalledWith("/admin/catalog/import");
   });
@@ -498,6 +498,22 @@ describe("/admin/catalog/import (WizardPage)", () => {
     expect(router.push).not.toHaveBeenCalled();
   });
 
+  it("the source step: card radios and the 选择文件 drop zone with the chosen file in it", async () => {
+    stubApi({ "GET /api/v1/me": () => json(200, ME) });
+    await renderRoute(importPage, lastStubRoutes(), { locale: "zh" });
+    const r = zh.catalog.admin.review;
+    const group = await screen.findByRole("radiogroup", { name: r.sourceLabel });
+    expect(group.getAttribute("data-variant")).toBe("card");
+    expect(within(group).getByText(r.sourceGitHint)).toBeTruthy();
+    const zone = document.querySelector('[data-part="file-picker"]') as HTMLElement;
+    expect(
+      within(zone).getByRole("button", { name: zh.admin.extensions.wizard.choose }),
+    ).toBeTruthy();
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await userEvent.setup().upload(input, new File([new Uint8Array([1, 2, 3])], "todo.tgz"));
+    expect(within(zone).getByText("todo.tgz")).toBeTruthy();
+  });
+
   it("a pre-0.1.0 upload shows the legacy-format error prominently", async () => {
     stubApi({
       "GET /api/v1/me": () => json(200, ME),
@@ -506,7 +522,9 @@ describe("/admin/catalog/import (WizardPage)", () => {
     });
     await renderRoute(importPage, lastStubRoutes());
     const user = userEvent.setup();
-    await screen.findByRole("radio", { name: en.catalog.admin.review.sourceFile });
+    await screen.findByRole("radio", {
+      name: new RegExp(`^${escapeRe(en.catalog.admin.review.sourceFile)}`),
+    });
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(input, new File([new Uint8Array([1, 2, 3])], "old.tgz"));
     await user.click(screen.getByRole("button", { name: en.catalog.admin.review.fetch }));
@@ -1872,7 +1890,7 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
       });
       await renderRoute(importPage, lastStubRoutes(), { locale });
       const user = userEvent.setup();
-      await user.click(await screen.findByRole("radio", { name: r.sourceGit }));
+      await user.click(await screen.findByRole("radio", { name: new RegExp(`^${r.sourceGit}`) }));
       await user.type(screen.getByRole("textbox", { name: r.gitUrl }), "acme/crm");
       await user.type(screen.getByRole("textbox", { name: startsWith(r.gitRef) }), "v1.0.0");
       await user.type(screen.getByRole("textbox", { name: startsWith(r.gitPath) }), "plugins/crm");

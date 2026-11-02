@@ -549,6 +549,24 @@ describe("轨迹详情（TracePage）", () => {
     expect(screen.queryByRole("button", { name: en.trajectories.addToSet.action })).toBeNull();
   });
 
+  it("no eval set for the agent: the dialog offers 新建评测集 for it, not a disabled 加入", async () => {
+    stubApi({
+      [`GET ${DETAIL}`]: () => json(200, detailBody([run()])),
+      [`GET ${ORG}/eval-sets`]: () => json(200, { sets: [] }),
+    });
+    await renderRoute(detailPage, lastStubRoutes());
+    await screen.findByRole("tree");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: en.trajectories.addToSet.action }));
+    const dialog = await screen.findByRole("dialog", { name: en.trajectories.addToSet.title });
+    expect(await within(dialog).findByText(en.trajectories.addToSet.noSets)).toBeTruthy();
+    const create = within(dialog).getByRole("link", { name: en.trajectories.addToSet.createSet });
+    expect(create.getAttribute("href")).toBe("/evals/new?agentId=ag1");
+    expect(
+      within(dialog).queryByRole("button", { name: en.trajectories.addToSet.submit }),
+    ).toBeNull();
+  });
+
   it("管理员把选中的运行加入该 agent 的评测集", async () => {
     const calls = stubApi({
       [`GET ${DETAIL}`]: () => json(200, detailBody([run()])),

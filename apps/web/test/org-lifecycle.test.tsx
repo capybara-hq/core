@@ -112,6 +112,14 @@ describe("退出组织", () => {
     expect(
       within(dialog).queryByRole("button", { name: zh.orgLifecycle.leave.confirm }),
     ).toBeNull();
+    // nothing destructive can happen here: not a dangerous dialog, one 知道了 that closes it
+    expect(zh.orgLifecycle.leave.gotIt).toBe("知道了");
+    expect(dialog.getAttribute("data-danger")).toBeNull();
+    expect(within(dialog).queryByRole("button", { name: zh.common.cancel })).toBeNull();
+    await userEvent
+      .setup()
+      .click(within(dialog).getByRole("button", { name: zh.orgLifecycle.leave.gotIt }));
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
   it("a failed owner count shows the error, not a bare confirm button", async () => {
@@ -166,8 +174,15 @@ describe("删除组织 (组织设置 · 通用)", () => {
     });
     const user = userEvent.setup();
     const zone = await screen.findByRole("region", { name: zh.orgLifecycle.danger.title });
+    // after the form sections, so the design puts it in their field column (spec §6.21)
+    const first = (zone.parentElement as HTMLElement).querySelector(
+      ':scope > [data-part="form-section"]',
+    ) as Element;
+    expect(first.compareDocumentPosition(zone) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await user.click(within(zone).getByRole("button", { name: zh.orgLifecycle.delete.action }));
     const dialog = await screen.findByRole("dialog", { name: zh.orgLifecycle.delete.title });
+    // a dangerous dialog: the ordinary frame, red only on the destructive button
+    expect(dialog.getAttribute("data-danger")).toBe("true");
     const confirm = within(dialog).getByRole("button", { name: zh.orgLifecycle.delete.confirm });
     expect(confirm).toHaveProperty("disabled", true);
     await user.type(within(dialog).getByRole("textbox"), "acme");

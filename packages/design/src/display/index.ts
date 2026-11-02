@@ -8,6 +8,8 @@ export {
   type FileButtonProps,
   FileDrop,
   type FileDropProps,
+  FilePicker,
+  type FilePickerProps,
   formatBytes,
   isSafeAttachmentHref,
 } from "./attachments";

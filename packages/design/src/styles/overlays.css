@@ -67,9 +67,6 @@
 .cb-dialog[data-size="640"] {
   width: min(640px, calc(100vw - 32px));
 }
-.cb-dialog[data-danger="true"] {
-  border-color: var(--cb-fail);
-}
 .cb-dialog-head,
 .cb-sheet-head {
   display: flex;
@@ -84,9 +81,6 @@
   margin: 0;
   font-size: var(--cb-type-h2-size);
   font-weight: 500;
-}
-.cb-dialog[data-danger="true"] .cb-dialog-title {
-  color: var(--cb-fail);
 }
 .cb-dialog-body {
   flex: 1;

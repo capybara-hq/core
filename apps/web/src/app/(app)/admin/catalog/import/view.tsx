@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AttachmentChip,
   Badge,
   Button,
   Card,
@@ -8,7 +9,7 @@ import {
   CodeBlock,
   Disclosure,
   Field,
-  FileButton,
+  FilePicker,
   Input,
   KeyValue,
   RadioGroup,
@@ -284,32 +285,42 @@ export default function PluginImportWizard({ initial }: { initial: StagedImport 
           </Card>
         ) : (
           <Stack gap={16}>
-            <RadioGroup
-              label={t("sourceLabel")}
-              value={source}
-              onChange={(v) => {
-                setSource(v as "file" | "npm" | "git");
-                setFetchError(undefined);
-              }}
-              options={[
-                { value: "file", label: t("sourceFile") },
-                { value: "npm", label: t("sourceNpm") },
-                { value: "git", label: t("sourceGit") },
-              ]}
-            />
+            <Card title={t("sourceLabel")}>
+              <RadioGroup
+                label={t("sourceLabel")}
+                variant="card"
+                value={source}
+                onChange={(v) => {
+                  setSource(v as "file" | "npm" | "git");
+                  setFetchError(undefined);
+                }}
+                options={[
+                  { value: "file", label: t("sourceFile"), description: t("sourceFileHint") },
+                  { value: "npm", label: t("sourceNpm"), description: t("sourceNpmHint") },
+                  { value: "git", label: t("sourceGit"), description: t("sourceGitHint") },
+                ]}
+              />
+            </Card>
             {source === "file" ? (
-              <Stack direction="row" gap={8} align="center">
-                <FileButton
-                  label={tw("choose")}
-                  accept=".tgz,application/gzip,application/x-gzip"
-                  disabled={fetching}
-                  onFiles={(files) => {
-                    setFile(files[0] ?? null);
-                    setFetchError(undefined);
-                  }}
-                />
-                <Text tone="muted">{file === null ? tw("noFile") : file.name}</Text>
-              </Stack>
+              <FilePicker
+                label={tw("choose")}
+                dropLabel={tw("drop")}
+                accept=".tgz,application/gzip,application/x-gzip"
+                disabled={fetching}
+                onFiles={(files) => {
+                  setFile(files[0] ?? null);
+                  setFetchError(undefined);
+                }}
+              >
+                {file !== null && (
+                  <AttachmentChip
+                    name={file.name}
+                    size={file.size}
+                    status="ready"
+                    onRemove={() => setFile(null)}
+                  />
+                )}
+              </FilePicker>
             ) : source === "git" ? (
               <Stack gap={12}>
                 <Field label={t("gitUrl")} help={t("gitUrlHelp")}>

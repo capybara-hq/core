@@ -730,6 +730,40 @@
 .cb-file-input {
   display: none;
 }
+/* FilePicker (spec §6.25): a dashed drop zone with a real 选择文件 button */
+.cb-file-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--cb-space-2);
+  padding: var(--cb-space-6) var(--cb-space-4);
+  border: 1px dashed var(--cb-line-strong);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel);
+  text-align: center;
+}
+.cb-file-picker[data-disabled="true"] {
+  border-color: var(--cb-line);
+}
+.cb-file-picker-icon {
+  display: inline-flex;
+  color: var(--cb-faint);
+}
+.cb-file-picker-hint {
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-file-picker-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--cb-space-2);
+  width: 100%;
+  min-width: 0;
+  margin-top: var(--cb-space-2);
+}
 
 /* 消息里的附件：图片缩略图 / 文件卡片 */
 .cb-attachment {

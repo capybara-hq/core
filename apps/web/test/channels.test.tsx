@@ -234,9 +234,16 @@ describe("新建渠道连接（FormPage）", () => {
     await renderNew({ locale: "zh" });
     const f = zh.channels.form;
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: f.submit }));
+    // a create form: focus on the first field, no 没有未保存的修改, the primary disabled until valid
+    const pluginSelect = await screen.findByRole("combobox", {
+      name: new RegExp(`^${f.pluginLabel}`),
+    });
+    expect(document.activeElement).toBe(pluginSelect);
+    expect(screen.queryByText("没有未保存的修改")).toBeNull();
+    const submit = screen.getByRole("button", { name: f.submit }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    await user.click(submit);
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
-    expect(screen.getByText(`${f.nameRequired}`)).toBeTruthy();
 
     await user.selectOptions(
       screen.getByRole("combobox", { name: new RegExp(`^${f.pluginLabel}`) }),
@@ -250,21 +257,30 @@ describe("新建渠道连接（FormPage）", () => {
       screen.getByRole("combobox", { name: new RegExp(`^${f.agentLabel}`) }),
       "ag1",
     );
-    await user.click(screen.getByRole("button", { name: f.submit }));
+    expect(submit.disabled).toBe(false);
+    await user.click(submit);
     expect(await screen.findByText(`${zh.errors.channel.verify_failed}`)).toBeTruthy();
   });
 
-  it("没有启用的渠道插件：提示去插件设置", async () => {
+  it("没有启用的渠道插件：只有空状态和去扩展设置的入口，没有表单", async () => {
     stubApi({
       [`GET ${BASE}/extensions`]: () => json(200, { extensions: [PLUGINS[1]] }),
       [`GET ${BASE}/agents`]: () => json(200, { agents: AGENTS }),
     });
-    await renderNew();
-    expect(await screen.findByText(en.channels.form.noExtensions)).toBeTruthy();
-    await userEvent
-      .setup()
-      .click(screen.getByRole("button", { name: en.channels.form.openExtensions }));
-    expect(router.push).toHaveBeenCalledWith("/settings/extensions");
+    const { container } = await renderNew({ locale: "zh" });
+    const f = zh.channels.form;
+    expect(f.noExtensions).toBe("先启用一个渠道扩展。");
+    const empty = container.querySelector('[data-part="empty-state"]') as HTMLElement;
+    expect(empty.textContent).toContain(f.noExtensions);
+    expect(within(empty).getByRole("link", { name: f.openExtensions }).getAttribute("href")).toBe(
+      "/settings/extensions",
+    );
+    // no form: no fields, no action row, no 创建渠道
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("combobox")).toBeNull();
+    expect(screen.queryByRole("button", { name: f.submit })).toBeNull();
+    expect(container.querySelector('[data-part="action-row"]')).toBeNull();
+    expect(screen.getByRole("heading", { level: 1, name: f.title })).toBeTruthy();
   });
 });
 

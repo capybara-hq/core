@@ -2,9 +2,10 @@
 
 import {
   AttachmentChip,
+  Card,
   Checkbox,
   Field,
-  FileButton,
+  FilePicker,
   Input,
   RadioGroup,
   Stack,
@@ -210,36 +211,33 @@ export default function ExtensionInstall({
     >
       {step === 0 && (
         <Stack gap={16}>
-          <RadioGroup
-            label={t("sourceLabel")}
-            value={source}
-            onChange={(v) => {
-              setSource(v as "file" | "npm");
-              setFetchError(undefined);
-            }}
-            options={[
-              { value: "file", label: t("sourceFile") },
-              { value: "npm", label: t("sourceNpm") },
-            ]}
-          />
+          <Card title={t("sourceLabel")}>
+            <RadioGroup
+              label={t("sourceLabel")}
+              variant="card"
+              value={source}
+              onChange={(v) => {
+                setSource(v as "file" | "npm");
+                setFetchError(undefined);
+              }}
+              options={[
+                { value: "file", label: t("sourceFile"), description: t("sourceFileHint") },
+                { value: "npm", label: t("sourceNpm"), description: t("sourceNpmHint") },
+              ]}
+            />
+          </Card>
           {source === "file" ? (
-            <Stack gap={8}>
-              <Text variant="small" tone="muted">
-                {t("fileHint")}
-              </Text>
-              <Stack direction="row" gap={8} align="center">
-                <FileButton
-                  label={t("choose")}
-                  accept=".tgz,application/gzip,application/x-gzip"
-                  disabled={fetching}
-                  onFiles={(files) => {
-                    setFile(files[0] ?? null);
-                    setCancelled(false);
-                    setFetchError(undefined);
-                  }}
-                />
-                {file === null && <Text tone="muted">{t("noFile")}</Text>}
-              </Stack>
+            <FilePicker
+              label={t("choose")}
+              dropLabel={t("drop")}
+              accept=".tgz,application/gzip,application/x-gzip"
+              disabled={fetching}
+              onFiles={(files) => {
+                setFile(files[0] ?? null);
+                setCancelled(false);
+                setFetchError(undefined);
+              }}
+            >
               {file !== null && (
                 <AttachmentChip
                   name={file.name}
@@ -253,7 +251,7 @@ export default function ExtensionInstall({
                 />
               )}
               {cancelled && <Text tone="muted">{t("cancelled")}</Text>}
-            </Stack>
+            </FilePicker>
           ) : (
             <Stack gap={12}>
               <Field label={t("npmPackage")}>

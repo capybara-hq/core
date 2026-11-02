@@ -5,6 +5,7 @@ import {
   Dialog,
   Field,
   KeyValue,
+  LinkButton,
   Select,
   Skeleton,
   SpanWaterfall,
@@ -174,7 +175,10 @@ export default function TrajectoryView({
   );
 }
 
-/** 把一次运行加入该 agent 的评测集（组织管理员；`POST /eval-sets/:setId/cases`）。 */
+/**
+ * 把一次运行加入该 agent 的评测集（组织管理员；`POST /eval-sets/:setId/cases`）。With no eval set
+ * for the agent the dialog is not a dead end: its primary is 新建评测集 for that agent.
+ */
 function AddToSetDialog({
   orgId,
   agentId,
@@ -203,6 +207,7 @@ function AddToSetDialog({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const finished = run.end !== null;
+  const noSets = state.kind === "ready" && sets.length === 0;
 
   const submit = async () => {
     if (chosen === undefined) return;
@@ -231,14 +236,23 @@ function AddToSetDialog({
           <Button variant="ghost" onClick={onClose}>
             {tc("cancel")}
           </Button>
-          <Button
-            variant="primary"
-            onClick={() => void submit()}
-            loading={pending}
-            disabled={chosen === undefined || !finished || pending}
-          >
-            {t("submit")}
-          </Button>
+          {noSets ? (
+            <LinkButton
+              href={`/evals/new?agentId=${encodeURIComponent(agentId)}`}
+              variant="primary"
+            >
+              {t("createSet")}
+            </LinkButton>
+          ) : (
+            <Button
+              variant="primary"
+              onClick={() => void submit()}
+              loading={pending}
+              disabled={chosen === undefined || !finished || pending}
+            >
+              {t("submit")}
+            </Button>
+          )}
         </>
       }
     >

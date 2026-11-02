@@ -3094,3 +3094,34 @@ textarea {
   width: 40px;
   height: 40px;
 }
+
+.r-file-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--cb-space-2);
+  padding: var(--cb-space-6) var(--cb-space-4);
+  border: 1px dashed var(--cb-line-strong);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel);
+  text-align: center;
+}
+.r-file-picker-icon {
+  display: inline-flex;
+  color: var(--cb-faint);
+}
+.r-file-picker-hint {
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-file-picker-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--cb-space-2);
+  width: 100%;
+  margin-top: var(--cb-space-2);
+  color: var(--cb-ink);
+}

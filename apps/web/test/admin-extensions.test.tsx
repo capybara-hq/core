@@ -667,7 +667,7 @@ describe("/admin/extensions/install (WizardPage)", () => {
       await renderRoute(installPage, lastStubRoutes(), { locale });
       expect(template("WizardPage")).not.toBeNull();
       const user = userEvent.setup();
-      await user.click(screen.getByRole("radio", { name: p.wizard.sourceNpm }));
+      await user.click(screen.getByRole("radio", { name: new RegExp(`^${p.wizard.sourceNpm}`) }));
       await user.type(screen.getByLabelText(p.wizard.npmPackage), "@acme/plugin-demo");
       await user.click(screen.getByRole("button", { name: p.wizard.fetch }));
       await vi.waitFor(() =>
@@ -731,7 +731,7 @@ describe("/admin/extensions/install (WizardPage)", () => {
     await renderRoute(installPage, lastStubRoutes());
     const p = en.admin.extensions;
     const user = userEvent.setup();
-    await user.click(screen.getByRole("radio", { name: p.wizard.sourceNpm }));
+    await user.click(screen.getByRole("radio", { name: new RegExp(`^${p.wizard.sourceNpm}`) }));
     await user.type(screen.getByLabelText(p.wizard.npmPackage), "demo");
     await user.click(screen.getByRole("button", { name: p.wizard.fetch }));
     expect(await screen.findByText("DROP TABLE notes")).toBeTruthy();
@@ -767,7 +767,7 @@ describe("/admin/extensions/install (WizardPage)", () => {
     const p = en.admin.extensions;
     expect(await screen.findByText(fill(p.wizard.upgradeTitle, { name: "demo" }))).toBeTruthy();
     const user = userEvent.setup();
-    await user.click(screen.getByRole("radio", { name: p.wizard.sourceNpm }));
+    await user.click(screen.getByRole("radio", { name: new RegExp(`^${p.wizard.sourceNpm}`) }));
     await user.type(screen.getByLabelText(p.wizard.npmPackage), "demo");
     await user.click(screen.getByRole("button", { name: p.wizard.fetch }));
     expect(
@@ -790,6 +790,28 @@ describe("/admin/extensions/install (WizardPage)", () => {
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: p.wizard.next }).hasAttribute("disabled")).toBe(true);
     window.history.replaceState(null, "", "/");
+  });
+
+  it("the source step: card radios and the 选择文件 drop zone with the chosen file in it", async () => {
+    stubApi({
+      "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
+      "GET /api/v1/me": () => json(200, {}),
+    });
+    await renderRoute(installPage, { ...lastStubRoutes(), ...sessionRoutes() }, { locale: "zh" });
+    const w = zh.admin.extensions.wizard;
+    const group = await screen.findByRole("radiogroup", { name: w.sourceLabel });
+    expect(group.getAttribute("data-variant")).toBe("card");
+    expect(within(group).getByText(w.sourceNpmHint)).toBeTruthy();
+    const zone = document.querySelector('[data-part="file-picker"]') as HTMLElement;
+    expect(within(zone).getByRole("button", { name: w.choose })).toBeTruthy();
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await userEvent
+      .setup()
+      .upload(
+        input,
+        new File([new Uint8Array([1])], "demo-1.0.0.tgz", { type: "application/gzip" }),
+      );
+    expect(within(zone).getByText("demo-1.0.0.tgz")).toBeTruthy();
   });
 
   it("上传 tgz：显示进度，可取消（中止请求，回到选文件）", async () => {

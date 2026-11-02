@@ -322,6 +322,36 @@ describe("新建评测集（FormPage）", () => {
   });
 });
 
+describe("新建评测集: a create form", () => {
+  const AG2 = { ...AGENT, id: "ag2", definition: { ...AGENT.definition, name: "Second" } };
+  it("starts on the first field, says nothing about unsaved changes, and needs a name", async () => {
+    stubApi({ [`GET ${ORG}/agents`]: () => json(200, { agents: [AGENT, AG2] }) });
+    await renderRoute(() => NewEvalSetPage(), lastStubRoutes(), { locale: "zh" });
+    const Z = zh.evals.form;
+    const agent = await screen.findByRole("combobox", { name: Z.agentLabel });
+    expect(document.activeElement).toBe(agent);
+    expect(screen.queryByText("没有未保存的修改")).toBeNull();
+    const submit = screen.getByRole("button", { name: Z.submit }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    await userEvent
+      .setup()
+      .type(screen.getByRole("textbox", { name: new RegExp(Z.nameLabel) }), "Nightly");
+    expect(submit.disabled).toBe(false);
+  });
+
+  it("?agentId= (from a trajectory's 加入评测集) presets the agent", async () => {
+    stubApi({ [`GET ${ORG}/agents`]: () => json(200, { agents: [AGENT, AG2] }) });
+    await renderRoute(
+      () => NewEvalSetPage({ searchParams: Promise.resolve({ agentId: "ag2" }) }),
+      lastStubRoutes(),
+    );
+    const agent = (await screen.findByRole("combobox", {
+      name: E.form.agentLabel,
+    })) as HTMLSelectElement;
+    expect(agent.value).toBe("ag2");
+  });
+});
+
 describe("评测集详情（DetailPage）", () => {
   const routes = (over: Record<string, () => Response> = {}) => ({
     [`GET ${SETS}/s1`]: () => json(200, { set: { ...SET, cases: CASES } }),

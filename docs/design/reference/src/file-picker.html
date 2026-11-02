@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>FilePicker · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>FilePicker</h1>
+<p>The file pick of a form or a flow: a dashed drop zone with a real 选择文件 button and a hint; what is chosen sits inside it (spec §6.25).</p>
+<div class="r-blocks">
+<section data-ref-block="file-picker-default" style="width:640px" data-pad>
+  <div class="r-file-picker" data-part="file-picker">
+    <span class="r-file-picker-icon" data-part="file-picker-icon"><i data-icon="upload" data-size="16"></i></span>
+    <button class="r-btn" data-part="button" data-variant="default">选择文件</button>
+    <span class="r-file-picker-hint" data-part="file-picker-hint">或拖放到这里。</span>
+  </div>
+</section>
+<section data-ref-block="file-picker-chosen" style="width:640px" data-pad>
+  <div class="r-file-picker" data-part="file-picker">
+    <span class="r-file-picker-icon" data-part="file-picker-icon"><i data-icon="upload" data-size="16"></i></span>
+    <button class="r-btn" data-part="button" data-variant="default">选择文件</button>
+    <span class="r-file-picker-hint" data-part="file-picker-hint">或拖放到这里。</span>
+    <div class="r-file-picker-status" data-part="file-picker-status"><span>plugin-todo-0.3.1.tgz · 48 KB</span></div>
+  </div>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

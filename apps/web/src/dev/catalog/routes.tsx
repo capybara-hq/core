@@ -85,6 +85,7 @@ export const REFERENCE_COMPONENTS = [
   "secret-reveal",
   // unslop fixes
   "error-detail",
+  "file-picker",
 ] as const;
 
 export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];

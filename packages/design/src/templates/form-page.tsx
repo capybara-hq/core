@@ -1,22 +1,32 @@
-import { type ReactNode, useEffect } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
+import { FIELDS } from "../controls/a11y";
 import { Text } from "../layout/index";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
 import { TemplateHead } from "./frame";
 
 /**
  * T4 Form: Centered at the form width, no anchor navigation (spec §5.3), and an ActionRow that is
- * always there; unsaved changes guard leaving the page.
+ * always there; unsaved changes guard leaving the page. A `create` form (a new object) starts on
+ * its first field and never says "No unsaved changes": nothing exists yet to be unchanged.
  */
 export function FormPage({
   header,
   actionRow,
+  create,
   children,
 }: {
   header: PageHeaderProps;
   actionRow: ActionRowProps;
+  /** A form that creates an object: focus starts on the first field, no "No unsaved changes". */
+  create?: boolean;
   children?: ReactNode;
 }) {
   const dirty = (actionRow.unsaved ?? 0) > 0;
+  const body = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!create) return;
+    body.current?.querySelector<HTMLElement>(FIELDS)?.focus();
+  }, [create]);
   useEffect(() => {
     if (!dirty) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -28,14 +38,19 @@ export function FormPage({
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [dirty]);
   return (
-    <div className="cb-template" data-template="FormPage" data-width="content">
+    <div className="cb-template" data-template="FormPage" data-width="content" ref={body}>
       <TemplateHead header={header} loose />
       <Body layout="centered" loose width="content">
         {children}
       </Body>
-      <ActionRow {...actionRow} />
+      <ActionRow {...(create && !dirty ? withoutUnsaved(actionRow) : actionRow)} />
     </div>
   );
+}
+
+/** The action row without its unsaved count (a create form with nothing typed yet). */
+function withoutUnsaved({ unsaved: _, ...rest }: ActionRowProps): ActionRowProps {
+  return rest;
 }
 
 /**

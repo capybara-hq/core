@@ -36,6 +36,7 @@ export default function NewAgentView({
   const form = useAgentForm(orgId, done, initial);
   return (
     <FormPage
+      create
       header={{
         path: [...scope, { label: "agents", href: "/agents" }, { label: "new" }],
         title: t("agents.form.title"),

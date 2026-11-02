@@ -162,6 +162,40 @@ describe("FormPage", () => {
     expect(e.returnValue).toBe("");
   });
 
+  it("a create form never says 没有未保存的修改 and starts on its first field", () => {
+    zh(
+      <FormPage header={header} actionRow={{ ...row, unsaved: 0 }} create>
+        <FormSection id="basic" title="基本信息">
+          <input aria-label="名称" />
+          <input aria-label="描述" />
+        </FormSection>
+      </FormPage>,
+    );
+    expect(screen.queryByText("没有未保存的修改")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "名称" }));
+  });
+
+  it("an edit form keeps 没有未保存的修改 and does not move the focus", () => {
+    zh(
+      <FormPage header={header} actionRow={{ ...row, unsaved: 0 }}>
+        <input aria-label="名称" />
+      </FormPage>,
+    );
+    expect(screen.getByText("没有未保存的修改")).toBeTruthy();
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("a DangerZone after form sections sits in their field column (spec §6.21)", () => {
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
+    const rule = css.match(/\.cb-form-section ~ \.cb-danger-zone \{[^}]*\}/)?.[0] ?? "";
+    expect(rule).toContain("margin-left: calc(240px + var(--cb-space-7))");
+    const narrow =
+      css.match(
+        /@media \(max-width: 959px\) \{[^@]*\.cb-form-section ~ \.cb-danger-zone \{[^}]*\}/,
+      )?.[0] ?? "";
+    expect(narrow).toContain("margin-left: 0");
+  });
+
   it("unsaved=0 不注册 beforeunload", () => {
     const add = vi.spyOn(window, "addEventListener");
     zh(

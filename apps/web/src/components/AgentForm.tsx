@@ -288,7 +288,8 @@ export function useAgentForm(
     })),
   );
   const noModels = options.length === 0;
-  const canSubmit = !pending && !noModels;
+  // The primary waits for a name (spec §5.3); Enter in the name field still says what is missing.
+  const canSubmit = !pending && !noModels && name.trim() !== "";
 
   /**
    * 保存的工具引用：表单里的内置工具与连接器，加上修改时原样保留的其他引用。修改时按原定义的顺序保留仍选着的
@@ -332,12 +333,12 @@ export function useAgentForm(
   }
 
   async function save() {
-    if (!canSubmit || warnings !== undefined) return;
-    const main = decode(model);
-    if (main === null) return;
+    if (pending || noModels || warnings !== undefined) return;
     const trimmed = name.trim();
     setNameError(trimmed === "");
     if (trimmed === "") return;
+    const main = decode(model);
+    if (main === null) return;
     const fb = decode(fallback);
     const definition: AgentDefinitionInput = {
       // 修改：先铺上原定义，表单不认识的字段原样带回

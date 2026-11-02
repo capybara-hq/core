@@ -689,6 +689,15 @@ a.cb-object-name:hover {
   border: 1px solid color-mix(in srgb, var(--cb-fail) 45%, transparent);
   border-radius: var(--cb-radius-md);
 }
+/* After form sections the zone sits in their field column, not under their titles. */
+.cb-form-section ~ .cb-danger-zone {
+  margin-left: calc(240px + var(--cb-space-7));
+}
+@media (max-width: 959px) {
+  .cb-form-section ~ .cb-danger-zone {
+    margin-left: 0;
+  }
+}
 .cb-danger-zone-title {
   margin: 0;
   padding: var(--cb-space-3) var(--cb-space-4);

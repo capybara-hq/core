@@ -1,14 +1,14 @@
 "use client";
 
 import {
-  Button,
+  EmptyState,
   Field,
   FormPage,
   FormSection,
   Input,
+  OverviewPage,
   Select,
   Skeleton,
-  Stack,
   Text,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
@@ -32,8 +32,10 @@ import { useLoad } from "../../../../lib/use-load";
 
 /**
  * `/channels/new`：新建渠道连接（FormPage）：选插件（该组织已启用、提供 `channel@1` 的）→
- * 按插件的连接 schema 填写配置 → 绑定 agent → 未绑定策略。保存时内核先向平台校验凭据。The plugins,
- * the agents and the preset (`?agentId=&returnTo=`, from an agent page) come from the server
+ * 按插件的连接 schema 填写配置 → 绑定 agent → 未绑定策略。保存时内核先向平台校验凭据。With no
+ * channel extension enabled there is nothing to create: the page is only the empty state pointing
+ * at the extension settings, never a form. A create form: the primary waits until it is valid.
+ * The plugins, the agents and the preset (`?agentId=&returnTo=`, from an agent page) come from the server
  * (`page.tsx`); a plugin's schema loads when it is picked.
  */
 export default function NewChannelView({
@@ -62,7 +64,6 @@ export default function NewChannelView({
   const [stored, setStored] = useState<{ plugin: string; draft: SchemaDraft }>();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<{ message: string; extra: string[] }>();
-  const [attempted, setAttempted] = useState(false);
   const schema = useLoad(
     () =>
       plugin === "" ? Promise.resolve(null) : getChannelSchema(orgId, plugin).then((r) => r.schema),
@@ -77,7 +78,6 @@ export default function NewChannelView({
   const setDraft = (next: SchemaDraft) => setStored({ plugin, draft: next });
   const fields = schemaFields(js);
   const { config, errors: configErrors } = draftToConfig(fields, draft, "create");
-  const nameError = attempted && name.trim() === "" ? t("form.nameRequired") : undefined;
   const configInvalid = Object.keys(configErrors).length > 0;
   const missing = [
     plugin === "",
@@ -89,7 +89,6 @@ export default function NewChannelView({
   const back = () => router.push(preset.returnTo ?? "/channels");
 
   async function submit() {
-    setAttempted(true);
     if (missing > 0) return;
     setPending(true);
     setError(undefined);
@@ -112,49 +111,51 @@ export default function NewChannelView({
     }
   }
 
+  const header = {
+    path: [...scope, { label: "channels", href: "/channels" }, { label: "new" }],
+    title: t("form.title"),
+  };
+  if (ready.plugins.length === 0) {
+    return (
+      <OverviewPage header={header}>
+        <EmptyState
+          text={t("form.noExtensions")}
+          action={{
+            label: t("form.openExtensions"),
+            variant: "primary",
+            href: "/settings/extensions",
+          }}
+        />
+      </OverviewPage>
+    );
+  }
+
   return (
     <FormPage
-      header={{
-        path: [...scope, { label: "channels", href: "/channels" }, { label: "new" }],
-        title: t("form.title"),
-      }}
+      create
+      header={header}
       actionRow={{
-        ...(attempted && missing > 0 ? { errors: missing } : {}),
         cancel: { label: tc("cancel"), onSelect: back },
         primary: {
           label: t("form.submit"),
           onSelect: () => void submit(),
           loading: pending,
+          disabled: pending || missing > 0,
         },
       }}
     >
       <FormSection id="plugin" title={t("form.pluginSection")} description={t("form.pluginHint")}>
-        {ready.plugins.length === 0 ? (
-          <Stack gap={8}>
-            <Text>{t("form.noExtensions")}</Text>
-            <Stack direction="row">
-              <Button onClick={() => router.push("/settings/extensions")}>
-                {t("form.openExtensions")}
-              </Button>
-            </Stack>
-          </Stack>
-        ) : (
-          <Field label={t("form.pluginLabel")} required>
-            <Select
-              value={plugin}
-              onChange={(e) => setPlugin(e.target.value)}
-              options={[
-                ...(plugin === "" ? [{ value: "", label: t("form.pluginPlaceholder") }] : []),
-                ...ready.plugins.map((p) => ({ value: p, label: p })),
-              ]}
-            />
-          </Field>
-        )}
-        <Field
-          label={t("form.nameLabel")}
-          required
-          {...(nameError !== undefined ? { error: nameError } : {})}
-        >
+        <Field label={t("form.pluginLabel")} required>
+          <Select
+            value={plugin}
+            onChange={(e) => setPlugin(e.target.value)}
+            options={[
+              ...(plugin === "" ? [{ value: "", label: t("form.pluginPlaceholder") }] : []),
+              ...ready.plugins.map((p) => ({ value: p, label: p })),
+            ]}
+          />
+        </Field>
+        <Field label={t("form.nameLabel")} required>
           <Input value={name} maxLength={100} onChange={(e) => setName(e.target.value)} />
         </Field>
       </FormSection>
@@ -172,7 +173,6 @@ export default function NewChannelView({
             onChange={setDraft}
             mode="create"
             disabled={pending}
-            showRequired={attempted}
           />
         )}
       </FormSection>

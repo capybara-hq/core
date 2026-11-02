@@ -269,7 +269,7 @@ States: `title`, `path`, `description-actions`, `long-title`, `narrow`
 ### 4.4 ActionRow and StatusBar
 
 - **StatusBar**: one form only. Height `layout.status-bar`, **no background**, a `line-soft` top line, `micro` type, `muted`, padding `layout.gutter`. Left: the prompt `<login>@<org slug>:~/<path>` in the workspace and `<login>@<org slug>:/admin/<path>` in the admin console (the login in lowercase and the org's slug; the same on the conversation page, `~/chat/<id>`, which also shows the time zone) and the page status (such as "Filtered 18 / 24", "Auto-refresh 15s"), `space.3` apart; right: system status, version and time zone, separated by spacing only (`space.3`, as the signed reference). No `>` prefix, no status dot (success is not colored). **Read-only**: it never holds a clickable control and never grows into an action bar. When space runs out the left part truncates first (ellipsis), the right part stays.
-- **ActionRow**: when the page has actions to submit (forms, bulk edits, approval decisions, wizards) it appears **above** the StatusBar; both stay fixed at the bottom of the content area. Height `layout.action-row`, `panel-2` ground, `line-soft` top line, padding `layout.gutter`. Left: an accent dot + "N unsaved changes" (`muted`) `·` "N errors" (`fail` text, no icon, as the signed reference; the words carry the state), or a muted "No unsaved changes" ("没有未保存的修改", when the page passes `unsaved: 0`); right: Cancel / Discard (default) · secondary action (default) · primary action (primary, rightmost), all `default` density. With no changes the primary is disabled.
+- **ActionRow**: when the page has actions to submit (forms, bulk edits, approval decisions, wizards) it appears **above** the StatusBar; both stay fixed at the bottom of the content area. Height `layout.action-row`, `panel-2` ground, `line-soft` top line, padding `layout.gutter`. Left: an accent dot + "N unsaved changes" (`muted`) `·` "N errors" (`fail` text, no icon, as the signed reference; the words carry the state), or a muted "No unsaved changes" ("没有未保存的修改", when the page passes `unsaved: 0`; never on a create form, §5.3); right: Cancel / Discard (default) · secondary action (default) · primary action (primary, rightmost), all `default` density. With no changes the primary is disabled.
 - A page must not create its own floating / fixed bottom button bar.
 - A page writes the "page status" text through `useStatusBar(...)` (rendered by the AppShell's StatusBar); StatusBar and ActionRow are design components, and a page does not render the StatusBar directly.
 
@@ -359,6 +359,7 @@ States: `page`
 - Sections: a two-column grid, the left column 240 wide with the section title (`h2`) and a description (`prose-small` `muted`), the right column the fields on a `panel` card with radius `md`, padding `space.4`, `space.3` between fields. Sections are separated by `space.6` of spacing, **not by lines**; rows inside a list of switches are divided by `line-soft`.
 - Fields: label on top (`body` `ink`; required marked with an accent `*`, optional marked "Optional" in faint); controls `default` density; help text and error message below (`small`); on error the border is `fail` and the message starts with the `circle-alert` icon and gives an actionable suggestion.
 - The ActionRow is always present: Cancel · Save draft (⌘S) · Publish.
+- **Create forms** (`FormPage create`, a new object): focus starts on the first field; the ActionRow never says "No unsaved changes" (nothing exists yet to be unchanged; typed fields still count as unsaved and guard leaving); the primary is disabled until the form is valid (the required fields filled), as in a create dialog. A create form whose prerequisite is missing (no channel extension enabled for 新建渠道) draws only the `EmptyState` with the next step, never the form.
 
 <!-- states: template-form -->
 States: `page`
@@ -626,8 +627,8 @@ States: `default`, `row-hover`, `row-selected`, `loading`, `empty`, `narrow`
 
 Selection rules: the user needs to decide → Dialog; view / edit one object without leaving the list → Sheet; in-place options / filters → Popover / Menu; feedback on an operation result → Toast (a Dialog must not be used); creating something with more than 6 fields → a form page (T4).
 
-- **Dialog**: width 480 / 640, `panel` background + `line-strong` border + radius `md` + `shadow-2` + `scrim`. Header (h2 title + close `x`) / body (padding 16) / footer (right-aligned: ghost Cancel + primary action, the primary action carries `↵`), with 1px `line` separating header and footer. Esc closes; focus is trapped and returned after closing. Default focus: on the primary action for an ordinary dialog, on Cancel for a dangerous dialog.
-- **Dangerous confirmation**: `fail` frame, `fail` title; explains the consequences and recoverability; the object name must be typed, the confirm button is disabled until it matches, and is danger-solid once it matches.
+- **Dialog**: width 480 / 640, `panel` background + `line-strong` border + radius `md` + `shadow-2` + `scrim`. Header (h2 title + close `x`) / body (padding 16) / footer (right-aligned: ghost Cancel + primary action, the primary action carries `↵`), with 1px `line` separating header and footer. Esc closes; focus is trapped and returned after closing. Default focus: on the first field for a dialog that asks for input (新建组织, 新建令牌), else on the primary action (a `LinkButton` primary too); on Cancel for a dangerous dialog. A create dialog's primary is disabled until it is valid. A dialog that only explains why something cannot be done (退出组织 as the only owner) is not dangerous: plain title, one default button "知道了" / "Got it", and a link to where it can be fixed. A dialog whose next step lives elsewhere (加入评测集 with no eval set) says so and offers that step as its primary (`LinkButton`), never a disabled dead end.
+- **Dangerous confirmation**: the ordinary frame and title (`line-strong`, `ink`): the red is only on the destructive button; explains the consequences and recoverability; the object name must be typed, the confirm button is disabled until it matches, and is danger-solid once it matches.
 - **Sheet**: slides out from the right, width 480 / 720, `panel` background + `line-strong` left line + `shadow-sheet`; no scrim by default (the list is still operable). Header: name + version + open in a new page `external-link` + close `x`; may contain Tabs; footer: actions. Closing with unsaved changes needs a second confirmation.
 - **Links**: the design package is framework-agnostic; links in the sidebar navigation, the PageHeader path, Tabs, Sheet, TextLink and LinkCard are rendered through the `link` component of `DesignProvider` (default `<a>`); `apps/web` passes next-intl's `Link` to get client-side navigation and the locale prefix. Pages should not build `<a href>` themselves for in-site navigation.
 - **Popover / Menu**: `panel` background + `line-strong` border + radius `md` + `shadow-1`; menu items are `row.default` high with padding `pad.default.x`; a filter Popover has a search `>` at the top and "Clear / Apply ↵" at the bottom; a hovered item gets a `hover` background. The trigger button is outlined in the accent color when open and holding a value.
@@ -1638,7 +1639,7 @@ One empty state for the whole product. `EmptyState({ text, hint?, action?, icon?
 
 ### 6.21 DangerZone
 
-`DangerZone({ title, children })` with `DangerZoneItem({ title, description, action })` (role pass): the irreversible actions at the bottom of a settings section (organization deletion). A `region` named by its title, `space.8` above, a 1px border of `fail` at 45 %, radius `md`; the title (`body`, 500, `fail`) in a head row split from the items by `fail` at 25 %. Each item: the title (500, `ink`) over the description (`small`, `muted`), and one dense `danger` button at the right that opens a confirmation (`DangerConfirm`, §6.7), never acts at once; items are split by `line-soft`.
+`DangerZone({ title, children })` with `DangerZoneItem({ title, description, action })` (role pass): the irreversible actions at the bottom of a settings section (organization deletion). A `region` named by its title, `space.8` above, a 1px border of `fail` at 45 %, radius `md`; the title (`body`, 500, `fail`) in a head row split from the items by `fail` at 25 %. Each item: the title (500, `ink`) over the description (`small`, `muted`), and one dense `danger` button at the right that opens a confirmation (`DangerConfirm`, §6.7), never acts at once; items are split by `line-soft`. After `FormSection`s (a settings page) it sits in their field column (indented by the 240 title column and its gap, the section cards' left edge), full width below 960.
 
 <!-- states: danger-zone -->
 States: `default`, `two-items`
@@ -1711,6 +1712,28 @@ States: `default`, `open`
 | error-detail-raw | open | font-size | type.small |
 | error-detail-raw | open | padding-left | space.2 |
 | error-detail-raw | open | border-left-color | color.line |
+
+### 6.25 FilePicker
+
+`FilePicker({ dropLabel, onFiles, label?, hint?, accept?, multiple?, disabled?, children? })`: the one file pick of a form or a flow (上传技能, the extension package of 安装扩展, the plugin package of 导入插件), never a bare `+` icon button. A drop zone (`FileDrop`: dragging a file over it draws the `dropLabel` overlay, a drop or a paste hands the files over) drawn as a 1px dashed `line-strong` box, radius `md`, `panel` ground, padding `space.6` / `space.4`, its content centered in a column `space.2` apart: the `upload` icon (16, `faint`), a `default` button with words ("选择文件" / "Choose file"; `label` names the type, "选择 .zip 文件") that opens the system picker, and a `small` prose `muted` hint ("或拖放到这里。" / "or drop it here."; `hint` overrides). What is chosen or happening (the file's `AttachmentChip` with its progress, a cancelled note) goes inside the zone under the hint (`children`). Disabled: the button disabled, the border `line`, drops ignored. Choosing between sources (upload / npm / git) above it uses card radios (§6.3 option cards) in a `Card`, as every install and import flow does.
+
+<!-- states: file-picker -->
+States: `default`, `chosen`
+
+<!-- size-table: file-picker -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| file-picker | default | border-radius | radius.md |
+| file-picker | default | border-top-color | color.line-strong |
+| file-picker | default | background-color | color.panel |
+| file-picker | default | padding-top | space.6 |
+| file-picker | default | padding-left | space.4 |
+| file-picker | default | row-gap | space.2 |
+| file-picker-icon | default | color | color.faint |
+| file-picker-hint | default | color | color.muted |
+| file-picker-hint | default | font-size | type.small |
+| button | default | height | control.default |
+| file-picker-status | chosen | row-gap | space.2 |
 
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.

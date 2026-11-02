@@ -9,7 +9,8 @@ import { useSession } from "./shell/session";
 
 /**
  * "Create an organization": a name, then `POST /api/v1/orgs`; the new org becomes the current one.
- * Rendered only when `/me` says the account may create one (`canCreateOrg`). The submit stays
+ * Rendered only when `/me` says the account may create one (`canCreateOrg`). Focus starts on the
+ * name and the submit waits for one (spec §6.7). The submit stays
  * pending until the new org's frame (usually the setup frame) replaces the page, which closes it.
  */
 export function CreateOrgDialog({
@@ -64,7 +65,12 @@ export function CreateOrgDialog({
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             {t("cancel")}
           </Button>
-          <Button variant="primary" loading={busy} onClick={() => void submit()}>
+          <Button
+            variant="primary"
+            loading={busy}
+            disabled={name.trim() === ""}
+            onClick={() => void submit()}
+          >
             {t("submit")}
           </Button>
         </>

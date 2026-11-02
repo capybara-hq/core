@@ -12,6 +12,7 @@ import {
   DesignProvider,
   ErrorDetail,
   Field,
+  FilePicker,
   FilterChip,
   FormPage,
   FormSection,
@@ -1005,6 +1006,21 @@ function errorDetailBlocks(): ReactNode {
   );
 }
 
+function filePickerBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="file-picker-default" width={640} pad>
+        <FilePicker dropLabel="松开即选择" onFiles={noop} />
+      </RefBlock>
+      <RefBlock id="file-picker-chosen" width={640} pad>
+        <FilePicker dropLabel="松开即选择" onFiles={noop}>
+          <Text>plugin-todo-0.3.1.tgz · 48 KB</Text>
+        </FilePicker>
+      </RefBlock>
+    </>
+  );
+}
+
 export const REFERENCE_BLOCKS = {
   button: buttonBlocks,
   input: inputBlocks,
@@ -1026,4 +1042,5 @@ export const REFERENCE_BLOCKS = {
   "danger-zone": dangerZoneBlocks,
   "secret-reveal": secretRevealBlocks,
   "error-detail": errorDetailBlocks,
+  "file-picker": filePickerBlocks,
 } as const;

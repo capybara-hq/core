@@ -171,8 +171,15 @@ describe("session-changing actions", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: zh.orgChooser.create }));
     const dialog = await screen.findByRole("dialog", { name: zh.home.createOrg.title });
+    // a create dialog: focus on the name, 新建 disabled until it has one
+    expect(document.activeElement).toBe(within(dialog).getByRole("textbox"));
+    const submit = within(dialog).getByRole("button", {
+      name: zh.home.createOrg.submit,
+    }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
     await user.type(within(dialog).getByRole("textbox"), "New");
-    await user.click(within(dialog).getByRole("button", { name: zh.home.createOrg.submit }));
+    expect(submit.disabled).toBe(false);
+    await user.click(submit);
     await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
     expect(calls.map((c) => [c.method, c.url])).toEqual([
       ["POST", "/api/v1/orgs"],

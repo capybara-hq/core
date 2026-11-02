@@ -13,7 +13,8 @@ import { FormError } from "./form-error";
 /**
  * 退出组织… (any member; the kernel refuses the last owner): a confirmation saying what leaving
  * does. An owner's dialog first counts the owners; the only owner is told to transfer ownership
- * and gets no confirm button. Leaving keeps the sign-in (only this org's access ends), so
+ * and gets no confirm button: nothing destructive can happen there, so it is a plain dialog with
+ * one 知道了 (spec §6.7). Leaving keeps the sign-in (only this org's access ends), so
  * `onLeft` moves to another org or the chooser.
  */
 export function LeaveOrgDialog({
@@ -55,6 +56,23 @@ export function LeaveOrgDialog({
       setBusy(false);
     }
   };
+  if (lastOwner) {
+    return (
+      <Dialog
+        open
+        onOpenChange={(open) => {
+          if (!open) onClose();
+        }}
+        title={t("title")}
+        footer={<Button onClick={onClose}>{t("gotIt")}</Button>}
+      >
+        <Stack gap={8}>
+          <Text>{t("lastOwner")}</Text>
+          <TextLink href="/settings/members">{t("toMembers")}</TextLink>
+        </Stack>
+      </Dialog>
+    );
+  }
   return (
     <Dialog
       open
@@ -70,7 +88,7 @@ export function LeaveOrgDialog({
             {tc("cancel")}
           </Button>
           {countFailed ? <Button onClick={owners.reload}>{tc("retry")}</Button> : null}
-          {lastOwner || checking || countFailed ? null : (
+          {checking || countFailed ? null : (
             <Button variant="danger-solid" loading={busy} onClick={() => void leave()}>
               {t("confirm")}
             </Button>
@@ -82,11 +100,6 @@ export function LeaveOrgDialog({
         <Skeleton rows={2} />
       ) : countFailed && owners.state.kind === "error" ? (
         <FormError message={errorMessage(new ApiClientError(0, owners.state.code, ""))} />
-      ) : lastOwner ? (
-        <Stack gap={8}>
-          <Text>{t("lastOwner")}</Text>
-          <TextLink href="/settings/members">{t("toMembers")}</TextLink>
-        </Stack>
       ) : (
         <Text>{t("description")}</Text>
       )}

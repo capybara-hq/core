@@ -3,8 +3,7 @@
 import {
   Button,
   Dialog,
-  FileButton,
-  FileDrop,
+  FilePicker,
   ListPage,
   ObjectRow,
   Stack,
@@ -158,8 +157,14 @@ function UploadCard({ orgId, onUploaded }: { orgId: string; onUploaded(): void }
     }
   }
 
+  const status =
+    busy !== undefined
+      ? t("uploading", { name: busy.name, percent: Math.round(busy.progress * 100) })
+      : cancelled
+        ? t("cancelled")
+        : null;
   return (
-    <FileDrop label={t("drop")} onFiles={(f) => void upload(f)} disabled={busy !== undefined}>
+    <Stack gap={12}>
       <Stack gap={8}>
         <Text variant="small" tone="muted">
           {t("layoutHint")}
@@ -167,31 +172,30 @@ function UploadCard({ orgId, onUploaded }: { orgId: string; onUploaded(): void }
         <Text variant="small" tone="muted">
           {t("limits")}
         </Text>
-        <Stack direction="row" gap={8} align="center">
-          <FileButton
-            label={t("choose")}
-            accept=".zip,application/zip"
-            onFiles={(f) => void upload(f)}
-            disabled={busy !== undefined}
-          />
-          <Text variant="small" tone={busy !== undefined ? "ink" : "faint"}>
-            {busy !== undefined
-              ? t("uploading", { name: busy.name, percent: Math.round(busy.progress * 100) })
-              : cancelled
-                ? t("cancelled")
-                : t("chooseHint")}
-          </Text>
-          {busy !== undefined && (
-            <Button variant="ghost" onClick={() => ctrl.current?.abort()}>
-              {t("cancel")}
-            </Button>
-          )}
-          {busy === undefined && failed !== undefined && (
-            <Button onClick={() => void upload([failed])}>{t("retry")}</Button>
-          )}
-        </Stack>
-        {error !== undefined && <FormError message={error.message} extra={error.extra} />}
       </Stack>
-    </FileDrop>
+      <FilePicker
+        label={t("choose")}
+        hint={t("chooseHint")}
+        dropLabel={t("drop")}
+        accept=".zip,application/zip"
+        onFiles={(f) => void upload(f)}
+        disabled={busy !== undefined}
+      >
+        {status !== null || failed !== undefined ? (
+          <Stack direction="row" gap={8} align="center" wrap>
+            {status !== null ? <Text variant="small">{status}</Text> : null}
+            {busy !== undefined && (
+              <Button variant="ghost" onClick={() => ctrl.current?.abort()}>
+                {t("cancel")}
+              </Button>
+            )}
+            {busy === undefined && failed !== undefined && (
+              <Button onClick={() => void upload([failed])}>{t("retry")}</Button>
+            )}
+          </Stack>
+        ) : null}
+      </FilePicker>
+      {error !== undefined && <FormError message={error.message} extra={error.extra} />}
+    </Stack>
   );
 }
