@@ -11,3 +11,6 @@ the permission groups are ordinary hairline cards, and 企业管理员 in the ac
 failed run reads red in the status bar. In the dark theme, path segments and key labels are muted
 (no longer faint), disabled controls reach 3:1 with a visible border, cards get a hairline and
 scrollbars a quiet thumb. The sign-in dither is greyscale.
+Only the 「敏感」 word is yellow: the reasons and items of a sensitive permission group read as
+ordinary text, and the org extension page shows 必需 as muted text and 不可用 as attention text
+instead of orange badges.

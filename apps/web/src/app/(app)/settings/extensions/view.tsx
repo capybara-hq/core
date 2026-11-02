@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Badge,
   Button,
   FormSection,
   SettingsPage,
@@ -205,8 +204,8 @@ function ExtensionSection({
           onChange={(on) => void toggle(on)}
         />
         <Text>{plugin.enabled ? t("enabled") : t("disabled")}</Text>
-        {required && <Badge tone="accent">{t("required")}</Badge>}
-        {unavailable && <Badge tone="accent">{t("unavailable")}</Badge>}
+        {required && <Text tone="muted">{t("required")}</Text>}
+        {unavailable && <Text tone="warn">{t("unavailable")}</Text>}
       </Stack>
       {required && <Text tone="muted">{t("requiredHint")}</Text>}
       {unavailable && <Text tone="muted">{t("unavailableHint")}</Text>}

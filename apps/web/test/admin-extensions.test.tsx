@@ -686,6 +686,15 @@ describe("/admin/extensions/install (WizardPage)", () => {
       // One attention style: the word in warn; the group is a hairline card, never an accent box.
       for (const m of marks) expect(m.getAttribute("data-tone")).toBe("warn");
       expect(review.querySelector('.cb-card[data-tone="accent"]')).toBeNull();
+      // Only the mark is yellow: reasons are secondary text, items the plain list colour.
+      for (const el of review.querySelectorAll('[data-tone="warn"]')) {
+        expect(el.textContent).toBe(msgs[locale].extensions.sensitive);
+      }
+      expect(
+        within(review)
+          .getByText(msgs[locale].extensions.review.reason.sandbox)
+          .getAttribute("data-tone"),
+      ).toBe("muted");
       await user.click(screen.getByRole("button", { name: p.wizard.next }));
       // 确认：勾选前不可用
       const submit = await screen.findByRole("button", { name: p.wizard.install });

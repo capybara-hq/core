@@ -96,7 +96,7 @@ afterEach(() => {
 
 describe("组织插件（SettingsPage）", () => {
   it.each(["zh", "en"] as const)(
-    "权限清单只读、敏感类别高亮；启用 → PUT enabled（%s）",
+    "the permission list is read-only, a sensitive group carries the mark; enable PUTs enabled (%s)",
     async (locale) => {
       const m = msgs[locale].extensions;
       const calls = api({
@@ -111,7 +111,13 @@ describe("组织插件（SettingsPage）", () => {
       });
       expect(within(perms).getAllByText(m.sensitive)).toHaveLength(2);
       expect(within(perms).getByText(m.category.tools)).toBeTruthy();
-      expect(within(perms).getByText("· post_announcement").getAttribute("data-tone")).toBe("warn");
+      // Only the 「敏感」 mark is yellow; a sensitive item is the plain muted list colour.
+      expect(within(perms).getByText("· post_announcement").getAttribute("data-tone")).toBe(
+        "muted",
+      );
+      for (const mark of within(perms).getAllByText(m.sensitive)) {
+        expect(mark.getAttribute("data-tone")).toBe("warn");
+      }
       expect(within(perms).getByText("· channel@1").getAttribute("data-tone")).toBe("muted");
       const user = userEvent.setup();
       await user.click(
@@ -154,7 +160,10 @@ describe("组织插件（SettingsPage）", () => {
       expect(
         toggle.hasAttribute("disabled") || toggle.getAttribute("aria-disabled") === "true",
       ).toBe(true);
-      expect(screen.getByText(m.unavailable)).toBeTruthy();
+      // A state, not a badge: attention text (warn), never orange.
+      const state = screen.getByText(m.unavailable);
+      expect(state.closest(".cb-badge")).toBeNull();
+      expect(state.getAttribute("data-tone")).toBe("warn");
       expect(screen.getByText(m.unavailableHint)).toBeTruthy();
       expect(screen.getByText(m.enabled)).toBeTruthy();
       expect(
@@ -192,7 +201,10 @@ describe("组织插件（SettingsPage）", () => {
       expect(
         toggle.hasAttribute("disabled") || toggle.getAttribute("aria-disabled") === "true",
       ).toBe(true);
-      expect(screen.getByText(m.required)).toBeTruthy();
+      // Plain metadata: muted text, no badge.
+      const req = screen.getByText(m.required);
+      expect(req.closest(".cb-badge")).toBeNull();
+      expect(req.getAttribute("data-tone")).toBe("muted");
       expect(screen.getByText(m.requiredHint)).toBeTruthy();
       expect(screen.getByText(m.enabled)).toBeTruthy();
       await userEvent.setup().click(toggle);
