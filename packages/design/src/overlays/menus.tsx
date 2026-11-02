@@ -32,13 +32,24 @@ export type MenuItem =
 
 /**
  * The items of a menu a person can act on: no separators, nothing disabled. A `more-horizontal`
- * menu with none of them is not drawn, and one with a single one is that action, drawn directly
- * (spec §6.7): a menu of one item only hides it.
+ * menu with none of them is not drawn, and one with a single safe one is that action, drawn
+ * directly (spec §6.7): a menu of one item only hides it. See {@link menuLone}.
  */
 export function menuActions(items: readonly MenuItem[]): Exclude<MenuItem, "separator">[] {
   return items.filter(
     (i): i is Exclude<MenuItem, "separator"> => i !== "separator" && i.disabled !== true,
   );
+}
+
+/**
+ * The menu's only action when it should be drawn directly instead of the menu (spec §6.7): exactly
+ * one actionable item, not dangerous (a destructive action is never promoted out of its menu) and
+ * not a submenu. `undefined` keeps the menu (or, with no actions, drops it).
+ */
+export function menuLone(items: readonly MenuItem[]): Exclude<MenuItem, "separator"> | undefined {
+  const actions = menuActions(items);
+  const only = actions.length === 1 ? actions[0] : undefined;
+  return only && only.danger !== true && only.submenu === undefined ? only : undefined;
 }
 
 export function Popover({

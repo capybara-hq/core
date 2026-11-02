@@ -78,6 +78,21 @@ describe("ObjectRow", () => {
     expect(screen.queryByText("不能停用")).toBeNull();
   });
 
+  it("a lone destructive item stays in the ⋯ menu", async () => {
+    zh(
+      <ObjectList label="l">
+        <ObjectRow
+          mark={{ text: "a" }}
+          name="a"
+          menu={[{ label: "停用", danger: true, onSelect: () => {} }]}
+        />
+      </ObjectList>,
+    );
+    expect(screen.queryByRole("button", { name: "停用" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "更多操作" }));
+    expect(screen.getByRole("menuitem", { name: "停用" })).toBeTruthy();
+  });
+
   it("warn mark and chip use the warn tone", () => {
     zh(
       <ObjectList label="l">

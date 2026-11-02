@@ -288,26 +288,35 @@ describe("PageHeader", () => {
     expect(screen.getByRole("button", { name: "更多" })).toBeTruthy();
   });
 
-  it("a menu action with one item is that item, drawn directly; with none it is not drawn", async () => {
-    const onDelete = vi.fn();
+  it("a menu action with one safe item is that item, drawn directly; with none it is not drawn", () => {
     zh(
       <PageHeader
         path={[{ label: "~" }]}
         title="t"
         actions={[
-          { menu: [{ label: "删除", danger: true, onSelect: onDelete }], label: "更多" },
           { menu: [{ label: "市场", href: "/m" }, "separator"], label: "更多 2" },
           { menu: [], label: "空" },
         ]}
       />,
     );
-    expect(screen.queryByRole("button", { name: "更多" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "更多 2" })).toBeNull();
     expect(screen.queryByRole("button", { name: "空" })).toBeNull();
-    const del = screen.getByRole("button", { name: "删除" });
-    expect(del.getAttribute("data-variant")).toBe("danger");
-    await userEvent.click(del);
-    expect(onDelete).toHaveBeenCalled();
     expect(screen.getByRole("link", { name: "市场" }).getAttribute("href")).toBe("/m");
+  });
+
+  it("a lone destructive item stays in its menu: never promoted to a button", async () => {
+    const onDelete = vi.fn();
+    zh(
+      <PageHeader
+        path={[{ label: "~" }]}
+        title="t"
+        actions={[{ menu: [{ label: "删除", danger: true, onSelect: onDelete }], label: "更多" }]}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "删除" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "更多" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "删除" }));
+    expect(onDelete).toHaveBeenCalled();
   });
 
   it("the primary action is drawn rightmost whatever the given order", () => {

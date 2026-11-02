@@ -4,7 +4,7 @@ import type { MetricProps } from "../display/index";
 import { Tabs } from "../display/tabs";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
-import { Menu, type MenuItem, menuActions } from "../overlays/index";
+import { Menu, type MenuItem, menuActions, menuLone } from "../overlays/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { useHydrated, useMediaQuery } from "./use-media-query";
 
@@ -12,8 +12,7 @@ type HeaderButton = {
   label: string;
   /** A leading icon (such as `plus` on a create action). */
   icon?: IconName;
-  /** `danger` only for a menu's lone dangerous item drawn directly (spec §6.7). */
-  variant: "primary" | "secondary" | "default" | "danger";
+  variant: "primary" | "secondary" | "default";
   shortcut?: string;
 };
 
@@ -85,18 +84,17 @@ export function PageHeader(p: PageHeaderProps) {
   const tabItems = p.tabs ?? [];
   // The primary action is rightmost (spec §4.2), whatever order the page gives.
   const isPrimary = (a: HeaderAction) => "variant" in a && a.variant === "primary";
-  // No menu of one (spec §6.7): a menu action with one item is that item, with none it is dropped.
+  // No menu of one (spec §6.7): a menu action with one safe item is that item, with none it is
+  // dropped; a lone destructive item stays in its menu.
   const given = (p.actions ?? []).flatMap((a): HeaderAction[] => {
     if (!("menu" in a)) return [a];
-    const items = menuActions(a.menu);
-    const only = items.length === 1 ? items[0] : undefined;
-    if (items.length === 0) return [];
-    if (only === undefined || only.submenu !== undefined) return [a];
-    const variant = only.danger ? ("danger" as const) : ("default" as const);
+    if (menuActions(a.menu).length === 0) return [];
+    const only = menuLone(a.menu);
+    if (only === undefined) return [a];
     return [
       only.href !== undefined
         ? { label: only.label, variant: "default", href: only.href }
-        : { label: only.label, variant, onSelect: () => only.onSelect?.() },
+        : { label: only.label, variant: "default", onSelect: () => only.onSelect?.() },
     ];
   });
   const actions = [...given.filter((a) => !isPrimary(a)), ...given.filter(isPrimary)];
