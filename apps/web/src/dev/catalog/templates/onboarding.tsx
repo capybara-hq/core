@@ -8,7 +8,7 @@ export function OnboardingTemplate() {
       <OnboardingPage
         header={{ path: [{ label: "capybara" }, { label: "start" }], title: "开始使用" }}
         steps={[
-          { label: "创建组织", description: "示例组织 · 生产环境", done: true },
+          { label: "新建组织", description: "示例组织 · 生产环境", done: true },
           { label: "接入模型", description: "Anthropic · claude-opus-5-5", done: true },
           {
             label: "创建第一个 Agent",

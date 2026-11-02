@@ -82,6 +82,7 @@ export function Text({
   truncate,
   pre,
   icon,
+  title: titleText,
   children,
 }: {
   variant?: "h1" | "h2" | "body" | "small" | "micro";
@@ -92,13 +93,16 @@ export function Text({
   pre?: boolean;
   /** A leading line icon (spec §2.4: a status is an icon plus text), such as `circle-x` for a failure. */
   icon?: IconName;
+  /** A tooltip (the full value behind a short label); a truncated string already shows itself. */
+  title?: string;
   children?: ReactNode;
 }) {
   const Tag: ElementType = as ?? (variant === "h1" ? "h1" : variant === "h2" ? "h2" : "span");
   const title =
-    truncate && (typeof children === "string" || typeof children === "number")
+    titleText ??
+    (truncate && (typeof children === "string" || typeof children === "number")
       ? String(children)
-      : undefined;
+      : undefined);
   return (
     <Tag
       className="cb-text"

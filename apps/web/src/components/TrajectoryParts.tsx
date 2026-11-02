@@ -94,10 +94,19 @@ export function useTrajectoryMetrics(runs: TrajectoryRun[], currency: string): M
 }
 
 /** 选中 span 的详情。 */
-export function SpanDetail({ source, currency }: { source: SpanSource; currency: string }) {
+export function SpanDetail({
+  source,
+  currency,
+  people,
+}: {
+  source: SpanSource;
+  currency: string;
+  /** Account id -> display name: the starter shows as a name, the id in a tooltip. */
+  people?: Readonly<Record<string, string>>;
+}) {
   switch (source.kind) {
     case "run":
-      return <RunDetail run={source.run} currency={currency} />;
+      return <RunDetail run={source.run} currency={currency} people={people ?? {}} />;
     case "step":
       return <StepDetail step={source.step} />;
     case "model":
@@ -117,14 +126,30 @@ function useEndDetail(): (detail: string) => string {
   return (detail) => (td.has(detail) ? td(detail) : te.has(detail) ? te(detail) : detail);
 }
 
-function RunDetail({ run, currency }: { run: TrajectoryRun; currency: string }) {
+function RunDetail({
+  run,
+  currency,
+  people,
+}: {
+  run: TrajectoryRun;
+  currency: string;
+  people: Readonly<Record<string, string>>;
+}) {
   const t = useTranslations("trajectories.detail.run");
   const locale = useLocale();
   const formatCost = useFormatCost();
   const endDetail = useEndDetail();
   const rows: { k: ReactNode; v: ReactNode }[] = [
     { k: t("version"), v: `v${run.agentVersion}` },
-    { k: t("trigger"), v: run.triggerAccountId },
+    {
+      k: t("trigger"),
+      v:
+        people[run.triggerAccountId] === undefined ? (
+          run.triggerAccountId
+        ) : (
+          <Text title={run.triggerAccountId}>{people[run.triggerAccountId]}</Text>
+        ),
+    },
     { k: t("started"), v: formatTime(run.startedAt, locale) },
     { k: t("ended"), v: run.endedAt === null ? t("running") : formatTime(run.endedAt, locale) },
     {

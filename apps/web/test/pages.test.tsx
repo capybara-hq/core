@@ -157,9 +157,7 @@ describe("(app) 页面模板", () => {
     await renderRoute(() => HomePage(), overviewRoutes(), { locale: "zh" });
     expect(template("OverviewPage")).not.toBeNull();
     const h = zh.home;
-    expect(
-      screen.getByRole("heading", { level: 1, name: h.greeting.replace("{name}", "Grant") }),
-    ).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: h.title })).toBeTruthy();
     const inbox = screen.getByRole("list", { name: h.inbox.title });
     const rows = within(inbox).getAllByRole("listitem");
     expect(rows.map((r) => r.textContent)).toEqual([

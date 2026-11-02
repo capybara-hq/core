@@ -86,7 +86,7 @@ describe("接受邀请页（AuthPage）", () => {
     );
   });
 
-  it("未登录：创建账号并加入 → POST accept 带注册信息 → 切到该组织 → 进入首页", async () => {
+  it("未登录：新建账号并加入 → POST accept 带注册信息 → 切到该组织 → 进入首页", async () => {
     const m = en.invite;
     const calls = stubApi({
       [`GET ${PREVIEW}`]: () => json(200, INVITE),

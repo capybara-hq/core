@@ -453,7 +453,7 @@ describe("用例快照轨迹（TracePage）", () => {
     );
     expect(container.querySelector('[data-template="TracePage"]')).not.toBeNull();
     const tree = await screen.findByRole("tree", { name: en.trajectories.detail.waterfall });
-    expect(within(tree).getByText("run · v2")).toBeTruthy();
+    expect(within(tree).getByText("v2")).toBeTruthy();
     expect(screen.getByText(en.trajectories.detail.audited)).toBeTruthy();
     // the set's name, not the page title, sits in the path
     const link = await within(screen.getByRole("navigation", { name: "Path" })).findByRole("link", {

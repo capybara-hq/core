@@ -247,8 +247,11 @@ export function ComposerBar({
     }
   }
 
+  // A lone "/" is the menu's trigger, not a message.
   const empty = (value: string) =>
-    skill === null && value === "" && (files.length === 0 || attachments.length > 0);
+    skill === null &&
+    (value === "" || value === "/") &&
+    (files.length === 0 || attachments.length > 0);
 
   async function submit(how: "send" | "queue") {
     const sentText = text;
@@ -602,6 +605,7 @@ export function ComposerBar({
           }
         }}
         groups={groups}
+        {...(palette === "prompts" && groups.length === 0 ? { emptyText: t("noInvocable") } : {})}
       />
       <Dialog
         open={argsFor !== null}

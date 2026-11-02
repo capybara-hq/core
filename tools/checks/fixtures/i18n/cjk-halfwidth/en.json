@@ -1,0 +1,10 @@
+{
+  "chat": {
+    "placeholder": "What should the agent do?",
+    "warn": "Careful! Save first",
+    "colon": "State: disabled",
+    "semi": "One; two",
+    "ok": "Time 12:30, ratio 1:2, path a:b, agent: name",
+    "fullwidth": "What should the agent do?"
+  }
+}

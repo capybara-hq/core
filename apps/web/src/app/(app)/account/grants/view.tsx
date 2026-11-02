@@ -73,7 +73,7 @@ export default function Grants({ orgId, initial }: { orgId: string; initial: Too
     <SettingsPage
       header={{
         path: [...scope, { label: "account", href: "/account/connections" }, { label: "grants" }],
-        title: t("title"),
+        title: t("nav.grants"),
       }}
       nav={nav}
       activeNav="grants"

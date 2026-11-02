@@ -275,7 +275,7 @@ describe("新建渠道连接（FormPage）", () => {
     expect(within(empty).getByRole("link", { name: f.openExtensions }).getAttribute("href")).toBe(
       "/settings/extensions",
     );
-    // no form: no fields, no action row, no 创建渠道
+    // no form: no fields, no action row, no 新建渠道
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.queryByRole("combobox")).toBeNull();
     expect(screen.queryByRole("button", { name: f.submit })).toBeNull();

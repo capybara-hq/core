@@ -36,7 +36,7 @@ test("成员页：管理员生成邀请链接 → 新用户凭链接注册加入
     page.getByRole("cell", { name: new RegExp(`${M.invitations.status.pending}$`) }),
   ).toBeVisible();
 
-  // 另一个浏览器上下文（没有登录）：打开链接 → 创建账号并加入 → 进入首页，当前组织就是 Acme
+  // 另一个浏览器上下文（没有登录）：打开链接 → 新建账号并加入 → 进入首页，当前组织就是 Acme
   const other = await browser.newContext();
   try {
     const guestPage = await other.newPage();

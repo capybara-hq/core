@@ -51,9 +51,12 @@ const RUN_PAGE = 10;
 export default function TrajectoryView({
   orgId,
   first,
+  people,
 }: {
   orgId: string;
   first: TrajectoryDetail;
+  /** Account id -> display name (empty when the members are not readable). */
+  people: Record<string, string>;
 }) {
   const scope = usePagePath("org");
   const t = useTranslations("trajectories");
@@ -156,7 +159,7 @@ export default function TrajectoryView({
               {source === undefined ? (
                 <Text tone="muted">{t("detail.selectHint")}</Text>
               ) : (
-                <SpanDetail source={source} currency={first.currency} />
+                <SpanDetail source={source} currency={first.currency} people={people} />
               )}
             </Stack>
           </section>

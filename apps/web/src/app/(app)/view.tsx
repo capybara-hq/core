@@ -232,7 +232,7 @@ function DailyOverview({
     <OverviewPage
       header={{
         path: home,
-        title: t("greeting", { name: me.account.displayName }),
+        title: t("title"),
         description:
           pending > 0
             ? t("dailyDescriptionPending", { org: orgName, role, count: pending })

@@ -52,7 +52,7 @@ export default function Connections({
           { label: "account", href: "/account/connections" },
           { label: "connections" },
         ],
-        title: t("title"),
+        title: t("nav.connections"),
       }}
       nav={nav}
       activeNav="connections"

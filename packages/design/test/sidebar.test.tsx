@@ -543,7 +543,7 @@ describe("Sidebar conversations", () => {
     const actions = screen.getAllByRole("button", { name: "会话操作：研究助手 会话 1" });
     expect(actions).toHaveLength(1);
     await user.click(actions[0] as HTMLElement);
-    await user.click(await screen.findByRole("menuitem", { name: "改名" }));
+    await user.click(await screen.findByRole("menuitem", { name: "重命名" }));
     const input = await screen.findByRole("textbox", { name: "会话标题" });
     expect((input as HTMLInputElement).value).toBe("研究助手 会话 1");
     // focus moves into the input (the menu does not take it back)
@@ -561,7 +561,7 @@ describe("Sidebar conversations", () => {
     await vi.waitFor(() => expect(document.activeElement).toBe(row1));
 
     await user.click(screen.getByRole("button", { name: "会话操作：研究助手 会话 2" }));
-    await user.click(await screen.findByRole("menuitem", { name: "改名" }));
+    await user.click(await screen.findByRole("menuitem", { name: "重命名" }));
     const again = await screen.findByRole("textbox", { name: "会话标题" });
     await user.type(again, "不要了");
     await user.keyboard("{Escape}");
@@ -577,7 +577,7 @@ describe("Sidebar conversations", () => {
     const p = props();
     zh(<Sidebar {...p} />);
     await user.click(screen.getByRole("button", { name: "会话操作：研究助手 会话 1" }));
-    await user.click(await screen.findByRole("menuitem", { name: "改名" }));
+    await user.click(await screen.findByRole("menuitem", { name: "重命名" }));
     const input = await screen.findByRole("textbox", { name: "会话标题" });
     fireEvent.keyDown(input, { key: "Enter", isComposing: true });
     expect(p.conversations.onRename).not.toHaveBeenCalled();
@@ -595,7 +595,7 @@ describe("Sidebar conversations", () => {
     });
     zh(<Sidebar {...p} />);
     await user.click(screen.getByRole("button", { name: "会话操作：研究助手 会话 1" }));
-    await user.click(await screen.findByRole("menuitem", { name: "改名" }));
+    await user.click(await screen.findByRole("menuitem", { name: "重命名" }));
     const input = await screen.findByRole("textbox", { name: "会话标题" });
     await vi.waitFor(() => expect(document.activeElement).toBe(input));
     await user.keyboard("{Enter}");
@@ -609,7 +609,7 @@ describe("Sidebar conversations", () => {
     const p = props();
     const r = zh(<Sidebar {...p} />);
     await user.click(screen.getByRole("button", { name: "会话操作：研究助手 会话 1" }));
-    await user.click(await screen.findByRole("menuitem", { name: "改名" }));
+    await user.click(await screen.findByRole("menuitem", { name: "重命名" }));
     expect(await screen.findByRole("textbox", { name: "会话标题" })).toBeTruthy();
     const filtered = { ...p.conversations, filter: { ...p.conversations.filter, q: "客服" } };
     r.rerender(
@@ -647,7 +647,7 @@ describe("Sidebar conversations", () => {
     zh(<Sidebar {...p} />);
     await user.click(screen.getByRole("button", { name: "会话操作：客服分流 会话 1" }));
     expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual([
-      "改名",
+      "重命名",
       "归档",
       "删除",
     ]);
@@ -824,7 +824,7 @@ describe("Sidebar conversations", () => {
     const sec = convSection();
     const es = sec.querySelector('[data-part="empty-state"]');
     expect(es?.getAttribute("data-size")).toBe("compact");
-    expect(within(sec).getByText("还没有会话")).toBeTruthy();
+    expect(within(sec).getByText("还没有会话。")).toBeTruthy();
     expect(within(sec).getByRole("link", { name: "新会话" }).getAttribute("href")).toBe("/chat");
   });
 
@@ -971,7 +971,7 @@ describe("Sidebar rail", () => {
     zh(<Sidebar {...props()} mode="drawer" drawer={{ open: true, onOpenChange }} />);
     const drawer = await screen.findByRole("dialog");
     await user.click(within(drawer).getByRole("button", { name: "会话操作：研究助手 会话 1" }));
-    await user.click(await screen.findByRole("menuitem", { name: "改名" }));
+    await user.click(await screen.findByRole("menuitem", { name: "重命名" }));
     const input = await within(drawer).findByRole("textbox", { name: "会话标题" });
     await vi.waitFor(() => expect(document.activeElement).toBe(input));
     await user.keyboard("{Escape}");

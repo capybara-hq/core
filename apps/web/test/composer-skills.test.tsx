@@ -256,6 +256,36 @@ describe("the / menu", () => {
   });
 });
 
+describe("a lone /", () => {
+  it("is never sent as a message", async () => {
+    const calls = api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`POST ${BASE}/messages`]: echo,
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.click(input());
+    await user.paste("/");
+    await user.keyboard("{Enter}");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(posts(calls, `${BASE}/messages`)).toHaveLength(0);
+  });
+
+  it("with no skills and no prompts the menu says the agent has nothing to run", async () => {
+    api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${INVOCABLE}`]: () => json(200, { skills: [] }),
+      [`GET ${ORG}/connectors/prompts`]: () => json(200, { prompts: [], unavailable: [] }),
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    await userEvent.setup().type(input(), "/");
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText(en.chat.noInvocable)).toBeTruthy();
+  });
+});
+
 describe("typed /name", () => {
   it("/fix-issue 7 without the menu is sent as an invocation; /nope 7 and /etc/hosts as text", async () => {
     const calls = api({

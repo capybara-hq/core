@@ -258,7 +258,7 @@ describe("first paint comes from the server (no browser fetch)", () => {
     const browser = expectNoFirstPaintFetch();
     await renderRoute(casePage, ROUTES);
     const tree = screen.getByRole("tree", { name: en.trajectories.detail.waterfall });
-    expect(within(tree).getByText("run · v2")).toBeTruthy();
+    expect(within(tree).getByText("v2")).toBeTruthy();
     const path = screen.getByRole("navigation", { name: "Path" });
     expect(within(path).getByRole("link", { name: SET.name }).getAttribute("href")).toBe(
       "/evals/s1",

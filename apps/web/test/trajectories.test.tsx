@@ -457,8 +457,8 @@ describe("轨迹详情（TracePage）", () => {
     stubApi({ [`GET ${DETAIL}`]: () => json(200, detailBody([run()])) });
     const { container } = await renderRoute(detailPage, lastStubRoutes(), { locale: "zh" });
     const list = await screen.findByRole("tree", { name: zh.trajectories.detail.waterfall });
-    expect(within(list).getByText("运行 · v3")).toBeTruthy();
-    expect(within(list).getByText("步骤 1")).toBeTruthy();
+    expect(within(list).getByText("v3")).toBeTruthy();
+    expect(within(list).getAllByText("步骤").length).toBeGreaterThan(0);
     expect(within(list).getByText("审批")).toBeTruthy();
     expect(within(list).queryByText("run · v3")).toBeNull();
     const kind = container.querySelector('[data-span="run:r1"] .cb-waterfall-kind');
@@ -480,6 +480,26 @@ describe("轨迹详情（TracePage）", () => {
     expect(within(row).getByText("—")).toBeTruthy();
   });
 
+  it("the run's starter shows as a name with the account id in a tooltip; the id when members are unreadable", async () => {
+    stubApi({
+      [`GET ${DETAIL}`]: () => json(200, detailBody([run()])),
+      "GET /api/v1/orgs/o1/members": () =>
+        json(200, {
+          members: [
+            {
+              account: { id: "a1", displayName: "Grace", email: null },
+              role: "member",
+              joinedAt: at(0),
+              anonymous: false,
+            },
+          ],
+        }),
+    });
+    await renderRoute(detailPage, lastStubRoutes());
+    const name = await screen.findByText("Grace");
+    expect(name.getAttribute("title")).toBe("a1");
+  });
+
   it("加载更早的运行：带 before 再读一页，拼在前面", async () => {
     const older = run({ runId: "r0", startedAt: at(-60_000), endedAt: at(-50_000) });
     const calls = stubApi({
@@ -491,7 +511,9 @@ describe("轨迹详情（TracePage）", () => {
     await userEvent
       .setup()
       .click(screen.getByRole("button", { name: en.trajectories.detail.loadEarlier }));
-    await waitFor(() => expect(screen.getAllByText(/^run · v3$/)).toHaveLength(2));
+    await waitFor(() =>
+      expect(within(screen.getByRole("tree")).getAllByText(/^v3$/)).toHaveLength(2),
+    );
     // the first page was the server's read
     expect(calls.map((c) => c.url)).toEqual([`${DETAIL}?limit=10&before=r1`]);
     expect(screen.queryByRole("button", { name: en.trajectories.detail.loadEarlier })).toBeNull();

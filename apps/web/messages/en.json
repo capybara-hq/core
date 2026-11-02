@@ -59,9 +59,8 @@
     "setupTokenHint": "Only needed if the deployment configured a setup token."
   },
   "home": {
-    "title": "Workspace",
-    "greeting": "Hello, {name}",
-    "noMemberships": "You have not joined any organization yet",
+    "title": "Home",
+    "noMemberships": "You have not joined any organization yet.",
     "agents": "Agents",
     "noMembershipsHint": "Ask an organization admin to invite you.",
     "role": "Role",
@@ -413,8 +412,8 @@
     "new": "New agent",
     "empty": "No agents yet.",
     "starting": "Creating conversation…",
-    "noOrg": "No current organization selected",
-    "backHome": "Back to workspace",
+    "noOrg": "No current organization selected.",
+    "backHome": "Back to home",
     "form": {
       "title": "New agent",
       "nameLabel": "Name",
@@ -702,6 +701,7 @@
     "attachments": "Attachments",
     "removeAttachment": "Remove {name}",
     "attachLimit": "At most {max} attachments per message.",
+    "noInvocable": "This agent has no skills to run.",
     "skillsGroup": "Skills",
     "skillTag": {
       "manual": "manual",
@@ -859,7 +859,7 @@
   "notFound": {
     "title": "Page not found",
     "description": "The link may be broken, or the page has been removed.",
-    "back": "Back to overview"
+    "back": "Back to home"
   },
   "tools": {
     "outputId": "Full output archived as {id}.",
@@ -1259,7 +1259,6 @@
     }
   },
   "connections": {
-    "title": "My settings",
     "nav": {
       "groupPersonal": "Personal",
       "groupCapabilities": "Capabilities",
@@ -1387,7 +1386,7 @@
   "channels": {
     "title": "Channels",
     "new": "New channel",
-    "empty": "No channel connections yet",
+    "empty": "No channel connections yet.",
     "emptyHint": "Connect an IM bot (such as Slack or Lark) to an agent so people can chat with it in IM.",
     "columns": {
       "name": "Name",
@@ -1568,7 +1567,7 @@
   "identities": {
     "title": "IM identities",
     "hint": "IM and sign-in accounts linked to your Capybara account. Messages from a linked IM account act as you.",
-    "empty": "No linked identities",
+    "empty": "No linked identities.",
     "emptyHint": "Message a Capybara bot in IM and follow its link, or sign in with a third-party account.",
     "columns": {
       "name": "Name",
@@ -1604,7 +1603,7 @@
     "title": "Evals & runs",
     "untitled": "Untitled conversation",
     "noRun": "No runs",
-    "empty": "No run history to view yet",
+    "empty": "No run history to view yet.",
     "emptyHint": "Conversations with agents you own (all agents for org admins) appear here once they run.",
     "noMatch": "No conversations match the current filters.",
     "loadMore": "Load more",
@@ -1636,13 +1635,13 @@
       "empty": "This conversation has not started any runs yet.",
       "selectHint": "Select a span above to see its details.",
       "spans": {
-        "run": "run · v{version}",
-        "step": "step {n}",
+        "run": "v{version}",
+        "step": "{n}",
         "approval": "approval",
         "question": "question"
       },
       "metrics": {
-        "tokens": "TOKENS",
+        "tokens": "Total tokens",
         "cost": "Cost (est.)",
         "calls": "Calls",
         "duration": "Duration"
@@ -1781,7 +1780,7 @@
     "title": "Evals & runs",
     "runHistory": "Run history",
     "new": "New eval set",
-    "empty": "No eval sets yet",
+    "empty": "No eval sets yet.",
     "emptyHint": "Pick runs from real conversations into an eval set, then replay them with another model, prompt or agent version and compare.",
     "columns": {
       "name": "Name",
@@ -1824,7 +1823,7 @@
       "defaultRubric": "(default rubric)",
       "created": "Created",
       "casesLabel": "Cases",
-      "casesEmpty": "No cases yet",
+      "casesEmpty": "No cases yet.",
       "casesEmptyHint": "Use \"Sample from conversations\", or \"Add to eval set\" from a run in the run history.",
       "caseColumns": {
         "title": "Trigger message",
@@ -1836,7 +1835,7 @@
       "removeCase": "Remove case",
       "caseRemoved": "Case removed.",
       "runsLabel": "Runs",
-      "runsEmpty": "No runs yet",
+      "runsEmpty": "No runs yet.",
       "runColumns": {
         "created": "Started",
         "mode": "Mode",
@@ -1952,7 +1951,7 @@
         "summary": "Summary"
       },
       "resultsLabel": "Results",
-      "resultsEmpty": "No results",
+      "resultsEmpty": "No results.",
       "loadMore": "Load more",
       "columns": {
         "case": "Case",
@@ -2139,7 +2138,7 @@
     }
   },
   "admin": {
-    "title": "Admin",
+    "title": "Overview",
     "nav": {
       "group": "Admin",
       "overview": "Overview",
@@ -2164,7 +2163,7 @@
     "accounts": {
       "title": "Accounts",
       "new": "New account",
-      "empty": "No accounts yet",
+      "empty": "No accounts yet.",
       "loadMore": "Load more",
       "columns": {
         "name": "Name",
@@ -2218,7 +2217,7 @@
     "orgs": {
       "title": "Organizations",
       "hint": "Empty values use the deployment default. Organization admins can only view them in their settings.",
-      "empty": "No organizations yet",
+      "empty": "No organizations yet.",
       "default": "Default",
       "edit": "Set limits",
       "saved": "Saved",
@@ -2294,8 +2293,8 @@
       "title": "Extensions",
       "install": "Install extension",
       "hint": "Every extension on this deployment. Installing, enabling, disabling and upgrading need no restart: replicas converge within seconds of a change.",
-      "empty": "No extensions yet",
-      "noResults": "No extensions match the filters",
+      "empty": "No extensions yet.",
+      "noResults": "No extensions match the filters.",
       "sensitive": "Sensitive",
       "required": "Required",
       "columns": {
@@ -2524,7 +2523,7 @@
       "owner": "Owner"
     },
     "roleChanged": "Changed {name} to {role}.",
-    "empty": "No members yet",
+    "empty": "No members yet.",
     "menu": {
       "transfer": "Transfer ownership",
       "remove": "Remove from organization"
@@ -2541,7 +2540,7 @@
     "transferred": "Transferred ownership to {name}",
     "invitations": {
       "title": "Invitations",
-      "empty": "No invitations yet",
+      "empty": "No invitations yet.",
       "columns": {
         "role": "Role",
         "status": "Status",
@@ -3341,7 +3340,7 @@
     "revokeDescription": "Scripts using “{name}” stop working at once.",
     "revokeConfirm": "Revoke",
     "revoked": "Token revoked",
-    "empty": "No service tokens yet",
+    "empty": "No service tokens yet.",
     "emptyHint": "Create a token for CI or an integration to call the organization’s API.",
     "loadFailed": "Couldn’t load service tokens.",
     "retry": "Retry",
