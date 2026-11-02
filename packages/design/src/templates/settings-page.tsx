@@ -39,7 +39,7 @@ export function SettingsPage({
     const nav = navRef.current;
     const current = nav?.querySelector<HTMLElement>('[aria-current="page"]');
     if (!nav || !current || nav.scrollWidth <= nav.clientWidth) return;
-    nav.scrollLeft = current.offsetLeft - nav.offsetLeft - 16;
+    nav.scrollLeft = current.offsetLeft - nav.offsetLeft;
   }, []);
   const rail = (
     <nav

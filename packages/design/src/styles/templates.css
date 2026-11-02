@@ -132,8 +132,7 @@
   .cb-settings-nav {
     flex-direction: row;
     gap: var(--cb-space-1);
-    margin: 0 calc(var(--cb-content-pad, 16px) * -1);
-    padding: 0 var(--cb-content-pad, 16px) var(--cb-space-1);
+    padding-bottom: var(--cb-space-1);
     overflow-x: auto;
     border-bottom: 1px solid var(--cb-line-soft);
     scrollbar-width: none;
