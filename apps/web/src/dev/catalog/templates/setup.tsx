@@ -34,7 +34,7 @@ export function SetupHomeBody() {
               done: true,
             },
             {
-              label: "创建 agent",
+              label: "新建 agent",
               description: "agent 决定用哪个模型、能用哪些工具和技能。",
               done: false,
               action: <Button variant="primary">新建</Button>,

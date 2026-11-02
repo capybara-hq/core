@@ -74,7 +74,7 @@ export function ObjectsSection() {
           <EmptyState
             text="还没有 agent"
             hint="新建一个 agent，就能和它对话。"
-            action={{ label: "新建 Agent", icon: "plus", variant: "primary", onSelect: noop }}
+            action={{ label: "新建 agent", icon: "plus", variant: "primary", onSelect: noop }}
           />
           <EmptyState
             size="compact"

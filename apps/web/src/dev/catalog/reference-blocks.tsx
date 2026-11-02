@@ -75,7 +75,7 @@ function ButtonRow({ density, disabled }: { density?: "dense" | "prominent"; dis
   return (
     <Stack direction="row" gap={12} align="center" wrap>
       <Button variant="primary" disabled={disabled} {...d}>
-        新建 Agent
+        新建 agent
       </Button>
       <Button variant="secondary" disabled={disabled} {...d}>
         部署
@@ -126,7 +126,7 @@ function buttonBlocks(): ReactNode {
         force={{ pseudo: ["focus", "focus-visible"], selector: "button" }}
       >
         <Stack direction="row" gap={12} align="center" wrap>
-          <Button variant="primary">新建 Agent</Button>
+          <Button variant="primary">新建 agent</Button>
           <Button variant="default">导出</Button>
           <IconButton variant="default" label="更多操作" icon={<Icon name="more-horizontal" />} />
         </Stack>

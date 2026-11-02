@@ -14,7 +14,7 @@ export function OnboardingTemplate() {
             label: "创建第一个 Agent",
             description: "从模板开始，或导入 YAML",
             done: false,
-            action: <Button variant="primary">+ 新建 Agent</Button>,
+            action: <Button variant="primary">+ 新建 agent</Button>,
           },
           {
             label: "邀请成员",

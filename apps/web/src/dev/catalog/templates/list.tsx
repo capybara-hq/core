@@ -109,7 +109,7 @@ function ListBody() {
         actions: [
           { label: "导入", variant: "default" },
           { label: "导出", variant: "default" },
-          { label: "新建 Agent", variant: "primary", icon: "plus", href: "/dev/ui/templates/form" },
+          { label: "新建 agent", variant: "primary", icon: "plus", href: "/dev/ui/templates/form" },
         ],
       }}
       rail={<Facets />}

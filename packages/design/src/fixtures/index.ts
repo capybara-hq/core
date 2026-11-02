@@ -139,14 +139,14 @@ export type FixtureSetupStep = {
 export const SETUP_STEPS_FIXTURE: Record<"admin" | "member", FixtureSetupStep[]> = {
   admin: [
     { id: "model", label: "配置模型", state: "done" },
-    { id: "agent", label: "创建 agent", state: "todo" },
+    { id: "agent", label: "新建 agent", state: "todo" },
     { id: "channels", label: "连接渠道", state: "todo", optional: true },
     { id: "members", label: "邀请成员", state: "todo", optional: true },
     { id: "catalog", label: "安装插件", state: "todo", optional: true },
   ],
   member: [
     { id: "model", label: "配置模型", state: "waiting", reason: "等待管理员配置模型" },
-    { id: "agent", label: "创建 agent", state: "waiting", reason: "先配置模型" },
+    { id: "agent", label: "新建 agent", state: "waiting", reason: "先配置模型" },
     { id: "connections", label: "我的连接", state: "todo", optional: true },
   ],
 };
@@ -593,7 +593,7 @@ export const STATUS_FIXTURE = {
 
 export const CONTROLS_FIXTURE = {
   buttons: [
-    { variant: "primary", label: "新建 Agent" },
+    { variant: "primary", label: "新建 agent" },
     { variant: "secondary", label: "部署" },
     { variant: "default", label: "导出" },
     { variant: "ghost", label: "取消" },

@@ -575,7 +575,7 @@
     },
     "warnings": {
       "fallback_same_provider": "The fallback model should come from a different provider; otherwise it cannot help when that provider fails.",
-      "unknown": "Saved with an unrecognized notice: {code}"
+      "unknown": "Saved with an unrecognized notice: {code}."
     },
     "columns": {
       "name": "Name",
@@ -752,7 +752,7 @@
     "pickAgent": "Switch agent",
     "pickModel": "Switch model",
     "pickEffort": "Effort",
-    "agentLocked": "The agent can't change after the first message",
+    "agentLocked": "The agent can't change after the first message.",
     "nextMessage": "Applies from the next message",
     "agentDefault": "agent default",
     "effort": {
@@ -1096,7 +1096,7 @@
       "empty": "This connector has no tools.",
       "missing": "No longer provided by the server",
       "pendingReview": "Pending review",
-      "neverReviewed": "Never reviewed: approve it on the Review tab to enable it"
+      "neverReviewed": "Never reviewed: approve it on the Review tab to enable it."
     },
     "credential": {
       "title": "Credential",
@@ -2035,7 +2035,7 @@
         "verdict": "Verdict",
         "score": "Score",
         "reason": "Reason",
-        "judgeError": "The judge gave no verdict: {reason}",
+        "judgeError": "The judge gave no verdict: {reason}.",
         "unparseable": "the judge's reply could not be parsed",
         "label": "Human label",
         "note": "Note",
@@ -2229,10 +2229,10 @@
         "enable": "Reactivate"
       },
       "done": {
-        "grant": "{name} is now an enterprise admin",
-        "revoke": "{name} is no longer an enterprise admin",
-        "disable": "{name} was deactivated",
-        "enable": "{name} was reactivated"
+        "grant": "{name} is now an enterprise admin.",
+        "revoke": "{name} is no longer an enterprise admin.",
+        "disable": "{name} was deactivated.",
+        "enable": "{name} was reactivated."
       },
       "form": {
         "title": "New account",
@@ -2245,7 +2245,7 @@
         "submit": "Create",
         "created": "Created account {name}"
       },
-      "lastAdmin": "The only enterprise admin: cannot be revoked or disabled"
+      "lastAdmin": "The only enterprise admin: cannot be revoked or disabled."
     },
     "orgs": {
       "title": "Organizations",
@@ -2398,8 +2398,8 @@
           "unloaded": "Unloaded",
           "pending": "Pending"
         },
-        "failedReplica": "Replica {replica} failed to load: {reason}",
-        "stillServing": "This replica still serves {version}",
+        "failedReplica": "Replica {replica} failed to load: {reason}.",
+        "stillServing": "This replica still serves {version}.",
         "replicaReason": {
           "config": "Deployment config missing or invalid",
           "approval": "Permissions awaiting approval",
@@ -2440,7 +2440,7 @@
           "disable": "Disable submitted; replicas are converging.",
           "uninstall": "Uninstalled “{name}”."
         },
-        "packageError": "The extension package cannot be read: {error}"
+        "packageError": "The extension package cannot be read: {error}."
       },
       "approve": {
         "title": "Approve permissions",
@@ -2555,7 +2555,7 @@
       "admin": "Admin",
       "owner": "Owner"
     },
-    "roleChanged": "Changed {name} to {role}",
+    "roleChanged": "Changed {name} to {role}.",
     "empty": "No members yet",
     "menu": {
       "transfer": "Transfer ownership",
@@ -2769,7 +2769,7 @@
         "unchecked": "The connector extension is not loaded on this replica, so the endpoint has not been checked against its schema yet.",
         "mismatch": "The permission summary in the marketplace does not match the downloaded package (the package is what counts).",
         "mismatchMissing": "Not listed in the marketplace: {keys}",
-        "mismatchExtra": "Listed in the marketplace but not requested: {keys}",
+        "mismatchExtra": "Listed in the marketplace but not requested: {keys}.",
         "deployExtension": "Also install the extension on the deployment",
         "deployOn": "After confirming, the extension is installed (or upgraded) on the deployment and enabled.",
         "deployOff": "If unchecked, the extension is only recorded in the catalog and is not installed. Organizations cannot use the plugin until an enterprise admin installs its extension on the deployment.",
@@ -2918,8 +2918,8 @@
         "importVersion": "Import {version}",
         "noCompatible": "No compatible version",
         "reason": {
-          "host_not_allowed": "Host {host} is not in marketplaces.allowedHosts",
-          "path_needs_git_marketplace": "A path in the marketplace's repository: add the repository as a git marketplace"
+          "host_not_allowed": "Host {host} is not in marketplaces.allowedHosts.",
+          "path_needs_git_marketplace": "A path in the marketplace's repository: add the repository as a git marketplace."
         },
         "gitPinned": "commit {commit}",
         "gitFollows": "follows {ref}",
@@ -3052,7 +3052,7 @@
         },
         "installed": "Installed {name}",
         "requested": "Request submitted",
-        "approvalRequested": "Enterprise admin approval is needed; a request was submitted",
+        "approvalRequested": "Enterprise admin approval is needed; a request was submitted.",
         "openPlugins": "View installed plugins",
         "upgradeAvailable": "Upgrade available: {version}",
         "upgrade": "Upgrade"
@@ -3086,7 +3086,7 @@
         "dcrHint": "The client is registered automatically; nothing to fill in.",
         "extensionHint": "This plugin enables its extension in this organization. Fill in the organization settings if it has any (an extension already enabled keeps its settings).",
         "extensionNone": "No extension settings to fill in.",
-        "extensionEnabled": "{name}: already enabled in this organization; settings unchanged",
+        "extensionEnabled": "{name}: already enabled in this organization; settings unchanged.",
         "summary": "This will install:",
         "summaryExtension": "extension {name}",
         "summaryTemplates": "{n} connectors",
@@ -3203,8 +3203,8 @@
       "extensionConfig": "This upgrade enables the plugin's extension in this organization; its organization config:",
       "confirm": "Upgrade",
       "cancel": "Cancel",
-      "done": "Upgraded {name} to {version}",
-      "requested": "Enterprise admin approval is needed; a request was submitted",
+      "done": "Upgraded {name} to {version}.",
+      "requested": "Enterprise admin approval is needed; a request was submitted.",
       "failed": "Upgrading failed at the “{step}” step ({code}); this organization's components are back at version {version}.",
       "failedNoRollback": "Upgrading failed at the “{step}” step ({code}) and could not be undone right away; it is undone automatically after the timeout."
     },
@@ -3284,7 +3284,7 @@
     "later": {
       "connectionsWhere": "Personal settings · My connections"
     },
-    "waitingDeployment": "A deployment admin needs to set up a model service before you can continue",
+    "waitingDeployment": "A deployment admin needs to set up a model service before you can continue.",
     "steps": {
       "model": "Configure a model",
       "agent": "Create an agent",
