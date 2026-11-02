@@ -430,6 +430,7 @@ Every glyph in this section is an `Icon` of §2.6 (rule `design-char-icon`).
 - Disabled: `faint` text, `line-soft` border (a disabled ghost button too), transparent ground; a disabled primary gets the `selected` ground and weight 400; `cursor: not-allowed`.
 - Loading: the `spinner` icon (14) before the label, in flow (the button grows by the icon and its gap), the variant's colors kept, no repeated clicks (`aria-busy`).
 - A shortcut hint follows the label in the form `⌘S` (`faint`).
+- A button that navigates is a link drawn as the button: `LinkButton({ href, variant, density })` (`primary` / `secondary` / `default`), the same steps, colors and states, through the DesignProvider's `link`; never the browser's link colors (the extension detail's 升级).
 
 <!-- states: button -->
 States: `default-step`, `dense-step`, `prominent-step`, `hover`, `focus`, `disabled`, `loading`
@@ -1690,6 +1691,26 @@ States: `default`
 | status-need | default | border-top-color | color.line |
 | status-need | default | padding-left | space.2 |
 | status-need | default | color | color.ink |
+
+### 6.24 ErrorDetail
+
+`ErrorDetail({ summary, detail?, label?, defaultOpen? })`: a failure a person reads first as one sentence in their language, with the system's raw text one click away (a marketplace's last refresh error). The summary (`body`, `fail`, led by `circle-x` 14, `space.1` apart) is one sentence the page maps from the error (a known kind gets its own sentence, anything else a generic one such as "同步失败。"); raw English text never goes into it. Under it, `space.1` below, a toggle button in `small` `muted` ("原始错误" / "Raw error"; `label` overrides) with a `faint` `chevron-right` / `chevron-down` (12) after the words (`aria-expanded`, `aria-controls`; `ink` on hover). Once open, the raw text follows `space.1` below in mono `small` `muted`, line breaks kept and long words broken anywhere, under a 1px `line` guide on the left, indented `space.2` (the Disclosure body, §6.5). Closed by default; without `detail` the toggle is not drawn.
+
+<!-- states: error-detail -->
+States: `default`, `open`
+
+<!-- size-table: error-detail -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| error-detail | default | row-gap | space.1 |
+| error-detail-summary | default | color | color.fail |
+| error-detail-summary | default | font-size | type.body |
+| error-detail-toggle | default | color | color.muted |
+| error-detail-toggle | default | font-size | type.small |
+| error-detail-raw | open | color | color.muted |
+| error-detail-raw | open | font-size | type.small |
+| error-detail-raw | open | padding-left | space.2 |
+| error-detail-raw | open | border-left-color | color.line |
 
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.

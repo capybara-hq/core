@@ -83,6 +83,8 @@ export const REFERENCE_COMPONENTS = [
   "no-access",
   "danger-zone",
   "secret-reveal",
+  // unslop fixes
+  "error-detail",
 ] as const;
 
 export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];

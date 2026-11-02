@@ -45,6 +45,8 @@ const PAGES = [
   "file-preview",
   // the role pass: no-access state, danger zone, secret reveal
   "roles",
+  // unslop fixes: a failure sentence with its raw text behind a toggle
+  "error-detail",
 ];
 const THEMES = ["dark", "light"] as const;
 const BLOCK_ID = /^[a-z-]+-[a-z0-9-]+$/;

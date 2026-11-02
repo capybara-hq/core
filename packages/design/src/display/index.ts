@@ -38,6 +38,7 @@ export { DangerZone, DangerZoneItem, type DangerZoneItemProps } from "./danger-z
 export { Disclosure, type DisclosureProps } from "./disclosure";
 export { EMBED_SANDBOX, EmbedFrame, type EmbedFrameProps } from "./embed";
 export { EmptyState, type EmptyStateProps } from "./empty-state";
+export { ErrorDetail, type ErrorDetailProps } from "./error-detail";
 export { BarChart, Dither, Skeleton, Sparkline } from "./graphics";
 export { ItemList, type ItemListRow } from "./item-list";
 export { KeyValue, type KeyValueProps } from "./key-value";

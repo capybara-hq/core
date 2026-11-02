@@ -10,6 +10,7 @@ import {
   DangerZoneItem,
   DataTable,
   DesignProvider,
+  ErrorDetail,
   Field,
   FilterChip,
   FormPage,
@@ -987,6 +988,23 @@ function secretRevealBlocks(): ReactNode {
   );
 }
 
+const RAW_REFRESH_ERROR =
+  "https://github.com/capybara-hq/plugins.git: cannot list the refs of https://github.com/capybara-hq/plugins.git: Access to github.com is refused: it resolves to a private or reserved address (add the hostname to marketplaces.allowPrivateHosts to allow an internal host).";
+
+function errorDetailBlocks(): ReactNode {
+  const summary = "市场地址解析到内网或保留地址，已被网络规则拦截。";
+  return (
+    <>
+      <RefBlock id="error-detail-default" width={640} pad>
+        <ErrorDetail summary={summary} detail={RAW_REFRESH_ERROR} />
+      </RefBlock>
+      <RefBlock id="error-detail-open" width={640} pad>
+        <ErrorDetail summary={summary} detail={RAW_REFRESH_ERROR} defaultOpen />
+      </RefBlock>
+    </>
+  );
+}
+
 export const REFERENCE_BLOCKS = {
   button: buttonBlocks,
   input: inputBlocks,
@@ -1007,4 +1025,5 @@ export const REFERENCE_BLOCKS = {
   "no-access": noAccessBlocks,
   "danger-zone": dangerZoneBlocks,
   "secret-reveal": secretRevealBlocks,
+  "error-detail": errorDetailBlocks,
 } as const;

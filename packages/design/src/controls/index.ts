@@ -1,4 +1,4 @@
-export { Button, type ButtonProps, IconButton } from "./button";
+export { Button, type ButtonProps, IconButton, LinkButton, type LinkButtonProps } from "./button";
 export { type Density, DensityContext, useDensity } from "./density";
 export { Field } from "./field";
 export { FilterChip } from "./filter-chip";

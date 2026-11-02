@@ -1,5 +1,6 @@
 import type { ButtonHTMLAttributes, ReactNode, Ref } from "react";
 import { Icon } from "../icons/icon";
+import { useDesignLink } from "../provider";
 import { type Density, useDensity } from "./density";
 
 export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -48,6 +49,34 @@ export function Button({
         {shortcut ? <span className="cb-btn-shortcut">{shortcut}</span> : null}
       </span>
     </button>
+  );
+}
+
+export type LinkButtonProps = {
+  href: string;
+  /** The navigating variants (spec §6.1); default `default`. */
+  variant?: "primary" | "secondary" | "default";
+  density?: Density;
+  children: ReactNode;
+};
+
+/**
+ * A button that navigates (spec §6.1): a link through the DesignProvider's `link`, drawn as the
+ * Button of its variant and density, never in the browser's link colors.
+ */
+export function LinkButton({ href, variant = "default", density, children }: LinkButtonProps) {
+  const Link = useDesignLink();
+  const step = useDensity(density);
+  return (
+    <Link
+      href={href}
+      className={`cb-btn cb-btn-link cb-btn-link-${variant}`}
+      data-part="button"
+      data-variant={variant}
+      data-density={step}
+    >
+      <span className="cb-btn-body">{children}</span>
+    </Link>
   );
 }
 

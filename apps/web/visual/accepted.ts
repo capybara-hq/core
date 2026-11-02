@@ -48,4 +48,7 @@ export const ACCEPTED: string[] = [
   "no-access",
   "danger-zone",
   "secret-reveal",
+  // unslop fixes (2026-11-03): blocks and size table in place; the reference PNGs and the
+  // side-by-side review wait for the reference-update and visual-update workflows
+  "error-detail",
 ];
