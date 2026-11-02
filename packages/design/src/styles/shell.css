@@ -134,6 +134,11 @@
 .cb-template-head {
   flex: none;
   padding: var(--cb-space-6) var(--cb-layout-gutter) var(--cb-space-3);
+  /* Reserve the same scrollbar gutter as the scrolling body below, so a classic (non-overlay)
+     scrollbar does not shift the content column against the head; scrollbar-gutter only applies
+     to a scroll container, hence overflow: hidden. No effect with overlay scrollbars. */
+  overflow: hidden;
+  scrollbar-gutter: stable;
 }
 /* Frame templates: side padding 32 (16 below 640), top 20 (spec §2.3). */
 .cb-template-head[data-width="content"] {
@@ -355,6 +360,8 @@ a.cb-stat-card:focus-visible {
   flex: 1;
   min-width: min(560px, 100%);
   overflow: auto;
+  /* Same gutter as .cb-template-head: the column keeps its x whether or not the page scrolls. */
+  scrollbar-gutter: stable;
 }
 /* A content column with its own header (SettingsPage): the header stays, the content scrolls. */
 .cb-body-main {
