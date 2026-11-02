@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Badge,
   Button,
   Checkbox,
   type Column,
@@ -94,7 +93,7 @@ export default function AdminAccounts({ initial }: { initial: AdminAccountsPage 
     {
       key: "role",
       header: t("columns.role"),
-      cell: (a) => (a.isEnterpriseAdmin ? <Badge tone="accent">{t("enterpriseAdmin")}</Badge> : ""),
+      cell: (a) => (a.isEnterpriseAdmin ? t("enterpriseAdmin") : ""),
     },
   ];
 

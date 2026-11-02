@@ -139,7 +139,8 @@ describe("/admin/accounts（ListPage）", () => {
       expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ isEnterpriseAdmin: true }),
     );
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(within(alice).getByText(a.enterpriseAdmin)).toBeTruthy();
+    // A role is plain text, not an accent badge.
+    expect(within(alice).getByText(a.enterpriseAdmin).closest(".cb-badge")).toBeNull();
   });
 
   it("取消确认：不发请求", async () => {

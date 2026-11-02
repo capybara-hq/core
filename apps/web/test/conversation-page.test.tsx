@@ -127,6 +127,24 @@ describe("the conversation page (ConversationPage)", () => {
     params.conversationId = "c1";
   });
 
+  it("a failed last run reads in fail in the status bar", async () => {
+    api({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [
+            userMsg(1, "hello"),
+            runStarted(2),
+            ev(3, "run_failed", { error: { code: "model.timeout", message: "x" } }),
+          ],
+        }),
+    });
+    const { container } = await renderChat("en");
+    await screen.findByText("hello");
+    const bar = container.querySelector('[data-part="status-bar"]') as HTMLElement;
+    const failed = within(bar).getByText(en.chat.status.failed);
+    expect(failed.getAttribute("data-tone")).toBe("fail");
+  });
+
   it("the composer is a sibling of the scrolling thread, not inside it", async () => {
     api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }) });
     const { container } = await renderChat("en");

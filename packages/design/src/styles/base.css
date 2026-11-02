@@ -4,6 +4,11 @@
   box-sizing: border-box;
 }
 
+/* Scrollbars (inherited): a quiet thumb on a transparent track in both themes. */
+html {
+  scrollbar-color: var(--cb-scroll-thumb) transparent;
+}
+
 body {
   margin: 0;
   background: var(--cb-bg);

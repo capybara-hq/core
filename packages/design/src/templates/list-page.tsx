@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { isValidElement, type ReactNode } from "react";
 import {
   Callout,
   type CalloutProps,
@@ -17,6 +17,9 @@ import { TemplateHead, WithStats } from "./frame";
  * `empty` is drawn instead of the children. `loading` draws skeleton rows (objects: in the 64 px
  * row shape inside the panel; records: a Skeleton) instead of the children or `empty`; the head,
  * its tabs (counts pending) and its search keep their place.
+ *
+ * One primary per screen (spec §5.2): while `empty` is drawn with a primary action, the head's
+ * primary is left out and the empty state carries it.
  */
 export function ListPage({
   header,
@@ -56,7 +59,20 @@ export function ListPage({
           tabs: header.tabs.map((t) => (t.count !== undefined ? { ...t, pending: true } : t)),
         }
       : header;
-  const head = callout ? { ...withTabs, notice: <Callout {...callout} /> } : withTabs;
+  const emptyPrimary =
+    !loading &&
+    empty?.action !== undefined &&
+    !isValidElement(empty.action) &&
+    "variant" in empty.action &&
+    empty.action.variant === "primary";
+  const onePrimary =
+    emptyPrimary && withTabs.actions
+      ? {
+          ...withTabs,
+          actions: withTabs.actions.filter((a) => !("variant" in a && a.variant === "primary")),
+        }
+      : withTabs;
+  const head = callout ? { ...onePrimary, notice: <Callout {...callout} /> } : onePrimary;
   const content = loading ? (
     variant === "objects" ? (
       <ObjectList label={listLabel ?? header.title} loading />

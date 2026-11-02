@@ -36,6 +36,7 @@
   padding: var(--cb-space-4);
   border-radius: var(--cb-radius-md);
   background: var(--cb-panel);
+  box-shadow: inset 0 0 0 1px var(--cb-line-card);
 }
 .cb-form-section-fields[data-flush="true"] {
   gap: 0;
@@ -405,7 +406,7 @@ a.cb-item-list-title:hover {
   padding: 0;
   list-style: none;
   background: var(--cb-panel);
-  border: 1px solid var(--cb-line-soft);
+  border: 1px solid var(--cb-line-card);
   border-radius: var(--cb-radius-md);
 }
 .cb-object-row {
@@ -463,9 +464,10 @@ a.cb-object-name:hover {
   line-height: 16px;
   color: var(--cb-muted);
 }
+/* An attention mark: the word in warn, no box (the Badge's warn tone). */
 .cb-object-chip[data-tone="warn"] {
+  padding: 0;
   border-color: transparent;
-  background: color-mix(in srgb, var(--cb-warn) 15%, transparent);
   color: var(--cb-warn);
 }
 .cb-object-desc,

@@ -64,6 +64,8 @@ export type ConversationStatus = {
   stats?: ReactNode;
   /** Run status and "上下文 N%", before the version; none on a new conversation. */
   right?: string[];
+  /** The run status's colour (the first `right` item): `fail` after a failed run. */
+  tone?: "fail";
   version: string;
   /** The viewer's time zone (`UTC+8`), after the version, as on every page (spec §4.4). */
   timeZone?: string;
@@ -246,6 +248,7 @@ export function ConversationPage({
           {...(status.timeZone !== undefined ? { timeZone: status.timeZone } : {})}
           pageStatus={status.stats}
           system={status.right}
+          {...(status.tone !== undefined ? { systemTone: status.tone } : {})}
           announceFirst={(status.right?.length ?? 0) > 0}
         />
       </div>

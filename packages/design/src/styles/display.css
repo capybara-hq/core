@@ -47,7 +47,7 @@
 }
 .cb-tab:disabled,
 .cb-tab[aria-disabled="true"] {
-  color: var(--cb-faint);
+  color: var(--cb-disabled);
   cursor: not-allowed;
 }
 .cb-tab-count {
@@ -157,6 +157,12 @@
 .cb-badge[data-tone="accent"] {
   border-color: var(--cb-accent);
   color: var(--cb-accent);
+}
+/* An attention mark ("敏感"): the word in warn, no box (spec §2.4). */
+.cb-badge[data-tone="warn"] {
+  padding: 0;
+  border-color: transparent;
+  color: var(--cb-warn);
 }
 .cb-badge[data-tone="count"] {
   border-color: transparent;
@@ -270,9 +276,6 @@
 }
 .cb-dither rect {
   fill: var(--cb-line);
-}
-.cb-dither rect[data-accent="true"] {
-  fill: var(--cb-accent);
 }
 
 /* Skeleton */
@@ -841,9 +844,10 @@ a.cb-attachment:hover {
 .cb-waterfall-row:hover {
   background: var(--cb-hover);
 }
+/* Selection is neutral (spec §2.3): a selected ground and an ink marker on the left. */
 .cb-waterfall-row[aria-selected="true"] {
-  background: var(--cb-accent-tint);
-  box-shadow: inset 2px 0 0 var(--cb-accent);
+  background: var(--cb-selected);
+  box-shadow: inset 2px 0 0 var(--cb-ink);
 }
 .cb-waterfall-name {
   display: flex;
@@ -957,6 +961,7 @@ a.cb-attachment:hover {
   padding: var(--cb-space-4);
   border-radius: var(--cb-radius-md);
   background: var(--cb-panel);
+  box-shadow: inset 0 0 0 1px var(--cb-line-card);
 }
 .cb-link-card-title {
   margin: 0;

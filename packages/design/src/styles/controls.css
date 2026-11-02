@@ -96,10 +96,10 @@
   gap: 32px;
 }
 
-/* Cards and sections have no border (spec §2.5): the panel ground separates them. */
+/* Cards and sections: the panel ground and a line-card hairline (spec §2.5). */
 .cb-card {
   background: var(--cb-panel);
-  border: 1px solid transparent;
+  border: 1px solid var(--cb-line-card);
   border-radius: var(--cb-radius-md);
 }
 .cb-card[data-tone="danger"] {
@@ -294,19 +294,20 @@
 }
 
 .cb-btn:disabled {
-  color: var(--cb-faint);
-  border-color: var(--cb-line-soft);
+  color: var(--cb-disabled);
+  border-color: var(--cb-line);
   background: transparent;
   cursor: not-allowed;
 }
 .cb-btn[data-variant="primary"]:disabled,
 .cb-btn[data-variant="danger-solid"]:disabled {
-  border-color: transparent;
+  border-color: var(--cb-line);
   background: var(--cb-selected);
   font-weight: 400;
 }
 /* A loading primary keeps its look (only the spinner says it is busy). */
 .cb-btn[data-variant="primary"][data-state="loading"]:disabled {
+  border-color: transparent;
   background: var(--cb-accent);
   color: var(--cb-on-accent);
   font-weight: 600;
@@ -475,9 +476,9 @@
 .cb-input[data-state="disabled"],
 .cb-select[data-state="disabled"],
 .cb-textarea[data-state="disabled"] {
-  border-color: var(--cb-line-soft);
+  border-color: var(--cb-line);
   background: var(--cb-hover);
-  color: var(--cb-faint);
+  color: var(--cb-disabled);
 }
 .cb-input input,
 .cb-select select,
@@ -565,7 +566,7 @@
   background: var(--cb-hover);
 }
 .cb-stepper-btn:disabled {
-  color: var(--cb-faint);
+  color: var(--cb-disabled);
   cursor: not-allowed;
   background: transparent;
 }
@@ -636,7 +637,7 @@
   cursor: pointer;
 }
 .cb-check[data-disabled="true"] {
-  color: var(--cb-faint);
+  color: var(--cb-disabled);
   cursor: not-allowed;
 }
 .cb-check input,
@@ -720,9 +721,10 @@
 .cb-radio[data-variant="card"]:hover {
   border-color: var(--cb-line-strong);
 }
+/* Selection is neutral (spec §2.3): the radio dot and the focus ring carry the accent. */
 .cb-radio[data-variant="card"][data-state="checked"] {
-  border-color: var(--cb-accent);
-  background: var(--cb-accent-tint);
+  border-color: var(--cb-line-strong);
+  background: var(--cb-selected);
 }
 .cb-radio[data-variant="card"] input {
   left: 12px;
@@ -785,22 +787,22 @@
   background: var(--cb-line-strong);
 }
 .cb-slider[data-state="disabled"] .cb-slider-thumb {
-  background: var(--cb-faint);
+  background: var(--cb-disabled);
 }
 .cb-slider-input:disabled {
   background: var(--cb-hover);
-  color: var(--cb-faint);
+  color: var(--cb-disabled);
   cursor: not-allowed;
 }
 .cb-stepper[data-state="disabled"] {
   background: var(--cb-hover);
-  color: var(--cb-faint);
+  color: var(--cb-disabled);
 }
 .cb-stepper[data-state="disabled"] input {
-  color: var(--cb-faint);
+  color: var(--cb-disabled);
 }
 .cb-radio[data-disabled="true"] {
-  color: var(--cb-faint);
+  color: var(--cb-disabled);
   cursor: not-allowed;
 }
 .cb-radio input:disabled + .cb-box {

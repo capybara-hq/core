@@ -38,14 +38,17 @@ All colors, sizes and shadows may only be used through tokens. Color literals ar
 | `sidebar` | `#111110` | `#EFEEE9` | Sidebar ground |
 | `sidebar-active` | `#1A1A18` | `#E2E1DB` | Current nav item or conversation in the sidebar |
 | `raised` | `#141413` | `#FFFFFF` | Floating inline cards, the composer |
-| `selected` | `#1F1F1D` | `#ECEBE6` | Selected segment, selected filter chip ground, avatar, skeleton bars |
+| `selected` | `#1F1F1D` | `#ECEBE6` | Selection ground: selected segment, filter chip, option card, the palette's current row, the waterfall's selected row; avatar, skeleton bars |
 | `hover` | `#171716` | `#F4F3EF` | Hover ground, disabled input ground |
 | `line-soft` | `#1C1C1A` | `#E6E5E0` | Column dividers, table row dividers, the status bar's and action row's top line, disabled borders |
 | `line` | `#2A2A28` | `#D6D5CF` | Input and button border |
-| `line-strong` | `#3A3A37` | `#B5B5AE` | Overlay border |
+| `line-strong` | `#3A3A37` | `#B5B5AE` | Overlay border, the border of a selected option card or palette row |
+| `line-card` | `rgba(255,255,255,0.08)` | `rgba(26,26,24,0.06)` | The 1px hairline of cards and sections |
+| `scroll-thumb` | `rgba(255,255,255,0.15)` | `rgba(26,26,24,0.20)` | Scrollbar thumb (on a transparent track) |
 | `ink` | `#E6E6E3` | `#1A1A18` | Text |
 | `muted` | `#8E8E89` | `#5E5E5A` | Secondary text, table headers, sidebar group labels |
-| `faint` | `#5A5A56` | `#9A9A94` | Placeholders, disabled text and separators only (**must not** carry essential information; contrast is below 4.5:1) |
+| `faint` | `#5A5A56` | `#9A9A94` | Placeholders, separators and decorative strokes only (**must not** carry essential information, a path segment or a label; contrast is below 3:1) |
+| `disabled` | `#6E6E69` | `#82827C` | Disabled text and icons (at least 3:1 on `bg`, `panel`, `hover` and `selected`); a disabled control keeps a `line` border |
 | `accent` | `#FF6A13` | `#CC4609` | Primary action, focus, current navigation (§2.3) |
 | `accent-hover` | `#FF8240` | `#B83F08` | Accent hover |
 | `accent-press` | `#E85A08` | `#A33707` | Accent pressed |
@@ -59,7 +62,7 @@ All colors, sizes and shadows may only be used through tokens. Color literals ar
 | `diff-add` | `rgba(63,212,131,.08)` | `rgba(22,128,63,.10)` | Added lines in a diff (ground only; the text stays `ink`) |
 | `diff-del` | `rgba(255,92,82,.08)` | `rgba(207,34,46,.08)` | Removed lines in a diff (ground only) |
 
-The light accent is `#CC4609`: white text on it has a contrast of 4.72:1 (WCAG AA). The original `#FF6A13` with white text is only 2.87:1 and must not be used in the light theme. The text pairs that must meet AA are listed in `tokens.json` `contrast` and checked by `check:tokens`; a translucent token (`diff-add`, `diff-del`) is composited over `bg` before its pair is checked.
+The light accent is `#CC4609`: white text on it has a contrast of 4.72:1 (WCAG AA). The original `#FF6A13` with white text is only 2.87:1 and must not be used in the light theme. The text pairs that must meet AA are listed in `tokens.json` `contrast` and checked by `check:tokens`; a translucent token (`diff-add`, `diff-del`) is composited over `bg` before its pair is checked. `muted` must reach 4.5:1 on every ground secondary text sits on (`bg`, `panel`, `panel-2`, `sidebar`, `raised`, `selected`, `hover`; dark: 6.02:1 on `bg`, 5.02:1 on `selected`) and `disabled` 3:1 on the grounds a control sits on (dark: 3.86:1 on `bg`, 3.22:1 on `selected`; light: 3.57:1 on `bg`, 3.24:1 on `selected`).
 
 ### 2.2 Fonts and type
 
@@ -99,7 +102,7 @@ Two fonts, each with a job:
 | Text (`accent` text / the `spinner` icon) | Something is happening: running, live, auto-refresh countdown, cursor |
 | Ground + left marker (`accent-tint` ground + `inset 2px 0 0 accent`) | The selected row / item |
 
-The accent color must not be used anywhere else. Selected segments and selected filter chips use the `selected` ground, not the accent.
+The accent color must not be used anywhere else. Selected segments and selected filter chips use the `selected` ground, not the accent. A **selection inside a control** is neutral too: a checked option card, the command palette's current row and the trace waterfall's selected row use the `selected` ground with a 1px `line-strong` border (the waterfall row, a row of a tree, a 2px `ink` marker on its left instead); the accent stays on the radio dot and the focus ring. Badges and marks never use the accent: a role ("企业管理员") is plain text, and attention is `warn` (§2.4).
 
 ### 2.4 Status encoding
 
@@ -116,6 +119,7 @@ The accent color must not be used anywhere else. Selected segments and selected 
 - A status must have both an icon and text; it must not rely on color alone.
 - **Queued messages** (§6.16.14) are the exception that proves the rule: the dashed, translucent bubble is the mark and the word "排队中" / "Queued" follows it in `faint`, as the signed reference draws it; there is no `circle` icon there.
 - **Streaming cursor**: an `accent` block `space.2` wide and `space.4` high at the end of streaming text, blinking every `motion.cursor` in steps (steady under reduced motion); it is the "cursor" of §2.3's text role.
+- **Attention marks** ("敏感" / "Sensitive", "有新版本"): the word in `warn`, no box, no fill (`Badge tone="warn"`, an ObjectRow chip with `tone: "warn"`); one style on every page. A group that holds sensitive items is an ordinary card (the `line-card` hairline) with the mark in its title, never an accent or warn frame.
 - **High-frequency lists** (tool rows, todo items, connector lists, table status columns): success is shown by **no mark** (plain `muted` text such as "Connected"), failure by the word "Failed" (or the specific error) in `fail` with `circle-x`. Everything that needs a person keeps `warn`.
 
 ### 2.5 Sizes, density, lines, radius, shadow, layering, motion, focus
@@ -146,7 +150,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 - The page-header primary action and the action-row actions are `default`.
 - Spacing usage: inside components steps 1–3; between components 2–3; between sections 4–6; page gutters `layout.gutter`. **If spacing can separate it, don't draw a line.**
 
-**Lines**: 1px. Column dividers, table row dividers and the status bar / action row top lines use `line-soft`. Borders (`line`) only on things that float over content or take input: inputs, buttons, chips, inline cards, overlays (`line-strong`). Cards, sections, stat cards, form field cards and the table container have **no border** and use the `panel` ground.
+**Lines**: 1px. Column dividers, table row dividers and the status bar / action row top lines use `line-soft`. Borders (`line`) only on things that float over content or take input: inputs, buttons, chips, inline cards, overlays (`line-strong`). Cards, sections, stat cards, form field cards and object lists use the `panel` ground with a 1px `line-card` hairline (`rgba(255,255,255,.08)` in dark, where the ground alone barely separates them; drawn as an inset shadow where a border would change the box); the table container has no border.
 
 - **Input borders are a signed-off contrast exception.** An input's 1px `line` border on the page ground is about 1.38:1 (dark, `#2A2A28` on `#0A0A0A`) / 1.36:1 (light, `#D6D5CF` on `#F7F6F2`), below the 3:1 WCAG asks of UI component boundaries. The maintainer signed this off with the reference set (2026-10-26): the soft line is the refined E look, and an input is never identified by its border alone. It always carries a visible label (Field, `body` `ink`) or a placeholder/prefix inside it, it shows a `line-strong` border on hover, and focus draws an `accent` border plus the 3px `focus-ring` halo. `tokens.json` keeps no contrast pair for `line` for this reason; a new component that relies on a `line` border as its only boundary needs its own sign-off.
 
@@ -191,7 +195,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 ```
 
 - Wordmark: `CAPYBARA`, 600, 8 away from the Logo.
-- **Dither dot matrix**: used only for the backgrounds on both sides of auth pages and (optionally) the PageHeader corner of the overview page; 4px squares, density decreasing from one side to the other, with at most 1% accent-colored squares as accents. No other page may use it.
+- **Dither dot matrix**: used only for the backgrounds on both sides of auth pages and (optionally) the PageHeader corner of the overview page; 4px squares in `line`, density decreasing from one side to the other, greyscale only (no accent squares). No other page may use it.
 - No illustrations, gradients, frosted glass or emoji.
 
 ---
@@ -218,7 +222,7 @@ See §6.13 for the component. Width `layout.sidebar`; below 1280 an icon rail of
 
 ### 4.2 PageHeader
 
-- Four rows. Row 1: the **path** `scope / page [/ object]` (mono, `small`, `faint`; the last segment, the current page, in `ink` with `aria-current="page"`), inside a `nav` labelled "Path"; earlier segments with a link are links. The scope is the org slug for workspace pages (links to `/`), `~` for the home page, `/admin` for admin pages. Row 2: title (`h1`, single line with an ellipsis, full text in `title`) + count / status, actions on the right (at most one primary, rightmost). Row 3 (optional): a one-line description (`prose-small` `muted`, single line with an ellipsis). Row 4 (optional): **tabs** with counts (`全部 6 · 我的 3`) for pages with views, with the **search** field at the right end of the same row; a tab changes the view (`onSelect`) or links (`href`). The tab row has one height with or without the search (`control.default` + `space.1` above and below) and a 1 px `line-soft` bottom border; the tabs sit at its bottom and overlap the border by 1 px, so the selected tab's underline lies **on** the border; the search is centered vertically. While a ListPage loads, the tabs and the search keep their place and a tab's count is a `faint` "–" (§5.1). Tabs never wrap: a tab row too narrow for its tabs scrolls sideways (§6.4). **Below 640** the search takes its own full-width line above the tabs (`space.2` between the lines), the tabs are 40 high (tap targets), and so are the header's actions.
+- Four rows. Row 1: the **path** `scope / page [/ object]` (mono, `small`; the segments in `muted`, the `/` separators in `faint`, the last segment, the current page, in `ink` with `aria-current="page"`; the conversation title bar's path the same), inside a `nav` labelled "Path"; earlier segments with a link are links. The scope is the org slug for workspace pages (links to `/`), `~` for the home page, `/admin` for admin pages. Row 2: title (`h1`, single line with an ellipsis, full text in `title`) + count / status, actions on the right (at most one primary, rightmost). Row 3 (optional): a one-line description (`prose-small` `muted`, single line with an ellipsis). Row 4 (optional): **tabs** with counts (`全部 6 · 我的 3`) for pages with views, with the **search** field at the right end of the same row; a tab changes the view (`onSelect`) or links (`href`). The tab row has one height with or without the search (`control.default` + `space.1` above and below) and a 1 px `line-soft` bottom border; the tabs sit at its bottom and overlap the border by 1 px, so the selected tab's underline lies **on** the border; the search is centered vertically. While a ListPage loads, the tabs and the search keep their place and a tab's count is a `faint` "–" (§5.1). Tabs never wrap: a tab row too narrow for its tabs scrolls sideways (§6.4). **Below 640** the search takes its own full-width line above the tabs (`space.2` between the lines), the tabs are 40 high (tap targets), and so are the header's actions.
 - No bottom line and no background; spacing separates it from the body.
 - Actions: at most 1 solid primary action + 2 secondary + a `more-horizontal` menu; the primary action is rightmost; all `default` density; an action may lead with a 14 icon (`plus` on a create action). The submit action of form pages **must not** go here; it goes in the ActionRow.
 - List-page key metrics are **not** in the header: the template renders them below the header as StatCards (§6.14), at most 4–5. List and overview pages draw them at the top of the body; detail, trace, inbox, onboarding and status templates draw them in the fixed header area under the PageHeader.
@@ -268,7 +272,7 @@ States: `title`, `path`, `description-actions`, `long-title`, `narrow`
 
 ### 4.4 ActionRow and StatusBar
 
-- **StatusBar**: one form only. Height `layout.status-bar`, **no background**, a `line-soft` top line, `micro` type, `muted`, padding `layout.gutter`. Left: the prompt `<login>@<org slug>:~/<path>` in the workspace and `<login>@<org slug>:/admin/<path>` in the admin console (the login in lowercase and the org's slug; the same on the conversation page, `~/chat/<id>`, which also shows the time zone) and the page status (such as "Filtered 18 / 24", "Auto-refresh 15s"), `space.3` apart; right: system status, version and time zone, separated by spacing only (`space.3`, as the signed reference). No `>` prefix, no status dot (success is not colored). **Read-only**: it never holds a clickable control and never grows into an action bar. When space runs out the left part truncates first (ellipsis), the right part stays.
+- **StatusBar**: one form only. Height `layout.status-bar`, **no background**, a `line-soft` top line, `micro` type, `muted`, padding `layout.gutter`. Left: the prompt `<login>@<org slug>:~/<path>` in the workspace and `<login>@<org slug>:/admin/<path>` in the admin console (the login in lowercase and the org's slug; the same on the conversation page, `~/chat/<id>`, which also shows the time zone) and the page status (such as "Filtered 18 / 24", "Auto-refresh 15s"), `space.3` apart; right: system status, version and time zone, separated by spacing only (`space.3`, as the signed reference). No `>` prefix, no status dot (success is not colored); a failed run's status ("失败" / "Failed", the conversation page) is drawn in `fail` (`systemTone`, `ConversationStatus.tone`). **Read-only**: it never holds a clickable control and never grows into an action bar. When space runs out the left part truncates first (ellipsis), the right part stays.
 - **ActionRow**: when the page has actions to submit (forms, bulk edits, approval decisions, wizards) it appears **above** the StatusBar; both stay fixed at the bottom of the content area. Height `layout.action-row`, `panel-2` ground, `line-soft` top line, padding `layout.gutter`. Left: an accent dot + "N unsaved changes" (`muted`) `·` "N errors" (`fail` text, no icon, as the signed reference; the words carry the state), or a muted "No unsaved changes" ("没有未保存的修改", when the page passes `unsaved: 0`; never on a create form, §5.3); right: Cancel / Discard (default) · secondary action (default) · primary action (primary, rightmost), all `default` density. With no changes the primary is disabled.
 - A page must not create its own floating / fixed bottom button bar.
 - A page writes the "page status" text through `useStatusBar(...)` (rendered by the AppShell's StatusBar); StatusBar and ActionRow are design components, and a page does not render the StatusBar directly.
@@ -300,7 +304,7 @@ States: `unsaved-errors`, `clean`
 | action-row | unsaved-errors | padding-left | layout.gutter |
 | action-row-errors | unsaved-errors | color | color.fail |
 | button[data-variant=primary] | unsaved-errors | height | control.default |
-| button[data-variant=primary] | clean | color | color.faint |
+| button[data-variant=primary] | clean | color | color.disabled |
 
 ---
 
@@ -334,6 +338,7 @@ A new page **must** pick one of the following templates; a new template requires
 - Content = one DataTable (§6.6) on the `panel` ground (framed, as the signed reference; `framed={false}` is only for a table inside a Card), whose toolbar, bulk bar and pagination all belong to the DataTable.
 - Subordinate section (optional, at most one): below the main table with a `space.6` gap, an `h2` title + one DataTable listing secondary objects closely related to the main object and few in number (such as "Invitations" on the members page, a settings page that follows the same rule); it has no filters or metrics of its own, and the create entry stays in the PageHeader. When the secondary objects need their own filters or are numerous, make a separate list page.
 - PageHeader: title + total, description, secondary actions on the right + Create (primary); metrics ≤ 5 as StatCards.
+- **One primary per screen**: while `empty` is drawn with a `primary` action, the template leaves the head's primary out and the empty state carries it (the head's other actions stay); with rows, while loading, or when the empty state has no primary action, the head keeps it. Pages pass the same action to both and never draw two.
 - StatusBar page status: the number of filter results.
 - **Variants** (`variant`): `records` (default) holds a DataTable; `objects` wraps its ObjectRows (§6.17) in one ObjectList panel (things people own and configure: agents, skills, connectors, plugins, extensions). The `callout` prop draws a Callout (§6.19) in the header between the title row and the tabs; `empty` draws an EmptyState (§6.18) instead of the content. `loading` draws skeleton rows (§6.17) instead of the content or `empty` until the first answer; the head keeps its real layout meanwhile (title, actions, tabs with counts shown as a `faint` "–", search), so nothing moves when the answer arrives. Exception: a tab that exists only when the data holds something different from 全部 cannot be known before the answer and appears after it. An object list has no rail: tabs with counts in the header replace the filters.
 
@@ -465,14 +470,14 @@ States: `default-step`, `dense-step`, `prominent-step`, `hover`, `focus`, `disab
 | button[data-variant=primary] | focus | outline-color | color.accent |
 | button[data-variant=primary] | focus | outline-width | 2 |
 | button[data-variant=primary] | disabled | background-color | color.selected |
-| button[data-variant=primary] | disabled | color | color.faint |
-| button[data-variant=default] | disabled | border-top-color | color.line-soft |
-| button[data-variant=ghost] | disabled | border-top-color | color.line-soft |
+| button[data-variant=primary] | disabled | color | color.disabled |
+| button[data-variant=default] | disabled | border-top-color | color.line |
+| button[data-variant=ghost] | disabled | border-top-color | color.line |
 | button[data-variant=primary] | loading | height | control.default |
 
 ### 6.2 Input / Select / Textarea / Stepper
 - Height `control.<step>` (28 by default), inner padding `space.2`, 1px `line` border, radius `sm`, transparent ground, `body` type.
-- Focus: `accent` border + 3px `focus-ring` halo (§2.5); error: `fail` border; disabled: `line-soft` border, `hover` ground, `faint` text. Hover and focus transition border and halo over `motion.hover`.
+- Focus: `accent` border + 3px `focus-ring` halo (§2.5); error: `fail` border; disabled: `line` border, `hover` ground, `disabled` text. Hover and focus transition border and halo over `motion.hover`.
 - Prefix / suffix use `faint` / `muted` icons (such as `search`, `chevron-down`, `⌘K`).
 - Field: label on top (`body` `ink`), help and error below (`small`; error `fail` with `circle-alert` 12), `space.1` between them.
 - A Textarea is two lines high unless `rows` asks for more. A Textarea with a character count shows `n / max` (muted) at the bottom right. Prose textareas (descriptions) use `prose-small`; prompts and code use the mono font.
@@ -501,14 +506,14 @@ States: `default`, `focus`, `error`, `disabled`
 | field-error | error | color | color.fail |
 | field-error | error | font-size | type.small |
 | input | disabled | background-color | color.hover |
-| input | disabled | border-top-color | color.line-soft |
-| input-control | disabled | color | color.faint |
+| input | disabled | border-top-color | color.line |
+| input-control | disabled | color | color.disabled |
 
 ### 6.3 Checkbox / Radio / Switch / option card
 - Checkbox and radio are 14×14 with radius `sm` (radio round). Checkbox checked: `accent` ground + `on-accent` `check` icon; indeterminate `minus`. Radio checked: `accent` border + a 6×6 `accent` inner dot.
 - Switch: a `space.7` × `space.5` (32 × 20) track with radius `bubble` and 2px padding, a `space.4` (16) round knob; off: `line` track + `muted` knob; on: `accent` track + `on-accent` knob moved right by `space.3`; the knob moves over `motion.hover`. Where a switch stands alone its label and current state ("On" / "Off", muted) are shown as text next to it, so the state never relies on color: `SwitchField` draws that row, `control.default` high with `space.2` gaps (clicking the label toggles too).
 - Switch list (`SwitchList`, a form's tools and similar lists): one `row.roomy` row per item with the name and a `small` prose `muted` description (each one line with an ellipsis), `muted` `small` meta text (such as the policy) and the switch; padding `space.4`, rows divided by `line-soft`; it sits in a `flush` FormSection card.
-- Option card (rich option of a single choice): 1px `line` border, radius `md`; selected `accent` border + `accent-tint` ground.
+- Option card (rich option of a single choice): 1px `line` border, radius `md`; selected: `line-strong` border + `selected` ground (neutral, §2.3), the radio dot in `accent`.
 
 <!-- states: switch -->
 States: `default`, `selected`, `focus`
@@ -530,7 +535,7 @@ States: `default`, `selected`, `focus`
 | switch | focus | outline-width | 2 |
 
 ### 6.4 Tabs / Segmented / Pagination
-- Tabs: text + underline when selected (§2.3); hover `hover` ground; disabled `faint`. In the page head's tab row the underline sits on the row's bottom border (§4.2). Tabs stay on one line at every width (a tab never wraps its label); a row of tabs that does not fit scrolls sideways without a drawn scrollbar, and since the row clips, a tab's focus ring is drawn inside it.
+- Tabs: text + underline when selected (§2.3); hover `hover` ground; disabled `disabled`. In the page head's tab row the underline sits on the row's bottom border (§4.2). Tabs stay on one line at every width (a tab never wraps its label); a row of tabs that does not fit scrolls sideways without a drawn scrollbar, and since the row clips, a tab's focus ring is drawn inside it.
 - Segmented in a form field takes the field's width with equal segments (`fill`).
   - Count `count`: a small `muted` number after the name.
   - Badge `badge` (such as Inspector "Tasks 2/4"): 1px `line` border, small `muted`, radius `sm`; when selected `ink` text.
@@ -633,7 +638,7 @@ Selection rules: the user needs to decide → Dialog; view / edit one object wit
 - **Links**: the design package is framework-agnostic; links in the sidebar navigation, the PageHeader path, Tabs, Sheet, TextLink and LinkCard are rendered through the `link` component of `DesignProvider` (default `<a>`); `apps/web` passes next-intl's `Link` to get client-side navigation and the locale prefix. Pages should not build `<a href>` themselves for in-site navigation.
 - **Popover / Menu**: `panel` background + `line-strong` border + radius `md` + `shadow-1`; menu items are `row.default` high with padding `pad.default.x`; a filter Popover has a search `>` at the top and "Clear / Apply ↵" at the bottom; a hovered item gets a `hover` background. The trigger button is outlined in the accent color when open and holding a value.
 - **No menu of one**: an overflow menu (`more-horizontal` in a page head or an object row, More on the conversation title bar) is drawn only when it holds two or more actions a person can take, or one destructive one (separators and disabled items don't count). With none it is not drawn; with one safe action, that action is drawn directly in its place (a button or link). A destructive (`danger`) action is never promoted out of its menu: a menu whose only action is dangerous stays a `more-horizontal` menu with that one item. A table's row menu keeps its column, so a row with one action keeps `⋯`, and a row with none shows no button (§6.6). Never list an action twice on one screen (a menu item that repeats a visible button, the name link or a sidebar entry).
-- **Command palette (⌘K)**: width 560, input with a `>` prefix; group titles small faint; the current item has an `accent-tint` background + left marker; key hints at the bottom.
+- **Command palette (⌘K)**: width 560, input with a `>` prefix; group titles small faint; the current item has the `selected` background + a 1px `line-strong` outline (neutral, §2.3); key hints at the bottom.
   - **Items** are one `row.dense` line, gap `space.2`: the label (`ink`), then an optional hint (`faint`, a skill's argument hint "[issue-number]"), then optional tags (`micro` `muted` on the `selected` ground, radius `sm`, padding 0 `space.1`, the picker-menu tag), then an optional description (`muted`, filling the rest of the line with an ellipsis), then an optional source, a secondary label (`small` `faint`, at the end of the line: the plugin a skill comes from, "superpowers"), then an optional shortcut (`Kbd`, at the end).
   - **Filtering and ranking**: the query (a leading `/` ignored, case-insensitive) matches the label, an item's extra search text (not shown; e.g. a skill's qualified name "superpowers:brainstorming") and the description. Order: label prefix, then search-text prefix (also after a `<plugin>:`), then label substring, then search-text substring, then description substring; anything else is hidden. Groups follow their best item.
   - The composer's `/` menu is this palette (phase D): the "Skills" group first (sorted by name, tags "manual" / "sub-agent", the argument hint, the plugin as the source), then the connector prompt groups.
@@ -649,7 +654,7 @@ States: `skills`, `filtered`
 | palette | skills | border-radius | radius.md |
 | palette-input | skills | height | control.prominent |
 | palette-item | skills | height | row.dense |
-| palette-item[data-selected=true] | skills | background-color | color.accent-tint |
+| palette-item[data-selected=true] | skills | background-color | color.selected |
 | palette-hint | skills | color | color.faint |
 | palette-tag | skills | font-size | type.micro |
 | palette-tag | skills | background-color | color.selected |
@@ -658,7 +663,7 @@ States: `skills`, `filtered`
 | palette-source | skills | color | color.faint |
 | palette-source | skills | font-size | type.small |
 | palette-item | filtered | height | row.dense |
-| palette-item[data-selected=true] | filtered | background-color | color.accent-tint |
+| palette-item[data-selected=true] | filtered | background-color | color.selected |
 - **Toast**: stacked at the bottom right, `panel` background + `line-strong` border + radius `md` + `shadow-1`, a 2px status-color bar on the left (ok / accent / fail); success auto-dismisses after 4s; an error must be dismissed manually and may carry "View →"; a progress type carries a segmented progress bar.
 
 ### 6.8 Charts
@@ -694,7 +699,7 @@ The waterfall above the trace viewer (T8): the spans of the runs in one conversa
 - Each span is one row (height 28), from left to right: name column (fixed 40%: indented 16 per depth level, a `kind` badge (text defaults to the design i18n: Run / Step / Model / Tool / Wait in zh, run / step / model / tool / wait in en; overridable through `labels.kinds`) 11px `faint` with a fixed width of 5ch + name single line with ellipsis + `meta` small `muted`) ｜ time track (1px `line` left line; the bar is positioned by `startMs / total duration` and sized by `durationMs / total duration`, minimum 2px) ｜ status (`StatusMark`: ok succeeded, error failed, pending running; a `wait` that has not ended is pending approval) ｜ duration (right-aligned, `6.8s` / `312ms` / `00:02:18`, `—` if unknown).
 - Bar colors: ok `line-strong`; error `fail`; pending `accent` (something is happening, an extension of the §2.3 "text" role), and a span that has not ended extends from its start to the end of the time track. A `wait` bar is a 1px outlined hollow bar (waiting is not execution).
 - Total duration = the maximum over spans of `startMs + (durationMs ?? 0)` (at least 1ms).
-- Interaction: `role="tree"` (`aria-label` taken from `label`, default "Span waterfall"; always expanded, cannot be collapsed), each row `role="treeitem"`, with `aria-selected`, `aria-level` (depth + 1), and a row with child spans has `aria-expanded="true"`; focus stays on the tree, and the current item is indicated by `aria-activedescendant`. Clicking a row selects it; once focused, ↑ / ↓ select the previous / next, and Home / End select the first / last. The selected row gets an `accent-tint` background + a 2px accent bar on the left (§2.3).
+- Interaction: `role="tree"` (`aria-label` taken from `label`, default "Span waterfall"; always expanded, cannot be collapsed), each row `role="treeitem"`, with `aria-selected`, `aria-level` (depth + 1), and a row with child spans has `aria-expanded="true"`; focus stays on the tree, and the current item is indicated by `aria-activedescendant`. Clicking a row selects it; once focused, ↑ / ↓ select the previous / next, and Home / End select the first / last. The selected row gets the `selected` background + a 2px `ink` bar on the left (neutral, §2.3).
 - Empty: only one line of `labels.empty` (`muted`).
 
 ---
@@ -1015,7 +1020,7 @@ States: `idle`, `new`, `running`, `attachments`, `focus`, `no-effort`, `skill`
 | send | idle | width | control.default |
 | send | idle | height | control.default |
 | send | idle | background-color | color.selected |
-| send | idle | color | color.faint |
+| send | idle | color | color.disabled |
 | composer-input | new | font-size | type.prose |
 | picker | new | height | control.default |
 | stop | running | width | control.default |
@@ -1625,7 +1630,7 @@ States: `image`, `text`, `markdown`, `csv`, `none`, `failed`
 One empty state for the whole product. `EmptyState({ text, hint?, action?, icon?, size? })`:
 
 - **Illustration**: the pixel capybara of §3 drawn as a line (`LogoLine`: the outer edges of the bitmap's cells, the eye included, 1 px `faint` stroke, no fill), decorative. `icon` replaces it where an object icon reads better (a failed load: `circle-alert`; a search that matched nothing: `search` / `search-x`), drawn in `faint`.
-- **Copy**: one sentence in `ink` saying what will be here ("还没有 agent" / "No agents yet"), an optional second line in `muted` (`small`), and at most one action, the primary next step (a `default` or `primary` button or link). Never a table header over an icon, never a sentence about the absence of data in general ("暂无数据" is only the DataTable's fallback).
+- **Copy**: one sentence in `ink` saying what will be here ("还没有 agent" / "No agents yet"), an optional second line in `muted` (`small`), and at most one action, the primary next step (a `default` or `primary` button or link). A `primary` action here is the screen's one primary: `ListPage` hides the head's primary while it is shown (§5.1). Never a table header over an icon, never a sentence about the absence of data in general ("暂无数据" is only the DataTable's fallback).
 - **Sizes**: `page` (default) is centered in the content frame, no frame of its own, `space.8` × 2 above and below, the illustration at scale 6 (85 × 61). `compact` (panels, the DataTable's empty area, the sidebar's conversation list) is left-aligned with `space.3` padding and `space.2` gaps, the illustration at scale 3, the action `dense`; inside a DataTable it is centered horizontally in the table body instead (§6.6).
 - **Where**: every ListPage / ObjectList empty (`ListPage.empty`), the InboxPage with no items (the page state instead of the list + detail split, §5), the DataTable's empty and no-results areas (§6.6, compact), the sidebar's conversation list (compact: "还没有会话" + 新会话; a filter matching nothing: "没有匹配的会话" + 清除筛选).
 

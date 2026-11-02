@@ -104,7 +104,7 @@
 .cb-title-path-seg {
   min-width: 0;
   overflow: hidden;
-  color: var(--cb-faint);
+  color: var(--cb-muted);
   text-decoration: none;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -363,7 +363,7 @@ span.cb-title-btn {
 .cb-send.cb-btn:disabled {
   border-color: transparent;
   background: var(--cb-selected);
-  color: var(--cb-faint);
+  color: var(--cb-disabled);
 }
 .cb-stop.cb-btn,
 .cb-stop.cb-btn:hover:not(:disabled) {
@@ -459,6 +459,7 @@ span.cb-title-btn {
   padding: var(--cb-space-3);
   border-radius: var(--cb-radius-md);
   background: var(--cb-panel);
+  box-shadow: inset 0 0 0 1px var(--cb-line-card);
   color: var(--cb-ink);
 }
 .cb-property-head {

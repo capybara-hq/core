@@ -258,7 +258,7 @@
   border-top: 1px solid var(--cb-line-soft);
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: var(--cb-line) transparent;
+  scrollbar-color: var(--cb-scroll-thumb) transparent;
 }
 .cb-sidebar-convs-head {
   display: flex;

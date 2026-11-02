@@ -203,7 +203,7 @@
 .cb-pageheader-path-seg {
   min-width: 0;
   overflow: hidden;
-  color: var(--cb-faint);
+  color: var(--cb-muted);
   text-decoration: none;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -321,6 +321,7 @@ a.cb-pageheader-path-seg:hover {
   padding: var(--cb-space-2) var(--cb-space-3);
   border-radius: var(--cb-radius-md);
   background: var(--cb-panel);
+  box-shadow: inset 0 0 0 1px var(--cb-line-card);
 }
 /* A linked card (spec §6.14): the whole card is the link; hover ground, accent focus ring. */
 a.cb-stat-card {
@@ -561,6 +562,9 @@ a.cb-stat-card:focus-visible {
   display: flex;
   flex: none;
   gap: var(--cb-space-3);
+}
+.cb-statusbar-right > [data-tone="fail"] {
+  color: var(--cb-fail);
 }
 
 /* Body before hydration: CSS picks the inline rail / inspector or their toolbar buttons. */

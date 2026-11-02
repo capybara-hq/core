@@ -231,7 +231,7 @@
   color: var(--cb-fail);
 }
 .cb-menu-item[data-disabled] {
-  color: var(--cb-faint);
+  color: var(--cb-disabled);
   cursor: not-allowed;
 }
 .cb-menu-shortcut {
@@ -426,11 +426,11 @@
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
+/* Selection is neutral (spec §2.3): a selected ground and a line-strong outline. */
 .cb-palette-item[data-selected="true"] {
-  outline: 1px solid var(--cb-accent);
+  outline: 1px solid var(--cb-line-strong);
   outline-offset: -1px;
-  background: var(--cb-accent-tint);
-  border-left-color: var(--cb-accent);
+  background: var(--cb-selected);
 }
 .cb-palette-empty {
   padding: 8px 12px;

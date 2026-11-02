@@ -249,6 +249,7 @@ export function useConversationPage(
         : stats.last === "failed"
           ? t("status.failed")
           : t("status.idle");
+  const statusFailed = !conv.running && !conv.waiting && stats.last === "failed";
 
   const slot: RightAreaSlot | undefined = useRightAreaSlot({
     orgId,
@@ -351,6 +352,7 @@ export function useConversationPage(
           }
         : {}),
       right: [statusText, ...(contextPct !== null ? [t("contextPct", { n: contextPct })] : [])],
+      ...(statusFailed ? { tone: "fail" as const } : {}),
       version: session.version ?? "",
     },
     right: slot?.right ?? "none",

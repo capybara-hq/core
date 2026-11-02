@@ -235,7 +235,7 @@
   --cb-row-ground: var(--cb-accent-tint);
 }
 .cb-table-el .cb-table-row[data-state~="disabled"] td {
-  color: var(--cb-faint);
+  color: var(--cb-disabled);
 }
 .cb-table-menu [data-state="open"],
 .cb-table-menu .cb-btn[aria-expanded="true"] {

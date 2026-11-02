@@ -519,7 +519,7 @@ button.cb-tool-row {
 .cb-kv-pair {
   display: contents;
 }
-.cb-kv-key {
+.cb-kv[data-part="kv"] .cb-kv-key {
   color: var(--cb-faint);
 }
 .cb-kv-value {
@@ -807,7 +807,7 @@ button.cb-tool-row {
 }
 .cb-q-option:is([aria-disabled="true"], [data-disabled="true"]) {
   cursor: default;
-  color: var(--cb-faint);
+  color: var(--cb-disabled);
 }
 .cb-q-mark {
   flex: none;

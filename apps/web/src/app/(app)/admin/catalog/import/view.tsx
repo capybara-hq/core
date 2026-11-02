@@ -469,7 +469,7 @@ function ReviewBody({
         <Stack direction="row" gap={8} align="center">
           <Text>{t("plugin", { name: review.name, version: review.version })}</Text>
           {review.format === "claude-code" && <Badge>{tt("formatClaude")}</Badge>}
-          {review.sensitive && <Badge tone="accent">{tp("sensitive")}</Badge>}
+          {review.sensitive && <Badge tone="warn">{tp("sensitive")}</Badge>}
         </Stack>
         {review.pluginVersion !== undefined && (
           <Text variant="small" tone="warn">
@@ -681,9 +681,8 @@ function ExtensionReview({ extension }: { extension: PluginReviewExtension }) {
         : t("action.keep", { version: extension.currentVersion ?? extension.version });
   return (
     <Card
-      tone={extension.sensitive ? "accent" : "default"}
       title={extension.name}
-      {...(extension.sensitive && { actions: <Badge tone="accent">{tp("sensitive")}</Badge> })}
+      {...(extension.sensitive && { actions: <Badge tone="warn">{tp("sensitive")}</Badge> })}
     >
       <Stack gap={8}>
         <Text>{action}</Text>
