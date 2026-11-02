@@ -1243,6 +1243,19 @@ describe("run rows (spec §6.16.23)", () => {
     );
   });
 
+  it("a sub-agent conversation links no trajectory (the kernel checks the parent's agent)", async () => {
+    api({
+      [`GET ${BASE}`]: () =>
+        json(200, CONV("c1", { parentConversationId: "p1", subagentType: "general" })),
+      [`GET ${BASE}/events`]: () => json(200, { events: authFailure }),
+    });
+    await renderChat();
+    const region = within(row()).getByRole("region", { name: "Run details" });
+    expect(within(region).queryByRole("link", { name: en.chat.run.trajectory })).toBeNull();
+    // the deployment fix entry does not depend on the agent
+    expect(within(region).getByRole("link", { name: en.chat.run.configureModels })).toBeTruthy();
+  });
+
   it("the fix entry only for a model setup failure", async () => {
     api({
       [`GET ${BASE}/events`]: () =>

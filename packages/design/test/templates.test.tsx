@@ -490,6 +490,12 @@ describe("其他模板行为", () => {
     expect(css).toMatch(/\.cb-trace-detail \{[^}]*overflow: hidden auto;/);
   });
 
+  it("SettingsPage on phones: the scrolling sub-nav draws its focus ring inside the item", () => {
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
+    const phone = css.slice(css.indexOf("@media (max-width: 639px) {\n  .cb-settings-nav {") + 1);
+    expect(phone).toMatch(/^[^@]*\.cb-settings-nav-item:focus-visible \{\s*outline-offset: -2px;/);
+  });
+
   it("TracePage: the detail follows the waterfall in one column, a right panel from 1280", () => {
     zh(<TracePage header={header} waterfall={<div>w</div>} detail={<div>d</div>} />);
     const waterfall = document.querySelector(".cb-trace-waterfall") as HTMLElement;

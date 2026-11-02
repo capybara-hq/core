@@ -4,6 +4,7 @@ import {
   CsvPreview,
   FileCard,
   FilePreviewFrame,
+  formatRelative,
   ImagePreview,
   LoadFailed,
   MarkdownPreview,
@@ -21,7 +22,6 @@ import {
   listFilePreviewers,
   renderFilePreview,
 } from "../../lib/previewers";
-import { ago } from "../../lib/time";
 import { type UiView, uiLocale } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { EmbedTab } from "../extension-ui/EmbedTab";
@@ -131,7 +131,7 @@ export function FilePanel({
   const header = {
     badge: typeBadge(file.name, file.contentType),
     name: file.name,
-    version: `v${file.version} · ${ago(file.versions[0]?.createdAt ?? file.createdAt, locale)}`,
+    version: `v${file.version} · ${formatRelative(file.versions[0]?.createdAt ?? file.createdAt, locale)}`,
     files: files.map((f) => ({ id: f.id, name: f.name })),
     current: file.id,
     onSwitch,

@@ -24,15 +24,19 @@ export default function EvalCaseView({
   setId,
   detail,
   setName,
+  people,
 }: {
   setId: string;
   detail: EvalCaseDetail;
   setName: string | null;
+  /** Account id -> display name: the starter shows as a name, the id in a tooltip. */
+  people: Record<string, string>;
 }) {
   return (
     <CaseTrajectory
       parent={{ label: setName ?? setId, href: `/evals/${encodeURIComponent(setId)}` }}
       detail={detail}
+      people={people}
     />
   );
 }
@@ -40,9 +44,11 @@ export default function EvalCaseView({
 function CaseTrajectory({
   parent,
   detail,
+  people,
 }: {
   parent: { label: string; href: string };
   detail: EvalCaseDetail;
+  people: Record<string, string>;
 }) {
   const scope = usePagePath("org");
   const t = useTranslations("evals");
@@ -93,7 +99,7 @@ function CaseTrajectory({
                 {tt("selectHint")}
               </Text>
             ) : (
-              <SpanDetail source={source} currency={detail.currency} />
+              <SpanDetail source={source} currency={detail.currency} people={people} />
             )}
           </Stack>
         </section>

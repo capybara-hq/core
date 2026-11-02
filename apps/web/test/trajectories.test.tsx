@@ -22,6 +22,8 @@ vi.mock("next/navigation", () => ({
   },
 }));
 
+/** The member list the detail page reads for the starter's name: none unless a test gives some. */
+const NO_MEMBERS = { "GET /api/v1/orgs/o1/members": () => json(200, { members: [] }) };
 const detailPage = () => TrajectoryPage({ params: Promise.resolve({ conversationId: "c1" }) });
 const listPage = () => TrajectoriesPage({ searchParams: Promise.resolve({}) });
 
@@ -349,7 +351,11 @@ describe("轨迹详情（TracePage）", () => {
     async (locale) => {
       const m = msgs[locale].trajectories;
       stubApi({ [`GET ${DETAIL}`]: () => json(200, detailBody([run()])) });
-      const { container, calls } = await renderRoute(detailPage, lastStubRoutes(), { locale });
+      const { container, calls } = await renderRoute(
+        detailPage,
+        { ...NO_MEMBERS, ...lastStubRoutes() },
+        { locale },
+      );
       expect(container.querySelector('[data-template="TracePage"]')).not.toBeNull();
       const list = await screen.findByRole("tree", { name: m.detail.waterfall });
       // By run, never the whole conversation (read on the server)
@@ -436,7 +442,7 @@ describe("轨迹详情（TracePage）", () => {
         ],
       });
       stubApi({ [`GET ${DETAIL}`]: () => json(200, detailBody([denied])) });
-      await renderRoute(detailPage, lastStubRoutes(), { locale });
+      await renderRoute(detailPage, { ...NO_MEMBERS, ...lastStubRoutes() }, { locale });
       const list = await screen.findByRole("tree", { name: m.detail.waterfall });
       const detail = () => screen.getByRole("region", { name: m.detail.region });
       const user = userEvent.setup();
@@ -455,7 +461,11 @@ describe("轨迹详情（TracePage）", () => {
 
   it("中文界面：瀑布的 span 名称与 kind 徽标都是中文", async () => {
     stubApi({ [`GET ${DETAIL}`]: () => json(200, detailBody([run()])) });
-    const { container } = await renderRoute(detailPage, lastStubRoutes(), { locale: "zh" });
+    const { container } = await renderRoute(
+      detailPage,
+      { ...NO_MEMBERS, ...lastStubRoutes() },
+      { locale: "zh" },
+    );
     const list = await screen.findByRole("tree", { name: zh.trajectories.detail.waterfall });
     expect(within(list).getByText("v3")).toBeTruthy();
     expect(within(list).getAllByText("步骤").length).toBeGreaterThan(0);
@@ -467,7 +477,7 @@ describe("轨迹详情（TracePage）", () => {
 
   it("没有价格时成本显示「—」", async () => {
     stubApi({ [`GET ${DETAIL}`]: () => json(200, detailBody([run({}, null)])) });
-    const { container } = await renderRoute(detailPage, lastStubRoutes());
+    const { container } = await renderRoute(detailPage, { ...NO_MEMBERS, ...lastStubRoutes() });
     const list = await screen.findByRole("tree", { name: en.trajectories.detail.waterfall });
     // 页头：合计成本未知
     const metrics = container.querySelector('[data-part="stat-cards"]') as HTMLElement;
@@ -495,9 +505,18 @@ describe("轨迹详情（TracePage）", () => {
           ],
         }),
     });
-    await renderRoute(detailPage, lastStubRoutes());
+    await renderRoute(detailPage, { ...NO_MEMBERS, ...lastStubRoutes() });
     const name = await screen.findByText("Grace");
     expect(name.getAttribute("title")).toBe("a1");
+    cleanup();
+    // a member list the kernel refuses costs only the name
+    stubApi({
+      [`GET ${DETAIL}`]: () => json(200, detailBody([run()])),
+      "GET /api/v1/orgs/o1/members": () =>
+        json(403, { error: { code: "auth.forbidden", message: "no" } }),
+    });
+    await renderRoute(detailPage, lastStubRoutes());
+    expect(await screen.findByText("a1")).toBeTruthy();
   });
 
   it("加载更早的运行：带 before 再读一页，拼在前面", async () => {
@@ -506,7 +525,7 @@ describe("轨迹详情（TracePage）", () => {
       [`GET ${DETAIL}?limit=10`]: () => json(200, detailBody([run()], "r1")),
       [`GET ${DETAIL}?limit=10&before=r1`]: () => json(200, detailBody([older], null)),
     });
-    await renderRoute(detailPage, lastStubRoutes());
+    await renderRoute(detailPage, { ...NO_MEMBERS, ...lastStubRoutes() });
     await screen.findByRole("tree");
     await userEvent
       .setup()
@@ -530,7 +549,7 @@ describe("轨迹详情（TracePage）", () => {
         return within(screen.getByRole("region", { name: m.trajectories.detail.region }));
       };
       ended(run({ end: { kind: "aborted", detail: "capped" } }));
-      await renderRoute(detailPage, lastStubRoutes(), { locale });
+      await renderRoute(detailPage, { ...NO_MEMBERS, ...lastStubRoutes() }, { locale });
       expect(
         (await region()).getByText(
           `${m.trajectories.detail.run.end.aborted} · ${m.trajectories.endDetail.capped}`,
@@ -538,7 +557,7 @@ describe("轨迹详情（TracePage）", () => {
       ).toBeTruthy();
       cleanup();
       ended(run({ end: { kind: "failed", detail: "run.provider_error" } }));
-      await renderRoute(detailPage, lastStubRoutes(), { locale });
+      await renderRoute(detailPage, { ...NO_MEMBERS, ...lastStubRoutes() }, { locale });
       expect(
         (await region()).getByText(
           `${m.trajectories.detail.run.end.failed} · ${m.errors.run.provider_error}`,
@@ -546,7 +565,7 @@ describe("轨迹详情（TracePage）", () => {
       ).toBeTruthy();
       cleanup();
       ended(run({ end: { kind: "aborted", detail: "something_new" } }));
-      await renderRoute(detailPage, lastStubRoutes(), { locale });
+      await renderRoute(detailPage, { ...NO_MEMBERS, ...lastStubRoutes() }, { locale });
       expect(
         (await region()).getByText(`${m.trajectories.detail.run.end.aborted} · something_new`),
       ).toBeTruthy();
@@ -559,14 +578,14 @@ describe("轨迹详情（TracePage）", () => {
       [`GET ${DETAIL}`]: () =>
         json(200, { ...body, conversation: { ...body.conversation, kind: "eval" } }),
     });
-    await renderRoute(detailPage, lastStubRoutes());
+    await renderRoute(detailPage, { ...NO_MEMBERS, ...lastStubRoutes() });
     await screen.findByRole("tree");
     expect(screen.queryByRole("button", { name: en.trajectories.addToSet.action })).toBeNull();
   });
 
   it("非管理员（agent 负责人）看不到「加入评测集」", async () => {
     stubApi({ [`GET ${DETAIL}`]: () => json(200, detailBody([run()])) });
-    await renderRoute(detailPage, lastStubRoutes(), { me: OWNER_MEMBER });
+    await renderRoute(detailPage, { ...NO_MEMBERS, ...lastStubRoutes() }, { me: OWNER_MEMBER });
     await screen.findByRole("tree");
     expect(screen.queryByRole("button", { name: en.trajectories.addToSet.action })).toBeNull();
   });
@@ -576,7 +595,7 @@ describe("轨迹详情（TracePage）", () => {
       [`GET ${DETAIL}`]: () => json(200, detailBody([run()])),
       [`GET ${ORG}/eval-sets`]: () => json(200, { sets: [] }),
     });
-    await renderRoute(detailPage, lastStubRoutes());
+    await renderRoute(detailPage, { ...NO_MEMBERS, ...lastStubRoutes() });
     await screen.findByRole("tree");
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: en.trajectories.addToSet.action }));
@@ -617,7 +636,7 @@ describe("轨迹详情（TracePage）", () => {
         }),
       [`POST ${ORG}/eval-sets/set-1/cases`]: () => json(201, { case: { id: "case-1" } }),
     });
-    await renderRoute(detailPage, lastStubRoutes());
+    await renderRoute(detailPage, { ...NO_MEMBERS, ...lastStubRoutes() });
     await screen.findByRole("tree");
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: en.trajectories.addToSet.action }));
@@ -647,7 +666,9 @@ describe("轨迹详情（TracePage）", () => {
       [`GET ${DETAIL}`]: () =>
         json(404, { error: { code: "trajectory.not_found", message: "Trajectory not found" } }),
     });
-    await expect(renderRoute(detailPage, lastStubRoutes())).rejects.toThrow("NOT_FOUND");
+    await expect(renderRoute(detailPage, { ...NO_MEMBERS, ...lastStubRoutes() })).rejects.toThrow(
+      "NOT_FOUND",
+    );
   });
 });
 
@@ -778,7 +799,7 @@ describe("sub-agent links in the trajectory (phase C)", () => {
 
   it("an agent call links to the sub-agent's trajectory", async () => {
     stubApi({ [`GET ${DETAIL}`]: () => json(200, detailBody([parentRun()])) });
-    await renderRoute(detailPage, lastStubRoutes());
+    await renderRoute(detailPage, { ...NO_MEMBERS, ...lastStubRoutes() });
     const list = await screen.findByRole("tree", { name: en.trajectories.detail.waterfall });
     await userEvent.setup().click(within(list).getByText("agent"));
     const detail = screen.getByRole("region", { name: en.trajectories.detail.region });
@@ -800,7 +821,7 @@ describe("sub-agent links in the trajectory (phase C)", () => {
           },
         }),
     });
-    await renderRoute(detailPage, lastStubRoutes());
+    await renderRoute(detailPage, { ...NO_MEMBERS, ...lastStubRoutes() });
     await screen.findByRole("tree");
     const back = screen.getByRole("link", { name: en.trajectories.parentLink });
     expect(back.getAttribute("href")).toBe("/trajectories/p1");

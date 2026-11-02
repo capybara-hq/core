@@ -21,6 +21,7 @@ import {
   scopesFor,
 } from "../lib/approvals";
 import type { ToolInfo } from "../lib/conversations";
+import { shortTime } from "../lib/time";
 import type { ApprovalDecision, ApprovalItem } from "../lib/timeline";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useSession } from "./shell/session";
@@ -145,9 +146,6 @@ export function toolLabel(key: string, info: ToolInfo | undefined): string {
     ? `${info.source.name}: ${title}`
     : title;
 }
-
-const shortTime = (iso: string, locale: string) =>
-  new Date(iso).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
 
 /**
  * The approval in the conversation (spec §5.7, design `ApprovalBlock`): the tool, its model-visible

@@ -438,28 +438,22 @@ describe("agents: edit, read-only and 更换负责人", () => {
 
   for (const role of ROLES) {
     const admin = role === "admin" || role === "owner";
-    it(`agent row menu · ${role}: 更换负责人 ${admin ? "in a menu" : "hidden, no menu of one"}`, async () => {
+    it(`agent row · ${role}: 编辑 only through the name, 更换负责人 ${admin ? "as a button" : "hidden"}`, async () => {
       routes = { [`GET ${O}/agents`]: { agents: [AGENT("ag1", "a1")] } };
       resetNavigation("/agents");
       await renderRoute(() => AgentsPage(), served(), { locale: "zh", me: meAs(role) });
       await screen.findByText("Agent ag1");
-      // 对话 is the row's action; the menu never repeats it (no 开始对话)
+      // 开始会话 is the row's action; the menu never repeats it
       expect(screen.getAllByRole("button", { name: zh.agents.chat })).toHaveLength(1);
-      expect(screen.queryByText("开始对话")).toBeNull();
-      if (admin) {
-        await userEvent.setup().click(screen.getByRole("button", { name: "更多操作" }));
-        const menu = await screen.findByRole("menu");
-        expect(
-          within(menu).getByRole("menuitem", { name: zh.agents.reassign.action }),
-        ).toBeTruthy();
-        expect(within(menu).getByRole("menuitem", { name: zh.agents.edit })).toBeTruthy();
-        expect(within(menu).queryByRole("menuitem", { name: "开始对话" })).toBeNull();
-        return;
-      }
-      // No menu of one: the member owner's only other action is a button; a guest has none
+      // The name links to the edit page for whoever may edit; 编辑 is never offered twice
+      const nameLink = screen.queryByRole("link", { name: "Agent ag1" });
+      expect(nameLink?.getAttribute("href") ?? null).toBe(role === "guest" ? null : "/agents/ag1");
+      expect(screen.queryByRole("button", { name: zh.agents.edit })).toBeNull();
+      expect(screen.queryByRole("link", { name: zh.agents.edit })).toBeNull();
+      // No menu of one: the admins' lone 更换负责人 is a button
       expect(screen.queryByRole("button", { name: "更多操作" })).toBeNull();
-      expect(screen.queryByRole("button", { name: zh.agents.edit }) !== null).toBe(
-        role !== "guest",
+      expect(screen.queryByRole("button", { name: zh.agents.reassign.action }) !== null).toBe(
+        admin,
       );
     });
   }

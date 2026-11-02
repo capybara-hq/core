@@ -28,7 +28,7 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
 
   // 1. 管理 → 模型：model-fake 的表里有 fake-1，行内编辑价格
   await page.goto("/admin/models");
-  await expect(page.locator('[data-template="SettingsPage"]')).toBeVisible();
+  await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
   const table = page.getByRole("table", { name: "model-fake" });
   const row = table.getByRole("row").filter({ hasText: "fake-1" });
   await row.getByRole("button", { name: RECORD_ROW_MENU }).click();

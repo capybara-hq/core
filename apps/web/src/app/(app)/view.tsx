@@ -3,6 +3,7 @@
 import {
   Button,
   Card,
+  formatRelative,
   Grid,
   ItemList,
   type ItemListRow,
@@ -23,7 +24,6 @@ import type { Agent, ProviderModels } from "../../lib/agents";
 import { decideApproval } from "../../lib/approvals";
 import type { Conversation } from "../../lib/conversations";
 import type { InboxItem } from "../../lib/inbox";
-import { ago } from "../../lib/time";
 import { useErrorMessage } from "../../lib/use-error-message";
 
 export type OverviewData = {
@@ -148,7 +148,7 @@ function DailyOverview({
     inbox.flatMap((i) => (i.type === "tool_approval" ? [i.approval.conversationId] : [])),
   );
   const inboxRows: ItemListRow[] = inbox.slice(0, 5).map((item): ItemListRow => {
-    const when = ago(item.createdAt, locale);
+    const when = formatRelative(item.createdAt, locale);
     if (item.type === "tool_approval") {
       const a = item.approval;
       return {
@@ -202,7 +202,7 @@ function DailyOverview({
   const recentRows: ItemListRow[] = (data.recent ?? []).map((c) => ({
     id: c.id,
     title: c.title ?? untitledLabel(new Date(c.createdAt), locale === "zh" ? "zh" : "en"),
-    meta: `${c.agentName} · ${ago(c.updatedAt, locale)}`,
+    meta: `${c.agentName} · ${formatRelative(c.updatedAt, locale)}`,
     href: `/chat/${encodeURIComponent(c.id)}`,
     ...(waiting.has(c.id)
       ? { status: { label: t("recent.waiting"), tone: "accent" as const } }

@@ -91,9 +91,16 @@ describe("StatCards below 640", () => {
 
 describe("DataTable below 640: stacked rows", () => {
   const narrow = media(css("table.css"));
+  /** The rules outside any media block. */
+  const table = css("table.css").replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, "");
 
-  it("hides the header row and lays each row out as a card of label: value lines", () => {
-    expect(decls(narrow, ".cb-table .cb-table-el thead")).toContain("display: none;");
+  it("hides the header row from sight only and lays each row out as a card of label: value lines", () => {
+    const head = decls(narrow, ".cb-table .cb-table-el thead");
+    // visually hidden, never display: none (screen readers keep the column headers)
+    expect(head).not.toContain("display: none;");
+    expect(head).toContain("clip-path: inset(50%);");
+    expect(decls(table, ".cb-table-narrow-bar")).toContain("display: none;");
+    expect(decls(narrow, ".cb-table-narrow-bar")).toContain("display: flex;");
     const row = decls(narrow, ".cb-table .cb-table-el tbody .cb-table-row");
     expect(row).toContain("display: grid;");
     const cell = decls(narrow, ".cb-table .cb-table-el tbody .cb-table-row > td");

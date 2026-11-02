@@ -29,7 +29,7 @@ export function matchesAgent(a: Agent, query: string): boolean {
 
 /**
  * One agent as an object row: mark, name (links to the edit page for the owner and org admins),
- * scope chip, a meta line (model, skills, tools) and the row action "Chat", which opens a new
+ * scope chip, a meta line (model, skills, tools) and the row action "Start conversation", which opens a new
  * conversation with that agent picked (`/chat?agent=`, created on the first send). The API returns
  * no last-use time, so there is no trailing text.
  */
@@ -65,11 +65,9 @@ export function AgentRow({ agent, onChanged }: { agent: Agent; onChanged?(): voi
         {...(canEdit ? { href: editHref } : {})}
         meta={meta}
         action={{ label: t("chat"), onSelect: start }}
-        // 对话 is the row action: the menu never repeats it (spec §6.7)
-        menu={[
-          ...(canEdit ? [{ label: t("edit"), onSelect: () => router.push(editHref) }] : []),
-          ...(admin ? [{ label: t("reassign.action"), onSelect: () => setReassigning(true) }] : []),
-        ]}
+        // The row action starts a conversation and the name already opens the edit page, so the
+        // menu repeats neither (spec §6.7): it holds only 更换负责人, for org admins.
+        menu={admin ? [{ label: t("reassign.action"), onSelect: () => setReassigning(true) }] : []}
       />
       {reassigning ? (
         <ReassignOwnerDialog

@@ -31,6 +31,8 @@ const params = <T,>(p: T) => ({ params: Promise.resolve(p) });
 const msgs = { zh, en } as const;
 const ORG = "/api/v1/orgs/o1";
 const SETS = `${ORG}/eval-sets`;
+/** The member list the case page reads for the starter's name: none unless a test gives some. */
+const NO_MEMBERS = { [`GET ${ORG}/members`]: () => json(200, { members: [] }) };
 const T = "2026-10-22T08:00:00.000Z";
 const E = en.evals;
 
@@ -449,7 +451,7 @@ describe("用例快照轨迹（TracePage）", () => {
     });
     const { container } = await renderRoute(
       () => EvalCasePage(params({ setId: "s1", caseId: "k1" })),
-      lastStubRoutes(),
+      { ...NO_MEMBERS, ...lastStubRoutes() },
     );
     expect(container.querySelector('[data-template="TracePage"]')).not.toBeNull();
     const tree = await screen.findByRole("tree", { name: en.trajectories.detail.waterfall });
@@ -460,6 +462,49 @@ describe("用例快照轨迹（TracePage）", () => {
       name: SET.name,
     });
     expect(link.getAttribute("href")).toBe("/evals/s1");
+  });
+});
+
+describe("the eval case's starter", () => {
+  it("shows as the member's name with the account id in a tooltip", async () => {
+    const run: TrajectoryRun = {
+      runId: "r1",
+      agentVersion: 2,
+      triggerAccountId: "a1",
+      startedAt: T,
+      endedAt: T,
+      end: { kind: "finished", detail: "completed" },
+      steps: [],
+      totals: {
+        usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        cost: null,
+        modelCalls: 0,
+        toolCalls: 0,
+        durationMs: 0,
+      },
+    };
+    stubApi({
+      [`GET ${SETS}/s1`]: () => json(200, { set: { ...SET, cases: CASES } }),
+      [`GET ${SETS}/s1/cases/k1`]: () =>
+        json(200, { case: { ...CASES[0], sourceRunId: "r1" }, trajectory: [run], currency: "USD" }),
+      "GET /api/v1/orgs/o1/members": () =>
+        json(200, {
+          members: [
+            {
+              account: { id: "a1", displayName: "Grace", email: null },
+              role: "admin",
+              joinedAt: T,
+              anonymous: false,
+            },
+          ],
+        }),
+    });
+    await renderRoute(() => EvalCasePage(params({ setId: "s1", caseId: "k1" })), {
+      ...NO_MEMBERS,
+      ...lastStubRoutes(),
+    });
+    const name = await screen.findByText("Grace");
+    expect(name.getAttribute("title")).toBe("a1");
   });
 });
 
@@ -480,7 +525,10 @@ describe("a sub-agent's eval case", () => {
         }),
       [`GET ${SETS}/s1`]: () => json(200, { set: { ...SET, cases: CASES } }),
     });
-    await renderRoute(() => EvalCasePage(params({ setId: "s1", caseId: "k1" })), lastStubRoutes());
+    await renderRoute(() => EvalCasePage(params({ setId: "s1", caseId: "k1" })), {
+      ...NO_MEMBERS,
+      ...lastStubRoutes(),
+    });
     const link = await screen.findByRole("link", { name: en.trajectories.parentLink });
     expect(link.getAttribute("href")).toBe("/trajectories/p1");
   });

@@ -21,7 +21,7 @@ test("成员页：管理员生成邀请链接 → 新用户凭链接注册加入
   await page.goto("/settings/organization");
   await page.getByRole("link", { name: zh.connections.nav.members }).click();
   await expect(page).toHaveURL(/\/settings\/members$/);
-  await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
+  await expect(page.locator('[data-template="SettingsPage"]')).toBeVisible();
 
   // 生成邀请（成员、7 天）并取链接
   await page.getByRole("button", { name: M.invite }).click();

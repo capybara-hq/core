@@ -1,5 +1,5 @@
 import { Fragment, type ReactNode } from "react";
-import { Button, IconButton } from "../controls/index";
+import { Button, IconButton, LinkButton } from "../controls/index";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { Menu, type MenuItem, menuActions, menuLone } from "../overlays/index";
@@ -163,15 +163,10 @@ export function ObjectRow({
       {trailing ? <span className="cb-object-trailing">{trailing}</span> : null}
       {slots.map((a, i) =>
         a === undefined ? null : a.href !== undefined ? (
-          <Link
-            // biome-ignore lint/suspicious/noArrayIndexKey: two fixed slots (the action, a lone menu item)
-            key={i}
-            href={a.href}
-            className="cb-btn cb-btn-link cb-btn-link-default"
-            data-density="dense"
-          >
-            <span className="cb-btn-body">{a.label}</span>
-          </Link>
+          // biome-ignore lint/suspicious/noArrayIndexKey: two fixed slots (the action, a lone menu item)
+          <LinkButton key={i} href={a.href} variant="default" density="dense">
+            {a.label}
+          </LinkButton>
         ) : (
           <Button
             // biome-ignore lint/suspicious/noArrayIndexKey: two fixed slots (the action, a lone menu item)

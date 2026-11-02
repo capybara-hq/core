@@ -531,3 +531,75 @@ describe("CellTitle", () => {
     expect(screen.getByText("检索文档").getAttribute("title")).toBe("检索文档");
   });
 });
+
+describe("DataTable semantics and the narrow controls (spec §6.6)", () => {
+  const realMatchMedia = window.matchMedia;
+  const phone = () => {
+    window.matchMedia = ((q: string) => ({
+      matches: q === "(max-width: 639px)",
+      media: q,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+  };
+  afterEach(() => {
+    window.matchMedia = realMatchMedia;
+  });
+
+  it("carries explicit table roles, so stacked rows keep their semantics", () => {
+    const { container } = plain({ rowMenu: () => [{ label: "删除", onSelect: () => {} }] });
+    expect(container.querySelector("table.cb-table-el")?.getAttribute("role")).toBe("table");
+    for (const g of container.querySelectorAll(
+      "table.cb-table-el > thead, table.cb-table-el > tbody",
+    ))
+      expect(g.getAttribute("role")).toBe("rowgroup");
+    for (const r of container.querySelectorAll("table.cb-table-el tr"))
+      expect(r.getAttribute("role")).toBe("row");
+    for (const th of container.querySelectorAll("table.cb-table-el th"))
+      expect(th.getAttribute("role")).toBe("columnheader");
+    for (const td of container.querySelectorAll("table.cb-table-el td"))
+      expect(td.getAttribute("role")).toBe("cell");
+    expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual([
+      "名称",
+      "数量",
+      "",
+    ]);
+  });
+
+  it("wide: no narrow bar; the header sorts and selects all", () => {
+    const onChange = vi.fn();
+    render(<Harness sort={{ key: "name", dir: "asc", onChange }} />);
+    expect(document.querySelector('[data-part="table-narrow-bar"]')).toBeNull();
+    expect(screen.getByRole("button", { name: /名称/ })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "全选" })).toBeTruthy();
+  });
+
+  it("narrow: the header is text for screen readers; sort and select-all move to a bar above the rows", async () => {
+    phone();
+    const onChange = vi.fn();
+    render(<Harness sort={{ key: "name", dir: "asc", onChange }} />);
+    const bar = document.querySelector('[data-part="table-narrow-bar"]') as HTMLElement;
+    expect(bar).not.toBeNull();
+    // the header row stays in the tree (visually hidden), with no controls of its own
+    const head = document.querySelector("table.cb-table-el > thead") as HTMLElement;
+    expect(within(head).queryByRole("button")).toBeNull();
+    expect(within(head).queryByRole("checkbox")).toBeNull();
+    expect(within(head).getByRole("columnheader", { name: "名称" })).toBeTruthy();
+    const user = userEvent.setup();
+    // select all
+    await user.click(within(bar).getByRole("checkbox", { name: "全选" }));
+    expect(screen.getByText("已选 3 项")).toBeTruthy();
+    // sort: the sortable columns, each way
+    const select = within(bar).getByRole("combobox", { name: "排序" }) as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent)).toEqual(["名称 升序", "名称 降序"]);
+    expect(select.value).toBe("name:asc");
+    await user.selectOptions(select, "name:desc");
+    expect(onChange).toHaveBeenCalledWith("name", "desc");
+  });
+
+  it("narrow: no bar when there is nothing to sort or select", () => {
+    phone();
+    plain({});
+    expect(document.querySelector('[data-part="table-narrow-bar"]')).toBeNull();
+  });
+});

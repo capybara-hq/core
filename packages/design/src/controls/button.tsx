@@ -57,6 +57,8 @@ export type LinkButtonProps = {
   /** The navigating variants (spec §6.1); default `default`. */
   variant?: "primary" | "secondary" | "default";
   density?: Density;
+  /** A keyboard hint after the label, as on {@link Button}. */
+  shortcut?: string;
   children: ReactNode;
 };
 
@@ -64,7 +66,13 @@ export type LinkButtonProps = {
  * A button that navigates (spec §6.1): a link through the DesignProvider's `link`, drawn as the
  * Button of its variant and density, never in the browser's link colors.
  */
-export function LinkButton({ href, variant = "default", density, children }: LinkButtonProps) {
+export function LinkButton({
+  href,
+  variant = "default",
+  density,
+  shortcut,
+  children,
+}: LinkButtonProps) {
   const Link = useDesignLink();
   const step = useDensity(density);
   return (
@@ -75,7 +83,10 @@ export function LinkButton({ href, variant = "default", density, children }: Lin
       data-variant={variant}
       data-density={step}
     >
-      <span className="cb-btn-body">{children}</span>
+      <span className="cb-btn-body">
+        {children}
+        {shortcut ? <span className="cb-btn-shortcut">{shortcut}</span> : null}
+      </span>
     </Link>
   );
 }

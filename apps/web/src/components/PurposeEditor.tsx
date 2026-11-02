@@ -2,7 +2,6 @@
 
 import {
   type ActionRowProps,
-  Badge,
   Card,
   Field,
   Select,
@@ -233,8 +232,11 @@ function PurposeEditor({
             <Text variant="small" tone="muted">
               {view.purpose}
             </Text>
+            {/* A state, not a call to act: muted text, never the accent */}
             {scope === "org" && view.override !== null ? (
-              <Badge tone="accent">{t("overridden")}</Badge>
+              <Text variant="small" tone="muted">
+                {t("overridden")}
+              </Text>
             ) : null}
           </Stack>
         }

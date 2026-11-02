@@ -10,14 +10,29 @@ import {
 } from "react";
 import { Button, IconButton } from "../controls/button";
 import { DensityContext } from "../controls/density";
+import { Select } from "../controls/inputs";
 import { Checkbox } from "../controls/toggles";
 import { Pagination } from "../display/pagination";
 import { Icon } from "../icons/icon";
 import { Menu, menuActions } from "../overlays/menus";
 import { useDesignT } from "../provider";
+import { useMediaQuery } from "../shell/use-media-query";
 import { CellTitle } from "./cell-title";
 import { EmptyArea } from "./empty";
 import type { DataTableProps } from "./types";
+
+/**
+ * Explicit table roles (spec §6.6): below 640 the stacked rows give the table's elements block,
+ * grid and flex display, and WebKit then drops their implicit table semantics. Spread from here
+ * because the roles look redundant to a linter that only sees the elements.
+ */
+const ROLE = {
+  table: { role: "table" },
+  rowgroup: { role: "rowgroup" },
+  row: { role: "row" },
+  columnheader: { role: "columnheader" },
+  cell: { role: "cell" },
+} as const;
 
 function titleOf(node: ReactNode): string | undefined {
   return typeof node === "string" || typeof node === "number" ? String(node) : undefined;
@@ -78,6 +93,9 @@ export function DataTable<T>({
   framed = true,
 }: DataTableProps<T>) {
   const t = useDesignT();
+  // Below 640 the rows stack (spec §6.6): the header row is only read by screen readers, so its
+  // sort buttons and select-all checkbox move to a compact bar above the rows.
+  const narrow = useMediaQuery("(max-width: 639px)");
   const bodyRef = useRef<HTMLTableSectionElement>(null);
   const [focusKey, setFocusKey] = useState<string | undefined>();
 
@@ -162,26 +180,30 @@ export function DataTable<T>({
   const bulk = selection && selected.size > 0;
   const colCount = columns.length + (selection ? 1 : 0) + (rowMenu ? 1 : 0);
 
+  // Explicit roles throughout ({@link ROLE}).
   const head = (
-    <thead>
-      <tr>
+    <thead {...ROLE.rowgroup}>
+      <tr {...ROLE.row}>
         {selection ? (
-          <th className="cb-table-check" scope="col" data-part="header-cell">
-            <Checkbox
-              checked={allState}
-              onChange={toggleAll}
-              aria-label={t("table.selectAll")}
-              disabled={selectable.length === 0}
-            />
+          <th className="cb-table-check" scope="col" {...ROLE.columnheader} data-part="header-cell">
+            {narrow ? null : (
+              <Checkbox
+                checked={allState}
+                onChange={toggleAll}
+                aria-label={t("table.selectAll")}
+                disabled={selectable.length === 0}
+              />
+            )}
           </th>
         ) : null}
         {columns.map((c) => {
           const current = sort?.key === c.key ? sort : undefined;
-          const sortable = c.sortable && sort;
+          const sortable = c.sortable && sort && !narrow;
           return (
             <th
               key={c.key}
               scope="col"
+              {...ROLE.columnheader}
               data-part="header-cell"
               data-align={c.align === "right" ? "right" : undefined}
               data-sorted={current ? "true" : undefined}
@@ -214,10 +236,57 @@ export function DataTable<T>({
             </th>
           );
         })}
-        {rowMenu ? <th className="cb-table-menu" scope="col" data-part="header-cell" /> : null}
+        {rowMenu ? (
+          <th
+            className="cb-table-menu"
+            scope="col"
+            {...ROLE.columnheader}
+            data-part="header-cell"
+          />
+        ) : null}
       </tr>
     </thead>
   );
+
+  // The narrow bar (spec §6.6): select-all and a sort select of the sortable columns, each way.
+  const sortOptions =
+    sort === undefined
+      ? []
+      : columns
+          .filter((c) => c.sortable)
+          .flatMap((c) => [
+            { value: `${c.key}:asc`, label: t("table.sortAsc").replace("{column}", c.header) },
+            { value: `${c.key}:desc`, label: t("table.sortDesc").replace("{column}", c.header) },
+          ]);
+  const sortValue = sort ? `${sort.key}:${sort.dir}` : "";
+  const narrowBar =
+    narrow && kind === null && (selection || sortOptions.length > 0) ? (
+      <div className="cb-table-narrow-bar" data-part="table-narrow-bar">
+        {selection ? (
+          <Checkbox
+            checked={allState}
+            onChange={toggleAll}
+            label={t("table.selectAll")}
+            disabled={selectable.length === 0}
+          />
+        ) : null}
+        {sort && sortOptions.length > 0 ? (
+          <Select
+            aria-label={t("table.sort")}
+            value={sortValue}
+            options={
+              sortOptions.some((o) => o.value === sortValue)
+                ? sortOptions
+                : [{ value: sortValue, label: t("table.sort") }, ...sortOptions]
+            }
+            onChange={(e) => {
+              const [key, dir] = e.target.value.split(":");
+              if (key && (dir === "asc" || dir === "desc")) sort.onChange(key, dir);
+            }}
+          />
+        ) : null}
+      </div>
+    ) : null;
 
   // Density (spec §6.6): the toolbar, bulk bar and empty-state actions are `default`, as the signed
   // reference draws them; the rows (row menus) and pagination are `dense`.
@@ -247,6 +316,7 @@ export function DataTable<T>({
           ) : null}
         </div>
       ) : null}
+      {narrowBar}
       <div className="cb-table-panel" data-part="table" aria-busy={kind === "loading" || undefined}>
         {kind ? (
           <>
@@ -261,13 +331,14 @@ export function DataTable<T>({
           <div className="cb-table-scroll">
             <table
               className="cb-table-el"
+              {...ROLE.table}
               aria-label={label}
               data-select={selection ? "true" : undefined}
             >
               {head}
 
               <DensityContext value="dense">
-                <tbody ref={bodyRef}>
+                <tbody ref={bodyRef} {...ROLE.rowgroup}>
                   {rows.map((row, idx) => {
                     const key = rowKey(row);
                     const disabled = !!isDisabled?.(row);
@@ -288,6 +359,7 @@ export function DataTable<T>({
                       <Fragment key={key}>
                         <tr
                           className="cb-table-row"
+                          {...ROLE.row}
                           data-part="row"
                           data-row-key={key}
                           data-state={states || undefined}
@@ -299,7 +371,12 @@ export function DataTable<T>({
                           onClick={(e) => onRowClick(e, row)}
                         >
                           {selection ? (
-                            <td className="cb-table-check" data-part="cell" data-no-open="true">
+                            <td
+                              className="cb-table-check"
+                              {...ROLE.cell}
+                              data-part="cell"
+                              data-no-open="true"
+                            >
                               <Checkbox
                                 checked={selected.has(key)}
                                 onChange={() => toggle(key)}
@@ -318,6 +395,7 @@ export function DataTable<T>({
                             return (
                               <td
                                 key={c.key}
+                                {...ROLE.cell}
                                 data-part="cell"
                                 data-align={c.align === "right" ? "right" : undefined}
                                 data-tone={c.tone}
@@ -338,11 +416,17 @@ export function DataTable<T>({
                             // 这一行没有可用的操作：保留单元格对齐列，不显示 ⋯
                             <td
                               className="cb-table-menu"
+                              {...ROLE.cell}
                               data-part="menu-cell"
                               data-no-open="true"
                             />
                           ) : (
-                            <td className="cb-table-menu" data-part="menu-cell" data-no-open="true">
+                            <td
+                              className="cb-table-menu"
+                              {...ROLE.cell}
+                              data-part="menu-cell"
+                              data-no-open="true"
+                            >
                               <Menu
                                 items={menuItems}
                                 trigger={
@@ -357,8 +441,8 @@ export function DataTable<T>({
                           )}
                         </tr>
                         {extra ? (
-                          <tr className="cb-table-expand">
-                            <td colSpan={colCount}>
+                          <tr className="cb-table-expand" {...ROLE.row}>
+                            <td colSpan={colCount} {...ROLE.cell}>
                               {/* 每个直接子元素是一行，CSS 在行首加 └ 引导 */}
                               <div className="cb-table-expand-body">
                                 {typeof extra === "string" || typeof extra === "number" ? (

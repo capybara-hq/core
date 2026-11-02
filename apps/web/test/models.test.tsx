@@ -439,7 +439,9 @@ describe("/settings/models（组织管理员）", () => {
           target: target("alpha-large"),
         }),
       );
-      expect(await ev.findByText(m.models.purpose.overridden)).toBeTruthy();
+      const overridden = await ev.findByText(m.models.purpose.overridden);
+      // A state reads as muted text, never an accent badge
+      expect(overridden.closest(".cb-badge")).toBeNull();
       // Restoring the default is choosing 「使用部署默认」 and saving
       await user.selectOptions(ev.getByRole("combobox", { name: m.models.purpose.model }), "");
       await user.click(actionRow().getByRole("button", { name: m.models.purpose.save }));

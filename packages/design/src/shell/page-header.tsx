@@ -1,5 +1,5 @@
 import { Fragment, type ReactNode } from "react";
-import { Button, IconButton, Input } from "../controls/index";
+import { Button, IconButton, Input, LinkButton } from "../controls/index";
 import type { MetricProps } from "../display/index";
 import { Tabs } from "../display/tabs";
 import { Icon } from "../icons/icon";
@@ -132,14 +132,16 @@ export function PageHeader(p: PageHeaderProps) {
     }
     if (a.href !== undefined) {
       return (
-        <Link key={a.label} href={a.href} className={`cb-btn cb-btn-link cb-btn-link-${a.variant}`}>
-          {/* The same content structure as Button, so the shortcut hint matches */}
-          <span className="cb-btn-body">
-            {a.icon ? <Icon name={a.icon} size={14} /> : null}
-            {a.label}
-            {a.shortcut ? <span className="cb-btn-shortcut">{a.shortcut}</span> : null}
-          </span>
-        </Link>
+        <LinkButton
+          key={a.label}
+          href={a.href}
+          variant={a.variant}
+          density="default"
+          {...(a.shortcut !== undefined ? { shortcut: a.shortcut } : {})}
+        >
+          {a.icon ? <Icon name={a.icon} size={14} /> : null}
+          {a.label}
+        </LinkButton>
       );
     }
     return (

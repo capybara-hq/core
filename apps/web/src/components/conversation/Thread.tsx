@@ -33,6 +33,7 @@ import {
   isModelSetupError,
   runParts,
 } from "../../lib/run-row";
+import { shortTime } from "../../lib/time";
 import {
   type FailedRun,
   type FileRef,
@@ -106,9 +107,6 @@ function useMemberNames(
   return names;
 }
 
-const shortTime = (iso: string, locale: string) =>
-  new Date(iso).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
-
 const modelName = (m: ModelRef | null) => (m === null ? "—" : m.model);
 
 export type ThreadProps = {
@@ -122,9 +120,10 @@ export type ThreadProps = {
   /**
    * The main thread's run rows link out (spec §6.16.23): 查看轨迹 for the roles the kernel lets
    * read the trajectory (the agent's owner decides for members), 去配置模型服务 for enterprise
-   * admins. Absent (a sub-agent's record), the rows link nowhere.
+   * admins. Absent (a sub-agent's record), the rows link nowhere. `trajectory: false` (a
+   * sub-agent conversation, whose trajectory the kernel gates on the parent's agent) drops 查看轨迹.
    */
-  runLinks?: { agentOwnerId: string | undefined };
+  runLinks?: { agentOwnerId: string | undefined; trajectory?: boolean };
   /** Opens a file output in the right panel. */
   onOpenFile?(id: string): void;
   /** Opens the Files section (the "N more files" card). */
@@ -282,7 +281,10 @@ export function Thread({
     renderCard,
     renderTask,
   };
-  const trajectory = runLinks !== undefined && canViewTrajectory(me, runLinks.agentOwnerId);
+  const trajectory =
+    runLinks !== undefined &&
+    runLinks.trajectory !== false &&
+    canViewTrajectory(me, runLinks.agentOwnerId);
   const configureModels = runLinks !== undefined && canConfigureModels(me);
   const hasRetry = onRetry !== undefined;
   const hasOpenFile = onOpenFile !== undefined;

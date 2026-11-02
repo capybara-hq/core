@@ -313,7 +313,11 @@ export function useConversationPage(
           info={info}
           reasoningOf={selection.reasoningOf}
           initialMembers={initial.members}
-          runLinks={{ agentOwnerId: agent?.ownerAccountId }}
+          runLinks={{
+            agentOwnerId: agent?.ownerAccountId,
+            // a sub-agent conversation's trajectory is gated on the parent's agent: no link
+            trajectory: !conv.conversation?.parentConversationId,
+          }}
           {...(active ? {} : { onRetry: retry })}
           {...(slot?.thread ?? {})}
         />

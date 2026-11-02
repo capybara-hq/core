@@ -1,6 +1,6 @@
 import { NoAccess } from "../../../../components/NoAccess";
 import { listMembers } from "../../../../lib/members";
-import { read } from "../../../../lib/server/page";
+import { optional, read } from "../../../../lib/server/page";
 import { workspace } from "../../../../lib/server/session";
 import { firstTrajectoryPage } from "../../../../lib/server/trajectory";
 import TrajectoryView from "./view";
@@ -20,8 +20,8 @@ export default async function TrajectoryPage({
   const id = decodeURIComponent((await params).conversationId);
   const [first, members] = await Promise.all([
     read(firstTrajectoryPage(ws.orgId, id)),
-    // names are cosmetic: the id shows when the members cannot be read, whatever the reason
-    listMembers(ws.orgId).catch(() => null),
+    // names are cosmetic: the id shows when the kernel refuses the member list
+    optional(listMembers(ws.orgId)),
   ]);
   const people = Object.fromEntries(
     (members?.members ?? []).map((m) => [m.account.id, m.account.displayName]),

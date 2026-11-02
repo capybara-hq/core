@@ -99,6 +99,7 @@ const BOARD = {
 const LIVE = { ...BOARD, id: "live", title: { zh: "实时", en: "Live" }, kind: "embed" };
 
 const ROUTES: Routes = {
+  [`GET ${O}/members`]: () => json(200, { members: [] }),
   [`GET ${O}/agents`]: () => json(200, { agents: [AGENT] }),
   [`GET ${O}/trajectories`]: () =>
     json(200, { items: [ITEM("c1", "Clean up"), ITEM("c2", null)], next: null }),

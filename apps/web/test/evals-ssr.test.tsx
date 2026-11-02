@@ -155,6 +155,7 @@ const TRAJECTORY_RUN = {
 };
 
 const ROUTES: Routes = {
+  [`GET ${O}/members`]: () => json(200, { members: [] }),
   [`GET ${SETS}`]: () => json(200, { sets: [SET] }),
   [`GET ${O}/agents`]: () => json(200, { agents: [AGENT] }),
   [`GET ${O}/agents/ag1`]: () => json(200, { agent: AGENT }),

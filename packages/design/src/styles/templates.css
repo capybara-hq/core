@@ -149,6 +149,10 @@
     height: 40px;
     white-space: nowrap;
   }
+  /* The row clips (it scrolls), so the focus ring is drawn inside the item, as on tabs. */
+  .cb-settings-nav-item:focus-visible {
+    outline-offset: -2px;
+  }
 }
 
 /* Trace (T8): the stats, the waterfall and the detail share the content frame's one left edge. The

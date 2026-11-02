@@ -596,7 +596,7 @@
       "org": "组织共享",
       "members": "指定成员"
     },
-    "chat": "会话",
+    "chat": "开始会话",
     "meta": {
       "skills": "{n} 技能",
       "tools": "{n} 工具"
@@ -792,7 +792,7 @@
     "run": {
       "stopped": "已停止 · {who} {time}",
       "failedRetried": "失败 · 已重试",
-      "tokens": "{n} tokens",
+      "tokens": "{n} token",
       "tokenSplit": "输入 {input} · 输出 {output} · 缓存读 {cacheRead} · 缓存写 {cacheWrite}",
       "trajectory": "查看轨迹",
       "configureModels": "去配置模型服务"
