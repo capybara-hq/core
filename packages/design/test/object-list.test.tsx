@@ -1,5 +1,6 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Callout,
   DesignProvider,
@@ -28,7 +29,10 @@ describe("ObjectRow", () => {
           state={{ label: "已启用", tone: "ok" }}
           trailing="刚刚"
           action={{ label: "对话", href: "/chat" }}
-          menu={[{ label: "删除", danger: true, onSelect: () => {} }]}
+          menu={[
+            { label: "编辑", onSelect: () => {} },
+            { label: "删除", danger: true, onSelect: () => {} },
+          ]}
         />
       </ObjectList>,
     );
@@ -43,6 +47,35 @@ describe("ObjectRow", () => {
     expect(within(row).getByText("刚刚")).toBeTruthy();
     expect(within(row).getByRole("link", { name: "对话" })).toBeTruthy();
     expect(within(row).getByRole("button", { name: "更多操作" })).toBeTruthy();
+  });
+
+  it("a menu with one action is that action, drawn directly; a menu with none is not drawn", async () => {
+    const onUpgrade = vi.fn();
+    zh(
+      <ObjectList label="l">
+        <ObjectRow
+          mark={{ text: "a" }}
+          name="a"
+          action={{ label: "设置", href: "/a" }}
+          menu={[{ label: "升级", onSelect: onUpgrade }]}
+        />
+        <ObjectRow
+          mark={{ text: "b" }}
+          name="b"
+          menu={[{ label: "详情", href: "/b" }, "separator"]}
+        />
+        <ObjectRow
+          mark={{ text: "c" }}
+          name="c"
+          menu={[{ label: "不能停用", disabled: true, onSelect: () => {} }]}
+        />
+      </ObjectList>,
+    );
+    expect(screen.queryByRole("button", { name: "更多操作" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "升级" }));
+    expect(onUpgrade).toHaveBeenCalled();
+    expect(screen.getByRole("link", { name: "详情" }).getAttribute("href")).toBe("/b");
+    expect(screen.queryByText("不能停用")).toBeNull();
   });
 
   it("warn mark and chip use the warn tone", () => {

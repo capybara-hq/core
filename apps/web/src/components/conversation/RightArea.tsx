@@ -426,17 +426,15 @@ export function useRightAreaSlot(p: {
 
   return {
     titleBarPanels: [
-      {
+      // Files opens the newest file (its panel switches to the others); without a file there is
+      // no Files button: it would have to open something else (the properties panel).
+      ...files.slice(0, 1).map((first) => ({
         id: "files",
         label: t("files"),
-        icon: "file-text",
+        icon: "file-text" as const,
         pressed: target?.kind === "file",
-        onOpen: () => {
-          const first = files[0];
-          if (first) openFile(first.id);
-          else open({ kind: "properties" });
-        },
-      },
+        onOpen: () => openFile(first.id),
+      })),
       ...panels.map((c) => ({
         id: `panel:${uiKey(c.plugin, c.id)}`,
         label: c.title[locale],

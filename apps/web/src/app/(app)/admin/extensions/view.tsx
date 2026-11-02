@@ -155,8 +155,8 @@ export default function AdminPlugins({
               label: p.status === "pending_config" ? t("configure") : t("settings"),
               href: detail,
             }}
+            // The name and the action open the detail page already: no 详情 item (spec §6.7)
             menu={[
-              { label: t("details"), href: detail },
               ...(p.source === "install"
                 ? [
                     {

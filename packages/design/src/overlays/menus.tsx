@@ -30,6 +30,17 @@ export type MenuItem =
     ))
   | "separator";
 
+/**
+ * The items of a menu a person can act on: no separators, nothing disabled. A `more-horizontal`
+ * menu with none of them is not drawn, and one with a single one is that action, drawn directly
+ * (spec §6.7): a menu of one item only hides it.
+ */
+export function menuActions(items: readonly MenuItem[]): Exclude<MenuItem, "separator">[] {
+  return items.filter(
+    (i): i is Exclude<MenuItem, "separator"> => i !== "separator" && i.disabled !== true,
+  );
+}
+
 export function Popover({
   trigger,
   active,

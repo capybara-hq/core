@@ -13,7 +13,7 @@ import { DensityContext } from "../controls/density";
 import { Checkbox } from "../controls/toggles";
 import { Pagination } from "../display/pagination";
 import { Icon } from "../icons/icon";
-import { Menu } from "../overlays/menus";
+import { Menu, menuActions } from "../overlays/menus";
 import { useDesignT } from "../provider";
 import { CellTitle } from "./cell-title";
 import { EmptyArea } from "./empty";
@@ -300,7 +300,7 @@ export function DataTable<T>({
                               </td>
                             );
                           })}
-                          {menuItems === undefined ? null : menuItems.length === 0 ? (
+                          {menuItems === undefined ? null : menuActions(menuItems).length === 0 ? (
                             // 这一行没有可用的操作：保留单元格对齐列，不显示 ⋯
                             <td
                               className="cb-table-menu"

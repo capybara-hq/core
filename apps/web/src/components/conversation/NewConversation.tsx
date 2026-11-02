@@ -11,7 +11,7 @@ import { useErrorMessage } from "../../lib/use-error-message";
 import { FormError } from "../form-error";
 import { useSession } from "../shell/session";
 import { ComposerBar, type ComposerMessage } from "./ComposerBar";
-import { useWho } from "./ConversationView";
+import { useStatusSignature } from "./ConversationView";
 import type { SendResult } from "./useConversation";
 import { useSelection } from "./useSelection";
 
@@ -41,7 +41,7 @@ export function useNewConversationPage(
   const router = useRouter();
   const errorMessage = useErrorMessage();
   const session = useSession();
-  const who = useWho();
+  const signature = useStatusSignature("/chat");
   const agents = initial.agents;
   const recent = initial.recent;
   const [picked, setPicked] = useState<string | null>(null);
@@ -116,7 +116,7 @@ export function useNewConversationPage(
         />
       </Stack>
     ),
-    status: { context: `${who}:/chat`, version: session.version ?? "" },
+    status: { ...signature, version: session.version ?? "" },
     right: "none",
     onCloseRight: () => {},
   };

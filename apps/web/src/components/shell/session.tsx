@@ -26,6 +26,8 @@ export type Session = {
   refreshPending?(): void;
   /** The web version (pages that draw their own status bar show it). */
   version?: string;
+  /** The viewer's time zone (`UTC+8`; none in the server render), for those status bars too. */
+  timeZone?: string;
 };
 
 /** `null` only outside the `(app)` layout (the layout always provides the session). */

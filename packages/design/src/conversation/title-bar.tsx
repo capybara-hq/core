@@ -9,7 +9,7 @@ import { ConvMenu, type ConvMenuEntry } from "./menu";
 
 // The conversation title bar (spec §6.16.1): the middle column's own 48-high bar with the title
 // (rename / copy link / delete), the properties toggle, a separator, Files and the extensions'
-// panel icons, and More for the icons that don't fit.
+// panel icons, and More for the icons that don't fit (only when two or more don't).
 
 export type TitleBarMenuItem = {
   id: string;
@@ -79,7 +79,9 @@ export function TitleBar({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const fit = reference?.visiblePanels ?? titleBarFit(width, panels.length);
+  const measured = reference?.visiblePanels ?? titleBarFit(width, panels.length);
+  // No menu of one (spec §6.7): a single icon that doesn't fit takes More's slot instead.
+  const fit = panels.length - measured === 1 ? panels.length : measured;
   // The open panel stays visible: it takes the last visible slot when it would overflow.
   let shown = panels.slice(0, fit);
   const pressedIdx = panels.findIndex((p) => p.pressed);
@@ -148,7 +150,9 @@ export function TitleBar({
         aria-pressed={properties.pressed}
         onClick={properties.onToggle}
       />
-      <span className="cb-title-sep" data-part="title-bar-separator" aria-hidden="true" />
+      {panels.length > 0 ? (
+        <span className="cb-title-sep" data-part="title-bar-separator" aria-hidden="true" />
+      ) : null}
       {shown.map((p) => (
         <IconButton
           key={p.id}
@@ -159,32 +163,34 @@ export function TitleBar({
           onClick={p.onOpen}
         />
       ))}
-      <ConvMenu
-        inline={reference?.moreMenu === true}
-        label={t("titlebar.more")}
-        align="end"
-        size="narrow"
-        sideOffset={2}
-        open={moreOpen}
-        onOpenChange={setMoreOpen}
-        trigger={
-          <IconButton
-            part="title-bar-button"
-            label={t("titlebar.more")}
-            icon={<Icon name="more-vertical" size={16} />}
-            // More is pressed while its menu is open (§6.16.1).
-            aria-pressed={reference?.moreMenu === true || moreOpen}
-          />
-        }
-        // Icons that don't fit; with nothing hidden, every panel (a keyboard route to them).
-        entries={(hidden.length > 0 ? hidden : panels).map((p) => ({
-          kind: "item" as const,
-          id: p.id,
-          label: p.label,
-          icon: p.icon,
-          onSelect: p.onOpen,
-        }))}
-      />
+      {hidden.length > 0 ? (
+        <ConvMenu
+          inline={reference?.moreMenu === true}
+          label={t("titlebar.more")}
+          align="end"
+          size="narrow"
+          sideOffset={2}
+          open={moreOpen}
+          onOpenChange={setMoreOpen}
+          trigger={
+            <IconButton
+              part="title-bar-button"
+              label={t("titlebar.more")}
+              icon={<Icon name="more-vertical" size={16} />}
+              // More is pressed while its menu is open (§6.16.1).
+              aria-pressed={reference?.moreMenu === true || moreOpen}
+            />
+          }
+          // Only the icons that don't fit (two or more): the shown ones are buttons already.
+          entries={hidden.map((p) => ({
+            kind: "item" as const,
+            id: p.id,
+            label: p.label,
+            icon: p.icon,
+            onSelect: p.onOpen,
+          }))}
+        />
+      ) : null}
     </header>
   );
 }

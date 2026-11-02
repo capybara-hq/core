@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -59,6 +61,19 @@ const page = (over: Partial<ConversationPageProps> = {}): ConversationPageProps 
 });
 
 describe("ConversationPage (§5.4)", () => {
+  it("the status bar shows the time zone after the version", () => {
+    wrap(
+      <ConversationPage
+        {...page({
+          status: { context: "grant@acme:~/chat/9f3a", version: "v1", timeZone: "UTC+8" },
+        })}
+      />,
+    );
+    const bar = document.querySelector('[data-part="status-bar"]') ?? document.body;
+    expect(bar.textContent).toContain("grant@acme:~/chat/9f3a");
+    expect(bar.textContent).toMatch(/v1.*UTC\+8/);
+  });
+
   it("announces the run state once, in a polite status (final review I2)", () => {
     render(
       <ConversationPage
@@ -192,6 +207,16 @@ describe("TitleBar (§6.16.1)", () => {
     expect(nav.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it('the path spaces every "/" like the page head: space.2 on both sides', () => {
+    const css = (f: string) =>
+      readFileSync(resolve(import.meta.dirname, "../src/styles", f), "utf8");
+    const gapOf = (text: string, selector: string) =>
+      new RegExp(`${selector.replace(".", "\\.")} \\{[^}]*gap: ([^;]+);`).exec(text)?.[1];
+    expect(gapOf(css("shell.css"), ".cb-pageheader-path")).toBe("var(--cb-space-2)");
+    expect(gapOf(css("conversation-page.css"), ".cb-title-path")).toBe("var(--cb-space-2)");
+    expect(gapOf(css("conversation-page.css"), ".cb-title-path-item")).toBe("var(--cb-space-2)");
+  });
+
   it("without a path there is no path nav", () => {
     wrap(<TitleBar {...titleBar()} />);
     expect(screen.queryByRole("navigation", { name: "路径" })).toBeNull();
@@ -242,6 +267,48 @@ describe("TitleBar (§6.16.1)", () => {
         .getAllByRole("menuitem")
         .map((m) => m.textContent),
     ).toEqual(["看板 2", "看板 3", "看板 4"]);
+  });
+
+  it("with every icon shown there is no More (a menu of what is already on the bar)", () => {
+    wrap(<TitleBar {...titleBar()} />);
+    expect(screen.getByRole("button", { name: "文件" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "更多" })).toBeNull();
+  });
+
+  it("one icon that doesn't fit takes More's place: More holds two or more", () => {
+    let report: ((w: number) => void) | undefined;
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(cb: (e: { contentRect: { width: number } }[]) => void) {
+          report = (w) => cb([{ contentRect: { width: w } }]);
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const panels = ["文件", "待办", "任务看板"].map((label, i) => ({
+      id: `p${i}`,
+      label,
+      icon: "extension" as const,
+      pressed: false,
+      onOpen: noop,
+    }));
+    wrap(<TitleBar {...titleBar({ panels })} />);
+    act(() => report?.(titleBarWidthFor(2)));
+    for (const name of ["文件", "待办", "任务看板"]) {
+      expect(screen.getByRole("button", { name })).toBeTruthy();
+    }
+    expect(screen.queryByRole("button", { name: "更多" })).toBeNull();
+    act(() => report?.(titleBarWidthFor(1)));
+    expect(screen.queryByRole("button", { name: "待办" })).toBeNull();
+    expect(screen.getByRole("button", { name: "更多" })).toBeTruthy();
+  });
+
+  it("without panels there is no separator and no More", () => {
+    wrap(<TitleBar {...titleBar({ panels: [] })} />);
+    expect(document.querySelector('[data-part="title-bar-separator"]')).toBeNull();
+    expect(screen.queryByRole("button", { name: "更多" })).toBeNull();
   });
 
   it("the title menu holds rename and a fail-toned delete", async () => {

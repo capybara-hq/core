@@ -239,6 +239,19 @@ describe("DataTable rows", () => {
     expect(within(r2 as HTMLElement).getByRole("button", { name: "行操作" })).toBeTruthy();
   });
 
+  it("a row whose items are all disabled or separators has no action: no ⋯ either", () => {
+    plain({
+      rowMenu: (r) =>
+        r.id === rows[0]?.id
+          ? [{ label: "唯一的管理员", disabled: true, onSelect() {} }, "separator"]
+          : [{ label: "编辑", onSelect() {} }],
+    });
+    const [r1, r2] = screen.getAllByRole("row").slice(1) as HTMLElement[];
+    expect(within(r1 as HTMLElement).queryByRole("button", { name: "行操作" })).toBeNull();
+    expect(within(r1 as HTMLElement).getAllByRole("cell")).toHaveLength(columns.length + 1);
+    expect(within(r2 as HTMLElement).getByRole("button", { name: "行操作" })).toBeTruthy();
+  });
+
   it("展开行：内容放进缩进容器，引导符由每行 CSS 前缀提供（不再单独渲染一行 └）", () => {
     const { container } = plain({
       expand: (r) =>

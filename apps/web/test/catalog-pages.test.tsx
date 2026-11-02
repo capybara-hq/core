@@ -978,6 +978,13 @@ describe("/admin/catalog and marketplace entries", () => {
     expect(screen.getByRole("link", { name: t.admin.actions.import }).getAttribute("href")).toBe(
       "/admin/catalog/import",
     );
+    // No overflow menu: browsing the marketplaces is one link; the sources are the sidebar's 市场
+    const head = document.querySelector('[data-part="page-header"]') as HTMLElement;
+    expect(within(head).queryByRole("button", { name: "More" })).toBeNull();
+    expect(
+      within(head).getByRole("link", { name: t.admin.actions.entries }).getAttribute("href"),
+    ).toBe("/admin/marketplaces/entries");
+    expect(within(head).queryByRole("link", { name: "Marketplaces" })).toBeNull();
     // Tabs: plugins (with the count) and deployment requests, linking the two routes
     expect(template("ListPage")).not.toBeNull();
     expect(
@@ -1046,12 +1053,8 @@ describe("/admin/catalog and marketplace entries", () => {
     expect(within(git).getByText(/https:\/\/github\.com\/acme\/git-a\.git/)).toBeTruthy();
     // nothing to import: no row action
     expect(within(git).queryByRole("button", { name: c.import })).toBeNull();
-    const user = userEvent.setup();
-    await user.click(within(git).getByRole("button", { name: "More actions" }));
-    const item = await screen.findByRole("menuitem", { name: notAllowed });
-    expect(
-      item.getAttribute("aria-disabled") === "true" || item.hasAttribute("data-disabled"),
-    ).toBe(true);
+    // the reason is the row's state; a menu holding only that disabled line is not drawn
+    expect(within(git).queryByRole("button", { name: "More actions" })).toBeNull();
   });
 
   it("entries: importing stages the plugin and opens the import review; an integrity mismatch is a prominent error", async () => {

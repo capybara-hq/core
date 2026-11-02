@@ -64,8 +64,8 @@ export function AgentRow({ agent, onChanged }: { agent: Agent; onChanged?(): voi
         chips={[{ label: t(`scope.${agent.visibility}`) }]}
         meta={meta}
         action={{ label: t("chat"), onSelect: start }}
+        // 对话 is the row action: the menu never repeats it (spec §6.7)
         menu={[
-          { label: t("startChat"), onSelect: start },
           ...(canEdit ? [{ label: t("edit"), onSelect: () => router.push(editHref) }] : []),
           ...(admin ? [{ label: t("reassign.action"), onSelect: () => setReassigning(true) }] : []),
         ]}

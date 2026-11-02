@@ -2,7 +2,7 @@ import { Fragment, type ReactNode } from "react";
 import { Button, IconButton } from "../controls/index";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
-import { Menu, type MenuItem } from "../overlays/index";
+import { Menu, type MenuItem, menuActions } from "../overlays/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 
 export type ObjectRowProps = {
@@ -33,6 +33,9 @@ export type ObjectRowProps = {
   action?: { label: string; href?: string; onSelect?(): void };
   menu?: MenuItem[];
 };
+
+/** A button or link at the row's right: the row action, or a menu's lone item. */
+type RowButton = { label: string; href?: string; onSelect?(): void; danger?: boolean };
 
 /** Skeleton rows an object list shows while it loads (spec §6.17). */
 const SKELETON_ROWS = 3;
@@ -93,6 +96,16 @@ export function ObjectRow({
 }: ObjectRowProps) {
   const Link = useDesignLink();
   const t = useDesignT();
+  // No menu of one (spec §6.7): a lone item is drawn as a second row action; none, no menu.
+  const actions = menuActions(menu ?? []);
+  const lone = actions.length === 1 && actions[0]?.submenu === undefined ? actions[0] : undefined;
+  const single: RowButton | undefined = lone && {
+    label: lone.label,
+    ...(lone.href !== undefined ? { href: lone.href } : {}),
+    ...(lone.onSelect ? { onSelect: lone.onSelect } : {}),
+    ...(lone.danger ? { danger: true } : {}),
+  };
+  const slots: (RowButton | undefined)[] = [action, single];
   return (
     <li className="cb-object-row">
       <span className="cb-object-mark" data-tone={mark.tone ?? "neutral"} aria-hidden="true">
@@ -143,28 +156,32 @@ export function ObjectRow({
         </span>
       ) : null}
       {trailing ? <span className="cb-object-trailing">{trailing}</span> : null}
-      {action ? (
-        action.href !== undefined ? (
+      {slots.map((a, i) =>
+        a === undefined ? null : a.href !== undefined ? (
           <Link
-            href={action.href}
+            // biome-ignore lint/suspicious/noArrayIndexKey: two fixed slots (the action, a lone menu item)
+            key={i}
+            href={a.href}
             className="cb-btn cb-btn-link cb-btn-link-default"
             data-density="dense"
           >
-            <span className="cb-btn-body">{action.label}</span>
+            <span className="cb-btn-body">{a.label}</span>
           </Link>
         ) : (
           <Button
-            variant="default"
+            // biome-ignore lint/suspicious/noArrayIndexKey: two fixed slots (the action, a lone menu item)
+            key={i}
+            variant={a.danger ? "danger" : "default"}
             density="dense"
-            {...(action.onSelect ? { onClick: action.onSelect } : {})}
+            {...(a.onSelect ? { onClick: a.onSelect } : {})}
           >
-            {action.label}
+            {a.label}
           </Button>
-        )
-      ) : null}
-      {menu && menu.length > 0 ? (
+        ),
+      )}
+      {actions.length > 0 && lone === undefined ? (
         <Menu
-          items={menu}
+          items={menu ?? []}
           trigger={
             <IconButton
               label={t("shell.moreActions")}

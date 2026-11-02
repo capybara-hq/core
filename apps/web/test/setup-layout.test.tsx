@@ -74,7 +74,7 @@ describe("setup layout scope", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: "账户: Grant" }));
     expect(await screen.findByRole("menuitem", { name: zh.common.logout })).toBeTruthy();
     // the status bar prompt
-    expect(screen.getByText("Grant@acme:~/setup")).toBeTruthy();
+    expect(screen.getByText("grant@acme:~/setup")).toBeTruthy();
   });
 
   it("not ready on /chat: the same setup home, never a composer", () => {

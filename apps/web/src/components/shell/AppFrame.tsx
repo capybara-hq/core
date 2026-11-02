@@ -176,8 +176,16 @@ export function AppFrame({
   useSessionSync(() => navigateBrowser("/"), openHome);
 
   const session = useMemo<Session>(
-    () => ({ me, reload, switchOrg, switching, refreshPending: pending.refresh, version }),
-    [me, reload, switchOrg, switching, pending.refresh, version],
+    () => ({
+      me,
+      reload,
+      switchOrg,
+      switching,
+      refreshPending: pending.refresh,
+      version,
+      ...(timeZone === "" ? {} : { timeZone }),
+    }),
+    [me, reload, switchOrg, switching, pending.refresh, version, timeZone],
   );
 
   async function onLogout() {

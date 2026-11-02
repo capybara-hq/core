@@ -107,6 +107,26 @@ describe("the conversation page (ConversationPage)", () => {
     expect(nav.textContent).toBe("acme/Echo agent/");
   });
 
+  it("the status bar signs like every page: <login>@<slug>:~/chat/<id>, then version and time zone", async () => {
+    params.conversationId = "9f60c1e6-1111-4222-8333-444455556666";
+    const id = params.conversationId;
+    api(
+      { [`GET /api/v1/orgs/o1/conversations/${id}/events`]: () => json(200, { events: [] }) },
+      id,
+    );
+    const { container } = await renderChatRoute({
+      id,
+      locale: "en",
+      session: { version: "v9.9.9", timeZone: "UTC+8" },
+    });
+    const bar = container.querySelector('[data-part="status-bar"]') as HTMLElement;
+    expect((bar.querySelector('[data-part="status-bar-context"]') as HTMLElement).textContent).toBe(
+      "grant@acme:~/chat/9f60c1e6",
+    );
+    expect(bar.textContent).toMatch(/v9\.9\.9.*UTC\+8/);
+    params.conversationId = "c1";
+  });
+
   it("the composer is a sibling of the scrolling thread, not inside it", async () => {
     api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }) });
     const { container } = await renderChat("en");
@@ -853,6 +873,21 @@ describe("a new conversation (/chat)", () => {
       agentId: "ag2",
       message: { text: "start" },
     });
+  });
+
+  it("the new conversation's status bar reads <login>@<slug>:~/chat with the time zone", async () => {
+    resetNavigation("/chat");
+    expectNoFirstPaintFetch();
+    const { container } = await renderRoute(
+      () => NewChatPage({ searchParams: Promise.resolve({}) }),
+      NEW_CHAT,
+      { session: { timeZone: "UTC+8" } },
+    );
+    const bar = container.querySelector('[data-part="status-bar"]') as HTMLElement;
+    expect((bar.querySelector('[data-part="status-bar-context"]') as HTMLElement).textContent).toBe(
+      "grant@acme:~/chat",
+    );
+    expect(bar.textContent).toContain("UTC+8");
   });
 
   it("without ?agent= the agent most recently talked to is picked, and can be changed", async () => {

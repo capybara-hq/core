@@ -412,7 +412,6 @@
     "title": "Agents",
     "new": "New agent",
     "empty": "No agents yet.",
-    "startChat": "Start chat",
     "starting": "Creating conversation…",
     "noOrg": "No current organization selected",
     "backHome": "Back to workspace",
@@ -2222,8 +2221,7 @@
         "enterpriseAdmin": "Make enterprise admin",
         "submit": "Create",
         "created": "Created account {name}"
-      },
-      "lastAdmin": "The only enterprise admin: cannot be revoked or disabled."
+      }
     },
     "orgs": {
       "title": "Organizations",
@@ -2505,7 +2503,6 @@
       "calloutFix": "Fix now",
       "configure": "Configure",
       "settings": "Settings",
-      "details": "Details",
       "upgrade": "Upgrade",
       "meta": {
         "points": "{n, plural, one {# extension point} other {# extension points}}",
@@ -2671,8 +2668,6 @@
       "actions": {
         "import": "Import",
         "entries": "Browse marketplaces",
-        "more": "More",
-        "marketplaces": "Marketplaces",
         "requests": "Deployment requests"
       },
       "detail": {

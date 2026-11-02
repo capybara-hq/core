@@ -262,13 +262,15 @@ export function useExtensions(
 }
 
 /**
- * The status bar prompt (web order §2.3): `<login>@<org-slug>:<path>`, the path `~` + the
- * pathname in the workspace and the pathname as-is under `/admin`; without a current org there
- * is no `@<slug>`.
+ * The status bar prompt (web order §2.3, spec §4.4): `<login>@<org-slug>:<path>`, the path `~` +
+ * the pathname in the workspace and the pathname as-is under `/admin`; without a current org there
+ * is no `@<slug>`. The login is the account's name in lowercase, spaces joined by hyphens (`/me`
+ * carries no login name, and an SSO account may have none).
  */
 export function statusPrompt(login: string, slug: string | null, pathname: string): string {
   const path = under(pathname, "/admin") ? pathname : `~${pathname === "/" ? "" : pathname}`;
-  return `${login}${slug === null ? "" : `@${slug}`}:${path}`;
+  const user = login.trim().toLowerCase().replace(/\s+/g, "-");
+  return `${user}${slug === null ? "" : `@${slug}`}:${path}`;
 }
 
 const ADMIN_ICONS: Record<AdminPageId, IconName> = {

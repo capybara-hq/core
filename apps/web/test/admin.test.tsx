@@ -163,7 +163,7 @@ describe("/admin/accounts（ListPage）", () => {
     expect(calls.filter((c) => c.method !== "GET")).toEqual([]);
   });
 
-  it("the only active enterprise admin of the full list: no 撤销 and no 停用 in its menu", async () => {
+  it("the only active enterprise admin of the full list: no 撤销, no 停用, so no row menu at all", async () => {
     stubApi({
       "GET /api/v1/admin/accounts": () =>
         json(200, {
@@ -184,11 +184,10 @@ describe("/admin/accounts（ListPage）", () => {
     const a = zh.admin.accounts;
     const table = await screen.findByRole("table", { name: a.title });
     const grant = within(table).getByText("Grant").closest("tr") as HTMLElement;
-    await userEvent.setup().click(within(grant).getByRole("button", { name: ROW_ACTIONS.zh }));
-    const menu = await screen.findByRole("menu");
-    expect(within(menu).queryByRole("menuitem", { name: a.menu.revoke })).toBeNull();
-    expect(within(menu).queryByRole("menuitem", { name: a.menu.disable })).toBeNull();
-    expect(within(menu).getByText(a.lastAdmin)).toBeTruthy();
+    // a menu holding only an explanation is not a menu: the row has no ⋯
+    expect(within(grant).queryByRole("button", { name: ROW_ACTIONS.zh })).toBeNull();
+    const old = within(table).getByText("Old").closest("tr") as HTMLElement;
+    expect(within(old).getByRole("button", { name: ROW_ACTIONS.zh })).toBeTruthy();
   });
 
   it("撤销最后一个企业管理员：显示 account.last_enterprise_admin 的文案，对话框保持打开", async () => {

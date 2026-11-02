@@ -47,12 +47,12 @@ export default function AdminDirectory({
     ...(all.length > 0 ? { search: { label: t("search"), value: q, onChange: setQ } } : {}),
     actions: [
       { label: t("actions.import"), variant: "primary" as const, href: "/admin/catalog/import" },
+      // Browsing the marketplaces is one link; their sources are the sidebar's 市场 (no menu of
+      // two ways to one page, spec §6.7).
       {
-        label: t("actions.more"),
-        menu: [
-          { label: t("actions.entries"), href: "/admin/marketplaces/entries" },
-          { label: t("actions.marketplaces"), href: "/admin/marketplaces" },
-        ],
+        label: t("actions.entries"),
+        variant: "default" as const,
+        href: "/admin/marketplaces/entries",
       },
     ],
   };

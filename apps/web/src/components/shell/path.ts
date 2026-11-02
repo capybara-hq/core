@@ -1,6 +1,7 @@
 "use client";
 
 import { useContext } from "react";
+import { usePathname } from "../../i18n/navigation";
 import { SessionContext } from "./session";
 
 /** One segment of the page head's path line (design `PageHeaderProps.path`). */
@@ -36,4 +37,31 @@ export function usePagePath(scope: PathScope, ...rest: PathSegment[]): PathSegme
   const me = useContext(SessionContext)?.me;
   const slug = me?.memberships.find((m) => m.orgId === me.currentOrgId)?.slug;
   return buildPagePath(scope, slug, rest);
+}
+
+/** A UUID segment: shown by its first 8 characters. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The page path of the current route (spec §2.4), for pages that have no head of their own (the
+ * error and not-found pages): `<slug> / trajectories / <id>` in the workspace, `/admin / accounts`
+ * in the admin console. Every segment but the last links to its route; UUIDs read as
+ * their first 8 characters, as the conversation's status bar shows them.
+ */
+export function useRoutePath(): PathSegment[] {
+  const pathname = usePathname();
+  const parts = pathname.split("/").filter((p) => p !== "");
+  const admin = parts[0] === "admin";
+  const rest = (admin ? parts.slice(1) : parts).map((raw, i, all): PathSegment => {
+    let label = raw;
+    try {
+      label = decodeURIComponent(raw);
+    } catch {
+      // a malformed escape stays as it came
+    }
+    if (UUID.test(label)) label = label.slice(0, 8);
+    const href = `${admin ? "/admin" : ""}/${all.slice(0, i + 1).join("/")}`;
+    return i < all.length - 1 ? { label, href } : { label };
+  });
+  return usePagePath(admin ? "admin" : "org", ...rest);
 }

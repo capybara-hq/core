@@ -1,6 +1,7 @@
 import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import en from "../messages/en.json";
 import { formatRightHash, parseRightHash } from "../src/lib/right-area";
 import type { UiView } from "../src/lib/ui";
 import { type Call, json, stubApi } from "./support/api";
@@ -152,6 +153,50 @@ describe("the right area", () => {
     );
     expect(props.getAttribute("aria-pressed")).toBe("false");
     expect(window.location.hash).toBe("#panel=todo/tasks-panel");
+  });
+
+  it("each title-bar toggle opens the panel its name says; nothing is listed twice", async () => {
+    api();
+    await renderChatRoute();
+    await screen.findByText("in c1");
+    const user = userEvent.setup();
+    const bar = document.querySelector('[data-part="title-bar"]') as HTMLElement;
+    const toggles = within(bar)
+      .getAllByRole("button")
+      .filter((b) => b.getAttribute("data-part") === "title-bar-button");
+    // Properties, Files and the extension's panel; all fit, so there is no More
+    expect(toggles.map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Properties",
+      en.chat.files,
+      "Tasks",
+    ]);
+    const expected: Record<string, { hash: string; panel: string }> = {
+      Properties: { hash: "#properties", panel: "Properties" },
+      [en.chat.files]: { hash: "#file=f1", panel: "out.txt" },
+      Tasks: { hash: "#panel=todo/tasks-panel", panel: "Tasks" },
+    };
+    for (const [name, want] of Object.entries(expected)) {
+      const button = within(bar).getByRole("button", { name });
+      if (button.getAttribute("aria-pressed") === "true") await user.click(button);
+      await user.click(within(bar).getByRole("button", { name }));
+      expect(window.location.hash).toBe(want.hash);
+      expect(await screen.findByRole("complementary", { name: want.panel })).toBeTruthy();
+      expect(within(bar).getByRole("button", { name }).getAttribute("aria-pressed")).toBe("true");
+    }
+  });
+
+  it("without files there is no Files toggle (it would open something else)", async () => {
+    api("c1", {
+      [`GET ${conv("c1")}/files`]: () => json(200, { files: [], next: null }),
+      [`GET ${UI}/contributions`]: () => json(200, { items: [] }),
+    });
+    await renderChatRoute();
+    await screen.findByText("in c1");
+    const bar = document.querySelector('[data-part="title-bar"]') as HTMLElement;
+    expect(within(bar).queryByRole("button", { name: en.chat.files })).toBeNull();
+    expect(within(bar).queryByRole("button", { name: "More" })).toBeNull();
+    expect(bar.querySelector('[data-part="title-bar-separator"]')).toBeNull();
+    expect(within(bar).getByRole("button", { name: "Properties" })).toBeTruthy();
   });
 
   it("a section item with an open target opens the panel with the item", async () => {

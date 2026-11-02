@@ -87,6 +87,8 @@
   display: flex;
   flex: 0 1 auto;
   align-items: center;
+  /* The page head's spacing: space.2 on both sides of every "/" (spec §6.16.1). */
+  gap: var(--cb-space-2);
   min-width: 0;
   color: var(--cb-faint);
   font-family: var(--cb-font);

@@ -412,7 +412,6 @@
     "title": "Agents",
     "new": "新建 agent",
     "empty": "暂无 agent。",
-    "startChat": "开始对话",
     "starting": "正在创建对话…",
     "noOrg": "还没有选择当前组织",
     "backHome": "返回工作台",
@@ -2222,8 +2221,7 @@
         "enterpriseAdmin": "设为企业管理员",
         "submit": "创建",
         "created": "已创建账号「{name}」"
-      },
-      "lastAdmin": "唯一的企业管理员，不能撤销或停用。"
+      }
     },
     "orgs": {
       "title": "组织",
@@ -2505,7 +2503,6 @@
       "calloutFix": "去处理",
       "configure": "配置",
       "settings": "设置",
-      "details": "查看详情",
       "upgrade": "升级",
       "meta": {
         "points": "{n} 个扩展点",
@@ -2671,8 +2668,6 @@
       "actions": {
         "import": "导入",
         "entries": "浏览市场",
-        "more": "更多",
-        "marketplaces": "市场",
         "requests": "部署申请"
       },
       "detail": {

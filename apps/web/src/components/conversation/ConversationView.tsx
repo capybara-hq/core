@@ -32,6 +32,7 @@ import {
 import { useToolInfo } from "../../lib/tool-info";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { FormError } from "../form-error";
+import { statusPrompt } from "../shell/nav";
 import { usePagePath } from "../shell/path";
 import { useSession } from "../shell/session";
 import { ComposerBar, type ComposerMessage, newClientMessageId } from "./ComposerBar";
@@ -41,11 +42,17 @@ import { type SendResult, useConversation } from "./useConversation";
 import { QueueList, useQueue } from "./useQueue";
 import { useSelection } from "./useSelection";
 
-/** "user@org" for the status bar's context path. */
-export function useWho(): string {
-  const { me } = useSession();
-  const org = me.memberships.find((m) => m.orgId === me.currentOrgId);
-  return `${me.account.displayName}${org ? `@${org.name}` : ""}`;
+/**
+ * The conversation status bar's prompt and time zone, signed like every page's
+ * (`<login>@<slug>:~/chat/<id>`, spec §4.4): `path` is the page's path.
+ */
+export function useStatusSignature(path: string): { context: string; timeZone?: string } {
+  const { me, timeZone } = useSession();
+  const slug = me.memberships.find((m) => m.orgId === me.currentOrgId)?.slug ?? null;
+  return {
+    context: statusPrompt(me.account.displayName, slug, path),
+    ...(timeZone !== undefined ? { timeZone } : {}),
+  };
 }
 
 /**
@@ -117,7 +124,7 @@ export function useConversationPage(
   const session = useSession();
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const who = useWho();
+  const signature = useStatusSignature(`/chat/${conversationId.slice(0, 8)}`);
   const conv = useConversation(orgId, conversationId, {
     conversation: initial.conversation,
     events: initial.events,
@@ -330,7 +337,7 @@ export function useConversationPage(
       </Stack>
     ),
     status: {
-      context: `${who}:/chat/${conversationId.slice(0, 8)}`,
+      ...signature,
       ...(stats.turns > 0
         ? {
             stats: (

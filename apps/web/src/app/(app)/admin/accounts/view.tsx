@@ -119,14 +119,14 @@ export default function AdminAccounts({ initial }: { initial: AdminAccountsPage 
           rowMenu={(a) => {
             // The kernel refuses to revoke or disable the last active enterprise admin
             // (account.last_enterprise_admin): with the whole list loaded the page knows it and
-            // offers neither, saying why; a partial list leaves it to the kernel's refusal.
+            // offers neither, so the row has no menu; a partial list leaves it to the kernel.
             const activeAdmins = rows.filter((r) => r.isEnterpriseAdmin && r.status === "active");
             const last =
               next === null &&
               a.isEnterpriseAdmin &&
               a.status === "active" &&
               activeAdmins.length <= 1;
-            if (last) return [{ label: t("lastAdmin"), disabled: true, onSelect: () => {} }];
+            if (last) return [];
             return [
               a.isEnterpriseAdmin
                 ? {

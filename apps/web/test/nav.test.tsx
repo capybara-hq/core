@@ -185,16 +185,21 @@ describe("activeNavOf", () => {
 
 describe("statusPrompt", () => {
   it.each([
-    ["/", "Grant@acme:~"],
-    ["/agents/new", "Grant@acme:~/agents/new"],
-    ["/admin", "Grant@acme:/admin"],
-    ["/admin/accounts", "Grant@acme:/admin/accounts"],
+    ["/", "grant@acme:~"],
+    ["/agents/new", "grant@acme:~/agents/new"],
+    ["/chat/9f60c1e6", "grant@acme:~/chat/9f60c1e6"],
+    ["/admin", "grant@acme:/admin"],
+    ["/admin/accounts", "grant@acme:/admin/accounts"],
   ])("%s → %s", (path, prompt) => {
     expect(statusPrompt("Grant", "acme", path)).toBe(prompt);
   });
 
   it("without a current org there is no @<slug>", () => {
-    expect(statusPrompt("Grant", null, "/admin")).toBe("Grant:/admin");
+    expect(statusPrompt("Grant", null, "/admin")).toBe("grant:/admin");
+  });
+
+  it("the login is lowercase, its spaces joined by hyphens", () => {
+    expect(statusPrompt(" Grant  Wu ", "acme", "/")).toBe("grant-wu@acme:~");
   });
 });
 
@@ -211,14 +216,14 @@ describe("AppFrame contexts", () => {
     expect(market.getAttribute("aria-current")).toBe("page");
     expect(screen.getByRole("link", { name: /~\/acme/ }).getAttribute("href")).toBe("/");
     expect(screen.queryByRole("region", { name: "会话" })).toBeNull();
-    expect(within(screen.getByRole("contentinfo")).getByText("Grant@acme:/admin/marketplaces"));
+    expect(within(screen.getByRole("contentinfo")).getByText("grant@acme:/admin/marketplaces"));
   });
 
   it("the workspace status bar prompt is <login>@<slug>:~<path>", async () => {
     resetNavigation("/agents/new");
     renderFrame();
     expect(screen.getByText("page body")).toBeTruthy();
-    expect(within(screen.getByRole("contentinfo")).getByText("Grant@acme:~/agents/new"));
+    expect(within(screen.getByRole("contentinfo")).getByText("grant@acme:~/agents/new"));
     // the old footer item 设置 is gone; 组织设置 is in the 更多 flyout
     const nav = screen.getByRole("navigation", { name: "主导航" });
     expect(within(nav).queryByRole("link", { name: "设置" })).toBeNull();

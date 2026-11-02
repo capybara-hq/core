@@ -55,7 +55,7 @@ function writeWidth(n: number) {
 }
 
 export type ConversationStatus = {
-  /** `user@org:/chat/<id>`. */
+  /** `<login>@<org slug>:~/chat/<id>` (spec §4.4). */
   context: string;
   /**
    * "第 N 轮 · 已用 <elapsed>"; none on a new conversation. A node, so a page can tick the elapsed
@@ -65,6 +65,8 @@ export type ConversationStatus = {
   /** Run status and "上下文 N%", before the version; none on a new conversation. */
   right?: string[];
   version: string;
+  /** The viewer's time zone (`UTC+8`), after the version, as on every page (spec §4.4). */
+  timeZone?: string;
 };
 
 export type ConversationPageProps = {
@@ -241,6 +243,7 @@ export function ConversationPage({
         <StatusBar
           context={status.context}
           version={status.version}
+          {...(status.timeZone !== undefined ? { timeZone: status.timeZone } : {})}
           pageStatus={status.stats}
           system={status.right}
           announceFirst={(status.right?.length ?? 0) > 0}

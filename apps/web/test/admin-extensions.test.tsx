@@ -241,6 +241,27 @@ describe("/admin/extensions (ListPage, object rows)", () => {
     },
   );
 
+  it("row actions: no 详情 (the name and the action open it); 升级 alone is a button, no menu of one", async () => {
+    const p = msgs.zh.admin.extensions;
+    stubApi({
+      "GET /api/v1/admin/extensions": () =>
+        json(200, { extensions: [plugin(), S3], drainSeconds: 30 }),
+    });
+    await renderRoute(() => AdminExtensionsPage(), lastStubRoutes(), { locale: "zh" });
+    const list = await screen.findByRole("list", { name: p.title });
+    const row = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
+    expect(within(list).queryByRole("button", { name: "更多操作" })).toBeNull();
+    expect(within(list).queryByText("查看详情")).toBeNull();
+    expect(within(row("demo")).getByRole("link", { name: p.upgrade }).getAttribute("href")).toBe(
+      "/admin/extensions/install?upgrade=demo",
+    );
+    expect(
+      within(row("object-store-s3"))
+        .getAllByRole("link")
+        .map((l) => l.textContent),
+    ).toEqual(["object-store-s3", p.configure, p.upgrade]);
+  });
+
   it("nothing needs attention: no callout, no tab that equals All", async () => {
     stubApi({
       "GET /api/v1/admin/extensions": () =>

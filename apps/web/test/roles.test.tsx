@@ -438,18 +438,27 @@ describe("agents: edit, read-only and 更换负责人", () => {
 
   for (const role of ROLES) {
     const admin = role === "admin" || role === "owner";
-    it(`agent row menu · ${role}: 更换负责人 ${admin ? "shown" : "hidden"}`, async () => {
+    it(`agent row menu · ${role}: 更换负责人 ${admin ? "in a menu" : "hidden, no menu of one"}`, async () => {
       routes = { [`GET ${O}/agents`]: { agents: [AGENT("ag1", "a1")] } };
       resetNavigation("/agents");
       await renderRoute(() => AgentsPage(), served(), { locale: "zh", me: meAs(role) });
       await screen.findByText("Agent ag1");
-      await userEvent.setup().click(screen.getByRole("button", { name: "更多操作" }));
-      const menu = await screen.findByRole("menu");
-      expect(
-        within(menu).queryByRole("menuitem", { name: zh.agents.reassign.action }) !== null,
-      ).toBe(admin);
-      // a guest who owns the agent cannot edit it either
-      expect(within(menu).queryByRole("menuitem", { name: zh.agents.edit }) !== null).toBe(
+      // 对话 is the row's action; the menu never repeats it (no 开始对话)
+      expect(screen.getAllByRole("button", { name: zh.agents.chat })).toHaveLength(1);
+      expect(screen.queryByText("开始对话")).toBeNull();
+      if (admin) {
+        await userEvent.setup().click(screen.getByRole("button", { name: "更多操作" }));
+        const menu = await screen.findByRole("menu");
+        expect(
+          within(menu).getByRole("menuitem", { name: zh.agents.reassign.action }),
+        ).toBeTruthy();
+        expect(within(menu).getByRole("menuitem", { name: zh.agents.edit })).toBeTruthy();
+        expect(within(menu).queryByRole("menuitem", { name: "开始对话" })).toBeNull();
+        return;
+      }
+      // No menu of one: the member owner's only other action is a button; a guest has none
+      expect(screen.queryByRole("button", { name: "更多操作" })).toBeNull();
+      expect(screen.queryByRole("button", { name: zh.agents.edit }) !== null).toBe(
         role !== "guest",
       );
     });

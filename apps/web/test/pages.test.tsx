@@ -10,6 +10,7 @@ import NotFound from "../src/app/(app)/not-found";
 import HomePage from "../src/app/(app)/page";
 import LoginPage from "../src/app/(auth)/login/page";
 import SetupPage from "../src/app/(auth)/setup/page";
+import { ErrorFrame } from "../src/components/ErrorFrame";
 import { activeNavOf } from "../src/components/shell/nav";
 import { navigateBrowser } from "../src/lib/browser";
 import type { Me } from "../src/lib/session";
@@ -386,6 +387,26 @@ describe("(app) 页面模板", () => {
     expect(template("StatusPage")?.getAttribute("data-kind")).toBe("404");
     expect(screen.getByText(zh.notFound.description)).toBeTruthy();
   });
+
+  it("not-found keeps the page's path in the head, not ~", () => {
+    resetNavigation("/trajectories/9f60c1e6-1111-4222-8333-444455556666");
+    renderPage(<NotFound />, { locale: "zh" });
+    const nav = screen.getByRole("navigation", { name: "路径" });
+    expect(nav.textContent).toBe("acme/trajectories/9f60c1e6");
+    expect(within(nav).getByRole("link", { name: "trajectories" }).getAttribute("href")).toBe(
+      "/trajectories",
+    );
+  });
+
+  it("the error page keeps the page's path in the head; under /admin it starts with /admin", () => {
+    resetNavigation("/trajectories");
+    const { unmount } = renderPage(<ErrorFrame reset={() => {}} />, { locale: "zh" });
+    expect(screen.getByRole("navigation", { name: "路径" }).textContent).toBe("acme/trajectories");
+    unmount();
+    resetNavigation("/admin/accounts");
+    renderPage(<ErrorFrame reset={() => {}} />, { locale: "zh" });
+    expect(screen.getByRole("navigation", { name: "路径" }).textContent).toBe("/admin/accounts");
+  });
 });
 
 describe("(auth) 页面模板", () => {
@@ -492,7 +513,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
       within(nav).getByRole("link", { name: zh.nav.agents }).getAttribute("aria-current"),
     ).toBe("page");
     const status = screen.getByRole("contentinfo");
-    expect(within(status).getByText("Grant@acme:~/agents/new")).toBeTruthy();
+    expect(within(status).getByText("grant@acme:~/agents/new")).toBeTruthy();
     expect(within(status).getByText("v9.9.9")).toBeTruthy();
     expect(status.textContent).not.toContain(">");
   });

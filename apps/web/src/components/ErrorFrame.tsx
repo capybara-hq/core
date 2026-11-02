@@ -4,6 +4,7 @@ import { Button, StatusPage } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useTransition } from "react";
 import { useRouter } from "../i18n/navigation";
+import { useRoutePath } from "./shell/path";
 
 /** The automatic retry: once, 3 s after the error, and not again within a minute. */
 const AUTO_RETRY_MS = 3_000;
@@ -24,6 +25,8 @@ export function ErrorFrame({ reset }: { reset(): void }) {
   const t = useTranslations("errors.page");
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  // The page's own path (`<slug> / trajectories`), not `~`: the head says where the error is.
+  const path = useRoutePath();
   const retry = useCallback(
     () =>
       startTransition(() => {
@@ -42,7 +45,7 @@ export function ErrorFrame({ reset }: { reset(): void }) {
   }, [retry]);
   return (
     <StatusPage
-      header={{ path: [{ label: "~" }], title: t("title") }}
+      header={{ path, title: t("title") }}
       kind="maintenance"
       title={t("title")}
       description={t("description")}

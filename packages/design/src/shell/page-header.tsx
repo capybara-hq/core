@@ -4,7 +4,7 @@ import type { MetricProps } from "../display/index";
 import { Tabs } from "../display/tabs";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
-import { Menu, type MenuItem } from "../overlays/index";
+import { Menu, type MenuItem, menuActions } from "../overlays/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { useHydrated, useMediaQuery } from "./use-media-query";
 
@@ -12,7 +12,8 @@ type HeaderButton = {
   label: string;
   /** A leading icon (such as `plus` on a create action). */
   icon?: IconName;
-  variant: "primary" | "secondary" | "default";
+  /** `danger` only for a menu's lone dangerous item drawn directly (spec §6.7). */
+  variant: "primary" | "secondary" | "default" | "danger";
   shortcut?: string;
 };
 
@@ -84,10 +85,21 @@ export function PageHeader(p: PageHeaderProps) {
   const tabItems = p.tabs ?? [];
   // The primary action is rightmost (spec §4.2), whatever order the page gives.
   const isPrimary = (a: HeaderAction) => "variant" in a && a.variant === "primary";
-  const actions = [
-    ...(p.actions ?? []).filter((a) => !isPrimary(a)),
-    ...(p.actions ?? []).filter(isPrimary),
-  ];
+  // No menu of one (spec §6.7): a menu action with one item is that item, with none it is dropped.
+  const given = (p.actions ?? []).flatMap((a): HeaderAction[] => {
+    if (!("menu" in a)) return [a];
+    const items = menuActions(a.menu);
+    const only = items.length === 1 ? items[0] : undefined;
+    if (items.length === 0) return [];
+    if (only === undefined || only.submenu !== undefined) return [a];
+    const variant = only.danger ? ("danger" as const) : ("default" as const);
+    return [
+      only.href !== undefined
+        ? { label: only.label, variant: "default", href: only.href }
+        : { label: only.label, variant, onSelect: () => only.onSelect?.() },
+    ];
+  });
+  const actions = [...given.filter((a) => !isPrimary(a)), ...given.filter(isPrimary)];
   const folded: MenuItem[] = [];
   for (const a of actions) {
     if (isPrimary(a)) continue;
@@ -95,8 +107,9 @@ export function PageHeader(p: PageHeaderProps) {
     else if (a.href !== undefined) folded.push({ label: a.label, href: a.href });
     else folded.push({ label: a.label, onSelect: () => a.onSelect?.() });
   }
+  // One action besides the primary stays a button below 640 too.
   const more: HeaderAction | null =
-    folded.length > 0 ? { label: t("shell.moreActions"), menu: folded } : null;
+    folded.length > 1 ? { label: t("shell.moreActions"), menu: folded } : null;
   const rest = actions.filter((a) => !isPrimary(a));
   const primaries = actions.filter(isPrimary);
   // Before hydration both the inline actions and the fold menu are drawn and CSS media queries
@@ -144,23 +157,25 @@ export function PageHeader(p: PageHeaderProps) {
       </Button>
     );
   };
-  const drawn: ReactNode[] = pre
-    ? [
-        ...rest.map((a) => (
-          <span key={`inline-${a.label}`} className="cb-pageheader-fold" data-fold="inline">
-            {renderAction(a)}
-          </span>
-        )),
-        more ? (
-          <span key="fold-menu" className="cb-pageheader-fold" data-fold="menu">
-            {renderAction(more)}
-          </span>
-        ) : null,
-        ...primaries.map(renderAction),
-      ]
-    : narrow
-      ? [more ? renderAction(more) : null, ...primaries.map(renderAction)]
-      : actions.map(renderAction);
+  const drawn: ReactNode[] = !more
+    ? actions.map(renderAction)
+    : pre
+      ? [
+          ...rest.map((a) => (
+            <span key={`inline-${a.label}`} className="cb-pageheader-fold" data-fold="inline">
+              {renderAction(a)}
+            </span>
+          )),
+          more ? (
+            <span key="fold-menu" className="cb-pageheader-fold" data-fold="menu">
+              {renderAction(more)}
+            </span>
+          ) : null,
+          ...primaries.map(renderAction),
+        ]
+      : narrow
+        ? [more ? renderAction(more) : null, ...primaries.map(renderAction)]
+        : actions.map(renderAction);
   return (
     <header className="cb-pageheader" data-part="page-header">
       {segments.length > 0 ? (
@@ -214,7 +229,7 @@ export function PageHeader(p: PageHeaderProps) {
           ) : null}
         </div>
         {actions.length > 0 ? (
-          <div className="cb-pageheader-actions" data-responsive={pre ? "true" : undefined}>
+          <div className="cb-pageheader-actions" data-responsive={pre && more ? "true" : undefined}>
             {drawn}
           </div>
         ) : null}
