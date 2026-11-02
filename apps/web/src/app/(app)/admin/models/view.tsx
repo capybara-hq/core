@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Badge,
   Button,
   type Column,
   DataTable,
@@ -16,7 +15,7 @@ import {
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { FormError } from "../../../../components/form-error";
-import { PurposeEditor } from "../../../../components/PurposeEditor";
+import { usePurposeDrafts } from "../../../../components/PurposeEditor";
 import { usePagePath } from "../../../../components/shell/path";
 import {
   type AdminModelInfo,
@@ -53,8 +52,16 @@ export default function AdminModelsView({ initial }: { initial: AdminModelsData 
   const okProviders = data.providers.filter((p) => p.status === "ok");
   const evalView = data.purposes.find((p) => p.purpose === EVAL_PURPOSE);
   const setPrices = (next: PriceTable) => set({ ...data, ...next });
+  // A functional update: the ActionRow saves several purposes at once
   const replacePurpose = (v: PurposeView) =>
-    set({ ...data, purposes: data.purposes.map((p) => (p.purpose === v.purpose ? v : p)) });
+    set((d) => ({ ...d, purposes: d.purposes.map((p) => (p.purpose === v.purpose ? v : p)) }));
+  const { editor, actionRow } = usePurposeDrafts({
+    purposes: data.purposes,
+    providers: okProviders,
+    scope: "deployment",
+    save: (purpose, target) => putAdminPurpose(purpose, target).then((r) => r.purpose),
+    onSaved: replacePurpose,
+  });
   const body = (
     <>
       <FormSection
@@ -78,22 +85,16 @@ export default function AdminModelsView({ initial }: { initial: AdminModelsData 
         {evalView !== undefined && evalView.default === null ? (
           <Text tone="warn">{t("evalUnmapped")}</Text>
         ) : null}
-        {data.purposes.map((v) => (
-          <PurposeEditor
-            key={v.purpose}
-            view={v}
-            providers={okProviders}
-            scope="deployment"
-            save={(target) => putAdminPurpose(v.purpose, target).then((r) => r.purpose)}
-            onSaved={replacePurpose}
-          />
-        ))}
+        {data.purposes.map(editor)}
       </FormSection>
     </>
   );
 
   return (
-    <ListPage header={{ path: [...scope, { label: "models" }], title: t("admin.title") }}>
+    <ListPage
+      header={{ path: [...scope, { label: "models" }], title: t("admin.title") }}
+      {...(actionRow !== undefined ? { actionRow } : {})}
+    >
       {body}
     </ListPage>
   );
@@ -133,6 +134,8 @@ function ProviderModels({
     {
       key: "model",
       header: t("admin.columns.model"),
+      // A minimum for the names (「deepseek/deepseek-chat」 is not cut to 「deepseek/dee」)
+      width: 240,
       cell: (m) => (
         <Stack gap={0}>
           <Text>{m.displayName}</Text>
@@ -147,13 +150,12 @@ function ProviderModels({
     {
       key: "capabilities",
       header: t("admin.columns.capabilities"),
-      cell: (m) => (
-        <Stack direction="row" gap={4}>
-          {CAPS.filter((c) => m.capabilities[c] === true).map((c) => (
-            <Badge key={c}>{t(`capability.${c}`)}</Badge>
-          ))}
-        </Stack>
-      ),
+      tone: "muted",
+      // Plain text, not badges: 「工具 · 缓存」
+      cell: (m) =>
+        CAPS.filter((c) => m.capabilities[c] === true)
+          .map((c) => t(`capability.${c}`))
+          .join(" · "),
     },
     {
       key: "context",

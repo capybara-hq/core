@@ -3,13 +3,14 @@
 import {
   Button,
   DangerConfirm,
+  ErrorDetail,
   Field,
   FormSection,
   Input,
   ListPage,
   RadioGroup,
   Stack,
-  Switch,
+  SwitchField,
   Text,
   useToast,
 } from "@capybara-hq/design";
@@ -26,6 +27,7 @@ import {
   addMarketplace,
   type Marketplace,
   type MarketplaceForm,
+  marketplaceErrorKind,
   refreshMarketplace,
   removeMarketplace,
   shortCommit,
@@ -67,21 +69,34 @@ export default function Sources({
   const reload = () => startTransition(() => router.refresh());
   const replace = (next: Marketplace) =>
     set({ ...data, items: data.items.map((s) => (s.id === next.id ? next : s)) });
+  // The head's search narrows the marketplaces shown, by name or address
+  const [q, setQ] = useState("");
+  const needle = q.trim().toLowerCase();
+  const matches = (s: Marketplace) =>
+    needle === "" || s.name.toLowerCase().includes(needle) || s.url.toLowerCase().includes(needle);
   const official = data.items.find((s) => s.builtin);
   const enterprise = data.items.filter((s) => !s.builtin);
+  const shownEnterprise = enterprise.filter(matches);
+  const officialShown = official !== undefined && matches(official);
 
   return (
     <ListPage
       header={{
         path: [...scope, { label: "marketplaces" }],
         title: t("title"),
-        tabs: marketplaceTabs(ta),
+        // One head for both tabs (description, tab counts, search): switching never moves the tabs
+        description: t("description"),
+        tabs: marketplaceTabs(ta, data.items),
         activeTab: "sources",
+        search: { label: t("search"), value: q, onChange: setQ },
       }}
     >
+      {needle !== "" && !officialShown && shownEnterprise.length === 0 && (
+        <Text tone="muted">{t("noMatch")}</Text>
+      )}
       <FormSection id="official" title={t("official")} description={t("officialHint")}>
         {data.offline && <Text tone="warn">{t("offline")}</Text>}
-        {official !== undefined && (
+        {officialShown && (
           <SourceEditor
             key={official.id}
             source={official}
@@ -93,7 +108,7 @@ export default function Sources({
       <FormSection id="enterprise" title={t("enterprise")} description={t("enterpriseHint")}>
         <Stack gap={24}>
           {enterprise.length === 0 && <Text tone="muted">{t("enterpriseEmpty")}</Text>}
-          {enterprise.map((s) => (
+          {shownEnterprise.map((s) => (
             <SourceEditor key={s.id} source={s} onChanged={replace} onRemoved={reload} />
           ))}
           <AddSource onAdded={reload} />
@@ -141,12 +156,21 @@ function SourceStatus({ source }: { source: Marketplace }) {
   );
 }
 
-/** 来源状态的一行文字。 */
+/**
+ * A marketplace's status: OK with the entry count and time, never fetched, or the last refresh
+ * error as one sentence (by its kind) with the kernel's raw text behind the ErrorDetail toggle.
+ */
 function StatusLine({ source }: { source: Marketplace }) {
   const t = useTranslations("catalog.admin.marketplaces");
   const locale = useLocale();
   if (source.lastStatus === "error") {
-    return <Text tone="fail">{t("statusValue.error", { error: source.lastError ?? "" })}</Text>;
+    const raw = source.lastError ?? "";
+    return (
+      <ErrorDetail
+        summary={t(`statusValue.errors.${marketplaceErrorKind(raw)}`)}
+        {...(raw !== "" ? { detail: raw } : {})}
+      />
+    );
   }
   if (source.lastStatus === "never") return <Text tone="muted">{t("statusValue.never")}</Text>;
   return (
@@ -209,10 +233,10 @@ function SourceEditor({
 
   return (
     <Stack gap={8}>
-      <Switch
+      <SwitchField
         checked={source.enabled}
         disabled={source.disabledByConfig || busy !== undefined}
-        label={`${t("enabled")} · ${builtin ? t("official") : source.name}`}
+        label={t("enabledLabel", { name: builtin ? t("official") : source.name })}
         onChange={(enabled) =>
           void run(
             "toggle",
@@ -263,8 +287,9 @@ function SourceEditor({
           />
         </Field>
       )}
-      <Stack direction="row" gap={8} align="center">
-        <Text variant="small">{`${t("status")}:`}</Text>
+      {/* The label above its value, like the fields: a long status never squeezes it */}
+      <Stack gap={4}>
+        <Text variant="small">{t("status")}</Text>
         <SourceStatus source={source} />
       </Stack>
       {error !== undefined && <FormError message={error.message} extra={error.extra} />}

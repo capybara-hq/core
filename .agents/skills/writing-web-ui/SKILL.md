@@ -46,6 +46,8 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
 | Settings | `SettingsPage` with the grouped secondary nav | Org settings, personal settings, deployment settings |
 
 - `ListPage` takes `listLabel` (the list's accessible name), `callout` (a `Callout` between the title row and the tabs) and `empty` (an `EmptyState`, drawn instead of the rows: loading failed, nothing yet, no match). Use these instead of drawing your own notices; an object list is a `ul` (role `list` / `listitem`), not a table.
+- A failure whose cause is raw system text (a kernel message, a network error) is an `ErrorDetail`: one sentence in the reader's language mapped from the error, the raw text behind its 「原始错误」 toggle; never the raw English inline. A button that navigates is a `LinkButton` (a link drawn as the button), never a bare text link among buttons.
+- Model purposes (`components/PurposeEditor`, `usePurposeDrafts`): the cards have no save of their own; the page has one ActionRow that saves every changed purpose.
 - `ObjectRow.action` is the row's most common action (a link when it has `href`), `menu` holds the rest; the menu button is named 更多操作.
 - A header's `path` comes from `usePagePath("org" | "home" | "admin", ...)`; `web-ui-page-path` rejects a page head without it.
 

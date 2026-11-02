@@ -57,6 +57,17 @@ describe("useServerState", () => {
     rerender({ initial: next });
     expect(result.current[0]).toBe(next);
   });
+
+  it("takes an updater, applied to the latest value (several updates in one tick)", () => {
+    const { result } = renderHook(({ initial }) => useServerState(initial), {
+      initialProps: { initial: { n: 1 } },
+    });
+    act(() => {
+      result.current[1]((v) => ({ n: v.n + 1 }));
+      result.current[1]((v) => ({ n: v.n + 1 }));
+    });
+    expect(result.current[0]).toEqual({ n: 3 });
+  });
 });
 
 describe("server page test helpers", () => {

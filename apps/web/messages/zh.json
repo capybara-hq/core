@@ -2135,14 +2135,7 @@
       "unavailable": "{target}（不可用）",
       "params": "参数",
       "save": "保存",
-      "saveLabel": "保存用途 {purpose}",
-      "clear": "清除",
-      "clearLabel": "清除用途 {purpose} 的部署默认",
-      "restore": "恢复默认",
-      "restoreLabel": "用途 {purpose} 恢复部署默认",
-      "saved": "已保存用途 {purpose}。",
-      "cleared": "已清除用途 {purpose} 的部署默认。",
-      "restored": "用途 {purpose} 已恢复部署默认。",
+      "savedAll": "已保存 {n} 个用途。",
       "subagentHint": "按此档位派发的子代理使用它。未设置时，子代理使用派发它的 agent 的模型。"
     }
   },
@@ -2337,8 +2330,8 @@
         "legacy_format": "需要重新打包"
       },
       "replicas": {
-        "consistent": "一致（{n}）",
-        "diverged": "不一致（{n}）",
+        "consistent": "副本一致 {ok}/{n}",
+        "diverged": "副本不一致 {ok}/{n}",
         "none": "无副本上报"
       },
       "detail": {
@@ -2391,7 +2384,7 @@
         "converging": "各副本正在收敛到期望状态，页面会自动刷新。",
         "refresh": "刷新",
         "noReplicas": "还没有副本上报状态。",
-        "requiredNote": "本部署的必需插件，由预装步骤从核心镜像安装：在每个组织中都启用，不能停用或卸载；可以升级，也可以填写部署配置。",
+        "requiredNote": "本部署的必需插件，由预装步骤从 npm 安装（版本与校验和已固定）。在每个组织中都启用，不能停用或卸载；可以升级，也可以填写部署配置。",
         "configNote": "这个扩展由启动配置的 extensions 列表声明：不能在网页上停用、升级或卸载；要改，请修改启动配置。",
         "actions": {
           "enable": "启用",
@@ -2432,7 +2425,7 @@
           "cli": "命令行",
           "auto": "自动批准",
           "web": "网页",
-          "bootstrap": "预装（核心镜像）"
+          "bootstrap": "预装（npm）"
         }
       },
       "wizard": {
@@ -2866,8 +2859,7 @@
       },
       "entries": {
         "title": "浏览市场",
-        "hint": "每个条目是插件的一个版本。要先「引入」才会成为企业目录条目；引入时下载、按市场的完整性校验，审阅后才加入。",
-        "empty": "没有市场条目。先在「市场」里添加或刷新市场。",
+        "empty": "没有市场条目。先在「市场源」里添加或刷新市场。",
         "noResults": "没有符合条件的条目。",
         "truncated": "条目太多，只显示了前一部分；请按市场或关键词缩小范围。",
         "search": "搜索",
@@ -2907,17 +2899,27 @@
       },
       "marketplaces": {
         "title": "市场",
+        "description": "每个条目是插件的一个版本，来自这里的市场源。要先「引入」才会成为企业目录条目；引入时下载、按市场的完整性校验，审阅后才加入。",
+        "search": "搜索市场源",
+        "noMatch": "没有匹配的市场源。",
         "official": "官方市场",
         "officialHint": "地址在部署配置 marketplaces.official.* 里设置（默认是 git 仓库 capybara-hq/plugins），这里只读。",
         "offline": "离线模式：部署配置关闭了官方市场（marketplaces.official.enabled = false），不会拉取它。",
-        "enabled": "启用",
+        "enabledLabel": "启用「{name}」",
         "url": "地址",
         "mirrors": "镜像",
         "status": "状态",
         "statusValue": {
           "ok": "正常（{n} 个条目，{at}）",
-          "error": "出错：{error}",
-          "never": "还没有拉取过"
+          "never": "还没有拉取过",
+          "errors": {
+            "private_address": "市场地址解析到内网或保留地址，已被网络规则拦截。",
+            "dns": "无法解析市场地址的主机名。",
+            "timeout": "连接市场超时。",
+            "http_status": "市场返回了错误状态码。",
+            "invalid": "市场清单的格式不对。",
+            "unknown": "刷新失败。"
+          }
         },
         "refresh": "立即刷新",
         "refreshed": "已刷新 {name}",

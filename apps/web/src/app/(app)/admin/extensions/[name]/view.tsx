@@ -10,6 +10,7 @@ import {
   DetailPage,
   Dialog,
   KeyValue,
+  LinkButton,
   Stack,
   Text,
   useToast,
@@ -22,7 +23,7 @@ import { ExtensionDeploymentConfig } from "../../../../../components/ExtensionDe
 import { FormError } from "../../../../../components/form-error";
 import { PermissionReview } from "../../../../../components/PermissionReview";
 import { usePagePath } from "../../../../../components/shell/path";
-import { Link, useRouter } from "../../../../../i18n/navigation";
+import { useRouter } from "../../../../../i18n/navigation";
 import {
   type AdminExtension,
   approveExtension,
@@ -289,9 +290,12 @@ function Overview({
                 </Button>
               )
             )}
-            <Link href={`/admin/extensions/install?upgrade=${encodeURIComponent(plugin.name)}`}>
+            <LinkButton
+              variant="secondary"
+              href={`/admin/extensions/install?upgrade=${encodeURIComponent(plugin.name)}`}
+            >
               {t("detail.actions.upgrade")}
-            </Link>
+            </LinkButton>
             {desiredState === "disabled" && plugin.removable && (
               <Button variant="danger" disabled={busy} onClick={() => setConfirm("uninstall")}>
                 {t("detail.actions.uninstall")}

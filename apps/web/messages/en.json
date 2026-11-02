@@ -2135,14 +2135,7 @@
       "unavailable": "{target} (unavailable)",
       "params": "Parameters",
       "save": "Save",
-      "saveLabel": "Save purpose {purpose}",
-      "clear": "Clear",
-      "clearLabel": "Clear the deployment default for purpose {purpose}",
-      "restore": "Restore default",
-      "restoreLabel": "Restore the deployment default for purpose {purpose}",
-      "saved": "Saved purpose {purpose}.",
-      "cleared": "Cleared the deployment default for purpose {purpose}.",
-      "restored": "Purpose {purpose} now uses the deployment default.",
+      "savedAll": "{n, plural, one {Saved # purpose.} other {Saved # purposes.}}",
       "subagentHint": "Used by sub-agents dispatched on this tier. When it is not set, they run on the model of the agent that dispatches them."
     }
   },
@@ -2337,8 +2330,8 @@
         "legacy_format": "Repack needed"
       },
       "replicas": {
-        "consistent": "In sync ({n})",
-        "diverged": "Out of sync ({n})",
+        "consistent": "Replicas in sync {ok}/{n}",
+        "diverged": "Replicas out of sync {ok}/{n}",
         "none": "No replica reported"
       },
       "detail": {
@@ -2391,7 +2384,7 @@
         "converging": "Replicas are converging to the desired state; this page refreshes automatically.",
         "refresh": "Refresh",
         "noReplicas": "No replica has reported yet.",
-        "requiredNote": "A required plugin of this deployment, installed by the bootstrap step from the core image: it is enabled in every organization and cannot be disabled or uninstalled. It can be upgraded, and its deployment config filled in.",
+        "requiredNote": "A required plugin of this deployment, installed by the bootstrap step from npm (version and checksum pinned). It is enabled in every organization and cannot be disabled or uninstalled; it can be upgraded and its deployment config filled in.",
         "configNote": "This extension is declared in the startup config's extensions list: it cannot be disabled, upgraded or uninstalled here. Change the startup config instead.",
         "actions": {
           "enable": "Enable",
@@ -2432,7 +2425,7 @@
           "cli": "command line",
           "auto": "auto-approved",
           "web": "web",
-          "bootstrap": "bootstrap (core image)"
+          "bootstrap": "bootstrap (npm)"
         }
       },
       "wizard": {
@@ -2866,8 +2859,7 @@
       },
       "entries": {
         "title": "Browse marketplaces",
-        "hint": "Each entry is one version of a plugin. It becomes a catalog item only after you import it; the package is downloaded, checked against the marketplace's integrity and reviewed before it is added.",
-        "empty": "No marketplace entries. Add or refresh a marketplace under Marketplaces first.",
+        "empty": "No marketplace entries. Add or refresh a marketplace under Sources first.",
         "noResults": "No entries match.",
         "truncated": "There are too many entries and the list is truncated. Narrow it down by marketplace or keyword.",
         "search": "Search",
@@ -2907,17 +2899,27 @@
       },
       "marketplaces": {
         "title": "Marketplaces",
+        "description": "Each entry is one version of a plugin, from the sources set up here. It becomes a catalog item only after you import it; the package is downloaded, checked against the marketplace's integrity and reviewed before it is added.",
+        "search": "Search sources",
+        "noMatch": "No matching sources.",
         "official": "Official marketplace",
         "officialHint": "The address is set in the deployment config marketplaces.official.* (by default the capybara-hq/plugins git repository) and is read-only here.",
         "offline": "Offline mode: the deployment config turns the official marketplace off (marketplaces.official.enabled = false), so it is never fetched.",
-        "enabled": "Enabled",
+        "enabledLabel": "Enable {name}",
         "url": "URL",
         "mirrors": "Mirrors",
         "status": "Status",
         "statusValue": {
           "ok": "OK ({n} entries, {at})",
-          "error": "Error: {error}",
-          "never": "Not fetched yet"
+          "never": "Not fetched yet",
+          "errors": {
+            "private_address": "The marketplace's host resolves to a private or reserved address, so the network rules blocked it.",
+            "dns": "The marketplace's host name cannot be resolved.",
+            "timeout": "The marketplace did not answer in time.",
+            "http_status": "The marketplace answered with an error status.",
+            "invalid": "The marketplace manifest is not valid.",
+            "unknown": "The refresh failed."
+          }
         },
         "refresh": "Refresh now",
         "refreshed": "Refreshed {name}",

@@ -26,5 +26,5 @@ export default async function MarketplaceEntriesPage({
     read(listMarketplaceEntries({ ...(sourceId !== "" && { sourceId }), ...(q !== "" && { q }) })),
     section(listMarketplaces()),
   ]);
-  return <Catalog initial={{ entries, sources: sources?.items ?? [], sourceId, q }} />;
+  return <Catalog initial={{ entries, sources: sources?.items ?? null, sourceId, q }} />;
 }

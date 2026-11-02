@@ -279,20 +279,27 @@ function sendPackage(
 }
 
 /**
- * 副本是否一致：至少一个副本上报，且全部副本的版本与状态相同、没有失败的。`failed` 为出错（失败）的副本。
+ * Whether the replicas agree: at least one reported, and every one has the same version and state
+ * with none failed (`consistent`); `inSync` counts the ones that agree (「副本一致 2/2」,
+ * 「副本不一致 1/2」); `failed` lists the failed replicas.
  */
 export function replicaSummary(p: Pick<AdminExtension, "replicas">): {
   total: number;
+  /** Replicas that agree: not failed, same version and state as the first one that is not. */
+  inSync: number;
   consistent: boolean;
   failed: ExtensionReplica[];
 } {
   const failed = p.replicas.filter((r) => r.state === "failed");
-  const first = p.replicas[0];
-  const consistent =
-    first !== undefined &&
-    failed.length === 0 &&
-    p.replicas.every((r) => r.version === first.version && r.state === first.state);
-  return { total: p.replicas.length, consistent, failed };
+  const first = p.replicas.find((r) => r.state !== "failed");
+  const inSync =
+    first === undefined
+      ? 0
+      : p.replicas.filter(
+          (r) => r.state !== "failed" && r.version === first.version && r.state === first.state,
+        ).length;
+  const total = p.replicas.length;
+  return { total, inSync, consistent: total > 0 && inSync === total, failed };
 }
 
 /** 审阅结果是否含敏感项（敏感分组或迁移警告）：确认安装 / 批准前须勾选「我已了解敏感项」。 */

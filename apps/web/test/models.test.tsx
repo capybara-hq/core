@@ -17,6 +17,10 @@ vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 const msgs = { zh, en } as const;
 const LOCALES = ["zh", "en"] as const;
 const ROW_ACTIONS = { zh: "行操作", en: "Row actions" } as const;
+/** The design ActionRow's count (design i18n `shell.unsaved`). */
+const UNSAVED = { zh: "{n} 处未保存的修改", en: "{n} unsaved changes" } as const;
+/** `models.purpose.savedAll` for one purpose (ICU plural in en). */
+const SAVED_ONE = { zh: "已保存 1 个用途。", en: "Saved 1 purpose." } as const;
 const NOT_ADMIN: Me = { ...ME, account: { ...ME.account, isEnterpriseAdmin: false } };
 const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
 const fill = (s: string, vars: Record<string, string | number>) =>
@@ -116,6 +120,16 @@ function adminRoutes(extra: Record<string, (c: Call) => Response> = {}) {
   });
 }
 
+/** The page's one ActionRow (spec §4.4): one save for every changed purpose. */
+const actionRow = () =>
+  within(
+    (() => {
+      const el = document.querySelector('[data-part="action-row"]');
+      if (!el) throw new Error("no action row");
+      return el as HTMLElement;
+    })(),
+  );
+
 const purposeBox = async (purpose: string) =>
   within(
     await vi.waitFor(() => {
@@ -148,8 +162,14 @@ describe("/admin/models（ListPage）", () => {
     expect(container.querySelector(".cb-settings-nav")).toBeNull();
     const table = await screen.findByRole("table", { name: "alpha" });
     const large = within(table).getByText("Alpha Large").closest("tr") as HTMLElement;
-    expect(within(large).getByText(m.models.capability.vision)).toBeTruthy();
-    expect(within(large).getByText(m.models.capability.reasoning)).toBeTruthy();
+    // Capabilities are one line of text, not badges (「工具 · 图片 · 推理」)
+    const caps = [m.models.capability.tools, m.models.capability.vision];
+    expect(
+      within(large).getByText([...caps, m.models.capability.reasoning].join(" · ")),
+    ).toBeTruthy();
+    // The model column keeps a 240 px minimum so names are not cut to 「deepseek/dee」
+    const head = within(table).getByRole("columnheader", { name: m.models.admin.columns.model });
+    expect(head.style.width).toBe("240px");
     expect(within(large).getByText("200,000")).toBeTruthy();
     expect(within(large).getByText("3")).toBeTruthy();
     expect(within(large).getByText("15")).toBeTruthy();
@@ -275,6 +295,9 @@ describe("/admin/models（ListPage）", () => {
       ).toBeTruthy();
       const ev = await purposeBox("eval");
       expect(ev.queryByText(m.models.purpose.pluginNote)).toBeNull();
+      // No save per purpose: the page has one ActionRow, shown once something changed
+      expect(ev.queryByRole("button")).toBeNull();
+      expect(document.querySelector('[data-part="action-row"]')).toBeNull();
       const user = userEvent.setup();
       await user.selectOptions(
         ev.getByRole("combobox", { name: m.models.purpose.model }),
@@ -283,15 +306,18 @@ describe("/admin/models（ListPage）", () => {
       // 选中模型后出现它的参数（复用 ModelParams）
       const effort = ev.getByRole("radiogroup", { name: locale === "zh" ? "思考深度" : "Effort" });
       await user.click(within(effort).getByRole("radio", { name: m.agents.params.effort.high }));
-      await user.click(
-        ev.getByRole("button", { name: fill(m.models.purpose.saveLabel, { purpose: "eval" }) }),
-      );
+      expect(actionRow().getByText(fill(UNSAVED[locale], { n: 1 }))).toBeTruthy();
+      await user.click(actionRow().getByRole("button", { name: m.models.purpose.save }));
       await vi.waitFor(() =>
         expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
           target: target("alpha-large", { effort: "high" }),
         }),
       );
+      // Only the changed purpose is written
+      expect(calls.filter((c) => c.method === "PUT")).toHaveLength(1);
       await vi.waitFor(() => expect(screen.queryByText(m.models.evalUnmapped)).toBeNull());
+      expect(await screen.findByText(SAVED_ONE[locale])).toBeTruthy();
+      await vi.waitFor(() => expect(document.querySelector('[data-part="action-row"]')).toBeNull());
     },
   );
 
@@ -316,10 +342,10 @@ describe("/admin/models（ListPage）", () => {
     await user.click(
       within(ev.getByRole("radiogroup", { name: "Effort" })).getByRole("radio", { name: "Low" }),
     );
-    await user.click(
-      ev.getByRole("button", { name: fill(en.models.purpose.saveLabel, { purpose: "eval" }) }),
-    );
+    await user.click(actionRow().getByRole("button", { name: en.models.purpose.save }));
     expect(await ev.findByText(`${en.agents.params.invalid}`)).toBeTruthy();
+    // The failed purpose stays changed: the ActionRow keeps it and counts the error
+    expect(actionRow().getByText(fill(UNSAVED.en, { n: 1 }))).toBeTruthy();
   });
 
   it("非企业管理员：没有访问权限，不请求后台接口", async () => {
@@ -392,28 +418,22 @@ describe("/settings/models（组织管理员）", () => {
       const defText = fill(m.models.purpose.deploymentDefault, { target: "alpha / Alpha Small" });
       expect(ev.getByText(defText)).toBeTruthy();
       expect(ev.queryByText(m.models.purpose.overridden)).toBeNull();
-      expect(
-        ev.queryByRole("button", {
-          name: fill(m.models.purpose.restoreLabel, { purpose: "eval" }),
-        }),
-      ).toBeNull();
+      expect(ev.queryByRole("button")).toBeNull();
       const user = userEvent.setup();
       await user.selectOptions(
         ev.getByRole("combobox", { name: m.models.purpose.model }),
         "alpha/alpha-large",
       );
-      await user.click(
-        ev.getByRole("button", { name: fill(m.models.purpose.saveLabel, { purpose: "eval" }) }),
-      );
+      await user.click(actionRow().getByRole("button", { name: m.models.purpose.save }));
       await vi.waitFor(() =>
         expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
           target: target("alpha-large"),
         }),
       );
       expect(await ev.findByText(m.models.purpose.overridden)).toBeTruthy();
-      await user.click(
-        ev.getByRole("button", { name: fill(m.models.purpose.restoreLabel, { purpose: "eval" }) }),
-      );
+      // Restoring the default is choosing 「使用部署默认」 and saving
+      await user.selectOptions(ev.getByRole("combobox", { name: m.models.purpose.model }), "");
+      await user.click(actionRow().getByRole("button", { name: m.models.purpose.save }));
       await vi.waitFor(() =>
         expect(bodyOf(calls.filter((c) => c.method === "PUT")[1])).toEqual({ target: null }),
       );

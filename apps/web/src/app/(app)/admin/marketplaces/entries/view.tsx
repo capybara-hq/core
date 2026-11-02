@@ -49,7 +49,8 @@ export default function Catalog({
 }: {
   initial: {
     entries: { items: MarketplaceEntry[]; truncated?: boolean };
-    sources: Marketplace[];
+    /** null: the marketplaces failed to load (no source tabs, no tab counts). */
+    sources: Marketplace[] | null;
     sourceId: string;
     q: string;
   };
@@ -84,7 +85,7 @@ export default function Catalog({
   const [busy, setBusy] = useState<string>();
   const rows = state.kind === "ready" ? state.data.items : [];
   const truncated = state.kind === "ready" && state.data.truncated === true;
-  const sourceList = initial.sources;
+  const sourceList = initial.sources ?? [];
 
   const doImport = async (e: MarketplaceEntry) => {
     setBusy(keyOf(e));
@@ -225,11 +226,11 @@ export default function Catalog({
           { label: "entries" },
         ],
         title: ta("marketplaces.title"),
-        description: t("hint"),
-        tabs: marketplaceTabs(ta),
+        // One head for both tabs (description, tab counts, search): switching never moves the tabs
+        description: ta("marketplaces.description"),
+        tabs: marketplaceTabs(ta, initial.sources ?? undefined),
         activeTab: "browse",
         search: { label: t("search"), value: q, onChange: setQ },
-        ...(state.kind === "ready" && { count: `${rows.length}${truncated ? "+" : ""}` }),
       }}
       variant="objects"
       listLabel={t("title")}

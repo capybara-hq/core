@@ -17,7 +17,9 @@ import ExtensionsPage from "../src/app/(app)/settings/extensions/page";
 import PluginsPage from "../src/app/(app)/settings/plugins/page";
 import { defaultSlug, slugOf } from "../src/components/CatalogInstallWizard";
 import {
+  MARKETPLACE_ERROR_KINDS,
   MARKETPLACE_SKIP_REASONS,
+  marketplaceErrorKind,
   TRANSLATION_CODE_PLACEHOLDERS,
   TRANSLATION_CODES,
   TRANSLATION_DETAIL_KEYS,
@@ -62,6 +64,8 @@ const renderItem = (opts: RenderOpts = {}) => renderRoute(itemPage, lastStubRout
 const renderInstall = (opts: RenderOpts = {}) => renderRoute(installPage, lastStubRoutes(), opts);
 
 const msgs = { zh, en } as const;
+/** The design ErrorDetail's toggle (design i18n `errorDetail.raw`). */
+const RAW_ERROR = { zh: "原始错误", en: "Raw error" } as const;
 const LOCALES = ["zh", "en"] as const;
 const fill = (s: string, vars: Record<string, string | number>) =>
   s.replace(/\{(\w+)\}/g, (_, k: string) => String(vars[k]));
@@ -875,7 +879,22 @@ describe("/admin/marketplaces (ListPage)", () => {
       expect(official.readOnly).toBe(true);
       const acme = screen.getByDisplayValue(SOURCES.items[1]?.url as string) as HTMLInputElement;
       expect(acme.readOnly).toBe(false);
-      expect(screen.getByText(fill(s.statusValue.error, { error: "HTTP 500" }))).toBeTruthy();
+      // A refresh error is one sentence in the reader's language; the raw text is behind a toggle
+      expect(screen.getByText(s.statusValue.errors.http_status)).toBeTruthy();
+      expect(screen.queryByText("HTTP 500", { exact: false })).toBeNull();
+      const raw = screen.getByRole("button", { name: RAW_ERROR[locale] });
+      await userEvent.setup().click(raw);
+      expect(screen.getByText("HTTP 500")).toBeTruthy();
+      // The status label sits above its value (no 「状态:」 squeezed beside a long line)
+      expect(screen.getAllByText(s.status).length).toBeGreaterThan(0);
+      expect(screen.queryByText(`${s.status}:`)).toBeNull();
+      // Every marketplace's switch is labelled on screen, the official one too
+      const switches = screen.getAllByRole("switch");
+      expect(switches.map((x) => x.getAttribute("aria-label"))).toEqual([
+        fill(s.enabledLabel, { name: s.official }),
+        fill(s.enabledLabel, { name: "Acme" }),
+      ]);
+      expect(screen.getByText(fill(s.enabledLabel, { name: s.official }))).toBeTruthy();
       const refresh = screen.getAllByRole("button", { name: s.refresh });
       // 官方清单被配置关闭：不能刷新
       expect((refresh[0] as HTMLButtonElement).disabled).toBe(true);
@@ -883,6 +902,103 @@ describe("/admin/marketplaces (ListPage)", () => {
       expect(await screen.findByText(fill(s.refreshed, { name: "Acme" }))).toBeTruthy();
     },
   );
+});
+
+describe("marketplaces: the two tabs share one head", () => {
+  const ENTRY = {
+    sourceId: "s2",
+    sourceName: "Acme",
+    name: "cat-a",
+    version: "1.0.0",
+    summary: { en: "Cat A" },
+    minKernel: null,
+    homepage: null,
+    permissions: null,
+    source: { npm: { package: "@acme/cat-a", version: "1.0.0", integrity: "sha512-x" } },
+    compatible: true,
+    importable: true,
+    adopted: null,
+    newerAvailable: false,
+    contentChanged: false,
+  };
+  const head = () => document.querySelector('[data-part="page-header"]') as HTMLElement;
+
+  it.each(LOCALES)(
+    "sources and entries: the same description, tab counts and a search (%s)",
+    async (locale) => {
+      const m = msgs[locale].catalog.admin;
+      stubApi({
+        "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+        "GET /api/v1/admin/marketplaces/entries": () => json(200, { items: [ENTRY] }),
+      });
+      await renderRoute(() => MarketplacesPage(), lastStubRoutes(), { locale });
+      const sourcesHead = head();
+      expect(within(sourcesHead).getByText(m.marketplaces.description)).toBeTruthy();
+      // browse counts the entries of the marketplaces that are listed (the official one is off)
+      const tabs = (el: HTMLElement) =>
+        within(el.querySelector('[data-part="page-header-tabs"]') as HTMLElement)
+          .getAllByRole("link")
+          .map((a) => a.textContent);
+      const counted = [`${m.tabs.browse}3`, `${m.tabs.sources}2`];
+      expect(tabs(sourcesHead)).toEqual(counted);
+      expect(
+        within(sourcesHead).getByRole("searchbox", { name: m.marketplaces.search }),
+      ).toBeTruthy();
+      cleanup();
+
+      resetNavigation("/admin/marketplaces/entries");
+      await renderRoute(entriesPage, lastStubRoutes(), { locale });
+      const entriesHead = head();
+      expect(within(entriesHead).getByText(m.marketplaces.description)).toBeTruthy();
+      expect(tabs(entriesHead)).toEqual(counted);
+      expect(within(entriesHead).getByRole("searchbox", { name: m.entries.search })).toBeTruthy();
+    },
+  );
+
+  it("the sources search filters the marketplaces by name or address", async () => {
+    const m = en.catalog.admin.marketplaces;
+    stubApi({ "GET /api/v1/admin/marketplaces": () => json(200, SOURCES) });
+    await renderRoute(() => MarketplacesPage(), lastStubRoutes());
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("searchbox", { name: m.search }), "acme.com");
+    expect(screen.queryByDisplayValue(SOURCES.items[0]?.url as string)).toBeNull();
+    expect(screen.getByDisplayValue(SOURCES.items[1]?.url as string)).toBeTruthy();
+    await user.clear(screen.getByRole("searchbox", { name: m.search }));
+    await user.type(screen.getByRole("searchbox", { name: m.search }), "nothing-here");
+    expect(screen.getByText(m.noMatch)).toBeTruthy();
+  });
+
+  it.each(LOCALES)("the empty entries list points to the sources tab (%s)", (locale) => {
+    const m = msgs[locale].catalog.admin;
+    expect(m.entries.empty).toContain(locale === "zh" ? `「${m.tabs.sources}」` : m.tabs.sources);
+  });
+});
+
+describe("marketplaceErrorKind", () => {
+  it("maps the kernel's refresh errors to a kind; anything else is unknown", () => {
+    const git = "https://github.com/capybara-hq/plugins.git: cannot list the refs of x";
+    expect(
+      marketplaceErrorKind(
+        `${git}: Access to github.com is refused: it resolves to a private or reserved address (add the hostname to marketplaces.allowPrivateHosts to allow an internal host).`,
+      ),
+    ).toBe("private_address");
+    expect(marketplaceErrorKind("https://x.com/m.json: Cannot resolve x.com.")).toBe("dns");
+    expect(marketplaceErrorKind(`${git}: timed out after 30 s`)).toBe("timeout");
+    expect(marketplaceErrorKind("https://x/m.json: the marketplace responded with HTTP 404")).toBe(
+      "http_status",
+    );
+    expect(
+      marketplaceErrorKind("https://x/m.json: the marketplace manifest is not valid JSON"),
+    ).toBe("invalid");
+    expect(marketplaceErrorKind("refresh aborted")).toBe("unknown");
+  });
+
+  it.each(LOCALES)("every kind has a sentence ending with a full stop (%s)", (locale) => {
+    const errors = msgs[locale].catalog.admin.marketplaces.statusValue.errors;
+    for (const k of MARKETPLACE_ERROR_KINDS) {
+      expect(errors[k]).toMatch(locale === "zh" ? /。$/ : /\.$/);
+    }
+  });
 });
 
 describe("/admin/catalog and marketplace entries", () => {

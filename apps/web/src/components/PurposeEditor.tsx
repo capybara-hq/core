@@ -1,6 +1,15 @@
 "use client";
 
-import { Badge, Button, Card, Field, Select, Stack, Text, useToast } from "@capybara-hq/design";
+import {
+  type ActionRowProps,
+  Badge,
+  Card,
+  Field,
+  Select,
+  Stack,
+  Text,
+  useToast,
+} from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { findModel, keepDeclared, type ParamValue, type ProviderModels } from "../lib/agents";
@@ -18,59 +27,179 @@ import { ModelParams } from "./ModelParams";
 
 type Params = Record<string, ParamValue>;
 
-/** 参数比较（键顺序无关）。 */
+/** One purpose's draft: the encoded model (`""` = unset / use the deployment default) and its params. */
+export interface PurposeDraft {
+  model: string;
+  params: Params;
+}
+
+/** A purpose's save error: a message, extra lines, and the fields it lands on. */
+interface PurposeError {
+  message?: string;
+  extra: string[];
+  model?: boolean;
+  params: Record<string, string>;
+}
+
+type Scope = "deployment" | "org";
+
+/** Parameter equality (key order does not matter). */
 const sameParams = (a: Params, b: Params) =>
   Object.keys(a).length === Object.keys(b).length &&
   Object.entries(a).every(([k, v]) => Object.hasOwn(b, k) && b[k] === v);
 
+const savedOf = (view: PurposeView, scope: Scope) =>
+  scope === "deployment" ? view.default : view.override;
+
+const savedDraft = (view: PurposeView, scope: Scope): PurposeDraft => {
+  const saved = savedOf(view, scope);
+  return { model: saved === null ? "" : encodeModel(saved.model), params: saved?.params ?? {} };
+};
+
+const sameDraft = (a: PurposeDraft, b: PurposeDraft) =>
+  a.model === b.model && sameParams(a.params, b.params);
+
 /**
- * 一个模型用途的编辑卡片（后台部署默认与组织覆盖共用）：
- * - `scope: "deployment"`：编辑部署默认（`view.default`），已设置时可清除；
- * - `scope: "org"`：显示部署默认，编辑本组织的覆盖（`view.override`），已覆盖时可恢复默认。
- * 选中模型后按该模型的参数声明渲染参数（复用 ModelParams，换模型时用 keepDeclared 保留仍合法的参数）。
- * 插件声明的用途旁注「插件调用模型尚未开放」。内核 `validation_failed` 的明细落到模型 / 对应参数上。
+ * The drafts of a page of purpose cards and the page's one ActionRow (spec §4.4): every card edits
+ * its draft, the row counts the changed purposes and saves them all (one PUT per changed purpose;
+ * the unset / default option writes `null`, which clears the deployment default or restores the
+ * org's default). A purpose that fails keeps its draft and shows its error in its card.
  */
-export function PurposeEditor({
-  view,
+export function usePurposeDrafts({
+  purposes,
   providers,
   scope,
   save,
   onSaved,
 }: {
-  view: PurposeView;
+  purposes: PurposeView[];
   providers: ProviderModels[];
-  scope: "deployment" | "org";
-  save(target: PurposeTarget | null): Promise<PurposeView>;
+  scope: Scope;
+  save(purpose: string, target: PurposeTarget | null): Promise<PurposeView>;
   onSaved(view: PurposeView): void;
 }) {
   const t = useTranslations("models.purpose");
   const tp = useTranslations("agents.params");
-  const locale = useLocale();
+  const tc = useTranslations("common");
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const saved = scope === "deployment" ? view.default : view.override;
-  const savedModel = saved === null ? "" : encodeModel(saved.model);
-  const [model, setModel] = useState(savedModel);
-  const [params, setParams] = useState<Params>(saved?.params ?? {});
-  // 保存后（或父组件换了视图）草稿回到新的已保存值：渲染期间按已保存值的指纹重置，不重新挂载（保留焦点）
-  const savedKey = JSON.stringify(saved);
-  const [seenKey, setSeenKey] = useState(savedKey);
-  if (seenKey !== savedKey) {
-    setSeenKey(savedKey);
-    setModel(savedModel);
-    setParams(saved?.params ?? {});
-  }
-  const [busy, setBusy] = useState<"save" | "clear">();
-  const [error, setError] = useState<{
-    message?: string;
-    extra: string[];
-    model?: boolean;
-    params: Record<string, string>;
-  }>();
+  const [edits, setEdits] = useState<Record<string, PurposeDraft>>({});
+  const [errors, setErrors] = useState<Record<string, PurposeError>>({});
+  const [busy, setBusy] = useState(false);
 
-  const ref = decodeModel(model);
+  const draftOf = (v: PurposeView) => edits[v.purpose] ?? savedDraft(v, scope);
+  const changed = purposes.filter((v) => !sameDraft(draftOf(v), savedDraft(v, scope)));
+  const errorCount = changed.filter((v) => errors[v.purpose] !== undefined).length;
+
+  const setDraft = (purpose: string, d: PurposeDraft) => {
+    setEdits((e) => ({ ...e, [purpose]: d }));
+    setErrors(({ [purpose]: _, ...rest }) => rest);
+  };
+
+  async function saveOne(v: PurposeView): Promise<boolean> {
+    const d = draftOf(v);
+    const ref = decodeModel(d.model);
+    try {
+      onSaved(await save(v.purpose, ref === null ? null : { model: ref, params: d.params }));
+      setEdits(({ [v.purpose]: _, ...rest }) => rest);
+      return true;
+    } catch (e) {
+      const decl = ref === null ? [] : (findModel(providers, ref)?.parameters ?? []);
+      const issues = targetIssues(e, decl);
+      let err: PurposeError;
+      if (issues === null) err = { message: errorMessage(e), extra: [], params: {} };
+      else {
+        const extra = [
+          ...issues.unknownParams.map((key) => tp("invalidKey", { key })),
+          ...issues.other,
+        ];
+        const onFields = issues.model || issues.params.length > 0;
+        err = {
+          extra,
+          model: issues.model,
+          params: Object.fromEntries(issues.params.map((k) => [k, tp("invalid")])),
+          // When every detail landed on a field, the summary is not repeated
+          ...(onFields && extra.length === 0 ? {} : { message: errorMessage(e) }),
+        };
+      }
+      setErrors((x) => ({ ...x, [v.purpose]: err }));
+      return false;
+    }
+  }
+
+  async function saveAll() {
+    setBusy(true);
+    try {
+      const results = await Promise.all(changed.map(saveOne));
+      if (results.every(Boolean)) toast.success(t("savedAll", { n: results.length }));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const actionRow: ActionRowProps | undefined =
+    changed.length === 0
+      ? undefined
+      : {
+          unsaved: changed.length,
+          errors: errorCount,
+          cancel: {
+            label: tc("cancel"),
+            onSelect: () => {
+              setEdits({});
+              setErrors({});
+            },
+          },
+          primary: { label: t("save"), onSelect: () => void saveAll(), loading: busy },
+        };
+
+  const editor = (v: PurposeView) => (
+    <PurposeEditor
+      key={v.purpose}
+      view={v}
+      providers={providers}
+      scope={scope}
+      draft={draftOf(v)}
+      onDraft={(d) => setDraft(v.purpose, d)}
+      disabled={busy}
+      {...(errors[v.purpose] !== undefined ? { error: errors[v.purpose] } : {})}
+    />
+  );
+
+  return { editor, actionRow };
+}
+
+/**
+ * One model purpose's card (shared by the deployment defaults and the org overrides):
+ * - `scope: "deployment"`: edits the deployment default (`view.default`); 「未设置」 clears it;
+ * - `scope: "org"`: shows the deployment default and edits the org's override (`view.override`);
+ *   「使用部署默认」 restores the default.
+ * A chosen model renders its parameter declarations (ModelParams; switching models keeps the
+ * parameters that are still valid, keepDeclared). A plugin purpose notes that plugins cannot call
+ * models yet. The card has no save of its own: the page's ActionRow saves (usePurposeDrafts).
+ */
+function PurposeEditor({
+  view,
+  providers,
+  scope,
+  draft,
+  onDraft,
+  disabled,
+  error,
+}: {
+  view: PurposeView;
+  providers: ProviderModels[];
+  scope: Scope;
+  draft: PurposeDraft;
+  onDraft(d: PurposeDraft): void;
+  disabled: boolean;
+  error?: PurposeError;
+}) {
+  const t = useTranslations("models.purpose");
+  const locale = useLocale();
+  const saved = savedOf(view, scope);
+  const ref = decodeModel(draft.model);
   const decl = ref === null ? [] : (findModel(providers, ref)?.parameters ?? []);
-  const dirty = model !== savedModel || !sameParams(params, saved?.params ?? {});
   const label = (view.label as Record<string, string | undefined>)[locale] || view.label.en;
   const plugin = view.declaredBy !== "kernel";
 
@@ -83,45 +212,12 @@ export function PurposeEditor({
       })),
     ),
   ];
-  // 已保存的模型不在列表里（供应商出错、模型下线）：仍列出并标不可用
+  // A saved model that is not listed (its provider failed, the model is gone): still listed, marked
   if (saved !== null && !options.some((o) => o.value === encodeModel(saved.model))) {
     options.push({
       value: encodeModel(saved.model),
       label: t("unavailable", { target: `${saved.model.provider} / ${saved.model.model}` }),
     });
-  }
-
-  async function submit(target: PurposeTarget | null) {
-    setBusy(target === null ? "clear" : "save");
-    setError(undefined);
-    try {
-      const next = await save(target);
-      toast.success(
-        t(target !== null ? "saved" : scope === "deployment" ? "cleared" : "restored", {
-          purpose: view.purpose,
-        }),
-      );
-      onSaved(next);
-    } catch (e) {
-      const issues = targetIssues(e, decl);
-      if (issues === null) setError({ message: errorMessage(e), extra: [], params: {} });
-      else {
-        const extra = [
-          ...issues.unknownParams.map((key) => tp("invalidKey", { key })),
-          ...issues.other,
-        ];
-        const onFields = issues.model || issues.params.length > 0;
-        setError({
-          extra,
-          model: issues.model,
-          params: Object.fromEntries(issues.params.map((k) => [k, tp("invalid")])),
-          // 明细都落到了字段上就不再重复总述
-          ...(onFields && extra.length === 0 ? {} : { message: errorMessage(e) }),
-        });
-      }
-    } finally {
-      setBusy(undefined);
-    }
   }
 
   const defaultText =
@@ -164,15 +260,18 @@ export function PurposeEditor({
             {...(error?.model === true ? { error: t("modelInvalid") } : {})}
           >
             <Select
-              value={model}
-              disabled={busy !== undefined}
+              value={draft.model}
+              disabled={disabled}
               onChange={(e) => {
                 const v = e.target.value;
                 const r = decodeModel(v);
-                setModel(v);
-                setParams((p) =>
-                  r === null ? {} : keepDeclared(findModel(providers, r)?.parameters ?? [], p),
-                );
+                onDraft({
+                  model: v,
+                  params:
+                    r === null
+                      ? {}
+                      : keepDeclared(findModel(providers, r)?.parameters ?? [], draft.params),
+                });
               }}
               options={options}
             />
@@ -184,8 +283,8 @@ export function PurposeEditor({
               </Text>
               <ModelParams
                 parameters={decl}
-                value={params}
-                onChange={setParams}
+                value={draft.params}
+                onChange={(params) => onDraft({ model: draft.model, params })}
                 locale={locale}
                 errors={error?.params ?? {}}
               />
@@ -194,30 +293,6 @@ export function PurposeEditor({
           {error?.message !== undefined ? (
             <FormError message={error.message} extra={error.extra} />
           ) : null}
-          <Stack direction="row" gap={8}>
-            {/* 每个用途一张卡片：保存用次级样式，页面不出现多个主操作 */}
-            <Button
-              variant="secondary"
-              loading={busy === "save"}
-              disabled={busy !== undefined || !dirty || ref === null}
-              aria-label={t("saveLabel", { purpose: view.purpose })}
-              onClick={() => ref !== null && void submit({ model: ref, params })}
-            >
-              {t("save")}
-            </Button>
-            {saved !== null ? (
-              <Button
-                loading={busy === "clear"}
-                disabled={busy !== undefined}
-                aria-label={t(scope === "deployment" ? "clearLabel" : "restoreLabel", {
-                  purpose: view.purpose,
-                })}
-                onClick={() => void submit(null)}
-              >
-                {t(scope === "deployment" ? "clear" : "restore")}
-              </Button>
-            ) : null}
-          </Stack>
         </Stack>
       </Card>
     </div>

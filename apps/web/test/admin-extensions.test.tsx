@@ -228,7 +228,15 @@ describe("/admin/extensions (ListPage, object rows)", () => {
       ).toBeNull();
       expect(within(row("demo")).getByText(new RegExp(escapeRe(p.source.install)))).toBeTruthy();
       expect(
-        within(row("split")).getByText(new RegExp(escapeRe(fill(p.replicas.diverged, { n: 2 })))),
+        within(row("split")).getByText(
+          new RegExp(escapeRe(fill(p.replicas.diverged, { ok: 1, n: 2 }))),
+        ),
+      ).toBeTruthy();
+      // 「副本一致 2/2」: the replicas that agree out of all of them
+      expect(
+        within(row("demo")).getByText(
+          new RegExp(escapeRe(fill(p.replicas.consistent, { ok: 2, n: 2 }))),
+        ),
       ).toBeTruthy();
       expect(
         within(row("object-store-s3")).getByText(new RegExp(escapeRe(p.source.bootstrap))),
@@ -308,9 +316,17 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
       expect(screen.queryByRole("button", { name: p.detail.actions.disable })).toBeNull();
       expect(screen.queryByRole("button", { name: p.detail.actions.uninstall })).toBeNull();
       expect(screen.queryByText(p.detail.uninstallNeedsDisable)).toBeNull();
-      expect(
-        screen.getByRole("link", { name: p.detail.actions.upgrade }).getAttribute("href"),
-      ).toBe("/admin/extensions/install?upgrade=object-store-s3");
+      const upgrade = screen.getByRole("link", { name: p.detail.actions.upgrade });
+      expect(upgrade.getAttribute("href")).toBe(
+        "/admin/extensions/install?upgrade=object-store-s3",
+      );
+      // 升级 is a secondary button, never a browser-default blue link
+      expect(upgrade.getAttribute("data-variant")).toBe("secondary");
+      expect(upgrade.className).toContain("cb-btn");
+      // The bootstrap step installs from npm with pinned versions and checksums
+      expect(p.detail.requiredNote).toContain(
+        locale === "zh" ? "由预装步骤从 npm 安装（版本与校验和已固定）。" : "from npm",
+      );
       const user = userEvent.setup();
       await user.click(
         screen.getByRole("tab", { name: new RegExp(`^${p.detail.tabs.permissions}`) }),

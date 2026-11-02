@@ -15,6 +15,10 @@ const P = M.purpose;
 const fill = (s: string, vars: Record<string, string | number>) =>
   s.replace(/\{(\w+)\}/g, (_, k: string) => String(vars[k]));
 
+/** The page's one save: the ActionRow's primary (the purpose cards have no save of their own). */
+const saveAll = (page: import("@playwright/test").Page) =>
+  page.locator('[data-part="action-row"]').getByRole("button", { name: P.save }).click();
+
 /**
  * 模型、价格与用途映射（T18）：企业管理员在后台给 fake-1 定价、把评委用途 eval 的部署默认设为 fake-1；
  * 组织设置页显示部署默认，覆盖后再恢复默认。最后清掉价格与映射，不影响其他用例。
@@ -41,8 +45,8 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
   await expect(page.getByText(M.evalUnmapped)).toBeVisible();
   const evalCard = page.locator('[data-purpose="eval"]');
   await evalCard.getByRole("combobox", { name: P.model }).selectOption("model-fake/fake-1");
-  await evalCard.getByRole("button", { name: fill(P.saveLabel, { purpose: "eval" }) }).click();
-  await expect(page.getByText(fill(P.saved, { purpose: "eval" }))).toBeVisible();
+  await saveAll(page);
+  await expect(page.getByText(fill(P.savedAll, { n: 1 }))).toBeVisible();
   await expect(page.getByText(M.evalUnmapped)).toHaveCount(0);
 
   // 刷新后价格与映射仍在（存在 PG）
@@ -63,9 +67,11 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
   await expect(orgCard.getByText(defText)).toBeVisible();
   await expect(orgCard.getByText(P.overridden)).toHaveCount(0);
   await orgCard.getByRole("combobox", { name: P.model }).selectOption("model-fake/fake-1");
-  await orgCard.getByRole("button", { name: fill(P.saveLabel, { purpose: "eval" }) }).click();
+  await saveAll(page);
   await expect(orgCard.getByText(P.overridden)).toBeVisible();
-  await orgCard.getByRole("button", { name: fill(P.restoreLabel, { purpose: "eval" }) }).click();
+  // Restoring the default: choose 「使用部署默认」 and save
+  await orgCard.getByRole("combobox", { name: P.model }).selectOption("");
+  await saveAll(page);
   await expect(orgCard.getByText(P.overridden)).toHaveCount(0);
   await expect(orgCard.getByRole("combobox", { name: P.model })).toHaveValue("");
 
@@ -73,8 +79,9 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
   await page.goto("/admin/models");
   await page
     .locator('[data-purpose="eval"]')
-    .getByRole("button", { name: fill(P.clearLabel, { purpose: "eval" }) })
-    .click();
+    .getByRole("combobox", { name: P.model })
+    .selectOption("");
+  await saveAll(page);
   await expect(page.getByText(M.evalUnmapped)).toBeVisible();
   const priced = page
     .getByRole("table", { name: "model-fake" })

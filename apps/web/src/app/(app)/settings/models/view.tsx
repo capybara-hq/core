@@ -2,7 +2,7 @@
 
 import { FormSection, SettingsPage, Text } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { PurposeEditor } from "../../../../components/PurposeEditor";
+import { usePurposeDrafts } from "../../../../components/PurposeEditor";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import type { ProviderModels } from "../../../../lib/agents";
@@ -25,23 +25,22 @@ export default function OrgModels({ orgId, initial }: { orgId: string; initial: 
   const nav = useOrgSettingsNav();
   const [data, set] = useServerState(initial);
   const evalView = data.purposes.find((p) => p.purpose === EVAL_PURPOSE);
+  // A functional update: the ActionRow saves several purposes at once
   const replace = (v: PurposeView) =>
-    set({ ...data, purposes: data.purposes.map((p) => (p.purpose === v.purpose ? v : p)) });
+    set((d) => ({ ...d, purposes: d.purposes.map((p) => (p.purpose === v.purpose ? v : p)) }));
+  const { editor, actionRow } = usePurposeDrafts({
+    purposes: data.purposes,
+    providers: data.providers,
+    scope: "org",
+    save: (purpose, target) => putOrgPurpose(orgId, purpose, target).then((r) => r.purpose),
+    onSaved: replace,
+  });
   const body = (
     <FormSection id="purposes" title={t("org.title")} description={t("org.description")}>
       {evalView !== undefined && evalView.effective === null ? (
         <Text tone="warn">{t("evalUnmapped")}</Text>
       ) : null}
-      {data.purposes.map((v) => (
-        <PurposeEditor
-          key={v.purpose}
-          view={v}
-          providers={data.providers}
-          scope="org"
-          save={(target) => putOrgPurpose(orgId, v.purpose, target).then((r) => r.purpose)}
-          onSaved={replace}
-        />
-      ))}
+      {data.purposes.map(editor)}
     </FormSection>
   );
 
@@ -57,6 +56,7 @@ export default function OrgModels({ orgId, initial }: { orgId: string; initial: 
       }}
       nav={nav}
       activeNav="models"
+      {...(actionRow !== undefined ? { actionRow } : {})}
     >
       {body}
     </SettingsPage>

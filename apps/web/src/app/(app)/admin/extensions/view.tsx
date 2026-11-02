@@ -135,7 +135,10 @@ export default function AdminPlugins({
           points > 0 ? t("meta.points", { n: points }) : null,
           t(`source.${displaySource(p)}`),
           r.total > 0
-            ? t(r.consistent ? "replicas.consistent" : "replicas.diverged", { n: r.total })
+            ? t(r.consistent ? "replicas.consistent" : "replicas.diverged", {
+                ok: r.inSync,
+                n: r.total,
+              })
             : null,
           perms > 0 ? t("meta.permissions", { n: perms }) : null,
         ]
