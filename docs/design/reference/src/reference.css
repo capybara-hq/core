@@ -124,7 +124,7 @@ body {
   margin: 0;
   font-size: var(--cb-type-h2-size);
   line-height: var(--cb-type-h2-line);
-  font-weight: 700;
+  font-weight: 500;
 }
 .r-skel {
   display: block;
@@ -197,7 +197,7 @@ textarea {
 .r-btn[data-variant="primary"] {
   background: var(--cb-accent);
   color: var(--cb-on-accent);
-  font-weight: 700;
+  font-weight: 600;
 }
 .r-btn[data-variant="secondary"] {
   border-color: var(--cb-accent);
@@ -452,7 +452,7 @@ textarea {
 }
 .r-wordmark {
   flex: 1;
-  font-weight: 700;
+  font-weight: 600;
 }
 /* The org switcher and the admin block: 40 high on bg, the 24 initial on ink. */
 .r-sb-org {
@@ -484,7 +484,7 @@ textarea {
   background: var(--cb-ink);
   color: var(--cb-bg);
   font-size: var(--cb-type-small-size);
-  font-weight: 700;
+  font-weight: 600;
 }
 .r-sb-org-initial[data-tone="accent"] {
   background: var(--cb-accent-tint);
@@ -761,7 +761,7 @@ textarea {
   background: transparent;
   color: var(--cb-ink);
   font-size: var(--cb-type-small-size);
-  font-weight: 600;
+  font-weight: 500;
   line-height: var(--cb-type-small-line);
   text-align: left;
   cursor: pointer;
@@ -1042,7 +1042,7 @@ textarea {
   white-space: nowrap;
   font-size: var(--cb-type-h1-size);
   line-height: var(--cb-type-h1-line);
-  font-weight: 700;
+  font-weight: 600;
 }
 .r-ph-desc {
   margin: var(--cb-space-1) 0 0;
@@ -1204,7 +1204,7 @@ textarea {
   border-radius: var(--cb-radius-sm);
   background: var(--cb-selected);
   font-size: var(--cb-type-small-size);
-  font-weight: 700;
+  font-weight: 600;
 }
 .r-cell-desc {
   color: var(--cb-muted);
@@ -1610,7 +1610,7 @@ textarea {
 .r-prose .r-md-h {
   font-size: var(--cb-type-h2-size);
   line-height: var(--cb-type-h2-line);
-  font-weight: 700;
+  font-weight: 600;
 }
 .r-prose > * + .r-md-h {
   margin-top: var(--cb-space-5);
@@ -1620,7 +1620,7 @@ textarea {
   padding-left: var(--cb-space-5);
 }
 .r-prose strong {
-  font-weight: 700;
+  font-weight: 600;
 }
 .r-muted-prose {
   color: var(--cb-muted);
@@ -1899,7 +1899,7 @@ textarea {
 }
 .r-card-head strong,
 .r-card-title {
-  font-weight: 700;
+  font-weight: 500;
 }
 .r-card-title {
   font-family: var(--cb-font-prose);
@@ -2353,7 +2353,7 @@ textarea {
   color: var(--cb-muted);
   font-size: var(--cb-type-micro-size);
   line-height: var(--cb-type-micro-line);
-  font-weight: 700;
+  font-weight: 600;
 }
 .r-fcard {
   display: flex;
@@ -2892,7 +2892,7 @@ textarea {
   color: var(--cb-fail);
   font-size: var(--cb-type-body-size);
   line-height: var(--cb-type-body-line);
-  font-weight: 600;
+  font-weight: 500;
 }
 .r-danger-zone-item {
   display: flex;
@@ -2911,7 +2911,7 @@ textarea {
   min-width: 0;
 }
 .r-danger-zone-item-title {
-  font-weight: 600;
+  font-weight: 500;
 }
 .r-danger-zone-desc {
   color: var(--cb-muted);

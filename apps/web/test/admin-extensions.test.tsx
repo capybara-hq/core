@@ -201,17 +201,31 @@ describe("/admin/extensions (ListPage, object rows)", () => {
         const tab = within(tabs).getByRole("tab", { name: new RegExp(`^${p.tabs[id]}`) });
         expect(tab.textContent).toContain(String(n));
       }
-      // Rows: required chip, state label, one action (configure when pending)
-      expect(within(row("object-store-s3")).getByText(p.required)).toBeTruthy();
+      // Rows: the version and "required" are meta text (no badge), state label, one secondary
+      // action (configure when pending; the page head keeps the one primary)
+      const s3Meta = within(row("object-store-s3")).getByText(
+        new RegExp(`^v\\d.* · ${escapeRe(p.required)} · `),
+      );
+      expect(s3Meta.closest(".cb-object-chip")).toBeNull();
+      // Only "sensitive" is still a badge.
+      for (const r of [row("object-store-s3"), row("demo")]) {
+        const chips = [...r.querySelectorAll(".cb-object-chip")].map((c) => c.textContent);
+        expect(chips.filter((c) => c !== p.sensitive)).toEqual([]);
+      }
       expect(within(row("object-store-s3")).getByText(p.status.pending_config)).toBeTruthy();
       expect(
         within(row("object-store-s3"))
           .getByRole("link", { name: p.configure })
           .getAttribute("href"),
       ).toBe("/admin/extensions/object-store-s3");
+      expect(
+        within(row("object-store-s3")).getByRole("link", { name: p.configure }).className,
+      ).toContain("cb-btn-link-default");
       expect(within(row("demo")).getByText(p.status.enabled)).toBeTruthy();
       expect(within(row("demo")).getByRole("link", { name: p.settings })).toBeTruthy();
-      expect(within(row("demo")).queryByText(p.required)).toBeNull();
+      expect(
+        within(row("demo")).queryByText(new RegExp(` · ${escapeRe(p.required)} · `)),
+      ).toBeNull();
       expect(within(row("demo")).getByText(new RegExp(escapeRe(p.source.install)))).toBeTruthy();
       expect(
         within(row("split")).getByText(new RegExp(escapeRe(fill(p.replicas.diverged, { n: 2 })))),

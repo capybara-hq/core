@@ -107,7 +107,7 @@
 .cb-settings-nav-item[data-current="true"] {
   background: var(--cb-sidebar-active);
   color: var(--cb-ink);
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-settings-nav-count {
   font-size: var(--cb-type-micro-size);
@@ -149,7 +149,7 @@
 }
 .cb-step[data-state="current"] {
   color: var(--cb-ink);
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-step[data-state="done"] {
   color: var(--cb-muted);
@@ -386,7 +386,7 @@ a.cb-item-list-title:hover {
   border-radius: var(--cb-radius-md);
   background: var(--cb-selected);
   color: var(--cb-ink);
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-object-mark[data-tone="warn"] {
   background: color-mix(in srgb, var(--cb-warn) 15%, transparent);
@@ -407,7 +407,7 @@ a.cb-item-list-title:hover {
 }
 .cb-object-name {
   color: var(--cb-ink);
-  font-weight: 700;
+  font-weight: 600;
   text-decoration: none;
 }
 a.cb-object-name:hover {
@@ -641,7 +641,7 @@ a.cb-object-name:hover {
   border-bottom: 1px solid color-mix(in srgb, var(--cb-fail) 25%, transparent);
   color: var(--cb-fail);
   font-size: var(--cb-type-body-size);
-  font-weight: 600;
+  font-weight: 500;
   line-height: var(--cb-type-body-line);
 }
 .cb-danger-zone-item {
@@ -662,7 +662,7 @@ a.cb-object-name:hover {
 }
 .cb-danger-zone-item-title {
   color: var(--cb-ink);
-  font-weight: 600;
+  font-weight: 500;
 }
 .cb-danger-zone-desc {
   color: var(--cb-muted);

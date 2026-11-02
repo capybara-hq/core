@@ -41,11 +41,10 @@ export function ObjectsSection() {
               mark={{ icon: "extension", tone: "warn" }}
               name="openai-compatible"
               mono
-              chips={[{ label: "必需" }]}
               description="兼容 OpenAI Chat Completions 的模型服务。"
-              meta="model-provider@2 · 预装 · 副本 1/1 一致"
+              meta={["v0.1.0", "必需", "model-provider@2", "预装", "副本 1/1 一致"]}
               state={{ label: "待配置", tone: "warn" }}
-              action={{ label: "配置", primary: true, onSelect: noop }}
+              action={{ label: "配置", onSelect: noop }}
               menu={[{ label: "停用", onSelect: noop }]}
             />
             <ObjectRow

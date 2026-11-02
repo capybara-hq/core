@@ -81,12 +81,16 @@ export default function AdminDirectory({
             name={name}
             href={`/admin/catalog/${encodeURIComponent(i.id)}`}
             chips={[
-              { label: `v${i.latestVersion}` },
               ...(i.newerInMarketplace ? [{ label: td("newer"), tone: "warn" as const }] : []),
               ...(i.contentChanged ? [{ label: td("contentChanged"), tone: "warn" as const }] : []),
             ]}
             description={i.description}
-            meta={[i.name, sourceLabel(i), `${t("columns.installs")} ${i.installs}`].join(" · ")}
+            meta={[
+              `v${i.latestVersion}`,
+              i.name,
+              sourceLabel(i),
+              `${t("columns.installs")} ${i.installs}`,
+            ].join(" · ")}
             state={{ label: td(`policy.${i.policy}`), tone: POLICY_TONE[i.policy] }}
           />
         );

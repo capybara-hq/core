@@ -83,7 +83,7 @@
   flex: 1;
   margin: 0;
   font-size: var(--cb-type-h2-size);
-  font-weight: 700;
+  font-weight: 500;
 }
 .cb-dialog[data-danger="true"] .cb-dialog-title {
   color: var(--cb-fail);
@@ -120,7 +120,7 @@
 .cb-dialog-confirm code {
   color: var(--cb-ink);
   font-family: inherit;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 /* Sheet */

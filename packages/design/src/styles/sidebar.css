@@ -91,7 +91,7 @@
   color: var(--cb-bg);
   font-family: var(--cb-font);
   font-size: var(--cb-type-small-size);
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1;
 }
 .cb-sidebar-org-initial[data-tone="accent"] {
@@ -342,7 +342,7 @@
   color: var(--cb-ink);
   font: inherit;
   font-size: var(--cb-type-small-size);
-  font-weight: 600;
+  font-weight: 500;
   line-height: var(--cb-type-small-line);
   text-align: left;
   cursor: pointer;

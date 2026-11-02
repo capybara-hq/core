@@ -126,7 +126,7 @@ button.cb-tool-line:focus-visible {
   margin: 0;
   font-size: var(--cb-type-h2-size);
   line-height: var(--cb-type-h2-line);
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-md > * + .cb-md-h {
   margin-top: var(--cb-space-5);
@@ -151,7 +151,7 @@ button.cb-tool-line:focus-visible {
   color: var(--cb-muted);
 }
 .cb-md strong {
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-md-quote {
   margin: 0;
@@ -396,7 +396,7 @@ button.cb-tool-line:focus-visible {
   color: var(--cb-muted);
   font-size: var(--cb-type-micro-size);
   line-height: var(--cb-type-micro-line);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 /* ── Run divider ── */
@@ -665,7 +665,7 @@ button.cb-tool-row {
   background: var(--cb-accent);
 }
 .cb-hcard-strong {
-  font-weight: 700;
+  font-weight: 600;
 }
 /* The model-visible key wraps rather than truncates. */
 .cb-hcard-key {
@@ -675,7 +675,7 @@ button.cb-tool-row {
   font-family: var(--cb-font-prose);
   font-size: var(--cb-type-prose-size);
   line-height: var(--cb-type-prose-line);
-  font-weight: 700;
+  font-weight: 600;
   overflow-wrap: anywhere;
 }
 .cb-hcard-args {
@@ -743,7 +743,7 @@ button.cb-tool-row {
   border-radius: var(--cb-radius-sm);
   background: var(--cb-selected);
   font-size: var(--cb-type-small-size);
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-qa {
   display: flex;

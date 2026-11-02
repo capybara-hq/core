@@ -26,8 +26,11 @@ export type ObjectRowProps = {
   state?: { label: string; tone: "ok" | "warn" | "fail" | "muted" };
   /** A short mono text at the right (last use). */
   trailing?: string;
-  /** The row's most common action. */
-  action?: { label: string; primary?: boolean; href?: string; onSelect?(): void };
+  /**
+   * The row's most common action, always a secondary (`default`) button or link: the page head
+   * holds the one primary of the screen (spec §6.17); urgency is the row's `state`.
+   */
+  action?: { label: string; href?: string; onSelect?(): void };
   menu?: MenuItem[];
 };
 
@@ -90,7 +93,6 @@ export function ObjectRow({
 }: ObjectRowProps) {
   const Link = useDesignLink();
   const t = useDesignT();
-  const variant = action?.primary ? "primary" : "default";
   return (
     <li className="cb-object-row">
       <span className="cb-object-mark" data-tone={mark.tone ?? "neutral"} aria-hidden="true">
@@ -145,14 +147,14 @@ export function ObjectRow({
         action.href !== undefined ? (
           <Link
             href={action.href}
-            className={`cb-btn cb-btn-link cb-btn-link-${variant}`}
+            className="cb-btn cb-btn-link cb-btn-link-default"
             data-density="dense"
           >
             <span className="cb-btn-body">{action.label}</span>
           </Link>
         ) : (
           <Button
-            variant={variant}
+            variant="default"
             density="dense"
             {...(action.onSelect ? { onClick: action.onSelect } : {})}
           >

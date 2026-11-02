@@ -58,6 +58,23 @@ describe("ObjectRow", () => {
     expect(document.querySelector(".cb-object-mark")?.getAttribute("data-tone")).toBe("warn");
     expect(screen.getByText("回退模型不可用").getAttribute("data-tone")).toBe("warn");
   });
+
+  it("the row action is a secondary button or link, never the primary (one primary per screen)", () => {
+    // An older caller may still ask for a primary row action; the row draws the default variant.
+    const loud = { primary: true } as Record<string, unknown>;
+    zh(
+      <ObjectList label="l">
+        <ObjectRow mark={{ text: "a" }} name="a" action={{ label: "配置", ...loud }} />
+        <ObjectRow mark={{ text: "b" }} name="b" action={{ label: "安装", href: "/i", ...loud }} />
+      </ObjectList>,
+    );
+    expect(screen.getByRole("button", { name: "配置" }).getAttribute("data-variant")).toBe(
+      "default",
+    );
+    const link = screen.getByRole("link", { name: "安装" });
+    expect(link.className).toContain("cb-btn-link-default");
+    expect(link.className).not.toContain("cb-btn-link-primary");
+  });
 });
 
 describe("EmptyState and Callout", () => {

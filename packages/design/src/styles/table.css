@@ -39,7 +39,7 @@
   background: var(--cb-panel);
 }
 .cb-table-bulk strong {
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-table-bulk-spacer {
   flex: 1;
@@ -338,7 +338,7 @@
   background: var(--cb-selected);
   color: var(--cb-ink);
   font-size: var(--cb-type-small-size);
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-cell-title-text {
   display: flex;

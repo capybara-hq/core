@@ -33,8 +33,9 @@ const STATE_TONE: Record<ExtensionStatus, "ok" | "warn" | "fail" | "muted"> = {
  * warn callout above the tabs names the extensions that need attention (anything that is neither
  * enabled nor disabled, such as a required extension without config); tabs All / Needs attention /
  * Enabled / Disabled carry counts and appear only when they hold something different from All.
- * A row: mark, mono name, version and chips, description-free meta (extension points, source,
- * replicas, permissions: only what the API returns), state label, one action and a menu.
+ * A row: mark, mono name, the sensitive chip, description-free meta (version, required, extension
+ * points, source, replicas, permissions: only what the API returns), state label, one secondary
+ * action and a menu.
  */
 export default function AdminPlugins({
   initial,
@@ -126,7 +127,11 @@ export default function AdminPlugins({
           .filter((g) => g.category !== "provides")
           .reduce((n, g) => n + g.items.length, 0);
         const r = replicaSummary(p);
+        // Plain facts are meta text, not badges: the version and "required" lead the meta line;
+        // only "sensitive" stays a (warn) chip.
         const meta = [
+          `v${p.version}`,
+          p.required ? t("required") : null,
           points > 0 ? t("meta.points", { n: points }) : null,
           t(`source.${displaySource(p)}`),
           r.total > 0
@@ -143,17 +148,12 @@ export default function AdminPlugins({
             name={p.name}
             mono
             href={detail}
-            chips={[
-              { label: `v${p.version}` },
-              ...(p.required ? [{ label: t("required") }] : []),
-              ...(p.sensitive ? [{ label: t("sensitive"), tone: "warn" as const }] : []),
-            ]}
+            {...(p.sensitive ? { chips: [{ label: t("sensitive"), tone: "warn" as const }] } : {})}
             meta={meta}
             state={{ label: t(`status.${p.status}`), tone: STATE_TONE[p.status] }}
             action={{
               label: p.status === "pending_config" ? t("configure") : t("settings"),
               href: detail,
-              ...(p.status === "pending_config" ? { primary: true } : {}),
             }}
             menu={[
               { label: t("details"), href: detail },

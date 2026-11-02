@@ -115,7 +115,7 @@
   gap: 8px;
   padding: var(--cb-space-2) var(--cb-space-4);
   border-bottom: 1px solid var(--cb-line-soft);
-  font-weight: 700;
+  font-weight: 500;
 }
 .cb-card-actions {
   display: flex;
@@ -136,12 +136,12 @@
 .cb-text[data-variant="h1"] {
   font-size: var(--cb-type-h1-size);
   line-height: var(--cb-type-h1-line);
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-text[data-variant="h2"] {
   font-size: var(--cb-type-h2-size);
   line-height: var(--cb-type-h2-line);
-  font-weight: 700;
+  font-weight: 500;
 }
 .cb-text[data-variant="body"] {
   font-size: var(--cb-type-body-size);
@@ -238,7 +238,7 @@
   background: var(--cb-accent);
   border-color: transparent;
   color: var(--cb-on-accent);
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-btn[data-variant="primary"]:hover:not(:disabled) {
   background: var(--cb-accent-hover);
@@ -309,7 +309,7 @@
 .cb-btn[data-variant="primary"][data-state="loading"]:disabled {
   background: var(--cb-accent);
   color: var(--cb-on-accent);
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-btn[data-variant="default"][data-state="loading"]:disabled {
   border-color: var(--cb-line);

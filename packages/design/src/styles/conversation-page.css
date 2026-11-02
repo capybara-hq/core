@@ -651,7 +651,7 @@ button.cb-property-row {
   color: var(--cb-ink);
   font-size: var(--cb-type-h2-size);
   line-height: var(--cb-type-h2-line);
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-conv-new > .cb-conv-new-desc {
   margin: 0;

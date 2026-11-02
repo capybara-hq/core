@@ -43,7 +43,7 @@ export default function CatalogView({ initial }: { initial: OrgCatalogItem[] }) 
     if (i.installable === "needs_approval") {
       return { label: t("action.requestApproval"), href: detail };
     }
-    return { label: t("action.install"), primary: true, href: `${detail}/install` };
+    return { label: t("action.install"), href: `${detail}/install` };
   };
   const tone = (i: OrgCatalogItem) =>
     i.installed !== null

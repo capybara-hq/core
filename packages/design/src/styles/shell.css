@@ -11,7 +11,7 @@
   background: var(--cb-accent);
   border-color: var(--cb-accent);
   color: var(--cb-on-accent);
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-btn-link-primary:hover {
   background: var(--cb-accent-hover);
@@ -208,7 +208,7 @@ a.cb-pageheader-path-seg:hover {
   overflow: hidden;
   color: var(--cb-ink);
   font-size: var(--cb-type-h1-size);
-  font-weight: 700;
+  font-weight: 600;
   line-height: var(--cb-type-h1-line);
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -349,7 +349,7 @@ describe("first paint comes from the server (no browser fetch)", () => {
   it("/admin/catalog: the items, with their source from the marketplaces", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderRoute(() => AdminCatalogPage(), ROUTES);
-    expect(screen.getByText(/^crm · .*Organizations 2$/)).toBeTruthy();
+    expect(screen.getByText(/^v[^ ]+ · crm · .*Organizations 2$/)).toBeTruthy();
     expect(browser).toEqual([]);
   });
 
@@ -359,7 +359,7 @@ describe("first paint comes from the server (no browser fetch)", () => {
       ...ROUTES,
       "GET /api/v1/admin/marketplaces": failing,
     });
-    expect(screen.getByText(/^crm · .*Organizations 2$/)).toBeTruthy();
+    expect(screen.getByText(/^v[^ ]+ · crm · .*Organizations 2$/)).toBeTruthy();
     expect(browser).toEqual([]);
   });
 

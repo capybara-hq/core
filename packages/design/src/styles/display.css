@@ -201,7 +201,7 @@
   gap: 8px;
   font-size: var(--cb-type-h2-size);
   line-height: var(--cb-type-h2-line);
-  font-weight: 700;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 .cb-metric-delta {
@@ -246,7 +246,7 @@
   fill: var(--cb-muted);
 }
 .cb-logo-word {
-  font-weight: 700;
+  font-weight: 600;
 }
 
 /* Dither */
@@ -482,7 +482,7 @@
 }
 .cb-toolcall-name {
   flex: none;
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-toolcall-summary {
   min-width: 0;
@@ -531,7 +531,7 @@
   color: var(--cb-faint);
   font-size: var(--cb-type-micro-size);
   line-height: 20px;
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-io-body {
   display: flex;
@@ -587,7 +587,7 @@
 .cb-tasklist-item[data-status="in_progress"] {
   background: var(--cb-accent-tint);
   box-shadow: inset 2px 0 0 var(--cb-accent);
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-tasklist-item[data-status="in_progress"] .cb-tasklist-glyph {
   color: var(--cb-accent);
@@ -819,7 +819,7 @@ a.cb-attachment:hover {
 }
 .cb-waterfall-row[data-kind="run"] .cb-waterfall-label,
 .cb-waterfall-row[data-kind="step"] .cb-waterfall-label {
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-waterfall-meta {
   flex: none;
@@ -915,7 +915,7 @@ a.cb-attachment:hover {
   margin: 0;
   font-size: var(--cb-type-body-size);
   line-height: var(--cb-type-body-line);
-  font-weight: 700;
+  font-weight: 500;
 }
 .cb-link-card-description {
   flex: 1;
