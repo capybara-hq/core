@@ -156,6 +156,10 @@
   text-overflow: clip;
   overflow-wrap: break-word;
 }
+/* A wrap column's string list: each item with its separator is one unit; lines break between. */
+.cb-table-cell-list-item {
+  white-space: nowrap;
+}
 .cb-table-el td[data-wrap="true"] {
   padding-top: var(--cb-space-1);
   padding-bottom: var(--cb-space-1);

@@ -153,10 +153,8 @@ function ProviderModels({
       tone: "muted",
       // Plain text, not badges (「工具 · 缓存」), and never cut: it wraps instead of an ellipsis
       wrap: true,
-      cell: (m) =>
-        CAPS.filter((c) => m.capabilities[c] === true)
-          .map((c) => t(`capability.${c}`))
-          .join(" · "),
+      // A list: DataTable joins it with 「 · 」 and breaks lines only between items
+      cell: (m) => CAPS.filter((c) => m.capabilities[c] === true).map((c) => t(`capability.${c}`)),
     },
     {
       key: "context",

@@ -214,6 +214,25 @@ describe("DataTable wrapping columns", () => {
   });
 });
 
+describe("DataTable wrapping lists", () => {
+  it("a wrap column's string list is one no-break unit per item, so lines break only at 「 · 」", () => {
+    const { container } = plain({
+      columns: [
+        ...columns,
+        { key: "caps", header: "能力", cell: () => ["工具", "推理", "缓存"], wrap: true },
+      ],
+    });
+    const cell = container.querySelector('td[data-wrap="true"]') as HTMLElement;
+    expect(cell.textContent).toBe("工具 · 推理 · 缓存");
+    const items = [...cell.querySelectorAll('[data-part="cell-list-item"]')];
+    // each item keeps its separator, so a line never starts with 「·」 and 「缓存」 never splits
+    expect(items.map((i) => i.textContent)).toEqual(["工具 ·", "推理 ·", "缓存"]);
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/table.css"), "utf8");
+    expect(css).toMatch(/\.cb-table-cell-list-item \{[^}]*white-space: nowrap/);
+    expect(cell.querySelector(".cb-table-cell")?.getAttribute("title")).toBe("工具 · 推理 · 缓存");
+  });
+});
+
 describe("DataTable rows", () => {
   it("activeKey 行 data-state 含 active；点击行调用 onOpen，点击复选框不调用", async () => {
     const user = userEvent.setup();

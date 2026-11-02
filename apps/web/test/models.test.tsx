@@ -162,15 +162,14 @@ describe("/admin/models（ListPage）", () => {
     expect(container.querySelector(".cb-settings-nav")).toBeNull();
     const table = await screen.findByRole("table", { name: "alpha" });
     const large = within(table).getByText("Alpha Large").closest("tr") as HTMLElement;
-    // Capabilities are one line of text, not badges (「工具 · 图片 · 推理」)
+    // Capabilities are text, not badges (「工具 · 图片 · 推理」), one no-break unit per item
     const caps = [m.models.capability.tools, m.models.capability.vision];
+    const capsCell = large.querySelector('td[data-wrap="true"]') as HTMLElement;
+    expect(capsCell.textContent).toBe([...caps, m.models.capability.reasoning].join(" · "));
     expect(
-      within(large).getByText([...caps, m.models.capability.reasoning].join(" · ")),
-    ).toBeTruthy();
+      [...capsCell.querySelectorAll('[data-part="cell-list-item"]')].map((i) => i.textContent),
+    ).toEqual([`${caps[0]} ·`, `${caps[1]} ·`, m.models.capability.reasoning]);
     // Capabilities are never cut to 「工具 ·…」: the cell wraps instead of an ellipsis
-    const capsCell = within(large)
-      .getByText([...caps, m.models.capability.reasoning].join(" · "))
-      .closest("td") as HTMLElement;
     expect(capsCell.getAttribute("data-wrap")).toBe("true");
     // The price columns are narrowed to their figures so the table fits the 1120 content width
     for (const k of ["input", "output", "cacheRead", "cacheWrite"] as const) {

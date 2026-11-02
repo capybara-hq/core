@@ -23,6 +23,30 @@ function titleOf(node: ReactNode): string | undefined {
   return typeof node === "string" || typeof node === "number" ? String(node) : undefined;
 }
 
+/** A wrap column's content as a list of strings (spec §6.6), else null. */
+function stringList(node: ReactNode): string[] | null {
+  return Array.isArray(node) && node.every((x) => typeof x === "string") ? node : null;
+}
+
+/**
+ * A wrap column's list: one no-break unit per item, each keeping its 「 · 」, so a wrapped line
+ * breaks only between items (never inside 「缓存」, never before a separator).
+ */
+function cellList(items: string[]): ReactNode {
+  return items.map((it, i) => {
+    const last = i === items.length - 1;
+    return (
+      // biome-ignore lint/suspicious/noArrayIndexKey: items may repeat; the list is static
+      <Fragment key={i}>
+        <span className="cb-table-cell-list-item" data-part="cell-list-item">
+          {last ? it : `${it} ·`}
+        </span>
+        {last ? null : " "}
+      </Fragment>
+    );
+  });
+}
+
 /** The text that names a row: a plain first cell, or the title of a `CellTitle` first cell. */
 function rowNameOf(node: ReactNode): string | undefined {
   if (isValidElement<{ title: string }>(node) && node.type === CellTitle) return node.props.title;
@@ -290,6 +314,7 @@ export function DataTable<T>({
                             // Below 640 the rows stack (spec §6.6): the first cell is the card's
                             // title line, every other cell is labelled with its column header.
                             const lead = ci === 0;
+                            const list = c.wrap ? stringList(content) : null;
                             return (
                               <td
                                 key={c.key}
@@ -300,8 +325,11 @@ export function DataTable<T>({
                                 data-lead={lead ? "true" : undefined}
                                 data-label={!lead && c.header ? c.header : undefined}
                               >
-                                <span className="cb-table-cell" title={titleOf(content)}>
-                                  {content}
+                                <span
+                                  className="cb-table-cell"
+                                  title={list ? list.join(" · ") : titleOf(content)}
+                                >
+                                  {list ? cellList(list) : content}
                                 </span>
                               </td>
                             );
