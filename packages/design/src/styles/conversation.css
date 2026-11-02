@@ -508,7 +508,9 @@ button.cb-tool-row {
 .cb-tool-box > .cb-tool-detail:first-child {
   padding-top: var(--cb-space-3);
 }
-.cb-kv {
+/* The tool and approval argument grid (`data-part="kv"`); scoped so it never lays out the
+   KeyValue component (`dl.cb-kv`, a column of rows) as label/value/label/value. */
+.cb-kv[data-part="kv"] {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
   column-gap: var(--cb-space-3);

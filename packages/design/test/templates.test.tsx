@@ -13,6 +13,7 @@ import {
   FormPage,
   FormSection,
   InboxPage,
+  KeyValue,
   ListPage,
   OnboardingPage,
   OverviewPage,
@@ -411,6 +412,48 @@ describe("其他模板行为", () => {
     expect(head).toContain("padding: var(--cb-space-5) var(--cb-content-pad) var(--cb-space-3);");
     expect(head).toContain("scrollbar-gutter: stable;");
     expect(css).not.toContain('.cb-template-head[data-width="content"]');
+  });
+
+  it("TracePage: an info grid in the detail panel is one label/value pair per row", () => {
+    // The real stylesheets: the conversation's argument grid must not lay KeyValue out in pairs
+    const styles = ["display.css", "conversation.css"].map((f) => {
+      const el = document.createElement("style");
+      el.textContent = readFileSync(resolve(import.meta.dirname, `../src/styles/${f}`), "utf8");
+      document.head.append(el);
+      return el;
+    });
+    try {
+      zh(
+        <TracePage
+          header={header}
+          waterfall={<div>w</div>}
+          detail={
+            <KeyValue
+              keyWidth="16ch"
+              rows={[
+                { k: "版本", v: "v3" },
+                { k: "发起人", v: "Grant" },
+                { k: "开始", v: "10:00" },
+                { k: "结束", v: "10:01" },
+              ]}
+            />
+          }
+        />,
+      );
+      const dl = document.querySelector(".cb-trace-detail dl.cb-kv") as HTMLElement;
+      expect(getComputedStyle(dl).display).toBe("flex");
+      expect(getComputedStyle(dl).flexDirection).toBe("column");
+      const rows = [...dl.children];
+      expect(rows).toHaveLength(4);
+      for (const r of rows) {
+        expect([...r.children].map((c) => c.tagName)).toEqual(["DT", "DD"]);
+      }
+    } finally {
+      for (const el of styles) el.remove();
+    }
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
+    // the right panel never scrolls sideways
+    expect(css).toMatch(/\.cb-trace-detail \{[^}]*overflow: hidden auto;/);
   });
 
   it("TracePage: the detail follows the waterfall in one column, a right panel from 1280", () => {
