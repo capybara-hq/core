@@ -1681,6 +1681,16 @@ States: `default`
   | connector, tool | 已使用 / Used | 已使用 N 个工具 / Used N tools | 正在使用工具 / Using tool |
   | meta | 已加载的工具 / Loaded tools | counted with tools | 正在使用工具 / Using tool |
 
+### 7.1 Copy
+
+The polish checklist below comes from an audit with [unslop](https://github.com/heydamir/unslop) (Damir Sokolovsky, CC BY 4.0), adapted to this product: exact, restrained, a little dry.
+
+- **Periods**: full sentences (descriptions, hints, errors, toasts, empty-state explanations, notices) end with "。" / "."; titles, buttons, labels, menu items, table headers, tabs, short phrase captions ("先配置模型", "设置 · 成员") and inline key hints ("按 ↵ 立即发送，按 Ctrl+↵ 加入队列") have none. `check:i18n` rule `i18n-label-period` rejects a period at the end of a message whose key names a label (`title`, `label`, `action`, `confirm`, `cancel`, `submit`, `button`, `name`, `tab`, `heading`, `item`, `menu`, `placeholder`, also as the last camelCase word, e.g. `confirmLabel`).
+- **"agent"**: in Chinese running text the word is lowercase ("新建 agent", "agent 决定用哪个模型…"); the nav item and the page name stay "Agents". The create verb is "新建" everywhere (buttons, the setup step, the page title "新建 agent").
+- **The path is not translated**: the page-head path and the status bar's path line (`user@org:~/path`) keep the route words (`capybara / settings / members`, `/admin / extensions`); they mirror the URL and are the product's signature.
+- **One primary per screen**: the page head (or the action row of a form) holds the one `primary` button; row actions in lists are secondary (§6.17), and a row that needs attention says so in its state text.
+- **No badge for plain metadata**: a version, "必需" / "Required" or a source is meta text (§6.17); a badge (chip) is for a scope or something that needs attention ("敏感" / "Sensitive").
+
 ## 8. Accessibility
 - Text contrast ≥ 4.5:1 (`faint` only for non-essential information).
 - All interactive elements are native `button` / `a` / `input`; icon buttons must have an `aria-label`; status is not expressed by color alone.

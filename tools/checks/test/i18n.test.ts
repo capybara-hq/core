@@ -89,6 +89,38 @@ describe("checkI18n", () => {
     expect(checkI18n(d)).toEqual([]);
   });
 
+  it("a title, label or button ending with a period -> i18n-label-period (zh and en)", () => {
+    const f = checkI18n(fixture("label-period"));
+    expect(f.map((x) => [x.rule, x.file.endsWith("zh.json") ? "zh" : "en"])).toEqual([
+      ["i18n-label-period", "zh"],
+      ["i18n-label-period", "zh"],
+      ["i18n-label-period", "en"],
+    ]);
+    expect(f.map((x) => x.message.match(/「([^」]+)」/)?.[1])).toEqual([
+      "agents.form.submit",
+      "agents.form.confirmLabel",
+      "agents.title",
+    ]);
+    // the line points at the key; sentences (hints) and an ellipsis are fine
+    expect(f[0]?.line).toBe(5);
+  });
+
+  it("label keys: the last segment or its camelCase last word, case-insensitive", () => {
+    const d = dirWith({
+      "zh.json": JSON.stringify({
+        a: { Title: "x。", pageTitle: "y。", subtitle: "z。", titled: "w。", menuItem: "v。" },
+      }),
+      "en.json": JSON.stringify({
+        a: { Title: "x", pageTitle: "y", subtitle: "z.", titled: "w.", menuItem: "v" },
+      }),
+    });
+    expect(checkI18n(d).map((x) => x.message.match(/「([^」]+)」/)?.[1])).toEqual([
+      "a.Title",
+      "a.pageTitle",
+      "a.menuItem",
+    ]);
+  });
+
   it("JSON 解析失败 -> i18n-invalid-json", () => {
     const d = dirWith({ "zh.json": '{"a":"x"}', "en.json": "{" });
     expect(checkI18n(d).map((x) => x.rule)).toEqual(["i18n-invalid-json"]);
