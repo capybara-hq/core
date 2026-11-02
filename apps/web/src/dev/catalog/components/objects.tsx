@@ -81,7 +81,7 @@ export function ObjectsSection() {
             text="还没有会话"
             action={{ label: "新会话", variant: "default", onSelect: noop }}
           />
-          <EmptyState size="compact" icon="search-x" text="没有匹配的会话" />
+          <EmptyState size="compact" text="没有匹配的会话。" />
         </Grid>
       </Row>
     </Section>

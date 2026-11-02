@@ -1495,7 +1495,6 @@
   "extensions": {
     "title": "Extensions",
     "empty": "No extensions are installed.",
-    "version": "Version {version}",
     "enableLabel": "Enable {plugin}",
     "enabled": "Enabled for this organization",
     "disabled": "Not enabled",
@@ -2216,7 +2215,7 @@
     },
     "orgs": {
       "title": "Organizations",
-      "hint": "Empty values use the deployment default. Organization admins can only view them in their settings.",
+      "hint": "Empty values use the deployment default, and organization admins can only view them in their settings; to manage settings inside an organization, you need to be an admin of that organization.",
       "empty": "No organizations yet.",
       "default": "Default",
       "edit": "Set limits",
@@ -2252,8 +2251,7 @@
         "subagentTokens": "Sub-agent tokens per run",
         "subagentTokensHelp": "At least 10,000; empty uses the deployment default.",
         "subagentTokensInvalid": "Enter a whole number of at least 10,000."
-      },
-      "memberHint": "To manage settings inside an organization, you need to be an admin of that organization."
+      }
     },
     "settings": {
       "title": "Deployment settings",
@@ -2417,7 +2415,7 @@
         "done": "Approved; replicas are loading the extension.",
         "stale": "The package or its permissions changed after you reviewed them. Refresh and review again.",
         "refresh": "Refresh and review again",
-        "approved": "Approved: version {version}, {at} ({source})",
+        "approved": "Approved: {version}, {at} ({source})",
         "notApproved": "Not approved yet.",
         "via": {
           "cli": "command line",
@@ -2763,7 +2761,7 @@
         "provenance": "Built from {repository}@{commit} by {workflow}",
         "provenanceNotChecked": "Provenance not checked ({reason})",
         "provenanceMismatch": "The repository in the provenance differs from this git marketplace's repository. Check that this is the package you expect.",
-        "buildVersion": "Recorded as {version}: version {pluginVersion} is already in the catalog with other content.",
+        "buildVersion": "Recorded as {version}: {pluginVersion} is already in the catalog with other content.",
         "translation": {
           "title": "Translation from Claude Code",
           "formatClaude": "Claude Code plugin",
@@ -3182,7 +3180,7 @@
       "cancel": "Cancel",
       "done": "Upgraded {name} to {version}.",
       "requested": "Enterprise admin approval is needed; a request was submitted.",
-      "failed": "Upgrading failed at the “{step}” step ({code}); this organization's components are back at version {version}.",
+      "failed": "Upgrading failed at the “{step}” step ({code}); this organization's components are back at {version}.",
       "failedNoRollback": "Upgrading failed at the “{step}” step ({code}) and could not be undone right away; it is undone automatically after the timeout."
     },
     "errorDetail": {
@@ -3193,7 +3191,7 @@
       "gitSuffix": "The git server redirects this repository URL; use the URL ending in .git.",
       "entry": "Refused entry: {path}",
       "pathEntry": "Marketplace entry {entry} (path {path})",
-      "sameVersion": "Version {version} is already installed in this organization.",
+      "sameVersion": "{version} is already installed in this organization.",
       "deploymentVersion": "The deployment runs this plugin's extension at {deploymentVersion}; this organization can upgrade only to catalog version {allowedVersion}.",
       "deploymentVersionNone": "The deployment runs this plugin's extension at {deploymentVersion}, but no imported catalog version carries it yet.",
       "notDeployed": "The deployment does not run this plugin's extension; ask an enterprise admin to install it first.",

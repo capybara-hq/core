@@ -2,6 +2,7 @@ import * as RM from "@radix-ui/react-dropdown-menu";
 import * as RP from "@radix-ui/react-popover";
 import { cloneElement, type ReactElement, type ReactNode } from "react";
 import { Icon } from "../icons/icon";
+import type { IconName } from "../icons/paths";
 import { useDesignLink } from "../provider";
 
 export type MenuItem =
@@ -18,6 +19,8 @@ export type MenuItem =
       checked?: boolean;
       /** The current page (a navigation menu such as the sidebar's 更多): `aria-current="page"`. */
       current?: boolean;
+      /** A leading 16 px icon (a navigation menu's items carry the main nav's icons). */
+      icon?: IconName;
     } & (
       | { onSelect(): void; href?: undefined; submenu?: undefined }
       /** 导航项：以 DesignProvider 的 link 渲染。 */
@@ -70,7 +73,12 @@ export function Popover({
         })}
       </RP.Trigger>
       <RP.Portal>
-        <RP.Content className="cb-popover" sideOffset={4} align="start">
+        <RP.Content
+          className="cb-popover"
+          sideOffset={4}
+          align="start"
+          collisionPadding={COLLISION_PADDING}
+        >
           {children}
         </RP.Content>
       </RP.Portal>
@@ -116,6 +124,10 @@ export function Menu({
           className="cb-menu"
           sideOffset={sideOffset}
           align="start"
+          collisionPadding={COLLISION_PADDING}
+          // Opening below its trigger, a menu is at least as wide as it (the org switcher, the
+          // account row); a flyout beside a sidebar row keeps its own width.
+          data-match-trigger={side === "right" ? undefined : "true"}
           {...(side ? { side } : {})}
           {...(label ? { "aria-label": label } : {})}
           {...(onCloseAutoFocus ? { onCloseAutoFocus } : {})}
@@ -126,6 +138,9 @@ export function Menu({
     </RM.Root>
   );
 }
+
+/** Menus keep this far from the viewport's edges (spec §6.7). */
+const COLLISION_PADDING = 8;
 
 /** One level of items; danger items go last, after a separator. */
 function MenuItems({ items }: { items: MenuItem[] }) {
@@ -148,7 +163,12 @@ function MenuItems({ items }: { items: MenuItem[] }) {
             </span>
           </RM.SubTrigger>
           <RM.Portal>
-            <RM.SubContent className="cb-menu" sideOffset={4} alignOffset={-5}>
+            <RM.SubContent
+              className="cb-menu"
+              sideOffset={4}
+              alignOffset={-5}
+              collisionPadding={COLLISION_PADDING}
+            >
               <MenuItems items={item.submenu} />
             </RM.SubContent>
           </RM.Portal>
@@ -184,7 +204,11 @@ function MenuItems({ items }: { items: MenuItem[] }) {
   });
 }
 
-function MenuLabel({ item }: { item: { label: string; checked?: boolean } }) {
+function MenuLabel({
+  item,
+}: {
+  item: { label: string; checked?: boolean; icon?: IconName | undefined };
+}) {
   return (
     <span className="cb-menu-label">
       {item.checked !== undefined ? (
@@ -192,6 +216,7 @@ function MenuLabel({ item }: { item: { label: string; checked?: boolean } }) {
           {item.checked ? <Icon name="check" size={14} /> : null}
         </span>
       ) : null}
+      {item.icon ? <Icon name={item.icon} size={16} /> : null}
       {item.label}
     </span>
   );

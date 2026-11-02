@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
 import { TemplateHead } from "./frame";
@@ -13,7 +13,9 @@ export type SettingsNavGroup = {
  * content width, then a 200 px sub-nav (mono group labels, 30 px items, the current one on
  * `sidebar-active`, mono counts) beside the section content; ActionRow on changes. The header's
  * `description` opens the content column instead of the head, so the head has one height and the
- * sub-nav sits at the same y on every settings page, its top aligned with the content's.
+ * sub-nav sits at the same y on every settings page, its top aligned with the content's. Below
+ * 640 the sub-nav is a compact control: one horizontally scrolling row of its items (no group
+ * labels, 40 px tap targets) above the content, the current item scrolled into view.
  */
 export function SettingsPage({
   header,
@@ -31,8 +33,21 @@ export function SettingsPage({
   const { description, ...head } = header;
   const Link = useDesignLink();
   const t = useDesignT();
+  // On phones the sub-nav is one scrolling row above the content: keep the current item in view.
+  const navRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const nav = navRef.current;
+    const current = nav?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!nav || !current || nav.scrollWidth <= nav.clientWidth) return;
+    nav.scrollLeft = current.offsetLeft - nav.offsetLeft - 16;
+  }, []);
   const rail = (
-    <nav className="cb-settings-nav" aria-label={t("settings.nav")}>
+    <nav
+      ref={navRef}
+      className="cb-settings-nav"
+      data-part="settings-nav"
+      aria-label={t("settings.nav")}
+    >
       {nav.map((g) => (
         <div key={g.group} className="cb-settings-nav-section">
           <span className="cb-settings-nav-group">{g.group}</span>

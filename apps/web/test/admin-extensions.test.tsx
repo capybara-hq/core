@@ -387,7 +387,7 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
       );
       expect(alert).toBeTruthy();
       expect(screen.getAllByText(/connect ECONNREFUSED/).length).toBeGreaterThan(0);
-      const serving = fill(p.detail.stillServing, { version: "1.0.0" });
+      const serving = fill(p.detail.stillServing, { version: "v1.0.0" });
       expect(screen.getAllByText(serving).length).toBeGreaterThan(0);
       const replicas = screen.getByRole("table", { name: p.detail.replicasTitle });
       expect(within(replicas).getByText("web-1-111-aaaaaa")).toBeTruthy();
@@ -782,7 +782,7 @@ describe("/admin/extensions/install (WizardPage)", () => {
     await user.type(screen.getByLabelText(p.wizard.npmPackage), "demo");
     await user.click(screen.getByRole("button", { name: p.wizard.fetch }));
     expect(
-      await screen.findByText(fill(p.wizard.upgradeFrom, { from: "1.0.0", to: "2.0.0" })),
+      await screen.findByText(fill(p.wizard.upgradeFrom, { from: "v1.0.0", to: "v2.0.0" })),
     ).toBeTruthy();
     expect(screen.getByText(fill(p.detail.drainHint, { seconds: 45 }))).toBeTruthy();
     expect(screen.getByText(en.extensions.review.added)).toBeTruthy();

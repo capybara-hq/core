@@ -487,15 +487,28 @@ a.cb-stat-card:focus-visible {
 }
 
 /* ActionRow (spec §4.4): above the StatusBar, panel-2 ground, soft top line. */
+/* The ground spans the content area; the row inside it is the content frame (spec §4.4): the
+   template's side padding, the one content width and the body's scrollbar gutter, so its right end
+   is the content's. Outside a template (the reference set) the padding is the gutter. */
 .cb-actionrow {
   display: flex;
   flex: none;
   align-items: center;
-  gap: var(--cb-space-2);
   height: var(--cb-layout-action-row);
-  padding: 0 var(--cb-layout-gutter);
+  padding: 0 var(--cb-content-pad, var(--cb-layout-gutter));
+  overflow: hidden;
+  scrollbar-gutter: stable;
   border-top: 1px solid var(--cb-line-soft);
   background: var(--cb-panel-2);
+}
+.cb-actionrow-frame {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+  max-width: var(--cb-layout-content);
+  margin: 0 auto;
 }
 .cb-actionrow-info {
   display: flex;

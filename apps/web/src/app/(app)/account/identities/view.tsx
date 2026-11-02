@@ -5,13 +5,14 @@ import {
   Button,
   type Column,
   DataTable,
+  DateTime,
   Dialog,
   SettingsPage,
   Stack,
   Text,
   useToast,
 } from "@capybara-hq/design";
-import { useLocale, useTranslations } from "next-intl";
+import { useTranslations } from "next-intl";
 import { useState, useTransition } from "react";
 import { FormError } from "../../../../components/form-error";
 import { useAccountNav } from "../../../../components/settings-nav";
@@ -41,7 +42,6 @@ export default function Identities({
   const scope = usePagePath("home");
   const t = useTranslations("identities");
   const tc = useTranslations("common");
-  const locale = useLocale();
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const nav = useAccountNav();
@@ -109,7 +109,7 @@ export default function Identities({
       header: t("columns.linkedAt"),
       tone: "muted",
       width: 160,
-      cell: (x) => new Date(x.createdAt).toLocaleDateString(locale),
+      cell: (x) => <DateTime value={x.createdAt} />,
     },
   ];
 
@@ -127,7 +127,9 @@ export default function Identities({
       activeNav="identities"
     >
       <Stack gap={12}>
-        <Text tone="muted">{t("hint")}</Text>
+        <Text variant="prose" tone="muted">
+          {t("hint")}
+        </Text>
         <DataTable<LinkedIdentity>
           label={t("title")}
           columns={columns}
@@ -183,7 +185,7 @@ export default function Identities({
         }
       >
         <Stack gap={8}>
-          <Text>{t("unlinkHint")}</Text>
+          <Text variant="prose">{t("unlinkHint")}</Text>
           {error !== undefined && <FormError message={error} />}
         </Stack>
       </Dialog>

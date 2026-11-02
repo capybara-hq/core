@@ -276,13 +276,16 @@ const ORGS = [
 ];
 
 describe("/admin/orgs（ListPage）", () => {
-  it("says that org settings need an org admin of that org", async () => {
+  it("says in one paragraph that defaults apply and org settings need an org admin", async () => {
     stubApi({
       "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS }),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
     });
     await renderRoute(AdminOrgsPage, lastStubRoutes(), { locale: "zh" });
-    expect(await screen.findByText(zh.admin.orgs.memberHint)).toBeTruthy();
+    const hint = await screen.findByText(zh.admin.orgs.hint);
+    expect(hint.textContent).toContain("该组织的管理员");
+    expect(hint.getAttribute("data-variant")).toBe("prose");
+    expect("memberHint" in zh.admin.orgs).toBe(false);
   });
 
   it.each(LOCALES)("显示覆盖值；设置运行并发与沙箱限额 → PUT settings（%s）", async (locale) => {

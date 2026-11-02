@@ -16,6 +16,7 @@ import {
   Stack,
   Text,
   useToast,
+  versionLabel,
   WizardPage,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
@@ -360,14 +361,14 @@ export default function PluginImportWizard({ initial }: { initial: StagedImport 
       )}
       {step === 2 && review !== null && (
         <Stack gap={16}>
-          <Text>{t("plugin", { name: review.name, version: review.version })}</Text>
+          <Text>{t("plugin", { name: review.name, version: versionLabel(review.version) })}</Text>
           {review.extension === undefined ? (
             <Text tone="muted">{t("noExtension")}</Text>
           ) : !deployable ? (
             <Text tone="muted">
               {t("keepExtension", {
                 name: review.extension.name,
-                version: review.extension.currentVersion ?? review.extension.version,
+                version: versionLabel(review.extension.currentVersion ?? review.extension.version),
               })}
             </Text>
           ) : (
@@ -385,7 +386,9 @@ export default function PluginImportWizard({ initial }: { initial: StagedImport 
           )}
           {sensitive && (
             <Stack gap={8}>
-              <Text tone="warn">{t("ackHint")}</Text>
+              <Text variant="prose" tone="warn">
+                {t("ackHint")}
+              </Text>
               <Checkbox checked={ack} onChange={setAck} label={t("ack")} />
             </Stack>
           )}
@@ -396,7 +399,7 @@ export default function PluginImportWizard({ initial }: { initial: StagedImport 
                 <Text tone="fail">
                   {t("deployFailed", {
                     name: result.deploy.name,
-                    version: result.deploy.version,
+                    version: versionLabel(result.deploy.version),
                     code: result.deploy.code ?? "",
                   })}
                 </Text>
@@ -467,13 +470,16 @@ function ReviewBody({
     <Stack gap={16}>
       <Stack gap={4}>
         <Stack direction="row" gap={8} align="center">
-          <Text>{t("plugin", { name: review.name, version: review.version })}</Text>
+          <Text>{t("plugin", { name: review.name, version: versionLabel(review.version) })}</Text>
           {review.format === "claude-code" && <Badge>{tt("formatClaude")}</Badge>}
           {review.sensitive && <Badge tone="warn">{tp("sensitive")}</Badge>}
         </Stack>
         {review.pluginVersion !== undefined && (
           <Text variant="small" tone="warn">
-            {t("buildVersion", { version: review.version, pluginVersion: review.pluginVersion })}
+            {t("buildVersion", {
+              version: versionLabel(review.version),
+              pluginVersion: versionLabel(review.pluginVersion),
+            })}
           </Text>
         )}
         <Text variant="small" tone="muted">
@@ -483,7 +489,11 @@ function ReviewBody({
             ...(review.license !== undefined ? [t("license", { license: review.license })] : []),
           ].join(" · ")}
         </Text>
-        {review.description !== "" && <Text tone="muted">{review.description}</Text>}
+        {review.description !== "" && (
+          <Text variant="prose" tone="muted">
+            {review.description}
+          </Text>
+        )}
         {review.repository !== undefined && (
           // display only: never fetched or compared with the source
           <Text variant="small" tone="muted">
@@ -657,7 +667,11 @@ function ReviewBody({
         {review.dependencies.map((d) =>
           d.resolved !== null ? (
             <Text key={d.name}>
-              {tc("dependencyResolved", { name: d.name, range: d.range, version: d.resolved })}
+              {tc("dependencyResolved", {
+                name: d.name,
+                range: d.range,
+                version: versionLabel(d.resolved),
+              })}
             </Text>
           ) : (
             <Text key={d.name} tone="warn">
@@ -675,10 +689,15 @@ function ExtensionReview({ extension }: { extension: PluginReviewExtension }) {
   const tp = useTranslations("extensions");
   const action =
     extension.action === "install"
-      ? t("action.install", { version: extension.version })
+      ? t("action.install", { version: versionLabel(extension.version) })
       : extension.action === "upgrade"
-        ? t("action.upgrade", { from: extension.currentVersion ?? "", to: extension.version })
-        : t("action.keep", { version: extension.currentVersion ?? extension.version });
+        ? t("action.upgrade", {
+            from: extension.currentVersion == null ? "" : versionLabel(extension.currentVersion),
+            to: versionLabel(extension.version),
+          })
+        : t("action.keep", {
+            version: versionLabel(extension.currentVersion ?? extension.version),
+          });
   return (
     <Card
       title={extension.name}

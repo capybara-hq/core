@@ -199,6 +199,10 @@ describe("Sidebar navigation (work context)", () => {
         .getAllByRole("menuitem")
         .map((i) => i.textContent),
     ).toEqual(["技能", "连接器", "看板"]);
+    // like the main nav, every flyout item carries its icon
+    for (const item of within(menu).getAllByRole("menuitem")) {
+      expect(item.querySelector(".cb-icon")).not.toBeNull();
+    }
     expect(within(menu).getAllByRole("separator")).toHaveLength(1);
     // nothing remembered
     expect(localStorage.getItem("cap.sidebar.more")).toBeNull();

@@ -57,7 +57,6 @@ export function EmptyArea<T>({
       <div className="cb-table-empty" data-part="table-empty" data-empty="no-results">
         <EmptyState
           size="compact"
-          icon="search-x"
           text={t("table.noResults")}
           {...(noResults?.description ? { hint: noResults.description } : {})}
           {...(noResults

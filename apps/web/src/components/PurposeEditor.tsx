@@ -229,7 +229,10 @@ function PurposeEditor({
         title={
           <Stack direction="row" gap={8} align="center">
             <Text>{label}</Text>
-            <Badge>{view.purpose}</Badge>
+            {/* The purpose id is plain metadata: mono muted text, not a badge */}
+            <Text variant="small" tone="muted">
+              {view.purpose}
+            </Text>
             {scope === "org" && view.override !== null ? (
               <Badge tone="accent">{t("overridden")}</Badge>
             ) : null}

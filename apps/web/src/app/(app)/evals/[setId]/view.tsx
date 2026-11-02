@@ -5,9 +5,11 @@ import {
   type Column,
   DangerConfirm,
   DataTable,
+  DateTime,
   DetailPage,
   Dialog,
   Field,
+  formatDateTime,
   Input,
   KeyValue,
   Select,
@@ -16,9 +18,8 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
-import { useLocale, useTranslations } from "next-intl";
+import { useTranslations } from "next-intl";
 import { useState, useTransition } from "react";
-import { formatTime } from "../../../../components/ApprovalCard";
 import { FormError } from "../../../../components/form-error";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
@@ -136,7 +137,6 @@ export default function EvalSetView({
 
 function SetInspector({ set, agent }: { set: EvalSetDetail; agent: Agent | null }) {
   const t = useTranslations("evals.set");
-  const locale = useLocale();
   // Display only: the agent's id when it could not be read.
   const agentName = agent?.definition.name || set.agentId;
   return (
@@ -145,7 +145,7 @@ function SetInspector({ set, agent }: { set: EvalSetDetail; agent: Agent | null 
         keyWidth="10ch"
         rows={[
           { k: t("agent"), v: agentName },
-          { k: t("created"), v: formatTime(set.createdAt, locale) },
+          { k: t("created"), v: <DateTime value={set.createdAt} /> },
         ]}
       />
       {set.description !== "" ? (
@@ -153,7 +153,9 @@ function SetInspector({ set, agent }: { set: EvalSetDetail; agent: Agent | null 
           <Text variant="small" tone="muted">
             {t("description")}
           </Text>
-          <Text pre>{set.description}</Text>
+          <Text variant="prose" pre>
+            {set.description}
+          </Text>
         </Stack>
       ) : null}
       <Stack gap={4}>
@@ -180,7 +182,6 @@ function CasesTab({
   onChanged(): void;
 }) {
   const t = useTranslations("evals.set");
-  const locale = useLocale();
   const router = useRouter();
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -220,7 +221,7 @@ function CasesTab({
       header: t("caseColumns.created"),
       width: 170,
       tone: "muted",
-      cell: (c) => formatTime(c.createdAt, locale),
+      cell: (c) => <DateTime value={c.createdAt} />,
     },
   ];
   return (
@@ -243,14 +244,13 @@ function CasesTab({
 
 function RunsTab({ runs, onRetry }: { runs: EvalRun[] | null; onRetry(): void }) {
   const t = useTranslations("evals");
-  const locale = useLocale();
   const router = useRouter();
   const columns: Column<EvalRun>[] = [
     {
       key: "created",
       header: t("set.runColumns.created"),
       width: 170,
-      cell: (r) => formatTime(r.createdAt, locale),
+      cell: (r) => <DateTime value={r.createdAt} />,
     },
     { key: "mode", header: t("set.runColumns.mode"), cell: (r) => t(`mode.${r.mode}`) },
     {
@@ -279,7 +279,7 @@ function RunsTab({ runs, onRetry }: { runs: EvalRun[] | null; onRetry(): void })
       columns={columns}
       rows={runs ?? []}
       rowKey={(r) => r.id}
-      rowLabel={(r) => formatTime(r.createdAt, locale)}
+      rowLabel={(r) => formatDateTime(r.createdAt)}
       state={runs === null ? "error" : "ready"}
       error={{ code: "unknown", onRetry }}
       empty={{ title: t("set.runsEmpty") }}
@@ -364,7 +364,9 @@ function SampleDialog({
       }
     >
       <Stack gap={12}>
-        <Text tone="muted">{t("hint")}</Text>
+        <Text variant="prose" tone="muted">
+          {t("hint")}
+        </Text>
         <Field label={t("count")}>
           <Input
             type="number"

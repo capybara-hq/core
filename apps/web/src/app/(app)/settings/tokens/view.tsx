@@ -4,6 +4,7 @@ import {
   Button,
   type Column,
   DataTable,
+  DateTime,
   Dialog,
   Field,
   Input,
@@ -16,7 +17,7 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
-import { useLocale, useTranslations } from "next-intl";
+import { useTranslations } from "next-intl";
 import { useState, useTransition } from "react";
 import { FormError } from "../../../../components/form-error";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
@@ -40,9 +41,6 @@ import { useErrorMessage } from "../../../../lib/use-error-message";
 const EXPIRY_DAYS = ["never", "30", "90", "365"] as const;
 type Expiry = (typeof EXPIRY_DAYS)[number];
 
-const date = (iso: string, locale: string) =>
-  new Date(iso).toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" });
-
 export default function Tokens({
   orgId,
   actor,
@@ -55,7 +53,6 @@ export default function Tokens({
   const scope = usePagePath("org");
   const t = useTranslations("tokens");
   const tr = useTranslations("members.roles");
-  const locale = useLocale();
   const nav = useOrgSettingsNav();
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -74,7 +71,7 @@ export default function Tokens({
       key: "created",
       header: t("columns.created"),
       tone: "muted",
-      cell: (r) => date(r.createdAt, locale),
+      cell: (r) => <DateTime value={r.createdAt} />,
     },
     {
       key: "expires",
@@ -86,14 +83,14 @@ export default function Tokens({
         ) : Date.parse(r.expiresAt) <= Date.now() ? (
           <StatusMark status="cancelled" label={t("expired")} />
         ) : (
-          date(r.expiresAt, locale)
+          <DateTime value={r.expiresAt} />
         ),
     },
     {
       key: "lastUsed",
       header: t("columns.lastUsed"),
       tone: "muted",
-      cell: (r) => (r.lastUsedAt === null ? t("neverUsed") : date(r.lastUsedAt, locale)),
+      cell: (r) => (r.lastUsedAt === null ? t("neverUsed") : <DateTime value={r.lastUsedAt} />),
     },
   ];
   const menu = (r: ServiceToken): MenuItem[] => [
@@ -300,7 +297,7 @@ function RevokeDialog({
       }
     >
       <Stack gap={8}>
-        <Text>{t("revokeDescription", { name: token.name })}</Text>
+        <Text variant="prose">{t("revokeDescription", { name: token.name })}</Text>
         {error !== null && <FormError message={error} />}
       </Stack>
     </Dialog>

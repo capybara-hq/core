@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   DangerConfirm,
+  DateTime,
   DetailPage,
   Field,
   Input,
@@ -13,7 +14,7 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
-import { useLocale, useTranslations } from "next-intl";
+import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { AgentSelect, ChannelStatusMark, PolicyRadio } from "../../../../components/ChannelFields";
 import { FormError } from "../../../../components/form-error";
@@ -106,7 +107,6 @@ export default function ChannelView({ orgId, initial }: { orgId: string; initial
 
 function Inspector({ data }: { data: ChannelData }) {
   const t = useTranslations("channels");
-  const locale = useLocale();
   const { channel } = data;
   const agent = data.agents.find((a) => a.id === channel.agentId);
   return (
@@ -118,7 +118,7 @@ function Inspector({ data }: { data: ChannelData }) {
         { k: t("inspector.bot"), v: channel.botUserId ?? "—" },
         { k: t("inspector.agent"), v: agent?.definition.name ?? channel.agentId },
         { k: t("inspector.policy"), v: t(`policy.${channel.unboundPolicy}`) },
-        { k: t("inspector.created"), v: new Date(channel.createdAt).toLocaleString(locale) },
+        { k: t("inspector.created"), v: <DateTime value={channel.createdAt} /> },
       ]}
     />
   );
@@ -228,7 +228,9 @@ function InboundCard({
   return (
     <Card title={t("detail.inboundTitle")}>
       <Stack gap={12}>
-        <Text tone="muted">{t("detail.inboundHint")}</Text>
+        <Text variant="prose" tone="muted">
+          {t("detail.inboundHint")}
+        </Text>
         {channel.inboundMode === "webhook" && channel.webhookUrl === null && (
           <Text tone="warn">{`! ${t("detail.webhookNoUrlWarning")}`}</Text>
         )}
@@ -322,7 +324,9 @@ function CredentialsTab({
   return (
     <Card title={t("detail.credentialsTitle")}>
       <Stack gap={16}>
-        <Text tone="muted">{t("detail.credentialsHint")}</Text>
+        <Text variant="prose" tone="muted">
+          {t("detail.credentialsHint")}
+        </Text>
         <SchemaForm
           schema={schema}
           draft={draft}
@@ -413,7 +417,9 @@ function SettingsTab({
       </Card>
       <Card tone="danger" title={t("detail.dangerTitle")}>
         <Stack gap={12}>
-          <Text tone="muted">{t("detail.deleteHint")}</Text>
+          <Text variant="prose" tone="muted">
+            {t("detail.deleteHint")}
+          </Text>
           <Stack direction="row">
             <Button variant="danger" onClick={() => setConfirm(true)}>
               {t("detail.delete")}

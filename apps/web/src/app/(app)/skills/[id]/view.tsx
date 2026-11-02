@@ -7,6 +7,7 @@ import {
   type Column,
   DangerConfirm,
   DataTable,
+  DateTime,
   DetailPage,
   formatBytes,
   KeyValue,
@@ -14,9 +15,8 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
-import { useLocale, useTranslations } from "next-intl";
+import { useTranslations } from "next-intl";
 import { useState } from "react";
-import { formatTime } from "../../../../components/ApprovalCard";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import { useRouter } from "../../../../i18n/navigation";
@@ -76,7 +76,6 @@ export default function SkillView({
 function Inspector({ skill }: { skill: SkillDetail }) {
   const t = useTranslations("skills.detail");
   const tv = useTranslations("skills");
-  const locale = useLocale();
   return (
     <Stack gap={12}>
       <KeyValue
@@ -85,14 +84,16 @@ function Inspector({ skill }: { skill: SkillDetail }) {
           { k: t("name"), v: skill.name },
           { k: t("version"), v: tv("version", { version: skill.currentVersion }) },
           { k: t("files"), v: String(skill.versions[0]?.files.length ?? 0) },
-          { k: t("updated"), v: formatTime(skill.updatedAt, locale) },
+          { k: t("updated"), v: <DateTime value={skill.updatedAt} /> },
         ]}
       />
       <Stack gap={4}>
         <Text variant="small" tone="muted">
           {t("description")}
         </Text>
-        <Text pre>{skill.description}</Text>
+        <Text variant="prose" pre>
+          {skill.description}
+        </Text>
       </Stack>
     </Stack>
   );
@@ -117,7 +118,9 @@ function ContentTab({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
         <>
           <Card tone="danger" title={t("dangerTitle")}>
             <Stack gap={12}>
-              <Text tone="muted">{t("deleteHint")}</Text>
+              <Text variant="prose" tone="muted">
+                {t("deleteHint")}
+              </Text>
               <Stack direction="row">
                 <Button variant="danger" onClick={() => setConfirm(true)}>
                   {t("delete")}
@@ -176,7 +179,6 @@ function FilesTab({ files }: { files: SkillFile[] }) {
 function VersionsTab({ versions }: { versions: SkillVersion[] }) {
   const t = useTranslations("skills.detail");
   const tv = useTranslations("skills");
-  const locale = useLocale();
   const columns: Column<SkillVersion>[] = [
     {
       key: "version",
@@ -205,7 +207,7 @@ function VersionsTab({ versions }: { versions: SkillVersion[] }) {
       header: t("columns.created"),
       tone: "muted",
       width: 160,
-      cell: (v) => formatTime(v.createdAt, locale),
+      cell: (v) => <DateTime value={v.createdAt} />,
     },
   ];
   return (

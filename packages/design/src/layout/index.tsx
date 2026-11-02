@@ -85,7 +85,11 @@ export function Text({
   title: titleText,
   children,
 }: {
-  variant?: "h1" | "h2" | "body" | "small" | "micro";
+  /**
+   * `prose`: running text (descriptions, hints, dialog bodies) in the proportional font,
+   * `prose-small` 13 / 20 (spec §2.2); every other variant is the mono UI skeleton.
+   */
+  variant?: "h1" | "h2" | "body" | "small" | "micro" | "prose";
   tone?: "ink" | "muted" | "faint" | "accent" | "ok" | "fail" | "warn";
   as?: ElementType;
   truncate?: boolean;

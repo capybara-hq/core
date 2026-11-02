@@ -314,7 +314,7 @@ describe("(app) 页面模板", () => {
     ...over,
   });
 
-  it("Agents page: object rows with scope chip, meta line and the row action Chat", async () => {
+  it("Agents page: object rows with the visibility in the meta line (no chip) and the row action Chat", async () => {
     const calls = stubApi({});
     await renderRoute(
       () => AgentsPage(),
@@ -327,8 +327,11 @@ describe("(app) 页面模板", () => {
     const list = await screen.findByRole("list", { name: zh.agents.title });
     const row = within(list).getAllByRole("listitem")[0] as HTMLElement;
     expect(within(row).getByText("Echo agent")).toBeTruthy();
-    expect(within(row).getByText(zh.agents.scope.org)).toBeTruthy();
-    expect(within(row).getByText("model-fake / fake-1 · 2 技能 · 1 工具")).toBeTruthy();
+    // visibility is plain metadata: the first part of the mono meta line, never a chip
+    expect(row.querySelector(".cb-object-chip")).toBeNull();
+    expect(
+      within(row).getByText(`${zh.agents.scope.org} · model-fake / fake-1 · 2 技能 · 1 工具`),
+    ).toBeTruthy();
     expect(screen.getByRole("link", { name: zh.agents.new }).getAttribute("href")).toBe(
       "/agents/new",
     );
@@ -697,6 +700,8 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(current.getAttribute("aria-checked")).toBe("true");
     expect(current.querySelector("svg")).toBeTruthy();
     expect(current.textContent).toBe("Acme");
+    // the current org is the current choice, in primary text: not disabled
+    expect(current.getAttribute("aria-disabled")).toBeNull();
     // jsdom has no layout: pick submenu items with the keyboard (see design menu-submenu tests)
     (await screen.findByRole("menuitemradio", { name: "Beta" })).focus();
     await user.keyboard("{Enter}");

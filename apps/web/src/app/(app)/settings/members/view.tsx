@@ -5,8 +5,10 @@ import {
   Button,
   type Column,
   DataTable,
+  DateTime,
   Dialog,
   Field,
+  formatDateTime,
   Input,
   type MenuItem,
   Select,
@@ -61,15 +63,11 @@ export interface MembersData {
 
 type Pending = { member: Member; action: "remove" | "transfer" };
 
-const date = (iso: string, locale: string) =>
-  new Date(iso).toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" });
-
 export default function Members({ orgId, initial }: { orgId: string; initial: MembersData }) {
   const scope = usePagePath("org");
   const nav = useOrgSettingsNav();
   const t = useTranslations("members");
   const tr = useTranslations("roles");
-  const locale = useLocale();
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const { me } = useSession();
@@ -151,7 +149,7 @@ export default function Members({ orgId, initial }: { orgId: string; initial: Me
       key: "joined",
       header: t("columns.joined"),
       tone: "muted",
-      cell: (m) => date(m.joinedAt, locale),
+      cell: (m) => <DateTime value={m.joinedAt} />,
     },
   ];
 
@@ -318,7 +316,7 @@ function ConfirmDialog({
       }
     >
       <Stack gap={8}>
-        <Text>{t(`confirm.${action}Hint`, { name })}</Text>
+        <Text variant="prose">{t(`confirm.${action}Hint`, { name })}</Text>
         {error !== null && <FormError message={error} />}
       </Stack>
     </Dialog>
@@ -340,7 +338,6 @@ function Invitations({
   setInviting(v: boolean): void;
 }) {
   const t = useTranslations("members");
-  const locale = useLocale();
   const toast = useToast();
   const errorMessage = useErrorMessage();
   // 最近的在前
@@ -374,13 +371,13 @@ function Invitations({
       key: "created",
       header: t("invitations.columns.created"),
       tone: "muted",
-      cell: (i) => date(i.createdAt, locale),
+      cell: (i) => <DateTime value={i.createdAt} />,
     },
     {
       key: "expires",
       header: t("invitations.columns.expires"),
       tone: "muted",
-      cell: (i) => date(i.expiresAt, locale),
+      cell: (i) => <DateTime value={i.expiresAt} />,
     },
   ];
 
@@ -394,7 +391,7 @@ function Invitations({
         columns={columns}
         rows={rows}
         rowKey={(i) => i.id}
-        rowLabel={(i) => `${t(`roles.${i.role}`)} · ${date(i.createdAt, locale)}`}
+        rowLabel={(i) => `${t(`roles.${i.role}`)} · ${formatDateTime(i.createdAt)}`}
         state={initial === null ? "error" : "ready"}
         error={{ code: "unknown", onRetry: refresh }}
         empty={{ title: t("invitations.empty") }}

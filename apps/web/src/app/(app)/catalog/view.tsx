@@ -82,7 +82,7 @@ export default function CatalogView({ initial }: { initial: OrgCatalogItem[] }) 
         return (
           <ObjectRow
             key={i.id}
-            mark={{ text: Array.from(name)[0] ?? "?" }}
+            mark={{ text: name }}
             name={name}
             href={`/catalog/${encodeURIComponent(i.id)}`}
             description={i.description}

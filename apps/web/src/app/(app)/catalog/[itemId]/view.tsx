@@ -1,6 +1,6 @@
 "use client";
 
-import { Card, DetailPage, KeyValue, Stack, Text } from "@capybara-hq/design";
+import { Card, DetailPage, KeyValue, Stack, Text, versionLabel } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useTransition } from "react";
 import {
@@ -56,7 +56,7 @@ export default function CatalogItemView({
           { label: displayNameOf(item, locale) },
         ],
         title: displayNameOf(item, locale),
-        count: item.latestVersion,
+        count: versionLabel(item.latestVersion),
       }}
       tabs={{
         label: t("detail.tabsLabel"),
@@ -72,7 +72,7 @@ export default function CatalogItemView({
             keyWidth="10ch"
             rows={[
               { k: t("detail.fields.publisher"), v: item.publisher || "—" },
-              { k: t("detail.fields.version"), v: item.latestVersion },
+              { k: t("detail.fields.version"), v: versionLabel(item.latestVersion) },
               { k: t("detail.fields.status"), v: status(item) },
             ]}
           />
@@ -80,7 +80,7 @@ export default function CatalogItemView({
       }
     >
       <Stack gap={16}>
-        {item.description !== "" && <Text>{item.description}</Text>}
+        {item.description !== "" && <Text variant="prose">{item.description}</Text>}
         <CatalogInstallAction
           orgId={orgId}
           item={item}
@@ -127,7 +127,11 @@ export default function CatalogItemView({
               }
             >
               <Stack gap={8}>
-                {c.description !== "" && <Text tone="muted">{c.description}</Text>}
+                {c.description !== "" && (
+                  <Text variant="prose" tone="muted">
+                    {c.description}
+                  </Text>
+                )}
                 <KeyValue
                   keyWidth="14ch"
                   rows={endpointLeaves(c.endpoint).map(([k, v]) => ({ k, v: showValue(v) }))}

@@ -126,6 +126,31 @@
   font-weight: 400;
   color: var(--cb-faint);
 }
+/* Phones: the sub-nav is one row of items that scrolls sideways (no group labels), above the
+   content, so the content starts on the first screen. */
+@media (max-width: 639px) {
+  .cb-settings-nav {
+    flex-direction: row;
+    gap: var(--cb-space-1);
+    margin: 0 calc(var(--cb-content-pad, 16px) * -1);
+    padding: 0 var(--cb-content-pad, 16px) var(--cb-space-1);
+    overflow-x: auto;
+    border-bottom: 1px solid var(--cb-line-soft);
+    scrollbar-width: none;
+  }
+  .cb-settings-nav-section {
+    display: contents;
+  }
+  .cb-settings-nav-group {
+    display: none;
+  }
+  .cb-settings-nav-item {
+    flex: none;
+    gap: var(--cb-space-2);
+    height: 40px;
+    white-space: nowrap;
+  }
+}
 
 /* Trace (T8): the stats, the waterfall and the detail share the content frame's one left edge. The
    detail follows the waterfall (no stretched waterfall, no gap); from 1280 it is a 400 px right
@@ -383,10 +408,6 @@ a.cb-item-list-title:hover {
   flex: none;
   gap: var(--cb-space-2);
 }
-.cb-item-list-empty {
-  margin: 0;
-  color: var(--cb-muted);
-}
 
 /* Sections inside a page's own wrapper (not the form frame's direct children) keep space.6 apart. */
 .cb-form-section + .cb-form-section {
@@ -481,6 +502,7 @@ a.cb-object-name:hover {
 }
 .cb-object-desc {
   color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
 }
 .cb-object-meta {
   font-size: var(--cb-type-micro-size);
@@ -557,6 +579,10 @@ a.cb-object-name:hover {
   padding: var(--cb-space-3);
   text-align: left;
 }
+/* A card's body already pads its content: the compact state sits on the card's edge. */
+.cb-card-body > .cb-empty-state[data-size="compact"] {
+  padding: 0;
+}
 .cb-empty-state-art {
   display: flex;
   margin-bottom: var(--cb-space-1);
@@ -567,10 +593,6 @@ a.cb-object-name:hover {
   stroke: var(--cb-faint);
   stroke-width: 1;
 }
-.cb-empty-state-icon {
-  display: flex;
-  color: var(--cb-faint);
-}
 .cb-empty-state-words {
   display: flex;
   flex-direction: column;
@@ -579,10 +601,12 @@ a.cb-object-name:hover {
 .cb-empty-state-text {
   margin: 0;
   color: var(--cb-ink);
+  font-family: var(--cb-font-prose);
 }
 .cb-empty-state-hint {
   margin: 0;
   color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
@@ -624,6 +648,7 @@ a.cb-object-name:hover {
 }
 .cb-callout-text {
   flex: 1;
+  font-family: var(--cb-font-prose);
   min-width: 0;
 }
 

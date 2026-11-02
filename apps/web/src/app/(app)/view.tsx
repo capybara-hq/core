@@ -66,6 +66,7 @@ function Overview({ orgId, data }: { orgId: string; data: OverviewData }) {
         : {})}
     >
       <KeyValue
+        columns={2}
         rows={[
           { k: t("agents"), v: String(data.agents.length) },
           ...(data.counts.skills !== undefined

@@ -1,9 +1,17 @@
 "use client";
 
-import { Button, Card, Dialog, SettingsPage, Stack, Text } from "@capybara-hq/design";
-import { useLocale, useTranslations } from "next-intl";
+import {
+  Button,
+  Card,
+  Dialog,
+  formatDateTime,
+  SettingsPage,
+  Stack,
+  Text,
+  versionLabel,
+} from "@capybara-hq/design";
+import { useTranslations } from "next-intl";
 import { useState, useTransition } from "react";
-import { formatTime } from "../../../../components/ApprovalCard";
 import { FormError } from "../../../../components/form-error";
 import { PluginUpgradeDialog } from "../../../../components/PluginUpgradeDialog";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
@@ -112,7 +120,6 @@ function InstallCard({
 }) {
   const t = useTranslations("catalog.plugins");
   const ti = useTranslations("catalog.org.install.step");
-  const locale = useLocale();
   const errorMessage = useErrorMessage();
   const [confirm, setConfirm] = useState(false);
   const [upgrading, setUpgrading] = useState(false);
@@ -141,9 +148,9 @@ function InstallCard({
   };
 
   return (
-    <section aria-label={`${install.name} ${install.version}`}>
+    <section aria-label={`${install.name} ${versionLabel(install.version)}`}>
       <Card
-        title={`${install.name} ${install.version}`}
+        title={`${install.name} ${versionLabel(install.version)}`}
         tone={install.status === "failed" ? "danger" : "default"}
         actions={
           <Stack direction="row" gap={8}>
@@ -160,13 +167,13 @@ function InstallCard({
       >
         <Stack gap={8}>
           <Text tone={install.status === "failed" ? "fail" : "muted"}>
-            {`${t(`status.${install.status}`)} · ${t("installedAt", { at: formatTime(install.installedAt, locale) })}`}
+            {`${t(`status.${install.status}`)} · ${t("installedAt", { at: formatDateTime(install.installedAt) })}`}
           </Text>
           {install.deploymentPending ? (
             <Text tone="warn">{t("deploymentPending")}</Text>
           ) : (
             target !== null && (
-              <Text tone="accent">{t("upgradeAvailable", { version: target })}</Text>
+              <Text tone="accent">{t("upgradeAvailable", { version: versionLabel(target) })}</Text>
             )
           )}
           {usedBy.length > 0 && (
@@ -225,7 +232,7 @@ function InstallCard({
             </>
           }
         >
-          <Text>{t("confirm.hint")}</Text>
+          <Text variant="prose">{t("confirm.hint")}</Text>
         </Dialog>
       </Card>
     </section>

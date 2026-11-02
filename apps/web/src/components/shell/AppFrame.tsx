@@ -250,11 +250,15 @@ export function AppFrame({
   // The user's orgs as radio items, then "Create organization…": the org switcher's menu and the
   // account menu's Organization submenu.
   const orgItems: MenuItem[] = [
+    // The current org reads as the current choice (primary text and a check), not as disabled;
+    // choosing it again does nothing.
     ...me.memberships.map((m) => ({
       label: m.name,
       checked: m.orgId === orgId,
-      disabled: m.orgId === orgId || switching,
-      onSelect: () => selectOrg(m.orgId),
+      disabled: switching,
+      onSelect: () => {
+        if (m.orgId !== orgId) selectOrg(m.orgId);
+      },
     })),
     ...(me.memberships.length > 0 && createOrgItem.length > 0 ? ["separator" as const] : []),
     ...createOrgItem,

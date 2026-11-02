@@ -121,11 +121,14 @@ describe("DataTable density and parts", () => {
       cleanup();
     }
   });
-  it("no results shows the search-x icon", () => {
+  it("no results is the compact empty state: the sentence, no icon or art", () => {
     const r = plain({ rows: [], noResults: { description: "状态：失败", onClear: () => {} } });
-    expect(
-      r.container.querySelector('[data-empty="no-results"] [data-icon="search-x"]'),
-    ).toBeTruthy();
+    const area = r.container.querySelector('[data-empty="no-results"]') as HTMLElement;
+    expect(area.querySelector('[data-part="empty-state"]')?.getAttribute("data-size")).toBe(
+      "compact",
+    );
+    expect(area.querySelector('[data-icon="search-x"]')).toBeNull();
+    expect(area.querySelector('[data-part="empty-illustration"]')).toBeNull();
   });
   it("a CellTitle first cell names the row checkbox", () => {
     render(

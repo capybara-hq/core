@@ -4,15 +4,15 @@ import {
   Button,
   Dialog,
   FilePicker,
+  formatDateTime,
   ListPage,
   ObjectRow,
   Stack,
   Text,
   useToast,
 } from "@capybara-hq/design";
-import { useLocale, useTranslations } from "next-intl";
+import { useTranslations } from "next-intl";
 import { useRef, useState, useTransition } from "react";
-import { formatTime } from "../../../components/ApprovalCard";
 import { FormError } from "../../../components/form-error";
 import { usePagePath } from "../../../components/shell/path";
 import { useSession } from "../../../components/shell/session";
@@ -30,7 +30,6 @@ import { useErrorMessage } from "../../../lib/use-error-message";
 export default function SkillsView({ orgId, initial }: { orgId: string; initial: SkillSummary[] }) {
   const scope = usePagePath("org");
   const t = useTranslations("skills");
-  const locale = useLocale();
   const { me } = useSession();
   const admin = canUpdateOrg(me);
   const [uploading, setUploading] = useState(false);
@@ -77,12 +76,12 @@ export default function SkillsView({ orgId, initial }: { orgId: string; initial:
         {rows.map((s) => (
           <ObjectRow
             key={s.id}
-            mark={{ text: Array.from(s.name)[0] ?? "?" }}
+            mark={{ text: s.name }}
             name={s.name}
             href={`/skills/${encodeURIComponent(s.id)}`}
             mono
             description={s.description}
-            meta={`${t("version", { version: s.currentVersion })} · ${formatTime(s.updatedAt, locale)}`}
+            meta={`${t("version", { version: s.currentVersion })} · ${formatDateTime(s.updatedAt)}`}
           />
         ))}
       </ListPage>

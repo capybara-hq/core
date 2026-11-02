@@ -1,6 +1,15 @@
 "use client";
 
-import { Button, Card, Dialog, Skeleton, Stack, Text, useToast } from "@capybara-hq/design";
+import {
+  Button,
+  Card,
+  Dialog,
+  Skeleton,
+  Stack,
+  Text,
+  useToast,
+  versionLabel,
+} from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 import { ApiClientError } from "../lib/api";
@@ -108,7 +117,7 @@ export function PluginUpgradeDialog({
     const message =
       d.rolledBack === false
         ? t("failedNoRollback", { step: stepName, code })
-        : t("failed", { step: stepName, code, version: from });
+        : t("failed", { step: stepName, code, version: versionLabel(from) });
     return typeof d.dependency === "string"
       ? `${message} ${ti("failedIn", { dependency: d.dependency })}`
       : message;
@@ -229,7 +238,7 @@ export function PluginUpgradeDialog({
         toast.success(t("requested"));
         onDone("requested");
       } else {
-        toast.success(t("done", { name: install.name, version: preview.to }));
+        toast.success(t("done", { name: install.name, version: versionLabel(preview.to) }));
         onDone("upgraded");
       }
       onOpenChange(false);
@@ -278,7 +287,12 @@ export function PluginUpgradeDialog({
         <FormError message={loaded.problem.message} extra={loaded.problem.extra} />
       ) : (
         <Stack gap={16}>
-          <Text>{t("versions", { from: loaded.preview.from, to: loaded.preview.to })}</Text>
+          <Text>
+            {t("versions", {
+              from: versionLabel(loaded.preview.from),
+              to: versionLabel(loaded.preview.to),
+            })}
+          </Text>
           <Stack gap={4}>
             <Text variant="small" tone="muted">
               {t("changes")}

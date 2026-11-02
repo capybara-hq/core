@@ -1,6 +1,14 @@
 "use client";
 
-import { ListPage, type MenuItem, ObjectRow, Stack, Tabs, Text } from "@capybara-hq/design";
+import {
+  ListPage,
+  type MenuItem,
+  ObjectRow,
+  Stack,
+  Tabs,
+  Text,
+  versionLabel,
+} from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 import { useCatalogErrorLines } from "../../../../../components/CatalogParts";
@@ -123,7 +131,9 @@ export default function Catalog({
   const versionText = (e: MarketplaceEntry) =>
     e.compatible
       ? (e.version ?? t("noVersion"))
-      : t("incompatible", { version: e.version ?? t("noVersion") });
+      : t("incompatible", {
+          version: e.version == null ? t("noVersion") : versionLabel(e.version),
+        });
   const metaOf = (e: MarketplaceEntry): (string | { label: string; tone: "warn" })[] => {
     const note = sourceNote(e);
     return [
@@ -148,10 +158,12 @@ export default function Catalog({
   };
   const importLabel = (e: MarketplaceEntry) =>
     e.contentChanged
-      ? t("importChanged", { version: e.version ?? t("noVersion") })
+      ? t("importChanged", {
+          version: e.version == null ? t("noVersion") : versionLabel(e.version),
+        })
       : e.version === null
         ? t("import")
-        : t("importVersion", { version: e.version });
+        : t("importVersion", { version: versionLabel(e.version) });
   /** The row's one action: import (again, when the content changed), or open the imported item. */
   const actionOf = (e: MarketplaceEntry) => {
     if (e.importable && e.compatible && (!imported(e) || e.contentChanged)) {
@@ -183,7 +195,12 @@ export default function Catalog({
       ? { label: reasonOf(e), tone: "warn" as const }
       : e.adopted === null
         ? { label: t("notAdopted"), tone: "muted" as const }
-        : { label: t("adopted", { version: e.adopted.versions[0] ?? "" }), tone: "ok" as const };
+        : {
+            label: t("adopted", {
+              version: e.adopted.versions[0] == null ? "" : versionLabel(e.adopted.versions[0]),
+            }),
+            tone: "ok" as const,
+          };
 
   const filtering = sourceId !== "" || query !== "";
   const callout =
@@ -207,13 +224,12 @@ export default function Catalog({
   const empty =
     state.kind === "error"
       ? {
-          icon: "circle-alert" as const,
           text: t("loadFailed"),
           action: { label: t("retry"), variant: "default" as const, onSelect: reload },
         }
       : state.kind === "ready" && rows.length === 0
         ? filtering
-          ? { icon: "search" as const, text: t("noResults") }
+          ? { text: t("noResults") }
           : { text: t("empty") }
         : undefined;
 
@@ -259,7 +275,7 @@ export default function Catalog({
           <ObjectRow
             key={keyOf(e)}
             mark={{
-              text: Array.from(e.name)[0] ?? "?",
+              text: e.name,
               ...(!e.importable ? { tone: "warn" as const } : {}),
             }}
             name={e.name}

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { LinkPendingMark, useDesignLink } from "../provider";
+import { EmptyState } from "./empty-state";
 
 export type ItemListRow = {
   id: string;
@@ -19,7 +20,7 @@ export type ItemListRow = {
 /**
  * Rows of things to look at or act on inside a Card (the overview's inbox, recent conversations,
  * agents): tag, title and meta, status, actions; rows split by `line-soft` (spec §6.12). Empty, it
- * shows `empty` as muted text.
+ * shows `empty` as the compact empty state.
  */
 export function ItemList({
   label,
@@ -32,7 +33,7 @@ export function ItemList({
 }) {
   const Link = useDesignLink();
   if (rows.length === 0) {
-    return empty ? <p className="cb-item-list-empty">{empty}</p> : null;
+    return empty ? <EmptyState size="compact" text={empty} /> : null;
   }
   return (
     <ul className="cb-item-list" aria-label={label}>

@@ -7,6 +7,7 @@ import {
   type Column,
   DangerConfirm,
   DataTable,
+  DateTime,
   DetailPage,
   Field,
   formatBytes,
@@ -16,10 +17,10 @@ import {
   Stack,
   Text,
   useToast,
+  versionLabel,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
-import { formatTime } from "../../../../../components/ApprovalCard";
 import {
   CatalogIcon,
   ComponentSection,
@@ -99,7 +100,7 @@ export default function DirectoryItemView({
           { label: displayNameOf(item, locale) },
         ],
         title: displayNameOf(item, locale),
-        count: item.latestVersion,
+        count: versionLabel(item.latestVersion),
         status: <PolicyBadge policy={item.policy} />,
       }}
       tabs={{
@@ -117,11 +118,11 @@ export default function DirectoryItemView({
             rows={[
               { k: t("detail.fields.package"), v: item.packageName ?? "—" },
               { k: t("detail.fields.publisher"), v: item.publisher || "—" },
-              { k: t("detail.fields.latest"), v: item.latestVersion },
+              { k: t("detail.fields.latest"), v: versionLabel(item.latestVersion) },
               { k: t("detail.fields.source"), v: sourceLabel(item) },
               ...(latestDetail ? [{ k: t("detail.fields.origin"), v: origin(latestDetail) }] : []),
               { k: t("detail.fields.installs"), v: String(item.installs) },
-              { k: t("detail.fields.updated"), v: formatTime(item.updatedAt, locale) },
+              { k: t("detail.fields.updated"), v: <DateTime value={item.updatedAt} /> },
             ]}
           />
         </Stack>
@@ -132,7 +133,11 @@ export default function DirectoryItemView({
       ) : (
         <Versions versions={detail.versions} />
       )}
-      {item.description && tab === "overview" && <Text tone="muted">{item.description}</Text>}
+      {item.description && tab === "overview" && (
+        <Text variant="prose" tone="muted">
+          {item.description}
+        </Text>
+      )}
       {item.deletedAt !== null && <Text tone="warn">{td("admin.detail.deleted")}</Text>}
     </DetailPage>
   );
@@ -184,7 +189,7 @@ function Overview({
     try {
       const p = await installItemToDeployment(item.id, version);
       setDeployed(p.name);
-      toast.success(t("deployed", { name: `${p.name} ${p.version}` }));
+      toast.success(t("deployed", { name: `${p.name} ${versionLabel(p.version)}` }));
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -303,7 +308,9 @@ function Components({
     <Stack gap={16}>
       <ComponentSection title={t("extension")} count={ext ? 1 : 0} empty={t("extensionNone")}>
         {ext && (
-          <Card title={t("extensionVersion", { name: ext.name, version: ext.version })}>
+          <Card
+            title={t("extensionVersion", { name: ext.name, version: versionLabel(ext.version) })}
+          >
             <Stack gap={8}>
               <Text variant="small" tone="muted">
                 {t("declaredHint")}
@@ -372,10 +379,9 @@ function Versions({ versions }: { versions: CatalogItemVersion[] }) {
   const t = useTranslations("catalog.admin.detail.versionColumns");
   const tv = useTranslations("catalog.versionSource");
   const tf = useTranslations("catalog.admin.detail.format");
-  const locale = useLocale();
   const origin = useOrigin();
   const columns: Column<CatalogItemVersion>[] = [
-    { key: "version", header: t("version"), cell: (v) => v.version },
+    { key: "version", header: t("version"), cell: (v) => versionLabel(v.version) },
     { key: "source", header: t("source"), cell: (v) => tv(v.source) },
     {
       key: "format",
@@ -394,7 +400,7 @@ function Versions({ versions }: { versions: CatalogItemVersion[] }) {
       key: "imported",
       header: t("imported"),
       tone: "muted",
-      cell: (v) => formatTime(v.importedAt, locale),
+      cell: (v) => <DateTime value={v.importedAt} />,
     },
   ];
   return (

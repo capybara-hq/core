@@ -161,7 +161,7 @@ describe("/catalog: actions follow installable", () => {
       }
       expect(within(row("off")).getByText(st.disabled)).toBeTruthy();
       expect(within(row("missing")).getByText(st.not_deployed)).toBeTruthy();
-      expect(within(row("done")).getByText(fill(st.installed, { version: "1.0.0" }))).toBeTruthy();
+      expect(within(row("done")).getByText(fill(st.installed, { version: "v1.0.0" }))).toBeTruthy();
       expect(within(row("asked")).getByText(st.requested)).toBeTruthy();
     },
   );
@@ -366,7 +366,7 @@ describe("/admin/catalog/import (WizardPage)", () => {
       await user.type(screen.getByRole("textbox", { name: w.npmPackage }), "@acme/plugin-crm");
       await user.click(screen.getByRole("button", { name: r.fetch }));
       const ext = await screen.findByRole("region", { name: c.extension });
-      expect(within(ext).getByText(fill(r.action.install, { version: "1.0.0" }))).toBeTruthy();
+      expect(within(ext).getByText(fill(r.action.install, { version: "v1.0.0" }))).toBeTruthy();
       expect(within(ext).getAllByText(msgs[locale].extensions.sensitive).length).toBeGreaterThan(0);
       const skills = screen.getByRole("region", { name: c.skills });
       expect(within(skills).getByText(`pdf-tools · ${fill(c.skillFiles, { n: 2 })}`)).toBeTruthy();
@@ -375,7 +375,7 @@ describe("/admin/catalog/import (WizardPage)", () => {
       const deps = screen.getByRole("region", { name: c.dependencies });
       expect(
         within(deps).getByText(
-          fill(c.dependencyResolved, { name: "crm-core", range: "^1.0.0", version: "1.2.0" }),
+          fill(c.dependencyResolved, { name: "crm-core", range: "^1.0.0", version: "v1.2.0" }),
         ),
       ).toBeTruthy();
       expect(
@@ -487,7 +487,11 @@ describe("/admin/catalog/import (WizardPage)", () => {
     await user.click(screen.getByRole("button", { name: r.confirm }));
     expect(
       await screen.findByText(
-        fill(r.deployFailed, { name: "crm", version: "1.0.0", code: "extension.migration_failed" }),
+        fill(r.deployFailed, {
+          name: "crm",
+          version: "v1.0.0",
+          code: "extension.migration_failed",
+        }),
       ),
     ).toBeTruthy();
     expect(screen.getByText("relation exists")).toBeTruthy();
@@ -1178,7 +1182,7 @@ describe("/admin/catalog and marketplace entries", () => {
     const row = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
     expect(
       within(row("old-a")).getByText(
-        new RegExp(escapeRe(fill(c.incompatible, { version: "3.0.0" }))),
+        new RegExp(escapeRe(fill(c.incompatible, { version: "v3.0.0" }))),
       ),
     ).toBeTruthy();
     const git = row("git-a");
@@ -1213,7 +1217,7 @@ describe("/admin/catalog and marketplace entries", () => {
     const importIt = async () => {
       await user.click(
         await within(list).findByRole("button", {
-          name: fill(c.importVersion, { version: "2.0.0" }),
+          name: fill(c.importVersion, { version: "v2.0.0" }),
         }),
       );
     };
@@ -1291,7 +1295,7 @@ describe("/admin/catalog and marketplace entries", () => {
     await renderRoute(adminItemPage, lastStubRoutes());
     const ext = await screen.findByRole("region", { name: c.extension });
     expect(
-      within(ext).getByText(fill(c.extensionVersion, { name: "crm", version: "1.0.0" })),
+      within(ext).getByText(fill(c.extensionVersion, { name: "crm", version: "v1.0.0" })),
     ).toBeTruthy();
     expect(within(ext).getByText("crm_search")).toBeTruthy();
     expect(within(ext).getByText(en.extensions.category.storage)).toBeTruthy();
@@ -1708,7 +1712,7 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
     const user = userEvent.setup();
     await user.click(
       within(row("in-repo")).getByRole("button", {
-        name: fill(c.importChanged, { version: "1.0.0" }),
+        name: fill(c.importChanged, { version: "v1.0.0" }),
       }),
     );
     await waitFor(() =>
@@ -1738,7 +1742,7 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
     const user = userEvent.setup();
     await user.click(
       within(list).getByRole("button", {
-        name: fill(en.catalog.admin.entries.importVersion, { version: "1.0.0" }),
+        name: fill(en.catalog.admin.entries.importVersion, { version: "v1.0.0" }),
       }),
     );
     expect(await screen.findByText(`${en.errors.marketplace.private_address}`)).toBeTruthy();
@@ -1768,7 +1772,7 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
     const user = userEvent.setup();
     await user.click(
       within(list).getByRole("button", {
-        name: fill(en.catalog.admin.entries.importVersion, { version: "1.0.0" }),
+        name: fill(en.catalog.admin.entries.importVersion, { version: "v1.0.0" }),
       }),
     );
     expect(await screen.findByText(`${en.errors.marketplace.redirect}`)).toBeTruthy();
@@ -1828,7 +1832,7 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
       expect(screen.getByText(fill(r.origin, { origin }))).toBeTruthy();
       expect(
         screen.getByText(
-          fill(r.buildVersion, { version: "1.0.0+git.fedcba987654", pluginVersion: "1.0.0" }),
+          fill(r.buildVersion, { version: "v1.0.0+git.fedcba987654", pluginVersion: "v1.0.0" }),
         ),
       ).toBeTruthy();
     },
@@ -2089,7 +2093,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       });
       await renderRoute(PluginsPage, lastStubRoutes(), { locale });
       expect(
-        await screen.findByText(fill(m.plugins.upgradeAvailable, { version: "1.1.0" })),
+        await screen.findByText(fill(m.plugins.upgradeAvailable, { version: "v1.1.0" })),
       ).toBeTruthy();
       expect(
         screen.getByText(`· ${m.plugins.componentKind.skill} old-notes — ${m.plugins.dropped}`),
@@ -2129,7 +2133,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       );
       await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
       expect(
-        await screen.findByText(fill(m.upgrade.done, { name: "crm", version: "1.1.0" })),
+        await screen.findByText(fill(m.upgrade.done, { name: "crm", version: "v1.1.0" })),
       ).toBeTruthy();
       expect(bodyOf(calls.find((c) => c.url.endsWith("/upgrade")))).toEqual({
         version: "1.1.0",
@@ -2202,12 +2206,12 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
     });
     await renderItem();
     expect(
-      await screen.findByText(fill(m.org.action.upgradeAvailable, { version: "1.1.0" })),
+      await screen.findByText(fill(m.org.action.upgradeAvailable, { version: "v1.1.0" })),
     ).toBeTruthy();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: m.org.action.upgrade }));
     const dialog = await screen.findByRole("dialog");
-    await within(dialog).findByText(fill(m.upgrade.versions, { from: "1.0.0", to: "1.1.0" }));
+    await within(dialog).findByText(fill(m.upgrade.versions, { from: "v1.0.0", to: "v1.1.0" }));
     await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
     expect(await screen.findByText(m.upgrade.requested)).toBeTruthy();
   });
@@ -2254,7 +2258,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       const inDep = fill(m.org.install.failedIn, { dependency: "crm-core" });
       expect(
         await within(dialog).findByText(
-          `${fill(m.upgrade.failed, { step: m.org.install.step.skills, code: "internal", version: "1.0.0" })} ${inDep}`,
+          `${fill(m.upgrade.failed, { step: m.org.install.step.skills, code: "internal", version: "v1.0.0" })} ${inDep}`,
         ),
       ).toBeTruthy();
       expect(within(dialog).getByText("skills.notes: bad file")).toBeTruthy();
@@ -2300,7 +2304,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       await user.click(screen.getByRole("button", { name: m.catalog.plugins.upgrade }));
       expect(
         await within(await screen.findByRole("dialog")).findByText(
-          `${fill(m.catalog.errorDetail.dependentRange, { dependent: "app", range: "^1.0.0", version: "2.0.0" })}`,
+          `${fill(m.catalog.errorDetail.dependentRange, { dependent: "app", range: "^1.0.0", version: "v2.0.0" })}`,
         ),
       ).toBeTruthy();
     },
@@ -2340,7 +2344,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
     stubApi({ [`GET ${ORG}/catalog/${ID}`]: () => json(200, DETAIL) });
     await renderItem({ me: MEMBER });
     expect(
-      await screen.findByText(fill(en.catalog.org.action.upgradeAvailable, { version: "1.1.0" })),
+      await screen.findByText(fill(en.catalog.org.action.upgradeAvailable, { version: "v1.1.0" })),
     ).toBeTruthy();
     expect(screen.queryByRole("button", { name: en.catalog.org.action.upgrade })).toBeNull();
   });
@@ -2390,7 +2394,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       ).toBeTruthy();
       expect(
         screen.getByText(
-          `${fill(m.catalog.components.skillConflictPlugin, { skill: "extra", plugin: "other 2.0.0" })}`,
+          `${fill(m.catalog.components.skillConflictPlugin, { skill: "extra", plugin: "other v2.0.0" })}`,
         ),
       ).toBeTruthy();
       expect(

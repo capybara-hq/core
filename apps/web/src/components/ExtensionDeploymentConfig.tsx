@@ -208,7 +208,9 @@ function ConfigForm({
 
   return (
     <Stack gap={16}>
-      <Text tone="muted">{t("hint")}</Text>
+      <Text variant="prose" tone="muted">
+        {t("hint")}
+      </Text>
       {view.validated && !view.valid && (
         <FormError
           message={t("invalid")}

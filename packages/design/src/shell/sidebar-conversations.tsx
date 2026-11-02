@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { Button, IconButton, Input } from "../controls/index";
+import { formatDateTime } from "../display/date-time";
 import { EmptyState } from "../display/empty-state";
 import { Segmented } from "../display/tabs";
 import { type Locale, messages } from "../i18n";
@@ -79,9 +80,8 @@ export type SidebarConversations = {
 
 /** `未命名会话 · MM-DD HH:mm` / `Untitled conversation · MM-DD HH:mm`, in local time. */
 export function untitledLabel(startedAt: Date, locale: Locale): string {
-  const p = (n: number) => String(n).padStart(2, "0");
-  const when = `${p(startedAt.getMonth() + 1)}-${p(startedAt.getDate())} ${p(startedAt.getHours())}:${p(startedAt.getMinutes())}`;
-  return `${messages[locale]["sidebar.untitled"]} · ${when}`;
+  // The compact date form of dense lists (spec §2.2).
+  return `${messages[locale]["sidebar.untitled"]} · ${formatDateTime(startedAt, "compact")}`;
 }
 
 /**
@@ -298,7 +298,6 @@ export function Conversations({
         {filtering ? (
           <EmptyState
             size="compact"
-            icon="search-x"
             text={t("sidebar.noMatch")}
             action={{
               label: t("sidebar.clearFilter"),

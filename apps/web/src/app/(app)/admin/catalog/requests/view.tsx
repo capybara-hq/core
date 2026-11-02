@@ -4,15 +4,16 @@ import {
   Card,
   type Column,
   DataTable,
+  DateTime,
   InboxPage,
   KeyValue,
   Stack,
   Text,
   useToast,
+  versionLabel,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useState, useTransition } from "react";
-import { formatTime } from "../../../../../components/ApprovalCard";
 import { FormError } from "../../../../../components/form-error";
 import { usePagePath } from "../../../../../components/shell/path";
 import { Link, useRouter } from "../../../../../i18n/navigation";
@@ -81,7 +82,7 @@ export default function Requests({ initial }: { initial: CatalogRequest[] }) {
       key: "time",
       header: t("columns.time"),
       tone: "muted",
-      cell: (r) => formatTime(r.createdAt, locale),
+      cell: (r) => <DateTime value={r.createdAt} />,
     },
   ];
 
@@ -118,10 +119,13 @@ export default function Requests({ initial }: { initial: CatalogRequest[] }) {
                 rows={[
                   { k: t("fields.org"), v: active.orgName },
                   { k: t("fields.requester"), v: requesterOf(active) },
-                  { k: t("fields.version"), v: active.version ?? "—" },
-                  { k: t("fields.requested"), v: formatTime(active.createdAt, locale) },
+                  {
+                    k: t("fields.version"),
+                    v: active.version == null ? "—" : versionLabel(active.version),
+                  },
+                  { k: t("fields.requested"), v: <DateTime value={active.createdAt} /> },
                   ...(active.orgDecidedAt !== null
-                    ? [{ k: t("fields.orgApproved"), v: formatTime(active.orgDecidedAt, locale) }]
+                    ? [{ k: t("fields.orgApproved"), v: <DateTime value={active.orgDecidedAt} /> }]
                     : []),
                 ]}
               />
@@ -158,7 +162,7 @@ export default function Requests({ initial }: { initial: CatalogRequest[] }) {
                   <Text variant="small" tone="muted">
                     {t("fields.note")}
                   </Text>
-                  <Text>{active.note}</Text>
+                  <Text variant="prose">{active.note}</Text>
                 </Stack>
               )}
               <Text variant="small" tone="muted">

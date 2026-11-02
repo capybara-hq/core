@@ -157,7 +157,9 @@ export default function TrajectoryView({
                 {t("detail.audited")}
               </Text>
               {source === undefined ? (
-                <Text tone="muted">{t("detail.selectHint")}</Text>
+                <Text variant="prose" tone="muted">
+                  {t("detail.selectHint")}
+                </Text>
               ) : (
                 <SpanDetail source={source} currency={first.currency} people={people} />
               )}

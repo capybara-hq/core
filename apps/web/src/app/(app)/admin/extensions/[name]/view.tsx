@@ -7,18 +7,20 @@ import {
   type Column,
   DangerConfirm,
   DataTable,
+  DateTime,
   DetailPage,
   Dialog,
+  formatDateTime,
   KeyValue,
   LinkButton,
   Stack,
   Text,
   useToast,
+  versionLabel,
 } from "@capybara-hq/design";
-import { useLocale, useTranslations } from "next-intl";
+import { useTranslations } from "next-intl";
 import { useEffect, useState, useTransition } from "react";
 import { ExtensionStatusMark } from "../../../../../components/AdminExtensionParts";
-import { formatTime } from "../../../../../components/ApprovalCard";
 import { ExtensionDeploymentConfig } from "../../../../../components/ExtensionDeploymentConfig";
 import { FormError } from "../../../../../components/form-error";
 import { PermissionReview } from "../../../../../components/PermissionReview";
@@ -121,7 +123,7 @@ export default function ExtensionDetail({
         path: [...scope, { label: "extensions", href: "/admin/extensions" }, { label: name }],
         title: name,
         ...(plugin && {
-          count: plugin.version,
+          count: versionLabel(plugin.version),
           status: <ExtensionStatusMark status={plugin.status} />,
         }),
       }}
@@ -173,7 +175,6 @@ function Overview({
   onRefresh(): void;
 }) {
   const t = useTranslations("admin.extensions");
-  const locale = useLocale();
   const toast = useToast();
   const router = useRouter();
   const errorMessage = useErrorMessage();
@@ -218,13 +219,13 @@ function Overview({
       cell: (r) =>
         r.servingVersion ? (
           <Stack gap={4}>
-            <Text>{r.version}</Text>
+            <Text>{versionLabel(r.version)}</Text>
             <Text variant="small" tone="muted">
-              {t("detail.stillServing", { version: r.servingVersion })}
+              {t("detail.stillServing", { version: versionLabel(r.servingVersion) })}
             </Text>
           </Stack>
         ) : (
-          r.version
+          versionLabel(r.version)
         ),
     },
     {
@@ -248,7 +249,7 @@ function Overview({
       key: "heartbeat",
       header: t("detail.replicaColumns.heartbeat"),
       tone: "muted",
-      cell: (r) => formatTime(r.heartbeatAt, locale),
+      cell: (r) => <DateTime value={r.heartbeatAt} />,
     },
   ];
 
@@ -258,10 +259,10 @@ function Overview({
         <FormError message={t("detail.packageError", { error: plugin.error })} />
       )}
       <KeyValue
-        keyWidth="12ch"
+        columns={2}
         rows={[
           { k: t("detail.fields.source"), v: t(`source.${displaySource(plugin)}`) },
-          { k: t("detail.fields.version"), v: plugin.version },
+          { k: t("detail.fields.version"), v: versionLabel(plugin.version) },
           {
             k: t("detail.fields.desired"),
             v:
@@ -274,8 +275,16 @@ function Overview({
             : []),
         ]}
       />
-      {plugin.required && <Text tone="muted">{t("detail.requiredNote")}</Text>}
-      {plugin.source === "config" && <Text tone="muted">{t("detail.configNote")}</Text>}
+      {plugin.required && (
+        <Text variant="prose" tone="muted">
+          {t("detail.requiredNote")}
+        </Text>
+      )}
+      {plugin.source === "config" && (
+        <Text variant="prose" tone="muted">
+          {t("detail.configNote")}
+        </Text>
+      )}
       {installed && (
         <Stack gap={8}>
           <Stack direction="row" gap={8}>
@@ -331,7 +340,7 @@ function Overview({
                 </Text>
                 {r.servingVersion && (
                   <Text variant="small" tone="muted">
-                    {t("detail.stillServing", { version: r.servingVersion })}
+                    {t("detail.stillServing", { version: versionLabel(r.servingVersion) })}
                   </Text>
                 )}
                 {r.detail !== null && r.detail !== "" && (
@@ -374,8 +383,10 @@ function Overview({
         }
       >
         <Stack gap={8}>
-          <Text>{t("detail.disableConfirm.hint")}</Text>
-          <Text tone="warn">{t("detail.drainHint", { seconds: drainSeconds })}</Text>
+          <Text variant="prose">{t("detail.disableConfirm.hint")}</Text>
+          <Text variant="prose" tone="warn">
+            {t("detail.drainHint", { seconds: drainSeconds })}
+          </Text>
         </Stack>
       </Dialog>
       <DangerConfirm
@@ -408,7 +419,6 @@ function Permissions({
   onRefresh(): void;
 }) {
   const t = useTranslations("admin.extensions.approve");
-  const locale = useLocale();
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const [ack, setAck] = useState(false);
@@ -444,8 +454,8 @@ function Permissions({
       {plugin.snapshot !== null ? (
         <Text tone="muted">
           {t("approved", {
-            version: plugin.snapshot.version,
-            at: formatTime(plugin.snapshot.approvedAt, locale),
+            version: versionLabel(plugin.snapshot.version),
+            at: formatDateTime(plugin.snapshot.approvedAt),
             source: t(`via.${plugin.snapshot.source}`),
           })}
         </Text>
@@ -462,7 +472,9 @@ function Permissions({
       {pending && (
         <Card tone="accent" title={t("title")}>
           <Stack gap={12}>
-            <Text tone="muted">{t("hint")}</Text>
+            <Text variant="prose" tone="muted">
+              {t("hint")}
+            </Text>
             {sensitive && <Checkbox checked={ack} onChange={setAck} label={t("ack")} />}
             {error !== undefined && (
               <Stack gap={8}>

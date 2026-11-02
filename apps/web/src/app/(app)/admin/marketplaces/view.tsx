@@ -6,6 +6,7 @@ import {
   ErrorDetail,
   Field,
   FormSection,
+  formatDateTime,
   Input,
   ListPage,
   RadioGroup,
@@ -14,9 +15,8 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
-import { useLocale, useTranslations } from "next-intl";
+import { useTranslations } from "next-intl";
 import { useState, useTransition } from "react";
-import { formatTime } from "../../../../components/ApprovalCard";
 import { useCatalogErrorLines } from "../../../../components/CatalogParts";
 import { FormError } from "../../../../components/form-error";
 import { usePagePath } from "../../../../components/shell/path";
@@ -162,7 +162,6 @@ function SourceStatus({ source }: { source: Marketplace }) {
  */
 function StatusLine({ source }: { source: Marketplace }) {
   const t = useTranslations("catalog.admin.marketplaces");
-  const locale = useLocale();
   if (source.lastStatus === "error") {
     const raw = source.lastError ?? "";
     return (
@@ -177,7 +176,7 @@ function StatusLine({ source }: { source: Marketplace }) {
     <Text tone="muted">
       {t("statusValue.ok", {
         n: source.entryCount,
-        at: source.lastRefreshedAt ? formatTime(source.lastRefreshedAt, locale) : "—",
+        at: source.lastRefreshedAt ? formatDateTime(source.lastRefreshedAt) : "—",
       })}
     </Text>
   );

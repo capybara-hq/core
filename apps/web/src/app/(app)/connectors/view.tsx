@@ -66,7 +66,7 @@ export default function ConnectorsView({ initial }: { initial: ConnectorSummary[
       {rows.map((c) => (
         <ObjectRow
           key={c.id}
-          mark={{ text: Array.from(c.name)[0] ?? "?" }}
+          mark={{ text: c.name }}
           name={c.name}
           href={`/connectors/${encodeURIComponent(c.id)}`}
           chips={[{ label: t(`auth.${c.auth.type}`) }]}

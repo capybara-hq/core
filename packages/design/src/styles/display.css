@@ -314,6 +314,13 @@
   fill: var(--cb-muted);
 }
 
+/* DateTime (spec §2.2): mono, tabular figures, relative age in the tooltip. */
+.cb-datetime {
+  font-family: var(--cb-font);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 /* KeyValue：键定宽 muted，值单行省略 */
 .cb-kv {
   display: flex;
@@ -339,6 +346,28 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Two columns of pairs (spec §6.5): key and value space.3 apart, the columns space.7 (32 px)
+   apart, each key column as wide as its widest key, so the gaps never vary from row to row. */
+.cb-kv[data-columns="2"] {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr);
+  column-gap: var(--cb-space-3);
+  row-gap: var(--cb-space-1);
+}
+.cb-kv[data-columns="2"] > .cb-kv-row {
+  display: contents;
+}
+.cb-kv[data-columns="2"] > .cb-kv-row:nth-child(2n) > .cb-kv-key {
+  margin-left: calc(var(--cb-space-7) - var(--cb-space-3));
+}
+@media (max-width: 639px) {
+  .cb-kv[data-columns="2"] {
+    grid-template-columns: max-content minmax(0, 1fr);
+  }
+  .cb-kv[data-columns="2"] > .cb-kv-row:nth-child(2n) > .cb-kv-key {
+    margin-left: 0;
+  }
 }
 
 @media (prefers-reduced-motion: no-preference) {

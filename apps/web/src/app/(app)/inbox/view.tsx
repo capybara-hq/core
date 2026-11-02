@@ -6,6 +6,7 @@ import {
   Card,
   type Column,
   DataTable,
+  DateTime,
   InboxPage,
   KeyValue,
   Stack,
@@ -13,15 +14,11 @@ import {
   Text,
   useStatusBar,
   useToast,
+  versionLabel,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useState, useTransition } from "react";
-import {
-  ApprovalInput,
-  formatTime,
-  ScopePicker,
-  useDecide,
-} from "../../../components/ApprovalCard";
+import { ApprovalInput, ScopePicker, useDecide } from "../../../components/ApprovalCard";
 import {
   requesterOf,
   SkillChangeReview,
@@ -105,7 +102,7 @@ export default function InboxView({ orgId, initial }: { orgId: string; initial: 
       key: "at",
       header: t("columns.time"),
       tone: "muted",
-      cell: (item) => formatTime(item.createdAt, locale),
+      cell: (item) => <DateTime value={item.createdAt} />,
     },
   ];
 
@@ -169,7 +166,6 @@ export default function InboxView({ orgId, initial }: { orgId: string; initial: 
               openConversation: () => router.push(active.approval.conversationPath),
               t,
               ta,
-              locale,
             })
           : skillChangeDetail({
               orgId,
@@ -181,7 +177,6 @@ export default function InboxView({ orgId, initial }: { orgId: string; initial: 
               pending: changes.pending,
               onDecide: (d) => void decideChange(active.skillChange, d),
               t,
-              locale,
             });
 
   return (
@@ -271,7 +266,6 @@ function toolApprovalDetail({
   openConversation,
   t,
   ta,
-  locale,
 }: {
   approval: Approval;
   scope: ApprovalScope;
@@ -281,7 +275,6 @@ function toolApprovalDetail({
   openConversation(): void;
   t: Translate;
   ta: Translate;
-  locale: string;
 }): Detail {
   return {
     inspector: (
@@ -291,8 +284,8 @@ function toolApprovalDetail({
           rows={[
             { k: ta("agent"), v: approval.agent.name },
             { k: t("conversation"), v: approval.conversationId },
-            { k: t("requested"), v: formatTime(approval.createdAt, locale) },
-            { k: ta("expires"), v: formatTime(approval.expiresAt, locale) },
+            { k: t("requested"), v: <DateTime value={approval.createdAt} /> },
+            { k: ta("expires"), v: <DateTime value={approval.expiresAt} /> },
           ]}
         />
         <Stack direction="row">
@@ -359,7 +352,6 @@ function skillChangeDetail({
   pending,
   onDecide,
   t,
-  locale,
 }: {
   orgId: string;
   change: SkillChange;
@@ -367,7 +359,6 @@ function skillChangeDetail({
   pending: "approve" | "reject" | undefined;
   onDecide(decision: "approve" | "reject"): void;
   t: Translate;
-  locale: string;
 }): Detail {
   return {
     inspector: (
@@ -377,7 +368,7 @@ function skillChangeDetail({
           { k: t("skillChange.agent"), v: change.agent.name },
           { k: t("skillChange.requester"), v: requesterOf(change) },
           { k: t("conversation"), v: change.requestedInConversation },
-          { k: t("requested"), v: formatTime(change.createdAt, locale) },
+          { k: t("requested"), v: <DateTime value={change.createdAt} /> },
         ]}
       />
     ),
@@ -422,8 +413,8 @@ function directoryRequestDetail({
         keyWidth="10ch"
         rows={[
           { k: td("requester"), v: directoryRequester(request) },
-          { k: td("version"), v: request.version ?? "—" },
-          { k: t("requested"), v: formatTime(request.createdAt, locale) },
+          { k: td("version"), v: request.version == null ? "—" : versionLabel(request.version) },
+          { k: t("requested"), v: <DateTime value={request.createdAt} /> },
         ]}
       />
     ),
@@ -452,7 +443,7 @@ function directoryRequestDetail({
               <Text variant="small" tone="muted">
                 {td("note")}
               </Text>
-              <Text>{request.note}</Text>
+              <Text variant="prose">{request.note}</Text>
             </Stack>
           )}
           <Text variant="small" tone="muted">

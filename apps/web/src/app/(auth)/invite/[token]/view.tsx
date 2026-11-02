@@ -1,7 +1,16 @@
 "use client";
 
-import { AuthPage, Button, Field, Input, KeyValue, Stack, Text } from "@capybara-hq/design";
-import { useLocale, useTranslations } from "next-intl";
+import {
+  AuthPage,
+  Button,
+  DateTime,
+  Field,
+  Input,
+  KeyValue,
+  Stack,
+  Text,
+} from "@capybara-hq/design";
+import { useTranslations } from "next-intl";
 import { type FormEvent, useState } from "react";
 import { FormError } from "../../../../components/form-error";
 import { useRouter } from "../../../../i18n/navigation";
@@ -49,7 +58,6 @@ const deadLink = (e: unknown) =>
 export default function InviteView({ token, initial }: { token: string; initial: InviteInitial }) {
   const t = useTranslations("invite");
   const tm = useTranslations("members");
-  const locale = useLocale();
   const router = useRouter();
   const errorMessage = useErrorMessage();
   const [state, setState] = useState<State>(() =>
@@ -95,7 +103,11 @@ export default function InviteView({ token, initial }: { token: string; initial:
       <AuthPage title={dead ? t("invalidTitle") : t("title")} preferences={preferences}>
         <Stack gap={16}>
           <FormError message={errorMessage(state.error)} />
-          {dead && <Text tone="muted">{t("invalidHint")}</Text>}
+          {dead && (
+            <Text variant="prose" tone="muted">
+              {t("invalidHint")}
+            </Text>
+          )}
           <Button density="prominent" onClick={() => router.replace("/")}>
             {t("goHome")}
           </Button>
@@ -117,10 +129,7 @@ export default function InviteView({ token, initial }: { token: string; initial:
             { k: t("role"), v: tm(`roles.${invite.role}`) },
             {
               k: t("expires"),
-              v: new Date(invite.expiresAt).toLocaleString(locale, {
-                dateStyle: "medium",
-                timeStyle: "short",
-              }),
+              v: <DateTime value={invite.expiresAt} />,
             },
           ]}
         />
@@ -145,7 +154,9 @@ export default function InviteView({ token, initial }: { token: string; initial:
           />
         ) : (
           <Stack gap={8}>
-            <Text tone="muted">{t("signInHint")}</Text>
+            <Text variant="prose" tone="muted">
+              {t("signInHint")}
+            </Text>
             <Button
               variant="primary"
               density="prominent"

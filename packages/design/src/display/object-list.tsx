@@ -4,9 +4,14 @@ import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { Menu, type MenuItem, menuActions, menuLone } from "../overlays/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
+import { initialOf } from "./initial";
 
 export type ObjectRowProps = {
-  /** The 36 px mark: initials (mono) or the object's icon; `warn` when it needs attention. */
+  /**
+   * The 36 px mark: `text` is the display name, drawn as its upper-cased first grapheme (the one
+   * avatar-tile rule); `icon` only for rows that are steps, not objects; `warn` when it needs
+   * attention.
+   */
   mark: { text?: string; icon?: IconName; tone?: "neutral" | "warn" };
   name: string;
   /** The name links here. */
@@ -109,7 +114,7 @@ export function ObjectRow({
   return (
     <li className="cb-object-row">
       <span className="cb-object-mark" data-tone={mark.tone ?? "neutral"} aria-hidden="true">
-        {mark.icon ? <Icon name={mark.icon} size={16} /> : mark.text}
+        {mark.icon ? <Icon name={mark.icon} size={16} /> : initialOf(mark.text ?? "")}
       </span>
       <span className="cb-object-text">
         <span className="cb-object-line">

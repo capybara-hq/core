@@ -147,7 +147,7 @@ export default function AdminPlugins({
         return (
           <ObjectRow
             key={p.name}
-            mark={{ icon: "extension", tone: attn ? "warn" : "neutral" }}
+            mark={{ text: p.name, tone: attn ? "warn" : "neutral" }}
             name={p.name}
             mono
             href={detail}

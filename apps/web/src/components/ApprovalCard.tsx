@@ -38,10 +38,6 @@ export function outcomeOf(a: Approval): Outcome | null {
   };
 }
 
-/** 本地时间（客户端组件在数据到达后才渲染，不涉及水合）。 */
-export const formatTime = (iso: string, locale: string) =>
-  new Date(iso).toLocaleString(locale, { dateStyle: "short", timeStyle: "short" });
-
 const rowsOf = (text: string) => Math.min(12, Math.max(2, text.split("\n").length));
 
 /** 参数（JSON，只读代码样式）。 */

@@ -67,7 +67,7 @@ export default function AdminDirectory({
           },
         }
       : rows.length === 0
-        ? { icon: "search" as const, text: t("noResults") }
+        ? { text: t("noResults") }
         : undefined;
 
   return (
@@ -77,7 +77,7 @@ export default function AdminDirectory({
         return (
           <ObjectRow
             key={i.id}
-            mark={{ text: Array.from(name)[0] ?? "?" }}
+            mark={{ text: name }}
             name={name}
             href={`/admin/catalog/${encodeURIComponent(i.id)}`}
             chips={[

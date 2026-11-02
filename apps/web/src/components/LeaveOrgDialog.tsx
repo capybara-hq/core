@@ -67,7 +67,7 @@ export function LeaveOrgDialog({
         footer={<Button onClick={onClose}>{t("gotIt")}</Button>}
       >
         <Stack gap={8}>
-          <Text>{t("lastOwner")}</Text>
+          <Text variant="prose">{t("lastOwner")}</Text>
           <TextLink href="/settings/members">{t("toMembers")}</TextLink>
         </Stack>
       </Dialog>
@@ -101,7 +101,7 @@ export function LeaveOrgDialog({
       ) : countFailed && owners.state.kind === "error" ? (
         <FormError message={errorMessage(new ApiClientError(0, owners.state.code, ""))} />
       ) : (
-        <Text>{t("description")}</Text>
+        <Text variant="prose">{t("description")}</Text>
       )}
       {error !== null && <FormError message={error} />}
     </Dialog>

@@ -37,6 +37,7 @@ export {
   type ToolCallStatus,
 } from "./chat";
 export { DangerZone, DangerZoneItem, type DangerZoneItemProps } from "./danger-zone";
+export { DateTime, formatDateTime, formatRelative, versionLabel } from "./date-time";
 export { Disclosure, type DisclosureProps } from "./disclosure";
 export { EMBED_SANDBOX, EmbedFrame, type EmbedFrameProps } from "./embed";
 export { EmptyState, type EmptyStateProps } from "./empty-state";

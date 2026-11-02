@@ -89,7 +89,9 @@ function CaseTrajectory({
               {tt("audited")}
             </Text>
             {source === undefined ? (
-              <Text tone="muted">{tt("selectHint")}</Text>
+              <Text variant="prose" tone="muted">
+                {tt("selectHint")}
+              </Text>
             ) : (
               <SpanDetail source={source} currency={detail.currency} />
             )}

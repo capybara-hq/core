@@ -64,7 +64,7 @@ export default function AgentsView({ initial }: { initial: Agent[] }) {
                         }
                       : {}),
                   }
-                : { icon: "search" as const, text: t("noMatch") },
+                : { text: t("noMatch") },
           }
         : {})}
     >

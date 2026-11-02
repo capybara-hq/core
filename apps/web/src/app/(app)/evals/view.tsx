@@ -1,8 +1,7 @@
 "use client";
 
-import { ListPage, ObjectRow } from "@capybara-hq/design";
-import { useLocale, useTranslations } from "next-intl";
-import { formatTime } from "../../../components/ApprovalCard";
+import { formatDateTime, ListPage, ObjectRow } from "@capybara-hq/design";
+import { useTranslations } from "next-intl";
 import { usePagePath } from "../../../components/shell/path";
 import type { Agent } from "../../../lib/agents";
 import type { EvalSet } from "../../../lib/evals";
@@ -20,7 +19,6 @@ export default function EvalSets({
 }) {
   const scope = usePagePath("org");
   const t = useTranslations("evals");
-  const locale = useLocale();
   const { sets, agents } = initial;
   // Agent names are display only: show the id when they cannot be read.
   const agentName = (id: string) => (agents ?? []).find((a) => a.id === id)?.definition.name || id;
@@ -45,11 +43,11 @@ export default function EvalSets({
       {sets.map((s) => (
         <ObjectRow
           key={s.id}
-          mark={{ icon: "evals" }}
+          mark={{ text: s.name }}
           name={s.name}
           href={`/evals/${encodeURIComponent(s.id)}`}
           meta={t("setMeta", { agent: agentName(s.agentId), n: s.caseCount })}
-          trailing={formatTime(s.createdAt, locale)}
+          trailing={formatDateTime(s.createdAt)}
         />
       ))}
     </ListPage>

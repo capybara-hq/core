@@ -4,6 +4,7 @@ import {
   Button,
   type Column,
   DataTable,
+  DateTime,
   EmptyState,
   Field,
   ListPage,
@@ -12,9 +13,8 @@ import {
   StatusMark,
   Text,
 } from "@capybara-hq/design";
-import { useLocale, useTranslations } from "next-intl";
+import { useTranslations } from "next-intl";
 import { useState, useTransition } from "react";
-import { formatTime } from "../../../components/ApprovalCard";
 import { usePagePath } from "../../../components/shell/path";
 import { useRouter } from "../../../i18n/navigation";
 import type { Agent } from "../../../lib/agents";
@@ -134,7 +134,6 @@ function TrajectoryTable({
   onClear(): void;
 }) {
   const t = useTranslations("trajectories");
-  const locale = useLocale();
   const router = useRouter();
   const errorMessage = useErrorMessage();
   const { agentId, status } = filters;
@@ -197,7 +196,7 @@ function TrajectoryTable({
       key: "updated",
       header: t("columns.updated"),
       tone: "muted",
-      cell: (r) => formatTime(r.updatedAt, locale),
+      cell: (r) => <DateTime value={r.updatedAt} />,
     },
   ];
 

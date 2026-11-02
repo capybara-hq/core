@@ -428,7 +428,9 @@ function Wizard({
         )}
         {step === extensionIdx && (
           <Stack gap={16}>
-            <Text tone="muted">{t("extensionHint")}</Text>
+            <Text variant="prose" tone="muted">
+              {t("extensionHint")}
+            </Text>
             {own?.enabled === true && (
               <Text variant="small" tone="muted">
                 {t("extensionEnabled", { name: own.plugin })}
@@ -453,7 +455,7 @@ function Wizard({
         {step === confirmIdx && (
           <Stack gap={12}>
             {!installable && <FormError message={t("notInstallable")} />}
-            <Text>{t("summary")}</Text>
+            <Text variant="prose">{t("summary")}</Text>
             <Text variant="small" tone="muted">
               {[
                 detail.extension !== null
@@ -504,7 +506,11 @@ export function TemplateStep({
   const oauth = isOAuth(auth);
   return (
     <Stack gap={16}>
-      {template.description !== "" && <Text tone="muted">{template.description}</Text>}
+      {template.description !== "" && (
+        <Text variant="prose" tone="muted">
+          {template.description}
+        </Text>
+      )}
       {!credentialsOnly && (
         <>
           <Field label={t("name")}>
@@ -547,7 +553,9 @@ export function TemplateStep({
       <Stack gap={8}>
         <Text>{t("credential")}</Text>
         {auth.type === "none" ? (
-          <Text tone="muted">{t("noneHint")}</Text>
+          <Text variant="prose" tone="muted">
+            {t("noneHint")}
+          </Text>
         ) : oauth ? (
           needsClient(auth) ? (
             <OAuthClientFields
@@ -556,10 +564,14 @@ export function TemplateStep({
               secretRequired={auth.type === "oauth_client"}
             />
           ) : (
-            <Text tone="muted">{t("dcrHint")}</Text>
+            <Text variant="prose" tone="muted">
+              {t("dcrHint")}
+            </Text>
           )
         ) : template.ownership === "personal" && credentialsOnly ? (
-          <Text tone="muted">{t("personalMembersHint")}</Text>
+          <Text variant="prose" tone="muted">
+            {t("personalMembersHint")}
+          </Text>
         ) : (
           <>
             <Text variant="small" tone="muted">

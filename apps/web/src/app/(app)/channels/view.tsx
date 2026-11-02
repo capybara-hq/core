@@ -57,7 +57,7 @@ export default function ChannelsView({
         <ObjectRow
           key={c.id}
           mark={{
-            text: Array.from(c.name)[0] ?? "?",
+            text: c.name,
             ...(c.status === "error" ? { tone: "warn" as const } : {}),
           }}
           name={c.name}

@@ -1495,7 +1495,6 @@
   "extensions": {
     "title": "扩展",
     "empty": "没有安装任何扩展。",
-    "version": "版本 {version}",
     "enableLabel": "启用 {plugin}",
     "enabled": "已在该组织启用",
     "disabled": "未启用",
@@ -2216,7 +2215,7 @@
     },
     "orgs": {
       "title": "组织",
-      "hint": "留空的项使用部署默认。组织管理员在组织设置里只能查看。",
+      "hint": "留空的项使用部署默认，组织管理员在组织设置里只能查看；要管理组织内的设置，需要成为该组织的管理员。",
       "empty": "还没有组织。",
       "default": "默认",
       "edit": "设置限额",
@@ -2252,8 +2251,7 @@
         "subagentTokens": "每次运行子 agent 的 token 数",
         "subagentTokensHelp": "至少 10,000；留空使用部署默认。",
         "subagentTokensInvalid": "请输入不小于 10,000 的整数。"
-      },
-      "memberHint": "要管理组织内的设置，需要成为该组织的管理员。"
+      }
     },
     "settings": {
       "title": "部署设置",
@@ -2417,7 +2415,7 @@
         "done": "已批准，各副本正在加载。",
         "stale": "审阅之后扩展包或权限已经变化，请刷新后重新审阅。",
         "refresh": "刷新后重新审阅",
-        "approved": "已批准：版本 {version}，{at}（{source}）",
+        "approved": "已批准：{version}，{at}（{source}）",
         "notApproved": "尚未批准。",
         "via": {
           "cli": "命令行",
@@ -2763,7 +2761,7 @@
         "provenance": "由 {workflow} 从 {repository}@{commit} 构建",
         "provenanceNotChecked": "未核对来源证明（{reason}）",
         "provenanceMismatch": "来源证明里的仓库与这个 git 市场的仓库不一致。请确认这是你预期的包。",
-        "buildVersion": "记为 {version}：版本 {pluginVersion} 已在企业目录中，但内容不同。",
+        "buildVersion": "记为 {version}：{pluginVersion} 已在企业目录中，但内容不同。",
         "translation": {
           "title": "Claude Code 翻译报告",
           "formatClaude": "Claude Code 插件",
@@ -3182,7 +3180,7 @@
       "cancel": "取消",
       "done": "已把 {name} 升级到 {version}。",
       "requested": "需要企业管理员批准，已提交申请。",
-      "failed": "升级在「{step}」这一步失败（{code}）；本组织的组件已恢复到版本 {version}。",
+      "failed": "升级在「{step}」这一步失败（{code}）；本组织的组件已恢复到 {version}。",
       "failedNoRollback": "升级在「{step}」这一步失败（{code}），且未能立即撤销；超时后会自动撤销。"
     },
     "errorDetail": {
@@ -3193,11 +3191,11 @@
       "gitSuffix": "git 服务器对这个仓库地址返回了重定向；请改用以 .git 结尾的地址。",
       "entry": "被拒绝的条目：{path}",
       "pathEntry": "市场条目 {entry}（路径 {path}）",
-      "sameVersion": "本组织已安装版本 {version}。",
+      "sameVersion": "本组织已安装 {version}。",
       "deploymentVersion": "部署运行的是这个插件扩展的 {deploymentVersion}；本组织只能升级到目录版本 {allowedVersion}。",
       "deploymentVersionNone": "部署运行的是这个插件扩展的 {deploymentVersion}，但企业目录里还没有带这个扩展的版本。",
       "notDeployed": "部署上没有运行这个插件的扩展；请先请企业管理员安装。",
-      "dependentRange": "本组织的 {dependent} 依赖 {range}，版本 {version} 不满足。",
+      "dependentRange": "本组织的 {dependent} 依赖 {range}，{version} 不满足。",
       "templateConnector": "连接器模板 {template} 改用了另一种连接器（{plugin} / {connector}）；请卸载插件后安装新版本。"
     }
   },

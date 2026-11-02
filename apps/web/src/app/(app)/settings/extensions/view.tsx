@@ -8,6 +8,7 @@ import {
   Switch,
   Text,
   useToast,
+  versionLabel,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
@@ -194,7 +195,7 @@ function ExtensionSection({
     <FormSection
       id={`plugin-${plugin.plugin}`}
       title={plugin.plugin}
-      description={t("version", { version: plugin.version })}
+      description={versionLabel(plugin.version)}
     >
       <Stack direction="row" gap={12} align="center">
         <Switch
@@ -207,8 +208,16 @@ function ExtensionSection({
         {required && <Text tone="muted">{t("required")}</Text>}
         {unavailable && <Text tone="warn">{t("unavailable")}</Text>}
       </Stack>
-      {required && <Text tone="muted">{t("requiredHint")}</Text>}
-      {unavailable && <Text tone="muted">{t("unavailableHint")}</Text>}
+      {required && (
+        <Text variant="prose" tone="muted">
+          {t("requiredHint")}
+        </Text>
+      )}
+      {unavailable && (
+        <Text variant="prose" tone="muted">
+          {t("unavailableHint")}
+        </Text>
+      )}
       {problem?.kind === "dependency_missing" && (
         <FormError message={t("dependencyMissing")} extra={problem.extensionPoints} />
       )}

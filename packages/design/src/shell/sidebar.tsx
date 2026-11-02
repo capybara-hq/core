@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { IconButton } from "../controls/index";
+import { initialOf } from "../display/initial";
 import { Logo } from "../display/logo";
 import { Tooltip } from "../display/tooltip";
 import { Icon } from "../icons/icon";
@@ -29,6 +30,7 @@ export {
   type SidebarGroup,
   untitledLabel,
 } from "./sidebar-conversations";
+export { initialOf };
 
 export type SidebarNavItem = {
   id: string;
@@ -148,16 +150,6 @@ const countText = (n: { count?: number; countMore?: boolean }): string =>
   (n.count ?? 0) > 99 ? "99+" : `${n.count ?? 0}${n.countMore ? "+" : ""}`;
 
 type Variant = "full" | "rail" | "panel";
-
-/** The first grapheme of a name, upper-cased (an emoji or a CJK character stays whole). */
-export function initialOf(name: string): string {
-  const Segmenter = (Intl as { Segmenter?: typeof Intl.Segmenter }).Segmenter;
-  const first = Segmenter
-    ? new Segmenter(undefined, { granularity: "grapheme" }).segment(name)[Symbol.iterator]().next()
-        .value?.segment
-    : Array.from(name)[0];
-  return (first ?? "").toUpperCase();
-}
 
 /**
  * The left sidebar (spec §6.13): the brand, the context (the org switcher or the admin block),
@@ -612,6 +604,7 @@ function SidebarNav({ p, rail }: { p: SidebarProps; rail: boolean }) {
   const toMenu = (n: SidebarNavItem): MenuItem => ({
     label: n.label,
     href: n.href,
+    icon: n.icon,
     ...(n.id === p.activeNav ? { current: true } : {}),
   });
   const moreItems: MenuItem[] = [

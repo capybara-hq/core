@@ -155,6 +155,12 @@
   font-size: var(--cb-type-micro-size);
   line-height: var(--cb-type-micro-line);
 }
+/* Running text (spec §2.2): the proportional font, prose-small. */
+.cb-text[data-variant="prose"] {
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+}
 .cb-text[data-tone="ink"] {
   color: var(--cb-ink);
 }
@@ -411,6 +417,7 @@
 }
 .cb-field-help {
   color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }

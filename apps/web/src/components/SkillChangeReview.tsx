@@ -174,7 +174,9 @@ function SkillChangeCard({
             <Text variant="small" tone="muted">
               {t("description")}
             </Text>
-            <Text pre>{change.description}</Text>
+            <Text variant="prose" pre>
+              {change.description}
+            </Text>
           </Stack>
           <Text variant="small" tone="muted">
             {t("ownerHint")}

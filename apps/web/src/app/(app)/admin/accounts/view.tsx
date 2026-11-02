@@ -246,7 +246,7 @@ function ConfirmDialog({
       }
     >
       <Stack gap={8}>
-        <Text>{t(`confirm.${action}Hint`, { name })}</Text>
+        <Text variant="prose">{t(`confirm.${action}Hint`, { name })}</Text>
         {error !== null && <FormError message={error} />}
       </Stack>
     </Dialog>

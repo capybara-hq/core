@@ -2,6 +2,7 @@
 
 import {
   Card,
+  DateTime,
   formatSpanDuration,
   IoBlock,
   KeyValue,
@@ -22,7 +23,6 @@ import {
   type TrajectoryRun,
   type TrajectoryToolCall,
 } from "../lib/trajectories";
-import { formatTime } from "./ApprovalCard";
 
 /**
  * 轨迹查看器的共用部件（运行记录页 `/trajectories/[conversationId]` 与评测用例的快照轨迹
@@ -136,7 +136,6 @@ function RunDetail({
   people: Readonly<Record<string, string>>;
 }) {
   const t = useTranslations("trajectories.detail.run");
-  const locale = useLocale();
   const formatCost = useFormatCost();
   const endDetail = useEndDetail();
   const rows: { k: ReactNode; v: ReactNode }[] = [
@@ -150,8 +149,8 @@ function RunDetail({
           <Text title={run.triggerAccountId}>{people[run.triggerAccountId]}</Text>
         ),
     },
-    { k: t("started"), v: formatTime(run.startedAt, locale) },
-    { k: t("ended"), v: run.endedAt === null ? t("running") : formatTime(run.endedAt, locale) },
+    { k: t("started"), v: <DateTime value={run.startedAt} /> },
+    { k: t("ended"), v: run.endedAt === null ? t("running") : <DateTime value={run.endedAt} /> },
     {
       k: t("result"),
       v:
@@ -213,7 +212,6 @@ function StepDetail({ step }: { step: TrajectoryRun["steps"][number] }) {
 
 function ModelDetail({ call, currency }: { call: TrajectoryModelCall; currency: string }) {
   const t = useTranslations("trajectories.detail.model");
-  const locale = useLocale();
   const formatCost = useFormatCost();
   const params = Object.entries(call.request.params ?? {});
   const tools = (call.request.tools ?? []).map((x) => x.key);
@@ -243,7 +241,7 @@ function ModelDetail({ call, currency }: { call: TrajectoryModelCall; currency: 
       v: params.length === 0 ? "—" : params.map(([k, v]) => `${k}=${v}`).join(", "),
     },
     { k: t("tools"), v: tools.length === 0 ? "—" : tools.join(", ") },
-    { k: t("started"), v: formatTime(call.startedAt, locale) },
+    { k: t("started"), v: <DateTime value={call.startedAt} /> },
   ];
   return (
     <Card title={t("title", { name: `${call.provider}/${call.model}` })}>
@@ -276,13 +274,12 @@ function ToolDetail({ call }: { call: TrajectoryToolCall }) {
   const t = useTranslations("trajectories.detail.tool");
   const ts = useTranslations("subagents");
   const tc = useTranslations("chat");
-  const locale = useLocale();
   const hookRows = useHookRows();
   const rows: { k: ReactNode; v: ReactNode }[] = [
     { k: t("duration"), v: formatSpanDuration(call.durationMs) },
     {
       k: t("started"),
-      v: call.startedAt === null ? t("notStarted") : formatTime(call.startedAt, locale),
+      v: call.startedAt === null ? t("notStarted") : <DateTime value={call.startedAt} />,
     },
   ];
   if (call.result?.isError) rows.push({ k: t("result"), v: <Text tone="fail">{t("error")}</Text> });
@@ -307,19 +304,19 @@ function ToolDetail({ call }: { call: TrajectoryToolCall }) {
   const ap = call.approval;
   if (ap !== null) {
     rows.push(
-      { k: t("approvalRequested"), v: formatTime(ap.requestedAt, locale) },
+      { k: t("approvalRequested"), v: <DateTime value={ap.requestedAt} /> },
       { k: t("decision"), v: t(`decisions.${ap.decision ?? "pending"}`) },
       ...(ap.scope !== undefined ? [{ k: t("scope"), v: t(`scopes.${ap.scope}`) }] : []),
       ...(ap.byAccountId !== null ? [{ k: t("by"), v: ap.byAccountId }] : []),
       ...(ap.decidedAt !== null
-        ? [{ k: t("decidedAt"), v: formatTime(ap.decidedAt, locale) }]
+        ? [{ k: t("decidedAt"), v: <DateTime value={ap.decidedAt} /> }]
         : []),
     );
   }
   const q = call.question;
   if (q !== null) {
     rows.push(
-      { k: t("asked"), v: formatTime(q.askedAt, locale) },
+      { k: t("asked"), v: <DateTime value={q.askedAt} /> },
       { k: t("questionOutcome"), v: t(`questionOutcomes.${q.outcome ?? "pending"}`) },
       ...(q.byAccountId !== null ? [{ k: t("by"), v: q.byAccountId }] : []),
     );

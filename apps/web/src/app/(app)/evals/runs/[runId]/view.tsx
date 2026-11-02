@@ -8,6 +8,7 @@ import {
   DataTable,
   DetailPage,
   Field,
+  formatDateTime,
   Input,
   KeyValue,
   type MetricProps,
@@ -17,9 +18,8 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
-import { useLocale, useTranslations } from "next-intl";
+import { useTranslations } from "next-intl";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import { formatTime } from "../../../../../components/ApprovalCard";
 import { FormError } from "../../../../../components/form-error";
 import { usePagePath } from "../../../../../components/shell/path";
 import { grouped, useFormatCost } from "../../../../../components/TrajectoryParts";
@@ -204,7 +204,6 @@ function EvalRunView({
   const scope = usePagePath("org");
   const t = useTranslations("evals");
   const te = useTranslations("errors");
-  const locale = useLocale();
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const { run, rows, titles } = data;
@@ -346,9 +345,9 @@ function EvalRunView({
           ...scope,
           { label: "evals", href: "/evals" },
           { label: data.setName ?? run.setId, href: `/evals/${encodeURIComponent(run.setId)}` },
-          { label: formatTime(run.createdAt, locale) },
+          { label: formatDateTime(run.createdAt) },
         ],
-        title: t("run.title", { time: formatTime(run.createdAt, locale) }),
+        title: t("run.title", { time: formatDateTime(run.createdAt) }),
         status: (
           <StatusMark status={evalRunMark(run.status)} label={t(`runStatus.${run.status}`)} />
         ),
@@ -371,7 +370,9 @@ function EvalRunView({
       inspector={
         <section aria-label={t("run.inspector.title")}>
           {current === undefined ? (
-            <Text tone="muted">{t("run.inspector.selectHint")}</Text>
+            <Text variant="prose" tone="muted">
+              {t("run.inspector.selectHint")}
+            </Text>
           ) : (
             <ResultPanel
               key={current.id}
@@ -637,7 +638,9 @@ function ResultInspector({
         <Text variant="small" tone="muted">
           {t("inspector.reason")}
         </Text>
-        <Text pre>{j.reason}</Text>
+        <Text variant="prose" pre>
+          {j.reason}
+        </Text>
       </Stack>
     ) : j !== null ? (
       <Text tone="fail">

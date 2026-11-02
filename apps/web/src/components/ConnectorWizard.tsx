@@ -1023,7 +1023,9 @@ function ToolsStep({
     ];
     return (
       <Stack gap={12}>
-        <Text tone="muted">{t("wizard.operationsHint")}</Text>
+        <Text variant="prose" tone="muted">
+          {t("wizard.operationsHint")}
+        </Text>
         <IssuesCard issues={preview?.issues ?? []} />
         <DataTable<ConnectorOperation>
           label={t("wizard.operationsLabel")}
@@ -1077,7 +1079,9 @@ function ToolsStep({
   ];
   return (
     <Stack gap={12}>
-      <Text tone="muted">{t("wizard.toolsHint")}</Text>
+      <Text variant="prose" tone="muted">
+        {t("wizard.toolsHint")}
+      </Text>
       <IssuesCard issues={preview.issues} />
       <DataTable<ToolPreview>
         label={t("wizard.toolsTitle")}

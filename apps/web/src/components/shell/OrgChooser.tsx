@@ -86,7 +86,9 @@ export function OrgChooser({ onLogout }: { onLogout(): void }) {
             {t("create")}
           </Button>
         ) : none ? (
-          <Text tone="muted">{t("askHint")}</Text>
+          <Text variant="prose" tone="muted">
+            {t("askHint")}
+          </Text>
         ) : null}
       </Stack>
       {me.canCreateOrg ? <CreateOrgDialog open={creating} onOpenChange={setCreating} /> : null}

@@ -79,7 +79,11 @@ export default function BindView({ token, initial }: { token: string; initial: B
       <AuthPage title={invalid ? t("invalidTitle") : t("title")} preferences={preferences}>
         <Stack gap={16}>
           <FormError message={errorMessage(state.error)} />
-          {invalid && <Text tone="muted">{t("invalidHint")}</Text>}
+          {invalid && (
+            <Text variant="prose" tone="muted">
+              {t("invalidHint")}
+            </Text>
+          )}
           <Button density="prominent" onClick={() => router.replace("/")}>
             {t("goHome")}
           </Button>

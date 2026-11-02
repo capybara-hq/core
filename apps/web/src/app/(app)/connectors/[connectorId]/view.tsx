@@ -327,7 +327,9 @@ function CredentialsTab({
   const personalCard = (
     <Card title={t("credential.personalTitle")} actions={status}>
       <Stack gap={12}>
-        <Text tone="muted">{t("credential.personalHint")}</Text>
+        <Text variant="prose" tone="muted">
+          {t("credential.personalHint")}
+        </Text>
         <Stack direction="row">
           <Button onClick={() => router.push("/account/connections")}>
             {t("credential.openConnections")}
@@ -342,7 +344,9 @@ function CredentialsTab({
     return (
       <Card title={t("credential.orgTitle")} actions={status}>
         <Stack gap={12}>
-          <Text tone="muted">{t("credential.oauthOrgHint")}</Text>
+          <Text variant="prose" tone="muted">
+            {t("credential.oauthOrgHint")}
+          </Text>
           {manage && <RotateClient orgId={orgId} app={app} onSaved={onSaved} />}
         </Stack>
       </Card>
@@ -486,7 +490,9 @@ function SettingsTab({
       {manage && (
         <Card tone="danger" title={t("settings.dangerTitle")}>
           <Stack gap={12}>
-            <Text tone="muted">{t("settings.deleteHint")}</Text>
+            <Text variant="prose" tone="muted">
+              {t("settings.deleteHint")}
+            </Text>
             <Stack direction="row">
               <Button variant="danger" onClick={() => setConfirm(true)}>
                 {t("settings.delete")}
@@ -683,7 +689,9 @@ function ReviewTab({
           <Text tone="muted">{t("review.empty")}</Text>
         </Card>
       ) : (
-        <Text tone="muted">{t("review.hint")}</Text>
+        <Text variant="prose" tone="muted">
+          {t("review.hint")}
+        </Text>
       )}
       {pendingTools.map((tool) => {
         // 复核过且有新定义 → 对比当前（上次复核通过的）与新定义；从未复核过 → 新工具，只显示完整定义

@@ -126,10 +126,9 @@ describe("ObjectRow", () => {
 });
 
 describe("EmptyState and Callout", () => {
-  it("EmptyState shows icon, sentence and the primary action", () => {
+  it("EmptyState shows the sentence and the primary action", () => {
     zh(
       <EmptyState
-        icon="empty"
         text="还没有 agent"
         action={{ label: "新建", variant: "primary", href: "/new" }}
       />,
@@ -150,12 +149,11 @@ describe("EmptyState and Callout", () => {
     );
   });
 
-  it("EmptyState compact: a smaller illustration; an icon overrides it", () => {
-    zh(<EmptyState size="compact" text="没有匹配的会话" icon="search" />);
+  it("EmptyState compact: the sentence alone, no illustration", () => {
+    zh(<EmptyState size="compact" text="没有匹配的会话。" />);
     const el = document.querySelector('[data-part="empty-state"]') as HTMLElement;
     expect(el.getAttribute("data-size")).toBe("compact");
     expect(el.querySelector('[data-part="empty-illustration"]')).toBeNull();
-    expect(el.querySelector('[data-part="empty-state-icon"]')).not.toBeNull();
   });
 
   it("Callout is a status with the tone and its button", () => {
@@ -233,14 +231,7 @@ describe("ListPage variants", () => {
   });
 
   it("loading wins over empty: no empty state flashes before the first answer", () => {
-    zh(
-      <ListPage
-        header={header}
-        variant="objects"
-        loading
-        empty={{ icon: "empty", text: "还没有 agent" }}
-      />,
-    );
+    zh(<ListPage header={header} variant="objects" loading empty={{ text: "还没有 agent" }} />);
     expect(screen.queryByText("还没有 agent")).toBeNull();
     expect(document.querySelectorAll('[data-skeleton="true"]').length).toBe(3);
   });
@@ -265,7 +256,7 @@ describe("ListPage variants", () => {
       <ListPage
         header={header}
         variant="objects"
-        empty={{ icon: "empty", text: "空空如也" }}
+        empty={{ text: "空空如也" }}
         callout={{ tone: "warn", children: "注意" }}
       >
         <ObjectRow mark={{ text: "a" }} name="a" />

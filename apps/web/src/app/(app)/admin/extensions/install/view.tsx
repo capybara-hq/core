@@ -11,6 +11,7 @@ import {
   Stack,
   Text,
   useToast,
+  versionLabel,
   WizardPage,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
@@ -270,7 +271,9 @@ export default function ExtensionInstall({
       {step === 1 && review !== null && (
         <Stack gap={16}>
           <Stack gap={4}>
-            <Text>{t("package", { name: review.name, version: review.version })}</Text>
+            <Text>
+              {t("package", { name: review.name, version: versionLabel(review.version) })}
+            </Text>
             <Text variant="small" tone="muted">
               {t("sha", { sha: review.sha256 })}
             </Text>
@@ -279,8 +282,15 @@ export default function ExtensionInstall({
             <FormError message={blocked} />
           ) : upgrading && current !== undefined ? (
             <Stack gap={4}>
-              <Text>{t("upgradeFrom", { from: current.version, to: review.version })}</Text>
-              <Text tone="warn">{td("drainHint", { seconds: drainSeconds })}</Text>
+              <Text>
+                {t("upgradeFrom", {
+                  from: versionLabel(current.version),
+                  to: versionLabel(review.version),
+                })}
+              </Text>
+              <Text variant="prose" tone="warn">
+                {td("drainHint", { seconds: drainSeconds })}
+              </Text>
             </Stack>
           ) : (
             <Text tone="muted">{t("newInstall")}</Text>
@@ -295,11 +305,17 @@ export default function ExtensionInstall({
       )}
       {step === 2 && review !== null && (
         <Stack gap={16}>
-          <Text>{t("package", { name: review.name, version: review.version })}</Text>
-          {upgrading && <Text tone="warn">{td("drainHint", { seconds: drainSeconds })}</Text>}
+          <Text>{t("package", { name: review.name, version: versionLabel(review.version) })}</Text>
+          {upgrading && (
+            <Text variant="prose" tone="warn">
+              {td("drainHint", { seconds: drainSeconds })}
+            </Text>
+          )}
           {sensitive && (
             <Stack gap={8}>
-              <Text tone="warn">{t("ackHint")}</Text>
+              <Text variant="prose" tone="warn">
+                {t("ackHint")}
+              </Text>
               <Checkbox checked={ack} onChange={setAck} label={t("ack")} />
             </Stack>
           )}

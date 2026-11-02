@@ -1,9 +1,15 @@
 "use client";
 
-import { Button, type Column, DataTable, SettingsPage, useToast } from "@capybara-hq/design";
-import { useLocale, useTranslations } from "next-intl";
+import {
+  Button,
+  type Column,
+  DataTable,
+  DateTime,
+  SettingsPage,
+  useToast,
+} from "@capybara-hq/design";
+import { useTranslations } from "next-intl";
 import { useState, useTransition } from "react";
-import { formatTime } from "../../../../components/ApprovalCard";
 import { useAccountNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
@@ -19,7 +25,6 @@ const keyOf = (g: ToolGrant) => `${g.agentId}/${g.toolKey}`;
 export default function Grants({ orgId, initial }: { orgId: string; initial: ToolGrant[] }) {
   const scope = usePagePath("home");
   const t = useTranslations("connections");
-  const locale = useLocale();
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const nav = useAccountNav();
@@ -48,7 +53,7 @@ export default function Grants({ orgId, initial }: { orgId: string; initial: Too
       key: "created",
       header: t("grants.columns.created"),
       tone: "muted",
-      cell: (g) => formatTime(g.createdAt, locale),
+      cell: (g) => <DateTime value={g.createdAt} />,
     },
     {
       key: "actions",

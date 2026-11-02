@@ -97,6 +97,7 @@
 }
 .cb-dialog-desc {
   color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
 }
 .cb-dialog-confirm {
   display: flex;
@@ -171,6 +172,10 @@
 .cb-menu {
   padding: 4px 0;
 }
+/* Below its trigger a menu is at least as wide as the trigger (spec §6.7). */
+.cb-menu[data-match-trigger="true"] {
+  min-width: max(160px, var(--radix-dropdown-menu-trigger-width));
+}
 /* 悬停时也保持（与按钮变体的 :hover 规则同优先级，本文件在后） */
 [data-cb-trigger][data-active="true"],
 [data-cb-trigger][data-active="true"]:hover:not(:disabled) {
@@ -197,6 +202,10 @@
   display: inline-flex;
   flex: none;
   width: 14px;
+}
+.cb-menu-label > .cb-icon {
+  flex: none;
+  color: var(--cb-muted);
 }
 .cb-menu-sub-mark {
   display: inline-flex;

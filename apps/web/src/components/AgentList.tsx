@@ -48,7 +48,9 @@ export function AgentRow({ agent, onChanged }: { agent: Agent; onChanged?(): voi
   const def = agent.definition;
   const skills = def.skills?.orgSkills.length ?? 0;
   const tools = def.tools?.length ?? 0;
+  // Visibility is plain metadata (mono muted meta text), never a chip.
   const meta = [
+    t(`scope.${agent.visibility}`),
     `${def.model.provider} / ${def.model.model}`,
     ...(skills > 0 ? [t("meta.skills", { n: skills })] : []),
     ...(tools > 0 ? [t("meta.tools", { n: tools })] : []),
@@ -58,10 +60,9 @@ export function AgentRow({ agent, onChanged }: { agent: Agent; onChanged?(): voi
   return (
     <>
       <ObjectRow
-        mark={{ text: Array.from(def.name)[0] ?? "?" }}
+        mark={{ text: def.name }}
         name={def.name}
         {...(canEdit ? { href: editHref } : {})}
-        chips={[{ label: t(`scope.${agent.visibility}`) }]}
         meta={meta}
         action={{ label: t("chat"), onSelect: start }}
         // 对话 is the row action: the menu never repeats it (spec §6.7)
