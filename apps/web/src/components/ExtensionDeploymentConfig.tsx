@@ -63,7 +63,14 @@ export function flatConfigSchema(
     const sub = subSchema(view.schema, f.path);
     const { default: _default, title: _title, description, ...shape } = sub ?? inferred(f.value);
     properties[f.path] = {
-      ...(f.secret ? { type: "string", "x-secret": true } : shape),
+      // a secret object (e.g. a record of keys) is typed as JSON and sent parsed
+      ...(f.secret
+        ? {
+            type: "string",
+            "x-secret": true,
+            ...(shape.type === "object" || shape.type === "array" ? { "x-secret-json": true } : {}),
+          }
+        : shape),
       title: f.path,
       description: [typeof description === "string" ? description : "", note(f)]
         .filter((s) => s !== "")

@@ -5,6 +5,7 @@ import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
+import { flatConfigSchema } from "../src/components/ExtensionDeploymentConfig";
 import {
   draftToConfig,
   initialDraft,
@@ -179,6 +180,49 @@ describe("draftToConfig", () => {
     );
     expect(r.errors).toEqual({ appSecret: "required" });
     expect(r.config).not.toHaveProperty("webhookToken");
+  });
+
+  it("a secret whose value is an object (x-secret-json) is parsed as JSON; bad JSON is an error", () => {
+    const jsonSecret = schemaFields({
+      type: "object",
+      properties: { apiKeys: { type: "string", "x-secret": true, "x-secret-json": true } },
+    });
+    expect(jsonSecret[0]).toMatchObject({ kind: "secret", secretJson: true });
+    const ok = draftToConfig(jsonSecret, { apiKeys: '{"deepseek":"sk-1"}' }, "edit", []);
+    expect(ok.config).toEqual({ apiKeys: { deepseek: "sk-1" } });
+    const bad = draftToConfig(jsonSecret, { apiKeys: "sk-1" }, "edit", []);
+    expect(bad.errors).toEqual({ apiKeys: "json" });
+    expect(bad.config).toEqual({});
+  });
+});
+
+describe("flatConfigSchema", () => {
+  it("marks an object-valued secret (a record of keys) x-secret-json; a string secret stays plain", () => {
+    const view = {
+      plugin: "p",
+      version: "1.0.0",
+      configurable: true,
+      valid: false,
+      validated: true,
+      issues: [],
+      schema: {
+        type: "object",
+        properties: {
+          apiKeys: { type: "object", additionalProperties: { type: "string" } },
+          token: { type: "string" },
+        },
+      },
+      fields: [
+        { path: "apiKeys", secret: true, hot: false, source: "unset", readonly: false, set: false },
+        { path: "token", secret: true, hot: false, source: "unset", readonly: false, set: false },
+      ],
+    } as unknown as Parameters<typeof flatConfigSchema>[0];
+    const props = flatConfigSchema(view, () => "").properties as Record<
+      string,
+      Record<string, unknown>
+    >;
+    expect(props.apiKeys).toMatchObject({ "x-secret": true, "x-secret-json": true });
+    expect(props.token?.["x-secret-json"]).toBeUndefined();
   });
 });
 

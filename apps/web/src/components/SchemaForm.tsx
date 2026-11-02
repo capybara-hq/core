@@ -26,6 +26,8 @@ export interface SchemaField {
   required: boolean;
   /** `enum` 的取值（原样，可能不是字符串）。 */
   options?: unknown[];
+  /** A secret whose value is an object or array (`x-secret-json`): typed as JSON, sent parsed. */
+  secretJson?: boolean;
 }
 
 export type SchemaDraft = Record<string, string | boolean | null | undefined>;
@@ -69,6 +71,7 @@ export function schemaFields(schema: JsonSchema | null | undefined): SchemaField
         kind,
         required: required.has(key),
         ...(kind === "enum" ? { options: prop.enum as unknown[] } : {}),
+        ...(kind === "secret" && prop["x-secret-json"] === true ? { secretJson: true } : {}),
       },
     ];
   });
@@ -127,7 +130,16 @@ export function draftToConfig(
       if (v === null) {
         if (existing) config[f.key] = null;
       } else if (typeof v === "string" && v !== "") {
-        config[f.key] = v;
+        if (!f.secretJson) config[f.key] = v;
+        else {
+          try {
+            const parsed: unknown = JSON.parse(v);
+            if (typeof parsed === "object" && parsed !== null) config[f.key] = parsed;
+            else errors[f.key] = "json";
+          } catch {
+            errors[f.key] = "json";
+          }
+        }
       } else if (f.required && !existing) {
         errors[f.key] = "required";
       }
