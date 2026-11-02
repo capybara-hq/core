@@ -151,7 +151,8 @@ function ProviderModels({
       key: "capabilities",
       header: t("admin.columns.capabilities"),
       tone: "muted",
-      // Plain text, not badges: 「工具 · 缓存」
+      // Plain text, not badges (「工具 · 缓存」), and never cut: it wraps instead of an ellipsis
+      wrap: true,
       cell: (m) =>
         CAPS.filter((c) => m.capabilities[c] === true)
           .map((c) => t(`capability.${c}`))
@@ -166,6 +167,8 @@ function ProviderModels({
     {
       key: "input",
       header: t("admin.columns.input"),
+      // Narrow: the mono figures fit, so the table fits the content width
+      width: 80,
       align: "right",
       cell: (m) => {
         const pr = priceOf(m);
@@ -175,6 +178,8 @@ function ProviderModels({
     {
       key: "output",
       header: t("admin.columns.output"),
+      // Narrow: the mono figures fit, so the table fits the content width
+      width: 80,
       align: "right",
       cell: (m) => {
         const pr = priceOf(m);
@@ -185,6 +190,8 @@ function ProviderModels({
       (k): Column<AdminModelInfo> => ({
         key: k,
         header: t(`admin.columns.${k}`),
+        // Narrow: the mono figures fit, so the table fits the content width
+        width: 80,
         align: "right",
         tone: "muted",
         cell: (m) => {

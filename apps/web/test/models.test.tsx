@@ -167,6 +167,16 @@ describe("/admin/models（ListPage）", () => {
     expect(
       within(large).getByText([...caps, m.models.capability.reasoning].join(" · ")),
     ).toBeTruthy();
+    // Capabilities are never cut to 「工具 ·…」: the cell wraps instead of an ellipsis
+    const capsCell = within(large)
+      .getByText([...caps, m.models.capability.reasoning].join(" · "))
+      .closest("td") as HTMLElement;
+    expect(capsCell.getAttribute("data-wrap")).toBe("true");
+    // The price columns are narrowed to their figures so the table fits the 1120 content width
+    for (const k of ["input", "output", "cacheRead", "cacheWrite"] as const) {
+      const th = within(table).getByRole("columnheader", { name: m.models.admin.columns[k] });
+      expect(th.style.width).toBe("80px");
+    }
     // The model column keeps a 240 px minimum so names are not cut to 「deepseek/dee」
     const head = within(table).getByRole("columnheader", { name: m.models.admin.columns.model });
     expect(head.style.width).toBe("240px");

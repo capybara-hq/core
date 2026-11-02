@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
@@ -190,6 +192,25 @@ describe("DataTable selection", () => {
     expect(screen.getByText("已选 1 项")).toBeTruthy();
     await user.keyboard("{Enter}");
     expect(onOpen).toHaveBeenCalledWith(rows[1]);
+  });
+});
+
+describe("DataTable wrapping columns", () => {
+  it("a wrap column's cells wrap onto more lines instead of an ellipsis; others stay one line", () => {
+    const { container } = plain({
+      columns: [
+        ...columns,
+        { key: "caps", header: "能力", cell: () => "工具 · 图片 · 文档 · 推理 · 缓存", wrap: true },
+      ],
+    });
+    const cell = screen.getAllByText("工具 · 图片 · 文档 · 推理 · 缓存")[0]?.closest("td");
+    expect(cell?.getAttribute("data-wrap")).toBe("true");
+    const name = screen.getByText("Alpha").closest("td");
+    expect(name?.getAttribute("data-wrap")).toBeNull();
+    // The CSS turns off nowrap and the ellipsis for data-wrap cells, at every width
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/table.css"), "utf8");
+    expect(css).toMatch(/td\[data-wrap="true"\][^{]*\{[^}]*white-space: normal/);
+    expect(container.querySelector('td[data-wrap="true"] .cb-table-cell')).not.toBeNull();
   });
 });
 

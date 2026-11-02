@@ -296,6 +296,7 @@ export function DataTable<T>({
                                 data-part="cell"
                                 data-align={c.align === "right" ? "right" : undefined}
                                 data-tone={c.tone}
+                                data-wrap={c.wrap ? "true" : undefined}
                                 data-lead={lead ? "true" : undefined}
                                 data-label={!lead && c.header ? c.header : undefined}
                               >

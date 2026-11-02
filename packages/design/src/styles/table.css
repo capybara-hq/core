@@ -147,6 +147,19 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A wrapping column (Column.wrap, spec §6.6): its text wraps onto more lines, never an ellipsis;
+   the row grows and the extra lines get space.1 above and below. */
+.cb-table-el td[data-wrap="true"],
+.cb-table-el td[data-wrap="true"] > .cb-table-cell {
+  max-width: none;
+  white-space: normal;
+  text-overflow: clip;
+  overflow-wrap: break-word;
+}
+.cb-table-el td[data-wrap="true"] {
+  padding-top: var(--cb-space-1);
+  padding-bottom: var(--cb-space-1);
+}
 .cb-table-el td.cb-table-check,
 .cb-table-el th.cb-table-check {
   width: 40px;

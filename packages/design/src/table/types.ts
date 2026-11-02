@@ -10,6 +10,11 @@ export type Column<T> = {
   tone?: "ink" | "muted";
   sortable?: boolean;
   width?: number;
+  /**
+   * The cell wraps onto more lines instead of an ellipsis (spec §6.6): for short lists that must
+   * stay readable (a model's capabilities), never for names or ids.
+   */
+  wrap?: boolean;
 };
 
 export type SortDir = "asc" | "desc";
