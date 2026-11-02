@@ -64,7 +64,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("成员页（ListPage）", () => {
+describe("成员页（SettingsPage）", () => {
   it.each(LOCALES)(
     "匿名访客行：带「匿名访客」Badge，角色控件禁用，没有移出与转让（%s）",
     async (locale) => {
@@ -74,7 +74,11 @@ describe("成员页（ListPage）", () => {
         [`GET ${BASE}/invitations`]: () => json(200, { invitations: [] }),
       });
       const { container } = await renderRoute(MembersPage, lastStubRoutes(), { locale });
-      expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
+      // The settings frame with its sub-nav, like the other /settings pages (audit U8)
+      expect(container.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
+      const current = container.querySelector('.cb-settings-nav [aria-current="page"]');
+      expect(current?.textContent).toBe(msgs[locale].connections.nav.members);
+      expect(current?.getAttribute("href")).toBe("/settings/members");
       expect(await screen.findByText("IM visitor")).toBeTruthy();
       const anon = rowOf("IM visitor");
       expect(within(anon).getByText(m.anonymous)).toBeTruthy();

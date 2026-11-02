@@ -8,9 +8,9 @@ import {
   Dialog,
   Field,
   Input,
-  ListPage,
   type MenuItem,
   Select,
+  SettingsPage,
   Stack,
   StatusMark,
   Text,
@@ -19,6 +19,7 @@ import {
 import { useLocale, useTranslations } from "next-intl";
 import { useState, useTransition } from "react";
 import { FormError } from "../../../../components/form-error";
+import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import { useRouter } from "../../../../i18n/navigation";
@@ -44,9 +45,11 @@ import { useErrorMessage } from "../../../../lib/use-error-message";
 import { useServerState } from "../../../../lib/use-server-state";
 
 /**
- * `/settings/members`：组织成员（ListPage）。成员起可看；管理员可以改角色、移出（二次确认）、
- * 邀请（生成一次性链接、撤销）；所有者还可以转让所有权。匿名访客行（渠道连接的匿名策略）角色控件禁用、
- * 没有移出与转让，带「匿名访客」Badge。界面只是隐藏，最终由内核判定。
+ * `/settings/members`: the org's members (SettingsPage, group 组织, with the settings sub-nav).
+ * Members and up can read it; admins change roles, remove members (confirmed) and invite (a
+ * one-time link, revocable); owners also transfer ownership. Anonymous visitor rows (a channel
+ * connection's anonymous policy) have a disabled role control, no remove or transfer, and the
+ * 「匿名访客」 badge. The UI only hides actions; the kernel decides.
  * Read on the server (`page.tsx`): the members and, for admins, the invitations (a section: a
  * failure draws the invitation table's error state, retried with `router.refresh()`).
  */
@@ -63,6 +66,7 @@ const date = (iso: string, locale: string) =>
 
 export default function Members({ orgId, initial }: { orgId: string; initial: MembersData }) {
   const scope = usePagePath("org");
+  const nav = useOrgSettingsNav();
   const t = useTranslations("members");
   const tr = useTranslations("roles");
   const locale = useLocale();
@@ -175,7 +179,9 @@ export default function Members({ orgId, initial }: { orgId: string; initial: Me
   };
 
   return (
-    <ListPage
+    <SettingsPage
+      nav={nav}
+      activeNav="members"
       header={{
         path: [
           ...scope,
@@ -242,7 +248,7 @@ export default function Members({ orgId, initial }: { orgId: string; initial: Me
           }}
         />
       )}
-    </ListPage>
+    </SettingsPage>
   );
 }
 

@@ -4,9 +4,9 @@ import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../s
 import { TemplateHead } from "./frame";
 
 /**
- * T6 Inbox: Rail (the list) + Content (+ Inspector); an ActionRow while deciding. The head and
- * the body share one left edge (the gutter). `empty` (no items, a failed load) draws one
- * full-width EmptyState instead of the list + detail split.
+ * T6 Inbox: Rail (the list) + Content (+ Inspector); an ActionRow while deciding. The split is
+ * capped at the content width like every page (spec §4.3), so the head and the body share one left
+ * edge. `empty` (no items, a failed load) draws one EmptyState instead of the list + detail split.
  */
 export function InboxPage({
   header,
@@ -29,22 +29,23 @@ export function InboxPage({
 }) {
   if (empty) {
     return (
-      <div className="cb-template" data-template="InboxPage" data-width="full">
-        <TemplateHead header={header} statsInHead width="full" />
-        <Body layout="single">
+      <div className="cb-template" data-template="InboxPage" data-width="content">
+        <TemplateHead header={header} statsInHead />
+        <Body layout="single" width="content">
           <EmptyState {...empty} />
         </Body>
       </div>
     );
   }
   return (
-    <div className="cb-template" data-template="InboxPage" data-width="full">
-      <TemplateHead header={header} statsInHead width="full" />
+    <div className="cb-template" data-template="InboxPage" data-width="content">
+      <TemplateHead header={header} statsInHead />
       <Body
         layout={inspector != null ? "rail-inspector" : "rail"}
         rail={list}
         railFlush
         contentPadded
+        width="content"
         inspector={inspector}
         {...(inspectorTitle !== undefined ? { inspectorTitle } : {})}
         {...(onInspectorClose ? { onInspectorClose } : {})}

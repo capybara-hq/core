@@ -5,9 +5,9 @@ import { TemplateHead } from "./frame";
 /** T12 first use: a centered checklist on a Single page. */
 export function OnboardingPage({ header, steps }: { header: PageHeaderProps; steps: Step[] }) {
   return (
-    <div className="cb-template" data-template="OnboardingPage" data-width="full">
-      <TemplateHead header={header} statsInHead width="full" />
-      <Body layout="single">
+    <div className="cb-template" data-template="OnboardingPage" data-width="content">
+      <TemplateHead header={header} statsInHead />
+      <Body layout="single" width="content">
         <StepList steps={steps} />
       </Body>
     </div>

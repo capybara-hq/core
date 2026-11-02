@@ -105,6 +105,12 @@ describe("页面模板根节点与页头", () => {
       expect(root(name)).toBeTruthy();
       expect(screen.getByRole("heading", { level: 1, name: "页面标题" })).toBeTruthy();
     });
+    it(`${name}: the root and the head use the one content width (no full-width template)`, () => {
+      zh(el);
+      expect(root(name)?.getAttribute("data-width")).toBe("content");
+      const head = document.querySelector(".cb-template-head-frame");
+      expect(head?.getAttribute("data-width")).toBe("content");
+    });
   }
 
   it("AuthPage 无 Shell：标题可见，含 Dither 与 Logo，无页头", () => {
@@ -239,12 +245,25 @@ describe("widths, stat cards and the form without anchors", () => {
       <InboxPage header={header} list={<div>l</div>}>
         x
       </InboxPage>,
-      "full",
+      "content",
     ],
     [
       "TracePage",
       <TracePage header={header} waterfall={<div>w</div>} detail={<div>d</div>} />,
-      "full",
+      "content",
+    ],
+    [
+      "StatusPage",
+      <StatusPage header={header} kind="404" title="未找到" description="页面不存在" />,
+      "content",
+    ],
+    [
+      "OnboardingPage",
+      <OnboardingPage
+        header={header}
+        steps={[{ label: "接入模型", description: "d", done: false }]}
+      />,
+      "content",
     ],
   ];
   for (const [name, el, w] of widths) {
@@ -360,7 +379,7 @@ describe("其他模板行为", () => {
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 
-  it("InboxPage with no items: one full-width empty state instead of the list + detail split", () => {
+  it("InboxPage with no items: one page empty state instead of the list + detail split", () => {
     zh(
       <InboxPage header={header} list={<div>l</div>} empty={{ text: "没有待处理的事项" }}>
         x
@@ -376,10 +395,36 @@ describe("其他模板行为", () => {
     expect(document.querySelector(".cb-body")?.getAttribute("data-layout")).toBe("single");
   });
 
-  it("InboxPage: the head and the body share one left edge (the gutter)", () => {
+  it("InboxPage: the split is capped at the content width, inside the content padding", () => {
     const css = readFileSync(resolve(import.meta.dirname, "../src/styles/shell.css"), "utf8");
     expect(css).toMatch(
-      /\.cb-template\[data-template="InboxPage"\] \.cb-body-row \{\s*padding: 0 var\(--cb-layout-gutter\);/,
+      /\.cb-template\[data-template="InboxPage"\] \.cb-body:not\(\[data-layout="single"\]\) \{[^}]*padding: 0 var\(--cb-content-pad\);[^}]*scrollbar-gutter: stable;/,
+    );
+    expect(css).toMatch(
+      /\.cb-template\[data-template="InboxPage"\] \.cb-body-row \{[^}]*max-width: var\(--cb-layout-content\);[^}]*margin: 0 auto;/,
+    );
+  });
+
+  it("the template head has one padding rule: the content padding, no page gutter", () => {
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/shell.css"), "utf8");
+    const head = /\.cb-template-head \{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(head).toContain("padding: var(--cb-space-5) var(--cb-content-pad) var(--cb-space-3);");
+    expect(head).toContain("scrollbar-gutter: stable;");
+    expect(css).not.toContain('.cb-template-head[data-width="content"]');
+  });
+
+  it("TracePage: the detail follows the waterfall in one column, a right panel from 1280", () => {
+    zh(<TracePage header={header} waterfall={<div>w</div>} detail={<div>d</div>} />);
+    const waterfall = document.querySelector(".cb-trace-waterfall") as HTMLElement;
+    const detail = document.querySelector(".cb-trace-detail") as HTMLElement;
+    expect(waterfall.parentElement).toBe(detail.parentElement);
+    expect(waterfall.nextElementSibling).toBe(detail);
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
+    const trace = /\.cb-trace \{([^}]*)\}/.exec(css)?.[1] ?? "";
+    // no stretched waterfall pinning the detail to the bottom (the dead gap)
+    expect(trace).not.toContain("min-height: 100%");
+    expect(css).toMatch(
+      /@media \(min-width: 1280px\) \{[^@]*\.cb-trace \{[^}]*grid-template-columns: minmax\(0, 1fr\) 400px;/,
     );
   });
 
@@ -560,6 +605,24 @@ describe("SettingsPage column (blind round 2)", () => {
     expect(content.contains(title)).toBe(false);
     expect(title.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(title.closest(".cb-template-head-frame")?.getAttribute("data-width")).toBe("content");
+  });
+
+  it("the head's description sits at the top of the content column, so the sub-nav never moves", () => {
+    zh(
+      <SettingsPage
+        header={{ path: [], title: "服务令牌", description: "给脚本用的令牌。" }}
+        nav={[{ group: "g", items: [{ id: "tokens", label: "服务令牌", href: "/t" }] }]}
+        activeNav="tokens"
+      >
+        <p>内容</p>
+      </SettingsPage>,
+    );
+    const description = screen.getByText("给脚本用的令牌。");
+    expect(description.closest(".cb-template-head")).toBeNull();
+    const column = description.closest(".cb-settings-content") as HTMLElement;
+    expect(column).not.toBeNull();
+    expect(column.firstElementChild).toBe(description);
+    expect(document.querySelector('[data-part="page-header-description"]')).toBeNull();
   });
 
   it("the sub-nav has a name and no collapse button", () => {

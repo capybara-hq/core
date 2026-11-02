@@ -61,6 +61,17 @@
   gap: var(--cb-space-6);
   min-width: 0;
 }
+/* The page's description opens the content column (the head keeps one height). */
+.cb-settings-description {
+  margin: 0;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+}
+.cb-settings-content > .cb-settings-description + * {
+  margin-top: calc(var(--cb-space-3) - var(--cb-space-6));
+}
 .cb-settings-content > .cb-form-section + .cb-form-section {
   margin-top: 0;
 }
@@ -115,21 +126,47 @@
   color: var(--cb-faint);
 }
 
-/* Trace：上瀑布、下详情 */
+/* Trace (T8): the stats, the waterfall and the detail share the content frame's one left edge. The
+   detail follows the waterfall (no stretched waterfall, no gap); from 1280 it is a 400 px right
+   panel inside the width, both columns scrolling on their own, so the selected row and its detail
+   are on screen together. */
 .cb-trace {
   display: flex;
   flex-direction: column;
-  min-height: 100%;
+  gap: var(--cb-space-4);
 }
-.cb-trace-waterfall {
-  flex: 1;
-  min-height: 240px;
-  overflow: auto;
-  border-bottom: 1px solid var(--cb-line);
+.cb-trace-waterfall,
+.cb-trace-detail {
+  min-width: 0;
 }
 .cb-trace-detail {
-  flex: none;
-  padding: 16px;
+  padding-top: var(--cb-space-4);
+  border-top: 1px solid var(--cb-line-soft);
+}
+@media (min-width: 1280px) {
+  .cb-template[data-template="TracePage"] .cb-body-frame {
+    height: 100%;
+  }
+  .cb-trace {
+    display: grid;
+    flex: 1;
+    grid-template-columns: minmax(0, 1fr) 400px;
+    gap: 0;
+    min-height: 0;
+  }
+  .cb-trace-waterfall,
+  .cb-trace-detail {
+    min-height: 0;
+    overflow: auto;
+  }
+  .cb-trace-waterfall {
+    padding-right: var(--cb-space-4);
+  }
+  .cb-trace-detail {
+    padding: 0 0 0 var(--cb-space-4);
+    border-top: 0;
+    border-left: 1px solid var(--cb-line-soft);
+  }
 }
 
 /* Wizard 步骤条 */
