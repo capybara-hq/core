@@ -405,7 +405,8 @@ export class ExtensionDeploymentConfigService {
         source,
         readonly: from !== undefined,
       };
-      if (f.secret) return { ...base, set: value !== undefined };
+      // a schema default (e.g. `secret(record).default({})`) is no secret anybody set
+      if (f.secret) return { ...base, set: value !== undefined && source !== "default" };
       return value === undefined ? base : { ...base, value: structuredClone(value) };
     });
     return {

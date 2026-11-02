@@ -512,6 +512,23 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
     expect(v.fields.find((f) => f.path === "b")).toMatchObject({ set: true });
   });
 
+  it("a secret field whose only value is its schema default reads as not set", async () => {
+    // e.g. openai-compatible's `apiKeys: secret(record).default({})`: the default is no secret
+    const { z } = await import("zod");
+    const { secret } = await import("@capybara-hq/plugin-sdk");
+    const schema = z.object({ keys: secret(z.record(z.string(), z.string())).default({}) });
+    const svc = schemaOverride(async () => ({
+      version: "1.0.0",
+      schema,
+      fields: [{ path: "keys", secret: true, hot: false }],
+    }));
+    const v = await svc.view("defaultsecret");
+    expect(v.fields.find((f) => f.path === "keys")).toMatchObject({
+      source: "default",
+      set: false,
+    });
+  });
+
   it("引导插件同样可以在 PG 里配：待配置 → 保存后不重启即加载", async () => {
     const before = await admin({ method: "GET", url: "/api/v1/admin/extensions/badconfig" });
     expect(before.json()).toMatchObject({
