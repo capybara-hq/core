@@ -10,7 +10,7 @@
 <body>
 <main class="r-page">
 <h1>Stat cards</h1>
-<p>Key metrics below the list-page header, at most 4–5. Only warn / fail values are colored, and their label says what they are. A linked card (the first one in the link blocks) is the link to its page: hover ground, accent focus ring.</p>
+<p>Key metrics below the list-page header, at most 4–5. Only warn / fail values are colored, and their label says what they are. A linked card (the first one in the link blocks) is the link to its page: hover ground, accent focus ring. Below 640 (the narrow block, 390) they are two columns.</p>
 <div class="r-blocks">
 <section data-ref-block="stat-cards-four" style="width:var(--cb-layout-content)" data-pad>
   <template data-fixture="stats"></template>
@@ -26,6 +26,9 @@
 </section>
 <section data-ref-block="stat-cards-link-focus" style="width:640px" data-pad>
   <template data-fixture="stats" data-opts='{"linkState": "focus"}'></template>
+</section>
+<section data-ref-block="stat-cards-narrow" style="width:390px" data-pad>
+  <template data-fixture="stats" data-opts='{"narrow": true}'></template>
 </section>
 </div>
 </main>

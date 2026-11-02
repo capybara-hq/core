@@ -529,6 +529,11 @@ a.cb-object-name:hover {
   .cb-object-text {
     flex-basis: calc(100% - 36px - var(--cb-space-3));
   }
+  /* The row action and the overflow menu are 40 px tap targets on phones. */
+  .cb-object-row .cb-btn {
+    min-width: 40px;
+    min-height: 40px;
+  }
 }
 
 /* EmptyState (spec §6.18) */

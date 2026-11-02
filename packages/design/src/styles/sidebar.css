@@ -739,6 +739,19 @@
   box-shadow: var(--cb-shadow-float);
   outline: none;
 }
+/* The drawer is the touch form of the sidebar (below 960, phones included): its rows are 40 px
+   tap targets (spec §6.13), and a conversation row's menu is a 40 px square. */
+.cb-sidebar-drawer .cb-sidebar .cb-sidebar-item,
+.cb-sidebar-drawer .cb-sidebar .cb-sidebar-row,
+.cb-sidebar-drawer .cb-sidebar .cb-sidebar-back,
+.cb-sidebar-drawer .cb-sidebar .cb-sidebar-group-head,
+.cb-sidebar-drawer .cb-sidebar .cb-sidebar-archived {
+  height: 40px;
+}
+.cb-sidebar-drawer .cb-sidebar .cb-sidebar-row-menu {
+  width: 40px;
+  height: 40px;
+}
 @media (prefers-reduced-motion: no-preference) {
   .cb-sidebar-drawer {
     animation: cb-sidebar-in var(--cb-motion-overlay) ease-out;

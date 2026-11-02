@@ -213,7 +213,7 @@ test("the open drawer traps Tab: focus cycles inside it", async ({ page }) => {
 });
 
 test.describe("viewport widths (full shell)", () => {
-  for (const width of [1440, 1279, 959, 640]) {
+  for (const width of [1440, 1279, 959, 640, 390]) {
     test(`no horizontal page scroll at ${width}`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
       await page.goto("/dev/ui/templates/list");

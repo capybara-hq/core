@@ -269,15 +269,28 @@
       )
       .join('<span aria-hidden="true">/</span>')}</nav>`;
     const desc = o.description ? `<p class="r-ph-desc">${esc(L.description)}</p>` : "";
+    const secondary = o.narrow
+      ? `<button class="r-icon-btn" data-variant="default" aria-label="更多操作">${icon("more-horizontal", 14)}</button>`
+      : `<button class="r-btn" data-variant="default">${esc(L.secondaryAction)}</button>`;
     const actions = o.actions
-      ? `<div class="r-ph-actions"><button class="r-btn" data-variant="default">${esc(L.secondaryAction)}</button><button class="r-btn" data-variant="primary">${icon("plus", 14)}${esc(L.primaryAction)}</button></div>`
+      ? `<div class="r-ph-actions">${secondary}<button class="r-btn" data-variant="primary">${icon("plus", 14)}${esc(L.primaryAction)}</button></div>`
       : "";
-    return `<header class="r-ph">${crumb}<div class="r-ph-row"><div class="r-ph-text"><h1 class="r-ph-title" title="${esc(title)}">${esc(title)}</h1>${desc}</div>${actions}</div></header>`;
+    // Phones (spec §4.2): the search on its own line above the tabs, which scroll on theirs.
+    const P = F.PAGE_HEADER_FIXTURE;
+    const tabs = o.tabs
+      ? `<div class="r-ph-tabs"><label class="r-search">${icon("search", 14)}<span class="r-sr">${esc(P.search)}</span><input placeholder="${esc(P.search)}"></label><div class="r-ph-tablist" role="tablist">${P.tabs
+          .map(
+            (t, i) =>
+              `<span role="tab" aria-selected="${i === 0}">${esc(t.label)}<span class="r-ph-count">${t.count}</span></span>`,
+          )
+          .join("")}</div></div>`
+      : "";
+    return `<header class="r-ph"${o.narrow ? " data-narrow" : ""}>${crumb}<div class="r-ph-row"><div class="r-ph-text"><h1 class="r-ph-title" title="${esc(title)}">${esc(title)}</h1>${desc}</div>${actions}</div>${tabs}</header>`;
   }
 
   function stats(o) {
     const metrics = o.five ? F.LIST_PAGE_FIXTURE.metricsFive : F.LIST_PAGE_FIXTURE.metrics;
-    return `<div class="r-stats">${metrics
+    return `<div class="r-stats"${o.narrow ? " data-narrow" : ""}>${metrics
       .map(
         (m, i) =>
           `<div class="r-stat"${o.linkState && i === 0 ? ` data-state="${o.linkState}"` : ""}><div class="r-stat-label">${esc(m.label)}</div><div class="r-stat-value"${m.tone ? ` data-tone="${m.tone}"` : ""}>${esc(m.value)}</div></div>`,
@@ -328,6 +341,16 @@
     if (o.state === "empty") {
       body = `<tr><td colspan="7" class="r-table-empty"><div>${icon("empty", 16)}<span>${esc(L.empty.title)}</span><button class="r-btn" data-variant="default">${esc(L.empty.action)}</button></div></td></tr>`;
       return `<div class="r-table"><table>${head}<tbody>${body}</tbody></table></div>`;
+    }
+    if (o.narrow) {
+      // Phones (spec §6.6): stacked rows; the name is the card's title line, then label: value.
+      const line = (label, value, cls = "") =>
+        `<div class="r-stack-line"><span class="r-stack-label">${esc(label)}</span><span class="r-ellipsis${cls}">${value}</span></div>`;
+      const cards = (o.rows ? L.rows.slice(0, o.rows) : L.rows).map(
+        (r) =>
+          `<div class="r-stack-row"><div class="r-stack-title"><div class="r-cell-name"><span class="r-initial" aria-hidden="true">${esc(r.name.slice(0, 1))}</span><div class="r-min0"><div class="r-ellipsis">${esc(r.name)}</div><div class="r-cell-desc r-ellipsis">${esc(r.description)}</div></div></div><button class="r-icon-btn" data-step="touch" aria-label="${esc(L.rowActions)}">${icon("more-horizontal", 14)}</button></div>${line(C.type, esc(r.type), " r-muted")}${line(C.status, statusCell(r.status))}${line(C.tools, esc(String(r.tools)))}${line(C.calls7d, esc(r.calls7d), " r-muted")}${line(C.owner, esc(r.owner), " r-muted")}</div>`,
+      );
+      return `<div class="r-table r-stacked">${cards.join("")}</div>`;
     }
     const rows = (o.rows ? L.rows.slice(0, o.rows) : L.rows).map((r) => {
       const st =

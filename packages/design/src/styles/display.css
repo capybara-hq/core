@@ -1,13 +1,22 @@
 /* 导航与展示组件（spec §2.4、§3、§6.4、§6.5、§6.8） */
 
-/* Tabs：文字 + 选中下划线 */
+/* Tabs: text + the selected underline. One line at every width: tabs never wrap; when they don't
+   fit they scroll sideways (no scrollbar drawn) (spec §6.4). */
 .cb-tabs {
   display: flex;
   gap: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
   border-bottom: 1px solid var(--cb-line-soft);
+}
+.cb-tabs::-webkit-scrollbar {
+  display: none;
 }
 .cb-tab {
   display: inline-flex;
+  flex: none;
+  white-space: nowrap;
   align-items: center;
   gap: 8px;
   height: 28px;
@@ -22,6 +31,10 @@
   transition:
     background-color var(--cb-motion-hover),
     color var(--cb-motion-hover);
+}
+/* The row clips (it scrolls), so the focus ring is drawn inside the tab. */
+.cb-tab:focus-visible {
+  outline-offset: -2px;
 }
 .cb-tab:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--cb-hover);

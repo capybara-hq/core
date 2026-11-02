@@ -10,7 +10,7 @@
 <body>
 <main class="r-page">
 <h1>Table</h1>
-<p>DataTable is dense throughout: header 28, two-line rows 44, row dividers in line-soft, square. Success is not colored.</p>
+<p>DataTable is dense throughout: header 28, two-line rows 44, row dividers in line-soft, square. Success is not colored. Below 640 (the narrow block, 390) every table is stacked rows: the name is the title line with the row menu (40 square), then one label · value line per column.</p>
 <div class="r-blocks">
 <section data-ref-block="table-default" style="width:var(--cb-layout-content)">
   <template data-fixture="table"></template>
@@ -26,6 +26,9 @@
 </section>
 <section data-ref-block="table-empty" style="width:var(--cb-layout-content)">
   <template data-fixture="table" data-opts='{"state": "empty"}'></template>
+</section>
+<section data-ref-block="table-narrow" style="width:390px">
+  <template data-fixture="table" data-opts='{"narrow": true, "rows": 3}'></template>
 </section>
 </div>
 </main>

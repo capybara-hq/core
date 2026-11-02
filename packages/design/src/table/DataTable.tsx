@@ -285,14 +285,19 @@ export function DataTable<T>({
                               />
                             </td>
                           ) : null}
-                          {columns.map((c) => {
+                          {columns.map((c, ci) => {
                             const content = c.cell(row);
+                            // Below 640 the rows stack (spec §6.6): the first cell is the card's
+                            // title line, every other cell is labelled with its column header.
+                            const lead = ci === 0;
                             return (
                               <td
                                 key={c.key}
                                 data-part="cell"
                                 data-align={c.align === "right" ? "right" : undefined}
                                 data-tone={c.tone}
+                                data-lead={lead ? "true" : undefined}
+                                data-label={!lead && c.header ? c.header : undefined}
                               >
                                 <span className="cb-table-cell" title={titleOf(content)}>
                                   {content}

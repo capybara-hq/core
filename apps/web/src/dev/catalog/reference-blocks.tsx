@@ -393,6 +393,10 @@ function tableBlocks(): ReactNode {
       <RefBlock id="table-empty" width={LIST}>
         <ConnectorTable state="empty" />
       </RefBlock>
+      {/* Phones: measured in a 390 window, where the rows stack (spec §6.6, §9.3). */}
+      <RefBlock id="table-narrow" width={390}>
+        <ConnectorTable rows={3} />
+      </RefBlock>
     </>
   );
 }
@@ -617,6 +621,18 @@ function pageHeaderBlocks(): ReactNode {
           actions={ACTIONS}
         />
       </RefBlock>
+      {/* Phones: measured in a 390 window: the search on its own line, the tabs scroll, 40 px
+          tap targets (spec §4.2, §9.3). */}
+      <RefBlock id="page-header-narrow" width={390} pad>
+        <PageHeader
+          path={F.path.slice(0, 1)}
+          title={PAGE_HEADER_FIXTURE.title}
+          actions={ACTIONS}
+          tabs={PAGE_HEADER_FIXTURE.tabs}
+          activeTab="all"
+          search={{ label: PAGE_HEADER_FIXTURE.search, value: "", onChange: noop }}
+        />
+      </RefBlock>
     </>
   );
 }
@@ -651,6 +667,10 @@ function statCardsBlocks(): ReactNode {
         force={{ pseudo: ["focus", "focus-visible"], selector: 'a[data-part="stat-card"]' }}
       >
         <StatCards metrics={LINKED_METRICS} />
+      </RefBlock>
+      {/* Phones: measured in a 390 window, two columns (spec §6.14, §9.3). */}
+      <RefBlock id="stat-cards-narrow" width={390} pad>
+        <StatCards metrics={L.metrics} />
       </RefBlock>
     </>
   );

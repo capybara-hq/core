@@ -579,6 +579,13 @@ export const FORM_PAGE_FIXTURE: {
 export const PAGE_HEADER_FIXTURE = {
   title: "Agents",
   pathTitle: "编辑 Agent",
+  /** The views and the search of a list page's tab row (the narrow block, spec §4.2). */
+  tabs: [
+    { id: "all", label: "全部", count: 6 },
+    { id: "mine", label: "我的", count: 3 },
+    { id: "shared", label: "组织共享", count: 3 },
+  ],
+  search: "搜索名称或模型",
   longTitle:
     "季度经营分析与预算执行跟踪复盘助手的全部历史版本与发布记录以及每个版本的变更说明和审批意见汇总页面",
 };

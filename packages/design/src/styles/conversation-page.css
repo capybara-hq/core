@@ -684,6 +684,33 @@ button.cb-property-row {
     display: none;
   }
 }
+/*
+ * Phones (below 640, spec §5.4): the middle column has no minimum and fills the window, with 16 px
+ * gutters for the title bar, the thread and the composer, so the composer, its send button and
+ * the user bubbles never run past the right edge. Title-bar buttons are 40 px tap targets; the
+ * right padding is space.1 so an icon's glyph lines up with the 16 px content edge.
+ */
+@media (max-width: 639px) {
+  .cb-conv-main {
+    min-width: 0;
+  }
+  .cb-conv-scroll {
+    padding-inline: var(--cb-space-4);
+  }
+  .cb-conv-composer {
+    padding-inline: var(--cb-space-4);
+  }
+  .cb-title-bar {
+    padding-inline: var(--cb-space-4) var(--cb-space-1);
+  }
+  .cb-title-bar .cb-icon-btn {
+    min-width: 40px;
+    min-height: 40px;
+  }
+  .cb-title-btn {
+    height: 40px;
+  }
+}
 .cb-conv-resize {
   position: absolute;
   inset: 0 auto 0 calc(-1 * var(--cb-space-1));

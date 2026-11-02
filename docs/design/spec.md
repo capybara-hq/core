@@ -87,6 +87,7 @@ Two fonts, each with a job:
 
 - Numbers always use `font-variant-numeric: tabular-nums`.
 - No italics and no letter-spacing adjustment.
+- `micro` (11) is the smallest size anywhere, at every window width (mono meta lines included); no stylesheet sets a smaller one.
 
 ### 2.3 The five roles of the accent color (only these five)
 
@@ -201,7 +202,7 @@ Every page (except auth pages, §5 T10) is **Sidebar | content area**. The conte
 
 | Layer | Height | Required | Content |
 |---|---|---|---|
-| Drawer menu bar | `row.roomy` | Only below 960 | Menu button that opens the sidebar drawer, page title |
+| Drawer menu bar | `row.roomy` | Only below 960 | Menu button that opens the sidebar drawer, page title; below 640 its buttons are 40 px tap targets and it is padded 0 `space.1`, so their icons sit on the 16 px content edge |
 | PageHeader | content | Required | Row 1 the path; row 2 title + one-line description, actions on the right; optional tabs row (§4.2) |
 | PageTabs | 36 | Optional (detail pages only) | In-page tabs, current item underlined |
 | Body | flexible | Required | One of the layouts in §4.3 |
@@ -217,14 +218,14 @@ See §6.13 for the component. Width `layout.sidebar`; below 1280 an icon rail of
 
 ### 4.2 PageHeader
 
-- Four rows. Row 1: the **path** `scope / page [/ object]` (mono, `small`, `faint`; the last segment, the current page, in `ink` with `aria-current="page"`), inside a `nav` labelled "Path"; earlier segments with a link are links. The scope is the org slug for workspace pages (links to `/`), `~` for the home page, `/admin` for admin pages. Row 2: title (`h1`, single line with an ellipsis, full text in `title`) + count / status, actions on the right (at most one primary, rightmost). Row 3 (optional): a one-line description (`prose-small` `muted`, single line with an ellipsis). Row 4 (optional): **tabs** with counts (`全部 6 · 我的 3`) for pages with views, with the **search** field at the right end of the same row; a tab changes the view (`onSelect`) or links (`href`). The tab row has one height with or without the search (`control.default` + `space.1` above and below) and a 1 px `line-soft` bottom border; the tabs sit at its bottom and overlap the border by 1 px, so the selected tab's underline lies **on** the border; the search is centered vertically. While a ListPage loads, the tabs and the search keep their place and a tab's count is a `faint` "–" (§5.1).
+- Four rows. Row 1: the **path** `scope / page [/ object]` (mono, `small`, `faint`; the last segment, the current page, in `ink` with `aria-current="page"`), inside a `nav` labelled "Path"; earlier segments with a link are links. The scope is the org slug for workspace pages (links to `/`), `~` for the home page, `/admin` for admin pages. Row 2: title (`h1`, single line with an ellipsis, full text in `title`) + count / status, actions on the right (at most one primary, rightmost). Row 3 (optional): a one-line description (`prose-small` `muted`, single line with an ellipsis). Row 4 (optional): **tabs** with counts (`全部 6 · 我的 3`) for pages with views, with the **search** field at the right end of the same row; a tab changes the view (`onSelect`) or links (`href`). The tab row has one height with or without the search (`control.default` + `space.1` above and below) and a 1 px `line-soft` bottom border; the tabs sit at its bottom and overlap the border by 1 px, so the selected tab's underline lies **on** the border; the search is centered vertically. While a ListPage loads, the tabs and the search keep their place and a tab's count is a `faint` "–" (§5.1). Tabs never wrap: a tab row too narrow for its tabs scrolls sideways (§6.4). **Below 640** the search takes its own full-width line above the tabs (`space.2` between the lines), the tabs are 40 high (tap targets), and so are the header's actions.
 - No bottom line and no background; spacing separates it from the body.
 - Actions: at most 1 solid primary action + 2 secondary + a `more-horizontal` menu; the primary action is rightmost; all `default` density; an action may lead with a 14 icon (`plus` on a create action). The submit action of form pages **must not** go here; it goes in the ActionRow.
 - List-page key metrics are **not** in the header: the template renders them below the header as StatCards (§6.14), at most 4–5. List and overview pages draw them at the top of the body; detail, trace, inbox, onboarding and status templates draw them in the fixed header area under the PageHeader.
 - Content width: the header shares the body's one content width (`layout.content`, 1120, centered; §4.3). It sits `space.6` below the top of the content area and `space.3` above the body (StatCards or the table).
 
 <!-- states: page-header -->
-States: `title`, `path`, `description-actions`, `long-title`
+States: `title`, `path`, `description-actions`, `long-title`, `narrow`
 
 <!-- size-table: page-header -->
 | Part | State | Property | Value |
@@ -240,6 +241,10 @@ States: `title`, `path`, `description-actions`, `long-title`
 | button[data-variant=primary] | description-actions | height | control.default |
 | page-header-title | long-title | height | type.h1.line |
 | page-header | long-title | width | 608 |
+| page-header-tabs | narrow | row-gap | space.2 |
+| page-header-search | narrow | width | 358 |
+| tab | narrow | height | 40 |
+| button[data-variant=primary] | narrow | height | 40 |
 
 ### 4.3 Body layouts and content widths
 
@@ -254,7 +259,12 @@ States: `title`, `path`, `description-actions`, `long-title`
 - Content width: **one** width for every page template (list, overview, form, settings, wizard, detail, trace, inbox, onboarding, status), `layout.content` (1120), centered (100% wide below that), with `layout.content-pad` (32) of side padding (16 below 640) and `space.5` (20) above the header; the page head and the body (also a detail page's tabs, beside its inspector) share that container. The head and the scrolling body both reserve the scrollbar gutter (`scrollbar-gutter: stable`), so a classic (non-overlay) scrollbar never shifts the body's column against the head. The head therefore sits at the same x and y on every page and on every tab of one page. The inbox's rail + content + inspector split is capped at that width inside the same padding; the trace viewer's waterfall and detail share its one left edge (§5 T8). A form keeps its label column inside it (forms put `space.6` between sections, lists `space.3`); the conversation page has its own columns (§5.4). The Centered layout has **no anchor navigation**; a form's error count lives in the ActionRow.
 - Content has a minimum width of 560. The Rail is collapsible; the Inspector is closable.
 - Scrolling: the sidebar, PageHeader / PageTabs / ActionRow / StatusBar are fixed; the sidebar's conversation section, Rail, Content and Inspector scroll independently; the page must not show a horizontal scrollbar (wide tables scroll inside their own container).
-- Responsive: < 1280 the sidebar becomes the rail and the Inspector a right-side Sheet; < 960 the sidebar becomes a drawer and the Rail a toolbar "Filter" button + Sheet; < 640 the header actions beyond the primary fold into `more-horizontal`.
+- Responsive: < 1280 the sidebar becomes the rail and the Inspector a right-side Sheet; < 960 the sidebar becomes a drawer and the Rail a toolbar "Filter" button + Sheet; < 640 (phones, checked at 390 × 844) the header actions beyond the primary fold into `more-horizontal`, and:
+  - nothing scrolls sideways: the side padding is 16 on every template and on the conversation page (§5.4), and nothing keeps a minimum width wider than the window;
+  - tab rows scroll instead of wrapping (§6.4), and the page head's search takes its own line (§4.2);
+  - every DataTable is stacked rows (§6.6) and StatCards are two columns (§6.14);
+  - tap targets are at least 40 px: the page head's actions and tabs, row actions (ObjectRow, §6.17; the DataTable row menu), the drawer menu bar's and the conversation title bar's buttons (§6.16.1); the sidebar drawer's rows are 40 high (§6.13);
+  - type keeps its sizes: `micro` (11) stays the smallest (§2.2).
 
 ### 4.4 ActionRow and StatusBar
 
@@ -366,7 +376,7 @@ States: `page`
 `ConversationPage` (it replaced `PlaygroundPage`, which only the conversation page used; removed with UI refresh B). Signed off with reference set B on 2026-10-27; UI refresh spec §5.
 
 - **Columns**: the sidebar (§4.1) | the middle column | the right area.
-  - The **middle column** holds, top to bottom: the title bar (§6.16.1), the thread (centered, at most `layout.chat` wide, gutters `layout.gutter`, padding `space.4` on top, items `space.3` apart, following the bottom while the reader is at the bottom), the composer (§6.16.2, at most `layout.chat` plus the gutters wide, centered, `space.3` from the status bar) and the status bar (§4.4). It is never narrower than `layout.chat-min`.
+  - The **middle column** holds, top to bottom: the title bar (§6.16.1), the thread (centered, at most `layout.chat` wide, gutters `layout.gutter`, padding `space.4` on top, items `space.3` apart, following the bottom while the reader is at the bottom), the composer (§6.16.2, at most `layout.chat` plus the gutters wide, centered, `space.3` from the status bar) and the status bar (§4.4). It is never narrower than `layout.chat-min`, except **below 640**, where it fills the window and the title bar, the thread and the composer use `space.4` (16) gutters, so the composer, its send button and the user bubbles never run past the right edge.
   - The **right area** holds one thing at a time: either the **properties panel** (§6.16.17), which sits *inside* the middle column under its title bar so the title bar spans thread and properties, or **one right panel** (§6.16.18), full height beside the middle column, whose title bar then narrows with it. Opening one closes the other; "none" is the default.
 - **Narrow windows**: below 1280 (where the sidebar becomes the rail, §4.3) the right area is a right-side Sheet over the page (`layout.panel` wide, `shadow-sheet`, a `scrim` behind it), closed by Esc, its close button or a click on the scrim; the server render and hydration cannot know the window, so below 1280 a CSS media query hides the inline right area until the first client render makes it the Sheet (the page never scrolls sideways, no flash). At 1280 and above it sits beside the thread; with the full sidebar at exactly 1280 the panel narrows to 544 so the thread keeps `layout.chat-min` (maintainer ruling 2026-10-27).
 - **New conversation**: nothing is created until the first send. The title bar shows "新会话" / "New conversation"; the thread is replaced by a centered column (`layout.chat` wide): the agent's name (`h2`), its description (`prose-small` `muted`) and the composer with the agent picker open for choice; the status bar shows only the context and the version.
@@ -518,7 +528,7 @@ States: `default`, `selected`, `focus`
 | switch | focus | outline-width | 2 |
 
 ### 6.4 Tabs / Segmented / Pagination
-- Tabs: text + underline when selected (§2.3); hover `hover` ground; disabled `faint`. In the page head's tab row the underline sits on the row's bottom border (§4.2).
+- Tabs: text + underline when selected (§2.3); hover `hover` ground; disabled `faint`. In the page head's tab row the underline sits on the row's bottom border (§4.2). Tabs stay on one line at every width (a tab never wraps its label); a row of tabs that does not fit scrolls sideways without a drawn scrollbar, and since the row clips, a tab's focus ring is drawn inside it.
 - Segmented in a form field takes the field's width with equal segments (`fill`).
   - Count `count`: a small `muted` number after the name.
   - Badge `badge` (such as Inspector "Tasks 2/4"): 1px `line` border, small `muted`, radius `sm`; when selected `ink` text.
@@ -578,11 +588,12 @@ Structure, top to bottom: toolbar / bulk action bar → the table (header and ro
   - The empty states and the skeleton rows keep a row cell's horizontal padding: `space.3` at the first-column edge (left) and `space.2` on the right, as the signed reference draws its full-width cell, so their centered content sits 2px right of the panel's middle.
   - No results (caused by filters): the compact EmptyState, centered the same way, with the `search-x` icon, "No matching results", a description of the current filters and "Clear filters".
   - Error: `circle-x` + "Failed to load" in `fail`, the error code · request ID (muted) + "Retry" (`refresh`).
+- **Narrow (below 640): stacked rows.** Every table becomes stacked rows; it is the table's own behaviour, no page opts in. The header row is hidden (also above an empty state). Each row is a card, `space.2` padding above and below, a `line-soft` line between rows: the first column's cell is its title line (500, at least `row.dense` high), with the row checkbox before it and the row menu after it on the same line; every other cell is one `label value` line, the label being the column header (`small` `muted`, 10ch, one line with an ellipsis; a column without a header has no label) and the value one line with an ellipsis (the full text in `title`). Cells keep the `space.3` edge padding. Nothing sticks; the selected row keeps its 2px accent bar on the card's left; the row-menu button is a 40 px square (tap target). The toolbar wraps and its search takes the full width.
 - Keyboard: ↑↓ move focus, Space checks, ↵ opens, Esc deselects.
 - The header is sticky; when scrolling horizontally the first column sticks to the left.
 
 <!-- states: table -->
-States: `default`, `row-hover`, `row-selected`, `loading`, `empty`
+States: `default`, `row-hover`, `row-selected`, `loading`, `empty`, `narrow`
 
 <!-- size-table: table -->
 | Part | State | Property | Value |
@@ -604,6 +615,11 @@ States: `default`, `row-hover`, `row-selected`, `loading`, `empty`
 | table-empty button | empty | height | control.default |
 | menu-cell | default | width | 48 |
 | menu-cell icon-button | default | height | control.dense |
+| row | narrow | padding-top | space.2 |
+| row | narrow | border-top-color | color.line-soft |
+| cell[data-lead=true] | narrow | padding-left | space.3 |
+| menu-cell icon-button | narrow | width | 40 |
+| menu-cell icon-button | narrow | height | 40 |
 
 ### 6.7 Overlays
 
@@ -742,7 +758,7 @@ The left sidebar replaces the TopBar on every page (UI refresh spec §4.4). Side
 - **States of the conversation section**: empty: the compact EmptyState (§6.18) "还没有会话" / "No conversations yet" with a 新会话 link (the archived list: "没有已归档的会话"; a filter matching nothing: "没有匹配的会话" + 清除筛选); loading: skeleton bars (`space.3` high, `selected`, radius `sm`) in three groups (3, 2, 2), `aria-busy`, no spinner; error: `circle-alert` + "会话列表加载失败" / "Couldn't load conversations" in `fail` and a dense ghost "Retry" (`refresh`).
 - Long titles and agent names (40+ CJK characters without spaces) truncate to one line and never widen the sidebar.
 - **Rail** (below 1280): width `layout.sidebar-rail`, icons only: the brand row is the logo alone; under it the expand button (`panel-left`, "Expand sidebar", opens the drawer), then search and the inbox as rail icons (the inbox badge as in the brand row); the org initial (a button opening the org menu, named as the switcher; the admin context shows the shield and the back arrow), 新会话, the primary items (each `row.default` square, accessible name kept, a Tooltip with the label to the right, past the rail's edge, on hover and focus), 更多 as one `more-horizontal` button opening the same flyout (on `sidebar-active` while the current page is inside), the admin entry and the account. Hover over the current item takes the `hover` ground (the signed rail reference). No conversations.
-- **Drawer** (below 960): the full sidebar slides in from the left over a `scrim`, with `shadow-float`, opened from the menu button in the drawer menu bar; its brand row carries a close button (`x`), and the drawer menu bar carries the search button (`search`, at its right end) so the command palette stays reachable by pointer below 960. Esc, the close button and route changes close it; focus returns to the menu button.
+- **Drawer** (below 960): the full sidebar slides in from the left over a `scrim`, with `shadow-float`, opened from the menu button in the drawer menu bar; its brand row carries a close button (`x`), and the drawer menu bar carries the search button (`search`, at its right end) so the command palette stays reachable by pointer below 960. Esc, the close button and route changes close it; focus returns to the menu button. The drawer is the touch form: its rows (nav items, the back link, group heads, conversation rows, the archived entry) are 40 high and a conversation row's menu is a 40 px square.
 - **First paint**: the full / rail / drawer variant follows the window width through CSS media queries before hydration (both panels are drawn, one shown), so the server render never draws the full 256 sidebar at a narrow width. Remembered collapsed groups apply on the first client commit (layout effects) without the height motion; the motion runs only after the viewer toggles a group. The remembered collapsed list keeps at most 100 ids and drops ids of agents no longer listed once every group of that org is loaded.
 - Hover never replaces the current item's `sidebar-active` ground.
 - Interaction: §6.11.
@@ -820,6 +836,8 @@ States: `default`, `item-hover`, `item-focus`, `conversation-active`, `group-col
 | inbox-badge | rail | min-width | 14 |
 | inbox-badge | rail | padding-left | 3 |
 | sidebar | drawer | width | layout.sidebar |
+| nav-item | drawer | height | 40 |
+| conversation-row | drawer | height | 40 |
 | step-item | setup | height | row.default |
 | step-item | setup | border-radius | radius.sm |
 | step-item | setup | padding-left | pad.dense.x |
@@ -854,13 +872,13 @@ States: `default`, `item-hover`, `item-focus`, `conversation-active`, `group-col
 
 The key metrics of a list page, as a row of cards below the PageHeader (§5.1), at most 5 (throws in development and tests otherwise).
 
-- The row: equal-width cards, gap `space.2`.
+- The row: equal-width cards, gap `space.2`. **Below 640** it is two equal columns (four metrics are 2 × 2), gap `space.2` both ways, so a label keeps its words.
 - A card: `panel` ground, radius `md`, no border, padding `space.2` / `space.3`; label `small` `muted` on top, value `metric` below.
 - Only warn / fail values are colored (`warn` / `fail`), and their label says what they are ("Needs authorization", "Errors"); success values are never colored.
 - **Linked** (`href` on a metric, e.g. the admin overview's four numbers): the whole card is the link to the page the number counts (an `a` named by its label and value), `ink` text without an underline; hover: the `hover` ground (`motion.hover`); focus: a 2px `accent` outline, 2px offset. A pending navigation draws the link-pending mark (§6.7). Cards without `href` are not interactive.
 
 <!-- states: stat-cards -->
-States: `four`, `five`, `tones`, `link-hover`, `link-focus`
+States: `four`, `five`, `tones`, `link-hover`, `link-focus`, `narrow`
 
 <!-- size-table: stat-cards -->
 | Part | State | Property | Value |
@@ -880,6 +898,8 @@ States: `four`, `five`, `tones`, `link-hover`, `link-focus`
 | stat-card[data-ref-forced=true] | link-hover | background-color | color.hover |
 | stat-card[data-ref-forced=true] | link-focus | outline-color | color.accent |
 | stat-card[data-ref-forced=true] | link-focus | outline-width | 2 |
+| stat-cards | narrow | row-gap | space.2 |
+| stat-card | narrow | width | 175 |
 
 ### 6.15 FilterChip
 
@@ -925,9 +945,10 @@ The components of the conversation page (T7, §5.4; UI refresh spec §5), signed
 - Left: the path `<org slug> / <agent> /` (mono `small`, `faint`, the agent a link), spaced like the page head's path (`space.2` on both sides of every `/`), then the title button (`control.default` high, radius `sm`, padding 0 `space.2`, pulled left by `space.2`, `body` `ink`, one line with an ellipsis and the full title in `title`, then `chevron-down` 14 `muted`; `hover` ground on hover and while its menu is open). It opens a menu: Rename (`square-pen`), Copy link (`link`), a separator, Delete (`trash-2`, `fail`). Rename opens a dialog; a manual rename stops title generation for good.
 - Untitled: the title reads "未命名会话 · MM-DD HH:mm" / "Untitled conversation · MM-DD HH:mm" (the start time) in `muted` until a generated or manual title exists. The new-conversation page shows only the `muted` label "新会话" / "New conversation".
 - Right, two groups of ghost icon buttons (`control.default` square, radius `sm`, icon 16): group 1 is the properties toggle (`panel-right`); then a 1px × `space.4` `line` separator with `space.1` on each side; group 2 is Files (`file-text`, once the conversation has a file; it opens the newest file in the right panel, whose switcher reaches the others) and the panel icons of the extensions enabled in the org, in contribution order, then More (`more-vertical`). Icons that don't fit move into More, a menu of icon + label items; More exists only while two or more icons don't fit (one that doesn't fit takes More's slot, §6.7), and never repeats an icon on the bar. With no icon in group 2 the separator goes too. Each button's name is the panel it opens. The title and More menus hang 2px below their button. The open item's button has `aria-pressed="true"`, the `selected` ground and an `ink` icon; More is pressed while its menu is open.
+- **Below 640** the bar is padded 0 `space.1` 0 `space.4` (the path on the 16 px content edge, the last icon's glyph near it), the title button is 40 high and the icon buttons 40 square (tap targets); fewer panel icons fit, and the rest go into More as above.
 
 <!-- states: title-bar -->
-States: `default`, `untitled`, `rename-menu`, `panel-active`, `overflow`, `long-title`
+States: `default`, `untitled`, `rename-menu`, `panel-active`, `overflow`, `long-title`, `narrow`
 
 <!-- size-table: title-bar -->
 | Part | State | Property | Value |
@@ -954,6 +975,11 @@ States: `default`, `untitled`, `rename-menu`, `panel-active`, `overflow`, `long-
 | menu-item | overflow | height | row.default |
 | title | long-title | height | control.default |
 | title-bar | long-title | height | layout.title-bar |
+| title-bar | narrow | padding-left | space.4 |
+| title-bar | narrow | padding-right | space.1 |
+| title | narrow | height | 40 |
+| title-bar-button | narrow | width | 40 |
+| title-bar-button | narrow | height | 40 |
 
 #### 6.16.2 Composer
 
@@ -1589,7 +1615,7 @@ States: `image`, `text`, `markdown`, `csv`, `none`, `failed`
 
 - A 36 px mark (radius `md`, `selected` ground): initials in 600 (mono like the whole UI) or an icon; `tone="warn"` tints it with `warn` at 15% when the object needs attention.
 - Text column: line 1 the name (600; a link when `href`; `mono` for package names) and chips (`small`, 1px `line` border, radius `sm`; `tone="warn"` draws the warn tint without a border). A chip is a scope or an attention mark (组织共享, 敏感); plain facts such as a version or 必需 are meta text, never a chip; line 2 the description in `muted`, one line with an ellipsis; line 3 the meta in `faint`, `small`, one line.
-- At the right: a state label (`state`: `ok` / `warn` / `fail` colored, `muted` in `faint`), a short `trailing` text in `faint`, one row action (`action`: a `default` dense button or link, never `primary`: the page head holds the one primary of the screen, and a row that needs attention says so in its `state`) and the `more-horizontal` overflow menu (`menu`). Below 640 the row wraps.
+- At the right: a state label (`state`: `ok` / `warn` / `fail` colored, `muted` in `faint`), a short `trailing` text in `faint`, one row action (`action`: a `default` dense button or link, never `primary`: the page head holds the one primary of the screen, and a row that needs attention says so in its `state`) and the `more-horizontal` overflow menu (`menu`). Below 640 the row wraps, and its action and menu buttons are at least 40 px (tap targets).
 - **Loading** (`ObjectList.loading`, `true` for 3 rows or a row count; `ListPage.loading` on a list page): the panel draws skeleton rows in the row shape instead of its rows — a 36 px mark and two 12 px bars (30% and 55% wide) on the `hover` ground, radius `sm` — and the list is `aria-busy` with a hidden "正在加载 / Loading". It wins over `empty`, so no empty state flashes before the first answer; a `records` ListPage draws a Skeleton instead.
 
 ### 6.18 EmptyState
@@ -1733,7 +1759,7 @@ States: `state-a`, `state-b`
 
 ### 9.3 Measuring tests
 
-`apps/web/visual/fidelity.spec.ts` (Playwright, both themes) opens `/dev/ui/reference/<component>` for every accepted component and checks every size-table row against the block with the same id: sizes within ±1px, colors exactly equal to the token (compared as computed `rgb()` / `rgba()`). A failure names the component, state, part, property, expected and actual value. jsdom cannot measure layout, so these tests are Playwright only.
+`apps/web/visual/fidelity.spec.ts` (Playwright, both themes) opens `/dev/ui/reference/<component>` for every accepted component and checks every size-table row against the block with the same id: sizes within ±1px, colors exactly equal to the token (compared as computed `rgb()` / `rgba()`). A failure names the component, state, part, property, expected and actual value. A state named `narrow` is drawn and measured in a 390 × 844 window, where the phone rules (§4.3, media queries below 640) apply; every other state at 1440 × 900. jsdom cannot measure layout, so these tests are Playwright only (`packages/design/test/narrow.test.tsx` checks the phone rules' CSS and the stacked table's DOM).
 
 ### 9.4 State coverage
 
@@ -1741,7 +1767,7 @@ The same spec fails when `/dev/ui/reference/<component>` lacks a block for a sta
 
 ### 9.5 Interaction tests
 
-Hover, focus, expand / collapse motion and its reduced-motion form, the sidebar keyboard paths, the rail and the drawer (§6.11, §6.13) are covered by Playwright interaction specs in `apps/web/visual/` (for example `sidebar.interaction.spec.ts`), including "no horizontal page scroll" at 1440 / 1279 / 959 / 640.
+Hover, focus, expand / collapse motion and its reduced-motion form, the sidebar keyboard paths, the rail and the drawer (§6.11, §6.13) are covered by Playwright interaction specs in `apps/web/visual/` (for example `sidebar.interaction.spec.ts`), including "no horizontal page scroll" at 1440 / 1279 / 959 / 640 / 390 (at 390 the conversation page's composer also stays inside the window's 16 px gutters).
 
 ### 9.6 Side-by-side acceptance
 

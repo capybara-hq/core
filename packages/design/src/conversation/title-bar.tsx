@@ -5,6 +5,7 @@ import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { Dialog } from "../overlays/dialog";
 import { useDesignLink, useDesignT } from "../provider";
+import { useMediaQuery } from "../shell/use-media-query";
 import { ConvMenu, type ConvMenuEntry } from "./menu";
 
 // The conversation title bar (spec §6.16.1): the middle column's own 48-high bar with the title
@@ -47,11 +48,18 @@ export type TitleBarProps = {
 const SLOT = 28 + 4;
 /** What the bar keeps besides group 2: paddings, a readable title, the toggle, separator, More. */
 const RESERVED = 20 + 12 + 200 + SLOT + 9 + 4 + SLOT;
+/** Below 640 (spec §6.16.1): 40 px tap targets, 16 + 4 paddings and a shorter readable title. */
+const TOUCH_SLOT = 40 + 4;
+const TOUCH_RESERVED = 16 + 4 + 160 + TOUCH_SLOT + 9 + 4 + TOUCH_SLOT;
 
-/** How many of `count` panel icons fit in a title bar `width` wide (the rest go into More). */
-export function titleBarFit(width: number, count: number): number {
+/**
+ * How many of `count` panel icons fit in a title bar `width` wide (the rest go into More);
+ * `touch` is the phone form (below 640), whose buttons are 40 px tap targets.
+ */
+export function titleBarFit(width: number, count: number, touch = false): number {
   if (width <= 0) return count;
-  const room = Math.floor((width - RESERVED) / SLOT);
+  const slot = touch ? TOUCH_SLOT : SLOT;
+  const room = Math.floor((width - (touch ? TOUCH_RESERVED : RESERVED)) / slot);
   return Math.max(0, Math.min(count, room));
 }
 
@@ -79,7 +87,8 @@ export function TitleBar({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const measured = reference?.visiblePanels ?? titleBarFit(width, panels.length);
+  const touch = useMediaQuery("(max-width: 639px)");
+  const measured = reference?.visiblePanels ?? titleBarFit(width, panels.length, touch);
   // No menu of one (spec §6.7): a single icon that doesn't fit takes More's slot instead.
   const fit = panels.length - measured === 1 ? panels.length : measured;
   // The open panel stays visible: it takes the last visible slot when it would overflow.

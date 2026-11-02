@@ -113,6 +113,7 @@ export function Tabs({ items, value, onChange, label }: TabsProps) {
             type="button"
             role="tab"
             className="cb-tab"
+            data-part="tab"
             data-id={it.id}
             aria-selected={selected}
             tabIndex={it.id === focusId ? 0 : -1}

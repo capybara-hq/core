@@ -198,6 +198,10 @@ function titleBarBlocks(): ReactNode {
       <RefBlock id="title-bar-long-title" width={760}>
         <TitleBar {...titleBarProps({ title: C.longTitle })} />
       </RefBlock>
+      {/* Phones: measured in a 390 window, 40 px tap targets (spec §6.16.1, §9.3). */}
+      <RefBlock id="title-bar-narrow" width={390}>
+        <TitleBar {...titleBarProps()} />
+      </RefBlock>
     </>
   );
 }

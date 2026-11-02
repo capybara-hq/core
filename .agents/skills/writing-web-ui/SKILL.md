@@ -69,6 +69,7 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
 - **`SpanWaterfall`**(spec §6.10)takes only plain props (`spans`, `selectedId`, `onSelect`, `labels`, `label`): each span's `kind` (`run` / `step` / `model` / `tool` / `wait`), `startMs` (relative to the earliest span), `durationMs` (null if unknown), `status`, `parentId`; the caller passes them in depth-first order. The page computes time and cost from the data the kernel returns (latency is derived from event times; cost is labeled "estimated").
 - Permission review (install confirmation page, org extension settings, plugin review) shares `components/PermissionReview`; the purpose mapping shares `components/PurposeEditor`. Don't draw a second copy in a page.
 - After the main table, a `ListPage` may carry a subordinate block (an `h2` + one `DataTable`, e.g. invitations on the members page); see spec §5.1.
+- Phones (below 640, spec §4.3) are the design package's job, never a page's: every `DataTable` stacks its rows (the first column is the card's title, the others `header value` lines, so give every column a real `header`), StatCards go 2 × 2, tabs scroll, tap targets are 40 px and the conversation page loses its minimum width. Pages add no narrow variant of their own.
 
 ### The conversation page
 

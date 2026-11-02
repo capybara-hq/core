@@ -490,7 +490,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     const more = o.state === "overflow"
       ? `<div class="r-menu r-more-menu" role="menu"><div class="r-menu-item" role="menuitem">${icon("list-checks", 14)}待办</div><div class="r-menu-item" role="menuitem">${icon("extension", 14)}任务看板</div></div>`
       : "";
-    return `<header class="r-titlebar"><button class="r-title"${untitled ? " data-untitled" : ""} aria-haspopup="menu" aria-expanded="${menuOpen}"${menuOpen ? ' data-state="hover"' : ""} title="${esc(title)}"><span class="r-ellipsis">${esc(title)}</span>${icon("chevron-down", 14)}</button>${iconBtn("panel-right", K.properties, { pressed: pressed === "properties" })}<span class="r-vsep" aria-hidden="true"></span>${group2}${iconBtn("more-vertical", K.more, { pressed: o.state === "overflow" })}${menu}${more}</header>`;
+    return `<header class="r-titlebar"${o.narrow ? " data-narrow" : ""}><button class="r-title"${untitled ? " data-untitled" : ""} aria-haspopup="menu" aria-expanded="${menuOpen}"${menuOpen ? ' data-state="hover"' : ""} title="${esc(title)}"><span class="r-ellipsis">${esc(title)}</span>${icon("chevron-down", 14)}</button>${iconBtn("panel-right", K.properties, { pressed: pressed === "properties" })}<span class="r-vsep" aria-hidden="true"></span>${group2}${o.narrow ? "" : iconBtn("more-vertical", K.more, { pressed: o.state === "overflow" })}${menu}${more}</header>`;
   }
 
   // ── Sub-agents ─────────────────────────────────────────────────────────

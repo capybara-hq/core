@@ -145,7 +145,7 @@ test("below 1280 the panel is a sheet; Esc closes it and focus returns to the ic
   await expect(files).toBeFocused();
 });
 
-for (const width of [1440, 1279, 959, 640]) {
+for (const width of [1440, 1279, 959, 640, 390]) {
   test(`no horizontal page scroll at ${width}`, async ({ page }) => {
     await openTemplate(page, width);
     const overflow = await page.evaluate(
@@ -154,6 +154,17 @@ for (const width of [1440, 1279, 959, 640]) {
     expect(overflow).toBeLessThanOrEqual(0);
   });
 }
+
+// A phone (spec §5.4): the middle column has no minimum, so the composer (and its send button)
+// sits inside the window's 16 px gutters instead of running past the right edge.
+test("390: the composer stays inside the 16 px gutters", async ({ page }) => {
+  await openTemplate(page, 390);
+  const box = await page.locator('[data-part="composer"]').first().boundingBox();
+  expect(box).not.toBeNull();
+  if (!box) return;
+  expect(box.x).toBeGreaterThanOrEqual(16 - 1);
+  expect(box.x + box.width).toBeLessThanOrEqual(390 - 16 + 1);
+});
 
 // The server render and hydration cannot know the window: `useMediaQuery` reads false there, so
 // the right area is drawn inline until the first client render makes it a sheet below 1280. The

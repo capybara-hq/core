@@ -2946,3 +2946,103 @@ textarea {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
+
+/* ── Phones (below 640; spec §4.3): the `narrow` blocks, drawn 390 wide ── */
+
+.r-icon-btn[data-step="touch"] {
+  width: 40px;
+  height: 40px;
+}
+.r-ph[data-narrow] .r-btn,
+.r-ph[data-narrow] .r-icon-btn {
+  min-width: 40px;
+  height: 40px;
+}
+.r-ph-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  row-gap: var(--cb-space-2);
+  margin-top: var(--cb-space-3);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.r-ph-tabs .r-search {
+  width: 100%;
+}
+.r-ph-tablist {
+  display: flex;
+  min-width: 0;
+  margin-bottom: -1px;
+  overflow: hidden;
+}
+.r-ph-tablist > span {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--cb-space-2);
+  height: 40px;
+  padding: 0 var(--cb-space-3);
+  color: var(--cb-muted);
+  white-space: nowrap;
+}
+.r-ph-tablist > span[aria-selected="true"] {
+  color: var(--cb-ink);
+  box-shadow: inset 0 -2px 0 var(--cb-accent);
+}
+.r-ph-count {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+}
+.r-stats[data-narrow] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.r-stats[data-narrow] .r-stat-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.r-stacked .r-stack-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  padding: var(--cb-space-2) 0;
+  border-top: 1px solid var(--cb-line-soft);
+}
+.r-stacked .r-stack-title {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  padding: 0 var(--cb-space-2) 0 var(--cb-space-3);
+  font-weight: 500;
+}
+.r-stacked .r-stack-title > .r-cell-name {
+  flex: 1;
+  min-width: 0;
+}
+.r-stack-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--cb-space-3);
+  min-width: 0;
+  padding: 0 var(--cb-space-3);
+}
+.r-stack-label {
+  flex: none;
+  width: 10ch;
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.r-titlebar[data-narrow] {
+  padding: 0 var(--cb-space-1) 0 var(--cb-space-4);
+}
+.r-titlebar[data-narrow] .r-title {
+  height: 40px;
+}
+.r-titlebar[data-narrow] .r-icon-btn {
+  width: 40px;
+  height: 40px;
+}

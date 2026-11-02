@@ -244,7 +244,7 @@ export function PageHeader(p: PageHeaderProps) {
             />
           ) : null}
           {p.search ? (
-            <div className="cb-pageheader-search">
+            <div className="cb-pageheader-search" data-part="page-header-search">
               <Input
                 type="search"
                 aria-label={p.search.label}

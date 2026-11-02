@@ -78,6 +78,16 @@
 .cb-shell-drawerbar .cb-icon-btn {
   color: var(--cb-muted);
 }
+/* Phones: 40 px tap targets, the icons' glyphs on the 16 px content edge. */
+@media (max-width: 639px) {
+  .cb-shell-drawerbar {
+    padding: 0 var(--cb-space-1);
+  }
+  .cb-shell-drawerbar .cb-icon-btn {
+    min-width: 40px;
+    min-height: 40px;
+  }
+}
 .cb-shell-drawerbar-end {
   display: flex;
   flex: none;
@@ -111,6 +121,7 @@
 }
 .cb-pageheader-tabs .cb-tabs {
   position: relative;
+  min-width: 0;
   margin-bottom: -1px;
   border-bottom: 0;
 }
@@ -120,6 +131,25 @@
   margin-left: auto;
   width: 240px;
   max-width: 100%;
+}
+/* Phones (below 640): the search takes its own full-width line above the tabs, and the tabs
+   scroll on theirs; the tabs are 40 px tap targets. */
+@media (max-width: 639px) {
+  .cb-pageheader-tabs {
+    flex-wrap: wrap;
+    row-gap: var(--cb-space-2);
+    height: auto;
+  }
+  .cb-pageheader-search {
+    order: -1;
+    flex: 1 1 100%;
+    width: 100%;
+    margin-left: 0;
+  }
+  .cb-pageheader-tabs .cb-tab {
+    min-width: 40px;
+    min-height: 40px;
+  }
 }
 
 /* Template head: the PageHeader in the content width, fixed above the body. */
@@ -246,6 +276,11 @@ a.cb-pageheader-path-seg:hover {
   .cb-pageheader-actions[data-responsive="true"] [data-fold="inline"] {
     display: none;
   }
+  /* 40 px tap targets on phones. */
+  .cb-pageheader-actions .cb-btn {
+    min-width: 40px;
+    min-height: 40px;
+  }
 }
 @media (min-width: 640px) {
   .cb-pageheader-actions[data-responsive="true"] [data-fold="menu"] {
@@ -272,6 +307,13 @@ a.cb-pageheader-path-seg:hover {
 .cb-stat-cards {
   display: flex;
   gap: var(--cb-space-2);
+}
+/* Phones (below 640): two columns, so four metrics are 2 × 2 and their labels keep their words. */
+@media (max-width: 639px) {
+  .cb-stat-cards {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 .cb-stat-card {
   flex: 1 1 0;

@@ -333,6 +333,15 @@ describe("TitleBar (§6.16.1)", () => {
   });
 });
 
+describe("titleBarFit on phones", () => {
+  it("counts 40 px tap targets below 640, so fewer icons fit the same width", () => {
+    // 16 + 4 padding, a 160 title, the toggle, the separator and More around 44 px slots
+    expect(titleBarFit(500, 99, true)).toBe(4);
+    expect(titleBarFit(500, 99)).toBe(5);
+    expect(titleBarFit(390, 1, true)).toBe(1);
+  });
+});
+
 /** A title-bar width that leaves room for exactly `n` panel icons. */
 function titleBarWidthFor(n: number): number {
   let w = 300;
