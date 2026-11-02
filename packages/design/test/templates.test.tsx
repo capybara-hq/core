@@ -410,14 +410,14 @@ describe("其他模板行为", () => {
     expect(screen.getByRole("link", { name: "组织" }).getAttribute("aria-current")).toBeNull();
   });
 
-  it("OnboardingPage 区分完成与待办，并渲染 action", () => {
+  it("OnboardingPage marks done and to-do steps; a to-do step shows only its action", () => {
     zh(
       <OnboardingPage
         header={header}
         steps={[
           { label: "接入模型", description: "d1", done: true },
           {
-            label: "创建 Agent",
+            label: "新建 agent",
             description: "d2",
             done: false,
             action: <button type="button">开始</button>,
@@ -429,7 +429,7 @@ describe("其他模板行为", () => {
     expect(Array.from(items).map((i) => i.getAttribute("data-state"))).toEqual(["done", "todo"]);
     expect(screen.getByRole("button", { name: "开始" })).toBeTruthy();
     expect(screen.getByText("已完成")).toBeTruthy();
-    expect(screen.getByText("待办")).toBeTruthy();
+    expect(screen.queryByText("待办")).toBeNull();
   });
 
   it("StatusPage 渲染标题、说明、操作与 kind", () => {

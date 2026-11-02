@@ -69,24 +69,19 @@ describe("/admin 概览（OverviewPage）", () => {
     expect(metric(a.overview.metrics.catalogRequests).getByText("0")).toBeTruthy();
     expect(metric(a.overview.metrics.orgs).getByText("2")).toBeTruthy();
     expect(metric(a.overview.metrics.accounts).getByText("7")).toBeTruthy();
-    expect(screen.getByRole("link", { name: a.overview.accounts.open }).getAttribute("href")).toBe(
-      "/admin/accounts",
-    );
-    expect(screen.getByRole("link", { name: a.overview.orgs.open }).getAttribute("href")).toBe(
-      "/admin/orgs",
-    );
-    expect(screen.getByRole("link", { name: a.overview.settings.open }).getAttribute("href")).toBe(
-      "/admin/settings",
-    );
-    // the intro is the header's description, under the title (not below the stat cards)
+    // each number links to its page (the stat card is the link); no section cards duplicate the
+    // sidebar
+    const statLink = (label: string) =>
+      within(metrics).getByText(label).closest("a")?.getAttribute("href");
+    expect(statLink(a.overview.metrics.extensions)).toBe("/admin/extensions");
+    expect(statLink(a.overview.metrics.catalogRequests)).toBe("/admin/catalog/requests");
+    expect(statLink(a.overview.metrics.orgs)).toBe("/admin/orgs");
+    expect(statLink(a.overview.metrics.accounts)).toBe("/admin/accounts");
+    expect(container.querySelectorAll('[data-part="link-card"]')).toHaveLength(0);
+    // one sentence under the title; the privacy fact is its own quiet note
     const description = container.querySelector('[data-part="page-header-description"]');
     expect(description?.textContent).toBe(a.overview.intro);
-    // section cards are LinkCards with design TextLinks, not the old Card with a raw <a>
-    expect(container.querySelectorAll('[data-part="link-card"]')).toHaveLength(5);
-    expect(container.querySelector(".cb-card")).toBeNull();
-    for (const link of container.querySelectorAll('[data-part="link-card"] a')) {
-      expect(link.getAttribute("data-part")).toBe("text-link");
-    }
+    expect(screen.getByRole("note").textContent).toBe(a.overview.noConversations);
   });
 
   it("非企业管理员：没有访问权限（需要企业管理员），不请求后台接口", async () => {

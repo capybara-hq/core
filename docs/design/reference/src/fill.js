@@ -279,8 +279,8 @@
     const metrics = o.five ? F.LIST_PAGE_FIXTURE.metricsFive : F.LIST_PAGE_FIXTURE.metrics;
     return `<div class="r-stats">${metrics
       .map(
-        (m) =>
-          `<div class="r-stat"><div class="r-stat-label">${esc(m.label)}</div><div class="r-stat-value"${m.tone ? ` data-tone="${m.tone}"` : ""}>${esc(m.value)}</div></div>`,
+        (m, i) =>
+          `<div class="r-stat"${o.linkState && i === 0 ? ` data-state="${o.linkState}"` : ""}><div class="r-stat-label">${esc(m.label)}</div><div class="r-stat-value"${m.tone ? ` data-tone="${m.tone}"` : ""}>${esc(m.value)}</div></div>`,
       )
       .join("")}</div>`;
   }

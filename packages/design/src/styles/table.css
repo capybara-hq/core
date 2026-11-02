@@ -259,14 +259,12 @@
   color: var(--cb-muted);
   text-align: center;
 }
-/* Empty and no results hold the compact EmptyState, left-aligned at the first-column edge. */
-.cb-table-empty[data-empty="empty"],
-.cb-table-empty[data-empty="no-results"] {
-  align-items: stretch;
-  text-align: left;
-}
+/* Empty and no results hold the compact EmptyState, centered in the table body (the area's
+   space.8 above and below gives it the page rhythm). */
 .cb-table-empty .cb-empty-state[data-size="compact"] {
+  align-items: center;
   padding: 0;
+  text-align: center;
 }
 .cb-table-empty[data-empty="loading"] {
   align-items: stretch;

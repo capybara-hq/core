@@ -86,13 +86,15 @@
     "dailyDescription": "{org} · {role}",
     "dailyDescriptionPending": "{org} · {role} · {count, plural, other {# 件事等你处理}}",
     "setup": {
-      "title": "开始之前",
       "description": "{org} 刚建好。完成下面几步，团队就能开始用 agent 干活。",
       "progress": "已完成 {done} / {total}",
       "later": "可以稍后再做",
-      "inviteMembersWhere": "设置 · 成员",
-      "channelsWhere": "渠道",
-      "catalogWhere": "企业目录"
+      "laterHint": {
+        "channels": "在飞书或 Slack 里使用 agent。",
+        "members": "让同事加入这个组织。",
+        "catalog": "从企业目录添加技能和连接器。",
+        "connections": "连接你自己的账号，供 agent 代你操作。"
+      }
     },
     "inbox": {
       "title": "等你处理",
@@ -2159,37 +2161,13 @@
       "marketplaces": "市场"
     },
     "overview": {
-      "intro": "企业管理员在这里管理整个部署：账号、组织、扩展与部署设置。各组织自己的设置仍在组织的「设置」里。企业管理员不能查看对话内容。",
+      "intro": "管理整个部署：账号、组织、扩展与部署设置。",
+      "noConversations": "企业管理员不能查看对话内容。",
       "metrics": {
         "extensions": "需要处理的扩展",
         "catalogRequests": "待处理的企业目录申请",
         "orgs": "组织",
         "accounts": "账号"
-      },
-      "accounts": {
-        "title": "账号",
-        "hint": "新建、停用账号，授予或撤销企业管理员。",
-        "open": "管理账号"
-      },
-      "orgs": {
-        "title": "组织",
-        "hint": "为各组织设置运行并发与沙箱 CPU / 内存。",
-        "open": "管理组织"
-      },
-      "settings": {
-        "title": "部署设置",
-        "hint": "谁能建组织、价格币种、组织能否自建连接器与技能。",
-        "open": "打开部署设置"
-      },
-      "extensions": {
-        "title": "扩展",
-        "hint": "安装、批准、启用、停用、升级扩展，填写部署级配置。",
-        "open": "管理扩展"
-      },
-      "models": {
-        "title": "模型",
-        "hint": "模型供应商、价格与各用途的默认模型。",
-        "open": "管理模型"
       }
     },
     "accounts": {
@@ -3281,9 +3259,6 @@
     },
     "waiting": "组织还在配置中，管理员完成后你就能开始对话。",
     "refresh": "刷新",
-    "later": {
-      "connectionsWhere": "个人设置 · 我的连接"
-    },
     "waitingDeployment": "需要部署管理员配置模型服务后才能继续。",
     "steps": {
       "model": "配置模型",

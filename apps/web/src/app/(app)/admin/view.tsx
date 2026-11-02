@@ -1,23 +1,15 @@
 "use client";
 
-import { Grid, LinkCard, OverviewPage, Stack } from "@capybara-hq/design";
+import { Callout, OverviewPage } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { usePagePath } from "../../../components/shell/path";
 import type { AdminOverview as Overview } from "../../../lib/admin";
 
-const SECTIONS = [
-  { id: "accounts", href: "/admin/accounts" },
-  { id: "orgs", href: "/admin/orgs" },
-  { id: "extensions", href: "/admin/extensions" },
-  { id: "models", href: "/admin/models" },
-  { id: "settings", href: "/admin/settings" },
-] as const;
-
 /**
- * `/admin`: the admin console overview (enterprise admins, OverviewPage). Four header
- * numbers: extensions needing action, pending catalog requests, orgs, accounts; the body links to
- * accounts, orgs, extensions, models and deployment settings. An org's own settings stay under
- * `/settings/*`. The numbers are read on the server (`page.tsx`).
+ * `/admin`: the admin console overview (enterprise admins, OverviewPage). Four header numbers,
+ * each linking to its page: extensions needing action, pending catalog requests, orgs, accounts.
+ * The sidebar is the way to the other pages, so the body holds only the quiet note that
+ * enterprise admins cannot read conversations. The numbers are read on the server (`page.tsx`).
  */
 export default function AdminOverview({ initial }: { initial: Overview }) {
   const scope = usePagePath("admin");
@@ -31,29 +23,26 @@ export default function AdminOverview({ initial }: { initial: Overview }) {
         title: t("title"),
         description: t("overview.intro"),
         metrics: [
-          { label: t("overview.metrics.extensions"), value: value(data?.extensionsNeedingAction) },
+          {
+            label: t("overview.metrics.extensions"),
+            value: value(data?.extensionsNeedingAction),
+            href: "/admin/extensions",
+          },
           {
             label: t("overview.metrics.catalogRequests"),
             value: value(data?.catalogRequestsPending),
+            href: "/admin/catalog/requests",
           },
-          { label: t("overview.metrics.orgs"), value: value(data?.orgs) },
-          { label: t("overview.metrics.accounts"), value: value(data?.accounts) },
+          { label: t("overview.metrics.orgs"), value: value(data?.orgs), href: "/admin/orgs" },
+          {
+            label: t("overview.metrics.accounts"),
+            value: value(data?.accounts),
+            href: "/admin/accounts",
+          },
         ],
       }}
     >
-      <Stack gap={16}>
-        <Grid columns={2} gap={16}>
-          {SECTIONS.map((s) => (
-            <LinkCard
-              key={s.id}
-              title={t(`overview.${s.id}.title`)}
-              description={t(`overview.${s.id}.hint`)}
-              href={s.href}
-              linkLabel={t(`overview.${s.id}.open`)}
-            />
-          ))}
-        </Grid>
-      </Stack>
+      <Callout tone="info">{t("overview.noConversations")}</Callout>
     </OverviewPage>
   );
 }

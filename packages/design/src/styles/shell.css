@@ -277,6 +277,24 @@ a.cb-pageheader-path-seg:hover {
   border-radius: var(--cb-radius-md);
   background: var(--cb-panel);
 }
+/* A linked card (spec §6.14): the whole card is the link; hover ground, accent focus ring. */
+a.cb-stat-card {
+  display: block;
+  overflow: hidden;
+  color: var(--cb-ink);
+  text-decoration: none;
+  transition: background-color var(--cb-motion-hover);
+}
+a.cb-stat-card:visited {
+  color: var(--cb-ink);
+}
+a.cb-stat-card:hover {
+  background: var(--cb-hover);
+}
+a.cb-stat-card:focus-visible {
+  outline: 2px solid var(--cb-accent);
+  outline-offset: 2px;
+}
 .cb-stat-label {
   overflow: hidden;
   color: var(--cb-muted);

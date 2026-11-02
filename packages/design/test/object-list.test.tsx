@@ -120,6 +120,13 @@ describe("EmptyState and Callout", () => {
     expect(el.getAttribute("data-tone")).toBe("warn");
     expect(within(el).getByRole("link", { name: "去配置" })).toBeTruthy();
   });
+
+  it("Callout info is a quiet note without an action", () => {
+    zh(<Callout tone="info">企业管理员不能查看对话内容。</Callout>);
+    const el = screen.getByRole("note");
+    expect(el.getAttribute("data-tone")).toBe("info");
+    expect(el.textContent).toBe("企业管理员不能查看对话内容。");
+  });
 });
 
 describe("ListPage variants", () => {

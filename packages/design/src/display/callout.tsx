@@ -4,17 +4,24 @@ import { Icon } from "../icons/icon";
 import { useDesignLink } from "../provider";
 
 export type CalloutProps = {
-  tone: "warn" | "fail";
+  /**
+   * `warn` / `fail`: something needs action (a `status`). `info`: a quiet standing fact about the
+   * page (a `note`, `panel` ground, `muted` text), usually without an action.
+   */
+  tone: "info" | "warn" | "fail";
   children?: ReactNode;
   /** The one button that resolves it. */
   action?: { label: string; href?: string; onSelect?(): void };
 };
 
-/** What needs action, above the list's tabs: a tinted bar, icon, sentence and one button (spec §6.19). */
+/**
+ * What needs action, above the list's tabs: a tinted bar, icon, sentence and one button; or, with
+ * `tone="info"`, a quiet note under the page head (spec §6.19).
+ */
 export function Callout({ tone, children, action }: CalloutProps) {
   const Link = useDesignLink();
   return (
-    <section className="cb-callout" role="status" data-tone={tone}>
+    <section className="cb-callout" role={tone === "info" ? "note" : "status"} data-tone={tone}>
       <Icon name="circle-alert" size={16} />
       <span className="cb-callout-text">{children}</span>
       {action ? (

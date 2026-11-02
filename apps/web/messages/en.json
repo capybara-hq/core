@@ -86,13 +86,15 @@
     "dailyDescription": "{org} · {role}",
     "dailyDescriptionPending": "{org} · {role} · {count, plural, one {# thing waits for you} other {# things wait for you}}",
     "setup": {
-      "title": "Before you start",
       "description": "{org} is new. Finish these steps and your team can start working with agents.",
       "progress": "{done} of {total} done",
       "later": "Can wait",
-      "inviteMembersWhere": "Settings · Members",
-      "channelsWhere": "Channels",
-      "catalogWhere": "Catalog"
+      "laterHint": {
+        "channels": "Use agents in Lark or Slack.",
+        "members": "Bring your colleagues into this organization.",
+        "catalog": "Add skills and connectors from the catalog.",
+        "connections": "Connect your own accounts so agents can act for you."
+      }
     },
     "inbox": {
       "title": "Waiting for you",
@@ -2159,37 +2161,13 @@
       "marketplaces": "Marketplaces"
     },
     "overview": {
-      "intro": "Manage the deployment: accounts, organizations, extensions and settings. Each organization's own settings stay in its Settings; admins cannot read conversations.",
+      "intro": "Manage the whole deployment: accounts, organizations, extensions and deployment settings.",
+      "noConversations": "Enterprise admins cannot read conversations.",
       "metrics": {
         "extensions": "Extensions needing action",
         "catalogRequests": "Pending catalog requests",
         "orgs": "Organizations",
         "accounts": "Accounts"
-      },
-      "accounts": {
-        "title": "Accounts",
-        "hint": "Create and deactivate accounts; grant or revoke enterprise admin.",
-        "open": "Manage accounts"
-      },
-      "orgs": {
-        "title": "Organizations",
-        "hint": "Set each organization's run concurrency and sandbox CPU / memory.",
-        "open": "Manage organizations"
-      },
-      "settings": {
-        "title": "Deployment settings",
-        "hint": "Who can create organizations, the price currency, and whether organizations may add their own connectors and skills.",
-        "open": "Open deployment settings"
-      },
-      "extensions": {
-        "title": "Extensions",
-        "hint": "Install, approve, enable, disable and upgrade extensions; fill in deployment config.",
-        "open": "Manage extensions"
-      },
-      "models": {
-        "title": "Models",
-        "hint": "Model providers, prices and the default model for each purpose.",
-        "open": "Manage models"
       }
     },
     "accounts": {
@@ -3281,9 +3259,6 @@
     },
     "waiting": "The organization is still being set up. You can start chatting once an admin finishes.",
     "refresh": "Refresh",
-    "later": {
-      "connectionsWhere": "Personal settings · My connections"
-    },
     "waitingDeployment": "A deployment admin needs to set up a model service before you can continue.",
     "steps": {
       "model": "Configure a model",

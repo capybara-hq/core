@@ -3,8 +3,9 @@
 import {
   Button,
   Card,
-  ItemList,
-  type ItemListRow,
+  type IconName,
+  ObjectList,
+  ObjectRow,
   type SetupStep,
   Stack,
   type Step,
@@ -131,20 +132,21 @@ export function activeStepOf(pathname: string, steps: SetupStep[]): string {
   return steps.find((s) => s.href !== undefined && under(pathname, s.href))?.id ?? "";
 }
 
-/** Where each optional step is done (the second line of its row on the setup home). */
-const LATER_WHERE: Record<string, string> = {
-  members: "home.setup.inviteMembersWhere",
-  channels: "home.setup.channelsWhere",
-  catalog: "home.setup.catalogWhere",
-  connections: "setupLayout.later.connectionsWhere",
+/** The icon of each optional step's row on the setup home (the workspace's own icons). */
+const LATER_ICON: Record<string, IconName> = {
+  channels: "channel",
+  members: "user",
+  catalog: "catalog",
+  connections: "link",
 };
 
 /**
  * The setup home (`/`, `/chat` while not ready): the same steps as the setup sidebar
  * ({@link useSetupSteps}: ids, labels, order, states). The required ones in the checklist card
- * ("开始之前 · 已完成 n / 2"), each with a description and the action this viewer may take (or
- * why it waits); then "可以稍后再做" with the optional ones. A viewer with nothing to do now is told
- * why (role-specific), with a refresh that re-reads readiness.
+ * (no title of its own, only "已完成 n / 2"), each with a description and one thing at the right:
+ * the action this viewer may take, or why it waits; then "可以稍后再做" with the optional ones as
+ * object rows (icon, label, one sentence). A viewer with nothing to do now is told why
+ * (role-specific), with a refresh that re-reads readiness.
  */
 export function SetupHome({
   me,
@@ -164,7 +166,6 @@ export function SetupHome({
   const required = all.filter((s) => !s.optional);
   const optional = all.filter((s) => s.optional);
   const enterprise = setupRoleOf(me) === "enterprise";
-  const canCreateAgent = navLevelOf(me) !== "guest";
   const description: Record<string, string> = {
     model: enterprise ? t("chat.setup.model.description") : t("chat.setup.model.askAdmin"),
     agent: t("chat.setup.agent.description"),
@@ -183,17 +184,7 @@ export function SetupHome({
         </Button>
       );
     }
-    // Creating an agent waits for the model: the action shows, disabled, with the reason.
-    if (s.id === "agent" && canCreateAgent) {
-      return (
-        <Stack direction="row" gap={8} align="center">
-          <Button disabled>{actionLabel[s.id]}</Button>
-          <Text variant="small" tone="muted">
-            {s.reason}
-          </Text>
-        </Stack>
-      );
-    }
+    // Waiting: only the reason (who acts, or what comes first).
     return (
       <Text variant="small" tone="muted">
         {s.reason}
@@ -217,16 +208,9 @@ export function SetupHome({
     : required.some((s) => s.id === "model" && s.state === "waiting") && canUpdateOrg(me)
       ? "deployment"
       : "admin";
-  const later: ItemListRow[] = optional.map((s) => ({
-    id: s.id,
-    title: s.label,
-    ...(LATER_WHERE[s.id] !== undefined ? { meta: t(LATER_WHERE[s.id] as "common.retry") } : {}),
-    ...(s.href !== undefined ? { href: s.href } : {}),
-  }));
   return (
     <Stack gap={16}>
       <Card
-        title={t("home.setup.title")}
         actions={
           <Text tone="muted">{t("home.setup.progress", { done, total: required.length })}</Text>
         }
@@ -245,10 +229,21 @@ export function SetupHome({
           </Button>
         </Stack>
       )}
-      {later.length > 0 ? (
-        <Card title={t("home.setup.later")}>
-          <ItemList label={t("home.setup.later")} rows={later} />
-        </Card>
+      {optional.length > 0 ? (
+        <Stack gap={8}>
+          <Text variant="h2">{t("home.setup.later")}</Text>
+          <ObjectList label={t("home.setup.later")}>
+            {optional.map((s) => (
+              <ObjectRow
+                key={s.id}
+                mark={{ icon: LATER_ICON[s.id] ?? "circle" }}
+                name={s.label}
+                {...(s.href !== undefined ? { href: s.href } : {})}
+                description={t(`home.setup.laterHint.${s.id}` as "home.setup.laterHint.members")}
+              />
+            ))}
+          </ObjectList>
+        </Stack>
       ) : null}
     </Stack>
   );

@@ -58,8 +58,9 @@ export function ObjectsSection() {
           </ObjectList>
         </Grid>
       </Row>
-      <Row label="Callout · 警告 / 失败">
+      <Row label="Callout · 说明 / 警告 / 失败">
         <Grid columns={1}>
+          <Callout tone="info">企业管理员不能查看对话内容。</Callout>
           <Callout tone="warn" action={{ label: "去配置", onSelect: noop }}>
             openai-compatible 还没有配置模型地址和密钥：所有组织都还没有可用的模型。
           </Callout>

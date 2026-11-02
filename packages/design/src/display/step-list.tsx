@@ -7,12 +7,18 @@ export type Step = {
   label: string;
   description: string;
   done: boolean;
+  /**
+   * The one thing at the right of a step that is not done: the action this viewer can take (a
+   * button), or why it waits (muted text). A done step shows 已完成 instead.
+   */
   action?: ReactNode;
 };
 
 /**
- * Steps to finish, each done or to do, with its own action (spec §6.12): OnboardingPage centers it
- * on the page; `inset="card"` fills a Card (the overview's setup card).
+ * Steps to finish, each done or to do (spec §6.12): OnboardingPage centers it on the page;
+ * `inset="card"` fills a Card (the setup home's checklist). The right of each row holds one thing,
+ * centered with the row: 已完成 when done, else the step's `action` (a button or the reason it
+ * waits); there is no "to do" label (the mark and the action say it).
  */
 export function StepList({ steps, inset = "page" }: { steps: Step[]; inset?: "page" | "card" }) {
   const t = useDesignT();
@@ -35,10 +41,19 @@ export function StepList({ steps, inset = "page" }: { steps: Step[]; inset?: "pa
               {s.description}
             </Text>
           </span>
-          <Text variant="small" tone="muted">
-            {s.done ? t("template.done") : t("template.todo")}
-          </Text>
-          {s.action ? <span className="cb-checklist-action">{s.action}</span> : null}
+          {s.done ? (
+            <span className="cb-checklist-end" data-part="checklist-end">
+              <Text variant="small" tone="muted">
+                {t("template.done")}
+              </Text>
+            </span>
+          ) : s.action ? (
+            <span className="cb-checklist-end" data-part="checklist-end">
+              {s.action}
+            </span>
+          ) : (
+            <span className="cb-sr-only">{t("template.todo")}</span>
+          )}
         </li>
       ))}
     </ol>

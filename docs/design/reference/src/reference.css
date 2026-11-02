@@ -1073,6 +1073,13 @@ textarea {
   border-radius: var(--cb-radius-md);
   background: var(--cb-panel);
 }
+.r-stat[data-state="hover"] {
+  background: var(--cb-hover);
+}
+.r-stat[data-state="focus"] {
+  outline: 2px solid var(--cb-accent);
+  outline-offset: 2px;
+}
 .r-stat-label {
   color: var(--cb-muted);
   font-size: var(--cb-type-small-size);

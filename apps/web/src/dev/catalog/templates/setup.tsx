@@ -1,10 +1,12 @@
 import {
   Button,
   Card,
-  ItemList,
+  ObjectList,
+  ObjectRow,
   OverviewPage,
   SetupPage,
   type SetupPageProps,
+  Stack,
   StepList,
   Text,
 } from "@capybara-hq/design";
@@ -14,7 +16,10 @@ import { setupStepsFixture } from "../shell-fixture";
 const noop = () => {};
 const stay = () => "/dev/ui/templates/setup";
 
-/** The setup home (web-SSR spec §4): its own page head, the checklist, the later items. */
+/**
+ * The setup home (web-SSR spec §4): its own page head, the checklist card (no title, the count at
+ * the right; one thing at the right of each step) and the later items as object rows.
+ */
 export function SetupHomeBody() {
   return (
     <OverviewPage
@@ -24,7 +29,7 @@ export function SetupHomeBody() {
         description: "还差几步才能开始对话。",
       }}
     >
-      <Card title="开始之前" actions={<Text tone="muted">已完成 1 / 2</Text>}>
+      <Card actions={<Text tone="muted">已完成 1 / 2</Text>}>
         <StepList
           inset="card"
           steps={[
@@ -42,15 +47,23 @@ export function SetupHomeBody() {
           ]}
         />
       </Card>
-      <Card title="可以稍后再做">
-        <ItemList
-          label="可以稍后再做"
-          rows={[
-            { id: "channels", title: "连接渠道", meta: "渠道", href: stay() },
-            { id: "members", title: "邀请成员", meta: "设置 · 成员", href: stay() },
-          ]}
-        />
-      </Card>
+      <Stack gap={8}>
+        <Text variant="h2">可以稍后再做</Text>
+        <ObjectList label="可以稍后再做">
+          <ObjectRow
+            mark={{ icon: "channel" }}
+            name="连接渠道"
+            href={stay()}
+            description="在飞书或 Slack 里使用 agent。"
+          />
+          <ObjectRow
+            mark={{ icon: "user" }}
+            name="邀请成员"
+            href={stay()}
+            description="让同事加入这个组织。"
+          />
+        </ObjectList>
+      </Stack>
     </OverviewPage>
   );
 }

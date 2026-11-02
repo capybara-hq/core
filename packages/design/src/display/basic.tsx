@@ -62,6 +62,8 @@ export type MetricProps = {
    * is never colored, and the label says what the value is.
    */
   tone?: "warn" | "fail";
+  /** StatCards: the whole card links to the page the number counts (spec §6.14). */
+  href?: string;
 };
 
 export function Metric({ label, value, delta }: MetricProps) {

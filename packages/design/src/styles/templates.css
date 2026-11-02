@@ -244,7 +244,7 @@
 }
 .cb-checklist-item {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
   padding: 12px 0;
   border-top: 1px solid var(--cb-line);
@@ -254,6 +254,7 @@
 }
 .cb-checklist-mark {
   flex: none;
+  align-self: flex-start;
   color: var(--cb-faint);
 }
 .cb-checklist-item[data-state="done"] .cb-checklist-mark {
@@ -266,8 +267,10 @@
   gap: 4px;
   min-width: 0;
 }
-.cb-checklist-action {
+.cb-checklist-end {
+  display: flex;
   flex: none;
+  align-items: center;
 }
 .cb-checklist[data-inset="card"] {
   width: 100%;
@@ -551,6 +554,10 @@ a.cb-object-name:hover {
   border-radius: var(--cb-radius-md);
   color: var(--cb-ink);
 }
+.cb-callout[data-tone="info"] {
+  background: var(--cb-panel);
+  color: var(--cb-muted);
+}
 .cb-callout[data-tone="warn"] {
   background: color-mix(in srgb, var(--cb-warn) 15%, transparent);
 }
@@ -559,6 +566,9 @@ a.cb-object-name:hover {
 }
 .cb-callout > svg {
   flex: none;
+}
+.cb-callout[data-tone="info"] > svg {
+  color: var(--cb-faint);
 }
 .cb-callout[data-tone="warn"] > svg {
   color: var(--cb-warn);

@@ -415,6 +415,23 @@ describe("StatCards", () => {
     ).toBeNull();
   });
 
+  it("a metric with href is a link to its page: the whole card, named by label and value", () => {
+    zh(
+      <StatCards
+        metrics={[
+          { label: "组织", value: "3", href: "/admin/orgs" },
+          { label: "账号", value: "12" },
+        ]}
+      />,
+    );
+    const link = screen.getByRole("link", { name: "组织 3" });
+    expect(link.getAttribute("href")).toBe("/admin/orgs");
+    expect(link.getAttribute("data-part")).toBe("stat-card");
+    expect(link.querySelector('[data-part="stat-value"]')?.textContent).toBe("3");
+    const plain = document.querySelectorAll('[data-part="stat-card"]')[1];
+    expect(plain?.tagName).toBe("DIV");
+  });
+
   it("six metrics throw", () => {
     const m = Array.from({ length: 6 }, (_, i) => ({ label: `m${i}`, value: i }));
     expect(() => zh(<StatCards metrics={m} />)).toThrow();

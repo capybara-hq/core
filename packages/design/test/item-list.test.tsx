@@ -45,6 +45,33 @@ describe("ItemList", () => {
   });
 });
 
+describe("StepList: one thing at the right of a step", () => {
+  it("done shows 已完成, a to-do step only its action (or reason), never a 待办 label", () => {
+    zh(
+      <StepList
+        inset="card"
+        steps={[
+          { label: "配置模型", description: "x", done: true },
+          {
+            label: "新建 agent",
+            description: "y",
+            done: false,
+            action: <button type="button">新建</button>,
+          },
+          { label: "邀请成员", description: "z", done: false, action: <span>先配置模型</span> },
+        ]}
+      />,
+    );
+    const items = screen.getAllByRole("listitem");
+    const ends = items.map((i) => i.querySelectorAll(".cb-checklist-end"));
+    expect(ends.map((e) => e.length)).toEqual([1, 1, 1]);
+    expect(ends[0]?.[0]?.textContent).toBe("已完成");
+    expect(within(ends[1]?.[0] as HTMLElement).getByRole("button", { name: "新建" })).toBeTruthy();
+    expect(ends[2]?.[0]?.textContent).toBe("先配置模型");
+    expect(screen.queryByText("待办")).toBeNull();
+  });
+});
+
 describe("StepList and the main-side grid", () => {
   it("a card-inset step list marks done and to-do steps; the grid names its layout", () => {
     const { container } = zh(

@@ -452,6 +452,18 @@ describe("row grounds of a table inside a card", () => {
   });
 });
 
+describe("the table's empty state", () => {
+  it("is centered in the table body, with the area's space.8 above and below", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/table.css"), "utf8");
+    expect(css).not.toMatch(/data-empty="empty"\][^{]*\{[^}]*text-align: left/);
+    expect(css).toMatch(
+      /\.cb-table-empty \.cb-empty-state\[data-size="compact"\] \{[^}]*align-items: center;[^}]*text-align: center;/,
+    );
+  });
+});
+
 describe("CellTitle", () => {
   it("draws the initial tile, the name and the description, with full text in title", async () => {
     const { CellTitle } = await import("../src/index");

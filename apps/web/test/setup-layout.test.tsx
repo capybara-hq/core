@@ -62,8 +62,11 @@ describe("setup layout scope", () => {
     expect(path.textContent).toContain("acme");
     expect(screen.getByText(s.description)).toBeTruthy();
     expect(step(sl.steps.model).getAttribute("data-state")).toBe("todo");
-    // the count is over the required steps (no "organization created" item)
+    // the count is over the required steps (no "organization created" item); the checklist card
+    // has no title of its own (the page title already says 开始之前)
     expect(screen.getByText(zh.home.setup.progress.replace("{done}", "0").replace("{total}", "2")));
+    expect(within(screen.getByRole("main")).queryByText(zh.home.setup.progress)).toBeNull();
+    expect(document.querySelector(".cb-card-title")?.textContent ?? "").toBe("");
     // the account menu holds sign-out
     await userEvent.setup().click(screen.getByRole("button", { name: "账户: Grant" }));
     expect(await screen.findByRole("menuitem", { name: zh.common.logout })).toBeTruthy();
@@ -206,15 +209,18 @@ describe("the checklist by role", () => {
     const model = step(sl.steps.model);
     await userEvent.setup().click(within(model).getByRole("button", { name: s.model.action }));
     expect(router.push).toHaveBeenCalledWith("/admin/extensions");
-    // creating an agent waits for the model: disabled with the reason
+    // creating an agent waits for the model: only the reason, no disabled button, no 待办 label
     const agent = step(sl.steps.agent);
-    expect(
-      (within(agent).getByRole("button", { name: s.agent.action }) as HTMLButtonElement).disabled,
-    ).toBe(true);
+    expect(within(agent).queryByRole("button")).toBeNull();
     expect(within(agent).getByText(sl.agent.needsModel)).toBeTruthy();
-    // admins can act on the later items
+    expect(within(agent).queryByText("待办")).toBeNull();
+    // admins can act on the later items: object rows with an icon, the label and one sentence
     const later = within(screen.getByRole("list", { name: zh.home.setup.later }));
     expect(later.getByRole("link", { name: sl.steps.members })).toBeTruthy();
+    expect(later.getByText(zh.home.setup.laterHint.members)).toBeTruthy();
+    expect(later.getByText(zh.home.setup.laterHint.channels)).toBeTruthy();
+    expect(later.getByText(zh.home.setup.laterHint.catalog)).toBeTruthy();
+    expect(later.queryByText("设置 · 成员")).toBeNull();
     expect(later.getByRole("link", { name: sl.steps.channels }).getAttribute("href")).toBe(
       "/channels/new",
     );
@@ -243,6 +249,7 @@ describe("the checklist by role", () => {
     expect(later.getAllByRole("link").map((l) => l.getAttribute("href"))).toEqual([
       "/account/connections",
     ]);
+    expect(later.getByText(zh.home.setup.laterHint.connections)).toBeTruthy();
   });
 
   it("a member with a model creates the agent; a guest waits for an admin", async () => {

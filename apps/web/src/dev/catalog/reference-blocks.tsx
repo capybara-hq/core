@@ -621,6 +621,9 @@ function pageHeaderBlocks(): ReactNode {
   );
 }
 
+// Linked stat cards: only the first card links, so the forced state lands on one card.
+const LINKED_METRICS = L.metrics.map((m, i) => (i === 0 ? { ...m, href: "/dev/ui" } : m));
+
 function statCardsBlocks(): ReactNode {
   return (
     <>
@@ -632,6 +635,22 @@ function statCardsBlocks(): ReactNode {
       </RefBlock>
       <RefBlock id="stat-cards-tones" width={640} pad>
         <StatCards metrics={L.metrics} />
+      </RefBlock>
+      <RefBlock
+        id="stat-cards-link-hover"
+        width={640}
+        pad
+        force={{ pseudo: ["hover"], selector: 'a[data-part="stat-card"]' }}
+      >
+        <StatCards metrics={LINKED_METRICS} />
+      </RefBlock>
+      <RefBlock
+        id="stat-cards-link-focus"
+        width={640}
+        pad
+        force={{ pseudo: ["focus", "focus-visible"], selector: 'a[data-part="stat-card"]' }}
+      >
+        <StatCards metrics={LINKED_METRICS} />
       </RefBlock>
     </>
   );
