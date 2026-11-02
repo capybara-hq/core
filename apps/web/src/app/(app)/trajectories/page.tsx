@@ -3,8 +3,13 @@ import { listAgents } from "../../../lib/agents";
 import { roleAtLeast } from "../../../lib/members";
 import { read, section } from "../../../lib/server/page";
 import { workspace } from "../../../lib/server/session";
-import { listTrajectories, RUN_STATUSES, type RunStatus } from "../../../lib/trajectories";
-import Trajectories, { TRAJECTORY_PAGE } from "./view";
+import {
+  listTrajectories,
+  RUN_STATUSES,
+  type RunStatus,
+  TRAJECTORY_PAGE,
+} from "../../../lib/trajectories";
+import Trajectories from "./view";
 
 const one = (v: string | string[] | undefined): string => (typeof v === "string" ? v : "");
 

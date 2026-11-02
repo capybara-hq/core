@@ -156,6 +156,12 @@ const query = (params: Record<string, string | number | undefined>) => {
   return s === "" ? "" : `?${s}`;
 };
 
+/**
+ * The trajectory list page size. Lives here, not in the client view: a server page that imports a
+ * value from a "use client" module gets a client reference, not the value.
+ */
+export const TRAJECTORY_PAGE = 50;
+
 export const listTrajectories = (
   orgId: string,
   q: { agentId?: string; status?: RunStatus; before?: string; limit: number },

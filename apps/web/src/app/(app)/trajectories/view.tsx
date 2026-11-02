@@ -24,12 +24,12 @@ import {
   RUN_STATUSES,
   type RunStatus,
   runStatusMark,
+  TRAJECTORY_PAGE,
   type TrajectoryListItem,
 } from "../../../lib/trajectories";
 import { useErrorMessage } from "../../../lib/use-error-message";
 
 /** Rows per page. */
-export const TRAJECTORY_PAGE = 50;
 
 type Page = { items: TrajectoryListItem[]; next: string | null };
 type Filters = { agentId: string; status: RunStatus | "" };
