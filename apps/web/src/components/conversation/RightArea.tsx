@@ -237,6 +237,8 @@ export function useRightAreaSlot(p: {
   sandboxVersion: number;
   model: ModelRef | null;
   contextPct: number | null;
+  /** The Context section's last-run line (model, duration, tokens), once a run ended. */
+  lastRun?: string | undefined;
   /** The conversation's sub-agents (`GET …/subagents`), once there are any. */
   subagents?: SubagentView[] | undefined;
   /** The Context section's tokens-with-sub-agents line. */
@@ -455,6 +457,7 @@ export function useRightAreaSlot(p: {
         events={p.events}
         model={p.model}
         contextPct={p.contextPct}
+        lastRun={p.lastRun}
         files={files}
         sections={sections}
         onOpenFile={openFile}

@@ -96,11 +96,11 @@ test("interject while running, queue with ⌘↵ / Ctrl+↵ (sent in order after
   const texts = await replies(page).allTextContents();
   expect(texts.map((t) => t.trim())).toEqual([LONG, "now", "queued one", "queued two"]);
 
-  // Stop while running: the stop divider names who stopped.
+  // Stop while running: the stopped run row names who stopped.
   await send(page, `slow:300:${LONG}`);
   await expect(page.locator('[data-entry="prose"][data-streaming="true"]')).toBeVisible();
   await stopButton(page).click();
-  await expect(page.locator('[data-divider="stopped"]')).toHaveCount(1);
+  await expect(page.locator('[data-run-status="stopped"]')).toHaveCount(1);
   await expect(stopButton(page)).toHaveCount(0);
   await expect(statusBar(page)).toContainText(zh.chat.status.stopped);
 });
@@ -157,7 +157,7 @@ test("approvals: once / this conversation / always; deny with a reason; stop whi
     approval.getByRole("button", { name: designZh("hitl.approve"), exact: true }),
   ).toBeVisible();
   await stopButton(page).click();
-  await expect(page.locator('[data-divider="stopped"]')).toHaveCount(1);
+  await expect(page.locator('[data-run-status="stopped"]')).toHaveCount(1);
   await expect(
     approval.getByRole("button", { name: designZh("hitl.approve"), exact: true }),
   ).toHaveCount(0);
@@ -360,7 +360,7 @@ test("a policy hook: a denied tool row names the extension; a denied run shows t
 
     expect((await probe({ denyModel: true })).ok()).toBe(true);
     await send(page, "echo:blocked");
-    const notice = page.locator('[data-divider="hook-denied"]');
+    const notice = page.locator('[data-run-status="failed"]');
     await expect(notice).toContainText(
       zh.errors.run.hook_denied.replace("{plugin}", "hooks-probe"),
     );

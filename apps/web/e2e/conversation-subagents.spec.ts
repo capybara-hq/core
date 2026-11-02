@@ -143,14 +143,12 @@ test("a failed run shows its notice; Retry repeats the message without a second 
   await createAgent(page, orgId, "Cap retry");
   await startChat(page, "Cap retry");
   await send(page, "fail:invalid_request");
-  const failed = page.locator('[data-divider="failed"]');
+  const failed = page.locator('[data-run-status="failed"]');
   await expect(failed).toHaveCount(1);
   await failed.getByRole("button", { name: designZh("conv.retry") }).click();
   // the retry fails again (the same script): two notices, the first marked retried, one bubble
   await expect(failed).toHaveCount(2);
-  await expect(failed.first()).toContainText(
-    zh.chat.divider.failedRetried.split("{reason}")[1]?.trim() ?? "",
-  );
+  await expect(failed.first()).toContainText(zh.chat.run.failedRetried);
   await expect(users(page)).toHaveCount(1);
   const events = await eventsOf(page, orgId, conversationIdOf(page));
   const messages = events.filter((e) => e.type === "user_message");

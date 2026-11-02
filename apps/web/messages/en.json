@@ -765,12 +765,9 @@
     },
     "effortDefault": "Default",
     "divider": {
-      "stopped": "Stopped · {who} {time}",
       "compacted": "Earlier conversation compacted",
       "compactedSaved": "Earlier conversation compacted · saved {n} tokens",
-      "fallback": "The chosen model {from} is unavailable; using the agent's model {to} from this message",
-      "failed": "Run failed: {reason}",
-      "failedRetried": "Run failed: {reason} · Retried"
+      "fallback": "The chosen model {from} is unavailable; using the agent's model {to} from this message"
     },
     "system": "System",
     "fileRemoved": "No longer available",
@@ -791,6 +788,14 @@
         "description": "An agent sets the model it uses and the tools and skills it can use.",
         "action": "Create"
       }
+    },
+    "run": {
+      "stopped": "Stopped · {who} {time}",
+      "failedRetried": "Failed · Retried",
+      "tokens": "{n} tokens",
+      "tokenSplit": "Input {input} · Output {output} · Cache read {cacheRead} · Cache write {cacheWrite}",
+      "trajectory": "View trajectory",
+      "configureModels": "Configure model services"
     }
   },
   "ui": {
@@ -829,7 +834,8 @@
     "sandboxRunning": "Running",
     "sandboxSuspended": "Suspended",
     "sandboxLastUsed": "Last used",
-    "sandboxFailed": "Status unavailable"
+    "sandboxFailed": "Status unavailable",
+    "lastRun": "Last run · {parts}"
   },
   "pluginPage": {
     "pathLabel": "Extension page",

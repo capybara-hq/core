@@ -158,7 +158,7 @@ describe("the conversation page (ConversationPage)", () => {
   });
 
   it.each(["zh", "en"] as const)(
-    "while running, Stop calls abort; the input stays enabled; a stop divider follows (%s)",
+    "while running, Stop calls abort; the input stays enabled; a stopped run row follows (%s)",
     async (locale) => {
       const m = locale === "zh" ? zh : en;
       const calls = api({
@@ -178,7 +178,9 @@ describe("the conversation page (ConversationPage)", () => {
         );
       });
       expect(screen.queryByRole("button", { name: m.chat.stop })).toBeNull();
-      expect(document.querySelector('[data-divider="stopped"]')?.textContent).toContain(m.chat.you);
+      expect(document.querySelector('[data-run-status="stopped"]')?.textContent).toContain(
+        m.chat.you,
+      );
     },
   );
 
@@ -210,10 +212,10 @@ describe("the conversation page (ConversationPage)", () => {
     });
     await renderChat();
     await vi.waitFor(() =>
-      expect(document.querySelectorAll('[data-divider="stopped"]')).toHaveLength(2),
+      expect(document.querySelectorAll('[data-run-status="stopped"]')).toHaveLength(2),
     );
     const dividers = () =>
-      [...document.querySelectorAll('[data-divider="stopped"]')].map((d) => d.textContent ?? "");
+      [...document.querySelectorAll('[data-run-status="stopped"]')].map((d) => d.textContent ?? "");
     await vi.waitFor(() => expect(dividers()[0]).toContain("Bo Admin"));
     expect(dividers()[1]).toContain(en.chat.anotherMember);
     expect(dividers().join(" ")).not.toContain("acc-");
@@ -607,7 +609,7 @@ describe("the conversation page (ConversationPage)", () => {
     window.removeEventListener("cap:conversations-changed", changed);
   });
 
-  it("Retry on the failed divider re-sends the last message with retryOf", async () => {
+  it("Retry on the failed run row re-sends the last message with retryOf", async () => {
     const calls = api({
       [`GET ${BASE}/events`]: () =>
         json(200, {
@@ -626,9 +628,11 @@ describe("the conversation page (ConversationPage)", () => {
       text: "hello",
       retryOf: 1,
     });
-    // The retry folds into the divider instead of a second bubble.
+    // The retry folds into the run row instead of a second bubble.
     await vi.waitFor(() => expect(screen.getAllByText("hello")).toHaveLength(1));
-    expect(document.querySelector('[data-divider="failed"]')?.textContent).toMatch(/Retried/);
+    expect(document.querySelector('[data-run-status="failed"]')?.textContent).toContain(
+      en.chat.run.failedRetried,
+    );
   });
 
   it("a run blocked by a policy hook names the extension; a pinned-skill failure says so", async () => {
@@ -664,12 +668,19 @@ describe("the conversation page (ConversationPage)", () => {
     });
     await renderChat();
     await screen.findByText("again");
-    expect(document.querySelector('[data-divider="hook-denied"]')?.textContent).toContain(
-      en.errors.run.hook_denied.replace("{plugin}", "guard"),
-    );
-    const pinned = document.querySelector('[data-divider="failed"]')?.textContent ?? "";
-    expect(pinned).toContain(en.errors.run.pinned_unavailable);
-    expect(pinned).toContain('Pinned skill "notes" cannot be read');
+    const [hook, pinned] = [
+      ...document.querySelectorAll<HTMLElement>('[data-run-status="failed"]'),
+    ];
+    expect(hook?.textContent).toContain(en.errors.run.hook_denied.replace("{plugin}", "guard"));
+    // a denial is not retried (the policy would deny it again)
+    expect(within(hook as HTMLElement).queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(pinned?.textContent).toContain(en.errors.run.pinned_unavailable);
+    // the kernel's text (it names the skill) stays behind the raw-error toggle
+    expect(pinned?.textContent).not.toContain('Pinned skill "notes" cannot be read');
+    await userEvent
+      .setup()
+      .click(within(pinned as HTMLElement).getByRole("button", { name: "Raw error" }));
+    expect(pinned?.textContent).toContain('Pinned skill "notes" cannot be read');
   });
 
   it("thinking shows by the model's capabilities.reasoning", async () => {
@@ -1133,5 +1144,118 @@ describe("tool rows read the tool info API", () => {
     expect(screen.getByText(/Slack: Search messages/)).toBeTruthy();
     expect(server.some((c) => c.url.endsWith("/tools?keys=slack__search"))).toBe(true);
     expect(calls.some((c) => c.url.includes("/tools?"))).toBe(false);
+  });
+});
+
+describe("run rows (spec §6.16.23)", () => {
+  const usage = (seq: number, input: number, output: number) =>
+    ev(seq, "usage", {
+      step: 0,
+      provider: "model-fake",
+      model: "fake-1",
+      inputTokens: input,
+      outputTokens: output,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    });
+  const authFailure = [
+    userMsg(1, "hello"),
+    runStarted(2),
+    ev(3, "run_failed", { error: { code: "model.auth", message: "401 Unauthorized: bad key" } }),
+  ];
+  const as = (role: string, opts: { id?: string; enterprise?: boolean } = {}) => ({
+    ...ME,
+    account: { ...ME.account, id: opts.id ?? "a9", isEnterpriseAdmin: opts.enterprise ?? false },
+    memberships: [{ ...(ME.memberships[0] as (typeof ME.memberships)[number]), role }],
+  });
+  const row = () => document.querySelector<HTMLElement>("[data-entry='run']") as HTMLElement;
+
+  it("a finished run ends with one quiet collapsed row; the properties panel shows the last run", async () => {
+    api({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [
+            userMsg(1, "hi"),
+            runStarted(2),
+            usage(3, 1000, 234),
+            ev(4, "run_finished", { reason: "end_turn", consumedUpToSeq: 1 }),
+          ],
+        }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#properties");
+    await renderChat();
+    const line = within(row()).getByRole("button", {
+      name: /^Run · fake-1 · 2\.0s · 1,234 tokens/,
+    });
+    expect(line.getAttribute("aria-expanded")).toBe("false");
+    expect(row().getAttribute("data-run-status")).toBe("ok");
+    expect(row().querySelector('[data-part="run-status"]')?.textContent).toBe("Done");
+    expect(document.querySelectorAll("[data-entry='run']")).toHaveLength(1);
+    const props = await screen.findByRole("complementary", { name: "Properties" });
+    expect(props.querySelector('[data-part="context-last-run"]')?.textContent).toBe(
+      "Last run · fake-1 · 2.0s · 1,234 tokens",
+    );
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("a failed run is open: the localized error, the raw text behind its toggle, Retry and the links (an owner who is an enterprise admin)", async () => {
+    api({ [`GET ${BASE}/events`]: () => json(200, { events: authFailure }) });
+    await renderChat();
+    const region = within(row()).getByRole("region", { name: "Run details" });
+    expect(region.textContent).toContain(en.errors.model.auth);
+    expect(region.textContent).not.toContain("401 Unauthorized");
+    expect(within(region).getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(
+      within(region).getByRole("link", { name: en.chat.run.trajectory }).getAttribute("href"),
+    ).toBe("/trajectories/c1");
+    expect(
+      within(region).getByRole("link", { name: en.chat.run.configureModels }).getAttribute("href"),
+    ).toBe("/admin/extensions");
+    // no duplicate: the failure is the row, never a divider too
+    expect(document.querySelector("[data-entry='divider']")).toBeNull();
+  });
+
+  it.each([
+    [
+      "a member who owns the agent: the trajectory, no fix entry",
+      as("member", { id: "a1" }),
+      true,
+      false,
+    ],
+    ["a member who does not own it: no links", as("member"), false, false],
+    ["a guest: no links", as("guest", { id: "a1" }), false, false],
+    ["an org admin: the trajectory", as("admin"), true, false],
+    [
+      "an enterprise admin who is a plain member: the fix entry only",
+      as("member", { enterprise: true }),
+      false,
+      true,
+    ],
+  ])("%s", async (_name, me, trajectory, fix) => {
+    api({ [`GET ${BASE}/events`]: () => json(200, { events: authFailure }) });
+    await renderChatRoute({ locale: "en", me });
+    const region = within(row()).getByRole("region", { name: "Run details" });
+    expect(within(region).queryByRole("link", { name: en.chat.run.trajectory }) !== null).toBe(
+      trajectory,
+    );
+    expect(within(region).queryByRole("link", { name: en.chat.run.configureModels }) !== null).toBe(
+      fix,
+    );
+  });
+
+  it("the fix entry only for a model setup failure", async () => {
+    api({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [
+            userMsg(1, "hello"),
+            runStarted(2),
+            ev(3, "run_failed", { error: { code: "model.timeout", message: "timeout" } }),
+          ],
+        }),
+    });
+    await renderChat();
+    expect(within(row()).queryByRole("link", { name: en.chat.run.configureModels })).toBeNull();
+    expect(within(row()).getByRole("link", { name: en.chat.run.trajectory })).toBeTruthy();
   });
 });

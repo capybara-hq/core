@@ -26,9 +26,12 @@ import type {
  * - A call's `artifact_created` files and its inline card (`tool_result.card`) land right after the
  *   group that holds the call (files first).
  * - `hook_denied` with a `callId` marks that row as blocked by the extension.
- * - `run_aborted`, `run_failed`, `compaction_summary` and `model_switched { reason: "unavailable" }`
- *   become dividers. A `user_message` with `retryOf` folds into the failed divider of the message it
- *   repeats ("Retried") instead of a second bubble.
+ * - Every run that ended (`run_finished`, `run_failed`, `run_aborted`) becomes a `run` entry at its
+ *   terminal event: its model (the last `model_call`, else `run_started`), duration and tokens (its
+ *   `usage` events) and how it ended (spec §6.16.23); a run still going has none. A `user_message`
+ *   with `retryOf` folds into the failed run of the message it repeats ("Retried") instead of a
+ *   second bubble. `compaction_summary` and `model_switched { reason: "unavailable" }` become
+ *   dividers.
  * - Logs written before UI refresh B (no `description`, `view`, title or card) still render: rows
  *   fall back to the tool key and the first string argument, failures to `isError`.
  * - Sub-agents (phase C, Task 21): consecutive `agent` calls form one `subagents` entry, its rows
@@ -128,21 +131,50 @@ export interface ConnectItem {
 }
 
 export type DividerData =
-  | { divider: "stopped"; byAccountId: string | null; at: string }
+  | { divider: "compacted"; summary: string; savedTokens: number | null }
+  | { divider: "fallback"; from: ModelRef | null; to: ModelRef | null };
+
+/** A run's tokens: every `usage` of the run (its step calls and compaction). */
+export interface RunTokens {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  /** input + cacheRead + cacheWrite + output. */
+  total: number;
+}
+
+/** How a run ended (its run row, spec §6.16.23). */
+export type RunEnd =
+  | { status: "ok" }
+  | { status: "stopped"; byAccountId: string | null }
   | {
-      divider: "failed";
+      status: "failed";
       code: string;
-      /** The kernel's message, shown for the pinned-skill failure only. */
+      /** The kernel's raw message (English; the row keeps it behind 原始错误). */
       message: string;
-      at: string;
+      /** A `model.request` denial (`run.hook_denied`): the extension and its reason. */
+      hook: { plugin: string | null; reason: string | null } | null;
       /** The last user message before the failure (what Retry repeats), or null. */
       retry: RetryMessage | null;
       /** A later message retried it. */
       retried: boolean;
-    }
-  | { divider: "hook-denied"; plugin: string | null; reason: string | null; at: string }
-  | { divider: "compacted"; summary: string; savedTokens: number | null }
-  | { divider: "fallback"; from: ModelRef | null; to: ModelRef | null };
+    };
+
+/** A run that ended, from the log alone (`run_started`, `model_call`, `usage`, the terminal). */
+export type RunData = {
+  runId: string | null;
+  /** The run's last model call, else the model it started with; null when the log has neither. */
+  model: ModelRef | null;
+  /** From `run_started` to the terminal event (waits for a person included); null without a start. */
+  durationMs: number | null;
+  /** Null when the run reported no usage. */
+  tokens: RunTokens | null;
+  /** When it ended. */
+  at: string;
+} & RunEnd;
+
+export type FailedRun = Extract<TimelineEntry, { kind: "run"; status: "failed" }>;
 
 /** What Retry repeats: the text (an invocation's arguments), files and the skill invoked. */
 export interface RetryMessage {
@@ -204,7 +236,8 @@ export type TimelineEntry =
   | { kind: "connect"; key: string; item: ConnectItem }
   | { kind: "card"; key: string; plugin: string; view: string; callId: string; cardKey?: string }
   | { kind: "files"; key: string; files: FileRef[] }
-  | ({ kind: "divider"; key: string } & DividerData);
+  | ({ kind: "divider"; key: string } & DividerData)
+  | ({ kind: "run"; key: string } & RunData);
 
 /** A streaming draft (`event: delta`), not in the log yet. */
 export interface TimelineDraft {
@@ -369,7 +402,32 @@ export function buildEventTimeline(
   const forks = new Map<number, { label: string; dispatched: boolean; reported: boolean }>();
   /** The highest user seq a model call took in (`model_call.request.absorbedUpToSeq`). */
   let absorbed = 0;
-  /** Failed dividers by the user seq they would retry. */
+  /** What the log says so far of each run (its row's model, start and tokens). */
+  const runs = new Map<
+    string,
+    { startedAt: number | null; model: ModelRef | null; tokens: RunTokens | null }
+  >();
+  const runOf = (runId: string) => {
+    let r = runs.get(runId);
+    if (r === undefined) {
+      r = { startedAt: null, model: null, tokens: null };
+      runs.set(runId, r);
+    }
+    return r;
+  };
+  const runData = (
+    e: ConversationEvent,
+  ): Pick<RunData, "runId" | "model" | "durationMs" | "tokens" | "at"> => {
+    const r = e.runId === null ? undefined : runs.get(e.runId);
+    return {
+      runId: e.runId,
+      model: r?.model ?? null,
+      durationMs: r?.startedAt == null ? null : Math.max(0, Date.parse(e.createdAt) - r.startedAt),
+      tokens: r?.tokens ?? null,
+      at: e.createdAt,
+    };
+  };
+  /** Failed runs by the user seq they would retry. */
   const failedBySeq = new Map<number, number>();
   /** The model the person switched to (the `from` of a fallback). */
   let switched: ModelRef | null = null;
@@ -414,6 +472,10 @@ export function buildEventTimeline(
     switch (e.type) {
       case "run_started":
         if (e.runId !== null) {
+          const r = runOf(e.runId);
+          // A resumed run writes no second run_started; keep the first start.
+          if (r.startedAt === null) r.startedAt = Date.parse(e.createdAt);
+          if (r.model === null) r.model = e.payload.model;
           models.set(e.runId, e.payload.model);
           const fb = fallbacks.get(e.runId);
           const d = fb === undefined ? undefined : out[fb];
@@ -426,6 +488,7 @@ export function buildEventTimeline(
           const k = stepKey(e.runId, e.payload.step);
           models.set(k, { provider: e.payload.provider, model: e.payload.model });
           stepStarted.set(k, Date.parse(e.createdAt));
+          runOf(e.runId).model = { provider: e.payload.provider, model: e.payload.model };
         }
         break;
       case "model_switched":
@@ -448,8 +511,8 @@ export function buildEventTimeline(
         const retryOf = e.payload.retryOf;
         const failed = retryOf === undefined ? undefined : failedBySeq.get(retryOf);
         const d = failed === undefined ? undefined : out[failed];
-        if (d?.kind === "divider" && d.divider === "failed" && !d.retried) {
-          // Folded into the failed divider ("Retried"), not a second bubble.
+        if (d?.kind === "run" && d.status === "failed" && !d.retried) {
+          // Folded into the failed run ("Retried"), not a second bubble.
           d.retried = true;
         } else {
           const entry: Extract<TimelineEntry, { kind: "user" }> = {
@@ -820,6 +883,17 @@ export function buildEventTimeline(
         });
         break;
       case "usage":
+        if (e.runId !== null) {
+          const r = runOf(e.runId);
+          const p = e.payload;
+          const tk = r.tokens ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+          tk.input += p.inputTokens;
+          tk.output += p.outputTokens;
+          tk.cacheRead += p.cacheReadTokens;
+          tk.cacheWrite += p.cacheWriteTokens;
+          tk.total += p.inputTokens + p.cacheReadTokens + p.cacheWriteTokens + p.outputTokens;
+          r.tokens = tk;
+        }
         if (e.payload.purpose === "compaction") {
           const p = e.payload;
           compactionUsage = Math.max(
@@ -838,36 +912,33 @@ export function buildEventTimeline(
         });
         compactionUsage = null;
         break;
+      case "run_finished":
+        out.push({ kind: "run", key, ...runData(e), status: "ok" });
+        break;
       case "run_aborted":
         out.push({
-          kind: "divider",
+          kind: "run",
           key,
-          divider: "stopped",
+          ...runData(e),
+          status: "stopped",
           byAccountId: e.payload.byAccountId,
-          at: e.createdAt,
         });
         break;
       case "run_failed": {
-        const code = e.payload.error.code;
-        if (code === "run.hook_denied") {
-          const d = e.runId === null ? undefined : modelDenials.get(e.runId);
-          out.push({
-            kind: "divider",
-            key,
-            divider: "hook-denied",
-            plugin: d?.plugin ?? null,
-            reason: d?.reason ?? null,
-            at: e.createdAt,
-          });
-          break;
-        }
+        const { code, message } = e.payload.error;
+        const denial =
+          code === "run.hook_denied" && e.runId !== null ? modelDenials.get(e.runId) : undefined;
         out.push({
-          kind: "divider",
+          kind: "run",
           key,
-          divider: "failed",
+          ...runData(e),
+          status: "failed",
           code,
-          message: code === "storage.unavailable" ? e.payload.error.message : "",
-          at: e.createdAt,
+          message,
+          hook:
+            code === "run.hook_denied"
+              ? { plugin: denial?.plugin ?? null, reason: denial?.reason ?? null }
+              : null,
           retry: lastUser,
           retried: false,
         });

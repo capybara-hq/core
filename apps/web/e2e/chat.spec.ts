@@ -58,7 +58,7 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
   await expect(draft).not.toHaveText(early); // 继续增长：逐步出现
   // 运行中「发送」变成「停止」
   await stopButton(page).click();
-  const stopped = page.locator('[data-divider="stopped"]');
+  const stopped = page.locator('[data-run-status="stopped"]');
   await expect(stopped).toHaveCount(1);
   const partial = ((await assistants(page).last().textContent()) ?? "").trim();
   expect(partial.length).toBeGreaterThan(0);

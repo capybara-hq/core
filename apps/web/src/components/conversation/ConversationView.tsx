@@ -17,11 +17,12 @@ import {
   notifyConversationsChanged,
   renameConversation,
 } from "../../lib/conversations";
+import { runParts } from "../../lib/run-row";
 import type { ConversationSnapshot } from "../../lib/server/conversation";
 import { usageTotal, useSubagents, useUsageWithSubagents } from "../../lib/subagents";
 import {
   buildEventTimeline,
-  type DividerData,
+  type FailedRun,
   latestModel,
   latestUsage,
   runStats,
@@ -120,6 +121,7 @@ export function useConversationPage(
 ): { page: ConversationPageProps; dialogs: ReactNode } {
   const t = useTranslations("chat");
   const ts = useTranslations("subagents");
+  const tp = useTranslations("chatPanel");
   const locale = useLocale() === "zh" ? "zh" : "en";
   const session = useSession();
   const toast = useToast();
@@ -185,7 +187,7 @@ export function useConversationPage(
     return r;
   };
 
-  const retry = (d: Extract<DividerData, { divider: "failed" }>) => {
+  const retry = (d: FailedRun) => {
     if (d.retry === null) return;
     const pick = selection.pending;
     void conv
@@ -250,6 +252,13 @@ export function useConversationPage(
           ? t("status.failed")
           : t("status.idle");
   const statusFailed = !conv.running && !conv.waiting && stats.last === "failed";
+  // The properties panel's last-run line (spec §6.16.17): the newest run row's parts.
+  const lastRun = useMemo(() => {
+    const r = base.entries.findLast((e) => e.kind === "run");
+    if (r?.kind !== "run") return undefined;
+    const parts = runParts(r, locale, (n) => t("run.tokens", { n }));
+    return parts.length > 0 ? tp("lastRun", { parts: parts.join(" · ") }) : undefined;
+  }, [base, locale, t, tp]);
 
   const slot: RightAreaSlot | undefined = useRightAreaSlot({
     orgId,
@@ -261,6 +270,7 @@ export function useConversationPage(
     sandboxVersion: conv.changes.sandbox,
     model: usageModel,
     contextPct,
+    lastRun,
     subagents: subagents.views,
     total:
       usageAll === undefined
@@ -303,6 +313,7 @@ export function useConversationPage(
           info={info}
           reasoningOf={selection.reasoningOf}
           initialMembers={initial.members}
+          runLinks={{ agentOwnerId: agent?.ownerAccountId }}
           {...(active ? {} : { onRetry: retry })}
           {...(slot?.thread ?? {})}
         />

@@ -90,7 +90,7 @@ describe("buildTimeline", () => {
       ev(6, "run_finished", { reason: "end_turn", consumedUpToSeq: 1 }),
     ];
     const out = buildTimeline(events, [], new Map(), "zh");
-    expect(kinds(out)).toEqual(["user", "tools"]);
+    expect(kinds(out)).toEqual(["user", "tools", "run"]);
     const row = tools(out)[0]?.rows[0]?.row;
     expect(row).toMatchObject({
       title: "sandbox_bash",
@@ -216,7 +216,7 @@ describe("buildTimeline", () => {
     expect(row).toMatchObject({ status: "failed", blockedBy: "compliance" });
   });
 
-  it("run_aborted → a stopped divider with who; a model.request denial names the extension", () => {
+  it("run_aborted → a stopped run with who; a model.request denial names the extension", () => {
     const events = [
       ev(1, "run_aborted", { byAccountId: "a1", reason: "user" }),
       ev(
@@ -228,12 +228,12 @@ describe("buildTimeline", () => {
       ev(3, "run_failed", { error: { code: "run.hook_denied", message: "x" } }, "r2"),
     ];
     const out = buildTimeline(events, [], new Map(), "en");
-    expect(out[0]).toMatchObject({ kind: "divider", divider: "stopped", byAccountId: "a1" });
+    expect(out[0]).toMatchObject({ kind: "run", status: "stopped", byAccountId: "a1" });
     expect(out[1]).toMatchObject({
-      kind: "divider",
-      divider: "hook-denied",
-      plugin: "guard",
-      reason: "pii",
+      kind: "run",
+      status: "failed",
+      code: "run.hook_denied",
+      hook: { plugin: "guard", reason: "pii" },
     });
   });
 
@@ -256,16 +256,16 @@ describe("buildTimeline", () => {
     ]);
   });
 
-  it("a retry folds into the failed divider instead of a second bubble", () => {
+  it("a retry folds into the failed run instead of a second bubble", () => {
     const events = [
       user(1, "hello"),
       ev(2, "run_failed", { error: { code: "model.timeout", message: "x" } }),
       user(3, "hello", { retryOf: 1 }),
     ];
     const out = buildTimeline(events, [], new Map(), "en");
-    expect(kinds(out)).toEqual(["user", "divider"]);
+    expect(kinds(out)).toEqual(["user", "run"]);
     expect(out[1]).toMatchObject({
-      divider: "failed",
+      status: "failed",
       retried: true,
       retry: { seq: 1, text: "hello" },
     });
@@ -293,7 +293,7 @@ describe("buildTimeline", () => {
       instructions: "The user invoked the skill …",
     });
     expect(out[1]).toMatchObject({
-      divider: "failed",
+      status: "failed",
       retry: { seq: 1, text: "a b", skill: "superpowers:brainstorming" },
     });
   });
@@ -400,6 +400,102 @@ describe("buildTimeline", () => {
       ev(3, "run_aborted", { byAccountId: null, reason: "x" }),
     ];
     expect(tools(buildTimeline(events, [], INFO, "en"))[0]?.rows[0]?.row.status).toBe("cancelled");
+  });
+});
+
+describe("run rows (spec §6.16.23)", () => {
+  const usage = (seq: number, runId: string, input: number, output: number, extra = {}) =>
+    ev(
+      seq,
+      "usage",
+      {
+        step: 0,
+        provider: "p",
+        model: "m2",
+        inputTokens: input,
+        outputTokens: output,
+        cacheReadTokens: 10,
+        cacheWriteTokens: 0,
+        ...extra,
+      },
+      runId,
+    );
+
+  it("a finished run ends with an ok row: the last call's model, the duration and the tokens", () => {
+    const events = [
+      user(1, "hi"),
+      ev(2, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }, "r1"),
+      ev(3, "model_call", { step: 0, provider: "p", model: "m2" }, "r1"),
+      usage(4, "r1", 100, 20),
+      ev(5, "model_call", { step: 1, provider: "p", model: "m2" }, "r1"),
+      usage(6, "r1", 200, 30),
+      ev(
+        7,
+        "assistant_message",
+        { step: 1, stopReason: "end_turn", content: [{ type: "text", text: "ok" }] },
+        "r1",
+      ),
+      ev(8, "run_finished", { reason: "end_turn", consumedUpToSeq: 1 }, "r1"),
+    ];
+    const out = buildTimeline(events, [], new Map(), "en");
+    expect(kinds(out)).toEqual(["user", "prose", "run"]);
+    expect(out[2]).toMatchObject({
+      kind: "run",
+      key: "e8",
+      runId: "r1",
+      status: "ok",
+      model: { provider: "p", model: "m2" },
+      durationMs: 6000,
+      tokens: { input: 300, output: 50, cacheRead: 20, cacheWrite: 0, total: 370 },
+    });
+  });
+
+  it("a run still going has no row", () => {
+    const events = [
+      user(1, "hi"),
+      ev(2, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }, "r1"),
+      ev(3, "model_call", { step: 0, provider: "p", model: "m" }, "r1"),
+    ];
+    expect(kinds(buildTimeline(events, [], new Map(), "en"))).toEqual(["user"]);
+  });
+
+  it("a failed run keeps the code and the kernel's raw message; no usage, no tokens", () => {
+    const events = [
+      user(1, "hi"),
+      ev(2, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }, "r1"),
+      ev(3, "run_failed", { error: { code: "model.auth", message: "401 Unauthorized" } }, "r1"),
+    ];
+    const out = buildTimeline(events, [], new Map(), "en");
+    expect(kinds(out)).toEqual(["user", "run"]);
+    expect(out[1]).toMatchObject({
+      kind: "run",
+      status: "failed",
+      code: "model.auth",
+      message: "401 Unauthorized",
+      hook: null,
+      model: { provider: "p", model: "m" },
+      durationMs: 1000,
+      tokens: null,
+      retry: { seq: 1, text: "hi" },
+      retried: false,
+    });
+  });
+
+  it("a stopped run names who stopped it; a run without run_started has no model or duration", () => {
+    const events = [ev(1, "run_aborted", { byAccountId: "a1", reason: "user" }, "r9")];
+    expect(buildTimeline(events, [], new Map(), "en")).toEqual([
+      {
+        kind: "run",
+        key: "e1",
+        runId: "r9",
+        status: "stopped",
+        byAccountId: "a1",
+        at: expect.any(String),
+        model: null,
+        durationMs: null,
+        tokens: null,
+      },
+    ]);
   });
 });
 

@@ -76,6 +76,7 @@ export function ContextSection({
   events,
   model,
   contextPct,
+  lastRun,
   total,
   initial,
   version,
@@ -85,6 +86,8 @@ export function ContextSection({
   events: readonly ConversationEvent[];
   model: ModelRef | null;
   contextPct: number | null;
+  /** The last run's line, once a run ended. */
+  lastRun?: string | undefined;
   /** The tokens with sub-agents line, once there are any. */
   total?: string | undefined;
   initial: ContextInitial;
@@ -139,6 +142,7 @@ export function ContextSection({
       model={model === null ? "—" : model.model}
       {...(sandboxText !== undefined ? { sandbox: `${t("sandbox")} ${sandboxText}` } : {})}
       connectors={connectorsUsed(events, nameOfSlug)}
+      {...(lastRun !== undefined ? { lastRun } : {})}
       {...(total !== undefined ? { total } : {})}
     />
   );
@@ -177,6 +181,7 @@ export function PropertiesSections({
   events,
   model,
   contextPct,
+  lastRun,
   files,
   sections,
   onOpenFile,
@@ -189,6 +194,7 @@ export function PropertiesSections({
   events: readonly ConversationEvent[];
   model: ModelRef | null;
   contextPct: number | null;
+  lastRun?: string | undefined;
   files: FileOutput[];
   sections: UiContributionItem[];
   onOpenFile(id: string): void;
@@ -208,6 +214,7 @@ export function PropertiesSections({
         events={events}
         model={model}
         contextPct={contextPct}
+        lastRun={lastRun}
         total={total}
         initial={initial}
         version={sandboxVersion}
