@@ -200,6 +200,7 @@ export function ContextSection({
   model,
   sandbox,
   connectors,
+  lastRun,
   total,
 }: {
   /** Context usage in percent (0–100). */
@@ -207,6 +208,8 @@ export function ContextSection({
   model: string;
   sandbox?: string;
   connectors: string[];
+  /** The last run's line ("上次运行 · <model> · <duration> · <tokens>"), worded by the page. */
+  lastRun?: string;
   /** A last line, e.g. the conversation's tokens with its sub-agents' (the page words it). */
   total?: string;
 }): JSX.Element {
@@ -230,6 +233,11 @@ export function ContextSection({
       {connectors.length > 0 ? (
         <div className="cb-muted cb-small">
           {fillCopy(t("props.connectors"), { list: connectors.join(t("props.listJoin")) })}
+        </div>
+      ) : null}
+      {lastRun ? (
+        <div className="cb-muted cb-small" data-part="context-last-run">
+          {lastRun}
         </div>
       ) : null}
       {total ? (

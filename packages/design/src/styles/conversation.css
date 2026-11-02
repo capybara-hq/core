@@ -440,6 +440,57 @@ button.cb-tool-line:focus-visible {
   white-space: pre-wrap;
 }
 
+/* ── Run row (§6.16.23) ── */
+
+.cb-run-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.cb-run-row > .cb-tool-line {
+  height: var(--cb-row-dense);
+}
+.cb-run-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--cb-space-1);
+  color: var(--cb-muted);
+  white-space: nowrap;
+}
+.cb-run-mark {
+  display: inline-flex;
+  color: var(--cb-muted);
+}
+.cb-run-status[data-status="ok"] .cb-run-mark {
+  color: var(--cb-ok);
+}
+.cb-run-status[data-status="failed"],
+.cb-run-status[data-status="failed"] .cb-run-mark {
+  color: var(--cb-fail);
+}
+.cb-run-detail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  row-gap: var(--cb-space-2);
+  padding-left: var(--cb-space-3);
+  border-left: 1px solid var(--cb-line);
+  min-width: 0;
+}
+.cb-run-fact {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  overflow-wrap: anywhere;
+}
+.cb-run-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cb-space-2);
+}
+
 /* ── Tool group, tool box, tool row (§6.16.8, §6.16.9) ── */
 
 .cb-tool-group {

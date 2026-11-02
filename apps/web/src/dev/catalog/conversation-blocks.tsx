@@ -23,6 +23,7 @@ import {
   QueuedMessage,
   QueuePaused,
   RunDivider,
+  RunRow,
   Stack,
   TextOutput,
   TextPreview,
@@ -151,6 +152,52 @@ function userBubbleBlocks(): ReactNode {
           text={SKILL_FIXTURE.bubble.arguments}
           skill={SKILL_FIXTURE.chip.label}
           details={<Disclosure summary={SKILL_FIXTURE.bubble.details}>{null}</Disclosure>}
+        />
+      </Block>
+    </>
+  );
+}
+
+// ── Run row ─────────────────────────────────────────────────────────────────
+
+const RUN_PARTS = ["deepseek-flash", "3.7s", "1,234 tokens"];
+const RUN_FACTS = ["输入 1,000 · 输出 200 · 缓存读 34 · 缓存写 0"];
+const RUN_TRAJECTORY = { label: "查看轨迹", href: "/trajectories/c1" };
+
+function runRowBlocks(): ReactNode {
+  return (
+    <>
+      <Block id="run-row-ok">
+        <RunRow status="ok" parts={RUN_PARTS} facts={RUN_FACTS} links={[RUN_TRAJECTORY]} />
+      </Block>
+      <Block id="run-row-ok-open">
+        <RunRow
+          status="ok"
+          parts={RUN_PARTS}
+          facts={RUN_FACTS}
+          links={[RUN_TRAJECTORY]}
+          defaultOpen
+        />
+      </Block>
+      <Block id="run-row-failed">
+        <RunRow
+          status="failed"
+          parts={["deepseek-flash", "3.7s"]}
+          error={{
+            summary: "模型供应商认证失败。",
+            detail: "401 Unauthorized: Authentication Fails, Your api key is invalid",
+          }}
+          onRetry={noop}
+          links={[{ label: "去配置模型服务", href: "/admin/extensions" }, RUN_TRAJECTORY]}
+        />
+      </Block>
+      <Block id="run-row-stopped">
+        <RunRow
+          status="stopped"
+          parts={RUN_PARTS}
+          statusText="已停止 · 你 14:03"
+          facts={RUN_FACTS}
+          links={[RUN_TRAJECTORY]}
         />
       </Block>
     </>
@@ -818,6 +865,7 @@ export const CONVERSATION_BLOCKS = {
   "thinking-row": thinkingRowBlocks,
   "user-bubble": userBubbleBlocks,
   "run-divider": runDividerBlocks,
+  "run-row": runRowBlocks,
   "tool-group": toolGroupBlocks,
   "tool-row": toolRowBlocks,
   "diff-block": diffBlockBlocks,

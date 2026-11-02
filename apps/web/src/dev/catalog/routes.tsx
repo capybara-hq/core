@@ -86,6 +86,7 @@ export const REFERENCE_COMPONENTS = [
   // unslop fixes
   "error-detail",
   "file-picker",
+  "run-row",
 ] as const;
 
 export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];

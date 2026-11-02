@@ -57,6 +57,7 @@ const GROUPS = [
       "file-outputs",
       "attachment-strip",
       "file-preview",
+      "run-row",
     ],
   },
   {

@@ -79,6 +79,7 @@ export {
 } from "./panels";
 export { Cursor, Prose, type ProseProps, Spinner } from "./prose";
 export { QueuedMessage, type QueuedMessageProps, QueuePaused } from "./queued";
+export { RunRow, type RunRowProps, type RunRowStatus, runDuration } from "./run-row";
 export {
   BackgroundTasks,
   type BackgroundTasksProps,

@@ -49,6 +49,8 @@ const PAGES = [
   "error-detail",
   // forms and flows: the one file pick
   "file-picker",
+  // the run row: a run's model, duration, tokens and outcome
+  "run-row",
 ];
 const THEMES = ["dark", "light"] as const;
 const BLOCK_ID = /^[a-z-]+-[a-z0-9-]+$/;

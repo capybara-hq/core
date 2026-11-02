@@ -390,6 +390,7 @@ States: `page`
 - **Narrow windows**: below 1280 (where the sidebar becomes the rail, §4.3) the right area is a right-side Sheet over the page (`layout.panel` wide, `shadow-sheet`, a `scrim` behind it), closed by Esc, its close button or a click on the scrim; the server render and hydration cannot know the window, so below 1280 a CSS media query hides the inline right area until the first client render makes it the Sheet (the page never scrolls sideways, no flash). At 1280 and above it sits beside the thread; with the full sidebar at exactly 1280 the panel narrows to 544 so the thread keeps `layout.chat-min` (maintainer ruling 2026-10-27).
 - **New conversation**: nothing is created until the first send. The title bar shows "新会话" / "New conversation"; the thread is replaced by a centered column (`layout.chat` wide): the agent's name (`h2`), its description (`prose-small` `muted`) and the composer with the agent picker open for choice; the status bar shows only the context and the version.
 - **Status bar** (read-only, §4.4): left `user@org:/chat/<id>` and "第 N 轮 · 已用 <elapsed>" / "Turn N · <elapsed>"; right the run status ("空闲" / "Idle", "运行中" / "Running", "等待批准" / "Waiting for approval"), "上下文 N%" / "Context N%" and the version.
+- **Runs** (design note, unslop fixes 2026-11-03): every run that ended closes with a **run row** (§6.16.23), a quiet mono line `运行 · <model> · <duration> · <tokens>` with its status mark, built from the log alone (`run_started`, `model_call`, `usage`, `run_finished` / `run_failed` / `run_aborted`). A finished run's row is collapsed and uncoloured except its `ok` check; a failed run's row is open at first and red only in its mark, its status word and the failure sentence; its detail holding the failure (ErrorDetail: the sentence in the reader's language, the raw kernel text behind 原始错误), 重试 (the last failure only, while nothing runs), 查看轨迹 (`/trajectories/<conversationId>`, only for those the kernel lets read it: org admins and owners, or the agent's owner) and, for an enterprise admin when the model service is misconfigured (`model.auth`, `model.unconfigured`, `run.model_unavailable`), 去配置模型服务 (`/admin/extensions`). A stopped run's row names who stopped it. The run row replaces the stopped, failed and hook-denied dividers (no run is drawn twice); a running run shows nothing new (the live indicators stay). The properties panel's Context section adds the last run's line (model, duration, tokens; cost only when the log carries one, which it does not today).
 - Extension slots, files and sub-agents: §6.16.16–§6.16.18, §6.16.15.
 
 <!-- states: template-conversation -->
@@ -1171,6 +1172,7 @@ States: `default`, `attachments`, `skill`
 #### 6.16.7 Run divider
 
 - A centered line between two 1px `line` rules that fill the width: `small` `muted`, gap `space.3`, on one line, `role="status"`.
+- On the conversation page a run's end is the run row (§6.16.23): the thread draws only **compacted** and **fallback** dividers; the stopped, failed and hook-denied kinds stay in the component.
 - Kinds: **stopped** "已停止 · <who> <time>"; **failed** (the whole divider `fail`) "运行失败：<reason> · 重试" where Retry re-sends the last user message (text and files) and is folded into this divider rather than drawing a second bubble; **compacted** "较早的对话已压缩 · 节省 <n> · 查看摘要", which toggles the summary below it (`panel` ground, radius `md`, padding `space.3`, `prose-small` `muted`; the link reads "收起摘要" / "Hide summary" while open); **fallback** "所选模型 <a> 已不可用，本条起改用 agent 的模型 <b>" (a switched-to model disappeared); **hook-denied** (`fail`) "运行被扩展「<extension>」拦截：<reason>" (`run.hook_denied`).
 
 <!-- states: run-divider -->
@@ -1454,7 +1456,7 @@ States: `view`, `embed`, `loading`, `failed`
 
 - The properties panel is `layout.properties` wide and sits **inside** the middle column, under its title bar, right of the thread (padding `space.2` `space.4` `space.4` 0); its sections stack `space.2` apart and it scrolls on its own.
 - A section: `panel` ground, no border, radius `md`, padding `space.3`, gap `space.1`; a head with the title in `muted` and a value at the right, `space.1` above the body.
-- Built-in sections, in order: **Context** (the usage ratio as the value; a meter `space.1` high, `line` track, `ink` fill, radius `sm`; "<model> · <sandbox status>" and "连接器：…" / "Connectors: …" in `small` `muted`; once the conversation has sub-agents, a last `small` `muted` line with its tokens including theirs, worded by the page); extension sections (`place: "section"`, in contribution order, rendered `dense`); **Files** (the count as the value, the conversation's own files and its sub-agents' deliveries; rows `row.dense`: type badge, name with an ellipsis, for a sub-agent's file "来自 <sub-agent>" / "from <sub-agent>" in `faint` (at most 40% of the row, with an ellipsis), size in `muted`; then "全部 N 个文件" / "All N files" with `chevron-right` 12 in `muted`); **Background tasks** (rows `row.dense`: `spinner`, name, duration `muted`, a dense stop icon button `square` 12 named "停止 <name>" / "Stop <name>"; then "已完成 N 项" / "N completed" with a chevron).
+- Built-in sections, in order: **Context** (the usage ratio as the value; a meter `space.1` high, `line` track, `ink` fill, radius `sm`; "<model> · <sandbox status>" and "连接器：…" / "Connectors: …" in `small` `muted`; the last run's line "上次运行 · <model> · <duration> · <tokens>" / "Last run · …" in `small` `muted` (`context-last-run`, once a run ended; cost joins it only when the log carries one); once the conversation has sub-agents, a last `small` `muted` line with its tokens including theirs, worded by the page); extension sections (`place: "section"`, in contribution order, rendered `dense`); **Files** (the count as the value, the conversation's own files and its sub-agents' deliveries; rows `row.dense`: type badge, name with an ellipsis, for a sub-agent's file "来自 <sub-agent>" / "from <sub-agent>" in `faint` (at most 40% of the row, with an ellipsis), size in `muted`; then "全部 N 个文件" / "All N files" with `chevron-right` 12 in `muted`); **Background tasks** (rows `row.dense`: `spinner`, name, duration `muted`, a dense stop icon button `square` 12 named "停止 <name>" / "Stop <name>"; then "已完成 N 项" / "N completed" with a chevron).
 - A failing extension section shows the load-failure line in that section only.
 
 <!-- states: property-section -->
@@ -1616,6 +1618,35 @@ States: `image`, `text`, `markdown`, `csv`, `none`, `failed`
 | no-preview | none | padding-left | space.3 |
 | load-failed-title | failed | color | color.fail |
 | no-preview | failed | background-color | color.raised |
+
+#### 6.16.23 Run row
+
+`RunRow({ status, parts, statusText?, defaultOpen?, error?, facts?, onRetry?, retryLabel?, links? })` closes every run that ended (§5.4): what ran, how long, what it cost, and how it ended, without colour unless it failed.
+
+- **Line**: a tool line (§6.16, `row.dense` high, mono `small` `muted`, gap `space.2`): "运行" / "Run" and the `parts` the page fills (the model, the duration such as `3.7s`, the tokens such as `1,234 tokens`; unknown ones are left out) joined by " · " with an ellipsis, then the **status**: the mark (12) and the status word, `space.1` apart: `ok` a `check` in `ok` and "完成" / "Done" in `muted` (the one coloured mark of a quiet row, an exception to §2.4's uncoloured success: a run is a unit a person checks for its outcome); `failed` a `circle-x` and "失败" / "Failed" (or the page's words such as "失败 · 已重试") both in `fail`; `stopped` a `ban` and the page's words "已停止 · <who> <time>" in `muted`. Then a `chevron-right` / `chevron-down` 12 when there is a detail.
+- **Disclosure**: with a detail the line is a `button` with `aria-expanded` and `aria-controls`; the detail is a `region` named "运行详情" / "Run details". A failed row starts open (`defaultOpen` overrides), the others closed. Without any detail the line is plain text.
+- **Detail**: `space.1` below the line, `space.2` between its parts, under a 1px `line` guide on the left, indented `space.3` (the thinking body's guide): the failure as an `ErrorDetail` (§6.24: the localized sentence, the raw text behind its toggle); `facts`, plain mono `small` `muted` lines (the token split, the start time); then the actions, a row `space.2` apart of `dense` buttons: Retry ("重试" / "Retry", default) and the `links` as `LinkButton`s (default): "查看轨迹" / "View trajectory", "去配置模型服务" / "Configure model services". The page decides which actions a role gets; the row never draws one the reader cannot use.
+
+<!-- states: run-row -->
+States: `ok`, `ok-open`, `failed`, `stopped`
+
+<!-- size-table: run-row -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| run-row | ok | height | row.dense |
+| run-row | ok | font-size | type.small |
+| run-row | ok | color | color.muted |
+| run-mark | ok | color | color.ok |
+| run-status | ok | color | color.muted |
+| run-detail | ok-open | padding-left | space.3 |
+| run-detail | ok-open | border-left-color | color.line |
+| run-detail | ok-open | row-gap | space.2 |
+| run-status | failed | color | color.fail |
+| run-mark | failed | color | color.fail |
+| run-detail | failed | padding-left | space.3 |
+| error-detail-summary | failed | color | color.fail |
+| run-status | stopped | color | color.muted |
+| run-mark | stopped | color | color.muted |
 
 ---
 

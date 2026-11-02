@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Run row · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Run row</h1>
+<p>The quiet line that closes a run: model, duration, tokens and its status mark; a failed run opens on its error and actions (spec §6.16.23).</p>
+<div class="r-blocks">
+<section data-ref-block="run-row-ok" style="width:752px" data-pad>
+  <div class="r-chatcol"><div class="r-run-row"><button class="r-tline r-run-line" data-part="run-row" aria-expanded="false"><span class="r-tlabel">运行 · deepseek-flash · 3.7s · 1,234 tokens</span><span class="r-run-status" data-part="run-status" data-status="ok"><span class="r-run-mark" data-part="run-mark"><i data-icon="check" data-size="12"></i></span>完成</span><i data-icon="chevron-right" data-size="12"></i></button></div></div>
+</section>
+<section data-ref-block="run-row-ok-open" style="width:752px" data-pad>
+  <div class="r-chatcol"><div class="r-run-row"><button class="r-tline r-run-line" data-part="run-row" aria-expanded="true"><span class="r-tlabel">运行 · deepseek-flash · 3.7s · 1,234 tokens</span><span class="r-run-status" data-part="run-status" data-status="ok"><span class="r-run-mark" data-part="run-mark"><i data-icon="check" data-size="12"></i></span>完成</span><i data-icon="chevron-down" data-size="12"></i></button><section class="r-run-detail" data-part="run-detail" aria-label="运行详情"><div class="r-run-fact">输入 1,000 · 输出 200 · 缓存读 34 · 缓存写 0</div><div class="r-run-actions"><a class="r-btn" data-variant="default" data-step="dense" href="#">查看轨迹</a></div></section></div></div>
+</section>
+<section data-ref-block="run-row-failed" style="width:752px" data-pad>
+  <div class="r-chatcol"><div class="r-run-row"><button class="r-tline r-run-line" data-part="run-row" aria-expanded="true"><span class="r-tlabel">运行 · deepseek-flash · 3.7s</span><span class="r-run-status" data-part="run-status" data-status="failed"><span class="r-run-mark" data-part="run-mark"><i data-icon="circle-x" data-size="12"></i></span>失败</span><i data-icon="chevron-down" data-size="12"></i></button><section class="r-run-detail" data-part="run-detail" aria-label="运行详情"><div class="r-error-detail" data-part="error-detail"><span class="r-error-detail-summary" data-part="error-detail-summary"><span class="r-error-detail-icon"><i data-icon="circle-x" data-size="14"></i></span>模型供应商认证失败。</span><button class="r-error-detail-toggle" data-part="error-detail-toggle" aria-expanded="false">原始错误<span class="r-error-detail-caret"><i data-icon="chevron-right" data-size="12"></i></span></button></div><div class="r-run-actions"><button class="r-btn" data-variant="default" data-step="dense">重试</button><a class="r-btn" data-variant="default" data-step="dense" href="#">去配置模型服务</a><a class="r-btn" data-variant="default" data-step="dense" href="#">查看轨迹</a></div></section></div></div>
+</section>
+<section data-ref-block="run-row-stopped" style="width:752px" data-pad>
+  <div class="r-chatcol"><div class="r-run-row"><button class="r-tline r-run-line" data-part="run-row" aria-expanded="false"><span class="r-tlabel">运行 · deepseek-flash · 3.7s · 1,234 tokens</span><span class="r-run-status" data-part="run-status" data-status="stopped"><span class="r-run-mark" data-part="run-mark"><i data-icon="ban" data-size="12"></i></span>已停止 · 你 14:03</span><i data-icon="chevron-right" data-size="12"></i></button></div></div>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>
