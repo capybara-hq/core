@@ -127,6 +127,9 @@ export default async function AgentsPage() {
   `router.push` + `router.refresh()`: the old page stays until the new document arrives, so no
   frame pairs one org's shell with another's page. The control stays pending until the unload.
 - **No `loading.tsx`** (`web-ssr-loading-file`) and no `"use client"` page (`web-ssr-client-page`).
+- **A server page imports only the default export and types from `./view`**
+  (`web-ssr-view-value-import`): any other value of a `"use client"` module is a client reference on
+  the server (a page size becomes a function, `limit=NaN`); put shared constants in a `lib/` module.
 - **Exceptions** (client-side loads after the first paint), each marked `// ssr-exempt: <reason>` on
   the line or the line above (`web-ssr-first-paint`; an empty reason fails): live updates (SSE
   after the snapshot's last seq, polling with `updatedSince`, the UI stream) and user-triggered

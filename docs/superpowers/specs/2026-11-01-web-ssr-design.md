@@ -447,6 +447,7 @@ Every route in the inventory moves to the pattern. Batches follow the plan's tas
 | `web-ssr-client-page` | a `page.tsx` under `(app)` or `(auth)` with `"use client"` (exceptions listed with reasons; none planned) |
 | `web-ssr-first-paint` | in a `view.tsx`: a `useLoad(` call without `initial`, or a `useEffect` that calls a `lib/*` loader, unless the line carries `// ssr-exempt: <reason>` |
 | `web-ssr-location` | `window.location.search` / `.pathname` read during render or in a `useState` initializer in `apps/web/src/app` (use `searchParams` / `usePathname`) |
+| `web-ssr-view-value-import` (added 2026-11-03) | a server `page.tsx` importing or re-exporting anything from `./view` other than its default export and types |
 | `web-ui-template` (changed) | a server `page.tsx` that renders a view must import it from `./view`, and that view must use a page template |
 
 These are cheap text scans of `apps/web/src`, so they run in full on every PR as part of

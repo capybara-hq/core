@@ -406,6 +406,7 @@ const SSR_RULES = {
   client: "web-ssr-client-page",
   firstPaint: "web-ssr-first-paint",
   location: "web-ssr-location",
+  viewValue: "web-ssr-view-value-import",
   stale: "web-ssr-stale-pending",
 } as const;
 const SSR_EXEMPT = /\/\/\s*ssr-exempt:(.*)$/;
@@ -544,6 +545,35 @@ function hasInitial(call: Node): boolean {
   );
 }
 
+/**
+ * Value imports and re-exports from `./view` other than its default export: in a server page they
+ * are client references, never the value itself (audit docs/design/audits/2026-11-03-unslop-full.md
+ * U1). `import type`, inline `type` specifiers, the default import and `export { default }` pass.
+ */
+function viewValueImports(p: ParsedFile): Node[] {
+  const hits: Node[] = [];
+  const fromView = (n: Node) =>
+    n.source != null && /^\.\/view(?:\.[jt]sx?)?$/.test(String((n.source as Node).value));
+  for (const n of (p.program.body as Node[] | undefined) ?? []) {
+    if (!fromView(n)) continue;
+    if (n.type === "ImportDeclaration") {
+      if (n.importKind === "type") continue;
+      const bad = (n.specifiers as Node[]).some(
+        (sp) => sp.type !== "ImportDefaultSpecifier" && sp.importKind !== "type",
+      );
+      if (bad) hits.push(n);
+    } else if (n.type === "ExportNamedDeclaration" || n.type === "ExportAllDeclaration") {
+      if (n.exportKind === "type") continue;
+      const specs = (n.specifiers as Node[] | undefined) ?? [];
+      const value = (sp: Node) =>
+        sp.exportKind !== "type" &&
+        String((sp.local as Node).name ?? (sp.local as Node).value) !== "default";
+      if (n.type === "ExportAllDeclaration" || specs.some(value)) hits.push(n);
+    }
+  }
+  return hits;
+}
+
 function ssrFindings(file: string, p: ParsedFile, segs: string[]): Finding[] {
   if (segs[0] !== "app") return [];
   const out: Finding[] = [];
@@ -587,6 +617,14 @@ function ssrFindings(file: string, p: ParsedFile, segs: string[]): Finding[] {
       message:
         'a page.tsx is a server component (gate and reads); move the template and interaction into view.tsx with "use client" and pass the data as `initial` props',
     });
+
+  if (/^page\.[jt]sx?$/.test(base) && !isUseClient(p))
+    for (const at of viewValueImports(p))
+      flag(
+        SSR_RULES.viewValue,
+        at,
+        'a server page.tsx imports only the default export and types from its "use client" ./view: any other value is a client reference on the server (a number becomes a function); move the value into a lib module both import',
+      );
 
   if (isUseClient(p)) {
     const loaders = libLoaders(p);

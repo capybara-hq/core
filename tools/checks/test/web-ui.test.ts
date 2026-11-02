@@ -161,6 +161,12 @@ describe("checkWebUi", () => {
         ["web-ssr-location", "view.tsx", 9],
         ["web-ssr-location", "view.tsx", 10],
       ]));
+    it("web-ssr-view-value-import flags value imports from ./view in a server page", () =>
+      expect(at("ssr-view-value-import")).toEqual([
+        ["web-ssr-view-value-import", "page.tsx", 3],
+        ["web-ssr-view-value-import", "page.tsx", 4],
+        ["web-ssr-view-value-import", "page.tsx", 5],
+      ]));
     it("a server page rendering ./view passes web-ui-template when the view has a template", () =>
       expect(run("ssr-template-view")).toEqual([]));
     it("a server page whose ./view has no template fails web-ui-template", () =>
