@@ -17,8 +17,8 @@ const noop = () => {};
 const stay = () => "/dev/ui/templates/setup";
 
 /**
- * The setup home (web-SSR spec §4): its own page head, the checklist card (no title, the count at
- * the right; one thing at the right of each step) and the later items as object rows.
+ * The setup home (web-SSR spec §4): its own page head, the checklist card (no head: the count is the
+ * page head's; one thing at the right of each step) and the later items as object rows.
  */
 export function SetupHomeBody() {
   return (
@@ -26,10 +26,11 @@ export function SetupHomeBody() {
       header={{
         path: [{ label: ORG_SWITCHER_FIXTURE.slug }, { label: "开始之前" }],
         title: "开始之前",
+        count: "已完成 1 / 2",
         description: "还差几步才能开始对话。",
       }}
     >
-      <Card actions={<Text tone="muted">已完成 1 / 2</Text>}>
+      <Card>
         <StepList
           inset="card"
           steps={[

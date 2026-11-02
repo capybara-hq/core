@@ -65,8 +65,11 @@ describe("setup layout scope", () => {
     // the count is over the required steps (no "organization created" item); the checklist card
     // has no title of its own (the page title already says 开始之前)
     expect(screen.getByText(zh.home.setup.progress.replace("{done}", "0").replace("{total}", "2")));
-    expect(within(screen.getByRole("main")).queryByText(zh.home.setup.progress)).toBeNull();
-    expect(document.querySelector(".cb-card-title")?.textContent ?? "").toBe("");
+    // the count is the page head's (beside the h1); the checklist card has no header band
+    expect(
+      document.querySelector('[data-template="OverviewPage"] .cb-pageheader-count')?.textContent,
+    ).toBe(zh.home.setup.progress.replace("{done}", "0").replace("{total}", "2"));
+    expect(document.querySelector('[data-template="OverviewPage"] .cb-card-head')).toBeNull();
     // the account menu holds sign-out
     await userEvent.setup().click(screen.getByRole("button", { name: "账户: Grant" }));
     expect(await screen.findByRole("menuitem", { name: zh.common.logout })).toBeTruthy();

@@ -143,7 +143,8 @@ const LATER_ICON: Record<string, IconName> = {
 /**
  * The setup home (`/`, `/chat` while not ready): the same steps as the setup sidebar
  * ({@link useSetupSteps}: ids, labels, order, states). The required ones in the checklist card
- * (no title of its own, only "已完成 n / 2"), each with a description and one thing at the right:
+ * (no head: "已完成 n / 2" is the page head's count, drawn by the app frame), each with a
+ * description and one thing at the right:
  * the action this viewer may take, or why it waits; then "可以稍后再做" with the optional ones as
  * object rows (icon, label, one sentence). A viewer with nothing to do now is told why
  * (role-specific), with a refresh that re-reads readiness.
@@ -200,7 +201,6 @@ export function SetupHome({
       ...(action === undefined ? {} : { action }),
     };
   });
-  const done = required.filter((s) => s.state === "done").length;
   // Nothing this viewer can do now: an org admin waits for a deployment admin's model, anyone else
   // for an org admin.
   const blocked = required.some((s) => s.state === "todo")
@@ -210,11 +210,7 @@ export function SetupHome({
       : "admin";
   return (
     <Stack gap={16}>
-      <Card
-        actions={
-          <Text tone="muted">{t("home.setup.progress", { done, total: required.length })}</Text>
-        }
-      >
+      <Card>
         <StepList steps={steps} inset="card" />
       </Card>
       {blocked === null ? null : (

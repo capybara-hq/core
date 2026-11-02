@@ -355,6 +355,11 @@ export function AppFrame({
                 header={{
                   path: [{ label: currentOrg?.slug ?? "~" }, { label: t("chat.setup.title") }],
                   title: t("chat.setup.title"),
+                  // the checklist's progress sits beside the title (no header band on the card)
+                  count: t("home.setup.progress", {
+                    done: steps.filter((s) => !s.optional && s.state === "done").length,
+                    total: steps.filter((s) => !s.optional).length,
+                  }),
                   description: t("chat.setup.description"),
                 }}
               >
