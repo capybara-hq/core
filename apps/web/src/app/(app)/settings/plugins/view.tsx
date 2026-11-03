@@ -73,8 +73,9 @@ function Apps({ orgId }: { orgId: string }) {
         }}
         nav={nav}
         activeNav="plugins"
-        // The install cards (the template's default count): a status line and the uninstall button.
-        loading={{ cards: { shape: { lines: 1, actions: 1 } } }}
+        // The install cards (the template's default count): a status line, the components list
+        // (its label and two components, the typical count) and the uninstall button.
+        loading={{ cards: { shape: { lines: 1, list: 2, actions: 1 } } }}
       />
     );
   }

@@ -223,6 +223,20 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       expect(document.querySelectorAll('[data-box="block"][style*="32px"]')).toHaveLength(
         shapes.switches,
       );
+      // extensions: each group's hint line and permission cards; plugins: each card's components
+      expect(document.querySelectorAll('[data-part="loading-group-card"]')).toHaveLength(
+        shapes.switches * 2,
+      );
+      expect(
+        document.querySelectorAll('.cb-form-section-fields > [data-size="prose"]'),
+      ).toHaveLength(shapes.switches);
+      if (path === "/settings/plugins") {
+        for (const card of document.querySelectorAll('[data-part="loading-shaped-card"]')) {
+          expect(
+            card.querySelector(".cb-card-body > .cb-stack")?.lastElementChild?.children,
+          ).toHaveLength(3);
+        }
+      }
       await release();
       await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
     },

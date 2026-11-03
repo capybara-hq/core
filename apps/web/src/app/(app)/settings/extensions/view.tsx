@@ -62,8 +62,18 @@ export default function ExtensionsView() {
   return <Plugins orgId={ws.orgId} />;
 }
 
-/** The extension groups while they load: two, each its enable switch and state word. */
-const LOADING_EXTENSIONS = [0, 1].map(() => ({ fields: [{ control: "switch" as const }] }));
+/**
+ * The extension groups while they load: two, each its enable switch and state word, the hint line
+ * a required bootstrap plugin carries (every org has them) and its permissions (the label and the
+ * template's default count of permission cards). A config form depends on the extension.
+ */
+const LOADING_EXTENSIONS = [0, 1].map(() => ({
+  fields: [
+    { control: "switch" as const },
+    { control: "text" as const },
+    { control: "card-group" as const },
+  ],
+}));
 
 function Plugins({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
@@ -86,7 +96,7 @@ function Plugins({ orgId }: { orgId: string }) {
         header={header}
         nav={nav}
         activeNav="extensions"
-        // Two extension groups (titles come with the data), each with its enable switch row.
+        // Two extension groups (titles come with the data).
         loading={{ sections: LOADING_EXTENSIONS }}
       />
     );
