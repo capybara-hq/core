@@ -19,8 +19,9 @@ import {
   Textarea,
   useToast,
 } from "@capybara-hq/design";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import {
   buildCredential,
   buildOAuthClient,
@@ -29,8 +30,9 @@ import {
   EMPTY_OAUTH_CLIENT,
   OAuthClientFields,
 } from "../../../../components/ConnectorForm";
+import { ErrorFrame } from "../../../../components/ErrorFrame";
+import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
-import { useSession } from "../../../../components/shell/session";
 import { useRouter } from "../../../../i18n/navigation";
 import {
   type ConnectorDetail,
@@ -42,53 +44,103 @@ import {
   setOrgCredential,
   type ToolDefinition,
   type ToolPolicy,
+  type UpdateConnectorInput,
   updateConnector,
 } from "../../../../lib/connectors";
+import { connectorQuery } from "../../../../lib/query/conversation";
+import { useAppMutation } from "../../../../lib/query/define";
+import { keys } from "../../../../lib/query/keys";
+import { usePageQuery } from "../../../../lib/query/page-query";
+import { useWorkspace } from "../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../lib/use-error-message";
-import { useServerState } from "../../../../lib/use-server-state";
+import NotFound from "../../not-found";
 
 const TABS = ["tools", "review", "credentials", "settings"] as const;
 type Tab = (typeof TABS)[number];
 const POLICIES = ["allow", "ask", "deny"] as const satisfies readonly ToolPolicy[];
 
+/** Saves a change to the connector; resolves with the connector the kernel answered. */
+type Update = (input: UpdateConnectorInput) => Promise<ConnectorDetail>;
+
 /**
  * `/connectors/[connectorId]`：连接器详情（DetailPage）：工具（启停、默认策略）、复核（定义变化的新旧对比）、
- * 凭据（含 OAuth 客户端轮换）、设置（改名、启停、删除）。Read on the server (`page.tsx`): a change
- * the kernel answers with the connector replaces it here; a credential change re-renders the page
- * there.
+ * 凭据（含 OAuth 客户端轮换）、设置（改名、启停、删除）。From the query cache (the layout prefetched it
+ * on a first load); a missing connector is the not-found state. A change the kernel answers with
+ * the connector replaces the cached one; a credential change reads it again.
  */
-export default function ConnectorView({
+export default function ConnectorView({ connectorId }: { connectorId: string }) {
+  const ws = useWorkspace();
+  if (ws.kind === "pending" || ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  return (
+    <Connector
+      key={connectorId}
+      orgId={ws.orgId}
+      connectorId={connectorId}
+      manage={canManageConnectors(ws.me)}
+    />
+  );
+}
+
+function Connector({
   orgId,
-  initial,
+  connectorId,
+  manage,
 }: {
   orgId: string;
-  initial: ConnectorDetail;
+  connectorId: string;
+  manage: boolean;
 }) {
   const scope = usePagePath("org");
   const t = useTranslations("connectors");
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const router = useRouter();
-  const [, startTransition] = useTransition();
-  const { me } = useSession();
-  const manage = canManageConnectors(me);
+  const qc = useQueryClient();
   const [tab, setTab] = useState<Tab>("tools");
-  const [app, set] = useServerState(initial);
-  const connectorId = app.id;
-  const [refreshing, setRefreshing] = useState(false);
+  const read = usePageQuery(connectorQuery(orgId, connectorId));
+  const key = connectorQuery(orgId, connectorId).queryKey;
+  const saved = (next: ConnectorDetail) => qc.setQueryData(key, next);
+  // The kernel answers a change with the connector: it replaces the cached one; the list (names,
+  // status) is read again when shown.
+  const save = useAppMutation({
+    fn: (input: UpdateConnectorInput) => updateConnector(orgId, connectorId, input),
+    invalidates: () => [keys.org(orgId).connectors()],
+    onSuccess: (r) => saved(r.connector),
+  });
+  const update: Update = (input) => save.mutateAsync(input).then((r) => r.connector);
+  const refresh = useAppMutation({
+    fn: () => refreshConnector(orgId, connectorId),
+    invalidates: () => [],
+    onSuccess: (r) => saved(r.connector),
+  });
 
   async function onRefresh() {
-    setRefreshing(true);
     try {
-      const r = await refreshConnector(orgId, connectorId);
-      set(r.connector);
+      await refresh.mutateAsync(undefined);
       toast.success(t("detail.refreshed"));
     } catch (e) {
       toast.error(errorMessage(e));
-    } finally {
-      setRefreshing(false);
     }
   }
+
+  if (read.kind === "notFound") return <NotFound />;
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
+  if (read.kind === "loading") {
+    return (
+      <DetailPage
+        header={{ path: [...scope, { label: "connectors", href: "/connectors" }], title: "" }}
+        tabs={{
+          label: t("detail.tabsLabel"),
+          items: TABS.map((id) => ({ id, label: t(`detail.tabs.${id}`) })),
+          value: tab,
+          onChange: (id) => setTab(id as Tab),
+        }}
+        inspectorTitle={t("detail.inspectorTitle")}
+        loading={{ inspector: true }}
+      />
+    );
+  }
+  const app = read.data;
 
   return (
     <DetailPage
@@ -119,23 +171,17 @@ export default function ConnectorView({
     >
       {tab === "tools" ? (
         <ToolsTab
-          orgId={orgId}
           app={app}
           manage={manage}
-          onSaved={set}
-          refresh={{ onRefresh: () => void onRefresh(), refreshing }}
+          update={update}
+          refresh={{ onRefresh: () => void onRefresh(), refreshing: refresh.isPending }}
         />
       ) : tab === "review" ? (
-        <ReviewTab orgId={orgId} app={app} manage={manage} onSaved={set} />
+        <ReviewTab orgId={orgId} app={app} manage={manage} onSaved={saved} />
       ) : tab === "credentials" ? (
-        <CredentialsTab
-          orgId={orgId}
-          app={app}
-          manage={manage}
-          onSaved={() => startTransition(() => router.refresh())}
-        />
+        <CredentialsTab orgId={orgId} app={app} manage={manage} />
       ) : (
-        <SettingsTab orgId={orgId} app={app} manage={manage} onSaved={set} />
+        <SettingsTab orgId={orgId} app={app} manage={manage} update={update} />
       )}
     </DetailPage>
   );
@@ -167,16 +213,14 @@ function ConnectorInspector({ app }: { app: ConnectorDetail }) {
 
 /** 工具页签；「刷新工具」放在表格工具栏（PageHeader 的按钮没有加载态），刷新期间为加载中且不可再点。 */
 function ToolsTab({
-  orgId,
   app,
   manage,
-  onSaved,
+  update,
   refresh,
 }: {
-  orgId: string;
   app: ConnectorDetail;
   manage: boolean;
-  onSaved(app: ConnectorDetail): void;
+  update: Update;
   refresh: { onRefresh(): void; refreshing: boolean };
 }) {
   const t = useTranslations("connectors");
@@ -190,10 +234,7 @@ function ToolsTab({
   ) {
     setBusy(tool.name);
     try {
-      const { connector: next } = await updateConnector(orgId, app.id, {
-        tools: { [tool.name]: change },
-      });
-      onSaved(next);
+      await update({ tools: { [tool.name]: change } });
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -295,12 +336,10 @@ function CredentialsTab({
   orgId,
   app,
   manage,
-  onSaved,
 }: {
   orgId: string;
   app: ConnectorDetail;
   manage: boolean;
-  onSaved(): void;
 }) {
   const t = useTranslations("connectors");
   const router = useRouter();
@@ -308,6 +347,12 @@ function CredentialsTab({
   const errorMessage = useErrorMessage();
   const [values, setValues] = useState(EMPTY_CREDENTIAL);
   const [pending, setPending] = useState(false);
+  // A credential change is not answered with the connector: its status is read again.
+  const setCredential = useAppMutation({
+    fn: (credential: Parameters<typeof setOrgCredential>[2]) =>
+      setOrgCredential(orgId, app.id, credential),
+    invalidates: () => [keys.org(orgId).connector(app.id)],
+  });
   const status = (
     <StatusMark
       status={app.credential.status === "connected" ? "success" : "waiting"}
@@ -347,7 +392,7 @@ function CredentialsTab({
           <Text variant="prose" tone="muted">
             {t("credential.oauthOrgHint")}
           </Text>
-          {manage && <RotateClient orgId={orgId} app={app} onSaved={onSaved} />}
+          {manage && <RotateClient orgId={orgId} app={app} />}
         </Stack>
       </Card>
     );
@@ -360,7 +405,7 @@ function CredentialsTab({
         {manage && (
           <Card title={t("credential.clientTitle")}>
             {auth.client === "manual" ? (
-              <RotateClient orgId={orgId} app={app} onSaved={onSaved} />
+              <RotateClient orgId={orgId} app={app} />
             ) : (
               <Text tone="muted">{t("credential.clientDcr")}</Text>
             )}
@@ -379,10 +424,9 @@ function CredentialsTab({
     if (credential === undefined) return;
     setPending(true);
     try {
-      await setOrgCredential(orgId, app.id, credential);
+      await setCredential.mutateAsync(credential);
       setValues(EMPTY_CREDENTIAL);
       toast.success(t("credential.saved"));
-      onSaved();
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -418,12 +462,12 @@ function SettingsTab({
   orgId,
   app,
   manage,
-  onSaved,
+  update,
 }: {
   orgId: string;
   app: ConnectorDetail;
   manage: boolean;
-  onSaved(app: ConnectorDetail): void;
+  update: Update;
 }) {
   const t = useTranslations("connectors");
   const router = useRouter();
@@ -433,17 +477,18 @@ function SettingsTab({
   const [active, setActive] = useState(app.status === "active");
   const [pending, setPending] = useState(false);
   const [confirm, setConfirm] = useState(false);
+  // A delete invalidates the org's connectors (the list this page goes back to).
+  const remove = useAppMutation({
+    fn: () => deleteConnector(orgId, app.id),
+    invalidates: () => [keys.org(orgId).connectors()],
+  });
   const dirty = name.trim() !== app.name || active !== (app.status === "active");
 
   async function save() {
     if (name.trim() === "") return;
     setPending(true);
     try {
-      const { connector: next } = await updateConnector(orgId, app.id, {
-        name: name.trim(),
-        status: active ? "active" : "disabled",
-      });
-      onSaved(next);
+      await update({ name: name.trim(), status: active ? "active" : "disabled" });
       toast.success(t("settings.saved"));
     } catch (e) {
       toast.error(errorMessage(e));
@@ -510,7 +555,7 @@ function SettingsTab({
         confirmLabel={t("settings.delete")}
         onConfirm={async () => {
           try {
-            await deleteConnector(orgId, app.id);
+            await remove.mutateAsync(undefined);
           } catch (e) {
             // 对话框保持打开并显示原因（翻译后的文案）
             throw new Error(errorMessage(e));
@@ -549,20 +594,16 @@ const reviewCount = (app: ConnectorDetail) =>
  * OAuth 客户端轮换（Ruling A18，`PUT credentials/org`）：客户端凭据流在内核先用新客户端取 token 验证；
  * 手填客户端的授权码流不验证，填错会让所有成员重新连接（提示）。
  */
-function RotateClient({
-  orgId,
-  app,
-  onSaved,
-}: {
-  orgId: string;
-  app: ConnectorDetail;
-  onSaved(): void;
-}) {
+function RotateClient({ orgId, app }: { orgId: string; app: ConnectorDetail }) {
   const t = useTranslations("connectors");
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const [values, setValues] = useState(EMPTY_OAUTH_CLIENT);
   const [pending, setPending] = useState(false);
+  const setClient = useAppMutation({
+    fn: (client: Parameters<typeof setOrgCredential>[2]) => setOrgCredential(orgId, app.id, client),
+    invalidates: () => [keys.org(orgId).connector(app.id)],
+  });
   const clientFlow = app.auth.type === "oauth_client";
   const value = buildOAuthClient(values);
   const ready = value !== undefined && (!clientFlow || values.clientSecret !== "");
@@ -571,10 +612,9 @@ function RotateClient({
     if (!ready || value === undefined) return;
     setPending(true);
     try {
-      await setOrgCredential(orgId, app.id, value);
+      await setClient.mutateAsync(value);
       setValues(EMPTY_OAUTH_CLIENT);
       toast.success(t("credential.rotated"));
-      onSaved();
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -664,13 +704,19 @@ function ReviewTab({
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const [busy, setBusy] = useState<string>();
+  // The kernel answers a decision with the connector (the caller sets it in the cache).
+  const review = useAppMutation({
+    fn: (v: { tool: string; action: "approve" | "reject" }) =>
+      reviewTool(orgId, app.id, v.tool, v.action),
+    invalidates: () => [],
+  });
   const pendingTools = app.tools.filter(reviewable);
   const missing = app.tools.filter((x) => x.missing === true);
 
   async function decide(tool: ConnectorTool, action: "approve" | "reject") {
     setBusy(tool.name);
     try {
-      const { connector: next } = await reviewTool(orgId, app.id, tool.name, action);
+      const { connector: next } = await review.mutateAsync({ tool: tool.name, action });
       onSaved(next);
       toast.success(
         t(action === "approve" ? "review.approved" : "review.rejected", { tool: tool.key }),

@@ -31,8 +31,9 @@ type RenderOpts = Parameters<typeof renderRoute>[2];
 const renderList = (opts: RenderOpts = {}) =>
   renderRouteWithCache("/connectors", lastStubRoutes(), opts);
 const detailPage = () => ConnectorDetailPage({ params: Promise.resolve({ connectorId: "app1" }) });
-/** `/connectors/app1` read on the server from the latest `stubApi` routes. */
-const renderDetail = (opts: RenderOpts = {}) => renderRoute(detailPage, lastStubRoutes(), opts);
+/** `/connectors/app1` as a first load: the layout prefetches from the latest `stubApi` routes. */
+const renderDetail = (opts: RenderOpts = {}) =>
+  renderRouteWithCache("/connectors/app1", lastStubRoutes(), opts);
 
 const msgs = { zh, en } as const;
 const LOCALES = ["zh", "en"] as const;
@@ -178,7 +179,7 @@ describe("连接器详情（DetailPage）", () => {
           }),
         "PUT /api/v1/orgs/o1/connectors/app1/credentials/org": () => noContent(),
       });
-      const { calls: server } = await renderDetail({ locale });
+      await renderDetail({ locale });
       const user = userEvent.setup();
       await user.click(
         await screen.findByRole("tab", { name: m.connectors.detail.tabs.credentials }),
@@ -190,10 +191,11 @@ describe("连接器详情（DetailPage）", () => {
       await user.click(screen.getByRole("button", { name: m.connectors.credential.save }));
       const put = calls.find((c) => c.method === "PUT");
       expect(bodyOf(put)).toEqual({ token: "tok" });
-      // the page is read again on the server, not in the browser
-      expect(calls.filter((c) => c.method === "GET")).toHaveLength(0);
+      // saving a credential invalidates the connector: its status is read again
       await vi.waitFor(() =>
-        expect(server.filter((c) => c.url === "/api/v1/orgs/o1/connectors/app1")).toHaveLength(2),
+        expect(
+          calls.filter((c) => c.method === "GET" && c.url === "/api/v1/orgs/o1/connectors/app1"),
+        ).toHaveLength(1),
       );
       // 保存成功后清空输入框（凭据值不留在页面上）
       await vi.waitFor(() =>
@@ -813,31 +815,109 @@ describe("the connectors pages render on the server (web-SSR spec §6)", () => {
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
   });
 
-  it("/connectors/<id>: the connector is the first paint, guests included", async () => {
+  it("/connectors/<id>: a first render from the hydrated cache makes no browser read (guests too)", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(detailPage, routes, { me: GUEST });
+    await renderRouteWithCache("/connectors/app1", routes, { me: GUEST });
     expect(screen.getByRole("heading", { level: 1, name: "Fixture" })).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/connectors/<id>: a connector the kernel does not find is the not-found page", async () => {
-    await expect(
-      renderRoute(detailPage, {
-        "GET /api/v1/orgs/o1/connectors/app1": () =>
-          json(404, { error: { code: "connector.not_found", message: "x" } }),
-      }),
-    ).rejects.toThrow("NOT_FOUND");
+  it("/connectors/<id>: an empty cache shows the template's loading state, then the data", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    await renderRouteEmptyCache("/connectors/app1", {
+      "GET /api/v1/orgs/o1/connectors/app1": async () => {
+        await held;
+        return json(200, { connector: detail() });
+      },
+    });
+    await vi.waitFor(() => {
+      if (document.querySelector('[data-template="DetailPage"]') === null)
+        throw new Error("no page");
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByRole("heading", { level: 1, name: "Fixture" })).toBeNull();
+    await act(async () => release());
+    expect(await screen.findByRole("heading", { level: 1, name: "Fixture" })).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it.each([["/connectors/<id>", detailPage]])(
-    "%s: no org renders nothing; setup redirects home",
-    async (_path, page) => {
-      const none = await renderRoute(page, routes, { me: { ...ME, currentOrgId: null } });
-      expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
-      expect(document.body.textContent).toBe("");
-      await expect(renderRoute(page, routes, { readiness: NOT_READY })).rejects.toThrow(
-        "REDIRECT /",
-      );
-    },
-  );
+  it("/connectors/<id>: a connector the kernel does not find is the not-found state in the shell", async () => {
+    expectNoFirstPaintFetch();
+    await renderRouteWithCache("/connectors/app1", {
+      "GET /api/v1/orgs/o1/connectors/app1": () =>
+        json(404, { error: { code: "connector.not_found", message: "x" } }),
+    });
+    expect(screen.getByRole("heading", { level: 1, name: en.notFound.title })).toBeTruthy();
+  });
+
+  it("/connectors/<id>: no org renders nothing; setup goes home", async () => {
+    const none = await renderRouteWithCache("/connectors/app1", routes, {
+      me: { ...ME, currentOrgId: null },
+    });
+    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+    expect(document.body.textContent).toBe("");
+    cleanup();
+    await renderRouteWithCache("/connectors/app1", routes, { readiness: NOT_READY });
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+  });
+});
+
+describe("connector mutations update the cache", () => {
+  const listState = (client: {
+    getQueryState(k: unknown[]): { isInvalidated: boolean } | undefined;
+  }) => client.getQueryState(["org", "o1", "connectors"])?.isInvalidated;
+
+  it("saving the settings sets the cached connector and invalidates connectors", async () => {
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }),
+      "PATCH /api/v1/orgs/o1/connectors/app1": (c) =>
+        json(200, { connector: detail(bodyOf(c) as Record<string, unknown>) }),
+    });
+    const { client } = await renderDetail();
+    // the list is cached (as after a visit to /connectors)
+    client.setQueryData(["org", "o1", "connectors"], { connectors: [summary()] });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: en.connectors.detail.tabs.settings }));
+    const name = screen.getByRole("textbox", {
+      name: new RegExp(`^${en.connectors.form.nameLabel}`),
+    });
+    await user.clear(name);
+    await user.type(name, "Renamed");
+    await user.click(screen.getByRole("button", { name: en.connectors.settings.save }));
+    await vi.waitFor(() =>
+      expect(
+        (client.getQueryData(["org", "o1", "connector", "app1"]) as { name: string }).name,
+      ).toBe("Renamed"),
+    );
+    // the connector comes from the answer: it is not read again
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "PATCH /api/v1/orgs/o1/connectors/app1",
+    ]);
+    expect(listState(client)).toBe(true);
+  });
+
+  it("deleting a connector invalidates connectors", async () => {
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }),
+      "DELETE /api/v1/orgs/o1/connectors/app1": () => noContent(),
+    });
+    const { client } = await renderDetail();
+    client.setQueryData(["org", "o1", "connectors"], { connectors: [summary()] });
+    const s = en.connectors.settings;
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: en.connectors.detail.tabs.settings }));
+    await user.click(screen.getByRole("button", { name: s.delete }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByRole("textbox"), "Fixture");
+    await user.click(within(dialog).getByRole("button", { name: s.delete }));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/connectors"));
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "DELETE /api/v1/orgs/o1/connectors/app1",
+    ]);
+    expect(listState(client)).toBe(true);
+  });
 });

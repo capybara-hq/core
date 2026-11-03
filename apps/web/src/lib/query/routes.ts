@@ -11,6 +11,7 @@ import { authSourcesQuery } from "./auth";
 import { channelQuery, channelSchemaQuery, channelsQuery, orgExtensionsQuery } from "./channels";
 import {
   attachmentLimitsQuery,
+  connectorQuery,
   connectorsQuery,
   contributionsQuery,
   conversationFollowUps,
@@ -223,7 +224,13 @@ export const ROUTES: readonly RouteEntry[] = [
     // Guests read the list too.
     queries: ({ orgId }) => (orgId === null ? [] : [q(connectorsQuery(orgId))]),
   },
-  { pattern: "/connectors/[connectorId]", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/connectors/[connectorId]",
+    queries: ({ orgId, params }) =>
+      orgId === null || params.connectorId === undefined
+        ? []
+        : [q(connectorQuery(orgId, params.connectorId))],
+  },
   { pattern: "/connectors/install", queries: () => [], none: "pending migration" },
   { pattern: "/evals", queries: () => [], none: "pending migration" },
   { pattern: "/evals/[setId]", queries: () => [], none: "pending migration" },
