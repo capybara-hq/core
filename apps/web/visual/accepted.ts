@@ -111,7 +111,6 @@ export const VARIABLE_HEIGHT: string[] = [
   "content",
   "thread",
   "table",
-  "title",
   "form-section",
   "form-section-head",
   "form-card",
@@ -124,3 +123,11 @@ export const VARIABLE_HEIGHT: string[] = [
  * parts).
  */
 export const IGNORED_PARTS: string[] = ["link-pending", "icon", "icon-button"];
+
+/**
+ * Parts whose loaded width follows text or siblings the page does not know yet: a title's text
+ * (the skeleton is a bar of the bar's width), and the header description, which ends where the
+ * loaded action buttons begin (a placeholder button is 72 px, a real one is as wide as its label).
+ * Compared in x, y and height only.
+ */
+export const VARIABLE_WIDTH: string[] = ["title", "page-header-description"];

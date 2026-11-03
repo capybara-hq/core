@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { IGNORED_PARTS, LOADING_TEMPLATES, VARIABLE_HEIGHT } from "./accepted";
+import { IGNORED_PARTS, LOADING_TEMPLATES, VARIABLE_HEIGHT, VARIABLE_WIDTH } from "./accepted";
 import { openReference, THEMES } from "./reference-page";
 
 /**
@@ -63,6 +63,7 @@ for (const theme of THEMES) {
                 ? ["x", "width"]
                 : ["x", "y", "width"]
               : ["x", "y", "width", "height"];
+            if (VARIABLE_WIDTH.includes(part)) props.splice(props.indexOf("width"), 1);
             for (const p of props) {
               if (Math.abs(a[p] - b[p]) > 1) {
                 failures.push(
