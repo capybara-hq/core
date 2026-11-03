@@ -12,7 +12,7 @@ export type Need = Exclude<OrgRole, "guest"> | "enterprise";
 
 /**
  * The one no-access state (web-order spec §9, R2): what the page is, which role it needs and
- * who to ask; never a retry. Drawn by the server gates' `noAccess` result (`workspace()`, `admin()`).
+ * who to ask; never a retry. Drawn by the gates' `noAccess` result (`useWorkspace()`, `useAdmin()`).
  */
 export function NoAccess({ need }: { need: Need }) {
   const t = useTranslations();

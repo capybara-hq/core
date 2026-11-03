@@ -1,6 +1,6 @@
 # Web data through TanStack Query: server render once, then a client cache
 
-Status: draft for review (2026-11-03)
+Status: implemented (2026-11-04)
 Amends: `2026-11-01-web-ssr-design.md` (§1 principles 1–3, §9 checks, decision S1)
 
 ## 0. Why

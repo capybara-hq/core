@@ -2,6 +2,15 @@
 
 Status: implemented (acceptance round 3, user decisions 2026-11-01)
 
+> **Amended by `2026-11-03-web-query-cache-design.md`** (implemented): every read now goes through
+> TanStack Query. Principles 1–3 of §1 (server components fetch, one decision before the first
+> byte, no loading UI for navigation), the checks of §9 (`web-ssr-first-paint` is replaced by the
+> `web-query-*` rules) and decision S1 hold only for a first load (a document request): a client
+> navigation reads from the query cache, and a page with nothing cached draws its template's
+> loading state. Pages read nothing (`page.tsx` passes params to a client view), the layouts
+> prefetch from the route table, and a missing object is the not-found state with HTTP 200. Read
+> that spec for those parts; the rest of this one (frames, gates, session changes, R1–R5) stands.
+
 Related: `docs/superpowers/specs/2026-10-31-web-order-design.md` (the shell, frames, setup layout,
 roles), `docs/design/spec.md` (design system).
 

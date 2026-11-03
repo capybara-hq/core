@@ -323,7 +323,7 @@ function ShellFrame({
     readiness === null || ready ? { kind: "ready" } : { kind: "setup", ...readiness };
   const steps = useSetupSteps(me, readiness ?? NO_ORG_READINESS);
   // A route that is no setup route never gets here while in setup: the layout redirects it on the
-  // server, and `workspace()` does for client navigations.
+  // server, and `useWorkspace()` does for client navigations.
   // While in setup, read readiness again every 30 s, on focus and on every navigation (a step page
   // may have changed it): the shell replaces the setup frame once the org is ready.
   useEffect(() => {

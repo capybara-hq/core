@@ -1,6 +1,6 @@
 ---
 name: writing-web-ui
-description: 'Use when adding or changing UI under apps/web or packages/design: page = page template + design components, server-rendered pages (server page.tsx + client view.tsx, workspace() / admin(), read / optional / section, no first-paint fetch), which template each page uses, the skeletons for ListPage + DataTable and FormPage + FormSection + ActionRow, what check:web-ui forbids (className / style / .css / color literals / low-level UI packages), the change flow for adding a component or template, and how to use /dev/ui and screenshot tests (visual-update).'
+description: 'Use when adding or changing UI under apps/web or packages/design: page = page template + design components, pages on the query cache (thin server page.tsx + client view.tsx, TanStack Query: keys, freshness classes, defineQuery, the route table and its prefetch, usePageQuery, useWorkspace / useAdmin, useAppMutation invalidation, renderRouteWithCache / renderRouteEmptyCache, template loading shapes), which template each page uses, the skeletons for ListPage + DataTable and FormPage + FormSection + ActionRow, what check:web-ui forbids (className / style / .css / color literals / low-level UI packages), the change flow for adding a component or template, and how to use /dev/ui and screenshot tests (visual-update).'
 ---
 
 # Writing UI
@@ -70,7 +70,7 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
 | Create an eval set / start a run | `/evals/new`, `/evals/[setId]/run` | `FormPage` / `WizardPage` |
 | Org-side catalog, item detail, install | `/catalog`, `/catalog/[itemId]`, `/catalog/[itemId]/install` | `ListPage` / `DetailPage` / `WizardPage` |
 
-- Admin console pages start with the server gate `admin()` (`lib/server/session.ts`): for non-enterprise-admins the page returns `<NoAccess need={gate.need} />` (`components/NoAccess`, the `StatusPage` no-access state) and reads nothing from `/api/v1/admin/*` (a UI-level block; the kernel is the final authority). Org pages do the same with `workspace()`. The UI always says "enterprise admin".
+- Admin console views start with the gate `useAdmin()` (`lib/query/workspace.ts`): for non-enterprise-admins the view returns `<NoAccess need={gate.need} />` (`components/NoAccess`, the `StatusPage` no-access state), and the route table prefetches nothing from `/api/v1/admin/*` for them (a UI-level block; the kernel is the final authority). Org views do the same with `useWorkspace()`. The UI always says "enterprise admin".
 - **`SpanWaterfall`**(spec §6.10)takes only plain props (`spans`, `selectedId`, `onSelect`, `labels`, `label`): each span's `kind` (`run` / `step` / `model` / `tool` / `wait`), `startMs` (relative to the earliest span), `durationMs` (null if unknown), `status`, `parentId`; the caller passes them in depth-first order. The page computes time and cost from the data the kernel returns (latency is derived from event times; cost is labeled "estimated").
 - Permission review (install confirmation page, org extension settings, plugin review) shares `components/PermissionReview`; the purpose mapping shares `components/PurposeEditor`. Don't draw a second copy in a page.
 - After the main table, a `ListPage` may carry a subordinate block (an `h2` + one `DataTable`, e.g. invitations on the members page); see spec §5.1.
@@ -86,72 +86,169 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
 
 Submit actions go in the ActionRow (built into `FormPage`, `WizardPage` etc.) and **must not** go in the PageHeader; at most one `variant: "primary"` per view, and at most 5 metrics (`PageHeader` throws in development and tests).
 
-## Server-rendered pages (spec `docs/superpowers/specs/2026-11-01-web-ssr-design.md`)
+## Pages and the query cache (spec `docs/superpowers/specs/2026-11-03-web-query-cache-design.md`)
 
-The server decides the first paint: what a page shows on load (its data, the frame, a not-found
-page, a no-access state, a redirect to sign-in) is decided before any HTML reaches the browser.
+Every network read of the web app goes through TanStack Query (`@tanstack/react-query`). A first
+load (a document request: opening a URL, a reload) is rendered on the server with its data and
+paints complete; later navigations inside the app are client-side and read from the query cache.
+The web-SSR spec (`2026-11-01-web-ssr-design.md`) still holds for the frame, the gates and session
+changes; this spec replaces its "server page reads, view gets `initial`" model.
+
 Every route is two files:
 
 ```
-app/(app)/agents/page.tsx      server: the gate, the reads, render the view
-app/(app)/agents/view.tsx      "use client": the template and the interaction, fed `initial`
+app/(app)/agents/page.tsx      server, thin: reads nothing, passes the route params to the view
+app/(app)/agents/view.tsx      "use client": the gate, the reads (useQuery), the template
 ```
 
 ```tsx
-// page.tsx (no "use client")
-export default async function AgentsPage() {
-  const ws = await workspace();               // admin pages: `await admin()`
-  if (ws.kind === "noOrg") return null;       // the frame draws the org chooser
+// page.tsx (no "use client"; no kernel read: web-query-page-read)
+export default async function AgentPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  return <AgentView id={id} />;
+}
+
+// view.tsx
+"use client";
+export default function AgentsView() {
+  const ws = useWorkspace();                  // admin pages: useAdmin()
+  if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
-  const { agents } = await read(listAgents(ws.orgId));
-  return <AgentsView initial={agents} />;
+  return <Agents orgId={ws.orgId} />;
+}
+
+function Agents({ orgId }: { orgId: string }) {
+  const list = usePageQuery(agentsQuery(orgId));
+  if (list.kind === "notFound") return <NotFound />;           // the segment's not-found.tsx
+  if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
+  if (list.kind === "loading") return <ListPage header={header} variant="objects" loading />;
+  return <ListPage header={header} variant="objects">{/* rows of list.data */}</ListPage>;
 }
 ```
 
-- **Gates** (`lib/server/session.ts`): `workspace({ min?, setup? })` for workspace pages (no current
-  org → `noOrg`; below `min` → `noAccess`, read nothing else; a route without `setup` redirects to
-  `/` while the org is not ready, `setup: "home" | "step"` marks setup routes); `admin()` for
-  `/admin/*` (enterprise admins). Reads go through the same `lib/*` loaders as the browser
-  (`apiFetch` uses the server transport, `lib/server/kernel.ts`, forwarding the cookies).
-- **Wrap every read** (`lib/server/page.ts`):
-  - `read(p)`: required data. A 401 `auth.*` redirects to sign-in and back, a 404 is the page's
-    not-found page (`notFound()`), anything else throws to `error.tsx`.
-  - `optional(p)`: a role-dependent read; a 403 / 404 is `null`.
-  - `section(p)` (ruling R5): a secondary section; a 5xx / 403 / 404 is `null`, which the view
-    draws as that section's own error or empty state. It is never read again after mount.
-  - Never pass an error object to a view (it does not cross to the browser): map a refusal the page
-    shows itself to a plain `{ status, code, message }` (see `admin/catalog/import/page.tsx`).
-- **Params and query** come from the server props (`params`, `searchParams`), never from
-  `window.location` (`web-ssr-location`); query-string tabs and filters are navigations.
-- **In the view**: `useLoad(load, deps, { initial })` starts `ready` and fetches only when `deps`
-  change or on `reload()`; `useServerState(initial)` is local state that resets when the server
-  sends a new `initial`. After a mutation call `router.refresh()` (in a transition) so the server
-  reads again; never re-fetch the first-paint data in an effect.
-- **Session changes are full navigations** (ruling R4): sign-in, setup, an invitation sign-up or
-  accept, an org switch / create / leave / delete, sign-out broadcast to the other tabs
-  (`broadcastSession`) and then `navigateBrowser(...)` (`lib/browser.ts`), never
-  `router.push` + `router.refresh()`: the old page stays until the new document arrives, so no
-  frame pairs one org's shell with another's page. The control stays pending until the unload.
-- **No `loading.tsx`** (`web-ssr-loading-file`) and no `"use client"` page (`web-ssr-client-page`).
-- **A server page imports only the default export and types from `./view`**
-  (`web-ssr-view-value-import`): any other value of a `"use client"` module is a client reference on
-  the server (a page size becomes a function, `limit=NaN`); put shared constants in a `lib/` module.
-- **Exceptions** (client-side loads after the first paint), each marked `// ssr-exempt: <reason>` on
-  the line or the line above (`web-ssr-first-paint`; an empty reason fails): live updates (SSE
-  after the snapshot's last seq, polling with `updatedSince`, the UI stream) and user-triggered
-  loads (a dialog's contents, a wizard step after input, search-as-you-type, "load more" pages, the
-  conversation's right panel, whose open state lives in the URL hash).
-- **Tests** (`apps/web/test/support/server.tsx`): `renderRoute(() => Page(props), routes)` runs the
-  server page against stubbed kernel routes (plus the gate's `sessionRoutes`) and mounts the result;
-  `serverRoutes` / `renderServer` are its two halves; `expectNoFirstPaintFetch()` makes any browser
-  fetch throw (assert the returned calls stay empty). The mocked `router.refresh` re-runs the page.
-- **`SSR_PENDING`** (`tools/checks/src/web-ui.ts`) is the ratchet of pages not migrated yet. It is
-  empty; new pages are never added to it.
+**The query layer** (`apps/web/src/lib/query/`):
+
+- `client.ts`: one `QueryClient` per browser tab, one per server request (`lib/server/query.ts`,
+  React `cache()`). No retry for a 4xx `ApiClientError`, at most one for `network`,
+  `upstream_unavailable` and 5xx; `refetchOnWindowFocus: false`, `refetchOnMount` and
+  `refetchOnReconnect` on; `gcTime` is TanStack's default. A signed-out 401 `auth.*` (after the
+  refresh retry) clears the cache and goes to `/login?returnTo=<path>`.
+- `keys.ts`: the only place keys are built (`web-query-keys`). Every key starts with its scope:
+  `["org", orgId, …]`, `["account", accountId, …]` (`keys.account("self")` only for `me` /
+  `maybeMe`), `["deployment", …]`. Add a builder next to its area's others; a key holds everything
+  the answer depends on (route params, search params, the UI locale), so each filter set is its
+  own entry.
+- `freshness.ts`: each read names a class, never a number (`web-query-freshness`): `mine`
+  (`Infinity`: `/me`, my tokens, identities), `orgConfig` (30 s: agents, models, connectors,
+  skills, members, settings), `live` (30 s: inbox, conversation groups, queue, files, sandbox),
+  `events` (`Infinity`: a conversation's log, which the stream appends to), `deployment` (30 s:
+  the admin console), `unclassified` (0, the default nobody should keep).
+- `define.ts`: `defineQuery({ key, fn, freshness })` is the one way to declare a read, in
+  `lib/query/<area>.ts`, wrapping the existing `lib/<area>.ts` loader (`fn` gets `{ signal }`).
+  The same options object serves the server prefetch and the client hook; `useQuery({ ...q,
+  enabled })` / `select` are fine. Views and components never call a kernel loader outside a
+  `defineQuery` / `useAppMutation` `fn` (`web-query-no-direct-read`); pure helpers and the SSE
+  opener are allowed.
+- `routes.ts`: the route table, one entry per `page.tsx` under `(app)` / `(auth)`
+  (`web-query-route-table`; patterns are string literals): `queries(ctx)` returns what the first
+  paint needs from `ctx` (`params`, `search`, `me`, `orgId`, `locale`), gated like the view (a
+  page a guest may not open reads nothing for a guest); `then(ctx, qc)` prefetches reads that need
+  the first wave's answers (what the loaded agent's connectors name); `none: "<reason>"` for a page
+  that reads nothing. `(app)/layout.tsx` and the `(auth)` layout run `prefetchRoute` for
+  `currentPath()` beside the shell reads and dehydrate the cache (failed reads too, with their
+  kernel code, so the view draws the error or not-found state on the first paint and does not read
+  it again on mount). A client navigation never runs the layout.
+- `page-query.ts`: `usePageQuery(q)` turns a page's main read into `loading` / `ready` (with
+  `refreshing`) / `notFound` (a 404 wins even over cached data: an object deleted elsewhere is
+  not shown) / `error` (`code`, `retry`; a failed background refetch keeps the cached data).
+  Secondary sections are their own `useQuery` with their own section state (`retryOnMountOf`
+  keeps a hydrated error from being read again on mount).
+- `workspace.ts`: `useWorkspace({ min?, setup? })` / `useAdmin()` are the client gates, decided
+  from the cached `/me` and readiness (`pending` until they answer; a route without `setup` goes to
+  `/` while the org is not ready). `resetSession(qc, then)` cancels every read in flight, clears
+  the cache and navigates in the same task: an org switch, create or leave and a sign-out go
+  through it, then a full navigation (ruling R4), so nothing of the old org or account paints.
+- **Mutations** are `useAppMutation({ fn, invalidates: (v, r) => [keys…], onSuccess? })`: the
+  listed keys are invalidated (awaited) before `onSuccess`; use `qc.setQueryData` where the answer
+  is the new object. No `router.refresh()` after a mutation, except one that changes what the
+  layout decided (org, readiness, sign-in), which goes through `resetSession`.
+- **Polling** is `refetchInterval` on the query, never a hand-written timer. **Persistent
+  components** (the sidebar's groups, the inbox count) stay mounted, so they refetch their stale
+  queries on each path change themselves. The conversation's SSE stream appends to the cached
+  events (`appendEvents`, unique and ordered by `seq`) and its `changed` frames invalidate the
+  matching keys; on return it reopens from the cached last seq.
+
+**Status codes.** A missing object (a 404 read) is the page's not-found state inside the shell
+with HTTP 200; an unknown route keeps `notFound()` and its 404 (`(app)/[...rest]/page.tsx`); the
+kernel unavailable on a first load is the `KernelStarting` frame.
+
+**Recipe for a page** (what every page of the migration did):
+
+1. One `defineQuery` per kernel read in `lib/query/<area>.ts`, keys in `keys.ts`, the class from
+   the table above.
+2. The route entry: `queries(ctx)` with the first-paint reads, `then` for the dependent ones (or a
+   dependent `useQuery` with `enabled` in the view when the first paint does not need it).
+3. `page.tsx` reads nothing and passes the params; `view.tsx` gates with `useWorkspace` /
+   `useAdmin`, reads with `usePageQuery`, passes the template's `loading` shape while it is
+   `loading`, renders the segment's not-found component for `notFound` and the existing error
+   state with `retry` for `error`.
+4. Mutations through `useAppMutation` with their `invalidates`; polls as `refetchInterval`.
+5. Tests (below), then `pnpm check:web-ui` and `pnpm exec vitest run apps/web/test/<file>`.
+
+**Template loading states** (spec §7.1, `docs/design/spec.md` §5): a navigation to a page with
+nothing cached draws the page's frame with skeletons in the loaded page's own boxes, so nothing
+moves when the data lands. Pass the shape the page knows statically; a template guesses nothing:
+
+- `ListPage loading`: `true`, or `{ rows?, stats?, table?: { label, columns, rowHeight?, framed? },
+  keep? }` (`keep`: the children are the page's own sections, each loading for itself).
+- `FormPage loading` (boolean) with `FormSection loading={{ fields: n | FieldShape[] }}` or
+  `{{ cards: CardShape[] }}`; `LoadingFormSection` when the section's title is not known either.
+- `SettingsPage loading={{ sections?: [{ fields?, cards?, title?, description? }], cards? }}`.
+- `DetailPage loading={{ inspector?: true | { rows?, keyWidth? }, blocks?, content?: BlockShape[] }}`
+  and `WizardPage loading={{ fields }} | {{ content: BlockShape[] }}`.
+- `OverviewPage loading={{ stats?, sections?, mainSide?: { main, side }, keep? }}` (`mainSide`:
+  the content is a main-side grid of card stacks; `keep`: the children don't depend on the data).
+- `InboxPage loading`, `TracePage loading={{ spans?, stats? }}`, `AuthPage loading={{ fields }}`,
+  `ConversationPage loading={{ thread?, title?, rightArea? }}`, `PageHeader loading`.
+- Shapes (`templates/frame.tsx`): `FieldShape` (`control`: `input` / `textarea` / `select` /
+  `segmented` / `radio-cards` / `radios` / `key-value` / `switch` / `text` / `card-group`, plus
+  `help`, `rows`, `pair`, `options`, `keyWidth`), `CardShape` (`lines`, `lineSize`, `field`,
+  `actions`, `list`), `BlockShape` (`lines` / `list` / `key-value` / `buttons` / `table` /
+  `card`). Parts already cached render for real; only the missing parts are skeletons. One busy
+  region per page (`aria-busy`); reduced motion draws static bars. `PendingState` stays for
+  in-place loading after a person's action, never for navigation.
+
+**Rules kept from web-SSR**: no `loading.tsx` (`web-ssr-loading-file`), no `"use client"` page
+(`web-ssr-client-page`), params and query from the server props (`params`, `searchParams`, passed to the view), never
+`window.location` during render (`web-ssr-location`; `// ssr-exempt: <reason>` covers a false
+positive), a server page imports only the default export and types from `./view`
+(`web-ssr-view-value-import`). Next's `staleTimes` is not configured, and Next's internal request
+headers (`RSC`, `Next-Router-State-Tree`) are never read. `QUERY_PENDING` and `SSR_PENDING`
+(`tools/checks/src/web-ui.ts`) are empty ratchets; new pages are never added to them.
+
+**Tests** (`apps/web/test/support/query.tsx`):
+
+- `renderRouteWithCache(path, routes, opts)`: a document load: the layout's prefetch (`/me`,
+  readiness, the route's entry) runs against stubbed kernel routes on the server, the cache is
+  dehydrated through JSON and the page renders inside the hydration boundary; `navigate(to)` is a
+  client navigation under the same layout. Pair it with `expectNoFirstPaintFetch()` to assert the
+  first render makes no browser read. `renderAuthRouteWithCache` is the same for `(auth)` pages.
+- `renderRouteEmptyCache(path, routes, opts)`: a client navigation with nothing cached (or a
+  seeded `opts.client`): the views read through `stubApi`; hold a route to assert the template's
+  `aria-busy` loading state, then the data.
+- Every page has the cases "a first render from the hydrated cache makes no browser read" and
+  "an empty cache shows the template's loading state, then the data", and each mutation one
+  "<mutation> invalidates <keys>" asserting the refetch.
+- `apps/web/e2e/query-cache.spec.ts` counts the browser's `/api` GETs: back to a conversation
+  within 30 s reads only its stream, after 30 s it paints at once and refreshes in the background,
+  a rename updates the sidebar with one groups read, an org switch never shows the old org, a
+  reload paints with no skeleton and no browser read, a navigation to an uncached page shows the
+  template's loading state.
 
 ## Skeleton examples
 
-List (`apps/web/src/app/(app)/agents/page.tsx` + `view.tsx` are a real example; the server page is
-shown under "Server-rendered pages" below):
+List (`apps/web/src/app/(app)/agents/page.tsx` + `view.tsx` are a real example; the page, the gate
+and the reads are shown under "Pages and the query cache" above):
 
 ```tsx
 // view.tsx
@@ -160,21 +257,27 @@ shown under "Server-rendered pages" below):
 import { ListPage } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 
-export default function AgentsView({ initial }: { initial: Agent[] }) {
+function Agents({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("agents");
+  const list = usePageQuery(agentsQuery(orgId));
+  const header = {
+    path: [...scope, { label: "agents" }],
+    title: t("title"),
+    actions: [{ label: t("new"), variant: "primary" as const, href: "/agents/new" }],
+  };
+  if (list.kind === "notFound") return <NotFound />;
+  if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
+  if (list.kind === "loading") return <ListPage header={header} variant="objects" loading />;
+  const agents = list.data.agents;
   return (
     <ListPage
-      header={{
-        path: [...scope, { label: "agents" }],
-        title: t("title"),
-        actions: [{ label: t("new"), variant: "primary", href: "/agents/new" }],
-      }}
+      header={header}
       variant="objects"
       listLabel={t("title")}
-      {...(initial.length === 0 ? { empty: { text: t("empty") } } : {})}
+      {...(agents.length === 0 ? { empty: { text: t("empty") } } : {})}
     >
-      {initial.map((a) => (
+      {agents.map((a) => (
         <AgentRow key={a.id} agent={a} />
       ))}
     </ListPage>
