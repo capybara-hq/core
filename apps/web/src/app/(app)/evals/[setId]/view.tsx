@@ -18,9 +18,12 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
+import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import type { Agent } from "../../../../lib/agents";
@@ -34,7 +37,15 @@ import {
   type SampleInput,
   sampleEvalCases,
 } from "../../../../lib/evals";
+import { agentQuery } from "../../../../lib/query/agents";
+import { retryOnMountOf } from "../../../../lib/query/client";
+import { useAppMutation } from "../../../../lib/query/define";
+import { evalRunsQuery, evalSetQuery } from "../../../../lib/query/evals";
+import { keys } from "../../../../lib/query/keys";
+import { usePageQuery } from "../../../../lib/query/page-query";
+import { useWorkspace } from "../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../lib/use-error-message";
+import NotFound from "../../not-found";
 
 const TABS = ["cases", "runs"] as const;
 type Tab = (typeof TABS)[number];
@@ -44,31 +55,59 @@ const grouped = new Intl.NumberFormat("en-US");
 /**
  * `/evals/[setId]`: an eval set (DetailPage): the tabs "Cases" and "Runs", the inspector is the
  * set's info. Header: "Sample from conversations" (dialog), "Run eval" (wizard), delete. A case
- * opens its snapshot trajectory, a run its results. Everything comes from the server; `agent` and
- * `runs` are null when it could not read them (the agent's id shows; the runs tab draws its error).
- * After a change the page renders again on the server.
+ * opens its snapshot trajectory, a run its results. From the query cache (the layout prefetched it
+ * on a first load): the set (required), its runs (a section: the runs tab draws its own error)
+ * and its agent (a section: the agent's id shows). A change invalidates the set (and the sets
+ * list, whose case counts change).
  */
-export default function EvalSetView({
-  orgId,
-  setId,
-  initial,
-}: {
-  orgId: string;
-  setId: string;
-  initial: { set: EvalSetDetail; agent: Agent | null; runs: EvalRun[] | null };
-}) {
+export default function EvalSetView({ setId }: { setId: string }) {
+  const ws = useWorkspace({ min: "admin" });
+  if (ws.kind === "pending" || ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  return <EvalSet orgId={ws.orgId} setId={setId} />;
+}
+
+function EvalSet({ orgId, setId }: { orgId: string; setId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("evals");
   const router = useRouter();
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const [, startTransition] = useTransition();
-  const refresh = () => startTransition(() => router.refresh());
-  const { set } = initial;
+  const read = usePageQuery(evalSetQuery(orgId, setId));
+  const set = read.kind === "ready" ? read.data : undefined;
+  const runsQ = evalRunsQuery(orgId, setId);
+  const runs = useQuery({ ...runsQ, retryOnMount: retryOnMountOf(runsQ.queryKey) });
+  const agentQ = agentQuery(orgId, set?.agentId ?? "");
+  const agent = useQuery({
+    ...agentQ,
+    enabled: set !== undefined,
+    retryOnMount: retryOnMountOf(agentQ.queryKey),
+  }).data;
+  const remove = useAppMutation({
+    fn: () => deleteEvalSet(orgId, setId),
+    invalidates: () => [keys.org(orgId).evalSets()],
+  });
   const [tab, setTab] = useState<Tab>("cases");
   const [sampling, setSampling] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const base = `/evals/${encodeURIComponent(setId)}`;
+  if (read.kind === "notFound") return <NotFound />;
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
+  if (set === undefined) {
+    return (
+      <DetailPage
+        header={{ path: [...scope, { label: "evals", href: "/evals" }], title: "" }}
+        tabs={{
+          label: t("set.tabsLabel"),
+          items: TABS.map((x) => ({ id: x, label: t(`set.tabs.${x}`) })),
+          value: tab,
+          onChange: (x) => setTab(x as Tab),
+        }}
+        inspectorTitle={t("set.inspectorTitle")}
+        loading={{ inspector: true }}
+      />
+    );
+  }
 
   return (
     <>
@@ -97,21 +136,21 @@ export default function EvalSetView({
           onChange: (x) => setTab(x as Tab),
         }}
         inspectorTitle={t("set.inspectorTitle")}
-        inspector={<SetInspector set={set} agent={initial.agent} />}
+        inspector={<SetInspector set={set} agent={agent ?? null} />}
       >
         {tab === "cases" ? (
-          <CasesTab orgId={orgId} set={set} onChanged={refresh} />
+          <CasesTab orgId={orgId} set={set} />
         ) : (
-          <RunsTab runs={initial.runs} onRetry={refresh} />
+          <RunsTab
+            runs={runs.data?.runs ?? null}
+            state={runs.data !== undefined ? "ready" : runs.error ? "error" : "loading"}
+            code={runs.error?.code ?? "unknown"}
+            onRetry={() => void runs.refetch()}
+          />
         )}
       </DetailPage>
       {sampling ? (
-        <SampleDialog
-          orgId={orgId}
-          setId={setId}
-          onClose={() => setSampling(false)}
-          onSampled={refresh}
-        />
+        <SampleDialog orgId={orgId} setId={setId} onClose={() => setSampling(false)} />
       ) : null}
       <DangerConfirm
         open={deleting}
@@ -122,7 +161,7 @@ export default function EvalSetView({
         confirmLabel={t("set.delete")}
         onConfirm={async () => {
           try {
-            await deleteEvalSet(orgId, setId);
+            await remove.mutateAsync(undefined);
           } catch (e) {
             throw new Error(errorMessage(e));
           }
@@ -172,26 +211,27 @@ function SetInspector({ set, agent }: { set: EvalSetDetail; agent: Agent | null 
   );
 }
 
-function CasesTab({
-  orgId,
-  set,
-  onChanged,
-}: {
-  orgId: string;
-  set: EvalSetDetail;
-  onChanged(): void;
-}) {
+/** What a change to a set's cases changes: the set and the sets list (its case counts). */
+const caseChangeKeys = (orgId: string, setId: string) => [
+  keys.org(orgId).evalSet(setId),
+  keys.org(orgId).evalSets(),
+];
+
+function CasesTab({ orgId, set }: { orgId: string; set: EvalSetDetail }) {
   const t = useTranslations("evals.set");
   const router = useRouter();
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const caseHref = (c: EvalCase) =>
     `/evals/${encodeURIComponent(set.id)}/cases/${encodeURIComponent(c.id)}`;
+  const removeCase = useAppMutation({
+    fn: (caseId: string) => removeEvalCase(orgId, set.id, caseId),
+    invalidates: () => caseChangeKeys(orgId, set.id),
+  });
   const remove = async (c: EvalCase) => {
     try {
-      await removeEvalCase(orgId, set.id, c.id);
+      await removeCase.mutateAsync(c.id);
       toast.success(t("caseRemoved"));
-      onChanged();
     } catch (e) {
       toast.error(errorMessage(e));
     }
@@ -242,7 +282,17 @@ function CasesTab({
   );
 }
 
-function RunsTab({ runs, onRetry }: { runs: EvalRun[] | null; onRetry(): void }) {
+function RunsTab({
+  runs,
+  state,
+  code,
+  onRetry,
+}: {
+  runs: EvalRun[] | null;
+  state: "ready" | "loading" | "error";
+  code: string;
+  onRetry(): void;
+}) {
   const t = useTranslations("evals");
   const router = useRouter();
   const columns: Column<EvalRun>[] = [
@@ -280,8 +330,8 @@ function RunsTab({ runs, onRetry }: { runs: EvalRun[] | null; onRetry(): void })
       rows={runs ?? []}
       rowKey={(r) => r.id}
       rowLabel={(r) => formatDateTime(r.createdAt)}
-      state={runs === null ? "error" : "ready"}
-      error={{ code: "unknown", onRetry }}
+      state={state}
+      error={{ code, onRetry }}
       empty={{ title: t("set.runsEmpty") }}
       onOpen={(r) => router.push(`/evals/runs/${encodeURIComponent(r.id)}`)}
     />
@@ -296,12 +346,10 @@ function SampleDialog({
   orgId,
   setId,
   onClose,
-  onSampled,
 }: {
   orgId: string;
   setId: string;
   onClose(): void;
-  onSampled(): void;
 }) {
   const t = useTranslations("evals.sample");
   const tc = useTranslations("common");
@@ -314,6 +362,10 @@ function SampleDialog({
   const [to, setTo] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const sample = useAppMutation({
+    fn: (body: SampleInput) => sampleEvalCases(orgId, setId, body),
+    invalidates: () => caseChangeKeys(orgId, setId),
+  });
   const n = Number(count);
   const min = Number(minToolCalls);
   const valid =
@@ -324,7 +376,7 @@ function SampleDialog({
     setPending(true);
     setError(null);
     try {
-      const r = await sampleEvalCases(orgId, setId, {
+      const r = await sample.mutateAsync({
         count: n,
         status,
         minToolCalls: min,
@@ -332,7 +384,6 @@ function SampleDialog({
         ...(to !== "" && { to: dayStart(to) }),
       });
       toast.success(t("done", { added: r.added, skipped: r.skipped }));
-      onSampled();
       onClose();
     } catch (e) {
       setError(errorMessage(e));

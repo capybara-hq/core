@@ -6,7 +6,6 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import EvalCasePage from "../src/app/(app)/evals/[setId]/cases/[caseId]/page";
-import EvalSetPage from "../src/app/(app)/evals/[setId]/page";
 import RunWizardPage from "../src/app/(app)/evals/[setId]/run/page";
 import EvalRunPage from "../src/app/(app)/evals/runs/[runId]/page";
 import { json, stubApi } from "./support/api";
@@ -190,7 +189,6 @@ async function renderHeld(path: string, held: string, routes: Routes = ROUTES) {
   return { ...r, release: () => act(async () => release()) };
 }
 
-const setPage = () => EvalSetPage({ params: Promise.resolve({ setId: "s1" }) });
 const wizardPage = () => RunWizardPage({ params: Promise.resolve({ setId: "s1" }) });
 const casePage = () => EvalCasePage({ params: Promise.resolve({ setId: "s1", caseId: "k1" }) });
 const runPage = () => EvalRunPage({ params: Promise.resolve({ runId: "er1" }) });
@@ -262,21 +260,22 @@ describe("first paint comes from the server (no browser fetch)", () => {
     expect(client.getQueryState(["org", "o1", "evalSets"])?.isInvalidated).toBe(true);
   });
 
-  it("/evals/[setId]: the cases, the inspector's agent and the runs tab", async () => {
+  it("/evals/[setId]: a first render from the hydrated cache makes no browser read (the cases, the inspector's agent and the runs tab)", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(setPage, ROUTES);
+    await renderRouteWithCache("/evals/s1", ROUTES);
     const cases = screen.getByRole("table", { name: E.set.casesLabel });
     expect(within(cases).getByText("Delete the stale item")).toBeTruthy();
     expect(screen.getByText("Helper")).toBeTruthy();
     await userEvent.setup().click(screen.getByRole("tab", { name: new RegExp(E.set.tabs.runs) }));
     const runs = screen.getByRole("table", { name: E.set.runsLabel });
     expect(within(runs).getByText("1/1")).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/evals/[setId]: runs the kernel fails are the tab's own error, retried on the server", async () => {
-    const browser = expectNoFirstPaintFetch();
-    const { calls } = await renderRoute(setPage, {
+  it("/evals/[setId]: runs the kernel fails are the tab's own error, retried in the browser", async () => {
+    const browser = stubApi(ROUTES);
+    await renderRouteWithCache("/evals/s1", {
       ...ROUTES,
       [`GET ${SETS}/s1/runs`]: failing,
       [`GET ${O}/agents/ag1`]: failing,
@@ -285,20 +284,58 @@ describe("first paint comes from the server (no browser fetch)", () => {
     expect(screen.getByText("ag1")).toBeTruthy();
     const u = userEvent.setup();
     await u.click(screen.getByRole("tab", { name: new RegExp(E.set.tabs.runs) }));
-    await u.click(screen.getByRole("button", { name: en.common.retry }));
-    expect(router.refresh).toHaveBeenCalled();
-    await waitFor(() => expect(calls.filter((c) => c.url === `${SETS}/s1/runs`).length).toBe(2));
+    await settle();
+    // hydrated errors are not read again on mount
     expect(browser).toEqual([]);
+    await u.click(screen.getByRole("button", { name: en.common.retry }));
+    const runs = await screen.findByRole("table", { name: E.set.runsLabel });
+    await waitFor(() => expect(within(runs).getByText("1/1")).toBeTruthy());
+    expect(browser.map((c) => c.url)).toEqual([`${SETS}/s1/runs`]);
+    expect(router.refresh).not.toHaveBeenCalled();
   });
 
-  it("/evals/[setId]: an unknown set is not found", async () => {
-    expectNoFirstPaintFetch();
-    await expect(
-      renderRoute(setPage, {
-        ...ROUTES,
-        [`GET ${SETS}/s1`]: () => json(404, { error: { code: "eval.not_found", message: "x" } }),
-      }),
-    ).rejects.toThrow("NOT_FOUND");
+  it("/evals/[setId]: an unknown set is the not-found state in the shell", async () => {
+    await renderRouteWithCache("/evals/s1", {
+      ...ROUTES,
+      [`GET ${SETS}/s1`]: () => json(404, { error: { code: "eval.not_found", message: "x" } }),
+    });
+    expect(screen.getByRole("heading", { level: 1, name: en.notFound.title })).toBeTruthy();
+  });
+
+  it("/evals/[setId]: an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld("/evals/s1", `GET ${SETS}/s1`);
+    await vi.waitFor(() => {
+      if (template("DetailPage") === null) throw new Error("no page");
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByText("Delete the stale item")).toBeNull();
+    await release();
+    expect(await screen.findByText("Delete the stale item")).toBeTruthy();
+    // the agent is read once the set named it
+    expect(await screen.findByText("Helper")).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
+  it("/evals/[setId]: removing a case invalidates the set and the sets list", async () => {
+    const calls = stubApi({
+      ...ROUTES,
+      [`DELETE ${SETS}/s1/cases/k1`]: () => new Response(null, { status: 204 }),
+    });
+    const { client } = await renderRouteWithCache("/evals/s1", ROUTES);
+    client.setQueryData(["org", "o1", "evalSets"], { sets: [SET] });
+    const u = userEvent.setup();
+    const row = within(screen.getByRole("table", { name: E.set.casesLabel })).getByRole("row", {
+      name: /Delete the stale item/,
+    });
+    await u.click(within(row).getByRole("button", { name: /./ }));
+    await u.click(await screen.findByRole("menuitem", { name: E.set.removeCase }));
+    await waitFor(() =>
+      expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+        `DELETE ${SETS}/s1/cases/k1`,
+        `GET ${SETS}/s1`,
+      ]),
+    );
+    expect(client.getQueryState(["org", "o1", "evalSets"])?.isInvalidated).toBe(true);
   });
 
   it("/evals/[setId]/run: the agent's versions and the models", async () => {
@@ -393,7 +430,6 @@ describe("first paint comes from the server (no browser fetch)", () => {
 });
 
 const GATES: [string, () => Promise<ReactNode>][] = [
-  ["/evals/s1", setPage],
   ["/evals/s1/run", wizardPage],
   ["/evals/s1/cases/k1", casePage],
   ["/evals/runs/er1", runPage],
@@ -420,7 +456,7 @@ describe("the gates (org admins)", () => {
 });
 
 /** The pages that read through the query cache. */
-const ROUTE_GATES = ["/evals", "/evals/new"];
+const ROUTE_GATES = ["/evals", "/evals/new", "/evals/s1"];
 
 describe("the gates (org admins, query cache)", () => {
   it.each(ROUTE_GATES)(

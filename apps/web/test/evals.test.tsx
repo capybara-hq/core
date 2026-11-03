@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import EvalCasePage from "../src/app/(app)/evals/[setId]/cases/[caseId]/page";
-import EvalSetPage from "../src/app/(app)/evals/[setId]/page";
 import RunWizardPage from "../src/app/(app)/evals/[setId]/run/page";
 import EvalRunPage from "../src/app/(app)/evals/runs/[runId]/page";
 import { activeNavOf } from "../src/components/shell/nav";
@@ -360,10 +359,7 @@ describe("评测集详情（DetailPage）", () => {
 
   it("用例与运行两个标签页；点用例看快照轨迹，点运行看结果", async () => {
     stubApi(routes());
-    const { container } = await renderRoute(
-      () => EvalSetPage(params({ setId: "s1" })),
-      lastStubRoutes(),
-    );
+    const { container } = await renderRouteWithCache("/evals/s1", lastStubRoutes());
     expect(container.querySelector('[data-template="DetailPage"]')).not.toBeNull();
     const user = userEvent.setup();
     const cases = await screen.findByRole("table", { name: E.set.casesLabel });
@@ -391,7 +387,7 @@ describe("评测集详情（DetailPage）", () => {
         [`POST ${SETS}/s1/cases/sample`]: () => json(200, { added: 3, skipped: 1 }),
       }),
     );
-    await renderRoute(() => EvalSetPage(params({ setId: "s1" })), lastStubRoutes());
+    await renderRouteWithCache("/evals/s1", lastStubRoutes());
     await screen.findByRole("table", { name: E.set.casesLabel });
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: E.set.sample }));
@@ -412,7 +408,7 @@ describe("评测集详情（DetailPage）", () => {
 
   it("移除用例", async () => {
     const calls = stubApi(routes({ [`DELETE ${SETS}/s1/cases/k2`]: () => noContent() }));
-    await renderRoute(() => EvalSetPage(params({ setId: "s1" })), lastStubRoutes());
+    await renderRouteWithCache("/evals/s1", lastStubRoutes());
     const cases = await screen.findByRole("table", { name: E.set.casesLabel });
     const user = userEvent.setup();
     const row = within(cases).getByRole("row", { name: /Summarize the doc/ });

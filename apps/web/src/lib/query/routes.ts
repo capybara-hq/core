@@ -4,6 +4,7 @@ import type { ApiClientError } from "../api";
 import type { ChannelConnection } from "../channels";
 import { type ConnectorSummary, personalConnectors } from "../connectors";
 import type { Conversation, ConversationEvent } from "../conversations";
+import type { EvalSetDetail } from "../evals";
 import { myRole, type OrgRole, roleAtLeast } from "../members";
 import { canEditAgent } from "../org-settings";
 import type { Me } from "../session";
@@ -25,7 +26,7 @@ import {
   queueQuery,
   sandboxQuery,
 } from "./conversation";
-import { evalSetsQuery } from "./evals";
+import { evalRunsQuery, evalSetQuery, evalSetsQuery } from "./evals";
 import { membersQuery } from "./members";
 import { overviewQueries } from "./overview";
 import {
@@ -305,7 +306,22 @@ export const ROUTES: readonly RouteEntry[] = [
         ? []
         : [q(evalSetsQuery(orgId)), q(agentsQuery(orgId))],
   },
-  { pattern: "/evals/[setId]", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/evals/[setId]",
+    // Org admins: the set and its runs (a section), then the set's agent (a section).
+    queries: ({ orgId, me, params }) =>
+      orgId === null || params.setId === undefined || !atLeast(me, "admin")
+        ? []
+        : [q(evalSetQuery(orgId, params.setId)), q(evalRunsQuery(orgId, params.setId))],
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, me, params }, qc) => {
+      const setId = params.setId;
+      if (orgId === null || setId === undefined || !atLeast(me, "admin")) return;
+      const set = qc.getQueryData<EvalSetDetail>(evalSetQuery(orgId, setId).queryKey);
+      if (set === undefined) return;
+      await qc.prefetchQuery({ ...agentQuery(orgId, set.agentId), retry: false });
+    },
+  },
   { pattern: "/evals/[setId]/cases/[caseId]", queries: () => [], none: "pending migration" },
   { pattern: "/evals/[setId]/run", queries: () => [], none: "pending migration" },
   {
