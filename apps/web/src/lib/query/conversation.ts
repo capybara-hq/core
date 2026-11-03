@@ -1,4 +1,4 @@
-import type { QueryClient, UseQueryOptions } from "@tanstack/react-query";
+import type { DehydratedState, QueryClient, UseQueryOptions } from "@tanstack/react-query";
 import { listModels } from "../agents";
 import { ApiClientError } from "../api";
 import { getApproval } from "../approvals";
@@ -47,7 +47,11 @@ export const conversationQuery = (orgId: string, id: string) =>
     freshness: "live",
   });
 
-/** Every event of the log, in seq order; the stream appends to it ({@link appendEvents}). */
+/**
+ * Every event of the log, in seq order; the stream appends to it ({@link appendEvents}). Never
+ * refetched wholesale while cached (`events` freshness), and a later hydration merges into it
+ * ({@link mergeHydratedEvents}) instead of replacing what the stream appended.
+ */
 export const eventsQuery = (orgId: string, id: string) =>
   defineQuery({
     key: keys.org(orgId).conversation(id).events(),
@@ -291,6 +295,38 @@ export function conversationFollowUps(
   const mine = row.accountId === undefined || row.accountId === accountId;
   add(invocableSkillsQuery(orgId, row.agentId, mine ? id : undefined));
   return out;
+}
+
+/** `a` and `b` merged by seq: none twice, ascending. */
+function mergeBySeq(
+  a: readonly ConversationEvent[],
+  b: readonly ConversationEvent[],
+): ConversationEvent[] {
+  const bySeq = new Map<number, ConversationEvent>();
+  for (const e of a) bySeq.set(e.seq, e);
+  for (const e of b) if (!bySeq.has(e.seq)) bySeq.set(e.seq, e);
+  return [...bySeq.values()].sort((x, y) => x.seq - y.seq);
+}
+
+const isEventsKey = (k: readonly unknown[]) =>
+  k.length === 5 && k[0] === "org" && k[2] === "conversation" && k[4] === "events";
+
+/**
+ * A dehydrated state (a later server render: `router.refresh()`) with every conversation log the
+ * cache already holds merged into it, so hydrating it never drops events the stream appended
+ * after the server read: the cached list and the server's are united by seq.
+ */
+export function mergeHydratedEvents(qc: QueryClient, state: DehydratedState): DehydratedState {
+  return {
+    ...state,
+    queries: state.queries.map((q) => {
+      if (!isEventsKey(q.queryKey)) return q;
+      const cached = qc.getQueryData<ConversationEvent[]>(q.queryKey);
+      const incoming = q.state.data as ConversationEvent[] | undefined;
+      if (cached === undefined || incoming === undefined) return q;
+      return { ...q, state: { ...q.state, data: mergeBySeq(cached, incoming) } };
+    }),
+  };
 }
 
 /**

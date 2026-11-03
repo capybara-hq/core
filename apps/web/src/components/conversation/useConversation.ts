@@ -53,6 +53,25 @@ const cancelFrame = (id: number): void => {
  */
 const deliveredBy = new WeakMap<QueryClient, Map<string, number>>();
 
+/**
+ * The resume points of `qc`'s conversations. A log read whole (a fetch, not a write of the
+ * stream's) is complete up to its end: its conversation's point is dropped, so the next open
+ * resumes at that end instead of replaying what the read already holds.
+ */
+function deliveredOf(qc: QueryClient): Map<string, number> {
+  const known = deliveredBy.get(qc);
+  if (known !== undefined) return known;
+  const map = new Map<string, number>();
+  deliveredBy.set(qc, map);
+  qc.getQueryCache().subscribe((event) => {
+    if (event.type !== "updated" || event.action.type !== "success" || event.action.manual) return;
+    const k = event.query.queryKey;
+    if (k[0] === "org" && k[2] === "conversation" && k[4] === "events")
+      map.delete(`${String(k[1])}/${String(k[3])}`);
+  });
+  return map;
+}
+
 /** `onSend`'s outcome: on failure the error (to mark the files it names). */
 export type SendResult = { ok: true } | { ok: false; error: unknown };
 
@@ -139,6 +158,11 @@ export function useConversation(orgId: string, conversationId: string): Conversa
   const [stopping, setStopping] = useState(false);
   const setError = useCallback((e: unknown) => setErrorText(errorMessage(e)), [errorMessage]);
   const loaded = events !== undefined;
+  /**
+   * The current open has not delivered a new event yet: the first one ends its catch-up. A
+   * person's own write (a send, a queued send) ends it too: what follows answers it, live.
+   */
+  const catchingUp = useRef(true);
 
   useEffect(() => {
     if (!loaded) return;
@@ -148,8 +172,8 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     let disposed = false;
     let close: (() => void) | undefined;
     let failures = 0;
-    /** This open has not delivered an event yet: the first one ends its catch-up. */
-    let catchingUp = true;
+    /** The row was read again once for a title generated before the stream was open. */
+    let titleChecked = false;
     // Deltas are applied once per animation frame, together (final review I3): a fast stream
     // renders the page per frame, not per token. An event first flushes what is pending, so
     // deltas and events stay in stream order.
@@ -181,8 +205,7 @@ export function useConversation(orgId: string, conversationId: string): Conversa
       if (what === "files") invalidate(c.files());
     };
     const scope = `${orgId}/${conversationId}`;
-    const delivered = deliveredBy.get(qc) ?? new Map<string, number>();
-    deliveredBy.set(qc, delivered);
+    const delivered = deliveredOf(qc);
     /** Where an open resumes: after what the stream delivered, never past the cached log's end. */
     const resumeAt = () => {
       const end = qc.getQueryData<ConversationEvent[]>(c.events())?.at(-1)?.seq ?? 0;
@@ -191,12 +214,19 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     // A log read in full is complete up to its end (the layout's or this page's first read).
     if (!delivered.has(scope)) delivered.set(scope, resumeAt());
     const open = () => {
-      catchingUp = true;
+      catchingUp.current = true;
       close = openConversationStream(orgId, conversationId, resumeAt(), {
         onOpen: () => {
           failures = 0;
           // The browser's own reconnect: its catch-up follows the same rule.
-          catchingUp = true;
+          catchingUp.current = true;
+          // An untitled conversation's title may have been generated before the stream was open
+          // (its `changed: title` reached nobody): read the row once. A named one reads nothing.
+          const row = qc.getQueryData<Conversation>(c.row());
+          if (!titleChecked && row !== undefined && row.title === null) {
+            titleChecked = true;
+            invalidate(c.row());
+          }
         },
         // An extension view changed: read again, coalesced (at most one read in flight).
         onUi: (r) =>
@@ -207,8 +237,8 @@ export function useConversation(orgId: string, conversationId: string): Conversa
           delivered.set(scope, Math.max(delivered.get(scope) ?? 0, e.seq));
           const { added } = appendEvents(qc, orgId, conversationId, [e]);
           // The catch-up delivered something: what lives outside the log may have changed too.
-          if (catchingUp && added > 0) {
-            catchingUp = false;
+          if (catchingUp.current && added > 0) {
+            catchingUp.current = false;
             for (const k of CONVERSATION_SIDE_KEYS(orgId, conversationId)) invalidate(k);
           }
         },
@@ -239,6 +269,7 @@ export function useConversation(orgId: string, conversationId: string): Conversa
   const sendMutation = useAppMutation({
     fn: async (m: MessageInput) => {
       const { event } = await postMessage(orgId, conversationId, m);
+      catchingUp.current = false;
       appendEvents(qc, orgId, conversationId, [event]);
       return event;
     },
@@ -290,7 +321,10 @@ export function useConversation(orgId: string, conversationId: string): Conversa
   );
 
   const merge = useCallback(
-    (list: ConversationEvent[]) => void appendEvents(qc, orgId, conversationId, list),
+    (list: ConversationEvent[]) => {
+      catchingUp.current = false;
+      appendEvents(qc, orgId, conversationId, list);
+    },
     [qc, orgId, conversationId],
   );
 

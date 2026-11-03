@@ -768,8 +768,9 @@ describe("server-decided failures (ruling R5)", () => {
 });
 
 describe("the first open after the server's snapshot (web query cache spec §6)", () => {
-  it("an open that delivers no event reads nothing outside the log", async () => {
+  it("an open of a named conversation that delivers no event reads nothing outside the log", async () => {
     const calls = api({
+      [`GET ${BASE}`]: () => json(200, CONV("c1", { title: "Kept" })),
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
     });
     await renderChat();

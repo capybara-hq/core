@@ -1,6 +1,6 @@
 // The conversation page through the query cache (web query cache spec §6): the stream appends to
 // the cached log, `changed` frames invalidate their key, and a return reads only what changed.
-import { QueryClientProvider } from "@tanstack/react-query";
+import { type DehydratedState, hashKey, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import ChatPage from "../src/app/(app)/chat/[conversationId]/page";
 import { useConversation } from "../src/components/conversation/useConversation";
+import { HydrateCache } from "../src/components/HydrateCache";
 import type { ConversationEvent } from "../src/lib/conversations";
 import {
   appendEvents,
@@ -73,6 +74,60 @@ describe("appendEvents", () => {
   });
 });
 
+describe("a later hydration of a log the stream appended to", () => {
+  const key = eventsQuery("o1", "c1").queryKey;
+  /** A server render's state holding `seqs` for c1's log, read after the cached one. */
+  const later = (seqs: number[]): DehydratedState => ({
+    mutations: [],
+    queries: [
+      {
+        queryKey: key,
+        queryHash: hashKey(key),
+        dehydratedAt: Date.now() + 60_000,
+        state: {
+          data: seqs.map(msg),
+          dataUpdateCount: 1,
+          dataUpdatedAt: Date.now() + 60_000,
+          error: null,
+          errorUpdateCount: 0,
+          errorUpdatedAt: 0,
+          fetchFailureCount: 0,
+          fetchFailureReason: null,
+          fetchMeta: null,
+          isInvalidated: false,
+          status: "success",
+          fetchStatus: "idle",
+        },
+      },
+    ],
+  });
+  const hydrateInto = async (qc: ReturnType<typeof testQueryClient>, state: DehydratedState) => {
+    const view = render(
+      <QueryClientProvider client={qc}>
+        <HydrateCache state={state}>
+          <p>page</p>
+        </HydrateCache>
+      </QueryClientProvider>,
+    );
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    view.unmount();
+  };
+
+  it("an older server list never drops what the stream appended", async () => {
+    const qc = testQueryClient();
+    qc.setQueryData(key, [1, 2, 3, 4, 5].map(msg));
+    await hydrateInto(qc, later([1, 2, 3]));
+    expect(seqs(qc.getQueryData<ConversationEvent[]>(key))).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("a longer server list adds its new events", async () => {
+    const qc = testQueryClient();
+    qc.setQueryData(key, [1, 2, 3, 4, 5].map(msg));
+    await hydrateInto(qc, later([1, 2, 3, 4, 5, 6]));
+    expect(seqs(qc.getQueryData<ConversationEvent[]>(key))).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+});
+
 describe("conversation query keys", () => {
   it("tool info holds its keys sorted: the same set is one key", () => {
     expect(toolInfoQuery("o1", "c1", ["b", "a"]).queryKey).toEqual(
@@ -91,15 +146,23 @@ describe("conversation query keys", () => {
 
 describe("useConversation and the cache", () => {
   const BASE = "/api/v1/orgs/o1/conversations/c1";
+  /** The latest render's state (to send from a test). */
+  let latest: ReturnType<typeof useConversation> | undefined;
   function Probe() {
     const c = useConversation("o1", "c1");
-    return <p data-testid="seqs">{c.events.map((e) => e.seq).join(",")}</p>;
+    latest = c;
+    return (
+      <>
+        <p data-testid="seqs">{c.events.map((e) => e.seq).join(",")}</p>
+        <p data-testid="title">{c.conversation?.title ?? "untitled"}</p>
+      </>
+    );
   }
-  /** A client holding c1's row and its log `[1, 2]`, as a first load leaves it. */
-  function cached() {
+  /** A client holding c1's row (`title`) and its log `[1, 2]`, as a first load leaves it. */
+  function cached(title: string | null = "Kept") {
     const qc = testQueryClient();
     qc.setQueryData(eventsQuery("o1", "c1").queryKey, [userMsg(1, "hi"), userMsg(2, "there")]);
-    qc.setQueryData(keys.org("o1").conversation("c1").row(), CONV("c1").conversation);
+    qc.setQueryData(keys.org("o1").conversation("c1").row(), CONV("c1", { title }).conversation);
     return qc;
   }
   const mount = (qc: ReturnType<typeof testQueryClient>) =>
@@ -127,7 +190,7 @@ describe("useConversation and the cache", () => {
     expect(view.getByTestId("seqs").textContent).toBe("1,2,3");
   });
 
-  it("returning within 30 s with no new event reads nothing but the stream", async () => {
+  it("returning to a named conversation within 30 s with no new event reads nothing but the stream", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const calls = stubApi({});
     const qc = cached();
@@ -159,6 +222,54 @@ describe("useConversation and the cache", () => {
     });
     const side = CONVERSATION_SIDE_KEYS("o1", "c1").map((k) => JSON.stringify(k));
     expect(invalidated()).toEqual(side);
+  });
+
+  it("a title generated before the stream opened appears without a navigation", async () => {
+    const calls = stubApi({
+      [`GET ${BASE}`]: () => json(200, CONV("c1", { title: "Generated early" })),
+    });
+    const qc = cached(null);
+    const view = mount(qc);
+    expect(view.getByTestId("title").textContent).toBe("untitled");
+    // generated (and its `changed: title` sent) before the stream was open
+    act(() => FakeEventSource.instances[0]?.emit("open"));
+    await vi.waitFor(() => expect(view.getByTestId("title").textContent).toBe("Generated early"));
+    // once per mount: a reconnect of the same page reads nothing more
+    act(() => FakeEventSource.instances[0]?.emit("open"));
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(calls.map((c) => c.url)).toEqual([BASE]);
+  });
+
+  it("a person's own send after an idle open is no catch-up: no side keys are read", async () => {
+    stubApi({ [`POST ${BASE}/messages`]: () => json(202, { event: userMsg(3, "mine") }) });
+    const qc = cached();
+    const invalidated = sideKeys(qc);
+    mount(qc);
+    const es = FakeEventSource.instances[0] as FakeEventSource;
+    act(() => es.emit("open"));
+    await act(async () => {
+      await latest?.send({ text: "mine", clientMessageId: "m1" });
+    });
+    act(() => {
+      es.emit("event", userMsg(3, "mine"));
+      es.emit("event", ev(4, "run_started", { agentVersion: 1, model: null }, "r1"));
+    });
+    // (the run starting tells the sidebar; nothing outside the log is read)
+    const side = new Set(CONVERSATION_SIDE_KEYS("o1", "c1").map((k) => JSON.stringify(k)));
+    expect(invalidated().filter((k) => side.has(k))).toEqual([]);
+  });
+
+  it("a return after the log was dropped (gc) resumes after the log read whole, not the old point", async () => {
+    const all = [1, 2, 3, 4, 5].map((n) => userMsg(n, `m${n}`));
+    stubApi({ [`GET ${BASE}/events`]: () => json(200, { events: all }) });
+    const qc = cached();
+    const first = mount(qc);
+    act(() => FakeEventSource.instances[0]?.emit("event", userMsg(3, "m3")));
+    first.unmount();
+    qc.removeQueries({ queryKey: eventsQuery("o1", "c1").queryKey });
+    const again = mount(qc);
+    await vi.waitFor(() => expect(again.getByTestId("seqs").textContent).toBe("1,2,3,4,5"));
+    expect(FakeEventSource.instances.at(-1)?.url).toBe(`${BASE}/stream?after=5`);
   });
 
   it("a changed frame for files invalidates only files", async () => {
