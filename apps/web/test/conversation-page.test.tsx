@@ -6,6 +6,7 @@ import zh from "../messages/zh.json";
 import ChatPage from "../src/app/(app)/chat/[conversationId]/page";
 import NewChatPage from "../src/app/(app)/chat/page";
 import { navigateBrowser } from "../src/lib/browser";
+import { keys } from "../src/lib/query/keys";
 import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
 import {
   AGENTS,
@@ -20,7 +21,7 @@ import {
   userMsg,
 } from "./support/conversation";
 import { resetNavigation, router } from "./support/navigation";
-import { ME, pageElement } from "./support/render";
+import { currentPageClient, ME, pageElement } from "./support/render";
 import { expectNoFirstPaintFetch, onServer, renderRoute } from "./support/server";
 import { renderFrame, shellOf } from "./support/shell";
 
@@ -58,6 +59,16 @@ function api(extra: Record<string, (c: Call) => Response | Promise<Response>>, i
 }
 
 const renderChat = (locale: "zh" | "en" = "en") => renderChatRoute({ locale });
+
+/**
+ * Counts the page's invalidations of the sidebar's conversation groups (the sidebar reads them
+ * again), from now on.
+ */
+function sidebarRefreshes() {
+  const spy = vi.spyOn(currentPageClient(), "invalidateQueries");
+  const groups = JSON.stringify(keys.org("o1").conversationGroupsAll());
+  return () => spy.mock.calls.filter(([f]) => JSON.stringify(f?.queryKey) === groups).length;
+}
 const input = (m = en) => screen.getByRole("textbox", { name: m.chat.inputLabel, hidden: true });
 const posts = (calls: Call[], path: string) =>
   calls.filter((c) => c.method === "POST" && c.url.split("?")[0] === path);
@@ -463,9 +474,8 @@ describe("the conversation page (ConversationPage)", () => {
         return json(200, CONV("c1", { title, titleSource: "manual" }));
       },
     });
-    const changed = vi.fn();
-    window.addEventListener("cap:conversations-changed", changed);
     await renderChat();
+    const refreshes = sidebarRefreshes();
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /^Untitled conversation/ }));
@@ -475,11 +485,11 @@ describe("the conversation page (ConversationPage)", () => {
     await vi.waitFor(() => expect(calls.find((c) => c.method === "PATCH")).toBeTruthy());
     expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ title: "Quarterly numbers" });
     expect(await screen.findByRole("button", { name: /Quarterly numbers/ })).toBeTruthy();
-    expect(changed).toHaveBeenCalled();
+    await vi.waitFor(() => expect(refreshes()).toBe(1));
     title = "Generated title";
     act(() => FakeEventSource.instances[0]?.emit("changed", { what: "title" }));
     expect(await screen.findByRole("button", { name: /Generated title/ })).toBeTruthy();
-    window.removeEventListener("cap:conversations-changed", changed);
+    expect(refreshes()).toBe(2);
   });
 
   it("a run starting, waiting and ending tells the sidebar (its state dot follows)", async () => {
@@ -487,15 +497,13 @@ describe("the conversation page (ConversationPage)", () => {
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
       [`GET ${BASE}`]: () => json(200, CONV("c1", { title: "Kept" })),
     });
-    const changed = vi.fn();
-    window.addEventListener("cap:conversations-changed", changed);
     await renderChat();
     await screen.findByText("hi");
     await screen.findByRole("button", { name: /Kept/ });
-    changed.mockClear();
+    const refreshes = sidebarRefreshes();
     const es = FakeEventSource.instances[0] as FakeEventSource;
     act(() => es.emit("event", runStarted(2)));
-    await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(refreshes()).toBe(1));
     act(() =>
       es.emit(
         "event",
@@ -513,13 +521,13 @@ describe("the conversation page (ConversationPage)", () => {
         ),
       ),
     );
-    await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(refreshes()).toBe(2));
     act(() => es.emit("event", ev(4, "run_aborted", { byAccountId: "a1", reason: "user" }, "r1")));
-    await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => expect(refreshes()).toBe(3));
     // an event that leaves the run phase as it was sends no further notice
     act(() => es.emit("event", userMsg(5, "again")));
-    expect(changed).toHaveBeenCalledTimes(3);
-    window.removeEventListener("cap:conversations-changed", changed);
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(refreshes()).toBe(3);
   });
 
   it.each(["archived", "deleted"])(
@@ -529,15 +537,12 @@ describe("the conversation page (ConversationPage)", () => {
         [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
         [`GET ${BASE}`]: () => json(200, CONV("c1", { title: "Kept" })),
       });
-      const changed = vi.fn();
-      window.addEventListener("cap:conversations-changed", changed);
       await renderChat();
       await screen.findByText("hi");
       await screen.findByRole("button", { name: /Kept/ });
-      changed.mockClear();
+      const refreshes = sidebarRefreshes();
       act(() => FakeEventSource.instances[0]?.emit("changed", { what }));
-      expect(changed).toHaveBeenCalledTimes(1);
-      window.removeEventListener("cap:conversations-changed", changed);
+      expect(refreshes()).toBe(1);
     },
   );
 
@@ -570,9 +575,8 @@ describe("the conversation page (ConversationPage)", () => {
         return json(200, CONV("c1", { title: n === 1 ? null : "Fresh title" }));
       },
     });
-    const changed = vi.fn();
-    window.addEventListener("cap:conversations-changed", changed);
     await renderChat();
+    const refreshes = sidebarRefreshes();
     await screen.findByText("hi");
     await vi.waitFor(() => expect(n).toBe(1));
     act(() => FakeEventSource.instances[0]?.emit("changed", { what: "title" }));
@@ -585,28 +589,8 @@ describe("the conversation page (ConversationPage)", () => {
     });
     expect(screen.queryByRole("button", { name: /Stale title/ })).toBeNull();
     expect(screen.getByRole("button", { name: /Fresh title/ })).toBeTruthy();
-    // the sidebar heard of the new title even though the first answer was superseded
-    expect(changed).toHaveBeenCalled();
-    window.removeEventListener("cap:conversations-changed", changed);
-  });
-
-  it("a title generated before the stream opened still reaches the title bar and the sidebar", async () => {
-    let title: string | null = null;
-    api({
-      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
-      [`GET ${BASE}`]: () => json(200, CONV("c1", { title })),
-    });
-    const changed = vi.fn();
-    window.addEventListener("cap:conversations-changed", changed);
-    await renderChat();
-    await screen.findByText("hi");
-    await screen.findByRole("button", { name: /^Untitled conversation/ });
-    // generated (and its `changed: title` sent) before the stream was open
-    title = "Generated early";
-    act(() => FakeEventSource.instances[0]?.emit("open"));
-    expect(await screen.findByRole("button", { name: /Generated early/ })).toBeTruthy();
-    await vi.waitFor(() => expect(changed).toHaveBeenCalled());
-    window.removeEventListener("cap:conversations-changed", changed);
+    // the sidebar heard of each new title
+    expect(refreshes()).toBe(2);
   });
 
   it("Retry on the failed run row re-sends the last message with retryOf", async () => {
@@ -796,19 +780,34 @@ describe("server-decided failures (ruling R5)", () => {
   });
 });
 
-describe("the first open after the server's snapshot (live catch-up)", () => {
-  it("reads again what lives outside the log: the queue, the files, the extension list, the row", async () => {
+describe("the first open after the server's snapshot (web query cache spec §6)", () => {
+  it("an open that delivers no event reads nothing outside the log", async () => {
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
     });
     await renderChat();
     expect(calls).toEqual([]);
     act(() => FakeEventSource.instances[0]?.emit("open"));
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(calls).toEqual([]);
+  });
+
+  it("a catch-up that delivers events reads the pieces outside the log again", async () => {
+    const calls = api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+    });
+    await renderChat();
+    const es = FakeEventSource.instances[0] as FakeEventSource;
+    act(() => {
+      es.emit("open");
+      es.emit("event", userMsg(2, "while away"));
+    });
     await vi.waitFor(() =>
       expect(new Set(calls.map((c) => c.url.split("?")[0]))).toEqual(
         new Set([BASE, `${BASE}/queue`, `${BASE}/files`, "/api/v1/orgs/o1/ui/contributions"]),
       ),
     );
+    expect(await screen.findByText("while away")).toBeTruthy();
   });
 });
 

@@ -747,12 +747,3 @@ export class NoCurrentOrgError extends Error {
     this.name = "NoCurrentOrgError";
   }
 }
-
-/**
- * Fired on `window` when the sidebar's conversation list should reload (a title changed, a
- * conversation was archived or deleted).
- */
-export const CONVERSATIONS_CHANGED = "cap:conversations-changed";
-export const notifyConversationsChanged = () => {
-  if (typeof window !== "undefined") window.dispatchEvent(new Event(CONVERSATIONS_CHANGED));
-};

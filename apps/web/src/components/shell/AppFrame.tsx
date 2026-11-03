@@ -28,7 +28,7 @@ import { ApiClientError } from "../../lib/api";
 import { loginPathFor } from "../../lib/auth-sources";
 import { navigateBrowser } from "../../lib/browser";
 import { useConnectResultToast } from "../../lib/connect";
-import { CONVERSATIONS_CHANGED, NoCurrentOrgError } from "../../lib/conversations";
+import { NoCurrentOrgError } from "../../lib/conversations";
 import { usePreferences } from "../../lib/preferences";
 import { retryOnMountOf } from "../../lib/query/client";
 import { useAppMutation } from "../../lib/query/define";
@@ -170,14 +170,6 @@ function OrgFrame({
     for (const queryKey of [keys.org(orgId).conversationGroupsAll(), keys.org(orgId).inboxCount()])
       void qc.refetchQueries({ queryKey, stale: true, type: "active" });
   }, [pathname, qc, orgId]);
-  // A title changed (generated or renamed), a conversation was archived or deleted, the open
-  // conversation's run started, ended or began waiting: the groups are read again.
-  useEffect(() => {
-    const changed = () =>
-      void qc.invalidateQueries({ queryKey: keys.org(orgId).conversationGroupsAll() });
-    window.addEventListener(CONVERSATIONS_CHANGED, changed);
-    return () => window.removeEventListener(CONVERSATIONS_CHANGED, changed);
-  }, [qc, orgId]);
   return (
     <ShellFrame
       me={me}

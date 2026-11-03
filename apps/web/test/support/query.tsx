@@ -10,7 +10,10 @@ import { matchRoute } from "../../src/lib/query/routes";
 import { meQuery } from "../../src/lib/query/shell";
 import { dehydrateFor, prefetchRoute } from "../../src/lib/server/query";
 import { type Call, stubApi } from "./api";
-import { ME, renderPage } from "./render";
+import { ME, renderPage, testQueryClient } from "./render";
+
+export { testQueryClient };
+
 import { type Routes, serverRoutes, sessionRoutes } from "./server";
 
 type RouteOpts = Parameters<typeof renderPage>[1] & { readiness?: OrgReadiness };
@@ -36,19 +39,6 @@ async function pageOf(path: string): Promise<ReactNode> {
     params: Promise.resolve(match.params),
     searchParams: Promise.resolve(Object.fromEntries(match.search)),
   });
-}
-
-/**
- * A browser query client with the app's defaults, retrying without the backoff delay (the one
- * retry of a 5xx still happens, at once).
- */
-export function testQueryClient(): QueryClient {
-  const client = makeQueryClient();
-  client.setDefaultOptions({
-    ...client.getDefaultOptions(),
-    queries: { ...client.getDefaultOptions().queries, retryDelay: 0 },
-  });
-  return client;
 }
 
 /** `page` inside a browser query client holding `state`, as the layout's `HydrationBoundary`. */

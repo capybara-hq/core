@@ -1,4 +1,5 @@
 import { DesignProvider, type LinkComponent, ToastProvider } from "@capybara-hq/design";
+import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import type { ReactNode } from "react";
@@ -6,6 +7,7 @@ import { vi } from "vitest";
 import en from "../../messages/en.json";
 import zh from "../../messages/zh.json";
 import { type Session, SessionContext } from "../../src/components/shell/session";
+import { makeQueryClient } from "../../src/lib/query/client";
 import type { Me } from "../../src/lib/session";
 import { Link } from "./navigation";
 
@@ -23,8 +25,32 @@ type PageOpts = {
   session?: Partial<Session>;
 };
 
-/** 页面测试的外层：next-intl、设计系统上下文与会话（代替 (app) 布局里的 AppFrame）。 */
+/**
+ * A browser query client with the app's defaults, retrying without the backoff delay (the one
+ * retry of a 5xx still happens, at once).
+ */
+export function testQueryClient(): QueryClient {
+  const client = makeQueryClient();
+  client.setDefaultOptions({
+    ...client.getDefaultOptions(),
+    queries: { ...client.getDefaultOptions().queries, retryDelay: 0 },
+  });
+  return client;
+}
+
+/** The query client of the latest {@link renderPage}: its `rerender`s keep the same cache. */
+let pageClient: QueryClient = testQueryClient();
+
+/** The browser cache the latest {@link renderPage} rendered with. */
+export const currentPageClient = (): QueryClient => pageClient;
+
+/**
+ * 页面测试的外层：查询缓存、next-intl、设计系统上下文与会话（代替 (app) 布局里的 AppFrame）。
+ * Each call starts from an empty cache; a page that brings its own provider (a hydrated cache)
+ * reads that one.
+ */
 export function renderPage(ui: ReactNode, opts: PageOpts = {}) {
+  pageClient = testQueryClient();
   return render(pageElement(ui, opts));
 }
 
@@ -40,12 +66,14 @@ export function pageElement(
     ...session,
   };
   return (
-    <NextIntlClientProvider locale={locale} messages={locale === "zh" ? zh : en}>
-      <DesignProvider locale={locale} link={Link as LinkComponent}>
-        <ToastProvider>
-          <SessionContext.Provider value={value}>{ui}</SessionContext.Provider>
-        </ToastProvider>
-      </DesignProvider>
-    </NextIntlClientProvider>
+    <QueryClientProvider client={pageClient}>
+      <NextIntlClientProvider locale={locale} messages={locale === "zh" ? zh : en}>
+        <DesignProvider locale={locale} link={Link as LinkComponent}>
+          <ToastProvider>
+            <SessionContext.Provider value={value}>{ui}</SessionContext.Provider>
+          </ToastProvider>
+        </DesignProvider>
+      </NextIntlClientProvider>
+    </QueryClientProvider>
   );
 }

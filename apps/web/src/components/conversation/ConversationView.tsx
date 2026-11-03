@@ -12,11 +12,9 @@ import {
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
-import {
-  type ModelRef,
-  notifyConversationsChanged,
-  renameConversation,
-} from "../../lib/conversations";
+import { type ModelRef, renameConversation } from "../../lib/conversations";
+import { useAppMutation } from "../../lib/query/define";
+import { keys as queryKeys } from "../../lib/query/keys";
 import { runParts } from "../../lib/run-row";
 import type { ConversationSnapshot } from "../../lib/server/conversation";
 import { usageTotal, useSubagents, useUsageWithSubagents } from "../../lib/subagents";
@@ -127,10 +125,7 @@ export function useConversationPage(
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const signature = useStatusSignature(`/chat/${conversationId.slice(0, 8)}`);
-  const conv = useConversation(orgId, conversationId, {
-    conversation: initial.conversation,
-    events: initial.events,
-  });
+  const conv = useConversation(orgId, conversationId);
   const agents = initial.agents;
   const agent = agents?.find((a) => a.id === conv.conversation?.agentId);
   // The title bar path `<org slug> / <agent> /` before the title (spec §3.5).
@@ -204,12 +199,19 @@ export function useConversationPage(
       });
   };
 
+  // The answer is the new row; the sidebar shows the title too.
+  const renameMutation = useAppMutation({
+    fn: async (title: string) => {
+      const { conversation } = await renameConversation(orgId, conversationId, title);
+      conv.setConversation(conversation);
+      return conversation;
+    },
+    invalidates: () => [queryKeys.org(orgId).conversationGroupsAll()],
+  });
   const rename = async (title: string) => {
     setRenameBusy(true);
     try {
-      const { conversation } = await renameConversation(orgId, conversationId, title);
-      conv.setConversation(conversation);
-      notifyConversationsChanged();
+      await renameMutation.mutateAsync(title);
       setRenaming(false);
     } catch (e) {
       toast.error(errorMessage(e));
