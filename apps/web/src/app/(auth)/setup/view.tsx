@@ -1,50 +1,61 @@
 "use client";
 
-import { AuthPage, Button, Stack, Text } from "@capybara-hq/design";
+import { AuthPage, Button, type FieldShape, Stack, Text } from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useContext, useEffect, useState } from "react";
+import { useContext } from "react";
 import { FormError } from "../../../components/form-error";
 import { SetupForm } from "../../../components/setup-form";
 import { useRouter } from "../../../i18n/navigation";
 import { navigateBrowser } from "../../../lib/browser";
 import { usePreferences } from "../../../lib/preferences";
-import { getSetupStatus } from "../../../lib/session";
+import { setupStatusQuery } from "../../../lib/query/auth";
+import { resetSession } from "../../../lib/query/workspace";
 import { broadcastSession } from "../../../lib/session-sync";
 import { useErrorMessage } from "../../../lib/use-error-message";
 import { ServerSetupStatus } from "./status";
 
-type State =
-  | { kind: "loading" }
-  | { kind: "ready"; needsSetup: boolean }
-  | { kind: "error"; message: string };
+/** The setup form while it loads: login and password with their hints, two names, the token. */
+const LOADING_FIELDS: FieldShape[] = [{ help: true }, { help: true }, {}, {}, { help: true }];
 
 /**
  * `/setup`: the setup wizard (AuthPage; `GET` / `POST /api/v1/setup`). The layout already asked the
- * kernel on the server; only when it couldn't answer (starting, unreachable) the browser asks.
- * Setting up signs the new admin in: the other tabs are told, then home loads as a new document.
+ * kernel on the server; only when it couldn't answer (starting, unreachable) the browser asks,
+ * through the cache. Setting up signs the new admin in: the other tabs are told, the cache is
+ * dropped, then home loads as a new document.
  */
 export default function SetupView() {
   const initial = useContext(ServerSetupStatus);
   const t = useTranslations();
   const errorMessage = useErrorMessage();
   const router = useRouter();
+  const qc = useQueryClient();
   const preferences = usePreferences();
-  const [state, setState] = useState<State>(
-    initial === undefined ? { kind: "loading" } : { kind: "ready", needsSetup: initial },
-  );
-
-  // ssr-exempt: only when the kernel did not answer the layout's server read (starting, unreachable)
-  useEffect(() => {
-    if (initial !== undefined) return;
-    getSetupStatus()
-      .then((s) => setState({ kind: "ready", needsSetup: s.needsSetup }))
-      .catch((e: unknown) => setState({ kind: "error", message: errorMessage(e) }));
-  }, [initial, errorMessage]);
+  // Only when the kernel did not answer the layout's server read.
+  const status = useQuery({ ...setupStatusQuery(), enabled: initial === undefined });
+  const needsSetup = initial ?? status.data;
 
   let body: React.ReactNode;
-  if (state.kind === "loading") body = <Text tone="muted">{t("common.loading")}</Text>;
-  else if (state.kind === "error") body = <FormError message={state.message} />;
-  else if (!state.needsSetup) {
+  if (needsSetup === undefined) {
+    if (!status.isError) {
+      return (
+        <AuthPage
+          title={t("setup.title")}
+          subtitle={t("setup.intro")}
+          preferences={preferences}
+          loading={{ fields: LOADING_FIELDS }}
+        />
+      );
+    }
+    body = (
+      <Stack gap={16}>
+        <FormError message={errorMessage(status.error)} />
+        <Button variant="primary" density="prominent" onClick={() => void status.refetch()}>
+          {t("common.retry")}
+        </Button>
+      </Stack>
+    );
+  } else if (!needsSetup) {
     body = (
       <Stack gap={16}>
         <Text>{t("setup.alreadyDone")}</Text>
@@ -58,8 +69,8 @@ export default function SetupView() {
       <SetupForm
         onSuccess={() => {
           broadcastSession("signed-in");
-          // A new session: load the new document (ruling R4).
-          navigateBrowser("/");
+          // A new session: drop the cache, then load the new document (ruling R4).
+          void resetSession(qc, () => navigateBrowser("/"));
         }}
       />
     );

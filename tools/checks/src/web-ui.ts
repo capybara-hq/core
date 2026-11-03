@@ -704,10 +704,7 @@ export interface QueryPending {
   path: string;
   reason: string;
 }
-export const QUERY_PENDING: readonly QueryPending[] = [
-  { path: "app/(auth)/setup/view.tsx", reason: "pending migration: Task 15" },
-  { path: "components/setup-form.tsx", reason: "pending migration: Task 15" },
-];
+export const QUERY_PENDING: readonly QueryPending[] = [];
 
 const QUERY_RULES = {
   noDirectRead: "web-query-no-direct-read",

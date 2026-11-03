@@ -563,7 +563,11 @@ export const ROUTES: readonly RouteEntry[] = [
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "admin") ? [] : [q(serviceTokensQuery(orgId))],
   },
-  { pattern: "/setup", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/setup",
+    queries: () => [],
+    none: "no kernel read before the form: the setup layout asks the kernel itself",
+  },
   {
     pattern: "/skills",
     queries: ({ orgId, me }) =>

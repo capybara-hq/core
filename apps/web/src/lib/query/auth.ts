@@ -1,6 +1,7 @@
 import { listAuthSources } from "../auth-sources";
 import { peekBinding } from "../identities";
 import { previewInvitation } from "../members";
+import { getSetupStatus } from "../session";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
 
@@ -9,6 +10,17 @@ export const authSourcesQuery = () =>
   defineQuery({
     key: keys.deployment().authSources(),
     fn: () => listAuthSources().then((r) => r.sources),
+    freshness: "deployment",
+  });
+
+/**
+ * Whether the deployment still needs its first admin. The setup layout asks on the server; the
+ * browser reads this only when the kernel did not answer it there (starting, unreachable).
+ */
+export const setupStatusQuery = () =>
+  defineQuery({
+    key: keys.deployment().setupStatus(),
+    fn: () => getSetupStatus().then((r) => r.needsSetup),
     freshness: "deployment",
   });
 

@@ -1,17 +1,19 @@
-// The auth pages render on the server (web-SSR spec §6.3, task 11): /login takes its query from the
-// server and sends a signed-in visitor on, /setup keeps the layout's status, /invite and /bind read
-// their token preview on the server. A sign-in tells the other tabs (§3.2), then navigates the whole
-// document (ruling R4: the new session's frame is server-rendered, never a client navigation).
+// The auth pages on the query cache (web query cache spec §3.1, Task 15): a document load paints
+// from what the (auth) layout prefetched (the sign-in sources, the invitation preview and session,
+// the pending binding) with no browser read; a client navigation with nothing cached draws
+// AuthPage's loading shape. /setup keeps its layout's status. A sign-in tells the other tabs
+// (§3.2), drops the cache, then navigates the whole document (ruling R4).
 import { act, cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import SetupPage from "../src/app/(auth)/setup/page";
 import { ServerSetupStatusProvider } from "../src/app/(auth)/setup/status";
+import { authSourcesQuery } from "../src/lib/query/auth";
 import { json, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderAuthRouteWithCache, renderRouteEmptyCache } from "./support/query";
-import { ME } from "./support/render";
+import { ME, testQueryClient } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes, renderServer } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -147,14 +149,22 @@ describe("/login", () => {
 });
 
 describe("/setup", () => {
-  it("the layout's status draws the form with no browser fetch; setting up tells the other tabs", async () => {
+  it("/setup: a first render from the layout's status makes no browser read; setting up tells the other tabs and drops the cache", async () => {
     const browser = stubApi({
       "POST /api/v1/setup": () => json(200, { account: { id: "a1" } }),
     });
+    const client = testQueryClient();
+    client.setQueryData(authSourcesQuery().queryKey, []);
     renderServer(
       <ServerSetupStatusProvider value={true}>{await SetupPage()}</ServerSetupStatusProvider>,
+      { client },
     );
+    await settle();
     expect(browser).toEqual([]);
+    let cachedAtNavigation = -1;
+    navigateBrowser.mockImplementation(() => {
+      cachedAtNavigation = client.getQueryCache().getAll().length;
+    });
     const user = userEvent.setup();
     await user.type(screen.getByRole("textbox", { name: en.setup.loginLabel }), "admin");
     await user.type(
@@ -164,8 +174,50 @@ describe("/setup", () => {
     await user.type(screen.getByRole("textbox", { name: en.setup.displayNameLabel }), "Admin");
     await user.click(screen.getByRole("button", { name: en.setup.submit }));
     await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    expect(cachedAtNavigation).toBe(0);
     expect(broadcastSession).toHaveBeenCalledWith("signed-in");
     expect(before(broadcastSession, navigateBrowser)).toBe(true);
+  });
+
+  it("/setup: when the layout got no answer, the loading state, then the form from the browser's read", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const browser = stubApi({
+      "GET /api/v1/setup": async () => {
+        await gate;
+        return json(200, { needsSetup: true });
+      },
+    });
+    renderServer(
+      <ServerSetupStatusProvider value={undefined}>{await SetupPage()}</ServerSetupStatusProvider>,
+    );
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: en.setup.submit })).toBeNull();
+    await act(async () => release());
+    expect(await screen.findByRole("button", { name: en.setup.submit })).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+    expect(browser.map((c) => c.url)).toEqual(["/api/v1/setup"]);
+  });
+
+  it("/setup: a failed browser read shows the error; retry reads it again", async () => {
+    let up = false;
+    const browser = stubApi({
+      "GET /api/v1/setup": () =>
+        up
+          ? json(200, { needsSetup: false })
+          : json(503, { error: { code: "upstream_unavailable", message: "x" } }),
+    });
+    renderServer(
+      <ServerSetupStatusProvider value={undefined}>{await SetupPage()}</ServerSetupStatusProvider>,
+    );
+    const retry = await screen.findByRole("button", { name: en.common.retry });
+    up = true;
+    await userEvent.setup().click(retry);
+    expect(await screen.findByText(en.setup.alreadyDone)).toBeTruthy();
+    // the first read and its one retry, then the person's retry
+    expect(browser.map((c) => c.url)).toEqual(["/api/v1/setup", "/api/v1/setup", "/api/v1/setup"]);
   });
 });
 

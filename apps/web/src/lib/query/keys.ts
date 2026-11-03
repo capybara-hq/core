@@ -241,6 +241,8 @@ export const keys = {
       all: all as readonly unknown[],
       /** The sign-in sources the login page offers. */
       authSources: (): readonly unknown[] => [...all, "authSources"],
+      /** Whether the deployment still needs its first admin (`GET /setup`). */
+      setupStatus: (): readonly unknown[] => [...all, "setupStatus"],
       /** An invitation's public preview, by its token (no session needed). */
       invitation: (token: string): readonly unknown[] => [...all, "invitation", token],
       /**

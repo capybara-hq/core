@@ -3,16 +3,22 @@
 import { Button, Field, Input, Stack } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { type FormEvent, useState } from "react";
+import { useAppMutation } from "../lib/query/define";
 import { completeSetup, type SetupInput } from "../lib/session";
 import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";
 
-/** 初始化向导表单：建首个企业管理员（可选同时建组织），成功后内核直接登录。 */
+/**
+ * The setup wizard's form: creates the first enterprise admin (and optionally an org); on success
+ * the kernel signs them in and `onSuccess` (the page) ends the cache's session and navigates.
+ */
 export function SetupForm({ onSuccess }: { onSuccess: () => void }) {
   const t = useTranslations("setup");
   const errorMessage = useErrorMessage();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
+  // A new session: the page drops the whole cache before it navigates, nothing to invalidate.
+  const { mutateAsync: setUp } = useAppMutation({ fn: completeSetup, invalidates: () => [] });
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -28,7 +34,7 @@ export function SetupForm({ onSuccess }: { onSuccess: () => void }) {
     setPending(true);
     setError(undefined);
     try {
-      await completeSetup(input);
+      await setUp(input);
     } catch (err) {
       setError(errorMessage(err));
       setPending(false);
