@@ -20,6 +20,7 @@ import {
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { useAccountNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
+import type { ApiClientError } from "../../../../lib/api";
 import { useStartConnect } from "../../../../lib/connect";
 import {
   type ConnectorDetail,
@@ -68,7 +69,7 @@ function Connections({ orgId }: { orgId: string }) {
     path: [...scope, { label: "account", href: "/account/connections" }, { label: "connections" }],
     title: t("nav.connections"),
   };
-  // Until the list and every personal connector's detail answered (a refused one is left out).
+  // Until the list and every personal connector's detail answered.
   if (list.kind === "loading" || details.some((d) => d.data === undefined && d.error === null)) {
     const sections =
       list.kind === "loading"
@@ -78,7 +79,16 @@ function Connections({ orgId }: { orgId: string }) {
       <SettingsPage header={header} nav={nav} activeNav="connections" loading={{ sections }} />
     );
   }
-  const shown = details.flatMap((d) => (d.data === undefined ? [] : [d.data]));
+  // A detail the kernel refuses (403 / 404: the person may no longer see it) is left out, even
+  // when an older answer is cached; any other failure without data is the page's error state.
+  const refused = (e: ApiClientError | null) => e?.status === 403 || e?.status === 404;
+  const failed = details.filter(
+    (d) => d.data === undefined && d.error !== null && !refused(d.error),
+  );
+  if (failed.length > 0) {
+    return <ErrorFrame reset={() => failed.forEach((d) => void d.refetch())} />;
+  }
+  const shown = details.flatMap((d) => (d.data === undefined || refused(d.error) ? [] : [d.data]));
   return (
     <SettingsPage header={header} nav={nav} activeNav="connections">
       {shown.length === 0 ? (

@@ -154,6 +154,50 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(browser).toEqual([]);
   });
 
+  it("/account/connections: a detail that fails otherwise (500) is the error state; retry reads it again", async () => {
+    let failing500 = true;
+    const routes: Routes = {
+      ...ROUTES,
+      [`GET ${O}/connectors/c2`]: () =>
+        failing500
+          ? json(500, { error: { code: "internal", message: "x" } })
+          : json(200, { connector: personalApp("c2", "Wiki") }),
+    };
+    const calls = stubApi(routes);
+    await renderRouteWithCache("/account/connections", routes);
+    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("maintenance");
+    expect(screen.queryByRole("region", { name: "Docs" })).toBeNull();
+    await settle();
+    // the hydrated error is not read again on mount
+    expect(calls).toEqual([]);
+    failing500 = false;
+    await userEvent.setup().click(screen.getByRole("button", { name: en.errors.page.retry }));
+    expect(await screen.findByRole("region", { name: "Wiki" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Docs" })).toBeTruthy();
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toContain(`GET ${O}/connectors/c2`);
+  });
+
+  it.each([
+    ["/account/grants", `GET ${O}/me/tool-grants`, en.connections.grants.empty],
+    ["/account/identities", "GET /api/v1/me/identities", "Alice Wong"],
+  ])("%s: a 404 of the list is the error state; retry reads it again", async (path, read, text) => {
+    let missing = true;
+    const answer = ROUTES[read] as NonNullable<Routes[string]>;
+    const routes: Routes = {
+      ...ROUTES,
+      [read]: (c) =>
+        missing ? json(404, { error: { code: "not_found", message: "x" } }) : answer(c),
+    };
+    const calls = stubApi(routes);
+    await renderRouteWithCache(path, routes);
+    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("maintenance");
+    expect(document.querySelector("[aria-busy='true']")).toBeNull();
+    missing = false;
+    await userEvent.setup().click(screen.getByRole("button", { name: en.errors.page.retry }));
+    expect(await screen.findByText(text)).toBeTruthy();
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toContain(read);
+  });
+
   it("/account/connections: an empty cache shows the template's loading state, then the data", async () => {
     const { release } = await renderHeld("/account/connections", `GET ${O}/connectors/c2`);
     await vi.waitFor(() => {

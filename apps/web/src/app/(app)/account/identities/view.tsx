@@ -12,7 +12,7 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
@@ -58,6 +58,8 @@ function Identities({ accountId }: { accountId: string }) {
   const errorMessage = useErrorMessage();
   const nav = useAccountNav();
   const read = usePageQuery(identitiesQuery(accountId));
+  const qc = useQueryClient();
+  const retry = () => void qc.refetchQueries({ queryKey: identitiesQuery(accountId).queryKey });
   const sourcesQ = authSourcesQuery();
   const sources = useQuery({ ...sourcesQ, retryOnMount: retryOnMountOf(sourcesQ.queryKey) });
   const loginPlugins = sources.data?.map((x) => x.plugin) ?? null;
@@ -128,6 +130,8 @@ function Identities({ accountId }: { accountId: string }) {
     },
   ];
 
+  // A 404 of my own list is no missing object: it is an error with a retry, like any failure.
+  if (read.kind === "notFound") return <ErrorFrame reset={retry} />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
   return (
     <SettingsPage

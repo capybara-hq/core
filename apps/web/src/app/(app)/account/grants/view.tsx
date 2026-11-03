@@ -8,6 +8,7 @@ import {
   SettingsPage,
   useToast,
 } from "@capybara-hq/design";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
@@ -40,6 +41,8 @@ function Grants({ orgId }: { orgId: string }) {
   const errorMessage = useErrorMessage();
   const nav = useAccountNav();
   const read = usePageQuery(toolGrantsQuery(orgId));
+  const qc = useQueryClient();
+  const retry = () => void qc.refetchQueries({ queryKey: toolGrantsQuery(orgId).queryKey });
   const [revoking, setRevoking] = useState<string>();
   const revokeGrant = useAppMutation({
     fn: (g: ToolGrant) => revokeToolGrant(orgId, g.agentId, g.toolKey),
@@ -86,6 +89,8 @@ function Grants({ orgId }: { orgId: string }) {
     },
   ];
 
+  // A 404 of my own list is no missing object: it is an error with a retry, like any failure.
+  if (read.kind === "notFound") return <ErrorFrame reset={retry} />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
   return (
     <SettingsPage
