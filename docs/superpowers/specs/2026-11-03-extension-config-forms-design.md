@@ -243,8 +243,8 @@ channel connection errors.
 `staticDeploymentSchema` (no imported module on this replica: pending approval, disabled, import
 failed) gives only `{ path, secret, hot }` today, so those extensions get the flat form. The packer
 writes the JSON Schemas into the package: `extension.configSchemas: { deployment?: JsonSchema; org?:
-JsonSchema }` in `plugin.json` (beside `manifest`, ≤ 256 KiB each). The kernel returns it as
-`schema` with `validated: false` (unchanged semantics: no validation until load). It is **not** part
+JsonSchema }` in `plugin.json` (beside `manifest`, ≤ 96 KiB each; `plugin.json` as a whole is
+≤ 256 KiB). The kernel returns it as `schema` with `validated: false` (unchanged semantics: no validation until load). It is **not** part
 of the `manifest_mismatch` comparison: the packer's and the host's zod may serialize slightly
 differently, and the field list in `manifest.config` already pins the shape. Old packages without
 `configSchemas` keep today's flat fallback. A package using `ui()` needs an `sdk` range that

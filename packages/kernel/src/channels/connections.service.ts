@@ -15,7 +15,12 @@ import { queryEnabledPlugins } from "../ctx/create-ctx.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import { ApiError } from "../errors.js";
 import { toIssues } from "../extensions/config-issues.js";
-import { configToJsonSchema, type JsonSchema } from "../extensions/config-json-schema.js";
+import {
+  configFormSchema,
+  configMessages,
+  describeConfigUiProblems,
+  type JsonSchema,
+} from "../extensions/config-json-schema.js";
 import { enabledExtensionsByOrg } from "../extensions/enabled.js";
 import type { InflightTracker } from "../extensions/inflight.js";
 import { type ExtensionPointEntry, ExtensionRegistry } from "../extensions/registry.js";
@@ -186,6 +191,8 @@ const COLUMNS = [
 @Injectable()
 export class ChannelConnections implements OnApplicationShutdown {
   private readonly unsubscribe: (() => void)[];
+  /** `<plugin>@<version>` whose invalid connection hints were warned about (a log dedupe only). */
+  private readonly hintsWarned = new Set<string>();
 
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
@@ -246,7 +253,29 @@ export class ChannelConnections implements OnApplicationShutdown {
 
   /** `connectionSchema` 的 JSON Schema（同组织插件配置的转换：密钥字段带 `x-secret`、不输出取值）。 */
   jsonSchema(plugin: string): JsonSchema {
-    return configToJsonSchema(this.channel(plugin).connectionSchema);
+    const entry = this.channelEntry(plugin);
+    return structuredClone(
+      this.formSchema(plugin, entry.version, (entry.impl as Channel).connectionSchema).schema,
+    );
+  }
+
+  /**
+   * The connection schema's form JSON Schema; invalid hints are stripped and warned about once per
+   * `<plugin>@<version>` on this replica (spec §4.1: the connection level is checked at its first
+   * conversion, not at load).
+   */
+  private formSchema(plugin: string, version: string, schema: z.ZodTypeAny) {
+    const r = configFormSchema(schema, "connection");
+    const key = `${plugin}@${version}`;
+    if (r.problems.length > 0 && !this.hintsWarned.has(key)) {
+      this.hintsWarned.add(key);
+      this.log.warn("extension config UI hints are invalid and ignored", {
+        plugin,
+        version,
+        detail: describeConfigUiProblems("connection", r.problems),
+      });
+    }
+    return r;
   }
 
   private parse(plugin: string, schema: z.ZodTypeAny, config: unknown): Obj {
@@ -255,7 +284,7 @@ export class ChannelConnections implements OnApplicationShutdown {
       throw new ApiError(
         "extension.config_invalid",
         `Invalid channel connection config for extension ${plugin}`,
-        toIssues(r.error),
+        toIssues(r.error, configMessages(configFormSchema(schema, "connection").schema)),
       );
     }
     return r.data as Obj;

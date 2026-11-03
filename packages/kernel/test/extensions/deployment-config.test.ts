@@ -323,7 +323,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
     expect(bad.json().error.code).toBe("extension.config_invalid");
     expect(bad.body).not.toContain("not-a-number-xyz");
     expect(bad.json().error.details).toEqual([
-      { path: "limits.burst", message: expect.any(String) },
+      { path: "limits.burst", segments: ["limits", "burst"], message: expect.any(String) },
     ]);
     // 什么都没写
     expect(await db.selectFrom("extension_deployment_configs").selectAll().execute()).toEqual([]);

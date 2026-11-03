@@ -25,7 +25,7 @@ import { KERNEL_LOGGER, KEYRING } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { type ConfigIssue, toIssues } from "./config-issues.js";
-import { configToJsonSchema, type JsonSchema } from "./config-json-schema.js";
+import { configFormSchema, configMessages, type JsonSchema } from "./config-json-schema.js";
 import { enabledExtensionsQuery, requiredExtensions } from "./enabled.js";
 import { ExtensionHost } from "./host.js";
 import { ExtensionInstalls } from "./installs.js";
@@ -65,15 +65,12 @@ export interface OrgExtensionView {
   required: boolean;
 }
 
-/** 清单不可变：每个组织级 schema 的 JSON Schema 转换结果按 schema 对象缓存（只读、无跨请求状态）。 */
-const jsonSchemaCache = new WeakMap<object, JsonSchema>();
+/**
+ * The org schema's form JSON Schema (`x-ui` stripped when its hints are invalid; the host warns at
+ * load), converted once per schema object (manifests are immutable).
+ */
 function orgJsonSchema(schema: z.ZodTypeAny): JsonSchema {
-  let js = jsonSchemaCache.get(schema);
-  if (!js) {
-    js = configToJsonSchema(schema);
-    jsonSchemaCache.set(schema, js);
-  }
-  return structuredClone(js);
+  return structuredClone(configFormSchema(schema, "org").schema);
 }
 
 /** `put` 的输入：`config` 中的密钥字段缺省 = 保留原值、`null` = 清除、其他值 = 新值。 */
@@ -352,7 +349,7 @@ export class OrgExtensionConfigs {
           throw new ApiError(
             "extension.config_invalid",
             `Invalid organization config for extension ${plugin}`,
-            toIssues(r.error),
+            toIssues(r.error, configMessages(configFormSchema(schema, "org").schema)),
           );
         }
         next = r.data as Obj;

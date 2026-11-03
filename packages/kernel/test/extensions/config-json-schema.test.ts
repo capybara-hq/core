@@ -1,91 +1,91 @@
-import { secret } from "@capybara-hq/plugin-sdk";
+import { secret, ui } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { configToJsonSchema } from "../../src/extensions/config-json-schema.js";
+import {
+  configFormSchema,
+  configToJsonSchema,
+  stripConfigUi,
+} from "../../src/extensions/config-json-schema.js";
+
+// The conversion itself (scrub, unsupported types, hint copies) is the SDK's and tested there
+// (packages/plugin-sdk/test/config-ui.test.ts); these cases cover what the kernel adds.
 
 type Props = { properties: Record<string, Record<string, unknown>> };
+const label = (en: string) => ({ zh: en, en });
 
-describe("configToJsonSchema", () => {
-  it("普通对象转成 JSON Schema，必填与默认值保留", () => {
-    const js = configToJsonSchema(
-      z.object({ appId: z.string(), n: z.number().default(3), tags: z.array(z.string()) }),
-    );
-    expect(js.type).toBe("object");
-    expect(js.required).toEqual(["appId", "tags"]);
-    expect((js as unknown as Props).properties.n?.default).toBe(3);
-  });
-
-  it("secret 字段（含可选与嵌套）带 x-secret 且不残留 secret 元数据键", () => {
+describe("configToJsonSchema (the SDK's configJsonSchema)", () => {
+  it("passes x-ui, x-hot and x-secret through", () => {
     const js = configToJsonSchema(
       z.object({
-        appSecret: secret(z.string()),
-        webhook: z.object({ token: secret(z.string()).optional(), path: z.string() }),
+        greeting: ui(z.string().default("hi").meta({ hot: true }), { label: label("Greeting") }),
+        token: secret(z.string()).optional(),
       }),
     ) as unknown as Props;
-    expect(js.properties.appSecret?.["x-secret"]).toBe(true);
-    expect(js.properties.appSecret).not.toHaveProperty("secret");
-    const wh = js.properties.webhook?.properties as Record<string, Record<string, unknown>>;
-    expect(wh.token?.["x-secret"]).toBe(true);
-    expect(wh.token).not.toHaveProperty("secret");
-    expect(wh.path).not.toHaveProperty("x-secret");
+    expect(js.properties.greeting).toMatchObject({
+      "x-hot": true,
+      "x-ui": { label: label("Greeting") },
+    });
+    expect(js.properties.token?.["x-secret"]).toBe(true);
+  });
+});
+
+describe("configFormSchema", () => {
+  const good = z.object({
+    mode: ui(z.enum(["a", "b"]).default("a"), {
+      options: [{ value: "a", label: label("A") }],
+    }),
+  });
+  const bad = z.object({
+    mode: ui(z.enum(["a", "b"]).default("a"), {
+      options: [{ value: "c", label: label("C") }],
+    }),
+    nested: z.object({ n: ui(z.number().default(1), { unit: label("ms") }) }),
   });
 
-  it("无法表达的类型降级为 {} 并标注 x-unsupported，不抛错", () => {
-    const js = configToJsonSchema(
-      z.object({ when: z.date(), big: z.bigint(), ok: z.string() }),
-    ) as unknown as Props;
-    expect(js.properties.when).toEqual({ "x-unsupported": true });
-    expect(js.properties.big).toEqual({ "x-unsupported": true });
-    expect(js.properties.ok).toEqual({ type: "string" });
+  it("valid hints stay, with no problems", () => {
+    const r = configFormSchema(good, "deployment");
+    expect(r.problems).toEqual([]);
+    expect((r.schema as unknown as Props).properties.mode?.["x-ui"]).toBeDefined();
   });
 
-  it("不带 $schema 键（嵌入 API 响应）", () => {
-    expect(configToJsonSchema(z.object({}))).not.toHaveProperty("$schema");
+  it("invalid hints: every x-ui is stripped and the problems are reported", () => {
+    const r = configFormSchema(bad, "org");
+    expect(r.problems.length).toBeGreaterThan(0);
+    expect(r.problems[0]?.path).toBe("mode");
+    expect(JSON.stringify(r.schema)).not.toContain("x-ui");
+    // the rest of the schema is untouched
+    expect((r.schema as unknown as Props).properties.mode?.enum).toEqual(["a", "b"]);
   });
 
-  it("密钥字段不输出 default / enum / const（两种 default 写法与 optional 包装）", () => {
-    const js = configToJsonSchema(
-      z.object({
-        a: secret(z.string()).default("S3CRET"),
-        b: secret(z.string().default("S4")),
-        c: secret(z.string()).optional().default("S5"),
-        d: secret(z.enum(["S6", "S7"])),
-        e: z.string().default("plain"),
+  it("is cached per schema object and level", () => {
+    expect(configFormSchema(good, "deployment")).toBe(configFormSchema(good, "deployment"));
+    // record secrets are allowed only at the deployment level
+    const rec = z.object({
+      keys: secret(z.record(z.string(), z.string())).default({}),
+      list: ui(z.array(z.object({ name: z.string() })).default([]), {
+        secrets: [{ path: "keys", keyBy: "name", label: label("Key") }],
       }),
-    ) as unknown as Props;
-    for (const k of ["a", "b", "c", "d"]) {
-      expect(js.properties[k]?.["x-secret"]).toBe(true);
-      for (const w of ["default", "examples", "const", "enum"]) {
-        expect(js.properties[k]).not.toHaveProperty(w);
-      }
-    }
-    expect(JSON.stringify(js)).not.toMatch(/S3CRET|S4|S5|S6|S7/);
-    expect(js.properties.e?.default).toBe("plain");
+    });
+    expect(configFormSchema(rec, "deployment").problems).toEqual([]);
+    expect(configFormSchema(rec, "connection").problems.length).toBeGreaterThan(0);
   });
 
-  it("密钥对象 / 数组的所有后代同样不输出取值关键字（含名为 default / enum 的属性）", () => {
-    const js = configToJsonSchema(
-      z.object({
-        obj: secret(
-          z.object({
-            a: z.string().default("NESTDEF"),
-            b: z.enum(["NESTENUM1", "NESTENUM2"]),
-            c: z.literal("NESTCONST"),
-            default: z.string().default("PROPDEF"),
-            enum: z.object({ deep: z.string().default("DEEPDEF") }),
-          }),
-        ),
-        arr: secret(z.array(z.string().default("ITEMDEF"))),
-        open: z.object({ default: z.string().default("PUBLICDEF") }),
-      }),
-    );
-    const text = JSON.stringify(js);
-    expect(text).not.toMatch(/NEST|PROPDEF|DEEPDEF|ITEMDEF/);
-    const p = (js as unknown as Props).properties;
-    const obj = p.obj?.properties as Record<string, Record<string, unknown>>;
-    expect(Object.keys(obj)).toEqual(["a", "b", "c", "default", "enum"]);
-    // 非密钥对象里名为 default 的属性保持原样（遍历到了、也没被误删）
-    const open = p.open?.properties as Record<string, Record<string, unknown>>;
-    expect(open.default?.default).toBe("PUBLICDEF");
+  it("stripConfigUi leaves a property named x-ui alone", () => {
+    const js = {
+      type: "object",
+      "x-ui": { label: label("Root") },
+      properties: {
+        "x-ui": { type: "string", "x-ui": { label: label("Field") } },
+        list: { type: "array", items: { type: "string", "x-ui": { label: label("Item") } } },
+      },
+    };
+    stripConfigUi(js);
+    expect(js).toEqual({
+      type: "object",
+      properties: {
+        "x-ui": { type: "string" },
+        list: { type: "array", items: { type: "string" } },
+      },
+    });
   });
 });

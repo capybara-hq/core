@@ -16,7 +16,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
-import type { core } from "zod";
+import type { core, z } from "zod";
 import type { KernelAppOptions } from "../app.js";
 import {
   changedPaths,
@@ -61,6 +61,7 @@ import {
 } from "./approvals.js";
 import { ExtensionBlobIntegrityError } from "./blobs.js";
 import { toIssues } from "./config-issues.js";
+import { configFormSchema, describeConfigUiProblems } from "./config-json-schema.js";
 import { HookRegistry } from "./hooks.js";
 import type { InflightTracker } from "./inflight.js";
 import { type DesiredExtension, ExtensionInstalls } from "./installs.js";
@@ -608,6 +609,8 @@ export class ExtensionHost {
   private readonly configValidity = new Map<string, boolean>();
   /** 已告警过的「部署配置不合法」（插件名 → 说明；每个周期都会重新判定，同一说明只告警一次）。 */
   private readonly configWarned = new Map<string, string>();
+  /** `<name>@<version>` whose invalid config UI hints were warned about (a log dedupe only). */
+  private readonly configUiWarned = new Set<string>();
 
   /**
    * The host builds each extension's `ctx` from the injected kernel services: the pool for
@@ -1351,6 +1354,33 @@ export class ExtensionHost {
     }
   }
 
+  /**
+   * Checks the config UI hints of a loaded module's deployment and org schemas (spec §4.1). Invalid
+   * hints never fail the load: the form schemas drop their `x-ui` (`configFormSchema`), one warning
+   * per `<name>@<version>` is logged, and the returned text goes into the status detail (null when
+   * every hint is valid). The packer refuses such a package; this covers hand-made ones.
+   */
+  private checkConfigUi(manifest: ExtensionManifest): string | null {
+    const parts: string[] = [];
+    for (const level of ["deployment", "org"] as const) {
+      const schema = manifest.config?.[level];
+      if (!schema) continue;
+      const { problems } = configFormSchema(schema as z.ZodTypeAny, level);
+      if (problems.length > 0) parts.push(describeConfigUiProblems(level, problems));
+    }
+    if (parts.length === 0) return null;
+    const detail = parts.join("; ");
+    const key = `${manifest.name}@${manifest.version}`;
+    if (!this.configUiWarned.has(key)) {
+      this.configUiWarned.add(key);
+      this.log.warn(
+        "extension config UI hints are invalid and ignored: its config forms show plain fields",
+        { plugin: manifest.name, version: manifest.version, detail },
+      );
+    }
+    return detail;
+  }
+
   /** 给已有状态行补说明；失败只记 warn。 */
   private async noteStatus(plugin: string, detail: string): Promise<void> {
     try {
@@ -1566,7 +1596,12 @@ export class ExtensionHost {
     this.unloadedForDependency.delete(name);
     const old = this.registry.activate(inst);
     this.loggedFailures.delete(name);
-    await this.writeStatus({ ...base, state: "loaded", reason: null, detail: null });
+    await this.writeStatus({
+      ...base,
+      state: "loaded",
+      reason: null,
+      detail: this.checkConfigUi(manifest),
+    });
     if (old) this.retire(old);
     return inst;
   }
@@ -2317,7 +2352,7 @@ export class ExtensionHost {
       source: inst.source,
       state: "loaded",
       reason: null,
-      detail: null,
+      detail: this.checkConfigUi(spec.manifest),
     });
     if (old) await this.disposeQuietly(old, drainMs);
     this.log.info("plugin reloaded", { plugin, generation: inst.generation });

@@ -24,7 +24,12 @@ import { KERNEL_APP_OPTIONS } from "../lifecycle/tokens.js";
 import type { KernelLogger } from "../log.js";
 import type { PublishBus } from "./admin-view.js";
 import { type ConfigIssue, toIssues } from "./config-issues.js";
-import { configToJsonSchema, type JsonSchema } from "./config-json-schema.js";
+import {
+  checkConfigUi,
+  configFormSchema,
+  configMessages,
+  type JsonSchema,
+} from "./config-json-schema.js";
 import {
   DEPLOYMENT_SECRETS_ORG,
   type DeploymentSchemaInfo,
@@ -80,7 +85,10 @@ export interface DeploymentConfigView {
   /** 插件声明了部署级配置。 */
   configurable: boolean;
   fields: DeploymentConfigField[];
-  /** 部署级 schema 的 JSON Schema（密钥字段带 `x-secret`）；本副本拿不到模块（未加载的安装记录）时为 null。 */
+  /**
+   * 部署级 schema 的 JSON Schema（密钥字段带 `x-secret`，提示 `x-ui` / `x-hot`）。本副本拿不到模块（未加载的
+   * 安装记录）时取包内的 `extension.configSchemas.deployment`（`validated` 为 false）；旧包没有它时为 null。
+   */
   schema: JsonSchema | null;
   /** 生效配置按 schema 校验通过（`validated` 为 false 时没有校验，恒为 true，界面不要据此显示「合法」）。 */
   valid: boolean;
@@ -93,15 +101,10 @@ export interface DeploymentConfigView {
   issues: ConfigIssue[];
 }
 
-/** JSON Schema 转换按 schema 对象缓存（清单不可变）。 */
-const jsonSchemaCache = new WeakMap<object, JsonSchema>();
-function jsonSchemaOf(schema: core.$ZodType): JsonSchema {
-  let js = jsonSchemaCache.get(schema);
-  if (!js) {
-    js = configToJsonSchema(schema as z.ZodType);
-    jsonSchemaCache.set(schema, js);
-  }
-  return structuredClone(js);
+/** The form JSON Schema of the description: the zod schema's, else the package's static one. */
+function formSchemaOf(info: DeploymentSchemaInfo): JsonSchema | undefined {
+  if (info.schema) return configFormSchema(info.schema as z.ZodType, "deployment").schema;
+  return info.jsonSchema;
 }
 
 /** 某字段 zod 叶子上的默认值（整份配置不合法、校验没能补上默认值时，视图仍按它显示）。 */
@@ -309,7 +312,7 @@ export class ExtensionDeploymentConfigService {
       );
       if (!r.success) {
         // 启动配置里只读字段自己的问题这里改不了（照样保存，插件保持待配置），其余拒绝
-        const issues = toIssues(r.error).filter(
+        const issues = toIssues(r.error, messagesOf(info)).filter(
           (i) => i.path === "" || fieldSource(sources, i.path) === undefined,
         );
         if (issues.length > 0) {
@@ -384,7 +387,7 @@ export class ExtensionDeploymentConfigService {
       if (r.success) effective = r.data;
       else {
         valid = false;
-        issues = toIssues(r.error);
+        issues = toIssues(r.error, messagesOf(info));
       }
     }
     const fields = info.fields.map((f): DeploymentConfigField => {
@@ -414,7 +417,7 @@ export class ExtensionDeploymentConfigService {
       version: info.version,
       configurable: info.fields.length > 0,
       fields,
-      schema: info.schema ? jsonSchemaOf(info.schema) : null,
+      schema: structuredClone(formSchemaOf(info) ?? null),
       valid,
       validated: info.schema !== undefined,
       issues,
@@ -422,8 +425,16 @@ export class ExtensionDeploymentConfigService {
   }
 }
 
+const messagesOf = (info: DeploymentSchemaInfo) => {
+  const js = formSchemaOf(info);
+  return js && configMessages(js);
+};
+
 /**
  * 本副本拿不到模块时（未加载的安装记录）按包内审阅过的静态清单给出字段（没有 zod schema：不校验，加载时再校验）。
+ * The package's `extension.configSchemas.deployment` (written by the packer) is the form schema;
+ * its hints are checked like a loaded schema's (stripped when invalid, silently: a hand-made
+ * package). It is not compared with the module (not part of `manifest_mismatch`, spec §4.5).
  */
 export async function staticDeploymentSchema(
   db: KernelSchemaDb,
@@ -438,9 +449,16 @@ export async function staticDeploymentSchema(
   if (!row) return undefined;
   // new rows hold the plugin's extension section, pre-0.1.0 rows the old capybara section; both
   // carry the static manifest
-  const section = row.section as Pick<PluginExtensionSection, "manifest">;
+  const section = row.section as Pick<PluginExtensionSection, "manifest" | "configSchemas">;
+  const stored = section.configSchemas?.deployment;
+  let jsonSchema: JsonSchema | undefined;
+  if (typeof stored === "object" && stored !== null && !Array.isArray(stored)) {
+    jsonSchema = structuredClone(stored);
+    checkConfigUi(jsonSchema, "deployment");
+  }
   return {
     version: row.version,
+    ...(jsonSchema !== undefined && { jsonSchema }),
     fields: (section.manifest.config?.deployment ?? []).map((f) => ({
       path: f.path,
       secret: f.secret,
