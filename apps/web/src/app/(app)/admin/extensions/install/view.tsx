@@ -14,14 +14,16 @@ import {
   versionLabel,
   WizardPage,
 } from "@capybara-hq/design";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useRef, useState } from "react";
+import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { FormError } from "../../../../../components/form-error";
+import { NoAccess } from "../../../../../components/NoAccess";
 import { PermissionReview } from "../../../../../components/PermissionReview";
 import { usePagePath } from "../../../../../components/shell/path";
 import { Link, useRouter } from "../../../../../i18n/navigation";
 import {
-  type AdminExtension,
   approveExtension,
   enableExtension,
   ingestNpm,
@@ -32,7 +34,13 @@ import {
   uploadExtensionPackage,
 } from "../../../../../lib/admin-extensions";
 import { ApiClientError, issueLines } from "../../../../../lib/api";
+import { adminExtensionsQuery, extensionChangeKeys } from "../../../../../lib/query/admin";
+import { useAppMutation } from "../../../../../lib/query/define";
+import { keys } from "../../../../../lib/query/keys";
+import { usePageQuery } from "../../../../../lib/query/page-query";
+import { useAdmin } from "../../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
+import NotFound from "../../../not-found";
 
 type Step = 0 | 1 | 2;
 type Problem = { message: string; extra: string[] };
@@ -49,22 +57,45 @@ type Problem = { message: string; extra: string[] };
  * 3. Confirm: with sensitive items, "I understand the sensitive items" must be checked; then install
  *    -> approve (skipped when no approval is needed) -> optionally enable.
  * `?upgrade=<name>` is an upgrade ("Upgrade" on the extension page).
+ * The installed extensions come from the query cache (the layout prefetched them on a first load).
+ * The source step does not depend on them, so it renders for real while they load; the review
+ * waits for them. Each step's write invalidates the list and what an extension brings to the
+ * current org (its readiness among them).
  */
-export default function ExtensionInstall({
-  target,
-  initial,
-}: {
-  target: string | null;
-  initial: { extensions: AdminExtension[]; drainSeconds: number };
-}) {
+export default function ExtensionInstallView({ target }: { target: string | null }) {
+  const gate = useAdmin();
+  if (gate.kind === "pending") return null;
+  if (gate.kind === "noAccess") return <NoAccess need={gate.need} />;
+  return <ExtensionInstall target={target} orgId={gate.me.currentOrgId} />;
+}
+
+function ExtensionInstall({ target, orgId }: { target: string | null; orgId: string | null }) {
   const scope = usePagePath("admin");
   const t = useTranslations("admin.extensions.wizard");
   const td = useTranslations("admin.extensions.detail");
   const router = useRouter();
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const plugins = initial.extensions;
-  const drainSeconds = initial.drainSeconds;
+  const qc = useQueryClient();
+  const read = usePageQuery(adminExtensionsQuery());
+  const plugins = read.kind === "ready" ? read.data.extensions : [];
+  const drainSeconds = read.kind === "ready" ? read.data.drainSeconds : 0;
+  const changes = () => [keys.deployment().extensions(), ...extensionChangeKeys(orgId)];
+  const install = useAppMutation({
+    fn: (v: { name: string; sha256: string }) => installExtension(v.name, v.sha256),
+    invalidates: changes,
+  });
+  const approve = useAppMutation({
+    fn: (v: { name: string; sha256: string; reviewHash: string }) =>
+      approveExtension(v.name, { sha256: v.sha256, reviewHash: v.reviewHash }),
+    invalidates: changes,
+  });
+  const enable = useAppMutation({ fn: enableExtension, invalidates: changes });
+  // Only reads the package for the review (nothing changes on the deployment yet).
+  const fetchNpm = useAppMutation({
+    fn: (v: { pkg: string; version: string }) => ingestNpm(v.pkg, v.version),
+    invalidates: () => [],
+  });
 
   const [step, setStep] = useState<Step>(0);
   const [source, setSource] = useState<"file" | "npm">("file");
@@ -97,8 +128,10 @@ export default function ExtensionInstall({
         setProgress(0);
         r = await uploadExtensionPackage(file, { onProgress: setProgress, signal: ctrl.signal });
       } else {
-        r = await ingestNpm(pkg.trim(), version.trim());
+        r = await fetchNpm.mutateAsync({ pkg: pkg.trim(), version: version.trim() });
       }
+      // The review compares against the installed extensions: they are here before it shows.
+      await qc.ensureQueryData(adminExtensionsQuery());
       setReview(r);
       setAck(false);
       setStep(1);
@@ -134,10 +167,11 @@ export default function ExtensionInstall({
     setSubmitError(undefined);
     let installed: string | null = null;
     try {
-      await installExtension(review.name, review.sha256);
+      await install.mutateAsync({ name: review.name, sha256: review.sha256 });
       installed = review.name;
       try {
-        await approveExtension(review.name, {
+        await approve.mutateAsync({
+          name: review.name,
           sha256: review.sha256,
           reviewHash: review.reviewHash,
         });
@@ -146,10 +180,8 @@ export default function ExtensionInstall({
         if (!(e instanceof ApiClientError && e.code === "extension.not_pending")) throw e;
       }
       if (offerEnable && enableAfter) {
-        await enableExtension(review.name);
+        await enable.mutateAsync(review.name);
       }
-      // A model provider installed or enabled moves the org's readiness the shell shows.
-      router.refresh();
       toast.success(t("done", { name: review.name }));
       router.push(`/admin/extensions/${encodeURIComponent(review.name)}`);
     } catch (e) {
@@ -200,6 +232,8 @@ export default function ExtensionInstall({
             },
           };
 
+  if (read.kind === "notFound") return <NotFound />;
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
   return (
     <WizardPage
       header={{

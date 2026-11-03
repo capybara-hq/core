@@ -73,6 +73,8 @@ function shellRoutes(readiness: typeof READY) {
     [`GET ${O}/members`]: () => json(200, { members: [] }),
     // and the setup step /settings/models (the purposes)
     [`GET ${O}/model-purposes`]: () => json(200, { purposes: [] }),
+    // and the admin console's /admin/extensions (the deployment's extensions)
+    "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
   });
 }
 const layoutAt = (path: string) => {

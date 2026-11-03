@@ -13,11 +13,13 @@ import type { UiContributionItem, UiLocale } from "../ui";
 import { identitiesQuery, toolGrantsQuery } from "./account";
 import {
   adminAccountsQuery,
+  adminExtensionsQuery,
   adminModelsQuery,
   adminOrgsQuery,
   adminOverviewQuery,
   adminPurposesQuery,
   deploymentSettingsQuery,
+  extensionConfigQuery,
 } from "./admin";
 import { agentConnectorQueries, agentFormQueries, agentQuery, agentsQuery } from "./agents";
 import { authSourcesQuery } from "./auth";
@@ -166,9 +168,23 @@ export const ROUTES: readonly RouteEntry[] = [
   { pattern: "/admin/catalog/[itemId]", queries: () => [], none: "pending migration" },
   { pattern: "/admin/catalog/import", queries: () => [], none: "pending migration" },
   { pattern: "/admin/catalog/requests", queries: () => [], none: "pending migration" },
-  { pattern: "/admin/extensions", queries: () => [], none: "pending migration" },
-  { pattern: "/admin/extensions/[name]", queries: () => [], none: "pending migration" },
-  { pattern: "/admin/extensions/install", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/admin/extensions",
+    queries: ({ me }) => (enterprise(me) ? [q(adminExtensionsQuery())] : []),
+  },
+  {
+    pattern: "/admin/extensions/[name]",
+    // The list (the extension is found in it) and its deployment config (the Config tab).
+    queries: ({ me, params }) =>
+      enterprise(me) && params.name !== undefined
+        ? [q(adminExtensionsQuery()), q(extensionConfigQuery(params.name))]
+        : [],
+  },
+  {
+    pattern: "/admin/extensions/install",
+    // The installed extensions (a name clash or an upgrade); `?upgrade=` needs no read.
+    queries: ({ me }) => (enterprise(me) ? [q(adminExtensionsQuery())] : []),
+  },
   { pattern: "/admin/marketplaces", queries: () => [], none: "pending migration" },
   { pattern: "/admin/marketplaces/entries", queries: () => [], none: "pending migration" },
   {

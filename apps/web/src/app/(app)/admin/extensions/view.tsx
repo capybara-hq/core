@@ -3,6 +3,8 @@
 import { ListPage, ObjectRow } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
+import { ErrorFrame } from "../../../../components/ErrorFrame";
+import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
 import {
   type AdminExtension,
@@ -11,6 +13,10 @@ import {
   replicaSummary,
 } from "../../../../lib/admin-extensions";
 import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
+import { adminExtensionsQuery } from "../../../../lib/query/admin";
+import { usePageQuery } from "../../../../lib/query/page-query";
+import { useAdmin } from "../../../../lib/query/workspace";
+import NotFound from "../../not-found";
 
 type TabId = "all" | "attention" | "enabled" | "disabled";
 
@@ -36,18 +42,43 @@ const STATE_TONE: Record<ExtensionStatus, "ok" | "warn" | "fail" | "muted"> = {
  * Enabled / Disabled carry counts and appear only when they hold something different from All.
  * A row: mark, mono name, the sensitive chip, description-free meta (version, required, extension
  * points, source, replicas, permissions: only what the API returns), state label, one secondary
- * action and a menu.
+ * action and a menu. From the query cache (the layout prefetched the list on a first load).
  */
-export default function AdminPlugins({
-  initial,
-}: {
-  initial: { extensions: AdminExtension[]; drainSeconds: number };
-}) {
+export default function AdminPluginsView() {
+  const gate = useAdmin();
+  if (gate.kind === "pending") return null;
+  if (gate.kind === "noAccess") return <NoAccess need={gate.need} />;
+  return <AdminPluginsRead />;
+}
+
+function AdminPluginsRead() {
+  const scope = usePagePath("admin");
+  const t = useTranslations("admin.extensions");
+  const read = usePageQuery(adminExtensionsQuery());
+  if (read.kind === "notFound") return <NotFound />;
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
+  if (read.kind === "loading") {
+    // The tabs and the callout exist only when the data holds something different from All.
+    return (
+      <ListPage
+        header={{
+          path: [...scope, { label: "extensions" }],
+          title: t("title"),
+          actions: [{ label: t("install"), variant: "primary", href: "/admin/extensions/install" }],
+        }}
+        variant="objects"
+        loading
+      />
+    );
+  }
+  return <AdminPlugins all={read.data.extensions} />;
+}
+
+function AdminPlugins({ all }: { all: AdminExtension[] }) {
   const scope = usePagePath("admin");
   const t = useTranslations("admin.extensions");
   const lang = labelLocale(useLocale());
   const [tab, setTab] = useState<TabId>("all");
-  const all = initial.extensions;
   const groups: Record<Exclude<TabId, "all">, AdminExtension[]> = {
     attention: all.filter(needsAttention),
     enabled: all.filter((p) => p.status === "enabled"),

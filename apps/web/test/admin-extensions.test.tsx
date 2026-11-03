@@ -3,18 +3,19 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import ExtensionDetailPage from "../src/app/(app)/admin/extensions/[name]/page";
-import ExtensionInstallPage from "../src/app/(app)/admin/extensions/install/page";
-import AdminExtensionsPage from "../src/app/(app)/admin/extensions/page";
 import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { renderRoute, sessionRoutes } from "./support/server";
+import { renderRouteWithCache } from "./support/query";
+import { sessionRoutes } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 const params = { current: { name: "demo" } as Record<string, string> };
 const query = { current: {} as Record<string, string> };
-const detailPage = () => ExtensionDetailPage({ params: Promise.resolve(params.current) as never });
-const installPage = () => ExtensionInstallPage({ searchParams: Promise.resolve(query.current) });
+const detailPage = () => `/admin/extensions/${encodeURIComponent(params.current.name ?? "")}`;
+const installPage = () => {
+  const qs = new URLSearchParams(query.current).toString();
+  return `/admin/extensions/install${qs === "" ? "" : `?${qs}`}`;
+};
 vi.mock("next/navigation", () => ({
   redirect: (to: string) => {
     throw new Error(`REDIRECT ${to}`);
@@ -181,7 +182,7 @@ describe("/admin/extensions (ListPage, object rows)", () => {
         "GET /api/v1/admin/extensions": () =>
           json(200, { extensions: [plugin(), diverged, S3, off], drainSeconds: 30 }),
       });
-      await renderRoute(() => AdminExtensionsPage(), lastStubRoutes(), { locale });
+      await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale });
       expect(template("ListPage")).not.toBeNull();
       const list = await screen.findByRole("list", { name: p.title });
       const row = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
@@ -255,7 +256,7 @@ describe("/admin/extensions (ListPage, object rows)", () => {
       "GET /api/v1/admin/extensions": () =>
         json(200, { extensions: [plugin(), S3], drainSeconds: 30 }),
     });
-    await renderRoute(() => AdminExtensionsPage(), lastStubRoutes(), { locale: "zh" });
+    await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale: "zh" });
     const list = await screen.findByRole("list", { name: p.title });
     const row = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
     expect(within(list).queryByRole("button", { name: "更多操作" })).toBeNull();
@@ -275,7 +276,7 @@ describe("/admin/extensions (ListPage, object rows)", () => {
       "GET /api/v1/admin/extensions": () =>
         json(200, { extensions: [plugin(), plugin({ name: "other" })], drainSeconds: 30 }),
     });
-    await renderRoute(() => AdminExtensionsPage(), lastStubRoutes());
+    await renderRouteWithCache("/admin/extensions", lastStubRoutes());
     await screen.findByRole("list", { name: en.admin.extensions.title });
     expect(document.querySelector(".cb-callout")).toBeNull();
     expect(screen.queryByRole("tablist")).toBeNull();
@@ -309,7 +310,7 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
       const p = msgs[locale].admin.extensions;
       params.current = { name: "object-store-s3" };
       detailRoutes(S3);
-      await renderRoute(detailPage, lastStubRoutes(), { locale });
+      await renderRouteWithCache(detailPage(), lastStubRoutes(), { locale });
       expect(template("DetailPage")).not.toBeNull();
       // waiting for config: the page opens on the Config tab
       const user = userEvent.setup();
@@ -348,7 +349,7 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
         status: "disabled",
       }),
     );
-    await renderRoute(detailPage, lastStubRoutes());
+    await renderRouteWithCache(detailPage(), lastStubRoutes());
     const p = en.admin.extensions;
     expect(await screen.findByText(p.source.bootstrap)).toBeTruthy();
     expect(screen.queryByText(p.detail.requiredNote)).toBeNull();
@@ -358,7 +359,7 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
 
   it("配置声明的插件：同样没有生命周期按钮，并说明要改启动配置", async () => {
     detailRoutes(plugin({ source: "config", sha256: null, desired: null, removable: false }));
-    await renderRoute(detailPage, lastStubRoutes());
+    await renderRouteWithCache(detailPage(), lastStubRoutes());
     const p = en.admin.extensions;
     await screen.findByText(p.detail.configNote);
     expect(screen.queryByRole("button", { name: p.detail.actions.disable })).toBeNull();
@@ -383,7 +384,7 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
         ],
       });
       detailRoutes(view);
-      await renderRoute(detailPage, lastStubRoutes(), { locale });
+      await renderRouteWithCache(detailPage(), lastStubRoutes(), { locale });
       const p = msgs[locale].admin.extensions;
       const reason = p.detail.replicaReason.setup_failed;
       const alert = await screen.findByText(
@@ -414,7 +415,7 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
         return json(200, current);
       },
     });
-    await renderRoute(detailPage, lastStubRoutes());
+    await renderRouteWithCache(detailPage(), lastStubRoutes());
     const p = en.admin.extensions;
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: p.detail.actions.disable }));
@@ -430,7 +431,7 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
 
   it("启用中的安装记录：卸载须先停用（不提供卸载按钮）；升级链接到安装向导", async () => {
     detailRoutes(plugin());
-    await renderRoute(detailPage, lastStubRoutes());
+    await renderRouteWithCache(detailPage(), lastStubRoutes());
     const p = en.admin.extensions;
     await screen.findByText(p.detail.uninstallNeedsDisable);
     expect(screen.queryByRole("button", { name: p.detail.actions.uninstall })).toBeNull();
@@ -449,7 +450,7 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
       "POST /api/v1/admin/extensions/demo/approve": () =>
         json(409, { error: { code: "extension.approval_stale", message: "stale" } }),
     });
-    const { calls: server } = await renderRoute(detailPage, lastStubRoutes(), { locale: "zh" });
+    await renderRouteWithCache(detailPage(), lastStubRoutes(), { locale: "zh" });
     const p = zh.admin.extensions;
     const user = userEvent.setup();
     await user.click(
@@ -465,11 +466,11 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
       sha256: SHA,
       reviewHash: "0123456789abcdef",
     });
-    const before = server.filter((c) => c.method === "GET").length;
+    // the refresh reads the list again (in the browser: the cache's entry is invalidated)
+    const lists = () => calls.filter((c) => c.url === "/api/v1/admin/extensions").length;
+    const before = lists();
     await user.click(screen.getByRole("button", { name: p.approve.refresh }));
-    await vi.waitFor(() =>
-      expect(server.filter((c) => c.method === "GET").length).toBeGreaterThan(before),
-    );
+    await vi.waitFor(() => expect(lists()).toBeGreaterThan(before));
   });
 
   it("待批准且包里有迁移警告（权限都不敏感）：详情页列出警告，批准前同样须勾选", async () => {
@@ -490,7 +491,7 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
       ],
     });
     detailRoutes(pending);
-    await renderRoute(detailPage, lastStubRoutes());
+    await renderRouteWithCache(detailPage(), lastStubRoutes());
     const p = en.admin.extensions;
     const user = userEvent.setup();
     await user.click(
@@ -511,7 +512,7 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
       }),
     });
     detailRoutes(pending);
-    await renderRoute(detailPage, lastStubRoutes(), { locale: "zh" });
+    await renderRouteWithCache(detailPage(), lastStubRoutes(), { locale: "zh" });
     const user = userEvent.setup();
     await user.click(
       await screen.findByRole("tab", {
@@ -536,7 +537,7 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
             : json(200, plugin({ status: "enabled" }));
         },
       });
-      await renderRoute(detailPage, lastStubRoutes());
+      await renderRouteWithCache(detailPage(), lastStubRoutes());
       const p = en.admin.extensions;
       expect(await screen.findByText(p.detail.converging)).toBeTruthy();
       await vi.advanceTimersByTimeAsync(3100);
@@ -610,7 +611,7 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
             echo: bodyOf(c),
           }),
       });
-      await renderRoute(detailPage, lastStubRoutes(), { locale });
+      await renderRouteWithCache(detailPage(), lastStubRoutes(), { locale });
       const user = userEvent.setup();
       await user.click(await screen.findByRole("tab", { name: p.detail.tabs.config }));
       const region = (await screen.findByLabelText("region")) as HTMLInputElement;
@@ -661,7 +662,7 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
       "GET /api/v1/admin/extensions/demo/config": () => json(200, view),
       "PUT /api/v1/admin/extensions/demo/config": () => json(200, view),
     });
-    await renderRoute(detailPage, lastStubRoutes(), { locale: "en" });
+    await renderRouteWithCache(detailPage(), lastStubRoutes(), { locale: "en" });
     const user = userEvent.setup();
     await user.click(await screen.findByRole("tab", { name: p.detail.tabs.config }));
     const sf = en.configForm;
@@ -744,7 +745,7 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
           issues: [],
         }),
     });
-    await renderRoute(detailPage, lastStubRoutes(), { locale: "en" });
+    await renderRouteWithCache(detailPage(), lastStubRoutes(), { locale: "en" });
     expect(
       await screen.findByText(fill(p.config.pendingMissing, { fields: "endpoints" })),
     ).toBeTruthy();
@@ -795,7 +796,7 @@ describe("/admin/extensions/install (WizardPage)", () => {
         "POST /api/v1/admin/extensions/demo/enable": () =>
           json(200, plugin({ status: "converging" })),
       });
-      await renderRoute(installPage, lastStubRoutes(), { locale });
+      await renderRouteWithCache(installPage(), lastStubRoutes(), { locale });
       expect(template("WizardPage")).not.toBeNull();
       const user = userEvent.setup();
       await user.click(screen.getByRole("radio", { name: new RegExp(`^${p.wizard.sourceNpm}`) }));
@@ -870,7 +871,7 @@ describe("/admin/extensions/install (WizardPage)", () => {
         json(200, plugin({ status: "pending_approval" })),
       "POST /api/v1/admin/extensions/demo/approve": () => json(200, plugin({ status: "disabled" })),
     });
-    await renderRoute(installPage, lastStubRoutes());
+    await renderRouteWithCache(installPage(), lastStubRoutes());
     const p = en.admin.extensions;
     const user = userEvent.setup();
     await user.click(screen.getByRole("radio", { name: new RegExp(`^${p.wizard.sourceNpm}`) }));
@@ -905,7 +906,7 @@ describe("/admin/extensions/install (WizardPage)", () => {
               removed: ["permissions.tools:echo"],
             }),
     });
-    await renderRoute(installPage, lastStubRoutes());
+    await renderRouteWithCache(installPage(), lastStubRoutes());
     const p = en.admin.extensions;
     expect(await screen.findByText(fill(p.wizard.upgradeTitle, { name: "demo" }))).toBeTruthy();
     const user = userEvent.setup();
@@ -939,7 +940,11 @@ describe("/admin/extensions/install (WizardPage)", () => {
       "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
       "GET /api/v1/me": () => json(200, {}),
     });
-    await renderRoute(installPage, { ...lastStubRoutes(), ...sessionRoutes() }, { locale: "zh" });
+    await renderRouteWithCache(
+      installPage(),
+      { ...lastStubRoutes(), ...sessionRoutes() },
+      { locale: "zh" },
+    );
     const w = zh.admin.extensions.wizard;
     const group = await screen.findByRole("radiogroup", { name: w.sourceLabel });
     expect(group.getAttribute("data-variant")).toBe("card");
@@ -992,7 +997,7 @@ describe("/admin/extensions/install (WizardPage)", () => {
       }
     }
     vi.stubGlobal("XMLHttpRequest", FakeXhr);
-    await renderRoute(installPage, { ...lastStubRoutes(), ...sessionRoutes() });
+    await renderRouteWithCache(installPage(), { ...lastStubRoutes(), ...sessionRoutes() });
     const p = en.admin.extensions;
     const user = userEvent.setup();
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
@@ -1048,7 +1053,11 @@ describe("/admin/extensions/install (WizardPage)", () => {
       abort() {}
     }
     vi.stubGlobal("XMLHttpRequest", FakeXhr);
-    await renderRoute(installPage, { ...lastStubRoutes(), ...sessionRoutes() }, { locale: "zh" });
+    await renderRouteWithCache(
+      installPage(),
+      { ...lastStubRoutes(), ...sessionRoutes() },
+      { locale: "zh" },
+    );
     const p = zh.admin.extensions;
     const user = userEvent.setup();
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;

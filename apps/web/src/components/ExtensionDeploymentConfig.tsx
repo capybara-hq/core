@@ -1,14 +1,16 @@
 "use client";
 
-import { Button, Callout, Stack, Text, useToast } from "@capybara-hq/design";
+import { Button, Callout, Skeleton, Stack, Text, useToast } from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { useMemo, useState, useTransition } from "react";
-import { useRouter } from "../i18n/navigation";
+import { useMemo, useState } from "react";
 import { type DeploymentConfigView, putExtensionConfig } from "../lib/admin-extensions";
 import { ApiClientError, configIssues } from "../lib/api";
 import type { ConfigIssue } from "../lib/json-schema";
+import { extensionConfigQuery } from "../lib/query/admin";
+import { retryOnMountOf } from "../lib/query/client";
+import { useAppMutation } from "../lib/query/define";
 import { useErrorMessage } from "../lib/use-error-message";
-import { useServerState } from "../lib/use-server-state";
 import { ConfigForm, type ConfigFormState, type ConfigSecretEntry } from "./config-form/ConfigForm";
 import { deploymentBody, deploymentForm, reloads } from "./config-form/deployment";
 import { buildTree, fromDraft, toDraft } from "./config-form/model";
@@ -22,38 +24,42 @@ import { FormError } from "./form-error";
  * save, the others reload the extension after saving (up to about the drain time limit).
  */
 export function ExtensionDeploymentConfig({
+  name,
   drainSeconds,
-  initial,
   pending = false,
   onChanged,
 }: {
+  name: string;
   drainSeconds: number;
-  /** Read on the server; `null` when that read failed (the tab draws its own error). */
-  initial: DeploymentConfigView | null;
   /** The extension waits for config: a callout lists the missing fields. */
   pending?: boolean;
-  /** The config was saved: the page re-renders on the server (readiness may have changed). */
+  /** The config was saved (the extension's state and the org's readiness may have changed). */
   onChanged(): void;
 }) {
-  const t = useTranslations("admin.extensions.config");
   const te = useTranslations("admin.extensions");
-  const router = useRouter();
-  const [, startTransition] = useTransition();
-  const [view, set] = useServerState(initial);
+  const t = useTranslations("admin.extensions.config");
+  const qc = useQueryClient();
+  // A section of the page's prefetch: a failure is the tab's own error (not read again on mount).
+  const q = extensionConfigQuery(name);
+  const read = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) });
   // Bumped on every save: replacing a secret that is already set returns an identical view, and
   // the form must still start over (the typed value gone, nothing left to save).
   const [saves, setSaves] = useState(0);
-  if (view === null)
-    return (
-      <Stack gap={8}>
-        <FormError message={te("loadFailed")} />
-        <Stack direction="row">
-          <Button density="dense" onClick={() => startTransition(() => router.refresh())}>
-            {te("retry")}
-          </Button>
+  const view = read.data;
+  if (view === undefined) {
+    if (read.error)
+      return (
+        <Stack gap={8}>
+          <FormError message={te("loadFailed")} />
+          <Stack direction="row">
+            <Button density="dense" onClick={() => void read.refetch()}>
+              {te("retry")}
+            </Button>
+          </Stack>
         </Stack>
-      </Stack>
-    );
+      );
+    return <Skeleton rows={4} />;
+  }
   if (!view.configurable || view.fields.length === 0) return <Text tone="muted">{t("none")}</Text>;
   return (
     <DeploymentConfigForm
@@ -62,7 +68,8 @@ export function ExtensionDeploymentConfig({
       drainSeconds={drainSeconds}
       pending={pending}
       onSaved={(next) => {
-        set(next);
+        // The answer is the config as it is now: it replaces the cached one.
+        qc.setQueryData(q.queryKey, next);
         setSaves((n) => n + 1);
         onChanged();
       }}
@@ -99,6 +106,10 @@ function DeploymentConfigForm({
   }>({ value: opened.value, entries: [], state: { problems: opened.problems, dirty: false } });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ message: string; issues: ConfigIssue[] }>();
+  const put = useAppMutation({
+    fn: (v: Parameters<typeof putExtensionConfig>) => putExtensionConfig(...v),
+    invalidates: () => [],
+  });
   const body = deploymentBody(view, tree, opened.value, current.value, current.entries);
   const changed = Object.keys(body.values).length > 0 || body.secretEntries.length > 0;
   // Fields left empty (inside existing items too) or lists without their minimum of items.
@@ -114,7 +125,7 @@ function DeploymentConfigForm({
     setBusy(true);
     setError(undefined);
     try {
-      const next = await putExtensionConfig(view.plugin, body.values, body.secretEntries);
+      const next = await put.mutateAsync([view.plugin, body.values, body.secretEntries]);
       toast.success(t("saved"));
       onSaved(next);
     } catch (e) {

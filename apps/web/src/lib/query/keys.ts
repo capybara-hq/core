@@ -257,6 +257,8 @@ export const keys = {
       adminPurposes: (): readonly unknown[] => [...all, "adminPurposes"],
       /** The deployment's extensions (with the drain time limit). */
       extensions: (): readonly unknown[] => [...all, "extensions"],
+      /** One extension (the detail page's poll while it converges). */
+      extension: (name: string): readonly unknown[] => [...all, "extension", name],
       /** Every extension's deployment config (an invalidation prefix). */
       extensionConfigsAll: (): readonly unknown[] => [...all, "extensionConfig"],
       /** One extension's deployment config. */

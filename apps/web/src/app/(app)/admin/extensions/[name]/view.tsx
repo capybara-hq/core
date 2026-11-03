@@ -18,31 +18,43 @@ import {
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
 import { ExtensionStatusMark } from "../../../../../components/AdminExtensionParts";
+import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { ExtensionDeploymentConfig } from "../../../../../components/ExtensionDeploymentConfig";
 import { FormError } from "../../../../../components/form-error";
+import { NoAccess } from "../../../../../components/NoAccess";
 import { PermissionReview } from "../../../../../components/PermissionReview";
 import { usePagePath } from "../../../../../components/shell/path";
 import { useRouter } from "../../../../../i18n/navigation";
 import {
   type AdminExtension,
   approveExtension,
-  type DeploymentConfigView,
   disableExtension,
   displaySource,
   type ExtensionReplica,
   enableExtension,
-  getAdminExtension,
   replicaSummary,
   reviewSensitive,
   uninstallExtension,
 } from "../../../../../lib/admin-extensions";
 import { ApiClientError } from "../../../../../lib/api";
 import { extensionLabel, labelLocale } from "../../../../../lib/extension-label";
+import {
+  adminExtensionQuery,
+  adminExtensionsQuery,
+  extensionChangeKeys,
+} from "../../../../../lib/query/admin";
+import { useAppMutation } from "../../../../../lib/query/define";
+import { keys } from "../../../../../lib/query/keys";
+import { usePageQuery } from "../../../../../lib/query/page-query";
+import { useAdmin } from "../../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
-import { useServerState } from "../../../../../lib/use-server-state";
+import NotFound from "../../../not-found";
+
+type ExtensionList = { extensions: AdminExtension[]; drainSeconds: number };
 
 const TABS = ["overview", "permissions", "config"] as const;
 type Tab = (typeof TABS)[number];
@@ -64,22 +76,67 @@ const POLL_MAX = 20;
  *   apply at once, the others reload after saving); a pending-config extension opens on it, with
  *   the missing fields listed.
  * Actions only write the desired state and return; the page re-reads while the state is converging.
+ * From the query cache (the layout prefetched the list and the config on a first load). An action's
+ * answer is the extension as it is now: it replaces that one in the cached list, and what an
+ * extension brings to the current org (its readiness among them) is read again. While it converges
+ * only this extension is polled (`refetchInterval`), each answer written into the list.
  */
-export default function ExtensionDetail({
+export default function ExtensionDetailView({ name }: { name: string }) {
+  const gate = useAdmin();
+  if (gate.kind === "pending") return null;
+  if (gate.kind === "noAccess") return <NoAccess need={gate.need} />;
+  return <ExtensionDetail name={name} orgId={gate.me.currentOrgId} />;
+}
+
+function ExtensionDetail({ name, orgId }: { name: string; orgId: string | null }) {
+  const scope = usePagePath("admin");
+  const t = useTranslations("admin.extensions");
+  const read = usePageQuery(adminExtensionsQuery());
+  const tabs = (tab: Tab, onChange: (x: Tab) => void, alert = false) => ({
+    label: t("detail.tabsLabel"),
+    items: TABS.map((x) => ({
+      id: x,
+      label: t(`detail.tabs.${x}`),
+      ...(x === "permissions" && alert && { alert: true }),
+    })),
+    value: tab,
+    onChange: (x: string) => onChange(x as Tab),
+  });
+  if (read.kind === "notFound") return <NotFound />;
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
+  if (read.kind === "loading") {
+    return (
+      <DetailPage
+        header={{
+          path: [...scope, { label: "extensions", href: "/admin/extensions" }, { label: name }],
+          title: "",
+        }}
+        tabs={tabs("overview", () => {})}
+        loading={{}}
+      />
+    );
+  }
+  return <Detail name={name} orgId={orgId} data={read.data} tabs={tabs} />;
+}
+
+function Detail({
   name,
-  initial,
+  orgId,
+  data,
+  tabs,
 }: {
   name: string;
-  initial: {
-    list: { extensions: AdminExtension[]; drainSeconds: number };
-    config: DeploymentConfigView | null;
-  };
+  orgId: string | null;
+  data: ExtensionList;
+  tabs: (
+    tab: Tab,
+    onChange: (x: Tab) => void,
+    alert?: boolean,
+  ) => Parameters<typeof DetailPage>[0]["tabs"];
 }) {
   const scope = usePagePath("admin");
   const t = useTranslations("admin.extensions");
-  const router = useRouter();
-  const [, startTransition] = useTransition();
-  const [data, set] = useServerState(initial.list);
+  const qc = useQueryClient();
   const lang = labelLocale(useLocale());
   const plugin = data.extensions.find((p) => p.name === name);
   // The title shows the display name; the id (also the URL segment) is muted meta in the overview.
@@ -89,41 +146,48 @@ export default function ExtensionDetail({
     plugin?.status === "pending_config" ? "config" : "overview",
   );
   const [polls, setPolls] = useState(0);
-  // A change to an extension (a model provider enabled or configured) moves the org's readiness,
-  // which the workspace shell shows: the server renders the page and its frame again.
-  const refresh = () => startTransition(() => router.refresh());
+  const listKey = adminExtensionsQuery().queryKey;
+  // The extension as it is now replaces that one in the cached list.
+  const intoList = (next: AdminExtension) =>
+    qc.setQueryData<ExtensionList>(listKey, (d) =>
+      d === undefined
+        ? d
+        : { ...d, extensions: d.extensions.map((p) => (p.name === next.name ? next : p)) },
+    );
   const replace = (next: AdminExtension) => {
-    set({ ...data, extensions: data.extensions.map((p) => (p.name === next.name ? next : p)) });
+    intoList(next);
+    qc.setQueryData(adminExtensionQuery(name).queryKey, next);
     setPolls(0);
-    refresh();
   };
+  // Reads the list again (an approval gone stale, a converging extension).
+  const refresh = () => void qc.invalidateQueries({ queryKey: listKey });
   const moving = plugin?.status === "converging" || plugin?.status === "pending_migration";
-  // Converging: poll only this extension (`GET /:name`); a failed poll keeps the last data and the
-  // next round tries again
+  // Converging: poll only this extension (`GET /:name`) every POLL_MS, at most POLL_MAX times; it
+  // starts from the list's entry, so the first read waits a period. A failed poll keeps the last
+  // data and the next round tries again.
+  const one = adminExtensionQuery(name);
+  const poll = useQuery({
+    ...one,
+    enabled: moving && plugin !== undefined,
+    ...(plugin !== undefined && { initialData: plugin }),
+    retry: false,
+    refetchInterval: moving && polls < POLL_MAX ? POLL_MS : false,
+    refetchIntervalInBackground: true,
+  });
+  const polled = poll.dataUpdatedAt + poll.errorUpdatedAt;
   // ssr-exempt: live updates after first paint (the extension is still converging)
   useEffect(() => {
-    if (!moving || polls >= POLL_MAX) return;
-    let disposed = false;
-    const timer = setTimeout(() => {
-      getAdminExtension(name).then(
-        (next) => {
-          if (disposed) return;
-          set({
-            ...data,
-            extensions: data.extensions.map((p) => (p.name === next.name ? next : p)),
-          });
-          setPolls((n) => n + 1);
-        },
-        () => {
-          if (!disposed) setPolls((n) => n + 1);
-        },
-      );
-    }, POLL_MS);
-    return () => {
-      disposed = true;
-      clearTimeout(timer);
-    };
-  }, [moving, polls, name, data, set]);
+    if (polled === 0 || !moving) return;
+    setPolls((n) => n + 1);
+  }, [polled, moving]);
+  // A poll's answer newer than the list's goes into the list (an older one never overwrites it).
+  const pollAt = poll.dataUpdatedAt;
+  useEffect(() => {
+    const next = poll.data;
+    const listAt = qc.getQueryState(listKey)?.dataUpdatedAt ?? 0;
+    if (next !== undefined && next !== plugin && pollAt > listAt) intoList(next);
+  });
+  const changed = { orgId, onChanged: replace, onRefresh: refresh };
 
   return (
     <DetailPage
@@ -135,35 +199,24 @@ export default function ExtensionDetail({
           status: <ExtensionStatusMark status={plugin.status} />,
         }),
       }}
-      tabs={{
-        label: t("detail.tabsLabel"),
-        items: TABS.map((x) => ({
-          id: x,
-          label: t(`detail.tabs.${x}`),
-          ...(x === "permissions" && plugin?.status === "pending_approval" && { alert: true }),
-        })),
-        value: tab,
-        onChange: (x) => setTab(x as Tab),
-      }}
+      tabs={tabs(tab, setTab, plugin?.status === "pending_approval")}
     >
       {plugin === undefined ? (
         <Text tone="muted">{t("detail.notFound")}</Text>
       ) : tab === "overview" ? (
-        <Overview
-          plugin={plugin}
-          drainSeconds={data.drainSeconds}
-          moving={moving}
-          onChanged={replace}
-          onRefresh={refresh}
-        />
+        <Overview plugin={plugin} drainSeconds={data.drainSeconds} moving={moving} {...changed} />
       ) : tab === "permissions" ? (
-        <Permissions plugin={plugin} onChanged={replace} onRefresh={refresh} />
+        <Permissions plugin={plugin} {...changed} />
       ) : (
         <ExtensionDeploymentConfig
+          name={name}
           drainSeconds={data.drainSeconds}
-          initial={initial.config}
           pending={plugin.status === "pending_config"}
-          onChanged={refresh}
+          // The extension's state (pending config) and the org's readiness may change with it.
+          onChanged={() => {
+            for (const queryKey of [listKey, ...extensionChangeKeys(orgId)])
+              void qc.invalidateQueries({ queryKey });
+          }}
         />
       )}
     </DetailPage>
@@ -174,12 +227,14 @@ function Overview({
   plugin,
   drainSeconds,
   moving,
+  orgId,
   onChanged,
   onRefresh,
 }: {
   plugin: AdminExtension;
   drainSeconds: number;
   moving: boolean;
+  orgId: string | null;
   onChanged(next: AdminExtension): void;
   onRefresh(): void;
 }) {
@@ -194,6 +249,17 @@ function Overview({
   const installed = plugin.source === "install";
   const desiredState = plugin.desired?.state;
   const { failed } = replicaSummary(plugin);
+  const lifecycle = useAppMutation({
+    fn: (op: "enable" | "disable") =>
+      op === "enable" ? enableExtension(plugin.name) : disableExtension(plugin.name),
+    invalidates: () => extensionChangeKeys(orgId),
+    onSuccess: onChanged,
+  });
+  // Gone from the list: the list and what the extension brought are read again.
+  const uninstall = useAppMutation({
+    fn: uninstallExtension,
+    invalidates: () => [keys.deployment().extensions(), ...extensionChangeKeys(orgId)],
+  });
   /** 原因码 → 界面文案（没有译文的码原样显示）。 */
   const reasonText = (code: string | null): string | null =>
     code === null || code === ""
@@ -206,10 +272,7 @@ function Overview({
     setBusy(true);
     setError(undefined);
     try {
-      const next = await (op === "enable"
-        ? enableExtension(plugin.name)
-        : disableExtension(plugin.name));
-      onChanged(next);
+      await lifecycle.mutateAsync(op);
       toast.success(t(`detail.done.${op}`));
       setConfirm(null);
     } catch (e) {
@@ -410,9 +473,8 @@ function Overview({
         confirmName={plugin.name}
         confirmLabel={t("detail.uninstallConfirm.confirm")}
         onConfirm={async () => {
-          await uninstallExtension(plugin.name);
+          await uninstall.mutateAsync(plugin.name);
           toast.success(t("detail.done.uninstall", { name: plugin.name }));
-          router.refresh();
           router.push("/admin/extensions");
         }}
       />
@@ -422,10 +484,12 @@ function Overview({
 
 function Permissions({
   plugin,
+  orgId,
   onChanged,
   onRefresh,
 }: {
   plugin: AdminExtension;
+  orgId: string | null;
   onChanged(next: AdminExtension): void;
   onRefresh(): void;
 }) {
@@ -438,16 +502,18 @@ function Permissions({
   // 待批准：状态为待批准，或权限超出快照（状态被失败等更高优先级的状态盖住时也能批准）
   const pending = plugin.status === "pending_approval" || plugin.added.length > 0;
   const sensitive = reviewSensitive(plugin);
+  const approval = useAppMutation({
+    fn: (body: { sha256: string | null; reviewHash: string }) =>
+      approveExtension(plugin.name, body),
+    invalidates: () => extensionChangeKeys(orgId),
+    onSuccess: onChanged,
+  });
 
   const approve = async () => {
     setBusy(true);
     setError(undefined);
     try {
-      const next = await approveExtension(plugin.name, {
-        sha256: plugin.sha256,
-        reviewHash: plugin.reviewHash,
-      });
-      onChanged(next);
+      await approval.mutateAsync({ sha256: plugin.sha256, reviewHash: plugin.reviewHash });
       toast.success(t("done"));
     } catch (e) {
       const code = e instanceof ApiClientError ? e.code : "unknown";

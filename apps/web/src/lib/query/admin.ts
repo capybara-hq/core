@@ -4,7 +4,7 @@ import {
   listAdminAccounts,
   listAdminOrgs,
 } from "../admin";
-import { getExtensionConfig, listAdminExtensions } from "../admin-extensions";
+import { getAdminExtension, getExtensionConfig, listAdminExtensions } from "../admin-extensions";
 import {
   getCatalogItem,
   getStagedImport,
@@ -65,6 +65,34 @@ export const adminExtensionsQuery = () =>
     fn: () => listAdminExtensions(),
     freshness: "deployment",
   });
+
+/** One extension (the detail page polls it while it converges). */
+export const adminExtensionQuery = (name: string) =>
+  defineQuery({
+    key: d().extension(name),
+    fn: () => getAdminExtension(name),
+    freshness: "deployment",
+  });
+
+/**
+ * What a change to an extension on the deployment changes besides the extension itself: the
+ * overview's count, and in the current org (the only one cached) its readiness (a model provider
+ * enabled or configured), its extensions, what they bring (UI, pages, file previewers) and the
+ * models they provide.
+ */
+export const extensionChangeKeys = (orgId: string | null): (readonly unknown[])[] => [
+  keys.deployment().adminOverview(),
+  ...(orgId === null
+    ? []
+    : [
+        keys.org(orgId).readiness(),
+        keys.org(orgId).orgExtensions(),
+        keys.org(orgId).contributions(),
+        keys.org(orgId).extensionPages(),
+        keys.org(orgId).orgFilePreviewers(),
+        keys.org(orgId).models(),
+      ]),
+];
 
 /** One extension's deployment config (the detail page's Config tab). */
 export const extensionConfigQuery = (name: string) =>

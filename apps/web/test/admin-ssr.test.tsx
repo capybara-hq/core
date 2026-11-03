@@ -11,9 +11,6 @@ import AdminCatalogItemPage from "../src/app/(app)/admin/catalog/[itemId]/page";
 import PluginImportPage from "../src/app/(app)/admin/catalog/import/page";
 import AdminCatalogPage from "../src/app/(app)/admin/catalog/page";
 import CatalogRequestsPage from "../src/app/(app)/admin/catalog/requests/page";
-import ExtensionDetailPage from "../src/app/(app)/admin/extensions/[name]/page";
-import ExtensionInstallPage from "../src/app/(app)/admin/extensions/install/page";
-import AdminExtensionsPage from "../src/app/(app)/admin/extensions/page";
 import MarketplaceEntriesPage from "../src/app/(app)/admin/marketplaces/entries/page";
 import MarketplacesPage from "../src/app/(app)/admin/marketplaces/page";
 import { bodyOf, json, stubApi } from "./support/api";
@@ -394,56 +391,83 @@ describe("first paint comes from the server (no browser fetch)", () => {
     expect(client.getQueryState(["deployment", "adminOverview"])?.isInvalidated).toBe(true);
   });
 
-  it("/admin/extensions: the list", async () => {
+  it("/admin/extensions: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => AdminExtensionsPage(), ROUTES);
+    await renderRouteWithCache("/admin/extensions", ROUTES);
     expect(screen.getByText("demo")).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/admin/extensions/install: ?upgrade= comes from the query, the installed list from the server", async () => {
+  it("/admin/extensions/install: ?upgrade= comes from the query, the installed list from the cache", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(
-      () => ExtensionInstallPage({ searchParams: Promise.resolve({ upgrade: "demo" }) }),
-      ROUTES,
-    );
+    await renderRouteWithCache("/admin/extensions/install?upgrade=demo", ROUTES);
     expect(
       screen.getByText(en.admin.extensions.wizard.upgradeTitle.replace("{name}", "demo")),
     ).toBeTruthy();
     cleanup();
-    await renderRoute(() => ExtensionInstallPage({ searchParams: Promise.resolve({}) }), ROUTES);
+    await renderRouteWithCache("/admin/extensions/install", ROUTES);
     expect(screen.getByText(en.admin.extensions.wizard.title)).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/admin/extensions/[name]: the extension and its config, with no browser fetch", async () => {
+  it("/admin/extensions/[name]: the extension and its config, with no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(detail("demo"), ROUTES);
+    await renderRouteWithCache("/admin/extensions/demo", ROUTES);
     await userEvent
       .setup()
       .click(screen.getByRole("tab", { name: en.admin.extensions.detail.tabs.config }));
     expect((screen.getByLabelText("region") as HTMLInputElement).value).toBe("eu-1");
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/admin/extensions/[name]: a config the kernel fails is the tab's own error, retried on the server", async () => {
-    const browser = expectNoFirstPaintFetch();
-    const { calls } = await renderRoute(detail("demo"), {
+  it.each([
+    ["/admin/extensions", "ListPage"],
+    ["/admin/extensions/demo", "DetailPage"],
+  ])("%s: an empty cache shows the template's loading state, then the data", async (path, name) => {
+    const { release } = await renderHeld(path, "GET /api/v1/admin/extensions");
+    await expectLoading(name, "v1.0.0");
+    await release();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+    expect(screen.getAllByText(/1\.0\.0/).length).toBeGreaterThan(0);
+  });
+
+  it("/admin/extensions/install: the source step does not wait for the list (it renders for real)", async () => {
+    const { release } = await renderHeld(
+      "/admin/extensions/install",
+      "GET /api/v1/admin/extensions",
+    );
+    expect(await screen.findByText(en.admin.extensions.wizard.title)).toBeTruthy();
+    expect(
+      screen.getByRole("radiogroup", { name: en.admin.extensions.wizard.sourceLabel }),
+    ).toBeTruthy();
+    expect(document.querySelector("[aria-busy='true']")).toBeNull();
+    await release();
+  });
+
+  it("/admin/extensions/[name]: a config the kernel fails is the tab's own error, not read again on mount; retry reads it", async () => {
+    const browser = stubApi({
+      "GET /api/v1/admin/extensions/demo/config": () => json(200, CONFIG),
+    });
+    await renderRouteWithCache("/admin/extensions/demo", {
       ...ROUTES,
       "GET /api/v1/admin/extensions/demo/config": failing,
     });
     expect(screen.getByText("demo", { selector: "h1" })).toBeTruthy();
     const u = userEvent.setup();
     await u.click(screen.getByRole("tab", { name: en.admin.extensions.detail.tabs.config }));
-    await u.click(screen.getByRole("button", { name: en.admin.extensions.retry }));
-    expect(router.refresh).toHaveBeenCalled();
-    expect(calls.filter((c) => c.url.endsWith("/demo/config")).length).toBe(2);
+    await settle();
     expect(browser).toEqual([]);
+    await u.click(screen.getByRole("button", { name: en.admin.extensions.retry }));
+    expect(await screen.findByLabelText("region")).toBeTruthy();
+    expect(browser.map((c) => c.url)).toEqual(["/api/v1/admin/extensions/demo/config"]);
   });
 
   it("/admin/extensions/[name]: an extension not in the list is not found", async () => {
     expectNoFirstPaintFetch();
-    await renderRoute(detail("ghost"), {
+    await renderRouteWithCache("/admin/extensions/ghost", {
       ...ROUTES,
       "GET /api/v1/admin/extensions/ghost/config": () =>
         json(404, { error: { code: "extension.not_found", message: "x" } }),
@@ -451,24 +475,35 @@ describe("first paint comes from the server (no browser fetch)", () => {
     expect(screen.getByText(en.admin.extensions.detail.notFound)).toBeTruthy();
   });
 
-  it("enabling an extension renders the page again on the server (the org's readiness may change)", async () => {
-    expectNoFirstPaintFetch();
-    const browser = stubApi({
-      "POST /api/v1/admin/extensions/demo/enable": () =>
-        json(
-          200,
-          ext({ status: "enabled", desired: { version: "1.0.0", sha256: SHA, state: "enabled" } }),
-        ),
+  it("enabling an extension writes it into the cached list and invalidates the org's readiness", async () => {
+    const enabled = ext({
+      status: "enabled",
+      desired: { version: "1.0.0", sha256: SHA, state: "enabled" },
     });
-    const { calls } = await renderRoute(detail("demo"), ROUTES);
+    const browser = stubApi({
+      ...ROUTES,
+      "POST /api/v1/admin/extensions/demo/enable": () => json(200, enabled),
+    });
+    const { client } = await renderRouteWithCache("/admin/extensions/demo", ROUTES);
     await userEvent
       .setup()
       .click(screen.getByRole("button", { name: en.admin.extensions.detail.actions.enable }));
-    await vi.waitFor(() => expect(router.refresh).toHaveBeenCalled());
     await vi.waitFor(() =>
-      expect(calls.filter((c) => c.url === "/api/v1/admin/extensions").length).toBe(2),
+      expect(
+        (
+          client.getQueryData(["deployment", "extensions"]) as {
+            extensions: { status: string }[];
+          }
+        ).extensions[0]?.status,
+      ).toBe("enabled"),
     );
-    expect(browser.map((c) => c.method)).toEqual(["POST"]);
+    expect(client.getQueryState(["org", "o1", "readiness"])?.isInvalidated).toBe(true);
+    expect(router.refresh).not.toHaveBeenCalled();
+    // the list is not read again (the answer is the extension)
+    expect(browser.map((c) => `${c.method} ${c.url}`)).not.toContain(
+      "GET /api/v1/admin/extensions",
+    );
+    expect(browser.map((c) => c.method)).toContain("POST");
   });
 
   it("/admin/catalog: the items, with their source from the marketplaces", async () => {
@@ -595,10 +630,6 @@ describe("first paint comes from the server (no browser fetch)", () => {
 });
 
 type Page = () => Promise<ReactNode>;
-const detail =
-  (name: string): Page =>
-  () =>
-    ExtensionDetailPage({ params: Promise.resolve({ name }) });
 const item =
   (itemId: string): Page =>
   () =>
@@ -610,6 +641,9 @@ const CACHED: string[] = [
   "/admin/orgs",
   "/admin/settings",
   "/admin/models",
+  "/admin/extensions",
+  "/admin/extensions/install",
+  "/admin/extensions/demo",
 ];
 const PAGES: [string, Page][] = [
   ["/admin/catalog", () => AdminCatalogPage()],
@@ -621,9 +655,6 @@ const PAGES: [string, Page][] = [
     "/admin/marketplaces/entries",
     () => MarketplaceEntriesPage({ searchParams: Promise.resolve({}) }),
   ],
-  ["/admin/extensions", () => AdminExtensionsPage()],
-  ["/admin/extensions/install", () => ExtensionInstallPage({ searchParams: Promise.resolve({}) })],
-  ["/admin/extensions/[name]", detail("demo")],
 ];
 
 describe("the enterprise-admin gate", () => {
