@@ -629,7 +629,7 @@ function ssrFindings(file: string, p: ParsedFile, segs: string[]): Finding[] {
       line: 1,
       rule: SSR_RULES.loading,
       message:
-        "no loading.tsx: it would hide the server-rendered page behind a fallback; the page renders its data on the server (docs/superpowers/specs/2026-11-01-web-ssr-design.md §5)",
+        "no loading.tsx: it would hide the page behind a fallback; the layout prefetches the route's first-paint reads (lib/query/routes.ts) and the view draws its template's loading state from the query cache (docs/superpowers/specs/2026-11-03-web-query-cache-design.md §3)",
     });
 
   const group = segs[1];
@@ -639,7 +639,7 @@ function ssrFindings(file: string, p: ParsedFile, segs: string[]): Finding[] {
       line: 1,
       rule: SSR_RULES.client,
       message:
-        'a page.tsx is a server component (gate and reads); move the template and interaction into view.tsx with "use client" and pass the data as `initial` props',
+        'a page.tsx is a server component that renders its "use client" ./view; move the template and interaction into view.tsx, which reads its data from the query cache (the route table in lib/query/routes.ts prefetches the first paint)',
     });
 
   if (/^page\.[jt]sx?$/.test(base) && !isUseClient(p))

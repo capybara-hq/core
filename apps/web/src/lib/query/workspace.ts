@@ -11,14 +11,15 @@ import { isSignedOut } from "../signed-out";
 import { meQuery, readinessQuery } from "./shell";
 
 /**
- * The client's counterpart of the server's `workspace()` gate (web query cache spec §3.2): client
- * navigations don't run the server's page gates, so it decides from the cache. `/me` and the
- * org's readiness are read through the cache (prefetched by the layout, and `mine` never goes
- * stale), so on a navigation inside the app it answers on the first render. Same semantics as the
- * server gate: no current org is `noOrg`; while the org is not ready, a page that is no setup route
- * (no `setup`) goes to `/` (`pending` until then); below `min` (default `guest`) it is `noAccess`.
- * `pending` while `/me` or readiness has no answer yet. A readiness failure other than a signed-out
- * session throws, to the route's error boundary, as the server gate does.
+ * A view's workspace gate, decided from the cache (web query cache spec §3.2): pages run no gate of
+ * their own on the server (only the `(app)` layout sends a document request home while the org is
+ * not ready), and client navigations don't re-render the layout. `/me` and the org's readiness are
+ * read through the cache (prefetched by the layout, and `mine` never goes stale), so on a
+ * navigation inside the app it answers on the first render. No current org is
+ * `noOrg`; while the org is not ready, a page that is no setup route (no `setup`) goes to `/`
+ * (`pending` until then); below `min` (default `guest`) it is `noAccess`. `pending` while `/me` or
+ * readiness has no answer yet. A readiness failure other than a signed-out session throws, to the
+ * route's error boundary.
  */
 export function useWorkspace(
   opts: { min?: "guest" | "member" | "admin"; setup?: "home" | "step" } = {},

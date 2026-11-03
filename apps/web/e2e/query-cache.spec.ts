@@ -348,6 +348,8 @@ test("a client navigation to an uncached page shows the template's loading state
   const orgId = await currentOrg(page);
   const agentId = await createAgent(page, orgId, "QC loading");
   await page.goto("/agents");
+  // a click before hydration would be a document navigation (no client cache to miss)
+  await hydrated(page);
 
   // the agent's own read is held until the loading state was seen
   const agentPath = `/api/v1/orgs/${orgId}/agents/${agentId}`;

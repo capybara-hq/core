@@ -149,7 +149,8 @@ async function importNotes(page: Page, version: string): Promise<void> {
     name: fill(D.admin.entries.importVersion, { version: `v${version}` }),
     exact: true,
   });
-  const row = page.getByRole("listitem").filter({ has: importIt });
+  // The entry shows the plugin's display name (笔记), not only its id
+  const row = page.getByRole("listitem").filter({ has: importIt }).filter({ hasText: "笔记" });
   // A git entry pinned to a commit of the notes repository
   await expect(
     row.getByText(new RegExp(fill(D.admin.entries.gitPinned, { commit: "[0-9a-f]{7}" }))),

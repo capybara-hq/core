@@ -52,8 +52,8 @@ let errorsPath: string | null = null;
 /**
  * Rebuilds `ApiClientError`s from the `{ status, code, message }` that `dehydrateFor` wrote; pass
  * the dehydrated state through it before `hydrate` / `HydrationBoundary`, in the browser only. It
- * also records the revived errors (in the browser; on the server it records nothing) so mounting them does not ask the kernel again (see
- * `isHydratedError`).
+ * also records the revived errors (in the browser; on the server it records nothing) so mounting
+ * them does not ask the kernel again (see `isHydratedError`).
  */
 export function reviveDehydrated(state: DehydratedState): DehydratedState {
   return {
