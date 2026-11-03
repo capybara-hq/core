@@ -1,5 +1,5 @@
 import { DesignProvider, ToastProvider } from "@capybara-hq/design";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -132,6 +132,59 @@ describe("ConfigForm without hints", () => {
   });
 });
 
+describe("ConfigForm repeaters", () => {
+  const LIST: JsonSchema = {
+    type: "object",
+    properties: {
+      region: { type: "string" },
+      endpoints: {
+        type: "array",
+        "x-ui": {
+          item: { title: "{name}" },
+          presets: [{ id: "p", label: { zh: "预设", en: "Preset" }, values: { name: "x" } }],
+        },
+        items: {
+          type: "object",
+          properties: { name: { type: "string" }, url: { type: "string" } },
+          required: ["name", "url"],
+        },
+      },
+    },
+  };
+
+  it("undo of a removed item keeps the edits made since", async () => {
+    const onChange = draw(LIST, {
+      region: "eu",
+      endpoints: [
+        { name: "a", url: "http://a" },
+        { name: "b", url: "http://b" },
+      ],
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Remove b" }));
+    await user.type(screen.getByLabelText(/^region/), "-west");
+    await user.type(within(screen.getByRole("group", { name: "a" })).getByLabelText(/^name/), "2");
+    await user.click(await screen.findByRole("button", { name: "Undo" }));
+    expect(onChange.mock.calls.at(-1)?.[0]).toEqual({
+      region: "eu-west",
+      endpoints: [
+        { name: "a2", url: "http://a" },
+        { name: "b", url: "http://b" },
+      ],
+    });
+  });
+
+  it("a preset focuses the new item's first empty required field", async () => {
+    draw(LIST, { endpoints: [] });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Add/ }));
+    await user.click(await screen.findByRole("menuitem", { name: "Preset" }));
+    await act(async () => {});
+    const item = screen.getByRole("group", { name: "x" });
+    expect(document.activeElement).toBe(within(item).getByLabelText(/^url/));
+  });
+});
+
 /** The schema without any hints, as the openai-compatible packed before hints serializes. */
 function unhinted(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(unhinted);
@@ -143,7 +196,7 @@ function unhinted(v: unknown): unknown {
   );
 }
 
-it("the openai-compatible schema without hints: endpoints and their models as repeaters, no JSON", () => {
+it("the openai-compatible schema without hints: endpoints and their models as repeaters, no JSON", async () => {
   const value = {
     endpoints: [
       {
@@ -159,8 +212,12 @@ it("the openai-compatible schema without hints: endpoints and their models as re
   const models = within(endpoints).getByRole("group", { name: "models" });
   expect((within(models).getByLabelText(/^contextWindow/) as HTMLInputElement).value).toBe("32768");
   expect(screen.queryAllByRole("textbox").filter((e) => e.tagName === "TEXTAREA")).toEqual([]);
-  // apiKeys: one secret record, replaced or cleared as a whole
-  expect(screen.getByRole("button", { name: "Replace apiKeys" })).toBeTruthy();
+  // apiKeys: one secret record, replaced or cleared as a whole; the values typed masked
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Replace apiKeys" }));
+  const keys = screen.getByRole("group", { name: "apiKeys" });
+  await user.click(within(keys).getByRole("button", { name: /Add/ }));
+  expect((within(keys).getByLabelText("Value 1") as HTMLInputElement).type).toBe("password");
 });
 
 describe("ConfigForm with the openai-compatible hints", () => {

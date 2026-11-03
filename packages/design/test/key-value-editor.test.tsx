@@ -32,6 +32,26 @@ function Host({
 }
 
 describe("KeyValueEditor (spec §6.28)", () => {
+  it("maskValues: the values are password inputs, the keys stay text", async () => {
+    const onChange = vi.fn();
+    wrap(
+      <KeyValueEditor
+        label="API keys"
+        keyLabel="Name"
+        valueLabel="Key"
+        value={[["deepseek", ""]]}
+        maskValues
+        onChange={onChange}
+      />,
+    );
+    const value = screen.getByLabelText("Key 1") as HTMLInputElement;
+    expect(value.type).toBe("password");
+    expect(value.autocomplete).toBe("new-password");
+    expect((screen.getByLabelText("Name 1") as HTMLInputElement).type).toBe("text");
+    await userEvent.setup().type(value, "s");
+    expect(onChange).toHaveBeenLastCalledWith([["deepseek", "s"]]);
+  });
+
   it("is a labelled group of key / value rows with column labels", () => {
     wrap(<Host initial={[["X-Org", "acme"]]} />);
     expect(screen.getByRole("group", { name: "Headers" })).toBeTruthy();

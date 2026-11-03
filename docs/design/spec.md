@@ -1780,7 +1780,7 @@ States: `default`, `chosen`
 
 - **Cards** (`variant="cards"`, default): a 1px `line` hairline card, radius `md`, no fill (the form card's `panel` shows through). The head is one line at least `row.default` high, split from the body by `line-soft`: the drag handle (`grip-vertical` 14, `faint`, only with `onMove`), a collapse chevron (`chevron-down` / `chevron-right`, a dense icon button with `aria-expanded`, only with `onToggle`), the title (`body`, 500, `ink`, one line with an ellipsis), the subtitle after it (`small`, `muted`, mono, one line with an ellipsis; a template such as `{baseUrl}`), and at the right the dense icon buttons move up / move down (`arrow-up` / `arrow-down`, only with `onMove`) and remove (`trash-2`), each named with the item ("上移 deepseek", "移除 deepseek"). The body holds the item's fields, padding `space.3`, `space.3` between fields. A `collapsed` card (with `onToggle`) draws only its head. An `invalid` card's border is `fail`.
 - **Rows** (`variant="rows"`): compact items without a head, one `FieldRow` (§6.27) each, `space.2` above and below, split by `line-soft`; the handle and the actions sit at the row's ends on the inputs' line (below the first row's labels); an invalid row carries a 2px `fail` bar on its left. Titles only name the rows.
-- **Footer**: a dense `default` button with `plus` and the caller's words ("添加端点" / "Add endpoint"). With `presets` it opens a menu (§6.7) of the presets, each with its help as the item's description, then a separator and "空白" / "Blank"; the button carries a `chevron-down` after its words. `onAdd(presetId?)` gets the preset's id, or nothing for a blank item. After an add, focus goes to the new item's first field (else the item).
+- **Footer**: a dense `default` button with `plus` and the caller's words ("添加端点" / "Add endpoint"). With `presets` it opens a menu (§6.7) of the presets, each with its help as the item's description, then a separator and "空白" / "Blank"; the button carries a `chevron-down` after its words. `onAdd(presetId?)` gets the preset's id, or nothing for a blank item. After an add, focus goes to the new item's first empty required field (`aria-required`; a preset filled the others), else its first field, else the item.
 - **Remove** acts at once: `onRemove(key)` removes the item and returns a restore function; the Repeater shows a success toast "已移除「deepseek」。" / `Removed "deepseek".` whose "撤销" / "Undo" action calls it (the toast stays 8 s). Focus moves to the next item (else the previous, else the add button).
 - **Reorder** (`onMove(key, to)`): the move buttons, dragging a card by its handle, or Alt+↑ / Alt+↓ anywhere inside a focused item; focus stays on what had it (a move button that became disabled hands it to its sibling). Move up is disabled on the first item, move down on the last.
 - **Limits and states**: remove is disabled while there are `min` items or fewer, add while there are `max` or more. Without items the list gives way to `empty` (`prose-small`, `muted`). `disabled` (a field given by the startup config) disables add, remove, move and dragging, and hides the handle.
@@ -1832,10 +1832,10 @@ States: `first`, `advanced-open`, `narrow`
 
 ### 6.28 KeyValueEditor
 
-`KeyValueEditor({ label, value, onChange, keyLabel, valueLabel, disabled? })`: a record of scalars without form hints (request headers, labels) as rows of two dense inputs, the key (2 parts) and the value (3 parts), and a dense remove icon button (`trash-2`, "移除 X-Org" / "Remove X-Org"; an empty key is named by its row), `space.2` apart both ways. A `group` named by `label`; above the rows a line of column labels (`keyLabel`, `valueLabel`; `small`, `muted`; hidden from screen readers, the inputs are named "名称 1", "值 1"). Under them a dense `default` "添加" / "Add" button with `plus` appends an empty row and focuses its key. Without rows only the button is drawn. `disabled` disables the inputs and both buttons. `value` is an ordered list of pairs; duplicate or empty keys are the form's to validate.
+`KeyValueEditor({ label, value, onChange, keyLabel, valueLabel, disabled?, maskValues? })`: a record of scalars without form hints (request headers, labels) as rows of two dense inputs, the key (2 parts) and the value (3 parts), and a dense remove icon button (`trash-2`, "移除 X-Org" / "Remove X-Org"; an empty key is named by its row), `space.2` apart both ways. A `group` named by `label`; above the rows a line of column labels (`keyLabel`, `valueLabel`; `small`, `muted`; hidden from screen readers, the inputs are named "名称 1", "值 1"). Under them a dense `default` "添加" / "Add" button with `plus` appends an empty row and focuses its key. Without rows only the button is drawn. `disabled` disables the inputs and both buttons. `maskValues` (a secret record, such as API keys by name) draws the values as password inputs (`autocomplete="new-password"`), the keys as text. `value` is an ordered list of pairs; duplicate or empty keys are the form's to validate.
 
 <!-- states: key-value-editor -->
-States: `default`, `empty`
+States: `default`, `empty`, `masked`
 
 <!-- size-table: key-value-editor -->
 | Part | State | Property | Value |
@@ -1847,6 +1847,7 @@ States: `default`, `empty`
 | input | default | height | control.dense |
 | kv-editor-add | default | height | control.dense |
 | kv-editor-add | empty | height | control.dense |
+| input | masked | height | control.dense |
 
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.

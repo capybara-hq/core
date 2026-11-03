@@ -149,3 +149,63 @@ describe("org and channel adapters", () => {
     expect(channelConfig(undefined)).toEqual({});
   });
 });
+
+describe("secret entries for renames", () => {
+  const ep = (name: string) => ({ ...ENDPOINT, name });
+  /** Opens the form on endpoints with these names, every one with a key set. */
+  function form(names: string[]) {
+    const view: DeploymentConfigView = {
+      ...VIEW,
+      fields: [
+        { ...(VIEW.fields[0] as DeploymentConfigView["fields"][number]), value: names.map(ep) },
+        { ...(VIEW.fields[1] as DeploymentConfigView["fields"][number]), keys: names },
+      ],
+    };
+    const f = deploymentForm(view);
+    const tree = buildTree(f.schema, "en");
+    const baseline = toDraft(tree, f.value);
+    const draft = structuredClone(baseline) as ObjDraft;
+    const items = (draft.fields.endpoints as ArrDraft).items;
+    const item = (i: number) => (items[i] as { draft: Draft }).draft as ObjDraft;
+    const rename = (i: number, to: string) => {
+      item(i).fields.name = { t: "text", text: to };
+    };
+    const entries = () => secretEntries(tree, draft, baseline, f.meta);
+    return { item, rename, entries };
+  }
+
+  it("a chain moves the last key first", () => {
+    const f = form(["a", "b"]);
+    f.rename(0, "b");
+    f.rename(1, "c");
+    expect(f.entries()).toEqual([
+      { path: "apiKeys", key: "c", renameFrom: "b" },
+      { path: "apiKeys", key: "b", renameFrom: "a" },
+    ]);
+  });
+
+  it("a swap parks one key under a temporary key", () => {
+    const f = form(["a", "b"]);
+    f.rename(0, "b");
+    f.rename(1, "a");
+    expect(f.entries()).toEqual([
+      { path: "apiKeys", key: "$rename-0", renameFrom: "a" },
+      { path: "apiKeys", key: "a", renameFrom: "b" },
+      { path: "apiKeys", key: "b", renameFrom: "$rename-0" },
+    ]);
+  });
+
+  it("a rename with a new key moves and sets in one entry", () => {
+    const f = form(["deepseek"]);
+    f.rename(0, "ds");
+    f.item(0).fields["$secret:apiKeys"] = {
+      t: "itemSecret",
+      op: "set",
+      text: "sk-new",
+      origKey: "deepseek",
+    };
+    expect(f.entries()).toEqual([
+      { path: "apiKeys", key: "ds", value: "sk-new", renameFrom: "deepseek" },
+    ]);
+  });
+});

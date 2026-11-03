@@ -11,3 +11,6 @@ saved through `secretEntries`, renames keep the key), unions as JSON. Server iss
 field by `segments` (`messageKey` picks the localized hint message); a pending-config extension
 opens on its form with the missing fields listed. Replaces `SchemaForm`, the flat deployment form
 and the JSON stopgap for object-valued secrets.
+
+Design: `KeyValueEditor` takes `maskValues` (password value inputs, used for secret records), and
+after an add a `Repeater` focuses the new item's first empty required field.

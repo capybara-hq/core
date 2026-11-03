@@ -196,6 +196,41 @@ describe("Repeater (spec §6.26)", () => {
     expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Name deepseek" }));
   });
 
+  it("after a preset add, focus goes to the first empty required field", async () => {
+    function Prefilled() {
+      const [keys, setKeys] = useState<string[]>([]);
+      return (
+        <Repeater
+          {...base}
+          presets={[{ id: "ds", label: "DeepSeek" }]}
+          items={keys.map((k) => ({
+            key: k,
+            title: k,
+            body: (
+              <>
+                <Field label="Name" required>
+                  <Input defaultValue="ds" />
+                </Field>
+                <Field label="Note">
+                  <Input defaultValue="" />
+                </Field>
+                <Field label="Base URL" required>
+                  <Input defaultValue="" />
+                </Field>
+              </>
+            ),
+          }))}
+          onAdd={() => setKeys((l) => [...l, `k${l.length}`])}
+        />
+      );
+    }
+    wrap(<Prefilled />);
+    await userEvent.click(screen.getByRole("button", { name: "Add endpoint" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "DeepSeek" }));
+    await act(async () => {});
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: /^Base URL/ }));
+  });
+
   it("disabled disables add, remove and move", () => {
     const onMove = vi.fn();
     wrap(<Repeater {...base} items={[card("a"), card("b")]} onMove={onMove} disabled />);

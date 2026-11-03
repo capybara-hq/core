@@ -298,15 +298,16 @@ function fieldRowBlocks(): ReactNode {
   );
 }
 
-function HeadersDemo({ initial }: { initial: [string, string][] }) {
+function HeadersDemo({ initial, masked }: { initial: [string, string][]; masked?: boolean }) {
   const [value, setValue] = useState(initial);
   return (
     <KeyValueEditor
-      label="请求头"
+      label={masked ? "API 密钥" : "请求头"}
       keyLabel="名称"
-      valueLabel="值"
+      valueLabel={masked ? "密钥" : "值"}
       value={value}
       onChange={setValue}
+      maskValues={masked === true}
     />
   );
 }
@@ -321,6 +322,9 @@ function keyValueEditorBlocks(): ReactNode {
             ["X-Region", "cn-beijing"],
           ]}
         />
+      </RefBlock>
+      <RefBlock id="key-value-editor-masked" width={640} pad>
+        <HeadersDemo initial={[["deepseek", "sk-0000000000"]]} masked />
       </RefBlock>
       <RefBlock id="key-value-editor-empty" width={640} pad>
         <HeadersDemo initial={[]} />

@@ -32,6 +32,7 @@ import {
   type Draft,
   type FieldMeta,
   fromDraft,
+  type ItemDraft,
   type ItemSecretNode,
   itemText,
   mapIssues,
@@ -152,7 +153,27 @@ interface Ctx {
   messages: Map<string, string>;
 }
 
-type SetDraft = (next: Draft) => void;
+/**
+ * Sets a node's draft: a draft, or an update of the latest one. Every level composes updates
+ * functionally, so a late call (an undo toast's restore) never rebuilds ancestors from an old
+ * render and keeps the edits made since.
+ */
+type DraftUpdate = Draft | ((prev: Draft) => Draft);
+type SetDraft = (next: DraftUpdate) => void;
+
+const apply = (u: DraftUpdate, prev: Draft): Draft => (typeof u === "function" ? u(prev) : u);
+
+const itemsOf = (d: Draft): ItemDraft[] => (d.t === "array" ? d.items : []);
+
+/** The setter of an object's child `c`, applied to the latest object draft. */
+const childSetter =
+  (set: SetDraft, c: ConfigNode): SetDraft =>
+  (u) =>
+    set((prev) => {
+      const fields = prev.t === "object" ? prev.fields : {};
+      const cur = fields[c.key] ?? toDraft(c, undefined);
+      return { t: "object", fields: { ...fields, [c.key]: apply(u, cur) } };
+    });
 
 const hasMessageIn = (ctx: Ctx, id: string) => [...ctx.messages.keys()].some((k) => within(k, id));
 
@@ -236,7 +257,7 @@ function Children({
       key={c.key}
       node={c}
       draft={fields[c.key] ?? toDraft(c, undefined)}
-      set={(d) => set({ t: "object", fields: { ...fields, [c.key]: d } })}
+      set={childSetter(set, c)}
       segs={[...segs, c.key]}
       itemFields={fields}
       ctx={ctx}
@@ -574,9 +595,6 @@ function ArrayField({ node, draft, set, segs, ctx }: NodeProps & { node: ArrayNo
   const t = useTranslations("configForm");
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const items = draft.t === "array" ? draft.items : [];
-  // The latest items for the restore an undo calls later.
-  const latest = useRef(items);
-  latest.current = items;
   const item = node.item as ObjectNode;
   const rows = item.layout === "row";
   const off = isLocked(node, ctx);
@@ -585,8 +603,13 @@ function ArrayField({ node, draft, set, segs, ctx }: NodeProps & { node: ArrayNo
     const id = nodeId([...segs, i]);
     const itemValue = Array.isArray(values) ? values[i] : undefined;
     const invalid = hasMessageIn(ctx, id);
-    const setItem = (d: Draft) =>
-      set({ t: "array", items: items.map((x) => (x.key === it.key ? { ...x, draft: d } : x)) });
+    const setItem: SetDraft = (u) =>
+      set((prev) => ({
+        t: "array",
+        items: itemsOf(prev).map((x) =>
+          x.key === it.key ? { ...x, draft: apply(u, x.draft) } : x,
+        ),
+      }));
     const body = rows ? (
       <ItemRow
         key={it.key}
@@ -637,25 +660,31 @@ function ArrayField({ node, draft, set, segs, ctx }: NodeProps & { node: ArrayNo
         })}
         onAdd={(presetId) => {
           const preset = node.presets.find((p) => p.id === presetId);
-          set({
-            t: "array",
-            items: [...items, { key: newItemKey(), draft: newItemDraft(node, preset?.values) }],
-          });
+          const added = { key: newItemKey(), draft: newItemDraft(node, preset?.values) };
+          set((prev) => ({ t: "array", items: [...itemsOf(prev), added] }));
         }}
         onRemove={(key) => {
-          const before = items;
-          set({ t: "array", items: items.filter((x) => x.key !== key) });
-          return () => {
-            const removed = before.find((x) => x.key === key);
-            if (!removed || latest.current.some((x) => x.key === key)) return;
-            const at = before.indexOf(removed);
-            const next = [...latest.current];
-            next.splice(Math.min(at, next.length), 0, removed);
-            set({ t: "array", items: next });
-          };
+          let removed: ItemDraft | undefined;
+          let at = 0;
+          set((prev) => {
+            const list = itemsOf(prev);
+            at = list.findIndex((x) => x.key === key);
+            removed = list[at];
+            return { t: "array", items: list.filter((x) => x.key !== key) };
+          });
+          // Put the item back into the latest list (edits made since stay).
+          return () =>
+            set((prev) => {
+              const list = itemsOf(prev);
+              if (removed === undefined || list.some((x) => x.key === key)) return prev;
+              const next = [...list];
+              next.splice(Math.min(Math.max(at, 0), next.length), 0, removed);
+              return { t: "array", items: next };
+            });
         }}
         {...(node.reorder && {
-          onMove: (key: string, to: number) => set({ t: "array", items: moved(items, key, to) }),
+          onMove: (key: string, to: number) =>
+            set((prev) => ({ t: "array", items: moved(itemsOf(prev), key, to) })),
         })}
         {...(!rows && {
           onToggle: (key: string) =>
@@ -692,7 +721,7 @@ function ItemRow({
   const props = (c: ConfigNode): NodeProps => ({
     node: c,
     draft: fields[c.key] ?? toDraft(c, undefined),
-    set: (d) => set({ t: "object", fields: { ...fields, [c.key]: d } }),
+    set: childSetter(set, c),
     segs: [...segs, c.key],
     itemFields: fields,
     ctx,
@@ -911,6 +940,7 @@ function SecretField({ node, draft, set, segs, ctx }: NodeProps & { node: Secret
         keyLabel={t("key")}
         valueLabel={t("value")}
         value={d.rows}
+        maskValues
         disabled={ctx.disabled}
         onChange={(rows) => set({ ...d, op: "set", rows })}
       />

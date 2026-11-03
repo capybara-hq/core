@@ -857,28 +857,81 @@ export function secretEntries(
 ): ConfigSecretEntry[] {
   const now = itemSecrets(root, draft);
   const before = itemSecrets(root, baseline);
-  const setKeys = (path: string) => new Set(meta[path]?.secretKeys ?? []);
-  const removals: ConfigSecretEntry[] = [];
-  for (const b of before) {
-    if (b.origKey === undefined || !setKeys(b.path).has(b.origKey)) continue;
-    if (now.some((n) => n.path === b.path && n.origKey === b.origKey)) continue;
-    removals.push({ path: b.path, key: b.origKey, value: null });
-  }
-  const changes: ConfigSecretEntry[] = [];
-  for (const n of now) {
-    const had = n.origKey !== undefined && setKeys(n.path).has(n.origKey);
-    const renamed = had && n.name !== "" && n.name !== n.origKey;
-    const from = renamed && n.origKey !== undefined ? { renameFrom: n.origKey } : {};
-    if (n.op === "set" && n.text !== "" && n.name !== "") {
-      changes.push({ path: n.path, key: n.name, value: n.text, ...from });
-    } else if (n.op === "clear") {
-      if (had && n.origKey !== undefined)
-        changes.push({ path: n.path, key: n.origKey, value: null });
-    } else if (renamed) {
-      changes.push({ path: n.path, key: n.name, ...from });
+  const out: ConfigSecretEntry[] = [];
+  for (const path of new Set([...before, ...now].map((x) => x.path))) {
+    const keys = new Set(meta[path]?.secretKeys ?? []);
+    const cur = now.filter((n) => n.path === path);
+    // 1. Keys whose item is gone.
+    for (const b of before) {
+      if (b.path !== path || b.origKey === undefined || !keys.has(b.origKey)) continue;
+      if (cur.some((n) => n.origKey === b.origKey)) continue;
+      out.push({ path, key: b.origKey, value: null });
+    }
+    // 2. Renames (a key moves with its item), carrying a new value or a clear when there is one.
+    const moves: Move[] = [];
+    const rest: ItemSecretState[] = [];
+    for (const n of cur) {
+      const had = n.origKey !== undefined && keys.has(n.origKey);
+      if (had && n.origKey !== undefined && n.name !== "" && n.name !== n.origKey) {
+        const value =
+          n.op === "set" && n.text !== "" ? n.text : n.op === "clear" ? null : undefined;
+        moves.push({ from: n.origKey, to: n.name, ...(value !== undefined && { value }) });
+      } else rest.push(n);
+    }
+    const taken = new Set([...keys, ...cur.map((n) => n.name)]);
+    out.push(...orderedMoves(path, moves, taken));
+    // 3. Values set or cleared in place, and keys of new items.
+    for (const n of rest) {
+      const had = n.origKey !== undefined && keys.has(n.origKey);
+      if (n.op === "set" && n.text !== "" && n.name !== "")
+        out.push({ path, key: n.name, value: n.text });
+      else if (n.op === "clear" && had && n.origKey !== undefined)
+        out.push({ path, key: n.origKey, value: null });
     }
   }
-  return [...removals, ...changes];
+  return out;
+}
+
+interface Move {
+  from: string;
+  to: string;
+  value?: string | null;
+}
+
+/**
+ * Renames in an order the kernel can apply one after another (a rename onto a key replaces it):
+ * a move whose target is still the source of another pending move waits for that one (a chain
+ * `A→B, B→C` sends `B→C` first). A cycle (`A↔B`) parks one value under a temporary key that no
+ * item uses, moves the others, then moves the parked value to its target; the whole list is
+ * applied in one transaction, so the temporary key never persists.
+ */
+function orderedMoves(path: string, moves: Move[], taken: Set<string>): ConfigSecretEntry[] {
+  const out: ConfigSecretEntry[] = [];
+  const entry = (m: Move): ConfigSecretEntry => ({
+    path,
+    key: m.to,
+    renameFrom: m.from,
+    ...(m.value !== undefined && { value: m.value }),
+  });
+  let pending = [...moves];
+  let n = 0;
+  while (pending.length > 0) {
+    const sources = new Set(pending.map((m) => m.from));
+    const ready = pending.find((m) => !sources.has(m.to));
+    if (ready !== undefined) {
+      out.push(entry(ready));
+      pending = pending.filter((m) => m !== ready);
+      continue;
+    }
+    // Every target is still a source: a cycle. Park the first move's value.
+    const first = pending[0] as Move;
+    let temp = `$rename-${n++}`;
+    while (taken.has(temp)) temp = `$rename-${n++}`;
+    taken.add(temp);
+    out.push({ path, key: temp, renameFrom: first.from });
+    pending = [{ ...first, from: temp }, ...pending.slice(1)];
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------------------------

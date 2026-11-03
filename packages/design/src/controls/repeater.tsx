@@ -68,6 +68,24 @@ function nameOf(item: RepeaterItem, index: number, t: ReturnType<typeof useDesig
   return t("repeater.item").replace("{n}", String(index + 1));
 }
 
+/**
+ * Where focus goes in a new item: its first empty required field (a preset filled the others),
+ * else its first field.
+ */
+function firstField(body: HTMLElement | null | undefined): HTMLElement | null {
+  if (!body) return null;
+  const fields = [...body.querySelectorAll<HTMLElement>(FIELDS)];
+  const empty = fields.find(
+    (f) =>
+      (f.getAttribute("aria-required") === "true" || f.hasAttribute("required")) &&
+      (f instanceof HTMLInputElement ||
+        f instanceof HTMLTextAreaElement ||
+        f instanceof HTMLSelectElement) &&
+      f.value === "",
+  );
+  return empty ?? fields[0] ?? null;
+}
+
 type Pending =
   | { kind: "add"; before: Set<string> }
   | { kind: "move"; el: HTMLElement; key: string }
@@ -121,7 +139,7 @@ export function Repeater({
       pending.current = null;
       const el = refs.current.get(fresh.key);
       const body = el?.querySelector<HTMLElement>('[data-part="repeater-body"]');
-      const target = body?.querySelector<HTMLElement>(FIELDS) ?? el;
+      const target = firstField(body) ?? el;
       // A preset menu may still be closing; its close hands focus here too (onCloseAutoFocus).
       if (addedFromMenu.current) menuFocus.current = target ?? null;
       target?.focus();

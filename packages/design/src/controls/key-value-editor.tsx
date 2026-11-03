@@ -7,7 +7,8 @@ import { Input } from "./inputs";
 /**
  * Rows of key / value inputs (spec §6.28): a record of scalars without form hints (headers,
  * labels). Column labels above the rows; each row has a remove button; "添加" / "Add" appends an
- * empty row and focuses its key.
+ * empty row and focuses its key. `maskValues` draws the values as password inputs (a secret
+ * record: the values are typed, never shown).
  */
 export function KeyValueEditor({
   label,
@@ -16,6 +17,7 @@ export function KeyValueEditor({
   disabled = false,
   keyLabel,
   valueLabel,
+  maskValues = false,
 }: {
   label: string;
   value: [string, string][];
@@ -23,6 +25,8 @@ export function KeyValueEditor({
   disabled?: boolean;
   keyLabel: string;
   valueLabel: string;
+  /** Values as password inputs (secret values). */
+  maskValues?: boolean;
 }) {
   const t = useDesignT();
   // Row identities that survive edits and removals (the keys themselves change as people type).
@@ -86,6 +90,7 @@ export function KeyValueEditor({
                 <Input
                   density="dense"
                   aria-label={`${valueLabel} ${i + 1}`}
+                  {...(maskValues && { type: "password", autoComplete: "new-password" })}
                   value={v}
                   disabled={disabled}
                   onChange={(e) => set(i, 1, e.target.value)}
