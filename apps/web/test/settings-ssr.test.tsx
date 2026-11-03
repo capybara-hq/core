@@ -471,21 +471,29 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     };
     const calls = stubApi({
       ...routes,
+      [`GET ${O}/readiness`]: () => json(200, { modelProvider: "ready", agents: 1 }),
       [`PUT ${O}/extensions/todo`]: () =>
         json(200, { extension: { ...EXTENSION, enabled: false } }),
     });
-    await renderRouteWithCache("/settings/extensions", routes);
+    const { client } = await renderRouteWithCache("/settings/extensions", routes);
+    // the models and purposes are cached (as after a visit to /settings/models)
+    client.setQueryData(["org", "o1", "models"], { providers: [] });
+    client.setQueryData(["org", "o1", "orgPurposes"], { purposes: [] });
     await userEvent
       .setup()
       .click(
         screen.getByRole("switch", { name: en.extensions.enableLabel.replace("{plugin}", "Todo") }),
       );
     await vi.waitFor(() => expect(screen.getByText(en.extensions.disabled)).toBeTruthy());
-    // the list is not read again (the answer is the extension); the previewers are
+    // the list is not read again (the answer is the extension); the shown readiness and
+    // previewers are, and the cached models and purposes are stale
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
       `PUT ${O}/extensions/todo`,
+      `GET ${O}/readiness`,
       `GET ${O}/file-previewers`,
     ]);
+    expect(client.getQueryState(["org", "o1", "models"])?.isInvalidated).toBe(true);
+    expect(client.getQueryState(["org", "o1", "orgPurposes"])?.isInvalidated).toBe(true);
   });
 });
 

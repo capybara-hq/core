@@ -10,6 +10,12 @@ import type { renderPage } from "./support/render";
 import { expectNoFirstPaintFetch } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+// What the page writes into the status bar (the shell's bar is not rendered here).
+const statusBar = vi.hoisted(() => vi.fn());
+vi.mock("@capybara-hq/design", async (original) => ({
+  ...(await original<typeof import("@capybara-hq/design")>()),
+  useStatusBar: statusBar,
+}));
 vi.mock("next/navigation", () => ({
   redirect: (to: string) => {
     throw new Error(`REDIRECT ${to}`);
@@ -106,7 +112,10 @@ const skillChange = (id: string, over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-beforeEach(() => resetNavigation("/inbox"));
+beforeEach(() => {
+  resetNavigation("/inbox");
+  statusBar.mockClear();
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -304,7 +313,7 @@ describe("收件箱：技能变更", () => {
   it("批准：POST decide 后重读列表、顶栏待处理数刷新", async () => {
     let changes = [skillChange("sc1")];
     const refreshPending = vi.fn();
-    const { calls } = await renderInbox(
+    const { calls, client } = await renderInbox(
       {
         [LIST]: () => json(200, inbox([], changes)),
         [DETAIL]: () => json(200, { skillChange: detail() }),
@@ -317,6 +326,8 @@ describe("收件箱：技能变更", () => {
     );
     // the visible skill change's detail is prefetched by the layout too
     expect(calls.filter((c) => c.method === "GET")).toEqual([]);
+    // the sidebar's count is cached (the shell reads it)
+    client.setQueryData(["org", "o1", "inboxCount"], { count: 1 });
     const row = await screen.findByRole("region", { name: "Pending changes" });
     await userEvent
       .setup()
@@ -325,11 +336,14 @@ describe("收件箱：技能变更", () => {
     expect(await screen.findByText(en.inbox.skillChange.approved)).toBeTruthy();
     expect(await screen.findByText(en.inbox.empty)).toBeTruthy();
     expect(refreshPending).toHaveBeenCalledTimes(1);
-    // the inbox is read again after the decision
+    // the inbox is read again after the decision (once); the decided change is marked stale
+    // without a read (it is hidden at once), and the sidebar's count is stale too
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
       "POST /api/v1/orgs/o1/skill-changes/sc1/decide",
       "GET /api/v1/orgs/o1/inbox",
     ]);
+    expect(client.getQueryState(["org", "o1", "skillChange", "sc1"])?.isInvalidated).toBe(true);
+    expect(client.getQueryState(["org", "o1", "inboxCount"])?.isInvalidated).toBe(true);
   });
 
   it("拒绝失败（已被处理）：toast 显示 skill_change.already_decided 的文案", async () => {
@@ -407,9 +421,13 @@ describe("the inbox from the cache", () => {
     });
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
     expect(screen.queryByText("Fixture · tool_a")).toBeNull();
+    // the status bar draws nothing while the inbox loads (not "0 pending")
+    expect(statusBar.mock.calls.length).toBeGreaterThan(0);
+    expect(statusBar.mock.calls.every(([v]) => v === null)).toBe(true);
     await act(async () => release());
     expect(await screen.findAllByText("Fixture · tool_a")).not.toHaveLength(0);
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+    expect(statusBar).toHaveBeenLastCalledWith("· 1 pending");
   });
 });
 

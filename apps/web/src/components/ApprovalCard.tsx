@@ -23,6 +23,7 @@ import {
 import type { ToolInfo } from "../lib/conversations";
 import { approvalQuery } from "../lib/query/conversation";
 import { useAppMutation } from "../lib/query/define";
+import { inboxChangeKeys } from "../lib/query/inbox";
 import { keys } from "../lib/query/keys";
 import { shortTime } from "../lib/time";
 import type { ApprovalDecision, ApprovalItem } from "../lib/timeline";
@@ -119,7 +120,8 @@ export function useDecide(orgId: string) {
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const [pending, setPending] = useState<"approve" | "deny">();
-  // The answer is the decided approval: it replaces the cached one.
+  // The answer is the decided approval: it replaces the cached one. The inbox and its count
+  // change too, wherever the decision was taken (here in a conversation, or on /inbox).
   const { mutateAsync } = useAppMutation({
     fn: (v: { id: string; decision: "approve" | "deny"; scope: ApprovalScope; reason?: string }) =>
       decideApproval(orgId, v.id, {
@@ -127,7 +129,7 @@ export function useDecide(orgId: string) {
         ...(v.decision === "approve" ? { scope: v.scope } : {}),
         ...(v.decision === "deny" && v.reason !== undefined ? { reason: v.reason } : {}),
       }),
-    invalidates: () => [],
+    invalidates: () => inboxChangeKeys(orgId),
     onSuccess: ({ approval }, v) => qc.setQueryData(keys.org(orgId).approval(v.id), approval),
   });
   const decide = useCallback(

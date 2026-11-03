@@ -11,7 +11,7 @@ import { buildAnswer, initialDraft, OTHER } from "../src/lib/questions";
 import type { ApprovalItem, QuestionItem } from "../src/lib/timeline";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { ME, renderPage } from "./support/render";
+import { ME, renderPage, testQueryClient } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -94,6 +94,29 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
     await userEvent.setup().click(await screen.findByRole("button", { name: label }));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ decision: "approve", scope });
     expect(await screen.findByText(/你 批准了 Fixture: Delete item/)).toBeTruthy();
+  });
+
+  it("a decision in the conversation invalidates the inbox and its count (the inbox list is not left stale)", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () => json(200, { approval: APPROVAL }),
+      "POST /api/v1/orgs/o1/approvals/ap1/decision": () =>
+        json(200, {
+          approval: { ...APPROVAL, status: "approved", scope: "once", decidedBy: "a1" },
+        }),
+    });
+    const client = testQueryClient();
+    // the inbox and the sidebar's count are cached (as after a visit to /inbox)
+    client.setQueryData(["org", "o1", "inbox"], { items: [] });
+    client.setQueryData(["org", "o1", "inboxCount"], { count: 1 });
+    renderPage(<ApprovalCard orgId="o1" item={item()} info={INFO} />, { locale: "en", client });
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Approve" }));
+    await vi.waitFor(() =>
+      expect(client.getQueryState(["org", "o1", "inbox"])?.isInvalidated).toBe(true),
+    );
+    expect(client.getQueryState(["org", "o1", "inboxCount"])?.isInvalidated).toBe(true);
+    expect(client.getQueryData(["org", "o1", "approval", "ap1"])).toMatchObject({
+      status: "approved",
+    });
   });
 
   it("a role escalation offers only once; deny sends the reason", async () => {

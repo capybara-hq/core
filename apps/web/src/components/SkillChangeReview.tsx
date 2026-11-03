@@ -11,7 +11,7 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useCallback, useState } from "react";
 import { useRouter } from "../i18n/navigation";
@@ -19,7 +19,7 @@ import type { ApiClientError } from "../lib/api";
 import { type FileChange, lineDiff, pairFiles } from "../lib/diff";
 import { retryOnMountOf } from "../lib/query/client";
 import { useAppMutation } from "../lib/query/define";
-import { skillChangeQuery } from "../lib/query/inbox";
+import { inboxChangeKeys, skillChangeQuery } from "../lib/query/inbox";
 import { keys } from "../lib/query/keys";
 import {
   decideSkillChange,
@@ -37,10 +37,11 @@ export const requesterOf = (c: Pick<SkillChange, "requestedBy" | "requestedByNam
 
 /**
  * 决定技能变更（`POST /skill-changes/:id/decide`）：成功返回 true；已被处理等错误以 toast 告知并返回 false。
- * 无论成败都立即刷新顶栏的待处理数。A decision changes the agent's own skills (invalidated here); the
- * caller reads the inbox again either way.
+ * 无论成败都立即刷新顶栏的待处理数。A decision changes the agent's own skills, the change itself and the
+ * inbox (invalidated here on success); the caller reads the inbox again either way.
  */
 export function useDecideSkillChange(orgId: string) {
+  const qc = useQueryClient();
   const session = useSession();
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -48,7 +49,16 @@ export function useDecideSkillChange(orgId: string) {
   const { mutateAsync } = useAppMutation({
     fn: (v: { change: SkillChange; decision: "approve" | "reject" }) =>
       decideSkillChange(orgId, v.change.id, { decision: v.decision }),
-    invalidates: ({ change }) => [keys.org(orgId).agentSkills(change.agent.id)],
+    invalidates: ({ change }) => [
+      keys.org(orgId).agentSkills(change.agent.id),
+      ...inboxChangeKeys(orgId),
+    ],
+    // The decided change is stale, but not read again now: the inbox hides it at once.
+    onSuccess: (_, { change }) =>
+      void qc.invalidateQueries({
+        queryKey: keys.org(orgId).skillChange(change.id),
+        refetchType: "none",
+      }),
   });
   const decide = useCallback(
     async (change: SkillChange, decision: "approve" | "reject") => {

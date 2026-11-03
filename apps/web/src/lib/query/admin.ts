@@ -96,23 +96,31 @@ export const adminExtensionQuery = (name: string) =>
   });
 
 /**
+ * What an extension changing in an org (enabled, disabled, configured, installed or upgraded, on
+ * the deployment or in the org) changes there besides the org's extensions list: its readiness (a
+ * model provider enabled or configured), what the extensions bring (UI, pages, file previewers),
+ * the models they provide and the purposes that map to them.
+ */
+export const orgExtensionChangeKeys = (orgId: string): (readonly unknown[])[] => {
+  const k = keys.org(orgId);
+  return [
+    k.readiness(),
+    k.contributions(),
+    k.extensionPages(),
+    k.orgFilePreviewers(),
+    k.models(),
+    k.orgPurposes(),
+  ];
+};
+
+/**
  * What a change to an extension on the deployment changes besides the extension itself: the
- * overview's count, and in the current org (the only one cached) its readiness (a model provider
- * enabled or configured), its extensions, what they bring (UI, pages, file previewers) and the
- * models they provide.
+ * overview's count, and in the current org (the only one cached) its extensions and
+ * {@link orgExtensionChangeKeys}.
  */
 export const extensionChangeKeys = (orgId: string | null): (readonly unknown[])[] => [
   keys.deployment().adminOverview(),
-  ...(orgId === null
-    ? []
-    : [
-        keys.org(orgId).readiness(),
-        keys.org(orgId).orgExtensions(),
-        keys.org(orgId).contributions(),
-        keys.org(orgId).extensionPages(),
-        keys.org(orgId).orgFilePreviewers(),
-        keys.org(orgId).models(),
-      ]),
+  ...(orgId === null ? [] : [keys.org(orgId).orgExtensions(), ...orgExtensionChangeKeys(orgId)]),
 ];
 
 /** One extension's deployment config (the detail page's Config tab). */

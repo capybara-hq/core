@@ -713,6 +713,7 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
     params.current = { itemId: ID };
     const t = en.catalog.org.install;
     const calls = stubApi({
+      [`GET ${ORG}/readiness`]: () => json(200, { modelProvider: "ready", agents: 1 }),
       [`GET ${ORG}/catalog/${ID}`]: () =>
         json(200, {
           item: orgItem({ name: "crm" }),
@@ -759,11 +760,11 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
     await user.click(screen.getByRole("button", { name: t.submit }));
     await waitFor(() => expect(router.push).toHaveBeenCalledWith("/settings/plugins"));
     // the install invalidates pluginChangeKeys: the cached catalog is marked stale, the shown
-    // item and the org's extensions are read again
+    // item, the org's extensions and its readiness are read again
     expect(client.getQueryState(["org", "o1", "catalog"])?.isInvalidated).toBe(true);
     await waitFor(() =>
       expect(new Set(calls.filter((c) => c.method === "GET").map((c) => c.url))).toEqual(
-        new Set([`${ORG}/catalog/${ID}`, `${ORG}/extensions`]),
+        new Set([`${ORG}/catalog/${ID}`, `${ORG}/extensions`, `${ORG}/readiness`]),
       ),
     );
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
@@ -801,6 +802,7 @@ describe("/settings/plugins: installed plugins and uninstall", () => {
       const a = msgs[locale].catalog.plugins;
       let gone = false;
       const calls = stubApi({
+        [`GET ${ORG}/readiness`]: () => json(200, { modelProvider: "ready", agents: 1 }),
         [`GET ${ORG}/plugin-installs`]: () =>
           json(200, { installs: gone ? [] : [INSTALL, DEP_INSTALL] }),
         [`DELETE ${ORG}/plugin-installs/i1`]: () => {
@@ -844,10 +846,12 @@ describe("/settings/plugins: installed plugins and uninstall", () => {
           `· ${a.componentKind.skill} s1 — ${a.report.reason.used_by_agents}`,
         ),
       ).toBeTruthy();
-      // the uninstall invalidates the installs (among what a plugin change touches): read again
+      // the uninstall invalidates what a plugin change touches: the installs and the org's
+      // readiness (an extension it brought may have been a model provider) are read again
       expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
         `DELETE ${ORG}/plugin-installs/i1`,
         `GET ${ORG}/plugin-installs`,
+        `GET ${ORG}/readiness`,
       ]);
       expect(await screen.findByText(a.empty)).toBeTruthy();
     },

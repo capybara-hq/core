@@ -11,6 +11,8 @@ import { renderHook } from "@testing-library/react";
 import { createElement, type ReactNode, StrictMode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { ApiClientError } from "../src/lib/api";
+import { extensionChangeKeys, orgExtensionChangeKeys } from "../src/lib/query/admin";
+import { pluginChangeKeys } from "../src/lib/query/catalog";
 import {
   isHydratedError,
   makeQueryClient,
@@ -190,5 +192,27 @@ describe("query foundation", () => {
       await mount(client, fn);
       expect(fn).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe("what an extension change invalidates in the org", () => {
+  const k = keys.org("o1");
+  const has = (list: (readonly unknown[])[], key: readonly unknown[]) =>
+    list.some((x) => hashKey(x) === hashKey(key));
+  it.each([
+    ["an org-side toggle or config (orgExtensionChangeKeys)", orgExtensionChangeKeys("o1")],
+    ["a plugin install, upgrade or uninstall (pluginChangeKeys)", pluginChangeKeys("o1")],
+    ["a deployment-side change (extensionChangeKeys)", extensionChangeKeys("o1")],
+  ])("%s: readiness, models, purposes and what the extensions bring", (_, list) => {
+    for (const key of [
+      k.readiness(),
+      k.models(),
+      k.orgPurposes(),
+      k.contributions(),
+      k.extensionPages(),
+      k.orgFilePreviewers(),
+    ]) {
+      expect(has(list, key), JSON.stringify(key)).toBe(true);
+    }
   });
 });

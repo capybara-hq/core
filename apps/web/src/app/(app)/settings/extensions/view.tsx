@@ -34,9 +34,9 @@ import {
   syncDirectory,
 } from "../../../../lib/extensions";
 import type { ConfigIssue } from "../../../../lib/json-schema";
+import { orgExtensionChangeKeys } from "../../../../lib/query/admin";
 import { orgExtensionsQuery } from "../../../../lib/query/channels";
 import { useAppMutation } from "../../../../lib/query/define";
-import { keys } from "../../../../lib/query/keys";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { useWorkspace } from "../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../lib/use-error-message";
@@ -166,16 +166,12 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
         ? d
         : { ...d, extensions: d.extensions.map((p) => (p.plugin === next.plugin ? next : p)) },
     );
-  // Enabling or disabling also changes what the extension brings to the org.
+  // Enabling, disabling or configuring also changes what the extension brings to the org (its
+  // readiness, UI, models and purposes); the list itself takes the answer.
   const put = useAppMutation({
     fn: (v: { enabled?: boolean; force?: boolean; config?: Record<string, unknown> }) =>
       putOrgExtension(orgId, plugin.plugin, v),
-    invalidates: (v) => {
-      const k = keys.org(orgId);
-      return v.enabled === undefined
-        ? []
-        : [k.contributions(), k.extensionPages(), k.orgFilePreviewers()];
-    },
+    invalidates: () => orgExtensionChangeKeys(orgId),
     onSuccess: (r) => onSaved(r.extension),
   });
   const startSync = useAppMutation({

@@ -94,14 +94,19 @@ function Inbox({
   const td = useTranslations("catalog.inbox");
   const errorMessage = useErrorMessage();
   const [requestPending, setRequestPending] = useState<"approve" | "reject">();
-  // A catalog request decision changes the catalog's view of the item (the inbox is read again by
-  // `handled`, whatever the answer).
+  // A catalog request decision changes the catalog's view of the item and the inbox (a failure
+  // reads the inbox again through `handled`).
   const decideRequestMutation = useAppMutation({
     fn: (v: { id: string; decision: "approve" | "reject" }) =>
       decideOrgRequest(orgId, v.id, v.decision),
-    invalidates: () => [keys.org(orgId).catalog(), keys.org(orgId).catalogItemsAll()],
+    invalidates: () => [
+      keys.org(orgId).catalog(),
+      keys.org(orgId).catalogItemsAll(),
+      ...inboxChangeKeys(orgId),
+    ],
   });
-  useStatusBar(`· ${t("pendingCount", { n: rows.length })}`);
+  // Nothing while the inbox loads (not "0 pending").
+  useStatusBar(inbox === null ? null : `· ${t("pendingCount", { n: rows.length })}`);
 
   // 换一项时审批范围回到「仅本次」
   // biome-ignore lint/correctness/useExhaustiveDependencies: 只在选中项变化时重置
@@ -134,13 +139,16 @@ function Inbox({
 
   /**
    * An item was handled (or failed as already handled elsewhere: it is no longer pending): it is
-   * hidden, the inbox is read again, and the first item is selected.
+   * hidden and the first item is selected. A decision invalidated the inbox itself; a failure
+   * (`message === null`) reads it again here.
    */
   const handled = (id: string, message: string | null) => {
     if (message !== null) toast.success(message);
     setDecided((s) => new Set(s).add(id));
     setActiveId(undefined);
-    for (const queryKey of inboxChangeKeys(orgId)) void qc.invalidateQueries({ queryKey });
+    if (message === null) {
+      for (const queryKey of inboxChangeKeys(orgId)) void qc.invalidateQueries({ queryKey });
+    }
   };
 
   async function decideApproval(approval: Approval, decision: "approve" | "deny") {

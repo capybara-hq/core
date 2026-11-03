@@ -1,4 +1,5 @@
 import { getOrgCatalogItem, listOrgCatalog, previewPluginUpgrade } from "../catalog";
+import { orgExtensionChangeKeys } from "./admin";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
 
@@ -20,8 +21,9 @@ export const orgCatalogItemQuery = (orgId: string, itemId: string) =>
 
 /**
  * What installing (or upgrading) a plugin in the org changes: the catalog's view of it (and of the
- * dependencies installed with it), the installed plugins, and the components a plugin brings (connectors, extensions and their UI,
- * skills, agent templates).
+ * dependencies installed with it), the installed plugins, and the components a plugin brings
+ * (connectors, skills, agent templates, extensions and what they change: readiness, UI, models and
+ * purposes, see {@link orgExtensionChangeKeys}).
  */
 export const pluginChangeKeys = (orgId: string): (readonly unknown[])[] => {
   const k = keys.org(orgId);
@@ -31,8 +33,7 @@ export const pluginChangeKeys = (orgId: string): (readonly unknown[])[] => {
     k.pluginInstalls(),
     k.connectors(),
     k.orgExtensions(),
-    k.contributions(),
-    k.extensionPages(),
+    ...orgExtensionChangeKeys(orgId),
     k.skills(),
     k.agentTemplates(),
   ];
