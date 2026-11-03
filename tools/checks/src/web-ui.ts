@@ -707,8 +707,6 @@ export interface QueryPending {
 export const QUERY_PENDING: readonly QueryPending[] = [
   { path: "app/(app)/account/connections/page.tsx", reason: "pending migration: Task 12" },
   { path: "app/(app)/account/connections/view.tsx", reason: "pending migration: Task 12" },
-  { path: "app/(app)/account/identities/page.tsx", reason: "pending migration: Task 12" },
-  { path: "app/(app)/account/identities/view.tsx", reason: "pending migration: Task 12" },
   { path: "app/(app)/evals/[setId]/cases/[caseId]/page.tsx", reason: "pending migration: Task 13" },
   { path: "app/(app)/evals/[setId]/page.tsx", reason: "pending migration: Task 13" },
   { path: "app/(app)/evals/[setId]/run/page.tsx", reason: "pending migration: Task 13" },

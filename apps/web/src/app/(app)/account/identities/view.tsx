@@ -12,15 +12,23 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { useAccountNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
-import { useRouter } from "../../../../i18n/navigation";
 import { ssoStartUrl } from "../../../../lib/auth-sources";
 import { navigateBrowser } from "../../../../lib/browser";
 import { type LinkedIdentity, splitSource, unlinkIdentity } from "../../../../lib/identities";
+import { identitiesQuery } from "../../../../lib/query/account";
+import { authSourcesQuery } from "../../../../lib/query/auth";
+import { retryOnMountOf } from "../../../../lib/query/client";
+import { useAppMutation } from "../../../../lib/query/define";
+import { keys } from "../../../../lib/query/keys";
+import { usePageQuery } from "../../../../lib/query/page-query";
+import { meQuery } from "../../../../lib/query/shell";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 
 /**
@@ -29,29 +37,37 @@ import { useErrorMessage } from "../../../../lib/use-error-message";
  * 经 IM 绑定链接建立的身份（`linkedVia: "bind"`）标为未验证；该插件是可用的登录方式（`GET /auth/sources`）时
  * 行菜单提供「验证」：整页跳到该插件的第三方登录，
  * 本人在登录状态下完成一次后身份升级为可登录，回到本页。
- * Read on the server (`page.tsx`): the identities and the login plugins (`null` when they could not be
- * read: no 验证 then); an unlink re-renders the page there.
+ * From the query cache (the layout prefetched it on a first load): the identities and the sign-in
+ * sources (a section: no 验证 while they are unknown or could not be read); an unlink invalidates the
+ * identities, which are read again.
  */
 const rowKey = (x: LinkedIdentity) => `${x.source}\u0000${x.externalId}`;
 
-export default function Identities({
-  initial,
-}: {
-  initial: { identities: LinkedIdentity[]; loginPlugins: string[] | null };
-}) {
+export default function IdentitiesView() {
+  // Any signed-in person (the layout's session gate): no org, no readiness.
+  const me = useQuery(meQuery()).data;
+  if (me === undefined) return null;
+  return <Identities accountId={me.account.id} />;
+}
+
+function Identities({ accountId }: { accountId: string }) {
   const scope = usePagePath("home");
   const t = useTranslations("identities");
   const tc = useTranslations("common");
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const nav = useAccountNav();
-  const router = useRouter();
-  const [, startTransition] = useTransition();
-  const reload = () => startTransition(() => router.refresh());
+  const read = usePageQuery(identitiesQuery(accountId));
+  const sourcesQ = authSourcesQuery();
+  const sources = useQuery({ ...sourcesQ, retryOnMount: retryOnMountOf(sourcesQ.queryKey) });
+  const loginPlugins = sources.data?.map((x) => x.plugin) ?? null;
+  const unlinkOne = useAppMutation({
+    fn: (x: LinkedIdentity) => unlinkIdentity(x.source, x.externalId),
+    invalidates: () => [keys.account(accountId).identities()],
+  });
   // 「验证」只对可用的登录方式提供（插件在 `auth.loginSources` 中且已加载）；读不到时都不提供
   const canVerify = (x: LinkedIdentity) =>
-    x.linkedVia === "bind" &&
-    (initial.loginPlugins?.includes(splitSource(x.source).plugin) ?? false);
+    x.linkedVia === "bind" && (loginPlugins?.includes(splitSource(x.source).plugin) ?? false);
   const [target, setTarget] = useState<LinkedIdentity>();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
@@ -62,10 +78,9 @@ export default function Identities({
     setPending(true);
     setError(undefined);
     try {
-      await unlinkIdentity(x.source, x.externalId);
+      await unlinkOne.mutateAsync(x);
       setTarget(undefined);
       toast.success(t("unlinked", { name: nameOf(x) }));
-      reload();
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -113,6 +128,7 @@ export default function Identities({
     },
   ];
 
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
   return (
     <SettingsPage
       header={{
@@ -133,10 +149,10 @@ export default function Identities({
         <DataTable<LinkedIdentity>
           label={t("title")}
           columns={columns}
-          rows={initial.identities}
+          rows={read.kind === "ready" ? read.data.identities : []}
           rowKey={rowKey}
           rowLabel={nameOf}
-          state="ready"
+          state={read.kind === "ready" ? "ready" : "loading"}
           empty={{ title: t("empty"), hint: t("emptyHint") }}
           rowMenu={(x) => [
             ...(canVerify(x)

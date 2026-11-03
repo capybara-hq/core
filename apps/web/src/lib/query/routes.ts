@@ -6,7 +6,7 @@ import type { Conversation, ConversationEvent } from "../conversations";
 import { myRole, type OrgRole, roleAtLeast } from "../members";
 import { canEditAgent } from "../org-settings";
 import type { Me } from "../session";
-import { toolGrantsQuery } from "./account";
+import { identitiesQuery, toolGrantsQuery } from "./account";
 import { agentConnectorQueries, agentFormQueries, agentQuery, agentsQuery } from "./agents";
 import { authSourcesQuery } from "./auth";
 import { orgCatalogItemQuery, orgCatalogQuery } from "./catalog";
@@ -93,7 +93,12 @@ export const ROUTES: readonly RouteEntry[] = [
     pattern: "/account/grants",
     queries: ({ orgId }) => (orgId === null ? [] : [q(toolGrantsQuery(orgId))]),
   },
-  { pattern: "/account/identities", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/account/identities",
+    // No org needed: my identities, and the sign-in sources (which plugins offer 验证).
+    queries: ({ me }) =>
+      me === null ? [] : [q(identitiesQuery(me.account.id)), q(authSourcesQuery())],
+  },
   { pattern: "/admin", queries: () => [], none: "pending migration" },
   { pattern: "/admin/accounts", queries: () => [], none: "pending migration" },
   { pattern: "/admin/catalog", queries: () => [], none: "pending migration" },

@@ -3,12 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import IdentitiesPage from "../src/app/(app)/account/identities/page";
 import ExtensionsPage from "../src/app/(app)/settings/extensions/page";
 import OrganizationSettingsPage from "../src/app/(app)/settings/organization/page";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
+import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { renderRoute } from "./support/server";
 
@@ -371,7 +371,9 @@ describe("已绑定的 IM 身份（SettingsPage）", () => {
         return noContent();
       },
     });
-    const { container } = await renderRoute(IdentitiesPage, lastStubRoutes(), { locale });
+    const { container } = await renderRouteWithCache("/account/identities", lastStubRoutes(), {
+      locale,
+    });
     expect(container.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
     const row = await screen.findByRole("row", { name: /Alice Wong/ });
     expect(within(row).getByText("fake-im")).toBeTruthy();
@@ -385,6 +387,10 @@ describe("已绑定的 IM 身份（SettingsPage）", () => {
     await user.click(within(dialog).getByRole("button", { name: m.unlink }));
     expect(await screen.findByText(m.empty)).toBeTruthy();
     expect(calls.some((c) => c.method === "DELETE")).toBe(true);
+    // unlinking invalidates the identities: they are read again in the browser
+    expect(calls.filter((c) => c.method === "GET").map((c) => c.url)).toEqual([
+      "/api/v1/me/identities",
+    ]);
   });
 
   it.each(["zh", "en"] as const)(
@@ -397,7 +403,7 @@ describe("已绑定的 IM 身份（SettingsPage）", () => {
         "GET /api/v1/auth/sources": () =>
           json(200, { sources: [{ plugin: "fake-im", label: { zh: "假 IM", en: "Fake IM" } }] }),
       });
-      await renderRoute(IdentitiesPage, lastStubRoutes(), { locale });
+      await renderRouteWithCache("/account/identities", lastStubRoutes(), { locale });
       const bound = await screen.findByRole("row", { name: /Bound Bob/ });
       expect(within(bound).getByText(m.unverified)).toBeTruthy();
       const verified = screen.getByRole("row", { name: /Alice Wong/ });
@@ -421,7 +427,7 @@ describe("已绑定的 IM 身份（SettingsPage）", () => {
       "GET /api/v1/me/identities": () => json(200, { identities: [BOUND] }),
       "GET /api/v1/auth/sources": () => json(200, { sources: [] }),
     });
-    await renderRoute(IdentitiesPage, lastStubRoutes());
+    await renderRouteWithCache("/account/identities", lastStubRoutes());
     const bound = await screen.findByRole("row", { name: /Bound Bob/ });
     expect(within(bound).getByText(en.identities.unverified)).toBeTruthy();
     const user = userEvent.setup();
@@ -436,7 +442,7 @@ describe("已绑定的 IM 身份（SettingsPage）", () => {
       "DELETE /api/v1/me/identities/fake-im%3At1/u-alice": () =>
         json(409, { error: { code: "identity.last_login_method", message: "x" } }),
     });
-    await renderRoute(IdentitiesPage, lastStubRoutes());
+    await renderRouteWithCache("/account/identities", lastStubRoutes());
     const user = userEvent.setup();
     const row = await screen.findByRole("row", { name: /Alice Wong/ });
     await user.click(within(row).getByRole("button", { name: "Row actions" }));

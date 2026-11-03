@@ -6,7 +6,6 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import ConnectionsPage from "../src/app/(app)/account/connections/page";
-import IdentitiesPage from "../src/app/(app)/account/identities/page";
 import { json, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
@@ -181,19 +180,39 @@ describe("first paint comes from the server (no browser fetch)", () => {
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("/account/identities: no org needed; 验证 only for login plugins the server read", async () => {
+  it("/account/identities: a first render from the hydrated cache makes no browser read; no org needed; 验证 only for login plugins read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => IdentitiesPage(), ROUTES, { me: { ...ME, currentOrgId: null } });
+    await renderRouteWithCache("/account/identities", ROUTES, {
+      me: { ...ME, currentOrgId: null },
+    });
     expect(screen.getByText("Alice Wong")).toBeTruthy();
     await userEvent.setup().click(screen.getByRole("button", { name: "Row actions" }));
     expect(screen.getByRole("menuitem", { name: en.identities.verify })).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
     cleanup();
-    await renderRoute(() => IdentitiesPage(), { ...ROUTES, "GET /api/v1/auth/sources": failing });
+    await renderRouteWithCache("/account/identities", {
+      ...ROUTES,
+      "GET /api/v1/auth/sources": failing,
+    });
     await userEvent.setup().click(screen.getByRole("button", { name: "Row actions" }));
     expect(screen.queryByRole("menuitem", { name: en.identities.verify })).toBeNull();
     expect(screen.getByRole("menuitem", { name: en.identities.unlink })).toBeTruthy();
+    await settle();
+    // a section that failed on the first load is not read again on mount
     expect(browser).toEqual([]);
+  });
+
+  it("/account/identities: an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld("/account/identities", "GET /api/v1/me/identities");
+    await vi.waitFor(() => {
+      if (template("SettingsPage") === null) throw new Error("no page");
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByText("Alice Wong")).toBeNull();
+    await release();
+    expect(await screen.findByText("Alice Wong")).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 });
 
@@ -244,8 +263,10 @@ describe("the gates", () => {
   });
 
   it("/account/identities is no workspace page: it renders while the org is not ready", async () => {
-    await renderRoute(() => IdentitiesPage(), ROUTES, { readiness: NOT_READY });
+    await renderRouteWithCache("/account/identities", ROUTES, { readiness: NOT_READY });
     expect(screen.getByText("Alice Wong")).toBeTruthy();
+    await settle();
+    expect(router.replace).not.toHaveBeenCalled();
   });
 });
 
