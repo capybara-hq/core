@@ -65,16 +65,18 @@ test("rail: expand opens the drawer; Esc closes it and returns focus", async ({ 
   // Icons only: no visible labels in the rail.
   await expect(b.locator('[data-part="nav-item"] .cb-sidebar-label')).toHaveCount(0);
   const expand = b.getByRole("button", { name: "展开侧栏" });
-  // The sidebar-drawer block draws one drawer in place (the open modal hides it from the
-  // accessibility tree), so count the elements; the modal one is the last.
-  const dialogs = page.locator('[role="dialog"]');
-  await expect(dialogs).toHaveCount(1);
+  // The sidebar-drawer and sidebar-setup-drawer blocks draw drawers in place (the open modal
+  // hides them from the accessibility tree), so count elements: the modal one is the only
+  // dialog outside a reference block.
+  const inPlace = page.locator('[data-ref-block] [role="dialog"]');
+  const modal = page.locator('[role="dialog"]:not([data-ref-block] [role="dialog"])');
+  await expect(inPlace).toHaveCount(2);
+  await expect(modal).toHaveCount(0);
   await expand.click();
-  await expect(dialogs).toHaveCount(2);
-  const drawer = dialogs.last();
-  await expect(drawer.getByRole("region", { name: "会话" })).toBeVisible();
+  await expect(modal).toHaveCount(1);
+  await expect(modal.getByRole("region", { name: "会话" })).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(dialogs).toHaveCount(1);
+  await expect(modal).toHaveCount(0);
   await expect(expand).toBeFocused();
 });
 
@@ -280,8 +282,8 @@ test.describe("first paint without JavaScript", () => {
 
   // m6: below 640 the header's non-primary actions are folded at first paint, not after hydration.
   for (const [width, labels] of [
-    [600, ["更多操作", "新建 Agent"]],
-    [1440, ["导入", "导出", "新建 Agent"]],
+    [600, ["更多操作", "新建 agent"]],
+    [1440, ["导入", "导出", "新建 agent"]],
   ] as const) {
     test(`${width}: the page header shows ${labels.join(" / ")}`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
