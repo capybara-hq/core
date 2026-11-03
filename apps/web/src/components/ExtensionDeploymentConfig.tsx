@@ -40,6 +40,9 @@ export function ExtensionDeploymentConfig({
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [view, set] = useServerState(initial);
+  // Bumped on every save: replacing a secret that is already set returns an identical view, and
+  // the form must still start over (the typed value gone, nothing left to save).
+  const [saves, setSaves] = useState(0);
   if (view === null)
     return (
       <Stack gap={8}>
@@ -54,12 +57,13 @@ export function ExtensionDeploymentConfig({
   if (!view.configurable || view.fields.length === 0) return <Text tone="muted">{t("none")}</Text>;
   return (
     <DeploymentConfigForm
-      key={JSON.stringify(view)}
+      key={`${saves}:${JSON.stringify(view)}`}
       view={view}
       drainSeconds={drainSeconds}
       pending={pending}
       onSaved={(next) => {
         set(next);
+        setSaves((n) => n + 1);
         onChanged();
       }}
     />

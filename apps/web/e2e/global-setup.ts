@@ -4,23 +4,23 @@
  * `@capybara-hq/testing` (`fake-connector` as connector kind `mcp`, so the web install wizard
  * drives it as an MCP connector; `fake-openapi`, connector kind `openapi`, for the wizard's OpenAPI
  * flow; `fake-tools-ui`, a tool with a conversation view; `fake-embed`, an org page and a
- * conversation tab embed; `fake-config-form`, a hinted deployment config form), all allowing local http, and the fake IM test plugin `fake-im`; no
- * official plugin except `model-fake` and the bootstrap plugins; server.mjs then
- * starts the web layer (`next dev`) pointing at it. A fake MCP server
- * (stateful sessions; the destructive tool `delete_item`, `signup` which starts an elicitation, the
- * prompt `summarize` and the resource `docs://handbook`) serves the tool / approval / slash command /
- * resource reference cases; a small pets API (an operations document for `fake-openapi` and the
- * operations behind an API key request header) serves the OpenAPI install wizard case. A SeaweedFS (S3-compatible) container is the object store through the
+ * conversation tab embed; all allowing local http), `fake-config-form` (a hinted deployment config
+ * form) and the fake IM test plugin `fake-im`; no official plugin except `model-fake` and the
+ * bootstrap plugins; server.mjs then starts the web layer (`next dev`) pointing at it. A fake MCP
+ * server (stateful sessions; the destructive tool `delete_item`, `signup` which starts an
+ * elicitation, the prompt `summarize` and the resource `docs://handbook`) serves the tool /
+ * approval / slash command / resource reference cases; a small pets API (an operations document
+ * for `fake-openapi` and the operations behind an API key request header) serves the OpenAPI
+ * install wizard case. A SeaweedFS (S3-compatible) container is the object store through the
  * `object-store-s3` plugin, for the attachment upload cases (the browser posts the presigned form
  * cross-origin). object-store-s3 and openai-compatible are the bootstrap plugins: downloaded at the
  * versions packages/kernel/bootstrap.json pins from the npm registry and checked against their
  * sha512 by `capybara bootstrap` (as the compose init does; the only network access of this setup,
  * `CAPYBARA_PACKAGES__NPM_REGISTRY` names a mirror, and a matching tgz in the repository's
  * `./bootstrap` is used instead), before `capybara start`, which then finds the step done.
- * `model-fake`'s
- * fake-1 declares image and document support. The sandbox is the kernel test fixture `sandbox-fake`
- * (a real /bin/sh, instance directories under a temp dir, for tests only), for the artifact case
- * (sandbox_write -> sandbox_deliver -> the artifacts tab).
+ * `model-fake`'s fake-1 declares image and document support. The sandbox is the kernel test
+ * fixture `sandbox-fake` (a real /bin/sh, instance directories under a temp dir, for tests only),
+ * for the artifact case (sandbox_write -> sandbox_deliver -> the artifacts tab).
  * The web URL goes into `CAPYBARA_E2E_BASE_URL` (inherited by the worker processes as Playwright's
  * baseURL), the fake MCP endpoint into `CAPYBARA_E2E_MCP_URL`, the pets API's document URL and
  * API key into `CAPYBARA_E2E_OPENAPI_SPEC_URL` / `CAPYBARA_E2E_OPENAPI_KEY`. An extension package

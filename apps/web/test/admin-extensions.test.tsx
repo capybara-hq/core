@@ -642,6 +642,51 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
     },
   );
 
+  it("replacing a set secret: the identical view back still resets the form (not dirty, input empty)", async () => {
+    const p = en.admin.extensions;
+    // a plain secret already set: saving a new value returns the same view as before
+    const view = {
+      plugin: "demo",
+      version: "1.0.0",
+      configurable: true,
+      schema: { type: "object", properties: { token: { type: "string", "x-secret": true } } },
+      fields: [
+        { path: "token", secret: true, hot: false, source: "db", readonly: false, set: true },
+      ],
+      valid: true,
+      validated: true,
+      issues: [],
+    };
+    const calls = detailRoutes(plugin(), {
+      "GET /api/v1/admin/extensions/demo/config": () => json(200, view),
+      "PUT /api/v1/admin/extensions/demo/config": () => json(200, view),
+    });
+    await renderRoute(detailPage, lastStubRoutes(), { locale: "en" });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: p.detail.tabs.config }));
+    const sf = en.configForm;
+    await user.click(
+      await screen.findByRole("button", { name: fill(sf.replaceLabel, { field: "token" }) }),
+    );
+    await user.type(screen.getByLabelText("token"), "sk-new");
+    const save = screen.getByRole("button", { name: p.config.save }) as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    await user.click(save);
+    await vi.waitFor(() => expect(calls.filter((c) => c.method === "PUT").length).toBe(1));
+    expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ values: { token: "sk-new" } });
+    await vi.waitFor(() =>
+      expect((screen.getByLabelText("token") as HTMLInputElement).value).toBe(""),
+    );
+    expect(
+      (screen.getByRole("button", { name: p.config.save }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(screen.getByText(p.config.noChanges)).toBeTruthy();
+    // back to "set, keep": Replace is offered again
+    expect(
+      screen.getByRole("button", { name: fill(sf.replaceLabel, { field: "token" }) }),
+    ).toBeTruthy();
+  });
+
   it("pending config without hints: opens on the form, lists what is missing; endpoints as a repeater, keys as a record", async () => {
     const p = msgs.en.admin.extensions;
     const calls = detailRoutes(plugin({ status: "pending_config", configValid: false }), {

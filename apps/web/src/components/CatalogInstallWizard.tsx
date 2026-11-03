@@ -28,6 +28,7 @@ import {
   showValue,
 } from "../lib/catalog";
 import type { AuthType, ConnectorAuth } from "../lib/connectors";
+import { extensionLabel, labelLocale } from "../lib/extension-label";
 import type { OrgExtension } from "../lib/extensions";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useCatalogErrorLines } from "./CatalogParts";
@@ -433,7 +434,12 @@ function Wizard({
               <Text tone="muted">{t("extensionNone")}</Text>
             )}
             {withConfig !== undefined && (
-              <Card title={withConfig.plugin}>
+              <Card
+                title={extensionLabel(
+                  { name: withConfig.plugin, displayName: withConfig.displayName },
+                  labelLocale(locale),
+                )}
+              >
                 <ConfigForm
                   schema={withConfig.orgConfigSchema}
                   value={config.value}

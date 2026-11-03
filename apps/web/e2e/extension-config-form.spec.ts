@@ -10,6 +10,7 @@ const P = zh.admin.extensions;
  * configuration: an openai-compatible-shaped schema with an endpoint preset menu, an API key drawn
  * in each endpoint card (stored in the secret record `apiKeys` by endpoint name) and model rows.
  * The field labels are the fixture's hints (packages/testing/fixtures/extensions/fake-config-form).
+ * Not re-runnable on the same kernel (the saved config stays); CI starts a fresh stack per run.
  */
 test("extension config form: the list shows the display name with the id as meta; add the DeepSeek preset, set its key, add a model row, save; after a reload the endpoint card shows the key as set", async ({
   page,
@@ -71,5 +72,10 @@ test("extension config form: the list shows the display name with the id as meta
   await expect(savedKey).toHaveValue("");
   await expect(savedKey).toHaveAttribute("placeholder", zh.configForm.secretSet);
   await expect(saved.getByLabel("模型 ID", { exact: true })).toHaveValue("deepseek-chat");
-  await expect(page.getByText("sk-e2e-config-form")).toHaveCount(0);
+  // the key is never sent back: not in the page, and no input holds it
+  expect(await page.content()).not.toContain("sk-e2e-config-form");
+  const values = await page
+    .locator("input, textarea")
+    .evaluateAll((els) => els.map((e) => (e as HTMLInputElement | HTMLTextAreaElement).value));
+  expect(values).not.toContain("sk-e2e-config-form");
 });

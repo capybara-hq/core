@@ -22,6 +22,7 @@ import {
   type UpgradePreview,
   upgradePlugin,
 } from "../lib/catalog";
+import { extensionLabel, labelLocale } from "../lib/extension-label";
 import { listOrgExtensions, type OrgExtension } from "../lib/extensions";
 import { useErrorMessage } from "../lib/use-error-message";
 import {
@@ -327,7 +328,12 @@ export function PluginUpgradeDialog({
             );
           })}
           {loaded.withConfig !== undefined && (
-            <Card title={loaded.withConfig.plugin}>
+            <Card
+              title={extensionLabel(
+                { name: loaded.withConfig.plugin, displayName: loaded.withConfig.displayName },
+                labelLocale(locale),
+              )}
+            >
               <Stack gap={8}>
                 <Text variant="small" tone="muted">
                   {t("extensionConfig")}

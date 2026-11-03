@@ -715,6 +715,7 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
           extensions: [
             {
               plugin: "crm",
+              displayName: { zh: "客户系统", en: "CRM Suite" },
               version: "1.0.0",
               enabled: false,
               configurable: true,
@@ -738,6 +739,8 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
     await renderInstall();
     const user = userEvent.setup();
     await user.type(await screen.findByLabelText("Region", { exact: false }), "eu");
+    // the config card is titled with the extension's display name, not its id
+    expect(screen.getByText("CRM Suite")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: t.next }));
     await user.click(screen.getByRole("button", { name: t.submit }));
     await waitFor(() => expect(router.push).toHaveBeenCalledWith("/settings/plugins"));
@@ -2222,6 +2225,43 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
     inputs: { connectors: [], credentialsChanged: [], extensionConfig: false },
     templates: [],
   };
+
+  it("the upgrade dialog's extension config card is titled with the display name", async () => {
+    const m = en.catalog;
+    stubApi({
+      [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [UPGRADABLE] }),
+      [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () =>
+        json(200, {
+          ...NO_INPUTS,
+          inputs: { connectors: [], credentialsChanged: [], extensionConfig: true },
+        }),
+      [`GET ${ORG}/extensions`]: () =>
+        json(200, {
+          extensions: [
+            {
+              plugin: "crm",
+              displayName: { zh: "客户系统", en: "CRM Suite" },
+              version: "1.0.0",
+              enabled: true,
+              configurable: true,
+              config: null,
+              secrets: [],
+              permissions: [],
+              orgConfigSchema: {
+                type: "object",
+                properties: { region: { type: "string", title: "Region" } },
+              },
+            },
+          ],
+        }),
+    });
+    await renderRoute(PluginsPage, lastStubRoutes(), { locale: "en" });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: m.plugins.upgrade }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("CRM Suite")).toBeTruthy();
+    expect(within(dialog).queryByText("crm", { exact: true })).toBeNull();
+  });
 
   it.each(LOCALES)(
     "a failed upgrade names the step, the dependency and whether the components were put back (%s)",

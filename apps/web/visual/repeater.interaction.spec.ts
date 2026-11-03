@@ -33,7 +33,7 @@ test("the add button opens the presets plus 空白; a preset adds a card and foc
   ]);
   await menu.getByRole("menuitem", { name: "火山方舟" }).click();
   await expect(menu).toHaveCount(0);
-  expect(await titles(page, "repeater-default")).toEqual(["deepseek", "qwen", "ark"]);
+  await expect.poll(() => titles(page, "repeater-default")).toEqual(["deepseek", "qwen", "ark"]);
   const name = b.getByRole("group", { name: "ark" }).getByRole("textbox", { name: "名称" });
   await expect(name).toBeFocused();
   await expect(name).toHaveValue("ark");
@@ -52,14 +52,14 @@ test("remove acts at once and 撤销 in the toast puts the item back", async ({ 
   await open(page);
   const b = block(page, "repeater-default");
   await b.getByRole("button", { name: "移除 qwen" }).click();
-  expect(await titles(page, "repeater-default")).toEqual(["deepseek"]);
+  await expect.poll(() => titles(page, "repeater-default")).toEqual(["deepseek"]);
   const toast = page.locator(".cb-toast").filter({ hasText: "已移除「qwen」。" });
   await expect(toast).toBeVisible();
   // at min (1) the last item cannot be removed
   await expect(b.getByRole("button", { name: "移除 deepseek" })).toBeDisabled();
   await toast.getByRole("button", { name: "撤销" }).click();
   await expect(toast).toHaveCount(0);
-  expect(await titles(page, "repeater-default")).toEqual(["deepseek", "qwen"]);
+  await expect.poll(() => titles(page, "repeater-default")).toEqual(["deepseek", "qwen"]);
 });
 
 test("Alt+↑/↓ on a focused item moves it and keeps the focus", async ({ page }) => {
