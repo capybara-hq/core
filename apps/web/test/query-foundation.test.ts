@@ -1,7 +1,7 @@
-import { hydrate } from "@tanstack/react-query";
+import { hashKey, hydrate, type QueryClient, QueryObserver } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import { ApiClientError } from "../src/lib/api";
-import { makeQueryClient, reviveDehydrated } from "../src/lib/query/client";
+import { makeQueryClient, retryOnMountFor, reviveDehydrated } from "../src/lib/query/client";
 import { defineQuery } from "../src/lib/query/define";
 import { FRESHNESS } from "../src/lib/query/freshness";
 import { keys } from "../src/lib/query/keys";
@@ -55,29 +55,66 @@ describe("query foundation", () => {
     expect(q?.refetchOnReconnect).toBe(true);
   });
 
-  it("a failed query is dehydrated with its kernel code and is not retried on mount", async () => {
-    const server = makeQueryClient();
+  describe("failed queries", () => {
     const key = keys.org("o").all;
-    await server
-      .fetchQuery({
+    const failing = () => {
+      throw new ApiClientError(404, "conversation.not_found", "gone");
+    };
+
+    async function hydratedClient() {
+      const server = makeQueryClient();
+      await server.fetchQuery({ queryKey: key, queryFn: failing, retry: false }).catch(() => {});
+      // survives the server -> client serialization
+      const wire = JSON.parse(JSON.stringify(dehydrateFor(server)));
+      const client = makeQueryClient();
+      hydrate(client, reviveDehydrated(wire));
+      return client;
+    }
+
+    /** Mounts an observer the way a page does (once), waits a tick, then unmounts. */
+    async function mount(client: QueryClient, queryFn: () => unknown) {
+      const queryHash = hashKey(key);
+      const observer = new QueryObserver(client, {
         queryKey: key,
-        queryFn: async () => {
-          throw new ApiClientError(404, "conversation.not_found", "gone");
-        },
-        retry: false,
-      })
-      .catch(() => {});
-    const dehydrated = dehydrateFor(server);
-    // survives the server -> client serialization
-    const wire = JSON.parse(JSON.stringify(dehydrated));
-    const client = makeQueryClient();
-    hydrate(client, reviveDehydrated(wire));
-    const query = client.getQueryCache().find({ queryKey: key });
-    expect(query?.state.status).toBe("error");
-    const error = query?.state.error as ApiClientError;
-    expect(error).toBeInstanceOf(ApiClientError);
-    expect(error.code).toBe("conversation.not_found");
-    expect(error.status).toBe(404);
-    expect(client.getDefaultOptions().queries?.retryOnMount).toBe(false);
+        queryFn: queryFn as () => Promise<unknown>,
+        retryOnMount: retryOnMountFor(queryHash),
+      });
+      const off = observer.subscribe(() => {});
+      await new Promise((r) => setTimeout(r, 10));
+      off();
+    }
+
+    it("a failed query is dehydrated with its kernel code", async () => {
+      const client = await hydratedClient();
+      const query = client.getQueryCache().find({ queryKey: key });
+      expect(query?.state.status).toBe("error");
+      const error = query?.state.error as ApiClientError;
+      expect(error).toBeInstanceOf(ApiClientError);
+      expect(error.code).toBe("conversation.not_found");
+      expect(error.status).toBe(404);
+    });
+
+    it("a hydrated error is not refetched on its first mount", async () => {
+      const client = await hydratedClient();
+      const fn = vi.fn(failing);
+      await mount(client, fn);
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    it("a hydrated error is refetched on the next mount", async () => {
+      const client = await hydratedClient();
+      await mount(client, failing);
+      const fn = vi.fn(failing);
+      await mount(client, fn);
+      expect(fn).toHaveBeenCalledTimes(1);
+    });
+
+    it("a query that failed in the browser is refetched on the next mount", async () => {
+      const client = makeQueryClient();
+      await client.fetchQuery({ queryKey: key, queryFn: failing, retry: false }).catch(() => {});
+      const fn = vi.fn(failing);
+      await mount(client, fn);
+      expect(fn).toHaveBeenCalledTimes(1);
+    });
   });
 });

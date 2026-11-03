@@ -13,7 +13,7 @@ import { makeQueryClient, type WireError } from "../query/client";
 export const serverQueryClient = cache((): QueryClient => makeQueryClient());
 
 /**
- * Dehydrates the client for a `HydrationBoundary`: successes, pending queries and failures. An
+ * Dehydrates the client for a `HydrationBoundary`: successes and failures. An
  * `ApiClientError` is stored as `{ status, code, message }` (class instances cannot cross to the
  * client); `reviveDehydrated` rebuilds it there.
  */

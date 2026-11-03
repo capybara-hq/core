@@ -14,7 +14,7 @@ function retry(failureCount: number, error: Error): boolean {
   return failureCount < 1;
 }
 
-/** A client with the app's defaults (`retryOnMount: false`: a failed query is retried explicitly). `gcTime` stays at TanStack's default. */
+/** A client with the app's defaults. `gcTime` stays at TanStack's default. */
 export function makeQueryClient(): QueryClient {
   return new QueryClient({
     defaultOptions: {
@@ -23,9 +23,6 @@ export function makeQueryClient(): QueryClient {
         refetchOnWindowFocus: false,
         refetchOnMount: true,
         refetchOnReconnect: true,
-        // An observer option (a hydrated query cannot carry it): a mounting component does not
-        // re-run a query that already failed, so a hydrated server error is not asked twice.
-        retryOnMount: false,
       },
     },
   });
@@ -40,9 +37,13 @@ export function browserQueryClient(): QueryClient {
   return browserClient;
 }
 
+/** Hashes of the errors revived from the server that have not been mounted yet (per tab). */
+const hydratedErrors = new Set<string>();
+
 /**
  * Rebuilds `ApiClientError`s from the `{ status, code, message }` that `dehydrateFor` wrote; pass
- * the dehydrated state through it before `hydrate` / `HydrationBoundary`.
+ * the dehydrated state through it before `hydrate` / `HydrationBoundary`. It also records the
+ * revived errors so their first mount does not ask the kernel again (see `retryOnMountFor`).
  */
 export function reviveDehydrated(state: DehydratedState): DehydratedState {
   return {
@@ -50,10 +51,20 @@ export function reviveDehydrated(state: DehydratedState): DehydratedState {
     queries: state.queries.map((q) => {
       const e = q.state.error as WireError | null;
       if (!e || e instanceof Error) return q;
+      hydratedErrors.add(q.queryHash);
       return {
         ...q,
         state: { ...q.state, error: new ApiClientError(e.status, e.code, e.message) },
       };
     }),
   };
+}
+
+/**
+ * The observer's `retryOnMount` for a query: false exactly once for an error revived from the
+ * server (the server already asked), true after that. A failed query is then read again by the
+ * page's retry action or the next mount. Call it once per mount, not on every render.
+ */
+export function retryOnMountFor(queryHash: string): boolean {
+  return !hydratedErrors.delete(queryHash);
 }
