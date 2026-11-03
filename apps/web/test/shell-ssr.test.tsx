@@ -434,16 +434,16 @@ describe("cross-tab session sync", () => {
     expect(signed).not.toHaveBeenCalled();
   });
 
-  it("the frame follows: an org switch or a sign-out elsewhere reloads /", () => {
+  it("the frame follows: an org switch or a sign-out elsewhere reloads /", async () => {
     Bus.all = [];
     vi.stubGlobal("BroadcastChannel", Bus);
     renderFrame(shellOf(ME));
     const other = new Bus("capybara-session");
     act(() => other.postMessage({ kind: "org-switched", from: "another-tab", at: 1 }));
-    expect(navigateBrowser).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledTimes(1));
     expect(navigateBrowser).toHaveBeenCalledWith("/");
     expect(router.push).not.toHaveBeenCalled();
     act(() => other.postMessage({ kind: "signed-out", from: "another-tab", at: 2 }));
-    expect(navigateBrowser).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledTimes(2));
   });
 });

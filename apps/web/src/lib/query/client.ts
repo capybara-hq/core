@@ -37,6 +37,9 @@ export function browserQueryClient(): QueryClient {
   return browserClient;
 }
 
+/** Client components also render during SSR; module state must only be written in the browser. */
+const onServer = () => typeof window === "undefined";
+
 /**
  * Hashes of the errors revived from the server for the current document (per tab). They stay
  * recorded until the first client navigation to another path ({@link noteClientPath}), so a first
@@ -49,7 +52,7 @@ let errorsPath: string | null = null;
 /**
  * Rebuilds `ApiClientError`s from the `{ status, code, message }` that `dehydrateFor` wrote; pass
  * the dehydrated state through it before `hydrate` / `HydrationBoundary`, in the browser only. It
- * also records the revived errors so mounting them does not ask the kernel again (see
+ * also records the revived errors (in the browser; on the server it records nothing) so mounting them does not ask the kernel again (see
  * `isHydratedError`).
  */
 export function reviveDehydrated(state: DehydratedState): DehydratedState {
@@ -58,7 +61,7 @@ export function reviveDehydrated(state: DehydratedState): DehydratedState {
     queries: state.queries.map((q) => {
       const e = q.state.error as WireError | null;
       if (!e || e instanceof Error) return q;
-      hydratedErrors.add(q.queryHash);
+      if (!onServer()) hydratedErrors.add(q.queryHash);
       return {
         ...q,
         state: { ...q.state, error: new ApiClientError(e.status, e.code, e.message) },
@@ -85,6 +88,7 @@ export const retryOnMountOf = (queryKey: readonly unknown[]): boolean =>
  * document's path, a different one (a client navigation away) forgets the revived errors.
  */
 export function noteClientPath(pathname: string): void {
+  if (onServer()) return;
   if (errorsPath === null) {
     errorsPath = pathname;
     return;

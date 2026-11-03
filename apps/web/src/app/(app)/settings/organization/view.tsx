@@ -28,6 +28,8 @@ import {
   updateOrgSettings,
 } from "../../../../lib/org-settings";
 import { deleteOrg } from "../../../../lib/orgs";
+import { browserQueryClient } from "../../../../lib/query/client";
+import { resetSession } from "../../../../lib/query/workspace";
 import { broadcastSession } from "../../../../lib/session-sync";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import { useServerState } from "../../../../lib/use-server-state";
@@ -191,7 +193,8 @@ function DeleteOrg({ orgId }: { orgId: string }) {
           // chooser), told to the other tabs (ruling R4). The dialog stays busy until the unload.
           toast.success(t("delete.done"));
           broadcastSession("org-switched");
-          navigateBrowser("/");
+          // The browser's one client (the provider's): drop the old org's cache before leaving.
+          await resetSession(browserQueryClient(), () => navigateBrowser("/"));
           await new Promise<never>(() => {});
         }}
       />

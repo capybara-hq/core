@@ -12,7 +12,7 @@ import { loginPathFor } from "../auth-sources";
 import { makeQueryClient, type WireError } from "../query/client";
 import { matchRoute, type RouteCtx, UNKNOWN_ROUTE } from "../query/routes";
 import type { Me } from "../session";
-import { isSignedOut } from "./page";
+import { isSignedOut } from "../signed-out";
 
 /** One query client per server request. */
 export const serverQueryClient = cache((): QueryClient => makeQueryClient());
@@ -58,7 +58,11 @@ export async function prefetchRoute(
   // A server read is not retried: the first paint waits for it, and the page's retry action or
   // the browser reads it again.
   await Promise.all(queries.map((q) => qc.prefetchQuery({ ...q, retry: false })));
-  await match.entry.then?.(ctx, qc);
+  // `then` only prefetches: a failure of it must not fail the layout. The queries it started stay
+  // in the cache in whatever state they reached, and the signed-out check below still runs.
+  try {
+    await match.entry.then?.(ctx, qc);
+  } catch {}
   if (!opts.signedOutRedirect) return "ok";
   const signedOut = qc
     .getQueryCache()

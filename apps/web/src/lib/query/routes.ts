@@ -23,7 +23,11 @@ export interface RouteEntry {
   /** The app-dir form without the route group: `/chat/[conversationId]`, `/[...rest]`. */
   pattern: string;
   queries(ctx: RouteCtx): UseQueryOptions<unknown, ApiClientError>[];
-  /** Reads that need the first wave's answers; run after it. */
+  /**
+   * Reads that need the first wave's answers; run after it. It only prefetches (through `qc`) and
+   * must not rely on throwing: `prefetchRoute` swallows a rejection, and what it started stays in
+   * the cache as it is.
+   */
   then?(ctx: RouteCtx, qc: QueryClient): Promise<void>;
   /** Why the entry prefetches nothing. */
   none?: string;

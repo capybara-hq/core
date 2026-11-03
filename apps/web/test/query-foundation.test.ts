@@ -129,6 +129,29 @@ describe("query foundation", () => {
       expect(fn).not.toHaveBeenCalled();
     });
 
+    it("recording is a no-op when run as the server", async () => {
+      const path = openDocument();
+      vi.stubGlobal("window", undefined);
+      let client: QueryClient;
+      try {
+        noteClientPath("/server-render");
+        client = await hydratedClient();
+        // a render on the server revives the error but records nothing
+        expect(isHydratedError(hashKey(key))).toBe(false);
+        noteClientPath("/server-other");
+      } finally {
+        vi.unstubAllGlobals();
+      }
+      // the browser's document path was not touched either: a re-render on it keeps its own state
+      expect(client.getQueryCache().find({ queryKey: key })?.state.error).toBeInstanceOf(
+        ApiClientError,
+      );
+      const fn = vi.fn(failing);
+      await mount(client, fn);
+      expect(fn).toHaveBeenCalledTimes(1);
+      noteClientPath(path);
+    });
+
     it("a hydrated error is refetched on a mount after a client navigation", async () => {
       openDocument();
       const client = await hydratedClient();

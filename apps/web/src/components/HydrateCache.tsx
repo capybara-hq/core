@@ -6,7 +6,8 @@ import { reviveDehydrated } from "../lib/query/client";
 
 /**
  * Hydrates what a layout read on the server into the browser's cache. The kernel errors are
- * revived here, in the browser, so a server render never records them.
+ * revived here. This component also renders during SSR, so `reviveDehydrated` records the revived
+ * errors only in the browser (module state must not be written on the server).
  */
 export function HydrateCache({ state, children }: { state: DehydratedState; children: ReactNode }) {
   const revived = useMemo(() => reviveDehydrated(state), [state]);

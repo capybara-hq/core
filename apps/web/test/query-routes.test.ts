@@ -17,6 +17,20 @@ import { json, stubApi } from "./support/api";
 import { ME } from "./support/render";
 
 vi.mock("server-only", () => ({}));
+// `entry` replaces the matched route entry while set (a test's own `then`).
+const override = vi.hoisted(() => ({
+  entry: null as null | import("../src/lib/query/routes").RouteEntry,
+}));
+vi.mock("../src/lib/query/routes", async (original) => {
+  const routes = await original<typeof import("../src/lib/query/routes")>();
+  return {
+    ...routes,
+    matchRoute: (path: string) => {
+      const m = routes.matchRoute(path);
+      return m !== null && override.entry !== null ? { ...m, entry: override.entry } : m;
+    },
+  };
+});
 vi.mock("next/navigation", () => ({
   redirect: (to: string) => {
     throw new Error(`REDIRECT ${to}`);
@@ -87,6 +101,42 @@ describe("the route table", () => {
     await expect(
       prefetchRoute(makeQueryClient(), "/agents", { me: ME, orgId: "o1" }),
     ).resolves.toBe("ok");
+  });
+});
+
+describe("prefetchRoute's then", () => {
+  const key = keys.org("o1").agents();
+  const first = defineQuery({
+    key,
+    fn: () => apiFetch<{ agents: unknown[] }>("/api/v1/orgs/o1/agents"),
+    freshness: "orgConfig",
+  });
+  const entry = (then: () => Promise<void>) => ({
+    pattern: "/agents",
+    queries: () => [first as never],
+    then,
+  });
+  afterEach(() => {
+    override.entry = null;
+  });
+
+  it("a rejecting then does not fail the layout; its first wave stays cached", async () => {
+    stubApi({ "GET /api/v1/orgs/o1/agents": () => json(200, { agents: [] }) });
+    override.entry = entry(() => Promise.reject(new Error("then broke")));
+    const qc = makeQueryClient();
+    await expect(prefetchRoute(qc, "/agents", { me: ME, orgId: "o1" })).resolves.toBe("ok");
+    expect(qc.getQueryData(key)).toEqual({ agents: [] });
+  });
+
+  it("the signed-out check still runs after a rejecting then", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/agents": () => kernelError(401, "auth.required"),
+      "POST /api/v1/auth/refresh": () => kernelError(401, "auth.required"),
+    });
+    override.entry = entry(() => Promise.reject(new Error("then broke")));
+    await expect(
+      prefetchRoute(makeQueryClient(), "/agents", { me: ME, orgId: "o1" }),
+    ).rejects.toThrow("REDIRECT /login?returnTo=%2Fagents");
   });
 });
 

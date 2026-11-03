@@ -9,7 +9,7 @@ import {
   type SidebarContext,
   useToast,
 } from "@capybara-hq/design";
-import { type UseQueryOptions, useQuery } from "@tanstack/react-query";
+import { type UseQueryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import {
   type ReactNode,
@@ -37,6 +37,7 @@ import {
   meQuery,
   readinessQuery,
 } from "../../lib/query/shell";
+import { resetSession } from "../../lib/query/workspace";
 import type { ShellData } from "../../lib/server/session";
 import { logout, setCurrentOrg } from "../../lib/session";
 import { broadcastSession, useSessionSync } from "../../lib/session-sync";
@@ -172,6 +173,7 @@ function ShellFrame({
   const t = useTranslations();
   const locale = useLocale();
   const router = useRouter();
+  const qc = useQueryClient();
   const pathname = usePathname();
   const errorMessage = useErrorMessage();
   const toast = useToast();
@@ -209,33 +211,37 @@ function ShellFrame({
   /**
    * The current org changed (here or in another tab): a full navigation to its home (ruling R4).
    * The browser keeps this page until the new server-rendered document arrives, so nothing of the
-   * new org paints inside the old org's shell; the control stays pending until the unload.
+   * new org paints inside the old org's shell; the control stays pending until the unload. The
+   * query cache is dropped first (`resetSession`), so a read of the old org cannot reach the new one.
    */
   const openHome = useCallback(() => {
     setSwitching(true);
-    navigateBrowser("/");
-  }, []);
+    void resetSession(qc, () => navigateBrowser("/"));
+  }, [qc]);
   const reload = useCallback(async () => startRefresh(() => router.refresh()), [router]);
   const switchOrg = useCallback(
     async (next: string | null) => {
       try {
         await setCurrentOrg(next);
       } catch (e) {
-        if (e instanceof ApiClientError && e.status === 401)
-          navigateBrowser(loginPathFor(`${window.location.pathname}${window.location.search}`));
+        if (e instanceof ApiClientError && e.status === 401) {
+          await resetSession(qc, () =>
+            navigateBrowser(loginPathFor(`${window.location.pathname}${window.location.search}`)),
+          );
+        }
         throw e;
       }
       broadcastSession("org-switched");
       openHome();
     },
-    [openHome],
+    [openHome, qc],
   );
   // A failed switch from a menu says why (the menu has closed).
   const selectOrg = (next: string) =>
     void switchOrg(next).catch((e: unknown) => toast.error(errorMessage(e)));
   // Another tab signed in or out: start over from `/`; it switched org: follow (the current org
   // belongs to the session the tabs share).
-  useSessionSync(() => navigateBrowser("/"), openHome);
+  useSessionSync(() => void resetSession(qc, () => navigateBrowser("/")), openHome);
 
   const session = useMemo<Session>(
     () => ({
@@ -255,7 +261,7 @@ function ShellFrame({
       await logout();
     } finally {
       broadcastSession("signed-out");
-      navigateBrowser("/login");
+      await resetSession(qc, () => navigateBrowser("/login"));
     }
   }
 

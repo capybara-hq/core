@@ -6,6 +6,7 @@ import { notFound, redirect } from "next/navigation";
 import { ApiClientError } from "../api";
 import { loginPathFor } from "../auth-sources";
 import { PATH_HEADER } from "../headers";
+import { isSignedOut } from "../signed-out";
 
 export { PATH_HEADER };
 
@@ -14,9 +15,7 @@ export async function currentPath(): Promise<string> {
   return (await headers()).get(PATH_HEADER) ?? "/";
 }
 
-/** A 401 `auth.*`: the session is gone, the page signs in again. */
-export const isSignedOut = (e: unknown): e is ApiClientError =>
-  e instanceof ApiClientError && e.status === 401 && e.code.startsWith("auth.");
+export { isSignedOut };
 
 /** The kernel could not be reached (the proxy saw it down, or the read failed in transit). */
 export const isKernelUnavailable = (e: unknown): e is ApiClientError =>
