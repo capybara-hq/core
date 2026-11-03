@@ -1,3 +1,5 @@
+import { SkeletonText } from "./skeleton";
+
 // 32 位整数哈希（确定性），返回 [0,1)。
 function hash(a: number, b: number, c: number): number {
   let h =
@@ -45,12 +47,13 @@ export function Dither({ side, seed = 1 }: { side: "left" | "right"; seed?: numb
   );
 }
 
+/** `rows` full-width text placeholders in the one bar look (spec §6.29): a line-box slot per row. */
 export function Skeleton({ rows }: { rows: number }) {
   return (
     <div className="cb-skeleton" aria-hidden="true">
       {Array.from({ length: rows }, (_, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: 静态占位行
-        <div key={i} className="cb-skeleton-row" />
+        // biome-ignore lint/suspicious/noArrayIndexKey: static placeholder rows
+        <SkeletonText key={i} width="100%" />
       ))}
     </div>
   );

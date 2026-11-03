@@ -224,7 +224,7 @@ describe("ListPage variants", () => {
     for (const r of rows) {
       expect(r.classList.contains("cb-object-row")).toBe(true);
       expect(r.getAttribute("data-skeleton")).toBe("true");
-      expect(r.querySelector(".cb-object-mark")).not.toBeNull();
+      expect(r.querySelector('[data-box="mark"]')).not.toBeNull();
     }
     expect(screen.queryByText("a")).toBeNull();
     expect(screen.getByText("正在加载")).toBeTruthy();

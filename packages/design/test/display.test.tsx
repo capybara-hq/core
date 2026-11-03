@@ -284,7 +284,7 @@ describe("Dither", () => {
 describe("Skeleton / BarChart", () => {
   it("Skeleton 行数", () => {
     const { container } = wrap(<Skeleton rows={3} />);
-    expect(container.querySelectorAll(".cb-skeleton-row").length).toBe(3);
+    expect(container.querySelectorAll('[data-part="skeleton-text"]').length).toBe(3);
   });
   it("BarChart role=img + aria-label", () => {
     wrap(

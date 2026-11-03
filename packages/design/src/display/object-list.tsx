@@ -5,6 +5,7 @@ import type { IconName } from "../icons/paths";
 import { Menu, type MenuItem, menuActions, menuLone } from "../overlays/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { initialOf } from "./initial";
+import { SkeletonBox, SkeletonText, useSkeletonAnnounces } from "./skeleton";
 
 export type ObjectRowProps = {
   /**
@@ -47,8 +48,9 @@ const SKELETON_ROWS = 3;
 
 /**
  * The panel of an object list: rows split by `line-soft` (spec §6.17). `loading` (true, or a row
- * count) draws skeleton rows in the 64 px row shape instead of the children, and marks the list
- * busy.
+ * count) draws skeleton rows in the row's shape instead of the children (a mark box and a name and
+ * a description line, in the one bar look of spec §6.29), and marks the list busy. Inside a skeleton
+ * group the group announces.
  */
 export function ObjectList({
   label,
@@ -60,6 +62,7 @@ export function ObjectList({
   children?: ReactNode;
 }) {
   const t = useDesignT();
+  const announces = useSkeletonAnnounces();
   if (loading === undefined || loading === false) {
     return (
       <ul className="cb-object-list" aria-label={label}>
@@ -73,12 +76,12 @@ export function ObjectList({
       {Array.from({ length: rows }, (_, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: the skeleton rows are positional
         <li key={i} className="cb-object-row" data-skeleton="true">
-          <span className="cb-object-mark" aria-hidden="true" />
-          <span className="cb-object-text" aria-hidden="true">
-            <span className="cb-object-bar" data-line="name" />
-            <span className="cb-object-bar" data-line="desc" />
+          <SkeletonBox part="mark" />
+          <span className="cb-object-text">
+            <SkeletonText width="30%" />
+            <SkeletonText width="55%" />
           </span>
-          {i === 0 ? <span className="cb-sr-only">{t("table.loading")}</span> : null}
+          {i === 0 && announces ? <span className="cb-sr-only">{t("table.loading")}</span> : null}
         </li>
       ))}
     </ul>

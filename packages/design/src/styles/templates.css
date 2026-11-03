@@ -537,23 +537,6 @@ a.cb-object-name:hover {
 .cb-object-trailing {
   color: var(--cb-faint);
 }
-/* Skeleton rows while the list loads: the mark and two bars in the row's shape */
-.cb-object-row[data-skeleton="true"] .cb-object-mark {
-  background: var(--cb-hover);
-}
-.cb-object-bar {
-  display: block;
-  height: 12px;
-  border-radius: var(--cb-radius-sm);
-  background: var(--cb-hover);
-}
-.cb-object-bar[data-line="name"] {
-  width: 30%;
-}
-.cb-object-bar[data-line="desc"] {
-  width: 55%;
-  margin-top: 6px;
-}
 @media (max-width: 639px) {
   .cb-object-row {
     flex-wrap: wrap;
@@ -683,9 +666,9 @@ a.cb-object-name:hover {
 }
 .cb-pending-bar {
   display: block;
-  height: 12px;
+  height: var(--cb-space-3);
   border-radius: var(--cb-radius-sm);
-  background: var(--cb-hover);
+  background: var(--cb-selected);
 }
 .cb-pending-bar[data-line="title"] {
   width: 30%;
