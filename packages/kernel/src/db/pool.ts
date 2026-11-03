@@ -30,6 +30,11 @@ export function createDb(
   opts: {
     connectTimeoutMs?: number | undefined;
     /**
+     * How long an idle client stays in the pool (pg's `idleTimeoutMillis`; unset = pg's 10 s).
+     * Every new client costs a TCP + auth handshake, several round trips to a distant database.
+     */
+    idleTimeoutMs?: number | undefined;
+    /**
      * Error of a client while it is checked out: pg-pool drops its own listener on checkout, so
      * without this a backend killed between two statements is an uncaught exception.
      */
@@ -41,6 +46,9 @@ export function createDb(
     connectionString: url,
     max: poolMax,
     ...pgConnectOptions(opts),
+    ...(opts.idleTimeoutMs !== undefined && { idleTimeoutMillis: opts.idleTimeoutMs }),
+    // a client kept idle longer must notice a dead peer (a dropped VPN, a NAT timeout) by itself
+    keepAlive: true,
   });
   pool.on("error", onError);
   pool.on("connect", (client) => client.on("error", opts.onClientError ?? onError));

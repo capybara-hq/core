@@ -6,6 +6,7 @@ import { closeWithin } from "../close-within.js";
 import { KernelConfigService } from "../config/kernel-config.service.js";
 import { GracefulShutdownModule } from "../lifecycle/graceful-shutdown.module.js";
 import { GracefulShutdown } from "../lifecycle/graceful-shutdown.service.js";
+import { REDIS_KEEPALIVE_MS } from "../queue/redis-connection.js";
 import { KERNEL_BUS, KERNEL_LOGGER, REDIS, REDIS_SUBSCRIBER } from "../tokens.js";
 
 /**
@@ -49,7 +50,10 @@ export class RedisLifecycle {
       provide: REDIS,
       inject: [KernelConfigService, KERNEL_LOGGER],
       useFactory: (config: KernelConfigService, log: KernelLogger) => {
-        const redis = new Redis(config.get().redis.url, { lazyConnect: true });
+        const redis = new Redis(config.get().redis.url, {
+          lazyConnect: true,
+          keepAlive: REDIS_KEEPALIVE_MS,
+        });
         redis.on("error", (err: Error) => log.error("redis connection error", { err }));
         return redis;
       },
@@ -58,7 +62,10 @@ export class RedisLifecycle {
       provide: REDIS_SUBSCRIBER,
       inject: [KernelConfigService, KERNEL_LOGGER],
       useFactory: (config: KernelConfigService, log: KernelLogger) =>
-        createBusSubscriber(() => new Redis(config.get().redis.url), log),
+        createBusSubscriber(
+          () => new Redis(config.get().redis.url, { keepAlive: REDIS_KEEPALIVE_MS }),
+          log,
+        ),
     },
     {
       provide: KERNEL_BUS,

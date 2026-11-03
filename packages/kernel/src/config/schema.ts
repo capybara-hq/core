@@ -196,6 +196,17 @@ export const KernelConfigSchema = z.object({
         .positive()
         .default(5000)
         .meta(meta({ description: "PostgreSQL connect timeout in milliseconds" })),
+      idleTimeoutMs: z
+        .number()
+        .int()
+        .positive()
+        .default(60_000)
+        .meta(
+          meta({
+            description:
+              "How long an idle PostgreSQL connection stays in the pool, in milliseconds",
+          }),
+        ),
     })
     .prefault({} as never),
   redis: z

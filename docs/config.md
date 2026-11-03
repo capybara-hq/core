@@ -11,6 +11,7 @@ The defaults of secret fields do not appear in this document.
 | `db.url` | `CAPYBARA_DB__URL` | `string` | required | no | yes | PostgreSQL connection URL |
 | `db.poolMax` | `CAPYBARA_DB__POOL_MAX` | `number` | `10` | no | no | Maximum PostgreSQL pool size |
 | `db.connectTimeoutMs` | `CAPYBARA_DB__CONNECT_TIMEOUT_MS` | `number` | `5000` | no | no | PostgreSQL connect timeout in milliseconds |
+| `db.idleTimeoutMs` | `CAPYBARA_DB__IDLE_TIMEOUT_MS` | `number` | `60000` | no | no | How long an idle PostgreSQL connection stays in the pool, in milliseconds |
 | `redis.url` | `CAPYBARA_REDIS__URL` | `string` | required | no | yes | Redis connection URL |
 | `masterKey` | `CAPYBARA_MASTER_KEY` | `string` | required | no | yes | Base64 master key (32 bytes) for secret encryption |
 | `masterKeyPrevious` | `CAPYBARA_MASTER_KEY_PREVIOUS` | `array<string>` | — | no | yes | Previous master keys kept during rotation |
