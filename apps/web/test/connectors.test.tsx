@@ -1,4 +1,4 @@
-import { act, cleanup, renderHook, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -6,7 +6,6 @@ import zh from "../messages/zh.json";
 import ConnectorDetailPage from "../src/app/(app)/connectors/[connectorId]/page";
 import { navigateBrowser } from "../src/lib/browser";
 import type { Me } from "../src/lib/session";
-import { useLoad } from "../src/lib/use-load";
 import { renderNewAgent } from "./support/agents";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
@@ -703,33 +702,6 @@ describe("连接器详情的工具栏刷新", () => {
     await vi.waitFor(() => expect(button.getAttribute("aria-busy")).toBeNull());
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
     expect(screen.queryByText("fixture__delete_item")).toBeNull();
-  });
-});
-
-describe("useLoad", () => {
-  it("依赖变化（切换组织）立即回到加载中，不显示上一组依赖的数据；reload 保留旧数据", async () => {
-    const pending = new Map<string, (v: string) => void>();
-    const load = (org: string) =>
-      new Promise<string>((r) => {
-        pending.set(org, r);
-      });
-    const { result, rerender } = renderHook(({ org }) => useLoad(() => load(org), [org]), {
-      initialProps: { org: "o1" },
-    });
-    expect(result.current.state).toEqual({ kind: "loading" });
-    await act(async () => pending.get("o1")?.("data of o1"));
-    expect(result.current.state).toEqual({ kind: "ready", data: "data of o1" });
-
-    rerender({ org: "o2" });
-    // 同一次渲染里就不再给出 o1 的数据
-    expect(result.current.state).toEqual({ kind: "loading" });
-    await act(async () => pending.get("o2")?.("data of o2"));
-    expect(result.current.state).toEqual({ kind: "ready", data: "data of o2" });
-
-    act(() => result.current.reload());
-    expect(result.current.state).toEqual({ kind: "ready", data: "data of o2" });
-    await act(async () => pending.get("o2")?.("data of o2 v2"));
-    expect(result.current.state).toEqual({ kind: "ready", data: "data of o2 v2" });
   });
 });
 

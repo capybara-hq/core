@@ -3,13 +3,12 @@ import "server-only";
 import "./register";
 import type { FetchQueryOptions, QueryClient, UseQueryOptions } from "@tanstack/react-query";
 import { headers } from "next/headers";
-import { redirect } from "next/navigation";
-import { cache } from "react";
-import { getReadiness, type OrgReadiness, setupReady } from "../agents";
-import type { ApiClientError } from "../api";
+import { notFound, redirect } from "next/navigation";
+import type { OrgReadiness } from "../agents";
+import { ApiClientError } from "../api";
 import { loginPathFor } from "../auth-sources";
 import type { ConversationGroupsPage } from "../conversations";
-import { myRole, type OrgRole, roleAtLeast } from "../members";
+import type { OrgRole } from "../members";
 import {
   conversationGroupsQuery,
   extensionPagesQuery,
@@ -17,21 +16,22 @@ import {
   meQuery,
   readinessQuery,
 } from "../query/shell";
-import { getMe, type Me, type Membership } from "../session";
+import type { Me, Membership } from "../session";
 import type { UiContributionItem } from "../ui";
 import { SESSION_STATE_HEADER } from "./kernel";
-import { currentPath, isKernelUnavailable, isSignedOut, read } from "./page";
+import { currentPath, isKernelUnavailable, isSignedOut } from "./page";
 import { serverQueryClient } from "./query";
 
-/** The signed-in account and its current org (`null` when none is chosen). Once per request. */
-export const getSession = cache(async (): Promise<{ me: Me; org: Membership | null }> => {
-  const me = await read(getMe());
-  const org = me.memberships.find((m) => m.orgId === me.currentOrgId) ?? null;
-  return { me, org };
-});
-
-/** The current org's readiness (one kernel call per request: the shell and the page share it). */
-export const orgReadiness = (orgId: string) => read(getReadiness(orgId));
+/** A shell read: a 401 `auth.*` redirects to sign-in (back to this page), a 404 is not-found. */
+async function read<T>(p: Promise<T>): Promise<T> {
+  try {
+    return await p;
+  } catch (e) {
+    if (isSignedOut(e)) redirect(loginPathFor(await currentPath()));
+    if (e instanceof ApiClientError && e.status === 404) notFound();
+    throw e;
+  }
+}
 
 /** What the `(app)` layout reads for the frame (spec web-ssr §3.1). */
 export interface ShellData {
@@ -123,34 +123,3 @@ export type Workspace =
   | { kind: "ok"; me: Me; orgId: string; role: OrgRole }
   | { kind: "noAccess"; need: "member" | "admin" }
   | { kind: "noOrg" };
-
-/**
- * The gate every workspace page calls first (spec web-ssr §2.3). Without a current org it returns
- * `noOrg` (the frame draws the org chooser; the page renders nothing). While the org is not ready,
- * a page that is no setup route (no `setup`) redirects to `/`. Below `min` (default `guest`) it
- * returns `noAccess`, and the page renders `<NoAccess need={…} />` without reading anything else.
- */
-export async function workspace(
-  opts: { min?: "guest" | "member" | "admin"; setup?: "home" | "step" } = {},
-): Promise<Workspace> {
-  const { me, org } = await getSession();
-  if (org === null) return { kind: "noOrg" };
-  const readiness = await orgReadiness(org.orgId);
-  if (!setupReady(readiness) && opts.setup === undefined) redirect("/");
-  const role = myRole(me);
-  const min = opts.min ?? "guest";
-  if (role === undefined || !roleAtLeast(role, min)) {
-    return { kind: "noAccess", need: min === "admin" ? "admin" : "member" };
-  }
-  return { kind: "ok", me, orgId: org.orgId, role };
-}
-
-/** The admin console's gate: enterprise admins only. */
-export async function admin(): Promise<
-  { kind: "ok"; me: Me } | { kind: "noAccess"; need: "enterprise" }
-> {
-  const { me } = await getSession();
-  return me.account.isEnterpriseAdmin
-    ? { kind: "ok", me }
-    : { kind: "noAccess", need: "enterprise" };
-}

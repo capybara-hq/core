@@ -27,10 +27,9 @@ vi.mock("react", async (original) => ({
     },
 }));
 
-const { ApiClientError, apiFetch, setApiTransport } = await import("../src/lib/api");
+const { apiFetch, setApiTransport } = await import("../src/lib/api");
 const { serverTransport } = await import("../src/lib/server/kernel");
-const { read, optional } = await import("../src/lib/server/page");
-const { getShell, workspace, admin } = await import("../src/lib/server/session");
+const { getShell } = await import("../src/lib/server/session");
 const { getMe } = await import("../src/lib/session");
 const { PEER_TOKEN_ENV, PEER_TOKEN_HEADER } = await import("../src/lib/peer");
 const { isPublicPath, isAdminPath } = await import("../src/lib/routes");
@@ -161,86 +160,6 @@ describe("serverTransport", () => {
   });
 });
 
-describe("read / optional", () => {
-  it("redirects a 401 auth.* to sign-in with the current path", async () => {
-    await expect(
-      read(Promise.reject(new ApiClientError(401, "auth.required", "x"))),
-    ).rejects.toThrow(`REDIRECT /login?returnTo=${encodeURIComponent("/agents?tab=mine")}`);
-  });
-
-  it("maps a 404 to notFound and rethrows anything else", async () => {
-    await expect(
-      read(Promise.reject(new ApiClientError(404, "agent.not_found", "x"))),
-    ).rejects.toThrow("NOT_FOUND");
-    const e502 = new ApiClientError(502, "upstream_unavailable", "x");
-    await expect(read(Promise.reject(e502))).rejects.toBe(e502);
-    const e403 = new ApiClientError(403, "forbidden", "x");
-    await expect(read(Promise.reject(e403))).rejects.toBe(e403);
-    expect(await read(Promise.resolve(7))).toBe(7);
-  });
-
-  it("optional tolerates only refusals (403, 404) and still redirects on 401", async () => {
-    expect(await optional(Promise.reject(new ApiClientError(403, "forbidden", "x")))).toBeNull();
-    expect(
-      await optional(Promise.reject(new ApiClientError(404, "skill.not_found", "x"))),
-    ).toBeNull();
-    expect(await optional(Promise.resolve(3))).toBe(3);
-    await expect(
-      optional(Promise.reject(new ApiClientError(401, "auth.required", "x"))),
-    ).rejects.toThrow(/REDIRECT/);
-    for (const e of [
-      new ApiClientError(0, "upstream_unavailable", "x"),
-      new ApiClientError(0, "network", "x"),
-      new ApiClientError(500, "internal", "x"),
-      new ApiClientError(503, "unavailable", "x"),
-      new ApiClientError(400, "validation_failed", "x"),
-    ]) {
-      await expect(optional(Promise.reject(e))).rejects.toBe(e);
-    }
-  });
-});
-
-describe("workspace", () => {
-  it("returns the org and role when ready and allowed", async () => {
-    kernel({
-      "/api/v1/me": () => json(200, ME),
-      "/api/v1/orgs/o1/readiness": () => json(200, READY),
-    });
-    expect(await workspace({})).toEqual({ kind: "ok", me: ME, orgId: "o1", role: "member" });
-  });
-
-  it("returns no access below min, deciding nothing else", async () => {
-    kernel({
-      "/api/v1/me": () => json(200, ME),
-      "/api/v1/orgs/o1/readiness": () => json(200, READY),
-    });
-    expect(await workspace({ min: "admin" })).toEqual({ kind: "noAccess", need: "admin" });
-  });
-
-  it("redirects to / in setup unless the route is a setup route", async () => {
-    kernel({
-      "/api/v1/me": () => json(200, ME),
-      "/api/v1/orgs/o1/readiness": () => json(200, { modelProvider: "none", agents: 0 }),
-    });
-    await expect(workspace({})).rejects.toThrow("REDIRECT /");
-    expect(await workspace({ setup: "step" })).toMatchObject({ kind: "ok", orgId: "o1" });
-  });
-
-  it("returns noOrg without a current org", async () => {
-    kernel({ "/api/v1/me": () => json(200, { ...ME, currentOrgId: null }) });
-    expect(await workspace({})).toEqual({ kind: "noOrg" });
-  });
-
-  it("admin() lets only enterprise admins in", async () => {
-    kernel({ "/api/v1/me": () => json(200, ME) });
-    expect(await admin()).toEqual({ kind: "noAccess", need: "enterprise" });
-    req.scope = new Map();
-    const boss = { ...ME, account: { ...ME.account, isEnterpriseAdmin: true } };
-    kernel({ "/api/v1/me": () => json(200, boss) });
-    expect(await admin()).toEqual({ kind: "ok", me: boss });
-  });
-});
-
 describe("getShell", () => {
   it("reads the shell in parallel; optional reads fall back to null", async () => {
     const calls = kernel({
@@ -260,8 +179,6 @@ describe("getShell", () => {
       pending: { count: 2, more: true },
       extensions: null,
     });
-    // the page's own workspace() reuses the request's reads
-    await workspace({});
     expect(calls).toHaveLength(5);
   });
 
