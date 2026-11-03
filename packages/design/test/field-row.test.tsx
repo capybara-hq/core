@@ -4,7 +4,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it } from "vitest";
-import { Checkbox, DesignProvider, Field, FieldRow, Input } from "../src/index";
+import { Checkbox, DesignProvider, Field, FieldRow, FieldRowGroup, Input } from "../src/index";
 
 afterEach(cleanup);
 
@@ -96,5 +96,36 @@ describe("FieldRow (spec §6.27)", () => {
   it("has no Advanced toggle without advanced fields", () => {
     wrap(row(true));
     expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("FieldRowGroup is a named group of the row's checkboxes, labelled like the fields", () => {
+    const { container } = wrap(
+      <div>
+        {[true, false].map((first) => (
+          <FieldRow key={String(first)} first={first}>
+            <Field label="Model ID">
+              <Input />
+            </Field>
+            <FieldRowGroup label="Capabilities">
+              <Checkbox checked={false} onChange={() => {}} label="Images" />
+              <Checkbox checked onChange={() => {}} label="Reasoning" />
+            </FieldRowGroup>
+          </FieldRow>
+        ))}
+      </div>,
+    );
+    const groups = screen.getAllByRole("group", { name: "Capabilities" });
+    expect(groups).toHaveLength(2);
+    for (const g of groups) {
+      expect(g.getAttribute("data-part")).toBe("field-row-group");
+      const boxes = [...g.querySelectorAll('input[type="checkbox"]')];
+      expect(boxes).toHaveLength(2);
+    }
+    expect(screen.getAllByRole("checkbox", { name: "Images" })).toHaveLength(2);
+    expect(container.querySelectorAll('[data-part="field-row-group-label"]')).toHaveLength(2);
+    // its label is drawn on the first row only, like a field's
+    expect(css.replace(/\s+/g, " ")).toMatch(
+      /\.cb-field-row\[data-first="false"\] > \.cb-field-row-fields > \.cb-field-row-group > \.cb-field-row-group-label[^{]*\{[^}]*clip-path: inset\(50%\)/,
+    );
   });
 });

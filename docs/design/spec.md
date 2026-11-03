@@ -1810,7 +1810,7 @@ States: `default`, `rows`, `invalid`, `empty`
 
 ### 6.27 FieldRow
 
-`FieldRow({ children, advanced?, first?, defaultAdvancedOpen? })`: a compact row of small fields for an object whose form hints say `layout: "row"` (a model: ID, context window, max output, the capability checkboxes). The fields (`Field`s) share the row equally, `space.3` apart; checkboxes and other non-field children keep their own width and sit on the inputs' line. Labels are drawn on the first row only (`first`); later rows keep them as the fields' accessible names, out of sight, so a list of rows reads as one table. With `advanced`, a "高级" / "Advanced" toggle ends the row (`small`, `muted`, a `faint` `chevron-right` / `chevron-down` 12 after the words, `aria-expanded`, `aria-controls`; `ink` on a `hover` ground); open, the advanced fields follow under the row, `space.2` below, wrapping at their own width under a 1px `line` guide on the left, indented `space.2` (the Disclosure body, §6.5), their labels always drawn; `defaultAdvancedOpen` starts it open (an issue inside it). **Below 640** the row stacks: one field per line, `space.2` apart, every label drawn; consecutive rows are split by `line-soft` with `space.2` above.
+`FieldRow({ children, advanced?, first?, defaultAdvancedOpen? })`: a compact row of small fields for an object whose form hints say `layout: "row"` (a model: ID, context window, max output, the capability checkboxes). The fields (`Field`s) share the row equally, `space.3` apart; a row's checkboxes go in one `FieldRowGroup({ label, children })`: a `group` named by its label ("能力" / "Capabilities"), drawn above the boxes like a field's label (`body`, `ink`, the label head's 20 px) and, like it, on the first row only; the boxes sit side by side on the inputs' line (`control.default` high, `space.3` apart, wrapping), the group at its own width. Other non-field children (a lone checkbox) keep their own width and sit on the inputs' line. Labels are drawn on the first row only (`first`); later rows keep them as the fields' accessible names, out of sight, so a list of rows reads as one table. With `advanced`, a "高级" / "Advanced" toggle ends the row (`small`, `muted`, a `faint` `chevron-right` / `chevron-down` 12 after the words, `aria-expanded`, `aria-controls`; `ink` on a `hover` ground); open, the advanced fields follow under the row, `space.2` below, wrapping at their own width under a 1px `line` guide on the left, indented `space.2` (the Disclosure body, §6.5), their labels always drawn; `defaultAdvancedOpen` starts it open (an issue inside it). **Below 640** the row stacks: one field per line, `space.2` apart, every label drawn; consecutive rows are split by `line-soft` with `space.2` above.
 
 <!-- states: field-row -->
 States: `first`, `advanced-open`, `narrow`
@@ -1821,6 +1821,10 @@ States: `first`, `advanced-open`, `narrow`
 | field-row-fields | first | column-gap | space.3 |
 | field-label | first | font-size | type.body |
 | field-row-toggle | first | height | control.default |
+| field-row-group-label | first | font-size | type.body |
+| field-row-group-label | first | color | color.ink |
+| field-row-group-items | first | height | control.default |
+| field-row-group-items | first | column-gap | space.3 |
 | field-row-toggle | first | color | color.muted |
 | field-row-more | advanced-open | padding-left | space.2 |
 | field-row-more | advanced-open | border-left-color | color.line |

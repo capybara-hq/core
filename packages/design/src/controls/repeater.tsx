@@ -179,14 +179,13 @@ export function Repeater({
   };
 
   const onKeyDown = (e: KeyboardEvent, key: string, index: number) => {
-    if (!e.altKey || !reorder || disabled) return;
-    if (e.key === "ArrowUp" && index > 0) {
-      e.preventDefault();
-      move(key, index - 1);
-    } else if (e.key === "ArrowDown" && index < items.length - 1) {
-      e.preventDefault();
-      move(key, index + 1);
-    }
+    // A nested Repeater (an endpoint's models) owns the keys pressed inside its items.
+    if (e.defaultPrevented || !e.altKey || !reorder || disabled) return;
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    e.preventDefault();
+    e.stopPropagation();
+    const to = e.key === "ArrowUp" ? index - 1 : index + 1;
+    if (to >= 0 && to < items.length) move(key, to);
   };
 
   const drag = (key: string, index: number) =>

@@ -3305,16 +3305,37 @@ textarea {
 .r-field-row-fields > .r-field {
   flex: 1 1 0;
 }
-.r-field-row-fields > :not(.r-field) {
+.r-field-row-fields > :not(.r-field, .r-field-row-group) {
   display: flex;
   flex: none;
   align-items: center;
   gap: var(--cb-space-1);
   min-height: var(--cb-control-default);
 }
-.r-field-row[data-first="true"] .r-field-row-fields > :not(.r-field) {
+.r-field-row[data-first="true"] .r-field-row-fields > :not(.r-field, .r-field-row-group) {
   margin-top: var(--cb-space-6);
 }
+.r-field-row-group {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+}
+.r-field-row-group > .r-label {
+  min-height: 20px;
+}
+.r-field-row-group-items {
+  display: flex;
+  align-items: center;
+  column-gap: var(--cb-space-3);
+  min-height: var(--cb-control-default);
+}
+.r-field-row-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+}
+.r-field-row[data-first="false"] .r-field-row-group > .r-label,
 .r-field-row[data-first="false"] .r-field-row-fields > .r-field > .r-label {
   position: absolute;
   width: 1px;
@@ -3354,11 +3375,32 @@ textarea {
   align-items: stretch;
   gap: var(--cb-space-2);
 }
-[data-ref-block="field-row-narrow"] .r-field-row-fields > :not(.r-field) {
+[data-ref-block="field-row-narrow"] .r-field-row-fields > :not(.r-field, .r-field-row-group) {
   margin-top: 0;
   align-self: flex-start;
 }
-[data-ref-block="field-row-narrow"] .r-field-row[data-first="false"] .r-field-row-fields > .r-field > .r-label {
+[data-ref-block="field-row-narrow"] .r-field-row-group {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+}
+.r-field-row-group > .r-label {
+  min-height: 20px;
+}
+.r-field-row-group-items {
+  display: flex;
+  align-items: center;
+  column-gap: var(--cb-space-3);
+  min-height: var(--cb-control-default);
+}
+.r-field-row-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+}
+.r-field-row[data-first="false"] .r-field-row-group > .r-label,
+.r-field-row[data-first="false"] .r-field-row-fields > .r-field > .r-label {
   position: static;
   width: auto;
   height: auto;

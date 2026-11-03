@@ -4,6 +4,7 @@ import {
   Checkbox,
   Field,
   FieldRow,
+  FieldRowGroup,
   Input,
   KeyValueEditor,
   Repeater,
@@ -127,11 +128,29 @@ function EndpointsDemo({
   );
 }
 
-type Model = { id: string; contextWindow: string; maxOutput: string; vision: boolean };
+type Model = {
+  id: string;
+  contextWindow: string;
+  maxOutput: string;
+  vision: boolean;
+  reasoning: boolean;
+};
 
 const MODELS: Model[] = [
-  { id: "deepseek-chat", contextWindow: "128000", maxOutput: "8192", vision: false },
-  { id: "deepseek-reasoner", contextWindow: "128000", maxOutput: "32768", vision: false },
+  {
+    id: "deepseek-chat",
+    contextWindow: "128000",
+    maxOutput: "8192",
+    vision: false,
+    reasoning: false,
+  },
+  {
+    id: "deepseek-reasoner",
+    contextWindow: "128000",
+    maxOutput: "32768",
+    vision: false,
+    reasoning: true,
+  },
 ];
 
 function ModelRow({
@@ -174,7 +193,14 @@ function ModelRow({
           onChange={(e) => onChange({ ...m, maxOutput: e.target.value })}
         />
       </Field>
-      <Checkbox checked={m.vision} label="图片" onChange={(v) => onChange({ ...m, vision: v })} />
+      <FieldRowGroup label="能力">
+        <Checkbox checked={m.vision} label="图片" onChange={(v) => onChange({ ...m, vision: v })} />
+        <Checkbox
+          checked={m.reasoning}
+          label="推理"
+          onChange={(v) => onChange({ ...m, reasoning: v })}
+        />
+      </FieldRowGroup>
     </FieldRow>
   );
 }
@@ -204,7 +230,14 @@ function ModelsDemo({ invalid }: { invalid?: string }) {
       onAdd={() => {
         setList((l) => [
           ...l,
-          { key: `m${next}`, id: "", contextWindow: "", maxOutput: "", vision: false },
+          {
+            key: `m${next}`,
+            id: "",
+            contextWindow: "",
+            maxOutput: "",
+            vision: false,
+            reasoning: false,
+          },
         ]);
         setNext((n) => n + 1);
       }}

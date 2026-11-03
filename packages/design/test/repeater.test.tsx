@@ -242,4 +242,42 @@ describe("Repeater (spec §6.26)", () => {
     expect(screen.getByRole("button", { name: "移除 a" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "下移 a" })).toBeTruthy();
   });
+
+  it("Alt+↑/↓ in a nested Repeater moves only the inner item, also at the inner list's edge", () => {
+    const outerMove = vi.fn();
+    const innerMove = vi.fn();
+    const inner = (
+      <Repeater
+        {...base}
+        label="Models"
+        addLabel="Add model"
+        variant="rows"
+        items={[
+          { key: "m1", title: "m1", body: <Input aria-label="Model m1" /> },
+          { key: "m2", title: "m2", body: <Input aria-label="Model m2" /> },
+        ]}
+        onMove={innerMove}
+      />
+    );
+    wrap(
+      <Repeater
+        {...base}
+        items={[card("a"), { key: "b", title: "b", body: inner }]}
+        onMove={outerMove}
+      />,
+    );
+    const m2 = screen.getByRole("textbox", { name: "Model m2" });
+    fireEvent.keyDown(m2, { key: "ArrowUp", altKey: true });
+    expect(innerMove).toHaveBeenCalledWith("m2", 0);
+    // the inner item cannot go further down: the key is still the inner list's, not the outer's
+    fireEvent.keyDown(m2, { key: "ArrowDown", altKey: true });
+    expect(innerMove).toHaveBeenCalledTimes(1);
+    expect(outerMove).not.toHaveBeenCalled();
+    // outside the inner list the outer item moves
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Name a" }), {
+      key: "ArrowDown",
+      altKey: true,
+    });
+    expect(outerMove).toHaveBeenCalledWith("a", 1);
+  });
 });

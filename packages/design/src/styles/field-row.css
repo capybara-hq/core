@@ -16,17 +16,42 @@
   min-width: 0;
 }
 /* Checkboxes, groups and the Advanced toggle: their own width, centred on the inputs' line. */
-.cb-field-row-fields > :not(.cb-field) {
+.cb-field-row-fields > :not(.cb-field, .cb-field-row-group) {
   display: flex;
   flex: none;
   align-items: center;
   min-height: var(--cb-control-default);
 }
 /* The first row's labels (head 20 + gap 4) push the inputs down; the rest follow. */
-.cb-field-row[data-first="true"] > .cb-field-row-fields > :not(.cb-field) {
+.cb-field-row[data-first="true"] > .cb-field-row-fields > :not(.cb-field, .cb-field-row-group) {
   margin-top: var(--cb-space-6);
 }
+/* A row's checkboxes as one named group: a field-like label over the boxes on the inputs' line. */
+.cb-field-row-group {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.cb-field-row-group-label {
+  min-height: 20px;
+  color: var(--cb-ink);
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+}
+.cb-field-row-group-items {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--cb-space-3);
+  min-height: var(--cb-control-default);
+}
 /* Later rows keep their labels as accessible names, out of sight. */
+.cb-field-row[data-first="false"]
+  > .cb-field-row-fields
+  > .cb-field-row-group
+  > .cb-field-row-group-label,
 .cb-field-row[data-first="false"] > .cb-field-row-fields > .cb-field > .cb-field-head {
   position: absolute;
   width: 1px;
@@ -79,7 +104,7 @@
   .cb-field-row-fields > .cb-field {
     flex: none;
   }
-  .cb-field-row[data-first="true"] > .cb-field-row-fields > :not(.cb-field) {
+  .cb-field-row[data-first="true"] > .cb-field-row-fields > :not(.cb-field, .cb-field-row-group) {
     margin-top: 0;
   }
   .cb-field-row-toggle {
@@ -89,6 +114,10 @@
     padding-top: var(--cb-space-2);
     border-top: 1px solid var(--cb-line-soft);
   }
+  .cb-field-row[data-first="false"]
+    > .cb-field-row-fields
+    > .cb-field-row-group
+    > .cb-field-row-group-label,
   .cb-field-row[data-first="false"] > .cb-field-row-fields > .cb-field > .cb-field-head {
     position: static;
     width: auto;

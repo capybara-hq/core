@@ -51,3 +51,28 @@ export function FieldRow({
     </div>
   );
 }
+
+/**
+ * The checkboxes of a FieldRow as one named group (spec §6.27): a label above them like a
+ * field's (drawn on the first row only, the group's accessible name on every row), the boxes
+ * side by side on the inputs' line.
+ */
+export function FieldRowGroup({ label, children }: { label: string; children: ReactNode }) {
+  const id = useId();
+  return (
+    // biome-ignore lint/a11y/useSemanticElements: a fieldset brings its own border and legend layout
+    <div
+      className="cb-field-row-group"
+      role="group"
+      aria-labelledby={id}
+      data-part="field-row-group"
+    >
+      <span id={id} className="cb-field-row-group-label" data-part="field-row-group-label">
+        {label}
+      </span>
+      <div className="cb-field-row-group-items" data-part="field-row-group-items">
+        {children}
+      </div>
+    </div>
+  );
+}
