@@ -74,3 +74,20 @@ export function canUpdateOrg(me: {
   const role = me.memberships.find((m) => m.orgId === me.currentOrgId)?.role;
   return role === "admin" || role === "owner";
 }
+
+/**
+ * Whether `me` may change an agent: its owner (members up: `agents.create`) or an org admin (R3).
+ * The kernel stays the authority on every save.
+ */
+export function canEditAgent(
+  me: {
+    account: { id: string };
+    currentOrgId: string | null;
+    memberships: { orgId: string; role: string }[];
+  },
+  agent: { ownerAccountId: string },
+): boolean {
+  const role = me.memberships.find((m) => m.orgId === me.currentOrgId)?.role;
+  if (role !== "member" && role !== "admin" && role !== "owner") return false;
+  return agent.ownerAccountId === me.account.id || canUpdateOrg(me);
+}

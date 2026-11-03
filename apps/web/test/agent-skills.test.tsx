@@ -254,6 +254,13 @@ describe("编辑 agent（FormPage）", () => {
       await user.type(within(dialog).getByRole("textbox"), "notes-style");
       await user.click(within(dialog).getByRole("button", { name: m.agents.form.deleteOwnSkill }));
       await vi.waitFor(() => expect(calls.some((c) => c.method === "DELETE")).toBe(true));
+      // the delete invalidates the agent's own skills: they are read again
+      const after = () => calls.slice(calls.findIndex((c) => c.method === "DELETE"));
+      await vi.waitFor(() =>
+        expect(after().map((c) => `${c.method} ${c.url}`)).toContain(
+          `GET ${ORG}/agents/ag1/skills`,
+        ),
+      );
       expect(await within(list).findByText(m.agents.form.noOwnSkills)).toBeTruthy();
     },
   );
@@ -360,13 +367,14 @@ describe("编辑 agent（FormPage）", () => {
     expect(within(list).queryByRole("button")).toBeNull();
   });
 
-  it("an agent the kernel does not find is the not-found page", async () => {
+  it("an agent the kernel does not find is the not-found state in the shell", async () => {
     stubApi({
       ...routes(),
       [`GET ${ORG}/agents/ag1`]: () =>
         json(404, { error: { code: "agent.not_found", message: "x" } }),
     });
-    await expect(renderEditAgent({ locale: "zh" })).rejects.toThrow("NOT_FOUND");
+    await renderEditAgent({ locale: "zh" });
+    expect(screen.getByRole("heading", { level: 1, name: zh.notFound.title })).toBeTruthy();
   });
 });
 

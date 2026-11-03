@@ -26,6 +26,14 @@ export const keys = {
       agents: (): readonly unknown[] => [...all, "agents"],
       /** One agent. */
       agent: (agentId: string): readonly unknown[] => [...all, "agent", agentId],
+      /** The skills an agent wrote itself. */
+      agentSkills: (agentId: string): readonly unknown[] => [...all, "agentSkills", agentId],
+      /** The org's agent templates (from plugins). */
+      agentTemplates: (): readonly unknown[] => [...all, "agentTemplates"],
+      /** The org skill library. */
+      skills: (): readonly unknown[] => [...all, "skills"],
+      /** The org's channel connections. */
+      channels: (): readonly unknown[] => [...all, "channels"],
       /** Every view of the sidebar's conversation groups (an invalidation prefix). */
       conversationGroupsAll: (): readonly unknown[] => [...all, "conversationGroups"],
       /** The sidebar's conversation groups of one view (`"default"`: what the layout reads). */

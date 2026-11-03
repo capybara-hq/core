@@ -1,8 +1,7 @@
 /** Shared helpers for the agent page tests: the form's server reads, `/agents/new` and `/agents/<id>`. */
-import EditAgentPage from "../../src/app/(app)/agents/[id]/page";
-import NewAgentPage from "../../src/app/(app)/agents/new/page";
 import { json, lastStubRoutes } from "./api";
-import { type Routes, renderRoute } from "./server";
+import { renderRouteWithCache } from "./query";
+import type { Routes } from "./server";
 
 const ORG = "/api/v1/orgs/o1";
 
@@ -23,22 +22,22 @@ export function agentFormDefaults(agentId = "ag1"): Routes {
   };
 }
 
-type Opts = Parameters<typeof renderRoute>[2] & { routes?: Routes };
+type Opts = Parameters<typeof renderRouteWithCache>[2] & { routes?: Routes };
 
 /**
- * `/agents/new` as the app renders it: the server reads from the routes of the latest `stubApi`
- * call (the browser's) over {@link agentFormDefaults}.
+ * `/agents/new` as a first load renders it: the layout prefetches from the routes of the latest
+ * `stubApi` call (the browser's) over {@link agentFormDefaults}, and the page reads the cache.
  */
 export function renderNewAgent(opts: Opts = {}) {
   const { routes = lastStubRoutes(), ...rest } = opts;
-  return renderRoute(() => NewAgentPage(), { ...agentFormDefaults(), ...routes }, rest);
+  return renderRouteWithCache("/agents/new", { ...agentFormDefaults(), ...routes }, rest);
 }
 
-/** `/agents/<id>` as the app renders it (routes as in {@link renderNewAgent}). */
+/** `/agents/<id>` as a first load renders it (routes as in {@link renderNewAgent}). */
 export function renderEditAgent(opts: Opts & { id?: string } = {}) {
   const { id = "ag1", routes = lastStubRoutes(), ...rest } = opts;
-  return renderRoute(
-    () => EditAgentPage({ params: Promise.resolve({ id }) }),
+  return renderRouteWithCache(
+    `/agents/${encodeURIComponent(id)}`,
     { ...agentFormDefaults(id), ...routes },
     rest,
   );

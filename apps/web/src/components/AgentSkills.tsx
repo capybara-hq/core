@@ -2,13 +2,10 @@
 
 import { Badge, Button, Checkbox, DangerConfirm, Stack, Text, useToast } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useCallback, useState } from "react";
-import {
-  deleteAgentSkill,
-  listAgentSkills,
-  PINNED_SKILLS_LIMITS,
-  type SkillSummary,
-} from "../lib/skills";
+import { useState } from "react";
+import { useAppMutation } from "../lib/query/define";
+import { keys } from "../lib/query/keys";
+import { deleteAgentSkill, PINNED_SKILLS_LIMITS, type SkillSummary } from "../lib/skills";
 import { useErrorMessage } from "../lib/use-error-message";
 
 /**
@@ -105,26 +102,6 @@ export function SkillWriteSwitch({
       </Text>
     </Stack>
   );
-}
-
-/**
- * The agent's own skills, seeded from the server's read (`[]` for a new agent; `null` when it could
- * not be read: then empty and `failed`), and a reload after a change (a delete).
- */
-export function useAgentOwnSkills(
-  orgId: string,
-  agentId: string | undefined,
-  initial: SkillSummary[] | null,
-): { skills: SkillSummary[]; failed: boolean; reload(): void } {
-  const [state, setState] = useState({ skills: initial ?? [], failed: initial === null });
-  const reload = useCallback(() => {
-    if (agentId === undefined) return;
-    listAgentSkills(orgId, agentId).then(
-      (r) => setState({ skills: r.skills, failed: false }),
-      () => setState({ skills: [], failed: true }),
-    );
-  }, [orgId, agentId]);
-  return { ...state, reload };
 }
 
 /**
@@ -286,6 +263,11 @@ export function OwnSkills({
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const [target, setTarget] = useState<SkillSummary>();
+  // A delete invalidates the agent's own skills: the list is read again.
+  const remove = useAppMutation({
+    fn: (skillId: string) => deleteAgentSkill(orgId, agentId, skillId),
+    invalidates: () => [keys.org(orgId).agentSkills(agentId)],
+  });
 
   return (
     // biome-ignore lint/a11y/useSemanticElements: fieldset 带浏览器默认边框与内边距，apps/web 不能写样式；用 role=group 分组
@@ -337,7 +319,7 @@ export function OwnSkills({
         onConfirm={async () => {
           if (!target) return;
           try {
-            await deleteAgentSkill(orgId, agentId, target.id);
+            await remove.mutateAsync(target.id);
           } catch (e) {
             throw new Error(errorMessage(e));
           }

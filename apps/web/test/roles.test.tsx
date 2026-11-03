@@ -5,7 +5,6 @@ import userEvent from "@testing-library/user-event";
 import type { ComponentType, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zh from "../messages/zh.json";
-import EditAgentPage from "../src/app/(app)/agents/[id]/page";
 import NewAgentPage from "../src/app/(app)/agents/new/page";
 import CatalogInstallPage from "../src/app/(app)/catalog/[itemId]/install/page";
 import CatalogItemPage from "../src/app/(app)/catalog/[itemId]/page";
@@ -32,8 +31,12 @@ import SkillPage from "../src/app/(app)/skills/[id]/page";
 import SkillsPage from "../src/app/(app)/skills/page";
 import TrajectoryPage from "../src/app/(app)/trajectories/[conversationId]/page";
 import TrajectoriesPage from "../src/app/(app)/trajectories/page";
+import { HydrateCache } from "../src/components/HydrateCache";
 import { setApiTransport } from "../src/lib/api";
 import type { OrgRole } from "../src/lib/members";
+import { makeQueryClient } from "../src/lib/query/client";
+import { meQuery, readinessQuery } from "../src/lib/query/shell";
+import { dehydrateFor, prefetchRoute } from "../src/lib/server/query";
 import type { Me } from "../src/lib/session";
 import { agentFormDefaults } from "./support/agents";
 import { resetNavigation } from "./support/navigation";
@@ -103,6 +106,12 @@ afterEach(() => {
 /** A server page (gate and reads on the server), as the role pass runs it. */
 type ServerPage = { server: () => Promise<ReactNode> };
 const server = (page: () => Promise<ReactNode>): ServerPage => ({ server: page });
+/** A page that reads through the query cache: the layout's prefetch of `path`, then the view. */
+type RoutePage = { route: string; page: () => ReactNode | Promise<ReactNode> };
+const route = (path: string, page: () => ReactNode | Promise<ReactNode>): RoutePage => ({
+  route: path,
+  page,
+});
 const params = <T,>(p: T) => ({ params: Promise.resolve(p) });
 
 /**
@@ -133,8 +142,40 @@ async function runServerPage(
   }
 }
 
-const PAGES: [string, ComponentType | ServerPage, "member" | "admin", string][] = [
-  ["/agents/new", server(() => NewAgentPage()), "member", zh.roles.need.member],
+/**
+ * Runs the layout's prefetch of a route page for `me` (the session reads answer, every other read
+ * is a 404) and renders the page inside the hydrated cache. Returns the reads past the session's.
+ */
+async function runRoutePage(page: RoutePage, me: Me): Promise<{ reads: string[] }> {
+  const reads: string[] = [];
+  setApiTransport(
+    async (path) => {
+      if (path === "/api/v1/me") return reply(200, me);
+      if (path === "/api/v1/orgs/o1/readiness")
+        return reply(200, { modelProvider: "ready", agents: 1 });
+      reads.push(path);
+      return reply(404, { error: { code: "not_found", message: "x" } });
+    },
+    { everywhere: true },
+  );
+  let element: ReactNode;
+  let state: ReturnType<typeof dehydrateFor>;
+  try {
+    const qc = makeQueryClient();
+    await qc.fetchQuery(meQuery());
+    await qc.fetchQuery(readinessQuery("o1"));
+    await prefetchRoute(qc, page.route, { me, orgId: "o1" });
+    element = await page.page();
+    state = JSON.parse(JSON.stringify(dehydrateFor(qc))) as ReturnType<typeof dehydrateFor>;
+  } finally {
+    setApiTransport(null);
+  }
+  renderPage(<HydrateCache state={state}>{element}</HydrateCache>, { locale: "zh", me });
+  return { reads };
+}
+
+const PAGES: [string, ComponentType | ServerPage | RoutePage, "member" | "admin", string][] = [
+  ["/agents/new", route("/agents/new", () => NewAgentPage()), "member", zh.roles.need.member],
   [
     "/connectors/install",
     server(() => ConnectorInstallPage({ searchParams: Promise.resolve({}) })),
@@ -220,6 +261,23 @@ describe("role gate: pages a role may not open", () => {
       const denied = RANK[role] < RANK[min];
       it(`${path} · ${role} → ${denied ? "no access, nothing loaded" : "the page"}`, async () => {
         resetNavigation(path);
+        if ("route" in Page) {
+          const { reads } = await runRoutePage(Page, meAs(role));
+          if (denied) {
+            expect(reads).toEqual([]);
+            expect(noAccess()).toBeTruthy();
+            expect(document.querySelector('[data-part="status-need"]')?.textContent).toBe(
+              `需要：${need}`,
+            );
+            await Promise.resolve();
+            expect(calls).toEqual([]);
+          } else {
+            expect(noAccess()).toBeNull();
+            // past the gate: the layout prefetched the page's data
+            expect(reads.length).toBeGreaterThan(0);
+          }
+          return;
+        }
         if ("server" in Page) {
           const { reads, element } = await runServerPage(Page, meAs(role));
           if (element !== undefined) renderPage(element, { locale: "zh", me: meAs(role) });
@@ -365,8 +423,8 @@ describe("agents: edit, read-only and 更换负责人", () => {
       [`POST ${O}/agents/x1/owner`]: { agent: AGENT("x1", "a2") },
     };
     resetNavigation("/agents/x1");
-    await renderRoute(
-      () => EditAgentPage(params({ id: "x1" })),
+    await renderRouteWithCache(
+      "/agents/x1",
       { ...agentFormDefaults("x1"), ...served() },
       { locale: "zh", me: meAs(role) },
     );

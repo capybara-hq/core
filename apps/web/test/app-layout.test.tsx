@@ -63,6 +63,13 @@ function shellRoutes(readiness: typeof READY) {
       json(200, { groups: [], next: null, archivedCount: 0 }),
     [`GET ${O}/inbox`]: () => json(200, { items: [], truncated: false }),
     [`GET ${O}/ui/contributions`]: () => json(200, { items: [] }),
+    // what the setup step /agents/new prefetches (the agent form's reads)
+    [`GET ${O}/models`]: () => json(200, { providers: [] }),
+    [`GET ${O}/connectors`]: () => json(200, { connectors: [] }),
+    [`GET ${O}/skills`]: () => json(200, { skills: [] }),
+    [`GET ${O}/agent-templates`]: () => json(200, { templates: [] }),
+    [`GET ${O}/agents`]: () => json(200, { agents: [] }),
+    [`GET ${O}/members`]: () => json(200, { members: [] }),
   });
 }
 const layoutAt = (path: string) => {

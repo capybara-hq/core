@@ -1,10 +1,13 @@
 import type { QueryClient, UseQueryOptions } from "@tanstack/react-query";
-import { setupReady } from "../agents";
+import { type Agent, setupReady } from "../agents";
 import type { ApiClientError } from "../api";
 import type { Conversation, ConversationEvent } from "../conversations";
+import { myRole, roleAtLeast } from "../members";
+import { canEditAgent } from "../org-settings";
 import type { Me } from "../session";
-import { agentsQuery } from "./agents";
+import { agentConnectorQueries, agentFormQueries, agentQuery, agentsQuery } from "./agents";
 import { authSourcesQuery } from "./auth";
+import { channelsQuery } from "./channels";
 import {
   attachmentLimitsQuery,
   connectorsQuery,
@@ -82,8 +85,35 @@ export const ROUTES: readonly RouteEntry[] = [
     pattern: "/agents",
     queries: ({ orgId }) => (orgId === null ? [] : [q(agentsQuery(orgId))]),
   },
-  { pattern: "/agents/[id]", queries: () => [], none: "pending migration" },
-  { pattern: "/agents/new", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/agents/[id]",
+    queries: ({ orgId, params }) =>
+      orgId === null || params.id === undefined ? [] : [q(agentQuery(orgId, params.id))],
+    // A viewer who may change the agent also gets the form's reads, the tools of the connectors
+    // it uses and the channel connections; anyone else the read-only view (the agent only).
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, params, me }, qc) => {
+      const id = params.id;
+      if (orgId === null || id === undefined || me === null) return;
+      const agent = qc.getQueryData<Agent>(agentQuery(orgId, id).queryKey);
+      if (agent === undefined || !canEditAgent(me, agent)) return;
+      await Promise.all(
+        [
+          ...agentFormQueries(orgId, id),
+          ...agentConnectorQueries(orgId, agent),
+          q(channelsQuery(orgId)),
+        ].map((o) => qc.prefetchQuery({ ...o, retry: false })),
+      );
+    },
+  },
+  {
+    pattern: "/agents/new",
+    // Members up (a guest gets no access and nothing is read).
+    queries: ({ orgId, me }) =>
+      orgId === null || me === null || !roleAtLeast(myRole(me) ?? "guest", "member")
+        ? []
+        : agentFormQueries(orgId),
+  },
   { pattern: "/bind/[token]", queries: () => [], none: "pending migration" },
   { pattern: "/catalog", queries: () => [], none: "pending migration" },
   { pattern: "/catalog/[itemId]", queries: () => [], none: "pending migration" },

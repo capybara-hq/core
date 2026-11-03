@@ -11,6 +11,7 @@ import {
   Text,
   Textarea,
 } from "@capybara-hq/design";
+import { type UseQueryResult, useQueries, useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type FormEvent, type KeyboardEvent, type ReactNode, useState } from "react";
 import {
@@ -31,18 +32,19 @@ import {
   updateAgent,
 } from "../lib/agents";
 import { ApiClientError } from "../lib/api";
-import { type ConnectorDetail, type ConnectorSummary, getConnector } from "../lib/connectors";
+import type { ConnectorDetail, ConnectorSummary } from "../lib/connectors";
 import type { ModelRef } from "../lib/conversations";
 import { labelLocale, modelLabel } from "../lib/extension-label";
+import { agentSkillsQuery, agentsQuery, agentTemplatesQuery } from "../lib/query/agents";
+import { retryOnMountOf } from "../lib/query/client";
+import { connectorQuery, connectorsQuery, modelsQuery } from "../lib/query/conversation";
+import { useAppMutation } from "../lib/query/define";
+import { keys } from "../lib/query/keys";
+import { membersQuery } from "../lib/query/members";
+import { skillsQuery } from "../lib/query/skills";
 import { PINNED_SKILLS_LIMITS, pinnedProblemsOf, type SkillSummary } from "../lib/skills";
 import { useErrorMessage } from "../lib/use-error-message";
-import {
-  OrgSkillsPicker,
-  OwnSkills,
-  PinnedSkillsPicker,
-  SkillWriteSwitch,
-  useAgentOwnSkills,
-} from "./AgentSkills";
+import { OrgSkillsPicker, OwnSkills, PinnedSkillsPicker, SkillWriteSwitch } from "./AgentSkills";
 import { AGENT_TOOL, type SubagentsFormData, useSubagentsForm } from "./AgentSubagents";
 import { FormError } from "./form-error";
 import { ModelParams } from "./ModelParams";
@@ -57,19 +59,101 @@ const isFormTool = (r: AgentToolRef) =>
   (r.kind === "connector" && r.tools === "all");
 
 /**
- * What the server read for the agent form's first paint (`lib/server/agent-form.ts`). A `null` list
- * could not be read (the kernel refused or failed it): that part shows its own empty or unavailable
- * state.
+ * What the agent form shows, from its queries (`agentFormQueries` in `lib/query/agents.ts`). A
+ * `null` list could not be read (the kernel refused or failed it): that part shows its own empty or
+ * unavailable state.
  */
 export interface AgentFormData {
   providers: ProviderModels[];
   connectors: ConnectorSummary[] | null;
-  /** The tools of the connectors the edited agent already uses (those that could be read). */
-  connectorDetails: Record<string, ConnectorDetail>;
   orgSkills: SkillSummary[] | null;
   /** The agent's own skills (`[]` for a new agent). */
   ownSkills: SkillSummary[] | null;
   subagents: SubagentsFormData;
+}
+
+/** The agent form's data as a page draws it. */
+export type AgentFormState =
+  | { kind: "loading" }
+  | { kind: "ready"; data: AgentFormData }
+  | { kind: "error"; code: string; retry(): void };
+
+/** A read the form needs (the models): any failure fails the page. */
+const REQUIRED = "required";
+/** A read the role decides (connectors, org skills, members): a 403 / 404 leaves the part out. */
+const OPTIONAL = "optional";
+/** A section (templates, org agents, own skills): any failure is that part's own state. */
+const SECTION = "section";
+
+/**
+ * The agent form's reads from the query cache (new agent, or `agentId` to edit), as one state:
+ * `loading` until every read answered, `error` when a required read failed (or an optional one
+ * failed otherwise than 403 / 404), else the data with `null` for the parts that could not be read.
+ * An error the server already read is not read again on mount; `retry` reads the failed ones.
+ */
+export function useAgentFormData(orgId: string, agentId?: string): AgentFormState {
+  const modelsQ = modelsQuery(orgId);
+  const connectorsQ = connectorsQuery(orgId);
+  const skillsQ = skillsQuery(orgId);
+  const templatesQ = agentTemplatesQuery(orgId);
+  const agentsQ = agentsQuery(orgId);
+  const membersQ = membersQuery(orgId);
+  // A query of no agent is disabled; the key's agent id is then never read.
+  const ownQ = agentSkillsQuery(orgId, agentId ?? "");
+  const models = useQuery({ ...modelsQ, retryOnMount: retryOnMountOf(modelsQ.queryKey) });
+  const connectors = useQuery({
+    ...connectorsQ,
+    retryOnMount: retryOnMountOf(connectorsQ.queryKey),
+  });
+  const skills = useQuery({ ...skillsQ, retryOnMount: retryOnMountOf(skillsQ.queryKey) });
+  const templates = useQuery({ ...templatesQ, retryOnMount: retryOnMountOf(templatesQ.queryKey) });
+  const agents = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) });
+  const members = useQuery({ ...membersQ, retryOnMount: retryOnMountOf(membersQ.queryKey) });
+  const own = useQuery({
+    ...ownQ,
+    retryOnMount: retryOnMountOf(ownQ.queryKey),
+    enabled: agentId !== undefined,
+  });
+  const all: [UseQueryResult<unknown, ApiClientError>, string][] = [
+    [models, REQUIRED],
+    [connectors, OPTIONAL],
+    [skills, OPTIONAL],
+    [members, OPTIONAL],
+    [templates, SECTION],
+    [agents, SECTION],
+    ...(agentId === undefined ? [] : ([[own, SECTION]] as [typeof own, string][])),
+  ];
+  if (all.some(([q]) => q.data === undefined && q.error === null)) return { kind: "loading" };
+  const fatal = all.find(
+    ([q, kind]) =>
+      q.data === undefined &&
+      q.error !== null &&
+      (kind === REQUIRED ||
+        (kind === OPTIONAL && q.error.status !== 403 && q.error.status !== 404)),
+  );
+  if (fatal?.[0].error) {
+    return {
+      kind: "error",
+      code: fatal[0].error.code,
+      retry: () => {
+        for (const [q] of all) if (q.error !== null) void q.refetch();
+      },
+    };
+  }
+  return {
+    kind: "ready",
+    data: {
+      providers: models.data?.providers ?? [],
+      connectors: connectors.data?.connectors ?? null,
+      orgSkills: skills.data?.skills ?? null,
+      ownSkills: agentId === undefined ? [] : (own.data?.skills ?? null),
+      subagents: {
+        templates: templates.data?.templates ?? null,
+        agents: agents.data?.agents ?? null,
+        members: members.data?.members ?? null,
+      },
+    },
+  };
 }
 
 /** 由已有定义得到表单的初始值；新建时为默认值（主模型默认为第一个模型）。 */
@@ -158,6 +242,26 @@ export function useAgentForm(
   const { me } = useSession();
   const providers = data.providers;
   const [initial] = useState(() => initialOf(existing, providers));
+  // The version the form was opened on: a save over someone else's newer one is a 409 conflict,
+  // even when the agent's query was read again meanwhile.
+  const [baseVersion] = useState(existing?.currentVersion);
+  // A save invalidates the agents list, the agent and the org's readiness (a first agent makes it
+  // ready).
+  const saveAgent = useAppMutation({
+    fn: (input: { definition: AgentDefinitionInput; visibility: AgentVisibility }) =>
+      existing
+        ? updateAgent(orgId, existing.id, {
+            definition: input.definition,
+            expectedVersion: baseVersion ?? existing.currentVersion,
+            ...(input.visibility !== existing.visibility ? { visibility: input.visibility } : {}),
+          })
+        : createAgent(orgId, input),
+    invalidates: (_, r) => [
+      keys.org(orgId).agents(),
+      keys.org(orgId).agent(r.agent.id),
+      keys.org(orgId).readiness(),
+    ],
+  });
   const [name, setName] = useState(initial.name);
   const [instructions, setInstructions] = useState(initial.instructions);
   const [visibility, setVisibility] = useState<AgentVisibility>(initial.visibility);
@@ -177,8 +281,21 @@ export function useAgentForm(
   // tools stay available).
   const apps = (data.connectors ?? []).filter((a) => a.status === "active");
   const [selectedConnectors, setSelectedConnectors] = useState<string[]>(initial.apps);
-  const [connectorDetails, setConnectorDetails] = useState<Record<string, ConnectorDetail>>(
-    data.connectorDetails,
+  // Every connector selected since the form opened: their tools are read (cached), so a connector
+  // switched off again still counts as managed when its policies are dropped on save.
+  const [seenConnectors, setSeenConnectors] = useState<string[]>(initial.apps);
+  // A connector's tools only serve to tighten policies: one that cannot be read just offers none.
+  const details = useQueries({
+    queries: seenConnectors.map((id) => {
+      const q = connectorQuery(orgId, id);
+      return { ...q, retryOnMount: retryOnMountOf(q.queryKey) };
+    }),
+  });
+  const connectorDetails: Record<string, ConnectorDetail> = Object.fromEntries(
+    seenConnectors.flatMap((id, i) => {
+      const d = details[i]?.data;
+      return d === undefined ? [] : [[id, d]];
+    }),
   );
   const [policies, setPolicies] = useState<Record<string, TightenedPolicy>>(initial.policies);
   // The org skill library: empty and `failed` when it could not be read (the form still works).
@@ -186,7 +303,8 @@ export function useAgentForm(
   const orgSkills = orgList.skills;
   const [skillIds, setSkillIds] = useState<string[]>(initial.orgSkills);
   const [confirmSkillWrite, setConfirmSkillWrite] = useState(initial.confirmSkillWrite);
-  const own = useAgentOwnSkills(orgId, existing?.id, data.ownSkills);
+  // The agent's own skills, read again after a delete (the delete invalidates them).
+  const own = { skills: data.ownSkills ?? [], failed: data.ownSkills === null };
   const [pinned, setPinned] = useState<string[]>(initial.pinned);
   const subagents = useSubagentsForm(existing, visibility, data.subagents);
   /** Every skill the form knows (org library and the agent's own), for names and pinning. */
@@ -218,18 +336,11 @@ export function useAgentForm(
     });
   }
 
-  // 连接器的工具列表只用于收紧策略：读不到时只是不显示该连接器的策略选项
-  const loadConnectorDetail = (connectorId: string) =>
-    getConnector(orgId, connectorId).then(
-      ({ connector }) => setConnectorDetails((d) => ({ ...d, [connectorId]: connector })),
-      () => {},
-    );
-
   function toggleConnector(connectorId: string, on: boolean) {
     setSelectedConnectors((cur) =>
       on ? [...cur, connectorId] : cur.filter((id) => id !== connectorId),
     );
-    if (on && connectorDetails[connectorId] === undefined) void loadConnectorDetail(connectorId);
+    if (on) setSeenConnectors((cur) => (cur.includes(connectorId) ? cur : [...cur, connectorId]));
   }
 
   /** 当前引用的工具 key（用于策略收紧）：内置工具名 + 已选连接器中启用的工具。 */
@@ -388,13 +499,7 @@ export function useAgentForm(
     setFieldErrors(NO_FIELD_ERRORS);
     setOtherErrors([]);
     try {
-      const res = existing
-        ? await updateAgent(orgId, existing.id, {
-            definition,
-            expectedVersion: existing.currentVersion,
-            ...(visibility !== existing.visibility ? { visibility } : {}),
-          })
-        : await createAgent(orgId, { definition, visibility });
+      const res = await saveAgent.mutateAsync({ definition, visibility });
       setSavedAgent(res.agent);
       if (res.warnings.length === 0) onDone(res.agent);
       else setWarnings(res.warnings);
@@ -664,10 +769,7 @@ export function useAgentForm(
                 agentId={existing.id}
                 skills={own.skills}
                 canDelete={existing.ownerAccountId === me.account.id}
-                onDeleted={(id) => {
-                  setPinned((cur) => cur.filter((x) => x !== id));
-                  own.reload();
-                }}
+                onDeleted={(id) => setPinned((cur) => cur.filter((x) => x !== id))}
               />
             )}
           </FormSection>
@@ -717,4 +819,65 @@ export function useAgentForm(
     pending,
     canSubmit,
   };
+}
+
+/**
+ * The agent form while its reads are on the way: its static sections (basics, model, tools,
+ * skills, sub-agents, and the agent's channels when editing), each with its field layout. The
+ * checkbox groups (tools, skills, sub-agents, channels) are counted as one field each.
+ */
+export function AgentFormLoading({ channels = false }: { channels?: boolean }) {
+  const t = useTranslations("agents");
+  return (
+    <>
+      <Stack gap={16}>
+        <div>
+          <FormSection
+            id="basic"
+            title={t("form.basicSection")}
+            description={t("form.basicSectionHint")}
+            loading={{
+              fields: [
+                { control: "input" },
+                { control: "textarea", rows: 6, help: true },
+                { control: "select" },
+              ],
+            }}
+          />
+          <FormSection
+            id="model"
+            title={t("form.modelSection")}
+            description={t("form.modelSectionHint")}
+            loading={{ fields: [{ control: "select" }, { control: "select" }] }}
+          />
+          <FormSection
+            id="tools"
+            title={t("form.toolsSection")}
+            description={t("form.toolsSectionHint")}
+            loading={{ fields: 2 }}
+          />
+          <FormSection
+            id="skills"
+            title={t("form.skillsSection")}
+            description={t("form.skillsSectionHint")}
+            loading={{ fields: 2 }}
+          />
+          <FormSection
+            id="subagents"
+            title={t("form.subagents.section")}
+            description={t("form.subagents.sectionHint")}
+            loading={{ fields: 1 }}
+          />
+        </div>
+      </Stack>
+      {channels ? (
+        <FormSection
+          id="channels"
+          title={t("channels.title")}
+          description={t("channels.hint")}
+          loading={{ fields: 1 }}
+        />
+      ) : null}
+    </>
+  );
 }

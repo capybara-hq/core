@@ -10,7 +10,7 @@ import { json as apiJson, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME, renderPage } from "./support/render";
-import { expectNoFirstPaintFetch, onServer } from "./support/server";
+import { expectNoFirstPaintFetch, sessionRoutes } from "./support/server";
 import { NOT_READY } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -120,16 +120,18 @@ describe("新建 Agent 页（FormPage）", () => {
   });
 
   it("inside the setup layout a saved agent lands on a new conversation with it", async () => {
-    stub([]);
-    const { element } = await onServer(() => NewAgentPage(), {
+    // a client navigation inside the setup layout: the page reads the form's lists in the browser
+    stubApi({
+      ...sessionRoutes(),
       ...agentFormDefaults(),
       "GET /api/v1/orgs/o1/models": () => json(200, MODELS),
+      "POST /api/v1/orgs/o1/agents": () => json(201, { agent: { id: "ag1" }, warnings: [] }),
     });
     renderPage(
       <SetupContext.Provider
         value={{ active: true, readiness: { kind: "unknown" }, recheck: async () => {} }}
       >
-        {element}
+        <NewAgentPage />
       </SetupContext.Provider>,
     );
     const user = userEvent.setup();
@@ -500,15 +502,118 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
     expect(browser).toEqual([]);
   });
 
-  it("/agents/<id>: an agent the kernel does not find is the not-found page", async () => {
-    await expect(
-      renderEditAgent({
-        routes: {
-          [`GET ${ORG}/agents/ag1`]: () =>
-            apiJson(404, { error: { code: "agent.not_found", message: "x" } }),
-        },
-      }),
-    ).rejects.toThrow("NOT_FOUND");
+  it("/agents/<id>: an agent the kernel does not find is the not-found state in the shell", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const { calls } = await renderEditAgent({
+      routes: {
+        [`GET ${ORG}/agents/ag1`]: () =>
+          apiJson(404, { error: { code: "agent.not_found", message: "x" } }),
+      },
+    });
+    expect(screen.getByRole("heading", { level: 1, name: en.notFound.title })).toBeTruthy();
+    // nothing of the form is read for an agent that does not exist
+    expect(calls.map((c) => c.url)).not.toContain(`${ORG}/models`);
+    await settle();
+    expect(browser).toEqual([]);
+  });
+
+  it("/agents/<id>: a first render from the hydrated cache makes no browser read", async () => {
+    const browser = stubApi({});
+    await renderEditAgent({
+      routes: { ...formRoutes, [`GET ${ORG}/agents/ag1`]: ok({ agent: agent("ag1", "Echo") }) },
+    });
+    expect(screen.getByRole("textbox", { name: en.agents.form.nameLabel })).toHaveProperty(
+      "value",
+      "Echo",
+    );
+    await settle();
+    expect(browser.filter((c) => c.method === "GET")).toEqual([]);
+  });
+
+  it("/agents/<id>: an empty cache shows the template's loading state, then the data", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    await renderRouteEmptyCache(`/agents/ag1`, {
+      ...agentFormDefaults(),
+      ...formRoutes,
+      [`GET ${ORG}/agents/ag1`]: ok({ agent: agent("ag1", "Echo") }),
+      [`GET ${ORG}/models`]: async () => {
+        await held;
+        return apiJson(200, MODELS);
+      },
+    });
+    const page = await vi.waitFor(() => {
+      const el = template("FormPage");
+      if (el === null || el.querySelector("[aria-busy='true']") === null)
+        throw new Error("no loading page yet");
+      return el as HTMLElement;
+    });
+    // the form's static sections, as placeholders
+    expect(page.querySelectorAll('[data-part="form-section"]').length).toBe(6);
+    expect(screen.queryByRole("textbox", { name: en.agents.form.nameLabel })).toBeNull();
+    await act(async () => release());
+    expect(await screen.findByRole("textbox", { name: en.agents.form.nameLabel })).toHaveProperty(
+      "value",
+      "Echo",
+    );
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
+  it("/agents/new: an empty cache shows the template's loading state, then the data", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    await renderRouteEmptyCache("/agents/new", {
+      ...agentFormDefaults(),
+      ...formRoutes,
+      [`GET ${ORG}/models`]: async () => {
+        await held;
+        return apiJson(200, MODELS);
+      },
+    });
+    const page = await vi.waitFor(() => {
+      const el = template("FormPage");
+      if (el === null) throw new Error("no page yet");
+      return el as HTMLElement;
+    });
+    expect(page.querySelector("[aria-busy='true']")).not.toBeNull();
+    await act(async () => release());
+    expect(await screen.findByRole("textbox", { name: en.agents.form.nameLabel })).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
+  it("/agents/new: a first render from the hydrated cache makes no browser read", async () => {
+    const browser = stubApi({});
+    await renderNewAgent({ routes: formRoutes });
+    expect(screen.getByRole("textbox", { name: en.agents.form.nameLabel })).toBeTruthy();
+    await settle();
+    expect(browser.filter((c) => c.method === "GET")).toEqual([]);
+  });
+
+  it("saving an agent invalidates the agents list, the agent and readiness", async () => {
+    const browser = stubApi({
+      ...sessionRoutes(),
+      ...agentFormDefaults(),
+      ...formRoutes,
+      [`GET ${ORG}/agents/ag1`]: ok({ agent: agent("ag1", "Echo") }),
+      [`PATCH ${ORG}/agents/ag1`]: ok({ agent: agent("ag1", "Echo 2"), warnings: [] }),
+    });
+    await renderEditAgent({
+      routes: { ...formRoutes, [`GET ${ORG}/agents/ag1`]: ok({ agent: agent("ag1", "Echo") }) },
+    });
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), " 2");
+    browser.length = 0;
+    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
+    const reads = browser.filter((c) => c.method === "GET").map((c) => c.url);
+    // the active ones are read again: the agents list (the sub-agents section), the agent, readiness
+    expect(new Set(reads)).toEqual(
+      new Set([`${ORG}/agents`, `${ORG}/agents/ag1`, `${ORG}/readiness`]),
+    );
   });
 
   it("/agents/<id>: channels the kernel fails show the section's own error to an admin", async () => {
