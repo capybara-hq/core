@@ -294,10 +294,16 @@
   display: contents;
 }
 .cb-skeleton-text {
-  display: block;
+  display: flex;
+  align-items: center;
   max-width: 100%;
+}
+.cb-skeleton-bar {
+  display: block;
+  width: 100%;
+  height: var(--cb-space-3);
   border-radius: var(--cb-radius-sm);
-  background: var(--cb-hover);
+  background: var(--cb-selected);
 }
 .cb-skeleton-text[data-size="body"] {
   height: var(--cb-type-body-line);

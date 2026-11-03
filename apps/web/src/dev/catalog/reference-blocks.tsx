@@ -636,6 +636,14 @@ function pageHeaderBlocks(): ReactNode {
           loading={{ title: true, actions: 2, tabs: 2 }}
         />
       </RefBlock>
+      {/* The same loading header on a phone: the placeholders are 40 px like the real parts. */}
+      <RefBlock id="page-header-narrow-loading" width={390} pad>
+        <PageHeader
+          path={F.path.slice(0, 1)}
+          title=""
+          loading={{ title: true, actions: 2, tabs: 2 }}
+        />
+      </RefBlock>
       {/* Phones: measured in a 390 window: the search on its own line, the tabs scroll, 40 px
           tap targets (spec §4.2, §9.3). */}
       <RefBlock id="page-header-narrow" width={390} pad>

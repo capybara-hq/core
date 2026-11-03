@@ -3439,10 +3439,16 @@ textarea {
 /* ── Skeleton primitives (spec §6.29) ────────────────────────────────────── */
 
 .r-skel-text {
-  display: block;
+  display: flex;
+  align-items: center;
   max-width: 100%;
+}
+.r-skel-bar {
+  display: block;
+  width: 100%;
+  height: var(--cb-space-3);
   border-radius: var(--cb-radius-sm);
-  background: var(--cb-hover);
+  background: var(--cb-selected);
 }
 .r-skel-text[data-size="body"] {
   height: var(--cb-type-body-line);
@@ -3483,6 +3489,16 @@ textarea {
   align-items: center;
   gap: var(--cb-space-4);
   height: var(--cb-control-default);
+}
+.r-ph[data-narrow] .r-skel-box[data-box="default"] {
+  min-width: 40px;
+  height: 40px;
+}
+.r-ph[data-narrow] .r-ph-tab-slots {
+  height: 40px;
+}
+.r-ph[data-narrow] .r-ph-tabs-loading {
+  height: auto;
 }
 .r-ph-tabs-loading {
   align-items: flex-end;

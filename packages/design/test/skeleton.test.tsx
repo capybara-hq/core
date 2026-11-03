@@ -37,10 +37,14 @@ describe("SkeletonText", () => {
       const token = size === "title" ? "h1" : size;
       expect(height).toBe(`var(--cb-type-${token}-line)`);
       expect(tokenValue(`type-${token}-line`)).toMatch(/^\d+px$/);
+      expect(container.querySelectorAll("[data-part=skeleton-bar]")).toHaveLength(1);
       unmount();
     }
-    expect(declared(sheet, ".cb-skeleton-text", "background")).toBe("var(--cb-hover)");
-    expect(declared(sheet, ".cb-skeleton-text", "border-radius")).toBe("var(--cb-radius-sm)");
+    // The slot is the line box; the bar in it is the one bar look (spec §6.29).
+    expect(declared(sheet, ".cb-skeleton-bar", "height")).toBe("var(--cb-space-3)");
+    expect(declared(sheet, ".cb-skeleton-bar", "background")).toBe("var(--cb-selected)");
+    expect(declared(sheet, ".cb-skeleton-bar", "border-radius")).toBe("var(--cb-radius-sm)");
+    expect(declared(sheet, ".cb-skeleton-text", "align-items")).toBe("center");
   });
 
   it("takes a percentage or a pixel width", () => {
@@ -126,6 +130,18 @@ describe("PageHeader loading", () => {
     expect(screen.getByRole("heading", { name: "Agents" })).toBeTruthy();
     expect(container.querySelectorAll("[data-part=skeleton-box]")).toHaveLength(2);
     expect(container.querySelectorAll("[data-part=skeleton-text]")).toHaveLength(3);
+  });
+
+  it("the placeholders follow the loaded parts' phone sizes below 640", () => {
+    const shell = css("shell.css").replace(/\/\*[\s\S]*?\*\//g, "");
+    // Every rule of the phone block, read as a plain rule list (the openers dropped).
+    const phone = shell.slice(shell.indexOf(".cb-pageheader-actions .cb-skeleton-box"));
+    const loadedTab = declared(phone, ".cb-pageheader-tabs .cb-tab", "min-height");
+    expect(loadedTab).toBe("40px");
+    expect(declared(phone, ".cb-pageheader-actions .cb-skeleton-box", "height")).toBe(loadedTab);
+    expect(declared(phone, ".cb-pageheader-tabs .cb-pageheader-tab-slots", "height")).toBe(
+      loadedTab,
+    );
   });
 
   it("known tabs render for real while loading", () => {

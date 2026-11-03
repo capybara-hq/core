@@ -24,8 +24,10 @@ export type SkeletonTextWidth = "30%" | "45%" | "55%" | "70%" | "100%" | number;
 const px = (w: SkeletonTextWidth) => (typeof w === "number" ? `${w}px` : w);
 
 /**
- * One text bar (spec §6.29): the height of the line box of its type size (`body`, `small`, or
- * `title`, the h1 size), the `hover` ground, radius `sm`. Decorative: the group announces.
+ * One text placeholder (spec §6.29): a slot exactly one line box of its type size high (`body`,
+ * `small`, or `title`, the h1 size), so the layout is the loaded one, holding a bar (`space.3`
+ * high, `selected`, radius `sm`) centred in it. `width` is the slot's and the bar's. Decorative:
+ * the group announces.
  */
 export function SkeletonText({
   width,
@@ -41,7 +43,9 @@ export function SkeletonText({
       data-size={size}
       style={{ width: px(width) }}
       aria-hidden="true"
-    />
+    >
+      <span className="cb-skeleton-bar" data-part="skeleton-bar" />
+    </span>
   );
 }
 

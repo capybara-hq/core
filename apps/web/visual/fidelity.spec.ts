@@ -44,6 +44,8 @@ test("the reference route answers", async ({ page }) => {
 
 /** The phone window a `narrow` state is drawn and measured in (spec §9.3); others at 1440. */
 const NARROW = "narrow";
+/** `narrow` and the `narrow-<x>` states (page-header `narrow-loading`) are phone-window states. */
+const isNarrow = (state: string) => state === NARROW || state.startsWith(`${NARROW}-`);
 const PHONE = { width: 390, height: 844 };
 
 type Row = (typeof tables)[number]["rows"][number];
@@ -114,12 +116,12 @@ for (const theme of THEMES) {
         const failures = await measure(
           page,
           component,
-          rows.filter((r) => r.state !== NARROW),
+          rows.filter((r) => !isNarrow(r.state)),
           theme,
         );
         // The phone rules are media queries below 640: a `narrow` state is measured in a phone
         // window (its block is 390 wide).
-        const narrow = rows.filter((r) => r.state === NARROW);
+        const narrow = rows.filter((r) => isNarrow(r.state));
         if (narrow.length > 0) {
           await page.setViewportSize(PHONE);
           await openReference(page, component, theme, ORIGIN);

@@ -226,14 +226,14 @@ See §6.13 for the component. Width `layout.sidebar`; below 1280 an icon rail of
 ### 4.2 PageHeader
 
 - Four rows. Row 1: the **path** `scope / page [/ object]` (mono, `small`; the segments in `muted`, the `/` separators in `faint`, the last segment, the current page, in `ink` with `aria-current="page"`; the conversation title bar's path the same), inside a `nav` labelled "Path"; earlier segments with a link are links. The scope is the org slug for workspace pages (links to `/`), `~` for the home page, `/admin` for admin pages. Row 2: title (`h1`, single line with an ellipsis, full text in `title`) + count / status, actions on the right (at most one primary, rightmost). Row 3 (optional): a one-line description (`prose-small` `muted`, single line with an ellipsis). Row 4 (optional): **tabs** with counts (`全部 6 · 我的 3`) for pages with views, with the **search** field at the right end of the same row; a tab changes the view (`onSelect`) or links (`href`). The tab row has one height with or without the search (`control.default` + `space.1` above and below) and a 1 px `line-soft` bottom border; the tabs sit at its bottom and overlap the border by 1 px, so the selected tab's underline lies **on** the border; the search is centered vertically. While a ListPage loads, the tabs and the search keep their place and a tab's count is a `faint` "–" (§5.1). Tabs never wrap: a tab row too narrow for its tabs scrolls sideways (§6.4). **Below 640** the search takes its own full-width line above the tabs (`space.2` between the lines), the tabs are 40 high (tap targets), and so are the header's actions.
-- **Loading** (`PageHeader.loading`, `{ title?, actions?, tabs? }`; the templates' `loading` states build on it): the header keeps its rows, so nothing moves when the data arrives. What the page already knows renders for real: the path, a known title, the `actions` and `tabs` it was given. A `title` that is not known yet is a `title`-size bar (§6.29) 30% wide in the h1's line box, with no empty heading. `actions` / `tabs` give the number of placeholders to draw when the page does not know them yet (an action is a 72 px `default` control block, a tab a 56 px `body` bar); they are drawn only while the real list is empty. The header is `aria-busy` with the hidden "正在加载 / Loading", unless it sits inside a skeleton group (§6.29), which announces once. Nothing animates.
+- **Loading** (`PageHeader.loading`, `{ title?, actions?, tabs? }`; the templates' `loading` states build on it): the header keeps its rows, so nothing moves when the data arrives. What the page already knows renders for real: the path, a known title, the `actions` and `tabs` it was given. A `title` that is not known yet is a `title`-size bar (§6.29) 30% wide in the h1's line box, with no empty heading. `actions` / `tabs` give the number of placeholders to draw when the page does not know them yet (an action is a 72 px `default` control block, a tab a 56 px `body` text slot); they are drawn only while the real list is empty. **Below 640 the placeholders take the loaded parts' phone sizes**: the action blocks and the tab slots are 40 high like the real actions and tabs (state `narrow-loading`), so the header does not change height when the answer arrives. The header is `aria-busy` with the hidden "正在加载 / Loading", unless it sits inside a skeleton group (§6.29), which announces once. Nothing animates.
 - No bottom line and no background; spacing separates it from the body.
 - Actions: at most 1 solid primary action + 2 secondary + a `more-horizontal` menu; the primary action is rightmost; all `default` density; an action may lead with a 14 icon (`plus` on a create action). The submit action of form pages **must not** go here; it goes in the ActionRow.
 - List-page key metrics are **not** in the header: the template renders them below the header as StatCards (§6.14), at most 4–5. List and overview pages draw them at the top of the body; detail, trace, inbox, onboarding and status templates draw them in the fixed header area under the PageHeader.
 - Content width: the header shares the body's one content width (`layout.content`, 1120, centered; §4.3). It sits `space.6` below the top of the content area and `space.3` above the body (StatCards or the table).
 
 <!-- states: page-header -->
-States: `title`, `path`, `description-actions`, `long-title`, `narrow`, `loading`
+States: `title`, `path`, `description-actions`, `long-title`, `narrow`, `loading`, `narrow-loading`
 
 <!-- size-table: page-header -->
 | Part | State | Property | Value |
@@ -255,6 +255,8 @@ States: `title`, `path`, `description-actions`, `long-title`, `narrow`, `loading
 | button[data-variant=primary] | narrow | height | 40 |
 | skeleton-text[data-size=title] | loading | height | type.h1.line |
 | skeleton-box[data-box=default] | loading | height | control.default |
+| skeleton-box[data-box=default] | narrow-loading | height | 40 |
+| page-header-tab-slots | narrow-loading | height | 40 |
 
 ### 4.3 Body layouts and content widths
 
@@ -1331,7 +1333,7 @@ States: `pending`, `pending-once`, `deny-reason`, `approved`, `denied`
 
 #### 6.16.12 Question block
 
-- `ask_user` and connector elicitation. **Pending**: a floating card (`line` border, not accent), gap `space.3`, `role="status"` named by the question. The question in the prose font (`prose`, 600). Options as rows (`row.default` minimum height, padding `pad.default`, 1px `line` border, radius `sm`; a 12 round radio, `line-strong`, `accent` when checked; the checked row has an `ink` border); multi-select options use checkboxes; with `allowOther` a last row "其他：" / "Other:" holds a free-text input. Actions: "回答" / "Answer" (primary), "跳过" / "Skip" (default).
+- `ask_user` and connector elicitation. **Pending**: a floating card (`line` border, not accent), gap `space.3`, `role="group"` named by the question. The question in the prose font (`prose`, 600). Options as rows (`row.default` minimum height, padding `pad.default`, 1px `line` border, radius `sm`; a 12 round radio, `line-strong`, `accent` when checked; the checked row has an `ink` border); multi-select options use checkboxes; with `allowOther` a last row "其他：" / "Other:" holds a free-text input. Actions: "回答" / "Answer" (primary), "跳过" / "Skip" (default).
 - **URL mode** (the form has a `url`): the full address as a link (`small` `ink`, underlined in `line-strong`, breaking anywhere, `external-link` 14 `muted` before it), "打开链接" / "Open link" (primary, with the icon), Skip, and the note "完成后回到这里继续" / "Come back here when you're done".
 - **Answered**: collapses to the question as a tool line and a second one with `corner-down-right` 12, the answer in `ink` and " · <who>" in `faint`; **skipped** says "已跳过" / "Skipped".
 
@@ -1856,10 +1858,11 @@ States: `default`, `empty`, `masked`
 
 The placeholder primitives every loading state is built from, so a template's loading state is shaped like its loaded page (§5): `SkeletonText`, `SkeletonBox` and `SkeletonGroup`. **Nothing here animates**, in any motion mode (no shimmer, no pulse), so the reduced-motion rule of §6.11 holds without a special case.
 
-- `SkeletonText({ width, size? })`: one bar with the height of the **line box** of its type size: `body` (default, `type.body.line`), `small` (`type.small.line`) or `title` (the h1 size, `type.h1.line`). `width` is `30%`, `45%`, `55%`, `70%`, `100%` or a pixel number. The `hover` ground, radius `sm`: the same bar as ObjectList's skeleton rows (§6.17) and PendingState's (§6.20). (DataTable's and the sidebar's bars, §6.6 and §6.13, are `space.3` high on `selected`; they stay as they are.) ObjectList and PendingState keep their own 12 px bars, which are thinner than a text line because they stand for a row's inner lines; `SkeletonText` is for placeholders that replace a line of real text and must take its place exactly.
-- `SkeletonBox({ part, height?, width? })`: a block shaped like a control or a mark, on the `selected` ground (one step above the bar, so a block reads as a surface and a bar as text), radius `sm`. `part` is `dense`, `default` or `prominent` (the control height of §2.5), `mark` (36 × 36, radius `md`, the ObjectRow mark) or `block` (`height` pixels, default 96). `width` is pixels; without it the box fills its container.
+- **One bar look**: a skeleton bar is `space.3` (12 px) high on the `selected` ground, radius `sm`: the look of DataTable's (§6.6) and the sidebar's (§6.13) bars. Every bar of every loading state has it; there is no second bar.
+- `SkeletonText({ width, size? })`: a **slot** exactly one line box of its type size high, `body` (default, `type.body.line`), `small` (`type.small.line`) or `title` (the h1 size, `type.h1.line`), so the layout is the loaded one and nothing moves when the text arrives. The slot holds one bar (the look above) centred vertically, as wide as the slot. `width` is `30%`, `45%`, `55%`, `70%`, `100%` or a pixel number.
+- `SkeletonBox({ part, height?, width? })`: a block shaped like a control or a mark, on the `selected` ground, radius `sm`. `part` is `dense`, `default` or `prominent` (the control height of §2.5), `mark` (36 × 36, radius `md`, the ObjectRow mark) or `block` (`height` pixels, default 96). `width` is pixels; without it the box fills its container.
 - `SkeletonGroup({ label, children })`: the busy region: `role="status"` named by `label`, `aria-busy="true"`, and one hidden "正在加载 / Loading". A group inside a group, and a component that draws its own loading state (PageHeader, ObjectList), adds no second announcement; the bars and blocks themselves are `aria-hidden`. The group draws no box of its own (`display: contents`).
-- The existing `Skeleton({ rows })` (stacked full-width `body`-height rows on the `hover` ground, ListPage's `records` loading) stays; it is a stack of unrounded `SkeletonText` bars, kept for that one use, and new loading states use the primitives above.
+- Not yet reconciled with this look, and kept as they are until the templates' loading states land (ListPage, Task 9): the existing `Skeleton({ rows })` (`.cb-skeleton-row`, stacked 20 px rows on the `hover` ground, ListPage's `records` loading) and the 12 px `hover` bars of ObjectList (§6.17) and PendingState (§6.20). New loading states use the primitives above.
 - Rule: a skeleton takes the size of what replaces it (a line of text its line box, a control its control height), so the swap moves nothing; no skeleton stands in for text whose width could change the layout of its row.
 
 <!-- states: skeleton -->
@@ -1871,8 +1874,9 @@ States: `text`, `box`, `group`
 | skeleton-text[data-size=title] | text | height | type.h1.line |
 | skeleton-text[data-size=body] | text | height | type.body.line |
 | skeleton-text[data-size=small] | text | height | type.small.line |
-| skeleton-text[data-size=body] | text | background-color | color.hover |
-| skeleton-text[data-size=body] | text | border-radius | radius.sm |
+| skeleton-bar | text | height | space.3 |
+| skeleton-bar | text | background-color | color.selected |
+| skeleton-bar | text | border-radius | radius.sm |
 | skeleton-box[data-box=dense] | box | height | control.dense |
 | skeleton-box[data-box=default] | box | height | control.default |
 | skeleton-box[data-box=prominent] | box | height | control.prominent |

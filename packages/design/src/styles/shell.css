@@ -135,6 +135,14 @@
 /* Phones (below 640): the search takes its own full-width line above the tabs, and the tabs
    scroll on theirs; the tabs are 40 px tap targets. */
 @media (max-width: 639px) {
+  /* The placeholders follow the loaded parts' phone sizes (40 px tap targets), so nothing moves. */
+  .cb-pageheader-actions .cb-skeleton-box {
+    min-width: 40px;
+    height: 40px;
+  }
+  .cb-pageheader-tabs .cb-pageheader-tab-slots {
+    height: 40px;
+  }
   .cb-pageheader-tabs {
     flex-wrap: wrap;
     row-gap: var(--cb-space-2);
