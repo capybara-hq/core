@@ -150,14 +150,27 @@ export function loadingActionRow(row: ActionRowProps): ActionRowProps {
  * with the `help` line under it, as a settings section draws a group and its hint: `radio-cards`
  * is a card RadioGroup of `options` cards (default 2), each with its label and description lines;
  * `key-value` is a KeyValue of `rows` rows (default 3) with a `keyWidth` key column (default 8ch);
- * `switch` is a switch and its state word on one row.
+ * `switch` is a switch and its state word on one row. Two more stand for static text and a block of
+ * cards beside the controls (no stack): `text` is one `prose` line (a hint the section always
+ * shows); `card-group` is a small label line over a gap-12 stack of `options` untitled cards
+ * (default {@link LOADING_GROUP_CARDS}), each a `body` line over `rows` `small` lines (default 2),
+ * as a labelled list of cards (an extension's permissions) draws.
  */
 export type FieldShape = {
-  control?: "input" | "textarea" | "select" | "segmented" | "radio-cards" | "key-value" | "switch";
+  control?:
+    | "input"
+    | "textarea"
+    | "select"
+    | "segmented"
+    | "radio-cards"
+    | "key-value"
+    | "switch"
+    | "text"
+    | "card-group";
   help?: boolean;
   rows?: number;
   pair?: boolean;
-  /** `radio-cards`: how many cards. */
+  /** `radio-cards`, `card-group`: how many cards. */
   options?: number;
   /** `key-value`: the key column's width (KeyValue's `keyWidth`). */
   keyWidth?: string;
@@ -167,14 +180,57 @@ export type FieldShape = {
  * A titled card while it loads (spec §5.8): the `Card` frame with a title slot and `actions`
  * button slots in its head; the body holds `lines` text lines (`lineSize`, default `body`), and
  * with a `field` the lines (gap 4) and that field's placeholder below them (gap 12), as a card that
- * describes a setting and then edits it does.
+ * describes a setting and then edits it does. `list` adds a labelled list after the lines: a
+ * `small` label line and `list` `small` lines in a gap-4 stack (an install's components).
  */
 export type CardShape = {
   lines?: number;
   lineSize?: "body" | "small";
   field?: FieldShape;
   actions?: number;
+  list?: number;
 };
+
+/** Cards a `card-group` draws when it is not told how many (spec §5.8). */
+export const LOADING_GROUP_CARDS = 2;
+
+/** A labelled list's small lines: its label, then `count` items (gap 4). */
+function LoadingList({ count }: { count: number }) {
+  return (
+    <Stack gap={4}>
+      <SkeletonText width="30%" size="small" />
+      {Array.from({ length: Math.max(0, count) }, (_, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
+        <SkeletonText key={i} width="55%" size="small" />
+      ))}
+    </Stack>
+  );
+}
+
+/** A small label over a gap-12 stack of untitled cards, each a body line over small lines. */
+function LoadingCardGroup({ cards, rows }: { cards: number; rows: number }) {
+  return (
+    <Stack gap={8}>
+      <SkeletonText width="30%" size="small" />
+      <Stack gap={12}>
+        {Array.from({ length: Math.max(0, cards) }, (_, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
+          <section key={i} className="cb-card" data-part="loading-group-card">
+            <div className="cb-card-body">
+              <Stack gap={4}>
+                <SkeletonText width="30%" />
+                {Array.from({ length: Math.max(0, rows) }, (_, j) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
+                  <SkeletonText key={j} width="55%" size="small" />
+                ))}
+              </Stack>
+            </div>
+          </section>
+        ))}
+      </Stack>
+    </Stack>
+  );
+}
 
 /** The shapes a bare field count stands for: that many default inputs. */
 const shapesOf = (fields: number | FieldShape[]): FieldShape[] =>
@@ -188,7 +244,7 @@ function LoadingRadioCards({ options }: { options: number }) {
         // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
         <span key={i} className="cb-radio" data-variant="card" data-part="loading-radio">
           <SkeletonBox part="block" width={14} height={14} />
-          <span className="cb-radio-text">
+          <span className="cb-radio-text" data-loading="true">
             <SkeletonText width="30%" />
             <SkeletonText width="70%" size="small" />
           </span>
@@ -219,6 +275,10 @@ function LoadingKeyValue({ rows, keyWidth }: { rows: number; keyWidth: string })
 
 /** One field placeholder: the loaded `.cb-field`'s own markup, with slots where the data goes. */
 function LoadingField({ shape }: { shape: FieldShape }) {
+  if (shape.control === "text") return <SkeletonText width="70%" size="prose" />;
+  if (shape.control === "card-group") {
+    return <LoadingCardGroup cards={shape.options ?? LOADING_GROUP_CARDS} rows={shape.rows ?? 2} />;
+  }
   const group =
     shape.control === "radio-cards" ? (
       <LoadingRadioCards options={shape.options ?? 2} />
@@ -274,7 +334,7 @@ export function LoadingShapedCards({ cards }: { cards: CardShape[] }) {
           // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
           <section key={i} className="cb-card" data-part="loading-shaped-card">
             <header className="cb-card-head">
-              <div className="cb-card-title">
+              <div className="cb-card-title" data-loading="true">
                 <SkeletonText width="45%" />
               </div>
               {(c.actions ?? 0) > 0 ? (
@@ -293,7 +353,10 @@ export function LoadingShapedCards({ cards }: { cards: CardShape[] }) {
                   <LoadingField shape={c.field} />
                 </Stack>
               ) : (
-                <Stack gap={8}>{lines}</Stack>
+                <Stack gap={8}>
+                  {lines}
+                  {c.list !== undefined ? <LoadingList count={c.list} /> : null}
+                </Stack>
               )}
             </div>
           </section>

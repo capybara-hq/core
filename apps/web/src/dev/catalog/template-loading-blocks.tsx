@@ -324,6 +324,29 @@ function settingsBlocks(): ReactNode {
               <Switch label="启用待办" checked onChange={noop} />
               <Text>已启用</Text>
             </Stack>
+            <Text variant="prose" tone="muted">
+              必需插件：每个组织都已启用，不能停用。
+            </Text>
+            <Stack gap={8}>
+              <Text variant="small" tone="muted">
+                权限
+              </Text>
+              <Stack gap={12}>
+                {["存储", "网络"].map((g) => (
+                  <Card key={g}>
+                    <Stack gap={4}>
+                      <Text>{g}</Text>
+                      <Text variant="small" tone="muted">
+                        · read
+                      </Text>
+                      <Text variant="small" tone="muted">
+                        · write
+                      </Text>
+                    </Stack>
+                  </Card>
+                ))}
+              </Stack>
+            </Stack>
           </FormSection>
         </SettingsPage>
       </RefBlock>
@@ -344,7 +367,7 @@ function settingsBlocks(): ReactNode {
                 description: "每个沙箱的 CPU 与内存。",
                 fields: [{ control: "key-value", rows: 3, keyWidth: "10ch", help: true }],
               },
-              { fields: [{ control: "switch" }] },
+              { fields: [{ control: "switch" }, { control: "text" }, { control: "card-group" }] },
             ],
           }}
         />
@@ -358,6 +381,13 @@ function settingsBlocks(): ReactNode {
                 <Card title={name} actions={<Button variant="danger">卸载</Button>}>
                   <Stack gap={8}>
                     <Text tone="muted">已安装 · 2026-10-20 09:00</Text>
+                    <Stack gap={4}>
+                      <Text variant="small" tone="muted">
+                        组件
+                      </Text>
+                      <Text variant="small">· 连接器 crm — 由安装创建</Text>
+                      <Text variant="small">· 技能 notes — 由安装创建</Text>
+                    </Stack>
                   </Stack>
                 </Card>
               </section>
@@ -370,7 +400,7 @@ function settingsBlocks(): ReactNode {
           header={{ ...SETTINGS_HEADER, title: "" }}
           nav={SETTINGS_NAV}
           activeNav="org"
-          loading={{ cards: { shape: { lines: 1, actions: 1 } } }}
+          loading={{ cards: { shape: { lines: 1, list: 2, actions: 1 } } }}
         />
       </RefBlock>
     </>

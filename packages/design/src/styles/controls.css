@@ -121,6 +121,12 @@
   display: flex;
   gap: 8px;
 }
+/* A loading card's title slot takes the head's free width, so its percentage bar has a width
+   (an auto-width flex item would shrink it to 0; spec §5.8). */
+.cb-card-title[data-loading="true"] {
+  flex: 1;
+  min-width: 0;
+}
 .cb-card-body {
   padding: 16px;
 }
@@ -713,6 +719,12 @@
 .cb-radio-text {
   display: flex;
   flex-direction: column;
+}
+/* A loading card radio's text column takes the card's free width, so its label and description
+   bars have a width (spec §5.8). */
+.cb-radio-text[data-loading="true"] {
+  flex: 1;
+  min-width: 0;
 }
 .cb-radio-desc {
   color: var(--cb-muted);

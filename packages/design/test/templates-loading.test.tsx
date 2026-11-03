@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -547,6 +549,91 @@ describe("SettingsPage loading", () => {
     expect(body?.querySelector('[data-part="loading-field"]')).not.toBeNull();
   });
 
+  it("text and card-group shapes: a prose hint line, and a labelled stack of untitled cards (default 2)", () => {
+    zh(
+      <SettingsPage
+        header={header}
+        nav={nav}
+        activeNav="general"
+        loading={{
+          sections: [
+            { fields: [{ control: "switch" }, { control: "text" }, { control: "card-group" }] },
+          ],
+        }}
+      />,
+    );
+    const card = document.querySelector(".cb-form-section-fields");
+    const kids = [...(card?.children ?? [])];
+    expect(kids).toHaveLength(3);
+    expect(kids[1]?.getAttribute("data-size")).toBe("prose");
+    const group = kids[2];
+    expect(group?.getAttribute("data-gap")).toBe("8");
+    expect(group?.firstElementChild?.getAttribute("data-size")).toBe("small");
+    const cards = group?.querySelectorAll('[data-part="loading-group-card"]') ?? [];
+    expect(cards).toHaveLength(2);
+    expect(cards[0]?.parentElement?.getAttribute("data-gap")).toBe("12");
+    // each card: a body line over two small lines
+    const lines = [...(cards[0]?.querySelectorAll('[data-part="skeleton-text"]') ?? [])];
+    expect(lines.map((l) => l.getAttribute("data-size"))).toEqual(["body", "small", "small"]);
+  });
+
+  it("a card's list: a small label and the list's small lines after the body lines", () => {
+    zh(
+      <SettingsPage
+        header={header}
+        nav={nav}
+        activeNav="general"
+        loading={{ cards: { shape: { lines: 1, list: 2, actions: 1 }, count: 1 } }}
+      />,
+    );
+    const body = document.querySelector(
+      '[data-part="loading-shaped-card"] .cb-card-body > .cb-stack',
+    );
+    const list = body?.lastElementChild;
+    expect(list?.getAttribute("data-gap")).toBe("4");
+    expect(list?.children).toHaveLength(3);
+    expect(list?.firstElementChild?.getAttribute("data-size")).toBe("small");
+  });
+
+  it("loading title and radio text slots take their container's free width (no 0 px bars)", () => {
+    zh(
+      <SettingsPage
+        header={header}
+        nav={nav}
+        activeNav="general"
+        loading={{
+          sections: [{ fields: [{ control: "radio-cards" }] }],
+          cards: { count: 1 },
+        }}
+      />,
+    );
+    expect(document.querySelectorAll('.cb-radio-text[data-loading="true"]')).toHaveLength(2);
+    cleanup();
+    zh(
+      <SettingsPage
+        header={header}
+        nav={nav}
+        activeNav="general"
+        loading={{ cards: { count: 1 } }}
+      />,
+    );
+    expect(
+      document.querySelector('.cb-card-title[data-loading="true"] [data-part="skeleton-text"]'),
+    ).not.toBeNull();
+    // the CSS gives those slots the free width
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/controls.css"), "utf8");
+    const rule = (selector: string) =>
+      css.slice(css.indexOf(`${selector} {`), css.indexOf("}", css.indexOf(`${selector} {`)));
+    for (const selector of [
+      '.cb-card-title[data-loading="true"]',
+      '.cb-radio-text[data-loading="true"]',
+    ]) {
+      expect(css.includes(`${selector} {`), selector).toBe(true);
+      expect(rule(selector)).toContain("flex: 1;");
+      expect(rule(selector)).toContain("min-width: 0;");
+    }
+  });
+
   it("keeps the action row, disabled", () => {
     zh(
       <SettingsPage
@@ -584,6 +671,12 @@ describe("WizardPage loading", () => {
     expect(document.querySelectorAll(".cb-step")).toHaveLength(3);
     expect(screen.getByText("端点")).toBeTruthy();
     expect(document.querySelector(".cb-card .cb-stack > .cb-field")).not.toBeNull();
+    // the card's title slot takes the head's width (not a 0 px auto-width flex item)
+    expect(
+      document.querySelector(
+        '.cb-card-head > .cb-card-title[data-loading="true"] [data-part="skeleton-text"]',
+      ),
+    ).not.toBeNull();
     expect(count('[data-part="loading-field"]')).toBe(3);
     expect(screen.getAllByRole("status")).toHaveLength(1);
     expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(true);

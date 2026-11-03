@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { SkeletonGroup, SkeletonText } from "../display/skeleton";
 import { Icon } from "../icons/icon";
-import { Card, Stack } from "../layout/index";
+import { Stack } from "../layout/index";
 import { useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
 import {
@@ -59,11 +59,20 @@ export function WizardPage({
           })}
         </ol>
         {loading ? (
-          <Card title={<SkeletonText width="30%" />}>
-            <Stack gap={16}>
-              <LoadingFields fields={loading.fields} />
-            </Stack>
-          </Card>
+          // The Card frame, its title slot taking the head's width (a bare slot in the Card's
+          // title would be an auto-width flex item, its percentage bar 0 px wide).
+          <section className="cb-card" data-part="card">
+            <header className="cb-card-head">
+              <div className="cb-card-title" data-loading="true">
+                <SkeletonText width="30%" />
+              </div>
+            </header>
+            <div className="cb-card-body">
+              <Stack gap={16}>
+                <LoadingFields fields={loading.fields} />
+              </Stack>
+            </div>
+          </section>
         ) : (
           children
         )}
