@@ -224,16 +224,23 @@ describe("useConversation and the cache", () => {
     expect(invalidated()).toEqual(side);
   });
 
-  it("a title generated before the stream opened appears without a navigation", async () => {
+  it("a title generated before the stream opened appears without a navigation, in the sidebar too", async () => {
     const calls = stubApi({
       [`GET ${BASE}`]: () => json(200, CONV("c1", { title: "Generated early" })),
     });
     const qc = cached(null);
+    const invalidated = sideKeys(qc);
     const view = mount(qc);
     expect(view.getByTestId("title").textContent).toBe("untitled");
     // generated (and its `changed: title` sent) before the stream was open
     act(() => FakeEventSource.instances[0]?.emit("open"));
     await vi.waitFor(() => expect(view.getByTestId("title").textContent).toBe("Generated early"));
+    // the sidebar's groups missed the frame as well: they are read again
+    await vi.waitFor(() =>
+      expect(invalidated()).toContainEqual(
+        JSON.stringify(keys.org("o1").conversationGroupsAll()),
+      ),
+    );
     // once per mount: a reconnect of the same page reads nothing more
     act(() => FakeEventSource.instances[0]?.emit("open"));
     await act(() => new Promise((r) => setTimeout(r, 20)));

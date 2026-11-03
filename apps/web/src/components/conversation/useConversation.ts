@@ -225,7 +225,12 @@ export function useConversation(orgId: string, conversationId: string): Conversa
           const row = qc.getQueryData<Conversation>(c.row());
           if (!titleChecked && row !== undefined && row.title === null) {
             titleChecked = true;
-            invalidate(c.row());
+            // A title found that way shows in the sidebar too (its groups missed the frame).
+            void qc.refetchQueries({ queryKey: c.row(), exact: true }).then(() => {
+              if (!disposed && qc.getQueryData<Conversation>(c.row())?.title != null) {
+                invalidate(groups);
+              }
+            });
           }
         },
         // An extension view changed: read again, coalesced (at most one read in flight).
