@@ -44,6 +44,89 @@ export const keys = {
       extensionPages: (): readonly unknown[] => [...all, "extensionPages"],
       /** The org's members. */
       members: (): readonly unknown[] => [...all, "members"],
+      /** The org's models (by provider). */
+      models: (): readonly unknown[] => [...all, "models"],
+      /** The org's connectors. */
+      connectors: (): readonly unknown[] => [...all, "connectors"],
+      /** One connector's detail. */
+      connector: (connectorId: string): readonly unknown[] => [...all, "connector", connectorId],
+      /** The connectors' prompts (`/` menu) or resources (`@` menu). */
+      connectorItems: (kind: "prompts" | "resources"): readonly unknown[] => [
+        ...all,
+        "connectorItems",
+        kind,
+      ],
+      /** The extensions' UI contributions (enabled and loaded). */
+      contributions: (): readonly unknown[] => [...all, "contributions"],
+      /** The attachment limits. */
+      attachmentLimits: (): readonly unknown[] => [...all, "attachmentLimits"],
+      /** An agent's invocable skills, with a conversation's trial drafts when one is named. */
+      invocableSkills: (agentId: string, conversationId: string | null): readonly unknown[] => [
+        ...all,
+        "invocableSkills",
+        agentId,
+        conversationId,
+      ],
+      /** One approval (who may decide, the scopes). */
+      approval: (approvalId: string): readonly unknown[] => [...all, "approval", approvalId],
+      /** One question (a sub-agent's, read by id). */
+      question: (questionId: string): readonly unknown[] => [...all, "question", questionId],
+      /**
+       * Extension views: every view of a scope (a conversation id, `"org"` for org pages), or of
+       * one contribution in it (prefixes), or one view (`rest`: locale, item, card).
+       */
+      uiViews: (scope: string, plugin?: string, contribution?: string): readonly unknown[] => [
+        ...all,
+        "uiView",
+        scope,
+        ...(plugin === undefined ? [] : [plugin]),
+        ...(contribution === undefined ? [] : [contribution]),
+      ],
+      uiView: (
+        scope: string,
+        plugin: string,
+        contribution: string,
+        rest: string,
+      ): readonly unknown[] => [...all, "uiView", scope, plugin, contribution, rest],
+      /** One conversation's pieces (its row, events and what lives outside the log). */
+      conversation(id: string) {
+        const c = [...all, "conversation", id] as const;
+        return {
+          all: c as readonly unknown[],
+          row: (): readonly unknown[] => [...c, "row"],
+          events: (): readonly unknown[] => [...c, "events"],
+          queue: (): readonly unknown[] => [...c, "queue"],
+          files: (): readonly unknown[] => [...c, "files"],
+          sandbox: (): readonly unknown[] => [...c, "sandbox"],
+          subagents: (): readonly unknown[] => [...c, "subagents"],
+          usage: (): readonly unknown[] => [...c, "usage"],
+          /** Every tool-info read of the conversation (an invalidation prefix). */
+          toolInfoAll: (): readonly unknown[] => [...c, "toolInfo"],
+          /** Tool info for `toolKeys`, sorted (the same set is one key whatever the order). */
+          toolInfo: (toolKeys: readonly string[]): readonly unknown[] => [
+            ...c,
+            "toolInfo",
+            [...toolKeys].sort(),
+          ],
+          /** A call's archived output: its size (`"size"`) or its text (`"text"`). */
+          output: (outputId: string, part: "size" | "text"): readonly unknown[] => [
+            ...c,
+            "output",
+            outputId,
+            part,
+          ],
+          /** A file's extension previewers. */
+          filePreviewers: (fileId: string): readonly unknown[] => [...c, "filePreviewers", fileId],
+          /** A file's preview body by one previewer (`builtin` or `plugin/id`) and locale. */
+          filePreview: (fileId: string, previewer: string, locale: string): readonly unknown[] => [
+            ...c,
+            "filePreview",
+            fileId,
+            previewer,
+            locale,
+          ],
+        };
+      },
     };
   },
   deployment() {
