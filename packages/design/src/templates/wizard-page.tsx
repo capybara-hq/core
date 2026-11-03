@@ -5,7 +5,9 @@ import { Stack } from "../layout/index";
 import { useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
 import {
+  type BlockShape,
   type FieldShape,
+  LoadingBlocks,
   LoadingFields,
   loadingActionRow,
   loadingHeader,
@@ -16,7 +18,9 @@ import {
  * T9 向导：Centered + 步骤条 + 始终存在的 ActionRow. `loading` draws the frame while the wizard's
  * data is on the way (spec §5.5): the header keeps its rows, the step bar is real (the steps are
  * static), the ActionRow stays with its buttons disabled, and the step's body is one card (a
- * title slot, `fields` field placeholders) in place of `children`. One busy announcement.
+ * title slot, `fields` field placeholders) in place of `children`; a step whose body is no card
+ * (a review stack) passes `content` (`BlockShape[]`) instead, drawn in a gap-16 stack as the loaded
+ * step stacks its parts. One busy announcement.
  */
 export function WizardPage({
   header,
@@ -30,7 +34,7 @@ export function WizardPage({
   steps: string[];
   current: number;
   actionRow: ActionRowProps;
-  loading?: { fields: number | FieldShape[] };
+  loading?: { fields: number | FieldShape[] } | { content: BlockShape[] };
   children?: ReactNode;
 }) {
   const t = useDesignT();
@@ -58,7 +62,9 @@ export function WizardPage({
             );
           })}
         </ol>
-        {loading ? (
+        {loading && "content" in loading ? (
+          <LoadingBlocks blocks={loading.content} />
+        ) : loading ? (
           // The Card frame, its title slot taking the head's width (a bare slot in the Card's
           // title would be an auto-width flex item, its percentage bar 0 px wide).
           <section className="cb-card" data-part="card">

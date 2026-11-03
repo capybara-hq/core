@@ -348,10 +348,10 @@ A new page **must** pick one of the following templates; a new template requires
 - PageHeader: title + total, description, secondary actions on the right + Create (primary); metrics ≤ 5 as StatCards.
 - **One primary per screen**: while `empty` is drawn with a `primary` action, the template leaves the head's primary out and the empty state carries it (the head's other actions stay); with rows, while loading, or when the empty state has no primary action, the head keeps it. Pages pass the same action to both and never draw two.
 - StatusBar page status: the number of filter results.
-- **Variants** (`variant`): `records` (default) holds a DataTable; `objects` wraps its ObjectRows (§6.17) in one ObjectList panel (things people own and configure: agents, skills, connectors, plugins, extensions). The `callout` prop draws a Callout (§6.19) in the header between the title row and the tabs; `empty` draws an EmptyState (§6.18) instead of the content. `loading` (`true`, or `{ rows?, stats?, table? }`; spec §7.1 of the web query cache design) draws the page's frame until the first answer, with one busy announcement (§6.29): the head keeps its real layout (§4.2: the path, a known title, actions and search for real, an unknown title is a `title` bar; the tabs stay with their counts shown as a `faint` "–"), so nothing moves when the answer arrives; `stats` stat card placeholders stand in for `metrics` the page does not know yet (§5.6); the list is skeleton rows in the loaded list's own container: for `objects`, the ObjectList panel with `rows` rows (default 3), each the object row's box with a 36 px mark box and a name and a description line in the one bar look (§6.17), and for `records`, the DataTable's own loading state in the caller's `table` shape (`label`, `columns`, `rowHeight`, `framed`, as InboxPage, §5.7), else four full-width `body` bars (`Skeleton({ rows })`); the action row, when there is one, stays with its buttons disabled. Loading wins over `empty`. Exception: a tab that exists only when the data holds something different from 全部 cannot be known before the answer and appears after it. An object list has no rail: tabs with counts in the header replace the filters.
+- **Variants** (`variant`): `records` (default) holds a DataTable; `objects` wraps its ObjectRows (§6.17) in one ObjectList panel (things people own and configure: agents, skills, connectors, plugins, extensions). The `callout` prop draws a Callout (§6.19) in the header between the title row and the tabs; `empty` draws an EmptyState (§6.18) instead of the content. `loading` (`true`, or `{ rows?, stats?, table?, keep? }`; spec §7.1 of the web query cache design) draws the page's frame until the first answer, with one busy announcement (§6.29): the head keeps its real layout (§4.2: the path, a known title, actions and search for real, an unknown title is a `title` bar; the tabs stay with their counts shown as a `faint` "–"), so nothing moves when the answer arrives; `stats` stat card placeholders stand in for `metrics` the page does not know yet (§5.6); the list is skeleton rows in the loaded list's own container: for `objects`, the ObjectList panel with `rows` rows (default 3), each the object row's box with a 36 px mark box and a name and a description line in the one bar look (§6.17), and for `records`, the DataTable's own loading state in the caller's `table` shape (`label`, `columns`, `rowHeight`, `framed`, as InboxPage, §5.7), else four full-width `body` bars (`Skeleton({ rows })`); the action row, when there is one, stays with its buttons disabled; a page whose content is its own sections (each `FormSection` saying for itself whether it is loading) passes `keep`, and its `children` render as they are inside the page's one busy region, so no section announces itself (state `loading-keep`, against the loaded `keep`). Loading wins over `empty`. Exception: a tab that exists only when the data holds something different from 全部 cannot be known before the answer and appears after it. An object list has no rail: tabs with counts in the header replace the filters.
 
 <!-- states: template-list -->
-States: `page`, `default-objects`, `loading-objects`
+States: `page`, `default-objects`, `loading-objects`, `keep`, `loading-keep`
 
 <!-- size-table: template-list -->
 | Part | State | Property | Value |
@@ -363,16 +363,18 @@ States: `page`, `default-objects`, `loading-objects`
 | content | loading-objects | max-width | layout.content |
 | skeleton-box[data-box=mark] | loading-objects | height | 36 |
 | skeleton-text[data-size=body] | loading-objects | height | type.body.line |
+| content | keep | max-width | layout.content |
+| content | loading-keep | max-width | layout.content |
 
 ### 5.2 Detail (T3)
 - PageHeader: path ending with the object's name; name + version (faint) + status; actions: Edit (default), Trial run (secondary), `more-horizontal`.
 - PageTabs: Summary · Runs · Config · Versions · Permissions · Audit (pick per object type), with counts following in faint.
 - Content: sections on the `panel` ground with radius `md` (no border), section header h2 + actions on the right, `space.4` between sections.
 - Inspector: grouped properties, group title small muted, key 8ch wide muted, value single line with ellipsis.
-- **Loading** (`DetailPage.loading`, `{ inspector?, blocks? }`; spec §7.1 of the web query cache design): every region keeps its box, so nothing moves when the data arrives. The header is the PageHeader's loading state (§4.2), the PageTabs stay real (the tabs are static per page), the content is `blocks` card-shaped blocks (default 2) in place of `children`: the `panel` card of the sections above, its head band holding a 30% `body` text slot and its body three text slots (100%, 70%, 55%) `space.2` apart; the card is 147 px high (a 1 px border on each side, the head band 37 = `space.2` × 2 + one `body` line + its 1 px rule, and the body 108 = padding 16 × 2 + three `body` lines + two `space.2` gaps). The inspector is drawn as placeholders only when `inspector` is set: KeyValue's own box (§6.5, the same `dl`) with four rows, each a `body` slot for the 8ch key and a 55% `body` slot for the value (a group title is not drawn: the loaded inspector's groups are the page's); an inspector the page passes for real stays. One busy announcement for the page (§6.29). Nothing animates.
+- **Loading** (`DetailPage.loading`, `{ inspector?, blocks?, content? }`; spec §7.1 of the web query cache design): every region keeps its box, so nothing moves when the data arrives. The header is the PageHeader's loading state (§4.2), the PageTabs stay real (the tabs are static per page), the content is `blocks` card-shaped blocks (default 2) in place of `children`: the `panel` card of the sections above, its head band holding a 30% `body` text slot and its body three text slots (100%, 70%, 55%) `space.2` apart; the card is 147 px high (a 1 px border on each side, the head band 37 = `space.2` × 2 + one `body` line + its 1 px rule, and the body 108 = padding 16 × 2 + three `body` lines + two `space.2` gaps). The inspector is drawn as placeholders only when `inspector` is set: KeyValue's own box (§6.5, the same `dl`) with four rows, each a `body` slot for the 8ch key and a 55% `body` slot for the value (a group title is not drawn: the loaded inspector's groups are the page's); an inspector the page passes for real stays; `inspector` as `{ rows?, keyWidth? }` draws that many rows with that key width (the loaded inspector's KeyValue). A tab whose static structure the page knows passes `content` (`BlockShape[]`) instead of `blocks`: the blocks stand in a gap-16 stack as the loaded tab stacks its parts (state `loading-content`, against the loaded `content`). A block is `lines` (a gap-4 stack, a `body` line over `small` ones), `list` (a labelled list: a `body` label slot over `items` `body` lines, gap 8), `key-value` (KeyValue's own `dl`, `rows`, one or two `columns`, `keyWidth`), `buttons` (a gap-8 row of `count` 88 px control-height slots, with a `small` line under it when `help`), `table` (the page's real `small` muted title over the DataTable's own loading state with its `label` and header `columns`, gap 8) or `card` (a `CardShape`, §5.8). A `radios` field shape (§5.8) is a plain RadioGroup's own markup: per option its box and a `body` label slot. One busy announcement for the page (§6.29). Nothing animates.
 
 <!-- states: template-detail -->
-States: `default`, `loading`
+States: `default`, `loading`, `content`, `loading-content`
 
 <!-- size-table: template-detail -->
 | Part | State | Property | Value |
@@ -383,6 +385,9 @@ States: `default`, `loading`
 | loading-card | loading | height | 147 |
 | skeleton-text[data-size=body] | loading | height | type.body.line |
 | loading-inspector-row | loading | height | type.body.line |
+| content | content | max-width | layout.content |
+| content | loading-content | max-width | layout.content |
+| skeleton-box[data-box=default] | loading-content | height | control.default |
 
 ### 5.3 Form (T4)
 - PageHeader: path ending with the object's name (`new` for a new one); title "Create X" + draft badge; only auxiliary actions on the right (such as "Import from YAML").
@@ -515,10 +520,10 @@ States: `default`, `loading`, `radio-cards`, `loading-radio-cards`, `cards`, `lo
 | skeleton-box[data-box=default] | loading-cards | height | control.default |
 
 ### 5.9 Wizard (T9)
-- **Loading** (`WizardPage.loading`, `{ fields }`): the header is its loading state (§4.2); the step bar is real (the steps are static); the ActionRow stays with its buttons disabled; the step's body is one card (the `panel` card of §5.2 with a 30% `body` slot as its title) holding `fields` field placeholders (§5.3; a count or the page's static `FieldShape[]`) `space.4` apart, in place of `children`. One busy announcement (§6.29). Nothing animates.
+- **Loading** (`WizardPage.loading`, `{ fields }` or `{ content }`): the header is its loading state (§4.2); the step bar is real (the steps are static); the ActionRow stays with its buttons disabled; the step's body is one card (the `panel` card of §5.2 with a 30% `body` slot as its title) holding `fields` field placeholders (§5.3; a count or the page's static `FieldShape[]`) `space.4` apart, in place of `children`; a step whose body is no card (a review stack) passes `content` (`BlockShape[]`, §5.2) instead, drawn in a gap-16 stack (state `loading-content`, against the loaded `content`). One busy announcement (§6.29). Nothing animates.
 
 <!-- states: template-wizard -->
-States: `default`, `loading`
+States: `default`, `loading`, `content`, `loading-content`
 
 <!-- size-table: template-wizard -->
 | Part | State | Property | Value |
@@ -527,6 +532,8 @@ States: `default`, `loading`
 | content | loading | max-width | layout.content |
 | action-row | loading | height | layout.action-row |
 | skeleton-box[data-box=default] | loading | height | control.default |
+| content | content | max-width | layout.content |
+| content | loading-content | max-width | layout.content |
 
 ### 5.10 Auth (T10)
 - **Loading** (`AuthPage.loading`, `{ fields }`): the page keeps its frame: the two dither columns, the logo, the 400 px card with the title and subtitle the page knows (an empty `title` is an h1-sized bar), and its `footer` and `preferences`. The card's body is `fields` field placeholders (§5.3; a count or the page's static `FieldShape[]`) and the submit button's box (`prominent`, §2.5), `space.4` apart, in place of `children`. One busy announcement (§6.29). Nothing animates.

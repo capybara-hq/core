@@ -88,7 +88,13 @@ export const LOADING_TEMPLATES: {
   name: string;
   pairs: { loaded: string; loading: string; dataOnly?: Record<string, string> }[];
 }[] = [
-  { name: "detail", pairs: [{ loaded: "default", loading: "loading" }] },
+  {
+    name: "detail",
+    pairs: [
+      { loaded: "default", loading: "loading" },
+      { loaded: "content", loading: "loading-content" },
+    ],
+  },
   {
     name: "overview",
     pairs: [
@@ -127,7 +133,13 @@ export const LOADING_TEMPLATES: {
       { loaded: "cards", loading: "loading-cards" },
     ],
   },
-  { name: "wizard", pairs: [{ loaded: "default", loading: "loading" }] },
+  {
+    name: "wizard",
+    pairs: [
+      { loaded: "default", loading: "loading" },
+      { loaded: "content", loading: "loading-content" },
+    ],
+  },
   { name: "auth", pairs: [{ loaded: "default", loading: "loading" }] },
   // the conversation's loading block is the file-panel block with every part still on its way
   {
@@ -158,7 +170,13 @@ export const LOADING_TEMPLATES: {
       { loaded: "default", loading: "loading", dataOnly: { "key-value": KV, "key-value-row": KV } },
     ],
   },
-  { name: "list", pairs: [{ loaded: "default-objects", loading: "loading-objects" }] },
+  {
+    name: "list",
+    pairs: [
+      { loaded: "default-objects", loading: "loading-objects" },
+      { loaded: "keep", loading: "loading-keep" },
+    ],
+  },
 ];
 
 /**

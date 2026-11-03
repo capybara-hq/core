@@ -89,6 +89,70 @@ describe("DetailPage loading", () => {
   });
 });
 
+describe("DetailPage / WizardPage content blocks", () => {
+  const cols: Column<never>[] = [{ key: "id", header: "副本", cell: () => null }];
+  it("content draws the tab's static blocks in a gap-16 stack instead of cards", () => {
+    zh(
+      <DetailPage
+        header={header}
+        tabs={tabs}
+        loading={{
+          content: [
+            { kind: "key-value", rows: 5, columns: 2 },
+            { kind: "buttons", count: 2, help: true },
+            { kind: "table", title: "副本列表", label: "副本", columns: cols },
+            { kind: "list", items: 1 },
+            { kind: "lines", lines: 3 },
+            { kind: "card", card: { lines: 1, field: { control: "radios", options: 3 } } },
+          ],
+        }}
+      />,
+    );
+    expect(count('[data-part="loading-card"]')).toBe(0);
+    const kv = document.querySelector('[data-part="loading-key-value"]');
+    expect(kv?.getAttribute("data-columns")).toBe("2");
+    expect(kv?.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(5);
+    expect(count('[data-box="default"]')).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("副本列表")).toBeTruthy();
+    expect(screen.getByText("副本")).toBeTruthy();
+    expect(document.querySelector('[data-empty="loading"]')).not.toBeNull();
+    expect(parts("loading-plain-radios")).toHaveLength(1);
+    expect(parts("loading-radio")).toHaveLength(3);
+    expect(parts("loading-shaped-card")).toHaveLength(1);
+    // one busy announcement for the page, the table's own silenced
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getAllByText("正在加载")).toHaveLength(1);
+  });
+
+  it("the inspector takes its row count and key width", () => {
+    zh(
+      <DetailPage
+        header={header}
+        tabs={tabs}
+        loading={{ inspector: { rows: 7, keyWidth: "10ch" } }}
+      />,
+    );
+    expect(parts("loading-inspector-row")).toHaveLength(7);
+    const key = document.querySelector('[data-part="loading-inspector-row"] dt') as HTMLElement;
+    expect(key.style.width).toBe("10ch");
+  });
+
+  it("a wizard step with content draws the blocks, no card", () => {
+    zh(
+      <WizardPage
+        header={header}
+        steps={["来源", "审阅"]}
+        current={1}
+        actionRow={{ primary: { label: "下一步", onSelect: () => {} } }}
+        loading={{ content: [{ kind: "lines", lines: 2 }, { kind: "list" }, { kind: "list" }] }}
+      />,
+    );
+    expect(count('[data-part="card"]')).toBe(0);
+    expect(count('[data-size="small"]')).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+});
+
 describe("OverviewPage loading", () => {
   it("OverviewPage loading draws the frame and no children", () => {
     zh(
@@ -946,6 +1010,21 @@ describe("TracePage loading", () => {
     );
     expect(screen.getByText("调用数")).toBeTruthy();
     expect(count('[data-part="stat-card"]')).toBe(1);
+  });
+});
+
+describe("ListPage loading keep", () => {
+  it("keep renders the page's own sections inside one busy region (they do not announce)", () => {
+    zh(
+      <ListPage header={header} loading={{ keep: true }}>
+        <FormSection id="a" title="甲" loading={{ fields: 2 }} />
+        <FormSection id="b" title="乙" loading={{ cards: [{ lines: 1 }] }} />
+        <DataTable<never> label="表" state="loading" columns={[]} rows={[]} rowKey={() => ""} />
+      </ListPage>,
+    );
+    expect(count(".cb-form-section")).toBe(2);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getAllByText("正在加载")).toHaveLength(1);
   });
 });
 

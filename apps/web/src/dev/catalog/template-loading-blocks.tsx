@@ -116,9 +116,54 @@ function detailBlocks(): ReactNode {
           loading={{ inspector: true }}
         />
       </RefBlock>
+      {/* A tab with a known static structure: facts, actions and a table (spec §5.2). */}
+      <RefBlock id="template-detail-content" width={W} height={H}>
+        <DetailPage header={DETAIL_HEADER} tabs={TABS}>
+          <Stack gap={16}>
+            <KeyValue columns={2} rows={PROPERTIES} />
+            <Stack direction="row" gap={8}>
+              <Button>停用</Button>
+              <Button variant="secondary">升级</Button>
+            </Stack>
+            <Stack gap={8}>
+              <Text variant="small" tone="muted">
+                副本
+              </Text>
+              <DataTable<{ id: string }>
+                label="副本"
+                columns={REPLICA_COLUMNS}
+                rows={[{ id: "api-1" }]}
+                rowKey={(r) => r.id}
+              />
+            </Stack>
+          </Stack>
+        </DetailPage>
+      </RefBlock>
+      <RefBlock id="template-detail-loading-content" width={W} height={H}>
+        <DetailPage
+          header={loadingHeader(PATH, 2)}
+          tabs={TABS}
+          loading={{
+            content: [
+              { kind: "key-value", rows: 4, columns: 2 },
+              { kind: "buttons", count: 2 },
+              {
+                kind: "table",
+                title: "副本",
+                label: "副本",
+                columns: REPLICA_COLUMNS as Column<never>[],
+              },
+            ],
+          }}
+        />
+      </RefBlock>
     </>
   );
 }
+
+const REPLICA_COLUMNS: Column<{ id: string }>[] = [
+  { key: "id", header: "副本", cell: (r) => r.id },
+];
 
 const OVERVIEW_HEADER = {
   path: PATH.slice(0, 1),
@@ -456,6 +501,32 @@ function wizardBlocks(): ReactNode {
           loading={{ fields: 2 }}
         />
       </RefBlock>
+      {/* A step whose body is a review stack, no card (spec §5.9). */}
+      <RefBlock id="template-wizard-content" width={W} height={H}>
+        <WizardPage header={WIZARD_HEADER} steps={WIZARD_STEPS} current={1} actionRow={WIZARD_ROW}>
+          <Stack gap={16}>
+            <Stack gap={4}>
+              <Text>crm 1.0.0</Text>
+              <Text variant="small" tone="muted">
+                发布者 Acme
+              </Text>
+            </Stack>
+            <Stack gap={8}>
+              <Text>技能</Text>
+              <Text tone="muted">没有技能</Text>
+            </Stack>
+          </Stack>
+        </WizardPage>
+      </RefBlock>
+      <RefBlock id="template-wizard-loading-content" width={W} height={H}>
+        <WizardPage
+          header={{ ...WIZARD_HEADER, title: "" }}
+          steps={WIZARD_STEPS}
+          current={1}
+          actionRow={WIZARD_ROW}
+          loading={{ content: [{ kind: "lines", lines: 2 }, { kind: "list" }] }}
+        />
+      </RefBlock>
     </>
   );
 }
@@ -516,6 +587,21 @@ export function listLoadingBlocks(): ReactNode {
       </RefBlock>
       <RefBlock id="template-list-loading-objects" width={W} height={H}>
         <ListPage header={LIST_HEADER} variant="objects" listLabel="Agents" loading />
+      </RefBlock>
+      {/* A list page whose content is its own sections (spec §5.1 `keep`). */}
+      <RefBlock id="template-list-keep" width={W} height={H}>
+        <ListPage header={LIST_HEADER}>
+          <FormSection id="a" title="内置市场" description="官方市场">
+            <Field label="地址">
+              <Input defaultValue="https://example.com" />
+            </Field>
+          </FormSection>
+        </ListPage>
+      </RefBlock>
+      <RefBlock id="template-list-loading-keep" width={W} height={H}>
+        <ListPage header={LIST_HEADER} loading={{ keep: true }}>
+          <FormSection id="a" title="内置市场" description="官方市场" loading={{ fields: 1 }} />
+        </ListPage>
       </RefBlock>
     </>
   );

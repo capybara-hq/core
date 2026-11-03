@@ -24,6 +24,11 @@ export type ListLoading =
   | {
       rows?: number;
       stats?: number;
+      /**
+       * The children are the page's own sections, each saying for itself whether it is loading:
+       * they render as they are, inside the page's one busy region (no section announces itself).
+       */
+      keep?: boolean;
       table?: {
         label: string;
         columns: Column<never>[];
@@ -120,7 +125,11 @@ export function ListPage({
       <Skeleton rows={4} />
     );
   const content = loading ? (
-    loadingList
+    spec.keep ? (
+      children
+    ) : (
+      loadingList
+    )
   ) : empty ? (
     <EmptyState {...empty} />
   ) : variant === "objects" ? (
