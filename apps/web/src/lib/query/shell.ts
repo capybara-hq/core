@@ -1,7 +1,8 @@
 import { getReadiness } from "../agents";
+import { ApiClientError } from "../api";
 import { listConversationGroups } from "../conversations";
 import { listInbox } from "../inbox";
-import { getMe } from "../session";
+import { getMe, type Me } from "../session";
 import { listUiContributions } from "../ui";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
@@ -15,6 +16,23 @@ export interface PendingCount {
 /** The signed-in account, its memberships and its current org. */
 export const meQuery = () =>
   defineQuery({ key: keys.account("self").me(), fn: getMe, freshness: "mine" });
+
+/**
+ * `/me` on a public page (sign-in, invitation): `null` for a visitor without a valid session (a
+ * 401 `auth.*`); any other failure throws.
+ */
+export const maybeMeQuery = () =>
+  defineQuery<Me | null>({
+    key: keys.account("self").maybeMe(),
+    fn: () =>
+      getMe().catch((e: unknown) => {
+        if (e instanceof ApiClientError && e.status === 401 && e.code.startsWith("auth.")) {
+          return null;
+        }
+        throw e;
+      }),
+    freshness: "mine",
+  });
 
 /** Whether the org has a model and an agent (the setup frame). */
 export const readinessQuery = (orgId: string) =>

@@ -1,13 +1,16 @@
 import type { QueryClient, UseQueryOptions } from "@tanstack/react-query";
 import type { ApiClientError } from "../api";
 import type { Me } from "../session";
+import { authSourcesQuery } from "./auth";
+import { maybeMeQuery } from "./shell";
 
 /** What a route's queries are built from. */
 export interface RouteCtx {
   /** The dynamic segments, decoded (`[...rest]` joined with `/`). */
   params: Record<string, string>;
   search: URLSearchParams;
-  me: Me;
+  /** `null` on the public (auth) pages, which read no session first. */
+  me: Me | null;
   /** The current org; `null` without one. */
   orgId: string | null;
 }
@@ -25,6 +28,13 @@ export interface RouteEntry {
   /** Why the entry prefetches nothing. */
   none?: string;
 }
+
+/**
+ * A query of any data type as a route entry lists it (the options are not assignable to
+ * `UseQueryOptions<unknown>` as they are: their callbacks take `T`).
+ */
+const q = <T>(o: UseQueryOptions<T, ApiClientError>) =>
+  o as unknown as UseQueryOptions<unknown, ApiClientError>;
 
 /**
  * Every `page.tsx` under `app/(app)` and `app/(auth)`, one entry each (a test walks the app dir).
@@ -71,8 +81,8 @@ export const ROUTES: readonly RouteEntry[] = [
   { pattern: "/evals/new", queries: () => [], none: "pending migration" },
   { pattern: "/evals/runs/[runId]", queries: () => [], none: "pending migration" },
   { pattern: "/inbox", queries: () => [], none: "pending migration" },
-  { pattern: "/invite/[token]", queries: () => [], none: "pending migration" },
-  { pattern: "/login", queries: () => [], none: "pending migration" },
+  { pattern: "/invite/[token]", queries: () => [q(maybeMeQuery())] },
+  { pattern: "/login", queries: () => [q(authSourcesQuery()), q(maybeMeQuery())] },
   { pattern: "/p/[plugin]/[id]", queries: () => [], none: "pending migration" },
   { pattern: "/settings/extensions", queries: () => [], none: "pending migration" },
   { pattern: "/settings/members", queries: () => [], none: "pending migration" },

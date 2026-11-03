@@ -3,8 +3,8 @@
  * or `deployment`), so an org switch or sign-out can drop a whole scope. Area builders are added
  * next to `all` as `[...all, "<area>", ...rest]`.
  *
- * One literal id is allowed: `keys.account("self").me()`. `/me` is what tells the account id, so it
- * is read before the id is known; it is the only key under `"self"`.
+ * One literal id is allowed: `keys.account("self")`, for `me()` and `maybeMe()`. `/me` is what
+ * tells the account id, so it is read before the id is known; nothing else lives under `"self"`.
  */
 export const keys = {
   account(accountId: string) {
@@ -13,6 +13,8 @@ export const keys = {
       all: all as readonly unknown[],
       /** The signed-in account (`/me`); only under `keys.account("self")`. */
       me: (): readonly unknown[] => [...all, "me"],
+      /** `/me` on a public page: `null` when signed out; only under `keys.account("self")`. */
+      maybeMe: (): readonly unknown[] => [...all, "maybeMe"],
     };
   },
   org(orgId: string) {
@@ -32,6 +34,10 @@ export const keys = {
   },
   deployment() {
     const all = ["deployment"] as const;
-    return { all: all as readonly unknown[] };
+    return {
+      all: all as readonly unknown[],
+      /** The sign-in sources the login page offers. */
+      authSources: (): readonly unknown[] => [...all, "authSources"],
+    };
   },
 };

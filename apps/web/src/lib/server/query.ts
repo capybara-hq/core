@@ -41,13 +41,15 @@ export function dehydrateFor(qc: QueryClient): DehydratedState {
 /**
  * The first-load prefetch of a route (web query cache spec §3.1): the matched entry's queries, in
  * parallel, then its `then` (reads that need those answers). `"unknown"` when no page serves the
- * path or it falls to `[...rest]`. A read that finds the session gone redirects to sign-in, back to
- * `path`; any other failure stays in the cache (dehydrated, the page draws it).
+ * path or it falls to `[...rest]`. With `signedOutRedirect` (the (app) pages), a read that finds the
+ * session gone redirects to sign-in, back to `path`; the public (auth) pages pass `false`. Any
+ * other failure stays in the cache (dehydrated, the page draws it).
  */
 export async function prefetchRoute(
   qc: QueryClient,
   path: string,
-  session: { me: Me; orgId: string | null },
+  session: { me: Me | null; orgId: string | null },
+  opts: { signedOutRedirect: boolean } = { signedOutRedirect: true },
 ): Promise<"ok" | "unknown"> {
   const match = matchRoute(path);
   if (match === null || match.entry.pattern === UNKNOWN_ROUTE) return "unknown";
@@ -57,6 +59,7 @@ export async function prefetchRoute(
   // the browser reads it again.
   await Promise.all(queries.map((q) => qc.prefetchQuery({ ...q, retry: false })));
   await match.entry.then?.(ctx, qc);
+  if (!opts.signedOutRedirect) return "ok";
   const signedOut = qc
     .getQueryCache()
     .getAll()
