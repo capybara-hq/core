@@ -157,10 +157,7 @@ export const VARIABLE_HEIGHT: Record<string, string> = {
     "the page's own sections or rows: the loading card blocks and the fixture sections differ",
   thread: "the loaded turns' text length decides the height; the skeleton draws three fixed turns",
   table: "the loaded table has the fixture's rows; the loading DataTable draws its own row count",
-  "form-section":
-    "the loaded fields carry help text and paired controls the placeholders cannot know",
   card: "a loaded section card is as tall as its content; the loading card is the three-line shape",
-  "form-card": "the loaded fields carry help text and paired controls the placeholders cannot know",
 };
 
 /**
@@ -235,22 +232,6 @@ export const VARIABLE_WIDTH: Record<string, string> = {
 
 /** Variable-width parts that sit at the right edge: their right edge is compared instead of x. */
 export const RIGHT_ALIGNED: string[] = ["page-header-actions", "bubble"];
-
-/**
- * A part whose height is that of another part of the same index (a grid cell stretched to its
- * row): in the loading block it is compared with the followed part's loading height, not with the
- * loaded height, which is data-driven.
- */
-export const FOLLOWS_HEIGHT: Record<string, string> = { "form-section-head": "form-section" };
-
-/**
- * Parts compared by count only, not by box: the loaded form lays its fields out by control kind
- * (a textarea, a segmented control, help text, two fields paired in one row), which a placeholder
- * of N identical fields cannot follow; the page's loading state still draws one per field.
- */
-export const COUNT_ONLY: Record<string, string> = {
-  field: "loaded fields differ in height by control and help text, and two can share a row",
-};
 
 /**
  * Parts compared in y and height only: their width (and so the x of the ones after them) is the

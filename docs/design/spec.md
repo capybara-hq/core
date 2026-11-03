@@ -392,7 +392,7 @@ States: `default`, `loading`
 - The ActionRow is always present: Cancel · Save draft (⌘S) · Publish.
 - **Create forms** (`FormPage create`, a new object): focus starts on the first field; the ActionRow never says "No unsaved changes" (nothing exists yet to be unchanged; typed fields still count as unsaved and guard leaving); the primary is disabled until the form is valid (the required fields filled), as in a create dialog. A create form whose prerequisite is missing (no channel extension enabled for 新建渠道) draws only the `EmptyState` with the next step, never the form.
 
-- **Loading** (`FormPage.loading`, a flag; `FormSection.loading`, `{ fields }`; spec §7.1 of the web query cache design): every region keeps its box. The header is its loading state (§4.2: the path the page knows, a title bar when the title is not known yet). Each section is the page's own `FormSection`, so the page passes its static section list and a section whose data is ready renders for real next to loading ones: a loading section keeps its title and description and draws `fields` field placeholders in its card in place of `children`. A field placeholder is the loaded `.cb-field` itself: a `body` slot (30%) in the field head where the label is, then a control-height box (`control.default`) directly in the field, so the box has whatever width the field's rule gives a control (never a width of its own). The ActionRow stays, its buttons disabled and with no unsaved or error count. A `flush` section (a SwitchList) keeps its flush card (no padding) and draws `fields` switch rows in SwitchList's own list and row (divider, padding, `row.roomy` height): a `body` name slot (30%) over a `small` description slot (55%) in the text column and a 32 × 20 box in the switch's place. One busy announcement (§6.29); a loading section outside a loading page announces itself. Nothing animates.
+- **Loading** (`FormPage.loading`, a flag; `FormSection.loading`, `{ fields }`; spec §7.1 of the web query cache design): every region keeps its box. The header is its loading state (§4.2: the path the page knows, a title bar when the title is not known yet). Each section is the page's own `FormSection`, so the page passes its static section list and a section whose data is ready renders for real next to loading ones: a loading section keeps its title and description and draws `fields` field placeholders in its card in place of `children`. `fields` is a count (that many default inputs) or `FieldShape[]`, the page's static field layout, which it knows before the data arrives and **must pass** whenever a field is not a plain input, so the loading card is as tall as the loaded one: `{ control?: input | textarea | select | segmented; help?: boolean; rows?: number; pair?: boolean }`. A field placeholder is the loaded `.cb-field` itself: a `body` slot (30%) in the field head where the label is, then the control's own box directly in the field (`control.default` for input, select and segmented; a textarea is `max(rows, 2)` `body` lines + `space.2` + 2 px high, `rows` default 2), so the box has whatever width the field's rule gives a control (never a width of its own), then, when `help` is set, one `small` slot (the loaded field's help text, error message or counter line). A shape with `pair` and the one after it sit in the two-column `Grid` (gap 12) the loaded section draws for paired fields. The ActionRow stays, its buttons disabled and with no unsaved or error count. A `flush` section (a SwitchList) keeps its flush card (no padding) and draws `fields` switch rows in SwitchList's own list and row (divider, padding, `row.roomy` height): a `body` name slot (30%) over a `small` description slot (55%) in the text column and a 32 × 20 box in the switch's place. One busy announcement (§6.29); a loading section outside a loading page announces itself. Nothing animates.
 
 <!-- states: template-form -->
 States: `page`, `loading`
@@ -408,6 +408,7 @@ States: `page`, `loading`
 | content | loading | max-width | layout.content |
 | action-row | loading | height | layout.action-row |
 | skeleton-box[data-box=default] | loading | height | control.default |
+| skeleton-box[data-box=textarea] | loading | height | 50 |
 | skeleton-text[data-size=body] | loading | height | type.body.line |
 | loading-switch-row | loading | height | row.roomy |
 
@@ -486,7 +487,7 @@ States: `default`, `loading`, `default-records`, `loading-records`
 | skeleton-box[data-box=mark] | loading | height | 36 |
 
 ### 5.8 Settings (T5)
-- **Loading** (`SettingsPage.loading`, `{ sections? }`): the header is its loading state (§4.2); the sub-nav is real (static per page) and so is the header's `description`; an ActionRow the page passes stays with its buttons disabled. `sections` (one entry per section: `fields`, and the `title` / `description` the page already knows) draws each section in the `FormSection` frame (§5.3) in place of `children`: a title the page does not know is an h2-sized slot (`SkeletonText` `heading`, 45%), a description it does not know a `body` slot (70%), then `fields` field placeholders (§5.3). Without `sections` the children render as they are, each `FormSection` or list saying for itself whether it is loading. One busy announcement (§6.29). Nothing animates.
+- **Loading** (`SettingsPage.loading`, `{ sections? }`): the header is its loading state (§4.2); the sub-nav is real (static per page) and so is the header's `description`; an ActionRow the page passes stays with its buttons disabled. `sections` (one entry per section: `fields`, and the `title` / `description` the page already knows) draws each section in the `FormSection` frame (§5.3) in place of `children`: a title the page does not know is an h2-sized slot (`SkeletonText` `heading`, 45%), a description it does not know a `body` slot (70%), then `fields` field placeholders (§5.3; a count or `FieldShape[]`). Without `sections` the children render as they are, each `FormSection` or list saying for itself whether it is loading. One busy announcement (§6.29). Nothing animates.
 
 <!-- states: template-settings -->
 States: `default`, `loading`
@@ -502,7 +503,7 @@ States: `default`, `loading`
 | skeleton-text[data-size=heading] | loading | height | type.h2.line |
 
 ### 5.9 Wizard (T9)
-- **Loading** (`WizardPage.loading`, `{ fields }`): the header is its loading state (§4.2); the step bar is real (the steps are static); the ActionRow stays with its buttons disabled; the step's body is one card (the `panel` card of §5.2 with a 30% `body` slot as its title) holding `fields` field placeholders (§5.3) `space.4` apart, in place of `children`. One busy announcement (§6.29). Nothing animates.
+- **Loading** (`WizardPage.loading`, `{ fields }`): the header is its loading state (§4.2); the step bar is real (the steps are static); the ActionRow stays with its buttons disabled; the step's body is one card (the `panel` card of §5.2 with a 30% `body` slot as its title) holding `fields` field placeholders (§5.3; a count or the page's static `FieldShape[]`) `space.4` apart, in place of `children`. One busy announcement (§6.29). Nothing animates.
 
 <!-- states: template-wizard -->
 States: `default`, `loading`
@@ -516,7 +517,7 @@ States: `default`, `loading`
 | skeleton-box[data-box=default] | loading | height | control.default |
 
 ### 5.10 Auth (T10)
-- **Loading** (`AuthPage.loading`, `{ fields }`): the page keeps its frame: the two dither columns, the logo, the 400 px card with the title and subtitle the page knows (an empty `title` is an h1-sized bar), and its `footer` and `preferences`. The card's body is `fields` field placeholders (§5.3) and the submit button's box (`prominent`, §2.5), `space.4` apart, in place of `children`. One busy announcement (§6.29). Nothing animates.
+- **Loading** (`AuthPage.loading`, `{ fields }`): the page keeps its frame: the two dither columns, the logo, the 400 px card with the title and subtitle the page knows (an empty `title` is an h1-sized bar), and its `footer` and `preferences`. The card's body is `fields` field placeholders (§5.3; a count or the page's static `FieldShape[]`) and the submit button's box (`prominent`, §2.5), `space.4` apart, in place of `children`. One busy announcement (§6.29). Nothing animates.
 
 <!-- states: template-auth -->
 States: `default`, `loading`

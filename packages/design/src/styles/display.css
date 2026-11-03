@@ -340,6 +340,15 @@
   width: 36px;
   height: 36px;
 }
+/* A Textarea's box: max(rows, 2) body lines + the textarea's own padding (space.1 x 2) + its border. */
+.cb-skeleton-box[data-box="textarea"] {
+  height: calc(
+    max(var(--cb-skeleton-rows, 2), 2) *
+    var(--cb-type-body-line) +
+    var(--cb-space-2) +
+    2px
+  );
+}
 .cb-skeleton-box[data-box="block"] {
   height: 96px;
 }

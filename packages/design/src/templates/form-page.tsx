@@ -10,9 +10,11 @@ import { Text } from "../layout/index";
 import { useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
 import {
+  type FieldShape,
   LoadingFields,
   LoadingSwitchRows,
   loadingActionRow,
+  loadingCount,
   loadingHeader,
   TemplateHead,
 } from "./frame";
@@ -93,7 +95,7 @@ function withoutUnsaved({ unsaved: _, ...rest }: ActionRowProps): ActionRowProps
  * A form section (spec §5.3): two columns, the title (h2) and a prose-small muted description on
  * the left, the fields on a `panel` card on the right. Sections are separated by spacing.
  * `loading` keeps the title and description real and draws `fields` field placeholders in the
- * card (a label slot and a control-height box each) in place of `children`; a `flush` section keeps its flush card and draws `fields` switch rows instead; a section whose data
+ * card (a count of default inputs, or the page's static `FieldShape`s) in place of `children`; a `flush` section keeps its flush card and draws `fields` switch rows instead; a section whose data
  * is ready renders for real next to loading ones. Outside a loading page it announces itself.
  */
 export function FormSection({
@@ -110,7 +112,7 @@ export function FormSection({
   /** The card without padding, for content that reaches its edges (a SwitchList). */
   flush?: boolean;
   /** The section's data is not here yet: this many field placeholders replace `children`. */
-  loading?: { fields: number };
+  loading?: { fields: number | FieldShape[] };
   children?: ReactNode;
 }) {
   const announces = useSkeletonAnnounces();
@@ -134,9 +136,9 @@ export function FormSection({
       >
         {loading ? (
           flush ? (
-            <LoadingSwitchRows count={loading.fields} />
+            <LoadingSwitchRows count={loadingCount(loading.fields)} />
           ) : (
-            <LoadingFields count={loading.fields} />
+            <LoadingFields fields={loading.fields} />
           )
         ) : (
           children
@@ -156,7 +158,7 @@ export function LoadingFormSection({
   title,
   description,
 }: {
-  fields: number;
+  fields: number | FieldShape[];
   title?: string;
   description?: string;
 }) {
@@ -181,7 +183,7 @@ export function LoadingFormSection({
         )}
       </div>
       <div className="cb-form-section-fields" data-part="form-card">
-        <LoadingFields count={fields} />
+        <LoadingFields fields={fields} />
       </div>
     </section>
   );

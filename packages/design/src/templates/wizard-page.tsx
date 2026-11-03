@@ -4,7 +4,13 @@ import { Icon } from "../icons/icon";
 import { Card, Stack } from "../layout/index";
 import { useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
-import { LoadingFields, loadingActionRow, loadingHeader, TemplateHead } from "./frame";
+import {
+  type FieldShape,
+  LoadingFields,
+  loadingActionRow,
+  loadingHeader,
+  TemplateHead,
+} from "./frame";
 
 /**
  * T9 向导：Centered + 步骤条 + 始终存在的 ActionRow. `loading` draws the frame while the wizard's
@@ -24,7 +30,7 @@ export function WizardPage({
   steps: string[];
   current: number;
   actionRow: ActionRowProps;
-  loading?: { fields: number };
+  loading?: { fields: number | FieldShape[] };
   children?: ReactNode;
 }) {
   const t = useDesignT();
@@ -55,7 +61,7 @@ export function WizardPage({
         {loading ? (
           <Card title={<SkeletonText width="30%" />}>
             <Stack gap={16}>
-              <LoadingFields count={loading.fields} />
+              <LoadingFields fields={loading.fields} />
             </Stack>
           </Card>
         ) : (

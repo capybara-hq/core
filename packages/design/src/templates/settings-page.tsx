@@ -3,7 +3,7 @@ import { SkeletonGroup } from "../display/skeleton";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
 import { LoadingFormSection } from "./form-page";
-import { loadingActionRow, loadingHeader, TemplateHead } from "./frame";
+import { type FieldShape, loadingActionRow, loadingHeader, TemplateHead } from "./frame";
 
 export type SettingsNavGroup = {
   group: string;
@@ -38,7 +38,9 @@ export function SettingsPage({
   nav: SettingsNavGroup[];
   activeNav: string;
   actionRow?: ActionRowProps;
-  loading?: { sections?: { fields: number; title?: string; description?: string }[] };
+  loading?: {
+    sections?: { fields: number | FieldShape[]; title?: string; description?: string }[];
+  };
   children?: ReactNode;
 }) {
   const { description, ...head } = header;

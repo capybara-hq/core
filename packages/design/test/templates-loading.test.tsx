@@ -277,6 +277,71 @@ describe("FormPage / FormSection loading", () => {
     expect(box?.style.width).toBe("");
   });
 
+  it("a textarea shape draws a textarea-height box of its rows", () => {
+    zh(
+      <FormSection
+        id="a"
+        title="T"
+        loading={{ fields: [{ control: "textarea" }, { control: "textarea", rows: 4 }] }}
+      />,
+    );
+    const boxes = document.querySelectorAll<HTMLElement>(
+      '.cb-form-section-fields > .cb-field > [data-part="skeleton-box"]',
+    );
+    expect(boxes).toHaveLength(2);
+    expect(boxes[0]?.dataset.box).toBe("textarea");
+    expect(boxes[0]?.style.getPropertyValue("--cb-skeleton-rows")).toBe("2");
+    expect(boxes[1]?.style.getPropertyValue("--cb-skeleton-rows")).toBe("4");
+  });
+
+  it("a help shape draws one small slot under the control, and only then", () => {
+    zh(
+      <FormSection
+        id="a"
+        title="T"
+        loading={{ fields: [{ help: true }, {}, { control: "select" }] }}
+      />,
+    );
+    const fields = document.querySelectorAll(".cb-form-section-fields > .cb-field");
+    expect(fields).toHaveLength(3);
+    const small = (i: number) =>
+      fields[i]?.querySelectorAll(':scope > [data-part="skeleton-text"][data-size="small"]');
+    expect(small(0)).toHaveLength(1);
+    expect(small(1)).toHaveLength(0);
+    expect(small(2)).toHaveLength(0);
+    const select = fields[2]?.querySelector(':scope > [data-part="skeleton-box"]') as HTMLElement;
+    expect(select.dataset.box).toBe("default");
+  });
+
+  it("a pair shape and the next one share the two-column grid the loaded section uses", () => {
+    zh(
+      <FormSection
+        id="a"
+        title="T"
+        loading={{ fields: [{ control: "select", pair: true }, { control: "segmented" }, {}] }}
+      />,
+    );
+    const card = document.querySelector(".cb-form-section-fields");
+    const grid = card?.querySelector(':scope > .cb-grid[data-columns="2"][data-gap="12"]');
+    expect(grid?.querySelectorAll(":scope > .cb-field")).toHaveLength(2);
+    // The third field stands alone, a direct child of the card.
+    expect(card?.querySelectorAll(":scope > .cb-field")).toHaveLength(1);
+  });
+
+  it("a number still draws that many default inputs; wizard and auth take shapes too", () => {
+    zh(<FormSection id="a" title="T" loading={{ fields: 3 }} />);
+    const boxes = document.querySelectorAll<HTMLElement>(
+      '.cb-form-section-fields > .cb-field > [data-part="skeleton-box"]',
+    );
+    expect([...boxes].map((b) => b.dataset.box)).toEqual(["default", "default", "default"]);
+    cleanup();
+    zh(<AuthPage title="登录" loading={{ fields: [{ help: true }, {}] }} />);
+    expect(document.querySelectorAll(".cb-auth-card .cb-field")).toHaveLength(2);
+    expect(document.querySelectorAll(".cb-auth-card .cb-field [data-size='small']")).toHaveLength(
+      1,
+    );
+  });
+
   it("a loading flush section keeps its flush card and draws the loaded switch rows", () => {
     zh(
       <FormPage header={header} actionRow={actionRow} loading>

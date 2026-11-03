@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { SkeletonBox, SkeletonText, StatCards } from "../display/index";
+import { Grid } from "../layout/index";
 import { type ActionRowProps, PageHeader, type PageHeaderProps } from "../shell/index";
 
 /**
@@ -139,26 +140,73 @@ export function loadingActionRow(row: ActionRowProps): ActionRowProps {
 }
 
 /**
- * Field placeholders (spec §5.3): each is the loaded `.cb-field` itself, a label slot (a `body`
- * line, 30% wide) in `.cb-field-head` where the label is, then a control-height box directly in
- * the field, so the box takes whatever width the field's rule gives a control. Drawn in the
- * container the loaded fields live in (a form card, a wizard card, the auth card).
+ * What a loading field looks like (spec §5.3): the page's static layout, which it knows before its
+ * data arrives. `control` is the kind of control (default `input`; `input`, `select` and `segmented`
+ * share the default control height); `rows` the textarea's lines (default 2); `help` a small line
+ * under the control (help text, an error message or a counter); `pair` puts this field and the next
+ * one in one row, as the loaded section's two-column grid does.
  */
-export function LoadingFields({ count }: { count: number }) {
+export type FieldShape = {
+  control?: "input" | "textarea" | "select" | "segmented";
+  help?: boolean;
+  rows?: number;
+  pair?: boolean;
+};
+
+/** The shapes a bare field count stands for: that many default inputs. */
+const shapesOf = (fields: number | FieldShape[]): FieldShape[] =>
+  typeof fields === "number" ? Array.from({ length: Math.max(0, fields) }, () => ({})) : fields;
+
+/** One field placeholder: the loaded `.cb-field`'s own markup, with slots where the data goes. */
+function LoadingField({ shape }: { shape: FieldShape }) {
+  const textarea = shape.control === "textarea";
   return (
-    <>
-      {Array.from({ length: Math.max(0, count) }, (_, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
-        <div key={i} className="cb-field" data-part="loading-field">
-          <div className="cb-field-head">
-            <SkeletonText width="30%" />
-          </div>
-          <SkeletonBox part="default" />
-        </div>
-      ))}
-    </>
+    <div className="cb-field" data-part="loading-field">
+      <div className="cb-field-head">
+        <SkeletonText width="30%" />
+      </div>
+      {textarea ? (
+        <SkeletonBox part="textarea" rows={shape.rows ?? 2} />
+      ) : (
+        <SkeletonBox part="default" />
+      )}
+      {shape.help ? <SkeletonText width="55%" size="small" /> : null}
+    </div>
   );
 }
+
+/**
+ * Field placeholders (spec §5.3): each is the loaded `.cb-field` itself, a label slot (a `body`
+ * line, 30% wide) in `.cb-field-head` where the label is, then a box at the control's own height
+ * (a textarea `rows` lines high) directly in the field, so the box takes whatever width the
+ * field's rule gives a control, and a `small` slot when the field has a line under it. `fields` is
+ * a count (that many default inputs) or the page's static layout as `FieldShape`s; a `pair` shape
+ * and the one after it share a two-column row (`Grid`), as in the loaded section. Drawn in the
+ * container the loaded fields live in (a form card, a wizard card, the auth card).
+ */
+export function LoadingFields({ fields }: { fields: number | FieldShape[] }) {
+  const shapes = shapesOf(fields);
+  const out: ReactNode[] = [];
+  for (let i = 0; i < shapes.length; i++) {
+    const shape = shapes[i] as FieldShape;
+    const next = shapes[i + 1];
+    if (shape.pair && next) {
+      out.push(
+        <Grid key={i} columns={2} gap={12}>
+          <LoadingField shape={shape} />
+          <LoadingField shape={next} />
+        </Grid>,
+      );
+      i++;
+    } else {
+      out.push(<LoadingField key={i} shape={shape} />);
+    }
+  }
+  return <>{out}</>;
+}
+
+/** How many switch rows or fields a loading section draws, whichever its `fields` says. */
+export const loadingCount = (fields: number | FieldShape[]): number => shapesOf(fields).length;
 
 /**
  * Switch row placeholders for a flush form section (spec §5.3): SwitchList's own `ul` and `li`

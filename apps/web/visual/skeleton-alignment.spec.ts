@@ -1,8 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 import {
-  COUNT_ONLY,
   DATA_ONLY_PARTS,
-  FOLLOWS_HEIGHT,
   HEIGHT_ONLY,
   IGNORED_PARTS,
   LOADING_ALIASES,
@@ -137,8 +135,6 @@ for (const theme of THEMES) {
             const a = loaded[k] as Box;
             const b = loading[k] as Box;
             const part = nameOf(k);
-            if (part in COUNT_ONLY) continue;
-            const follows = FOLLOWS_HEIGHT[part];
             const props = (["x", "y", "width", "height"] as const).filter(
               (p) =>
                 !(p === "height" && part in VARIABLE_HEIGHT) &&
@@ -147,15 +143,7 @@ for (const theme of THEMES) {
             );
             for (const p of props) {
               const right = p === "x" && RIGHT_ALIGNED.includes(part);
-              const followed = follows ? loading[`${follows}#${k.split("#")[1]}`] : undefined;
-              const want =
-                p === "y"
-                  ? a.y + shift(k)
-                  : right
-                    ? a.x + a.width
-                    : p === "height" && followed
-                      ? followed.height
-                      : a[p];
+              const want = p === "y" ? a.y + shift(k) : right ? a.x + a.width : a[p];
               const got = right ? b.x + b.width : b[p];
               if (Math.abs(want - got) > 1) {
                 failures.push(

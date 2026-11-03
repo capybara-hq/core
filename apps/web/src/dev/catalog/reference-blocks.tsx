@@ -12,6 +12,7 @@ import {
   DesignProvider,
   ErrorDetail,
   Field,
+  type FieldShape,
   FilePicker,
   FilterChip,
   FormPage,
@@ -919,6 +920,26 @@ function FormFieldView({ f }: { f: FixtureFormField }) {
   }
 }
 
+/**
+ * The loading shapes of a section's fields, from the same fixture the loaded section draws (the
+ * page's static layout: control kinds, help or error or counter lines, textarea rows, the paired
+ * first two).
+ */
+function loadingShapes(fields: FixtureFormField[], paired: boolean): FieldShape[] {
+  return fields.map((f, i) => {
+    const shape: FieldShape = {};
+    if (f.kind === "textarea") {
+      shape.control = "textarea";
+      shape.rows = f.mono ? 4 : 2;
+    } else if (f.kind === "select" || f.kind === "segmented") {
+      shape.control = f.kind;
+    }
+    if ((f.kind === "input" && f.error) || (f.kind === "textarea" && f.counter)) shape.help = true;
+    if (paired && i === 0) shape.pair = true;
+    return shape;
+  });
+}
+
 function FormTemplateBody({ loading }: { loading?: boolean }) {
   useStatusBar(F.status.pageStatus);
   return (
@@ -944,7 +965,12 @@ function FormTemplateBody({ loading }: { loading?: boolean }) {
             description={sec.description}
             flush={a?.kind === "switches"}
             {...(loading
-              ? { loading: { fields: a?.kind === "switches" ? a.rows.length : sec.fields.length } }
+              ? {
+                  loading: {
+                    fields:
+                      a?.kind === "switches" ? a.rows.length : loadingShapes(sec.fields, paired),
+                  },
+                }
               : {})}
           >
             {paired ? (

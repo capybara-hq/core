@@ -49,21 +49,24 @@ export function SkeletonText({
   );
 }
 
-export type SkeletonBoxPart = "dense" | "default" | "prominent" | "mark" | "block";
+export type SkeletonBoxPart = "dense" | "default" | "prominent" | "mark" | "block" | "textarea";
 
 /**
  * A block shaped like a control or a mark (spec §6.29), on the `selected` ground. `dense`,
  * `default` and `prominent` take the control height; `mark` is the 36 px object mark; `block`
- * takes `height` (pixels, default 96). `width` is in pixels and defaults to the container.
+ * takes `height` (pixels, default 96); `textarea` is a Textarea's own box, `rows` lines high (default 2,
+ * the control's minimum). `width` is in pixels and defaults to the container.
  */
 export function SkeletonBox({
   part,
   height,
   width,
+  rows,
 }: {
   part: SkeletonBoxPart;
   height?: number;
   width?: number;
+  rows?: number;
 }) {
   return (
     <span
@@ -73,6 +76,7 @@ export function SkeletonBox({
       style={{
         ...(width !== undefined ? { width: `${width}px` } : {}),
         ...(height !== undefined ? { height: `${height}px` } : {}),
+        ...(rows !== undefined ? { "--cb-skeleton-rows": rows } : {}),
       }}
       aria-hidden="true"
     />

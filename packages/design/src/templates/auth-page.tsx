@@ -4,7 +4,7 @@ import { SkeletonBox, SkeletonGroup, SkeletonText } from "../display/skeleton";
 import { Card, Stack, Text } from "../layout/index";
 import { useDesignT } from "../provider";
 import { PreferenceBar, type PreferenceBarProps } from "../shell/preference-bar";
-import { LoadingFields } from "./frame";
+import { type FieldShape, LoadingFields } from "./frame";
 
 /**
  * T10 auth: no shell, a centered 400-wide card between two dither columns (Dither is used only
@@ -27,7 +27,7 @@ export function AuthPage({
   subtitle?: string;
   footer?: ReactNode;
   preferences?: PreferenceBarProps;
-  loading?: { fields: number };
+  loading?: { fields: number | FieldShape[] };
   children?: ReactNode;
 }) {
   const t = useDesignT();
@@ -54,7 +54,7 @@ export function AuthPage({
             </div>
             {loading ? (
               <Stack gap={16}>
-                <LoadingFields count={loading.fields} />
+                <LoadingFields fields={loading.fields} />
                 <SkeletonBox part="prominent" />
               </Stack>
             ) : (
