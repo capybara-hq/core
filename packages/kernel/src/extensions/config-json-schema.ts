@@ -79,6 +79,31 @@ export function configFormSchema(schema: z.ZodTypeAny, level: ConfigLevel): Conf
   return r;
 }
 
+/**
+ * The secret record paths some `x-ui.secrets[].path` of a form schema names (spec §4.3), anywhere in
+ * the schema. Read from a checked schema: one whose hints were invalid was stripped and names none.
+ */
+export function hintedSecretPaths(node: unknown, out = new Set<string>()): Set<string> {
+  if (Array.isArray(node)) {
+    for (const n of node) hintedSecretPaths(n, out);
+    return out;
+  }
+  if (!isObj(node)) return out;
+  const hints = node["x-ui"];
+  if (isObj(hints) && Array.isArray(hints.secrets)) {
+    for (const s of hints.secrets) {
+      if (isObj(s) && typeof s.path === "string") out.add(s.path);
+    }
+  }
+  for (const [k, v] of Object.entries(node)) {
+    if (k === "x-ui" || VALUE_KEYWORDS.has(k)) continue;
+    if (SCHEMA_MAPS.has(k) && isObj(v)) {
+      for (const child of Object.values(v)) hintedSecretPaths(child, out);
+    } else hintedSecretPaths(v, out);
+  }
+  return out;
+}
+
 /** The root `x-ui.messages` of a form schema (the localized texts of custom issues), if any. */
 export function configMessages(schema: JsonSchema): Record<string, unknown> | undefined {
   const hints = schema["x-ui"];

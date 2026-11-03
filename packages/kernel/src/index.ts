@@ -116,6 +116,7 @@ export {
   mergeDeploymentConfig,
   PLUGIN_DEPLOYMENT_CONFIG_TOPIC,
   readStoredDeploymentConfig,
+  type SecretEntry,
 } from "./extensions/deployment-config.js";
 export {
   assertSecretsReachable,

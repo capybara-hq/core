@@ -121,6 +121,22 @@ describe("config UI hints: load-time validation, static schemas, issue message k
     expect(warnings[0]).toMatchObject({ level: "warn" });
   });
 
+  it("a hint conversion that throws: the deployment config view still renders, without a schema", async () => {
+    const before = logs.length;
+    for (let i = 0; i < 2; i++) {
+      const v = await configView("throwhints");
+      expect(v.schema).toBeNull();
+      expect(v.validated).toBe(true);
+      expect(v.valid).toBe(true);
+    }
+    // one warning per schema, not one per view
+    const warnings = logs
+      .slice(before)
+      .filter((l) => l.plugin === "throwhints" && l.level === "warn");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.msg).toMatch(/form schema/);
+  });
+
   it("valid org hints pass through (x-ui, x-hot); a custom issue names its message key", async () => {
     const orgId = await createOrg(admin);
     const list = await admin({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });

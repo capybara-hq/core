@@ -543,7 +543,7 @@ export class ExtensionHost {
         manifest,
         dir,
         permissions: sets.get(manifest.name) as PermissionSet,
-        displayName: (await declaredDisplayName(dir)).displayName ?? null,
+        displayName: (await declaredDisplayName(dir, manifest.name)).displayName ?? null,
       });
     }
     return out;
@@ -876,7 +876,7 @@ export class ExtensionHost {
    */
   private async noteDisplayNames(entries: ImportedEntry[]): Promise<void> {
     for (const e of entries) {
-      const { displayName, problem } = await declaredDisplayName(e.dir);
+      const { displayName, problem } = await declaredDisplayName(e.dir, e.manifest.name);
       if (displayName) this.declaredDisplayNames.set(e.manifest.name, displayName);
       if (problem !== undefined) {
         this.log.warn("plugin.json of a config-declared extension is invalid; no display name", {

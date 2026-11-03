@@ -287,11 +287,13 @@ export async function readMigrationSql(
 /**
  * The plugin.json `displayName` of the plugin a config-declared extension module belongs to: the
  * `.capybara-plugin/plugin.json` beside the nearest `package.json` above the module's directory
- * `dir`. Nothing when there is no such file; `problem` when it cannot be read or is not a valid
- * plugin.json (the extension then has no display name of its own).
+ * `dir`. Nothing when there is no such file or it names another plugin than the extension `name`
+ * (a module inside some other plugin's directory); `problem` when it cannot be read or is not a
+ * valid plugin.json (the extension then has no display name of its own).
  */
 export async function declaredDisplayName(
   dir: string,
+  name: string,
 ): Promise<{ displayName?: LocalizedName; problem?: string }> {
   let root: string | undefined;
   for (let d = resolvePath(dir); ; ) {
@@ -318,8 +320,12 @@ export async function declaredDisplayName(
   } catch (e) {
     return { problem: `${PLUGIN_MANIFEST_FILE} is not valid JSON: ${errMsg(e)}` };
   }
+  // another plugin's plugin.json (valid or not) says nothing about this extension
+  const named = (json as { name?: unknown } | null)?.name;
+  if (typeof named === "string" && named !== name) return {};
   const m = parsePluginManifest(json);
   if ("errors" in m) return { problem: m.errors.slice(0, 3).join("; ") };
+  if (m.name !== name) return {};
   return m.displayName === undefined ? {} : { displayName: m.displayName };
 }
 
