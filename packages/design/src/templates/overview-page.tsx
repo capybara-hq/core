@@ -15,6 +15,8 @@ const LOADING_SECTIONS = 2;
  * real instead) and `sections` card-shaped blocks (default 2) in place of `children`. A page whose
  * content is a `Grid columns="main-side"` of two card stacks passes `mainSide` (the cards of each
  * column) instead: the blocks then stand in the same grid, so nothing moves when the data lands.
+ * A page whose content does not depend on the data (a note under the numbers) passes `keep`: the
+ * children render as they are under the stat slots, in place of the blocks.
  */
 export function OverviewPage({
   header,
@@ -27,6 +29,8 @@ export function OverviewPage({
     sections?: number;
     /** The content is a main-side grid of two card stacks: the cards of each column. */
     mainSide?: { main: number; side: number };
+    /** The children do not depend on the data: they render as they are, no blocks. */
+    keep?: boolean;
   };
   children?: ReactNode;
 }) {
@@ -40,7 +44,9 @@ export function OverviewPage({
           <Body layout="single" width="content">
             {known ? null : <LoadingStats count={loading.stats ?? LOADING_STATS} />}
             <WithStats header={header}>
-              {loading.mainSide ? (
+              {loading.keep ? (
+                children
+              ) : loading.mainSide ? (
                 <Grid columns="main-side">
                   <Stack gap={16}>
                     <LoadingCards count={loading.mainSide.main} />

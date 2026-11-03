@@ -125,6 +125,18 @@ describe("OverviewPage loading", () => {
     expect(parts("stat-card")).toHaveLength(0);
   });
 
+  it("keep renders the children as they are under the stat slots, without blocks", () => {
+    zh(
+      <OverviewPage header={header} loading={{ stats: 4, keep: true }}>
+        <p>STATIC NOTE</p>
+      </OverviewPage>,
+    );
+    expect(screen.getByText("STATIC NOTE")).toBeTruthy();
+    expect(parts("stat-card")).toHaveLength(4);
+    expect(count('[data-part="loading-card"]')).toBe(0);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
   it("without mainSide the sections stack in one column", () => {
     zh(<OverviewPage header={header} loading={{ sections: 2 }} />);
     expect(document.querySelector('[data-template="OverviewPage"] .cb-grid')).toBeNull();
@@ -271,6 +283,18 @@ describe("FormPage / FormSection loading", () => {
     // Nothing is known to be unsaved yet.
     expect(parts("action-row-unsaved")).toHaveLength(0);
     expect(parts("action-row-errors")).toHaveLength(0);
+  });
+
+  it("a section that lists cards draws titled card placeholders in its card", () => {
+    zh(
+      <FormSection id="a" title="用途" loading={{ cards: [{ lines: 2 }, { lines: 3 }] }}>
+        <p>REAL CARD</p>
+      </FormSection>,
+    );
+    expect(screen.queryByText("REAL CARD")).toBeNull();
+    const card = document.querySelector('[data-part="form-card"]');
+    expect(card?.querySelectorAll('[data-part="loading-shaped-card"]')).toHaveLength(2);
+    expect(count('[data-part="loading-field"]')).toBe(0);
   });
 
   it("a loading section keeps its title and description real", () => {

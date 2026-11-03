@@ -113,8 +113,11 @@ export function FormSection({
   description?: string;
   /** The card without padding, for content that reaches its edges (a SwitchList). */
   flush?: boolean;
-  /** The section's data is not here yet: this many field placeholders replace `children`. */
-  loading?: { fields: number | FieldShape[] };
+  /**
+   * The section's data is not here yet: `fields` field placeholders replace `children`, or, for a
+   * section that lists cards, `cards` titled card placeholders (spec §5.8).
+   */
+  loading?: { fields: number | FieldShape[] } | { cards: CardShape[] };
   children?: ReactNode;
 }) {
   const announces = useSkeletonAnnounces();
@@ -137,7 +140,9 @@ export function FormSection({
         data-flush={flush ? "true" : undefined}
       >
         {loading ? (
-          flush ? (
+          "cards" in loading ? (
+            <LoadingShapedCards cards={loading.cards} />
+          ) : flush ? (
             <LoadingSwitchRows count={loadingCount(loading.fields)} />
           ) : (
             <LoadingFields fields={loading.fields} />

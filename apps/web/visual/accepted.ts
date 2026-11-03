@@ -94,6 +94,7 @@ export const LOADING_TEMPLATES: {
     pairs: [
       { loaded: "default", loading: "loading" },
       { loaded: "main-side", loading: "loading-main-side" },
+      { loaded: "keep", loading: "loading-keep" },
     ],
   },
   {
