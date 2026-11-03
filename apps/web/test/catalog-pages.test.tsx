@@ -10,7 +10,6 @@ import CatalogRequestsPage from "../src/app/(app)/admin/catalog/requests/page";
 import MarketplaceEntriesPage from "../src/app/(app)/admin/marketplaces/entries/page";
 import MarketplacesPage from "../src/app/(app)/admin/marketplaces/page";
 import InboxRoute from "../src/app/(app)/inbox/page";
-import ExtensionsPage from "../src/app/(app)/settings/extensions/page";
 import { defaultSlug, slugOf } from "../src/components/CatalogInstallWizard";
 import {
   MARKETPLACE_ERROR_KINDS,
@@ -1511,7 +1510,7 @@ describe("组织插件：启用被目录条目拒绝", () => {
       [`PUT ${ORG}/extensions/crm-core`]: () =>
         json(403, { error: { code: "catalog.approval_required", message: "x" } }),
     });
-    await renderRoute(ExtensionsPage, lastStubRoutes(), { locale });
+    await renderRouteWithCache("/settings/extensions", lastStubRoutes(), { locale });
     await userEvent.setup().click(
       await screen.findByRole("switch", {
         name: fill(m.extensions.enableLabel, { plugin: "crm-core" }),

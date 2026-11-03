@@ -3,13 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import ExtensionsPage from "../src/app/(app)/settings/extensions/page";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
-import { renderRoute } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 const navigateBrowser = vi.hoisted(() => vi.fn());
@@ -103,7 +101,9 @@ describe("组织插件（SettingsPage）", () => {
         [`PUT ${BASE}/extensions/fake-im`]: (c) =>
           json(200, { extension: { ...FAKE_IM, ...(bodyOf(c) as object) } }),
       });
-      const { container } = await renderRoute(ExtensionsPage, lastStubRoutes(), { locale });
+      const { container } = await renderRouteWithCache("/settings/extensions", lastStubRoutes(), {
+        locale,
+      });
       expect(container.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
       const perms = await screen.findByRole("region", {
         name: m.permissionsLabel.replace("{plugin}", "fake-im"),
@@ -152,7 +152,7 @@ describe("组织插件（SettingsPage）", () => {
             ],
           }),
       });
-      await renderRoute(ExtensionsPage, lastStubRoutes(), { locale });
+      await renderRouteWithCache("/settings/extensions", lastStubRoutes(), { locale });
       const toggle = await screen.findByRole("switch", {
         name: m.enableLabel.replace("{plugin}", "fake-im"),
       });
@@ -193,7 +193,7 @@ describe("组织插件（SettingsPage）", () => {
             ],
           }),
       });
-      await renderRoute(ExtensionsPage, lastStubRoutes(), { locale });
+      await renderRouteWithCache("/settings/extensions", lastStubRoutes(), { locale });
       const toggle = await screen.findByRole("switch", {
         name: m.enableLabel.replace("{plugin}", "fake-im"),
       });
@@ -223,7 +223,7 @@ describe("组织插件（SettingsPage）", () => {
           },
         }),
     });
-    await renderRoute(ExtensionsPage, lastStubRoutes());
+    await renderRouteWithCache("/settings/extensions", lastStubRoutes());
     await userEvent.setup().click(await screen.findByRole("switch", { name: "Enable fake-im" }));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain(en.extensions.dependencyMissing);
@@ -247,7 +247,7 @@ describe("组织插件（SettingsPage）", () => {
               },
             }),
     });
-    await renderRoute(ExtensionsPage, lastStubRoutes(), { locale: "zh" });
+    await renderRouteWithCache("/settings/extensions", lastStubRoutes(), { locale: "zh" });
     const user = userEvent.setup();
     await user.click(await screen.findByRole("switch", { name: "启用 core-dir" }));
     const alert = await screen.findByRole("alert");
@@ -269,7 +269,7 @@ describe("组织插件（SettingsPage）", () => {
       [`PUT ${BASE}/extensions/fake-im`]: () =>
         json(200, { extension: { ...FAKE_IM, config: { url: "http://dir.test" } } }),
     });
-    await renderRoute(ExtensionsPage, lastStubRoutes());
+    await renderRouteWithCache("/settings/extensions", lastStubRoutes());
     const user = userEvent.setup();
     const save = await screen.findByRole("button", { name: "Save config of fake-im" });
     expect(save).toHaveProperty("disabled", true);
@@ -287,7 +287,7 @@ describe("组织插件（SettingsPage）", () => {
       [`GET ${BASE}/extensions`]: () => json(200, { extensions: [{ ...FAKE_IM, enabled: true }] }),
       [`POST ${BASE}/extensions/fake-im/directory/sync`]: () => json(202, { jobId: "j1" }),
     });
-    await renderRoute(ExtensionsPage, lastStubRoutes());
+    await renderRouteWithCache("/settings/extensions", lastStubRoutes());
     await userEvent
       .setup()
       .click(await screen.findByRole("button", { name: "Sync directory of fake-im now" }));

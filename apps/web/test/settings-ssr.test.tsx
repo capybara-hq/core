@@ -5,7 +5,6 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import ExtensionsPage from "../src/app/(app)/settings/extensions/page";
 import TokensPage from "../src/app/(app)/settings/tokens/page";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
@@ -141,6 +140,28 @@ async function expectLoading(name: string, text: string) {
   expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
   expect(screen.queryByText(text)).toBeNull();
 }
+
+const EXTENSION = {
+  plugin: "todo",
+  displayName: { zh: "待办", en: "Todo" },
+  version: "1.0.0",
+  enabled: true,
+  available: true,
+  configurable: false,
+  orgConfigSchema: null,
+  config: null,
+  secrets: [],
+  permissions: [],
+  provides: [],
+};
+const PREVIEWER = {
+  plugin: "todo",
+  id: "md",
+  title: { zh: "Markdown", en: "Markdown" },
+  accepts: { extensions: ["md"] },
+  position: 0,
+  disabled: false,
+};
 
 const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
 const noAccess = () => template("StatusPage")?.getAttribute("data-kind") === "no-access";
@@ -314,27 +335,73 @@ describe("first paint comes from the server (no browser fetch)", () => {
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("/settings/extensions, /tokens", async () => {
+  it("/settings/tokens", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => ExtensionsPage(), ROUTES);
-    expect(screen.getByText(en.extensions.empty)).toBeTruthy();
-    cleanup();
     await renderRoute(() => TokensPage(), ROUTES);
     expect(screen.getByText(en.tokens.empty)).toBeTruthy();
     expect(browser).toEqual([]);
   });
 
-  it("/settings/extensions: previewers the kernel fails only hide their block", async () => {
+  it("/settings/extensions: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => ExtensionsPage(), { ...ROUTES, [`GET ${O}/file-previewers`]: failing });
-    expect(screen.getByText(en.extensions.empty)).toBeTruthy();
+    await renderRouteWithCache("/settings/extensions", {
+      ...ROUTES,
+      [`GET ${O}/extensions`]: () => json(200, { extensions: [EXTENSION] }),
+      [`GET ${O}/file-previewers`]: () => json(200, { items: [PREVIEWER] }),
+    });
+    expect(screen.getByRole("region", { name: "Todo" })).toBeTruthy();
+    expect(screen.getByRole("switch", { name: /Markdown/ })).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
+  });
+
+  it("/settings/extensions: previewers the kernel fails only hide their block (not read again on mount)", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRouteWithCache("/settings/extensions", {
+      ...ROUTES,
+      [`GET ${O}/file-previewers`]: failing,
+    });
+    expect(screen.getByText(en.extensions.empty)).toBeTruthy();
+    await settle();
+    expect(browser).toEqual([]);
+  });
+
+  it("/settings/extensions: an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld("/settings/extensions", `GET ${O}/extensions`);
+    await expectLoading("SettingsPage", en.extensions.empty);
+    await release();
+    expect(await screen.findByText(en.extensions.empty)).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
+  it("/settings/extensions: disabling an extension writes it into the cache and invalidates what it brings", async () => {
+    const routes: Routes = {
+      ...ROUTES,
+      [`GET ${O}/extensions`]: () => json(200, { extensions: [EXTENSION] }),
+      [`GET ${O}/file-previewers`]: () => json(200, { items: [PREVIEWER] }),
+    };
+    const calls = stubApi({
+      ...routes,
+      [`PUT ${O}/extensions/todo`]: () =>
+        json(200, { extension: { ...EXTENSION, enabled: false } }),
+    });
+    await renderRouteWithCache("/settings/extensions", routes);
+    await userEvent
+      .setup()
+      .click(
+        screen.getByRole("switch", { name: en.extensions.enableLabel.replace("{plugin}", "Todo") }),
+      );
+    await vi.waitFor(() => expect(screen.getByText(en.extensions.disabled)).toBeTruthy());
+    // the list is not read again (the answer is the extension); the previewers are
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      `PUT ${O}/extensions/todo`,
+      `GET ${O}/file-previewers`,
+    ]);
   });
 });
 
 type Page = () => Promise<ReactNode>;
 const GATES: [string, Page, "member" | "admin" | "guest", boolean][] = [
-  ["/settings/extensions", () => ExtensionsPage(), "admin", false],
   ["/settings/tokens", () => TokensPage(), "admin", false],
 ];
 
@@ -374,6 +441,7 @@ const ROUTE_GATES: [string, "member" | "admin", boolean][] = [
   ["/settings/members", "member", true],
   ["/settings/models", "admin", true],
   ["/settings/plugins", "admin", false],
+  ["/settings/extensions", "admin", false],
 ];
 
 describe("the gates (query cache)", () => {

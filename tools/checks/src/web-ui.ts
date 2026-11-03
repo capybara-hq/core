@@ -718,8 +718,6 @@ export const QUERY_PENDING: readonly QueryPending[] = [
   { path: "app/(app)/inbox/page.tsx", reason: "pending migration: Task 13" },
   { path: "app/(app)/inbox/view.tsx", reason: "pending migration: Task 13" },
   { path: "app/(app)/p/[plugin]/[id]/page.tsx", reason: "pending migration: Task 13" },
-  { path: "app/(app)/settings/extensions/page.tsx", reason: "pending migration: Task 13" },
-  { path: "app/(app)/settings/extensions/view.tsx", reason: "pending migration: Task 13" },
   { path: "app/(app)/settings/tokens/page.tsx", reason: "pending migration: Task 13" },
   { path: "app/(app)/settings/tokens/view.tsx", reason: "pending migration: Task 13" },
   {
@@ -732,7 +730,6 @@ export const QUERY_PENDING: readonly QueryPending[] = [
   },
   { path: "app/(app)/trajectories/page.tsx", reason: "pending migration: Task 13" },
   { path: "app/(app)/trajectories/view.tsx", reason: "pending migration: Task 13" },
-  { path: "components/FilePreviewersSection.tsx", reason: "pending migration: Task 13" },
   { path: "components/SkillChangeReview.tsx", reason: "pending migration: Task 13" },
   { path: "app/(app)/admin/accounts/page.tsx", reason: "pending migration: Task 14" },
   { path: "app/(app)/admin/accounts/view.tsx", reason: "pending migration: Task 14" },

@@ -10,13 +10,16 @@ import {
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
+import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { ConfigForm } from "../../../../components/config-form/ConfigForm";
 import { hasConfigFields } from "../../../../components/config-form/model";
 import { orgConfig, orgFormMeta } from "../../../../components/config-form/org";
+import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FilePreviewersSection } from "../../../../components/FilePreviewersSection";
 import { FormError } from "../../../../components/form-error";
+import { NoAccess } from "../../../../components/NoAccess";
 import { PermissionReview } from "../../../../components/PermissionReview";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
@@ -31,9 +34,13 @@ import {
   syncDirectory,
 } from "../../../../lib/extensions";
 import type { ConfigIssue } from "../../../../lib/json-schema";
-import type { OrgFilePreviewer } from "../../../../lib/previewers";
+import { orgExtensionsQuery } from "../../../../lib/query/channels";
+import { useAppMutation } from "../../../../lib/query/define";
+import { keys } from "../../../../lib/query/keys";
+import { usePageQuery } from "../../../../lib/query/page-query";
+import { useWorkspace } from "../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../lib/use-error-message";
-import { useServerState } from "../../../../lib/use-server-state";
+import NotFound from "../../not-found";
 
 /**
  * `/settings/extensions`: the org's extensions (SettingsPage, admins). One group per
@@ -44,42 +51,52 @@ import { useServerState } from "../../../../lib/use-server-state";
  * "Unavailable": the switch is read-only (the org's setting is kept). A required bootstrap plugin
  * shows "Required": the switch is read-only (always on) and its org config can still be set. Below the
  * extensions, the org's file previewers (`file-preview@1`) in order, when any is provided.
- * Both are read on the server (`page.tsx`); a change replaces the item locally.
+ * From the query cache (the layout prefetched both on a first load); a change writes the answer
+ * into the cached extensions, and enabling or disabling one also invalidates what an extension
+ * brings (its UI, its pages, its file previewers).
  */
-export default function Plugins({
-  orgId,
-  initial,
-}: {
-  orgId: string;
-  initial: { extensions: OrgExtension[]; previewers: OrgFilePreviewer[] | null };
-}) {
+export default function ExtensionsView() {
+  const ws = useWorkspace({ min: "admin" });
+  if (ws.kind === "pending" || ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  return <Plugins orgId={ws.orgId} />;
+}
+
+function Plugins({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("extensions");
   const nav = useOrgSettingsNav();
-  const [extensions, set] = useServerState(initial.extensions);
-  const replace = (next: OrgExtension) =>
-    set(extensions.map((p) => (p.plugin === next.plugin ? next : p)));
+  const read = usePageQuery(orgExtensionsQuery(orgId));
+  const header = {
+    path: [
+      ...scope,
+      { label: "settings", href: "/settings/organization" },
+      { label: "extensions" },
+    ],
+    title: t("title"),
+  };
+  if (read.kind === "notFound") return <NotFound />;
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
+  if (read.kind === "loading") {
+    return (
+      <SettingsPage
+        header={header}
+        nav={nav}
+        activeNav="extensions"
+        // An extension's group: its enable switch and its permissions (titles come with the data).
+        loading={{ sections: [{ fields: 1 }, { fields: 1 }] }}
+      />
+    );
+  }
+  const extensions = read.data.extensions;
   return (
-    <SettingsPage
-      header={{
-        path: [
-          ...scope,
-          { label: "settings", href: "/settings/organization" },
-          { label: "extensions" },
-        ],
-        title: t("title"),
-      }}
-      nav={nav}
-      activeNav="extensions"
-    >
+    <SettingsPage header={header} nav={nav} activeNav="extensions">
       {extensions.length === 0 ? (
         <Text tone="muted">{t("empty")}</Text>
       ) : (
-        extensions.map((p) => (
-          <ExtensionSection key={p.plugin} orgId={orgId} plugin={p} onSaved={replace} />
-        ))
+        extensions.map((p) => <ExtensionSection key={p.plugin} orgId={orgId} plugin={p} />)
       )}
-      <FilePreviewersSection orgId={orgId} initial={initial.previewers} />
+      <FilePreviewersSection orgId={orgId} />
     </SettingsPage>
   );
 }
@@ -100,15 +117,7 @@ const strings = (raw: unknown[], key: string): string[] => [
   ),
 ];
 
-function ExtensionSection({
-  orgId,
-  plugin,
-  onSaved,
-}: {
-  orgId: string;
-  plugin: OrgExtension;
-  onSaved(p: OrgExtension): void;
-}) {
+function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtension }) {
   const t = useTranslations("extensions");
   const label = extensionLabel(
     { name: plugin.plugin, displayName: plugin.displayName },
@@ -136,16 +145,36 @@ function ExtensionSection({
   // 部署上停用（或尚未加载）：只显示组织的启用设置，不能修改
   const unavailable = plugin.available === false;
   const required = plugin.required === true;
+  const qc = useQueryClient();
+  // The answer is the extension as it is now: it replaces that one in the cached list.
+  const onSaved = (next: OrgExtension) =>
+    qc.setQueryData<{ extensions: OrgExtension[] }>(orgExtensionsQuery(orgId).queryKey, (d) =>
+      d === undefined
+        ? d
+        : { ...d, extensions: d.extensions.map((p) => (p.plugin === next.plugin ? next : p)) },
+    );
+  // Enabling or disabling also changes what the extension brings to the org.
+  const put = useAppMutation({
+    fn: (v: { enabled?: boolean; force?: boolean; config?: Record<string, unknown> }) =>
+      putOrgExtension(orgId, plugin.plugin, v),
+    invalidates: (v) => {
+      const k = keys.org(orgId);
+      return v.enabled === undefined
+        ? []
+        : [k.contributions(), k.extensionPages(), k.orgFilePreviewers()];
+    },
+    onSuccess: (r) => onSaved(r.extension),
+  });
+  const startSync = useAppMutation({
+    fn: () => syncDirectory(orgId, plugin.plugin),
+    invalidates: () => [],
+  });
 
   async function toggle(enabled: boolean, force = false) {
     setBusy("toggle");
     setProblem(undefined);
     try {
-      const { extension: next } = await putOrgExtension(orgId, plugin.plugin, {
-        enabled,
-        ...(force ? { force } : {}),
-      });
-      onSaved(next);
+      await put.mutateAsync({ enabled, ...(force ? { force } : {}) });
       toast.success(t(enabled ? "enabledToast" : "disabledToast", { plugin: label }));
     } catch (e) {
       if (e instanceof ApiClientError && e.code === "extension.dependency_missing")
@@ -175,10 +204,7 @@ function ExtensionSection({
     setBusy("save");
     setSaveError(undefined);
     try {
-      const { extension: next } = await putOrgExtension(orgId, plugin.plugin, {
-        config: form.config,
-      });
-      onSaved(next);
+      await put.mutateAsync({ config: form.config });
       setRound((r) => r + 1);
       toast.success(t("configSaved", { plugin: label }));
     } catch (e) {
@@ -196,7 +222,7 @@ function ExtensionSection({
   async function sync() {
     setBusy("sync");
     try {
-      await syncDirectory(orgId, plugin.plugin);
+      await startSync.mutateAsync(undefined);
       toast.success(t("syncStarted"));
     } catch (e) {
       toast.error(errorMessage(e));

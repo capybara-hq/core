@@ -29,6 +29,7 @@ import { membersQuery } from "./members";
 import { overviewQueries } from "./overview";
 import {
   invitationsQuery,
+  orgFilePreviewersQuery,
   orgPurposesQuery,
   orgSettingsQuery,
   pluginInstallsQuery,
@@ -304,7 +305,14 @@ export const ROUTES: readonly RouteEntry[] = [
   { pattern: "/invite/[token]", queries: () => [q(maybeMeQuery())] },
   { pattern: "/login", queries: () => [q(authSourcesQuery()), q(maybeMeQuery())] },
   { pattern: "/p/[plugin]/[id]", queries: () => [], none: "pending migration" },
-  { pattern: "/settings/extensions", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/settings/extensions",
+    // Org admins: the extensions and the file previewers (a section).
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "admin")
+        ? []
+        : [q(orgExtensionsQuery(orgId)), q(orgFilePreviewersQuery(orgId))],
+  },
   {
     pattern: "/settings/members",
     // Members up; admins also read the invitations.

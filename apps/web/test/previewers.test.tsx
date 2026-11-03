@@ -3,7 +3,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import ExtensionsPage from "../src/app/(app)/settings/extensions/page";
 import {
   createEmbedBridge,
   EMBED_PROTOCOL,
@@ -13,7 +12,7 @@ import {
 import { type OrgFilePreviewer, reorder } from "../src/lib/previewers";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
-import { renderRoute } from "./support/server";
+import { renderRouteWithCache } from "./support/query";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -179,7 +178,7 @@ describe("org file previewers section", () => {
         return json(200, { items: items.map((i, n) => P(i.id, n, i.disabled)) });
       },
     });
-    await renderRoute(ExtensionsPage, lastStubRoutes(), { locale });
+    await renderRouteWithCache("/settings/extensions", lastStubRoutes(), { locale });
     const section = await screen.findByRole("region", { name: m.title });
     const user = userEvent.setup();
     await user.click(
@@ -214,7 +213,7 @@ describe("org file previewers section", () => {
       [`GET ${BASE}/extensions`]: () => json(200, { extensions: [] }),
       [`GET ${BASE}/file-previewers`]: () => json(200, { items: [] }),
     });
-    await renderRoute(ExtensionsPage, lastStubRoutes(), { locale: "en" });
+    await renderRouteWithCache("/settings/extensions", lastStubRoutes(), { locale: "en" });
     await screen.findByText(en.extensions.empty);
     expect(screen.queryByRole("region", { name: en.filePreviewers.title })).toBeNull();
   });
