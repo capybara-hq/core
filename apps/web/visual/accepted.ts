@@ -226,13 +226,15 @@ export const VARIABLE_WIDTH: Record<string, string> = {
     "the loaded title is its text; the loading title is a bar 30% of the row wide",
   "page-header-actions":
     "the loaded buttons are as wide as their labels; a placeholder is 72 px (right edge compared)",
+  bubble:
+    "the loaded user bubble is as wide as its text; the loading bubble is 45% of the thread (right edge compared)",
   title: "the loaded title is its text; the skeleton is a bar of the bar's width",
   "page-header-description":
     "ends where the loaded action buttons begin: a placeholder button is 72 px, a real one is as wide as its label",
 };
 
 /** Variable-width parts that sit at the right edge: their right edge is compared instead of x. */
-export const RIGHT_ALIGNED: string[] = ["page-header-actions"];
+export const RIGHT_ALIGNED: string[] = ["page-header-actions", "bubble"];
 
 /**
  * A part whose height is that of another part of the same index (a grid cell stretched to its
@@ -240,3 +242,12 @@ export const RIGHT_ALIGNED: string[] = ["page-header-actions"];
  * loaded height, which is data-driven.
  */
 export const FOLLOWS_HEIGHT: Record<string, string> = { "form-section-head": "form-section" };
+
+/**
+ * Parts compared by count only, not by box: the loaded form lays its fields out by control kind
+ * (a textarea, a segmented control, help text, two fields paired in one row), which a placeholder
+ * of N identical fields cannot follow; the page's loading state still draws one per field.
+ */
+export const COUNT_ONLY: Record<string, string> = {
+  field: "loaded fields differ in height by control and help text, and two can share a row",
+};

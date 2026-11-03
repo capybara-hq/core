@@ -1,5 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 import {
+  COUNT_ONLY,
   DATA_ONLY_PARTS,
   FOLLOWS_HEIGHT,
   IGNORED_PARTS,
@@ -46,7 +47,8 @@ async function partBoxes(page: Page, block: string): Promise<Record<string, Box>
       };
       for (const el of b.querySelectorAll("[data-part]")) {
         const raw = el.getAttribute("data-part") ?? "";
-        const part = aliases[raw] ?? raw;
+        const above = el.parentElement?.closest("[data-part]")?.getAttribute("data-part") ?? "";
+        const part = aliases[`${above} > ${raw}`] ?? aliases[raw] ?? raw;
         const n = seen[part] ?? 0;
         seen[part] = n + 1;
         const r = el.getBoundingClientRect();
@@ -134,6 +136,7 @@ for (const theme of THEMES) {
             const a = loaded[k] as Box;
             const b = loading[k] as Box;
             const part = nameOf(k);
+            if (part in COUNT_ONLY) continue;
             const follows = FOLLOWS_HEIGHT[part];
             const props = (["x", "y", "width", "height"] as const).filter(
               (p) =>
