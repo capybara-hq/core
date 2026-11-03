@@ -18,11 +18,12 @@ import {
   useToast,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
+import { NoAccess } from "../../../../components/NoAccess";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
-import { useRouter } from "../../../../i18n/navigation";
 import { type OrgRole, roleAtLeast } from "../../../../lib/members";
 import {
   createServiceToken,
@@ -31,35 +32,41 @@ import {
   type ServiceToken,
   type ServiceTokenRole,
 } from "../../../../lib/orgs";
+import { useAppMutation } from "../../../../lib/query/define";
+import { keys } from "../../../../lib/query/keys";
+import { usePageQuery } from "../../../../lib/query/page-query";
+import { serviceTokensQuery } from "../../../../lib/query/settings";
+import { useWorkspace } from "../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../lib/use-error-message";
+import NotFound from "../../not-found";
 
 /**
  * `/settings/tokens`: the org's service tokens (SettingsPage, group 组织; `org.tokens.manage`,
  * org admins): list, create (a role up to the actor's, optional expiry; the token is shown once)
- * and revoke after a confirmation. Read on the server (`page.tsx`); a change re-renders the page there.
+ * and revoke after a confirmation. From the query cache (the layout prefetched it on a first load);
+ * a change invalidates the tokens.
  */
 const EXPIRY_DAYS = ["never", "30", "90", "365"] as const;
 type Expiry = (typeof EXPIRY_DAYS)[number];
 
-export default function Tokens({
-  orgId,
-  actor,
-  initial,
-}: {
-  orgId: string;
-  actor: OrgRole;
-  initial: ServiceToken[];
-}) {
+export default function TokensView() {
+  const ws = useWorkspace({ min: "admin" });
+  if (ws.kind === "pending" || ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  return <Tokens orgId={ws.orgId} actor={ws.role} />;
+}
+
+function Tokens({ orgId, actor }: { orgId: string; actor: OrgRole }) {
   const scope = usePagePath("org");
   const t = useTranslations("tokens");
   const tr = useTranslations("members.roles");
   const nav = useOrgSettingsNav();
-  const router = useRouter();
-  const [, startTransition] = useTransition();
-  const reload = () => startTransition(() => router.refresh());
+  const read = usePageQuery(serviceTokensQuery(orgId));
   const [creating, setCreating] = useState(false);
   const [revoking, setRevoking] = useState<ServiceToken | null>(null);
-  const rows = initial;
+  if (read.kind === "notFound") return <NotFound />;
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
+  const rows = read.kind === "ready" ? read.data.tokens : [];
   const columns: Column<ServiceToken>[] = [
     { key: "name", header: t("columns.name"), cell: (r) => r.name },
     {
@@ -117,27 +124,19 @@ export default function Tokens({
         rows={rows}
         rowKey={(r) => r.id}
         rowLabel={(r) => r.name}
-        state="ready"
+        state={read.kind === "ready" ? "ready" : "loading"}
         empty={{ title: t("empty"), hint: t("emptyHint") }}
         rowMenu={menu}
       />
       {creating ? (
-        <CreateDialog
-          orgId={orgId}
-          actor={actor}
-          onClose={() => setCreating(false)}
-          onCreated={reload}
-        />
+        <CreateDialog orgId={orgId} actor={actor} onClose={() => setCreating(false)} />
       ) : null}
       {revoking !== null ? (
         <RevokeDialog
           orgId={orgId}
           token={revoking}
           onClose={() => setRevoking(null)}
-          onDone={() => {
-            setRevoking(null);
-            reload();
-          }}
+          onDone={() => setRevoking(null)}
         />
       ) : null}
     </SettingsPage>
@@ -148,12 +147,10 @@ function CreateDialog({
   orgId,
   actor,
   onClose,
-  onCreated,
 }: {
   orgId: string;
   actor: OrgRole;
   onClose(): void;
-  onCreated(): void;
 }) {
   const t = useTranslations("tokens");
   const tr = useTranslations("members.roles");
@@ -165,6 +162,10 @@ function CreateDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
+  const createToken = useAppMutation({
+    fn: (v: Parameters<typeof createServiceToken>[1]) => createServiceToken(orgId, v),
+    invalidates: () => [keys.org(orgId).serviceTokens()],
+  });
   const create = async () => {
     setBusy(true);
     setError(null);
@@ -173,13 +174,12 @@ function CreateDialog({
         expiry === "never"
           ? undefined
           : new Date(Date.now() + Number(expiry) * 86_400_000).toISOString();
-      const res = await createServiceToken(orgId, {
+      const res = await createToken.mutateAsync({
         name: name.trim(),
         role,
         ...(expiresAt === undefined ? {} : { expiresAt }),
       });
       setToken(res.token);
-      onCreated();
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -264,11 +264,15 @@ function RevokeDialog({
   const errorMessage = useErrorMessage();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const revokeToken = useAppMutation({
+    fn: (id: string) => revokeServiceToken(orgId, id),
+    invalidates: () => [keys.org(orgId).serviceTokens()],
+  });
   const revoke = async () => {
     setBusy(true);
     setError(null);
     try {
-      await revokeServiceToken(orgId, token.id);
+      await revokeToken.mutateAsync(token.id);
       toast.success(t("revoked"));
       onDone();
     } catch (e) {

@@ -1,16 +1,15 @@
-// The organization and personal settings pages render on the server (web-SSR spec §6, task 9):
-// first paint complete without a browser fetch, the gate cases, and the failure modes of R5.
+// The organization settings pages read from the query cache the layout prefetched (web query
+// cache spec §3): first paint complete without a browser read, the loading state on an empty
+// cache, the gate cases, the failure modes of R5 and the mutations' cache updates.
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import TokensPage from "../src/app/(app)/settings/tokens/page";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
-import { expectNoFirstPaintFetch, type Routes, renderRoute } from "./support/server";
+import { expectNoFirstPaintFetch, type Routes } from "./support/server";
 import { NOT_READY } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -169,7 +168,7 @@ const noAccess = () => template("StatusPage")?.getAttribute("data-kind") === "no
 beforeEach(() => resetNavigation("/settings/organization"));
 afterEach(cleanup);
 
-describe("first paint comes from the server (no browser fetch)", () => {
+describe("first paint comes from the hydrated cache (no browser read)", () => {
   it("/settings/organization and /settings/sandbox: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/settings/organization", ROUTES);
@@ -335,11 +334,20 @@ describe("first paint comes from the server (no browser fetch)", () => {
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("/settings/tokens", async () => {
+  it("/settings/tokens: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => TokensPage(), ROUTES);
+    await renderRouteWithCache("/settings/tokens", ROUTES);
     expect(screen.getByText(en.tokens.empty)).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
+  });
+
+  it("/settings/tokens: an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld("/settings/tokens", `GET ${O}/service-tokens`);
+    await expectLoading("SettingsPage", en.tokens.empty);
+    await release();
+    expect(await screen.findByText(en.tokens.empty)).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
   it("/settings/extensions: a first render from the hydrated cache makes no browser read", async () => {
@@ -400,40 +408,6 @@ describe("first paint comes from the server (no browser fetch)", () => {
   });
 });
 
-type Page = () => Promise<ReactNode>;
-const GATES: [string, Page, "member" | "admin" | "guest", boolean][] = [
-  ["/settings/tokens", () => TokensPage(), "admin", false],
-];
-
-describe("the gates", () => {
-  it.each(GATES)(
-    "%s: below its role no access and nothing read; no org renders nothing; setup",
-    async (_p, page, min, step) => {
-      if (min !== "guest") {
-        const denied = min === "admin" ? as("member") : as("guest");
-        const r = await renderRoute(page, ROUTES, { me: denied });
-        expect(new Set(r.calls.map((c) => c.url))).toEqual(
-          new Set(["/api/v1/me", `${O}/readiness`]),
-        );
-        expect(noAccess()).toBe(true);
-        cleanup();
-      }
-      const none = await renderRoute(page, ROUTES, { me: { ...ME, currentOrgId: null } });
-      expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
-      cleanup();
-      if (step) {
-        await renderRoute(page, ROUTES, { readiness: NOT_READY });
-        expect(template("StatusPage")).toBeNull();
-        expect(document.querySelector("h1")).not.toBeNull();
-      } else {
-        await expect(renderRoute(page, ROUTES, { readiness: NOT_READY })).rejects.toThrow(
-          "REDIRECT /",
-        );
-      }
-    },
-  );
-});
-
 /** The pages that read through the query cache: path, the role they need, whether a setup step. */
 const ROUTE_GATES: [string, "member" | "admin", boolean][] = [
   ["/settings/organization", "member", false],
@@ -442,9 +416,10 @@ const ROUTE_GATES: [string, "member" | "admin", boolean][] = [
   ["/settings/models", "admin", true],
   ["/settings/plugins", "admin", false],
   ["/settings/extensions", "admin", false],
+  ["/settings/tokens", "admin", false],
 ];
 
-describe("the gates (query cache)", () => {
+describe("the gates", () => {
   it.each(ROUTE_GATES)(
     "%s: below its role no access and nothing read; no org renders nothing; setup",
     async (path, min, step) => {

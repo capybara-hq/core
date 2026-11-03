@@ -33,6 +33,7 @@ import {
   orgPurposesQuery,
   orgSettingsQuery,
   pluginInstallsQuery,
+  serviceTokensQuery,
 } from "./settings";
 import { conversationGroupsQuery, maybeMeQuery, readinessQuery } from "./shell";
 import { skillQuery, skillsQuery } from "./skills";
@@ -343,7 +344,11 @@ export const ROUTES: readonly RouteEntry[] = [
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "member") ? [] : [q(orgSettingsQuery(orgId))],
   },
-  { pattern: "/settings/tokens", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/settings/tokens",
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "admin") ? [] : [q(serviceTokensQuery(orgId))],
+  },
   { pattern: "/setup", queries: () => [], none: "pending migration" },
   {
     pattern: "/skills",

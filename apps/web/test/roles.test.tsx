@@ -236,7 +236,7 @@ const PAGES: [string, ComponentType | ServerPage | RoutePage, "member" | "admin"
     "admin",
     zh.roles.need.admin,
   ],
-  ["/settings/tokens", server(() => TokensPage()), "admin", zh.roles.need.admin],
+  ["/settings/tokens", route("/settings/tokens", () => TokensPage()), "admin", zh.roles.need.admin],
   [
     "/settings/organization",
     route("/settings/organization", () => OrganizationPage()),

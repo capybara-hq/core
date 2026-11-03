@@ -718,8 +718,6 @@ export const QUERY_PENDING: readonly QueryPending[] = [
   { path: "app/(app)/inbox/page.tsx", reason: "pending migration: Task 13" },
   { path: "app/(app)/inbox/view.tsx", reason: "pending migration: Task 13" },
   { path: "app/(app)/p/[plugin]/[id]/page.tsx", reason: "pending migration: Task 13" },
-  { path: "app/(app)/settings/tokens/page.tsx", reason: "pending migration: Task 13" },
-  { path: "app/(app)/settings/tokens/view.tsx", reason: "pending migration: Task 13" },
   {
     path: "app/(app)/trajectories/[conversationId]/page.tsx",
     reason: "pending migration: Task 13",

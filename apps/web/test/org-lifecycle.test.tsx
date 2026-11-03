@@ -3,7 +3,6 @@ import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zh from "../messages/zh.json";
-import TokensPage from "../src/app/(app)/settings/tokens/page";
 import { navigateBrowser } from "../src/lib/browser";
 import type { OrgRole } from "../src/lib/members";
 import type { Me } from "../src/lib/session";
@@ -11,7 +10,6 @@ import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api"
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
-import { renderRoute } from "./support/server";
 import { renderFrame, shellOf } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -250,7 +248,10 @@ describe("服务令牌", () => {
     it(`${role}: no access, nothing loaded`, async () => {
       const calls = api();
       resetNavigation("/settings/tokens");
-      await renderRoute(TokensPage, lastStubRoutes(), { locale: "zh", me: meAs(role) });
+      await renderRouteWithCache("/settings/tokens", lastStubRoutes(), {
+        locale: "zh",
+        me: meAs(role),
+      });
       expect(
         document.querySelector('[data-template="StatusPage"][data-kind="no-access"]'),
       ).toBeTruthy();
@@ -285,7 +286,10 @@ describe("服务令牌", () => {
         json(200, { tokens: [{ ...TOKEN, expiresAt: "2020-01-01T00:00:00Z" }] }),
     });
     resetNavigation("/settings/tokens");
-    await renderRoute(TokensPage, lastStubRoutes(), { locale: "zh", me: meAs("admin") });
+    await renderRouteWithCache("/settings/tokens", lastStubRoutes(), {
+      locale: "zh",
+      me: meAs("admin"),
+    });
     const table = await screen.findByRole("table", { name: zh.tokens.title });
     expect(within(table).getByText(zh.tokens.expired)).toBeTruthy();
   });
@@ -294,7 +298,10 @@ describe("服务令牌", () => {
     it(`${role}: lists, creates (roles up to its own, shown once) and revokes`, async () => {
       const calls = api();
       resetNavigation("/settings/tokens");
-      await renderRoute(TokensPage, lastStubRoutes(), { locale: "zh", me: meAs(role) });
+      await renderRouteWithCache("/settings/tokens", lastStubRoutes(), {
+        locale: "zh",
+        me: meAs(role),
+      });
       const table = await screen.findByRole("table", { name: zh.tokens.title });
       expect(within(table).getByText("ci")).toBeTruthy();
       const user = userEvent.setup();
@@ -325,6 +332,15 @@ describe("服务令牌", () => {
       await user.click(within(confirm).getByRole("button", { name: zh.tokens.revokeConfirm }));
       await vi.waitFor(() =>
         expect(calls.some((c) => c.method === "DELETE" && c.url.endsWith("/t1"))).toBe(true),
+      );
+      // each change invalidates the tokens: they are read again after it
+      await vi.waitFor(() =>
+        expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+          `POST ${O}/service-tokens`,
+          `GET ${O}/service-tokens`,
+          `DELETE ${O}/service-tokens/t1`,
+          `GET ${O}/service-tokens`,
+        ]),
       );
     });
   }
