@@ -18,14 +18,14 @@ export function SkeletonAnnouncement() {
   return <span className="cb-sr-only">{t("table.loading")}</span>;
 }
 
-export type SkeletonTextSize = "body" | "small" | "title" | "metric";
+export type SkeletonTextSize = "body" | "small" | "title" | "metric" | "heading";
 export type SkeletonTextWidth = "30%" | "45%" | "55%" | "70%" | "100%" | number;
 
 const px = (w: SkeletonTextWidth) => (typeof w === "number" ? `${w}px` : w);
 
 /**
  * One text placeholder (spec §6.29): a slot exactly one line box of its type size high (`body`,
- * `small`, `title` (the h1 size) or `metric` (the StatCard value size)), so the layout is the
+ * `small`, `title` (the h1 size), `heading` (the h2 size) or `metric` (the StatCard value size)), so the layout is the
  * loaded one, holding a bar (`space.3` high, `selected`, radius `sm`) centred in it. `width` is the slot's and the bar's. Decorative:
  * the group announces.
  */

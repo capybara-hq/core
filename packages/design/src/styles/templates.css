@@ -248,6 +248,11 @@
   overflow: hidden;
   background: var(--cb-bg);
 }
+/* Inside a reference block the page fills the block instead of the window. */
+.cb-ref-block .cb-auth {
+  height: 100%;
+  min-height: 0;
+}
 .cb-auth-side {
   flex: none;
   width: 96px;

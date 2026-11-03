@@ -1,7 +1,9 @@
 import { type ReactNode, useEffect, useRef } from "react";
+import { SkeletonGroup } from "../display/skeleton";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
-import { TemplateHead } from "./frame";
+import { LoadingFormSection } from "./form-page";
+import { loadingActionRow, loadingHeader, TemplateHead } from "./frame";
 
 export type SettingsNavGroup = {
   group: string;
@@ -16,18 +18,27 @@ export type SettingsNavGroup = {
  * sub-nav sits at the same y on every settings page, its top aligned with the content's. Below
  * 640 the sub-nav is a compact control: one horizontally scrolling row of its items (no group
  * labels, 40 px tap targets) above the content, the current item scrolled into view.
+ *
+ * `loading` draws the page's frame while its data is on the way (spec §5.4): the header keeps its
+ * rows, the sub-nav and the header's description stay real (they are static per page), an
+ * ActionRow stays with its buttons disabled, and `sections` (one entry per section, its field
+ * count, and the `title` / `description` the page already knows) are placeholders in the
+ * sections' own frame in place of `children`. Without `sections` the children render as they are
+ * (each `FormSection` or list says for itself whether it is loading). One busy announcement.
  */
 export function SettingsPage({
   header,
   nav,
   activeNav,
   actionRow,
+  loading,
   children,
 }: {
   header: PageHeaderProps;
   nav: SettingsNavGroup[];
   activeNav: string;
   actionRow?: ActionRowProps;
+  loading?: { sections?: { fields: number; title?: string; description?: string }[] };
   children?: ReactNode;
 }) {
   const { description, ...head } = header;
@@ -70,9 +81,9 @@ export function SettingsPage({
       ))}
     </nav>
   );
-  return (
-    <div className="cb-template" data-template="SettingsPage" data-width="content">
-      <TemplateHead header={head} />
+  const page = (
+    <>
+      <TemplateHead header={loading ? loadingHeader(head) : head} />
       <Body layout="single" width="content">
         <div className="cb-settings-grid">
           {rail}
@@ -82,11 +93,25 @@ export function SettingsPage({
                 {description}
               </p>
             ) : null}
-            {children}
+            {loading?.sections
+              ? loading.sections.map((s, i) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
+                  <LoadingFormSection key={i} {...s} />
+                ))
+              : children}
           </div>
         </div>
       </Body>
-      {actionRow ? <ActionRow {...actionRow} /> : null}
+      {actionRow ? <ActionRow {...(loading ? loadingActionRow(actionRow) : actionRow)} /> : null}
+    </>
+  );
+  return (
+    <div className="cb-template" data-template="SettingsPage" data-width="content">
+      {loading ? (
+        <SkeletonGroup label={header.title || t("table.loading")}>{page}</SkeletonGroup>
+      ) : (
+        page
+      )}
     </div>
   );
 }

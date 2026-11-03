@@ -329,6 +329,10 @@
 
   function actionRow(o) {
     const A = F.FORM_PAGE_FIXTURE.actionRow;
+    // Loading (spec §5.3): the row stays, nothing to count, the buttons disabled.
+    if (o.loading) {
+      return `<div class="r-actionrow"><span class="r-actionrow-text"></span><button class="r-btn" data-variant="default" disabled>${esc(A.discard)}</button><button class="r-btn" data-variant="primary" disabled>${esc(A.save)}</button></div>`;
+    }
     if (o.clean) {
       return `<div class="r-actionrow"><span class="r-actionrow-text">${esc(A.clean)}</span><button class="r-btn" data-variant="primary" disabled>${esc(A.save)}</button></div>`;
     }
@@ -426,9 +430,17 @@
     return "";
   }
 
-  function formSections() {
+  /** A loading field (spec §5.3): the field head holds a 30% body slot, then a control-height box. */
+  function loadingField() {
+    return '<div class="r-field" data-part="loading-field"><div class="r-field-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-skel-box" data-part="skeleton-box" data-box="default"></div></div>';
+  }
+
+  function formSections(o = {}) {
     return F.FORM_PAGE_FIXTURE.sections
       .map((s) => {
+        if (o.loading) {
+          return `<section class="r-form-section"><div class="r-form-intro"><h2 class="r-h2">${esc(s.title)}</h2><p class="r-prose-small r-muted">${esc(s.description)}</p></div><div class="r-form-card">${s.fields.map(loadingField).join("")}</div></section>`;
+        }
         const pairs = [];
         const fields = s.fields.map(field);
         // The model select and the effort control share a row (canvas FormPage).
@@ -447,9 +459,12 @@
     return `<div class="r-app">${sidebar({ active: "connectors", activeConversation: null })}<main class="r-main"><div class="r-main-scroll"><div class="r-content" data-width="content">${pageHeader({ description: true, actions: true })}${stats({})}${toolbar()}${table({})}${pagination()}</div></div>${statusBar({})}</main></div>`;
   }
 
-  function formPage() {
+  function formPage(o = {}) {
     const P = F.FORM_PAGE_FIXTURE;
-    return `<div class="r-app">${sidebar({ active: "agents", activeConversation: null })}<main class="r-main"><div class="r-main-scroll"><div class="r-content" data-width="content">${pageHeader({ path: true, title: P.title })}${formSections()}</div></div>${actionRow({})}${statusBar({ context: P.status.context, pageStatus: P.status.pageStatus })}</main></div>`;
+    const head = o.loading
+      ? pageHeader({ loading: { actions: 0, tabs: 0 } })
+      : pageHeader({ path: true, title: P.title });
+    return `<div class="r-app">${sidebar({ active: "agents", activeConversation: null })}<main class="r-main"><div class="r-main-scroll"><div class="r-content" data-width="content">${head}${formSections(o)}</div></div>${actionRow(o)}${statusBar({ context: P.status.context, pageStatus: P.status.pageStatus })}</main></div>`;
   }
 
   function drawer(o) {

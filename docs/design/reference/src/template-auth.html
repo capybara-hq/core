@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Auth template · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Auth template</h1>
+<p>Loading state (spec §5.10): the card keeps its place with the title and subtitle, its body is field placeholders and the prominent submit button box. The dither columns of the loaded page are drawn empty here. Nothing animates.</p>
+<div class="r-blocks">
+<section data-ref-block="template-auth-loading" style="width:1280px;height:640px">
+  <div class="r-auth" aria-busy="true">
+    <div class="r-auth-side"></div>
+    <div class="r-auth-main"><div class="r-auth-logo"><svg class="r-logo" width="84" height="60" viewBox="0 0 14 10" shape-rendering="crispEdges" aria-hidden="true"><path d="M10 0h1v1h-1zM9 1h3v1h-3zM3 2h11v1h-11zM2 3h9v1h-9zM12 3h2v1h-2zM1 4h13v1h-13zM1 5h13v1h-13zM1 6h12v1h-12zM2 7h10v1h-10zM2 8h2v1h-2zM6 8h1v1h-1zM9 8h2v1h-2zM2 9h2v1h-2zM6 9h1v1h-1zM9 9h2v1h-2z"/></svg></div><div class="r-auth-card" data-part="auth-card"><div class="r-auth-head"><h1 class="r-auth-title">登录</h1><p class="r-muted r-auth-sub">示例组织</p></div><div class="r-auth-body"><div class="r-field" data-part="loading-field"><div class="r-field-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-skel-box" data-part="skeleton-box" data-box="default"></div></div><div class="r-field" data-part="loading-field"><div class="r-field-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-skel-box" data-part="skeleton-box" data-box="default"></div></div><div class="r-skel-box" data-part="skeleton-box" data-box="prominent"></div></div></div></div>
+    <div class="r-auth-side"></div>
+  </div>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

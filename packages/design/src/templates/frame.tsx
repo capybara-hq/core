@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import { SkeletonText, StatCards } from "../display/index";
-import { PageHeader, type PageHeaderProps } from "../shell/index";
+import { SkeletonBox, SkeletonText, StatCards } from "../display/index";
+import { type ActionRowProps, PageHeader, type PageHeaderProps } from "../shell/index";
 
 /**
  * The fixed header area of a template (spec §4.2): the PageHeader in a frame of the one content
@@ -121,5 +121,41 @@ export function LoadingInspector() {
         </div>
       ))}
     </dl>
+  );
+}
+
+/**
+ * The action row of a loading page: the row stays, nothing is known to save or cancel yet, so its
+ * buttons are disabled and it says nothing about unsaved changes (spec §5.3).
+ */
+export function loadingActionRow(row: ActionRowProps): ActionRowProps {
+  const { unsaved: _u, errors: _e, ...rest } = row;
+  return {
+    ...rest,
+    ...(row.cancel ? { cancel: { ...row.cancel, disabled: true } } : {}),
+    ...(row.secondary ? { secondary: { ...row.secondary, disabled: true } } : {}),
+    primary: { ...row.primary, disabled: true },
+  };
+}
+
+/**
+ * Field placeholders (spec §5.3): each is the loaded `.cb-field` itself, a label slot (a `body`
+ * line, 30% wide) in `.cb-field-head` where the label is, then a control-height box directly in
+ * the field, so the box takes whatever width the field's rule gives a control. Drawn in the
+ * container the loaded fields live in (a form card, a wizard card, the auth card).
+ */
+export function LoadingFields({ count }: { count: number }) {
+  return (
+    <>
+      {Array.from({ length: Math.max(0, count) }, (_, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
+        <div key={i} className="cb-field" data-part="loading-field">
+          <div className="cb-field-head">
+            <SkeletonText width="30%" />
+          </div>
+          <SkeletonBox part="default" />
+        </div>
+      ))}
+    </>
   );
 }

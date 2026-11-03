@@ -70,7 +70,15 @@ const GROUPS = [
   },
   {
     title: "Loading states: skeleton primitives and template loading states",
-    components: ["skeleton", "template-detail", "template-overview", "template-inbox"],
+    components: [
+      "skeleton",
+      "template-detail",
+      "template-overview",
+      "template-inbox",
+      "template-settings",
+      "template-wizard",
+      "template-auth",
+    ],
   },
 ];
 const COMPONENTS = GROUPS.flatMap((g) => g.components);

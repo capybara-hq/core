@@ -10,10 +10,13 @@
 <body>
 <main class="r-page">
 <h1>Form page template</h1>
-<p>Sidebar + content (content width 1120): path header, sections (intro left, field card right, no dividers); action row above the status bar.</p>
+<p>Sidebar + content (content width 1120): path header, sections (intro left, field card right, no dividers); action row above the status bar. Loading (spec §5.3): the header keeps its rows, each section keeps its title and description and draws field placeholders (a label slot and a control-height box), the action row stays with disabled buttons. Nothing animates.</p>
 <div class="r-blocks">
 <section data-ref-block="template-form-page" style="width:1280px;height:820px">
   <template data-fixture="form-page"></template>
+</section>
+<section data-ref-block="template-form-loading" style="width:1280px;height:820px">
+  <template data-fixture="form-page" data-opts='{"loading": true}'></template>
 </section>
 </div>
 </main>

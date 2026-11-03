@@ -1,18 +1,25 @@
 "use client";
 
 import {
+  AuthPage,
+  Button,
   Card,
   type Column,
   DataTable,
   DetailPage,
+  Field,
+  FormSection,
   type HeaderAction,
   InboxPage,
+  Input,
   KeyValue,
   ObjectList,
   ObjectRow,
   OverviewPage,
+  SettingsPage,
   Stack,
   Text,
+  WizardPage,
 } from "@capybara-hq/design";
 import type { ReactNode } from "react";
 import { RefBlock } from "./ref-block";
@@ -197,7 +204,133 @@ function inboxRecordsBlocks(): ReactNode {
   );
 }
 
+// Settings, Wizard and Auth (spec §5.8, §5.9, §5.10). The loading blocks are what the page draws
+// while its data is on the way; the default ones are the loaded page with the same header, nav,
+// steps and field counts.
+
+const SETTINGS_NAV = [
+  {
+    group: "组织",
+    items: [
+      { id: "org", label: "组织", href: "/" },
+      { id: "env", label: "环境", href: "/" },
+      { id: "members", label: "成员", href: "/", count: 5 },
+    ],
+  },
+  { group: "计费", items: [{ id: "billing", label: "计费", href: "/" }] },
+];
+const SETTINGS_HEADER = { path: PATH.slice(0, 1), title: "设置" };
+const SETTINGS_ROW = {
+  unsaved: 1,
+  cancel: { label: "取消", onSelect: noop },
+  primary: { label: "保存", onSelect: noop },
+};
+
+function settingsBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="template-settings-default" width={W} height={H}>
+        <SettingsPage
+          header={SETTINGS_HEADER}
+          nav={SETTINGS_NAV}
+          activeNav="org"
+          actionRow={SETTINGS_ROW}
+        >
+          <FormSection id="org" title="组织信息" description="名称显示在顶栏与邀请邮件中。">
+            <Field label="组织名称">
+              <Input defaultValue="示例组织" />
+            </Field>
+            <Field label="时区">
+              <Input defaultValue="UTC+8 北京" />
+            </Field>
+          </FormSection>
+          <FormSection id="security" title="安全" description="登录与会话的规则。">
+            <Field label="会话时长">
+              <Input defaultValue="12 小时" />
+            </Field>
+          </FormSection>
+        </SettingsPage>
+      </RefBlock>
+      <RefBlock id="template-settings-loading" width={W} height={H}>
+        <SettingsPage
+          header={{ ...SETTINGS_HEADER, title: "" }}
+          nav={SETTINGS_NAV}
+          activeNav="org"
+          actionRow={SETTINGS_ROW}
+          loading={{ sections: [{ fields: 2 }, { fields: 1 }] }}
+        />
+      </RefBlock>
+    </>
+  );
+}
+
+const WIZARD_HEADER = { path: PATH.slice(0, 1), title: "接入模型" };
+const WIZARD_STEPS = ["选择供应商", "填写凭据", "测试连接", "完成"];
+const WIZARD_ROW = {
+  cancel: { label: "取消", onSelect: noop },
+  secondary: { label: "上一步", onSelect: noop },
+  primary: { label: "下一步", onSelect: noop },
+};
+
+function wizardBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="template-wizard-default" width={W} height={H}>
+        <WizardPage header={WIZARD_HEADER} steps={WIZARD_STEPS} current={1} actionRow={WIZARD_ROW}>
+          <Card title="填写凭据">
+            <Stack gap={16}>
+              <Field label="名称">
+                <Input defaultValue="anthropic" />
+              </Field>
+              <Field label="API Key">
+                <Input type="password" defaultValue="sk-ant" />
+              </Field>
+            </Stack>
+          </Card>
+        </WizardPage>
+      </RefBlock>
+      <RefBlock id="template-wizard-loading" width={W} height={H}>
+        <WizardPage
+          header={{ ...WIZARD_HEADER, title: "" }}
+          steps={WIZARD_STEPS}
+          current={1}
+          actionRow={WIZARD_ROW}
+          loading={{ fields: 2 }}
+        />
+      </RefBlock>
+    </>
+  );
+}
+
+function authBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="template-auth-default" width={W} height={H}>
+        <AuthPage title="登录" subtitle="示例组织">
+          <Stack gap={16}>
+            <Field label="账号">
+              <Input defaultValue="grant" />
+            </Field>
+            <Field label="密码">
+              <Input type="password" defaultValue="" />
+            </Field>
+            <Button variant="primary" density="prominent">
+              登录
+            </Button>
+          </Stack>
+        </AuthPage>
+      </RefBlock>
+      <RefBlock id="template-auth-loading" width={W} height={H}>
+        <AuthPage title="登录" subtitle="示例组织" loading={{ fields: 2 }} />
+      </RefBlock>
+    </>
+  );
+}
+
 export const TEMPLATE_LOADING_BLOCKS = {
+  "template-settings": settingsBlocks,
+  "template-wizard": wizardBlocks,
+  "template-auth": authBlocks,
   "template-detail": detailBlocks,
   "template-overview": overviewBlocks,
   "template-inbox": () => (

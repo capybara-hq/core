@@ -1,13 +1,18 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  AuthPage,
   type Column,
   DataTable,
   DesignProvider,
   DetailPage,
+  FormPage,
+  FormSection,
   type InboxLoading,
   InboxPage,
   OverviewPage,
+  SettingsPage,
+  WizardPage,
 } from "../src/index";
 
 afterEach(cleanup);
@@ -199,5 +204,222 @@ describe("InboxPage loading", () => {
     expect(screen.getByText("F")).toBeTruthy();
     expect(screen.getByText("第一项")).toBeTruthy();
     expect(count('[data-part="loading-row"]')).toBe(0);
+  });
+});
+
+const actionRow = {
+  unsaved: 2,
+  errors: 1,
+  cancel: { label: "放弃", onSelect: () => {} },
+  secondary: { label: "存草稿", onSelect: () => {} },
+  primary: { label: "保存", onSelect: () => {} },
+};
+
+describe("FormPage / FormSection loading", () => {
+  it("FormPage loading draws the frame and no children", () => {
+    zh(
+      <FormPage header={header} actionRow={actionRow} loading>
+        <FormSection id="a" title="基本信息" description="名称与说明" loading={{ fields: 3 }}>
+          <p>REAL FIELD</p>
+        </FormSection>
+        <FormSection id="b" title="模型" loading={{ fields: 2 }} />
+      </FormPage>,
+    );
+    expect(screen.queryByText("REAL FIELD")).toBeNull();
+    expect(document.querySelector('[data-template="FormPage"]')).not.toBeNull();
+    expect(parts("page-header")).toHaveLength(1);
+    expect(parts("content")).toHaveLength(1);
+    expect(count(".cb-form-section")).toBe(2);
+    expect(count('[data-part="loading-field"]')).toBe(5);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getAllByText("正在加载")).toHaveLength(1);
+  });
+
+  it("loading form keeps the action row with disabled buttons", () => {
+    zh(<FormPage header={header} actionRow={actionRow} loading />);
+    expect(parts("action-row")).toHaveLength(1);
+    for (const name of ["放弃", "存草稿", "保存"]) {
+      expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
+    }
+    // Nothing is known to be unsaved yet.
+    expect(parts("action-row-unsaved")).toHaveLength(0);
+    expect(parts("action-row-errors")).toHaveLength(0);
+  });
+
+  it("a loading section keeps its title and description real", () => {
+    zh(
+      <FormSection id="a" title="基本信息" description="名称与说明" loading={{ fields: 2 }}>
+        <p>REAL FIELD</p>
+      </FormSection>,
+    );
+    expect(screen.getByRole("heading", { name: "基本信息" })).toBeTruthy();
+    expect(screen.getByText("名称与说明")).toBeTruthy();
+    expect(screen.queryByText("REAL FIELD")).toBeNull();
+  });
+
+  it("a field placeholder is the loaded field's own box: label slot, then a control-height box", () => {
+    zh(<FormSection id="a" title="T" loading={{ fields: 2 }} />);
+    const card = document.querySelector(".cb-form-section-fields");
+    const fields = card?.querySelectorAll(":scope > .cb-field");
+    expect(fields).toHaveLength(2);
+    const field = fields?.[0];
+    const head = field?.querySelector(":scope > .cb-field-head");
+    expect(head?.querySelector('[data-part="skeleton-text"][data-size="body"]')).not.toBeNull();
+    const box = field?.querySelector(':scope > [data-part="skeleton-box"]') as HTMLElement | null;
+    expect(box?.dataset.box).toBe("default");
+    // No width of its own: the field's rule decides, as for the loaded control.
+    expect(box?.style.width).toBe("");
+  });
+
+  it("a ready section renders for real next to a loading one", () => {
+    zh(
+      <FormPage header={header} actionRow={actionRow} loading>
+        <FormSection id="a" title="基本信息">
+          <p>READY FIELD</p>
+        </FormSection>
+        <FormSection id="b" title="模型" loading={{ fields: 1 }} />
+      </FormPage>,
+    );
+    expect(screen.getByText("READY FIELD")).toBeTruthy();
+    expect(count('[data-part="loading-field"]')).toBe(1);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("a loading section outside a loading page announces itself, without a status role", () => {
+    zh(<FormSection id="a" title="T" loading={{ fields: 1 }} />);
+    expect(screen.getAllByText("正在加载")).toHaveLength(1);
+    expect(document.querySelector(".cb-form-section")?.getAttribute("aria-busy")).toBe("true");
+  });
+
+  it("a page that is not loading draws no placeholder and no busy mark", () => {
+    zh(
+      <FormPage header={header} actionRow={actionRow}>
+        <FormSection id="a" title="T">
+          <p>REAL FIELD</p>
+        </FormSection>
+      </FormPage>,
+    );
+    expect(screen.getByText("REAL FIELD")).toBeTruthy();
+    expect(count('[data-part="loading-field"]')).toBe(0);
+    expect(count('[aria-busy="true"]')).toBe(0);
+    expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+});
+
+describe("SettingsPage loading", () => {
+  const nav = [
+    {
+      group: "组织",
+      items: [
+        { id: "general", label: "常规", href: "/s/general" },
+        { id: "members", label: "成员", href: "/s/members" },
+      ],
+    },
+  ];
+
+  it("SettingsPage loading draws the frame and no children", () => {
+    zh(
+      <SettingsPage
+        header={{ ...header, description: "管理组织" }}
+        nav={nav}
+        activeNav="general"
+        loading={{ sections: [{ fields: 2 }, { fields: 3, title: "安全" }] }}
+      >
+        <p>REAL CONTENT</p>
+      </SettingsPage>,
+    );
+    expect(screen.queryByText("REAL CONTENT")).toBeNull();
+    expect(document.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
+    expect(parts("page-header")).toHaveLength(1);
+    expect(count(".cb-settings-content > .cb-form-section")).toBe(2);
+    expect(count('[data-part="loading-field"]')).toBe(5);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    // What the page knows stays real: the sub-nav, the description, a known title.
+    expect(screen.getByRole("link", { name: "成员" })).toBeTruthy();
+    expect(screen.getByText("管理组织")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "安全" })).toBeTruthy();
+    // An unknown title and description are slots in the section's head.
+    const first = document.querySelectorAll(".cb-form-section-head")[0];
+    expect(first?.querySelector('[data-size="heading"]')).not.toBeNull();
+  });
+
+  it("without sections the children render as they are", () => {
+    zh(
+      <SettingsPage header={header} nav={nav} activeNav="general" loading={{}}>
+        <FormSection id="a" title="T" loading={{ fields: 1 }} />
+      </SettingsPage>,
+    );
+    expect(count('[data-part="loading-field"]')).toBe(1);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("keeps the action row, disabled", () => {
+    zh(
+      <SettingsPage
+        header={header}
+        nav={nav}
+        activeNav="general"
+        actionRow={actionRow}
+        loading={{ sections: [{ fields: 1 }] }}
+      />,
+    );
+    expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("WizardPage loading", () => {
+  const steps = ["类型", "端点", "完成"];
+
+  it("WizardPage loading draws the frame and no children", () => {
+    zh(
+      <WizardPage
+        header={header}
+        steps={steps}
+        current={1}
+        actionRow={actionRow}
+        loading={{ fields: 3 }}
+      >
+        <p>REAL CONTENT</p>
+      </WizardPage>,
+    );
+    expect(screen.queryByText("REAL CONTENT")).toBeNull();
+    expect(document.querySelector('[data-template="WizardPage"]')).not.toBeNull();
+    expect(parts("page-header")).toHaveLength(1);
+    expect(parts("content")).toHaveLength(1);
+    // The step bar is real, and the fields sit in a card.
+    expect(document.querySelectorAll(".cb-step")).toHaveLength(3);
+    expect(screen.getByText("端点")).toBeTruthy();
+    expect(document.querySelector(".cb-card .cb-stack > .cb-field")).not.toBeNull();
+    expect(count('[data-part="loading-field"]')).toBe(3);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("AuthPage loading", () => {
+  it("AuthPage loading draws the frame and no children", () => {
+    zh(
+      <AuthPage title="登录" subtitle="欢迎回来" loading={{ fields: 2 }}>
+        <p>REAL CONTENT</p>
+      </AuthPage>,
+    );
+    expect(screen.queryByText("REAL CONTENT")).toBeNull();
+    expect(document.querySelector('[data-template="AuthPage"]')).not.toBeNull();
+    expect(count(".cb-auth-side")).toBe(2);
+    expect(count(".cb-auth-card")).toBe(1);
+    expect(screen.getByRole("heading", { name: "登录" })).toBeTruthy();
+    expect(screen.getByText("欢迎回来")).toBeTruthy();
+    expect(count('[data-part="loading-field"]')).toBe(2);
+    // The submit button is part of the loaded card: a prominent box.
+    expect(count('.cb-auth-card [data-box="prominent"]')).toBe(1);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("an unknown title is a bar", () => {
+    zh(<AuthPage title="" loading={{ fields: 1 }} />);
+    expect(screen.queryByRole("heading")).toBeNull();
+    expect(document.querySelector('.cb-auth-head [data-size="title"]')).not.toBeNull();
   });
 });

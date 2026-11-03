@@ -918,11 +918,13 @@ function FormFieldView({ f }: { f: FixtureFormField }) {
   }
 }
 
-function FormTemplateBody() {
+function FormTemplateBody({ loading }: { loading?: boolean }) {
   useStatusBar(F.status.pageStatus);
   return (
     <FormPage
-      header={{ path: F.path, title: F.title }}
+      // Loading (spec §5.3): the page knows its path's first segment, not the object or its title.
+      header={loading ? { path: F.path.slice(0, 1), title: "" } : { path: F.path, title: F.title }}
+      {...(loading ? { loading: true } : {})}
       actionRow={{
         unsaved: 2,
         errors: 1,
@@ -940,6 +942,7 @@ function FormTemplateBody() {
             title={sec.title}
             description={sec.description}
             flush={a?.kind === "switches"}
+            {...(loading ? { loading: { fields: sec.fields.length } } : {})}
           >
             {paired ? (
               <Grid columns={2} gap={12}>
@@ -968,6 +971,19 @@ function templateListBlocks(): ReactNode {
 }
 
 function templateFormBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="template-form-loading" width={TEMPLATE_W} height={TEMPLATE_H}>
+        <ShellFixture active="agents" route="/agents/研究助手/edit">
+          <FormTemplateBody loading />
+        </ShellFixture>
+      </RefBlock>
+      {templateFormPageBlock()}
+    </>
+  );
+}
+
+function templateFormPageBlock(): ReactNode {
   return (
     <RefBlock
       id="template-form-page"

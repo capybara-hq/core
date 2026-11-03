@@ -13,7 +13,7 @@ export type ActionRowProps = {
   /** Unsaved changes; `0` reads "No unsaved changes", leaving it out shows nothing. */
   unsaved?: number;
   errors?: number;
-  cancel?: { label: string; onSelect(): void };
+  cancel?: { label: string; onSelect(): void; disabled?: boolean };
   secondary?: ButtonSpec;
   primary: ButtonSpec;
 };
@@ -61,7 +61,12 @@ export function ActionRow({ unsaved, errors = 0, cancel, secondary, primary }: A
         </span>
         <span className="cb-actionrow-actions">
           {cancel ? (
-            <Button variant="default" density="default" onClick={cancel.onSelect}>
+            <Button
+              variant="default"
+              density="default"
+              {...(cancel.disabled ? { disabled: true } : {})}
+              onClick={cancel.onSelect}
+            >
               {cancel.label}
             </Button>
           ) : null}

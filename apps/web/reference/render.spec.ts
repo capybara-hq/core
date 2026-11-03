@@ -60,6 +60,9 @@ const PAGES = [
   "template-detail",
   "template-overview",
   "template-inbox",
+  "template-settings",
+  "template-wizard",
+  "template-auth",
 ];
 const THEMES = ["dark", "light"] as const;
 const BLOCK_ID = /^[a-z-]+-[a-z0-9-]+$/;
