@@ -1,4 +1,4 @@
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -11,7 +11,6 @@ import MarketplaceEntriesPage from "../src/app/(app)/admin/marketplaces/entries/
 import MarketplacesPage from "../src/app/(app)/admin/marketplaces/page";
 import InstallPage from "../src/app/(app)/catalog/[itemId]/install/page";
 import OrgCatalogItemPage from "../src/app/(app)/catalog/[itemId]/page";
-import CatalogPage from "../src/app/(app)/catalog/page";
 import InboxRoute from "../src/app/(app)/inbox/page";
 import ExtensionsPage from "../src/app/(app)/settings/extensions/page";
 import PluginsPage from "../src/app/(app)/settings/plugins/page";
@@ -28,8 +27,9 @@ import {
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
-import { expectNoFirstPaintFetch, renderRoute } from "./support/server";
+import { expectNoFirstPaintFetch, type Routes, renderRoute } from "./support/server";
 import { NOT_READY } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -53,9 +53,9 @@ vi.mock("next/navigation", () => ({
 type RenderOpts = Parameters<typeof renderRoute>[2];
 const installPage = () =>
   InstallPage({ params: Promise.resolve({ itemId: params.current.itemId ?? "" }) });
-/** `/catalog` read on the server from the latest `stubApi` routes (the browser's). */
+/** `/catalog` as a first load: the layout prefetches from the latest `stubApi` routes. */
 const renderCatalog = (opts: RenderOpts = {}) =>
-  renderRoute(() => CatalogPage(), lastStubRoutes(), opts);
+  renderRouteWithCache("/catalog", lastStubRoutes(), opts);
 const itemPage = () =>
   OrgCatalogItemPage({ params: Promise.resolve({ itemId: params.current.itemId ?? "" }) });
 /** `/catalog/<id>` read on the server from the latest `stubApi` routes. */
@@ -107,6 +107,30 @@ function orgItem(over: Record<string, unknown> = {}) {
     request: null,
     ...over,
   };
+}
+
+/** Lets pending reads and effects run (a read after mount would show up in the calls). */
+const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
+
+/**
+ * A client navigation to `path` with an empty cache whose `held` read answers only on `release()`:
+ * the template's loading state is drawn until then.
+ */
+async function renderHeld(path: string, routes: Routes, held: string) {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  const answer = routes[held];
+  if (answer === undefined) throw new Error(`no route ${held}`);
+  await renderRouteEmptyCache(path, {
+    ...routes,
+    [held]: async (c) => {
+      await gate;
+      return answer(c);
+    },
+  });
+  return { release: () => act(async () => release()) };
 }
 
 const escapeRe = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -3038,11 +3062,39 @@ describe("/catalog and /catalog/[itemId] render on the server (web-SSR spec §6)
   };
   const item = () => OrgCatalogItemPage({ params: Promise.resolve({ itemId: ID }) });
 
-  it("/catalog: the list is the first paint; it is a setup step", async () => {
+  it("/catalog: a first render from the hydrated cache makes no browser read; it is a setup step", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => CatalogPage(), routes, { readiness: NOT_READY });
+    await renderRouteWithCache("/catalog", routes, { readiness: NOT_READY });
     expect(within(screen.getByRole("list", { name: en.catalog.org.title })).getByText("pdf-tools"));
+    await settle();
     expect(browser).toEqual([]);
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  it("/catalog: an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld("/catalog", routes, `GET ${ORG}/catalog`);
+    await vi.waitFor(() => {
+      if (template("ListPage") === null) throw new Error("no page");
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByText("pdf-tools")).toBeNull();
+    await release();
+    expect(await screen.findByText("pdf-tools")).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
+  it("/catalog: a guest gets no access and nothing is read; no org renders nothing", async () => {
+    const guest = await renderRouteWithCache("/catalog", routes, { me: GUEST });
+    expect(new Set(guest.calls.map((c) => c.url))).toEqual(
+      new Set(["/api/v1/me", `${ORG}/readiness`]),
+    );
+    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
+    cleanup();
+    const none = await renderRouteWithCache("/catalog", routes, {
+      me: { ...ME, currentOrgId: null },
+    });
+    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+    expect(document.body.textContent).toBe("");
   });
 
   it("/catalog/<id>: the item is the first paint; it is a setup step; a missing one is not found", async () => {
@@ -3059,18 +3111,18 @@ describe("/catalog and /catalog/[itemId] render on the server (web-SSR spec §6)
     ).rejects.toThrow("NOT_FOUND");
   });
 
-  it.each([
-    ["/catalog", () => CatalogPage()],
-    ["/catalog/<id>", item],
-  ])("%s: a guest gets no access and nothing is read; no org renders nothing", async (_p, page) => {
-    const guest = await renderRoute(page, routes, { me: GUEST });
-    expect(new Set(guest.calls.map((c) => c.url))).toEqual(
-      new Set(["/api/v1/me", `${ORG}/readiness`]),
-    );
-    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
-    cleanup();
-    const none = await renderRoute(page, routes, { me: { ...ME, currentOrgId: null } });
-    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
-    expect(document.body.textContent).toBe("");
-  });
+  it.each([["/catalog/<id>", item]])(
+    "%s: a guest gets no access and nothing is read; no org renders nothing",
+    async (_p, page) => {
+      const guest = await renderRoute(page, routes, { me: GUEST });
+      expect(new Set(guest.calls.map((c) => c.url))).toEqual(
+        new Set(["/api/v1/me", `${ORG}/readiness`]),
+      );
+      expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
+      cleanup();
+      const none = await renderRoute(page, routes, { me: { ...ME, currentOrgId: null } });
+      expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+      expect(document.body.textContent).toBe("");
+    },
+  );
 });

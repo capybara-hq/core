@@ -8,7 +8,7 @@ import { canEditAgent } from "../org-settings";
 import type { Me } from "../session";
 import { agentConnectorQueries, agentFormQueries, agentQuery, agentsQuery } from "./agents";
 import { authSourcesQuery } from "./auth";
-import { orgCatalogItemQuery } from "./catalog";
+import { orgCatalogItemQuery, orgCatalogQuery } from "./catalog";
 import { channelQuery, channelSchemaQuery, channelsQuery, orgExtensionsQuery } from "./channels";
 import {
   attachmentLimitsQuery,
@@ -136,7 +136,11 @@ export const ROUTES: readonly RouteEntry[] = [
       orgId === null || !atLeast(me, "member") ? [] : agentFormQueries(orgId),
   },
   { pattern: "/bind/[token]", queries: () => [], none: "pending migration" },
-  { pattern: "/catalog", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/catalog",
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "member") ? [] : [q(orgCatalogQuery(orgId))],
+  },
   { pattern: "/catalog/[itemId]", queries: () => [], none: "pending migration" },
   { pattern: "/catalog/[itemId]/install", queries: () => [], none: "pending migration" },
   {

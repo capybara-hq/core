@@ -232,7 +232,7 @@ const PAGES: [string, ComponentType | ServerPage | RoutePage, "member" | "admin"
     "member",
     zh.roles.need.member,
   ],
-  ["/catalog", server(() => CatalogPage()), "member", zh.roles.need.member],
+  ["/catalog", route("/catalog", () => CatalogPage()), "member", zh.roles.need.member],
   [
     "/catalog/i1",
     server(() => CatalogItemPage(params({ itemId: "i1" }))),
