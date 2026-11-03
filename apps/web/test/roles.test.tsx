@@ -176,8 +176,11 @@ async function runRoutePage(page: RoutePage, me: Me): Promise<{ reads: string[] 
 const PAGES: [string, ComponentType | ServerPage | RoutePage, "member" | "admin", string][] = [
   ["/agents/new", route("/agents/new", () => NewAgentPage()), "member", zh.roles.need.member],
   [
-    "/connectors/install",
-    server(() => ConnectorInstallPage({ searchParams: Promise.resolve({}) })),
+    // with a template: the layout prefetches its item and the org's extensions
+    "/connectors/install?template=t1",
+    route("/connectors/install?template=t1", () =>
+      ConnectorInstallPage({ searchParams: Promise.resolve({ template: "t1" }) }),
+    ),
     "admin",
     zh.roles.need.admin,
   ],
@@ -313,15 +316,8 @@ describe("role gate: pages a role may not open", () => {
           expect(calls).toEqual([]);
         } else {
           expect(noAccess()).toBeNull();
-          // the page really loads: it asks the kernel for its data (the connector wizard asks
-          // nothing before its first step, so its first step's template stands in)
-          if (path === "/connectors/install") {
-            await vi.waitFor(() =>
-              expect(document.querySelector('[data-template="WizardPage"]')).toBeTruthy(),
-            );
-          } else {
-            await vi.waitFor(() => expect(calls.length).toBeGreaterThan(0));
-          }
+          // the page really loads: it asks the kernel for its data
+          await vi.waitFor(() => expect(calls.length).toBeGreaterThan(0));
         }
       });
     }

@@ -8,6 +8,7 @@ import { canEditAgent } from "../org-settings";
 import type { Me } from "../session";
 import { agentConnectorQueries, agentFormQueries, agentQuery, agentsQuery } from "./agents";
 import { authSourcesQuery } from "./auth";
+import { orgCatalogItemQuery } from "./catalog";
 import { channelQuery, channelSchemaQuery, channelsQuery, orgExtensionsQuery } from "./channels";
 import {
   attachmentLimitsQuery,
@@ -231,7 +232,17 @@ export const ROUTES: readonly RouteEntry[] = [
         ? []
         : [q(connectorQuery(orgId, params.connectorId))],
   },
-  { pattern: "/connectors/install", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/connectors/install",
+    // Org admins; `?template=<item id>` installs a catalog template: its item and the org's
+    // extensions (the wizard's extension step).
+    queries: ({ orgId, me, search }) => {
+      const itemId = search.get("template") ?? "";
+      return orgId === null || itemId === "" || !atLeast(me, "admin")
+        ? []
+        : [q(orgCatalogItemQuery(orgId, itemId)), q(orgExtensionsQuery(orgId))];
+    },
+  },
   { pattern: "/evals", queries: () => [], none: "pending migration" },
   { pattern: "/evals/[setId]", queries: () => [], none: "pending migration" },
   { pattern: "/evals/[setId]/cases/[caseId]", queries: () => [], none: "pending migration" },

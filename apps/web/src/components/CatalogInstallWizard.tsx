@@ -4,12 +4,14 @@ import {
   type ActionRowProps,
   Card,
   Field,
+  type FieldShape,
   Input,
   type PageHeaderProps,
   Stack,
   Text,
   useToast,
 } from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
 import { useRouter } from "../i18n/navigation";
@@ -30,6 +32,11 @@ import {
 import type { AuthType, ConnectorAuth } from "../lib/connectors";
 import { extensionLabel, labelLocale } from "../lib/extension-label";
 import type { OrgExtension } from "../lib/extensions";
+import { orgCatalogItemQuery, pluginChangeKeys } from "../lib/query/catalog";
+import { orgExtensionsQuery } from "../lib/query/channels";
+import { retryOnMountOf } from "../lib/query/client";
+import { useAppMutation } from "../lib/query/define";
+import { type PageState, usePageQuery } from "../lib/query/page-query";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useCatalogErrorLines } from "./CatalogParts";
 import {
@@ -199,13 +206,34 @@ export function connectorInput(t: OrgCatalogTemplate, d: TemplateDraft): Connect
 }
 
 /**
- * What the install wizard starts from, read on the server: the catalog item and the org's
- * extensions (`null` when they could not be read: no extension config step is offered then).
+ * What the install wizard starts from: the catalog item and the org's extensions (`null` when they
+ * could not be read: no extension config step is offered then).
  */
 export interface CatalogInstallData {
   detail: OrgCatalogDetail;
   extensions: OrgExtension[] | null;
 }
+
+/**
+ * The install wizard's reads from the query cache (the layout prefetched them on a first load): the
+ * item (a 404 is the page's not-found) and the org's extensions (a section). Loading until both
+ * answered, so the steps don't change under the person.
+ */
+export function useCatalogInstall(orgId: string, itemId: string): PageState<CatalogInstallData> {
+  const item = usePageQuery(orgCatalogItemQuery(orgId, itemId));
+  const extQ = orgExtensionsQuery(orgId);
+  const ext = useQuery({ ...extQ, retryOnMount: retryOnMountOf(extQ.queryKey) });
+  if (item.kind !== "ready") return item;
+  if (ext.data === undefined && ext.error === null) return { kind: "loading" };
+  return {
+    kind: "ready",
+    data: { detail: item.data, extensions: ext.data?.extensions ?? null },
+    refreshing: item.refreshing,
+  };
+}
+
+/** A template step's fields while the item is on the way: the name, the endpoint, a credential. */
+const LOADING_FIELDS: FieldShape[] = [{}, {}, {}];
 
 /** 向导交给页面放进 WizardPage 的部分（页面文件自己渲染模板，见 check:web-ui 的 web-ui-template）。 */
 export interface WizardView {
@@ -215,6 +243,8 @@ export interface WizardView {
   current: number;
   actionRow: ActionRowProps;
   body: ReactNode;
+  /** The item is on the way: the page passes it as WizardPage's `loading`. */
+  wizardLoading?: { fields: FieldShape[] };
 }
 
 /**
@@ -229,16 +259,17 @@ export interface WizardView {
 export function CatalogInstallWizard({
   orgId,
   itemId,
-  initial,
+  data,
   frame,
 }: {
   orgId: string;
   itemId: string;
-  /** What the server read (`lib/server/catalog.ts`): the item, and the org's extensions. */
-  initial: CatalogInstallData;
+  /** The item and the org's extensions ({@link useCatalogInstall}); `null` while they load. */
+  data: CatalogInstallData | null;
   frame(view: WizardView): ReactNode;
 }) {
   const scope = usePagePath("org");
+  const t = useTranslations("catalog.org.install");
   const header = (title: string) => ({
     path: [
       ...scope,
@@ -248,11 +279,24 @@ export function CatalogInstallWizard({
     ],
     title,
   });
+  if (data === null) {
+    return frame({
+      ...header(""),
+      steps: [t("confirmStep")],
+      current: 0,
+      actionRow: {
+        cancel: { label: t("cancel"), onSelect: () => {} },
+        primary: { label: t("next"), onSelect: () => {} },
+      },
+      body: null,
+      wizardLoading: { fields: LOADING_FIELDS },
+    });
+  }
   return (
     <Wizard
       orgId={orgId}
-      detail={initial.detail}
-      orgExtensions={initial.extensions ?? []}
+      detail={data.detail}
+      orgExtensions={data.extensions ?? []}
       header={header}
       frame={frame}
     />
@@ -313,6 +357,11 @@ function Wizard({
   const [showRequired, setShowRequired] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<{ message: string; extra: string[] }>();
+  // An install changes the catalog's view, the installed plugins and what the plugin brings.
+  const install = useAppMutation({
+    fn: (body: OrgInstallBody) => installCatalogItem(orgId, item.id, body),
+    invalidates: () => pluginChangeKeys(orgId),
+  });
   const confirmIdx = steps.length - 1;
   const extensionIdx = hasExtensionStep ? confirmIdx - 1 : -1;
   const installable = item.installable === "yes" || item.installable === "granted";
@@ -344,7 +393,7 @@ function Wizard({
       ...(withConfig !== undefined && { extensionConfig: config.value }),
     };
     try {
-      const r = await installCatalogItem(orgId, item.id, body);
+      const r = await install.mutateAsync(body);
       if ("request" in r) {
         toast.success(ta("approvalRequested"));
         router.push(`/catalog/${item.id}`);

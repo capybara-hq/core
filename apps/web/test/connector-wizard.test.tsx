@@ -1,13 +1,13 @@
-import { cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import InstallAppPage from "../src/app/(app)/connectors/install/page";
 import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
-import { expectNoFirstPaintFetch, renderRoute } from "./support/server";
+import { expectNoFirstPaintFetch } from "./support/server";
 import { NOT_READY } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -20,11 +20,11 @@ vi.mock("next/navigation", () => ({
   },
 }));
 
-const installPage = (template?: string) => () =>
-  InstallAppPage({ searchParams: Promise.resolve(template === undefined ? {} : { template }) });
-/** `/connectors/install` read on the server from the latest `stubApi` routes (the browser's). */
-const renderInstall = (opts: Parameters<typeof renderRoute>[2] = {}) =>
-  renderRoute(installPage(), lastStubRoutes(), opts);
+const installPath = (template?: string) =>
+  template === undefined ? "/connectors/install" : `/connectors/install?template=${template}`;
+/** `/connectors/install` as a first load: the layout prefetches from the latest `stubApi` routes. */
+const renderInstall = (opts: Parameters<typeof renderRouteWithCache>[2] = {}) =>
+  renderRouteWithCache(installPath(), lastStubRoutes(), opts);
 
 const msgs = { zh, en } as const;
 const LOCALES = ["zh", "en"] as const;
@@ -119,7 +119,9 @@ describe("安装向导（WizardPage）", () => {
             issues: [],
           }),
       });
-      const { container } = await renderInstall({ locale });
+      const { container, client } = await renderInstall({ locale });
+      // the list is cached (as after a visit to /connectors)
+      client.setQueryData(["org", "o1", "connectors"], { connectors: [] });
       expect(container.querySelector('[data-template="WizardPage"]')).not.toBeNull();
       const user = userEvent.setup();
       expect(currentStep()).toBe(w.steps.type);
@@ -195,6 +197,8 @@ describe("安装向导（WizardPage）", () => {
       });
       expect(await screen.findByText(w.doneTitle.replace("{name}", "Fixture"))).toBeTruthy();
       expect(currentStep()).toBe(w.steps.done);
+      // installing invalidates connectors
+      expect(client.getQueryState(["org", "o1", "connectors"])?.isInvalidated).toBe(true);
       // 视图里至多一个主操作
       expect(container.querySelectorAll('[data-variant="primary"]').length).toBeLessThanOrEqual(1);
       await clickAction(user, locale, w.openConnector);
@@ -682,52 +686,111 @@ describe("安装向导（WizardPage）", () => {
   });
 });
 
-describe("/connectors/install renders on the server (web-SSR spec §6)", () => {
+describe("/connectors/install reads from the query cache", () => {
   const as = (role: "member" | "admin") => ({
     ...ME,
     account: { ...ME.account, isEnterpriseAdmin: false },
     memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
   });
+  const ITEM = {
+    item: {
+      id: "acme-crm",
+      name: "acme-crm",
+      displayName: null,
+      description: "",
+      installable: "yes",
+      latestVersion: "1.0.0",
+    },
+    templates: [],
+    skills: [],
+    extension: null,
+    dependencies: [],
+  };
+  const routes = {
+    "GET /api/v1/orgs/o1/catalog/acme-crm": () => json(200, ITEM),
+    "GET /api/v1/orgs/o1/extensions": () => json(200, { extensions: [] }),
+  };
+  /** Lets pending reads and effects run (a read after mount would show up in the calls). */
+  const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
 
   it("without ?template= the wizard's first step is the first paint; nothing is read", async () => {
     const browser = expectNoFirstPaintFetch();
-    const { calls } = await renderRoute(installPage(), {});
+    const { calls } = await renderRouteWithCache(installPath(), {});
     expect(document.querySelector('[data-template="WizardPage"]')).not.toBeNull();
     expect(new Set(calls.map((c) => c.url))).toEqual(
       new Set(["/api/v1/me", "/api/v1/orgs/o1/readiness"]),
     );
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("?template= (from searchParams) reads the catalog item and the org extensions on the server", async () => {
+  it("?template=: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    const { calls } = await renderRoute(installPage("acme-crm"), {
-      "GET /api/v1/orgs/o1/catalog/acme-crm": () =>
-        json(200, {
-          item: { id: "acme-crm", name: "acme-crm", displayName: null, description: "" },
-          templates: [],
-          skills: [],
-          extension: null,
-          dependencies: [],
-        }),
+    const { calls } = await renderRouteWithCache(installPath("acme-crm"), routes);
+    expect(calls.map((c) => c.url)).toContain("/api/v1/orgs/o1/catalog/acme-crm");
+    expect(calls.map((c) => c.url)).toContain("/api/v1/orgs/o1/extensions");
+    expect(document.querySelector('[data-template="WizardPage"]')).not.toBeNull();
+    expect(document.querySelector("[aria-busy='true']")).toBeNull();
+    await settle();
+    expect(browser).toEqual([]);
+  });
+
+  it("?template=: an empty cache shows the template's loading state, then the data", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    await renderRouteEmptyCache(installPath("acme-crm"), {
+      "GET /api/v1/orgs/o1/catalog/acme-crm": async () => {
+        await held;
+        return json(200, ITEM);
+      },
       "GET /api/v1/orgs/o1/extensions": () => json(200, { extensions: [] }),
     });
-    expect(calls.map((c) => c.url)).toContain("/api/v1/orgs/o1/catalog/acme-crm");
-    expect(document.querySelector('[data-template="WizardPage"]')).not.toBeNull();
-    expect(browser).toEqual([]);
+    await vi.waitFor(() => {
+      if (document.querySelector('[data-template="WizardPage"]') === null)
+        throw new Error("no page");
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    await act(async () => release());
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: en.catalog.org.install.title.replace("{name}", "acme-crm"),
+      }),
+    ).toBeTruthy();
   });
 
-  it("a member gets no access and nothing is read; no org renders nothing; setup redirects home", async () => {
-    const member = await renderRoute(installPage("x"), {}, { me: as("member") });
+  it("?template=: an item the kernel does not find is the not-found state in the shell", async () => {
+    expectNoFirstPaintFetch();
+    await renderRouteWithCache(installPath("acme-crm"), {
+      ...routes,
+      "GET /api/v1/orgs/o1/catalog/acme-crm": () =>
+        json(404, { error: { code: "catalog.not_found", message: "x" } }),
+    });
+    expect(screen.getByRole("heading", { level: 1, name: en.notFound.title })).toBeTruthy();
+  });
+
+  it("a member gets no access and nothing is read; no org renders nothing; setup goes home", async () => {
+    const member = await renderRouteWithCache(installPath("acme-crm"), routes, {
+      me: as("member"),
+    });
     expect(new Set(member.calls.map((c) => c.url))).toEqual(
       new Set(["/api/v1/me", "/api/v1/orgs/o1/readiness"]),
     );
     expect(document.querySelector('[data-kind="no-access"]')).not.toBeNull();
     cleanup();
-    const none = await renderRoute(installPage(), {}, { me: { ...ME, currentOrgId: null } });
-    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
-    await expect(renderRoute(installPage(), {}, { readiness: NOT_READY })).rejects.toThrow(
-      "REDIRECT /",
+    const none = await renderRouteWithCache(
+      installPath(),
+      {},
+      {
+        me: { ...ME, currentOrgId: null },
+      },
     );
+    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+    cleanup();
+    await renderRouteWithCache(installPath(), {}, { readiness: NOT_READY });
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
   });
 });

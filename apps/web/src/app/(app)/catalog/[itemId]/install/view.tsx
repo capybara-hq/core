@@ -23,7 +23,7 @@ export default function CatalogInstallView({
     <CatalogInstallWizard
       orgId={orgId}
       itemId={itemId}
-      initial={initial}
+      data={initial}
       frame={(v) => (
         <WizardPage
           header={{ path: v.path, title: v.title }}

@@ -15,6 +15,8 @@ export const keys = {
       me: (): readonly unknown[] => [...all, "me"],
       /** `/me` on a public page: `null` when signed out; only under `keys.account("self")`. */
       maybeMe: (): readonly unknown[] => [...all, "maybeMe"],
+      /** The account's linked external identities. */
+      identities: (): readonly unknown[] => [...all, "identities"],
     };
   },
   org(orgId: string) {
@@ -42,6 +44,23 @@ export const keys = {
       channelSchema: (plugin: string): readonly unknown[] => [...all, "channelSchema", plugin],
       /** The org's extensions (installed plugins with an extension, enabled or not). */
       orgExtensions: (): readonly unknown[] => [...all, "orgExtensions"],
+      /** The catalog from the org's view (the items it may install). */
+      catalog: (): readonly unknown[] => [...all, "catalog"],
+      /** Every catalog item read (an invalidation prefix). */
+      catalogItemsAll: (): readonly unknown[] => [...all, "catalogItem"],
+      /** One catalog item from the org's view (its latest version's components). */
+      catalogItem: (itemId: string): readonly unknown[] => [...all, "catalogItem", itemId],
+      /** The plugins installed in the org. */
+      pluginInstalls: (): readonly unknown[] => [...all, "pluginInstalls"],
+      /** An upgrade preview of an installed plugin to a version. */
+      pluginUpgradePreview: (installId: string, version: string): readonly unknown[] => [
+        ...all,
+        "pluginUpgradePreview",
+        installId,
+        version,
+      ],
+      /** My standing tool grants in the org. */
+      toolGrants: (): readonly unknown[] => [...all, "toolGrants"],
       /** Every view of the sidebar's conversation groups (an invalidation prefix). */
       conversationGroupsAll: (): readonly unknown[] => [...all, "conversationGroups"],
       /** The sidebar's conversation groups of one view (`"default"`: what the layout reads). */
