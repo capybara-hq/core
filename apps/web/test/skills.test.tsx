@@ -186,6 +186,34 @@ describe("技能库列表（ListPage）", () => {
     await vi.waitFor(() => expect(screen.getByText(/^v2 · /)).toBeTruthy());
   });
 
+  it("an upload invalidates skills and that skill: the list is read again", async () => {
+    const calls = stubApi({
+      [`GET ${BASE}`]: () => json(200, { skills: [skill("s1", "pdf-tools")] }),
+      [`POST ${BASE}/uploads`]: () =>
+        json(201, {
+          id: "up1",
+          upload: { method: "POST", url: S3_URL, headers: {}, fields: { key: "k", policy: "p" } },
+          expiresAt: T,
+        }),
+      [`POST ${BASE}`]: () =>
+        json(201, {
+          skill: skill("s1", "pdf-tools", { currentVersion: 2 }),
+          version: 2,
+          created: false,
+        }),
+    });
+    const { client } = await renderSkills();
+    // the skill is cached (as after a visit to /skills/s1)
+    client.setQueryData(["org", "o1", "skill", "s1"], { skill: skill("s1", "pdf-tools") });
+    await openUpload();
+    await userEvent.setup().upload(fileInput(), zipFile());
+    await vi.waitFor(() =>
+      expect(client.getQueryState(["org", "o1", "skill", "s1"])?.isInvalidated).toBe(true),
+    );
+    const after = calls.slice(calls.findIndex((c) => c.method === "POST" && c.url === BASE));
+    expect(after.map((c) => `${c.method} ${c.url}`)).toContain(`GET ${BASE}`);
+  });
+
   it.each(LOCALES)(
     "包不合法：显示 skill.invalid_package 的文案与逐条问题（%s）",
     async (locale) => {
