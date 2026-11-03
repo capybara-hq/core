@@ -72,6 +72,7 @@ const EXPECTED: Record<FakeExtensionName, { provides: string[]; requires?: strin
   "fake-dep-provider": { provides: ["counter@1"] },
   "fake-dep-requirer": { provides: [], requires: ["counter@1"] },
   "fake-im": { provides: ["channel@1", "identity-source@1", "directory@1"] },
+  "fake-config-form": { provides: [] },
 };
 
 let out: string;
@@ -147,6 +148,27 @@ describe("packing", () => {
       tools: ["note", "read_note"],
       storage: true,
     });
+  });
+
+  it("fake-config-form carries its display name and the hinted deployment schema", async () => {
+    const plugin = await readPluginPackage(packed.get("fake-config-form") as Uint8Array, {
+      maxBytes: MAX_BYTES,
+      hostSdkVersion: SDK_VERSION,
+    });
+    expect(plugin.manifest.displayName).toEqual({ zh: "表单样例", en: "Form sample" });
+    const deployment = plugin.manifest.extension?.configSchemas?.deployment as
+      | Record<string, unknown>
+      | undefined;
+    expect(deployment?.["x-ui"]).toMatchObject({
+      messages: { duplicateEndpoint: expect.anything() },
+    });
+    const props = deployment?.properties as Record<string, Record<string, unknown>>;
+    expect(props.endpoints?.["x-ui"]).toMatchObject({
+      label: { zh: "端点", en: "Endpoints" },
+      secrets: [{ path: "apiKeys", keyBy: "name", after: "baseUrl" }],
+      presets: expect.arrayContaining([expect.objectContaining({ id: "deepseek" })]),
+    });
+    expect(props.apiKeys?.["x-secret"]).toBe(true);
   });
 
   it("fake-connector ships its template; fake-dep-requirer depends on fake-dep-provider", async () => {

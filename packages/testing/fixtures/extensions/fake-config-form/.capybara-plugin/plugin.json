@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "name": "fake-config-form",
+  "displayName": {
+    "zh": "表单样例",
+    "en": "Form sample"
+  },
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Test fake: an openai-compatible-shaped deployment config schema with config form hints"
+}

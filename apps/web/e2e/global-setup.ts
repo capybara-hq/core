@@ -4,7 +4,7 @@
  * `@capybara-hq/testing` (`fake-connector` as connector kind `mcp`, so the web install wizard
  * drives it as an MCP connector; `fake-openapi`, connector kind `openapi`, for the wizard's OpenAPI
  * flow; `fake-tools-ui`, a tool with a conversation view; `fake-embed`, an org page and a
- * conversation tab embed), all allowing local http, and the fake IM test plugin `fake-im`; no
+ * conversation tab embed; `fake-config-form`, a hinted deployment config form), all allowing local http, and the fake IM test plugin `fake-im`; no
  * official plugin except `model-fake` and the bootstrap plugins; server.mjs then
  * starts the web layer (`next dev`) pointing at it. A fake MCP server
  * (stateful sessions; the destructive tool `delete_item`, `signup` which starts an elicitation, the
@@ -70,6 +70,11 @@ const fakeToolsUi = fakeExtension("fake-tools-ui");
 const fakeEmbed = fakeExtension("fake-embed");
 /** Connector extension `fake-openapi` (kind `openapi`), for the wizard's OpenAPI flow. */
 const fakeOpenApi = fakeExtension("fake-openapi");
+/**
+ * `fake-config-form` (表单样例): an openai-compatible-shaped deployment config with form hints, no
+ * config given here, so it starts pending configuration and the admin form fills it.
+ */
+const fakeConfigForm = fakeExtension("fake-config-form");
 /**
  * 假 IM 测试插件（内核测试夹具：channel@1 + identity-source@1 + directory@1），按路径加载。
  * 渠道连接的平台地址写在连接配置里（im-channels.spec 在 worker 里自起假 IM 平台）；部署级的 platformUrl
@@ -583,6 +588,7 @@ export default async function globalSetup(): Promise<Cleanup> {
         fakeIm,
         fakeToolsUi,
         fakeEmbed,
+        fakeConfigForm,
         sandboxFake,
         hooksProbe,
       ],
