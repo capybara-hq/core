@@ -148,7 +148,14 @@ export const ROUTES: readonly RouteEntry[] = [
         ? []
         : [q(orgCatalogItemQuery(orgId, params.itemId))],
   },
-  { pattern: "/catalog/[itemId]/install", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/catalog/[itemId]/install",
+    // Org admins: the item and the org's extensions (the wizard's extension step).
+    queries: ({ orgId, me, params }) =>
+      orgId === null || params.itemId === undefined || !atLeast(me, "admin")
+        ? []
+        : [q(orgCatalogItemQuery(orgId, params.itemId)), q(orgExtensionsQuery(orgId))],
+  },
   {
     pattern: "/channels",
     // Org admins; the agents name the connections' agents (a section).

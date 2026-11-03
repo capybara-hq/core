@@ -9,7 +9,6 @@ import AdminCatalogPage from "../src/app/(app)/admin/catalog/page";
 import CatalogRequestsPage from "../src/app/(app)/admin/catalog/requests/page";
 import MarketplaceEntriesPage from "../src/app/(app)/admin/marketplaces/entries/page";
 import MarketplacesPage from "../src/app/(app)/admin/marketplaces/page";
-import InstallPage from "../src/app/(app)/catalog/[itemId]/install/page";
 import InboxRoute from "../src/app/(app)/inbox/page";
 import ExtensionsPage from "../src/app/(app)/settings/extensions/page";
 import PluginsPage from "../src/app/(app)/settings/plugins/page";
@@ -50,16 +49,15 @@ vi.mock("next/navigation", () => ({
 }));
 
 type RenderOpts = Parameters<typeof renderRoute>[2];
-const installPage = () =>
-  InstallPage({ params: Promise.resolve({ itemId: params.current.itemId ?? "" }) });
 /** `/catalog` as a first load: the layout prefetches from the latest `stubApi` routes. */
 const renderCatalog = (opts: RenderOpts = {}) =>
   renderRouteWithCache("/catalog", lastStubRoutes(), opts);
 /** `/catalog/<id>` as a first load: the layout prefetches from the latest `stubApi` routes. */
 const renderItem = (opts: RenderOpts = {}) =>
   renderRouteWithCache(`/catalog/${params.current.itemId ?? ""}`, lastStubRoutes(), opts);
-/** `/catalog/<id>/install` read on the server from the latest `stubApi` routes (the browser's). */
-const renderInstall = (opts: RenderOpts = {}) => renderRoute(installPage, lastStubRoutes(), opts);
+/** `/catalog/<id>/install` as a first load: the layout prefetches from the latest `stubApi` routes. */
+const renderInstall = (opts: RenderOpts = {}) =>
+  renderRouteWithCache(`/catalog/${params.current.itemId ?? ""}/install`, lastStubRoutes(), opts);
 
 const msgs = { zh, en } as const;
 /** The design ErrorDetail's toggle (design i18n `errorDetail.raw`). */
@@ -758,7 +756,9 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
           install: { id: "i1" },
         }),
     });
-    await renderInstall();
+    const { client } = await renderInstall();
+    // the list is cached (as after a visit to /catalog)
+    client.setQueryData(["org", "o1", "catalog"], { items: [] });
     const user = userEvent.setup();
     await user.type(await screen.findByLabelText("Region", { exact: false }), "eu");
     // the config card is titled with the extension's display name, not its id
@@ -766,6 +766,14 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
     await user.click(screen.getByRole("button", { name: t.next }));
     await user.click(screen.getByRole("button", { name: t.submit }));
     await waitFor(() => expect(router.push).toHaveBeenCalledWith("/settings/plugins"));
+    // the install invalidates pluginChangeKeys: the cached catalog is marked stale, the shown
+    // item and the org's extensions are read again
+    expect(client.getQueryState(["org", "o1", "catalog"])?.isInvalidated).toBe(true);
+    await waitFor(() =>
+      expect(new Set(calls.filter((c) => c.method === "GET").map((c) => c.url))).toEqual(
+        new Set([`${ORG}/catalog/${ID}`, `${ORG}/extensions`]),
+      ),
+    );
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
       version: "1.0.0",
       extensionConfig: { region: "eu" },
@@ -3040,40 +3048,56 @@ describe("/catalog/[itemId]/install renders on the server (web-SSR spec §6)", (
     memberships: [{ ...ME.memberships[0], role } as Me["memberships"][number]],
   });
 
-  it("the item and the org extensions are the first paint; it is a setup step", async () => {
-    params.current = { itemId: ID };
+  const path = `/catalog/${ID}/install`;
+
+  it("a first render from the hydrated cache makes no browser read; it is a setup step", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(installPage, routes, { readiness: NOT_READY });
+    await renderRouteWithCache(path, routes, { readiness: NOT_READY });
     expect(screen.getByText(en.catalog.org.install.summarySkills.replace("{n}", "1"))).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
+    expect(router.replace).not.toHaveBeenCalled();
   });
 
-  it("the org extensions failing still renders the wizard; a missing item is not found", async () => {
-    params.current = { itemId: ID };
+  it("an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld(path, routes, `GET ${ORG}/catalog/${ID}`);
+    await vi.waitFor(() => {
+      if (template("WizardPage") === null) throw new Error("no page");
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    await release();
+    expect(
+      await screen.findByText(en.catalog.org.install.summarySkills.replace("{n}", "1")),
+    ).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
+  it("the org extensions failing still renders the wizard; a missing item is the not-found state", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(installPage, {
+    await renderRouteWithCache(path, {
       ...routes,
       [`GET ${ORG}/extensions`]: () => json(503, { error: { code: "internal" } }),
     });
     expect(template("WizardPage")).not.toBeNull();
+    await settle();
+    // a section that failed on the first load is not read again on mount
     expect(browser).toEqual([]);
-    await expect(
-      renderRoute(installPage, {
-        [`GET ${ORG}/catalog/${ID}`]: () => json(404, { error: { code: "catalog.not_found" } }),
-        [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
-      }),
-    ).rejects.toThrow("NOT_FOUND");
+    cleanup();
+    await renderRouteWithCache(path, {
+      [`GET ${ORG}/catalog/${ID}`]: () => json(404, { error: { code: "catalog.not_found" } }),
+      [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+    });
+    expect(screen.getByRole("heading", { level: 1, name: en.notFound.title })).toBeTruthy();
   });
 
   it("a member gets no access and nothing is read; no org renders nothing", async () => {
-    params.current = { itemId: ID };
-    const member = await renderRoute(installPage, routes, { me: as("member") });
+    const member = await renderRouteWithCache(path, routes, { me: as("member") });
     expect(new Set(member.calls.map((c) => c.url))).toEqual(
       new Set(["/api/v1/me", `${ORG}/readiness`]),
     );
     expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
     cleanup();
-    const none = await renderRoute(installPage, routes, { me: { ...ME, currentOrgId: null } });
+    const none = await renderRouteWithCache(path, routes, { me: { ...ME, currentOrgId: null } });
     expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
   });
 });

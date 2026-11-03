@@ -1,26 +1,15 @@
-import { NoAccess } from "../../../../../components/NoAccess";
-import { loadCatalogInstall } from "../../../../../lib/server/catalog";
-import { workspace } from "../../../../../lib/server/session";
 import CatalogInstallView from "./view";
 
 /**
- * `/catalog/[itemId]/install` (org admins; a setup step, web-order spec §3.8): the item and the
- * org's extensions are read on the server.
+ * `/catalog/[itemId]/install` (org admins; a setup step, web-order spec §3.8). It reads nothing: the
+ * layout prefetches the item and the org's extensions on a first load (`lib/query/routes.ts`); a
+ * missing item is the not-found state in the shell.
  */
 export default async function CatalogInstallPage({
   params,
 }: {
   params: Promise<{ itemId: string }>;
 }) {
-  const ws = await workspace({ min: "admin", setup: "step" });
-  if (ws.kind === "noOrg") return null;
-  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
   const { itemId } = await params;
-  return (
-    <CatalogInstallView
-      orgId={ws.orgId}
-      itemId={itemId}
-      initial={await loadCatalogInstall(ws.orgId, itemId)}
-    />
-  );
+  return <CatalogInstallView itemId={itemId} />;
 }

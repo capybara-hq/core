@@ -241,7 +241,7 @@ const PAGES: [string, ComponentType | ServerPage | RoutePage, "member" | "admin"
   ],
   [
     "/catalog/i1/install",
-    server(() => CatalogInstallPage(params({ itemId: "i1" }))),
+    route("/catalog/i1/install", () => CatalogInstallPage(params({ itemId: "i1" }))),
     "admin",
     zh.roles.need.admin,
   ],
