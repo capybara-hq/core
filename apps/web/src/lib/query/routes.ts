@@ -28,7 +28,7 @@ import {
   stagedImportQuery,
 } from "./admin";
 import { agentConnectorQueries, agentFormQueries, agentQuery, agentsQuery } from "./agents";
-import { authSourcesQuery } from "./auth";
+import { authSourcesQuery, invitationQuery } from "./auth";
 import { orgCatalogItemQuery, orgCatalogQuery } from "./catalog";
 import { channelQuery, channelSchemaQuery, channelsQuery, orgExtensionsQuery } from "./channels";
 import {
@@ -487,7 +487,14 @@ export const ROUTES: readonly RouteEntry[] = [
       await qc.prefetchQuery({ ...skillChangeQuery(orgId, first.skillChange.id), retry: false });
     },
   },
-  { pattern: "/invite/[token]", queries: () => [q(maybeMeQuery())] },
+  {
+    pattern: "/invite/[token]",
+    // The invitation's public preview, and the session (`null` signed out: sign in or sign up).
+    queries: ({ params }) =>
+      params.token === undefined
+        ? [q(maybeMeQuery())]
+        : [q(invitationQuery(params.token)), q(maybeMeQuery())],
+  },
   {
     pattern: "/login",
     // The sign-in sources, and the session (`null` signed out) the login layout redirects on.

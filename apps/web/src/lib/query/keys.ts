@@ -241,6 +241,8 @@ export const keys = {
       all: all as readonly unknown[],
       /** The sign-in sources the login page offers. */
       authSources: (): readonly unknown[] => [...all, "authSources"],
+      /** An invitation's public preview, by its token (no session needed). */
+      invitation: (token: string): readonly unknown[] => [...all, "invitation", token],
       /** The admin console's four overview numbers. */
       adminOverview: (): readonly unknown[] => [...all, "adminOverview"],
       /** Every page of the accounts list (an invalidation prefix). */

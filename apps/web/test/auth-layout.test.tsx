@@ -34,6 +34,11 @@ const stateOf = (element: unknown) =>
 const dataOf = (state: DehydratedState, area: string) =>
   state.queries.find((q) => q.queryKey.includes(area))?.state;
 const SOURCES = [{ plugin: "lark", label: "Lark" }];
+const INVITE = {
+  org: { id: "o9", name: "Initech" },
+  role: "guest",
+  expiresAt: "2026-10-29T00:00:00Z",
+};
 
 beforeEach(() => {
   req.headers = new Headers();
@@ -54,18 +59,21 @@ describe("the (auth) layout's first-load prefetch", () => {
     expect(dataOf(state, "authSources")).toMatchObject({ status: "success", data: SOURCES });
   });
 
-  it("a signed-in visitor's maybeMe is the account", async () => {
-    serverRoutes({
+  it("a document render of /invite prefetches the preview and maybeMe; signed in, it is the account", async () => {
+    const calls = serverRoutes({
       "GET /api/v1/me": () => json(200, ME),
-      "GET /api/v1/auth/sources": () => json(200, { sources: [] }),
+      "GET /api/v1/invitations/t1": () => json(200, INVITE),
     });
     const state = stateOf(await layoutAt("/invite/t1"));
+    expect(calls.map((c) => c.url).sort()).toEqual(["/api/v1/invitations/t1", "/api/v1/me"]);
     expect(dataOf(state, "maybeMe")).toMatchObject({ status: "success", data: ME });
+    expect(dataOf(state, "invitation")).toMatchObject({ status: "success", data: INVITE });
   });
 
   it("another /me failure is dehydrated as an error, still without a redirect", async () => {
     serverRoutes({
       "GET /api/v1/me": () => json(500, { error: { code: "internal", message: "boom" } }),
+      "GET /api/v1/invitations/t1": () => json(200, INVITE),
     });
     const state = stateOf(await layoutAt("/invite/t1"));
     expect(dataOf(state, "maybeMe")).toMatchObject({

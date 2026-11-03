@@ -7,7 +7,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import BindPage from "../src/app/(auth)/bind/[token]/page";
-import InvitePage from "../src/app/(auth)/invite/[token]/page";
 import SetupPage from "../src/app/(auth)/setup/page";
 import { ServerSetupStatusProvider } from "../src/app/(auth)/setup/status";
 import { json, noContent, stubApi } from "./support/api";
@@ -70,7 +69,6 @@ async function renderHeld(path: string, held: string, routes: Routes = ROUTES) {
   });
   return { ...view, release: () => act(async () => release()) };
 }
-const invite = () => InvitePage({ params: Promise.resolve({ token: "cap_inv_tok" }) });
 const bind = () => BindPage({ params: Promise.resolve({ token: "cap_bind_tok" }) });
 /** The order of two mocks' first calls. */
 const before = (a: { mock: { invocationCallOrder: number[] } }, b: typeof a) =>
@@ -174,40 +172,83 @@ describe("/setup", () => {
 });
 
 describe("/invite/[token]", () => {
-  it("signed in: the preview and accept, with no browser fetch", async () => {
+  const PAGE = "/invite/cap_inv_tok";
+
+  it("/invite/[token]: a first render from the hydrated cache makes no browser read (signed in: the preview and accept)", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(invite, { ...ROUTES, "GET /api/v1/me": () => json(200, ME) });
+    await renderAuthRouteWithCache(PAGE, { ...ROUTES, "GET /api/v1/me": () => json(200, ME) });
     expect(screen.getByText(en.invite.subtitle.replace("{org}", "Initech"))).toBeTruthy();
     expect(screen.getByRole("button", { name: en.invite.accept })).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
   });
 
   it("signed out: sign in or sign up", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(invite, ROUTES);
+    await renderAuthRouteWithCache(PAGE, ROUTES);
     expect(screen.getByText(en.invite.signInHint)).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("a dead link is the page's own problem, not a not-found page", async () => {
+  it("/invite/[token]: an empty cache shows the template's loading state, then the data", async () => {
+    resetNavigation(PAGE);
+    const { release } = await renderHeld(PAGE, "GET /api/v1/invitations/cap_inv_tok", {
+      ...ROUTES,
+      // the browser's apiFetch tries one refresh after a 401
+      "POST /api/v1/auth/refresh": unauthenticated,
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByText(en.invite.signInHint)).toBeNull();
+    await release();
+    expect(await screen.findByText(en.invite.signInHint)).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
+  it("a dead link is the page's own problem, not a not-found page, and is not read again", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(invite, {
+    await renderAuthRouteWithCache(PAGE, {
       ...ROUTES,
       "GET /api/v1/invitations/cap_inv_tok": () =>
         json(410, { error: { code: "invitation.expired", message: "x" } }),
     });
     expect(screen.getByText(en.invite.invalidTitle)).toBeTruthy();
     expect(screen.getByText(en.errors.invitation.expired)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: en.common.retry })).toBeNull();
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("signing up through the invitation tells the other tabs before entering", async () => {
+  it("an unreachable kernel on the first load is the page's error state; retry reads it again", async () => {
+    let up = false;
+    const preview = () =>
+      up ? json(200, INVITE) : json(502, { error: { code: "upstream_unavailable", message: "x" } });
+    const browser = stubApi({ "GET /api/v1/invitations/cap_inv_tok": preview });
+    await renderAuthRouteWithCache(PAGE, {
+      ...ROUTES,
+      "GET /api/v1/invitations/cap_inv_tok": preview,
+    });
+    expect(screen.getByText(en.invite.title)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: en.invite.accept })).toBeNull();
+    await settle();
+    expect(browser).toEqual([]);
+    up = true;
+    await userEvent.setup().click(screen.getByRole("button", { name: en.common.retry }));
+    expect(await screen.findByText(en.invite.signInHint)).toBeTruthy();
+    expect(browser.map((c) => c.url)).toEqual(["/api/v1/invitations/cap_inv_tok"]);
+  });
+
+  it("signing up through the invitation tells the other tabs, drops the cache, then enters", async () => {
     stubApi({
       "POST /api/v1/invitations/cap_inv_tok/accept": () =>
         json(200, { account: { id: "a7" }, orgId: "o9", role: "guest" }),
       "PUT /api/v1/me/current-org": () => noContent(),
     });
-    await renderRoute(invite, ROUTES);
+    const { client } = await renderAuthRouteWithCache(PAGE, ROUTES);
+    let cachedAtNavigation = -1;
+    navigateBrowser.mockImplementation(() => {
+      cachedAtNavigation = client.getQueryCache().getAll().length;
+    });
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: en.invite.signupToggle }));
     await user.type(screen.getByLabelText(en.invite.loginLabel), "carol");
@@ -215,19 +256,28 @@ describe("/invite/[token]", () => {
     await user.type(screen.getByLabelText(en.invite.displayNameLabel), "Carol");
     await user.click(screen.getByRole("button", { name: en.invite.signup }));
     await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    expect(cachedAtNavigation).toBe(0);
     expect(broadcastSession).toHaveBeenCalledWith("signed-in");
     expect(before(broadcastSession, navigateBrowser)).toBe(true);
   });
 
-  it("accepting while signed in switches the org and tells the other tabs", async () => {
+  it("accepting while signed in switches the org, tells the other tabs and drops the cache", async () => {
     stubApi({
       "POST /api/v1/invitations/cap_inv_tok/accept": () =>
         json(200, { account: { id: "a1" }, orgId: "o9", role: "guest" }),
       "PUT /api/v1/me/current-org": () => noContent(),
     });
-    await renderRoute(invite, { ...ROUTES, "GET /api/v1/me": () => json(200, ME) });
+    const { client } = await renderAuthRouteWithCache(PAGE, {
+      ...ROUTES,
+      "GET /api/v1/me": () => json(200, ME),
+    });
+    let cachedAtNavigation = -1;
+    navigateBrowser.mockImplementation(() => {
+      cachedAtNavigation = client.getQueryCache().getAll().length;
+    });
     await userEvent.setup().click(screen.getByRole("button", { name: en.invite.accept }));
     await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    expect(cachedAtNavigation).toBe(0);
     expect(broadcastSession).toHaveBeenCalledWith("org-switched");
     expect(router.replace).not.toHaveBeenCalled();
   });
