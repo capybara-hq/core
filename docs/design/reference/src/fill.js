@@ -435,11 +435,20 @@
     return '<div class="r-field" data-part="loading-field"><div class="r-field-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-skel-box" data-part="skeleton-box" data-box="default"></div></div>';
   }
 
+  /** A loading switch row (spec §5.3): name and description slots, a 32 x 20 box. */
+  function loadingSwitchRow() {
+    return '<div class="r-switch-row" data-part="loading-switch-row"><div class="r-min0"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="small" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-skel-box" data-part="skeleton-box" style="width:32px;height:20px"></div></div>';
+  }
+
   function formSections(o = {}) {
     return F.FORM_PAGE_FIXTURE.sections
       .map((s) => {
         if (o.loading) {
-          return `<section class="r-form-section"><div class="r-form-intro"><h2 class="r-h2">${esc(s.title)}</h2><p class="r-prose-small r-muted">${esc(s.description)}</p></div><div class="r-form-card">${s.fields.map(loadingField).join("")}</div></section>`;
+          const sw = s.fields[0]?.kind === "switches" ? s.fields[0] : null;
+          const body = sw
+            ? `<div class="r-switch-list">${sw.rows.map(loadingSwitchRow).join("")}</div>`
+            : s.fields.map(loadingField).join("");
+          return `<section class="r-form-section"><div class="r-form-intro"><h2 class="r-h2">${esc(s.title)}</h2><p class="r-prose-small r-muted">${esc(s.description)}</p></div><div class="r-form-card${sw ? " r-form-card-flush" : ""}">${body}</div></section>`;
         }
         const pairs = [];
         const fields = s.fields.map(field);

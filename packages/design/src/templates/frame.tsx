@@ -159,3 +159,25 @@ export function LoadingFields({ count }: { count: number }) {
     </>
   );
 }
+
+/**
+ * Switch row placeholders for a flush form section (spec §5.3): SwitchList's own `ul` and `li`
+ * (divider, padding, roomy row height), each with a name slot and a description slot in the text
+ * column and a box in the switch's own size (32 x 20, the `Switch` box).
+ */
+export function LoadingSwitchRows({ count }: { count: number }) {
+  return (
+    <ul className="cb-switch-list" data-part="loading-switch-list">
+      {Array.from({ length: Math.max(0, count) }, (_, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
+        <li key={i} className="cb-switch-row" data-part="loading-switch-row">
+          <span className="cb-switch-row-text">
+            <SkeletonText width="30%" />
+            <SkeletonText width="55%" size="small" />
+          </span>
+          <SkeletonBox part="block" width={32} height={20} />
+        </li>
+      ))}
+    </ul>
+  );
+}

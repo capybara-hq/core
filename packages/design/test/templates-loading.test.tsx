@@ -271,6 +271,22 @@ describe("FormPage / FormSection loading", () => {
     expect(box?.style.width).toBe("");
   });
 
+  it("a loading flush section keeps its flush card and draws the loaded switch rows", () => {
+    zh(
+      <FormPage header={header} actionRow={actionRow} loading>
+        <FormSection id="t" title="工具" flush loading={{ fields: 3 }} />
+      </FormPage>,
+    );
+    const card = document.querySelector(".cb-form-section-fields");
+    expect(card?.getAttribute("data-flush")).toBe("true");
+    const rows = card?.querySelectorAll(":scope > ul.cb-switch-list > li.cb-switch-row");
+    expect(rows).toHaveLength(3);
+    expect(rows?.[0]?.querySelector(".cb-switch-row-text")).not.toBeNull();
+    expect(rows?.[0]?.querySelector('[data-part="skeleton-box"]')).not.toBeNull();
+    expect(count('[data-part="loading-field"]')).toBe(0);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
   it("a ready section renders for real next to a loading one", () => {
     zh(
       <FormPage header={header} actionRow={actionRow} loading>

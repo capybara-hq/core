@@ -9,7 +9,13 @@ import {
 import { Text } from "../layout/index";
 import { useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
-import { LoadingFields, loadingActionRow, loadingHeader, TemplateHead } from "./frame";
+import {
+  LoadingFields,
+  LoadingSwitchRows,
+  loadingActionRow,
+  loadingHeader,
+  TemplateHead,
+} from "./frame";
 
 /**
  * T4 Form: Centered at the form width, no anchor navigation (spec §5.3), and an ActionRow that is
@@ -87,7 +93,7 @@ function withoutUnsaved({ unsaved: _, ...rest }: ActionRowProps): ActionRowProps
  * A form section (spec §5.3): two columns, the title (h2) and a prose-small muted description on
  * the left, the fields on a `panel` card on the right. Sections are separated by spacing.
  * `loading` keeps the title and description real and draws `fields` field placeholders in the
- * card (a label slot and a control-height box each) in place of `children`; a section whose data
+ * card (a label slot and a control-height box each) in place of `children`; a `flush` section keeps its flush card and draws `fields` switch rows instead; a section whose data
  * is ready renders for real next to loading ones. Outside a loading page it announces itself.
  */
 export function FormSection({
@@ -124,9 +130,17 @@ export function FormSection({
       <div
         className="cb-form-section-fields"
         data-part="form-card"
-        data-flush={flush && !loading ? "true" : undefined}
+        data-flush={flush ? "true" : undefined}
       >
-        {loading ? <LoadingFields count={loading.fields} /> : children}
+        {loading ? (
+          flush ? (
+            <LoadingSwitchRows count={loading.fields} />
+          ) : (
+            <LoadingFields count={loading.fields} />
+          )
+        ) : (
+          children
+        )}
       </div>
     </section>
   );

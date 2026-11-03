@@ -942,7 +942,9 @@ function FormTemplateBody({ loading }: { loading?: boolean }) {
             title={sec.title}
             description={sec.description}
             flush={a?.kind === "switches"}
-            {...(loading ? { loading: { fields: sec.fields.length } } : {})}
+            {...(loading
+              ? { loading: { fields: a?.kind === "switches" ? a.rows.length : sec.fields.length } }
+              : {})}
           >
             {paired ? (
               <Grid columns={2} gap={12}>
