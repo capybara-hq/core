@@ -21,6 +21,7 @@ import {
 } from "../../lib/query/conversation";
 import { useAppMutation } from "../../lib/query/define";
 import { keys } from "../../lib/query/keys";
+import { refreshUiViews } from "../../lib/query/ui";
 import {
   type ChatState,
   type ConversationChange,
@@ -30,7 +31,6 @@ import {
   type StreamDelta,
   type SubagentProgress,
 } from "../../lib/stream";
-import { uiKey } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
 
 /** Consecutive reopen attempts after the browser gave up the stream (reset by any open). */
@@ -77,13 +77,6 @@ export type ConversationState = {
   seedProgress(views: readonly { id: string; toolCalls: number }[]): void;
   /** Replace the conversation row (after a rename). */
   setConversation(c: Conversation): void;
-  /**
-   * Counters for the pieces outside the log not read through the cache yet: bumped where their
-   * keys are invalidated (`changed: queue` / `files`, a catch-up that delivered events).
-   */
-  changes: Readonly<Record<"queue" | "files" | "sandbox" | "reconnect", number>>;
-  /** Extension view refresh counters: `plugin/contribution`, `*` for all (a catch-up). */
-  uiVersions: Readonly<Record<string, number>>;
 };
 
 /** The progress inputs of {@link reduceChat}, kept apart from the log (they are not events). */
@@ -144,14 +137,6 @@ export function useConversation(orgId: string, conversationId: string): Conversa
 
   const [error, setErrorText] = useState<string>();
   const [stopping, setStopping] = useState(false);
-  const [changes, setChanges] = useState({ queue: 0, files: 0, sandbox: 0, reconnect: 0 });
-  const [uiVersions, setUiVersions] = useState<Record<string, number>>({});
-  const bump = useCallback((what: "queue" | "files" | "sandbox" | "reconnect") => {
-    setChanges((c) => ({ ...c, [what]: c[what] + 1 }));
-  }, []);
-  const bumpUi = useCallback((key: string) => {
-    setUiVersions((v) => ({ ...v, [key]: (v[key] ?? 0) + 1 }));
-  }, []);
   const setError = useCallback((e: unknown) => setErrorText(errorMessage(e)), [errorMessage]);
   const loaded = events !== undefined;
 
@@ -192,14 +177,8 @@ export function useConversation(orgId: string, conversationId: string): Conversa
       if (what === "title" || what === "selection") invalidate(c.row());
       // A new title shows in the sidebar too.
       if (what === "title") invalidate(groups);
-      if (what === "queue") {
-        invalidate(c.queue());
-        bump("queue");
-      }
-      if (what === "files") {
-        invalidate(c.files());
-        bump("files");
-      }
+      if (what === "queue") invalidate(c.queue());
+      if (what === "files") invalidate(c.files());
     };
     const scope = `${orgId}/${conversationId}`;
     const delivered = deliveredBy.get(qc) ?? new Map<string, number>();
@@ -219,10 +198,9 @@ export function useConversation(orgId: string, conversationId: string): Conversa
           // The browser's own reconnect: its catch-up follows the same rule.
           catchingUp = true;
         },
-        onUi: (r) => {
-          invalidate(keys.org(orgId).uiViews(conversationId, r.plugin, r.contribution));
-          bumpUi(uiKey(r.plugin, r.contribution));
-        },
+        // An extension view changed: read again, coalesced (at most one read in flight).
+        onUi: (r) =>
+          refreshUiViews(qc, keys.org(orgId).uiViews(conversationId, r.plugin, r.contribution)),
         onChanged,
         onEvent: (e) => {
           flush();
@@ -232,8 +210,6 @@ export function useConversation(orgId: string, conversationId: string): Conversa
           if (catchingUp && added > 0) {
             catchingUp = false;
             for (const k of CONVERSATION_SIDE_KEYS(orgId, conversationId)) invalidate(k);
-            for (const w of ["queue", "files", "sandbox", "reconnect"] as const) bump(w);
-            bumpUi("*");
           }
         },
         onDelta: (d) => {
@@ -258,7 +234,7 @@ export function useConversation(orgId: string, conversationId: string): Conversa
       if (scheduled !== null) cancelFrame(scheduled);
       close?.();
     };
-  }, [orgId, conversationId, loaded, qc, errorMessage, t, router, bump, bumpUi]);
+  }, [orgId, conversationId, loaded, qc, errorMessage, t, router]);
 
   const sendMutation = useAppMutation({
     fn: async (m: MessageInput) => {
@@ -354,7 +330,5 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     setError,
     seedProgress,
     setConversation: replaceConversation,
-    changes,
-    uiVersions,
   };
 }

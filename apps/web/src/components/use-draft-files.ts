@@ -1,17 +1,20 @@
 "use client";
 
 import { formatBytes, useToast } from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiClientError, clientError } from "../lib/api";
 import {
   type AttachmentLimits,
   DEFAULT_LIMITS,
-  getAttachmentLimits,
   precheckFile,
   typeList,
   uploadAttachment,
 } from "../lib/attachments";
+import { retryOnMountOf } from "../lib/query/client";
+import { attachmentLimitsQuery } from "../lib/query/conversation";
+import { useAppMutation } from "../lib/query/define";
 import { useErrorMessage } from "../lib/use-error-message";
 
 /**
@@ -56,18 +59,24 @@ function failedIds(e: unknown): Set<string> {
  * 输入框的上传文件：上限取自内核 `GET /attachments/limits`（取到之前用默认值兜底），加文件时先预检、
  * 通过的立即上传；条数按同步更新的 ref 计算，并发加文件（同时拖入、粘贴）也不会超过上限。
  */
-export function useDraftFiles(orgId: string, initialLimits?: AttachmentLimits | null) {
+export function useDraftFiles(orgId: string) {
   const t = useTranslations("chat");
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const [limits, setLimits] = useState<AttachmentLimits>(() =>
-    initialLimits ? { ...DEFAULT_LIMITS, ...initialLimits } : DEFAULT_LIMITS,
+  // Until the limits are read (or when the read failed) the defaults apply; an older kernel
+  // without requestMediaBytes / available gets the defaults for those.
+  const limitsQ = attachmentLimitsQuery(orgId);
+  const read = useQuery({ ...limitsQ, retryOnMount: retryOnMountOf(limitsQ.queryKey) }).data;
+  const limits = useMemo<AttachmentLimits>(
+    () => (read ? { ...DEFAULT_LIMITS, ...read } : DEFAULT_LIMITS),
+    [read],
   );
-  /**
-   * The server read the limits for the first paint (`null`: the kernel failed them, the defaults
-   * apply): nothing to fetch. Read here only without a server read at all.
-   */
-  const seeded = useRef(initialLimits !== undefined);
+  // An upload's answer is the attachment: nothing cached changes.
+  const { mutateAsync: upload } = useAppMutation({
+    fn: (v: { file: File; signal: AbortSignal; onProgress(p: number): void }) =>
+      uploadAttachment(orgId, v.file, { signal: v.signal, onProgress: v.onProgress }),
+    invalidates: () => [],
+  });
   const [files, setFilesState] = useState<DraftFile[]>([]);
   /** 与 `files` 同步的最新值：加文件时据此算剩余名额（state 在同一轮事件里还是旧值）。 */
   const filesRef = useRef<DraftFile[]>([]);
@@ -79,23 +88,6 @@ export function useDraftFiles(orgId: string, initialLimits?: AttachmentLimits | 
     filesRef.current = fn(filesRef.current);
     setFilesState(filesRef.current);
   }, []);
-
-  useEffect(() => {
-    if (seeded.current) return;
-    let live = true;
-    getAttachmentLimits(orgId).then(
-      (l) => {
-        // 较早的内核没有 requestMediaBytes / available：缺的项用默认值补上
-        if (live) setLimits({ ...DEFAULT_LIMITS, ...l });
-      },
-      () => {
-        // 取不到时沿用默认值；以内核的错误码为准
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [orgId]);
 
   useEffect(() => {
     const map = uploads.current;
@@ -117,10 +109,7 @@ export function useDraftFiles(orgId: string, initialLimits?: AttachmentLimits | 
       uploads.current.get(key)?.abort();
       const ctrl = new AbortController();
       uploads.current.set(key, ctrl);
-      uploadAttachment(orgId, file, {
-        signal: ctrl.signal,
-        onProgress: (p) => patch(key, { progress: p }),
-      })
+      upload({ file, signal: ctrl.signal, onProgress: (p) => patch(key, { progress: p }) })
         .then(
           (view) => {
             if (!ctrl.signal.aborted) patch(key, { status: "ready", progress: 1, id: view.id });
@@ -133,7 +122,7 @@ export function useDraftFiles(orgId: string, initialLimits?: AttachmentLimits | 
           if (uploads.current.get(key) === ctrl) uploads.current.delete(key);
         });
     },
-    [orgId, patch],
+    [upload, patch],
   );
 
   /**

@@ -90,6 +90,8 @@ export type RightAreaSlot = {
   propertiesNode?: ReactNode;
   panelNode?: ReactNode;
   onCloseRight(): void;
+  /** The open area's read is on its way (its loading state; `title`: the open panel's). */
+  loading?: true | { title: string };
   thread: Pick<
     ThreadProps,
     | "onOpenFile"
@@ -136,17 +138,15 @@ export function useConversationPage(
   const providers = initial.providers;
   const selection = useSelection(providers, agent, conv.conversation?.selection);
   const keys = useMemo(() => toolKeysOf(conv.events), [conv.events]);
-  const info = useToolInfo(orgId, conversationId, keys, initial.tools);
+  const info = useToolInfo(orgId, conversationId, keys);
   const subagents = useSubagents(
     orgId,
     conversationId,
     conv.events,
     conv.state.progress,
-    conv.changes.reconnect,
     conv.seedProgress,
-    initial.subagents,
   );
-  const usageAll = useUsageWithSubagents(orgId, conversationId, conv.events, initial.usage);
+  const usageAll = useUsageWithSubagents(orgId, conversationId, conv.events);
   const views = useMemo(
     () => (subagents.views ? new Map(subagents.views.map((v) => [v.id, v])) : undefined),
     [subagents.views],
@@ -161,7 +161,7 @@ export function useConversationPage(
     [conv.events, info, locale, conv.state.progress, views],
   );
   const entries = useMemo(() => withDrafts(base, conv.state.drafts), [base, conv.state.drafts]);
-  const queue = useQueue(orgId, conversationId, conv.changes.queue, conv.merge, initial.queue);
+  const queue = useQueue(orgId, conversationId, conv.merge);
   const [renaming, setRenaming] = useState(false);
   const [renameBusy, setRenameBusy] = useState(false);
   const active = conv.running || conv.waiting;
@@ -267,9 +267,6 @@ export function useConversationPage(
     conversationId,
     events: conv.events,
     entries,
-    uiVersions: conv.uiVersions,
-    filesVersion: conv.changes.files,
-    sandboxVersion: conv.changes.sandbox,
     model: usageModel,
     contextPct,
     lastRun,
@@ -280,12 +277,6 @@ export function useConversationPage(
         : ts("contextTotal", { n: usageTotal(usageAll).toLocaleString(locale) }),
     contextWindowOf: selection.contextWindowOf,
     reasoningOf: selection.reasoningOf,
-    initial: {
-      contributions: initial.contributions,
-      files: initial.files,
-      sandbox: initial.sandbox,
-      connectors: initial.connectors,
-    },
   });
 
   const agentPicker: PickerProps = {
@@ -314,7 +305,6 @@ export function useConversationPage(
           entries={entries}
           info={info}
           reasoningOf={selection.reasoningOf}
-          initialMembers={initial.members}
           runLinks={{
             agentOwnerId: agent?.ownerAccountId,
             // a sub-agent conversation's trajectory is gated on the parent's agent: no link
@@ -340,8 +330,6 @@ export function useConversationPage(
               : conversationId
           }
           running={active}
-          initialSkills={initial.skills}
-          initialLimits={initial.limits}
           stop={{ onStop: conv.stop, stopping: conv.stopping }}
           onSend={send}
           onQueue={enqueue}

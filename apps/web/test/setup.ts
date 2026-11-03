@@ -1,4 +1,9 @@
+import { notifyManager } from "@tanstack/react-query";
 import { vi } from "vitest";
+
+// The query cache tells its observers at once (the browser defers it to the next task): a
+// stream event a test emits inside `act` renders before its assertions, as a reducer did.
+notifyManager.setScheduler((cb) => cb());
 
 // `server-only` throws outside a server build; server modules (lib/server/*) are tested here too.
 vi.mock("server-only", () => ({}));

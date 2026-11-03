@@ -7,14 +7,14 @@ import {
   PropertiesPanel,
   typeBadge,
 } from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useEffect, useMemo, useRef } from "react";
-import { getSandboxStatus, type SandboxStatus } from "../../lib/artifacts";
-import { type ConnectorSummary, listConnectors } from "../../lib/connectors";
 import type { ConversationEvent, ModelRef, SubagentView } from "../../lib/conversations";
 import type { FileOutput } from "../../lib/files";
+import { retryOnMountOf } from "../../lib/query/client";
+import { connectorsQuery, sandboxQuery } from "../../lib/query/conversation";
 import type { UiContributionItem } from "../../lib/ui";
-import { useLoad } from "../../lib/use-load";
 import { BackgroundSection } from "./BackgroundSection";
 import { type BlockContext, ExtensionSection } from "./ExtensionBlocks";
 
@@ -57,18 +57,9 @@ const sandboxUses = (events: readonly ConversationEvent[]): number =>
   events.filter((e) => e.type === "tool_result" && e.payload.toolKey.startsWith("sandbox_")).length;
 
 /**
- * What the server read for the Context section (each `null` when it could not: read on open). The
- * sandbox comes with the number of sandbox tool results it follows: opened after more of them, the
- * section reads it again.
- */
-export interface ContextInitial {
-  sandbox: { status: SandboxStatus | null; uses: number } | null;
-  connectors: ConnectorSummary[] | null;
-}
-
-/**
  * The built-in Context section (the old Context tab): the context ratio of the latest step's usage,
  * the model, the sandbox state (read again after each sandbox tool result) and the connectors used.
+ * A connectors read the role is refused (R5: not read again on mount) names no connectors.
  */
 export function ContextSection({
   orgId,
@@ -78,8 +69,6 @@ export function ContextSection({
   contextPct,
   lastRun,
   total,
-  initial,
-  version,
 }: {
   orgId: string;
   conversationId: string;
@@ -90,52 +79,36 @@ export function ContextSection({
   lastRun?: string | undefined;
   /** The tokens with sub-agents line, once there are any. */
   total?: string | undefined;
-  initial: ContextInitial;
-  /** Moves when the sandbox may have changed outside the log (the stream's opens). */
-  version: number;
 }) {
   const t = useTranslations("chatPanel");
-  // Refused for this role (`null`): no connector names, never read after mount (R5).
-  const connectors = useLoad(() => listConnectors(orgId), [orgId], {
-    initial: { connectors: initial.connectors ?? [] },
-  });
+  const qc = useQueryClient();
+  const connectorsQ = connectorsQuery(orgId);
+  const connectors = useQuery({
+    ...connectorsQ,
+    retryOnMount: retryOnMountOf(connectorsQ.queryKey),
+  }).data;
   const nameOfSlug = useMemo(
-    () =>
-      new Map(
-        connectors.state.kind === "ready"
-          ? connectors.state.data.connectors.map((a) => [a.slug, a.name])
-          : [],
-      ),
-    [connectors.state],
+    () => new Map((connectors?.connectors ?? []).map((a) => [a.slug, a.name])),
+    [connectors],
   );
-  // The server's read; `failed` when the kernel failed it (the section's error, R5).
-  const sandbox = useLoad<{ status: SandboxStatus | null } | { failed: true }>(
-    () => getSandboxStatus(orgId, conversationId).then((status) => ({ status })),
-    [orgId, conversationId],
-    {
-      initial: initial.sandbox === null ? { failed: true } : { status: initial.sandbox.status },
-    },
-  );
+  const sandboxQ = sandboxQuery(orgId, conversationId);
+  const sandbox = useQuery({ ...sandboxQ, retryOnMount: retryOnMountOf(sandboxQ.queryKey) });
   const uses = useMemo(() => sandboxUses(events), [events]);
-  // From the server's read: sandbox results since then, or a change outside the log (`version`,
-  // which starts at the snapshot's 0), read the status again at once.
-  const seen = useRef({ uses: initial.sandbox?.uses ?? uses, version: 0 });
-  const { reload } = sandbox;
+  // A sandbox tool result since the last look may have started, stopped or replaced it.
+  const seenUses = useRef(uses);
   useEffect(() => {
-    // ssr-exempt: live updates after first paint (sandbox results and reconnects)
-    if (uses === seen.current.uses && version === seen.current.version) return;
-    seen.current = { uses, version };
-    reload();
-  }, [uses, version, reload]);
-  const s = sandbox.state;
+    if (uses === seenUses.current) return;
+    seenUses.current = uses;
+    void qc.invalidateQueries({ queryKey: sandboxQ.queryKey });
+  }, [uses, qc, sandboxQ.queryKey]);
   const sandboxText =
-    s.kind === "loading"
-      ? undefined
-      : s.kind === "error" || "failed" in s.data
-        ? t("sandboxFailed")
-        : s.data.status === null
-          ? t("sandboxNone")
-          : t(s.data.status.status === "running" ? "sandboxRunning" : "sandboxSuspended");
+    sandbox.data === undefined
+      ? sandbox.error === null
+        ? undefined
+        : t("sandboxFailed")
+      : sandbox.data === null
+        ? t("sandboxNone")
+        : t(sandbox.data.status === "running" ? "sandboxRunning" : "sandboxSuspended");
   return (
     <ContextBlock
       ratio={contextPct ?? 0}
@@ -187,8 +160,6 @@ export function PropertiesSections({
   onOpenFile,
   subagents,
   total,
-  initial,
-  sandboxVersion,
 }: {
   ctx: BlockContext;
   events: readonly ConversationEvent[];
@@ -202,9 +173,6 @@ export function PropertiesSections({
     | { views: readonly SubagentView[]; onStop(id: string): void; onOpen(id: string): void }
     | undefined;
   total?: string | undefined;
-  initial: ContextInitial;
-  /** See {@link ContextSection}'s `version`. */
-  sandboxVersion: number;
 }) {
   return (
     <PropertiesPanel>
@@ -216,8 +184,6 @@ export function PropertiesSections({
         contextPct={contextPct}
         lastRun={lastRun}
         total={total}
-        initial={initial}
-        version={sandboxVersion}
       />
       {sections.map((c) => (
         <ExtensionSection key={`${c.plugin}/${c.id}`} ctx={ctx} c={c} />

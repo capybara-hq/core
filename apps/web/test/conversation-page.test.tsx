@@ -804,7 +804,7 @@ describe("the first open after the server's snapshot (web query cache spec §6)"
     });
     await vi.waitFor(() =>
       expect(new Set(calls.map((c) => c.url.split("?")[0]))).toEqual(
-        new Set([BASE, `${BASE}/queue`, `${BASE}/files`, "/api/v1/orgs/o1/ui/contributions"]),
+        new Set([BASE, `${BASE}/queue`, `${BASE}/files`]),
       ),
     );
     expect(await screen.findByText("while away")).toBeTruthy();

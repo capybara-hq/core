@@ -11,6 +11,7 @@ import {
   readDesignTokens,
   readTheme,
 } from "../../lib/embed-bridge";
+import { useAppMutation } from "../../lib/query/define";
 import { requestEmbedToken, uiLocale } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { FormError } from "../form-error";
@@ -69,6 +70,17 @@ export function EmbedTab({
   const fileRef = useRef(file);
   fileRef.current = file;
   const fileId = file?.id;
+  // A token is minted for the bridge (its handshake and renewals): nothing cached changes.
+  const { mutateAsync } = useAppMutation({
+    fn: (v: { plugin: string; id: string; conversationId?: string; fileId?: string }) =>
+      requestEmbedToken(orgId, v.plugin, v.id, {
+        ...(v.conversationId !== undefined && { conversationId: v.conversationId }),
+        ...(v.fileId !== undefined && { fileId: v.fileId }),
+      }),
+    invalidates: () => [],
+  });
+  const mintToken = useRef(mutateAsync);
+  mintToken.current = mutateAsync;
   useEffect(() => {
     latest.current = { router, toast };
   });
@@ -84,7 +96,9 @@ export function EmbedTab({
       post: (m) => frame.current?.contentWindow?.postMessage(m, "*"),
       frameWindow: () => frame.current?.contentWindow,
       fetchToken: async () => {
-        const r = await requestEmbedToken(orgId, plugin, id, {
+        const r = await mintToken.current({
+          plugin,
+          id,
           ...(conversationId !== undefined && { conversationId }),
           ...(fileRef.current !== undefined && { fileId: fileRef.current.id }),
         });

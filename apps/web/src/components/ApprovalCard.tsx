@@ -10,17 +10,20 @@ import {
   Textarea,
   useToast,
 } from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   type Approval,
   type ApprovalScope,
   decideApproval,
   formatInput,
-  getApproval,
   scopesFor,
 } from "../lib/approvals";
 import type { ToolInfo } from "../lib/conversations";
+import { approvalQuery } from "../lib/query/conversation";
+import { useAppMutation } from "../lib/query/define";
+import { keys } from "../lib/query/keys";
 import { shortTime } from "../lib/time";
 import type { ApprovalDecision, ApprovalItem } from "../lib/timeline";
 import { useErrorMessage } from "../lib/use-error-message";
@@ -111,18 +114,31 @@ export function ApprovalOutcome({ outcome }: { outcome: Outcome }) {
  * 提交审批决定：成功返回处理后的结果；已被处理（`approval.already_decided`）等错误以 toast 告知并返回 null。
  */
 export function useDecide(orgId: string) {
+  const qc = useQueryClient();
   const session = useSession();
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const [pending, setPending] = useState<"approve" | "deny">();
+  // The answer is the decided approval: it replaces the cached one.
+  const { mutateAsync } = useAppMutation({
+    fn: (v: { id: string; decision: "approve" | "deny"; scope: ApprovalScope; reason?: string }) =>
+      decideApproval(orgId, v.id, {
+        decision: v.decision,
+        ...(v.decision === "approve" ? { scope: v.scope } : {}),
+        ...(v.decision === "deny" && v.reason !== undefined ? { reason: v.reason } : {}),
+      }),
+    invalidates: () => [],
+    onSuccess: ({ approval }, v) => qc.setQueryData(keys.org(orgId).approval(v.id), approval),
+  });
   const decide = useCallback(
     async (id: string, decision: "approve" | "deny", scope: ApprovalScope, reason?: string) => {
       setPending(decision);
       try {
-        const { approval } = await decideApproval(orgId, id, {
+        const { approval } = await mutateAsync({
+          id,
           decision,
-          ...(decision === "approve" ? { scope } : {}),
-          ...(decision === "deny" && reason !== undefined ? { reason } : {}),
+          scope,
+          ...(reason !== undefined ? { reason } : {}),
         });
         return approval;
       } catch (e) {
@@ -130,11 +146,12 @@ export function useDecide(orgId: string) {
         return null;
       } finally {
         setPending(undefined);
-        // 顶栏的待处理数立即更新（失败多半是已被处理，同样要更新）
+        // The sidebar's pending count follows at once (a failure most likely means someone
+        // already decided: it changed too).
         session.refreshPending?.();
       }
     },
-    [orgId, toast, errorMessage, session],
+    [toast, errorMessage, session, mutateAsync],
   );
   return { decide, pending };
 }
@@ -166,27 +183,18 @@ export function ApprovalCard({
   const t = useTranslations("approval");
   const locale = useLocale();
   const { me } = useSession();
-  const [view, setView] = useState<Approval | null>();
   const [local, setLocal] = useState<(Outcome & { at: string }) | null>(null);
   const { decide, pending } = useDecide(orgId);
   const decided = item.decided;
-
-  useEffect(() => {
-    if (decided !== null) return;
-    let disposed = false;
-    getApproval(orgId, item.approvalId).then(
-      ({ approval }) => {
-        if (!disposed) setView(approval);
-      },
-      () => {
-        // Not visible = may not decide (assigned to someone else, or the role is too low).
-        if (!disposed) setView(null);
-      },
-    );
-    return () => {
-      disposed = true;
-    };
-  }, [orgId, item.approvalId, decided]);
+  // Pending, the approval tells who may decide; not visible = may not decide (assigned to
+  // someone else, or the role is too low).
+  const approval = useQuery({
+    ...approvalQuery(orgId, item.approvalId),
+    enabled: decided === null,
+    retry: false,
+  });
+  const view: Approval | null | undefined =
+    approval.data !== undefined ? approval.data : approval.error !== null ? null : undefined;
 
   const who = (id: string | null) =>
     id === null ? t("system") : id === me.account.id ? t("you") : id;

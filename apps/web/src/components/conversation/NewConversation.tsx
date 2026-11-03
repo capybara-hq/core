@@ -90,7 +90,6 @@ export function useNewConversationPage(
           agentId={agent?.id}
           running={false}
           sendDisabled={!agent}
-          initialLimits={initial.limits}
           onSend={send}
           pickers={{
             agent: {

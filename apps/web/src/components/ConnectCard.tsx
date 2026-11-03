@@ -1,11 +1,12 @@
 "use client";
 
 import { ConnectBlock, Text, useToast } from "@capybara-hq/design";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { useRouter } from "../i18n/navigation";
 import { isOAuthCodeConnector, useStartConnect } from "../lib/connect";
-import { getConnector } from "../lib/connectors";
+import { connectorQuery } from "../lib/query/conversation";
 import type { ConnectItem } from "../lib/timeline";
 import { useErrorMessage } from "../lib/use-error-message";
 
@@ -25,11 +26,12 @@ export function ConnectCard({ orgId, item }: { orgId: string; item: ConnectItem 
   const errorMessage = useErrorMessage();
   const { start, starting } = useStartConnect(orgId);
   const [checking, setChecking] = useState(false);
+  const qc = useQueryClient();
 
   async function connect() {
     setChecking(true);
     try {
-      const { connector: app } = await getConnector(orgId, item.connectorId);
+      const app = await qc.fetchQuery(connectorQuery(orgId, item.connectorId));
       if (isOAuthCodeConnector(app.auth)) await start(item.connectorId);
       else router.push(connectionHref(item.connectorId));
     } catch (e) {

@@ -1,8 +1,9 @@
 "use client";
 
 import { DetailPage, Stack, Text } from "@capybara-hq/design";
+import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { EmbedTab } from "../../../../../components/extension-ui/EmbedTab";
 import {
   ExtensionViewTab,
@@ -11,6 +12,8 @@ import {
   type ViewState,
 } from "../../../../../components/extension-ui/ExtensionViewTab";
 import { usePagePath } from "../../../../../components/shell/path";
+import { keys } from "../../../../../lib/query/keys";
+import { refreshUiViews } from "../../../../../lib/query/ui";
 import { openUiStream, type UiContributionItem, uiKey, uiLocale } from "../../../../../lib/ui";
 
 /**
@@ -41,12 +44,9 @@ export default function PluginPageView({
   const isEmbed = contribution?.kind === "embed";
   const targets = useMemo(() => (isView ? [{ plugin, id }] : []), [isView, plugin, id]);
 
-  // The org UI stream: fetch again when this page's contribution changes, and once after a
+  // The org UI stream: read again when this page's contribution changes, and once after a
   // reconnect (refreshes may have been missed meanwhile)
-  const [versions, setVersions] = useState<Record<string, number>>({});
-  const bump = useCallback((key: string) => {
-    setVersions((v) => ({ ...v, [key]: (v[key] ?? 0) + 1 }));
-  }, []);
+  const qc = useQueryClient();
   // 组织流终止（会话吊销、浏览器放弃重连）：内容照常显示，提示实时刷新已断开
   const [liveLost, setLiveLost] = useState(false);
   // ssr-exempt: live updates after first paint (the UI stream)
@@ -55,16 +55,17 @@ export default function PluginPageView({
     setLiveLost(false);
     return openUiStream(orgId, {
       onUi: (r) => {
-        if (r.plugin === plugin && r.contribution === id) bump(uiKey(plugin, id));
+        if (r.plugin === plugin && r.contribution === id)
+          refreshUiViews(qc, keys.org(orgId).uiViews("org", plugin, id));
       },
-      onReconnect: () => bump("*"),
+      onReconnect: () => refreshUiViews(qc, keys.org(orgId).uiViews("org")),
       onError: () => setLiveLost(true),
     });
-  }, [orgId, plugin, id, isView, bump]);
+  }, [orgId, plugin, id, isView, qc]);
 
   const key = uiKey(plugin, id);
   const initialViews = useMemo(() => (view === undefined ? {} : { [key]: view }), [key, view]);
-  const views = useExtensionViews(orgId, targets, { locale, versions, initial: initialViews });
+  const views = useExtensionViews(orgId, targets, { locale, initial: initialViews });
   const runAction = useUiAction(orgId, { locale, onView: views.setView });
   const title = contribution?.title[locale] ?? id;
 

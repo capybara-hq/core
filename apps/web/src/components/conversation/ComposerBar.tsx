@@ -15,6 +15,7 @@ import {
   Stack,
   useToast,
 } from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import {
   type ChangeEvent,
@@ -25,22 +26,21 @@ import {
   useSyncExternalStore,
 } from "react";
 import { ApiClientError } from "../../lib/api";
-import { type AttachmentLimits, fileContentType } from "../../lib/attachments";
+import { fileContentType } from "../../lib/attachments";
 import {
   type ConnectorPrompt,
   type ConnectorResource,
   type ConnectorUnavailable,
-  listConnectorPrompts,
-  listConnectorResources,
   renderConnectorPrompt,
 } from "../../lib/connectors";
 import type { MessageInput } from "../../lib/conversations";
 import {
-  findInvocable,
-  type InvocableSkill,
-  listInvocableSkills,
-  parseSlashCommand,
-} from "../../lib/skills";
+  connectorPromptsQuery,
+  connectorResourcesQuery,
+  invocableSkillsQuery,
+} from "../../lib/query/conversation";
+import { useAppMutation } from "../../lib/query/define";
+import { findInvocable, type InvocableSkill, parseSlashCommand } from "../../lib/skills";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { type DraftFile, useDraftFiles } from "../use-draft-files";
 import type { SendResult } from "./useConversation";
@@ -157,8 +157,6 @@ export function ComposerBar({
   pickers,
   placeholder,
   sendDisabled,
-  initialSkills,
-  initialLimits,
 }: {
   orgId: string;
   /** The conversation's agent (the `/` menu lists its skills); undefined while loading. */
@@ -173,12 +171,8 @@ export function ComposerBar({
   onQueue?(m: ComposerMessage): Promise<SendResult>;
   pickers: { agent: PickerProps; model: PickerProps; effort?: PickerProps };
   placeholder: string;
-  /** Nothing can be sent yet (a new conversation whose agent is still loading). */
+  /** Nothing can be sent yet (a new conversation whose agent, or a thread, is still loading). */
   sendDisabled?: boolean;
-  /** `agentId`'s invocable skills as the server read them (the menu still reads them on open). */
-  initialSkills?: InvocableSkill[] | null | undefined;
-  /** The attachment limits as the server read them (`null`: failed, the defaults apply). */
-  initialLimits?: AttachmentLimits | null | undefined;
 }) {
   const t = useTranslations("chat");
   const tc = useTranslations("common");
@@ -189,28 +183,27 @@ export function ComposerBar({
   const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
   /** The picked skill (the chip), or null. */
   const [skill, setSkill] = useState<InvocableSkill | null>(null);
-  /** The agent's invocable skills, read once per agent (and refreshed when the menu opens). */
-  const [skills, setSkills] = useState<{ agentId: string; items: InvocableSkill[] } | undefined>(
-    () =>
-      initialSkills != null && agentId !== undefined
-        ? { agentId, items: initialSkills }
-        : undefined,
-  );
-  const drafts = useDraftFiles(orgId, initialLimits);
+  const qc = useQueryClient();
+  /** The agent's invocable skills (read again when the menu opens once they are stale). */
+  const skillsQ = invocableSkillsQuery(orgId, agentId ?? "", conversationId);
+  // Read when the menu opens or a typed `/name` is sent (`loadSkills`), or prefetched with the page.
+  const skills = useQuery({ ...skillsQ, enabled: false }).data;
+  // The menus' lists, read when a menu opens (`openPalette`).
+  const prompts = useQuery({ ...connectorPromptsQuery(orgId), enabled: false }).data;
+  const resources = useQuery({ ...connectorResourcesQuery(orgId), enabled: false }).data;
+  // The rendered text goes into the input: nothing cached changes.
+  const { mutateAsync: renderPrompt } = useAppMutation({
+    fn: (v: { p: ConnectorPrompt; values: Record<string, string> }) =>
+      renderConnectorPrompt(orgId, v.p.connectorId, v.p.name, v.values),
+    invalidates: () => [],
+  });
+  const drafts = useDraftFiles(orgId);
   const files = drafts.files;
   const previews = useObjectUrls(files);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const [pending, setPending] = useState(false);
   const [palette, setPalette] = useState<Palette>(null);
-  const [prompts, setPrompts] = useState<{
-    items: ConnectorPrompt[];
-    unavailable: ConnectorUnavailable[];
-  }>();
-  const [resources, setResources] = useState<{
-    items: ConnectorResource[];
-    unavailable: ConnectorUnavailable[];
-  }>();
   const [argsFor, setArgsFor] = useState<ConnectorPrompt | null>(null);
   const [args, setArgs] = useState<Record<string, string>>({});
   const [rendering, setRendering] = useState(false);
@@ -227,20 +220,12 @@ export function ComposerBar({
    * The agent's invocable skills. A conversation that is not the caller's (404) lists without it.
    * Failures read as no skills (typed `/name` is then sent as text).
    */
-  async function loadSkills(): Promise<InvocableSkill[]> {
+  async function loadSkills(fresh = false): Promise<InvocableSkill[]> {
     if (agentId === undefined) return [];
+    const q = invocableSkillsQuery(orgId, agentId, conversationId);
     try {
-      const r = await listInvocableSkills(orgId, agentId, conversationId).catch((e: unknown) => {
-        if (
-          conversationId !== undefined &&
-          e instanceof ApiClientError &&
-          e.code === "conversation.not_found"
-        )
-          return listInvocableSkills(orgId, agentId);
-        throw e;
-      });
-      setSkills({ agentId, items: r.skills });
-      return r.skills;
+      // The menu opening and a refusal read the list again (a person's action, not a view).
+      return await qc.fetchQuery(fresh ? { ...q, staleTime: 0 } : q);
     } catch (e) {
       toast.error(errorMessage(e));
       return [];
@@ -271,8 +256,7 @@ export function ComposerBar({
     if (invoke === undefined) {
       const typed = parseSlashCommand(value);
       if (typed !== null) {
-        const list =
-          skills !== undefined && skills.agentId === agentId ? skills.items : await loadSkills();
+        const list = skills ?? (await loadSkills());
         if (findInvocable(list, typed.name) !== undefined) {
           invoke = typed.name;
           args = typed.args;
@@ -302,7 +286,7 @@ export function ComposerBar({
       ) {
         // A typed `/name` from a stale list (the skill was deselected since it was read): an
         // unknown name is sent as text (spec §3.2), and the list is read again.
-        void loadSkills();
+        void loadSkills(true);
         r = await post(message(value, undefined));
       }
       if (r.ok) {
@@ -336,18 +320,11 @@ export function ComposerBar({
   function openPalette(which: Exclude<Palette, null>, pos: number) {
     trigger.current = { char: which === "prompts" ? "/" : "@", pos, picked: false };
     setPalette(which);
+    const failed = (e: unknown) => toast.error(errorMessage(e));
     if (which === "prompts") {
-      void loadSkills();
-      listConnectorPrompts(orgId).then(
-        (r) => setPrompts({ items: r.prompts, unavailable: r.unavailable }),
-        (e: unknown) => toast.error(errorMessage(e)),
-      );
-    } else {
-      listConnectorResources(orgId).then(
-        (r) => setResources({ items: r.resources, unavailable: r.unavailable }),
-        (e: unknown) => toast.error(errorMessage(e)),
-      );
-    }
+      void loadSkills(true);
+      qc.fetchQuery(connectorPromptsQuery(orgId)).catch(failed);
+    } else qc.fetchQuery(connectorResourcesQuery(orgId)).catch(failed);
   }
 
   function onChange(next: string, el?: HTMLTextAreaElement | null) {
@@ -368,7 +345,7 @@ export function ComposerBar({
   async function insertPrompt(p: ConnectorPrompt, values: Record<string, string>) {
     setRendering(true);
     try {
-      const r = await renderConnectorPrompt(orgId, p.connectorId, p.name, values);
+      const r = await renderPrompt({ p, values });
       setText(r.text);
       setArgsFor(null);
     } catch (e) {
@@ -430,7 +407,7 @@ export function ComposerBar({
     return [...groups.values()];
   };
 
-  const skillItems = skills !== undefined && skills.agentId === agentId ? skills.items : [];
+  const skillItems = skills ?? [];
   const groups: CommandGroup[] =
     palette === "prompts"
       ? [
@@ -462,7 +439,7 @@ export function ComposerBar({
                 },
               ]
             : []),
-          ...byConnector(prompts?.items ?? []).map((g) => ({
+          ...byConnector(prompts?.prompts ?? []).map((g) => ({
             label: g.label,
             items: g.items.map((p) => ({
               id: `prompt:${p.connectorId}:${p.name}`,
@@ -479,7 +456,7 @@ export function ComposerBar({
         ]
       : palette === "resources"
         ? [
-            ...byConnector(resources?.items ?? []).map((g) => ({
+            ...byConnector(resources?.resources ?? []).map((g) => ({
               label: g.label,
               items: g.items.map((r) => ({
                 id: `resource:${r.connectorId}:${r.uri}`,

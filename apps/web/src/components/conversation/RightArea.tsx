@@ -1,30 +1,27 @@
 "use client";
 
 import { RightPanel, type RightPanelSwitcher, TextPreview } from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   abortRun,
   type ConversationEvent,
   type ModelRef,
-  readToolOutput,
   type SubagentView,
 } from "../../lib/conversations";
-import { type FileOutput, listFiles } from "../../lib/files";
+import type { FileOutput } from "../../lib/files";
+import { retryOnMountOf } from "../../lib/query/client";
+import { contributionsQuery, filesQuery, toolOutputQuery } from "../../lib/query/conversation";
+import { useAppMutation } from "../../lib/query/define";
 import { formatRightHash, parseRightHash, type RightTarget } from "../../lib/right-area";
 import type { TimelineEntry, TimelineTool } from "../../lib/timeline";
-import {
-  listUiContributions,
-  type UiContributionItem,
-  type UiOpen,
-  uiKey,
-  uiLocale,
-} from "../../lib/ui";
+import { type UiContributionItem, type UiOpen, uiKey, uiLocale } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
 import type { RightAreaSlot } from "./ConversationView";
 import { type BlockContext, ExtensionCard, ExtensionPanel, ICON_OF } from "./ExtensionBlocks";
 import { FilePanel } from "./FilePanel";
-import { type ContextInitial, PropertiesSections } from "./PropertiesSections";
+import { PropertiesSections } from "./PropertiesSections";
 import { SubagentPanel } from "./SubagentPanel";
 
 /**
@@ -77,81 +74,6 @@ export function useRightArea(): {
   return { target, open, back };
 }
 
-/**
- * The extensions' UI contributions for this org (enabled and loaded only): the server's read
- * (`initial`), read again after a stream reconnect (`*`) and when the window gets focus: an
- * extension disabled meanwhile loses its icon, sections and cards. The last good list stays while
- * reading.
- */
-function useContributions(
-  orgId: string,
-  version: number,
-  initial: UiContributionItem[] | null,
-): UiContributionItem[] {
-  // `null`: the kernel failed it: no extension blocks until the next read (focus, reconnect).
-  const [items, setItems] = useState<UiContributionItem[]>(initial ?? []);
-  const [focus, setFocus] = useState(0);
-  /** The read the server's list stands for (`version/focus`): skipped while current. */
-  const seeded = useRef<string | null>(`${version}/0`);
-  useEffect(() => {
-    const onFocus = () => setFocus((n) => n + 1);
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, []);
-  useEffect(() => {
-    // ssr-exempt: live updates after first paint (reconnects and window focus)
-    if (seeded.current === `${version}/${focus}`) return;
-    seeded.current = null;
-    let live = true;
-    listUiContributions(orgId).then(
-      (r) => {
-        if (live) setItems(r.items);
-      },
-      () => {
-        // Unreadable: keep what was shown (or none); the conversation carries on.
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [orgId, version, focus]);
-  return items;
-}
-
-/**
- * The conversation's file outputs (the kernel's order): the server's read (`initial`), read again
- * on `changed: files` (and reconnects). Sub-agents cannot deliver files (`sandbox_deliver` is
- * removed for children), so their lists are not read (Task 22 ruling, final review I5); the Files
- * rows' `from` marking stays ready for when they can.
- */
-function useFiles(
-  orgId: string,
-  conversationId: string,
-  version: number,
-  initial: FileOutput[] | null,
-): FileOutput[] {
-  // `null`: the kernel failed it: no files until the next read (`changed: files`, reconnect).
-  const [files, setFiles] = useState<FileOutput[]>(initial ?? []);
-  const seeded = useRef<number | null>(version);
-  useEffect(() => {
-    // ssr-exempt: live updates after first paint (`changed: files` moves `version`)
-    if (seeded.current === version) return;
-    seeded.current = null;
-    let live = true;
-    listFiles(orgId, conversationId).then(
-      (mine) => {
-        // the kernel's order: newest first by first delivery
-        if (live) setFiles(mine);
-      },
-      () => {},
-    );
-    return () => {
-      live = false;
-    };
-  }, [orgId, conversationId, version]);
-  return files;
-}
-
 /** The full archived output of a call (replaces the old Run tab's "View full output"). */
 function OutputPanel({
   orgId,
@@ -169,33 +91,23 @@ function OutputPanel({
   onFullscreen(): void;
 }) {
   const errorMessage = useErrorMessage();
-  const [state, setState] = useState<
+  const outputId = tool.outputId;
+  // An output that was not archived is the row's own text: nothing to read.
+  const q = useQuery({
+    ...toolOutputQuery(orgId, conversationId, outputId ?? ""),
+    enabled: outputId !== null,
+  });
+  const state:
     | { kind: "loading" }
     | { kind: "ready"; text: string; complete: boolean }
-    | { kind: "error"; reason: string }
-  >({ kind: "loading" });
-  const [attempt, setAttempt] = useState(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt retries
-  useEffect(() => {
-    let live = true;
-    const outputId = tool.outputId;
-    if (outputId === null) {
-      setState({ kind: "ready", text: tool.row.detail?.output ?? "", complete: true });
-      return;
-    }
-    setState({ kind: "loading" });
-    readToolOutput(orgId, conversationId, outputId).then(
-      (r) => {
-        if (live) setState({ kind: "ready", ...r });
-      },
-      (e: unknown) => {
-        if (live) setState({ kind: "error", reason: errorMessage(e) });
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [orgId, conversationId, tool.outputId, attempt]);
+    | { kind: "error"; reason: string } =
+    outputId === null
+      ? { kind: "ready", text: tool.row.detail?.output ?? "", complete: true }
+      : q.data !== undefined
+        ? { kind: "ready", ...q.data }
+        : q.error !== null
+          ? { kind: "error", reason: errorMessage(q.error) }
+          : { kind: "loading" };
   return (
     <RightPanel
       title={title}
@@ -205,7 +117,7 @@ function OutputPanel({
       onFullscreen={onFullscreen}
       state={state.kind === "error" ? "failed" : state.kind}
       {...(state.kind === "error" ? { failure: { reason: state.reason } } : {})}
-      onRetry={() => setAttempt((n) => n + 1)}
+      onRetry={() => void q.refetch()}
     >
       {state.kind === "ready" ? (
         <TextPreview text={state.text} truncated={!state.complete} />
@@ -213,6 +125,9 @@ function OutputPanel({
     </RightPanel>
   );
 }
+
+const NONE_CONTRIBUTIONS: UiContributionItem[] = [];
+const NO_FILES: FileOutput[] = [];
 
 const fullscreen = () => {
   const el = document.querySelector('[data-part="right-panel"]');
@@ -231,10 +146,6 @@ export function useRightAreaSlot(p: {
   conversationId: string;
   events: readonly ConversationEvent[];
   entries: readonly TimelineEntry[];
-  uiVersions: Readonly<Record<string, number>>;
-  filesVersion: number;
-  /** Moves when the sandbox may have changed outside the log (the stream's opens). */
-  sandboxVersion: number;
   model: ModelRef | null;
   contextPct: number | null;
   /** The Context section's last-run line (model, duration, tokens), once a run ended. */
@@ -245,19 +156,23 @@ export function useRightAreaSlot(p: {
   total?: string | undefined;
   contextWindowOf(m: ModelRef): number | undefined;
   reasoningOf(m: ModelRef): boolean | undefined;
-  /** The server's reads (each `null` when the kernel failed or refused it: R5). */
-  initial: {
-    contributions: UiContributionItem[] | null;
-    files: FileOutput[] | null;
-    sandbox: ContextInitial["sandbox"];
-    connectors: ContextInitial["connectors"];
-  };
 }): RightAreaSlot {
   const t = useTranslations("chat");
   const locale = uiLocale(useLocale());
   const { target, open, back } = useRightArea();
-  const contributions = useContributions(p.orgId, p.uiVersions["*"] ?? 0, p.initial.contributions);
-  const files = useFiles(p.orgId, p.conversationId, p.filesVersion, p.initial.files);
+  // The extensions' contributions (enabled and loaded only) and the conversation's file outputs.
+  // A failed read (R5: not read again on mount) shows none: no extension blocks, no files.
+  // Sub-agents cannot deliver files (`sandbox_deliver` is removed for children), so their lists
+  // are not read (Task 22 ruling, final review I5).
+  const contributionsQ = contributionsQuery(p.orgId);
+  const contributionsR = useQuery({
+    ...contributionsQ,
+    retryOnMount: retryOnMountOf(contributionsQ.queryKey),
+  });
+  const filesQ = filesQuery(p.orgId, p.conversationId);
+  const filesR = useQuery({ ...filesQ, retryOnMount: retryOnMountOf(filesQ.queryKey) });
+  const contributions = contributionsR.data ?? NONE_CONTRIBUTIONS;
+  const files = filesR.data ?? NO_FILES;
   const panels = useMemo(() => contributions.filter((c) => c.place === "panel"), [contributions]);
   const sections = useMemo(
     () => contributions.filter((c) => c.place === "section"),
@@ -278,7 +193,6 @@ export function useRightAreaSlot(p: {
   const ctx: BlockContext = {
     orgId: p.orgId,
     conversationId: p.conversationId,
-    versions: p.uiVersions,
     onOpen: onOpenTarget,
   };
   const tools = useMemo(() => {
@@ -403,8 +317,29 @@ export function useRightAreaSlot(p: {
     );
   }
 
+  // The open area whose read is still on its way draws its own loading state (spec §7.1): a file
+  // while the files load, an extension panel or the properties while the contributions do.
+  const pending = (r: { data: unknown; error: unknown }) =>
+    r.data === undefined && r.error === null;
+  const loading: RightAreaSlot["loading"] =
+    target?.kind === "file" && pending(filesR)
+      ? { title: t("files") }
+      : target?.kind === "panel" && pending(contributionsR)
+        ? true
+        : target?.kind === "properties" && (pending(contributionsR) || pending(filesR))
+          ? true
+          : undefined;
   const right: RightAreaSlot["right"] =
-    target?.kind === "properties" ? "properties" : panelNode ? "panel" : "none";
+    target?.kind === "properties"
+      ? "properties"
+      : panelNode || loading !== undefined
+        ? "panel"
+        : "none";
+  // A sub-agent's terminal event reaches the parent through its stream: nothing to invalidate.
+  const { mutate: stopSubagent } = useAppMutation({
+    fn: (id: string) => abortRun(p.orgId, id),
+    invalidates: () => [],
+  });
 
   const filePaths = useMemo(() => {
     const m = new Map<string, string>();
@@ -461,13 +396,11 @@ export function useRightAreaSlot(p: {
         files={files}
         sections={sections}
         onOpenFile={openFile}
-        initial={{ sandbox: p.initial.sandbox, connectors: p.initial.connectors }}
-        sandboxVersion={p.sandboxVersion}
         subagents={
           p.subagents
             ? {
                 views: p.subagents,
-                onStop: (id) => void abortRun(p.orgId, id).catch(() => {}),
+                onStop: (id) => stopSubagent(id),
                 onOpen: (id) => open({ kind: "subagent", id }),
               }
             : undefined
@@ -476,6 +409,7 @@ export function useRightAreaSlot(p: {
       />
     ),
     ...(panelNode ? { panelNode } : {}),
+    ...(loading !== undefined ? { loading } : {}),
     onCloseRight: close,
     thread: {
       onOpenFile: openFile,

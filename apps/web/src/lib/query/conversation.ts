@@ -1,9 +1,15 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { listModels } from "../agents";
 import { ApiClientError } from "../api";
+import { getApproval } from "../approvals";
 import { getSandboxStatus } from "../artifacts";
 import { getAttachmentLimits } from "../attachments";
-import { listConnectors } from "../connectors";
+import {
+  getConnector,
+  listConnectorPrompts,
+  listConnectorResources,
+  listConnectors,
+} from "../connectors";
 import {
   type ConversationEvent,
   getConversation,
@@ -12,11 +18,15 @@ import {
   listAllEvents,
   listQueue,
   listSubagents,
+  readToolOutput,
   type ToolInfo,
+  toolOutputSize,
 } from "../conversations";
-import { listFiles } from "../files";
+import { fileText, listFiles } from "../files";
+import { listFilePreviewers, renderFilePreview } from "../previewers";
+import { getQuestion } from "../questions";
 import { listInvocableSkills } from "../skills";
-import { listUiContributions } from "../ui";
+import { listUiContributions, type UiLocale } from "../ui";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
 
@@ -157,6 +167,92 @@ export const modelsQuery = (orgId: string) =>
   defineQuery({
     key: keys.org(orgId).models(),
     fn: () => listModels(orgId),
+    freshness: "orgConfig",
+  });
+
+/** A call's full archived output (paged in; `complete: false` past the most it reads). */
+export const toolOutputQuery = (orgId: string, id: string, outputId: string) =>
+  defineQuery({
+    key: keys.org(orgId).conversation(id).output(outputId, "text"),
+    fn: () => readToolOutput(orgId, id, outputId),
+    freshness: "events",
+  });
+
+/** The size (characters) of a call's archived output, for "View all". */
+export const toolOutputSizeQuery = (orgId: string, id: string, outputId: string) =>
+  defineQuery({
+    key: keys.org(orgId).conversation(id).output(outputId, "size"),
+    fn: () => toolOutputSize(orgId, id, outputId),
+    freshness: "events",
+  });
+
+/** The extension previewers that accept a file. */
+export const filePreviewersQuery = (orgId: string, id: string, fileId: string) =>
+  defineQuery({
+    key: keys.org(orgId).conversation(id).filePreviewers(fileId),
+    fn: () => listFilePreviewers(orgId, id, fileId).then((r) => r.previewers),
+    freshness: "orgConfig",
+  });
+
+/** A file's preview by an extension previewer (a rendered view). */
+export const filePreviewQuery = (
+  orgId: string,
+  id: string,
+  fileId: string,
+  p: { plugin: string; id: string },
+  locale: UiLocale,
+) =>
+  defineQuery({
+    key: keys.org(orgId).conversation(id).filePreview(fileId, `${p.plugin}/${p.id}`, locale),
+    fn: () => renderFilePreview(orgId, id, fileId, p, locale).then((r) => r.view),
+    freshness: "live",
+  });
+
+/** A file's text for the built-in previews (the first bytes; `truncated` past them). */
+export const fileTextQuery = (orgId: string, id: string, fileId: string) =>
+  defineQuery({
+    key: keys.org(orgId).conversation(id).filePreview(fileId, "builtin", ""),
+    fn: ({ signal }) => fileText(orgId, id, fileId, signal),
+    freshness: "live",
+  });
+
+/** One approval as its approver reads it (a viewer who may not decide gets a 404). */
+export const approvalQuery = (orgId: string, approvalId: string) =>
+  defineQuery({
+    key: keys.org(orgId).approval(approvalId),
+    fn: () => getApproval(orgId, approvalId).then((r) => r.approval),
+    freshness: "live",
+  });
+
+/** One question (a sub-agent's, which the parent's log names only by id). */
+export const questionQuery = (orgId: string, questionId: string) =>
+  defineQuery({
+    key: keys.org(orgId).question(questionId),
+    fn: () => getQuestion(orgId, questionId).then((r) => r.question),
+    freshness: "live",
+  });
+
+/** One connector's detail (its auth decides how Connect starts). */
+export const connectorQuery = (orgId: string, connectorId: string) =>
+  defineQuery({
+    key: keys.org(orgId).connector(connectorId),
+    fn: () => getConnector(orgId, connectorId).then((r) => r.connector),
+    freshness: "orgConfig",
+  });
+
+/** The connectors' prompts for the composer's `/` menu. */
+export const connectorPromptsQuery = (orgId: string) =>
+  defineQuery({
+    key: keys.org(orgId).connectorItems("prompts"),
+    fn: () => listConnectorPrompts(orgId),
+    freshness: "orgConfig",
+  });
+
+/** The connectors' resources for the composer's `@` menu. */
+export const connectorResourcesQuery = (orgId: string) =>
+  defineQuery({
+    key: keys.org(orgId).connectorItems("resources"),
+    fn: () => listConnectorResources(orgId),
     freshness: "orgConfig",
   });
 

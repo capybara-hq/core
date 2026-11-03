@@ -20,13 +20,16 @@ import {
   UserBubble,
   useToast,
 } from "@capybara-hq/design";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import { ApiClientError, ensureSession } from "../../lib/api";
 import { artifactDownloadUrl } from "../../lib/artifacts";
 import { attachmentDownloadUrl } from "../../lib/attachments";
-import { type ModelRef, type ToolInfo, toolOutputSize } from "../../lib/conversations";
-import { listMembers } from "../../lib/members";
+import type { ModelRef, ToolInfo } from "../../lib/conversations";
+import { retryOnMountOf } from "../../lib/query/client";
+import { toolOutputSizeQuery } from "../../lib/query/conversation";
+import { membersQuery } from "../../lib/query/members";
 import {
   canConfigureModels,
   canViewTrajectory,
@@ -49,62 +52,43 @@ import { useOpenDownload } from "../SessionFilePreview";
 import { useSession } from "../shell/session";
 import { SubagentWait } from "./SubagentWait";
 
-/** Sizes of archived outputs (`outputId` → characters), fetched once each for "View all". */
+/** Sizes of archived outputs (`outputId` → characters), read once each for "View all". */
 function useOutputSizes(
   orgId: string,
   conversationId: string,
   ids: readonly string[],
 ): ReadonlyMap<string, number> {
-  const [sizes, setSizes] = useState<ReadonlyMap<string, number>>(new Map());
-  const key = ids.join("\n");
-  // biome-ignore lint/correctness/useExhaustiveDependencies: ids are represented by key
-  useEffect(() => {
-    let live = true;
-    for (const id of ids) {
-      if (sizes.has(id)) continue;
-      toolOutputSize(orgId, conversationId, id).then(
-        (n) => {
-          if (live) setSizes((m) => new Map(m).set(id, n));
-        },
-        () => {},
-      );
-    }
-    return () => {
-      live = false;
-    };
-  }, [orgId, conversationId, key]);
-  return sizes;
+  const results = useQueries({
+    queries: ids.map((id) => toolOutputSizeQuery(orgId, conversationId, id)),
+  });
+  // One map per set of answers: the entries re-render only when one arrives.
+  const answered = ids.map((id, i) => `${id}=${results[i]?.data ?? ""}`).join("\n");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the answers are represented by `answered`
+  return useMemo(() => {
+    const sizes = new Map<string, number>();
+    ids.forEach((id, i) => {
+      const n = results[i]?.data;
+      if (n !== undefined) sizes.set(id, n);
+    });
+    return sizes;
+  }, [answered]);
 }
 
 /**
- * Display names of the org's members, read once when the thread shows a run another account
- * stopped (m8); empty while loading or when the caller cannot list members (a guest). `initial`
- * is the server's read: nothing is fetched then.
+ * Display names of the org's members, read once the thread shows a run another account stopped
+ * (m8); empty while loading or when the caller cannot list members (a guest).
  */
-function useMemberNames(
-  orgId: string,
-  needed: boolean,
-  initial: readonly { id: string; name: string }[] | null | undefined,
-): ReadonlyMap<string, string> {
-  const [names, setNames] = useState<ReadonlyMap<string, string>>(
-    () => new Map((initial ?? []).map((m) => [m.id, m.name])),
+function useMemberNames(orgId: string, needed: boolean): ReadonlyMap<string, string> {
+  const q = membersQuery(orgId);
+  const { data } = useQuery({
+    ...q,
+    enabled: needed,
+    retryOnMount: retryOnMountOf(q.queryKey),
+  });
+  return useMemo(
+    () => new Map((data?.members ?? []).map((m) => [m.account.id, m.account.displayName])),
+    [data],
   );
-  // The server read them for this log (or was refused): never read at mount (R5).
-  const seeded = useRef(initial !== undefined && needed);
-  useEffect(() => {
-    if (!needed || seeded.current) return;
-    let live = true;
-    listMembers(orgId).then(
-      (r) => {
-        if (live) setNames(new Map(r.members.map((m) => [m.account.id, m.account.displayName])));
-      },
-      () => {},
-    );
-    return () => {
-      live = false;
-    };
-  }, [orgId, needed]);
-  return names;
 }
 
 const modelName = (m: ModelRef | null) => (m === null ? "—" : m.model);
@@ -149,11 +133,6 @@ export type ThreadProps = {
    * false, so the page has one live thread (I2).
    */
   live?: boolean;
-  /**
-   * Members' names as the server read them when the log already had a run another account stopped
-   * (`null`: refused for this role); a later such run reads them here.
-   */
-  initialMembers?: readonly { id: string; name: string }[] | null | undefined;
 };
 
 /** The callbacks an entry calls, read through a ref so they never re-render the entries. */
@@ -218,7 +197,6 @@ export function Thread({
   onOpenSubagent,
   live = true,
   renderTask,
-  initialMembers,
   runLinks,
 }: ThreadProps) {
   const t = useTranslations("chat");
@@ -229,6 +207,7 @@ export function Thread({
   const onImageError = useCallback((id: string) => {
     if (tried.current.has(id)) return;
     tried.current.add(id);
+    // query-exempt: a session refresh before reloading a thumbnail, not a kernel read
     ensureSession().then(
       () => setRetried((s) => new Set(s).add(id)),
       () => {
@@ -270,7 +249,7 @@ export function Thread({
       e.byAccountId !== null &&
       e.byAccountId !== me.account.id,
   );
-  const names = useMemberNames(orgId, stoppedByOther, initialMembers);
+  const names = useMemberNames(orgId, stoppedByOther);
   const cb = useRef<EntryCallbacks>({});
   cb.current = {
     onRetry,

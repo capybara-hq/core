@@ -1,4 +1,5 @@
 import { DesignProvider, type LinkComponent, ToastProvider } from "@capybara-hq/design";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
@@ -12,7 +13,7 @@ import type { ShellData } from "../src/lib/server/session";
 import type { UiView } from "../src/lib/ui";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { Link, resetNavigation } from "./support/navigation";
-import { ME } from "./support/render";
+import { ME, testQueryClient } from "./support/render";
 import { renderRoute } from "./support/server";
 import { renderFrame, shellOf } from "./support/shell";
 
@@ -288,13 +289,15 @@ describe("嵌入应用（第二档）", () => {
     });
     const { container } = render(
       <StrictMode>
-        <NextIntlClientProvider locale="en" messages={en}>
-          <DesignProvider locale="en" link={Link as LinkComponent}>
-            <ToastProvider>
-              <EmbedTab orgId="o1" plugin="board" id="live" title="Live" />
-            </ToastProvider>
-          </DesignProvider>
-        </NextIntlClientProvider>
+        <QueryClientProvider client={testQueryClient()}>
+          <NextIntlClientProvider locale="en" messages={en}>
+            <DesignProvider locale="en" link={Link as LinkComponent}>
+              <ToastProvider>
+                <EmbedTab orgId="o1" plugin="board" id="live" title="Live" />
+              </ToastProvider>
+            </DesignProvider>
+          </NextIntlClientProvider>
+        </QueryClientProvider>
       </StrictMode>,
     );
     const frame = await vi.waitFor(() => {

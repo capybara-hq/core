@@ -8,9 +8,11 @@ import {
   SubagentTask,
   subagentDuration,
 } from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useMemo, useState } from "react";
-import { type ConversationEvent, getConversation, type ModelRef } from "../../lib/conversations";
+import type { ConversationEvent, ModelRef } from "../../lib/conversations";
+import { conversationQuery } from "../../lib/query/conversation";
 import { toolsLine } from "../../lib/subagents";
 import {
   buildTimeline,
@@ -59,21 +61,16 @@ function useNow(active: boolean): number {
  */
 export function SubagentPanel(p: SubagentPanelProps) {
   const t = useTranslations("subagents.view");
-  const [check, setCheck] = useState<"pending" | "ok" | "failed">("pending");
-  useEffect(() => {
-    let live = true;
-    getConversation(p.orgId, p.subagentId).then(
-      ({ conversation }) => {
-        if (live) setCheck(conversation.parentConversationId === p.parentId ? "ok" : "failed");
-      },
-      () => {
-        if (live) setCheck("failed");
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [p.orgId, p.subagentId, p.parentId]);
+  // The child's row (the record shares it): only a child of this conversation opens.
+  const row = useQuery({ ...conversationQuery(p.orgId, p.subagentId), retry: false });
+  const check: "pending" | "ok" | "failed" =
+    row.data !== undefined
+      ? row.data.parentConversationId === p.parentId
+        ? "ok"
+        : "failed"
+      : row.error !== null
+        ? "failed"
+        : "pending";
   if (check === "ok") return <ChildRecord {...p} />;
   return (
     <RightPanel

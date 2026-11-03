@@ -2,6 +2,7 @@ import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
+import { keys } from "../src/lib/query/keys";
 import type { UiView } from "../src/lib/ui";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
 import {
@@ -15,6 +16,7 @@ import {
   userMsg,
 } from "./support/conversation";
 import { resetNavigation, router } from "./support/navigation";
+import { currentPageClient } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({ useParams: () => ({ conversationId: "c1" }) }));
@@ -142,7 +144,7 @@ describe("extension slots fail alone (review focus 3)", () => {
     expect(screen.getByText("go")).toBeTruthy();
   });
 
-  it("an extension disabled meanwhile loses its icon, section and cards on the next refresh", async () => {
+  it("an extension disabled meanwhile loses its icon, section and cards once the list is read again", async () => {
     api({
       [`GET ${BASE}/events`]: () => json(200, { events: withCard() }),
       [`GET ${UI}/views/todo/tasks-card`]: () => json(200, { view: view("Card task") }),
@@ -155,8 +157,9 @@ describe("extension slots fail alone (review focus 3)", () => {
     const bar = document.querySelector('[data-part="title-bar"]') as HTMLElement;
     expect(within(bar).getByRole("button", { name: "Tasks" })).toBeTruthy();
     contributions = [];
-    act(() => {
-      window.dispatchEvent(new Event("focus"));
+    // the list went stale and is read again (the next view; window focus reads nothing, spec §5)
+    await act(async () => {
+      await currentPageClient().invalidateQueries({ queryKey: keys.org("o1").contributions() });
     });
     await vi.waitFor(() => expect(screen.queryByText("Card task")).toBeNull());
     expect(screen.queryByText("Section task")).toBeNull();

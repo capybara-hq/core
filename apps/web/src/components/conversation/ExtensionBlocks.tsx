@@ -41,8 +41,6 @@ export const ICON_OF: Record<UiIcon, IconName> = {
 export type BlockContext = {
   orgId: string;
   conversationId: string;
-  /** Refresh counters (`event: ui`; `*` after a reconnect). */
-  versions: Readonly<Record<string, number>>;
   /** Opens an open target: `contribution` is a panel of the same extension. */
   onOpen(plugin: string, target: UiOpen): void;
 };
@@ -57,7 +55,6 @@ function useOneView(ctx: BlockContext, target: ViewTarget | null) {
   const views = useExtensionViews(ctx.orgId, targets, {
     conversationId: ctx.conversationId,
     locale,
-    versions: ctx.versions,
   });
   const runAction = useUiAction(ctx.orgId, {
     conversationId: ctx.conversationId,
@@ -148,8 +145,8 @@ function InlineCardBody({
 }
 
 /**
- * An inline view card. It loads when first in view and refetches on a refresh only while in view;
- * a refresh while out of view is fetched when the card is seen again (final review I4): a long
+ * An inline view card. It loads when first in view and reads again on a refresh only while in
+ * view; a refresh while out of view is read when the card is seen again (final review I4): a long
  * conversation's many cards cost a few GETs per change, not one each.
  */
 function ViewCard({
@@ -165,13 +162,10 @@ function ViewCard({
   panel: UiContributionItem | undefined;
   visible: boolean;
 }) {
-  const seen = useRef<Readonly<Record<string, number>> | null>(null);
-  if (visible) seen.current = ctx.versions;
-  const versions = seen.current;
-  const v = useOneView(
-    useMemo(() => ({ ...ctx, versions: versions ?? {} }), [ctx, versions]),
-    versions === null ? null : target,
-  );
+  const seen = useRef(false);
+  if (visible) seen.current = true;
+  const shown = useMemo(() => ({ ...target, paused: !visible }), [target, visible]);
+  const v = useOneView(ctx, seen.current ? shown : null);
   const reason = useReason(v.state);
   const view = v.state?.kind === "ready" ? v.state.view : undefined;
   const expand = view?.open ?? (panel ? { contribution: panel.id } : undefined);

@@ -34,6 +34,7 @@ export function useOpenDownload(): (url: string) => void {
       const go = () => {
         tab.location.href = target;
       };
+      // query-exempt: a session refresh before a download navigates, not a kernel read
       ensureSession().then(go, (e: unknown) => {
         if (e instanceof ApiClientError && e.status === 401) {
           tab.close();
@@ -63,6 +64,7 @@ export function SessionFilePreview({
   const onImageError = () => {
     if (retried.current) return;
     retried.current = true;
+    // query-exempt: a session refresh before reloading an image, not a kernel read
     ensureSession().then(
       () => setRetry(1),
       () => {

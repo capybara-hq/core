@@ -1,20 +1,23 @@
 "use client";
 
 import { QueuedMessage, QueuePaused, Stack, useToast } from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   type ConversationEvent,
   deleteQueued,
   editQueued,
   enqueueMessage,
-  listQueue,
   type MessageInput,
   type QueueItem,
   type QueuePauseReason,
   resumeQueue,
   sendQueuedNow,
 } from "../../lib/conversations";
+import { retryOnMountOf } from "../../lib/query/client";
+import { queueQuery } from "../../lib/query/conversation";
+import { useAppMutation } from "../../lib/query/define";
 import { useErrorMessage } from "../../lib/use-error-message";
 import type { ComposerMessage } from "./ComposerBar";
 import type { SendResult } from "./useConversation";
@@ -29,17 +32,15 @@ export type QueueView = {
 };
 
 /**
- * The conversation's queued messages (kernel queue routes, spec §5.7): the server's read
- * (`initial`; `null` when the kernel failed it: an empty queue until the next read), read again on
- * `changed: queue` (`version`) and after each of this page's own changes. The queue lives in PG, so a
- * reload, another tab or another replica see the same list.
+ * The conversation's queued messages (kernel queue routes, spec §5.7) through the query cache:
+ * `changed: queue` invalidates it, and so does each of this page's own changes. A failed read
+ * shows an empty queue until the next one. The queue lives in PG, so a reload, another tab or
+ * another replica see the same list.
  */
 export function useQueue(
   orgId: string,
   conversationId: string,
-  version: number,
   merge: (events: ConversationEvent[]) => void,
-  initial: { items: QueueItem[]; paused: boolean; pauseReason?: QueuePauseReason } | null,
 ): QueueView & {
   reload(): void;
   edit(id: string, text: string): Promise<boolean>;
@@ -49,39 +50,48 @@ export function useQueue(
 } {
   const errorMessage = useErrorMessage();
   const toast = useToast();
-  const [state, setState] = useState<{
-    items: QueueItem[];
-    paused: boolean;
-    pauseReason?: QueuePauseReason;
-  }>(initial ?? { items: [], paused: false });
-  /** The `version` the server's read stands for: no read until it moves. */
-  const seeded = useRef<number | null>(version);
-  const reload = useCallback(() => {
-    listQueue(orgId, conversationId).then(
-      (r) =>
-        setState({
-          items: r.items,
-          paused: r.paused,
-          ...(r.pauseReason !== undefined ? { pauseReason: r.pauseReason } : {}),
-        }),
-      () => {
-        // The thread keeps working; the queue shows what was last read.
-      },
-    );
-  }, [orgId, conversationId]);
-  useEffect(() => {
-    // ssr-exempt: live updates after first paint (`changed: queue` moves `version`)
-    if (seeded.current === version) return;
-    seeded.current = null;
-    reload();
-  }, [reload, version]);
+  const qc = useQueryClient();
+  const query = queueQuery(orgId, conversationId);
+  const state = useQuery({ ...query, retryOnMount: retryOnMountOf(query.queryKey) }).data ?? EMPTY;
+  const reload = useCallback(
+    () => void qc.invalidateQueries({ queryKey: query.queryKey }),
+    [qc, query.queryKey],
+  );
+  const invalidates = () => [query.queryKey];
+  const enqueue = useAppMutation({
+    fn: async (m: ComposerMessage & Pick<MessageInput, "model" | "effort">) => {
+      const r = await enqueueMessage(orgId, conversationId, m);
+      if (r.event) merge([r.event]);
+      return r;
+    },
+    invalidates,
+  });
+  const editMutation = useAppMutation({
+    fn: (v: { id: string; text: string }) => editQueued(orgId, conversationId, v.id, v.text),
+    invalidates,
+  });
+  const removeMutation = useAppMutation({
+    fn: (id: string) => deleteQueued(orgId, conversationId, id),
+    invalidates,
+  });
+  const sendNowMutation = useAppMutation({
+    fn: async (id: string) => {
+      const { event } = await sendQueuedNow(orgId, conversationId, id);
+      merge([event]);
+    },
+    invalidates,
+  });
+  const resumeMutation = useAppMutation({
+    fn: () => resumeQueue(orgId, conversationId),
+    invalidates,
+  });
 
+  // A failure says why; the queue is read again either way (it may have moved meanwhile).
   const act = async (f: () => Promise<unknown>) => {
     try {
       await f();
     } catch (e) {
       toast.error(errorMessage(e));
-    } finally {
       reload();
     }
   };
@@ -91,9 +101,7 @@ export function useQueue(
     reload,
     add: async (m) => {
       try {
-        const r = await enqueueMessage(orgId, conversationId, m);
-        if (r.event) merge([r.event]);
-        reload();
+        await enqueue.mutateAsync(m);
         return { ok: true };
       } catch (e) {
         toast.error(errorMessage(e));
@@ -102,23 +110,23 @@ export function useQueue(
     },
     edit: async (id, text) => {
       try {
-        await editQueued(orgId, conversationId, id, text);
-        reload();
+        await editMutation.mutateAsync({ id, text });
         return true;
       } catch (e) {
         toast.error(errorMessage(e));
         return false;
       }
     },
-    remove: (id) => act(() => deleteQueued(orgId, conversationId, id)),
-    sendNow: (id) =>
-      act(async () => {
-        const { event } = await sendQueuedNow(orgId, conversationId, id);
-        merge([event]);
-      }),
-    resume: () => act(() => resumeQueue(orgId, conversationId)),
+    remove: (id) => act(() => removeMutation.mutateAsync(id)),
+    sendNow: (id) => act(() => sendNowMutation.mutateAsync(id)),
+    resume: () => act(() => resumeMutation.mutateAsync(undefined)),
   };
 }
+
+const EMPTY: { items: QueueItem[]; paused: boolean; pauseReason?: QueuePauseReason } = {
+  items: [],
+  paused: false,
+};
 
 /** The chip of a queued invocation: the skill's bare name (as the thread's bubble shows it). */
 const skillLabel = (name: string) => name.slice(name.indexOf(":") + 1);

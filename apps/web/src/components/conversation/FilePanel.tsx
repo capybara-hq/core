@@ -12,16 +12,14 @@ import {
   TextPreview,
   typeBadge,
 } from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useState } from "react";
 import { ApiClientError } from "../../lib/api";
 import { artifactDownloadUrl } from "../../lib/artifacts";
-import { builtinPreview, type FileOutput, fileText } from "../../lib/files";
-import {
-  type FilePreviewerItem,
-  listFilePreviewers,
-  renderFilePreview,
-} from "../../lib/previewers";
+import { builtinPreview, type FileOutput } from "../../lib/files";
+import type { FilePreviewerItem } from "../../lib/previewers";
+import { filePreviewersQuery, filePreviewQuery, fileTextQuery } from "../../lib/query/conversation";
 import { type UiView, uiLocale } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { EmbedTab } from "../extension-ui/EmbedTab";
@@ -61,36 +59,24 @@ export function FilePanel({
   const locale = uiLocale(useLocale());
   const errorMessage = useErrorMessage();
   const openDownload = useOpenDownload();
-  const [extensions, setExtensions] = useState<FilePreviewerItem[] | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
-  const [attempt, setAttempt] = useState(0);
-  const [body, setBody] = useState<Load<{ text?: string; truncated?: boolean; view?: UiView }>>({
-    kind: "loading",
-  });
   const builtin = file.status === "removed" ? null : builtinPreview(file);
   const download = () => openDownload(artifactDownloadUrl(orgId, conversationId, file.id));
 
-  useEffect(() => {
-    let live = true;
-    setExtensions(null);
-    setPicked(null);
-    if (file.status === "removed") {
-      setExtensions([]);
-      return;
-    }
-    listFilePreviewers(orgId, conversationId, file.id).then(
-      (r) => {
-        if (live) setExtensions(r.previewers);
-      },
-      () => {
-        // No extension previewers readable: the built-in one (or the file card) shows.
-        if (live) setExtensions([]);
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [orgId, conversationId, file.id, file.status]);
+  // No extension previewers readable: the built-in one (or the file card) shows.
+  const previewers = useQuery({
+    ...filePreviewersQuery(orgId, conversationId, file.id),
+    enabled: file.status !== "removed",
+    retry: false,
+  });
+  const extensions: FilePreviewerItem[] | null =
+    file.status === "removed"
+      ? []
+      : previewers.data !== undefined
+        ? previewers.data
+        : previewers.error !== null
+          ? []
+          : null;
 
   const options = [
     ...(extensions ?? []).map((p) => ({ id: previewerId(p), title: p.title[locale], p })),
@@ -98,35 +84,39 @@ export function FilePanel({
   ];
   const current = options.find((o) => o.id === picked) ?? options[0];
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `attempt` re-runs a failed load
-  useEffect(() => {
-    if (extensions === null || !current) return;
-    const ctrl = new AbortController();
-    let live = true;
-    const done = (b: typeof body) => {
-      if (live) setBody(b);
-    };
-    setBody({ kind: "loading" });
-    if (current.p !== null) {
-      if (current.p.kind === "view") {
-        renderFilePreview(orgId, conversationId, file.id, current.p, locale).then(
-          ({ view }) => done({ kind: "ready", data: { view } }),
-          (e: unknown) => done({ kind: "error", e }),
-        );
-      } else done({ kind: "ready", data: {} });
-    } else if (builtin === "image") {
-      done({ kind: "ready", data: {} });
-    } else {
-      fileText(orgId, conversationId, file.id, ctrl.signal).then(
-        (r) => done({ kind: "ready", data: r }),
-        (e: unknown) => done({ kind: "error", e }),
-      );
-    }
-    return () => {
-      live = false;
-      ctrl.abort();
-    };
-  }, [orgId, conversationId, file.id, extensions, current?.id, builtin, locale, attempt]);
+  // The body of the current previewer: an extension's rendered view, an embed (it loads itself),
+  // a bitmap (`?inline=1`, nothing to read) or the file's text for the other built-ins.
+  const p = current?.p ?? null;
+  const viewP = p !== null && p.kind === "view" ? p : null;
+  const viewQ = useQuery({
+    ...filePreviewQuery(orgId, conversationId, file.id, viewP ?? { plugin: "", id: "" }, locale),
+    enabled: extensions !== null && viewP !== null,
+    retry: false,
+  });
+  const textQ = useQuery({
+    ...fileTextQuery(orgId, conversationId, file.id),
+    enabled: extensions !== null && current !== undefined && p === null && builtin !== "image",
+    retry: false,
+  });
+  const body: Load<{ text?: string; truncated?: boolean; view?: UiView }> =
+    extensions === null || current === undefined
+      ? { kind: "loading" }
+      : p !== null
+        ? p.kind !== "view"
+          ? { kind: "ready", data: {} }
+          : viewQ.data !== undefined
+            ? { kind: "ready", data: { view: viewQ.data } }
+            : viewQ.error !== null
+              ? { kind: "error", e: viewQ.error }
+              : { kind: "loading" }
+        : builtin === "image"
+          ? { kind: "ready", data: {} }
+          : textQ.data !== undefined
+            ? { kind: "ready", data: textQ.data }
+            : textQ.error !== null
+              ? { kind: "error", e: textQ.error }
+              : { kind: "loading" };
+  const retryBody = () => void (viewP !== null ? viewQ.refetch() : textQ.refetch());
 
   const header = {
     badge: typeBadge(file.name, file.contentType),
@@ -186,7 +176,7 @@ export function FilePanel({
         header={header}
         state="failed"
         failure={{ name: current.title, reason: errorMessage(new ApiClientError(0, code, code)) }}
-        onRetry={() => setAttempt((n) => n + 1)}
+        onRetry={retryBody}
       >
         {fallback}
       </FilePreviewFrame>
