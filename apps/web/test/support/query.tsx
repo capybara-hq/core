@@ -1,13 +1,13 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { type DehydratedState, type QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { DehydratedState, QueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { HydrateCache } from "../../src/components/HydrateCache";
 import type { OrgReadiness } from "../../src/lib/agents";
 import { setApiTransport } from "../../src/lib/api";
 import { makeQueryClient } from "../../src/lib/query/client";
 import { matchRoute } from "../../src/lib/query/routes";
-import { meQuery } from "../../src/lib/query/shell";
+import { meQuery, readinessQuery } from "../../src/lib/query/shell";
 import { dehydrateFor, prefetchRoute } from "../../src/lib/server/query";
 import { type Call, stubApi } from "./api";
 import { ME, renderPage, testQueryClient } from "./render";
@@ -41,17 +41,14 @@ async function pageOf(path: string): Promise<ReactNode> {
   });
 }
 
-/** `page` inside a browser query client holding `state`, as the layout's `HydrationBoundary`. */
-function withCache(page: ReactNode, client: QueryClient, state?: DehydratedState) {
-  return (
-    <QueryClientProvider client={client}>
-      {state === undefined ? page : <HydrateCache state={state}>{page}</HydrateCache>}
-    </QueryClientProvider>
-  );
+/** `page` inside the layout's `HydrationBoundary` holding `state`. */
+function withCache(page: ReactNode, state?: DehydratedState) {
+  return state === undefined ? page : <HydrateCache state={state}>{page}</HydrateCache>;
 }
 
 /**
- * A document load of `path`: the layout's prefetch (`/me`, then the route's queries) and the page
+ * A document load of `path`: the layout's prefetch (`/me` and readiness, then the route's queries)
+ * and the page
  * run against `routes` (plus the gate's `sessionRoutes`) on the server; the cache is dehydrated
  * (through JSON, as it crosses to the browser) and the page renders inside `HydrationBoundary`.
  * Install the browser's routes (`stubApi`, `expectNoFirstPaintFetch`) first. Returns the server
@@ -66,6 +63,8 @@ export async function renderRouteWithCache(path: string, routes: Routes, opts: R
   try {
     const qc = makeQueryClient();
     await qc.fetchQuery(meQuery());
+    // The shell's readiness (the layout's `getShell()` reads it beside the route).
+    if (me.currentOrgId !== null) await qc.fetchQuery(readinessQuery(me.currentOrgId));
     await prefetchRoute(qc, path, { me, orgId: me.currentOrgId });
     page = await pageOf(path);
     state = JSON.parse(JSON.stringify(dehydrateFor(qc))) as DehydratedState;
@@ -73,7 +72,7 @@ export async function renderRouteWithCache(path: string, routes: Routes, opts: R
     setApiTransport(null);
   }
   const client = testQueryClient();
-  const view = renderPage(withCache(page, client, state), render);
+  const view = renderPage(withCache(page, state), { ...render, client });
   return { calls, client, ...view };
 }
 
@@ -99,5 +98,5 @@ export async function renderRouteEmptyCache(
   }
   const calls = stubApi(all);
   const client = testQueryClient();
-  return { calls, client, ...renderPage(withCache(page, client), render) };
+  return { calls, client, ...renderPage(withCache(page), { ...render, client }) };
 }

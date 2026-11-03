@@ -1,8 +1,23 @@
 import type { QueryClient, UseQueryOptions } from "@tanstack/react-query";
+import { setupReady } from "../agents";
 import type { ApiClientError } from "../api";
+import type { Conversation, ConversationEvent } from "../conversations";
 import type { Me } from "../session";
+import { agentsQuery } from "./agents";
 import { authSourcesQuery } from "./auth";
-import { maybeMeQuery } from "./shell";
+import {
+  attachmentLimitsQuery,
+  connectorsQuery,
+  contributionsQuery,
+  conversationFollowUps,
+  conversationQuery,
+  eventsQuery,
+  filesQuery,
+  modelsQuery,
+  queueQuery,
+  sandboxQuery,
+} from "./conversation";
+import { conversationGroupsQuery, maybeMeQuery, readinessQuery } from "./shell";
 
 /** What a route's queries are built from. */
 export interface RouteCtx {
@@ -73,8 +88,56 @@ export const ROUTES: readonly RouteEntry[] = [
   { pattern: "/channels", queries: () => [], none: "pending migration" },
   { pattern: "/channels/[id]", queries: () => [], none: "pending migration" },
   { pattern: "/channels/new", queries: () => [], none: "pending migration" },
-  { pattern: "/chat", queries: () => [], none: "pending migration" },
-  { pattern: "/chat/[conversationId]", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/chat",
+    // The sidebar's groups name the agent most recently talked to (the shell reads them too).
+    queries: ({ orgId }) => (orgId === null ? [] : [q(conversationGroupsQuery(orgId))]),
+    // Until the org can run, the frame draws the setup home here: the composer's reads wait for
+    // readiness (the shell's read of it, shared) and are made only for a ready org.
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId }, qc) => {
+      if (orgId === null) return;
+      const readiness = await qc.fetchQuery({ ...readinessQuery(orgId), retry: false });
+      if (!setupReady(readiness)) return;
+      await Promise.all(
+        [q(agentsQuery(orgId)), q(modelsQuery(orgId)), q(attachmentLimitsQuery(orgId))].map((o) =>
+          qc.prefetchQuery({ ...o, retry: false }),
+        ),
+      );
+    },
+  },
+  {
+    pattern: "/chat/[conversationId]",
+    queries: ({ orgId, params }) => {
+      const id = params.conversationId;
+      if (orgId === null || id === undefined) return [];
+      return [
+        q(conversationQuery(orgId, id)),
+        q(eventsQuery(orgId, id)),
+        q(agentsQuery(orgId)),
+        q(modelsQuery(orgId)),
+        q(queueQuery(orgId, id)),
+        q(contributionsQuery(orgId)),
+        q(filesQuery(orgId, id)),
+        q(sandboxQuery(orgId, id)),
+        q(connectorsQuery(orgId)),
+        q(attachmentLimitsQuery(orgId)),
+      ];
+    },
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, params, me }, qc) => {
+      const id = params.conversationId;
+      if (orgId === null || id === undefined) return;
+      const events = qc.getQueryData<ConversationEvent[]>(eventsQuery(orgId, id).queryKey);
+      const row = qc.getQueryData<Conversation>(conversationQuery(orgId, id).queryKey);
+      if (events === undefined || row === undefined) return;
+      await Promise.all(
+        conversationFollowUps(orgId, id, events, row, me?.account.id).map((o) =>
+          qc.prefetchQuery({ ...o, retry: false }),
+        ),
+      );
+    },
+  },
   { pattern: "/connectors", queries: () => [], none: "pending migration" },
   { pattern: "/connectors/[connectorId]", queries: () => [], none: "pending migration" },
   { pattern: "/connectors/install", queries: () => [], none: "pending migration" },

@@ -63,6 +63,13 @@ export async function prefetchRoute(
   try {
     await match.entry.then?.(ctx, qc);
   } catch {}
+  // Anything that is not a kernel refusal or failure (a fetch bug, a mapper bug) is a bug of the
+  // page, not a state it draws: it fails the render as a page's own read did.
+  const bug = qc
+    .getQueryCache()
+    .getAll()
+    .find((q) => q.state.error != null && !(q.state.error instanceof ApiClientError));
+  if (bug) throw bug.state.error;
   if (!opts.signedOutRedirect) return "ok";
   const signedOut = qc
     .getQueryCache()

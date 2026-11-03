@@ -23,6 +23,8 @@ type PageOpts = {
   locale?: "zh" | "en";
   me?: Me;
   session?: Partial<Session>;
+  /** The browser's query client (a fresh one unless given). */
+  client?: QueryClient;
 };
 
 /**
@@ -50,7 +52,7 @@ export const currentPageClient = (): QueryClient => pageClient;
  * reads that one.
  */
 export function renderPage(ui: ReactNode, opts: PageOpts = {}) {
-  pageClient = testQueryClient();
+  pageClient = opts.client ?? testQueryClient();
   return render(pageElement(ui, opts));
 }
 

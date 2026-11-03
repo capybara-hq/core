@@ -3,7 +3,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import NewChatPage from "../src/app/(app)/chat/page";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
 import {
   AGENTS,
@@ -17,7 +16,7 @@ import {
   userMsg,
 } from "./support/conversation";
 import { resetNavigation } from "./support/navigation";
-import { renderRoute } from "./support/server";
+import { renderRouteWithCache } from "./support/query";
 
 /**
  * Phase D Task 11: the composer's `/` menu lists the agent's skills first (then the connector
@@ -636,7 +635,7 @@ describe("a new conversation", () => {
       [`POST ${ORG}/conversations`]: () =>
         json(201, { conversation: CONV().conversation, event: invocation(1) }),
     });
-    await renderRoute(() => NewChatPage({ searchParams: Promise.resolve({}) }), {
+    await renderRouteWithCache("/chat", {
       [`GET ${ORG}/agents`]: () => json(200, AGENTS),
       [`GET ${ORG}/models`]: () => json(200, MODELS),
       [`GET ${ORG}/conversations/groups`]: () => json(200, { groups: [] }),

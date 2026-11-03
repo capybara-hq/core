@@ -1,9 +1,8 @@
 /** Shared helpers for the conversation page tests: events, a fake EventSource, routes. */
-import ChatPage from "../../src/app/(app)/chat/[conversationId]/page";
 import { DEFAULT_LIMITS } from "../../src/lib/attachments";
 import type { ConversationEvent } from "../../src/lib/conversations";
 import { lastStubRoutes } from "./api";
-import { renderRoute } from "./server";
+import { renderRouteWithCache } from "./query";
 
 let seqTime = 0;
 export function ev(
@@ -147,10 +146,10 @@ export const MODELS = {
 export const LIMITS = { ...DEFAULT_LIMITS };
 
 /**
- * What the conversation page's server snapshot reads besides the conversation and its events,
+ * What the conversation page's first load reads besides the conversation and its events,
  * answered empty (an org with nothing else): tests override what they are about.
  */
-export function snapshotDefaults(id = "c1"): Parameters<typeof renderRoute>[1] {
+export function snapshotDefaults(id = "c1"): Parameters<typeof renderRouteWithCache>[1] {
   const ok = (body: unknown) => () =>
     new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
   const base = `/api/v1/orgs/o1/conversations/${id}`;
@@ -178,23 +177,21 @@ export function snapshotDefaults(id = "c1"): Parameters<typeof renderRoute>[1] {
 }
 
 /**
- * `/chat/<id>` as the app renders it: the page reads its snapshot on the server from the routes of
- * the latest `stubApi` call (the browser's) over {@link snapshotDefaults}, then the view mounts
- * with it. Pass `routes` to serve the server from others.
+ * `/chat/<id>` as a document load renders it: the layout prefetches the route's queries on the
+ * server from the routes of the latest `stubApi` call (the browser's) over
+ * {@link snapshotDefaults}, the cache is hydrated, then the view mounts from it. Pass `routes` to
+ * serve the server from others. Returns the server calls and the browser's client.
  */
 export function renderChatRoute(
-  opts: Parameters<typeof renderRoute>[2] & {
+  opts: Parameters<typeof renderRouteWithCache>[2] & {
     id?: string;
-    routes?: Parameters<typeof renderRoute>[1];
+    routes?: Parameters<typeof renderRouteWithCache>[1];
   } = {},
 ) {
   const { id = "c1", routes = lastStubRoutes(), ...rest } = opts;
-  return renderRoute(
-    () => ChatPage({ params: Promise.resolve({ conversationId: id }) }),
+  return renderRouteWithCache(
+    `/chat/${encodeURIComponent(id)}`,
     { ...snapshotDefaults(id), ...routes },
-    {
-      locale: "en",
-      ...rest,
-    },
+    { locale: "en", ...rest },
   );
 }

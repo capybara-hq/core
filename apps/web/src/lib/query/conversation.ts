@@ -1,4 +1,4 @@
-import type { QueryClient } from "@tanstack/react-query";
+import type { QueryClient, UseQueryOptions } from "@tanstack/react-query";
 import { listModels } from "../agents";
 import { ApiClientError } from "../api";
 import { getApproval } from "../approvals";
@@ -11,6 +11,7 @@ import {
   listConnectors,
 } from "../connectors";
 import {
+  type Conversation,
   type ConversationEvent,
   getConversation,
   getConversationUsage,
@@ -26,9 +27,11 @@ import { fileText, listFiles } from "../files";
 import { listFilePreviewers, renderFilePreview } from "../previewers";
 import { getQuestion } from "../questions";
 import { listInvocableSkills } from "../skills";
+import { toolKeysOf } from "../tool-keys";
 import { listUiContributions, type UiLocale } from "../ui";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
+import { membersQuery } from "./members";
 
 /**
  * The conversation page's reads (web query cache spec §5, §6): the row and the event log, the
@@ -255,6 +258,40 @@ export const connectorResourcesQuery = (orgId: string) =>
     fn: () => listConnectorResources(orgId),
     freshness: "orgConfig",
   });
+
+/**
+ * What the conversation page reads once it has the log and the row (the route's `then`, as
+ * today's snapshot did): the tool info the events name, the sub-agents and usage once one was
+ * dispatched, the members once a run another account stopped shows, and the agent's invocable
+ * skills (with the conversation's trial drafts when it is the caller's).
+ */
+export function conversationFollowUps(
+  orgId: string,
+  id: string,
+  events: readonly ConversationEvent[],
+  row: Conversation,
+  accountId: string | undefined,
+): UseQueryOptions<unknown, ApiClientError>[] {
+  const out: UseQueryOptions<unknown, ApiClientError>[] = [];
+  const add = <T>(o: UseQueryOptions<T, ApiClientError>) =>
+    out.push(o as unknown as UseQueryOptions<unknown, ApiClientError>);
+  const tools = toolKeysOf(events);
+  if (tools.length > 0) add(toolInfoQuery(orgId, id, tools));
+  if (events.some((e) => e.type === "subagent_dispatched")) {
+    add(subagentsQuery(orgId, id));
+    add(usageQuery(orgId, id));
+  }
+  const stoppedByOther = events.some(
+    (e) =>
+      e.type === "run_aborted" &&
+      e.payload.byAccountId !== null &&
+      e.payload.byAccountId !== accountId,
+  );
+  if (stoppedByOther) add(membersQuery(orgId));
+  const mine = row.accountId === undefined || row.accountId === accountId;
+  add(invocableSkillsQuery(orgId, row.agentId, mine ? id : undefined));
+  return out;
+}
 
 /**
  * Merges `events` into the cached log of the conversation by `seq`: none twice, in ascending

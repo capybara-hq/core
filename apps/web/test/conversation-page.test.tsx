@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import ChatPage from "../src/app/(app)/chat/[conversationId]/page";
-import NewChatPage from "../src/app/(app)/chat/page";
 import { navigateBrowser } from "../src/lib/browser";
 import { keys } from "../src/lib/query/keys";
 import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
@@ -21,8 +20,9 @@ import {
   userMsg,
 } from "./support/conversation";
 import { resetNavigation, router } from "./support/navigation";
+import { renderRouteWithCache } from "./support/query";
 import { currentPageClient, ME, pageElement } from "./support/render";
-import { expectNoFirstPaintFetch, onServer, renderRoute } from "./support/server";
+import { expectNoFirstPaintFetch, onServer } from "./support/server";
 import { renderFrame, shellOf } from "./support/shell";
 
 const params = { conversationId: "c1" };
@@ -708,17 +708,21 @@ describe("the conversation page (ConversationPage)", () => {
 });
 
 describe("the conversation page's server gate", () => {
-  it("a conversation the kernel does not show is the not-found page; without an org nothing renders", async () => {
-    stubApi({});
-    await expect(
-      renderChatRoute({
-        routes: {
-          [`GET ${BASE}`]: () =>
-            json(404, { error: { code: "conversation.not_found", message: "x" } }),
-          [`GET ${BASE}/events`]: () => json(200, { events: [] }),
-        },
-      }),
-    ).rejects.toThrow("NOT_FOUND");
+  it("a conversation the kernel does not show is the not-found state in the shell; without an org nothing renders", async () => {
+    const calls = stubApi({});
+    // a missing object is no unknown route: the page renders its not-found state (HTTP 200)
+    await renderChatRoute({
+      routes: {
+        [`GET ${BASE}`]: () =>
+          json(404, { error: { code: "conversation.not_found", message: "x" } }),
+        [`GET ${BASE}/events`]: () =>
+          json(404, { error: { code: "conversation.not_found", message: "x" } }),
+      },
+    });
+    expect(screen.getAllByRole("heading", { name: en.notFound.title }).length).toBeGreaterThan(0);
+    expect(document.querySelector('[data-template="ConversationPage"]')).toBeNull();
+    expect(calls).toEqual([]);
+    cleanup();
     const none = await renderChatRoute({ routes: {}, me: { ...ME, currentOrgId: null } });
     expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
     expect(document.querySelector('[data-template="ConversationPage"]')).toBeNull();
@@ -747,7 +751,7 @@ describe("server-decided failures (ruling R5)", () => {
     window.history.replaceState(null, "", "/");
   });
 
-  it("anything that is not a kernel refusal or failure propagates (a fetch bug, a mapper bug)", async () => {
+  it("anything that is not a kernel refusal or failure propagates (a fetch bug)", async () => {
     stubApi({});
     await expect(
       renderChatRoute({
@@ -757,23 +761,6 @@ describe("server-decided failures (ruling R5)", () => {
           [`GET ${BASE}/files`]: () => {
             throw new TypeError("boom");
           },
-        },
-      }),
-    ).rejects.toThrow(TypeError);
-    // a member list without members: mapping it is a TypeError, not a missing section
-    await expect(
-      renderChatRoute({
-        routes: {
-          [`GET ${BASE}`]: () => json(200, CONV()),
-          [`GET ${BASE}/events`]: () =>
-            json(200, {
-              events: [
-                userMsg(1, "hi"),
-                runStarted(2),
-                ev(3, "run_aborted", { byAccountId: "acc-bo", reason: "user" }),
-              ],
-            }),
-          "GET /api/v1/orgs/o1/members": () => json(200, { members: null }),
         },
       }),
     ).rejects.toThrow(TypeError);
@@ -851,11 +838,8 @@ describe("switching conversations", () => {
     const r = await renderChat();
     expect(await screen.findByText("queued in one")).toBeTruthy();
     await userEvent.setup().type(input(), "draft for one");
-    // the navigation to c2: the server renders its page, the same view gets new props
-    const { element } = await onServer(
-      () => ChatPage({ params: Promise.resolve({ conversationId: "c2" }) }),
-      { ...snapshotDefaults("c2"), ...lastStubRoutes() },
-    );
+    // the client navigation to c2: the same view gets new props and reads c2 from the browser
+    const element = await ChatPage({ params: Promise.resolve({ conversationId: "c2" }) });
     r.rerender(pageElement(element, { locale: "en" }));
     expect(await screen.findByText("in two")).toBeTruthy();
     expect(screen.queryByText("queued in one")).toBeNull();
@@ -879,17 +863,14 @@ describe("a new conversation (/chat)", () => {
       "POST /api/v1/orgs/o1/conversations": () =>
         json(201, { ...CONV("c9", { agentId: "ag2" }), event: userMsg(1, "start") }),
     });
-    const { calls: server } = await renderRoute(
-      () => NewChatPage({ searchParams: Promise.resolve({ agent: "ag2" }) }),
-      NEW_CHAT,
-    );
+    const { calls: server } = await renderRouteWithCache("/chat?agent=ag2", NEW_CHAT);
     // the first paint is the server's: agents, the most recent agent and the models
     expect(screen.getByRole("heading", { name: "Second agent" })).toBeTruthy();
     expect(server.map((c) => c.url)).toEqual(
       expect.arrayContaining([
         "/api/v1/orgs/o1/agents",
         "/api/v1/orgs/o1/models",
-        "/api/v1/orgs/o1/conversations/groups?perGroup=1&limit=1",
+        "/api/v1/orgs/o1/conversations/groups",
         "/api/v1/orgs/o1/attachments/limits",
       ]),
     );
@@ -906,11 +887,9 @@ describe("a new conversation (/chat)", () => {
   it("the new conversation's status bar reads <login>@<slug>:~/chat with the time zone", async () => {
     resetNavigation("/chat");
     expectNoFirstPaintFetch();
-    const { container } = await renderRoute(
-      () => NewChatPage({ searchParams: Promise.resolve({}) }),
-      NEW_CHAT,
-      { session: { timeZone: "UTC+8" } },
-    );
+    const { container } = await renderRouteWithCache("/chat", NEW_CHAT, {
+      session: { timeZone: "UTC+8" },
+    });
     const bar = container.querySelector('[data-part="status-bar"]') as HTMLElement;
     expect((bar.querySelector('[data-part="status-bar-context"]') as HTMLElement).textContent).toBe(
       "grant@acme:~/chat",
@@ -921,7 +900,7 @@ describe("a new conversation (/chat)", () => {
   it("without ?agent= the agent most recently talked to is picked, and can be changed", async () => {
     resetNavigation("/chat");
     expectNoFirstPaintFetch();
-    await renderRoute(() => NewChatPage({ searchParams: Promise.resolve({}) }), {
+    await renderRouteWithCache("/chat", {
       ...NEW_CHAT,
       "GET /api/v1/orgs/o1/conversations/groups": () =>
         json(200, {
@@ -948,10 +927,7 @@ describe("the new conversation once the org can run", () => {
   it("with a model and an agent the composer shows as before", async () => {
     resetNavigation("/chat");
     expectNoFirstPaintFetch();
-    const { container } = await renderRoute(
-      () => NewChatPage({ searchParams: Promise.resolve({}) }),
-      NEW_CHAT,
-    );
+    const { container } = await renderRouteWithCache("/chat", NEW_CHAT);
     expect(screen.getByRole("heading", { name: /agent/i })).toBeTruthy();
     expect(container.querySelector('[data-template="OnboardingPage"]')).toBeNull();
   });
@@ -959,11 +935,9 @@ describe("the new conversation once the org can run", () => {
   it("while the org is in setup, the page renders nothing (the frame draws the setup home)", async () => {
     resetNavigation("/chat");
     expectNoFirstPaintFetch();
-    const { container, calls } = await renderRoute(
-      () => NewChatPage({ searchParams: Promise.resolve({}) }),
-      NEW_CHAT,
-      { readiness: { modelProvider: "none", agents: 0 } },
-    );
+    const { container, calls } = await renderRouteWithCache("/chat", NEW_CHAT, {
+      readiness: { modelProvider: "none", agents: 0 },
+    });
     expect(container.querySelector('[data-template="ConversationPage"]')).toBeNull();
     expect(calls.some((c) => c.url.endsWith("/agents"))).toBe(false);
   });

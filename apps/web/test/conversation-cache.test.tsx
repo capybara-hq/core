@@ -1,10 +1,12 @@
 // The conversation page through the query cache (web query cache spec §6): the stream appends to
 // the cached log, `changed` frames invalidate their key, and a return reads only what changed.
 import { QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
+import ChatPage from "../src/app/(app)/chat/[conversationId]/page";
 import { useConversation } from "../src/components/conversation/useConversation";
 import type { ConversationEvent } from "../src/lib/conversations";
 import {
@@ -14,13 +16,23 @@ import {
   toolInfoQuery,
 } from "../src/lib/query/conversation";
 import { keys } from "../src/lib/query/keys";
-import { stubApi } from "./support/api";
-import { CONV, ev, FakeEventSource, userMsg } from "./support/conversation";
-import { testQueryClient } from "./support/query";
+import { type Call, json, noContent, stubApi } from "./support/api";
+import {
+  CONV,
+  ev,
+  FakeEventSource,
+  renderChatRoute,
+  snapshotDefaults,
+  userMsg,
+} from "./support/conversation";
+import { resetNavigation } from "./support/navigation";
+import { renderRouteEmptyCache, testQueryClient } from "./support/query";
+import { pageElement } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
 beforeEach(() => {
+  resetNavigation("/chat/c1");
   vi.stubGlobal("EventSource", FakeEventSource);
 });
 afterEach(() => {
@@ -169,5 +181,147 @@ describe("useConversation and the cache", () => {
     act(() => es.giveUp());
     await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(2));
     expect(FakeEventSource.instances[1]?.url).toBe(`${BASE}/stream?after=3`);
+  });
+});
+
+describe("the conversation page from the cache", () => {
+  const BASE = "/api/v1/orgs/o1/conversations/c1";
+  const gets = (calls: Call[]) =>
+    calls.filter((c) => c.method === "GET").map((c) => c.url.split("?")[0]);
+  const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
+  /** The page's reads, answered as {@link snapshotDefaults} does, with c1's log `[1]`. */
+  const routes = (extra: Record<string, (c: Call) => Response> = {}) => ({
+    ...snapshotDefaults("c1"),
+    [`GET ${BASE}`]: () => json(200, CONV("c1", { title: "Kept" })),
+    [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+    ...extra,
+  });
+
+  it("chat page: a first render from the hydrated cache makes no browser read", async () => {
+    const calls = stubApi({});
+    await renderChatRoute({ routes: routes() });
+    expect(screen.getByText("hi")).toBeTruthy();
+    await settle();
+    expect(calls).toEqual([]);
+    expect(document.querySelector("[aria-busy='true']")).toBeNull();
+  });
+
+  it("chat page: an empty cache shows the template's loading state, then the data", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    await renderRouteEmptyCache("/chat/c1", {
+      ...routes(),
+      [`GET ${BASE}/events`]: async () => {
+        await held;
+        return json(200, { events: [userMsg(1, "hi")] });
+      },
+    });
+    // the gate's `/me` and readiness are cached on a client navigation; here they load first
+    const page = await vi.waitFor(() => {
+      const el = document.querySelector('[data-template="ConversationPage"]');
+      if (el === null) throw new Error("no page yet");
+      return el as HTMLElement;
+    });
+    expect(page.querySelector("[aria-busy='true']")).not.toBeNull();
+    // the composer is real while the thread loads: it can be typed in, not sent from
+    const box = screen.getByRole("textbox", { name: en.chat.inputLabel, hidden: true });
+    await userEvent.setup().type(box, "early");
+    const send = screen.getByRole("button", { name: en.chat.send, hidden: true });
+    expect(send).toHaveProperty("disabled", true);
+    expect(screen.queryByText("hi")).toBeNull();
+    await act(async () => release());
+    expect(await screen.findByText("hi")).toBeTruthy();
+    await vi.waitFor(() => expect(page.querySelector("[aria-busy='true']")).toBeNull());
+    // the draft stayed and can be sent now
+    expect(box).toHaveProperty("value", "early");
+    expect(screen.getByRole("button", { name: en.chat.send, hidden: true })).toHaveProperty(
+      "disabled",
+      false,
+    );
+  });
+
+  it("returning within 30 s with no new event reads only the stream", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const calls = stubApi({});
+    const view = await renderChatRoute({ routes: routes() });
+    expect(FakeEventSource.instances.map((e) => e.url)).toEqual([`${BASE}/stream?after=1`]);
+    const page = await ChatPage({ params: Promise.resolve({ conversationId: "c1" }) });
+    // away (another page), then back at +10 s
+    view.rerender(pageElement(<p>elsewhere</p>, { locale: "en" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    view.rerender(pageElement(page, { locale: "en" }));
+    expect(await screen.findByText("hi")).toBeTruthy();
+    act(() => FakeEventSource.instances[1]?.emit("open"));
+    await settle();
+    expect(FakeEventSource.instances.map((e) => e.url)).toEqual([
+      `${BASE}/stream?after=1`,
+      `${BASE}/stream?after=1`,
+    ]);
+    expect(calls).toEqual([]);
+  });
+
+  it("returning with a new event refetches the side pieces", async () => {
+    window.history.replaceState(null, "", "/chat/c1#properties");
+    const calls = stubApi(routes());
+    const view = await renderChatRoute({ routes: routes() });
+    const page = await ChatPage({ params: Promise.resolve({ conversationId: "c1" }) });
+    view.rerender(pageElement(<p>elsewhere</p>, { locale: "en" }));
+    view.rerender(pageElement(page, { locale: "en" }));
+    await screen.findByText("hi");
+    const es = FakeEventSource.instances[1] as FakeEventSource;
+    act(() => {
+      es.emit("open");
+      es.emit("event", userMsg(2, "while away"));
+    });
+    expect(await screen.findByText("while away")).toBeTruthy();
+    await vi.waitFor(() =>
+      expect(gets(calls).sort()).toEqual(
+        [BASE, `${BASE}/files`, `${BASE}/queue`, `${BASE}/sandbox`].sort(),
+      ),
+    );
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("a changed frame for files reads only the files", async () => {
+    const calls = stubApi(routes());
+    await renderChatRoute({ routes: routes() });
+    act(() => FakeEventSource.instances[0]?.emit("changed", { what: "files" }));
+    await vi.waitFor(() => expect(gets(calls)).toEqual([`${BASE}/files`]));
+    await settle();
+    expect(gets(calls)).toEqual([`${BASE}/files`]);
+  });
+
+  it("deleting a queued message invalidates the queue", async () => {
+    const queued = {
+      id: "q1",
+      text: "queued",
+      files: [],
+      attachments: [],
+      clientMessageId: "x",
+      createdAt: "2026-10-26T06:00:00.000Z",
+      position: 1,
+    };
+    let items = [queued];
+    const extra = {
+      [`GET ${BASE}/queue`]: () => json(200, { items, paused: false }),
+      [`DELETE ${BASE}/queue/q1`]: () => {
+        items = [];
+        return noContent();
+      },
+    };
+    const calls = stubApi(routes(extra));
+    await renderChatRoute({ routes: routes(extra) });
+    expect(await screen.findByText("queued")).toBeTruthy();
+    act(() => {
+      (
+        document.querySelector('[data-queue-item="q1"] [aria-label="Delete"]') as HTMLElement
+      )?.click();
+    });
+    await vi.waitFor(() => expect(gets(calls)).toEqual([`${BASE}/queue`]));
+    await vi.waitFor(() => expect(screen.queryByText("queued")).toBeNull());
   });
 });

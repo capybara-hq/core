@@ -1,12 +1,17 @@
 "use client";
 
 import { type ConversationPageProps, Stack } from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { useRouter } from "../../i18n/navigation";
-import type { Agent, ProviderModels } from "../../lib/agents";
-import type { AttachmentLimits } from "../../lib/attachments";
-import { createConversationWithMessage } from "../../lib/conversations";
+import { createConversationWithMessage, type MessageInput } from "../../lib/conversations";
+import { agentsQuery } from "../../lib/query/agents";
+import { retryOnMountOf } from "../../lib/query/client";
+import { modelsQuery } from "../../lib/query/conversation";
+import { useAppMutation } from "../../lib/query/define";
+import { keys } from "../../lib/query/keys";
+import { conversationGroupsQuery } from "../../lib/query/shell";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { FormError } from "../form-error";
 import { useSession } from "../shell/session";
@@ -15,35 +20,30 @@ import { useStatusSignature } from "./ConversationView";
 import type { SendResult } from "./useConversation";
 import { useSelection } from "./useSelection";
 
-/** What `/chat` reads on the server for the first paint. */
-export interface NewConversationData {
-  agents: Agent[];
-  providers: ProviderModels[];
-  /** The agent most recently talked to (the first sidebar group), or null. */
-  recent: string | null;
-  /** The attachment limits; null when the kernel failed them (the defaults apply). */
-  limits: AttachmentLimits | null;
-}
-
 /**
  * A new conversation (`/chat`, spec §5.2): an empty page with the composer, the agent picker
  * enabled. The agent is `?agent=` when usable, else the one most recently talked to, else the
  * first. Nothing is created before the first send: it posts `POST /conversations` with the message
- * (and any model / effort pick), then replaces the URL with the new conversation's. Everything it
- * shows first comes from the server's read (`initial`).
+ * (and any model / effort pick), then replaces the URL with the new conversation's. The agents,
+ * the most recent agent (the sidebar's first group) and the models come from the query cache.
  */
 export function useNewConversationPage(
   orgId: string,
   preferredAgent: string | null,
-  initial: NewConversationData,
 ): ConversationPageProps {
   const t = useTranslations("chat");
   const router = useRouter();
   const errorMessage = useErrorMessage();
   const session = useSession();
   const signature = useStatusSignature("/chat");
-  const agents = initial.agents;
-  const recent = initial.recent;
+  const agentsQ = agentsQuery(orgId);
+  const agents = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) }).data
+    ?.agents;
+  const groupsQ = conversationGroupsQuery(orgId);
+  const groups = useQuery({ ...groupsQ, retryOnMount: retryOnMountOf(groupsQ.queryKey) });
+  // A failed groups read leaves no recent agent: the first one is picked.
+  const recent = groups.data?.groups[0]?.agent.id ?? null;
+  const recentKnown = groups.data !== undefined || groups.error !== null;
   const [picked, setPicked] = useState<string | null>(null);
   const [error, setError] = useState<string>();
   const usable = agents ?? [];
@@ -51,17 +51,24 @@ export function useNewConversationPage(
   const agent =
     usable.find((a) => a.id === picked) ??
     usable.find((a) => a.id === preferredAgent) ??
-    usable.find((a) => a.id === recent) ??
-    usable[0];
-  const providers = initial.providers;
+    (recentKnown ? (usable.find((a) => a.id === recent) ?? usable[0]) : undefined);
+  const modelsQ = modelsQuery(orgId);
+  const providers = useQuery({ ...modelsQ, retryOnMount: retryOnMountOf(modelsQ.queryKey) }).data
+    ?.providers;
+  // The new conversation shows in the sidebar; the page then reads it as any other.
+  const create = useAppMutation({
+    fn: (v: { agentId: string; message: MessageInput }) =>
+      createConversationWithMessage(orgId, v.agentId, v.message),
+    invalidates: () => [keys.org(orgId).conversationGroupsAll()],
+  });
   const selection = useSelection(providers, agent, undefined);
 
   const send = async (m: ComposerMessage): Promise<SendResult> => {
     if (!agent) return { ok: false, error: new Error("no agent") };
     try {
-      const { conversation } = await createConversationWithMessage(orgId, agent.id, {
-        ...m,
-        ...selection.pending,
+      const { conversation } = await create.mutateAsync({
+        agentId: agent.id,
+        message: { ...m, ...selection.pending },
       });
       router.replace(`/chat/${encodeURIComponent(conversation.id)}`);
       return { ok: true };

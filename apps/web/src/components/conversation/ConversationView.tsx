@@ -10,13 +10,16 @@ import {
   untitledLabel,
   useToast,
 } from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { type ModelRef, renameConversation } from "../../lib/conversations";
+import { agentsQuery } from "../../lib/query/agents";
+import { retryOnMountOf } from "../../lib/query/client";
+import { modelsQuery } from "../../lib/query/conversation";
 import { useAppMutation } from "../../lib/query/define";
 import { keys as queryKeys } from "../../lib/query/keys";
 import { runParts } from "../../lib/run-row";
-import type { ConversationSnapshot } from "../../lib/server/conversation";
 import { usageTotal, useSubagents, useUsageWithSubagents } from "../../lib/subagents";
 import {
   buildEventTimeline,
@@ -111,13 +114,14 @@ export type RightAreaSlot = {
  * rename, properties, panels), the thread built by `lib/timeline.ts`, the queue, the composer
  * (pickers, ↵ / ⌘↵) and the status bar; `dialogs` go next to the page. Use it in a component keyed
  * by the conversation id: everything here (drafts, queue, picks, the right area) belongs to one
- * conversation and never shows under another. `initial` is the server's snapshot (web-SSR spec
- * §6.2): every hook starts from it, and the stream opens at its last seq.
+ * conversation and never shows under another. Everything comes from the query cache (the
+ * layout's prefetch on a first load); what is not cached yet draws the template's loading state
+ * (spec §7.1): the thread while the log loads (the composer stays, only send waits), the title
+ * while the row loads, the open right area while its read is on its way.
  */
 export function useConversationPage(
   orgId: string,
   conversationId: string,
-  initial: ConversationSnapshot,
 ): { page: ConversationPageProps; dialogs: ReactNode } {
   const t = useTranslations("chat");
   const ts = useTranslations("subagents");
@@ -128,14 +132,18 @@ export function useConversationPage(
   const errorMessage = useErrorMessage();
   const signature = useStatusSignature(`/chat/${conversationId.slice(0, 8)}`);
   const conv = useConversation(orgId, conversationId);
-  const agents = initial.agents;
+  const agentsQ = agentsQuery(orgId);
+  const agents = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) }).data
+    ?.agents;
   const agent = agents?.find((a) => a.id === conv.conversation?.agentId);
   // The title bar path `<org slug> / <agent> /` before the title (spec §3.5).
   const path = usePagePath(
     "org",
     ...(agent ? [{ label: agent.definition.name, href: `/agents/${agent.id}` }] : []),
   );
-  const providers = initial.providers;
+  const modelsQ = modelsQuery(orgId);
+  const providers = useQuery({ ...modelsQ, retryOnMount: retryOnMountOf(modelsQ.queryKey) }).data
+    ?.providers;
   const selection = useSelection(providers, agent, conv.conversation?.selection);
   const keys = useMemo(() => toolKeysOf(conv.events), [conv.events]);
   const info = useToolInfo(orgId, conversationId, keys);
@@ -316,11 +324,12 @@ export function useConversationPage(
         <QueueList queue={queue} />
       </>
     ),
-    composer: (
+    composer: ({ sendDisabled }) => (
       <Stack gap={8}>
         {conv.error !== undefined && <FormError message={conv.error} />}
         <ComposerBar
           orgId={orgId}
+          sendDisabled={sendDisabled}
           agentId={conv.conversation?.agentId}
           conversationId={
             conv.conversation === undefined ||
@@ -365,6 +374,12 @@ export function useConversationPage(
     ...(slot?.panelNode !== undefined ? { panel: slot.panelNode } : {}),
     onCloseRight: slot?.onCloseRight ?? (() => {}),
   };
+  const loading = {
+    ...(conv.loading ? { thread: true } : {}),
+    ...(conv.conversation === undefined ? { title: true } : {}),
+    ...(slot.loading !== undefined ? { rightArea: slot.loading } : {}),
+  };
+  if (Object.keys(loading).length > 0) page.loading = loading;
   const dialogs = renaming ? (
     <RenameDialog
       value={conv.conversation?.title ?? ""}
