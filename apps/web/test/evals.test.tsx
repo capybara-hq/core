@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import EvalCasePage from "../src/app/(app)/evals/[setId]/cases/[caseId]/page";
-import RunWizardPage from "../src/app/(app)/evals/[setId]/run/page";
 import EvalRunPage from "../src/app/(app)/evals/runs/[runId]/page";
 import { activeNavOf } from "../src/components/shell/nav";
 import { type EvalResult, type EvalRun, rowOf } from "../src/lib/evals";
@@ -560,11 +559,9 @@ describe("运行向导（WizardPage）", () => {
     async (locale) => {
       const m = msgs[locale].evals;
       const calls = stubApi(routes(true));
-      const { container } = await renderRoute(
-        () => RunWizardPage(params({ setId: "s1" })),
-        lastStubRoutes(),
-        { locale },
-      );
+      const { container } = await renderRouteWithCache("/evals/s1/run", lastStubRoutes(), {
+        locale,
+      });
       expect(container.querySelector('[data-template="WizardPage"]')).not.toBeNull();
       const user = userEvent.setup();
       // 1. 模式与候选
@@ -638,7 +635,7 @@ describe("运行向导（WizardPage）", () => {
 
   it("不填上限：确认步骤显示生效的部署默认上限；超过部署上限时不能开始", async () => {
     const calls = stubApi(routes(true));
-    await renderRoute(() => RunWizardPage(params({ setId: "s1" })), lastStubRoutes());
+    await renderRouteWithCache("/evals/s1/run", lastStubRoutes());
     const user = userEvent.setup();
     await screen.findByRole("combobox", { name: E.wizard.model });
     await user.click(within(actionRow()).getByRole("button", { name: E.wizard.next }));
@@ -686,7 +683,7 @@ describe("运行向导（WizardPage）", () => {
         },
       }),
     );
-    await renderRoute(() => RunWizardPage(params({ setId: "s1" })), lastStubRoutes());
+    await renderRouteWithCache("/evals/s1/run", lastStubRoutes());
     const user = userEvent.setup();
     await screen.findByRole("combobox", { name: E.wizard.model });
     await user.click(within(actionRow()).getByRole("button", { name: E.wizard.next }));
@@ -713,7 +710,7 @@ describe("运行向导（WizardPage）", () => {
           json(500, { error: { code: "internal", message: "x" } }),
       }),
     );
-    await renderRoute(() => RunWizardPage(params({ setId: "s1" })), lastStubRoutes());
+    await renderRouteWithCache("/evals/s1/run", lastStubRoutes());
     const user = userEvent.setup();
     await screen.findByRole("combobox", { name: E.wizard.model });
     await user.click(within(actionRow()).getByRole("button", { name: E.wizard.next }));
@@ -725,7 +722,7 @@ describe("运行向导（WizardPage）", () => {
 
   it("eval 用途未映射：评委开关禁用，并给出去配置的链接", async () => {
     stubApi(routes(false));
-    await renderRoute(() => RunWizardPage(params({ setId: "s1" })), lastStubRoutes());
+    await renderRouteWithCache("/evals/s1/run", lastStubRoutes());
     const user = userEvent.setup();
     await screen.findByRole("combobox", { name: E.wizard.model });
     await user.click(within(actionRow()).getByRole("button", { name: E.wizard.next }));
@@ -750,7 +747,7 @@ describe("运行向导（WizardPage）", () => {
           }),
       }),
     );
-    await renderRoute(() => RunWizardPage(params({ setId: "s1" })), lastStubRoutes());
+    await renderRouteWithCache("/evals/s1/run", lastStubRoutes());
     const user = userEvent.setup();
     await screen.findByRole("combobox", { name: E.wizard.model });
     await user.click(screen.getByRole("radio", { name: new RegExp(E.mode.run) }));

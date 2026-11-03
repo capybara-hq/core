@@ -323,7 +323,22 @@ export const ROUTES: readonly RouteEntry[] = [
     },
   },
   { pattern: "/evals/[setId]/cases/[caseId]", queries: () => [], none: "pending migration" },
-  { pattern: "/evals/[setId]/run", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/evals/[setId]/run",
+    // Org admins: the set, the models and the purposes (a section), then the set's agent.
+    queries: ({ orgId, me, params }) =>
+      orgId === null || params.setId === undefined || !atLeast(me, "admin")
+        ? []
+        : [q(evalSetQuery(orgId, params.setId)), q(modelsQuery(orgId)), q(orgPurposesQuery(orgId))],
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, me, params }, qc) => {
+      const setId = params.setId;
+      if (orgId === null || setId === undefined || !atLeast(me, "admin")) return;
+      const set = qc.getQueryData<EvalSetDetail>(evalSetQuery(orgId, setId).queryKey);
+      if (set === undefined) return;
+      await qc.prefetchQuery({ ...agentQuery(orgId, set.agentId), retry: false });
+    },
+  },
   {
     pattern: "/evals/new",
     queries: ({ orgId, me }) =>

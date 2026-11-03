@@ -15,10 +15,13 @@ import {
   Textarea,
   WizardPage,
 } from "@capybara-hq/design";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
+import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { FormError } from "../../../../../components/form-error";
 import { ModelParams } from "../../../../../components/ModelParams";
+import { NoAccess } from "../../../../../components/NoAccess";
 import { usePagePath } from "../../../../../components/shell/path";
 import { grouped, useFormatCost } from "../../../../../components/TrajectoryParts";
 import { Link, useRouter } from "../../../../../i18n/navigation";
@@ -37,12 +40,21 @@ import {
   type EvalEstimate,
   type EvalMode,
   type EvalSetDetail,
-  estimateEvalRun,
   type PurposeView,
   startEvalRun,
 } from "../../../../../lib/evals";
 import { labelLocale, modelLabel } from "../../../../../lib/extension-label";
+import { agentQuery } from "../../../../../lib/query/agents";
+import { retryOnMountOf } from "../../../../../lib/query/client";
+import { modelsQuery } from "../../../../../lib/query/conversation";
+import { useAppMutation } from "../../../../../lib/query/define";
+import { type EstimateBody, evalEstimateQuery, evalSetQuery } from "../../../../../lib/query/evals";
+import { keys } from "../../../../../lib/query/keys";
+import { usePageQuery } from "../../../../../lib/query/page-query";
+import { orgPurposesQuery } from "../../../../../lib/query/settings";
+import { useWorkspace } from "../../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
+import NotFound from "../../../not-found";
 
 const STEPS = ["candidate", "judge", "confirm"] as const;
 
@@ -63,8 +75,9 @@ const PURPOSES_HREF = "/settings/models";
  * 2. the judge switch (disabled when the `eval` purpose has no effective mapping, linking to the
  *    purpose settings) and the token cap (empty: the deployment default);
  * 3. the estimate (D5: requests, tokens, cost and the cap) and confirmation; starting opens the run.
- * The set, its agent, the models and the model purposes come from the server (`purposes` null: the
- * server could not read them, the judge step draws the error); the estimate follows the input.
+ * From the query cache (the layout prefetched it on a first load): the set, its agent and the
+ * models (required) and the model purposes (a section: `null` when they could not be read, the
+ * judge step draws the error). The estimate follows the input (its own read per input, debounced).
  */
 type EstimateState =
   | { kind: "idle" }
@@ -72,10 +85,86 @@ type EstimateState =
   | { kind: "ready"; estimate: EvalEstimate; cap: number }
   | { kind: "error"; message: string; lines: string[] };
 
+export default function RunWizardView({ setId }: { setId: string }) {
+  const ws = useWorkspace({ min: "admin" });
+  if (ws.kind === "pending" || ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  return <RunWizardData orgId={ws.orgId} setId={setId} />;
+}
+
+/** The first step's fields while the wizard's data loads: the version and the model. */
+const LOADING_FIELDS = [{ control: "select" as const }, { control: "select" as const }];
+
+function RunWizardData({ orgId, setId }: { orgId: string; setId: string }) {
+  const scope = usePagePath("org");
+  const t = useTranslations("evals");
+  const tc = useTranslations("common");
+  const router = useRouter();
+  const set = usePageQuery(evalSetQuery(orgId, setId));
+  const agentId = set.kind === "ready" ? set.data.agentId : undefined;
+  const agent = usePageQuery({
+    ...agentQuery(orgId, agentId ?? ""),
+    enabled: agentId !== undefined,
+  });
+  const models = usePageQuery(modelsQuery(orgId));
+  const purposesQ = orgPurposesQuery(orgId);
+  const purposes = useQuery({ ...purposesQ, retryOnMount: retryOnMountOf(purposesQ.queryKey) });
+  const reads = [set, agent, models];
+  for (const r of reads) if (r.kind === "notFound") return <NotFound />;
+  for (const r of reads) if (r.kind === "error") return <ErrorFrame reset={r.retry} />;
+  if (set.kind !== "ready" || agent.kind !== "ready" || models.kind !== "ready") {
+    return (
+      <WizardPage
+        header={{
+          path: [
+            ...scope,
+            { label: "evals", href: "/evals" },
+            { label: setId, href: `/evals/${encodeURIComponent(setId)}` },
+            { label: "run" },
+          ],
+          title: t("wizard.title"),
+        }}
+        steps={STEPS.map((x) => t(`wizard.steps.${x}`))}
+        current={0}
+        actionRow={{
+          cancel: {
+            label: tc("cancel"),
+            onSelect: () => router.push(`/evals/${encodeURIComponent(setId)}`),
+          },
+          primary: { label: t("wizard.next"), onSelect: () => {} },
+        }}
+        loading={{ fields: LOADING_FIELDS }}
+      />
+    );
+  }
+  return (
+    <RunWizard
+      orgId={orgId}
+      set={set.data}
+      agent={agent.data}
+      providers={models.data.providers}
+      purposes={
+        purposes.data !== undefined ? purposes.data.purposes : purposes.error ? null : undefined
+      }
+    />
+  );
+}
+
+/** How long the input rests before it is estimated (no read per keystroke). */
+function useDebounced<T>(value: T, ms: number): T {
+  const [settled, setSettled] = useState(value);
+  // ssr-exempt: the estimate follows the person's input (from step 2), never the first paint
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(timer);
+  }, [value, ms]);
+  return settled;
+}
+
 /** 改动后等多久再估算（输入上限、参数时不逐键请求；内核只读用例上存好的计划列）。 */
 const ESTIMATE_DEBOUNCE_MS = 500;
 
-export default function RunWizard({
+function RunWizard({
   orgId,
   set,
   agent,
@@ -86,7 +175,8 @@ export default function RunWizard({
   set: EvalSetDetail;
   agent: Agent;
   providers: ProviderModels[];
-  purposes: PurposeView[] | null;
+  /** `null` when they could not be read; `undefined` while they load. */
+  purposes: PurposeView[] | null | undefined;
 }) {
   const scope = usePagePath("org");
   const t = useTranslations("evals");
@@ -98,7 +188,7 @@ export default function RunWizard({
   // Whether the judge purpose is mapped: when it could not be read the error shows and the judge
   // switch is disabled too
   const judgeAvailable =
-    purposes !== null && purposes.find((p) => p.purpose === EVAL_PURPOSE)?.effective != null;
+    purposes != null && purposes.find((p) => p.purpose === EVAL_PURPOSE)?.effective != null;
 
   const [step, setStep] = useState(0);
   const [mode, setMode] = useState<EvalMode>("step");
@@ -109,11 +199,8 @@ export default function RunWizard({
   const [instructions, setInstructions] = useState(agent.definition.instructions);
   const [judgeOn, setJudgeOn] = useState(false);
   const [tokenCap, setTokenCap] = useState("");
-  const [estimate, setEstimate] = useState<EstimateState>({ kind: "idle" });
   /** 部署默认与部署上限（来自最近一次估算响应）。 */
   const [caps, setCaps] = useState<{ defaultTokenCap: number; maxTokenCap: number } | null>(null);
-  /** 估算请求的序号：只认最后一次发出的响应，先发的慢响应不覆盖后发的。 */
-  const seq = useRef(0);
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<{ message: string; lines: string[] } | null>(null);
 
@@ -138,42 +225,51 @@ export default function RunWizard({
     ...(override && { instructions }),
   });
   const input = () => ({ mode, candidate: candidate(), judge });
-  const estimateBody = { ...input(), ...(cap !== null && { tokenCap: cap }) };
+  const estimateBody: EstimateBody = { ...input(), ...(cap !== null && { tokenCap: cap }) };
   const estimateKey = JSON.stringify(estimateBody);
   const estimating = step >= 1 && !capInvalid;
-
-  // From the second step on, any change (the cap too) estimates again (debounced); an invalid cap
-  // sends nothing and voids the estimate in flight.
-  // ssr-exempt: the estimate follows the person's input (from step 2), never the first paint
+  // From the second step on, any change (the cap too) estimates again once the input rested; an
+  // invalid cap reads nothing. Each input is its own read: a slow answer for an older input never
+  // shows for the current one. The last answer stays (as a placeholder) for the caps it carries.
+  const settledKey = useDebounced(estimateKey, ESTIMATE_DEBOUNCE_MS);
+  const settled = JSON.parse(settledKey) as EstimateBody;
+  const estimateRead = useQuery({
+    ...evalEstimateQuery(orgId, set.id, settled),
+    enabled: estimating && settledKey === estimateKey,
+    placeholderData: keepPreviousData,
+  });
+  const estimate: EstimateState = !estimating
+    ? { kind: "idle" }
+    : settledKey !== estimateKey || estimateRead.isPlaceholderData || estimateRead.isFetching
+      ? { kind: "loading" }
+      : estimateRead.error
+        ? {
+            kind: "error",
+            message: errorMessage(estimateRead.error),
+            lines: issueLines(estimateRead.error),
+          }
+        : estimateRead.data !== undefined
+          ? {
+              kind: "ready",
+              estimate: estimateRead.data.estimate,
+              cap: estimateRead.data.effectiveTokenCap,
+            }
+          : { kind: "loading" };
+  const answered = estimateRead.isPlaceholderData ? undefined : estimateRead.data;
   useEffect(() => {
-    const id = ++seq.current;
-    if (!estimating) {
-      setEstimate({ kind: "idle" });
-      return;
-    }
-    setEstimate({ kind: "loading" });
-    const body = JSON.parse(estimateKey) as Parameters<typeof estimateEvalRun>[2];
-    const timer = setTimeout(() => {
-      estimateEvalRun(orgId, set.id, body).then(
-        (r) => {
-          if (id !== seq.current) return;
-          setCaps({ defaultTokenCap: r.defaultTokenCap, maxTokenCap: r.maxTokenCap });
-          setEstimate({ kind: "ready", estimate: r.estimate, cap: r.effectiveTokenCap });
-        },
-        (e: unknown) => {
-          if (id !== seq.current) return;
-          setEstimate({ kind: "error", message: errorMessage(e), lines: issueLines(e) });
-        },
-      );
-    }, ESTIMATE_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [estimating, estimateKey, orgId, set.id, errorMessage]);
+    if (answered !== undefined)
+      setCaps({ defaultTokenCap: answered.defaultTokenCap, maxTokenCap: answered.maxTokenCap });
+  }, [answered]);
+  const startRun = useAppMutation({
+    fn: (body: EstimateBody) => startEvalRun(orgId, set.id, body),
+    invalidates: () => [keys.org(orgId).evalRuns(set.id)],
+  });
 
   const start = async () => {
     setStarting(true);
     setStartError(null);
     try {
-      const { run } = await startEvalRun(orgId, set.id, {
+      const { run } = await startRun.mutateAsync({
         ...input(),
         ...(cap !== null && { tokenCap: cap }),
       });

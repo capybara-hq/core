@@ -6,7 +6,6 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import EvalCasePage from "../src/app/(app)/evals/[setId]/cases/[caseId]/page";
-import RunWizardPage from "../src/app/(app)/evals/[setId]/run/page";
 import EvalRunPage from "../src/app/(app)/evals/runs/[runId]/page";
 import { json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
@@ -189,7 +188,6 @@ async function renderHeld(path: string, held: string, routes: Routes = ROUTES) {
   return { ...r, release: () => act(async () => release()) };
 }
 
-const wizardPage = () => RunWizardPage({ params: Promise.resolve({ setId: "s1" }) });
 const casePage = () => EvalCasePage({ params: Promise.resolve({ setId: "s1", caseId: "k1" }) });
 const runPage = () => EvalRunPage({ params: Promise.resolve({ runId: "er1" }) });
 
@@ -338,14 +336,55 @@ describe("first paint comes from the server (no browser fetch)", () => {
     expect(client.getQueryState(["org", "o1", "evalSets"])?.isInvalidated).toBe(true);
   });
 
-  it("/evals/[setId]/run: the agent's versions and the models", async () => {
+  it("/evals/[setId]/run: a first render from the hydrated cache makes no browser read (the agent's versions and the models)", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(wizardPage, ROUTES);
+    await renderRouteWithCache("/evals/s1/run", ROUTES);
     const model = screen.getByRole("combobox", { name: E.wizard.model });
     expect(within(model).getByRole("option", { name: "model-fake / Fake 1" })).toBeTruthy();
     const version = screen.getByRole("combobox", { name: E.wizard.version });
     expect(within(version).getAllByRole("option").length).toBe(4);
+    await settle();
     expect(browser).toEqual([]);
+  });
+
+  it("/evals/[setId]/run: an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld("/evals/s1/run", `GET ${O}/agents/ag1`);
+    await vi.waitFor(() => {
+      if (template("WizardPage") === null) throw new Error("no page");
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByRole("combobox", { name: E.wizard.model })).toBeNull();
+    await release();
+    expect(await screen.findByRole("combobox", { name: E.wizard.model })).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
+  it("/evals/[setId]/run: starting a run invalidates the set's runs", async () => {
+    const calls = stubApi({
+      ...ROUTES,
+      [`POST ${SETS}/s1/runs/estimate`]: () =>
+        json(200, {
+          estimate: RUN().estimate,
+          defaultTokenCap: 1_000_000,
+          maxTokenCap: 20_000_000,
+          effectiveTokenCap: 1_000_000,
+        }),
+      [`POST ${SETS}/s1/runs`]: () => json(201, { run: RUN({ status: "queued" }) }),
+    });
+    const { client } = await renderRouteWithCache("/evals/s1/run", ROUTES);
+    client.setQueryData(["org", "o1", "evalRuns", "s1"], { runs: [] });
+    const u = userEvent.setup();
+    await u.click(screen.getByRole("button", { name: E.wizard.next }));
+    await u.click(screen.getByRole("button", { name: E.wizard.next }));
+    const start = screen.getByRole("button", { name: E.wizard.start });
+    await waitFor(() => expect(start.hasAttribute("disabled")).toBe(false));
+    await u.click(start);
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/evals/runs/er1"));
+    expect(calls.filter((c) => c.method === "POST").map((c) => c.url)).toEqual([
+      `${SETS}/s1/runs/estimate`,
+      `${SETS}/s1/runs`,
+    ]);
+    expect(client.getQueryState(["org", "o1", "evalRuns", "s1"])?.isInvalidated).toBe(true);
   });
 
   it("/evals/[setId]/cases/[caseId]: the snapshot trajectory with the set's name", async () => {
@@ -430,7 +469,6 @@ describe("first paint comes from the server (no browser fetch)", () => {
 });
 
 const GATES: [string, () => Promise<ReactNode>][] = [
-  ["/evals/s1/run", wizardPage],
   ["/evals/s1/cases/k1", casePage],
   ["/evals/runs/er1", runPage],
 ];
@@ -456,7 +494,7 @@ describe("the gates (org admins)", () => {
 });
 
 /** The pages that read through the query cache. */
-const ROUTE_GATES = ["/evals", "/evals/new", "/evals/s1"];
+const ROUTE_GATES = ["/evals", "/evals/new", "/evals/s1", "/evals/s1/run"];
 
 describe("the gates (org admins, query cache)", () => {
   it.each(ROUTE_GATES)(
