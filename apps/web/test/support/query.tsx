@@ -86,6 +86,33 @@ export async function renderRouteWithCache(path: string, routes: Routes, opts: R
 }
 
 /**
+ * A document load of a public (auth) page: the (auth) layout's prefetch of the route's queries (no
+ * shell, no session read of its own, no redirect when signed out) and the page run against
+ * `routes` on the server, then the page renders inside `HydrationBoundary` as
+ * {@link renderRouteWithCache} does. The segment layouts (`login/layout`, `bind/[token]/layout`)
+ * are not run: their redirects have their own tests. Returns the server calls and the client.
+ */
+export async function renderAuthRouteWithCache(
+  path: string,
+  routes: Routes,
+  opts: Parameters<typeof renderPage>[1] = {},
+) {
+  const calls = serverRoutes(routes);
+  let state: DehydratedState;
+  let page: ReactNode;
+  try {
+    const qc = makeQueryClient();
+    await prefetchRoute(qc, path, { me: null, orgId: null }, { signedOutRedirect: false });
+    page = await pageOf(path);
+    state = JSON.parse(JSON.stringify(dehydrateFor(qc))) as DehydratedState;
+  } finally {
+    setApiTransport(null);
+  }
+  const client = opts.client ?? testQueryClient();
+  return { calls, client, ...renderPage(withCache(page, state), { ...opts, client }) };
+}
+
+/**
  * A client navigation to `path` with nothing cached: the page renders against an empty browser
  * cache and its views read through `stubApi(routes)` (plus `sessionRoutes`). A page not migrated
  * yet still reads on the server; those reads are served from the same routes. `opts.client` is a

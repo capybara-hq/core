@@ -709,9 +709,7 @@ export const QUERY_PENDING: readonly QueryPending[] = [
   { path: "app/(auth)/bind/[token]/view.tsx", reason: "pending migration: Task 15" },
   { path: "app/(auth)/invite/[token]/page.tsx", reason: "pending migration: Task 15" },
   { path: "app/(auth)/invite/[token]/view.tsx", reason: "pending migration: Task 15" },
-  { path: "app/(auth)/login/page.tsx", reason: "pending migration: Task 15" },
   { path: "app/(auth)/setup/view.tsx", reason: "pending migration: Task 15" },
-  { path: "components/login-form.tsx", reason: "pending migration: Task 15" },
   { path: "components/setup-form.tsx", reason: "pending migration: Task 15" },
 ];
 

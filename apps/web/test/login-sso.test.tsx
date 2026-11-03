@@ -3,7 +3,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import LoginPage from "../src/app/(auth)/login/page";
 import {
   LOGIN_ERROR_CODES,
   parseLoginError,
@@ -12,7 +11,7 @@ import {
 } from "../src/lib/auth-sources";
 import { json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
-import { renderRoute } from "./support/server";
+import { renderAuthRouteWithCache } from "./support/query";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -26,11 +25,10 @@ vi.mock("../src/lib/browser", () => ({ navigateBrowser }));
 const msgs = { zh, en } as const;
 const SOURCES = [{ plugin: "fake-im", label: { zh: "假 IM", en: "Fake IM" } }];
 
-/** The sign-in page rendered on the server for `search`, signed out, from the stubbed routes. */
+/** A document load of the sign-in page at `search`, signed out, from the stubbed routes. */
 function loginAt(search: string, opts: { locale?: "zh" | "en" } = {}) {
-  const q = Object.fromEntries(new URLSearchParams(search));
-  return renderRoute(
-    () => LoginPage({ searchParams: Promise.resolve(q) }),
+  return renderAuthRouteWithCache(
+    `/login${search}`,
     {
       ...lastStubRoutes(),
       "GET /api/v1/me": () => json(401, { error: { code: "auth.required", message: "x" } }),

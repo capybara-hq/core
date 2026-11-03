@@ -19,7 +19,11 @@ vi.mock("next/navigation", () => ({
   },
 }));
 
+const needsSetup = vi.hoisted(() => ({ value: false as boolean | undefined }));
+vi.mock("../src/lib/server-setup", () => ({ serverNeedsSetup: async () => needsSetup.value }));
+
 const { default: AuthLayout } = await import("../src/app/(auth)/layout");
+const { default: LoginLayout } = await import("../src/app/(auth)/login/layout");
 
 const layoutAt = (path: string) => {
   req.headers = new Headers({ "x-cap-path": path });
@@ -33,6 +37,7 @@ const SOURCES = [{ plugin: "lark", label: "Lark" }];
 
 beforeEach(() => {
   req.headers = new Headers();
+  needsSetup.value = false;
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -74,5 +79,49 @@ describe("the (auth) layout's first-load prefetch", () => {
     await expect(layoutAt("/setup")).resolves.toBeTruthy();
     await expect(layoutAt("/bind/t1")).resolves.toBeTruthy();
     expect(calls).toEqual([]);
+  });
+});
+
+describe("the login layout's decisions before anything renders", () => {
+  const loginAt = (path: string) => {
+    req.headers = new Headers({ "x-cap-path": path });
+    return LoginLayout({ children: <p>page body</p> });
+  };
+  const signedIn = () => serverRoutes({ "GET /api/v1/me": () => json(200, ME) });
+
+  it("a signed-in visitor goes to returnTo, never off-site or back to a sign-in page", async () => {
+    signedIn();
+    await expect(loginAt(`/login?returnTo=${encodeURIComponent("/agents")}`)).rejects.toThrow(
+      /^REDIRECT \/agents$/,
+    );
+    await expect(
+      loginAt(`/login?returnTo=${encodeURIComponent("https://evil.example")}`),
+    ).rejects.toThrow(/^REDIRECT \/$/);
+    // never back to a sign-in page (a loop)
+    await expect(loginAt(`/login?returnTo=${encodeURIComponent("/login?x=1")}`)).rejects.toThrow(
+      /^REDIRECT \/$/,
+    );
+    await expect(loginAt("/login")).rejects.toThrow(/^REDIRECT \/$/);
+  });
+
+  it("signed out, or the session read failing, renders the form", async () => {
+    serverRoutes({
+      "GET /api/v1/me": () =>
+        json(401, { error: { code: "auth.required", message: "signed out" } }),
+    });
+    await expect(loginAt("/login")).resolves.toBeTruthy();
+    serverRoutes({
+      "GET /api/v1/me": () => json(500, { error: { code: "internal", message: "boom" } }),
+    });
+    await expect(loginAt("/login")).resolves.toBeTruthy();
+  });
+
+  it("a deployment without an admin goes to setup first", async () => {
+    needsSetup.value = true;
+    serverRoutes({
+      "GET /api/v1/me": () =>
+        json(401, { error: { code: "auth.required", message: "signed out" } }),
+    });
+    await expect(loginAt("/login")).rejects.toThrow(/^REDIRECT \/setup$/);
   });
 });

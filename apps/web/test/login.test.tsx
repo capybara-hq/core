@@ -1,3 +1,4 @@
+import { QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
@@ -5,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { LoginForm } from "../src/components/login-form";
+import { testQueryClient } from "./support/render";
 
 afterEach(() => {
   cleanup();
@@ -22,9 +24,11 @@ function stubFetch(response: () => Response) {
 
 function renderLogin(locale: "zh" | "en", onSuccess = vi.fn()) {
   render(
-    <NextIntlClientProvider locale={locale} messages={locale === "zh" ? zh : en}>
-      <LoginForm onSuccess={onSuccess} />
-    </NextIntlClientProvider>,
+    <QueryClientProvider client={testQueryClient()}>
+      <NextIntlClientProvider locale={locale} messages={locale === "zh" ? zh : en}>
+        <LoginForm onSuccess={onSuccess} />
+      </NextIntlClientProvider>
+    </QueryClientProvider>,
   );
   return onSuccess;
 }

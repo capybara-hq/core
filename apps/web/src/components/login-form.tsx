@@ -5,12 +5,16 @@ import { useLocale, useTranslations } from "next-intl";
 import { type FormEvent, useEffect, useState } from "react";
 import { type AuthSource, type LoginErrorCode, ssoStartUrl } from "../lib/auth-sources";
 import { navigateBrowser } from "../lib/browser";
+import { useAppMutation } from "../lib/query/define";
 import { secureCookiesBlocked } from "../lib/secure-origin";
 import { login } from "../lib/session";
 import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";
 
-/** 本地登录表单（放在 AuthPage 卡片内）。成功后调用 `onSuccess`（由页面负责跳转）。 */
+/**
+ * The local sign-in form (inside the AuthPage card). On success it calls `onSuccess`, which ends
+ * the cache's session and navigates (the page's call).
+ */
 export function LoginForm({ onSuccess }: { onSuccess: () => void }) {
   const t = useTranslations("login");
   const errorMessage = useErrorMessage();
@@ -18,13 +22,18 @@ export function LoginForm({ onSuccess }: { onSuccess: () => void }) {
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
+  // A new session: the page drops the whole cache before it navigates, nothing to invalidate.
+  const { mutateAsync: signIn } = useAppMutation({
+    fn: (v: { login: string; password: string }) => login(v.login, v.password),
+    invalidates: () => [],
+  });
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setPending(true);
     setError(undefined);
     try {
-      await login(loginName, password);
+      await signIn({ login: loginName, password });
     } catch (err) {
       setError(errorMessage(err));
       setPending(false);
@@ -94,7 +103,7 @@ export function LoginErrorNotice({ code }: { code: LoginErrorCode }) {
 
 /**
  * The third-party sign-in buttons for the sign-in sources (`GET /api/v1/auth/sources`, read by the
- * page on the server); a click navigates the whole page to the kernel's start URL (with the return
+ * page from the cache); a click navigates the whole page to the kernel's start URL (with the return
  * page). Renders nothing without a source (or when they could not be read).
  */
 export function SsoButtons({ returnTo, sources }: { returnTo: string; sources: AuthSource[] }) {

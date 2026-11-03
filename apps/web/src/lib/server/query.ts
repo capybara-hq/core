@@ -4,6 +4,7 @@ import {
   defaultShouldDehydrateQuery,
   dehydrate,
   type QueryClient,
+  type UseQueryOptions,
 } from "@tanstack/react-query";
 import { redirect } from "next/navigation";
 import { cache } from "react";
@@ -84,4 +85,24 @@ export async function prefetchRoute(
     .some((q) => isSignedOut(q.state.error));
   if (signedOut) redirect(loginPathFor(path));
   return "ok";
+}
+
+/**
+ * A read a segment layout decides on before anything renders (a redirect: the sign-in page sends a
+ * signed-in visitor on, the binding page a signed-out one to sign-in). It goes through the
+ * request's query client, so a query the route's prefetch also lists is read once, whichever
+ * layout asks first: an answer or a failure already there is used, a read in flight is joined.
+ * Never throws: the answer or the failure.
+ */
+export async function settledQuery<T>(
+  qc: QueryClient,
+  o: UseQueryOptions<T, ApiClientError>,
+): Promise<{ data: T } | { error: unknown }> {
+  const state = qc.getQueryState(o.queryKey);
+  if (state?.status === "error") return { error: state.error };
+  try {
+    return { data: await qc.fetchQuery({ ...o, retry: false }) };
+  } catch (error) {
+    return { error };
+  }
 }

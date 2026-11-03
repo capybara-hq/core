@@ -2,17 +2,17 @@
 // server and sends a signed-in visitor on, /setup keeps the layout's status, /invite and /bind read
 // their token preview on the server. A sign-in tells the other tabs (§3.2), then navigates the whole
 // document (ruling R4: the new session's frame is server-rendered, never a client navigation).
-import { cleanup, screen } from "@testing-library/react";
+import { act, cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import BindPage from "../src/app/(auth)/bind/[token]/page";
 import InvitePage from "../src/app/(auth)/invite/[token]/page";
-import LoginPage from "../src/app/(auth)/login/page";
 import SetupPage from "../src/app/(auth)/setup/page";
 import { ServerSetupStatusProvider } from "../src/app/(auth)/setup/status";
 import { json, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { renderAuthRouteWithCache, renderRouteEmptyCache } from "./support/query";
 import { ME } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes, renderRoute, renderServer } from "./support/server";
 
@@ -50,10 +50,26 @@ const ROUTES: Routes = {
   "GET /api/v1/bind/cap_bind_tok": () => json(200, { binding: BINDING }),
 };
 
-const login =
-  (q: Record<string, string> = {}) =>
-  () =>
-    LoginPage({ searchParams: Promise.resolve(q) });
+/** Lets the mounted queries settle (a refetch on mount would have started by then). */
+const settle = () => act(async () => new Promise((r) => setTimeout(r, 0)));
+
+/** A client navigation to `path` with an empty cache whose `held` read answers on `release()`. */
+async function renderHeld(path: string, held: string, routes: Routes = ROUTES) {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  const answer = routes[held];
+  if (answer === undefined) throw new Error(`no route ${held}`);
+  const view = await renderRouteEmptyCache(path, {
+    ...routes,
+    [held]: async (c) => {
+      await gate;
+      return answer(c);
+    },
+  });
+  return { ...view, release: () => act(async () => release()) };
+}
 const invite = () => InvitePage({ params: Promise.resolve({ token: "cap_inv_tok" }) });
 const bind = () => BindPage({ params: Promise.resolve({ token: "cap_bind_tok" }) });
 /** The order of two mocks' first calls. */
@@ -72,51 +88,63 @@ afterEach(() => {
 });
 
 describe("/login", () => {
-  it("the form, the query's error and the sign-in sources, with no browser fetch", async () => {
+  it("/login: a first render from the hydrated cache makes no browser read (the form, the query's error and the sign-in sources)", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(login({ error: "sso.unavailable", returnTo: "/bind/x" }), ROUTES);
+    await renderAuthRouteWithCache(
+      `/login?error=sso.unavailable&returnTo=${encodeURIComponent("/bind/x")}`,
+      ROUTES,
+    );
     expect(screen.getByRole("button", { name: en.login.submit })).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toBe(en.login.ssoError.sso.unavailable);
     expect(
       screen.getByRole("button", { name: en.login.sso.replace("{name}", "Fake IM") }),
     ).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("sources the kernel fails leave the local form", async () => {
+  it("sources the kernel fails leave the local form, not read again on mount", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(login(), {
+    await renderAuthRouteWithCache("/login", {
       ...ROUTES,
       "GET /api/v1/auth/sources": () => json(500, { error: { code: "internal", message: "x" } }),
     });
     expect(screen.getByRole("button", { name: en.login.submit })).toBeTruthy();
     expect(screen.queryByText(en.login.or)).toBeNull();
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("a signed-in visitor goes to returnTo before anything renders", async () => {
-    expectNoFirstPaintFetch();
-    const ok = { ...ROUTES, "GET /api/v1/me": () => json(200, ME) };
-    await expect(renderRoute(login({ returnTo: "/agents" }), ok)).rejects.toThrow(
-      "REDIRECT /agents",
-    );
-    await expect(renderRoute(login({ returnTo: "https://evil.example" }), ok)).rejects.toThrow(
-      "REDIRECT /",
-    );
-    // never back to a sign-in page (a loop)
-    await expect(renderRoute(login({ returnTo: "/login?x=1" }), ok)).rejects.toThrow(
-      /^REDIRECT \/$/,
-    );
+  it("/login: an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld("/login", "GET /api/v1/auth/sources");
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: en.login.submit })).toBeNull();
+    await release();
+    expect(await screen.findByRole("button", { name: en.login.submit })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: en.login.sso.replace("{name}", "Fake IM") }),
+    ).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("signing in tells the other tabs, then loads returnTo as a new document", async () => {
+  it("signing in tells the other tabs, drops the cache, then loads returnTo as a new document", async () => {
     stubApi({ "POST /api/v1/auth/login": () => json(200, { account: { id: "a1" } }) });
-    await renderRoute(login({ returnTo: "/bind/x" }), ROUTES);
+    const { client } = await renderAuthRouteWithCache(
+      `/login?returnTo=${encodeURIComponent("/bind/x")}`,
+      ROUTES,
+    );
+    // what the document cached (the sign-in sources, the signed-out session) is there until then
+    expect(client.getQueryCache().getAll().length).toBeGreaterThan(0);
+    let cachedAtNavigation = -1;
+    navigateBrowser.mockImplementation(() => {
+      cachedAtNavigation = client.getQueryCache().getAll().length;
+    });
     const user = userEvent.setup();
     await user.type(screen.getByRole("textbox", { name: en.login.loginLabel }), "alice");
     await user.type(screen.getByLabelText(en.login.passwordLabel), "pw-123456789");
     await user.click(screen.getByRole("button", { name: en.login.submit }));
     await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/bind/x"));
+    expect(cachedAtNavigation).toBe(0);
     expect(broadcastSession).toHaveBeenCalledWith("signed-in");
     expect(before(broadcastSession, navigateBrowser)).toBe(true);
   });

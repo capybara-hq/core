@@ -56,3 +56,15 @@ export const ssoStartUrl = (plugin: string, returnTo: string) =>
 /** 带回跳参数的登录页路径（不含语言前缀，交给 next-intl 的导航补上）。 */
 export const loginPathFor = (returnTo: string) =>
   returnTo === "/" ? "/login" : `/login?returnTo=${encodeURIComponent(returnTo)}`;
+
+/**
+ * Where the sign-in page at `path` (path and query) sends a visitor who is already signed in: its
+ * `returnTo` (one value, a safe site path), unless that is a sign-in page itself (a loop).
+ */
+export function signedInTarget(path: string): string {
+  const q = path.indexOf("?");
+  const values = new URLSearchParams(q === -1 ? "" : path.slice(q + 1)).getAll("returnTo");
+  const returnTo = safeReturnTo(values.length === 1 ? values[0] : undefined);
+  const target = returnTo.split(/[?#]/)[0] ?? "/";
+  return target === "/login" || target === "/setup" ? "/" : returnTo;
+}

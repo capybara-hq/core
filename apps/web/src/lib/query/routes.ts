@@ -488,7 +488,11 @@ export const ROUTES: readonly RouteEntry[] = [
     },
   },
   { pattern: "/invite/[token]", queries: () => [q(maybeMeQuery())] },
-  { pattern: "/login", queries: () => [q(authSourcesQuery()), q(maybeMeQuery())] },
+  {
+    pattern: "/login",
+    // The sign-in sources, and the session (`null` signed out) the login layout redirects on.
+    queries: () => [q(authSourcesQuery()), q(maybeMeQuery())],
+  },
   {
     pattern: "/p/[plugin]/[id]",
     // Anyone in the org: the UI contributions, then the page's view when it is a schema view (an
