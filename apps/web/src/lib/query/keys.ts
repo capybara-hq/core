@@ -80,6 +80,8 @@ export const keys = {
       /** My inbox (its items). */
       inbox: (): readonly unknown[] => [...all, "inbox"],
       inboxCount: (): readonly unknown[] => [...all, "inboxCount"],
+      /** One skill change with its files and the skill's current version (the inbox's detail). */
+      skillChange: (changeId: string): readonly unknown[] => [...all, "skillChange", changeId],
       extensionPages: (): readonly unknown[] => [...all, "extensionPages"],
       /** The org's members. */
       members: (): readonly unknown[] => [...all, "members"],

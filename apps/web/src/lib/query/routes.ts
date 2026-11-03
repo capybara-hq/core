@@ -5,6 +5,7 @@ import type { ChannelConnection } from "../channels";
 import { type ConnectorSummary, personalConnectors } from "../connectors";
 import type { Conversation, ConversationEvent } from "../conversations";
 import type { EvalSetDetail } from "../evals";
+import type { InboxItem } from "../inbox";
 import { myRole, type OrgRole, roleAtLeast } from "../members";
 import { canEditAgent } from "../org-settings";
 import type { Me } from "../session";
@@ -34,6 +35,7 @@ import {
   evalSetQuery,
   evalSetsQuery,
 } from "./evals";
+import { inboxQuery, skillChangeQuery } from "./inbox";
 import { membersQuery } from "./members";
 import { overviewQueries } from "./overview";
 import {
@@ -382,7 +384,18 @@ export const ROUTES: readonly RouteEntry[] = [
       await qc.prefetchQuery({ ...evalSetQuery(orgId, state.run.setId), retry: false });
     },
   },
-  { pattern: "/inbox", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/inbox",
+    queries: ({ orgId }) => (orgId === null ? [] : [q(inboxQuery(orgId))]),
+    // The first item is selected at once: its skill change's detail when it is one.
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId }, qc) => {
+      if (orgId === null) return;
+      const first = qc.getQueryData<{ items: InboxItem[] }>(inboxQuery(orgId).queryKey)?.items[0];
+      if (first?.type !== "skill_change") return;
+      await qc.prefetchQuery({ ...skillChangeQuery(orgId, first.skillChange.id), retry: false });
+    },
+  },
   { pattern: "/invite/[token]", queries: () => [q(maybeMeQuery())] },
   { pattern: "/login", queries: () => [q(authSourcesQuery()), q(maybeMeQuery())] },
   { pattern: "/p/[plugin]/[id]", queries: () => [], none: "pending migration" },

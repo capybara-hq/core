@@ -11,20 +11,23 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useCallback, useState } from "react";
 import { useRouter } from "../i18n/navigation";
-import { ApiClientError } from "../lib/api";
+import type { ApiClientError } from "../lib/api";
 import { type FileChange, lineDiff, pairFiles } from "../lib/diff";
+import { retryOnMountOf } from "../lib/query/client";
+import { useAppMutation } from "../lib/query/define";
+import { skillChangeQuery } from "../lib/query/inbox";
+import { keys } from "../lib/query/keys";
 import {
   decideSkillChange,
-  getSkillChange,
   type SkillChange,
   type SkillChangeDetail,
   type SkillChangeFile,
 } from "../lib/skills";
 import { useErrorMessage } from "../lib/use-error-message";
-import { type Loaded, useLoad } from "../lib/use-load";
 import { FormError } from "./form-error";
 import { useSession } from "./shell/session";
 
@@ -34,18 +37,24 @@ export const requesterOf = (c: Pick<SkillChange, "requestedBy" | "requestedByNam
 
 /**
  * 决定技能变更（`POST /skill-changes/:id/decide`）：成功返回 true；已被处理等错误以 toast 告知并返回 false。
- * 无论成败都立即刷新顶栏的待处理数。
+ * 无论成败都立即刷新顶栏的待处理数。A decision changes the agent's own skills (invalidated here); the
+ * caller reads the inbox again either way.
  */
 export function useDecideSkillChange(orgId: string) {
   const session = useSession();
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const [pending, setPending] = useState<"approve" | "reject">();
+  const { mutateAsync } = useAppMutation({
+    fn: (v: { change: SkillChange; decision: "approve" | "reject" }) =>
+      decideSkillChange(orgId, v.change.id, { decision: v.decision }),
+    invalidates: ({ change }) => [keys.org(orgId).agentSkills(change.agent.id)],
+  });
   const decide = useCallback(
-    async (id: string, decision: "approve" | "reject") => {
+    async (change: SkillChange, decision: "approve" | "reject") => {
       setPending(decision);
       try {
-        await decideSkillChange(orgId, id, { decision });
+        await mutateAsync({ change, decision });
         return true;
       } catch (e) {
         toast.error(errorMessage(e));
@@ -55,7 +64,7 @@ export function useDecideSkillChange(orgId: string) {
         session.refreshPending?.();
       }
     },
-    [orgId, toast, errorMessage, session],
+    [toast, errorMessage, session, mutateAsync],
   );
   return { decide, pending };
 }
@@ -97,54 +106,31 @@ function FileDiff({
 /**
  * A skill change card in the inbox: agent, requester, version, description, open the conversation,
  * and each file's plain-text diff against the current version. The detail (file texts and the
- * current version) is `initial` when the server read it (the item shown first; `null`: the kernel
- * refused it, shown as the files' error), else read when the card is shown (`GET /skill-changes/:id`).
+ * current version) comes from the query cache (the layout prefetched the first item's on a first
+ * load), else it is read when the card is shown (`GET /skill-changes/:id`); a refusal or failure
+ * is the files' error.
  */
-export function SkillChangeReview({
-  orgId,
-  change,
-  initial,
-}: {
-  orgId: string;
-  change: SkillChange;
-  initial?: SkillChangeDetail | null | undefined;
-}) {
-  if (initial === null) return <SkillChangeCard change={change} state={UNREADABLE} />;
-  return <LoadedSkillChange orgId={orgId} change={change} initial={initial} />;
-}
-
-const UNREADABLE: Loaded<SkillChangeDetail> = { kind: "error", code: "unknown" };
-
-function LoadedSkillChange({
-  orgId,
-  change,
-  initial,
-}: {
-  orgId: string;
-  change: SkillChange;
-  initial: SkillChangeDetail | undefined;
-}) {
-  const { state } = useLoad(
-    () => getSkillChange(orgId, change.id).then((r) => r.skillChange),
-    [orgId, change.id],
-    initial !== undefined ? { initial } : {},
-  );
-  return <SkillChangeCard change={change} state={state} />;
+export function SkillChangeReview({ orgId, change }: { orgId: string; change: SkillChange }) {
+  const q = skillChangeQuery(orgId, change.id);
+  const read = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) });
+  return <SkillChangeCard change={change} detail={read.data} error={read.error} />;
 }
 
 function SkillChangeCard({
   change,
-  state,
+  detail,
+  error,
 }: {
   change: SkillChange;
-  state: Loaded<SkillChangeDetail>;
+  /** `undefined` while it loads or when it could not be read (`error`). */
+  detail: SkillChangeDetail | undefined;
+  error: ApiClientError | null;
 }) {
   const t = useTranslations("inbox.skillChange");
   const ti = useTranslations("inbox");
   const router = useRouter();
   const errorMessage = useErrorMessage();
   const { me } = useSession();
-  const detail = state.kind === "ready" ? state.data : undefined;
   const current = detail?.current ?? null;
   return (
     <div data-skill-change-id={change.id}>
@@ -195,14 +181,14 @@ function SkillChangeCard({
             <Text variant="small" tone="muted">
               {t("files")}
             </Text>
-            {state.kind === "loading" ? (
-              <Skeleton rows={4} />
-            ) : state.kind === "error" ? (
-              <FormError message={errorMessage(new ApiClientError(0, state.code, ""))} />
-            ) : (
-              pairFiles(state.data.files, state.data.current?.files ?? []).map((f) => (
+            {detail !== undefined ? (
+              pairFiles(detail.files, detail.current?.files ?? []).map((f) => (
                 <FileDiff key={f.path} {...f} />
               ))
+            ) : error !== null ? (
+              <FormError message={errorMessage(error)} />
+            ) : (
+              <Skeleton rows={4} />
             )}
           </Stack>
         </Stack>

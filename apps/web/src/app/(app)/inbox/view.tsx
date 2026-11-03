@@ -16,9 +16,12 @@ import {
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
+import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { type ReactNode, useEffect, useState, useTransition } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { ApprovalInput, ScopePicker, useDecide } from "../../../components/ApprovalCard";
+import { ErrorFrame } from "../../../components/ErrorFrame";
+import { NoAccess } from "../../../components/NoAccess";
 import {
   requesterOf,
   SkillChangeReview,
@@ -33,40 +36,56 @@ import {
   requesterOf as directoryRequester,
   displayNameOf,
 } from "../../../lib/catalog";
-import type { InboxItem, listInbox } from "../../../lib/inbox";
-import type { SkillChange, SkillChangeDetail } from "../../../lib/skills";
+import type { InboxItem } from "../../../lib/inbox";
+import { useAppMutation } from "../../../lib/query/define";
+import { inboxChangeKeys, inboxQuery } from "../../../lib/query/inbox";
+import { keys } from "../../../lib/query/keys";
+import { usePageQuery } from "../../../lib/query/page-query";
+import { useWorkspace } from "../../../lib/query/workspace";
+import type { SkillChange } from "../../../lib/skills";
 import { useErrorMessage } from "../../../lib/use-error-message";
-
-type InboxList = Awaited<ReturnType<typeof listInbox>>;
-
-/** What the server read for the first paint: the inbox and the first item's skill change detail. */
-export interface InboxData {
-  inbox: InboxList;
-  /**
-   * The first item's detail when it is a skill change (it shows at once; `detail: null` when the
-   * kernel refused it); else null.
-   */
-  firstChange: { id: string; detail: SkillChangeDetail | null } | null;
-}
+import NotFound from "../not-found";
 
 /**
  * `/inbox`: what waits on me (`GET /inbox` by type): tool call approvals, skill changes of the
- * shared agents I own and catalog requests (InboxPage: the list, the detail, the ActionRow). Read
- * on the server (`page.tsx`); a decision re-renders the page there (`router.refresh()`).
+ * shared agents I own and catalog requests (InboxPage: the list, the detail, the ActionRow). From
+ * the query cache (the layout prefetched the inbox and the first item's skill change on a first
+ * load); a decision hides the item at once and invalidates the inbox.
  */
-export default function InboxView({ orgId, initial }: { orgId: string; initial: InboxData }) {
+export default function InboxPageView() {
+  const ws = useWorkspace();
+  if (ws.kind === "pending" || ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  return <InboxView orgId={ws.orgId} />;
+}
+
+function InboxView({ orgId }: { orgId: string }) {
+  const read = usePageQuery(inboxQuery(orgId));
+  if (read.kind === "notFound") return <NotFound />;
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
+  return <Inbox orgId={orgId} inbox={read.kind === "ready" ? read.data : null} />;
+}
+
+function Inbox({
+  orgId,
+  inbox,
+}: {
+  orgId: string;
+  /** `null` while it loads. */
+  inbox: { items: InboxItem[]; truncated?: boolean } | null;
+}) {
   const here = usePagePath("org");
   const t = useTranslations("inbox");
   const locale = useLocale();
   const toast = useToast();
   const ta = useTranslations("approval");
   const router = useRouter();
-  const [, startTransition] = useTransition();
-  // Items decided here: hidden at once, before the server's new list arrives (its actions can't be
+  const qc = useQueryClient();
+  // Items decided here: hidden at once, before the inbox is read again (their actions can't be
   // pressed twice meanwhile).
   const [decided, setDecided] = useState<ReadonlySet<string>>(new Set());
-  const rows = initial.inbox.items.filter((i) => !decided.has(subjectOf(i)));
-  const truncated = initial.inbox.truncated === true;
+  const rows = (inbox?.items ?? []).filter((i) => !decided.has(subjectOf(i)));
+  const truncated = inbox?.truncated === true;
   const [activeId, setActiveId] = useState<string>();
   const active = rows.find((a) => a.id === activeId) ?? rows[0];
   const [scope, setScope] = useState<ApprovalScope>("once");
@@ -75,6 +94,13 @@ export default function InboxView({ orgId, initial }: { orgId: string; initial: 
   const td = useTranslations("catalog.inbox");
   const errorMessage = useErrorMessage();
   const [requestPending, setRequestPending] = useState<"approve" | "reject">();
+  // A catalog request decision changes the catalog's view of the item (the inbox is read again by
+  // `handled`, whatever the answer).
+  const decideRequestMutation = useAppMutation({
+    fn: (v: { id: string; decision: "approve" | "reject" }) =>
+      decideOrgRequest(orgId, v.id, v.decision),
+    invalidates: () => [keys.org(orgId).catalog(), keys.org(orgId).catalogItemsAll()],
+  });
   useStatusBar(`· ${t("pendingCount", { n: rows.length })}`);
 
   // 换一项时审批范围回到「仅本次」
@@ -108,13 +134,13 @@ export default function InboxView({ orgId, initial }: { orgId: string; initial: 
 
   /**
    * An item was handled (or failed as already handled elsewhere: it is no longer pending): it is
-   * hidden, the server reads the page again, and the first item is selected.
+   * hidden, the inbox is read again, and the first item is selected.
    */
   const handled = (id: string, message: string | null) => {
     if (message !== null) toast.success(message);
     setDecided((s) => new Set(s).add(id));
     setActiveId(undefined);
-    startTransition(() => router.refresh());
+    for (const queryKey of inboxChangeKeys(orgId)) void qc.invalidateQueries({ queryKey });
   };
 
   async function decideApproval(approval: Approval, decision: "approve" | "deny") {
@@ -124,7 +150,7 @@ export default function InboxView({ orgId, initial }: { orgId: string; initial: 
   }
 
   async function decideChange(change: SkillChange, decision: "approve" | "reject") {
-    const ok = await changes.decide(change.id, decision);
+    const ok = await changes.decide(change, decision);
     handled(
       change.id,
       ok ? (decision === "approve" ? t("skillChange.approved") : t("skillChange.rejected")) : null,
@@ -134,7 +160,7 @@ export default function InboxView({ orgId, initial }: { orgId: string; initial: 
   async function decideRequest(request: CatalogRequest, decision: "approve" | "reject") {
     setRequestPending(decision);
     try {
-      await decideOrgRequest(orgId, request.id, decision);
+      await decideRequestMutation.mutateAsync({ id: request.id, decision });
       handled(request.id, decision === "approve" ? td("approved") : td("rejected"));
     } catch (e) {
       toast.error(errorMessage(e));
@@ -170,15 +196,22 @@ export default function InboxView({ orgId, initial }: { orgId: string; initial: 
           : skillChangeDetail({
               orgId,
               change: active.skillChange,
-              initial:
-                initial.firstChange?.id === active.skillChange.id
-                  ? initial.firstChange.detail
-                  : undefined,
               pending: changes.pending,
               onDecide: (d) => void decideChange(active.skillChange, d),
               t,
             });
 
+  if (inbox === null) {
+    return (
+      <InboxPage
+        header={{ path: [...here, { label: "inbox" }], title: t("title") }}
+        loading={{
+          list: "records",
+          table: { label: t("listLabel"), columns, rowHeight: "dense", framed: false },
+        }}
+      />
+    );
+  }
   return (
     <InboxPage
       header={{
@@ -348,14 +381,12 @@ function toolApprovalDetail({
 function skillChangeDetail({
   orgId,
   change,
-  initial,
   pending,
   onDecide,
   t,
 }: {
   orgId: string;
   change: SkillChange;
-  initial: SkillChangeDetail | null | undefined;
   pending: "approve" | "reject" | undefined;
   onDecide(decision: "approve" | "reject"): void;
   t: Translate;
@@ -386,7 +417,7 @@ function skillChangeDetail({
         disabled: pending !== undefined,
       },
     },
-    content: <SkillChangeReview key={change.id} orgId={orgId} change={change} initial={initial} />,
+    content: <SkillChangeReview key={change.id} orgId={orgId} change={change} />,
   };
 }
 

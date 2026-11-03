@@ -1,14 +1,13 @@
-import { cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import InboxRoute from "../src/app/(app)/inbox/page";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { renderRouteWithCache } from "./support/query";
+import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import type { renderPage } from "./support/render";
-import { expectNoFirstPaintFetch, renderRoute } from "./support/server";
+import { expectNoFirstPaintFetch } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -23,12 +22,12 @@ vi.mock("next/navigation", () => ({
 type Routes = Parameters<typeof stubApi>[0];
 
 /**
- * The inbox rendered from the server's read (`server`); the browser answers `routes` afterwards
- * (`calls`). `router.refresh()` reads the page on the server again.
+ * The inbox as a first load: the layout's prefetch (`server`) from `routes`; the browser answers
+ * `routes` afterwards (`calls`).
  */
 async function renderInbox(routes: Routes, opts: Parameters<typeof renderPage>[1] = {}) {
   const calls = stubApi(routes);
-  const r = await renderRoute(() => InboxRoute(), routes, opts);
+  const r = await renderRouteWithCache("/inbox", routes, opts);
   return { ...r, server: r.calls, calls };
 }
 
@@ -181,11 +180,16 @@ describe("收件箱（InboxPage）", () => {
       decision: "approve",
       scope: "always",
     });
-    // the page is read again on the server (router.refresh), not in the browser
+    // the decision invalidates the inbox: it is read again in the browser, the route is not
+    // refreshed
     await vi.waitFor(() => expect(screen.queryByText("Fixture · tool_b")).toBeNull());
-    expect(router.refresh).toHaveBeenCalled();
-    expect(server.filter((c) => c.url.endsWith("/inbox"))).toHaveLength(2);
-    expect(calls.filter((c) => c.method === "GET")).toEqual([]);
+    expect(router.refresh).not.toHaveBeenCalled();
+    expect(server.filter((c) => c.url.endsWith("/inbox"))).toHaveLength(1);
+    await vi.waitFor(() =>
+      expect(calls.filter((c) => c.method === "GET").map((c) => c.url)).toEqual([
+        "/api/v1/orgs/o1/inbox",
+      ]),
+    );
     expect(await screen.findByText(m.inbox.approved)).toBeTruthy();
     // 顶栏的待处理数立即重读，不等 30 秒轮询
     expect(refreshPending).toHaveBeenCalledTimes(1);
@@ -311,7 +315,7 @@ describe("收件箱：技能变更", () => {
       },
       { session: { refreshPending } },
     );
-    // the visible skill change's detail is read on the server too
+    // the visible skill change's detail is prefetched by the layout too
     expect(calls.filter((c) => c.method === "GET")).toEqual([]);
     const row = await screen.findByRole("region", { name: "Pending changes" });
     await userEvent
@@ -321,6 +325,11 @@ describe("收件箱：技能变更", () => {
     expect(await screen.findByText(en.inbox.skillChange.approved)).toBeTruthy();
     expect(await screen.findByText(en.inbox.empty)).toBeTruthy();
     expect(refreshPending).toHaveBeenCalledTimes(1);
+    // the inbox is read again after the decision
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "POST /api/v1/orgs/o1/skill-changes/sc1/decide",
+      "GET /api/v1/orgs/o1/inbox",
+    ]);
   });
 
   it("拒绝失败（已被处理）：toast 显示 skill_change.already_decided 的文案", async () => {
@@ -368,17 +377,39 @@ describe("收件箱：技能变更", () => {
   });
 });
 
-describe("the inbox's server read", () => {
-  it("paints from the server with no browser call; a refused skill change detail shows its error", async () => {
+describe("the inbox from the cache", () => {
+  it("a first render from the hydrated cache makes no browser read; a refused skill change detail shows its error", async () => {
     const browser = expectNoFirstPaintFetch();
-    const { container } = await renderRoute(() => InboxRoute(), {
+    const { container } = await renderRouteWithCache("/inbox", {
       [LIST]: () => json(200, inbox([], [skillChange("sc1")])),
       "GET /api/v1/orgs/o1/skill-changes/sc1": () =>
         json(404, { error: { code: "skill_change.not_found", message: "x" } }),
     });
     const card = container.querySelector('[data-skill-change-id="sc1"]') as HTMLElement;
     expect(within(card).getByRole("alert")).toBeTruthy();
+    await act(() => new Promise((r) => setTimeout(r, 20)));
     expect(browser).toEqual([]);
+  });
+
+  it("an empty cache shows the template's loading state, then the data", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    await renderRouteEmptyCache("/inbox", {
+      [LIST]: async () => {
+        await held;
+        return json(200, inbox([approval("a")]));
+      },
+    });
+    await vi.waitFor(() => {
+      if (document.querySelector('[data-template="InboxPage"]') === null) throw new Error("none");
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByText("Fixture · tool_a")).toBeNull();
+    await act(async () => release());
+    expect(await screen.findAllByText("Fixture · tool_a")).not.toHaveLength(0);
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 });
 

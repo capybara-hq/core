@@ -9,7 +9,6 @@ import AdminCatalogPage from "../src/app/(app)/admin/catalog/page";
 import CatalogRequestsPage from "../src/app/(app)/admin/catalog/requests/page";
 import MarketplaceEntriesPage from "../src/app/(app)/admin/marketplaces/entries/page";
 import MarketplacesPage from "../src/app/(app)/admin/marketplaces/page";
-import InboxRoute from "../src/app/(app)/inbox/page";
 import { defaultSlug, slugOf } from "../src/components/CatalogInstallWizard";
 import {
   MARKETPLACE_ERROR_KINDS,
@@ -1475,7 +1474,7 @@ describe("inbox: catalog_request", () => {
       },
     };
     const calls = stubApi(routes);
-    await renderRoute(() => InboxRoute(), routes);
+    await renderRouteWithCache("/inbox", routes);
     expect(
       (await screen.findAllByText(fill(d.title, { name: "pdf-tools" }))).length,
     ).toBeGreaterThan(0);
