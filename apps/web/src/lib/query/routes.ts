@@ -27,7 +27,7 @@ import {
 } from "./conversation";
 import { membersQuery } from "./members";
 import { overviewQueries } from "./overview";
-import { invitationsQuery, orgSettingsQuery } from "./settings";
+import { invitationsQuery, orgPurposesQuery, orgSettingsQuery } from "./settings";
 import { conversationGroupsQuery, maybeMeQuery, readinessQuery } from "./shell";
 import { skillQuery, skillsQuery } from "./skills";
 
@@ -308,7 +308,13 @@ export const ROUTES: readonly RouteEntry[] = [
         ? []
         : [q(membersQuery(orgId)), ...(atLeast(me, "admin") ? [q(invitationsQuery(orgId))] : [])],
   },
-  { pattern: "/settings/models", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/settings/models",
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "admin")
+        ? []
+        : [q(orgPurposesQuery(orgId)), q(modelsQuery(orgId))],
+  },
   {
     pattern: "/settings/organization",
     queries: ({ orgId, me }) =>

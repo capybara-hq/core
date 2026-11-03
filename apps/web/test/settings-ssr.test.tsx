@@ -6,7 +6,6 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import ExtensionsPage from "../src/app/(app)/settings/extensions/page";
-import ModelsPage from "../src/app/(app)/settings/models/page";
 import PluginsPage from "../src/app/(app)/settings/plugins/page";
 import TokensPage from "../src/app/(app)/settings/tokens/page";
 import { bodyOf, json, stubApi } from "./support/api";
@@ -278,11 +277,30 @@ describe("first paint comes from the server (no browser fetch)", () => {
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("/settings/models, /plugins, /extensions, /tokens", async () => {
+  it("/settings/models: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => ModelsPage(), ROUTES);
+    await renderRouteWithCache("/settings/models", ROUTES);
     expect(screen.getByText(en.models.org.description)).toBeTruthy();
-    cleanup();
+    await settle();
+    expect(browser).toEqual([]);
+  });
+
+  it.each([`GET ${O}/model-purposes`, `GET ${O}/models`])(
+    "/settings/models: an empty cache shows the template's loading state, then the data (held: %s)",
+    async (held) => {
+      const { release } = await renderHeld("/settings/models", held);
+      await vi.waitFor(() => {
+        if (template("SettingsPage") === null) throw new Error("no page");
+      });
+      expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+      await release();
+      await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+      expect(screen.getByText(en.models.org.description)).toBeTruthy();
+    },
+  );
+
+  it("/settings/plugins, /extensions, /tokens", async () => {
+    const browser = expectNoFirstPaintFetch();
     await renderRoute(() => PluginsPage(), ROUTES);
     expect(screen.getByText(en.catalog.plugins.empty)).toBeTruthy();
     cleanup();
@@ -304,7 +322,6 @@ describe("first paint comes from the server (no browser fetch)", () => {
 
 type Page = () => Promise<ReactNode>;
 const GATES: [string, Page, "member" | "admin" | "guest", boolean][] = [
-  ["/settings/models", () => ModelsPage(), "admin", true],
   ["/settings/plugins", () => PluginsPage(), "admin", false],
   ["/settings/extensions", () => ExtensionsPage(), "admin", false],
   ["/settings/tokens", () => TokensPage(), "admin", false],
@@ -344,6 +361,7 @@ const ROUTE_GATES: [string, "member" | "admin", boolean][] = [
   ["/settings/organization", "member", false],
   ["/settings/sandbox", "member", false],
   ["/settings/members", "member", true],
+  ["/settings/models", "admin", true],
 ];
 
 describe("the gates (query cache)", () => {

@@ -70,6 +70,8 @@ function shellRoutes(readiness: typeof READY) {
     [`GET ${O}/agent-templates`]: () => json(200, { templates: [] }),
     [`GET ${O}/agents`]: () => json(200, { agents: [] }),
     [`GET ${O}/members`]: () => json(200, { members: [] }),
+    // and the setup step /settings/models (the purposes)
+    [`GET ${O}/model-purposes`]: () => json(200, { purposes: [] }),
   });
 }
 const layoutAt = (path: string) => {

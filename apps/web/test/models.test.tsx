@@ -4,11 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import AdminModelsPage from "../src/app/(app)/admin/models/page";
-import OrgModelsPage from "../src/app/(app)/settings/models/page";
 import { activeNavOf } from "../src/components/shell/nav";
 import type { Me } from "../src/lib/session";
 import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
+import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { renderRoute } from "./support/server";
 
@@ -382,7 +382,7 @@ describe("sub-agent model tiers on the purposes page", () => {
         }),
       "GET /api/v1/orgs/o1/models": () => json(200, { providers: [ALPHA] }),
     });
-    await renderRoute(OrgModelsPage, lastStubRoutes(), { locale });
+    await renderRouteWithCache("/settings/models", lastStubRoutes(), { locale });
     const box = (p: string) =>
       vi.waitFor(() => {
         const el = document.querySelector(`[data-purpose="${p}"]`);
@@ -418,7 +418,9 @@ describe("/settings/models（组织管理员）", () => {
           });
         },
       });
-      const { container } = await renderRoute(OrgModelsPage, lastStubRoutes(), { locale });
+      const { container } = await renderRouteWithCache("/settings/models", lastStubRoutes(), {
+        locale,
+      });
       expect(template("SettingsPage")).not.toBeNull();
       const current = container.querySelector('.cb-settings-nav [aria-current="page"]');
       expect(current?.textContent).toBe(m.connections.nav.models);
@@ -440,6 +442,8 @@ describe("/settings/models（组织管理员）", () => {
         }),
       );
       const overridden = await ev.findByText(m.models.purpose.overridden);
+      // the answer is written into the cached purposes: nothing is read again
+      expect(calls.filter((c) => c.method === "GET")).toEqual([]);
       // A state reads as muted text, never an accent badge
       expect(overridden.closest(".cb-badge")).toBeNull();
       // Restoring the default is choosing 「使用部署默认」 and saving
@@ -459,7 +463,7 @@ describe("/settings/models（组织管理员）", () => {
   it("部署默认未设置、组织也未覆盖：显示 eval 未映射提示", async () => {
     resetNavigation("/settings/models");
     orgRoutes([evalView()]);
-    await renderRoute(OrgModelsPage, lastStubRoutes());
+    await renderRouteWithCache("/settings/models", lastStubRoutes());
     expect(await screen.findByText(en.models.evalUnmapped)).toBeTruthy();
     const ev = await purposeBox("eval");
     expect(
@@ -470,7 +474,7 @@ describe("/settings/models（组织管理员）", () => {
   it("设置导航：管理员看到「模型用途」", async () => {
     resetNavigation("/settings/models");
     orgRoutes([evalView()]);
-    await renderRoute(OrgModelsPage, lastStubRoutes());
+    await renderRouteWithCache("/settings/models", lastStubRoutes());
     expect(await screen.findByRole("link", { name: en.connections.nav.models })).toBeTruthy();
   });
 });
