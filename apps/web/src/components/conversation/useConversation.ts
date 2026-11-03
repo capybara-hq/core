@@ -198,9 +198,17 @@ export function useConversation(orgId: string, conversationId: string): Conversa
         if (what === "deleted") router.push("/chat");
         return;
       }
-      if (what === "title" || what === "selection") invalidate(c.row());
-      // A new title shows in the sidebar too.
-      if (what === "title") invalidate(groups);
+      if (what === "selection") invalidate(c.row());
+      // A new title shows in the sidebar too; a title this page already shows (the person's own
+      // rename, whose mutation reads the groups itself) reads them no second time.
+      if (what === "title") {
+        const before = qc.getQueryData<Conversation>(c.row())?.title;
+        void qc.refetchQueries({ queryKey: c.row(), exact: true }).then(() => {
+          if (!disposed && qc.getQueryData<Conversation>(c.row())?.title !== before) {
+            invalidate(groups);
+          }
+        });
+      }
       if (what === "queue") invalidate(c.queue());
       if (what === "files") invalidate(c.files());
     };

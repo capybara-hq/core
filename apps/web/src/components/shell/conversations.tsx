@@ -324,8 +324,23 @@ export function useConversationGroups(
     if (l !== null && l.view === key) setPaged({ ...withoutRow(l, id), base });
   };
   const invalidates = () => [keys.org(orgId).conversationGroupsAll()];
+  // An open conversation's row takes the title first: its stream's `changed: title` for this
+  // rename then finds it unchanged and reads the groups no second time.
   const rename = useAppMutation({
-    fn: (v: { id: string; title: string }) => renameConversation(orgId, v.id, v.title),
+    fn: async (v: { id: string; title: string }) => {
+      const rowKey = keys.org(orgId).conversation(v.id).row();
+      const before = qc.getQueryData<Conversation>(rowKey);
+      if (before !== undefined)
+        qc.setQueryData<Conversation>(rowKey, { ...before, title: v.title });
+      try {
+        const r = await renameConversation(orgId, v.id, v.title);
+        if (before !== undefined) qc.setQueryData<Conversation>(rowKey, r.conversation);
+        return r;
+      } catch (e) {
+        if (before !== undefined) qc.setQueryData<Conversation>(rowKey, before);
+        throw e;
+      }
+    },
     invalidates,
   });
   // The row goes as soon as the kernel answers, before the views are read again.

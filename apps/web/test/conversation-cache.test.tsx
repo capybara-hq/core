@@ -237,14 +237,32 @@ describe("useConversation and the cache", () => {
     await vi.waitFor(() => expect(view.getByTestId("title").textContent).toBe("Generated early"));
     // the sidebar's groups missed the frame as well: they are read again
     await vi.waitFor(() =>
-      expect(invalidated()).toContainEqual(
-        JSON.stringify(keys.org("o1").conversationGroupsAll()),
-      ),
+      expect(invalidated()).toContainEqual(JSON.stringify(keys.org("o1").conversationGroupsAll())),
     );
     // once per mount: a reconnect of the same page reads nothing more
     act(() => FakeEventSource.instances[0]?.emit("open"));
     await act(() => new Promise((r) => setTimeout(r, 20)));
     expect(calls.map((c) => c.url)).toEqual([BASE]);
+  });
+
+  it("a changed title reads the row, and the sidebar's groups only when the title is new", async () => {
+    let title = "Kept";
+    const calls = stubApi({ [`GET ${BASE}`]: () => json(200, CONV("c1", { title })) });
+    const qc = cached("Kept");
+    const invalidated = sideKeys(qc);
+    const view = mount(qc);
+    const es = FakeEventSource.instances[0] as FakeEventSource;
+    const groups = JSON.stringify(keys.org("o1").conversationGroupsAll());
+    // the page already shows this title (the person's own rename): no second groups read
+    act(() => es.emit("changed", { what: "title" }));
+    await vi.waitFor(() => expect(calls.map((c) => c.url)).toEqual([BASE]));
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(invalidated()).not.toContainEqual(groups);
+    // a title set elsewhere: the row and the groups follow
+    title = "Renamed elsewhere";
+    act(() => es.emit("changed", { what: "title" }));
+    await vi.waitFor(() => expect(view.getByTestId("title").textContent).toBe("Renamed elsewhere"));
+    await vi.waitFor(() => expect(invalidated()).toContainEqual(groups));
   });
 
   it("a person's own send after an idle open is no catch-up: no side keys are read", async () => {

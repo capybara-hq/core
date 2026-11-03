@@ -207,12 +207,21 @@ export function useConversationPage(
       });
   };
 
-  // The answer is the new row; the sidebar shows the title too.
+  // The answer is the new row; the sidebar shows the title too. The row takes the title before
+  // the kernel answers, so the stream's `changed: title` for this rename finds it unchanged and
+  // reads the sidebar's groups no second time (the invalidation below is the one read).
   const renameMutation = useAppMutation({
     fn: async (title: string) => {
-      const { conversation } = await renameConversation(orgId, conversationId, title);
-      conv.setConversation(conversation);
-      return conversation;
+      const before = conv.conversation;
+      if (before !== undefined) conv.setConversation({ ...before, title });
+      try {
+        const { conversation } = await renameConversation(orgId, conversationId, title);
+        conv.setConversation(conversation);
+        return conversation;
+      } catch (e) {
+        if (before !== undefined) conv.setConversation(before);
+        throw e;
+      }
     },
     invalidates: () => [queryKeys.org(orgId).conversationGroupsAll()],
   });

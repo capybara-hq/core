@@ -464,7 +464,7 @@ describe("the conversation page (ConversationPage)", () => {
     expect(bodies[1]).not.toHaveProperty("effort");
   });
 
-  it("rename from the title menu PATCHes and shows the title; changed: title refetches it", async () => {
+  it("rename from the title menu PATCHes and shows the title; changed: title refetches it, the sidebar only for a new title", async () => {
     let title: string | null = null;
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
@@ -486,10 +486,14 @@ describe("the conversation page (ConversationPage)", () => {
     expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ title: "Quarterly numbers" });
     expect(await screen.findByRole("button", { name: /Quarterly numbers/ })).toBeTruthy();
     await vi.waitFor(() => expect(refreshes()).toBe(1));
+    // the stream's frame for this rename: the title is the one shown, the sidebar is not read again
+    act(() => FakeEventSource.instances[0]?.emit("changed", { what: "title" }));
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(refreshes()).toBe(1);
     title = "Generated title";
     act(() => FakeEventSource.instances[0]?.emit("changed", { what: "title" }));
     expect(await screen.findByRole("button", { name: /Generated title/ })).toBeTruthy();
-    expect(refreshes()).toBe(2);
+    await vi.waitFor(() => expect(refreshes()).toBe(2));
   });
 
   it("a run starting, waiting and ending tells the sidebar (its state dot follows)", async () => {
