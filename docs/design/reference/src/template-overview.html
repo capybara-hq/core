@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Overview template · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Overview template</h1>
+<p>Loading state (spec §5.6): the header keeps its rows, four stat cards and two card-shaped blocks. Nothing animates.</p>
+<div class="r-blocks">
+<section data-ref-block="template-overview-loading" style="width:1280px;height:640px">
+  <div class="r-tpl" aria-busy="true">
+    <div class="r-tpl-head"><template data-fixture="page-header" data-opts='{"loading": true}'></template></div>
+    <div class="r-tpl-body"><div class="r-tpl-main"><div class="r-stats"><div class="r-stat r-lstat" data-part="stat-card"><div class="r-stat-label"><div class="r-skel-text" data-part="skeleton-text" data-size="small" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-stat-value"><div class="r-skel-text" data-part="skeleton-text" data-size="metric" style="width:45%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></div><div class="r-stat r-lstat" data-part="stat-card"><div class="r-stat-label"><div class="r-skel-text" data-part="skeleton-text" data-size="small" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-stat-value"><div class="r-skel-text" data-part="skeleton-text" data-size="metric" style="width:45%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></div><div class="r-stat r-lstat" data-part="stat-card"><div class="r-stat-label"><div class="r-skel-text" data-part="skeleton-text" data-size="small" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-stat-value"><div class="r-skel-text" data-part="skeleton-text" data-size="metric" style="width:45%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></div><div class="r-stat r-lstat" data-part="stat-card"><div class="r-stat-label"><div class="r-skel-text" data-part="skeleton-text" data-size="small" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-stat-value"><div class="r-skel-text" data-part="skeleton-text" data-size="metric" style="width:45%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></div></div><section class="r-lcard" data-part="loading-card"><header class="r-lcard-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></header><div class="r-lcard-body"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:100%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:70%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></section><section class="r-lcard" data-part="loading-card"><header class="r-lcard-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></header><div class="r-lcard-body"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:100%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:70%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></section></div></div>
+  </div>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

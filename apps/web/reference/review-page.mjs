@@ -69,8 +69,8 @@ const GROUPS = [
     components: ["repeater", "field-row", "key-value-editor"],
   },
   {
-    title: "Loading states: skeleton primitives",
-    components: ["skeleton"],
+    title: "Loading states: skeleton primitives and template loading states",
+    components: ["skeleton", "template-detail", "template-overview", "template-inbox"],
   },
 ];
 const COMPONENTS = GROUPS.flatMap((g) => g.components);

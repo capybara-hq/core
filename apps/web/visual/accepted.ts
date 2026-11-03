@@ -18,6 +18,11 @@ export const ACCEPTED: string[] = [
   "action-row",
   "template-list",
   "template-form",
+  // loading states of the Detail, Overview and Inbox templates (spec §5.2, §5.6, §5.7): blocks and
+  // size tables in place; the reference PNGs wait for the reference-update workflow
+  "template-detail",
+  "template-overview",
+  "template-inbox",
   "prose",
   "thinking-row",
   "user-bubble",

@@ -57,6 +57,9 @@ const PAGES = [
   "key-value-editor",
   // loading states: the skeleton primitives
   "skeleton",
+  "template-detail",
+  "template-overview",
+  "template-inbox",
 ];
 const THEMES = ["dark", "light"] as const;
 const BLOCK_ID = /^[a-z-]+-[a-z0-9-]+$/;

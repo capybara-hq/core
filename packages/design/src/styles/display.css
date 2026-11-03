@@ -314,6 +314,9 @@
 .cb-skeleton-text[data-size="title"] {
   height: var(--cb-type-h1-line);
 }
+.cb-skeleton-text[data-size="metric"] {
+  height: var(--cb-type-metric-line);
+}
 .cb-skeleton-box {
   display: block;
   max-width: 100%;

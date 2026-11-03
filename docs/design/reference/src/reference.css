@@ -3505,3 +3505,91 @@ textarea {
   box-sizing: content-box;
   height: calc(var(--cb-control-default) + 2 * var(--cb-space-1));
 }
+
+/* ── Template loading states (spec §5.2, §5.6, §5.7) ─────────────────────── */
+
+.r-tpl {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--cb-bg);
+}
+.r-tpl-head,
+.r-tpl-body {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: var(--cb-layout-content);
+  margin: 0 auto;
+}
+.r-tpl-head {
+  padding: 0 var(--cb-content-pad, 32px);
+}
+.r-tpl-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.r-tpl-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+  min-width: 0;
+  padding: var(--cb-space-4) var(--cb-content-pad, 32px);
+}
+.r-tpl-rail {
+  flex: none;
+  width: 240px;
+  border-right: 1px solid var(--cb-line-soft);
+}
+.r-tpl-inspector {
+  flex: none;
+  width: 400px;
+  padding: var(--cb-space-4);
+  border-left: 1px solid var(--cb-line-soft);
+}
+.r-lcard {
+  background: var(--cb-panel);
+  border: 1px solid var(--cb-line-card);
+  border-radius: var(--cb-radius-md);
+}
+.r-lcard-head {
+  padding: var(--cb-space-2) var(--cb-space-4);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.r-lcard-body,
+.r-lstack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+}
+.r-lcard-body {
+  padding: 16px;
+}
+.r-lrow-kv {
+  display: flex;
+  gap: var(--cb-space-3);
+  align-items: center;
+}
+.r-lstat .r-skel-text {
+  max-width: 100%;
+}
+.r-lrow {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  box-sizing: border-box;
+  min-height: 64px;
+  padding: var(--cb-space-3) var(--cb-space-4);
+  border-top: 1px solid var(--cb-line-soft);
+}
+.r-lrow:first-child {
+  border-top: 0;
+}
+.r-lrow-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}

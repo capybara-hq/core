@@ -64,6 +64,7 @@ import { CONVERSATION_PAGE_BLOCKS } from "./conversation-page-blocks";
 import { COMMANDS } from "./fixtures";
 import { RefBlock } from "./ref-block";
 import { type SidebarFixture, sidebarProps, statusFixture } from "./shell-fixture";
+import { TEMPLATE_LOADING_BLOCKS } from "./template-loading-blocks";
 import { SetupHomeBody, setupFrameProps } from "./templates/setup";
 
 // The /dev/ui side of the reference set (docs/design/reference/src): one RefBlock per state, with
@@ -1090,6 +1091,7 @@ export const REFERENCE_BLOCKS = {
   "action-row": actionRowBlocks,
   "template-list": templateListBlocks,
   "template-form": templateFormBlocks,
+  ...TEMPLATE_LOADING_BLOCKS,
   ...CONVERSATION_BLOCKS,
   ...CONVERSATION_PAGE_BLOCKS,
   "no-access": noAccessBlocks,

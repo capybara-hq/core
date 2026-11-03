@@ -1,0 +1,122 @@
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import { DesignProvider, DetailPage, InboxPage, OverviewPage } from "../src/index";
+
+afterEach(cleanup);
+const zh = (ui: React.ReactElement) => render(<DesignProvider locale="zh">{ui}</DesignProvider>);
+
+const header = { path: [{ label: "capybara" }, { label: "agents" }], title: "研究助手" };
+const tabs = {
+  items: [
+    { id: "summary", label: "概要" },
+    { id: "runs", label: "运行" },
+  ],
+  value: "summary",
+  label: "页面",
+};
+const metrics = [
+  { label: "运行", value: 12 },
+  { label: "失败", value: 1 },
+];
+
+const parts = (name: string) => document.querySelectorAll(`[data-part="${name}"]`);
+const count = (selector: string) => document.querySelectorAll(selector).length;
+
+describe("DetailPage loading", () => {
+  it("DetailPage loading draws the frame and no children", () => {
+    zh(
+      <DetailPage header={header} tabs={tabs} loading={{ inspector: true }}>
+        <p>REAL CONTENT</p>
+      </DetailPage>,
+    );
+    expect(screen.queryByText("REAL CONTENT")).toBeNull();
+    expect(document.querySelector('[data-template="DetailPage"]')).not.toBeNull();
+    expect(parts("page-header")).toHaveLength(1);
+    expect(parts("content")).toHaveLength(1);
+    expect(count(".cb-body-inspector")).toBe(1);
+    // The default is two card-shaped blocks, and the group announces once.
+    expect(count('[data-part="loading-card"]')).toBe(2);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(document.querySelector('[aria-busy="true"]')).not.toBeNull();
+  });
+
+  it("takes the block count as given, and no inspector unless flagged", () => {
+    zh(<DetailPage header={header} tabs={tabs} loading={{ blocks: 3 }} />);
+    expect(count('[data-part="loading-card"]')).toBe(3);
+    expect(count(".cb-body-inspector")).toBe(0);
+  });
+
+  it("tabs stay real while loading", () => {
+    zh(<DetailPage header={header} tabs={tabs} loading={{ inspector: true }} />);
+    expect(screen.getByRole("tab", { name: "概要" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "运行" })).toBeTruthy();
+  });
+
+  it("a real inspector stays while loading unless it is flagged", () => {
+    zh(<DetailPage header={header} tabs={tabs} inspector={<p>REAL INSPECTOR</p>} loading={{}} />);
+    expect(screen.getByText("REAL INSPECTOR")).toBeTruthy();
+  });
+});
+
+describe("OverviewPage loading", () => {
+  it("OverviewPage loading draws the frame and no children", () => {
+    zh(
+      <OverviewPage header={header} loading={{}}>
+        <p>REAL CONTENT</p>
+      </OverviewPage>,
+    );
+    expect(screen.queryByText("REAL CONTENT")).toBeNull();
+    expect(document.querySelector('[data-template="OverviewPage"]')).not.toBeNull();
+    expect(parts("page-header")).toHaveLength(1);
+    // Defaults: four stat cards and two sections.
+    expect(parts("stat-card")).toHaveLength(4);
+    expect(count('[data-part="loading-card"]')).toBe(2);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("takes the stat and section counts as given", () => {
+    zh(<OverviewPage header={header} loading={{ stats: 3, sections: 1 }} />);
+    expect(parts("stat-card")).toHaveLength(3);
+    expect(count('[data-part="loading-card"]')).toBe(1);
+  });
+
+  it("known metrics render for real", () => {
+    zh(<OverviewPage header={{ ...header, metrics }} loading={{ stats: 4 }} />);
+    expect(parts("stat-card")).toHaveLength(2);
+    expect(screen.getByText("失败")).toBeTruthy();
+  });
+});
+
+describe("InboxPage loading", () => {
+  it("InboxPage loading draws the frame and no children", () => {
+    zh(
+      <InboxPage header={header} list={<p>REAL LIST</p>} filters={<p>REAL FILTERS</p>} loading={{}}>
+        <p>REAL CONTENT</p>
+      </InboxPage>,
+    );
+    expect(screen.queryByText("REAL LIST")).toBeNull();
+    expect(screen.queryByText("REAL CONTENT")).toBeNull();
+    expect(document.querySelector('[data-template="InboxPage"]')).not.toBeNull();
+    // The rail's filters are static: they stay; the list is four 64 px rows by default.
+    expect(screen.getByText("REAL FILTERS")).toBeTruthy();
+    expect(count(".cb-body-rail")).toBe(1);
+    expect(count('[data-part="loading-row"]')).toBe(4);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("takes the row count as given", () => {
+    zh(<InboxPage header={header} loading={{ rows: 6 }} />);
+    expect(count('[data-part="loading-row"]')).toBe(6);
+  });
+
+  it("without loading, the filters sit above the list", () => {
+    zh(
+      <InboxPage header={header} filters={<p>F</p>} list={<p>第一项</p>}>
+        x
+      </InboxPage>,
+    );
+    expect(screen.getByText("F")).toBeTruthy();
+    expect(screen.getByText("第一项")).toBeTruthy();
+    expect(count('[data-part="loading-row"]')).toBe(0);
+  });
+});
