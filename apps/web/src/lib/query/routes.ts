@@ -26,6 +26,7 @@ import {
   sandboxQuery,
 } from "./conversation";
 import { overviewQueries } from "./overview";
+import { orgSettingsQuery } from "./settings";
 import { conversationGroupsQuery, maybeMeQuery, readinessQuery } from "./shell";
 import { skillQuery, skillsQuery } from "./skills";
 
@@ -300,9 +301,17 @@ export const ROUTES: readonly RouteEntry[] = [
   { pattern: "/settings/extensions", queries: () => [], none: "pending migration" },
   { pattern: "/settings/members", queries: () => [], none: "pending migration" },
   { pattern: "/settings/models", queries: () => [], none: "pending migration" },
-  { pattern: "/settings/organization", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/settings/organization",
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "member") ? [] : [q(orgSettingsQuery(orgId))],
+  },
   { pattern: "/settings/plugins", queries: () => [], none: "pending migration" },
-  { pattern: "/settings/sandbox", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/settings/sandbox",
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "member") ? [] : [q(orgSettingsQuery(orgId))],
+  },
   { pattern: "/settings/tokens", queries: () => [], none: "pending migration" },
   { pattern: "/setup", queries: () => [], none: "pending migration" },
   {

@@ -222,9 +222,19 @@ const PAGES: [string, ComponentType | ServerPage | RoutePage, "member" | "admin"
   ["/settings/extensions", server(() => ExtensionsSettingsPage()), "admin", zh.roles.need.admin],
   ["/settings/plugins", server(() => PluginsSettingsPage()), "admin", zh.roles.need.admin],
   ["/settings/tokens", server(() => TokensPage()), "admin", zh.roles.need.admin],
-  ["/settings/organization", server(() => OrganizationPage()), "member", zh.roles.need.member],
+  [
+    "/settings/organization",
+    route("/settings/organization", () => OrganizationPage()),
+    "member",
+    zh.roles.need.member,
+  ],
   ["/settings/members", server(() => MembersPage()), "member", zh.roles.need.member],
-  ["/settings/sandbox", server(() => SandboxPage()), "member", zh.roles.need.member],
+  [
+    "/settings/sandbox",
+    route("/settings/sandbox", () => SandboxPage()),
+    "member",
+    zh.roles.need.member,
+  ],
   ["/skills", route("/skills", () => SkillsPage()), "member", zh.roles.need.member],
   [
     "/skills/x1",

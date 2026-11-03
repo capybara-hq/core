@@ -1,13 +1,9 @@
-import { NoAccess } from "../../../../components/NoAccess";
-import { getOrgSettings } from "../../../../lib/org-settings";
-import { read } from "../../../../lib/server/page";
-import { workspace } from "../../../../lib/server/session";
 import SandboxSettings from "./view";
 
-/** `/settings/sandbox` (members and up): the org's settings (required), read on the server. */
-export default async function SandboxSettingsPage() {
-  const ws = await workspace({ min: "member" });
-  if (ws.kind === "noOrg") return null;
-  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
-  return <SandboxSettings orgId={ws.orgId} initial={await read(getOrgSettings(ws.orgId))} />;
+/**
+ * `/settings/sandbox` (members and up): the org's settings. It reads nothing: the layout
+ * prefetches them on a first load (`lib/query/routes.ts`).
+ */
+export default function SandboxSettingsPage() {
+  return <SandboxSettings />;
 }

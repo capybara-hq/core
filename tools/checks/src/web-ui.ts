@@ -724,12 +724,8 @@ export const QUERY_PENDING: readonly QueryPending[] = [
   { path: "app/(app)/settings/members/view.tsx", reason: "pending migration: Task 13" },
   { path: "app/(app)/settings/models/page.tsx", reason: "pending migration: Task 13" },
   { path: "app/(app)/settings/models/view.tsx", reason: "pending migration: Task 13" },
-  { path: "app/(app)/settings/organization/page.tsx", reason: "pending migration: Task 13" },
-  { path: "app/(app)/settings/organization/view.tsx", reason: "pending migration: Task 13" },
   { path: "app/(app)/settings/plugins/page.tsx", reason: "pending migration: Task 13" },
   { path: "app/(app)/settings/plugins/view.tsx", reason: "pending migration: Task 13" },
-  { path: "app/(app)/settings/sandbox/page.tsx", reason: "pending migration: Task 13" },
-  { path: "app/(app)/settings/sandbox/view.tsx", reason: "pending migration: Task 13" },
   { path: "app/(app)/settings/tokens/page.tsx", reason: "pending migration: Task 13" },
   { path: "app/(app)/settings/tokens/view.tsx", reason: "pending migration: Task 13" },
   {

@@ -11,8 +11,11 @@ import {
   Textarea,
   useToast,
 } from "@capybara-hq/design";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { ErrorFrame } from "../../../../components/ErrorFrame";
+import { NoAccess } from "../../../../components/NoAccess";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
@@ -25,8 +28,12 @@ import {
   type SandboxEgressSetting,
   updateOrgSettings,
 } from "../../../../lib/org-settings";
+import { useAppMutation } from "../../../../lib/query/define";
+import { usePageQuery } from "../../../../lib/query/page-query";
+import { orgSettingsQuery } from "../../../../lib/query/settings";
+import { useWorkspace } from "../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../lib/use-error-message";
-import { useServerState } from "../../../../lib/use-server-state";
+import NotFound from "../../not-found";
 
 /**
  * `/settings/sandbox`: the organization's sandbox settings (SettingsPage): the default policy of the
@@ -34,7 +41,8 @@ import { useServerState } from "../../../../lib/use-server-state";
  * allowlist / no network, ruling M19) and sandbox resources (cpu / memory, read-only: enterprise
  * admins override them per organization in the deployment settings, C19). Members can see, admins
  * can change; changes show an ActionRow. The org-settings PATCH is shared with the general page:
- * this page sends only its own fields.
+ * this page sends only its own fields. From the query cache (the layout prefetched it on a first
+ * load; the general page shares it); a save writes the answer into the cache.
  */
 
 type EgressMode = "default" | SandboxEgressSetting["mode"];
@@ -42,13 +50,14 @@ type EgressMode = "default" | SandboxEgressSetting["mode"];
 const sameList = (a: readonly string[], b: readonly string[]) =>
   a.length === b.length && a.every((v, i) => v === b[i]);
 
-export default function SandboxSettings({
-  orgId,
-  initial,
-}: {
-  orgId: string;
-  initial: OrgSettingsResponse;
-}) {
+export default function SandboxSettingsView() {
+  const ws = useWorkspace({ min: "member" });
+  if (ws.kind === "pending" || ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  return <SandboxSettings orgId={ws.orgId} />;
+}
+
+function SandboxSettings({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("orgSettings");
   const ts = useTranslations("sandboxSettings");
@@ -58,14 +67,47 @@ export default function SandboxSettings({
   const nav = useOrgSettingsNav();
   const { me } = useSession();
   const manage = canUpdateOrg(me);
-  const [data, set] = useServerState(initial);
+  const qc = useQueryClient();
+  const read = usePageQuery(orgSettingsQuery(orgId));
   const [draft, setDraft] = useState<{
     sandboxToolPolicy?: NonNullable<OrgSettings["sandboxToolPolicy"]>;
     egressMode?: EgressMode;
     hostsText?: string;
   }>({});
-  const [pending, setPending] = useState(false);
-
+  // The answer is the new settings; the read-only parts it leaves out keep their cached values.
+  const update = useAppMutation({
+    fn: (patch: OrgSettingsPatch) => updateOrgSettings(orgId, patch),
+    invalidates: () => [],
+    onSuccess: (res) =>
+      qc.setQueryData<OrgSettingsResponse>(orgSettingsQuery(orgId).queryKey, (old) => ({
+        ...old,
+        settings: res.settings,
+        ...(res.deployment !== undefined ? { deployment: res.deployment } : {}),
+        ...(res.sandboxLimits !== undefined ? { sandboxLimits: res.sandboxLimits } : {}),
+      })),
+  });
+  const header = {
+    path: [...scope, { label: "settings", href: "/settings/organization" }, { label: "sandbox" }],
+    title: ts("title"),
+  };
+  if (read.kind === "notFound") return <NotFound />;
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
+  if (read.kind === "loading") {
+    return (
+      <SettingsPage
+        header={header}
+        nav={nav}
+        activeNav="sandbox"
+        // The tool policy (two cards); egress and resources come with the settings.
+        loading={{
+          sections: [
+            { fields: 2, title: t("sandbox.title"), description: t("sandbox.description") },
+          ],
+        }}
+      />
+    );
+  }
+  const data = read.data;
   const saved = data.settings;
   const { deployment, sandboxLimits } = data;
   const sandboxPolicy = draft.sandboxToolPolicy ?? saved?.sandboxToolPolicy ?? "allow";
@@ -100,35 +142,18 @@ export default function SandboxSettings({
   const dirty = unsaved > 0;
 
   async function save() {
-    setPending(true);
     try {
-      const res = await updateOrgSettings(orgId, patch);
-      const dep = res.deployment ?? deployment;
-      const lim = res.sandboxLimits ?? sandboxLimits;
-      set({
-        settings: res.settings,
-        ...(dep !== undefined ? { deployment: dep } : {}),
-        ...(lim !== undefined ? { sandboxLimits: lim } : {}),
-      });
+      await update.mutateAsync(patch);
       setDraft({});
       toast.success(ts("saved"));
     } catch (e) {
       toast.error(errorMessage(e));
-    } finally {
-      setPending(false);
     }
   }
 
   return (
     <SettingsPage
-      header={{
-        path: [
-          ...scope,
-          { label: "settings", href: "/settings/organization" },
-          { label: "sandbox" },
-        ],
-        title: ts("title"),
-      }}
+      header={header}
       nav={nav}
       activeNav="sandbox"
       {...(dirty
@@ -136,7 +161,7 @@ export default function SandboxSettings({
             actionRow: {
               unsaved,
               cancel: { label: tc("cancel"), onSelect: () => setDraft({}) },
-              primary: { label: t("save"), onSelect: () => void save(), loading: pending },
+              primary: { label: t("save"), onSelect: () => void save(), loading: update.isPending },
             },
           }
         : {})}

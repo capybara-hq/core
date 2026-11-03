@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import ExtensionsPage from "../src/app/(app)/settings/extensions/page";
-import OrganizationSettingsPage from "../src/app/(app)/settings/organization/page";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
@@ -298,7 +297,7 @@ describe("组织插件（SettingsPage）", () => {
 
   it("二级导航：管理员才有「插件」", async () => {
     api({ [`GET ${BASE}/settings`]: () => json(200, { settings: { toolSearch: "on" } }) });
-    await renderRoute(OrganizationSettingsPage, lastStubRoutes(), { me: MEMBER });
+    await renderRouteWithCache("/settings/organization", lastStubRoutes(), { me: MEMBER });
     await screen.findByText(en.orgSettings.readonly);
     expect(screen.queryByRole("link", { name: en.connections.nav.extensions })).toBeNull();
     expect(screen.getByRole("link", { name: en.connections.nav.sandbox })).toBeTruthy();
@@ -313,7 +312,7 @@ describe("组织设置：IM 语言", () => {
       [`PATCH ${BASE}/settings`]: (c) =>
         json(200, { settings: { toolSearch: "on", locale: "en", ...(bodyOf(c) as object) } }),
     });
-    await renderRoute(OrganizationSettingsPage, lastStubRoutes(), { locale });
+    await renderRouteWithCache("/settings/organization", lastStubRoutes(), { locale });
     const select = await screen.findByRole("combobox", { name: o.locale.label });
     expect(select).toHaveProperty("value", "en");
     const user = userEvent.setup();
@@ -331,7 +330,7 @@ describe("组织设置：IM 语言", () => {
     api({
       [`GET ${BASE}/settings`]: () => json(200, { settings: { toolSearch: "on", locale: "zh" } }),
     });
-    await renderRoute(OrganizationSettingsPage, lastStubRoutes(), { me: MEMBER });
+    await renderRouteWithCache("/settings/organization", lastStubRoutes(), { me: MEMBER });
     const select = await screen.findByRole("combobox", { name: en.orgSettings.locale.label });
     expect(select).toHaveProperty("value", "zh");
     expect(select).toHaveProperty("disabled", true);

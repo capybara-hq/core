@@ -3,13 +3,13 @@ import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zh from "../messages/zh.json";
-import OrganizationSettingsPage from "../src/app/(app)/settings/organization/page";
 import TokensPage from "../src/app/(app)/settings/tokens/page";
 import { navigateBrowser } from "../src/lib/browser";
 import type { OrgRole } from "../src/lib/members";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { renderRoute } from "./support/server";
 import { renderFrame, shellOf } from "./support/shell";
@@ -155,7 +155,7 @@ describe("删除组织 (组织设置 · 通用)", () => {
     it(`${role}: the danger zone is ${owner ? "shown" : "absent"}`, async () => {
       api();
       resetNavigation("/settings/organization");
-      await renderRoute(OrganizationSettingsPage, lastStubRoutes(), {
+      await renderRouteWithCache("/settings/organization", lastStubRoutes(), {
         locale: "zh",
         me: meAs(role),
       });
@@ -168,7 +168,7 @@ describe("删除组织 (组织设置 · 通用)", () => {
 
   it("the owner types the slug to delete; then a full navigation to the chooser, the dialog busy until then", async () => {
     const calls = api();
-    await renderRoute(OrganizationSettingsPage, lastStubRoutes(), {
+    await renderRouteWithCache("/settings/organization", lastStubRoutes(), {
       locale: "zh",
       me: meAs("owner"),
     });
@@ -208,7 +208,7 @@ describe("删除组织 errors", () => {
       [`DELETE ${O}`]: () =>
         json(403, { error: { code: "forbidden", message: "Insufficient organization role" } }),
     });
-    await renderRoute(OrganizationSettingsPage, lastStubRoutes(), {
+    await renderRouteWithCache("/settings/organization", lastStubRoutes(), {
       locale: "zh",
       me: meAs("owner"),
     });
@@ -264,14 +264,14 @@ describe("服务令牌", () => {
     stubApi({
       [`GET ${O}/settings`]: () => json(200, { settings: { toolSearch: "on", locale: "en" } }),
     });
-    await renderRoute(OrganizationSettingsPage, lastStubRoutes(), {
+    await renderRouteWithCache("/settings/organization", lastStubRoutes(), {
       locale: "zh",
       me: meAs("member"),
     });
     await screen.findByRole("link", { name: zh.connections.nav.general });
     expect(screen.queryByRole("link", { name: zh.connections.nav.tokens })).toBeNull();
     cleanup();
-    await renderRoute(OrganizationSettingsPage, lastStubRoutes(), {
+    await renderRouteWithCache("/settings/organization", lastStubRoutes(), {
       locale: "zh",
       me: meAs("admin"),
     });

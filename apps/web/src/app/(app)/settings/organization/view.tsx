@@ -13,8 +13,11 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { ErrorFrame } from "../../../../components/ErrorFrame";
+import { NoAccess } from "../../../../components/NoAccess";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
@@ -29,24 +32,28 @@ import {
 } from "../../../../lib/org-settings";
 import { deleteOrg } from "../../../../lib/orgs";
 import { browserQueryClient } from "../../../../lib/query/client";
-import { resetSession } from "../../../../lib/query/workspace";
+import { useAppMutation } from "../../../../lib/query/define";
+import { usePageQuery } from "../../../../lib/query/page-query";
+import { orgSettingsQuery } from "../../../../lib/query/settings";
+import { resetSession, useWorkspace } from "../../../../lib/query/workspace";
 import { broadcastSession } from "../../../../lib/session-sync";
 import { useErrorMessage } from "../../../../lib/use-error-message";
-import { useServerState } from "../../../../lib/use-server-state";
+import NotFound from "../../not-found";
 
 /**
  * `/settings/organization`：组织设置（SettingsPage）——工具搜索开关、IM 语言（机器人固定话术的语言）、
  * 沙箱的设置在 `/settings/sandbox`。
- * 成员可看，管理员可改；有改动时出现 ActionRow。Read on the server (`page.tsx`); a save replaces it locally.
+ * 成员可看，管理员可改；有改动时出现 ActionRow。From the query cache (the layout prefetched it on a
+ * first load); a save writes the answer into the cache (the sandbox page shares it).
  */
+export default function OrganizationSettingsView() {
+  const ws = useWorkspace({ min: "member" });
+  if (ws.kind === "pending" || ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  return <OrganizationSettings orgId={ws.orgId} />;
+}
 
-export default function OrganizationSettings({
-  orgId,
-  initial,
-}: {
-  orgId: string;
-  initial: OrgSettingsResponse;
-}) {
+function OrganizationSettings({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("orgSettings");
   const tc = useTranslations("common");
@@ -55,11 +62,52 @@ export default function OrganizationSettings({
   const nav = useOrgSettingsNav();
   const { me } = useSession();
   const manage = canUpdateOrg(me);
-  const [data, set] = useServerState(initial);
+  const qc = useQueryClient();
+  const read = usePageQuery(orgSettingsQuery(orgId));
   const [draft, setDraft] = useState<Pick<Partial<OrgSettings>, "toolSearch" | "locale">>({});
-  const [pending, setPending] = useState(false);
+  // The answer is the new settings: it replaces the cached ones (the response may leave out the
+  // read-only parts the sandbox page shows, so the cached ones are kept).
+  const update = useAppMutation({
+    fn: (patch: OrgSettingsPatch) => updateOrgSettings(orgId, patch),
+    invalidates: () => [],
+    onSuccess: (res) =>
+      qc.setQueryData<OrgSettingsResponse>(orgSettingsQuery(orgId).queryKey, (old) => ({
+        ...old,
+        ...res,
+      })),
+  });
+  const header = {
+    path: [
+      ...scope,
+      { label: "settings", href: "/settings/organization" },
+      { label: "organization" },
+    ],
+    title: t("title"),
+  };
+  if (read.kind === "notFound") return <NotFound />;
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
+  if (read.kind === "loading") {
+    return (
+      <SettingsPage
+        header={header}
+        nav={nav}
+        activeNav="organization"
+        // Tool search (a choice of two cards) and the IM locale (a select).
+        loading={{
+          sections: [
+            { fields: 2, title: t("toolSearch.title"), description: t("toolSearch.description") },
+            {
+              fields: [{ control: "select" }],
+              title: t("locale.title"),
+              description: t("locale.description"),
+            },
+          ],
+        }}
+      />
+    );
+  }
 
-  const saved = data.settings;
+  const saved = read.data.settings;
   const toolSearch = draft.toolSearch ?? saved.toolSearch ?? "on";
   const locale = draft.locale ?? saved.locale ?? "en";
   // 只提交改过的项
@@ -71,30 +119,18 @@ export default function OrganizationSettings({
   const dirty = unsaved > 0;
 
   async function save() {
-    setPending(true);
     try {
-      const res = await updateOrgSettings(orgId, patch);
-      // The response may leave out the read-only parts the sandbox page shows: keep the loaded ones
-      set({ ...data, ...res });
+      await update.mutateAsync(patch);
       setDraft({});
       toast.success(t("saved"));
     } catch (e) {
       toast.error(errorMessage(e));
-    } finally {
-      setPending(false);
     }
   }
 
   return (
     <SettingsPage
-      header={{
-        path: [
-          ...scope,
-          { label: "settings", href: "/settings/organization" },
-          { label: "organization" },
-        ],
-        title: t("title"),
-      }}
+      header={header}
       nav={nav}
       activeNav="organization"
       {...(dirty
@@ -102,7 +138,7 @@ export default function OrganizationSettings({
             actionRow: {
               unsaved,
               cancel: { label: tc("cancel"), onSelect: () => setDraft({}) },
-              primary: { label: t("save"), onSelect: () => void save(), loading: pending },
+              primary: { label: t("save"), onSelect: () => void save(), loading: update.isPending },
             },
           }
         : {})}
@@ -164,6 +200,8 @@ function DeleteOrg({ orgId }: { orgId: string }) {
   const { me } = useSession();
   const errorMessage = useErrorMessage();
   const [open, setOpen] = useState(false);
+  // The cache is dropped as a whole after it (`resetSession`): nothing to invalidate.
+  const remove = useAppMutation({ fn: deleteOrg, invalidates: () => [] });
   const org = me.memberships.find((m) => m.orgId === orgId);
   if (org === undefined) return null;
   return (
@@ -184,7 +222,7 @@ function DeleteOrg({ orgId }: { orgId: string }) {
         confirmLabel={t("delete.confirm")}
         onConfirm={async () => {
           try {
-            await deleteOrg(orgId);
+            await remove.mutateAsync(orgId);
           } catch (e) {
             // DangerConfirm shows the message: the localized one, never the kernel's English
             throw new Error(errorMessage(e));

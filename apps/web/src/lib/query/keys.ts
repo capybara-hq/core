@@ -83,6 +83,16 @@ export const keys = {
       extensionPages: (): readonly unknown[] => [...all, "extensionPages"],
       /** The org's members. */
       members: (): readonly unknown[] => [...all, "members"],
+      /** The org's settings (with the deployment's defaults and the sandbox limits). */
+      orgSettings: (): readonly unknown[] => [...all, "orgSettings"],
+      /** The org's invitations (admins). */
+      invitations: (): readonly unknown[] => [...all, "invitations"],
+      /** The org's model purposes and what each maps to. */
+      orgPurposes: (): readonly unknown[] => [...all, "orgPurposes"],
+      /** The org's file previewers (which extension previews which files). */
+      orgFilePreviewers: (): readonly unknown[] => [...all, "orgFilePreviewers"],
+      /** The org's service tokens. */
+      serviceTokens: (): readonly unknown[] => [...all, "serviceTokens"],
       /** The org's models (by provider). */
       models: (): readonly unknown[] => [...all, "models"],
       /** The org's connectors. */

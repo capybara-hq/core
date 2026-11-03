@@ -1,6 +1,6 @@
 // The organization and personal settings pages render on the server (web-SSR spec §6, task 9):
 // first paint complete without a browser fetch, the gate cases, and the failure modes of R5.
-import { cleanup, screen } from "@testing-library/react";
+import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,12 +8,11 @@ import en from "../messages/en.json";
 import ExtensionsPage from "../src/app/(app)/settings/extensions/page";
 import MembersPage from "../src/app/(app)/settings/members/page";
 import ModelsPage from "../src/app/(app)/settings/models/page";
-import OrganizationPage from "../src/app/(app)/settings/organization/page";
 import PluginsPage from "../src/app/(app)/settings/plugins/page";
-import SandboxPage from "../src/app/(app)/settings/sandbox/page";
 import TokensPage from "../src/app/(app)/settings/tokens/page";
-import { json } from "./support/api";
+import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes, renderRoute } from "./support/server";
 import { NOT_READY } from "./support/shell";
@@ -116,6 +115,36 @@ const ROUTES: Routes = {
   "GET /api/v1/auth/sources": () => json(200, { sources: [{ plugin: "fake-im" }] }),
 };
 
+/** Lets pending reads and effects run (a read after mount would show up in the calls). */
+const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
+
+/** A client navigation to `path` with an empty cache whose `held` read answers on `release()`. */
+async function renderHeld(path: string, held: string, routes: Routes = ROUTES) {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  const answer = routes[held];
+  if (answer === undefined) throw new Error(`no route ${held}`);
+  const r = await renderRouteEmptyCache(path, {
+    ...routes,
+    [held]: async (c) => {
+      await gate;
+      return answer(c);
+    },
+  });
+  return { ...r, release: () => act(async () => release()) };
+}
+
+/** Waits for `name`'s template, then checks it is busy and `text` is not shown yet. */
+async function expectLoading(name: string, text: string) {
+  await vi.waitFor(() => {
+    if (template(name) === null) throw new Error("no page");
+  });
+  expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+  expect(screen.queryByText(text)).toBeNull();
+}
+
 const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
 const noAccess = () => template("StatusPage")?.getAttribute("data-kind") === "no-access";
 
@@ -123,19 +152,76 @@ beforeEach(() => resetNavigation("/settings/organization"));
 afterEach(cleanup);
 
 describe("first paint comes from the server (no browser fetch)", () => {
-  it("/settings/organization and /settings/sandbox: the settings", async () => {
+  it("/settings/organization and /settings/sandbox: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => OrganizationPage(), ROUTES);
+    await renderRouteWithCache("/settings/organization", ROUTES);
     expect(
       screen.getByRole("radio", { name: new RegExp(`^${en.orgSettings.toolSearch.off}`) }),
     ).toHaveProperty("checked", true);
+    await settle();
     cleanup();
-    await renderRoute(() => SandboxPage(), ROUTES);
+    await renderRouteWithCache("/settings/sandbox", ROUTES);
     expect(
       screen.getByRole("radio", { name: new RegExp(`^${en.orgSettings.sandbox.ask}`) }),
     ).toHaveProperty("checked", true);
     expect(screen.getByText(en.orgSettings.limits.title)).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
+  });
+
+  it.each([
+    ["/settings/organization", en.orgSettings.toolSearch.offHint],
+    ["/settings/sandbox", en.orgSettings.limits.title],
+  ])("%s: an empty cache shows the template's loading state, then the data", async (path, text) => {
+    const { release } = await renderHeld(path, `GET ${O}/settings`);
+    await expectLoading("SettingsPage", text);
+    await release();
+    expect(await screen.findByText(text)).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
+  it("/settings/organization: a failed read is the error state; retry reads it again", async () => {
+    let fail = true;
+    const answer = ROUTES[`GET ${O}/settings`] as NonNullable<Routes[string]>;
+    const routes: Routes = {
+      ...ROUTES,
+      [`GET ${O}/settings`]: (c) => (fail ? failing() : answer(c)),
+    };
+    const calls = stubApi(routes);
+    await renderRouteWithCache("/settings/organization", routes);
+    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("maintenance");
+    await settle();
+    expect(calls).toEqual([]);
+    fail = false;
+    await userEvent.setup().click(screen.getByRole("button", { name: en.errors.page.retry }));
+    expect(await screen.findByText(en.orgSettings.toolSearch.offHint)).toBeTruthy();
+  });
+
+  it("saving the sandbox settings writes the answer into the cache the general page shares (no read)", async () => {
+    const calls = stubApi({
+      ...ROUTES,
+      [`PATCH ${O}/settings`]: (c) =>
+        json(200, {
+          settings: { toolSearch: "off", locale: "en", ...(bodyOf(c) as object) },
+        }),
+    });
+    const { client } = await renderRouteWithCache("/settings/sandbox", ROUTES);
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("radio", { name: new RegExp(`^${en.orgSettings.sandbox.allow}`) }),
+    );
+    const row = screen.getByRole("region", { name: "Pending changes" });
+    await user.click(within(row).getByRole("button", { name: en.orgSettings.save }));
+    expect(await screen.findByText(en.sandboxSettings.saved)).toBeTruthy();
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`PATCH ${O}/settings`]);
+    const cached = client.getQueryData<{ settings: object; sandboxLimits?: object }>([
+      "org",
+      "o1",
+      "orgSettings",
+    ]);
+    expect(cached?.settings).toMatchObject({ sandboxToolPolicy: "allow" });
+    // the read-only parts the answer left out stay
+    expect(cached?.sandboxLimits).toEqual({ cpu: 2, memoryMb: 4096, source: "deployment" });
   });
 
   it("/settings/members: members and, for an admin, the invitations", async () => {
@@ -202,8 +288,6 @@ describe("first paint comes from the server (no browser fetch)", () => {
 
 type Page = () => Promise<ReactNode>;
 const GATES: [string, Page, "member" | "admin" | "guest", boolean][] = [
-  ["/settings/organization", () => OrganizationPage(), "member", false],
-  ["/settings/sandbox", () => SandboxPage(), "member", false],
   ["/settings/members", () => MembersPage(), "member", true],
   ["/settings/models", () => ModelsPage(), "admin", true],
   ["/settings/plugins", () => PluginsPage(), "admin", false],
@@ -235,6 +319,38 @@ describe("the gates", () => {
         await expect(renderRoute(page, ROUTES, { readiness: NOT_READY })).rejects.toThrow(
           "REDIRECT /",
         );
+      }
+    },
+  );
+});
+
+/** The pages that read through the query cache: path, the role they need, whether a setup step. */
+const ROUTE_GATES: [string, "member" | "admin", boolean][] = [
+  ["/settings/organization", "member", false],
+  ["/settings/sandbox", "member", false],
+];
+
+describe("the gates (query cache)", () => {
+  it.each(ROUTE_GATES)(
+    "%s: below its role no access and nothing read; no org renders nothing; setup",
+    async (path, min, step) => {
+      const denied = min === "admin" ? as("member") : as("guest");
+      const r = await renderRouteWithCache(path, ROUTES, { me: denied });
+      expect(new Set(r.calls.map((c) => c.url))).toEqual(new Set(["/api/v1/me", `${O}/readiness`]));
+      expect(noAccess()).toBe(true);
+      cleanup();
+      const none = await renderRouteWithCache(path, ROUTES, { me: { ...ME, currentOrgId: null } });
+      expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+      expect(document.body.textContent).toBe("");
+      cleanup();
+      await renderRouteWithCache(path, ROUTES, { readiness: NOT_READY });
+      if (step) {
+        expect(template("StatusPage")).toBeNull();
+        expect(document.querySelector("h1")).not.toBeNull();
+        await settle();
+        expect(router.replace).not.toHaveBeenCalled();
+      } else {
+        await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
       }
     },
   );

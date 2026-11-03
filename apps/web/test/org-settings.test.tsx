@@ -3,12 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import OrganizationSettingsPage from "../src/app/(app)/settings/organization/page";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
+import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
-import { renderRoute } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -39,7 +38,7 @@ describe("组织设置（SettingsPage）", () => {
         [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }),
         [`PATCH ${SETTINGS}`]: (c) => json(200, { settings: bodyOf(c) }),
       });
-      const { container } = await renderRoute(OrganizationSettingsPage, lastStubRoutes(), {
+      const { container } = await renderRouteWithCache("/settings/organization", lastStubRoutes(), {
         locale,
       });
       expect(container.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
@@ -69,7 +68,7 @@ describe("组织设置（SettingsPage）", () => {
       [...c.querySelectorAll(".cb-settings-nav")].map((n) => n.textContent ?? "");
     stubApi({ [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }) });
     const nav = en.connections.nav;
-    const admin = await renderRoute(OrganizationSettingsPage, lastStubRoutes());
+    const admin = await renderRouteWithCache("/settings/organization", lastStubRoutes());
     await screen.findByRole("radio", { name: new RegExp(`^${en.orgSettings.toolSearch.on}`) });
     const text = groups(admin.container).join(" ");
     const order = [
@@ -90,7 +89,7 @@ describe("组织设置（SettingsPage）", () => {
     }
     cleanup();
     stubApi({ [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }) });
-    await renderRoute(OrganizationSettingsPage, lastStubRoutes(), { me: MEMBER });
+    await renderRouteWithCache("/settings/organization", lastStubRoutes(), { me: MEMBER });
     await screen.findByText(en.orgSettings.readonly);
     expect(screen.getByRole("link", { name: nav.members })).toBeTruthy();
     expect(screen.getByRole("link", { name: nav.sandbox })).toBeTruthy();
@@ -101,12 +100,12 @@ describe("组织设置（SettingsPage）", () => {
 
   it("二级导航：成员起有「成员」；访客打不开组织设置（没有访问权限）", async () => {
     stubApi({ [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }) });
-    await renderRoute(OrganizationSettingsPage, lastStubRoutes(), { me: MEMBER });
+    await renderRouteWithCache("/settings/organization", lastStubRoutes(), { me: MEMBER });
     const link = await screen.findByRole("link", { name: en.connections.nav.members });
     expect(link.getAttribute("href")).toBe("/settings/members");
     cleanup();
     stubApi({ [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }) });
-    await renderRoute(OrganizationSettingsPage, lastStubRoutes(), {
+    await renderRouteWithCache("/settings/organization", lastStubRoutes(), {
       me: { ...ME, memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "guest" }] },
     });
     expect(
@@ -117,7 +116,7 @@ describe("组织设置（SettingsPage）", () => {
 
   it("普通成员：只读（单选不可用、说明只有管理员能改），没有 ActionRow", async () => {
     stubApi({ [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "off" } }) });
-    await renderRoute(OrganizationSettingsPage, lastStubRoutes(), { me: MEMBER });
+    await renderRouteWithCache("/settings/organization", lastStubRoutes(), { me: MEMBER });
     const off = await screen.findByRole("radio", {
       name: new RegExp(`^${en.orgSettings.toolSearch.off}`),
     });
