@@ -18,9 +18,11 @@ import {
   ObjectList,
   ObjectRow,
   OverviewPage,
+  RadioGroup,
   SettingsPage,
   SpanWaterfall,
   Stack,
+  Switch,
   Text,
   TracePage,
   WizardPage,
@@ -280,6 +282,95 @@ function settingsBlocks(): ReactNode {
           activeNav="org"
           actionRow={SETTINGS_ROW}
           loading={{ sections: [{ fields: 2 }, { fields: 1 }] }}
+        />
+      </RefBlock>
+      {/* Control groups that are no Field: card radios with a hint, a KeyValue, a switch row. */}
+      <RefBlock id="template-settings-radio-cards" width={W} height={H}>
+        <SettingsPage header={SETTINGS_HEADER} nav={SETTINGS_NAV} activeNav="org">
+          <FormSection id="policy" title="沙箱工具" description="沙箱工具的默认策略。">
+            <Stack gap={8}>
+              <RadioGroup
+                label="沙箱工具"
+                variant="card"
+                value="allow"
+                onChange={noop}
+                options={[
+                  { value: "allow", label: "直接运行", description: "沙箱里的命令直接执行。" },
+                  { value: "ask", label: "需要审批", description: "除只读工具外都要审批。" },
+                ]}
+              />
+              <Text variant="small" tone="muted">
+                只有管理员可以修改。
+              </Text>
+            </Stack>
+          </FormSection>
+          <FormSection id="limits" title="沙箱资源" description="每个沙箱的 CPU 与内存。">
+            <Stack gap={8}>
+              <KeyValue
+                keyWidth="10ch"
+                rows={[
+                  { k: "CPU", v: "2 核" },
+                  { k: "内存", v: "4096 MB" },
+                  { k: "来源", v: "部署默认" },
+                ]}
+              />
+              <Text variant="small" tone="muted">
+                只对新建的沙箱生效。
+              </Text>
+            </Stack>
+          </FormSection>
+          <FormSection id="ext" title="待办" description="1.0.0">
+            <Stack direction="row" gap={12} align="center">
+              <Switch label="启用待办" checked onChange={noop} />
+              <Text>已启用</Text>
+            </Stack>
+          </FormSection>
+        </SettingsPage>
+      </RefBlock>
+      <RefBlock id="template-settings-loading-radio-cards" width={W} height={H}>
+        <SettingsPage
+          header={{ ...SETTINGS_HEADER, title: "" }}
+          nav={SETTINGS_NAV}
+          activeNav="org"
+          loading={{
+            sections: [
+              {
+                title: "沙箱工具",
+                description: "沙箱工具的默认策略。",
+                fields: [{ control: "radio-cards", options: 2, help: true }],
+              },
+              {
+                title: "沙箱资源",
+                description: "每个沙箱的 CPU 与内存。",
+                fields: [{ control: "key-value", rows: 3, keyWidth: "10ch", help: true }],
+              },
+              { fields: [{ control: "switch" }] },
+            ],
+          }}
+        />
+      </RefBlock>
+      {/* A stack of titled cards (the installed plugins). */}
+      <RefBlock id="template-settings-cards" width={W} height={H}>
+        <SettingsPage header={SETTINGS_HEADER} nav={SETTINGS_NAV} activeNav="org">
+          <Stack gap={16}>
+            {["crm 1.2.0", "todo 0.3.0", "board 2.0.0"].map((name) => (
+              <section key={name} aria-label={name}>
+                <Card title={name} actions={<Button variant="danger">卸载</Button>}>
+                  <Stack gap={8}>
+                    <Text tone="muted">已安装 · 2026-10-20 09:00</Text>
+                  </Stack>
+                </Card>
+              </section>
+            ))}
+          </Stack>
+        </SettingsPage>
+      </RefBlock>
+      <RefBlock id="template-settings-loading-cards" width={W} height={H}>
+        <SettingsPage
+          header={{ ...SETTINGS_HEADER, title: "" }}
+          nav={SETTINGS_NAV}
+          activeNav="org"
+          loading={{ cards: { shape: { lines: 1, actions: 1 } } }}
         />
       </RefBlock>
     </>

@@ -461,6 +461,92 @@ describe("SettingsPage loading", () => {
     expect(screen.getAllByRole("status")).toHaveLength(1);
   });
 
+  it("radio-cards, key-value and switch shapes draw the loaded group's own markup and a hint line", () => {
+    zh(
+      <SettingsPage
+        header={header}
+        nav={nav}
+        activeNav="general"
+        loading={{
+          sections: [
+            { fields: [{ control: "radio-cards", options: 3, help: true }] },
+            { fields: [{ control: "key-value", rows: 3, keyWidth: "10ch" }] },
+            { fields: [{ control: "switch" }] },
+          ],
+        }}
+      />,
+    );
+    const radios = document.querySelector('[data-part="loading-radios"]');
+    expect(radios?.className).toBe("cb-radios");
+    expect(radios?.getAttribute("data-variant")).toBe("card");
+    const cards = radios?.querySelectorAll('.cb-radio[data-variant="card"]') ?? [];
+    expect(cards).toHaveLength(3);
+    // each card: the label line and the description line
+    expect(cards[0]?.querySelectorAll(".cb-radio-text [data-part='skeleton-text']")).toHaveLength(
+      2,
+    );
+    // the group and its hint sit in a gap-8 stack, as the loaded section's Stack
+    const stack = radios?.parentElement;
+    expect(stack?.className).toBe("cb-stack");
+    expect(stack?.getAttribute("data-gap")).toBe("8");
+    expect(stack?.lastElementChild?.getAttribute("data-size")).toBe("small");
+    const kv = document.querySelector('[data-part="loading-key-value"]');
+    expect(kv?.className).toBe("cb-kv");
+    expect(kv?.querySelectorAll(".cb-kv-row")).toHaveLength(3);
+    expect(kv?.querySelector<HTMLElement>(".cb-kv-key")?.style.width).toBe("10ch");
+    const sw = document.querySelector('[data-box="block"][style*="32px"]');
+    expect(sw).not.toBeNull();
+    expect(count('[data-part="loading-field"]')).toBe(0);
+  });
+
+  it("cards: a stack of titled card placeholders, by shape or a repeated shape (default 3)", () => {
+    zh(
+      <SettingsPage
+        header={header}
+        nav={nav}
+        activeNav="general"
+        loading={{ cards: { shape: { lines: 1, actions: 1 } } }}
+      />,
+    );
+    const stack = document.querySelector(".cb-settings-content > .cb-stack");
+    expect(stack?.getAttribute("data-gap")).toBe("16");
+    const cards = document.querySelectorAll('[data-part="loading-shaped-card"]');
+    expect(cards).toHaveLength(3);
+    expect(cards[0]?.querySelectorAll(".cb-card-actions [data-part='skeleton-box']")).toHaveLength(
+      1,
+    );
+    expect(cards[0]?.querySelectorAll(".cb-card-body [data-part='skeleton-text']")).toHaveLength(1);
+    cleanup();
+    zh(
+      <SettingsPage
+        header={header}
+        nav={nav}
+        activeNav="general"
+        loading={{
+          sections: [
+            {
+              title: "用途",
+              cards: [
+                { lines: 2, lineSize: "small", field: { control: "select" } },
+                { lines: 3, lineSize: "small", field: { control: "select" } },
+              ],
+            },
+          ],
+        }}
+      />,
+    );
+    const inSection = document.querySelectorAll(
+      '.cb-form-section-fields > [data-part="loading-shaped-card"]',
+    );
+    expect(inSection).toHaveLength(2);
+    // the lines (gap 4) then the field (gap 12)
+    const body = inSection[1]?.querySelector(".cb-card-body > .cb-stack");
+    expect(body?.getAttribute("data-gap")).toBe("12");
+    expect(body?.firstElementChild?.getAttribute("data-gap")).toBe("4");
+    expect(body?.firstElementChild?.children).toHaveLength(3);
+    expect(body?.querySelector('[data-part="loading-field"]')).not.toBeNull();
+  });
+
   it("keeps the action row, disabled", () => {
     zh(
       <SettingsPage

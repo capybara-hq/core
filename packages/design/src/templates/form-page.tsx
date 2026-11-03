@@ -10,8 +10,10 @@ import { Text } from "../layout/index";
 import { useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
 import {
+  type CardShape,
   type FieldShape,
   LoadingFields,
+  LoadingShapedCards,
   LoadingSwitchRows,
   loadingActionRow,
   loadingCount,
@@ -151,14 +153,18 @@ export function FormSection({
 /**
  * A section whose title and description are not known either (SettingsPage's loading shorthand):
  * the `FormSection` frame with an h2-sized slot for the title and a prose-small slot for the
- * description. What the page does know (`title`, `description`) renders for real.
+ * description. What the page does know (`title`, `description`) renders for real. The form card
+ * holds `fields` field placeholders, or `cards` titled card placeholders (a section that lists
+ * cards, spec §5.8).
  */
 export function LoadingFormSection({
   fields,
+  cards,
   title,
   description,
 }: {
-  fields: number | FieldShape[];
+  fields?: number | FieldShape[];
+  cards?: CardShape[];
   title?: string;
   description?: string;
 }) {
@@ -183,7 +189,11 @@ export function LoadingFormSection({
         )}
       </div>
       <div className="cb-form-section-fields" data-part="form-card">
-        <LoadingFields fields={fields} />
+        {cards !== undefined ? (
+          <LoadingShapedCards cards={cards} />
+        ) : (
+          <LoadingFields fields={fields ?? 0} />
+        )}
       </div>
     </section>
   );

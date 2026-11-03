@@ -490,9 +490,11 @@ States: `default`, `loading`, `default-records`, `loading-records`
 
 ### 5.8 Settings (T5)
 - **Loading** (`SettingsPage.loading`, `{ sections? }`): the header is its loading state (§4.2); the sub-nav is real (static per page) and so is the header's `description`; an ActionRow the page passes stays with its buttons disabled. `sections` (one entry per section: `fields`, and the `title` / `description` the page already knows) draws each section in the `FormSection` frame (§5.3) in place of `children`: a title the page does not know is an h2-sized slot (`SkeletonText` `heading`, 45%), a description it does not know a `body` slot (70%), then `fields` field placeholders (§5.3; a count or `FieldShape[]`). Without `sections` the children render as they are, each `FormSection` or list saying for itself whether it is loading. One busy announcement (§6.29). Nothing animates.
+  - **Control groups** that are no `Field` have their own `FieldShape`s, each drawn in a `Stack` (gap 8) with an optional `help` line (`small`, 55%) under it, as a settings section draws a group and its hint: `radio-cards` is the card RadioGroup's own markup (`.cb-radios[data-variant=card]`, gap 8) with `options` cards (default 2), each the card's frame (padding `space.2` `space.3`, 1 px `line` border) holding a 14 px box slot and the text column's `body` label slot (30%) over its `small` description slot (70%); `key-value` is KeyValue's own `dl` with `rows` rows (default 3), a `body` slot in the `keyWidth` key column (default 8ch) and a 55% value slot; `switch` is a row (gap 12, centred) of a 32 × 20 box (the Switch) and a 64 px `body` slot (its state word). Static text the page shows beside a group (a read-only note, "applies to new sandboxes") renders for real through `help` only when the page knows it is shown. States `radio-cards` / `loading-radio-cards`.
+  - **Cards**: a section that lists titled cards takes `cards: CardShape[]` instead of `fields`, and a page that is a stack of titled cards (no sections) passes `loading.cards`: `CardShape[]`, or `{ shape, count }` (one shape repeated, default 3), in a 16-gap stack as the loaded cards. A card placeholder is the `Card` frame: in its head a 45% `body` title slot and `actions` button slots (88 px wide, `control.default` high); in its body `lines` text lines (`lineSize` `body` or `small`; 70% then 55%) in a gap-8 stack, or, with a `field`, the lines in a gap-4 stack and that field's placeholder below them (gap 12), as a card that describes a setting and then edits it. States `cards` / `loading-cards`.
 
 <!-- states: template-settings -->
-States: `default`, `loading`
+States: `default`, `loading`, `radio-cards`, `loading-radio-cards`, `cards`, `loading-cards`
 
 <!-- size-table: template-settings -->
 | Part | State | Property | Value |
@@ -503,6 +505,12 @@ States: `default`, `loading`
 | settings-nav | loading | width | 200 |
 | skeleton-box[data-box=default] | loading | height | control.default |
 | skeleton-text[data-size=heading] | loading | height | type.h2.line |
+| content | radio-cards | max-width | layout.content |
+| content | loading-radio-cards | max-width | layout.content |
+| skeleton-text[data-size=small] | loading-radio-cards | height | type.small.line |
+| content | cards | max-width | layout.content |
+| content | loading-cards | max-width | layout.content |
+| skeleton-box[data-box=default] | loading-cards | height | control.default |
 
 ### 5.9 Wizard (T9)
 - **Loading** (`WizardPage.loading`, `{ fields }`): the header is its loading state (§4.2); the step bar is real (the steps are static); the ActionRow stays with its buttons disabled; the step's body is one card (the `panel` card of §5.2 with a 30% `body` slot as its title) holding `fields` field placeholders (§5.3; a count or the page's static `FieldShape[]`) `space.4` apart, in place of `children`. One busy announcement (§6.29). Nothing animates.

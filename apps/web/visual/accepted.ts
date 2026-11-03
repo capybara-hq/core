@@ -118,7 +118,14 @@ export const LOADING_TEMPLATES: {
     ],
   },
   { name: "form", pairs: [{ loaded: "page", loading: "loading" }] },
-  { name: "settings", pairs: [{ loaded: "default", loading: "loading" }] },
+  {
+    name: "settings",
+    pairs: [
+      { loaded: "default", loading: "loading" },
+      { loaded: "radio-cards", loading: "loading-radio-cards" },
+      { loaded: "cards", loading: "loading-cards" },
+    ],
+  },
   { name: "wizard", pairs: [{ loaded: "default", loading: "loading" }] },
   { name: "auth", pairs: [{ loaded: "default", loading: "loading" }] },
   // the conversation's loading block is the file-panel block with every part still on its way

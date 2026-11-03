@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { SkeletonBox, SkeletonText, StatCards } from "../display/index";
-import { Grid } from "../layout/index";
+import { Grid, Stack } from "../layout/index";
 import { type ActionRowProps, PageHeader, type PageHeaderProps } from "../shell/index";
 
 /**
@@ -145,20 +145,99 @@ export function loadingActionRow(row: ActionRowProps): ActionRowProps {
  * share the default control height); `rows` the textarea's lines (default 2); `help` a small line
  * under the control (help text, an error message or a counter); `pair` puts this field and the next
  * one in one row, as the loaded section's two-column grid does.
+ *
+ * Three shapes stand for a control group that is no `Field` (spec §5.8), each in a `Stack` (gap 8)
+ * with the `help` line under it, as a settings section draws a group and its hint: `radio-cards`
+ * is a card RadioGroup of `options` cards (default 2), each with its label and description lines;
+ * `key-value` is a KeyValue of `rows` rows (default 3) with a `keyWidth` key column (default 8ch);
+ * `switch` is a switch and its state word on one row.
  */
 export type FieldShape = {
-  control?: "input" | "textarea" | "select" | "segmented";
+  control?: "input" | "textarea" | "select" | "segmented" | "radio-cards" | "key-value" | "switch";
   help?: boolean;
   rows?: number;
   pair?: boolean;
+  /** `radio-cards`: how many cards. */
+  options?: number;
+  /** `key-value`: the key column's width (KeyValue's `keyWidth`). */
+  keyWidth?: string;
+};
+
+/**
+ * A titled card while it loads (spec §5.8): the `Card` frame with a title slot and `actions`
+ * button slots in its head; the body holds `lines` text lines (`lineSize`, default `body`), and
+ * with a `field` the lines (gap 4) and that field's placeholder below them (gap 12), as a card that
+ * describes a setting and then edits it does.
+ */
+export type CardShape = {
+  lines?: number;
+  lineSize?: "body" | "small";
+  field?: FieldShape;
+  actions?: number;
 };
 
 /** The shapes a bare field count stands for: that many default inputs. */
 const shapesOf = (fields: number | FieldShape[]): FieldShape[] =>
   typeof fields === "number" ? Array.from({ length: Math.max(0, fields) }, () => ({})) : fields;
 
+/** A card RadioGroup's own markup with slots for each card's label and description. */
+function LoadingRadioCards({ options }: { options: number }) {
+  return (
+    <div className="cb-radios" data-variant="card" data-part="loading-radios">
+      {Array.from({ length: Math.max(0, options) }, (_, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
+        <span key={i} className="cb-radio" data-variant="card" data-part="loading-radio">
+          <SkeletonBox part="block" width={14} height={14} />
+          <span className="cb-radio-text">
+            <SkeletonText width="30%" />
+            <SkeletonText width="70%" size="small" />
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** KeyValue's own `dl` with a key slot and a value slot per row. */
+function LoadingKeyValue({ rows, keyWidth }: { rows: number; keyWidth: string }) {
+  return (
+    <dl className="cb-kv" data-part="loading-key-value">
+      {Array.from({ length: Math.max(0, rows) }, (_, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
+        <div key={i} className="cb-kv-row" data-part="key-value-row">
+          <dt className="cb-kv-key" style={{ width: keyWidth }}>
+            <SkeletonText width="100%" />
+          </dt>
+          <dd className="cb-kv-value">
+            <SkeletonText width="55%" />
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 /** One field placeholder: the loaded `.cb-field`'s own markup, with slots where the data goes. */
 function LoadingField({ shape }: { shape: FieldShape }) {
+  const group =
+    shape.control === "radio-cards" ? (
+      <LoadingRadioCards options={shape.options ?? 2} />
+    ) : shape.control === "key-value" ? (
+      <LoadingKeyValue rows={shape.rows ?? 3} keyWidth={shape.keyWidth ?? "8ch"} />
+    ) : shape.control === "switch" ? (
+      <Stack direction="row" gap={12} align="center">
+        <SkeletonBox part="block" width={32} height={20} />
+        <SkeletonText width={64} />
+      </Stack>
+    ) : null;
+  if (group !== null) {
+    return (
+      <Stack gap={8}>
+        {group}
+        {shape.help ? <SkeletonText width="55%" size="small" /> : null}
+      </Stack>
+    );
+  }
   const textarea = shape.control === "textarea";
   return (
     <div className="cb-field" data-part="loading-field">
@@ -172,6 +251,55 @@ function LoadingField({ shape }: { shape: FieldShape }) {
       )}
       {shape.help ? <SkeletonText width="55%" size="small" /> : null}
     </div>
+  );
+}
+
+/** Cards a loading page draws when it is not told how many (spec §5.8). */
+export const LOADING_CARDS = 3;
+
+/**
+ * Titled card placeholders (spec §5.8), one per `CardShape`, in the `Card` frame: a title slot
+ * (45%) and `actions` button slots (88 px, the control height) in the head, then the body.
+ */
+export function LoadingShapedCards({ cards }: { cards: CardShape[] }) {
+  return (
+    <>
+      {cards.map((c, i) => {
+        const size = c.lineSize ?? "body";
+        const lines = Array.from({ length: Math.max(0, c.lines ?? 1) }, (_, j) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
+          <SkeletonText key={j} width={j === 0 ? "70%" : "55%"} size={size} />
+        ));
+        return (
+          // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
+          <section key={i} className="cb-card" data-part="loading-shaped-card">
+            <header className="cb-card-head">
+              <div className="cb-card-title">
+                <SkeletonText width="45%" />
+              </div>
+              {(c.actions ?? 0) > 0 ? (
+                <div className="cb-card-actions">
+                  {Array.from({ length: c.actions ?? 0 }, (_, j) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
+                    <SkeletonBox key={j} part="default" width={88} />
+                  ))}
+                </div>
+              ) : null}
+            </header>
+            <div className="cb-card-body">
+              {c.field ? (
+                <Stack gap={12}>
+                  <Stack gap={4}>{lines}</Stack>
+                  <LoadingField shape={c.field} />
+                </Stack>
+              ) : (
+                <Stack gap={8}>{lines}</Stack>
+              )}
+            </div>
+          </section>
+        );
+      })}
+    </>
   );
 }
 

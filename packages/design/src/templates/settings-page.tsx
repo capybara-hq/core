@@ -1,9 +1,18 @@
 import { type ReactNode, useEffect, useRef } from "react";
 import { SkeletonGroup } from "../display/skeleton";
+import { Stack } from "../layout/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
 import { LoadingFormSection } from "./form-page";
-import { type FieldShape, loadingActionRow, loadingHeader, TemplateHead } from "./frame";
+import {
+  type CardShape,
+  type FieldShape,
+  LOADING_CARDS,
+  LoadingShapedCards,
+  loadingActionRow,
+  loadingHeader,
+  TemplateHead,
+} from "./frame";
 
 export type SettingsNavGroup = {
   group: string;
@@ -23,8 +32,11 @@ export type SettingsNavGroup = {
  * rows, the sub-nav and the header's description stay real (they are static per page), an
  * ActionRow stays with its buttons disabled, and `sections` (one entry per section, its field
  * count, and the `title` / `description` the page already knows) are placeholders in the
- * sections' own frame in place of `children`. Without `sections` the children render as they are
- * (each `FormSection` or list says for itself whether it is loading). One busy announcement.
+ * sections' own frame in place of `children`; a section that lists cards takes `cards` instead of
+ * `fields`. A page that is a stack of titled cards (no sections) passes `cards`: the cards'
+ * `CardShape`s, or one `shape` repeated `count` times (default {@link LOADING_CARDS}, 3); they
+ * stand in a 16-gap stack, as the loaded cards do. Without either the children render as they are (each `FormSection` or list says for
+ * itself whether it is loading). One busy announcement.
  */
 export function SettingsPage({
   header,
@@ -39,7 +51,13 @@ export function SettingsPage({
   activeNav: string;
   actionRow?: ActionRowProps;
   loading?: {
-    sections?: { fields: number | FieldShape[]; title?: string; description?: string }[];
+    sections?: {
+      fields?: number | FieldShape[];
+      cards?: CardShape[];
+      title?: string;
+      description?: string;
+    }[];
+    cards?: CardShape[] | { shape?: CardShape; count?: number };
   };
   children?: ReactNode;
 }) {
@@ -95,12 +113,27 @@ export function SettingsPage({
                 {description}
               </p>
             ) : null}
-            {loading?.sections
-              ? loading.sections.map((s, i) => (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
-                  <LoadingFormSection key={i} {...s} />
-                ))
-              : children}
+            {loading?.sections ? (
+              loading.sections.map((s, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
+                <LoadingFormSection key={i} {...s} />
+              ))
+            ) : loading?.cards !== undefined ? (
+              <Stack gap={16}>
+                <LoadingShapedCards
+                  cards={
+                    Array.isArray(loading.cards)
+                      ? loading.cards
+                      : Array.from(
+                          { length: loading.cards.count ?? LOADING_CARDS },
+                          () => (loading.cards as { shape?: CardShape }).shape ?? {},
+                        )
+                  }
+                />
+              </Stack>
+            ) : (
+              children
+            )}
           </div>
         </div>
       </Body>
