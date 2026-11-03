@@ -243,6 +243,12 @@ export const keys = {
       authSources: (): readonly unknown[] => [...all, "authSources"],
       /** An invitation's public preview, by its token (no session needed). */
       invitation: (token: string): readonly unknown[] => [...all, "invitation", token],
+      /**
+       * An IM identity binding waiting for confirmation, by its token. The visitor must be signed in
+       * to read it, but its answer is the IM identity, the same whoever asks; a sign-in or sign-out
+       * drops the whole cache anyway.
+       */
+      pendingBinding: (token: string): readonly unknown[] => [...all, "pendingBinding", token],
       /** The admin console's four overview numbers. */
       adminOverview: (): readonly unknown[] => [...all, "adminOverview"],
       /** Every page of the accounts list (an invalidation prefix). */

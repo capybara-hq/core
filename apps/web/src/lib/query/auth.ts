@@ -1,4 +1,5 @@
 import { listAuthSources } from "../auth-sources";
+import { peekBinding } from "../identities";
 import { previewInvitation } from "../members";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
@@ -16,5 +17,13 @@ export const invitationQuery = (token: string) =>
   defineQuery({
     key: keys.deployment().invitation(token),
     fn: () => previewInvitation(token),
+    freshness: "deployment",
+  });
+
+/** The IM identity a binding link would bind to the signed-in account (a 401 when signed out). */
+export const pendingBindingQuery = (token: string) =>
+  defineQuery({
+    key: keys.deployment().pendingBinding(token),
+    fn: () => peekBinding(token).then((r) => r.binding),
     freshness: "deployment",
   });

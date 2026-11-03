@@ -28,7 +28,7 @@ import {
   stagedImportQuery,
 } from "./admin";
 import { agentConnectorQueries, agentFormQueries, agentQuery, agentsQuery } from "./agents";
-import { authSourcesQuery, invitationQuery } from "./auth";
+import { authSourcesQuery, invitationQuery, pendingBindingQuery } from "./auth";
 import { orgCatalogItemQuery, orgCatalogQuery } from "./catalog";
 import { channelQuery, channelSchemaQuery, channelsQuery, orgExtensionsQuery } from "./channels";
 import {
@@ -274,7 +274,12 @@ export const ROUTES: readonly RouteEntry[] = [
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "member") ? [] : agentFormQueries(orgId),
   },
-  { pattern: "/bind/[token]", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/bind/[token]",
+    // The pending binding (signed out, the bind layout sends the visitor to sign-in first).
+    queries: ({ params }) =>
+      params.token === undefined ? [] : [q(pendingBindingQuery(params.token))],
+  },
   {
     pattern: "/catalog",
     queries: ({ orgId, me }) =>

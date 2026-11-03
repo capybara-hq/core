@@ -6,14 +6,13 @@ import { act, cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import BindPage from "../src/app/(auth)/bind/[token]/page";
 import SetupPage from "../src/app/(auth)/setup/page";
 import { ServerSetupStatusProvider } from "../src/app/(auth)/setup/status";
 import { json, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderAuthRouteWithCache, renderRouteEmptyCache } from "./support/query";
 import { ME } from "./support/render";
-import { expectNoFirstPaintFetch, type Routes, renderRoute, renderServer } from "./support/server";
+import { expectNoFirstPaintFetch, type Routes, renderServer } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -69,7 +68,6 @@ async function renderHeld(path: string, held: string, routes: Routes = ROUTES) {
   });
   return { ...view, release: () => act(async () => release()) };
 }
-const bind = () => BindPage({ params: Promise.resolve({ token: "cap_bind_tok" }) });
 /** The order of two mocks' first calls. */
 const before = (a: { mock: { invocationCallOrder: number[] } }, b: typeof a) =>
   (a.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY) <
@@ -284,30 +282,54 @@ describe("/invite/[token]", () => {
 });
 
 describe("/bind/[token]", () => {
-  it("the pending binding, with no browser fetch", async () => {
+  const PAGE = "/bind/cap_bind_tok";
+
+  it("/bind/[token]: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(bind, ROUTES);
+    await renderAuthRouteWithCache(PAGE, ROUTES);
     expect(screen.getByText("Alice Wong")).toBeTruthy();
     expect(screen.getByRole("button", { name: en.bind.confirm })).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("signed out: to sign-in and back here, before anything renders", async () => {
-    expectNoFirstPaintFetch();
-    await expect(
-      renderRoute(bind, { ...ROUTES, "GET /api/v1/bind/cap_bind_tok": unauthenticated }),
-    ).rejects.toThrow(`REDIRECT /login?returnTo=${encodeURIComponent("/bind/cap_bind_tok")}`);
+  it("/bind/[token]: an empty cache shows the template's loading state, then the data", async () => {
+    resetNavigation(PAGE);
+    const { release } = await renderHeld(PAGE, "GET /api/v1/bind/cap_bind_tok");
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByText("Alice Wong")).toBeNull();
+    await release();
+    expect(await screen.findByText("Alice Wong")).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("an invalid link is the page's own problem", async () => {
+  it("an invalid link is the page's own problem, not read again on mount", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(bind, {
+    await renderAuthRouteWithCache(PAGE, {
       ...ROUTES,
       "GET /api/v1/bind/cap_bind_tok": () =>
         json(404, { error: { code: "bind.invalid", message: "x" } }),
     });
     expect(screen.getByText(en.bind.invalidTitle)).toBeTruthy();
     expect(screen.queryByRole("button", { name: en.bind.confirm })).toBeNull();
+    await settle();
     expect(browser).toEqual([]);
+  });
+
+  it("another failure on the first load is the page's error state; retry reads it again", async () => {
+    let up = false;
+    const peek = () =>
+      up
+        ? json(200, { binding: BINDING })
+        : json(500, { error: { code: "internal", message: "x" } });
+    const browser = stubApi({ "GET /api/v1/bind/cap_bind_tok": peek });
+    await renderAuthRouteWithCache(PAGE, { ...ROUTES, "GET /api/v1/bind/cap_bind_tok": peek });
+    expect(screen.getByText(en.bind.title)).toBeTruthy();
+    await settle();
+    expect(browser).toEqual([]);
+    up = true;
+    await userEvent.setup().click(screen.getByRole("button", { name: en.common.retry }));
+    expect(await screen.findByText("Alice Wong")).toBeTruthy();
+    expect(browser.map((c) => c.url)).toEqual(["/api/v1/bind/cap_bind_tok"]);
   });
 });
