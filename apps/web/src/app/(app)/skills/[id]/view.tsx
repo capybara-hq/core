@@ -132,10 +132,12 @@ function ContentTab({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
   const errorMessage = useErrorMessage();
   const { me } = useSession();
   const [confirm, setConfirm] = useState(false);
-  // A delete invalidates the library (the list this page goes back to).
+  // A delete invalidates the library (the list this page goes back to) and forgets the skill once
+  // this page is left.
   const remove = useAppMutation({
     fn: () => deleteSkill(orgId, skill.id),
     invalidates: () => [keys.org(orgId).skills()],
+    forgetsOnLeave: () => [keys.org(orgId).skill(skill.id)],
   });
   return (
     <Stack gap={16}>

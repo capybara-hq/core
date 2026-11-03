@@ -391,13 +391,13 @@ describe("技能详情（DetailPage）", () => {
     expect(screen.getByRole("heading", { level: 1, name: zh.notFound.title })).toBeTruthy();
   });
 
-  it("deleting a skill invalidates the library: the list is read again when shown", async () => {
+  it("deleting a skill invalidates the library and forgets the skill once the page is left", async () => {
     const calls = stubApi({
       [`GET ${BASE}`]: () => json(200, { skills: [] }),
       [`GET ${BASE}/s1`]: () => json(200, detail()),
       [`DELETE ${BASE}/s1`]: () => noContent(),
     });
-    const { client } = await renderSkill();
+    const { client, unmount } = await renderSkill();
     // the library is cached (as after a visit to /skills)
     client.setQueryData(["org", "o1", "skills"], { skills: [skill("s1", "pdf-tools")] });
     const user = userEvent.setup();
@@ -408,6 +408,13 @@ describe("技能详情（DetailPage）", () => {
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/skills"));
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`DELETE ${BASE}/s1`]);
     expect(client.getQueryState(["org", "o1", "skills"])?.isInvalidated).toBe(true);
+    // still cached while the page shows (no read, no not-found flash before the navigation) ...
+    expect(client.getQueryData(["org", "o1", "skill", "s1"])).toBeDefined();
+    expect(screen.queryByRole("heading", { level: 1, name: en.notFound.title })).toBeNull();
+    // ... and gone once the page is left: Back reads it instead of painting the deleted skill
+    unmount();
+    expect(client.getQueryState(["org", "o1", "skill", "s1"])).toBeUndefined();
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`DELETE ${BASE}/s1`]);
   });
 });
 

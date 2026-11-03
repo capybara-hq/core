@@ -83,9 +83,12 @@ function EvalSet({ orgId, setId }: { orgId: string; setId: string }) {
     enabled: set !== undefined,
     retryOnMount: retryOnMountOf(agentQ.queryKey),
   }).data;
+  // A delete invalidates the sets list (where this page goes) and forgets the set and its runs
+  // once this page is left.
   const remove = useAppMutation({
     fn: () => deleteEvalSet(orgId, setId),
     invalidates: () => [keys.org(orgId).evalSets()],
+    forgetsOnLeave: () => [keys.org(orgId).evalSet(setId), keys.org(orgId).evalRuns(setId)],
   });
   const [tab, setTab] = useState<Tab>("cases");
   const [sampling, setSampling] = useState(false);

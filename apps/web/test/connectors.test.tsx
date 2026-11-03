@@ -873,12 +873,12 @@ describe("connector mutations update the cache", () => {
     expect(listState(client)).toBe(true);
   });
 
-  it("deleting a connector invalidates connectors", async () => {
+  it("deleting a connector invalidates connectors and forgets it once the page is left", async () => {
     const calls = stubApi({
       "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }),
       "DELETE /api/v1/orgs/o1/connectors/app1": () => noContent(),
     });
-    const { client } = await renderDetail();
+    const { client, unmount } = await renderDetail();
     client.setQueryData(["org", "o1", "connectors"], { connectors: [summary()] });
     const s = en.connectors.settings;
     const user = userEvent.setup();
@@ -892,5 +892,12 @@ describe("connector mutations update the cache", () => {
       "DELETE /api/v1/orgs/o1/connectors/app1",
     ]);
     expect(listState(client)).toBe(true);
+    // still cached while the page shows (no read before the navigation), gone once it is left
+    expect(client.getQueryData(["org", "o1", "connector", "app1"])).toBeDefined();
+    unmount();
+    expect(client.getQueryState(["org", "o1", "connector", "app1"])).toBeUndefined();
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "DELETE /api/v1/orgs/o1/connectors/app1",
+    ]);
   });
 });

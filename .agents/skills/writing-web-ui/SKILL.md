@@ -59,10 +59,10 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
 | Page | Route | Template |
 |---|---|---|
 | Admin console overview | `/admin` | `OverviewPage` |
-| Accounts, orgs, extensions, catalog items, marketplace entries | `/admin/accounts`, `/admin/orgs`, `/admin/extensions`, `/admin/catalog`, `/admin/marketplaces/entries` | `ListPage` |
+| Accounts, orgs, extensions, catalog items, marketplaces (tabs Browse / Sources), marketplace entries | `/admin/accounts`, `/admin/orgs`, `/admin/extensions`, `/admin/catalog`, `/admin/marketplaces`, `/admin/marketplaces/entries` | `ListPage` |
 | Extension detail, catalog item detail | `/admin/extensions/[name]`, `/admin/catalog/[itemId]` | `DetailPage` (summary / permissions / config etc. use PageTabs) |
 | Install an extension, plugin import review | `/admin/extensions/install`, `/admin/catalog/import` | `WizardPage` |
-| Deployment settings, models and prices, marketplaces | `/admin/settings`, `/admin/models`, `/admin/marketplaces` | `SettingsPage` |
+| Deployment settings, models and prices | `/admin/settings`, `/admin/models` | `SettingsPage` |
 | Catalog requests awaiting an enterprise admin decision | `/admin/catalog/requests` | `InboxPage` |
 | Trajectory list / eval set list | `/trajectories`, `/evals` | `ListPage` |
 | Trajectory detail, eval case | `/trajectories/[conversationId]`, `/evals/[setId]/cases/[caseId]` | `TracePage`: `waterfall` holds `SpanWaterfall`, `detail` holds the selected span's detail |
@@ -168,10 +168,13 @@ function Agents({ orgId }: { orgId: string }) {
   `/` while the org is not ready). `resetSession(qc, then)` cancels every read in flight, clears
   the cache and navigates in the same task: an org switch, create or leave and a sign-out go
   through it, then a full navigation (ruling R4), so nothing of the old org or account paints.
-- **Mutations** are `useAppMutation({ fn, invalidates: (v, r) => [keys…], onSuccess? })`: the
+- **Mutations** are `useAppMutation({ fn, invalidates: (v, r) => [keys…], forgetsOnLeave?, onSuccess? })`: the
   listed keys are invalidated (awaited) before `onSuccess`; use `qc.setQueryData` where the answer
-  is the new object. No `router.refresh()` after a mutation, except one that changes what the
-  layout decided (org, readiness, sign-in), which goes through `resetSession`.
+  is the new object. A delete that leaves its detail page lists the detail's keys in
+  `forgetsOnLeave`: they are removed when the page unmounts (removing them earlier would read them
+  again and flash not-found before the navigation), so Back never paints the deleted object. No
+  `router.refresh()` after a mutation, except one that changes what the layout decided (org,
+  readiness, sign-in), which goes through `resetSession`.
 - **Polling** is `refetchInterval` on the query, never a hand-written timer. **Persistent
   components** (the sidebar's groups, the inbox count) stay mounted, so they refetch their stale
   queries on each path change themselves. The conversation's SSE stream appends to the cached

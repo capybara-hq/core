@@ -331,6 +331,31 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(client.getQueryState(["org", "o1", "evalSets"])?.isInvalidated).toBe(true);
   });
 
+  it("/evals/[setId]: deleting the set invalidates the sets list and forgets the set and its runs once the page is left", async () => {
+    const calls = stubApi({
+      ...ROUTES,
+      [`DELETE ${SETS}/s1`]: () => new Response(null, { status: 204 }),
+    });
+    const { client, unmount } = await renderRouteWithCache("/evals/s1", ROUTES);
+    client.setQueryData(["org", "o1", "evalSets"], { sets: [SET] });
+    const u = userEvent.setup();
+    await u.click(screen.getByRole("button", { name: E.set.more }));
+    await u.click(await screen.findByRole("menuitem", { name: E.set.delete }));
+    const dialog = await screen.findByRole("dialog");
+    await u.type(within(dialog).getByRole("textbox"), SET.name);
+    await u.click(within(dialog).getByRole("button", { name: E.set.delete }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/evals"));
+    expect(client.getQueryState(["org", "o1", "evalSets"])?.isInvalidated).toBe(true);
+    // still cached while the page shows (no read, no not-found flash before the navigation) ...
+    expect(client.getQueryData(["org", "o1", "evalSet", "s1"])).toBeDefined();
+    expect(screen.queryByRole("heading", { level: 1, name: en.notFound.title })).toBeNull();
+    // ... and gone once the page is left
+    unmount();
+    expect(client.getQueryState(["org", "o1", "evalSet", "s1"])).toBeUndefined();
+    expect(client.getQueryState(["org", "o1", "evalRuns", "s1"])).toBeUndefined();
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`DELETE ${SETS}/s1`]);
+  });
+
   it("/evals/[setId]/run: a first render from the hydrated cache makes no browser read (the agent's versions and the models)", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/evals/s1/run", ROUTES);

@@ -670,12 +670,12 @@ describe("channel mutations update the cache", () => {
     expect(listState(client)).toBe(true);
   });
 
-  it("deleting a connection invalidates channels", async () => {
+  it("deleting a connection invalidates channels and forgets it once the page is left", async () => {
     const calls = stubApi({
       ...read,
       [`DELETE ${BASE}/channels/ch1`]: () => new Response(null, { status: 204 }),
     });
-    const { client } = await renderDetail();
+    const { client, unmount } = await renderDetail();
     client.setQueryData(["org", "o1", "channels"], { channels: [CHANNEL] });
     const d = en.channels.detail;
     const user = userEvent.setup();
@@ -687,5 +687,10 @@ describe("channel mutations update the cache", () => {
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/channels"));
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`DELETE ${BASE}/channels/ch1`]);
     expect(listState(client)).toBe(true);
+    // still cached while the page shows (no read before the navigation), gone once it is left
+    expect(client.getQueryData(["org", "o1", "channel", "ch1"])).toBeDefined();
+    unmount();
+    expect(client.getQueryState(["org", "o1", "channel", "ch1"])).toBeUndefined();
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`DELETE ${BASE}/channels/ch1`]);
   });
 });

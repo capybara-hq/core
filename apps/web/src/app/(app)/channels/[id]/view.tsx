@@ -417,10 +417,12 @@ function SettingsTab({
   const [policy, setPolicy] = useState<UnboundPolicy>(channel.unboundPolicy);
   const [pending, setPending] = useState(false);
   const [confirm, setConfirm] = useState(false);
-  // A delete invalidates the org's connections (the list this page goes back to).
+  // A delete invalidates the org's connections (the list this page goes back to) and forgets the
+  // connection once this page is left.
   const remove = useAppMutation({
     fn: () => deleteChannel(orgId, channel.id),
     invalidates: () => [keys.org(orgId).channels()],
+    forgetsOnLeave: () => [keys.org(orgId).channel(channel.id)],
   });
   const dirty =
     name.trim() !== channel.name || agentId !== channel.agentId || policy !== channel.unboundPolicy;

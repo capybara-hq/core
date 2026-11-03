@@ -477,10 +477,12 @@ function SettingsTab({
   const [active, setActive] = useState(app.status === "active");
   const [pending, setPending] = useState(false);
   const [confirm, setConfirm] = useState(false);
-  // A delete invalidates the org's connectors (the list this page goes back to).
+  // A delete invalidates the org's connectors (the list this page goes back to) and forgets the
+  // connector once this page is left.
   const remove = useAppMutation({
     fn: () => deleteConnector(orgId, app.id),
     invalidates: () => [keys.org(orgId).connectors()],
+    forgetsOnLeave: () => [keys.org(orgId).connector(app.id)],
   });
   const dirty = name.trim() !== app.name || active !== (app.status === "active");
 
