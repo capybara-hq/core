@@ -310,6 +310,26 @@
           "minLength": 3,
           "maxLength": 512,
           "pattern": "^\\.\\/"
+        },
+        "configSchemas": {
+          "type": "object",
+          "properties": {
+            "deployment": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            },
+            "org": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            }
+          },
+          "additionalProperties": false
         }
       },
       "required": [

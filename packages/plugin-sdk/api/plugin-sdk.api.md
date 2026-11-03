@@ -275,6 +275,86 @@ export function checkParamValue(schema: ParamSchema, v: unknown): string | undef
 export function clipMediaName(name: string, max?: number): string;
 
 // @public
+export const CONFIG_UI_LIMITS: {
+    readonly labelChars: 100;
+    readonly helpChars: 500;
+    readonly placeholderChars: 200;
+    readonly hintsBytes: number;
+    readonly options: 200;
+    readonly presets: 20;
+    readonly sections: 20;
+    readonly configSchemaBytes: number;
+};
+
+// @public
+export function configJsonSchema(schema: z.ZodTypeAny): JsonSchema;
+
+// @public
+export interface ConfigUiHints {
+    advanced?: boolean;
+    help?: LocalizedName;
+    item?: {
+        title?: string;
+        subtitle?: string;
+        addLabel?: LocalizedName;
+        reorder?: boolean;
+    };
+    label?: LocalizedName;
+    layout?: "stack" | "row";
+    messages?: Record<string, LocalizedName>;
+    options?: ConfigUiOption[];
+    order?: number;
+    placeholder?: string | LocalizedName;
+    presets?: ConfigUiPreset[];
+    secrets?: ConfigUiItemSecret[];
+    section?: string;
+    sections?: ConfigUiSection[];
+    unit?: LocalizedName;
+    widget?: ConfigWidget;
+}
+
+// @public
+export interface ConfigUiItemSecret {
+    after?: string;
+    help?: LocalizedName;
+    keyBy: string;
+    label: LocalizedName;
+    path: string;
+    placeholder?: string | LocalizedName;
+}
+
+// @public
+export interface ConfigUiOption {
+    help?: LocalizedName;
+    label: LocalizedName;
+    value: string | number | boolean;
+}
+
+// @public
+export interface ConfigUiPreset {
+    help?: LocalizedName;
+    id: string;
+    label: LocalizedName;
+    values: Record<string, unknown>;
+}
+
+// @public
+export interface ConfigUiProblem {
+    message: string;
+    path: string;
+}
+
+// @public
+export interface ConfigUiSection {
+    help?: LocalizedName;
+    id: string;
+    label: LocalizedName;
+}
+
+// @public
+export type ConfigWidget = "text" | "textarea" | "url" | "number" | "select" | "radio" | "switch" | "checkbox" | "tristate" | "tags" | "json";
+
+// @public
 export interface Connector {
     endpointSchema: ZodTypeAny;
     inspect?(args: {
@@ -1080,6 +1160,9 @@ export function isSecret(schema: z.ZodTypeAny): boolean;
 export function isSkillName(s: unknown): s is string;
 
 // @public
+export type JsonSchema = Record<string, unknown>;
+
+// @public
 export interface Lease {
     release(): Promise<void>;
     renew(): Promise<boolean>;
@@ -1540,6 +1623,10 @@ export interface PluginDependency {
 
 // @public
 export interface PluginExtensionSection {
+    configSchemas?: {
+        deployment?: JsonSchema;
+        org?: JsonSchema;
+    };
     entry: string;
     manifest: StaticExtensionManifest;
     migrations?: string;
@@ -1942,6 +2029,9 @@ export interface ToolSpec {
 }
 
 // @public
+export function ui<T extends z.ZodTypeAny>(schema: T, hints: ConfigUiHints): T;
+
+// @public
 export const UI_ICONS: readonly ["list-checks", "layout-grid", "file", "chart", "calendar", "users", "bot", "book", "message-square", "puzzle"];
 
 // @public
@@ -2113,6 +2203,9 @@ export function validateAnswer(form: InputForm, answer: FormAnswer): string[];
 
 // @public
 export function validateChannelCard(card: unknown): string[];
+
+// @public
+export function validateConfigUi(schema: JsonSchema, level: "deployment" | "org" | "connection"): ConfigUiProblem[];
 
 // @public
 export function validateConnectorTemplate(t: unknown): string[];
