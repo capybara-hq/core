@@ -14,6 +14,7 @@ import {
   appendEvents,
   CONVERSATION_SIDE_KEYS,
   eventsQuery,
+  renameWithRow,
   toolInfoQuery,
 } from "../src/lib/query/conversation";
 import { keys } from "../src/lib/query/keys";
@@ -459,5 +460,48 @@ describe("the conversation page from the cache", () => {
     });
     await vi.waitFor(() => expect(gets(calls)).toEqual([`${BASE}/queue`]));
     await vi.waitFor(() => expect(screen.queryByText("queued")).toBeNull());
+  });
+});
+
+describe("renameWithRow (the optimistic rename both the title bar and the sidebar use)", () => {
+  const rowKey = keys.org("o1").conversation("c1").row();
+  const URL = "PATCH /api/v1/orgs/o1/conversations/c1";
+
+  it("the cached row takes the title first; the answer replaces it", async () => {
+    stubApi({ [URL]: () => json(200, CONV("c1", { title: "New", titleSource: "manual" })) });
+    const qc = testQueryClient();
+    qc.setQueryData(rowKey, CONV("c1", { title: "Old" }).conversation);
+    const p = renameWithRow(qc, "o1", "c1", "New");
+    await vi.waitFor(() => expect(qc.getQueryData<{ title: string }>(rowKey)?.title).toBe("New"));
+    await expect(p).resolves.toMatchObject({ title: "New", titleSource: "manual" });
+    expect(qc.getQueryData(rowKey)).toMatchObject({ title: "New", titleSource: "manual" });
+  });
+
+  it("a failed PATCH restores the row as it was and rejects", async () => {
+    let fail: () => void = () => {};
+    const failed = new Promise<void>((r) => {
+      fail = r;
+    });
+    stubApi({
+      [URL]: async () => {
+        await failed;
+        return json(500, { error: { code: "internal", message: "x" } });
+      },
+    });
+    const qc = testQueryClient();
+    const before = CONV("c1", { title: "Old" }).conversation;
+    qc.setQueryData(rowKey, before);
+    const p = renameWithRow(qc, "o1", "c1", "New");
+    await vi.waitFor(() => expect(qc.getQueryData<{ title: string }>(rowKey)?.title).toBe("New"));
+    fail();
+    await expect(p).rejects.toMatchObject({ status: 500 });
+    expect(qc.getQueryData(rowKey)).toEqual(before);
+  });
+
+  it("a row not cached is left alone", async () => {
+    stubApi({ [URL]: () => json(200, CONV("c1", { title: "New" })) });
+    const qc = testQueryClient();
+    await renameWithRow(qc, "o1", "c1", "New");
+    expect(qc.getQueryData(rowKey)).toBeUndefined();
   });
 });

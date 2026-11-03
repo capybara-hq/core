@@ -10,13 +10,13 @@ import {
   untitledLabel,
   useToast,
 } from "@capybara-hq/design";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
-import { type ModelRef, renameConversation } from "../../lib/conversations";
+import type { ModelRef } from "../../lib/conversations";
 import { agentsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
-import { modelsQuery } from "../../lib/query/conversation";
+import { modelsQuery, renameWithRow } from "../../lib/query/conversation";
 import { useAppMutation } from "../../lib/query/define";
 import { keys as queryKeys } from "../../lib/query/keys";
 import { runParts } from "../../lib/run-row";
@@ -210,19 +210,9 @@ export function useConversationPage(
   // The answer is the new row; the sidebar shows the title too. The row takes the title before
   // the kernel answers, so the stream's `changed: title` for this rename finds it unchanged and
   // reads the sidebar's groups no second time (the invalidation below is the one read).
+  const qc = useQueryClient();
   const renameMutation = useAppMutation({
-    fn: async (title: string) => {
-      const before = conv.conversation;
-      if (before !== undefined) conv.setConversation({ ...before, title });
-      try {
-        const { conversation } = await renameConversation(orgId, conversationId, title);
-        conv.setConversation(conversation);
-        return conversation;
-      } catch (e) {
-        if (before !== undefined) conv.setConversation(before);
-        throw e;
-      }
-    },
+    fn: (title: string) => renameWithRow(qc, orgId, conversationId, title),
     invalidates: () => [queryKeys.org(orgId).conversationGroupsAll()],
   });
   const rename = async (title: string) => {

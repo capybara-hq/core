@@ -20,6 +20,7 @@ import {
   listQueue,
   listSubagents,
   readToolOutput,
+  renameConversation,
   type ToolInfo,
   toolOutputSize,
 } from "../conversations";
@@ -383,3 +384,29 @@ export const CONVERSATION_SIDE_KEYS = (orgId: string, id: string): (readonly unk
     keys.org(orgId).uiViews(id),
   ];
 };
+
+/**
+ * Renames a conversation with its cached row taking the title first: the stream's `changed: title`
+ * for this rename then finds the row unchanged and reads the sidebar's groups no second time. The
+ * answer replaces the row; a failure restores the row as it was. A row not cached is left alone.
+ */
+export async function renameWithRow(
+  qc: QueryClient,
+  orgId: string,
+  conversationId: string,
+  title: string,
+): Promise<Conversation> {
+  const rowKey = keys.org(orgId).conversation(conversationId).row();
+  // A read of the row in flight would land over the new title (or revert to its state later).
+  await qc.cancelQueries({ queryKey: rowKey });
+  const before = qc.getQueryData<Conversation>(rowKey);
+  if (before !== undefined) qc.setQueryData<Conversation>(rowKey, { ...before, title });
+  try {
+    const { conversation } = await renameConversation(orgId, conversationId, title);
+    if (before !== undefined) qc.setQueryData<Conversation>(rowKey, conversation);
+    return conversation;
+  } catch (e) {
+    if (before !== undefined) qc.setQueryData<Conversation>(rowKey, before);
+    throw e;
+  }
+}

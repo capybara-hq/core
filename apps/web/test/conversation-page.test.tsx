@@ -496,6 +496,38 @@ describe("the conversation page (ConversationPage)", () => {
     await vi.waitFor(() => expect(refreshes()).toBe(2));
   });
 
+  it("a failed rename restores the title it replaced (the title shows at once, then rolls back)", async () => {
+    let fail: () => void = () => {};
+    const failed = new Promise<void>((r) => {
+      fail = r;
+    });
+    api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${BASE}`]: () => json(200, CONV("c1", { title: "Kept" })),
+      [`PATCH ${BASE}`]: async () => {
+        await failed;
+        return json(500, { error: { code: "internal", message: "x" } });
+      },
+    });
+    await renderChat();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /^Kept/ }));
+    await user.click(await screen.findByRole("menuitem", { name: en.chat.rename }));
+    const field = await screen.findByRole("textbox", { name: "Title" });
+    await user.clear(field);
+    await user.type(field, "Quarterly numbers{Enter}");
+    // the row takes the new title before the kernel answers (the dialog stays open meanwhile, so
+    // the title bar is behind it)
+    const title = (name: RegExp) => screen.queryByRole("button", { name, hidden: true });
+    await vi.waitFor(() => expect(title(/^Quarterly numbers/)).not.toBeNull());
+    await act(async () => fail());
+    // the kernel refused: the title it replaced is back, the error is told
+    await vi.waitFor(() => expect(title(/^Kept/)).not.toBeNull());
+    expect(title(/^Quarterly numbers/)).toBeNull();
+    expect(await screen.findByText(en.errors.internal)).toBeTruthy();
+  });
+
   it("a run starting, waiting and ending tells the sidebar (its state dot follows)", async () => {
     api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
