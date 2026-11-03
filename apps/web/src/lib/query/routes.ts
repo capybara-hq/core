@@ -2,6 +2,7 @@ import type { QueryClient, UseQueryOptions } from "@tanstack/react-query";
 import { type Agent, setupReady } from "../agents";
 import type { ApiClientError } from "../api";
 import type { ChannelConnection } from "../channels";
+import { type ConnectorSummary, personalConnectors } from "../connectors";
 import type { Conversation, ConversationEvent } from "../conversations";
 import { myRole, type OrgRole, roleAtLeast } from "../members";
 import { canEditAgent } from "../org-settings";
@@ -88,7 +89,24 @@ export const ROUTES: readonly RouteEntry[] = [
       );
     },
   },
-  { pattern: "/account/connections", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/account/connections",
+    queries: ({ orgId }) => (orgId === null ? [] : [q(connectorsQuery(orgId))]),
+    // The list names the personal connectors: their details (this person's credential status).
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId }, qc) => {
+      if (orgId === null) return;
+      const list = qc.getQueryData<{ connectors: ConnectorSummary[] }>(
+        connectorsQuery(orgId).queryKey,
+      );
+      if (list === undefined) return;
+      await Promise.all(
+        personalConnectors(list.connectors).map((a) =>
+          qc.prefetchQuery({ ...connectorQuery(orgId, a.id), retry: false }),
+        ),
+      );
+    },
+  },
   {
     pattern: "/account/grants",
     queries: ({ orgId }) => (orgId === null ? [] : [q(toolGrantsQuery(orgId))]),

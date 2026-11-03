@@ -1,16 +1,14 @@
 // The organization and personal settings pages render on the server (web-SSR spec §6, task 9):
 // first paint complete without a browser fetch, the gate cases, and the failure modes of R5.
-import { act, cleanup, screen } from "@testing-library/react";
+import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import ConnectionsPage from "../src/app/(app)/account/connections/page";
 import { json, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
-import { expectNoFirstPaintFetch, type Routes, renderRoute } from "./support/server";
+import { expectNoFirstPaintFetch, type Routes } from "./support/server";
 import { NOT_READY } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -25,11 +23,6 @@ vi.mock("next/navigation", () => ({
 
 const O = "/api/v1/orgs/o1";
 const T = "2026-10-19T12:00:00.000Z";
-const as = (role: string) => ({
-  ...ME,
-  account: { ...ME.account, isEnterpriseAdmin: false },
-  memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
-});
 const failing = () => json(500, { error: { code: "internal", message: "x" } });
 
 const MEMBERS = [
@@ -133,31 +126,48 @@ async function renderHeld(path: string, held: string, routes: Routes = ROUTES) {
 }
 
 const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
-const noAccess = () => template("StatusPage")?.getAttribute("data-kind") === "no-access";
 
 beforeEach(() => resetNavigation("/settings/organization"));
 afterEach(cleanup);
 
-describe("first paint comes from the server (no browser fetch)", () => {
-  it("/account/connections: the personal connectors' details are read on the server in parallel", async () => {
+describe("first paint comes from the hydrated cache (no browser read)", () => {
+  it("/account/connections: a first render from the hydrated cache makes no browser read (the layout's `then` read the details)", async () => {
     const browser = expectNoFirstPaintFetch();
-    const { calls } = await renderRoute(() => ConnectionsPage(), ROUTES);
+    const { calls } = await renderRouteWithCache("/account/connections", ROUTES);
     expect(screen.getByRole("region", { name: "Docs" })).toBeTruthy();
     expect(screen.getByRole("region", { name: "Wiki" })).toBeTruthy();
     expect(screen.queryByText("Shared")).toBeNull();
     expect(calls.map((c) => c.url)).not.toContain(`${O}/connectors/c3`);
+    await settle();
     expect(browser).toEqual([]);
   });
 
   it("/account/connections: a connector the kernel no longer shows is left out", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => ConnectionsPage(), {
+    await renderRouteWithCache("/account/connections", {
       ...ROUTES,
       [`GET ${O}/connectors/c2`]: () => json(404, { error: { code: "connector.not_found" } }),
     });
     expect(screen.getByRole("region", { name: "Docs" })).toBeTruthy();
     expect(screen.queryByRole("region", { name: "Wiki" })).toBeNull();
+    await settle();
     expect(browser).toEqual([]);
+  });
+
+  it("/account/connections: an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld("/account/connections", `GET ${O}/connectors/c2`);
+    await vi.waitFor(() => {
+      if (template("SettingsPage") === null) throw new Error("no page");
+    });
+    // the list answered: its sections stand in until every detail answered
+    await vi.waitFor(() =>
+      expect(document.querySelector("[aria-busy='true']")?.textContent).toContain("Wiki"),
+    );
+    expect(screen.queryByRole("region", { name: "Docs" })).toBeNull();
+    await release();
+    expect(await screen.findByRole("region", { name: "Wiki" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Docs" })).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
   it("/account/grants: a first render from the hydrated cache makes no browser read", async () => {
@@ -216,38 +226,19 @@ describe("first paint comes from the server (no browser fetch)", () => {
   });
 });
 
-type Page = () => Promise<ReactNode>;
-const GATES: [string, Page, "guest", boolean][] = [
-  ["/account/connections", () => ConnectionsPage(), "guest", true],
-];
-
 describe("the gates", () => {
-  it.each(GATES)(
-    "%s: below its role no access and nothing read; no org renders nothing; setup",
-    async (_p, page, min, step) => {
-      if (min !== "guest") {
-        const denied = min === "admin" ? as("member") : as("guest");
-        const r = await renderRoute(page, ROUTES, { me: denied });
-        expect(new Set(r.calls.map((c) => c.url))).toEqual(
-          new Set(["/api/v1/me", `${O}/readiness`]),
-        );
-        expect(noAccess()).toBe(true);
-        cleanup();
-      }
-      const none = await renderRoute(page, ROUTES, { me: { ...ME, currentOrgId: null } });
-      expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
-      cleanup();
-      if (step) {
-        await renderRoute(page, ROUTES, { readiness: NOT_READY });
-        expect(template("StatusPage")).toBeNull();
-        expect(document.querySelector("h1")).not.toBeNull();
-      } else {
-        await expect(renderRoute(page, ROUTES, { readiness: NOT_READY })).rejects.toThrow(
-          "REDIRECT /",
-        );
-      }
-    },
-  );
+  it("/account/connections: no org renders nothing; it is a setup step", async () => {
+    const none = await renderRouteWithCache("/account/connections", ROUTES, {
+      me: { ...ME, currentOrgId: null },
+    });
+    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+    cleanup();
+    await renderRouteWithCache("/account/connections", ROUTES, { readiness: NOT_READY });
+    expect(template("StatusPage")).toBeNull();
+    expect(document.querySelector("h1")).not.toBeNull();
+    await settle();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
 
   it("/account/grants: no org renders nothing; it is a setup step", async () => {
     const none = await renderRouteWithCache("/account/grants", ROUTES, {
@@ -271,6 +262,37 @@ describe("the gates", () => {
 });
 
 describe("mutations invalidate the cache", () => {
+  it("disconnecting invalidates that connector: its detail is read again", async () => {
+    let status = "connected";
+    const routes: Routes = {
+      ...ROUTES,
+      [`GET ${O}/connectors/c1`]: () =>
+        json(200, {
+          connector: {
+            ...personalApp("c1", "Docs"),
+            credential: { ownership: "personal", status },
+          },
+        }),
+      [`DELETE ${O}/connectors/c1/credentials/me`]: () => {
+        status = "missing";
+        return noContent();
+      },
+    };
+    const calls = stubApi(routes);
+    await renderRouteWithCache("/account/connections", routes);
+    const docs = screen.getByRole("region", { name: "Docs" });
+    await userEvent
+      .setup()
+      .click(within(docs).getByRole("button", { name: en.connections.disconnect }));
+    await vi.waitFor(() =>
+      expect(within(docs).queryByRole("button", { name: en.connections.disconnect })).toBeNull(),
+    );
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      `DELETE ${O}/connectors/c1/credentials/me`,
+      `GET ${O}/connectors/c1`,
+    ]);
+  });
+
   it("revoking a grant invalidates toolGrants: the grants are read again", async () => {
     let grants = [
       { agentId: "ag1", agentName: "Echo", toolKey: "t__x", specHash: "h", createdAt: T },

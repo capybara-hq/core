@@ -3,7 +3,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import ConnectionsPage from "../src/app/(app)/account/connections/page";
 import ConnectorDetailPage from "../src/app/(app)/connectors/[connectorId]/page";
 import { navigateBrowser } from "../src/lib/browser";
 import type { Me } from "../src/lib/session";
@@ -13,7 +12,7 @@ import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api"
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
-import { expectNoFirstPaintFetch, onServer, renderRoute } from "./support/server";
+import { expectNoFirstPaintFetch, onServer, type renderRoute } from "./support/server";
 import { NOT_READY, renderFrame, shellOf } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -576,7 +575,9 @@ describe("个人连接（SettingsPage）", () => {
           return noContent();
         },
       });
-      const { container } = await renderRoute(ConnectionsPage, lastStubRoutes(), { locale });
+      const { container } = await renderRouteWithCache("/account/connections", lastStubRoutes(), {
+        locale,
+      });
       expect(container.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
       const section = await screen.findByRole("region", { name: "Fixture" });
       // 每个连接器一个分组：页面上没有多个主操作
