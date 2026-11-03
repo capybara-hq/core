@@ -23,13 +23,16 @@ const saveAll = (page: import("@playwright/test").Page) =>
  * 模型、价格与用途映射（T18）：企业管理员在后台给 fake-1 定价、把评委用途 eval 的部署默认设为 fake-1；
  * 组织设置页显示部署默认，覆盖后再恢复默认。最后清掉价格与映射，不影响其他用例。
  */
+/** model-fake's display name (zh, its plugin.json): each provider's table is named by it. */
+const MODEL_FAKE = "模拟模型";
+
 test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认", async ({ page }) => {
   await signIn(page);
 
   // 1. 管理 → 模型：model-fake 的表里有 fake-1，行内编辑价格
   await page.goto("/admin/models");
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
-  const table = page.getByRole("table", { name: "model-fake" });
+  const table = page.getByRole("table", { name: MODEL_FAKE });
   const row = table.getByRole("row").filter({ hasText: "fake-1" });
   await row.getByRole("button", { name: RECORD_ROW_MENU }).click();
   await page.getByRole("menuitem", { name: M.admin.menu.editPrice }).click();
@@ -53,7 +56,7 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
   await page.reload();
   await expect(
     page
-      .getByRole("table", { name: "model-fake" })
+      .getByRole("table", { name: MODEL_FAKE })
       .getByRole("row")
       .filter({ hasText: "fake-1" })
       .getByRole("cell", { name: "8", exact: true }),
@@ -63,7 +66,7 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
   // 3. 组织设置 → 模型用途（评测向导的「去设置」链到这里）：显示部署默认，覆盖后恢复默认
   await page.goto("/settings/models");
   const orgCard = page.locator('[data-purpose="eval"]');
-  const defText = fill(P.deploymentDefault, { target: "model-fake / fake-1" });
+  const defText = fill(P.deploymentDefault, { target: `${MODEL_FAKE} / fake-1` });
   await expect(orgCard.getByText(defText)).toBeVisible();
   await expect(orgCard.getByText(P.overridden)).toHaveCount(0);
   await orgCard.getByRole("combobox", { name: P.model }).selectOption("model-fake/fake-1");
@@ -84,7 +87,7 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
   await saveAll(page);
   await expect(page.getByText(M.evalUnmapped)).toBeVisible();
   const priced = page
-    .getByRole("table", { name: "model-fake" })
+    .getByRole("table", { name: MODEL_FAKE })
     .getByRole("row")
     .filter({ hasText: "fake-1" });
   await priced.getByRole("button", { name: RECORD_ROW_MENU }).click();

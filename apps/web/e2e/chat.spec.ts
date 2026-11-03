@@ -9,7 +9,9 @@ const SECOND_TEXT = "first answer arrives slowly";
 
 /** Assistant prose (`data-streaming` on its entry while it streams). */
 const assistants = replies;
-const stopButton = (page: Page) => page.getByRole("button", { name: designZh("composer.stop") });
+// exact: a stopped run's row is named "… 已停止 …" too
+const stopButton = (page: Page) =>
+  page.getByRole("button", { name: designZh("composer.stop"), exact: true });
 
 test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历史完整", async ({ page }) => {
   // 1. 登录（初始化由 setup 项目完成）→ 选当前组织 → 新建 agent（model-fake / fake-1）
@@ -134,4 +136,5 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
   await expect(page.locator('[data-template="StatusPage"][data-kind="404"]')).toBeVisible();
   await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
   await expect(page.getByText(zh.notFound.title).first()).toBeVisible();
+
 });

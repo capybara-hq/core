@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
 import { CSRF } from "./support/chat";
+import { hydrated } from "./support/nav";
 import { ORG_NAME, signIn } from "./support/sign-in";
 
 /** UI text comes from the zh message file, not hard-coded twice. */
@@ -84,6 +85,7 @@ async function backToAcme(page: Page): Promise<void> {
 }
 
 const workSidebar = (page: Page) => page.locator('[data-part="sidebar"][data-context="work"]');
+
 const setupSidebar = (page: Page) => page.locator('[data-part="sidebar"][data-context="setup"]');
 
 /** Opens the account menu (the sidebar's account row) of the workspace shell. */
@@ -113,6 +115,7 @@ test("an expired access cookie is renewed on the server: the page renders signed
   expect(res?.status()).toBe(200);
   await expect(page).toHaveURL(/\/agents$/);
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
+  await hydrated(page);
   await expect(workSidebar(page)).toBeVisible();
   // no redirect through the sign-in page, server-side or in the browser
   expect(navigations.filter((u) => new URL(u).pathname.startsWith("/login"))).toEqual([]);
@@ -138,6 +141,7 @@ test("creating an org lands on its setup frame with the setup steps; its shell n
   // a fresh org has no agent: the setup frame, named after the new org, on `/`
   await expect(page.locator('[data-template="SetupPage"]')).toBeVisible();
   await expect(page).toHaveURL(/\/$/);
+  await hydrated(page);
   const sidebar = setupSidebar(page);
   await expect(sidebar.locator('[data-part="org-switcher"]')).toHaveAttribute("title", name);
   await expect(workSidebar(page)).toHaveCount(0);
@@ -171,6 +175,7 @@ test("switching org from the account menu loads the other org's frame whole, on 
   expect(r.ok(), await r.text()).toBe(true);
   // a new document lists the new org in the menus; start on Acme's agent list
   await page.goto("/agents");
+  await hydrated(page);
   await expect(workSidebar(page).locator('[data-part="org-switcher"]')).toHaveAttribute(
     "title",
     ORG_NAME,
@@ -182,6 +187,8 @@ test("switching org from the account menu loads the other org's frame whole, on 
   await page.getByRole("menuitem", { name: zh.shell.orgMenu }).click();
   await page.getByRole("menuitemradio", { name: otherName }).click();
   await expect(page).toHaveURL(/\/$/);
+  await expect(setupSidebar(page).first()).toBeVisible();
+  await hydrated(page);
   await expect(setupSidebar(page).locator('[data-part="org-switcher"]')).toHaveAttribute(
     "title",
     otherName,

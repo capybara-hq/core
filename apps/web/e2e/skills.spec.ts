@@ -111,6 +111,8 @@ test("管理员上传技能包，agent 选用它；对话里 skill_load 的时�
   // 1. 技能库：上传 zip（GitHub 式外层目录），列表出现该技能
   await page.goto("/skills");
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
+  // the upload lives in a dialog opened from the page head (or the empty state)
+  await page.getByRole("button", { name: zh.skills.upload.open }).first().click();
   await expect(page.getByText(zh.skills.upload.layoutHint)).toBeVisible();
   const zip = makeZip({
     "e2e-notes-main/SKILL.md": `---\nname: ${SKILL}\ndescription: Write notes in the house style.\n---\n# Notes\n\nUse short lines.\n`,
@@ -242,6 +244,7 @@ test("共享 agent 用 skill_write 改技能：发起人确认工具调用，负
 async function uploadSkill(page: Page, orgId: string, name: string, md: string): Promise<string> {
   await page.goto("/skills");
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
+  await page.getByRole("button", { name: zh.skills.upload.open }).first().click();
   await page.locator('input[type="file"]').setInputFiles({
     name: `${name}.zip`,
     mimeType: "application/zip",

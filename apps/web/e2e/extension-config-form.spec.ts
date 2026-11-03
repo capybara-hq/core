@@ -40,8 +40,9 @@ test("extension config form: the list shows the display name with the id as meta
   await page.getByRole("menuitem", { name: "DeepSeek", exact: true }).click();
   const card = endpoints.getByRole("group", { name: "deepseek", exact: true });
   await expect(card).toBeVisible();
-  await expect(card.getByLabel("名称", { exact: true })).toHaveValue("deepseek");
-  await expect(card.getByLabel("接口地址", { exact: true })).toHaveValue(
+  // by role: a required field's label text carries its "*" marker, its accessible name does not
+  await expect(card.getByRole("textbox", { name: "名称", exact: true })).toHaveValue("deepseek");
+  await expect(card.getByRole("textbox", { name: "接口地址", exact: true })).toHaveValue(
     "https://api.deepseek.com",
   );
 
@@ -51,9 +52,9 @@ test("extension config form: the list shows the display name with the id as meta
   await key.fill("sk-e2e-config-form");
   const models = card.getByRole("group", { name: "模型", exact: true });
   await models.getByRole("button", { name: "添加模型" }).click();
-  await models.getByLabel("模型 ID", { exact: true }).fill("deepseek-chat");
-  await models.getByLabel("上下文窗口", { exact: true }).fill("65536");
-  await models.getByLabel("最大输出", { exact: true }).fill("8192");
+  await models.getByRole("textbox", { name: "模型 ID", exact: true }).fill("deepseek-chat");
+  await models.getByRole("textbox", { name: "上下文窗口", exact: true }).fill("65536");
+  await models.getByRole("textbox", { name: "最大输出", exact: true }).fill("8192");
 
   // 5. Save: the extension reloads with the new config
   const save = page.getByRole("button", { name: P.config.save });
@@ -71,7 +72,9 @@ test("extension config form: the list shows the display name with the id as meta
   const savedKey = saved.getByLabel("API 密钥", { exact: true });
   await expect(savedKey).toHaveValue("");
   await expect(savedKey).toHaveAttribute("placeholder", zh.configForm.secretSet);
-  await expect(saved.getByLabel("模型 ID", { exact: true })).toHaveValue("deepseek-chat");
+  await expect(saved.getByRole("textbox", { name: "模型 ID", exact: true })).toHaveValue(
+    "deepseek-chat",
+  );
   // the key is never sent back: not in the page, and no input holds it
   expect(await page.content()).not.toContain("sk-e2e-config-form");
   const values = await page

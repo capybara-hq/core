@@ -43,7 +43,7 @@ test("建评测集 → 从对话抽样 → 单步运行 → 标注，汇总随�
   await expect(page.locator('[data-template="FormPage"]')).toBeVisible();
   await page.getByRole("combobox", { name: E.form.agentLabel }).selectOption({ label: agentName });
   await page.getByRole("textbox", { name: E.form.nameLabel }).fill("E2E set");
-  await page.getByRole("button", { name: E.form.submit }).click();
+  await page.getByRole("button", { name: E.form.submit, exact: true }).click();
   await expect(page).toHaveURL(/\/evals\/[^/]+$/);
   await expect(page.locator('[data-template="DetailPage"]')).toBeVisible();
   const setUrl = page.url();

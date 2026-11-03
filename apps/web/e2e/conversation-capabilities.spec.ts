@@ -30,7 +30,9 @@ async function newChat(page: Page, agentId: string) {
   await expect(page.locator('[data-part="new-conversation-body"] h2')).not.toHaveText("—");
 }
 
-const stopButton = (page: Page) => page.getByRole("button", { name: designZh("composer.stop") });
+// exact: a stopped run's row is named "… 已停止 …" too
+const stopButton = (page: Page) =>
+  page.getByRole("button", { name: designZh("composer.stop"), exact: true });
 const statusBar = (page: Page) => page.locator('[data-part="conv-main"] .cb-statusbar');
 
 test("a new conversation is created on the first send only; the title is generated; rename", async ({
