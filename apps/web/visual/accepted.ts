@@ -206,7 +206,12 @@ export const DATA_ONLY_PARTS: Record<string, string> = {
 export const VARIABLE_WIDTH: Record<string, string> = {
   "page-header-title":
     "the loaded title is its text; the loading title is a bar 30% of the row wide",
+  "page-header-actions":
+    "the loaded buttons are as wide as their labels; a placeholder is 72 px (right edge compared)",
   title: "the loaded title is its text; the skeleton is a bar of the bar's width",
   "page-header-description":
     "ends where the loaded action buttons begin: a placeholder button is 72 px, a real one is as wide as its label",
 };
+
+/** Variable-width parts that sit at the right edge: their right edge is compared instead of x. */
+export const RIGHT_ALIGNED: string[] = ["page-header-actions"];

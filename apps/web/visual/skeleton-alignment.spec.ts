@@ -4,6 +4,7 @@ import {
   IGNORED_PARTS,
   LOADING_ALIASES,
   LOADING_TEMPLATES,
+  RIGHT_ALIGNED,
   VARIABLE_HEIGHT,
   VARIABLE_WIDTH,
 } from "./accepted";
@@ -138,10 +139,12 @@ for (const theme of THEMES) {
                 !(p === "width" && part in VARIABLE_WIDTH),
             );
             for (const p of props) {
-              const want = p === "y" ? a.y + shift(k) : a[p];
-              if (Math.abs(want - b[p]) > 1) {
+              const right = p === "x" && RIGHT_ALIGNED.includes(part);
+              const want = p === "y" ? a.y + shift(k) : right ? a.x + a.width : a[p];
+              const got = right ? b.x + b.width : b[p];
+              if (Math.abs(want - got) > 1) {
                 failures.push(
-                  `${where} ${k} ${p}: loaded ${want.toFixed(1)}, loading ${b[p].toFixed(1)}`,
+                  `${where} ${k} ${right ? "right edge" : p}: loaded ${want.toFixed(1)}, loading ${got.toFixed(1)}`,
                 );
               }
             }
