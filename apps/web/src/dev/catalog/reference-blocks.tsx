@@ -32,6 +32,9 @@ import {
   SetupPage,
   SIZES,
   Sidebar,
+  SkeletonBox,
+  SkeletonGroup,
+  SkeletonText,
   Stack,
   StatCards,
   StatusBar,
@@ -624,6 +627,15 @@ function pageHeaderBlocks(): ReactNode {
           actions={ACTIONS}
         />
       </RefBlock>
+      {/* Loading (spec §4.2): the title is a title-size bar, two action blocks and two tab bars
+          stand in for what the page does not know yet. */}
+      <RefBlock id="page-header-loading" width={LIST} pad>
+        <PageHeader
+          path={F.path.slice(0, 1)}
+          title=""
+          loading={{ title: true, actions: 2, tabs: 2 }}
+        />
+      </RefBlock>
       {/* Phones: measured in a 390 window: the search on its own line, the tabs scroll, 40 px
           tap targets (spec §4.2, §9.3). */}
       <RefBlock id="page-header-narrow" width={390} pad>
@@ -635,6 +647,38 @@ function pageHeaderBlocks(): ReactNode {
           activeTab="all"
           search={{ label: PAGE_HEADER_FIXTURE.search, value: "", onChange: noop }}
         />
+      </RefBlock>
+    </>
+  );
+}
+
+// ── Skeleton primitives (spec §6.29) ─────────────────────────────────────
+
+function skeletonBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="skeleton-text" width={400} pad>
+        <Stack gap={8}>
+          <SkeletonText width="30%" size="title" />
+          <SkeletonText width="55%" />
+          <SkeletonText width="70%" size="small" />
+        </Stack>
+      </RefBlock>
+      <RefBlock id="skeleton-box" width={400} pad>
+        <Stack gap={8}>
+          <SkeletonBox part="dense" width={96} />
+          <SkeletonBox part="default" width={96} />
+          <SkeletonBox part="prominent" width={96} />
+          <SkeletonBox part="mark" />
+        </Stack>
+      </RefBlock>
+      <RefBlock id="skeleton-group" width={400} pad>
+        <SkeletonGroup label="Reference">
+          <Stack gap={8}>
+            <SkeletonText width="55%" />
+            <SkeletonBox part="default" width={96} />
+          </Stack>
+        </SkeletonGroup>
       </RefBlock>
     </>
   );
@@ -1032,6 +1076,7 @@ export const REFERENCE_BLOCKS = {
   icon: iconBlocks,
   sidebar: sidebarBlocks,
   "page-header": pageHeaderBlocks,
+  skeleton: skeletonBlocks,
   "stat-cards": statCardsBlocks,
   "status-bar": statusBarBlocks,
   "action-row": actionRowBlocks,

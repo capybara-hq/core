@@ -289,6 +289,49 @@
   background: var(--cb-hover);
 }
 
+/* Skeleton primitives (spec §6.29): bars and blocks that never animate. */
+.cb-skeleton-group {
+  display: contents;
+}
+.cb-skeleton-text {
+  display: block;
+  max-width: 100%;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-hover);
+}
+.cb-skeleton-text[data-size="body"] {
+  height: var(--cb-type-body-line);
+}
+.cb-skeleton-text[data-size="small"] {
+  height: var(--cb-type-small-line);
+}
+.cb-skeleton-text[data-size="title"] {
+  height: var(--cb-type-h1-line);
+}
+.cb-skeleton-box {
+  display: block;
+  max-width: 100%;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-selected);
+}
+.cb-skeleton-box[data-box="dense"] {
+  height: var(--cb-control-dense);
+}
+.cb-skeleton-box[data-box="default"] {
+  height: var(--cb-control-default);
+}
+.cb-skeleton-box[data-box="prominent"] {
+  height: var(--cb-control-prominent);
+}
+.cb-skeleton-box[data-box="mark"] {
+  border-radius: var(--cb-radius-md);
+  width: 36px;
+  height: 36px;
+}
+.cb-skeleton-box[data-box="block"] {
+  height: 96px;
+}
+
 /* BarChart */
 .cb-barchart {
   display: block;

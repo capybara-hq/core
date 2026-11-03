@@ -246,6 +246,17 @@ a.cb-pageheader-path-seg:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Loading: a title-size bar stands in for the h1 and takes the h1's line box. */
+.cb-pageheader-title-bar {
+  flex: 1;
+  min-width: 0;
+}
+.cb-pageheader-tab-slots {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-4);
+  height: var(--cb-control-default);
+}
 .cb-pageheader-count {
   flex: none;
   color: var(--cb-muted);

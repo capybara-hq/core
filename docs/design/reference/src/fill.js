@@ -260,6 +260,14 @@
   function pageHeader(o) {
     const L = F.LIST_PAGE_FIXTURE;
     const title = o.title || L.title;
+    // Loading (spec §4.2): a title-size bar, two action blocks and two tab bars; nothing known yet.
+    if (o.loading) {
+      const loadSegs = F.FORM_PAGE_FIXTURE.path.slice(0, 1);
+      const loadCrumb = `<nav class="r-ph-crumb" aria-label="路径">${loadSegs
+        .map((c) => `<span class="r-ink">${esc(c.label)}</span>`)
+        .join("")}</nav>`;
+      return `<header class="r-ph" aria-busy="true">${loadCrumb}<div class="r-ph-row"><div class="r-ph-text"><div class="r-skel-text" data-part="skeleton-text" data-size="title" style="width:30%"></div></div><div class="r-ph-actions"><div class="r-skel-box" data-part="skeleton-box" data-box="default" style="width:72px"></div><div class="r-skel-box" data-box="default" style="width:72px"></div></div></div><div class="r-ph-tabs r-ph-tabs-loading"><div class="r-ph-tab-slots"><div class="r-skel-text" data-size="body" style="width:56px"></div><div class="r-skel-text" data-size="body" style="width:56px"></div></div></div></header>`;
+    }
     const segs = o.path ? F.FORM_PAGE_FIXTURE.path : F.FORM_PAGE_FIXTURE.path.slice(0, 1);
     const crumb = `<nav class="r-ph-crumb" aria-label="路径">${segs
       .map((c, i) =>

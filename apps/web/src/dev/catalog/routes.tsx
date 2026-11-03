@@ -91,6 +91,8 @@ export const REFERENCE_COMPONENTS = [
   "repeater",
   "field-row",
   "key-value-editor",
+  // loading states
+  "skeleton",
 ] as const;
 
 export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];

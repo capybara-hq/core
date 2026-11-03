@@ -1,6 +1,12 @@
 import { Fragment, type ReactNode } from "react";
 import { Button, IconButton, Input, LinkButton } from "../controls/index";
 import type { MetricProps } from "../display/index";
+import {
+  SkeletonAnnouncement,
+  SkeletonBox,
+  SkeletonText,
+  useSkeletonAnnounces,
+} from "../display/skeleton";
 import { Tabs } from "../display/tabs";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
@@ -54,6 +60,13 @@ export type PageHeaderProps = {
   activeTab?: string;
   /** The search field at the right end of the tabs row. */
   search?: { label: string; value: string; onChange(v: string): void };
+  /**
+   * The page's data is on its way (spec §4.2, §6.29). `title`: the title is not known yet, a
+   * `title`-size bar of 30% stands in for the h1. `actions` / `tabs`: how many placeholders to
+   * draw when the page does not know its actions or tabs yet; the ones given in `actions` /
+   * `tabs` always render for real, and then no placeholder is drawn.
+   */
+  loading?: { title?: boolean; actions?: number; tabs?: number };
 };
 
 /** Spec §4.2: metrics ≤ 5, at most one solid primary. Throws in development and tests. */
@@ -80,6 +93,7 @@ export function PageHeader(p: PageHeaderProps) {
   const t = useDesignT();
   const Link = useDesignLink();
   const narrow = useMediaQuery("(max-width: 639px)");
+  const announces = useSkeletonAnnounces();
   const segments = p.path;
   const tabItems = p.tabs ?? [];
   // The primary action is rightmost (spec §4.2), whatever order the page gives.
@@ -176,8 +190,16 @@ export function PageHeader(p: PageHeaderProps) {
       : narrow
         ? [more ? renderAction(more) : null, ...primaries.map(renderAction)]
         : actions.map(renderAction);
+  const loading = p.loading;
+  const actionSlots = actions.length === 0 ? (loading?.actions ?? 0) : 0;
+  const tabSlots = tabItems.length === 0 ? (loading?.tabs ?? 0) : 0;
   return (
-    <header className="cb-pageheader" data-part="page-header">
+    <header
+      className="cb-pageheader"
+      data-part="page-header"
+      aria-busy={loading && announces ? "true" : undefined}
+    >
+      {loading && announces ? <SkeletonAnnouncement /> : null}
       {segments.length > 0 ? (
         <nav className="cb-pageheader-path" data-part="path" aria-label={t("shell.path")}>
           {segments.map((c, i) => {
@@ -212,9 +234,15 @@ export function PageHeader(p: PageHeaderProps) {
       <div className="cb-pageheader-row">
         <div className="cb-pageheader-text">
           <div className="cb-pageheader-titleline">
-            <h1 className="cb-pageheader-title" data-part="page-header-title" title={p.title}>
-              {p.title}
-            </h1>
+            {loading?.title ? (
+              <span className="cb-pageheader-title-bar" data-part="page-header-title-bar">
+                <SkeletonText width="30%" size="title" />
+              </span>
+            ) : (
+              <h1 className="cb-pageheader-title" data-part="page-header-title" title={p.title}>
+                {p.title}
+              </h1>
+            )}
             {shown(p.count) ? <span className="cb-pageheader-count">{p.count}</span> : null}
             {shown(p.status) ? <span className="cb-pageheader-count">{p.status}</span> : null}
           </div>
@@ -232,10 +260,17 @@ export function PageHeader(p: PageHeaderProps) {
           <div className="cb-pageheader-actions" data-responsive={pre && more ? "true" : undefined}>
             {drawn}
           </div>
+        ) : actionSlots > 0 ? (
+          <div className="cb-pageheader-actions" data-part="page-header-action-slots">
+            {Array.from({ length: actionSlots }, (_, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
+              <SkeletonBox key={i} part="default" width={72} />
+            ))}
+          </div>
         ) : null}
       </div>
       {p.notice ?? null}
-      {tabItems.length > 0 || p.search ? (
+      {tabItems.length > 0 || p.search || tabSlots > 0 ? (
         <div className="cb-pageheader-tabs" data-part="page-header-tabs">
           {tabItems.length > 0 ? (
             <Tabs
@@ -244,6 +279,13 @@ export function PageHeader(p: PageHeaderProps) {
               value={p.activeTab ?? tabItems[0]?.id ?? ""}
               onChange={(id) => tabItems.find((x) => x.id === id)?.onSelect?.()}
             />
+          ) : tabSlots > 0 ? (
+            <div className="cb-pageheader-tab-slots" data-part="page-header-tab-slots">
+              {Array.from({ length: tabSlots }, (_, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
+                <SkeletonText key={i} width={56} />
+              ))}
+            </div>
           ) : null}
           {p.search ? (
             <div className="cb-pageheader-search" data-part="page-header-search">

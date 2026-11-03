@@ -3435,3 +3435,57 @@ textarea {
   padding: 0;
   list-style: none;
 }
+
+/* ── Skeleton primitives (spec §6.29) ────────────────────────────────────── */
+
+.r-skel-text {
+  display: block;
+  max-width: 100%;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-hover);
+}
+.r-skel-text[data-size="body"] {
+  height: var(--cb-type-body-line);
+}
+.r-skel-text[data-size="small"] {
+  height: var(--cb-type-small-line);
+}
+.r-skel-text[data-size="title"] {
+  height: var(--cb-type-h1-line);
+}
+.r-skel-box {
+  display: block;
+  max-width: 100%;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-selected);
+}
+.r-skel-box[data-box="dense"] {
+  height: var(--cb-control-dense);
+}
+.r-skel-box[data-box="default"] {
+  height: var(--cb-control-default);
+}
+.r-skel-box[data-box="prominent"] {
+  height: var(--cb-control-prominent);
+}
+.r-skel-box[data-box="mark"] {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--cb-radius-md);
+}
+.r-skel-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+}
+.r-ph-tab-slots {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-4);
+  height: var(--cb-control-default);
+}
+.r-ph-tabs-loading {
+  align-items: flex-end;
+  box-sizing: content-box;
+  height: calc(var(--cb-control-default) + 2 * var(--cb-space-1));
+}

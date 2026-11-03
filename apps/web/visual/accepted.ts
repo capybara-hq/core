@@ -60,4 +60,7 @@ export const ACCEPTED: string[] = [
   "repeater",
   "field-row",
   "key-value-editor",
+  // skeleton primitives (spec §6.29): blocks and size table in place; the reference PNGs and the
+  // side-by-side review wait for the reference-update and visual-update workflows
+  "skeleton",
 ];

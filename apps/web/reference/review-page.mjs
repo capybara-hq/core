@@ -68,6 +68,10 @@ const GROUPS = [
     title: "Config forms: repeater, field row, key / value editor",
     components: ["repeater", "field-row", "key-value-editor"],
   },
+  {
+    title: "Loading states: skeleton primitives",
+    components: ["skeleton"],
+  },
 ];
 const COMPONENTS = GROUPS.flatMap((g) => g.components);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);

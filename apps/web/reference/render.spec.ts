@@ -55,6 +55,8 @@ const PAGES = [
   "repeater",
   "field-row",
   "key-value-editor",
+  // loading states: the skeleton primitives
+  "skeleton",
 ];
 const THEMES = ["dark", "light"] as const;
 const BLOCK_ID = /^[a-z-]+-[a-z0-9-]+$/;
