@@ -12,9 +12,12 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
+import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
 import {
   type AdminOrg,
@@ -29,27 +32,43 @@ import {
   type SubagentLimitOverride,
   updateDeploymentSettings,
 } from "../../../../lib/admin";
+import { adminOrgsQuery, deploymentSettingsQuery } from "../../../../lib/query/admin";
+import { useAppMutation } from "../../../../lib/query/define";
+import { usePageQuery } from "../../../../lib/query/page-query";
+import { useAdmin } from "../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../lib/use-error-message";
-import { useServerState } from "../../../../lib/use-server-state";
+import NotFound from "../../not-found";
 
 /**
  * `/admin/orgs`：部署上的全部组织（企业管理员，ListPage）。每个组织可以覆盖运行并发上限与沙箱
  * cpu / 内存（部署设置 `runConcurrencyOverrides` / `sandboxLimitOverrides`）；留空用部署默认。
  * 沙箱限额只对之后新建的沙箱生效。组织管理员在组织设置里只读。
+ * From the query cache (the layout prefetched both reads on a first load); a saved override writes
+ * the answered settings into the cache.
  */
 /** 运行并发：正整数（内核不设上限）。 */
 const RUN_RANGE = { min: 1, max: Number.MAX_SAFE_INTEGER } as const;
 
-export default function AdminOrgs({
-  initial,
-}: {
-  initial: { orgs: AdminOrg[]; settings: DeploymentSettings };
-}) {
+export default function AdminOrgsView() {
+  const gate = useAdmin();
+  if (gate.kind === "pending") return null;
+  if (gate.kind === "noAccess") return <NoAccess need={gate.need} />;
+  return <AdminOrgs />;
+}
+
+function AdminOrgs() {
   const scope = usePagePath("admin");
   const t = useTranslations("admin.orgs");
-  const [s, setSettings] = useServerState(initial.settings);
-  const rows = initial.orgs;
+  const orgs = usePageQuery(adminOrgsQuery());
+  const settings = usePageQuery(deploymentSettingsQuery());
   const [editing, setEditing] = useState<AdminOrg | null>(null);
+  const header = { path: [...scope, { label: "orgs" }], title: t("title") };
+  if (orgs.kind === "notFound" || settings.kind === "notFound") return <NotFound />;
+  if (orgs.kind === "error") return <ErrorFrame reset={orgs.retry} />;
+  if (settings.kind === "error") return <ErrorFrame reset={settings.retry} />;
+  const ready = orgs.kind === "ready" && settings.kind === "ready";
+  const rows = orgs.kind === "ready" ? orgs.data.orgs : [];
+  const s = settings.kind === "ready" ? settings.data : null;
 
   const orDefault = (v: number | undefined, unit = "") =>
     v === undefined ? t("default") : `${v}${unit}`;
@@ -78,14 +97,29 @@ export default function AdminOrgs({
     },
   ];
 
+  if (!ready || s === null) {
+    // The hint is static: it stays above the table's own loading state, as the loaded page draws
+    // them (the count waits for the answer).
+    return (
+      <ListPage header={header}>
+        <Stack gap={12}>
+          <Text variant="prose" tone="muted">
+            {t("hint")}
+          </Text>
+          <DataTable
+            label={t("title")}
+            columns={columns}
+            rows={[]}
+            rowKey={(o) => o.id}
+            state="loading"
+          />
+        </Stack>
+      </ListPage>
+    );
+  }
+
   return (
-    <ListPage
-      header={{
-        path: [...scope, { label: "orgs" }],
-        title: t("title"),
-        count: String(rows.length),
-      }}
-    >
+    <ListPage header={{ path: header.path, title: header.title, count: String(rows.length) }}>
       <Stack gap={12}>
         {/* One paragraph: the admin console sets deployment-level limits; inside an org only its
             admins act */}
@@ -107,10 +141,7 @@ export default function AdminOrgs({
           org={editing}
           settings={s}
           onClose={() => setEditing(null)}
-          onSaved={(next) => {
-            setSettings(next);
-            setEditing(null);
-          }}
+          onSaved={() => setEditing(null)}
         />
       )}
     </ListPage>
@@ -127,7 +158,7 @@ function LimitsDialog({
   org: AdminOrg;
   settings: DeploymentSettings;
   onClose(): void;
-  onSaved(next: DeploymentSettings): void;
+  onSaved(): void;
 }) {
   const t = useTranslations("admin.orgs.dialog");
   const tc = useTranslations("common");
@@ -145,6 +176,13 @@ function LimitsDialog({
   const [tokens, setTokens] = useState(text(subagent?.maxTokensPerRun));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const qc = useQueryClient();
+  // The answer is the settings as they are now: it replaces the cached ones.
+  const update = useAppMutation({
+    fn: updateDeploymentSettings,
+    invalidates: () => [],
+    onSuccess: (r) => qc.setQueryData(deploymentSettingsQuery().queryKey, r),
+  });
 
   const runValue = parseLimit(run, RUN_RANGE, true);
   const cpuValue = parseLimit(cpu, SANDBOX_CPU, false);
@@ -176,7 +214,7 @@ function LimitsDialog({
     setBusy(true);
     setError(null);
     try {
-      const next = await updateDeploymentSettings({
+      await update.mutateAsync({
         runConcurrencyOverrides: { [org.id]: runValue },
         sandboxLimitOverrides: { [org.id]: Object.keys(limits).length > 0 ? limits : null },
         ...(subagentChanged && {
@@ -186,7 +224,7 @@ function LimitsDialog({
         }),
       });
       toast.success(tOrgs("saved"));
-      onSaved(next);
+      onSaved();
     } catch (e) {
       setError(errorMessage(e));
     } finally {

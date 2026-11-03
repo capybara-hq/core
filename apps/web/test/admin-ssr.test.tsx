@@ -1,11 +1,12 @@
-// The admin console renders on the server (web-SSR spec §6, task 10): first paint complete without a
-// browser fetch, the enterprise-admin gate (only the session is read below it), and R5's failures.
-import { cleanup, screen } from "@testing-library/react";
+// The admin console reads from the query cache the layout prefetched (web query cache spec §3):
+// first paint complete without a browser read, the loading state on an empty cache, the
+// enterprise-admin gate (only the session is read below it), R5's failures and the mutations'
+// cache updates. Pages not migrated yet still render on the server (`renderRoute`).
+import { act, cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import AdminAccountsPage from "../src/app/(app)/admin/accounts/page";
 import AdminCatalogItemPage from "../src/app/(app)/admin/catalog/[itemId]/page";
 import PluginImportPage from "../src/app/(app)/admin/catalog/import/page";
 import AdminCatalogPage from "../src/app/(app)/admin/catalog/page";
@@ -15,12 +16,9 @@ import ExtensionInstallPage from "../src/app/(app)/admin/extensions/install/page
 import AdminExtensionsPage from "../src/app/(app)/admin/extensions/page";
 import MarketplaceEntriesPage from "../src/app/(app)/admin/marketplaces/entries/page";
 import MarketplacesPage from "../src/app/(app)/admin/marketplaces/page";
-import AdminModelsPage from "../src/app/(app)/admin/models/page";
-import AdminOrgsPage from "../src/app/(app)/admin/orgs/page";
-import AdminOverviewPage from "../src/app/(app)/admin/page";
-import AdminSettingsPage from "../src/app/(app)/admin/settings/page";
-import { json, stubApi } from "./support/api";
+import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes, renderRoute } from "./support/server";
 
@@ -234,39 +232,166 @@ const ROUTES: Routes = {
 beforeEach(() => resetNavigation("/admin"));
 afterEach(cleanup);
 
+const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
+
+/** An empty-cache client navigation to `path` whose `held` read answers only on `release()`. */
+async function renderHeld(path: string, held: string, routes: Routes = ROUTES) {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  const answer = routes[held];
+  if (answer === undefined) throw new Error(`no route ${held}`);
+  const r = await renderRouteEmptyCache(path, {
+    ...routes,
+    [held]: async (c) => {
+      await gate;
+      return answer(c);
+    },
+  });
+  return { ...r, release: () => act(async () => release()) };
+}
+
+/** The template `name` is drawn busy and `text` (from the data) is not there yet. */
+async function expectLoading(name: string, text: string) {
+  await vi.waitFor(() => {
+    if (template(name) === null) throw new Error("no page");
+  });
+  expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+  expect(screen.queryByText(text)).toBeNull();
+}
+
 describe("first paint comes from the server (no browser fetch)", () => {
-  it("/admin: the four numbers", async () => {
+  it("/admin: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => AdminOverviewPage(), ROUTES);
+    await renderRouteWithCache("/admin", ROUTES);
     expect(screen.getByText("7")).toBeTruthy();
     expect(screen.getByText("3")).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/admin/accounts: the first page, with load more when there is a next", async () => {
+  it("/admin/accounts: a first render from the hydrated cache makes no browser read (load more when there is a next)", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => AdminAccountsPage(), ROUTES);
+    await renderRouteWithCache("/admin/accounts", ROUTES);
     expect(screen.getByText("Alice")).toBeTruthy();
     expect(screen.getByRole("button", { name: en.admin.accounts.loadMore })).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/admin/orgs: the orgs with the deployment overrides", async () => {
+  it("/admin/orgs: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => AdminOrgsPage(), ROUTES);
+    await renderRouteWithCache("/admin/orgs", ROUTES);
     expect(screen.getByText("Beta")).toBeTruthy();
     expect(screen.getByText("3")).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/admin/settings and /admin/models", async () => {
+  it("/admin/settings and /admin/models: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => AdminSettingsPage(), ROUTES);
+    await renderRouteWithCache("/admin/settings", ROUTES);
     expect(screen.getByDisplayValue("USD")).toBeTruthy();
     cleanup();
-    await renderRoute(() => AdminModelsPage(), ROUTES);
+    await renderRouteWithCache("/admin/models", ROUTES);
     expect(screen.getByText(en.models.admin.noProviders)).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
+  });
+
+  it.each([
+    ["/admin", "GET /api/v1/admin/overview", "OverviewPage", "7"],
+    ["/admin/accounts", "GET /api/v1/admin/accounts", "ListPage", "Alice"],
+    ["/admin/orgs", "GET /api/v1/admin/orgs", "ListPage", "Beta"],
+    [
+      "/admin/settings",
+      "GET /api/v1/admin/settings",
+      "FormPage",
+      en.admin.settings.orgCreation.anyone,
+    ],
+    ["/admin/models", "GET /api/v1/admin/models", "ListPage", en.models.admin.noProviders],
+  ])(
+    "%s: an empty cache shows the template's loading state, then the data",
+    async (path, held, name, text) => {
+      const { release } = await renderHeld(path, held);
+      await expectLoading(name, text);
+      await release();
+      expect(await screen.findByText(text)).toBeTruthy();
+      await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+    },
+  );
+
+  it("/admin: while the numbers load the note stays and the numbers are stat slots", async () => {
+    const { release } = await renderHeld("/admin", "GET /api/v1/admin/overview");
+    await expectLoading("OverviewPage", "7");
+    expect(screen.getByText(en.admin.overview.noConversations)).toBeTruthy();
+    expect(document.querySelectorAll('[data-part="stat-card"]')).toHaveLength(4);
+    await release();
+  });
+
+  it("/admin/settings: the loading sections are the page's own (three card radios, the currency)", async () => {
+    const { release } = await renderHeld("/admin/settings", "GET /api/v1/admin/settings");
+    await expectLoading("FormPage", en.admin.settings.orgCreation.anyone);
+    expect(document.querySelectorAll('[data-part="loading-radios"]')).toHaveLength(3);
+    expect(document.querySelectorAll(".cb-form-section")).toHaveLength(4);
+    await release();
+  });
+
+  it("/admin/models: the purposes load as the kernel's five cards", async () => {
+    const { release } = await renderHeld("/admin/models", "GET /api/v1/admin/model-purposes");
+    await vi.waitFor(() => {
+      if (document.querySelector("[aria-busy='true']") === null) throw new Error("not loading");
+    });
+    expect(document.querySelectorAll('[data-part="loading-shaped-card"]')).toHaveLength(5);
+    await release();
+  });
+
+  it("/admin/settings: a save writes the answered settings into the cache (nothing read again)", async () => {
+    const calls = stubApi({
+      ...ROUTES,
+      "PUT /api/v1/admin/settings": (c) => json(200, { ...SETTINGS, ...(bodyOf(c) as object) }),
+    });
+    const { client } = await renderRouteWithCache("/admin/settings", ROUTES);
+    const u = userEvent.setup();
+    await u.clear(screen.getByDisplayValue("USD"));
+    await u.type(screen.getByRole("textbox", { name: en.admin.settings.currency.label }), "EUR");
+    await u.click(screen.getByRole("button", { name: en.admin.settings.save }));
+    await vi.waitFor(() =>
+      expect(client.getQueryData(["deployment", "settings"])).toMatchObject({
+        priceCurrency: "EUR",
+      }),
+    );
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(["PUT /api/v1/admin/settings"]);
+  });
+
+  it("/admin/accounts: creating an account adds it to the cached list and invalidates the overview", async () => {
+    const calls = stubApi({
+      ...ROUTES,
+      "POST /api/v1/admin/accounts": () => json(201, { account: ACCOUNT("a9", "Zoe") }),
+    });
+    const { client } = await renderRouteWithCache("/admin/accounts", ROUTES);
+    await client.prefetchQuery({
+      queryKey: ["deployment", "adminOverview"],
+      queryFn: () => ({
+        extensionsNeedingAction: 0,
+        catalogRequestsPending: 0,
+        orgs: 0,
+        accounts: 0,
+      }),
+    });
+    const u = userEvent.setup();
+    await u.click(screen.getByRole("button", { name: en.admin.accounts.new }));
+    const f = en.admin.accounts.form;
+    await u.type(screen.getByRole("textbox", { name: new RegExp(f.login) }), "zoe");
+    await u.type(screen.getByLabelText(new RegExp(f.password)), "secret-pass");
+    await u.type(screen.getByRole("textbox", { name: new RegExp(f.displayName) }), "Zoe");
+    await u.click(screen.getByRole("button", { name: f.submit }));
+    expect(await screen.findByText("Zoe")).toBeTruthy();
+    // the list is not read again (the answer is the account); the overview (not on screen) is
+    // marked for its next read
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(["POST /api/v1/admin/accounts"]);
+    expect(client.getQueryState(["deployment", "adminOverview"])?.isInvalidated).toBe(true);
   });
 
   it("/admin/extensions: the list", async () => {
@@ -459,11 +584,13 @@ describe("first paint comes from the server (no browser fetch)", () => {
     );
   });
 
-  it("a failing required read is an error, not an empty page", async () => {
-    expectNoFirstPaintFetch();
-    await expect(
-      renderRoute(() => AdminOrgsPage(), { ...ROUTES, "GET /api/v1/admin/settings": failing }),
-    ).rejects.toThrow();
+  it("a failing required read is the error state with a retry, not an empty page (not read again on mount)", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRouteWithCache("/admin/orgs", { ...ROUTES, "GET /api/v1/admin/settings": failing });
+    expect(template("StatusPage")).not.toBeNull();
+    expect(screen.queryByText("Beta")).toBeNull();
+    await settle();
+    expect(browser).toEqual([]);
   });
 });
 
@@ -476,12 +603,15 @@ const item =
   (itemId: string): Page =>
   () =>
     AdminCatalogItemPage({ params: Promise.resolve({ itemId }) });
+/** The migrated pages (the query cache's gate). */
+const CACHED: string[] = [
+  "/admin",
+  "/admin/accounts",
+  "/admin/orgs",
+  "/admin/settings",
+  "/admin/models",
+];
 const PAGES: [string, Page][] = [
-  ["/admin", () => AdminOverviewPage()],
-  ["/admin/accounts", () => AdminAccountsPage()],
-  ["/admin/orgs", () => AdminOrgsPage()],
-  ["/admin/settings", () => AdminSettingsPage()],
-  ["/admin/models", () => AdminModelsPage()],
   ["/admin/catalog", () => AdminCatalogPage()],
   ["/admin/catalog/[itemId]", item(ITEM_ID)],
   ["/admin/catalog/import", () => PluginImportPage({ searchParams: Promise.resolve({}) })],
@@ -497,6 +627,21 @@ const PAGES: [string, Page][] = [
 ];
 
 describe("the enterprise-admin gate", () => {
+  it.each(CACHED)("%s: a non-admin gets no access and only the session is read", async (path) => {
+    const r = await renderRouteWithCache(path, ROUTES, { me: NOT_ADMIN });
+    expect(new Set(r.calls.map((c) => c.url))).toEqual(
+      new Set(["/api/v1/me", "/api/v1/orgs/o1/readiness"]),
+    );
+    expect(noAccess()).toBe(true);
+  });
+
+  it.each(CACHED)("%s: an admin needs no org", async (path) => {
+    const r = await renderRouteWithCache(path, ROUTES, { me: { ...ME, currentOrgId: null } });
+    expect(noAccess()).toBe(false);
+    expect(r.calls.map((c) => c.url)).toContain("/api/v1/me");
+    expect(document.querySelector("[data-template]")).not.toBeNull();
+  });
+
   it.each(PAGES)(
     "%s: a non-admin gets no access and only the session is read",
     async (_p, page) => {
@@ -505,18 +650,13 @@ describe("the enterprise-admin gate", () => {
       expect(noAccess()).toBe(true);
     },
   );
-
-  it("an admin needs no org: nothing is redirected", async () => {
-    await renderRoute(() => AdminOverviewPage(), ROUTES, { me: { ...ME, currentOrgId: null } });
-    expect(noAccess()).toBe(false);
-  });
 });
 
 describe("accounts: load more stays in the browser", () => {
   it("appends the next page and drops the button at the end", async () => {
     expectNoFirstPaintFetch();
-    const { calls } = await renderRoute(() => AdminAccountsPage(), ROUTES);
-    const browser = (await import("./support/api")).stubApi({
+    const { calls } = await renderRouteWithCache("/admin/accounts", ROUTES);
+    const browser = stubApi({
       "GET /api/v1/admin/accounts": () =>
         json(200, { accounts: [ACCOUNT("a3", "Carol")], next: null }),
     });

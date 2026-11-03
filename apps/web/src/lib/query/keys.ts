@@ -241,6 +241,47 @@ export const keys = {
       all: all as readonly unknown[],
       /** The sign-in sources the login page offers. */
       authSources: (): readonly unknown[] => [...all, "authSources"],
+      /** The admin console's four overview numbers. */
+      adminOverview: (): readonly unknown[] => [...all, "adminOverview"],
+      /** Every page of the accounts list (an invalidation prefix). */
+      adminAccountsAll: (): readonly unknown[] => [...all, "adminAccounts"],
+      /** A page of the accounts list: the first (`after: ""`) or the one after a cursor. */
+      adminAccounts: (after = ""): readonly unknown[] => [...all, "adminAccounts", after],
+      /** The deployment's orgs. */
+      adminOrgs: (): readonly unknown[] => [...all, "adminOrgs"],
+      /** The deployment settings. */
+      settings: (): readonly unknown[] => [...all, "settings"],
+      /** The providers with their models and the price table. */
+      adminModels: (): readonly unknown[] => [...all, "adminModels"],
+      /** The purposes' deployment defaults. */
+      adminPurposes: (): readonly unknown[] => [...all, "adminPurposes"],
+      /** The deployment's extensions (with the drain time limit). */
+      extensions: (): readonly unknown[] => [...all, "extensions"],
+      /** Every extension's deployment config (an invalidation prefix). */
+      extensionConfigsAll: (): readonly unknown[] => [...all, "extensionConfig"],
+      /** One extension's deployment config. */
+      extensionConfig: (name: string): readonly unknown[] => [...all, "extensionConfig", name],
+      /** The catalog's items. */
+      catalog: (): readonly unknown[] => [...all, "catalog"],
+      /** Every catalog item read (an invalidation prefix). */
+      catalogItemsAll: (): readonly unknown[] => [...all, "catalogItem"],
+      /** One catalog item with its versions. */
+      catalogItem: (itemId: string): readonly unknown[] => [...all, "catalogItem", itemId],
+      /** A staged plugin import's review. */
+      stagedImport: (stagingId: string): readonly unknown[] => [...all, "stagedImport", stagingId],
+      /** The pending catalog requests at the deployment stage. */
+      catalogRequests: (): readonly unknown[] => [...all, "catalogRequests"],
+      /** The marketplaces (with the offline flag). */
+      marketplaces: (): readonly unknown[] => [...all, "marketplaces"],
+      /** Every entries read (an invalidation prefix). */
+      marketplaceEntriesAll: (): readonly unknown[] => [...all, "marketplaceEntries"],
+      /** The marketplace entries of one source (`""`: all) and search (`""`: none). */
+      marketplaceEntries: (sourceId: string, q: string): readonly unknown[] => [
+        ...all,
+        "marketplaceEntries",
+        sourceId,
+        q,
+      ],
     };
   },
 };

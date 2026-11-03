@@ -3,14 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import AdminModelsPage from "../src/app/(app)/admin/models/page";
 import { activeNavOf } from "../src/components/shell/nav";
 import type { Me } from "../src/lib/session";
 import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
-import { renderRoute } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -156,7 +154,7 @@ describe("/admin/models（ListPage）", () => {
   it.each(LOCALES)("供应商、模型的能力、上下文长度与价格（%s）", async (locale) => {
     const m = msgs[locale];
     adminRoutes();
-    const { container } = await renderRoute(AdminModelsPage, lastStubRoutes(), { locale });
+    const { container } = await renderRouteWithCache("/admin/models", lastStubRoutes(), { locale });
     // One frame: no inner navigation (the sidebar's admin context navigates)
     expect(template("ListPage")).not.toBeNull();
     expect(container.querySelector(".cb-settings-nav")).toBeNull();
@@ -195,7 +193,7 @@ describe("/admin/models（ListPage）", () => {
   it.each(LOCALES)("某个供应商出错：显示错误，不影响其他供应商（%s）", async (locale) => {
     const m = msgs[locale];
     adminRoutes();
-    await renderRoute(AdminModelsPage, lastStubRoutes(), { locale });
+    await renderRouteWithCache("/admin/models", lastStubRoutes(), { locale });
     expect(await screen.findByRole("table", { name: "alpha" })).toBeTruthy();
     expect(
       screen.getByText(fill(m.models.admin.providerError, { provider: "broken" }), {
@@ -223,7 +221,7 @@ describe("/admin/models（ListPage）", () => {
         "PUT /api/v1/admin/model-prices": () =>
           json(200, { prices: [PRICE, next], currency: "EUR" }),
       });
-      await renderRoute(AdminModelsPage, lastStubRoutes(), { locale });
+      await renderRouteWithCache("/admin/models", lastStubRoutes(), { locale });
       const table = await screen.findByRole("table", { name: "alpha" });
       const row = () => within(table).getByText("Alpha Small").closest("tr") as HTMLElement;
       const user = userEvent.setup();
@@ -247,7 +245,7 @@ describe("/admin/models（ListPage）", () => {
   it("价格不合法：保存不可用、不发请求；留空输出价也不行", async () => {
     const p = en.models.admin.price;
     const calls = adminRoutes();
-    await renderRoute(AdminModelsPage, lastStubRoutes());
+    await renderRouteWithCache("/admin/models", lastStubRoutes());
     const table = await screen.findByRole("table", { name: "alpha" });
     const row = within(table).getByText("Alpha Small").closest("tr") as HTMLElement;
     const user = userEvent.setup();
@@ -267,7 +265,7 @@ describe("/admin/models（ListPage）", () => {
     const calls = adminRoutes({
       "PUT /api/v1/admin/model-prices": () => json(200, { prices: [], currency: "EUR" }),
     });
-    await renderRoute(AdminModelsPage, lastStubRoutes());
+    await renderRouteWithCache("/admin/models", lastStubRoutes());
     const table = await screen.findByRole("table", { name: "alpha" });
     const row = () => within(table).getByText("Alpha Large").closest("tr") as HTMLElement;
     const user = userEvent.setup();
@@ -295,7 +293,7 @@ describe("/admin/models（ListPage）", () => {
           return json(200, { purpose: evalView({ default: t, effective: t }) });
         },
       });
-      await renderRoute(AdminModelsPage, lastStubRoutes(), { locale });
+      await renderRouteWithCache("/admin/models", lastStubRoutes(), { locale });
       expect(await screen.findByText(m.models.evalUnmapped)).toBeTruthy();
       const plugin = await purposeBox("notes.summarize");
       expect(plugin.getByText(m.models.purpose.pluginNote)).toBeTruthy();
@@ -341,7 +339,7 @@ describe("/admin/models（ListPage）", () => {
           },
         }),
     });
-    await renderRoute(AdminModelsPage, lastStubRoutes());
+    await renderRouteWithCache("/admin/models", lastStubRoutes());
     const ev = await purposeBox("eval");
     const user = userEvent.setup();
     await user.selectOptions(
@@ -359,7 +357,7 @@ describe("/admin/models（ListPage）", () => {
 
   it("非企业管理员：没有访问权限，不请求后台接口", async () => {
     const calls = stubApi({});
-    await renderRoute(AdminModelsPage, lastStubRoutes(), { me: NOT_ADMIN });
+    await renderRouteWithCache("/admin/models", lastStubRoutes(), { me: NOT_ADMIN });
     expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
     expect(calls).toEqual([]);
   });

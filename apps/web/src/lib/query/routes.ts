@@ -11,6 +11,14 @@ import { canEditAgent } from "../org-settings";
 import type { Me } from "../session";
 import type { UiContributionItem, UiLocale } from "../ui";
 import { identitiesQuery, toolGrantsQuery } from "./account";
+import {
+  adminAccountsQuery,
+  adminModelsQuery,
+  adminOrgsQuery,
+  adminOverviewQuery,
+  adminPurposesQuery,
+  deploymentSettingsQuery,
+} from "./admin";
 import { agentConnectorQueries, agentFormQueries, agentQuery, agentsQuery } from "./agents";
 import { authSourcesQuery } from "./auth";
 import { orgCatalogItemQuery, orgCatalogQuery } from "./catalog";
@@ -94,6 +102,9 @@ const q = <T>(o: UseQueryOptions<T, ApiClientError>) =>
 const atLeast = (me: Me | null, min: OrgRole): boolean =>
   me !== null && roleAtLeast(myRole(me), min);
 
+/** Whether the session is an enterprise admin's (the admin console reads nothing for anyone else). */
+const enterprise = (me: Me | null): boolean => me?.account.isEnterpriseAdmin === true;
+
 /**
  * Every `page.tsx` under `app/(app)` and `app/(auth)`, one entry each (a test walks the app dir).
  * Patterns are string literals: the query checks read them statically.
@@ -142,8 +153,15 @@ export const ROUTES: readonly RouteEntry[] = [
     queries: ({ me }) =>
       me === null ? [] : [q(identitiesQuery(me.account.id)), q(authSourcesQuery())],
   },
-  { pattern: "/admin", queries: () => [], none: "pending migration" },
-  { pattern: "/admin/accounts", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/admin",
+    // Enterprise admins (no org needed): the four numbers.
+    queries: ({ me }) => (enterprise(me) ? [q(adminOverviewQuery())] : []),
+  },
+  {
+    pattern: "/admin/accounts",
+    queries: ({ me }) => (enterprise(me) ? [q(adminAccountsQuery())] : []),
+  },
   { pattern: "/admin/catalog", queries: () => [], none: "pending migration" },
   { pattern: "/admin/catalog/[itemId]", queries: () => [], none: "pending migration" },
   { pattern: "/admin/catalog/import", queries: () => [], none: "pending migration" },
@@ -153,9 +171,20 @@ export const ROUTES: readonly RouteEntry[] = [
   { pattern: "/admin/extensions/install", queries: () => [], none: "pending migration" },
   { pattern: "/admin/marketplaces", queries: () => [], none: "pending migration" },
   { pattern: "/admin/marketplaces/entries", queries: () => [], none: "pending migration" },
-  { pattern: "/admin/models", queries: () => [], none: "pending migration" },
-  { pattern: "/admin/orgs", queries: () => [], none: "pending migration" },
-  { pattern: "/admin/settings", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/admin/models",
+    queries: ({ me }) => (enterprise(me) ? [q(adminModelsQuery()), q(adminPurposesQuery())] : []),
+  },
+  {
+    pattern: "/admin/orgs",
+    // The orgs and the deployment settings (their overrides).
+    queries: ({ me }) =>
+      enterprise(me) ? [q(adminOrgsQuery()), q(deploymentSettingsQuery())] : [],
+  },
+  {
+    pattern: "/admin/settings",
+    queries: ({ me }) => (enterprise(me) ? [q(deploymentSettingsQuery())] : []),
+  },
   {
     pattern: "/agents",
     queries: ({ orgId }) => (orgId === null ? [] : [q(agentsQuery(orgId))]),

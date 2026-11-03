@@ -705,8 +705,6 @@ export interface QueryPending {
   reason: string;
 }
 export const QUERY_PENDING: readonly QueryPending[] = [
-  { path: "app/(app)/admin/accounts/page.tsx", reason: "pending migration: Task 14" },
-  { path: "app/(app)/admin/accounts/view.tsx", reason: "pending migration: Task 14" },
   { path: "app/(app)/admin/catalog/[itemId]/page.tsx", reason: "pending migration: Task 14" },
   { path: "app/(app)/admin/catalog/[itemId]/view.tsx", reason: "pending migration: Task 14" },
   { path: "app/(app)/admin/catalog/import/page.tsx", reason: "pending migration: Task 14" },
@@ -723,13 +721,6 @@ export const QUERY_PENDING: readonly QueryPending[] = [
   { path: "app/(app)/admin/marketplaces/entries/view.tsx", reason: "pending migration: Task 14" },
   { path: "app/(app)/admin/marketplaces/page.tsx", reason: "pending migration: Task 14" },
   { path: "app/(app)/admin/marketplaces/view.tsx", reason: "pending migration: Task 14" },
-  { path: "app/(app)/admin/models/page.tsx", reason: "pending migration: Task 14" },
-  { path: "app/(app)/admin/models/view.tsx", reason: "pending migration: Task 14" },
-  { path: "app/(app)/admin/orgs/page.tsx", reason: "pending migration: Task 14" },
-  { path: "app/(app)/admin/orgs/view.tsx", reason: "pending migration: Task 14" },
-  { path: "app/(app)/admin/page.tsx", reason: "pending migration: Task 14" },
-  { path: "app/(app)/admin/settings/page.tsx", reason: "pending migration: Task 14" },
-  { path: "app/(app)/admin/settings/view.tsx", reason: "pending migration: Task 14" },
   { path: "components/ExtensionDeploymentConfig.tsx", reason: "pending migration: Task 14" },
   { path: "app/(auth)/bind/[token]/page.tsx", reason: "pending migration: Task 15" },
   { path: "app/(auth)/bind/[token]/view.tsx", reason: "pending migration: Task 15" },

@@ -3,16 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import AdminAccountsPage from "../src/app/(app)/admin/accounts/page";
-import AdminOrgsPage from "../src/app/(app)/admin/orgs/page";
-import AdminOverviewPage from "../src/app/(app)/admin/page";
-import AdminSettingsPage from "../src/app/(app)/admin/settings/page";
 import { activeNavOf } from "../src/components/shell/nav";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
+import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
-import { renderRoute } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -54,7 +50,7 @@ describe("/admin 概览（OverviewPage）", () => {
       "GET /api/v1/admin/overview": () =>
         json(200, { extensionsNeedingAction: 3, catalogRequestsPending: 0, orgs: 2, accounts: 7 }),
     });
-    const { container } = await renderRoute(AdminOverviewPage, lastStubRoutes(), { locale });
+    const { container } = await renderRouteWithCache("/admin", lastStubRoutes(), { locale });
     expect(template("OverviewPage")).not.toBeNull();
     const metrics = await vi.waitFor(() => {
       const m = container.querySelector('[data-part="stat-cards"]');
@@ -86,7 +82,7 @@ describe("/admin 概览（OverviewPage）", () => {
 
   it("非企业管理员：没有访问权限（需要企业管理员），不请求后台接口", async () => {
     const calls = stubApi({});
-    await renderRoute(AdminOverviewPage, lastStubRoutes(), { locale: "zh", me: NOT_ADMIN });
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh", me: NOT_ADMIN });
     expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
     expect(document.querySelector('[data-part="status-need"]')?.textContent).toBe(
       `需要：${zh.roles.need.enterprise}`,
@@ -123,7 +119,7 @@ describe("/admin/accounts（ListPage）", () => {
       "PATCH /api/v1/admin/accounts/a2": (c) =>
         json(200, { account: { ...ACCOUNTS[1], ...(bodyOf(c) as object) } }),
     });
-    await renderRoute(AdminAccountsPage, lastStubRoutes(), { locale });
+    await renderRouteWithCache("/admin/accounts", lastStubRoutes(), { locale });
     expect(template("ListPage")).not.toBeNull();
     const table = await screen.findByRole("table", { name: a.title });
     const alice = within(table).getByText("Alice").closest("tr") as HTMLElement;
@@ -151,7 +147,7 @@ describe("/admin/accounts（ListPage）", () => {
           next: null,
         }),
     });
-    await renderRoute(AdminAccountsPage, lastStubRoutes());
+    await renderRouteWithCache("/admin/accounts", lastStubRoutes());
     const a = en.admin.accounts;
     const table = await screen.findByRole("table", { name: a.title });
     const grant = within(table).getByText("Grant").closest("tr") as HTMLElement;
@@ -181,7 +177,7 @@ describe("/admin/accounts（ListPage）", () => {
           next: null,
         }),
     });
-    await renderRoute(AdminAccountsPage, lastStubRoutes(), { locale: "zh" });
+    await renderRouteWithCache("/admin/accounts", lastStubRoutes(), { locale: "zh" });
     const a = zh.admin.accounts;
     const table = await screen.findByRole("table", { name: a.title });
     const grant = within(table).getByText("Grant").closest("tr") as HTMLElement;
@@ -198,7 +194,7 @@ describe("/admin/accounts（ListPage）", () => {
       "PATCH /api/v1/admin/accounts/a1": () =>
         json(409, { error: { code: "account.last_enterprise_admin", message: "x" } }),
     });
-    await renderRoute(AdminAccountsPage, lastStubRoutes(), { locale: "zh" });
+    await renderRouteWithCache("/admin/accounts", lastStubRoutes(), { locale: "zh" });
     const a = zh.admin.accounts;
     const table = await screen.findByRole("table", { name: a.title });
     const grant = within(table).getByText("Grant").closest("tr") as HTMLElement;
@@ -225,7 +221,7 @@ describe("/admin/accounts（ListPage）", () => {
       "GET /api/v1/admin/accounts": () => json(200, { accounts: ACCOUNTS, next: null }),
       "POST /api/v1/admin/accounts": () => json(201, { account: created }),
     });
-    await renderRoute(AdminAccountsPage, lastStubRoutes());
+    await renderRouteWithCache("/admin/accounts", lastStubRoutes());
     const a = en.admin.accounts;
     await screen.findByRole("table", { name: a.title });
     const user = userEvent.setup();
@@ -255,7 +251,7 @@ describe("/admin/accounts（ListPage）", () => {
       "PATCH /api/v1/admin/accounts/a2": (c) =>
         json(200, { account: { ...ACCOUNTS[1], ...(bodyOf(c) as object) } }),
     });
-    await renderRoute(AdminAccountsPage, lastStubRoutes());
+    await renderRouteWithCache("/admin/accounts", lastStubRoutes());
     const a = en.admin.accounts;
     const table = await screen.findByRole("table", { name: a.title });
     const alice = within(table).getByText("Alice").closest("tr") as HTMLElement;
@@ -281,7 +277,7 @@ describe("/admin/orgs（ListPage）", () => {
       "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS }),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
     });
-    await renderRoute(AdminOrgsPage, lastStubRoutes(), { locale: "zh" });
+    await renderRouteWithCache("/admin/orgs", lastStubRoutes(), { locale: "zh" });
     const hint = await screen.findByText(zh.admin.orgs.hint);
     expect(hint.textContent).toContain("该组织的管理员");
     expect(hint.getAttribute("data-variant")).toBe("prose");
@@ -300,7 +296,7 @@ describe("/admin/orgs（ListPage）", () => {
           sandboxLimitOverrides: { o1: { cpu: 1.5, memoryMb: 4096 }, o2: { cpu: 2 } },
         }),
     });
-    await renderRoute(AdminOrgsPage, lastStubRoutes(), { locale });
+    await renderRouteWithCache("/admin/orgs", lastStubRoutes(), { locale });
     expect(template("ListPage")).not.toBeNull();
     const table = await screen.findByRole("table", { name: o.title });
     const beta = within(table).getByText("Beta").closest("tr") as HTMLElement;
@@ -337,7 +333,7 @@ describe("/admin/orgs（ListPage）", () => {
       "PUT /api/v1/admin/settings": () =>
         json(200, { ...SETTINGS, runConcurrencyOverrides: {}, sandboxLimitOverrides: {} }),
     });
-    await renderRoute(AdminOrgsPage, lastStubRoutes());
+    await renderRouteWithCache("/admin/orgs", lastStubRoutes());
     const o = en.admin.orgs;
     const table = await screen.findByRole("table", { name: o.title });
     const beta = within(table).getByText("Beta").closest("tr") as HTMLElement;
@@ -374,7 +370,7 @@ describe("/admin/orgs（ListPage）", () => {
           json(200, { ...SETTINGS, subagentLimitOverrides: { o2: { maxDispatchesPerRun: 9 } } }),
         "PUT /api/v1/admin/settings": () => json(200, SETTINGS),
       });
-      await renderRoute(AdminOrgsPage, lastStubRoutes(), { locale });
+      await renderRouteWithCache("/admin/orgs", lastStubRoutes(), { locale });
       const table = await screen.findByRole("table", { name: o.title });
       const user = userEvent.setup();
       const beta = within(table).getByText("Beta").closest("tr") as HTMLElement;
@@ -414,7 +410,7 @@ describe("/admin/orgs（ListPage）", () => {
       "PUT /api/v1/admin/settings": () =>
         json(400, { error: { code: "validation_failed", message: "x" } }),
     });
-    await renderRoute(AdminOrgsPage, lastStubRoutes());
+    await renderRouteWithCache("/admin/orgs", lastStubRoutes());
     const o = en.admin.orgs;
     const table = await screen.findByRole("table", { name: o.title });
     const acme = within(table).getByText("Acme").closest("tr") as HTMLElement;
@@ -439,7 +435,9 @@ describe("/admin/settings（FormPage）", () => {
         "PUT /api/v1/admin/settings": (c) => json(200, { ...SETTINGS, ...(bodyOf(c) as object) }),
       });
       resetNavigation("/admin/settings");
-      const { container } = await renderRoute(AdminSettingsPage, lastStubRoutes(), { locale });
+      const { container } = await renderRouteWithCache("/admin/settings", lastStubRoutes(), {
+        locale,
+      });
       expect(template("FormPage")).not.toBeNull();
       expect(container.querySelector(".cb-settings-nav")).toBeNull();
       const group = await screen.findByRole("radiogroup", { name: s.customConnectors.title });
@@ -464,7 +462,7 @@ describe("/admin/settings（FormPage）", () => {
 
   it("币种不合法时不能保存", async () => {
     const calls = stubApi({ "GET /api/v1/admin/settings": () => json(200, SETTINGS) });
-    await renderRoute(AdminSettingsPage, lastStubRoutes());
+    await renderRouteWithCache("/admin/settings", lastStubRoutes());
     const s = en.admin.settings;
     const input = (await screen.findByRole("textbox", {
       name: s.currency.label,

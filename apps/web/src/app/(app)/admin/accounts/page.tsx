@@ -1,12 +1,9 @@
-import { NoAccess } from "../../../../components/NoAccess";
-import { listAdminAccounts } from "../../../../lib/admin";
-import { read } from "../../../../lib/server/page";
-import { admin } from "../../../../lib/server/session";
 import AdminAccounts from "./view";
 
-/** `/admin/accounts` (enterprise admins): the first page of accounts, read on the server. */
-export default async function AdminAccountsPage() {
-  const gate = await admin();
-  if (gate.kind === "noAccess") return <NoAccess need={gate.need} />;
-  return <AdminAccounts initial={await read(listAdminAccounts())} />;
+/**
+ * `/admin/accounts` (enterprise admins): the accounts. It reads nothing: the layout prefetches the
+ * first page on a first load (`lib/query/routes.ts`).
+ */
+export default function AdminAccountsPage() {
+  return <AdminAccounts />;
 }

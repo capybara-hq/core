@@ -14,24 +14,33 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
+import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
 import {
   type AccountPatch,
   type AdminAccount,
   type AdminAccountsPage,
   createAdminAccount,
-  listAdminAccounts,
   updateAdminAccount,
 } from "../../../../lib/admin";
+import { adminAccountsQuery } from "../../../../lib/query/admin";
+import { useAppMutation } from "../../../../lib/query/define";
+import { keys } from "../../../../lib/query/keys";
+import { usePageQuery } from "../../../../lib/query/page-query";
+import { useAdmin } from "../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../lib/use-error-message";
-import { useServerState } from "../../../../lib/use-server-state";
+import NotFound from "../../not-found";
 
 /**
  * `/admin/accounts`：部署上的全部账号（企业管理员，ListPage）。新建账号；停用 / 启用；
  * 授予或撤销「企业管理员」。改动前一律二次确认（撤销最后一个企业管理员由内核拒绝，错误显示在确认框里）。
+ * The first page comes from the query cache (the layout prefetched it on a first load); "Load
+ * more" reads later pages through the cache; a change writes the answered account into them.
  */
 /** 待确认的改动。 */
 type Pending = { account: AdminAccount; action: "grant" | "revoke" | "disable" | "enable" };
@@ -43,65 +52,104 @@ const PATCH: Record<Pending["action"], AccountPatch> = {
   enable: { status: "active" },
 };
 
-export default function AdminAccounts({ initial }: { initial: AdminAccountsPage }) {
+export default function AdminAccountsView() {
+  const gate = useAdmin();
+  if (gate.kind === "pending") return null;
+  if (gate.kind === "noAccess") return <NoAccess need={gate.need} />;
+  return <AdminAccounts />;
+}
+
+function AdminAccounts() {
   const scope = usePagePath("admin");
   const t = useTranslations("admin.accounts");
+  const read = usePageQuery(adminAccountsQuery());
+  const header = { path: [...scope, { label: "accounts" }], title: t("title") };
+  if (read.kind === "notFound") return <NotFound />;
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
+  if (read.kind === "loading") {
+    return (
+      <ListPage
+        // The "new account" button's slot (it opens a dialog onto the loaded list).
+        header={{ path: header.path, title: header.title, loading: { actions: 1 } }}
+        loading={{ table: { label: t("title"), columns: accountColumns(t) } }}
+      />
+    );
+  }
+  return <Accounts header={header} first={read.data} />;
+}
+
+type T = ReturnType<typeof useTranslations<"admin.accounts">>;
+
+/** The table's columns (the loading table draws the same header). */
+const accountColumns = (t: T): Column<AdminAccount>[] => [
+  { key: "name", header: t("columns.name"), cell: (a) => a.displayName },
+  { key: "email", header: t("columns.email"), tone: "muted", cell: (a) => a.email ?? "—" },
+  {
+    key: "status",
+    header: t("columns.status"),
+    cell: (a) =>
+      a.status === "active" ? (
+        <StatusMark status="success" label={t("status.active")} />
+      ) : (
+        <StatusMark status="cancelled" label={t("status.disabled")} />
+      ),
+  },
+  {
+    key: "role",
+    header: t("columns.role"),
+    cell: (a) => (a.isEnterpriseAdmin ? t("enterpriseAdmin") : ""),
+  },
+];
+
+function Accounts({
+  header,
+  first,
+}: {
+  header: { path: { label: string; href?: string }[]; title: string };
+  first: AdminAccountsPage;
+}) {
+  const t = useTranslations("admin.accounts");
   const errorMessage = useErrorMessage();
-  // The first page comes from the server; "load more" appends later pages in the browser.
-  const [first, setFirst] = useServerState(initial);
+  const qc = useQueryClient();
+  // Later pages belong to the first page they continue (a newer first page starts over).
   const [more, setMore] = useState<{ source: AdminAccountsPage; pages: AdminAccountsPage[] }>({
-    source: initial,
+    source: first,
     pages: [],
   });
-  const pages = more.source === initial ? more.pages : [];
+  const pages = more.source === first ? more.pages : [];
   const rows = [...first.accounts, ...pages.flatMap((p) => p.accounts)];
   const next = pages.length > 0 ? (pages[pages.length - 1] as AdminAccountsPage).next : first.next;
   const [loadingMore, setLoadingMore] = useState(false);
   const [pending, setPending] = useState<Pending | null>(null);
   const [creating, setCreating] = useState(false);
+  const firstKey = adminAccountsQuery().queryKey;
 
   const loadMore = (after: string) => {
     setLoadingMore(true);
-    listAdminAccounts(after)
-      .then((page) => setMore({ source: initial, pages: [...pages, page] }))
+    qc.fetchQuery(adminAccountsQuery(after))
+      .then((page) => setMore({ source: first, pages: [...pages, page] }))
       .catch(() => {})
       .finally(() => setLoadingMore(false));
   };
 
+  // The answer is the account as it is now: it replaces that row in the cached first page and in
+  // the later pages read so far.
   const replace = (a: AdminAccount) => {
-    const swap = (rs: AdminAccount[]) => rs.map((r) => (r.id === a.id ? a : r));
-    setFirst({ ...first, accounts: swap(first.accounts) });
-    setMore({
-      source: initial,
-      pages: pages.map((p) => ({ ...p, accounts: swap(p.accounts) })),
+    const swap = (p: AdminAccountsPage) => ({
+      ...p,
+      accounts: p.accounts.map((r) => (r.id === a.id ? a : r)),
     });
+    const nextFirst = swap(first);
+    qc.setQueryData<AdminAccountsPage>(firstKey, nextFirst);
+    setMore({ source: nextFirst, pages: pages.map(swap) });
   };
 
-  const columns: Column<AdminAccount>[] = [
-    { key: "name", header: t("columns.name"), cell: (a) => a.displayName },
-    { key: "email", header: t("columns.email"), tone: "muted", cell: (a) => a.email ?? "—" },
-    {
-      key: "status",
-      header: t("columns.status"),
-      cell: (a) =>
-        a.status === "active" ? (
-          <StatusMark status="success" label={t("status.active")} />
-        ) : (
-          <StatusMark status="cancelled" label={t("status.disabled")} />
-        ),
-    },
-    {
-      key: "role",
-      header: t("columns.role"),
-      cell: (a) => (a.isEnterpriseAdmin ? t("enterpriseAdmin") : ""),
-    },
-  ];
-
+  const columns = accountColumns(t);
   return (
     <ListPage
       header={{
-        path: [...scope, { label: "accounts" }],
-        title: t("title"),
+        path: header.path,
+        title: header.title,
         count: String(rows.length) + (next === null ? "" : "+"),
         actions: [{ label: t("new"), variant: "primary", onSelect: () => setCreating(true) }],
       }}
@@ -177,7 +225,10 @@ export default function AdminAccounts({ initial }: { initial: AdminAccountsPage 
         <CreateDialog
           onClose={() => setCreating(false)}
           onCreated={(a) => {
-            setFirst({ ...first, accounts: [...first.accounts, a] });
+            // The answer is the new account: it joins the cached first page.
+            const nextFirst = { ...first, accounts: [...first.accounts, a] };
+            qc.setQueryData<AdminAccountsPage>(firstKey, nextFirst);
+            setMore({ source: nextFirst, pages });
             setCreating(false);
           }}
         />
@@ -206,12 +257,16 @@ function ConfirmDialog({
   const { account, action } = pending;
   const name = account.displayName;
   const danger = action === "revoke" || action === "disable";
+  const update = useAppMutation({
+    fn: (patch: AccountPatch) => updateAdminAccount(account.id, patch),
+    invalidates: () => [],
+  });
 
   const confirm = async () => {
     setBusy(true);
     setError(null);
     try {
-      const { account: updated } = await updateAdminAccount(account.id, PATCH[action]);
+      const { account: updated } = await update.mutateAsync(PATCH[action]);
       toast.success(t(`done.${action}`, { name }));
       onDone(updated);
     } catch (e) {
@@ -273,13 +328,18 @@ function CreateDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const valid = login.trim() !== "" && password !== "" && displayName.trim() !== "";
+  // The overview counts the accounts.
+  const create = useAppMutation({
+    fn: createAdminAccount,
+    invalidates: () => [keys.deployment().adminOverview()],
+  });
 
   const submit = async () => {
     if (!valid) return;
     setBusy(true);
     setError(null);
     try {
-      const { account } = await createAdminAccount({
+      const { account } = await create.mutateAsync({
         login: login.trim(),
         password,
         displayName: displayName.trim(),

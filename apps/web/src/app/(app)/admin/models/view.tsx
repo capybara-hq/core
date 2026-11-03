@@ -12,9 +12,12 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
+import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
+import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
+import { NoAccess } from "../../../../components/NoAccess";
 import { usePurposeDrafts } from "../../../../components/PurposeEditor";
 import { usePagePath } from "../../../../components/shell/path";
 import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
@@ -26,18 +29,47 @@ import {
   encodeModel,
   findPrice,
   type ModelPrice,
-  type PriceTable,
+  type PurposeTarget,
   type PurposeView,
   parsePrice,
   putAdminPurpose,
   putModelPrice,
 } from "../../../../lib/models";
+import { adminModelsQuery, adminPurposesQuery } from "../../../../lib/query/admin";
+import { useAppMutation } from "../../../../lib/query/define";
+import { keys } from "../../../../lib/query/keys";
+import { usePageQuery } from "../../../../lib/query/page-query";
+import { useAdmin } from "../../../../lib/query/workspace";
+import type { Me } from "../../../../lib/session";
 import { useErrorMessage } from "../../../../lib/use-error-message";
-import { useServerState } from "../../../../lib/use-server-state";
+import NotFound from "../../not-found";
 
-export interface AdminModelsData extends AdminModels {
-  purposes: PurposeView[];
+/**
+ * A price change: the answer is the whole price table, which replaces the cached one (the
+ * providers and their models stay).
+ */
+function usePutPrice() {
+  const qc = useQueryClient();
+  return useAppMutation({
+    fn: putModelPrice,
+    invalidates: () => [],
+    onSuccess: (r) =>
+      qc.setQueryData<AdminModels>(adminModelsQuery().queryKey, (d) =>
+        d === undefined ? d : { ...d, ...r },
+      ),
+  });
 }
+
+/**
+ * The purposes while they load, as PurposeEditor draws them at the deployment scope: the kernel's
+ * five (eval, title and the three sub-agent tiers), each a card with who declares it (and a
+ * sub-agent tier's hint) over the model select.
+ */
+const LOADING_PURPOSES = [1, 1, 2, 2, 2].map((lines) => ({
+  lines,
+  lineSize: "small" as const,
+  field: { control: "select" as const },
+}));
 
 /**
  * `/admin/models`：模型（企业管理员，ListPage，no inner nav：the sidebar's admin context navigates）。
@@ -45,22 +77,108 @@ export interface AdminModelsData extends AdminModels {
  *   列模型失败的供应商只显示错误，不影响其他供应商；
  * - 用途默认映射：每个用途一张卡片（部署默认，各组织可在 `/settings/models` 覆盖）；插件声明的用途旁注
  *   「插件调用模型尚未开放」；`eval` 未映射时提示评测不能开评委。
+ * From the query cache (the layout prefetched both reads on a first load); a saved price or purpose
+ * is written into the cache.
  */
-export default function AdminModelsView({ initial }: { initial: AdminModelsData }) {
+export default function AdminModelsView() {
+  const gate = useAdmin();
+  if (gate.kind === "pending") return null;
+  if (gate.kind === "noAccess") return <NoAccess need={gate.need} />;
+  return <AdminModelsRead me={gate.me} />;
+}
+
+function AdminModelsRead({ me }: { me: Me }) {
   const scope = usePagePath("admin");
   const t = useTranslations("models");
-  const [data, set] = useServerState(initial);
+  const models = usePageQuery(adminModelsQuery());
+  const purposes = usePageQuery(adminPurposesQuery());
+  const header = { path: [...scope, { label: "models" }], title: t("admin.title") };
+  if (models.kind === "notFound" || purposes.kind === "notFound") return <NotFound />;
+  if (models.kind === "error") return <ErrorFrame reset={models.retry} />;
+  if (purposes.kind === "error") return <ErrorFrame reset={purposes.retry} />;
+  if (models.kind === "loading" || purposes.kind === "loading") {
+    // The two sections are static: the providers (one provider's table while it loads; the
+    // provider names come with the data) and the kernel's purposes as cards.
+    return (
+      <ListPage header={header}>
+        <FormSection
+          id="providers"
+          title={t("admin.providers.title")}
+          description={
+            models.kind === "ready"
+              ? t("admin.providers.description", { currency: models.data.currency })
+              : t("admin.providers.description", { currency: "…" })
+          }
+        >
+          <DataTable<AdminModelInfo>
+            label={t("admin.providers.title")}
+            // The loaded table's header (its cells come with the data).
+            columns={(
+              [
+                "model",
+                "capabilities",
+                "context",
+                "input",
+                "output",
+                "cacheRead",
+                "cacheWrite",
+              ] as const
+            ).map((key) => ({ key, header: t(`admin.columns.${key}`), cell: () => null }))}
+            rows={[]}
+            rowKey={(m) => m.id}
+            state="loading"
+          />
+        </FormSection>
+        <FormSection
+          id="purposes"
+          title={t("admin.purposes.title")}
+          description={t("admin.purposes.description")}
+          loading={{ cards: LOADING_PURPOSES }}
+        />
+      </ListPage>
+    );
+  }
+  return (
+    <ModelsBody
+      header={header}
+      data={{ ...models.data, purposes: purposes.data.purposes }}
+      orgId={me.currentOrgId}
+    />
+  );
+}
+
+function ModelsBody({
+  header,
+  data,
+  orgId,
+}: {
+  header: { path: { label: string; href?: string }[]; title: string };
+  data: AdminModels & { purposes: PurposeView[] };
+  orgId: string | null;
+}) {
+  const t = useTranslations("models");
+  const qc = useQueryClient();
   const okProviders = data.providers.filter((p) => p.status === "ok");
   const evalView = data.purposes.find((p) => p.purpose === EVAL_PURPOSE);
-  const setPrices = (next: PriceTable) => set({ ...data, ...next });
-  // A functional update: the ActionRow saves several purposes at once
+  // The answer is the saved purpose: it replaces that purpose in the cache (a functional update:
+  // the ActionRow saves several purposes at once). The current org's purposes show the deployment
+  // default, so they are read again.
+  const put = useAppMutation({
+    fn: (v: { purpose: string; target: PurposeTarget | null }) =>
+      putAdminPurpose(v.purpose, v.target),
+    invalidates: () => (orgId === null ? [] : [keys.org(orgId).orgPurposes()]),
+  });
   const replacePurpose = (v: PurposeView) =>
-    set((d) => ({ ...d, purposes: d.purposes.map((p) => (p.purpose === v.purpose ? v : p)) }));
+    qc.setQueryData<{ purposes: PurposeView[] }>(adminPurposesQuery().queryKey, (d) =>
+      d === undefined
+        ? d
+        : { ...d, purposes: d.purposes.map((p) => (p.purpose === v.purpose ? v : p)) },
+    );
   const { editor, actionRow } = usePurposeDrafts({
     purposes: data.purposes,
     providers: okProviders,
     scope: "deployment",
-    save: (purpose, target) => putAdminPurpose(purpose, target).then((r) => r.purpose),
+    save: (purpose, target) => put.mutateAsync({ purpose, target }).then((r) => r.purpose),
     onSaved: replacePurpose,
   });
   const body = (
@@ -73,9 +191,7 @@ export default function AdminModelsView({ initial }: { initial: AdminModelsData 
         {data.providers.length === 0 ? (
           <Text tone="muted">{t("admin.noProviders")}</Text>
         ) : (
-          data.providers.map((p) => (
-            <ProviderModels key={p.provider} provider={p} data={data} onPrices={setPrices} />
-          ))
+          data.providers.map((p) => <ProviderModels key={p.provider} provider={p} data={data} />)
         )}
       </FormSection>
       <FormSection
@@ -92,25 +208,14 @@ export default function AdminModelsView({ initial }: { initial: AdminModelsData 
   );
 
   return (
-    <ListPage
-      header={{ path: [...scope, { label: "models" }], title: t("admin.title") }}
-      {...(actionRow !== undefined ? { actionRow } : {})}
-    >
+    <ListPage header={header} {...(actionRow !== undefined ? { actionRow } : {})}>
       {body}
     </ListPage>
   );
 }
 
 /** 一个供应商：标题 + 模型表（或列模型失败的错误）。 */
-function ProviderModels({
-  provider: p,
-  data,
-  onPrices,
-}: {
-  provider: AdminProvider;
-  data: AdminModels;
-  onPrices(next: PriceTable): void;
-}) {
+function ProviderModels({ provider: p, data }: { provider: AdminProvider; data: AdminModels }) {
   const t = useTranslations("models");
   const locale = useLocale();
   const providerName = extensionLabel(
@@ -120,6 +225,7 @@ function ProviderModels({
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const [editing, setEditing] = useState<string>();
+  const putPrice = usePutPrice();
   const grouped = new Intl.NumberFormat(locale);
   const num = (n: number) => grouped.format(n);
   const priceOf = (m: AdminModelInfo) => findPrice(data.prices, p.provider, m.id);
@@ -127,7 +233,7 @@ function ProviderModels({
 
   async function clear(m: AdminModelInfo) {
     try {
-      onPrices(await putModelPrice({ provider: p.provider, model: m.id, price: null }));
+      await putPrice.mutateAsync({ provider: p.provider, model: m.id, price: null });
       toast.success(t("admin.price.cleared", { model: m.displayName }));
     } catch (e) {
       toast.error(errorMessage(e));
@@ -254,10 +360,7 @@ function ProviderModels({
                 model={m}
                 price={priceOf(m)}
                 onCancel={() => setEditing(undefined)}
-                onSaved={(next) => {
-                  setEditing(undefined);
-                  onPrices(next);
-                }}
+                onSaved={() => setEditing(undefined)}
               />
             ) : null
           }
@@ -282,9 +385,10 @@ function PriceEditor({
   model: AdminModelInfo;
   price: ModelPrice | undefined;
   onCancel(): void;
-  onSaved(next: PriceTable): void;
+  onSaved(): void;
 }) {
   const t = useTranslations("models.admin.price");
+  const putPrice = usePutPrice();
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const initial = (v: number | null | undefined) =>
@@ -312,7 +416,7 @@ function PriceEditor({
     setPending(true);
     setError(undefined);
     try {
-      const next = await putModelPrice({
+      await putPrice.mutateAsync({
         provider,
         model: model.id,
         inputPerMTok: input,
@@ -321,7 +425,7 @@ function PriceEditor({
         cacheWritePerMTok: cache(parsed.cacheWrite),
       });
       toast.success(t("saved", { model: model.displayName }));
-      onSaved(next);
+      onSaved();
     } catch (e) {
       setError(errorMessage(e));
     } finally {
