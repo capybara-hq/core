@@ -842,3 +842,15 @@ a.cb-object-name:hover {
   flex-direction: column;
   gap: var(--cb-space-2);
 }
+
+/* A loading button row (BlockShape `buttons`): the slots side by side, as a Stack row of buttons. */
+.cb-loading-buttons {
+  display: flex;
+  flex-direction: row;
+  gap: var(--cb-space-2);
+}
+
+/* A loading switch's box: no box of its own (the switch's 32 x 20 slot sets the size). */
+.cb-loading-slot {
+  display: inline-flex;
+}

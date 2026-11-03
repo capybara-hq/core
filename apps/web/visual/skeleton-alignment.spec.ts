@@ -91,11 +91,15 @@ for (const theme of THEMES) {
             }
           }
           // Parts of equal count pair by name and index.
+          // A part with no box of its own (`display: contents`, such as a two-column KeyValue's
+          // rows, whose cells sit in the parent grid) is not laid out: it has nothing to compare.
+          const laidOut = (b: Box | undefined) => b !== undefined && (b.width > 0 || b.height > 0);
           const paired = Object.keys(loaded).filter(
             (k) =>
               k in loading &&
               !IGNORED_PARTS.includes(nameOf(k)) &&
-              count(loaded, nameOf(k)) === count(loading, nameOf(k)),
+              count(loaded, nameOf(k)) === count(loading, nameOf(k)) &&
+              (laidOut(loaded[k]) || laidOut(loading[k])),
           );
           expect(paired.length, `${where}: no part pairs`).toBeGreaterThan(0);
           // The exempt parts above a part, in the same scrolling region, move it by their height

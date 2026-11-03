@@ -533,7 +533,9 @@ function sidebarBlocks(): ReactNode {
       <SidebarBlock
         id="sidebar-item-focus"
         {...base}
-        force={{ pseudo: ["focus", "focus-visible"], selector: navAt("inbox") }}
+        // The inbox left the nav items for the brand row (an icon button): the focus ring is shown
+        // on 首页, a nav item every sidebar has.
+        force={{ pseudo: ["focus", "focus-visible"], selector: navAt("overview") }}
       />
       <SidebarBlock id="sidebar-conversation-active" activeConversation="cnv_r2" />
       <SidebarBlock id="sidebar-group-collapsed" {...base} collapsed={["agt_research"]} />

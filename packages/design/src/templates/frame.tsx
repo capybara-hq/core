@@ -162,7 +162,7 @@ export function loadingActionRow(row: ActionRowProps): ActionRowProps {
  * `switch` is a switch and its state word on one row; `radios` is a plain RadioGroup of `options`
  * rows (default 3), each its box and a label slot. Two more stand for static text and a block of
  * cards beside the controls (no stack): `text` is one `prose` line (a hint the section always
- * shows); `card-group` is a small label line over a gap-12 stack of `options` untitled cards
+ * shows, the prose-small line); `card-group` is a small label line over a gap-12 stack of `options` untitled cards
  * (default {@link LOADING_GROUP_CARDS}), each a `body` line over `rows` `small` lines (default 2),
  * as a labelled list of cards (an extension's permissions) draws.
  */
@@ -298,7 +298,9 @@ function LoadingKeyValue({
       {Array.from({ length: Math.max(0, rows) }, (_, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
         <div key={i} className="cb-kv-row" data-part="key-value-row">
-          <dt className="cb-kv-key" style={grid ? undefined : { width: keyWidth }}>
+          {/* The key slot keeps `keyWidth` in the grid too: a max-content column would make its
+              percentage bar 0 px wide. */}
+          <dt className="cb-kv-key" style={{ width: keyWidth }}>
             <SkeletonText width="100%" />
           </dt>
           <dd className="cb-kv-value">
@@ -312,7 +314,8 @@ function LoadingKeyValue({
 
 /** One field placeholder: the loaded `.cb-field`'s own markup, with slots where the data goes. */
 function LoadingField({ shape }: { shape: FieldShape }) {
-  if (shape.control === "text") return <SkeletonText width="70%" size="prose" />;
+  // A hint is `Text variant="prose"`, whose line is prose-small's (20, the `body` line).
+  if (shape.control === "text") return <SkeletonText width="70%" />;
   if (shape.control === "card-group") {
     return <LoadingCardGroup cards={shape.options ?? LOADING_GROUP_CARDS} rows={shape.rows ?? 2} />;
   }
@@ -325,7 +328,9 @@ function LoadingField({ shape }: { shape: FieldShape }) {
       <LoadingKeyValue rows={shape.rows ?? 3} keyWidth={shape.keyWidth ?? "8ch"} />
     ) : shape.control === "switch" ? (
       <Stack direction="row" gap={12} align="center">
-        <SkeletonBox part="block" width={32} height={20} />
+        <span className="cb-loading-slot" data-part="loading-switch">
+          <SkeletonBox part="block" width={32} height={20} />
+        </span>
         <SkeletonText width={64} />
       </Stack>
     ) : null;
@@ -518,12 +523,12 @@ function LoadingBlock({ block }: { block: BlockShape }) {
     case "buttons":
       return (
         <Stack gap={8}>
-          <Stack direction="row" gap={8}>
+          <div className="cb-loading-buttons" data-part="loading-buttons">
             {Array.from({ length: Math.max(0, block.count ?? 1) }, (_, i) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
               <SkeletonBox key={i} part="default" width={88} />
             ))}
-          </Stack>
+          </div>
           {block.help ? <SkeletonText width="55%" size="small" /> : null}
         </Stack>
       );

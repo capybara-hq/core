@@ -228,7 +228,10 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
         shapes.switches * 2,
       );
       expect(
-        document.querySelectorAll('.cb-form-section-fields > [data-size="prose"]'),
+        // the hint is Text variant="prose": its slot is at the prose-small line (the body size)
+        document.querySelectorAll(
+          '.cb-form-section-fields > [data-part="skeleton-text"][data-size="body"]',
+        ),
       ).toHaveLength(shapes.switches);
       if (path === "/settings/plugins") {
         for (const card of document.querySelectorAll('[data-part="loading-shaped-card"]')) {

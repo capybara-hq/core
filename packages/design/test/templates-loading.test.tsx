@@ -112,6 +112,9 @@ describe("DetailPage / WizardPage content blocks", () => {
     const kv = document.querySelector('[data-part="loading-key-value"]');
     expect(kv?.getAttribute("data-columns")).toBe("2");
     expect(kv?.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(5);
+    // in the grid too the key slot keeps its width (a max-content column would be 0 px wide)
+    expect((kv?.querySelector("dt") as HTMLElement | null)?.style.width).toBe("8ch");
+    expect(parts("loading-buttons")).toHaveLength(1);
     expect(count('[data-box="default"]')).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("副本列表")).toBeTruthy();
     expect(screen.getByText("副本")).toBeTruthy();
@@ -637,7 +640,7 @@ describe("SettingsPage loading", () => {
     expect(body?.querySelector('[data-part="loading-field"]')).not.toBeNull();
   });
 
-  it("text and card-group shapes: a prose hint line, and a labelled stack of untitled cards (default 2)", () => {
+  it("text and card-group shapes: a hint line at the prose-small line, and a labelled stack of untitled cards (default 2)", () => {
     zh(
       <SettingsPage
         header={header}
@@ -653,7 +656,8 @@ describe("SettingsPage loading", () => {
     const card = document.querySelector(".cb-form-section-fields");
     const kids = [...(card?.children ?? [])];
     expect(kids).toHaveLength(3);
-    expect(kids[1]?.getAttribute("data-size")).toBe("prose");
+    // a hint is Text variant="prose": its prose-small line is the body line (20)
+    expect(kids[1]?.getAttribute("data-size")).toBe("body");
     const group = kids[2];
     expect(group?.getAttribute("data-gap")).toBe("8");
     expect(group?.firstElementChild?.getAttribute("data-size")).toBe("small");

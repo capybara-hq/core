@@ -92,7 +92,14 @@ export const LOADING_TEMPLATES: {
     name: "detail",
     pairs: [
       { loaded: "default", loading: "loading" },
-      { loaded: "content", loading: "loading-content" },
+      {
+        loaded: "content",
+        loading: "loading-content",
+        dataOnly: {
+          row: "the loaded replicas table's rows; the loading DataTable draws its own skeleton rows",
+          cell: "the loaded replicas table's cells; the loading DataTable draws its own skeleton rows",
+        },
+      },
     ],
   },
   {
@@ -214,10 +221,16 @@ export const LOADING_ALIASES: Record<string, string> = {
   "page-header-action-slots": "page-header-actions",
   "loading-field": "field",
   "loading-bubble": "bubble",
+  "loading-key-value": "key-value",
+  "loading-group-card": "card",
+  "loading-shaped-card": "card",
   // `<ancestor part> > <part>`: a placeholder box whose own part name is the generic skeleton-box
   "page-header-action-slots > skeleton-box": "button",
   "loading-switch-row > skeleton-box": "switch",
   "card > skeleton-box": "button",
+  "loading-shaped-card > skeleton-box": "button",
+  "loading-buttons > skeleton-box": "button",
+  "loading-switch > skeleton-box": "switch",
 };
 
 /**
