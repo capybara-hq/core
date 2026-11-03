@@ -102,19 +102,20 @@ export const LOADING_TEMPLATES: { name: string; pairs: { loaded: string; loading
 ];
 
 /**
- * Parts whose loaded size follows the page's content (a prose body, a table's row count, a form
- * section's fields and help text, a title's text), so the skeleton cannot match it by design: they
- * are compared in x, y and width only, and a later part of the same name (the second form section)
- * is not compared in y either, because it sits below the earlier ones.
+ * Parts whose loaded height follows the fixture's data, so a skeleton cannot match it by design:
+ * the part is not compared in height, and the parts below it are compared in y after subtracting
+ * the height difference of the exempt parts above them. Each entry carries its reason.
  */
-export const VARIABLE_HEIGHT: string[] = [
-  "content",
-  "thread",
-  "table",
-  "form-section",
-  "form-section-head",
-  "form-card",
-];
+export const VARIABLE_HEIGHT: Record<string, string> = {
+  content:
+    "the page's own sections or rows: the loading card blocks and the fixture sections differ",
+  thread: "the loaded turns' text length decides the height; the skeleton draws three fixed turns",
+  table: "the loaded table has the fixture's rows; the loading DataTable draws its own row count",
+  "form-section":
+    "the loaded fields carry help text and paired controls the placeholders cannot know",
+  "form-section-head": "stretches to the form-section's row, so it has the section's height",
+  "form-card": "the loaded fields carry help text and paired controls the placeholders cannot know",
+};
 
 /**
  * Parts that are not laid out by the page: `link-pending` is the off-screen route announcer, and
@@ -125,9 +126,17 @@ export const VARIABLE_HEIGHT: string[] = [
 export const IGNORED_PARTS: string[] = ["link-pending", "icon", "icon-button"];
 
 /**
- * Parts whose loaded width follows text or siblings the page does not know yet: a title's text
- * (the skeleton is a bar of the bar's width), and the header description, which ends where the
- * loaded action buttons begin (a placeholder button is 72 px, a real one is as wide as its label).
- * Compared in x, y and height only.
+ * Parts of the loaded page that the loading block does not draw, by design: they exist only when
+ * the data does (real text, rows, cells, actions). Every other loaded part, by name and count, must
+ * be present while loading. Each entry carries its reason.
  */
-export const VARIABLE_WIDTH: string[] = ["title", "page-header-description"];
+export const DATA_ONLY_PARTS: Record<string, string> = {};
+
+/**
+ * Parts whose loaded width follows text or siblings the page does not know yet.
+ */
+export const VARIABLE_WIDTH: Record<string, string> = {
+  title: "the loaded title is its text; the skeleton is a bar of the bar's width",
+  "page-header-description":
+    "ends where the loaded action buttons begin: a placeholder button is 72 px, a real one is as wide as its label",
+};

@@ -1,5 +1,11 @@
 import { expect, type Page, test } from "@playwright/test";
-import { IGNORED_PARTS, LOADING_TEMPLATES, VARIABLE_HEIGHT, VARIABLE_WIDTH } from "./accepted";
+import {
+  DATA_ONLY_PARTS,
+  IGNORED_PARTS,
+  LOADING_TEMPLATES,
+  VARIABLE_HEIGHT,
+  VARIABLE_WIDTH,
+} from "./accepted";
 import { openReference, THEMES } from "./reference-page";
 
 /**
@@ -43,31 +49,72 @@ for (const theme of THEMES) {
         await openReference(page, `template-${t.name}`, theme, ORIGIN);
         const failures: string[] = [];
         for (const pair of t.pairs) {
+          const where = `${t.name} ${pair.loading}`;
           const loaded = await partBoxes(page, `template-${t.name}-${pair.loaded}`);
           const loading = await partBoxes(page, `template-${t.name}-${pair.loading}`);
-          const shared = Object.keys(loading).filter(
-            (k) => k in loaded && !IGNORED_PARTS.includes(k.split("#")[0] ?? k),
+          const nameOf = (k: string) => k.split("#")[0] ?? k;
+          const count = (boxes: Record<string, Box>, part: string) =>
+            Object.keys(boxes).filter((k) => nameOf(k) === part).length;
+          const loadedParts = [...new Set(Object.keys(loaded).map(nameOf))].filter(
+            (p) => !IGNORED_PARTS.includes(p),
           );
-          // A template whose loading block shares no part with the loaded one compares nothing.
-          expect(shared.length, `${t.name} ${pair.loading}: no shared data-part`).toBeGreaterThan(
-            0,
+          // Every loaded part, by name and count, is drawn while loading (unless it is data only).
+          for (const part of loadedParts) {
+            if (part in DATA_ONLY_PARTS) continue;
+            const want = count(loaded, part);
+            const got = count(loading, part);
+            if (want !== got) {
+              failures.push(`${where}: ${part} appears ${got}x while loading, ${want}x loaded`);
+            }
+          }
+          // Parts of equal count pair by name and index.
+          const paired = Object.keys(loaded).filter(
+            (k) =>
+              k in loading &&
+              !IGNORED_PARTS.includes(nameOf(k)) &&
+              count(loaded, nameOf(k)) === count(loading, nameOf(k)),
           );
-          for (const k of shared) {
+          expect(paired.length, `${where}: no part pairs`).toBeGreaterThan(0);
+          // The exempt parts above a part move it by their height difference: it is corrected for.
+          const exempt = paired.filter((k) => nameOf(k) in VARIABLE_HEIGHT);
+          const shift = (k: string) => {
+            const a = loaded[k] as Box;
+            const above = exempt.filter((e) => {
+              const b = loaded[e] as Box;
+              return e !== k && b.y + b.height <= a.y + 1;
+            });
+            const outer = above.filter((e) => {
+              const b = loaded[e] as Box;
+              return !above.some((o) => {
+                const c = loaded[o] as Box;
+                return (
+                  o !== e &&
+                  c.x <= b.x + 1 &&
+                  c.y <= b.y + 1 &&
+                  c.y + c.height >= b.y + b.height - 1 &&
+                  (c.height > b.height + 1 || o < e)
+                );
+              });
+            });
+            return outer.reduce(
+              (sum, e) => sum + (loading[e] as Box).height - (loaded[e] as Box).height,
+              0,
+            );
+          };
+          for (const k of paired) {
             const a = loaded[k] as Box;
             const b = loading[k] as Box;
-            const part = k.split("#")[0] ?? k;
-            const variable = VARIABLE_HEIGHT.includes(part);
-            const later = variable && !k.endsWith("#0");
-            const props: (keyof Box)[] = variable
-              ? later
-                ? ["x", "width"]
-                : ["x", "y", "width"]
-              : ["x", "y", "width", "height"];
-            if (VARIABLE_WIDTH.includes(part)) props.splice(props.indexOf("width"), 1);
+            const part = nameOf(k);
+            const props = (["x", "y", "width", "height"] as const).filter(
+              (p) =>
+                !(p === "height" && part in VARIABLE_HEIGHT) &&
+                !(p === "width" && part in VARIABLE_WIDTH),
+            );
             for (const p of props) {
-              if (Math.abs(a[p] - b[p]) > 1) {
+              const want = p === "y" ? a.y + shift(k) : a[p];
+              if (Math.abs(want - b[p]) > 1) {
                 failures.push(
-                  `${t.name} ${pair.loading} ${k} ${p}: loaded ${a[p].toFixed(1)}, loading ${b[p].toFixed(1)}`,
+                  `${where} ${k} ${p}: loaded ${want.toFixed(1)}, loading ${b[p].toFixed(1)}`,
                 );
               }
             }
