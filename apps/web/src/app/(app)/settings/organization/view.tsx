@@ -92,10 +92,15 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
         header={header}
         nav={nav}
         activeNav="organization"
-        // Tool search (a choice of two cards) and the IM locale (a select).
+        // Tool search (two radio cards, and the read-only note for a member) and the IM locale
+        // (a select).
         loading={{
           sections: [
-            { fields: 2, title: t("toolSearch.title"), description: t("toolSearch.description") },
+            {
+              fields: [{ control: "radio-cards", options: 2, help: !manage }],
+              title: t("toolSearch.title"),
+              description: t("toolSearch.description"),
+            },
             {
               fields: [{ control: "select" }],
               title: t("locale.title"),

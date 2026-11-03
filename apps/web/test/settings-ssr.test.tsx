@@ -188,13 +188,77 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
 
   it.each([
     ["/settings/organization", en.orgSettings.toolSearch.offHint],
-    ["/settings/sandbox", en.orgSettings.limits.title],
+    ["/settings/sandbox", en.orgSettings.sandbox.askHint],
   ])("%s: an empty cache shows the template's loading state, then the data", async (path, text) => {
     const { release } = await renderHeld(path, `GET ${O}/settings`);
     await expectLoading("SettingsPage", text);
     await release();
     expect(await screen.findByText(text)).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
+  it.each([
+    // the radio cards of tool search; the read-only note only for a member
+    ["/settings/organization", `GET ${O}/settings`, { radios: 1, kv: 0, cards: 0, switches: 0 }],
+    // the tool policy and egress radios, the resources' key-value
+    ["/settings/sandbox", `GET ${O}/settings`, { radios: 2, kv: 1, cards: 0, switches: 0 }],
+    // the kernel's five purposes as cards, each with its model select
+    ["/settings/models", `GET ${O}/model-purposes`, { radios: 0, kv: 0, cards: 5, switches: 0 }],
+    // the install cards (the template's default count)
+    ["/settings/plugins", `GET ${O}/plugin-installs`, { radios: 0, kv: 0, cards: 3, switches: 0 }],
+    // two extension groups, each its switch row
+    ["/settings/extensions", `GET ${O}/extensions`, { radios: 0, kv: 0, cards: 0, switches: 2 }],
+  ] as const)(
+    "%s: the loading state draws the page's static shapes (Q6)",
+    async (path, held, shapes) => {
+      const { release } = await renderHeld(path, held);
+      await vi.waitFor(() => {
+        if (document.querySelector("[aria-busy='true']") === null) throw new Error("not loading");
+      });
+      expect(document.querySelectorAll('[data-part="loading-radios"]')).toHaveLength(shapes.radios);
+      expect(document.querySelectorAll('[data-part="loading-key-value"]')).toHaveLength(shapes.kv);
+      expect(document.querySelectorAll('[data-part="loading-shaped-card"]')).toHaveLength(
+        shapes.cards,
+      );
+      expect(document.querySelectorAll('[data-box="block"][style*="32px"]')).toHaveLength(
+        shapes.switches,
+      );
+      await release();
+      await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+    },
+  );
+
+  it("/settings/organization: a member's loading tool search has the read-only note's slot, an owner's none", async () => {
+    const card = () =>
+      document.querySelector('[data-part="loading-radios"]')?.parentElement?.lastElementChild;
+    const held = async (me?: ReturnType<typeof as>) => {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((r) => {
+        release = r;
+      });
+      await renderRouteEmptyCache(
+        "/settings/organization",
+        {
+          ...ROUTES,
+          [`GET ${O}/settings`]: async (c) => {
+            await gate;
+            return (ROUTES[`GET ${O}/settings`] as NonNullable<Routes[string]>)(c);
+          },
+        },
+        me ? { me } : {},
+      );
+      await vi.waitFor(() => {
+        if (document.querySelector('[data-part="loading-radios"]') === null) throw new Error("no");
+      });
+      return () => act(async () => release());
+    };
+    const r1 = await held(as("member"));
+    expect(card()?.getAttribute("data-size")).toBe("small");
+    await r1();
+    cleanup();
+    const r2 = await held();
+    expect(card()?.getAttribute("data-part")).toBe("loading-radios");
+    await r2();
   });
 
   it("/settings/organization: a failed read is the error state; retry reads it again", async () => {

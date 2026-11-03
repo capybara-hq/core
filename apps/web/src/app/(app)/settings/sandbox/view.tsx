@@ -98,10 +98,26 @@ function SandboxSettings({ orgId }: { orgId: string }) {
         header={header}
         nav={nav}
         activeNav="sandbox"
-        // The tool policy (two cards); egress and resources come with the settings.
+        // The static sections: the tool policy (two cards, and the read-only note for a member),
+        // egress (three cards and the "new sandboxes only" note) and the resources (three rows and
+        // the same note).
         loading={{
           sections: [
-            { fields: 2, title: t("sandbox.title"), description: t("sandbox.description") },
+            {
+              fields: [{ control: "radio-cards", options: 2, help: !manage }],
+              title: t("sandbox.title"),
+              description: t("sandbox.description"),
+            },
+            {
+              fields: [{ control: "radio-cards", options: 3, help: true }],
+              title: t("egress.title"),
+              description: t("egress.description"),
+            },
+            {
+              fields: [{ control: "key-value", rows: 3, keyWidth: "10ch", help: true }],
+              title: t("limits.title"),
+              description: t("limits.description"),
+            },
           ],
         }}
       />

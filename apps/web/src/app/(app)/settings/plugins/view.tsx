@@ -6,7 +6,6 @@ import {
   Dialog,
   formatDateTime,
   SettingsPage,
-  Skeleton,
   Stack,
   Text,
   versionLabel,
@@ -74,10 +73,9 @@ function Apps({ orgId }: { orgId: string }) {
         }}
         nav={nav}
         activeNav="plugins"
-        loading={{}}
-      >
-        <Skeleton rows={3} />
-      </SettingsPage>
+        // The install cards (the template's default count): a status line and the uninstall button.
+        loading={{ cards: { shape: { lines: 1, actions: 1 } } }}
+      />
     );
   }
   const installs = read.data.installs;

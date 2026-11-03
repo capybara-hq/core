@@ -62,6 +62,9 @@ export default function ExtensionsView() {
   return <Plugins orgId={ws.orgId} />;
 }
 
+/** The extension groups while they load: two, each its enable switch and state word. */
+const LOADING_EXTENSIONS = [0, 1].map(() => ({ fields: [{ control: "switch" as const }] }));
+
 function Plugins({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("extensions");
@@ -83,8 +86,8 @@ function Plugins({ orgId }: { orgId: string }) {
         header={header}
         nav={nav}
         activeNav="extensions"
-        // An extension's group: its enable switch and its permissions (titles come with the data).
-        loading={{ sections: [{ fields: 1 }, { fields: 1 }] }}
+        // Two extension groups (titles come with the data), each with its enable switch row.
+        loading={{ sections: LOADING_EXTENSIONS }}
       />
     );
   }

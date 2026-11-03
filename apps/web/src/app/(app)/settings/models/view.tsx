@@ -35,8 +35,17 @@ export default function OrgModelsView() {
   return <OrgModels orgId={ws.orgId} />;
 }
 
-/** The purposes while they load: one model select each (the kernel declares five). */
-const LOADING_PURPOSES = Array.from({ length: 5 }, () => ({ control: "select" as const }));
+/**
+ * The purposes while they load, as PurposeEditor draws them: the kernel's five (eval, title and
+ * the three sub-agent tiers), each a card with its small lines (who declares it, the deployment
+ * default, and a sub-agent tier's hint) over the model select.
+ */
+const purposeCard = (lines: number) => ({
+  lines,
+  lineSize: "small" as const,
+  field: { control: "select" as const },
+});
+const LOADING_PURPOSES = [2, 2, 3, 3, 3].map(purposeCard);
 
 function OrgModels({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
@@ -60,7 +69,7 @@ function OrgModels({ orgId }: { orgId: string }) {
         loading={{
           sections: [
             {
-              fields: LOADING_PURPOSES,
+              cards: LOADING_PURPOSES,
               title: t("org.title"),
               description: t("org.description"),
             },
