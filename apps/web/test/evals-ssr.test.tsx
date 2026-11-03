@@ -249,7 +249,7 @@ describe("first paint comes from the server (no browser fetch)", () => {
     const browser = expectNoFirstPaintFetch();
     await renderRoute(wizardPage, ROUTES);
     const model = screen.getByRole("combobox", { name: E.wizard.model });
-    expect(within(model).getByRole("option", { name: "model-fake/fake-1" })).toBeTruthy();
+    expect(within(model).getByRole("option", { name: "model-fake / Fake 1" })).toBeTruthy();
     const version = screen.getByRole("combobox", { name: E.wizard.version });
     expect(within(version).getAllByRole("option").length).toBe(4);
     expect(browser).toEqual([]);

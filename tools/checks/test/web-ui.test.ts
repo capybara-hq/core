@@ -141,6 +141,13 @@ describe("checkWebUi", () => {
       ]);
       expect(f[0]?.message).toContain("modelLabel");
     });
+    it("flags an unspaced label property but not the value", () => {
+      const f = run("provider-label-unspaced");
+      expect(f.map((x) => [x.rule, x.line])).toEqual([["web-ui-extension-label", 3]]);
+    });
+    it("allows an unspaced option value", () => {
+      expect(run("provider-label-value-ok")).toEqual([]);
+    });
     it("allows the helper file itself", () => {
       expect(run("provider-label-ok")).toEqual([]);
     });

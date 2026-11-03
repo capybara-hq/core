@@ -1,6 +1,7 @@
 import type { Span, StatusMark } from "@capybara-hq/design";
 import { apiFetch } from "./api";
 import type { SubagentEndStatus } from "./conversations";
+import { extensionLabel } from "./extension-label";
 
 /**
  * 内核轨迹 API 的类型（`packages/kernel/src/evals/trajectory*.ts`；只声明界面用到的字段）。Web 层不 import 内核代码。
@@ -266,7 +267,8 @@ export function indexTrajectory(
               id: `model:${run.runId}:${call.seq}`,
               parentId: stepId,
               kind: "model",
-              label: `${call.provider}/${call.model}`,
+              // A recorded call carries no providers list: the provider id stands in.
+              label: `${extensionLabel({ name: call.provider }, "en")}/${call.model}`,
               startMs: off(call.startedAt),
               durationMs: call.latencyMs,
               // 运行已结束仍没有结果的调用（没写 usage 就停了）算失败

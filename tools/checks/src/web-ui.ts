@@ -259,33 +259,58 @@ function pagePathFindings(file: string, p: ParsedFile): Finding[] {
 const EXTENSION_LABEL_FILE = "lib/extension-label.ts";
 
 /**
- * A template literal that puts `<…>.provider` (or `provider`) before ` / `: a provider label built by
- * hand shows the extension id. Labels go through `modelLabel` / `extensionLabel` (display names).
+ * A provider label built by hand shows the extension id: a template literal that puts `<…>.provider`
+ * (or `provider`) before ` / `, or one that holds such an expression and is the value of a `label`
+ * property or JSX attribute (spaced or not). Option values (`value:`, encode helpers) stay allowed.
+ * Labels go through `modelLabel` / `extensionLabel` (display names).
  */
 function extensionLabelFindings(p: ParsedFile): Finding[] {
+  const isProvider = (e: Node): boolean => {
+    const name =
+      e.type === "Identifier"
+        ? (e.name as string)
+        : e.type === "MemberExpression" && !e.computed
+          ? ((e.property as Node).name as string | undefined)
+          : undefined;
+    return name === "provider";
+  };
+  const seen = new Set<number>();
   const out: Finding[] = [];
-  walk(p.program, (n) => {
-    if (n.type !== "TemplateLiteral") return;
-    const exprs = n.expressions as Node[];
-    const quasis = n.quasis as Node[];
-    exprs.forEach((e, i) => {
-      const name =
-        e.type === "Identifier"
-          ? (e.name as string)
-          : e.type === "MemberExpression" && !e.computed
-            ? ((e.property as Node).name as string | undefined)
-            : undefined;
-      const next = (quasis[i + 1]?.value as { cooked: string | null } | undefined)?.cooked;
-      if (name === "provider" && typeof next === "string" && next.startsWith(" / ")) {
-        out.push({
-          file: p.file,
-          line: p.lineOf(n.start),
-          rule: "web-ui-extension-label",
-          message:
-            "provider label built by hand shows the extension id; use modelLabel / extensionLabel from lib/extension-label.ts (display names)",
-        });
-      }
+  const flag = (n: Node) => {
+    if (seen.has(n.start)) return;
+    seen.add(n.start);
+    out.push({
+      file: p.file,
+      line: p.lineOf(n.start),
+      rule: "web-ui-extension-label",
+      message:
+        "provider label built by hand shows the extension id; use modelLabel / extensionLabel from lib/extension-label.ts (display names)",
     });
+  };
+  const hasProvider = (t: Node) => (t.expressions as Node[]).some(isProvider);
+  walk(p.program, (n) => {
+    if (n.type === "TemplateLiteral") {
+      const exprs = n.expressions as Node[];
+      const quasis = n.quasis as Node[];
+      exprs.forEach((e, i) => {
+        const next = (quasis[i + 1]?.value as { cooked: string | null } | undefined)?.cooked;
+        if (isProvider(e) && typeof next === "string" && next.startsWith(" / ")) flag(n);
+      });
+    } else if (n.type === "Property" && propKey(n) === "label") {
+      const v = n.value as Node;
+      if (v.type === "TemplateLiteral" && hasProvider(v)) flag(v);
+    } else if (n.type === "JSXAttribute") {
+      const name = n.name as Node;
+      const v = n.value as Node | null;
+      if (
+        name.type === "JSXIdentifier" &&
+        name.name === "label" &&
+        v?.type === "JSXExpressionContainer"
+      ) {
+        const e = v.expression as Node;
+        if (e.type === "TemplateLiteral" && hasProvider(e)) flag(e);
+      }
+    }
   });
   return out;
 }

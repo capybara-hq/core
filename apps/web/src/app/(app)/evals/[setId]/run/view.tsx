@@ -41,6 +41,7 @@ import {
   type PurposeView,
   startEvalRun,
 } from "../../../../../lib/evals";
+import { labelLocale, modelLabel } from "../../../../../lib/extension-label";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
 
 const STEPS = ["candidate", "judge", "confirm"] as const;
@@ -210,7 +211,11 @@ export default function RunWizard({
     ...providers.flatMap((p) =>
       p.models.map((m) => ({
         value: encode({ provider: p.provider, model: m.id }),
-        label: `${p.provider}/${m.id}`,
+        label: modelLabel(
+          { name: p.provider, displayName: p.displayName },
+          m.displayName || m.id,
+          labelLocale(locale),
+        ),
       })),
     ),
   ];
