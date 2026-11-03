@@ -6,7 +6,7 @@ import { useTranslations } from "next-intl";
 import { useCallback } from "react";
 import { ApiClientError } from "../../lib/api";
 import { retryOnMountOf } from "../../lib/query/client";
-import { useAppMutation } from "../../lib/query/define";
+import { useAppMutation } from "../../lib/query/mutation";
 import { type UiViewTarget, uiViewQuery } from "../../lib/query/ui";
 import {
   postUiAction,

@@ -194,6 +194,15 @@ describe("checkWebUi", () => {
     });
   });
 
+  it("web-lib-client-hook flags a hook imported by a lib module without use client", () => {
+    const f = run("lib-client-hook");
+    expect(f.map((x) => [x.rule, x.file.split("/").pop(), x.line])).toEqual([
+      ["web-lib-client-hook", "plain.ts", 2],
+      ["web-lib-client-hook", "define.ts", 1],
+    ]);
+    expect(f[1]?.message).toContain("useEffect");
+  });
+
   describe("query cache rules (web-query-*)", () => {
     const at = (name: string, queryPending: QueryPending[] = []) =>
       run(name, [], queryPending).map((x) => [x.rule, x.file.split("/").at(-1), x.line]);

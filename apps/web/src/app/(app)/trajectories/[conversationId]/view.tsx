@@ -30,10 +30,10 @@ import {
 } from "../../../../components/TrajectoryParts";
 import { addEvalCase } from "../../../../lib/evals";
 import { canUpdateOrg } from "../../../../lib/org-settings";
-import { useAppMutation } from "../../../../lib/query/define";
 import { evalSetsQuery } from "../../../../lib/query/evals";
 import { keys } from "../../../../lib/query/keys";
 import { useMemberNames } from "../../../../lib/query/member-names";
+import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { trajectoryQuery } from "../../../../lib/query/trajectories";
 import { useWorkspace } from "../../../../lib/query/workspace";

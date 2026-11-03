@@ -17,7 +17,7 @@ import {
 } from "../../lib/conversations";
 import { retryOnMountOf } from "../../lib/query/client";
 import { queueQuery } from "../../lib/query/conversation";
-import { useAppMutation } from "../../lib/query/define";
+import { useAppMutation } from "../../lib/query/mutation";
 import { useErrorMessage } from "../../lib/use-error-message";
 import type { ComposerMessage } from "./ComposerBar";
 import type { SendResult } from "./useConversation";

@@ -46,9 +46,9 @@ import {
   transferOwnership,
 } from "../../../../lib/members";
 import { retryOnMountOf } from "../../../../lib/query/client";
-import { useAppMutation } from "../../../../lib/query/define";
 import { keys } from "../../../../lib/query/keys";
 import { membersQuery } from "../../../../lib/query/members";
+import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { invitationsQuery } from "../../../../lib/query/settings";
 import { useWorkspace } from "../../../../lib/query/workspace";

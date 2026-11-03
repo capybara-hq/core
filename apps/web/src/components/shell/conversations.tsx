@@ -14,8 +14,8 @@ import {
 } from "../../lib/conversations";
 import { retryOnMountOf } from "../../lib/query/client";
 import { renameWithRow } from "../../lib/query/conversation";
-import { useAppMutation } from "../../lib/query/define";
 import { keys } from "../../lib/query/keys";
+import { useAppMutation } from "../../lib/query/mutation";
 import {
   conversationGroupsQuery,
   groupsViewKey,

@@ -35,7 +35,7 @@ import type { OrgExtension } from "../lib/extensions";
 import { orgCatalogItemQuery, pluginChangeKeys } from "../lib/query/catalog";
 import { orgExtensionsQuery } from "../lib/query/channels";
 import { retryOnMountOf } from "../lib/query/client";
-import { useAppMutation } from "../lib/query/define";
+import { useAppMutation } from "../lib/query/mutation";
 import { type PageState, usePageQuery } from "../lib/query/page-query";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useCatalogErrorLines } from "./CatalogParts";

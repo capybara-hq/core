@@ -37,9 +37,9 @@ import {
   displayNameOf,
 } from "../../../lib/catalog";
 import type { InboxItem } from "../../../lib/inbox";
-import { useAppMutation } from "../../../lib/query/define";
 import { inboxChangeKeys, inboxQuery } from "../../../lib/query/inbox";
 import { keys } from "../../../lib/query/keys";
+import { useAppMutation } from "../../../lib/query/mutation";
 import { usePageQuery } from "../../../lib/query/page-query";
 import { useWorkspace } from "../../../lib/query/workspace";
 import type { SkillChange } from "../../../lib/skills";

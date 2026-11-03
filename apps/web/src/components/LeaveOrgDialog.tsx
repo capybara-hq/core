@@ -6,8 +6,8 @@ import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { ApiClientError } from "../lib/api";
 import { leaveOrg } from "../lib/orgs";
-import { useAppMutation } from "../lib/query/define";
 import { membersQuery } from "../lib/query/members";
+import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";
 

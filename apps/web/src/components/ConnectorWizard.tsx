@@ -38,8 +38,8 @@ import {
   type ToolPolicy,
   type ToolPreview,
 } from "../lib/connectors";
-import { useAppMutation } from "../lib/query/define";
 import { keys } from "../lib/query/keys";
+import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
 import { connectionHref } from "./ConnectCard";
 import {

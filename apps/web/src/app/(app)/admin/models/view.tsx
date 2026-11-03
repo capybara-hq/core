@@ -36,8 +36,8 @@ import {
   putModelPrice,
 } from "../../../../lib/models";
 import { adminModelsQuery, adminPurposesQuery } from "../../../../lib/query/admin";
-import { useAppMutation } from "../../../../lib/query/define";
 import { keys } from "../../../../lib/query/keys";
+import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { useAdmin } from "../../../../lib/query/workspace";
 import type { Me } from "../../../../lib/session";

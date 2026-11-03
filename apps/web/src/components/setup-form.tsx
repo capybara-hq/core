@@ -3,7 +3,7 @@
 import { Button, Field, Input, Stack } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { type FormEvent, useState } from "react";
-import { useAppMutation } from "../lib/query/define";
+import { useAppMutation } from "../lib/query/mutation";
 import { completeSetup, type SetupInput } from "../lib/session";
 import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";

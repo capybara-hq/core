@@ -3,7 +3,7 @@
 import { Button, Dialog, Field, Input } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
-import { useAppMutation } from "../lib/query/define";
+import { useAppMutation } from "../lib/query/mutation";
 import { createOrg } from "../lib/session";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useSession } from "./shell/session";

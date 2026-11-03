@@ -39,9 +39,9 @@ import {
 } from "../../../../lib/evals";
 import { agentQuery } from "../../../../lib/query/agents";
 import { retryOnMountOf } from "../../../../lib/query/client";
-import { useAppMutation } from "../../../../lib/query/define";
 import { evalRunsQuery, evalSetQuery } from "../../../../lib/query/evals";
 import { keys } from "../../../../lib/query/keys";
+import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { useWorkspace } from "../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../lib/use-error-message";

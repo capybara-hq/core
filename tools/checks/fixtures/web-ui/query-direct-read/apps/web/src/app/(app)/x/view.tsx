@@ -2,12 +2,12 @@
 import { ListPage } from "@capybara-hq/design";
 import { useEffect } from "react";
 import { apiFetch } from "@/lib/api";
-import { defineQuery, useAppMutation } from "@/lib/query/define";
+import { defineQuery } from "@/lib/query/define";
+import { useAppMutation } from "@/lib/query/mutation";
 import { keyOf } from "@/lib/query/keys";
 import * as things from "@/lib/things";
 import { listThings, removeThing, shortName } from "@/lib/things";
 import { useLoad } from "@/lib/use-load";
-
 const q = defineQuery({ key: keyOf("x"), fn: () => listThings(), freshness: "mine" });
 
 export default function View() {

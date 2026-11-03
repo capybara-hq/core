@@ -16,8 +16,8 @@ import {
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactElement, useState } from "react";
 import type { FormAnswer, InputForm } from "../lib/conversations";
-import { useAppMutation } from "../lib/query/define";
 import { keys } from "../lib/query/keys";
+import { useAppMutation } from "../lib/query/mutation";
 import {
   answerQuestion,
   answerText,

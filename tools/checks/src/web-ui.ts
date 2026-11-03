@@ -429,6 +429,35 @@ function checkWebFile(
     out.push(...pagePathFindings(file, p));
   out.push(...ssrFindings(file, p, segs));
   out.push(...queryFindings(file, p, segs, webSrcDir, readers));
+  if (segs[0] === "lib") out.push(...libClientHookFindings(file, p));
+  return out;
+}
+
+/**
+ * `web-lib-client-hook`: server layouts and pages import `lib/**` modules (loaders, `defineQuery`
+ * options, the route table), and a server component may not reach a client-only hook (`next build`
+ * rejects it; vitest and tsc do not). So a `lib/**` module that imports a hook (`use*`) is a client
+ * module and says so with `"use client"` on its first line (`lib/query/mutation.ts`,
+ * `page-query.ts`, `workspace.ts`), and the modules server code imports stay hook-free.
+ */
+function libClientHookFindings(file: string, p: ParsedFile): Finding[] {
+  if (isUseClient(p)) return [];
+  const out: Finding[] = [];
+  for (const st of (p.program.body as Node[] | undefined) ?? []) {
+    if (st.type !== "ImportDeclaration" || st.importKind === "type") continue;
+    for (const sp of (st.specifiers as Node[] | undefined) ?? []) {
+      if (sp.type !== "ImportSpecifier" || sp.importKind === "type") continue;
+      const imported = sp.imported as Node;
+      const name = (imported.name ?? imported.value) as string | undefined;
+      if (name === undefined || !/^use[A-Z]/.test(name)) continue;
+      out.push({
+        file,
+        line: p.lineOf(sp.start),
+        rule: "web-lib-client-hook",
+        message: `${name} is a client-only hook: server components import lib/** modules, so a lib module that uses hooks starts with "use client" (move the hook out of a module server code imports, e.g. writes into lib/query/mutation.ts)`,
+      });
+    }
+  }
   return out;
 }
 
@@ -692,7 +721,8 @@ function applySsrPending(
 
 /**
  * Query-cache conventions (spec docs/superpowers/specs/2026-11-03-web-query-cache-design.md §8):
- * every network read of the web app is a `defineQuery`, every write a `useAppMutation`, keys come
+ * every network read of the web app is a `defineQuery` (`lib/query/define.ts`, hook-free: server
+ * layouts import it), every write a `useAppMutation` (`lib/query/mutation.ts`), keys come
  * from `lib/query/keys.ts`, and a route's first-paint reads are listed in `lib/query/routes.ts`.
  * `QUERY_PENDING` lists the files not converted yet. It is a ratchet like `SSR_PENDING`: a listed
  * file is exempt from the `web-query-*` rules (not from other web-ui rules), an entry whose file no

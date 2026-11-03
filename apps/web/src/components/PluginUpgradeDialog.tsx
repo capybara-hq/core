@@ -26,7 +26,7 @@ import { extensionLabel, labelLocale } from "../lib/extension-label";
 import type { OrgExtension } from "../lib/extensions";
 import { pluginChangeKeys, pluginUpgradePreviewQuery } from "../lib/query/catalog";
 import { orgExtensionsQuery } from "../lib/query/channels";
-import { useAppMutation } from "../lib/query/define";
+import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
 import {
   connectorInput,

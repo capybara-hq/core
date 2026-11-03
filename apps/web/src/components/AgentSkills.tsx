@@ -3,8 +3,8 @@
 import { Badge, Button, Checkbox, DangerConfirm, Stack, Text, useToast } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
-import { useAppMutation } from "../lib/query/define";
 import { keys } from "../lib/query/keys";
+import { useAppMutation } from "../lib/query/mutation";
 import { deleteAgentSkill, PINNED_SKILLS_LIMITS, type SkillSummary } from "../lib/skills";
 import { useErrorMessage } from "../lib/use-error-message";
 

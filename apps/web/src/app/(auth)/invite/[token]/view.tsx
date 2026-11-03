@@ -23,7 +23,7 @@ import { acceptInvitation, invitePath, type SignupInput } from "../../../../lib/
 import { usePreferences } from "../../../../lib/preferences";
 import { invitationQuery } from "../../../../lib/query/auth";
 import { retryOnMountOf } from "../../../../lib/query/client";
-import { useAppMutation } from "../../../../lib/query/define";
+import { useAppMutation } from "../../../../lib/query/mutation";
 import { maybeMeQuery } from "../../../../lib/query/shell";
 import { resetSession } from "../../../../lib/query/workspace";
 import { setCurrentOrg } from "../../../../lib/session";

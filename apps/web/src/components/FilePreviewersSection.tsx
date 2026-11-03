@@ -6,7 +6,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { type OrgFilePreviewer, putOrgFilePreviewers, reorder } from "../lib/previewers";
 import { retryOnMountOf } from "../lib/query/client";
-import { useAppMutation } from "../lib/query/define";
+import { useAppMutation } from "../lib/query/mutation";
 import { orgFilePreviewersQuery } from "../lib/query/settings";
 import { uiLocale } from "../lib/ui";
 import { useErrorMessage } from "../lib/use-error-message";

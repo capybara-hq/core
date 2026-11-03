@@ -18,9 +18,9 @@ import { useRouter } from "../i18n/navigation";
 import type { ApiClientError } from "../lib/api";
 import { type FileChange, lineDiff, pairFiles } from "../lib/diff";
 import { retryOnMountOf } from "../lib/query/client";
-import { useAppMutation } from "../lib/query/define";
 import { inboxChangeKeys, skillChangeQuery } from "../lib/query/inbox";
 import { keys } from "../lib/query/keys";
+import { useAppMutation } from "../lib/query/mutation";
 import {
   decideSkillChange,
   type SkillChange,

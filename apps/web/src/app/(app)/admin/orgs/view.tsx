@@ -37,7 +37,7 @@ import {
   deploymentSettingsQuery,
   settingsChangeKeys,
 } from "../../../../lib/query/admin";
-import { useAppMutation } from "../../../../lib/query/define";
+import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { useAdmin } from "../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../lib/use-error-message";

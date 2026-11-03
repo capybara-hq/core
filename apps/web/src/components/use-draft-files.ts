@@ -14,7 +14,7 @@ import {
 } from "../lib/attachments";
 import { retryOnMountOf } from "../lib/query/client";
 import { attachmentLimitsQuery } from "../lib/query/conversation";
-import { useAppMutation } from "../lib/query/define";
+import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
 
 /**

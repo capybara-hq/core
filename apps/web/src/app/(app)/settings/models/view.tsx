@@ -16,7 +16,7 @@ import {
   putOrgPurpose,
 } from "../../../../lib/models";
 import { modelsQuery } from "../../../../lib/query/conversation";
-import { useAppMutation } from "../../../../lib/query/define";
+import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { orgPurposesQuery } from "../../../../lib/query/settings";
 import { useWorkspace } from "../../../../lib/query/workspace";

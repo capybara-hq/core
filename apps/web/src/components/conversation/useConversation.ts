@@ -19,8 +19,8 @@ import {
   conversationQuery,
   eventsQuery,
 } from "../../lib/query/conversation";
-import { useAppMutation } from "../../lib/query/define";
 import { keys } from "../../lib/query/keys";
+import { useAppMutation } from "../../lib/query/mutation";
 import { refreshUiViews } from "../../lib/query/ui";
 import {
   type ChatState,

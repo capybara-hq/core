@@ -11,7 +11,7 @@ import {
   readDesignTokens,
   readTheme,
 } from "../../lib/embed-bridge";
-import { useAppMutation } from "../../lib/query/define";
+import { useAppMutation } from "../../lib/query/mutation";
 import { requestEmbedToken, uiLocale } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { FormError } from "../form-error";

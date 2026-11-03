@@ -21,7 +21,7 @@ import { usePagePath } from "../../../../components/shell/path";
 import { ApiClientError } from "../../../../lib/api";
 import { type PluginInstall, type UninstallReport, uninstallPlugin } from "../../../../lib/catalog";
 import { pluginChangeKeys } from "../../../../lib/query/catalog";
-import { useAppMutation } from "../../../../lib/query/define";
+import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { pluginInstallsQuery } from "../../../../lib/query/settings";
 import { useWorkspace } from "../../../../lib/query/workspace";

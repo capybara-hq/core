@@ -36,7 +36,7 @@ import {
 import type { ConfigIssue } from "../../../../lib/json-schema";
 import { orgExtensionChangeKeys } from "../../../../lib/query/admin";
 import { orgExtensionsQuery } from "../../../../lib/query/channels";
-import { useAppMutation } from "../../../../lib/query/define";
+import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { useWorkspace } from "../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../lib/use-error-message";

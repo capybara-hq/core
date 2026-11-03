@@ -39,7 +39,7 @@ import {
   connectorResourcesQuery,
   invocableSkillsQuery,
 } from "../../lib/query/conversation";
-import { useAppMutation } from "../../lib/query/define";
+import { useAppMutation } from "../../lib/query/mutation";
 import { findInvocable, type InvocableSkill, parseSlashCommand } from "../../lib/skills";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { type DraftFile, useDraftFiles } from "../use-draft-files";

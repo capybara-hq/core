@@ -5,9 +5,9 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { reassignAgentOwner } from "../lib/agents";
-import { useAppMutation } from "../lib/query/define";
 import { keys } from "../lib/query/keys";
 import { membersQuery } from "../lib/query/members";
+import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";
 

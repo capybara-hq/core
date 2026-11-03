@@ -22,9 +22,9 @@ import {
 } from "../lib/approvals";
 import type { ToolInfo } from "../lib/conversations";
 import { approvalQuery } from "../lib/query/conversation";
-import { useAppMutation } from "../lib/query/define";
 import { inboxChangeKeys } from "../lib/query/inbox";
 import { keys } from "../lib/query/keys";
+import { useAppMutation } from "../lib/query/mutation";
 import { shortTime } from "../lib/time";
 import type { ApprovalDecision, ApprovalItem } from "../lib/timeline";
 import { useErrorMessage } from "../lib/use-error-message";

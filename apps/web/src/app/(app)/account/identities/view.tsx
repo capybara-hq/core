@@ -25,8 +25,8 @@ import { type LinkedIdentity, splitSource, unlinkIdentity } from "../../../../li
 import { identitiesQuery } from "../../../../lib/query/account";
 import { authSourcesQuery } from "../../../../lib/query/auth";
 import { retryOnMountOf } from "../../../../lib/query/client";
-import { useAppMutation } from "../../../../lib/query/define";
 import { keys } from "../../../../lib/query/keys";
+import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { meQuery } from "../../../../lib/query/shell";
 import { useErrorMessage } from "../../../../lib/use-error-message";

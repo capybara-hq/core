@@ -9,7 +9,7 @@ import { ApiClientError, configIssues } from "../lib/api";
 import type { ConfigIssue } from "../lib/json-schema";
 import { extensionConfigQuery } from "../lib/query/admin";
 import { retryOnMountOf } from "../lib/query/client";
-import { useAppMutation } from "../lib/query/define";
+import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
 import { ConfigForm, type ConfigFormState, type ConfigSecretEntry } from "./config-form/ConfigForm";
 import { deploymentBody, deploymentForm, reloads } from "./config-form/deployment";

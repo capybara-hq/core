@@ -9,8 +9,8 @@ import { createConversationWithMessage, type MessageInput } from "../../lib/conv
 import { agentsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
 import { modelsQuery } from "../../lib/query/conversation";
-import { useAppMutation } from "../../lib/query/define";
 import { keys } from "../../lib/query/keys";
+import { useAppMutation } from "../../lib/query/mutation";
 import { conversationGroupsQuery } from "../../lib/query/shell";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { FormError } from "../form-error";

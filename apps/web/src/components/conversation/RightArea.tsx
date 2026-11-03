@@ -13,7 +13,7 @@ import {
 import type { FileOutput } from "../../lib/files";
 import { retryOnMountOf } from "../../lib/query/client";
 import { contributionsQuery, filesQuery, toolOutputQuery } from "../../lib/query/conversation";
-import { useAppMutation } from "../../lib/query/define";
+import { useAppMutation } from "../../lib/query/mutation";
 import { formatRightHash, parseRightHash, type RightTarget } from "../../lib/right-area";
 import type { TimelineEntry, TimelineTool } from "../../lib/timeline";
 import { type UiContributionItem, type UiOpen, uiKey, uiLocale } from "../../lib/ui";

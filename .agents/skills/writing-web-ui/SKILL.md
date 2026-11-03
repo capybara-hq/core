@@ -143,7 +143,8 @@ function Agents({ orgId }: { orgId: string }) {
   skills, members, settings), `live` (30 s: inbox, conversation groups, queue, files, sandbox),
   `events` (`Infinity`: a conversation's log, which the stream appends to), `deployment` (30 s:
   the admin console), `unclassified` (0, the default nobody should keep).
-- `define.ts`: `defineQuery({ key, fn, freshness })` is the one way to declare a read, in
+- `define.ts`: hook-free, because server layouts import it (`next build` rejects a server
+  component that reaches a client hook; vitest and tsc do not). `defineQuery({ key, fn, freshness })` is the one way to declare a read, in
   `lib/query/<area>.ts`, wrapping the existing `lib/<area>.ts` loader (`fn` gets `{ signal }`).
   The same options object serves the server prefetch and the client hook; `useQuery({ ...q,
   enabled })` / `select` are fine. Views and components never call a kernel loader outside a
@@ -168,7 +169,9 @@ function Agents({ orgId }: { orgId: string }) {
   `/` while the org is not ready). `resetSession(qc, then)` cancels every read in flight, clears
   the cache and navigates in the same task: an org switch, create or leave and a sign-out go
   through it, then a full navigation (ruling R4), so nothing of the old org or account paints.
-- **Mutations** are `useAppMutation({ fn, invalidates: (v, r) => [keys…], forgetsOnLeave?, onSuccess? })`: the
+- **Mutations** are `useAppMutation({ fn, invalidates: (v, r) => [keys…], forgetsOnLeave?, onSuccess? })`
+  from `lib/query/mutation.ts` (a `"use client"` hook module; any `lib/**` module importing a
+  `use*` hook starts with `"use client"`, `web-lib-client-hook`): the
   listed keys are invalidated (awaited) before `onSuccess`; use `qc.setQueryData` where the answer
   is the new object. A delete that leaves its detail page lists the detail's keys in
   `forgetsOnLeave`: they are removed when the page unmounts (removing them earlier would read them

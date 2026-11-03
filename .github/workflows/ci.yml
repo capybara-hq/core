@@ -42,7 +42,7 @@ permissions: {}
 #   capybara-hq/plugins are pinned to marketplace.commit), in full; check:tokens: cheap, compares
 #   docs/design/tokens.json with the two files gen:tokens renders from it and checks its contrast
 #   pairs; design-char-icon, a rule of check:web-ui: cheap, a text scan for characters used as icons in apps/web and
-#   packages/design; the web-query-* rules of check:web-ui: cheap, AST scans of apps/web/src, in full). Its network half (`check:bootstrap --network`: npm entries
+#   packages/design; the web-query-* and web-lib-client-hook rules of check:web-ui: cheap, AST scans of apps/web/src, in full). Its network half (`check:bootstrap --network`: npm entries
 #   against the registry and the official marketplace commit, marketplace.url the official one,
 #   bootstrap-haproxy: the sandbox-docker plugin's test copy of the socket proxy config at that
 #   commit equals docker/sandbox-proxy/haproxy.cfg, and the compose build contexts exist there;

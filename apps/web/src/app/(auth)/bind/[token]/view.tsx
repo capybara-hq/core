@@ -20,8 +20,8 @@ import { confirmBinding, type PendingBinding, splitSource } from "../../../../li
 import { usePreferences } from "../../../../lib/preferences";
 import { pendingBindingQuery } from "../../../../lib/query/auth";
 import { retryOnMountOf } from "../../../../lib/query/client";
-import { useAppMutation } from "../../../../lib/query/define";
 import { keys } from "../../../../lib/query/keys";
+import { useAppMutation } from "../../../../lib/query/mutation";
 import { maybeMeQuery, meQuery } from "../../../../lib/query/shell";
 import type { Me } from "../../../../lib/session";
 import { useErrorMessage } from "../../../../lib/use-error-message";

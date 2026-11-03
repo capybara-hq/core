@@ -48,8 +48,8 @@ import {
   updateConnector,
 } from "../../../../lib/connectors";
 import { connectorQuery } from "../../../../lib/query/conversation";
-import { useAppMutation } from "../../../../lib/query/define";
 import { keys } from "../../../../lib/query/keys";
+import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { useWorkspace } from "../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../lib/use-error-message";

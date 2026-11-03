@@ -4,7 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useQueryClient } from "@tanstack/react-query";
 import { agentsQuery } from "@/lib/query/agents";
 import { keys } from "@/lib/query/keys";
-import { defineQuery, useAppMutation } from "@/lib/query/define";
+import { defineQuery } from "@/lib/query/define";
+import { useAppMutation } from "@/lib/query/mutation";
 import { removeThing, shortName } from "@/lib/things";
 
 const things = defineQuery({ key: keys.org("o").agents(), fn: () => removeThing("a"), freshness: "mine" });

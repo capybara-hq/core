@@ -28,7 +28,7 @@ import {
   type SandboxEgressSetting,
   updateOrgSettings,
 } from "../../../../lib/org-settings";
-import { useAppMutation } from "../../../../lib/query/define";
+import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { orgSettingsQuery } from "../../../../lib/query/settings";
 import { useWorkspace } from "../../../../lib/query/workspace";

@@ -5,7 +5,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { type FormEvent, useEffect, useState } from "react";
 import { type AuthSource, type LoginErrorCode, ssoStartUrl } from "../lib/auth-sources";
 import { navigateBrowser } from "../lib/browser";
-import { useAppMutation } from "../lib/query/define";
+import { useAppMutation } from "../lib/query/mutation";
 import { secureCookiesBlocked } from "../lib/secure-origin";
 import { login } from "../lib/session";
 import { useErrorMessage } from "../lib/use-error-message";

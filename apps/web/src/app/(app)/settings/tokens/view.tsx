@@ -32,8 +32,8 @@ import {
   type ServiceToken,
   type ServiceTokenRole,
 } from "../../../../lib/orgs";
-import { useAppMutation } from "../../../../lib/query/define";
 import { keys } from "../../../../lib/query/keys";
+import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { serviceTokensQuery } from "../../../../lib/query/settings";
 import { useWorkspace } from "../../../../lib/query/workspace";

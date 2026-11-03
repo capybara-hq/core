@@ -17,8 +17,8 @@ import type { ModelRef } from "../../lib/conversations";
 import { agentsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
 import { modelsQuery, renameWithRow } from "../../lib/query/conversation";
-import { useAppMutation } from "../../lib/query/define";
 import { keys as queryKeys } from "../../lib/query/keys";
+import { useAppMutation } from "../../lib/query/mutation";
 import { runParts } from "../../lib/run-row";
 import { usageTotal, useSubagents, useUsageWithSubagents } from "../../lib/subagents";
 import {

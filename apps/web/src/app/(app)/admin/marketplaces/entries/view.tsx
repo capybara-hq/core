@@ -32,7 +32,7 @@ import {
   stagedImportQuery,
 } from "../../../../../lib/query/admin";
 import { retryOnMountOf } from "../../../../../lib/query/client";
-import { useAppMutation } from "../../../../../lib/query/define";
+import { useAppMutation } from "../../../../../lib/query/mutation";
 import { useAdmin } from "../../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
 
