@@ -257,7 +257,11 @@ export function PageHeader(p: PageHeaderProps) {
           ) : null}
         </div>
         {actions.length > 0 ? (
-          <div className="cb-pageheader-actions" data-responsive={pre && more ? "true" : undefined}>
+          <div
+            className="cb-pageheader-actions"
+            data-part="page-header-actions"
+            data-responsive={pre && more ? "true" : undefined}
+          >
             {drawn}
           </div>
         ) : actionSlots > 0 ? (

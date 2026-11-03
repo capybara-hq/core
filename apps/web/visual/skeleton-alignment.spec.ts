@@ -80,7 +80,7 @@ for (const theme of THEMES) {
           );
           // Every loaded part, by name and count, is drawn while loading (unless it is data only).
           for (const part of loadedParts) {
-            if (part in DATA_ONLY_PARTS) continue;
+            if (part in DATA_ONLY_PARTS || part in (pair.dataOnly ?? {})) continue;
             const want = count(loaded, part);
             const got = count(loading, part);
             if (want !== got) {
