@@ -618,6 +618,9 @@ button.cb-property-row {
   min-height: 0;
   overflow-y: auto;
   padding: var(--cb-space-4) var(--cb-layout-gutter);
+  /* A classic (non-overlay) scrollbar's gutter on both sides: the centered thread keeps the
+     composer's center line whether or not the thread scrolls (the composer is outside it). */
+  scrollbar-gutter: stable both-edges;
 }
 .cb-conv-scroll[data-center="true"] {
   display: flex;
