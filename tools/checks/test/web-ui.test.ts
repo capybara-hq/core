@@ -3,11 +3,22 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 // design 是浏览器包（无扩展名导入）；names.ts 无 React 依赖，直接按相对路径取常量。
 import { PAGE_TEMPLATES } from "../../../packages/design/src/templates/names.js";
-import { checkWebUi, type SsrPending, WEB_UI_TEMPLATES } from "../src/web-ui.js";
+import {
+  checkWebUi,
+  QUERY_PENDING,
+  type QueryPending,
+  type SsrPending,
+  WEB_UI_TEMPLATES,
+} from "../src/web-ui.js";
 
-const run = (name: string, pending: SsrPending[] = []) => {
+const run = (name: string, pending: SsrPending[] = [], queryPending: QueryPending[] = []) => {
   const dir = fileURLToPath(new URL(`../fixtures/web-ui/${name}`, import.meta.url));
-  return checkWebUi(join(dir, "apps/web/src"), join(dir, "packages/design/src"), pending);
+  return checkWebUi(
+    join(dir, "apps/web/src"),
+    join(dir, "packages/design/src"),
+    pending,
+    queryPending,
+  );
 };
 
 describe("checkWebUi", () => {
@@ -160,33 +171,8 @@ describe("checkWebUi", () => {
       expect(at("ssr-loading-file")).toEqual([["web-ssr-loading-file", "loading.tsx", 1]]));
     it("web-ssr-client-page flags a use-client page under (app)", () =>
       expect(at("ssr-client-page")).toEqual([["web-ssr-client-page", "page.tsx", 1]]));
-    it("web-ssr-first-paint flags useLoad without initial and effects calling lib loaders", () =>
-      expect(at("ssr-first-paint")).toEqual([
-        ["web-ssr-first-paint", "view.tsx", 8],
-        ["web-ssr-first-paint", "view.tsx", 12],
-        ["web-ssr-first-paint", "view.tsx", 13],
-      ]));
-    it("web-ssr-first-paint follows one level of same-file calls and any lib import", () =>
-      expect(at("ssr-first-paint-indirect")).toEqual([
-        ["web-ssr-first-paint", "view.tsx", 11],
-        ["web-ssr-first-paint", "view.tsx", 14],
-      ]));
-    it("web-ssr-first-paint covers client files that are not views", () =>
-      expect(at("ssr-first-paint-client-file")).toEqual([["web-ssr-first-paint", "panel.tsx", 6]]));
-    it("web-ssr-first-paint: an exempted live-update effect passes", () =>
-      expect(run("ssr-first-paint-live")).toEqual([]));
-    it("web-ssr-location flags reads during render and in useState initializers", () =>
-      expect(at("ssr-location")).toEqual([
-        ["web-ssr-location", "view.tsx", 8],
-        ["web-ssr-location", "view.tsx", 9],
-        ["web-ssr-location", "view.tsx", 10],
-      ]));
-    it("web-ssr-view-value-import flags value imports from ./view in a server page", () =>
-      expect(at("ssr-view-value-import")).toEqual([
-        ["web-ssr-view-value-import", "page.tsx", 3],
-        ["web-ssr-view-value-import", "page.tsx", 4],
-        ["web-ssr-view-value-import", "page.tsx", 5],
-      ]));
+    it("web-ssr-first-paint is gone: an unseeded useLoad is no longer an ssr finding", () =>
+      expect(at("query-direct-read").map((x) => x[0])).not.toContain("web-ssr-first-paint"));
     it("a server page rendering ./view passes web-ui-template when the view has a template", () =>
       expect(run("ssr-template-view")).toEqual([]));
     it("a server page whose ./view has no template fails web-ui-template", () =>
@@ -205,6 +191,63 @@ describe("checkWebUi", () => {
       const f = run("ssr-pending-stale", [{ path: "app/(app)/gone/page.tsx", reason: "r" }]);
       expect(f.map((x) => x.rule)).toEqual(["web-ssr-stale-pending"]);
       expect(f[0]?.message).toContain("does not exist");
+    });
+  });
+
+  describe("query cache rules (web-query-*)", () => {
+    const at = (name: string, queryPending: QueryPending[] = []) =>
+      run(name, [], queryPending).map((x) => [x.rule, x.file.split("/").at(-1), x.line]);
+    it("web-query-no-direct-read flags lib reads, useLoad and apiFetch outside fn", () =>
+      expect(at("query-direct-read")).toEqual([
+        ["web-query-no-direct-read", "view.tsx", 16],
+        ["web-query-no-direct-read", "view.tsx", 17],
+        ["web-query-no-direct-read", "view.tsx", 19],
+        ["web-query-no-direct-read", "view.tsx", 20],
+        ["web-query-no-direct-read", "view.tsx", 22],
+      ]));
+    it("web-query-no-direct-read names the spec section", () =>
+      expect(run("query-direct-read")[0]?.message).toContain("web-query-cache-design.md §8"));
+    it("web-query-keys flags an array literal key outside keys.ts", () =>
+      expect(at("query-key-literal")).toEqual([
+        ["web-query-keys", "view.tsx", 7],
+        ["web-query-keys", "view.tsx", 12],
+      ]));
+    it("web-query-freshness flags an inline queryKey / queryFn object, not a spread", () =>
+      expect(at("query-no-freshness")).toEqual([["web-query-freshness", "view.tsx", 8]]));
+    it("web-query-page-read flags loaders, read, workspace in a server page", () =>
+      expect(at("query-page-read")).toEqual([
+        ["web-query-page-read", "page.tsx", 9],
+        ["web-query-page-read", "page.tsx", 10],
+        ["web-query-page-read", "page.tsx", 10],
+      ]));
+    it("web-query-route-table flags a page without an entry and an entry without a reason", () =>
+      expect(at("query-route-missing")).toEqual([
+        ["web-query-route-table", "page.tsx", 1],
+        ["web-query-route-table", "page.tsx", 1],
+      ]));
+    it("web-query-route-table reports which page is which", () => {
+      const f = run("query-route-missing");
+      expect(f[0]?.file).toContain("/y/");
+      expect(f[0]?.message).toContain("none");
+      expect(f[1]?.file).toContain("/z/");
+      expect(f[1]?.message).toContain("/z");
+    });
+    it("query-ok passes", () => expect(run("query-ok")).toEqual([]));
+    it("QUERY_PENDING exempts a listed file from the web-query rules", () =>
+      expect(
+        run("query-direct-read", [], [{ path: "app/(app)/x/view.tsx", reason: "later" }]),
+      ).toEqual([]));
+    it("web-query-stale-pending: a listed file without a violation fails", () => {
+      const f = run("query-pending-stale", [], [{ path: "app/(app)/x/page.tsx", reason: "r" }]);
+      expect(f.map((x) => x.rule)).toEqual(["web-query-stale-pending"]);
+    });
+    it("web-query-stale-pending: a listed file that does not exist fails", () => {
+      const f = run("query-pending-stale", [], [{ path: "app/(app)/gone/view.tsx", reason: "r" }]);
+      expect(f.map((x) => x.rule)).toEqual(["web-query-stale-pending"]);
+      expect(f[0]?.message).toContain("does not exist");
+    });
+    it("every QUERY_PENDING entry has a reason that names its task", () => {
+      for (const e of QUERY_PENDING) expect(e.reason).toMatch(/Task \d+/);
     });
   });
 });

@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import {
   collectImports,
   type Finding,
@@ -315,7 +315,12 @@ function extensionLabelFindings(p: ParsedFile): Finding[] {
   return out;
 }
 
-function checkWebFile(file: string, isTest: boolean, webSrcDir: string): Finding[] {
+function checkWebFile(
+  file: string,
+  isTest: boolean,
+  webSrcDir: string,
+  readers: ReaderMap,
+): Finding[] {
   if (isTest) return [];
   const p = parseFile(file);
   if (isParseError(p)) return [p];
@@ -423,6 +428,7 @@ function checkWebFile(file: string, isTest: boolean, webSrcDir: string): Finding
   )
     out.push(...pagePathFindings(file, p));
   out.push(...ssrFindings(file, p, segs));
+  out.push(...queryFindings(file, p, segs, webSrcDir, readers));
   return out;
 }
 
@@ -465,7 +471,6 @@ export const SSR_PENDING: readonly SsrPending[] = [];
 const SSR_RULES = {
   loading: "web-ssr-loading-file",
   client: "web-ssr-client-page",
-  firstPaint: "web-ssr-first-paint",
   location: "web-ssr-location",
   viewValue: "web-ssr-view-value-import",
   stale: "web-ssr-stale-pending",
@@ -565,48 +570,6 @@ function locationReads(p: ParsedFile): Node[] {
 }
 
 /**
- * Names bound by value imports from a `/lib/` module (any name: a loader, a stream, a poller) and
- * every `apiFetch` import. Namespace imports are tracked too.
- */
-function libLoaders(p: ParsedFile): { names: Set<string>; namespaces: Set<string> } {
-  const names = new Set<string>();
-  const namespaces = new Set<string>();
-  walk(p.program, (n) => {
-    if (n.type !== "ImportDeclaration" || n.importKind === "type") return;
-    const lib = String((n.source as Node).value).includes("/lib/");
-    for (const sp of n.specifiers as Node[]) {
-      if (sp.importKind === "type") continue;
-      const local = (sp.local as Node).name as string;
-      const im = sp.imported as Node | undefined;
-      const imported = im ? String(im.name ?? im.value) : "";
-      if (sp.type === "ImportNamespaceSpecifier") {
-        if (lib) namespaces.add(local);
-      } else if (lib || imported === "apiFetch") names.add(local);
-    }
-  });
-  return { names, namespaces };
-}
-
-/** Same-file functions by name: declarations and consts bound to a function or a call wrapping one. */
-function localFunctions(p: ParsedFile): Map<string, Node> {
-  const fns = new Map<string, Node>();
-  walk(p.program, (n) => {
-    if (n.type === "FunctionDeclaration" && n.id) fns.set((n.id as Node).name as string, n);
-    else if (n.type === "VariableDeclarator" && (n.id as Node).type === "Identifier" && n.init)
-      fns.set((n.id as Node).name as string, n.init as Node);
-  });
-  return fns;
-}
-
-function hasInitial(call: Node): boolean {
-  return (call.arguments as Node[]).some(
-    (a) =>
-      a.type === "ObjectExpression" &&
-      (a.properties as Node[]).some((q) => propKey(q) === "initial"),
-  );
-}
-
-/**
  * Value imports and re-exports from `./view` other than its default export: in a server page they
  * are client references, never the value itself (audit docs/design/audits/2026-11-03-unslop-full.md
  * U1). `import type`, inline `type` specifiers, the default import and `export { default }` pass.
@@ -687,65 +650,6 @@ function ssrFindings(file: string, p: ParsedFile, segs: string[]): Finding[] {
         'a server page.tsx imports only the default export and types from its "use client" ./view: any other value is a client reference on the server (a number becomes a function); move the value into a lib module both import',
       );
 
-  if (isUseClient(p)) {
-    const loaders = libLoaders(p);
-    const fns = localFunctions(p);
-    const loaderCall = (root: Node): string | undefined => {
-      let found: string | undefined;
-      walk(root, (m) => {
-        if (m.type !== "CallExpression" || found !== undefined) return;
-        const mc = m.callee as Node;
-        if (mc.type === "Identifier" && loaders.names.has(mc.name as string))
-          found = mc.name as string;
-        else if (
-          mc.type === "MemberExpression" &&
-          (mc.object as Node).type === "Identifier" &&
-          loaders.namespaces.has((mc.object as Node).name as string)
-        )
-          found = String((mc.property as Node).name);
-      });
-      return found;
-    };
-    /** A lib call in the callback, or in a same-file function it calls (one level). */
-    const effectLoader = (cb: Node): string | undefined => {
-      const direct = loaderCall(cb);
-      if (direct !== undefined) return direct;
-      let via: string | undefined;
-      walk(cb, (m) => {
-        if (m.type !== "CallExpression" || via !== undefined) return;
-        const mc = m.callee as Node;
-        const target = mc.type === "Identifier" ? fns.get(mc.name as string) : undefined;
-        if (target && target !== cb) {
-          const l = loaderCall(target);
-          if (l !== undefined) via = `${(mc as Node).name as string} -> ${l}`;
-        }
-      });
-      return via;
-    };
-    walk(p.program, (n) => {
-      if (n.type !== "CallExpression") return;
-      const c = n.callee as Node;
-      if (c.type !== "Identifier") return;
-      if (c.name === "useLoad" && !hasInitial(n)) {
-        flag(
-          SSR_RULES.firstPaint,
-          n,
-          "useLoad without `initial` fetches after mount, so the first paint is empty; pass the server read as `{ initial }` (or `// ssr-exempt: <reason>`)",
-        );
-      } else if (c.name === "useEffect" || c.name === "useLayoutEffect") {
-        const cb = (n.arguments as Node[])[0];
-        if (!cb) return;
-        const loader = effectLoader(cb);
-        if (loader !== undefined)
-          flag(
-            SSR_RULES.firstPaint,
-            n,
-            `${c.name} calls ${loader}(): a lib call after mount leaves the first paint empty; read it on the server and pass it as \`initial\`, or \`// ssr-exempt: <reason>\` for live updates`,
-          );
-      }
-    });
-  }
-
   for (const hit of locationReads(p))
     flag(
       SSR_RULES.location,
@@ -781,6 +685,557 @@ function applySsrPending(
         line: 1,
         rule: SSR_RULES.stale,
         message: `${e.path} no longer violates a web-ssr rule; remove its SSR_PENDING entry in tools/checks/src/web-ui.ts (the list only shrinks)`,
+      });
+  }
+  return out;
+}
+
+/**
+ * Query-cache conventions (spec docs/superpowers/specs/2026-11-03-web-query-cache-design.md §8):
+ * every network read of the web app is a `defineQuery`, every write a `useAppMutation`, keys come
+ * from `lib/query/keys.ts`, and a route's first-paint reads are listed in `lib/query/routes.ts`.
+ * `QUERY_PENDING` lists the files not converted yet. It is a ratchet like `SSR_PENDING`: a listed
+ * file is exempt from the `web-query-*` rules (not from other web-ui rules), an entry whose file no
+ * longer violates one (or no longer exists) fails as `web-query-stale-pending`, and nothing may be
+ * added. Each migration task removes its entries; the last one leaves the list empty.
+ */
+export interface QueryPending {
+  /** Relative to apps/web/src, with `/` separators. */
+  path: string;
+  reason: string;
+}
+export const QUERY_PENDING: readonly QueryPending[] = [
+  { path: "app/(app)/chat/[conversationId]/page.tsx", reason: "pending migration: Task 10" },
+  { path: "app/(app)/chat/page.tsx", reason: "pending migration: Task 10" },
+  { path: "components/ApprovalCard.tsx", reason: "pending migration: Task 10" },
+  { path: "components/ConnectCard.tsx", reason: "pending migration: Task 10" },
+  { path: "components/CreateOrgDialog.tsx", reason: "pending migration: Task 10" },
+  { path: "components/LeaveOrgDialog.tsx", reason: "pending migration: Task 10" },
+  { path: "components/QuestionCard.tsx", reason: "pending migration: Task 10" },
+  { path: "components/SessionFilePreview.tsx", reason: "pending migration: Task 10" },
+  { path: "components/conversation/ComposerBar.tsx", reason: "pending migration: Task 10" },
+  { path: "components/conversation/ConversationView.tsx", reason: "pending migration: Task 10" },
+  { path: "components/conversation/FilePanel.tsx", reason: "pending migration: Task 10" },
+  { path: "components/conversation/NewConversation.tsx", reason: "pending migration: Task 10" },
+  { path: "components/conversation/PropertiesSections.tsx", reason: "pending migration: Task 10" },
+  { path: "components/conversation/RightArea.tsx", reason: "pending migration: Task 10" },
+  { path: "components/conversation/SubagentPanel.tsx", reason: "pending migration: Task 10" },
+  { path: "components/conversation/SubagentWait.tsx", reason: "pending migration: Task 10" },
+  { path: "components/conversation/Thread.tsx", reason: "pending migration: Task 10" },
+  { path: "components/conversation/useConversation.ts", reason: "pending migration: Task 10" },
+  { path: "components/conversation/useQueue.tsx", reason: "pending migration: Task 10" },
+  { path: "components/extension-ui/EmbedTab.tsx", reason: "pending migration: Task 10" },
+  { path: "components/extension-ui/ExtensionViewTab.tsx", reason: "pending migration: Task 10" },
+  {
+    path: "components/shell/AppFrame.tsx",
+    reason:
+      "pending migration: Task 10 (rewrites the shell: org switch, sign-out and the shell queries it builds with an empty org id when there is no org)",
+  },
+  { path: "components/shell/conversations.tsx", reason: "pending migration: Task 10" },
+  { path: "components/shell/nav.tsx", reason: "pending migration: Task 10" },
+  { path: "components/use-draft-files.ts", reason: "pending migration: Task 10" },
+  { path: "app/(app)/agents/[id]/page.tsx", reason: "pending migration: Task 11" },
+  { path: "app/(app)/agents/new/page.tsx", reason: "pending migration: Task 11" },
+  { path: "app/(app)/agents/page.tsx", reason: "pending migration: Task 11" },
+  { path: "app/(app)/channels/[id]/page.tsx", reason: "pending migration: Task 11" },
+  { path: "app/(app)/channels/[id]/view.tsx", reason: "pending migration: Task 11" },
+  { path: "app/(app)/channels/new/page.tsx", reason: "pending migration: Task 11" },
+  { path: "app/(app)/channels/new/view.tsx", reason: "pending migration: Task 11" },
+  { path: "app/(app)/channels/page.tsx", reason: "pending migration: Task 11" },
+  { path: "app/(app)/page.tsx", reason: "pending migration: Task 11" },
+  { path: "app/(app)/skills/[id]/page.tsx", reason: "pending migration: Task 11" },
+  { path: "app/(app)/skills/[id]/view.tsx", reason: "pending migration: Task 11" },
+  { path: "app/(app)/skills/page.tsx", reason: "pending migration: Task 11" },
+  { path: "app/(app)/skills/view.tsx", reason: "pending migration: Task 11" },
+  { path: "app/(app)/view.tsx", reason: "pending migration: Task 11" },
+  { path: "components/AgentForm.tsx", reason: "pending migration: Task 11" },
+  { path: "components/AgentSkills.tsx", reason: "pending migration: Task 11" },
+  { path: "components/ReassignOwnerDialog.tsx", reason: "pending migration: Task 11" },
+  { path: "app/(app)/account/connections/page.tsx", reason: "pending migration: Task 12" },
+  { path: "app/(app)/account/connections/view.tsx", reason: "pending migration: Task 12" },
+  { path: "app/(app)/account/grants/page.tsx", reason: "pending migration: Task 12" },
+  { path: "app/(app)/account/grants/view.tsx", reason: "pending migration: Task 12" },
+  { path: "app/(app)/account/identities/page.tsx", reason: "pending migration: Task 12" },
+  { path: "app/(app)/account/identities/view.tsx", reason: "pending migration: Task 12" },
+  { path: "app/(app)/catalog/[itemId]/install/page.tsx", reason: "pending migration: Task 12" },
+  { path: "app/(app)/catalog/[itemId]/page.tsx", reason: "pending migration: Task 12" },
+  { path: "app/(app)/catalog/page.tsx", reason: "pending migration: Task 12" },
+  { path: "app/(app)/connectors/[connectorId]/page.tsx", reason: "pending migration: Task 12" },
+  { path: "app/(app)/connectors/[connectorId]/view.tsx", reason: "pending migration: Task 12" },
+  { path: "app/(app)/connectors/install/page.tsx", reason: "pending migration: Task 12" },
+  { path: "app/(app)/connectors/page.tsx", reason: "pending migration: Task 12" },
+  { path: "components/CatalogInstallAction.tsx", reason: "pending migration: Task 12" },
+  { path: "components/CatalogInstallWizard.tsx", reason: "pending migration: Task 12" },
+  { path: "components/ConnectorWizard.tsx", reason: "pending migration: Task 12" },
+  { path: "components/PluginUpgradeDialog.tsx", reason: "pending migration: Task 12" },
+  { path: "app/(app)/evals/[setId]/cases/[caseId]/page.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/evals/[setId]/page.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/evals/[setId]/run/page.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/evals/[setId]/run/view.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/evals/[setId]/view.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/evals/new/page.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/evals/new/view.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/evals/page.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/evals/runs/[runId]/page.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/evals/runs/[runId]/view.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/inbox/page.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/inbox/view.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/p/[plugin]/[id]/page.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/settings/extensions/page.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/settings/extensions/view.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/settings/members/page.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/settings/members/view.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/settings/models/page.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/settings/models/view.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/settings/organization/page.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/settings/organization/view.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/settings/plugins/page.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/settings/plugins/view.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/settings/sandbox/page.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/settings/sandbox/view.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/settings/tokens/page.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/settings/tokens/view.tsx", reason: "pending migration: Task 13" },
+  {
+    path: "app/(app)/trajectories/[conversationId]/page.tsx",
+    reason: "pending migration: Task 13",
+  },
+  {
+    path: "app/(app)/trajectories/[conversationId]/view.tsx",
+    reason: "pending migration: Task 13",
+  },
+  { path: "app/(app)/trajectories/page.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/trajectories/view.tsx", reason: "pending migration: Task 13" },
+  { path: "components/FilePreviewersSection.tsx", reason: "pending migration: Task 13" },
+  { path: "components/SkillChangeReview.tsx", reason: "pending migration: Task 13" },
+  { path: "app/(app)/admin/accounts/page.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/accounts/view.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/catalog/[itemId]/page.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/catalog/[itemId]/view.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/catalog/import/page.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/catalog/import/view.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/catalog/page.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/catalog/requests/page.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/catalog/requests/view.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/extensions/[name]/page.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/extensions/[name]/view.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/extensions/install/page.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/extensions/install/view.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/extensions/page.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/marketplaces/entries/page.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/marketplaces/entries/view.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/marketplaces/page.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/marketplaces/view.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/models/page.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/models/view.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/orgs/page.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/orgs/view.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/page.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/settings/page.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(app)/admin/settings/view.tsx", reason: "pending migration: Task 14" },
+  { path: "components/ExtensionDeploymentConfig.tsx", reason: "pending migration: Task 14" },
+  { path: "app/(auth)/bind/[token]/page.tsx", reason: "pending migration: Task 15" },
+  { path: "app/(auth)/bind/[token]/view.tsx", reason: "pending migration: Task 15" },
+  { path: "app/(auth)/invite/[token]/page.tsx", reason: "pending migration: Task 15" },
+  { path: "app/(auth)/invite/[token]/view.tsx", reason: "pending migration: Task 15" },
+  { path: "app/(auth)/login/page.tsx", reason: "pending migration: Task 15" },
+  { path: "app/(auth)/setup/view.tsx", reason: "pending migration: Task 15" },
+  { path: "components/login-form.tsx", reason: "pending migration: Task 15" },
+  { path: "components/setup-form.tsx", reason: "pending migration: Task 15" },
+];
+
+const QUERY_RULES = {
+  noDirectRead: "web-query-no-direct-read",
+  keys: "web-query-keys",
+  freshness: "web-query-freshness",
+  pageRead: "web-query-page-read",
+  routeTable: "web-query-route-table",
+  stale: "web-query-stale-pending",
+} as const;
+const QUERY_SPEC = "docs/superpowers/specs/2026-11-03-web-query-cache-design.md §8";
+const QUERY_EXEMPT = /\/\/\s*query-exempt:(.*)$/;
+const KEYS_FILE = "lib/query/keys.ts";
+const DEFINE_FILE = "lib/query/define.ts";
+const ROUTES_FILE = "lib/query/routes.ts";
+/** Calls whose `fn` property may reach the kernel. */
+const QUERY_FN_HOSTS = new Set(["defineQuery", "useAppMutation"]);
+/** Always a direct read, imported or not. */
+const DIRECT_READ_CALLS = new Set(["useLoad", "useServerState", "apiFetch"]);
+/** QueryClient methods whose object argument is a filter, not a query definition. */
+const QUERY_FILTER_METHODS = new Set([
+  "invalidateQueries",
+  "cancelQueries",
+  "removeQueries",
+  "resetQueries",
+  "refetchQueries",
+  "isFetching",
+  "getQueriesData",
+  "setQueriesData",
+]);
+/** Server-side helpers that read nothing from the kernel. */
+const SERVER_PURE = new Set([
+  "isKernelUnavailable",
+  "isSignedOut",
+  "currentPath",
+  "PATH_HEADER",
+  "dehydrateFor",
+  "prefetchRoute",
+  "serverQueryClient",
+]);
+
+/** Exported names of each `src/lib` module (extension stripped) that perform a kernel call. */
+export type ReaderMap = Map<string, Set<string>>;
+
+function stripExt(path: string): string {
+  return path.replace(/\.[jt]sx?$/, "");
+}
+
+/** The functions `lib/**` exports that call `apiFetch`, directly or through a same-file function. */
+export function kernelReaders(webSrcDir: string): ReaderMap {
+  const map: ReaderMap = new Map();
+  const libDir = join(webSrcDir, "lib");
+  for (const { file, isTest } of listSourceFiles(libDir)) {
+    const rel = relative(libDir, file).split(sep);
+    if (isTest || rel[0] === "server" || rel[0] === "query") continue;
+    const p = parseFile(file);
+    if (isParseError(p)) continue;
+    const fns = new Map<string, Node>();
+    const exported = new Map<string, string>();
+    for (const st of (p.program.body as Node[] | undefined) ?? []) {
+      const decl = st.type === "ExportNamedDeclaration" ? (st.declaration as Node | null) : st;
+      const isExport = st.type === "ExportNamedDeclaration";
+      if (decl?.type === "FunctionDeclaration" && decl.id) {
+        const name = (decl.id as Node).name as string;
+        fns.set(name, decl);
+        if (isExport) exported.set(name, name);
+      } else if (decl?.type === "VariableDeclaration") {
+        for (const d of decl.declarations as Node[]) {
+          if ((d.id as Node).type !== "Identifier" || !d.init) continue;
+          const name = (d.id as Node).name as string;
+          fns.set(name, d.init as Node);
+          if (isExport) exported.set(name, name);
+        }
+      }
+      if (isExport && !st.declaration && st.source == null) {
+        for (const sp of (st.specifiers as Node[]) ?? []) {
+          const local = (sp.local as Node).name as string;
+          const out = (sp.exported as Node).name ?? (sp.exported as Node).value;
+          exported.set(String(out), local);
+        }
+      }
+    }
+    const callsOf = (root: Node): Set<string> => {
+      const names = new Set<string>();
+      walk(root, (n) => {
+        if (n.type !== "CallExpression") return;
+        const c = n.callee as Node;
+        if (c.type === "Identifier") names.add(c.name as string);
+      });
+      return names;
+    };
+    const reads = new Set<string>();
+    const calls = new Map([...fns].map(([name, node]) => [name, callsOf(node)]));
+    for (const [name, c] of calls) if (c.has("apiFetch")) reads.add(name);
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const [name, c] of calls)
+        if (!reads.has(name) && [...c].some((x) => reads.has(x))) {
+          reads.add(name);
+          grew = true;
+        }
+    }
+    const names = new Set<string>();
+    for (const [out, local] of exported) if (reads.has(local)) names.add(out);
+    if (names.size > 0) map.set(stripExt(file), names);
+  }
+  return map;
+}
+
+/** The module an import specifier names, as a path without extension (`@/` is `src/`). */
+function resolveSpec(spec: string, fromFile: string, webSrcDir: string): string | undefined {
+  if (spec.startsWith("@/")) return join(webSrcDir, spec.slice(2));
+  if (spec.startsWith(".")) return resolve(dirname(fromFile), spec);
+  return undefined;
+}
+
+interface Bound {
+  /** `reader`: a kernel-calling lib export; `server`: a `lib/server` helper that may read. */
+  kind: "reader" | "server";
+  imported: string;
+}
+
+/** Local names bound by value imports of kernel readers or `lib/server` helpers, and namespaces. */
+function boundReaders(
+  p: ParsedFile,
+  file: string,
+  webSrcDir: string,
+  readers: ReaderMap,
+): { names: Map<string, Bound>; namespaces: Map<string, string> } {
+  const names = new Map<string, Bound>();
+  const namespaces = new Map<string, string>();
+  const serverDir = join(webSrcDir, "lib", "server") + sep;
+  walk(p.program, (n) => {
+    if (n.type !== "ImportDeclaration" || n.importKind === "type") return;
+    const base = resolveSpec(String((n.source as Node).value), file, webSrcDir);
+    if (base === undefined) return;
+    const key = stripExt(base);
+    const isServer = key.startsWith(serverDir);
+    const lib = readers.get(key) ?? readers.get(join(key, "index"));
+    for (const sp of n.specifiers as Node[]) {
+      if (sp.importKind === "type") continue;
+      const local = (sp.local as Node).name as string;
+      if (sp.type === "ImportNamespaceSpecifier") {
+        if (lib) namespaces.set(local, key);
+        continue;
+      }
+      if (sp.type !== "ImportSpecifier") continue;
+      const im = sp.imported as Node;
+      const imported = String(im.name ?? im.value);
+      if (lib?.has(imported)) names.set(local, { kind: "reader", imported });
+      else if (isServer && !SERVER_PURE.has(imported))
+        names.set(local, { kind: "server", imported });
+    }
+  });
+  return { names, namespaces };
+}
+
+function unwrapExpr(n: Node): Node {
+  let cur = n;
+  while (
+    cur.type === "TSAsExpression" ||
+    cur.type === "TSSatisfiesExpression" ||
+    cur.type === "ParenthesizedExpression" ||
+    cur.type === "TSNonNullExpression"
+  )
+    cur = cur.expression as Node;
+  return cur;
+}
+
+function queryFindings(
+  file: string,
+  p: ParsedFile,
+  segs: string[],
+  webSrcDir: string,
+  readers: ReaderMap,
+): Finding[] {
+  const out: Finding[] = [];
+  const rel = segs.join("/");
+  const lines = readFileSync(file, "utf8").split("\n");
+  const exemption = (line: number): "none" | "ok" | "empty" => {
+    for (const i of [line - 1, line - 2]) {
+      const m = QUERY_EXEMPT.exec(lines[i] ?? "");
+      if (m) return (m[1] ?? "").trim() === "" ? "empty" : "ok";
+    }
+    return "none";
+  };
+  const flag = (rule: string, at: Node, message: string) => {
+    const line = p.lineOf(at.start);
+    const ex = exemption(line);
+    if (ex === "ok") return;
+    out.push({
+      file,
+      line,
+      rule,
+      message: ex === "empty" ? "`// query-exempt:` needs a reason after the colon" : message,
+    });
+  };
+
+  // web-query-keys: keys are built only in lib/query/keys.ts.
+  if (rel !== KEYS_FILE) {
+    const keyMessage = `a query key is built only by lib/query/keys.ts: call \`keys.org(id).<area>()\` instead of an array literal (${QUERY_SPEC})`;
+    walk(p.program, (n) => {
+      if (n.type === "Property" && propKey(n) === "queryKey") {
+        if (unwrapExpr(n.value as Node).type === "ArrayExpression")
+          flag(QUERY_RULES.keys, n, keyMessage);
+      } else if (n.type === "CallExpression" && calleeName(n) === "defineQuery") {
+        for (const a of n.arguments as Node[]) {
+          if (a.type !== "ObjectExpression") continue;
+          for (const q of a.properties as Node[])
+            if (propKey(q) === "key" && unwrapExpr(q.value as Node).type === "ArrayExpression")
+              flag(QUERY_RULES.keys, q, keyMessage);
+        }
+      }
+    });
+  }
+
+  // web-query-freshness: a query definition is `defineQuery`, whose type requires `freshness`.
+  if (rel !== DEFINE_FILE) {
+    const filters = new Set<Node>();
+    walk(p.program, (n) => {
+      if (n.type !== "CallExpression") return;
+      const name = calleeName(n);
+      if (name !== undefined && QUERY_FILTER_METHODS.has(name))
+        for (const a of n.arguments as Node[]) filters.add(a);
+    });
+    walk(p.program, (n) => {
+      if (n.type !== "ObjectExpression" || filters.has(n)) return;
+      const hit = (n.properties as Node[]).find((q) => {
+        const k = propKey(q);
+        return k === "queryKey" || k === "queryFn";
+      });
+      if (hit)
+        flag(
+          QUERY_RULES.freshness,
+          n,
+          `an inline \`${propKey(hit)}\` object has no freshness class: declare the read with \`defineQuery({ key, fn, freshness })\` and spread it into \`useQuery\` (${QUERY_SPEC})`,
+        );
+    });
+  }
+
+  const isPage = /^page\.[jt]sx?$/.test(segs.at(-1) ?? "");
+  const client = isUseClient(p);
+  const inApp = segs[0] === "app" && (segs[1] === "(app)" || segs[1] === "(auth)");
+  const bound = boundReaders(p, file, webSrcDir, readers);
+  const boundCall = (n: Node): { label: string; bound: Bound | undefined } | undefined => {
+    const c = n.callee as Node;
+    if (c.type === "Identifier") {
+      const b = bound.names.get(c.name as string);
+      return b ? { label: b.imported, bound: b } : undefined;
+    }
+    if (c.type === "MemberExpression" && !c.computed && (c.object as Node).type === "Identifier") {
+      const key = bound.namespaces.get((c.object as Node).name as string);
+      const prop = (c.property as Node).name as string;
+      if (key !== undefined && readers.get(key)?.has(prop))
+        return { label: prop, bound: { kind: "reader", imported: prop } };
+    }
+    return undefined;
+  };
+
+  // web-query-page-read: a server page reads nothing; its view reads through queries.
+  if (inApp && isPage && !client) {
+    walk(p.program, (n) => {
+      if (n.type !== "CallExpression") return;
+      const hit = boundCall(n);
+      if (hit)
+        flag(
+          QUERY_RULES.pageRead,
+          n,
+          `a server page.tsx does not read: ${hit.label}() belongs in a query of its view, prefetched through lib/query/routes.ts (${QUERY_SPEC})`,
+        );
+    });
+  }
+
+  // web-query-no-direct-read: client code reads and writes only through defineQuery / useAppMutation.
+  if (segs[0] === "components" || (segs[0] === "app" && client)) {
+    const allowedFns = new Set<Node>();
+    const visit = (n: Node, ok: boolean): void => {
+      if (n.type === "CallExpression") {
+        const name = calleeName(n);
+        if (name !== undefined && QUERY_FN_HOSTS.has(name))
+          for (const a of n.arguments as Node[])
+            if (a.type === "ObjectExpression")
+              for (const q of a.properties as Node[])
+                if (propKey(q) === "fn" && q.value) allowedFns.add(q.value as Node);
+        const c = n.callee as Node;
+        if (c.type === "Identifier" && DIRECT_READ_CALLS.has(c.name as string))
+          flag(
+            QUERY_RULES.noDirectRead,
+            n,
+            `${c.name as string}() reads outside the query cache: declare the read with \`defineQuery\` and use \`useQuery\` (${QUERY_SPEC})`,
+          );
+        else if (!ok) {
+          const hit = boundCall(n);
+          if (hit && hit.bound?.kind === "reader")
+            flag(
+              QUERY_RULES.noDirectRead,
+              n,
+              `${hit.label}() reaches the kernel outside a query: call it only inside the \`fn\` of \`defineQuery\` / \`useAppMutation\` (${QUERY_SPEC})`,
+            );
+        }
+      }
+      for (const v of Object.values(n)) {
+        if (Array.isArray(v)) {
+          for (const c of v)
+            if (c && typeof c === "object" && "type" in c)
+              visit(c as Node, ok || allowedFns.has(c as Node));
+        } else if (v && typeof v === "object" && "type" in v)
+          visit(v as Node, ok || allowedFns.has(v as Node));
+      }
+    };
+    visit(p.program, false);
+  }
+  return out;
+}
+
+/** The `pattern` / `none` of every entry of `lib/query/routes.ts`, read from the source. */
+function routeEntries(webSrcDir: string): Map<string, { none: Node | undefined }> | undefined {
+  const file = join(webSrcDir, ROUTES_FILE);
+  if (!existsSync(file)) return undefined;
+  const p = parseFile(file);
+  if (isParseError(p)) return undefined;
+  const entries = new Map<string, { none: Node | undefined }>();
+  walk(p.program, (n) => {
+    if (n.type !== "ObjectExpression") return;
+    const props = n.properties as Node[];
+    const pat = props.find((q) => propKey(q) === "pattern");
+    const v = pat?.value as Node | undefined;
+    if (v?.type !== "Literal" || typeof v.value !== "string") return;
+    entries.set(v.value, { none: props.find((q) => propKey(q) === "none")?.value as Node });
+  });
+  return entries;
+}
+
+/** web-query-route-table: every page has a ROUTES entry, and an entry without queries says why. */
+function routeTableFindings(webSrcDir: string): Finding[] {
+  const entries = routeEntries(webSrcDir);
+  if (entries === undefined) return [];
+  const out: Finding[] = [];
+  for (const { file, isTest } of listSourceFiles(webSrcDir)) {
+    const segs = relative(webSrcDir, file).split(sep);
+    if (isTest || segs[0] !== "app" || (segs[1] !== "(app)" && segs[1] !== "(auth)")) continue;
+    if (!/^page\.[jt]sx?$/.test(segs.at(-1) ?? "")) continue;
+    const pattern = `/${segs
+      .slice(1, -1)
+      .filter((s) => !/^\(.*\)$/.test(s))
+      .join("/")}`;
+    const entry = entries.get(pattern);
+    if (entry === undefined)
+      out.push({
+        file,
+        line: 1,
+        rule: QUERY_RULES.routeTable,
+        message: `no ROUTES entry for "${pattern}" in lib/query/routes.ts: list the queries of its first paint, or \`none: "<reason>"\` (${QUERY_SPEC})`,
+      });
+    else if (
+      entry.none?.type === "Literal" &&
+      typeof entry.none.value === "string" &&
+      entry.none.value.trim() === ""
+    )
+      out.push({
+        file,
+        line: 1,
+        rule: QUERY_RULES.routeTable,
+        message: `the ROUTES entry for "${pattern}" has \`none: ""\`: give the reason it prefetches nothing (${QUERY_SPEC})`,
+      });
+  }
+  return out;
+}
+
+/** Drops the web-query findings of the pending files; reports stale and missing entries. */
+function applyQueryPending(
+  findings: Finding[],
+  webSrcDir: string,
+  pending: readonly QueryPending[],
+): Finding[] {
+  const isQuery = (f: Finding) => f.rule.startsWith("web-query-");
+  const abs = (path: string) => join(webSrcDir, ...path.split("/"));
+  const listed = new Set(pending.map((e) => abs(e.path)));
+  const out = findings.filter((f) => !(isQuery(f) && listed.has(f.file)));
+  for (const e of pending) {
+    const file = abs(e.path);
+    const hit = findings.some((f) => isQuery(f) && f.file === file);
+    if (!existsSync(file))
+      out.push({
+        file,
+        line: 1,
+        rule: QUERY_RULES.stale,
+        message: `QUERY_PENDING entry ${e.path} does not exist; remove it from QUERY_PENDING in tools/checks/src/web-ui.ts`,
+      });
+    else if (!hit)
+      out.push({
+        file,
+        line: 1,
+        rule: QUERY_RULES.stale,
+        message: `${e.path} no longer violates a web-query rule; remove its QUERY_PENDING entry in tools/checks/src/web-ui.ts (the list only shrinks)`,
       });
   }
   return out;
@@ -909,11 +1364,14 @@ export function checkWebUi(
   webSrcDir: string,
   designSrcDir: string,
   pending: readonly SsrPending[] = SSR_PENDING,
+  queryPending: readonly QueryPending[] = QUERY_PENDING,
 ): Finding[] {
   const findings: Finding[] = [];
+  const readers = kernelReaders(webSrcDir);
   for (const { file, isTest } of listSourceFiles(webSrcDir)) {
-    findings.push(...checkWebFile(file, isTest, webSrcDir));
+    findings.push(...checkWebFile(file, isTest, webSrcDir, readers));
   }
+  findings.push(...routeTableFindings(webSrcDir));
   for (const css of listCssFiles(webSrcDir)) {
     findings.push({
       file: css,
@@ -924,5 +1382,5 @@ export function checkWebUi(
   }
   findings.push(...charIconMessageFindings(join(webSrcDir, "..", "messages")));
   findings.push(...checkDesign(designSrcDir));
-  return applySsrPending(findings, webSrcDir, pending);
+  return applyQueryPending(applySsrPending(findings, webSrcDir, pending), webSrcDir, queryPending);
 }
