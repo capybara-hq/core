@@ -121,8 +121,25 @@ function DirectoryItemRead({ itemId, orgId }: { itemId: string; orgId: string | 
           value: "overview",
           onChange: () => {},
         }}
-        // The overview's components and the policy card (the deploy card only for an extension).
-        loading={{ inspector: true, blocks: 2 }}
+        // The overview: the five component sections (extension, skills, connector templates,
+        // agent templates, dependencies), the policy card (its hint and the three policies) and
+        // the delete button; the inspector's facts (package, publisher, latest, source,
+        // installs, updated). The deploy card (an extension's) and the license come with the data.
+        loading={{
+          inspector: { rows: 6, keyWidth: "10ch" },
+          content: [
+            { kind: "list" },
+            { kind: "list" },
+            { kind: "list" },
+            { kind: "list" },
+            { kind: "list" },
+            {
+              kind: "card",
+              card: { lines: 1, lineSize: "small", field: { control: "radios", options: 3 } },
+            },
+            { kind: "buttons" },
+          ],
+        }}
       />
     );
   }

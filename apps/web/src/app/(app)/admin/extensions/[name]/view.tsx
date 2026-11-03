@@ -91,6 +91,7 @@ export default function ExtensionDetailView({ name }: { name: string }) {
 function ExtensionDetail({ name, orgId }: { name: string; orgId: string | null }) {
   const scope = usePagePath("admin");
   const t = useTranslations("admin.extensions");
+  const qc = useQueryClient();
   const read = usePageQuery(adminExtensionsQuery());
   const tabs = (tab: Tab, onChange: (x: Tab) => void, alert = false) => ({
     label: t("detail.tabsLabel"),
@@ -105,14 +106,41 @@ function ExtensionDetail({ name, orgId }: { name: string; orgId: string | null }
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
   if (read.kind === "loading") {
+    // The extension may be cached already (its poll entry): it opens on the tab its status picks.
+    const known = qc.getQueryData<AdminExtension>(adminExtensionQuery(name).queryKey);
+    const tab: Tab = known?.status === "pending_config" ? "config" : "overview";
     return (
       <DetailPage
         header={{
           path: [...scope, { label: "extensions", href: "/admin/extensions" }, { label: name }],
           title: "",
         }}
-        tabs={tabs("overview", () => {})}
-        loading={{}}
+        tabs={tabs(tab, () => {})}
+        loading={{
+          content:
+            tab === "config"
+              ? // The config tab: its hint, then the form's fields and its save button.
+                [{ kind: "lines", lines: 2 }, { kind: "buttons" }]
+              : // The overview of an installed extension: its facts (source, version, desired
+                // state, digest) in two columns, its lifecycle buttons with their note, and the
+                // replicas table under its title.
+                [
+                  { kind: "key-value", rows: 4, columns: 2 },
+                  { kind: "buttons", count: 2, help: true },
+                  {
+                    kind: "table",
+                    title: t("detail.replicasTitle"),
+                    label: t("detail.replicasTitle"),
+                    columns: (["replica", "version", "state", "reason", "heartbeat"] as const).map(
+                      (key) => ({
+                        key,
+                        header: t(`detail.replicaColumns.${key}`),
+                        cell: () => null,
+                      }),
+                    ),
+                  },
+                ],
+        }}
       />
     );
   }
@@ -174,12 +202,20 @@ function Detail({
     refetchInterval: moving && polls < POLL_MAX ? POLL_MS : false,
     refetchIntervalInBackground: true,
   });
-  const polled = poll.dataUpdatedAt + poll.errorUpdatedAt;
+  // Only real reads count towards the budget: a fetch that answered or failed. The list entry it
+  // starts from and an action's answer written into it (`manual`) are no polls.
+  const pollHash = JSON.stringify(one.queryKey);
   // ssr-exempt: live updates after first paint (the extension is still converging)
-  useEffect(() => {
-    if (polled === 0 || !moving) return;
-    setPolls((n) => n + 1);
-  }, [polled, moving]);
+  useEffect(
+    () =>
+      qc.getQueryCache().subscribe((event) => {
+        if (event.type !== "updated" || JSON.stringify(event.query.queryKey) !== pollHash) return;
+        const a = event.action;
+        if ((a.type === "success" && a.manual !== true) || a.type === "error")
+          setPolls((n) => n + 1);
+      }),
+    [qc, pollHash],
+  );
   // A poll's answer newer than the list's goes into the list (an older one never overwrites it).
   const pollAt = poll.dataUpdatedAt;
   useEffect(() => {

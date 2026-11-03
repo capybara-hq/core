@@ -152,7 +152,19 @@ function StagedImportRead({ staging, orgId }: { staging: string; orgId: string |
         cancel: { label: tw("cancel"), onSelect: () => {} },
         primary: { label: tw("next"), onSelect: () => {} },
       }}
-      loading={{ fields: [{ control: "text" }, { control: "card-group" }] }}
+      // The review stack: the plugin line over its facts (package, origin, provenance), then the
+      // five component sections (extension, skills, connector templates, agent templates,
+      // dependencies).
+      loading={{
+        content: [
+          { kind: "lines", lines: 4 },
+          { kind: "list" },
+          { kind: "list" },
+          { kind: "list" },
+          { kind: "list" },
+          { kind: "list" },
+        ],
+      }}
     />
   );
 }

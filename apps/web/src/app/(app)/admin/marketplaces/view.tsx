@@ -103,6 +103,7 @@ function SourcesRead() {
           activeTab: "sources",
           search: { label: t("search"), value: "", onChange: () => {} },
         }}
+        loading={{ keep: true }}
       >
         <FormSection
           id="official"

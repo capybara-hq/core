@@ -2,13 +2,13 @@
 // first paint complete without a browser read, the loading state on an empty cache, the
 // enterprise-admin gate (only the session is read below it), R5's failures and the mutations'
 // cache updates.
-import { act, cleanup, screen } from "@testing-library/react";
+import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
+import { renderRouteEmptyCache, renderRouteWithCache, testQueryClient } from "./support/query";
 import { ME } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
 
@@ -225,20 +225,29 @@ afterEach(cleanup);
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
 
 /** An empty-cache client navigation to `path` whose `held` read answers only on `release()`. */
-async function renderHeld(path: string, held: string, routes: Routes = ROUTES) {
+async function renderHeld(
+  path: string,
+  held: string,
+  routes: Routes = ROUTES,
+  opts: Parameters<typeof renderRouteEmptyCache>[2] = {},
+) {
   let release: () => void = () => {};
   const gate = new Promise<void>((r) => {
     release = r;
   });
   const answer = routes[held];
   if (answer === undefined) throw new Error(`no route ${held}`);
-  const r = await renderRouteEmptyCache(path, {
-    ...routes,
-    [held]: async (c) => {
-      await gate;
-      return answer(c);
+  const r = await renderRouteEmptyCache(
+    path,
+    {
+      ...routes,
+      [held]: async (c) => {
+        await gate;
+        return answer(c);
+      },
     },
-  });
+    opts,
+  );
   return { ...r, release: () => act(async () => release()) };
 }
 
@@ -328,6 +337,24 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await release();
   });
 
+  it.each([
+    ["/admin/models", "GET /api/v1/admin/models"],
+    ["/admin/marketplaces", "GET /api/v1/admin/marketplaces"],
+  ])(
+    "%s: the loading page announces once (its sections inside one busy region)",
+    async (path, held) => {
+      const { release } = await renderHeld(path, held);
+      await vi.waitFor(() => {
+        if (document.querySelector("[aria-busy='true']") === null) throw new Error("not loading");
+      });
+      expect(document.querySelectorAll(".cb-form-section").length).toBe(2);
+      // one busy announcer (the toasts' live region is no announcer of the page)
+      expect(document.querySelectorAll("[role='status'][aria-busy='true']")).toHaveLength(1);
+      expect(screen.getAllByText("Loading")).toHaveLength(1);
+      await release();
+    },
+  );
+
   it("/admin/models: the purposes load as the kernel's five cards", async () => {
     const { release } = await renderHeld("/admin/models", "GET /api/v1/admin/model-purposes");
     await vi.waitFor(() => {
@@ -353,6 +380,56 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       }),
     );
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(["PUT /api/v1/admin/settings"]);
+  });
+
+  it("/admin/settings: a save invalidates the models page (its currency) and /me when org creation changes", async () => {
+    const calls = stubApi({
+      ...ROUTES,
+      "PUT /api/v1/admin/settings": (c) => json(200, { ...SETTINGS, ...(bodyOf(c) as object) }),
+    });
+    const { client } = await renderRouteWithCache("/admin/settings", ROUTES);
+    await client.prefetchQuery({
+      queryKey: ["deployment", "adminModels"],
+      queryFn: () => ({ providers: [], prices: [], currency: "USD" }),
+    });
+    const u = userEvent.setup();
+    await u.click(
+      screen.getByRole("radio", {
+        name: new RegExp(`^${en.admin.settings.orgCreation.enterprise_admin}`),
+      }),
+    );
+    await u.click(screen.getByRole("button", { name: en.admin.settings.save }));
+    await vi.waitFor(() =>
+      expect(client.getQueryState(["deployment", "adminModels"])?.isInvalidated).toBe(true),
+    );
+    // /me (whether the account may create an org) is on screen: it is read again
+    await vi.waitFor(() =>
+      expect(calls.map((c) => `${c.method} ${c.url}`)).toContain("GET /api/v1/me"),
+    );
+    expect(calls[0]?.method).toBe("PUT");
+  });
+
+  it("/admin/orgs: saving an org's limits invalidates that org's settings and the models page", async () => {
+    stubApi({
+      ...ROUTES,
+      "PUT /api/v1/admin/settings": () => json(200, SETTINGS),
+    });
+    const { client } = await renderRouteWithCache("/admin/orgs", ROUTES);
+    for (const queryKey of [
+      ["org", "o2", "orgSettings"],
+      ["deployment", "adminModels"],
+    ])
+      await client.prefetchQuery({ queryKey, queryFn: () => ({}) });
+    const u = userEvent.setup();
+    const row = screen.getByText("Beta").closest("tr") as HTMLElement;
+    await u.click(within(row).getByRole("button", { name: "Row actions" }));
+    await u.click(await screen.findByRole("menuitem", { name: en.admin.orgs.edit }));
+    const dialog = await screen.findByRole("dialog");
+    await u.click(within(dialog).getByRole("button", { name: en.admin.orgs.dialog.save }));
+    await vi.waitFor(() =>
+      expect(client.getQueryState(["org", "o2", "orgSettings"])?.isInvalidated).toBe(true),
+    );
+    expect(client.getQueryState(["deployment", "adminModels"])?.isInvalidated).toBe(true);
   });
 
   it("/admin/accounts: creating an account adds it to the cached list and invalidates the overview", async () => {
@@ -425,6 +502,41 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await release();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
     expect(screen.getAllByText(/1\.0\.0/).length).toBeGreaterThan(0);
+  });
+
+  it("/admin/extensions/[name]: the loading overview is its facts, its buttons and the replicas table", async () => {
+    const { release } = await renderHeld("/admin/extensions/demo", "GET /api/v1/admin/extensions");
+    await expectLoading("DetailPage", "v1.0.0");
+    expect(document.querySelectorAll('[data-part="loading-card"]')).toHaveLength(0);
+    const kv = document.querySelector('[data-part="loading-key-value"]');
+    expect(kv?.getAttribute("data-columns")).toBe("2");
+    expect(screen.getByText(en.admin.extensions.detail.replicasTitle)).toBeTruthy();
+    expect(screen.getByText(en.admin.extensions.detail.replicaColumns.heartbeat)).toBeTruthy();
+    expect(
+      screen
+        .getByRole("tab", { name: en.admin.extensions.detail.tabs.overview })
+        .getAttribute("aria-selected"),
+    ).toBe("true");
+    await release();
+  });
+
+  it("/admin/extensions/[name]: a cached pending-config extension loads on its config tab", async () => {
+    const client = testQueryClient();
+    // the extension is cached (its poll entry) while the list is still on its way
+    client.setQueryData(["deployment", "extension", "demo"], ext({ status: "pending_config" }));
+    const { release } = await renderHeld(
+      "/admin/extensions/demo",
+      "GET /api/v1/admin/extensions",
+      ROUTES,
+      { client },
+    );
+    await expectLoading("DetailPage", "v1.0.0");
+    expect(
+      screen
+        .getByRole("tab", { name: en.admin.extensions.detail.tabs.config })
+        .getAttribute("aria-selected"),
+    ).toBe("true");
+    await release();
   });
 
   it("/admin/extensions/install: the source step does not wait for the list (it renders for real)", async () => {
@@ -604,6 +716,32 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
     },
   );
+
+  it("/admin/catalog/[itemId]: the loading overview is its component sections, the policy radios and the inspector's six facts", async () => {
+    const { release } = await renderHeld(
+      `/admin/catalog/${ITEM_ID}`,
+      `GET /api/v1/admin/catalog/items/${ITEM_ID}`,
+    );
+    await expectLoading("DetailPage", "Acme");
+    expect(document.querySelectorAll('[data-part="loading-card"]')).toHaveLength(0);
+    expect(
+      document.querySelectorAll('[data-part="loading-plain-radios"] [data-part="loading-radio"]'),
+    ).toHaveLength(3);
+    expect(document.querySelectorAll('[data-part="loading-shaped-card"]')).toHaveLength(1);
+    expect(document.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(6);
+    await release();
+  });
+
+  it("/admin/catalog/import?staging=: the loading review is a stack (no wizard card)", async () => {
+    const { release } = await renderHeld(
+      "/admin/catalog/import?staging=st1",
+      "GET /api/v1/admin/catalog/imports/st1",
+    );
+    await expectLoading("WizardPage", "@acme/plugin-crm");
+    expect(document.querySelector('[data-template="WizardPage"] [data-part="card"]')).toBeNull();
+    expect(document.querySelectorAll('[data-part="loading-field"]')).toHaveLength(0);
+    await release();
+  });
 
   it("/admin/catalog/requests: a decision invalidates the requests and the overview", async () => {
     const calls = stubApi({

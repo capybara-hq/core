@@ -525,6 +525,61 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
     expect(screen.getByText("+ permissions.network:x.example.com")).toBeTruthy();
   });
 
+  it("converging: the budget is 20 real polls, 3 s apart (the list entry it starts from is none)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let polls = 0;
+      detailRoutes(plugin({ status: "converging" }), {
+        "GET /api/v1/admin/extensions/demo": () => {
+          polls++;
+          return json(200, plugin({ status: "converging" }));
+        },
+      });
+      await renderRouteWithCache(detailPage(), lastStubRoutes());
+      expect(await screen.findByText(en.admin.extensions.detail.converging)).toBeTruthy();
+      // nothing read before the first period
+      await vi.advanceTimersByTimeAsync(2900);
+      expect(polls).toBe(0);
+      for (let i = 0; i < 25; i++) await vi.advanceTimersByTimeAsync(3000);
+      expect(polls).toBe(20);
+      await vi.advanceTimersByTimeAsync(9000);
+      expect(polls).toBe(20);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("converging after an action: its answer is no poll, the budget is still 20 real reads", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let polls = 0;
+      const converging = plugin({
+        status: "converging",
+        desired: { version: "1.0.0", sha256: SHA, state: "disabled" },
+      });
+      detailRoutes(plugin(), {
+        "POST /api/v1/admin/extensions/demo/disable": () => json(200, converging),
+        "GET /api/v1/admin/extensions/demo": () => {
+          polls++;
+          return json(200, converging);
+        },
+      });
+      await renderRouteWithCache(detailPage(), lastStubRoutes());
+      const p = en.admin.extensions;
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await user.click(await screen.findByRole("button", { name: p.detail.actions.disable }));
+      const dialog = await screen.findByRole("dialog");
+      await user.click(
+        within(dialog).getByRole("button", { name: p.detail.disableConfirm.confirm }),
+      );
+      expect(await screen.findByText(p.detail.converging)).toBeTruthy();
+      for (let i = 0; i < 26; i++) await vi.advanceTimersByTimeAsync(3000);
+      expect(polls).toBe(20);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("收敛中：只轮询 GET /:name；轮询出错时保留上一次的数据", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {

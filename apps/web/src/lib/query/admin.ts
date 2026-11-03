@@ -1,4 +1,5 @@
 import {
+  type DeploymentSettingsPatch,
   getAdminOverview,
   getDeploymentSettings,
   listAdminAccounts,
@@ -45,6 +46,26 @@ export const deploymentSettingsQuery = () =>
     fn: () => getDeploymentSettings(),
     freshness: "deployment",
   });
+
+/**
+ * What a deployment settings save changes besides the settings (written from the answer): the
+ * models page (its price currency is the deployment's), `/me` when `orgCreation` changes (whether
+ * the account may create an org), and the org settings of every org whose overrides it touches
+ * (they carry the org's effective sandbox limits). `customConnectors` / `customSkills` reach no
+ * cached read: the kernel applies them when a connector or skill is created.
+ */
+export const settingsChangeKeys = (patch: DeploymentSettingsPatch): (readonly unknown[])[] => {
+  const orgIds = new Set([
+    ...Object.keys(patch.runConcurrencyOverrides ?? {}),
+    ...Object.keys(patch.sandboxLimitOverrides ?? {}),
+    ...Object.keys(patch.subagentLimitOverrides ?? {}),
+  ]);
+  return [
+    keys.deployment().adminModels(),
+    ...(patch.orgCreation !== undefined ? [keys.account("self").me()] : []),
+    ...[...orgIds].map((id) => keys.org(id).orgSettings()),
+  ];
+};
 
 /** The providers with their models and the price table. */
 export const adminModelsQuery = () =>

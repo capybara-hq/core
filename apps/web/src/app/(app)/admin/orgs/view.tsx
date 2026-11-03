@@ -32,7 +32,11 @@ import {
   type SubagentLimitOverride,
   updateDeploymentSettings,
 } from "../../../../lib/admin";
-import { adminOrgsQuery, deploymentSettingsQuery } from "../../../../lib/query/admin";
+import {
+  adminOrgsQuery,
+  deploymentSettingsQuery,
+  settingsChangeKeys,
+} from "../../../../lib/query/admin";
 import { useAppMutation } from "../../../../lib/query/define";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { useAdmin } from "../../../../lib/query/workspace";
@@ -180,7 +184,7 @@ function LimitsDialog({
   // The answer is the settings as they are now: it replaces the cached ones.
   const update = useAppMutation({
     fn: updateDeploymentSettings,
-    invalidates: () => [],
+    invalidates: (patch) => settingsChangeKeys(patch),
     onSuccess: (r) => qc.setQueryData(deploymentSettingsQuery().queryKey, r),
   });
 

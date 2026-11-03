@@ -100,7 +100,7 @@ function AdminModelsRead({ me }: { me: Me }) {
     // The two sections are static: the providers (one provider's table while it loads; the
     // provider names come with the data) and the kernel's purposes as cards.
     return (
-      <ListPage header={header}>
+      <ListPage header={header} loading={{ keep: true }}>
         <FormSection
           id="providers"
           title={t("admin.providers.title")}

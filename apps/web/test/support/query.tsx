@@ -88,8 +88,8 @@ export async function renderRouteWithCache(path: string, routes: Routes, opts: R
 /**
  * A client navigation to `path` with nothing cached: the page renders against an empty browser
  * cache and its views read through `stubApi(routes)` (plus `sessionRoutes`). A page not migrated
- * yet still reads on the server; those reads are served from the same routes. Returns the browser
- * calls and the client.
+ * yet still reads on the server; those reads are served from the same routes. `opts.client` is a
+ * browser cache the test seeded. Returns the browser calls and the client.
  */
 export async function renderRouteEmptyCache(
   path: string,
@@ -106,6 +106,7 @@ export async function renderRouteEmptyCache(
     setApiTransport(null);
   }
   const calls = stubApi(all);
-  const client = testQueryClient();
+  // A client the test seeded (what an earlier navigation left in the cache), or a fresh one.
+  const client = render.client ?? testQueryClient();
   return { calls, client, ...renderPage(withCache(page), { ...render, client }) };
 }
