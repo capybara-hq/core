@@ -36,6 +36,12 @@ export const keys = {
       skill: (skillId: string): readonly unknown[] => [...all, "skill", skillId],
       /** The org's channel connections. */
       channels: (): readonly unknown[] => [...all, "channels"],
+      /** One channel connection. */
+      channel: (channelId: string): readonly unknown[] => [...all, "channel", channelId],
+      /** A channel plugin's connection schema. */
+      channelSchema: (plugin: string): readonly unknown[] => [...all, "channelSchema", plugin],
+      /** The org's extensions (installed plugins with an extension, enabled or not). */
+      orgExtensions: (): readonly unknown[] => [...all, "orgExtensions"],
       /** Every view of the sidebar's conversation groups (an invalidation prefix). */
       conversationGroupsAll: (): readonly unknown[] => [...all, "conversationGroups"],
       /** The sidebar's conversation groups of one view (`"default"`: what the layout reads). */

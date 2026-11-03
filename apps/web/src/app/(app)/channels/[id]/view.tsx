@@ -10,16 +10,20 @@ import {
   Input,
   KeyValue,
   RadioGroup,
+  Skeleton,
   Stack,
   Text,
   useToast,
 } from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { AgentSelect, ChannelStatusMark, PolicyRadio } from "../../../../components/ChannelFields";
 import { ConfigForm } from "../../../../components/config-form/ConfigForm";
 import { channelConfig, channelFormMeta } from "../../../../components/config-form/channel";
+import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
+import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import type { Agent } from "../../../../lib/agents";
@@ -29,37 +33,97 @@ import {
   deleteChannel,
   type InboundMode,
   type UnboundPolicy,
+  type UpdateChannelInput,
   updateChannel,
 } from "../../../../lib/channels";
 import type { ConfigIssue, JsonSchema } from "../../../../lib/json-schema";
+import { agentsQuery } from "../../../../lib/query/agents";
+import { channelQuery, channelSchemaQuery } from "../../../../lib/query/channels";
+import { retryOnMountOf } from "../../../../lib/query/client";
+import { useAppMutation } from "../../../../lib/query/define";
+import { keys } from "../../../../lib/query/keys";
+import { usePageQuery } from "../../../../lib/query/page-query";
+import { useWorkspace } from "../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../lib/use-error-message";
-import { useServerState } from "../../../../lib/use-server-state";
+import NotFound from "../../not-found";
 
 const TABS = ["overview", "credentials", "settings"] as const;
 type Tab = (typeof TABS)[number];
 
 /**
- * What the server read (`page.tsx`): the connection, its plugin's connection schema (`null` when the
- * plugin is uninstalled or disabled: the credentials tab says so) and the agents (empty when they
- * could not be read).
+ * What the page shows: the connection, its plugin's connection schema (`undefined` while it is
+ * read; `null` when the plugin is uninstalled or disabled: the credentials tab says so) and the
+ * agents (empty when they could not be read).
  */
 export interface ChannelData {
   channel: ChannelConnection;
-  schema: JsonSchema | null;
+  schema: JsonSchema | null | undefined;
   agents: Agent[];
 }
+
+/** Saves a change to the connection; resolves with the connection the kernel answered. */
+type Update = (input: UpdateChannelInput) => Promise<ChannelConnection>;
 
 /**
  * `/channels/[id]`：渠道连接详情（DetailPage）：概览（状态与最近错误、启停）、凭据（按连接 schema
  * 修改配置与轮换密钥，内核先向平台校验）、设置（改名、绑定的 agent、未绑定策略、删除）。
- * A change the kernel answers with the connection replaces it here.
+ * From the query cache (the layout prefetched it on a first load); a missing connection is the
+ * not-found state. A change the kernel answers with the connection replaces it in the cache.
  */
-export default function ChannelView({ orgId, initial }: { orgId: string; initial: ChannelData }) {
+export default function ChannelView({ channelId }: { channelId: string }) {
+  const ws = useWorkspace({ min: "admin" });
+  if (ws.kind === "pending" || ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  return <Channel key={channelId} orgId={ws.orgId} channelId={channelId} />;
+}
+
+function Channel({ orgId, channelId }: { orgId: string; channelId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("channels");
-  const [data, set] = useServerState(initial);
+  const qc = useQueryClient();
   const [tab, setTab] = useState<Tab>("overview");
-  const saved = (channel: ChannelConnection) => set({ ...data, channel });
+  const read = usePageQuery(channelQuery(orgId, channelId));
+  const plugin = read.kind === "ready" ? read.data.plugin : "";
+  // Sections: the schema (once the connection names its plugin) and the agents.
+  const schemaQ = channelSchemaQuery(orgId, plugin);
+  const schema = useQuery({
+    ...schemaQ,
+    retryOnMount: retryOnMountOf(schemaQ.queryKey),
+    enabled: plugin !== "",
+  });
+  const agentsQ = agentsQuery(orgId);
+  const agents = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) });
+  // The kernel answers a change with the connection: it replaces the cached one; the list is
+  // read again when shown.
+  const save = useAppMutation({
+    fn: (input: UpdateChannelInput) => updateChannel(orgId, channelId, input),
+    invalidates: () => [keys.org(orgId).channels()],
+    onSuccess: (r) => qc.setQueryData(channelQuery(orgId, channelId).queryKey, r.channel),
+  });
+  const update: Update = (input) => save.mutateAsync(input).then((r) => r.channel);
+  const tabs = {
+    label: t("detail.tabsLabel"),
+    items: TABS.map((x) => ({ id: x, label: t(`detail.tabs.${x}`) })),
+    value: tab,
+    onChange: (x: string) => setTab(x as Tab),
+  };
+  if (read.kind === "notFound") return <NotFound />;
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
+  if (read.kind === "loading") {
+    return (
+      <DetailPage
+        header={{ path: [...scope, { label: "channels", href: "/channels" }], title: "" }}
+        tabs={tabs}
+        inspectorTitle={t("detail.inspectorTitle")}
+        loading={{ inspector: true }}
+      />
+    );
+  }
+  const data: ChannelData = {
+    channel: read.data,
+    schema: schema.data !== undefined ? schema.data : schema.error !== null ? null : undefined,
+    agents: agents.data?.agents ?? [],
+  };
   return (
     <DetailPage
       header={{
@@ -68,24 +132,18 @@ export default function ChannelView({ orgId, initial }: { orgId: string; initial
         count: data.channel.plugin,
         status: <ChannelStatusMark status={data.channel.status} />,
       }}
-      tabs={{
-        label: t("detail.tabsLabel"),
-        items: TABS.map((x) => ({ id: x, label: t(`detail.tabs.${x}`) })),
-        value: tab,
-        onChange: (x) => setTab(x as Tab),
-      }}
+      tabs={tabs}
       inspectorTitle={t("detail.inspectorTitle")}
       inspector={<Inspector data={data} />}
     >
       {tab === "overview" ? (
-        <OverviewTab orgId={orgId} channel={data.channel} onSaved={saved} />
+        <OverviewTab channel={data.channel} update={update} />
       ) : tab === "credentials" ? (
         <CredentialsTab
           key={data.channel.updatedAt}
-          orgId={orgId}
           channel={data.channel}
           schema={data.schema}
-          onSaved={saved}
+          update={update}
         />
       ) : (
         <SettingsTab
@@ -93,7 +151,7 @@ export default function ChannelView({ orgId, initial }: { orgId: string; initial
           orgId={orgId}
           channel={data.channel}
           agents={data.agents}
-          onSaved={saved}
+          update={update}
         />
       )}
     </DetailPage>
@@ -120,15 +178,7 @@ function Inspector({ data }: { data: ChannelData }) {
 }
 
 /** 概览：状态、最近错误与启停。 */
-function OverviewTab({
-  orgId,
-  channel,
-  onSaved,
-}: {
-  orgId: string;
-  channel: ChannelConnection;
-  onSaved(c: ChannelConnection): void;
-}) {
+function OverviewTab({ channel, update }: { channel: ChannelConnection; update: Update }) {
   const t = useTranslations("channels");
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -138,10 +188,7 @@ function OverviewTab({
   async function toggle() {
     setPending(true);
     try {
-      const { channel: next } = await updateChannel(orgId, channel.id, {
-        status: active ? "disabled" : "active",
-      });
-      onSaved(next);
+      await update({ status: active ? "disabled" : "active" });
       toast.success(t(active ? "detail.disabledToast" : "detail.enabledToast"));
     } catch (e) {
       toast.error(errorMessage(e));
@@ -180,7 +227,7 @@ function OverviewTab({
           </Stack>
         </Stack>
       </Card>
-      <InboundCard key={channel.inboundMode} orgId={orgId} channel={channel} onSaved={onSaved} />
+      <InboundCard key={channel.inboundMode} channel={channel} update={update} />
     </Stack>
   );
 }
@@ -189,15 +236,7 @@ function OverviewTab({
  * Inbound mode: long connection (default) or webhook. Webhook needs plugin support and the
  * deployment's webhook base URL; the callback URL to register with the platform is read-only.
  */
-function InboundCard({
-  orgId,
-  channel,
-  onSaved,
-}: {
-  orgId: string;
-  channel: ChannelConnection;
-  onSaved(c: ChannelConnection): void;
-}) {
+function InboundCard({ channel, update }: { channel: ChannelConnection; update: Update }) {
   const t = useTranslations("channels");
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -210,8 +249,7 @@ function InboundCard({
   async function save() {
     setPending(true);
     try {
-      const { channel: next } = await updateChannel(orgId, channel.id, { inboundMode: mode });
-      onSaved(next);
+      await update({ inboundMode: mode });
       toast.success(t("detail.inboundSaved"));
     } catch (e) {
       toast.error(errorMessage(e));
@@ -271,15 +309,13 @@ function InboundCard({
 
 /** 凭据：按连接 schema 修改配置；密钥不动则保留、「替换」即轮换、「清除」删掉可选密钥。 */
 function CredentialsTab({
-  orgId,
   channel,
   schema,
-  onSaved,
+  update,
 }: {
-  orgId: string;
   channel: ChannelConnection;
-  schema: JsonSchema | null;
-  onSaved(c: ChannelConnection): void;
+  schema: JsonSchema | null | undefined;
+  update: Update;
 }) {
   const t = useTranslations("channels");
   const toast = useToast();
@@ -291,6 +327,13 @@ function CredentialsTab({
   });
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<{ message: string; extra: string[]; issues: ConfigIssue[] }>();
+  if (schema === undefined) {
+    return (
+      <Card title={t("detail.credentialsTitle")}>
+        <Skeleton rows={3} />
+      </Card>
+    );
+  }
   if (schema === null) {
     return (
       <Card title={t("detail.credentialsTitle")}>
@@ -303,8 +346,7 @@ function CredentialsTab({
     setPending(true);
     setError(undefined);
     try {
-      const { channel: next } = await updateChannel(orgId, channel.id, { config: form.config });
-      onSaved(next);
+      await update({ config: form.config });
       toast.success(t("detail.credentialsSaved"));
     } catch (e) {
       const issues = configIssues(e);
@@ -359,12 +401,12 @@ function SettingsTab({
   orgId,
   channel,
   agents,
-  onSaved,
+  update,
 }: {
   orgId: string;
   channel: ChannelConnection;
   agents: Agent[];
-  onSaved(c: ChannelConnection): void;
+  update: Update;
 }) {
   const t = useTranslations("channels");
   const router = useRouter();
@@ -375,6 +417,11 @@ function SettingsTab({
   const [policy, setPolicy] = useState<UnboundPolicy>(channel.unboundPolicy);
   const [pending, setPending] = useState(false);
   const [confirm, setConfirm] = useState(false);
+  // A delete invalidates the org's connections (the list this page goes back to).
+  const remove = useAppMutation({
+    fn: () => deleteChannel(orgId, channel.id),
+    invalidates: () => [keys.org(orgId).channels()],
+  });
   const dirty =
     name.trim() !== channel.name || agentId !== channel.agentId || policy !== channel.unboundPolicy;
 
@@ -382,12 +429,11 @@ function SettingsTab({
     if (name.trim() === "") return;
     setPending(true);
     try {
-      const { channel: next } = await updateChannel(orgId, channel.id, {
+      await update({
         ...(name.trim() !== channel.name ? { name: name.trim() } : {}),
         ...(agentId !== channel.agentId ? { agentId } : {}),
         ...(policy !== channel.unboundPolicy ? { unboundPolicy: policy } : {}),
       });
-      onSaved(next);
       toast.success(t("detail.saved"));
     } catch (e) {
       toast.error(errorMessage(e));
@@ -438,7 +484,7 @@ function SettingsTab({
         confirmLabel={t("detail.delete")}
         onConfirm={async () => {
           try {
-            await deleteChannel(orgId, channel.id);
+            await remove.mutateAsync(undefined);
           } catch (e) {
             throw new Error(errorMessage(e));
           }

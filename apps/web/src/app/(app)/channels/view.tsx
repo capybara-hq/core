@@ -1,26 +1,45 @@
 "use client";
 
 import { ListPage, ObjectRow } from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { ErrorFrame } from "../../../components/ErrorFrame";
+import { NoAccess } from "../../../components/NoAccess";
 import { usePagePath } from "../../../components/shell/path";
-import type { ChannelConnection } from "../../../lib/channels";
+import { agentsQuery } from "../../../lib/query/agents";
+import { channelsQuery } from "../../../lib/query/channels";
+import { retryOnMountOf } from "../../../lib/query/client";
+import { usePageQuery } from "../../../lib/query/page-query";
+import { useWorkspace } from "../../../lib/query/workspace";
+import NotFound from "../not-found";
 
 /**
  * `/channels`: the org's channel connections as object rows (admins); a name opens the detail.
- * Read on the server (`page.tsx`): the connections and the agents' names by id (display only: a
- * connection shows its agent id when the name is unknown).
+ * From the query cache (the layout prefetched it on a first load): the connections, and the
+ * agents' names by id (a section, display only: a connection shows its agent id when the name is
+ * unknown).
  */
-export default function ChannelsView({
-  initial,
-}: {
-  initial: { channels: ChannelConnection[]; agentNames: Record<string, string> };
-}) {
+export default function ChannelsView() {
+  const ws = useWorkspace({ min: "admin" });
+  if (ws.kind === "pending" || ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  return <Channels orgId={ws.orgId} />;
+}
+
+function Channels({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("channels");
   const [tab, setTab] = useState<"all" | "error">("all");
-  const all = initial.channels;
-  const agentNames = initial.agentNames;
+  const list = usePageQuery(channelsQuery(orgId));
+  const agentsQ = agentsQuery(orgId);
+  const agents = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) }).data;
+  if (list.kind === "notFound") return <NotFound />;
+  if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
+  const all = list.kind === "ready" ? list.data.channels : [];
+  const agentNames: Record<string, string> = Object.fromEntries(
+    (agents?.agents ?? []).map((a) => [a.id, a.definition.name]),
+  );
   const failing = all.filter((c) => c.status === "error");
   // A tab only when it holds something different from "all".
   const active = tab === "error" && failing.length > 0 ? "error" : "all";
@@ -51,6 +70,7 @@ export default function ChannelsView({
           action: { label: t("new"), variant: "primary" as const, href: "/channels/new" },
         }
       : undefined;
+  if (list.kind === "loading") return <ListPage header={header} variant="objects" loading />;
   return (
     <ListPage header={header} variant="objects" {...(empty ? { empty } : {})}>
       {rows.map((c) => (

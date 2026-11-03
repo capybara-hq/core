@@ -1,24 +1,9 @@
-import { NoAccess } from "../../../components/NoAccess";
-import { listAgents } from "../../../lib/agents";
-import { listChannels } from "../../../lib/channels";
-import { read, section } from "../../../lib/server/page";
-import { workspace } from "../../../lib/server/session";
 import ChannelsView from "./view";
 
 /**
- * `/channels` (org admins): the connections (required) and the agents' names (a section: display
- * only), read on the server.
+ * `/channels` (org admins). It reads nothing: the layout prefetches the connections and the agents
+ * (their names) on a first load (`lib/query/routes.ts`), and the view reads them from the cache.
  */
-export default async function ChannelsPage() {
-  const ws = await workspace({ min: "admin" });
-  if (ws.kind === "noOrg") return null;
-  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
-  const [{ channels }, agents] = await Promise.all([
-    read(listChannels(ws.orgId)),
-    section(listAgents(ws.orgId)),
-  ]);
-  const agentNames = Object.fromEntries(
-    (agents?.agents ?? []).map((a) => [a.id, a.definition.name]),
-  );
-  return <ChannelsView initial={{ channels, agentNames }} />;
+export default function ChannelsPage() {
+  return <ChannelsView />;
 }

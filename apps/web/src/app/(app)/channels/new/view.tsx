@@ -11,41 +11,126 @@ import {
   Skeleton,
   Text,
 } from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { AgentSelect, PolicyRadio } from "../../../../components/ChannelFields";
 import { ConfigForm } from "../../../../components/config-form/ConfigForm";
 import { channelConfig } from "../../../../components/config-form/channel";
+import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
+import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import type { Agent } from "../../../../lib/agents";
-import { ApiClientError, configIssues, issueLines } from "../../../../lib/api";
+import { configIssues, issueLines } from "../../../../lib/api";
 import type { LocalizedName } from "../../../../lib/catalog";
-import { createChannel, getChannelSchema, type UnboundPolicy } from "../../../../lib/channels";
+import { createChannel, type UnboundPolicy } from "../../../../lib/channels";
 import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
+import { provides } from "../../../../lib/extensions";
 import type { ConfigIssue } from "../../../../lib/json-schema";
+import { agentsQuery } from "../../../../lib/query/agents";
+import { channelSchemaQuery, orgExtensionsQuery } from "../../../../lib/query/channels";
+import { useAppMutation } from "../../../../lib/query/define";
+import { keys } from "../../../../lib/query/keys";
+import { usePageQuery } from "../../../../lib/query/page-query";
+import { useWorkspace } from "../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../lib/use-error-message";
-import { useLoad } from "../../../../lib/use-load";
+import NotFound from "../../not-found";
 
 /**
  * `/channels/new`：新建渠道连接（FormPage）：选插件（该组织已启用、提供 `channel@1` 的）→
  * 按插件的连接 schema 填写配置 → 绑定 agent → 未绑定策略。保存时内核先向平台校验凭据。With no
  * channel extension enabled there is nothing to create: the page is only the empty state pointing
  * at the extension settings, never a form. A create form: the primary waits until it is valid.
- * The plugins, the agents and the preset (`?agentId=&returnTo=`, from an agent page) come from the server
- * (`page.tsx`); a plugin's schema loads when it is picked.
+ * The plugins and the agents come from the query cache (the layout prefetched them on a first
+ * load), the preset (`?agentId=&returnTo=`, from an agent page) from `page.tsx`; a plugin's schema
+ * is read when it is picked.
  */
-export default function NewChannelView({
+export default function NewChannelView({ preset }: { preset: ChannelPreset }) {
+  const ws = useWorkspace({ min: "admin", setup: "step" });
+  if (ws.kind === "pending" || ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  return <NewChannel orgId={ws.orgId} preset={preset} />;
+}
+
+type ChannelPreset = { agentId: string; returnTo: string | undefined };
+
+function NewChannel({ orgId, preset }: { orgId: string; preset: ChannelPreset }) {
+  const scope = usePagePath("org");
+  const t = useTranslations("channels");
+  const tc = useTranslations("common");
+  const extensions = usePageQuery(orgExtensionsQuery(orgId));
+  const agents = usePageQuery(agentsQuery(orgId));
+  const header = {
+    path: [...scope, { label: "channels", href: "/channels" }, { label: "new" }],
+    title: t("form.title"),
+  };
+  const router = useRouter();
+  const back = () => router.push(preset.returnTo ?? "/channels");
+  if (extensions.kind === "notFound" || agents.kind === "notFound") return <NotFound />;
+  if (extensions.kind === "error") return <ErrorFrame reset={extensions.retry} />;
+  if (agents.kind === "error") return <ErrorFrame reset={agents.retry} />;
+  if (extensions.kind === "loading" || agents.kind === "loading") {
+    return (
+      <FormPage
+        create
+        loading
+        header={header}
+        actionRow={{
+          cancel: { label: tc("cancel"), onSelect: back },
+          primary: { label: t("form.submit"), onSelect: () => {} },
+        }}
+      >
+        <FormSection
+          id="plugin"
+          title={t("form.pluginSection")}
+          description={t("form.pluginHint")}
+          loading={{ fields: [{ control: "select" }, { control: "input" }] }}
+        />
+        <FormSection
+          id="config"
+          title={t("form.configSection")}
+          description={t("form.configHint")}
+          loading={{ fields: 1 }}
+        />
+        <FormSection
+          id="agent"
+          title={t("form.agentSection")}
+          description={t("form.agentSectionHint")}
+          loading={{ fields: [{ control: "select" }] }}
+        />
+        <FormSection
+          id="policy"
+          title={t("form.policySection")}
+          description={t("form.policySectionHint")}
+          loading={{ fields: 1 }}
+        />
+      </FormPage>
+    );
+  }
+  return (
+    <NewChannelForm
+      orgId={orgId}
+      preset={preset}
+      plugins={extensions.data.extensions
+        .filter((p) => p.enabled && provides(p, "channel"))
+        .map((p) => ({ name: p.plugin, displayName: p.displayName ?? null }))}
+      agents={agents.data.agents}
+    />
+  );
+}
+
+function NewChannelForm({
   orgId,
-  initial,
+  preset,
+  plugins,
+  agents,
 }: {
   orgId: string;
-  initial: {
-    plugins: { name: string; displayName: LocalizedName | null }[];
-    agents: Agent[];
-    preset: { agentId: string; returnTo: string | undefined };
-  };
+  preset: ChannelPreset;
+  plugins: { name: string; displayName: LocalizedName | null }[];
+  agents: Agent[];
 }) {
   const scope = usePagePath("org");
   const t = useTranslations("channels");
@@ -56,7 +141,6 @@ export default function NewChannelView({
   const [plugin, setPlugin] = useState("");
   const [name, setName] = useState("");
   // `?agentId=<id>&returnTo=/agents/<id>`: opened from an agent page, which it returns to.
-  const preset = initial.preset;
   const [agentId, setAgentId] = useState(preset.agentId);
   const [policy, setPolicy] = useState<UnboundPolicy>("bind");
   // The config belongs to the plugin picked then: another plugin starts its own form (keyed).
@@ -67,16 +151,15 @@ export default function NewChannelView({
   }>();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<{ message: string; extra: string[]; issues: ConfigIssue[] }>();
-  const schema = useLoad(
-    () =>
-      plugin === "" ? Promise.resolve(null) : getChannelSchema(orgId, plugin).then((r) => r.schema),
-    [orgId, plugin],
-    // no plugin picked yet: no schema (nothing to read until the person picks one)
-    { initial: null },
-  );
+  // No plugin picked yet: nothing to read until the person picks one (the key's plugin is unused).
+  const schema = useQuery({ ...channelSchemaQuery(orgId, plugin), enabled: plugin !== "" });
+  // A new connection invalidates the org's connections (the list, an agent's channels section).
+  const create = useAppMutation({
+    fn: (input: Parameters<typeof createChannel>[1]) => createChannel(orgId, input),
+    invalidates: () => [keys.org(orgId).channels()],
+  });
 
-  const ready = initial;
-  const js = schema.state.kind === "ready" ? schema.state.data : null;
+  const js = schema.data ?? null;
   const current = form?.plugin === plugin ? form : undefined;
   const config = current?.config ?? {};
   const configInvalid = current?.ok === false;
@@ -84,7 +167,7 @@ export default function NewChannelView({
     plugin === "",
     name.trim() === "",
     agentId === "",
-    schema.state.kind !== "ready",
+    schema.data === undefined,
     configInvalid,
   ].filter(Boolean).length;
   const back = () => router.push(preset.returnTo ?? "/channels");
@@ -94,7 +177,7 @@ export default function NewChannelView({
     setPending(true);
     setError(undefined);
     try {
-      const { channel } = await createChannel(orgId, {
+      const { channel } = await create.mutateAsync({
         plugin,
         name: name.trim(),
         agentId,
@@ -118,7 +201,7 @@ export default function NewChannelView({
     path: [...scope, { label: "channels", href: "/channels" }, { label: "new" }],
     title: t("form.title"),
   };
-  if (ready.plugins.length === 0) {
+  if (plugins.length === 0) {
     return (
       <OverviewPage header={header}>
         <EmptyState
@@ -154,7 +237,7 @@ export default function NewChannelView({
             onChange={(e) => setPlugin(e.target.value)}
             options={[
               ...(plugin === "" ? [{ value: "", label: t("form.pluginPlaceholder") }] : []),
-              ...ready.plugins.map((p) => ({ value: p.name, label: extensionLabel(p, lang) })),
+              ...plugins.map((p) => ({ value: p.name, label: extensionLabel(p, lang) })),
             ]}
           />
         </Field>
@@ -165,10 +248,10 @@ export default function NewChannelView({
       <FormSection id="config" title={t("form.configSection")} description={t("form.configHint")}>
         {plugin === "" ? (
           <Text tone="muted">{t("form.pickPluginFirst")}</Text>
-        ) : schema.state.kind === "loading" ? (
+        ) : schema.error !== null && schema.data === undefined ? (
+          <FormError message={errorMessage(schema.error)} />
+        ) : schema.data === undefined ? (
           <Skeleton rows={3} />
-        ) : schema.state.kind === "error" ? (
-          <FormError message={errorMessage(new ApiClientError(0, schema.state.code, ""))} />
         ) : (
           <ConfigForm
             key={plugin}
@@ -187,10 +270,10 @@ export default function NewChannelView({
         title={t("form.agentSection")}
         description={t("form.agentSectionHint")}
       >
-        {ready.agents.length === 0 ? (
+        {agents.length === 0 ? (
           <Text tone="muted">{t("form.noAgents")}</Text>
         ) : (
-          <AgentSelect agents={ready.agents} value={agentId} onChange={setAgentId} />
+          <AgentSelect agents={agents} value={agentId} onChange={setAgentId} />
         )}
       </FormSection>
       <FormSection

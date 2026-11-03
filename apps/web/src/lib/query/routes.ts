@@ -1,13 +1,14 @@
 import type { QueryClient, UseQueryOptions } from "@tanstack/react-query";
 import { type Agent, setupReady } from "../agents";
 import type { ApiClientError } from "../api";
+import type { ChannelConnection } from "../channels";
 import type { Conversation, ConversationEvent } from "../conversations";
 import { myRole, type OrgRole, roleAtLeast } from "../members";
 import { canEditAgent } from "../org-settings";
 import type { Me } from "../session";
 import { agentConnectorQueries, agentFormQueries, agentQuery, agentsQuery } from "./agents";
 import { authSourcesQuery } from "./auth";
-import { channelsQuery } from "./channels";
+import { channelQuery, channelSchemaQuery, channelsQuery, orgExtensionsQuery } from "./channels";
 import {
   attachmentLimitsQuery,
   connectorsQuery,
@@ -121,9 +122,37 @@ export const ROUTES: readonly RouteEntry[] = [
   { pattern: "/catalog", queries: () => [], none: "pending migration" },
   { pattern: "/catalog/[itemId]", queries: () => [], none: "pending migration" },
   { pattern: "/catalog/[itemId]/install", queries: () => [], none: "pending migration" },
-  { pattern: "/channels", queries: () => [], none: "pending migration" },
-  { pattern: "/channels/[id]", queries: () => [], none: "pending migration" },
-  { pattern: "/channels/new", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/channels",
+    // Org admins; the agents name the connections' agents (a section).
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "admin")
+        ? []
+        : [q(channelsQuery(orgId)), q(agentsQuery(orgId))],
+  },
+  {
+    pattern: "/channels/[id]",
+    queries: ({ orgId, me, params }) =>
+      orgId === null || params.id === undefined || !atLeast(me, "admin")
+        ? []
+        : [q(channelQuery(orgId, params.id)), q(agentsQuery(orgId))],
+    // The connection's plugin names its schema.
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, params }, qc) => {
+      const id = params.id;
+      if (orgId === null || id === undefined) return;
+      const channel = qc.getQueryData<ChannelConnection>(channelQuery(orgId, id).queryKey);
+      if (channel === undefined) return;
+      await qc.prefetchQuery({ ...channelSchemaQuery(orgId, channel.plugin), retry: false });
+    },
+  },
+  {
+    pattern: "/channels/new",
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "admin")
+        ? []
+        : [q(orgExtensionsQuery(orgId)), q(agentsQuery(orgId))],
+  },
   {
     pattern: "/chat",
     // The sidebar's groups name the agent most recently talked to (the shell reads them too).

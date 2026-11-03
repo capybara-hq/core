@@ -1,4 +1,5 @@
-import { listChannels } from "../channels";
+import { getChannel, getChannelSchema, listChannels } from "../channels";
+import { listOrgExtensions } from "../extensions";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
 
@@ -7,5 +8,29 @@ export const channelsQuery = (orgId: string) =>
   defineQuery({
     key: keys.org(orgId).channels(),
     fn: () => listChannels(orgId),
+    freshness: "orgConfig",
+  });
+
+/** One channel connection (a 404 is the page's not-found). */
+export const channelQuery = (orgId: string, channelId: string) =>
+  defineQuery({
+    key: keys.org(orgId).channel(channelId),
+    fn: () => getChannel(orgId, channelId).then((r) => r.channel),
+    freshness: "orgConfig",
+  });
+
+/** A channel plugin's connection schema (refused while the plugin is uninstalled or disabled). */
+export const channelSchemaQuery = (orgId: string, plugin: string) =>
+  defineQuery({
+    key: keys.org(orgId).channelSchema(plugin),
+    fn: () => getChannelSchema(orgId, plugin).then((r) => r.schema),
+    freshness: "orgConfig",
+  });
+
+/** The org's extensions (`{ extensions }`): which channel plugins it can connect. */
+export const orgExtensionsQuery = (orgId: string) =>
+  defineQuery({
+    key: keys.org(orgId).orgExtensions(),
+    fn: () => listOrgExtensions(orgId),
     freshness: "orgConfig",
   });
