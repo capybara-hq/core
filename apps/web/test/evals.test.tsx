@@ -3,7 +3,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import EvalCasePage from "../src/app/(app)/evals/[setId]/cases/[caseId]/page";
 import EvalRunPage from "../src/app/(app)/evals/runs/[runId]/page";
 import { activeNavOf } from "../src/components/shell/nav";
 import { type EvalResult, type EvalRun, rowOf } from "../src/lib/evals";
@@ -440,10 +439,10 @@ describe("用例快照轨迹（TracePage）", () => {
       [`GET ${SETS}/s1/cases/k1`]: () =>
         json(200, { case: CASES[0], trajectory: [run], currency: "USD" }),
     });
-    const { container } = await renderRoute(
-      () => EvalCasePage(params({ setId: "s1", caseId: "k1" })),
-      { ...NO_MEMBERS, ...lastStubRoutes() },
-    );
+    const { container } = await renderRouteWithCache("/evals/s1/cases/k1", {
+      ...NO_MEMBERS,
+      ...lastStubRoutes(),
+    });
     expect(container.querySelector('[data-template="TracePage"]')).not.toBeNull();
     const tree = await screen.findByRole("tree", { name: en.trajectories.detail.waterfall });
     expect(within(tree).getByText("v2")).toBeTruthy();
@@ -490,7 +489,7 @@ describe("the eval case's starter", () => {
           ],
         }),
     });
-    await renderRoute(() => EvalCasePage(params({ setId: "s1", caseId: "k1" })), {
+    await renderRouteWithCache("/evals/s1/cases/k1", {
       ...NO_MEMBERS,
       ...lastStubRoutes(),
     });
@@ -516,7 +515,7 @@ describe("a sub-agent's eval case", () => {
         }),
       [`GET ${SETS}/s1`]: () => json(200, { set: { ...SET, cases: CASES } }),
     });
-    await renderRoute(() => EvalCasePage(params({ setId: "s1", caseId: "k1" })), {
+    await renderRouteWithCache("/evals/s1/cases/k1", {
       ...NO_MEMBERS,
       ...lastStubRoutes(),
     });

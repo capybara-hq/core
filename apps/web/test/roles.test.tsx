@@ -213,7 +213,7 @@ const PAGES: [string, ComponentType | ServerPage | RoutePage, "member" | "admin"
   ],
   [
     "/evals/s1/cases/c1",
-    server(() => EvalCasePage(params({ setId: "s1", caseId: "c1" }))),
+    route("/evals/s1/cases/c1", () => EvalCasePage(params({ setId: "s1", caseId: "c1" }))),
     "admin",
     zh.roles.need.admin,
   ],

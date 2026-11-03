@@ -5,7 +5,6 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import EvalCasePage from "../src/app/(app)/evals/[setId]/cases/[caseId]/page";
 import EvalRunPage from "../src/app/(app)/evals/runs/[runId]/page";
 import { json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
@@ -188,7 +187,6 @@ async function renderHeld(path: string, held: string, routes: Routes = ROUTES) {
   return { ...r, release: () => act(async () => release()) };
 }
 
-const casePage = () => EvalCasePage({ params: Promise.resolve({ setId: "s1", caseId: "k1" }) });
 const runPage = () => EvalRunPage({ params: Promise.resolve({ runId: "er1" }) });
 
 beforeEach(() => resetNavigation("/evals"));
@@ -387,24 +385,59 @@ describe("first paint comes from the server (no browser fetch)", () => {
     expect(client.getQueryState(["org", "o1", "evalRuns", "s1"])?.isInvalidated).toBe(true);
   });
 
-  it("/evals/[setId]/cases/[caseId]: the snapshot trajectory with the set's name", async () => {
+  it("/evals/[setId]/cases/[caseId]: a first render from the hydrated cache makes no browser read (the snapshot trajectory with the set's name)", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(casePage, ROUTES);
+    await renderRouteWithCache("/evals/s1/cases/k1", ROUTES);
     const tree = screen.getByRole("tree", { name: en.trajectories.detail.waterfall });
     expect(within(tree).getByText("v2")).toBeTruthy();
     const path = screen.getByRole("navigation", { name: "Path" });
     expect(within(path).getByRole("link", { name: SET.name }).getAttribute("href")).toBe(
       "/evals/s1",
     );
+    await settle();
     expect(browser).toEqual([]);
   });
 
   it("/evals/[setId]/cases/[caseId]: a set the kernel fails shows its id in the path", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(casePage, { ...ROUTES, [`GET ${SETS}/s1`]: failing });
+    await renderRouteWithCache("/evals/s1/cases/k1", { ...ROUTES, [`GET ${SETS}/s1`]: failing });
     const path = screen.getByRole("navigation", { name: "Path" });
     expect(within(path).getByRole("link", { name: "s1" })).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
+  });
+
+  it("/evals/[setId]/cases/[caseId]: members the kernel refuses only cost the names; another failure is the error state", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRouteWithCache("/evals/s1/cases/k1", {
+      ...ROUTES,
+      [`GET ${O}/members`]: () => json(403, { error: { code: "forbidden", message: "x" } }),
+    });
+    expect(screen.getByRole("tree", { name: en.trajectories.detail.waterfall })).toBeTruthy();
+    await settle();
+    expect(browser).toEqual([]);
+    cleanup();
+    stubApi(ROUTES);
+    await renderRouteWithCache("/evals/s1/cases/k1", { ...ROUTES, [`GET ${O}/members`]: failing });
+    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("maintenance");
+    await userEvent.setup().click(screen.getByRole("button", { name: en.errors.page.retry }));
+    expect(
+      await screen.findByRole("tree", { name: en.trajectories.detail.waterfall }),
+    ).toBeTruthy();
+  });
+
+  it("/evals/[setId]/cases/[caseId]: an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld("/evals/s1/cases/k1", `GET ${SETS}/s1/cases/k1`);
+    await vi.waitFor(() => {
+      if (template("TracePage") === null) throw new Error("no page");
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByRole("tree", { name: en.trajectories.detail.waterfall })).toBeNull();
+    await release();
+    expect(
+      await screen.findByRole("tree", { name: en.trajectories.detail.waterfall }),
+    ).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
   it("/evals/runs/[runId]: the run, its first page of results and the set's name", async () => {
@@ -468,10 +501,7 @@ describe("first paint comes from the server (no browser fetch)", () => {
   });
 });
 
-const GATES: [string, () => Promise<ReactNode>][] = [
-  ["/evals/s1/cases/k1", casePage],
-  ["/evals/runs/er1", runPage],
-];
+const GATES: [string, () => Promise<ReactNode>][] = [["/evals/runs/er1", runPage]];
 
 describe("the gates (org admins)", () => {
   it.each(GATES)(
@@ -494,7 +524,7 @@ describe("the gates (org admins)", () => {
 });
 
 /** The pages that read through the query cache. */
-const ROUTE_GATES = ["/evals", "/evals/new", "/evals/s1", "/evals/s1/run"];
+const ROUTE_GATES = ["/evals", "/evals/new", "/evals/s1", "/evals/s1/run", "/evals/s1/cases/k1"];
 
 describe("the gates (org admins, query cache)", () => {
   it.each(ROUTE_GATES)(

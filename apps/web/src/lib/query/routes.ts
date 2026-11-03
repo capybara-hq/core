@@ -26,7 +26,7 @@ import {
   queueQuery,
   sandboxQuery,
 } from "./conversation";
-import { evalRunsQuery, evalSetQuery, evalSetsQuery } from "./evals";
+import { evalCaseQuery, evalRunsQuery, evalSetQuery, evalSetsQuery } from "./evals";
 import { membersQuery } from "./members";
 import { overviewQueries } from "./overview";
 import {
@@ -322,7 +322,21 @@ export const ROUTES: readonly RouteEntry[] = [
       await qc.prefetchQuery({ ...agentQuery(orgId, set.agentId), retry: false });
     },
   },
-  { pattern: "/evals/[setId]/cases/[caseId]", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/evals/[setId]/cases/[caseId]",
+    // Org admins: the case, the set's name (a section) and the members (the starter's name).
+    queries: ({ orgId, me, params }) =>
+      orgId === null ||
+      params.setId === undefined ||
+      params.caseId === undefined ||
+      !atLeast(me, "admin")
+        ? []
+        : [
+            q(evalCaseQuery(orgId, params.setId, params.caseId)),
+            q(evalSetQuery(orgId, params.setId)),
+            q(membersQuery(orgId)),
+          ],
+  },
   {
     pattern: "/evals/[setId]/run",
     // Org admins: the set, the models and the purposes (a section), then the set's agent.
