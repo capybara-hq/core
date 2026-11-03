@@ -27,7 +27,12 @@ import {
 } from "./conversation";
 import { membersQuery } from "./members";
 import { overviewQueries } from "./overview";
-import { invitationsQuery, orgPurposesQuery, orgSettingsQuery } from "./settings";
+import {
+  invitationsQuery,
+  orgPurposesQuery,
+  orgSettingsQuery,
+  pluginInstallsQuery,
+} from "./settings";
 import { conversationGroupsQuery, maybeMeQuery, readinessQuery } from "./shell";
 import { skillQuery, skillsQuery } from "./skills";
 
@@ -320,7 +325,11 @@ export const ROUTES: readonly RouteEntry[] = [
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "member") ? [] : [q(orgSettingsQuery(orgId))],
   },
-  { pattern: "/settings/plugins", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/settings/plugins",
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "admin") ? [] : [q(pluginInstallsQuery(orgId))],
+  },
   {
     pattern: "/settings/sandbox",
     queries: ({ orgId, me }) =>

@@ -225,7 +225,12 @@ const PAGES: [string, ComponentType | ServerPage | RoutePage, "member" | "admin"
     zh.roles.need.admin,
   ],
   ["/settings/extensions", server(() => ExtensionsSettingsPage()), "admin", zh.roles.need.admin],
-  ["/settings/plugins", server(() => PluginsSettingsPage()), "admin", zh.roles.need.admin],
+  [
+    "/settings/plugins",
+    route("/settings/plugins", () => PluginsSettingsPage()),
+    "admin",
+    zh.roles.need.admin,
+  ],
   ["/settings/tokens", server(() => TokensPage()), "admin", zh.roles.need.admin],
   [
     "/settings/organization",

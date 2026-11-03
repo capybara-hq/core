@@ -11,7 +11,6 @@ import MarketplaceEntriesPage from "../src/app/(app)/admin/marketplaces/entries/
 import MarketplacesPage from "../src/app/(app)/admin/marketplaces/page";
 import InboxRoute from "../src/app/(app)/inbox/page";
 import ExtensionsPage from "../src/app/(app)/settings/extensions/page";
-import PluginsPage from "../src/app/(app)/settings/plugins/page";
 import { defaultSlug, slugOf } from "../src/components/CatalogInstallWizard";
 import {
   MARKETPLACE_ERROR_KINDS,
@@ -808,7 +807,7 @@ describe("/settings/plugins: installed plugins and uninstall", () => {
     async (locale) => {
       const a = msgs[locale].catalog.plugins;
       let gone = false;
-      stubApi({
+      const calls = stubApi({
         [`GET ${ORG}/plugin-installs`]: () =>
           json(200, { installs: gone ? [] : [INSTALL, DEP_INSTALL] }),
         [`DELETE ${ORG}/plugin-installs/i1`]: () => {
@@ -825,7 +824,7 @@ describe("/settings/plugins: installed plugins and uninstall", () => {
           });
         },
       });
-      await renderRoute(PluginsPage, lastStubRoutes(), { locale });
+      await renderRouteWithCache("/settings/plugins", lastStubRoutes(), { locale });
       expect(template("SettingsPage")).not.toBeNull();
       expect(
         await screen.findByText(`· ${a.componentKind.plugin} crm-core — ${a.created}`),
@@ -852,6 +851,12 @@ describe("/settings/plugins: installed plugins and uninstall", () => {
           `· ${a.componentKind.skill} s1 — ${a.report.reason.used_by_agents}`,
         ),
       ).toBeTruthy();
+      // the uninstall invalidates the installs (among what a plugin change touches): read again
+      expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+        `DELETE ${ORG}/plugin-installs/i1`,
+        `GET ${ORG}/plugin-installs`,
+      ]);
+      expect(await screen.findByText(a.empty)).toBeTruthy();
     },
   );
 
@@ -862,7 +867,7 @@ describe("/settings/plugins: installed plugins and uninstall", () => {
       [`DELETE ${ORG}/plugin-installs/i1`]: () =>
         json(409, { error: { code: "plugin.install_in_progress", message: "x" } }),
     });
-    await renderRoute(PluginsPage, lastStubRoutes());
+    await renderRouteWithCache("/settings/plugins", lastStubRoutes());
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: en.catalog.plugins.cleanup }));
     await user.click(
@@ -2124,7 +2129,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
           return json(200, { install: { ...UPGRADABLE, version: "1.1.0" } });
         },
       });
-      await renderRoute(PluginsPage, lastStubRoutes(), { locale });
+      await renderRouteWithCache("/settings/plugins", lastStubRoutes(), { locale });
       expect(
         await screen.findByText(fill(m.plugins.upgradeAvailable, { version: "v1.1.0" })),
       ).toBeTruthy();
@@ -2203,7 +2208,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
         json(409, { error: { code: "plugin.upgrade_stale", message: "x" } }),
     });
-    await renderRoute(PluginsPage, lastStubRoutes());
+    await renderRouteWithCache("/settings/plugins", lastStubRoutes());
     expect(await screen.findByText(m.plugins.deploymentPending)).toBeTruthy();
     expect(screen.getByText(new RegExp(`^${m.plugins.status.upgrading}`))).toBeTruthy();
     const user = userEvent.setup();
@@ -2285,7 +2290,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
           ],
         }),
     });
-    await renderRoute(PluginsPage, lastStubRoutes(), { locale: "en" });
+    await renderRouteWithCache("/settings/plugins", lastStubRoutes(), { locale: "en" });
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: m.plugins.upgrade }));
     const dialog = await screen.findByRole("dialog");
@@ -2357,7 +2362,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
             },
           }),
       });
-      await renderRoute(PluginsPage, lastStubRoutes(), { locale });
+      await renderRouteWithCache("/settings/plugins", lastStubRoutes(), { locale });
       const user = userEvent.setup();
       await user.click(await screen.findByRole("button", { name: m.plugins.upgrade }));
       const dialog = await screen.findByRole("dialog");
@@ -2395,7 +2400,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
             error: { code: "plugin.upgrade_target_invalid", message: "English", details },
           }),
       });
-      await renderRoute(PluginsPage, lastStubRoutes(), { locale });
+      await renderRouteWithCache("/settings/plugins", lastStubRoutes(), { locale });
       const user = userEvent.setup();
       await user.click(await screen.findByRole("button", { name: m.catalog.plugins.upgrade }));
       const dialog = await screen.findByRole("dialog");
@@ -2432,7 +2437,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
         json(409, { error: { code: "plugin.upgrade_stale", message: "x" } }),
     });
-    await renderRoute(PluginsPage, lastStubRoutes());
+    await renderRouteWithCache("/settings/plugins", lastStubRoutes());
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: m.plugins.upgrade }));
     const dialog = await screen.findByRole("dialog");

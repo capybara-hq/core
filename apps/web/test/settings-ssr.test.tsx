@@ -6,7 +6,6 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import ExtensionsPage from "../src/app/(app)/settings/extensions/page";
-import PluginsPage from "../src/app/(app)/settings/plugins/page";
 import TokensPage from "../src/app/(app)/settings/tokens/page";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
@@ -299,11 +298,24 @@ describe("first paint comes from the server (no browser fetch)", () => {
     },
   );
 
-  it("/settings/plugins, /extensions, /tokens", async () => {
+  it("/settings/plugins: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => PluginsPage(), ROUTES);
+    await renderRouteWithCache("/settings/plugins", ROUTES);
     expect(screen.getByText(en.catalog.plugins.empty)).toBeTruthy();
-    cleanup();
+    await settle();
+    expect(browser).toEqual([]);
+  });
+
+  it("/settings/plugins: an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld("/settings/plugins", `GET ${O}/plugin-installs`);
+    await expectLoading("SettingsPage", en.catalog.plugins.empty);
+    await release();
+    expect(await screen.findByText(en.catalog.plugins.empty)).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
+  it("/settings/extensions, /tokens", async () => {
+    const browser = expectNoFirstPaintFetch();
     await renderRoute(() => ExtensionsPage(), ROUTES);
     expect(screen.getByText(en.extensions.empty)).toBeTruthy();
     cleanup();
@@ -322,7 +334,6 @@ describe("first paint comes from the server (no browser fetch)", () => {
 
 type Page = () => Promise<ReactNode>;
 const GATES: [string, Page, "member" | "admin" | "guest", boolean][] = [
-  ["/settings/plugins", () => PluginsPage(), "admin", false],
   ["/settings/extensions", () => ExtensionsPage(), "admin", false],
   ["/settings/tokens", () => TokensPage(), "admin", false],
 ];
@@ -362,6 +373,7 @@ const ROUTE_GATES: [string, "member" | "admin", boolean][] = [
   ["/settings/sandbox", "member", false],
   ["/settings/members", "member", true],
   ["/settings/models", "admin", true],
+  ["/settings/plugins", "admin", false],
 ];
 
 describe("the gates (query cache)", () => {

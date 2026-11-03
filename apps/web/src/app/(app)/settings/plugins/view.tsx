@@ -6,20 +6,28 @@ import {
   Dialog,
   formatDateTime,
   SettingsPage,
+  Skeleton,
   Stack,
   Text,
   versionLabel,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
+import { NoAccess } from "../../../../components/NoAccess";
 import { PluginUpgradeDialog } from "../../../../components/PluginUpgradeDialog";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
-import { useRouter } from "../../../../i18n/navigation";
 import { ApiClientError } from "../../../../lib/api";
 import { type PluginInstall, type UninstallReport, uninstallPlugin } from "../../../../lib/catalog";
+import { pluginChangeKeys } from "../../../../lib/query/catalog";
+import { useAppMutation } from "../../../../lib/query/define";
+import { usePageQuery } from "../../../../lib/query/page-query";
+import { pluginInstallsQuery } from "../../../../lib/query/settings";
+import { useWorkspace } from "../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../lib/use-error-message";
+import NotFound from "../../not-found";
 
 /**
  * `/settings/plugins`: the plugins this org installed from the catalog (SettingsPage,
@@ -31,21 +39,48 @@ import { useErrorMessage } from "../../../../lib/use-error-message";
  * Upgrades (spec §10): "upgrade available" (or, when the deployment runs another version of the
  * plugin's extension, "upgrade this org's plugin") opens the upgrade dialog (preview, inputs,
  * confirm with the preview's diffHash); a component an upgrade dropped but kept is marked.
- * The installs are read on the server (`page.tsx`); an upgrade or uninstall re-renders the page there.
+ * From the query cache (the layout prefetched it on a first load); an upgrade or uninstall
+ * invalidates what a plugin change touches (the installs among them).
  */
-export default function Apps({ orgId, initial }: { orgId: string; initial: PluginInstall[] }) {
+export default function PluginsView() {
+  const ws = useWorkspace({ min: "admin" });
+  if (ws.kind === "pending" || ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  return <Apps orgId={ws.orgId} />;
+}
+
+function Apps({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("catalog.plugins");
   const nav = useOrgSettingsNav();
-  const router = useRouter();
-  const [, startTransition] = useTransition();
-  const reload = () => startTransition(() => router.refresh());
+  const read = usePageQuery(pluginInstallsQuery(orgId));
   const [report, setReport] = useState<{
     name: string;
     report: UninstallReport;
     refName(c: Component): string;
   } | null>(null);
-  const installs = initial;
+  if (read.kind === "notFound") return <NotFound />;
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
+  if (read.kind === "loading") {
+    return (
+      <SettingsPage
+        header={{
+          path: [
+            ...scope,
+            { label: "settings", href: "/settings/organization" },
+            { label: "plugins" },
+          ],
+          title: t("title"),
+        }}
+        nav={nav}
+        activeNav="plugins"
+        loading={{}}
+      >
+        <Skeleton rows={3} />
+      </SettingsPage>
+    );
+  }
+  const installs = read.data.installs;
   return (
     <SettingsPage
       header={{
@@ -80,11 +115,9 @@ export default function Apps({ orgId, initial }: { orgId: string; initial: Plugi
               usedBy={installs
                 .filter((o) => o.components.some((c) => c.kind === "plugin" && c.ref === a.id))
                 .map((o) => o.name)}
-              onUpgraded={reload}
               onUninstalled={(r) => {
                 // The names of dependency installs are read before the list reloads without them
                 setReport({ name: a.name, report: r, refName: refNameIn(installs) });
-                reload();
               }}
             />
           ))
@@ -107,7 +140,6 @@ function InstallCard({
   install,
   refName,
   usedBy,
-  onUpgraded,
   onUninstalled,
 }: {
   orgId: string;
@@ -115,7 +147,6 @@ function InstallCard({
   refName(c: Component): string;
   /** The plugins that installed this one as a dependency. */
   usedBy: string[];
-  onUpgraded(): void;
   onUninstalled(r: UninstallReport): void;
 }) {
   const t = useTranslations("catalog.plugins");
@@ -127,12 +158,17 @@ function InstallCard({
   const [error, setError] = useState<string>();
   const broken = install.status === "failed" || install.status === "installing";
   const target = install.status === "installed" ? install.upgradeAvailable : null;
+  // An uninstall removes what the plugin brought: everything a plugin change touches is read again.
+  const remove = useAppMutation({
+    fn: (installId: string) => uninstallPlugin(orgId, installId),
+    invalidates: () => pluginChangeKeys(orgId),
+  });
 
   const uninstall = async () => {
     setBusy(true);
     setError(undefined);
     try {
-      const r = await uninstallPlugin(orgId, install.id);
+      const r = await remove.mutateAsync(install.id);
       setConfirm(false);
       onUninstalled(r);
     } catch (e) {
@@ -212,7 +248,6 @@ function InstallCard({
             target={target}
             open={upgrading}
             onOpenChange={setUpgrading}
-            onDone={onUpgraded}
           />
         )}
         <Dialog
