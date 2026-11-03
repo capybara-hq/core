@@ -26,12 +26,10 @@ import type { PublishBus } from "./admin-view.js";
 import { type ConfigIssue, toIssues } from "./config-issues.js";
 import {
   checkConfigUi,
-  configFormSchema,
   configMessages,
-  configToJsonSchema,
   hintedSecretPaths,
   type JsonSchema,
-  stripConfigUi,
+  safeConfigFormSchema,
 } from "./config-json-schema.js";
 import {
   DEPLOYMENT_SECRETS_ORG,
@@ -145,11 +143,6 @@ function defaultOf(schema: core.$ZodType, path: string): { has: boolean; value?:
 export class ExtensionDeploymentConfigService {
   /** Where each startup-config field comes from (see `extensionConfigSources`); those fields are read-only. */
   private readonly sources: Record<string, Record<string, ConfigSourceKind>>;
-  /**
-   * The fallback form schema (no hints, null when even that cannot be made) of each zod schema whose
-   * hint conversion threw; also marks it as warned about. Manifests are immutable: per replica.
-   */
-  private readonly hintFailures = new WeakMap<object, JsonSchema | null>();
 
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
@@ -520,26 +513,13 @@ export class ExtensionDeploymentConfigService {
    */
   private formSchemaOf(plugin: string, info: DeploymentSchemaInfo): JsonSchema | undefined {
     if (!info.schema) return info.jsonSchema;
-    const schema = info.schema as z.ZodTypeAny;
-    const failed = this.hintFailures.get(schema);
-    if (failed !== undefined) return failed ?? undefined;
-    try {
-      return configFormSchema(schema, "deployment").schema;
-    } catch (err) {
-      let plain: JsonSchema | null = null;
-      try {
-        plain = configToJsonSchema(schema);
-        stripConfigUi(plain);
-      } catch {
-        plain = null;
-      }
-      this.hintFailures.set(schema, plain);
+    const r = safeConfigFormSchema(info.schema as z.ZodTypeAny, "deployment", (err, schema) =>
       this.log.warn(
         "the deployment config form schema could not be built with its UI hints; hints dropped",
-        { plugin, version: info.version, schema: plain ? "plain" : "none", err },
-      );
-      return plain ?? undefined;
-    }
+        { plugin, version: info.version, schema, err },
+      ),
+    );
+    return r?.schema;
   }
 
   private messagesOf(plugin: string, info: DeploymentSchemaInfo) {

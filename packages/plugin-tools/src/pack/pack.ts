@@ -24,6 +24,7 @@ import {
   type ExtensionManifest,
   HOST_PROVIDED_PACKAGES,
   PLUGIN_MANIFEST_FILE,
+  PLUGIN_MANIFEST_LIMITS,
   type PluginExtensionSection,
   type PluginManifest,
   parseAgentTemplate,
@@ -635,7 +636,17 @@ export async function packPlugin(pluginDir: string, outDir: string): Promise<Pac
   const pkgIssues = validatePluginPackageJsonFor(pkg, parsed, SDK_VERSION);
   if (pkgIssues.length > 0) throw new Error(`${label}: ${pkgIssues.join("; ")}`);
   files.set("package.json", Buffer.from(`${JSON.stringify(pkg, null, 2)}\n`));
-  files.set(PLUGIN_MANIFEST_FILE, Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`));
+  // The packed text is pretty-printed while the config schema caps measure compact JSON: the text
+  // itself must stay under the reader's limit, or the kernel would refuse the package unread.
+  const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
+  if (manifestText.length > PLUGIN_MANIFEST_LIMITS.manifestChars) {
+    throw new Error(
+      `${label}: packed ${PLUGIN_MANIFEST_FILE} is ${manifestText.length} characters, over the ` +
+        `${PLUGIN_MANIFEST_LIMITS.manifestChars} limit (PLUGIN_MANIFEST_LIMITS.manifestChars); ` +
+        "make the config schemas smaller",
+    );
+  }
+  files.set(PLUGIN_MANIFEST_FILE, Buffer.from(manifestText));
 
   const tgz = await makeTgz(files);
   await mkdir(outDir, { recursive: true });

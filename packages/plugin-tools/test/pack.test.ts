@@ -484,6 +484,14 @@ describe("packPlugin: config schemas (extension config forms spec §4.5)", () =>
     );
   }, 60_000);
 
+  it("refuses a packed plugin.json over manifestChars though each config schema is under its cap", async () => {
+    await expect(packPlugin(fixture("manifest-too-large"), out)).rejects.toThrow(
+      /packed \.capybara-plugin\/plugin\.json is \d+ characters, over the 262144 limit/,
+    );
+    // nothing was written
+    expect((await readdir(out)).filter((f) => f.includes("manifest-too-large"))).toEqual([]);
+  }, 60_000);
+
   it("missing labels do not stop the packer (that is the check's rule)", async () => {
     const r = await packPlugin(cfg("plugin-config-labels"), out);
     expect(r.manifest.extension?.configSchemas?.deployment).toBeDefined();

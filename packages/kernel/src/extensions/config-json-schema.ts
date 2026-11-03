@@ -79,6 +79,44 @@ export function configFormSchema(schema: z.ZodTypeAny, level: ConfigLevel): Conf
   return r;
 }
 
+/** The schemas whose hinted conversion threw: their fallback (plain schema, or null). */
+const fallbacks: Record<ConfigLevel, WeakMap<object, ConfigFormSchema | null>> = {
+  deployment: new WeakMap(),
+  org: new WeakMap(),
+  connection: new WeakMap(),
+};
+
+/**
+ * {@link configFormSchema} that never throws, for every caller that serves a form schema or reads
+ * its messages (deployment, org, connection, issues). A hint conversion that throws (a hand-made
+ * package, e.g. hints that won't serialize as JSON) drops the hints: the plain schema with every
+ * `x-ui` stripped, else `null` when even the plain conversion fails. `onFallback` runs once per
+ * schema object and level on this replica (the caller's one warning); later calls reuse the result.
+ */
+export function safeConfigFormSchema(
+  schema: z.ZodTypeAny,
+  level: ConfigLevel,
+  onFallback: (err: unknown, fallback: "plain" | "none") => void,
+): ConfigFormSchema | null {
+  const failed = fallbacks[level].get(schema);
+  if (failed !== undefined) return failed;
+  try {
+    return configFormSchema(schema, level);
+  } catch (err) {
+    let r: ConfigFormSchema | null = null;
+    try {
+      const plain = configJsonSchema(schema);
+      stripConfigUi(plain);
+      r = { schema: plain, problems: [] };
+    } catch {
+      r = null;
+    }
+    fallbacks[level].set(schema, r);
+    onFallback(err, r ? "plain" : "none");
+    return r;
+  }
+}
+
 /**
  * The secret record paths some `x-ui.secrets[].path` of a form schema names (spec §4.3), anywhere in
  * the schema. Read from a checked schema: one whose hints were invalid was stripped and names none.
@@ -105,8 +143,10 @@ export function hintedSecretPaths(node: unknown, out = new Set<string>()): Set<s
 }
 
 /** The root `x-ui.messages` of a form schema (the localized texts of custom issues), if any. */
-export function configMessages(schema: JsonSchema): Record<string, unknown> | undefined {
-  const hints = schema["x-ui"];
+export function configMessages(
+  schema: JsonSchema | null | undefined,
+): Record<string, unknown> | undefined {
+  const hints = schema?.["x-ui"];
   return isObj(hints) && isObj(hints.messages) ? hints.messages : undefined;
 }
 

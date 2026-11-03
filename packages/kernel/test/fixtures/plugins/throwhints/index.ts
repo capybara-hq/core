@@ -2,7 +2,7 @@ import { defineExtension } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
 /**
- * A hand-made extension whose deployment config hints make the form conversion throw (a BigInt in
+ * A hand-made extension whose deployment and org config hints make the form conversion throw (a BigInt in
  * the `ui` meta cannot be copied as JSON): the hint check must not throw out of the load, so the
  * extension still loads and gets its status row.
  */
@@ -17,6 +17,12 @@ export default defineExtension({
         .string()
         .default("a")
         .meta({ ui: { label: { zh: "模式", en: "Mode" }, big: 1n } }),
+    }),
+    org: z.object({
+      team: z
+        .string()
+        .optional()
+        .meta({ ui: { label: { zh: "团队", en: "Team" }, big: 2n } }),
     }),
   },
   setup() {},

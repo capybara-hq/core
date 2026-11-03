@@ -16,10 +16,10 @@ import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import { ApiError } from "../errors.js";
 import { toIssues } from "../extensions/config-issues.js";
 import {
-  configFormSchema,
   configMessages,
   describeConfigUiProblems,
   type JsonSchema,
+  safeConfigFormSchema,
 } from "../extensions/config-json-schema.js";
 import { enabledExtensionsByOrg } from "../extensions/enabled.js";
 import type { InflightTracker } from "../extensions/inflight.js";
@@ -251,23 +251,32 @@ export class ChannelConnections implements OnApplicationShutdown {
     }
   }
 
-  /** `connectionSchema` 的 JSON Schema（同组织插件配置的转换：密钥字段带 `x-secret`、不输出取值）。 */
+  /**
+   * The connection schema's form JSON Schema (secret fields carry `x-secret`, no values), a copy.
+   * Never throws: when even the plain conversion fails, an empty object schema (a save is still
+   * validated here).
+   */
   jsonSchema(plugin: string): JsonSchema {
     const entry = this.channelEntry(plugin);
-    return structuredClone(
-      this.formSchema(plugin, entry.version, (entry.impl as Channel).connectionSchema).schema,
-    );
+    const r = this.formSchema(plugin, entry.version, (entry.impl as Channel).connectionSchema);
+    return r ? structuredClone(r.schema) : { type: "object" };
   }
 
   /**
    * The connection schema's form JSON Schema; invalid hints are stripped and warned about once per
    * `<plugin>@<version>` on this replica (spec §4.1: the connection level is checked at its first
-   * conversion, not at load).
+   * conversion, not at load). Never throws: a hint conversion that throws serves the plain schema,
+   * else null, with one warning per schema.
    */
   private formSchema(plugin: string, version: string, schema: z.ZodTypeAny) {
-    const r = configFormSchema(schema, "connection");
+    const r = safeConfigFormSchema(schema, "connection", (err, fallback) =>
+      this.log.warn(
+        "the channel connection form schema could not be built with its UI hints; hints dropped",
+        { plugin, version, schema: fallback, err },
+      ),
+    );
     const key = `${plugin}@${version}`;
-    if (r.problems.length > 0 && !this.hintsWarned.has(key)) {
+    if (r && r.problems.length > 0 && !this.hintsWarned.has(key)) {
       this.hintsWarned.add(key);
       this.log.warn("extension config UI hints are invalid and ignored", {
         plugin,
@@ -278,13 +287,26 @@ export class ChannelConnections implements OnApplicationShutdown {
     return r;
   }
 
+  /** The loaded version of a channel extension, for warnings ("unknown" when not provided). */
+  private versionOf(plugin: string): string {
+    return (
+      this.registry
+        .list("channel")
+        .find((x) => x.plugin === plugin && x.capability === CHANNEL_EXTENSION_POINT)?.version ??
+      "unknown"
+    );
+  }
+
   private parse(plugin: string, schema: z.ZodTypeAny, config: unknown): Obj {
     const r = schema.safeParse(config);
     if (!r.success) {
       throw new ApiError(
         "extension.config_invalid",
         `Invalid channel connection config for extension ${plugin}`,
-        toIssues(r.error, configMessages(configFormSchema(schema, "connection").schema)),
+        toIssues(
+          r.error,
+          configMessages(this.formSchema(plugin, this.versionOf(plugin), schema)?.schema),
+        ),
       );
     }
     return r.data as Obj;

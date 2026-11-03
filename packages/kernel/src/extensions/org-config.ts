@@ -25,7 +25,7 @@ import { KERNEL_LOGGER, KEYRING } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { type ConfigIssue, toIssues } from "./config-issues.js";
-import { configFormSchema, configMessages, type JsonSchema } from "./config-json-schema.js";
+import { configMessages, type JsonSchema, safeConfigFormSchema } from "./config-json-schema.js";
 import { enabledExtensionsQuery, requiredExtensions } from "./enabled.js";
 import { ExtensionHost } from "./host.js";
 import { ExtensionInstalls } from "./installs.js";
@@ -63,14 +63,6 @@ export interface OrgExtensionView {
    * disabled here (`extension.required`); its org config, when it has one, can still be set.
    */
   required: boolean;
-}
-
-/**
- * The org schema's form JSON Schema (`x-ui` stripped when its hints are invalid; the host warns at
- * load), converted once per schema object (manifests are immutable).
- */
-function orgJsonSchema(schema: z.ZodTypeAny): JsonSchema {
-  return structuredClone(configFormSchema(schema, "org").schema);
 }
 
 /** `put` 的输入：`config` 中的密钥字段缺省 = 保留原值、`null` = 清除、其他值 = 新值。 */
@@ -349,7 +341,7 @@ export class OrgExtensionConfigs {
           throw new ApiError(
             "extension.config_invalid",
             `Invalid organization config for extension ${plugin}`,
-            toIssues(r.error, configMessages(configFormSchema(schema, "org").schema)),
+            toIssues(r.error, configMessages(this.formSchema(plugin, manifest.version, schema))),
           );
         }
         next = r.data as Obj;
@@ -658,10 +650,25 @@ export class OrgExtensionConfigs {
       config,
       secrets: paths.map((p) => ({ path: p, set: setKeys.has(secretKey(m.name, p)) })),
       permissions: permissionGroups(this.permissionsOf(m.name)),
-      orgConfigSchema: schema ? orgJsonSchema(schema) : null,
+      orgConfigSchema: schema ? this.formSchema(m.name, m.version, schema) : null,
       available: true,
       required,
     };
+  }
+
+  /**
+   * The org schema's form JSON Schema, a copy (`x-ui` stripped when its hints are invalid; the host
+   * warns at load). Never throws: a hint conversion that throws serves the plain schema, or null
+   * (one warning per schema on this replica), so one hand-made package cannot fail the org's list.
+   */
+  private formSchema(plugin: string, version: string, schema: z.ZodTypeAny): JsonSchema | null {
+    const r = safeConfigFormSchema(schema, "org", (err, fallback) =>
+      this.log.warn(
+        "the org config form schema could not be built with its UI hints; hints dropped",
+        { plugin, version, schema: fallback, err },
+      ),
+    );
+    return r ? structuredClone(r.schema) : null;
   }
 
   /** 该组织在 `kernel` 命名空间下已设置的插件配置密钥键（不解密）。 */
