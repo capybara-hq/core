@@ -5,9 +5,14 @@ import {
   dehydrate,
   type QueryClient,
 } from "@tanstack/react-query";
+import { redirect } from "next/navigation";
 import { cache } from "react";
 import { ApiClientError } from "../api";
+import { loginPathFor } from "../auth-sources";
 import { makeQueryClient, type WireError } from "../query/client";
+import { matchRoute, type RouteCtx, UNKNOWN_ROUTE } from "../query/routes";
+import type { Me } from "../session";
+import { isSignedOut } from "./page";
 
 /** One query client per server request. */
 export const serverQueryClient = cache((): QueryClient => makeQueryClient());
@@ -31,4 +36,31 @@ export function dehydrateFor(qc: QueryClient): DehydratedState {
       return { ...q, state: { ...q.state, error: wire as unknown as Error } };
     }),
   };
+}
+
+/**
+ * The first-load prefetch of a route (web query cache spec §3.1): the matched entry's queries, in
+ * parallel, then its `then` (reads that need those answers). `"unknown"` when no page serves the
+ * path or it falls to `[...rest]`. A read that finds the session gone redirects to sign-in, back to
+ * `path`; any other failure stays in the cache (dehydrated, the page draws it).
+ */
+export async function prefetchRoute(
+  qc: QueryClient,
+  path: string,
+  session: { me: Me; orgId: string | null },
+): Promise<"ok" | "unknown"> {
+  const match = matchRoute(path);
+  if (match === null || match.entry.pattern === UNKNOWN_ROUTE) return "unknown";
+  const ctx: RouteCtx = { params: match.params, search: match.search, ...session };
+  const queries = match.entry.queries(ctx);
+  // A server read is not retried: the first paint waits for it, and the page's retry action or
+  // the browser reads it again.
+  await Promise.all(queries.map((q) => qc.prefetchQuery({ ...q, retry: false })));
+  await match.entry.then?.(ctx, qc);
+  const signedOut = qc
+    .getQueryCache()
+    .getAll()
+    .some((q) => isSignedOut(q.state.error));
+  if (signedOut) redirect(loginPathFor(path));
+  return "ok";
 }

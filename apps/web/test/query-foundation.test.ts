@@ -1,7 +1,22 @@
-import { hashKey, hydrate, type QueryClient, QueryObserver } from "@tanstack/react-query";
+// @vitest-environment jsdom
+import {
+  hashKey,
+  hydrate,
+  type QueryClient,
+  QueryClientProvider,
+  QueryObserver,
+  useQuery,
+} from "@tanstack/react-query";
+import { renderHook } from "@testing-library/react";
+import { createElement, type ReactNode, StrictMode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { ApiClientError } from "../src/lib/api";
-import { makeQueryClient, retryOnMountFor, reviveDehydrated } from "../src/lib/query/client";
+import {
+  isHydratedError,
+  makeQueryClient,
+  noteClientPath,
+  reviveDehydrated,
+} from "../src/lib/query/client";
 import { defineQuery } from "../src/lib/query/define";
 import { FRESHNESS } from "../src/lib/query/freshness";
 import { keys } from "../src/lib/query/keys";
@@ -71,17 +86,26 @@ describe("query foundation", () => {
       return client;
     }
 
-    /** Mounts an observer the way a page does (once), waits a tick, then unmounts. */
+    /** Mounts an observer the way a page does, waits a tick, then unmounts. */
     async function mount(client: QueryClient, queryFn: () => unknown) {
       const queryHash = hashKey(key);
       const observer = new QueryObserver(client, {
         queryKey: key,
         queryFn: queryFn as () => Promise<unknown>,
-        retryOnMount: retryOnMountFor(queryHash),
+        retryOnMount: !isHydratedError(queryHash),
       });
       const off = observer.subscribe(() => {});
       await new Promise((r) => setTimeout(r, 10));
       off();
+    }
+
+    /** A fresh document at `path`: the provider's first render records it. */
+    let doc = 0;
+    function openDocument() {
+      // a path no earlier test used, then the document's own: the earlier errors are forgotten
+      noteClientPath(`/__reset/${++doc}`);
+      noteClientPath(`/doc/${doc}`);
+      return `/doc/${doc}`;
     }
 
     it("a failed query is dehydrated with its kernel code", async () => {
@@ -94,22 +118,49 @@ describe("query foundation", () => {
       expect(error.status).toBe(404);
     });
 
-    it("a hydrated error is not refetched on its first mount", async () => {
+    it("a hydrated error is not refetched on its first mount, nor on a re-mount on the same path", async () => {
+      const path = openDocument();
       const client = await hydratedClient();
       const fn = vi.fn(failing);
+      await mount(client, fn);
+      // StrictMode mounts twice; the provider renders again with the same path
+      noteClientPath(path);
       await mount(client, fn);
       expect(fn).not.toHaveBeenCalled();
     });
 
-    it("a hydrated error is refetched on the next mount", async () => {
+    it("a hydrated error is refetched on a mount after a client navigation", async () => {
+      openDocument();
       const client = await hydratedClient();
       await mount(client, failing);
+      noteClientPath("/elsewhere");
       const fn = vi.fn(failing);
       await mount(client, fn);
       expect(fn).toHaveBeenCalledTimes(1);
     });
 
+    it("in StrictMode, a page's first mount does not refetch a hydrated error", async () => {
+      openDocument();
+      const client = await hydratedClient();
+      const fn = vi.fn(failing);
+      const wrapper = ({ children }: { children: ReactNode }) =>
+        createElement(StrictMode, null, createElement(QueryClientProvider, { client }, children));
+      const { result } = renderHook(
+        () =>
+          useQuery({
+            queryKey: key,
+            queryFn: fn,
+            retryOnMount: !isHydratedError(hashKey(key)),
+          }),
+        { wrapper },
+      );
+      await new Promise((r) => setTimeout(r, 10));
+      expect(result.current.status).toBe("error");
+      expect(fn).not.toHaveBeenCalled();
+    });
+
     it("a query that failed in the browser is refetched on the next mount", async () => {
+      openDocument();
       const client = makeQueryClient();
       await client.fetchQuery({ queryKey: key, queryFn: failing, retry: false }).catch(() => {});
       const fn = vi.fn(failing);

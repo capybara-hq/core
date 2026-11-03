@@ -1,18 +1,27 @@
 import "server-only";
 // Registers the server transport (idempotent), whatever module a page loads first.
 import "./register";
+import type { FetchQueryOptions, QueryClient, UseQueryOptions } from "@tanstack/react-query";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 import { getReadiness, type OrgReadiness, setupReady } from "../agents";
+import type { ApiClientError } from "../api";
 import { loginPathFor } from "../auth-sources";
-import { type ConversationGroupsPage, listConversationGroups } from "../conversations";
-import { listInbox } from "../inbox";
+import type { ConversationGroupsPage } from "../conversations";
 import { myRole, type OrgRole, roleAtLeast } from "../members";
+import {
+  conversationGroupsQuery,
+  extensionPagesQuery,
+  inboxCountQuery,
+  meQuery,
+  readinessQuery,
+} from "../query/shell";
 import { getMe, type Me, type Membership } from "../session";
-import { listUiContributions, type UiContributionItem } from "../ui";
+import type { UiContributionItem } from "../ui";
 import { SESSION_STATE_HEADER } from "./kernel";
 import { currentPath, isKernelUnavailable, isSignedOut, read } from "./page";
+import { serverQueryClient } from "./query";
 
 /** The signed-in account and its current org (`null` when none is chosen). Once per request. */
 export const getSession = cache(async (): Promise<{ me: Me; org: Membership | null }> => {
@@ -41,9 +50,9 @@ export interface ShellData {
 export type Shell = { kind: "unavailable" } | ({ kind: "ready" } & ShellData);
 
 /**
- * A shell section's read: a failure resolves to `null` (the section draws its own error state),
- * except a 401 `auth.*` (sign in again) and an unavailable kernel (rethrown: the whole shell is
- * `unavailable`).
+ * A shell section's read: a failure resolves to `null` (the section draws its own error state; the
+ * failed query stays in the cache and is dehydrated with its code), except a 401 `auth.*` (sign in
+ * again) and an unavailable kernel (rethrown: the whole shell is `unavailable`).
  */
 async function section<T>(p: Promise<T>): Promise<T | null> {
   try {
@@ -55,22 +64,36 @@ async function section<T>(p: Promise<T>): Promise<T | null> {
   }
 }
 
+/** A shell read through the request's query client (not retried: the first paint waits on it). */
+const fetchShell = <T>(qc: QueryClient, o: UseQueryOptions<T, ApiClientError>): Promise<T> =>
+  qc.fetchQuery({ ...(o as FetchQueryOptions<T, ApiClientError>), retry: false });
+
 /**
- * The shell data, read in parallel. A kernel that can't answer (any of the reads) gives
- * `unavailable`; readiness failing otherwise throws; the conversation groups, the pending count and
- * the extension pages resolve to `null` on other failures (each section draws its own error state).
+ * The shell data, read in parallel through `qc` (so it is dehydrated for the browser's cache). A
+ * kernel that can't answer (any of the reads) gives `unavailable`; readiness failing otherwise
+ * throws; the conversation groups, the pending count and the extension pages resolve to `null` on
+ * other failures (each section draws its own error state).
+ *
+ * `alongside` (the route's prefetch) starts with the shell reads once `/me` has answered, in the
+ * same parallel wave; its failure fails the shell.
  */
-export async function getShell(): Promise<Shell> {
+export async function getShell(
+  qc: QueryClient = serverQueryClient(),
+  alongside?: (session: { me: Me; orgId: string | null }) => Promise<void>,
+): Promise<Shell> {
   if ((await headers()).get(SESSION_STATE_HEADER) === "unavailable") return { kind: "unavailable" };
-  let session: { me: Me; org: Membership | null };
+  let me: Me;
   try {
-    session = await getSession();
+    me = await read(fetchShell(qc, meQuery()));
   } catch (e) {
     if (isKernelUnavailable(e)) return { kind: "unavailable" };
     throw e;
   }
-  const { me, org } = session;
-  if (org === null) {
+  const org = me.memberships.find((m) => m.orgId === me.currentOrgId) ?? null;
+  const orgId = org?.orgId ?? null;
+  const route = alongside?.({ me, orgId });
+  if (orgId === null) {
+    await route;
     return {
       kind: "ready",
       me,
@@ -81,17 +104,13 @@ export async function getShell(): Promise<Shell> {
       extensions: null,
     };
   }
-  const orgId = org.orgId;
   try {
     const [readiness, groups, pending, extensions] = await Promise.all([
-      orgReadiness(orgId),
-      section(listConversationGroups(orgId)),
-      section(
-        listInbox(orgId).then((r) => ({ count: r.items.length, more: r.truncated === true })),
-      ),
-      section(
-        listUiContributions(orgId).then(({ items }) => items.filter((c) => c.place === "page")),
-      ),
+      read(fetchShell(qc, readinessQuery(orgId))),
+      section(fetchShell(qc, conversationGroupsQuery(orgId))),
+      section(fetchShell(qc, inboxCountQuery(orgId))),
+      section(fetchShell(qc, extensionPagesQuery(orgId))),
+      route,
     ]);
     return { kind: "ready", me, org, readiness, groups, pending, extensions };
   } catch (e) {

@@ -9,6 +9,7 @@ import {
   type SidebarContext,
   useToast,
 } from "@capybara-hq/design";
+import { type UseQueryOptions, useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import {
   type ReactNode,
@@ -28,6 +29,14 @@ import { navigateBrowser } from "../../lib/browser";
 import { useConnectResultToast } from "../../lib/connect";
 import { NoCurrentOrgError } from "../../lib/conversations";
 import { usePreferences } from "../../lib/preferences";
+import { retryOnMountOf } from "../../lib/query/client";
+import {
+  conversationGroupsQuery,
+  extensionPagesQuery,
+  inboxCountQuery,
+  meQuery,
+  readinessQuery,
+} from "../../lib/query/shell";
 import type { ShellData } from "../../lib/server/session";
 import { logout, setCurrentOrg } from "../../lib/session";
 import { broadcastSession, useSessionSync } from "../../lib/session-sync";
@@ -84,8 +93,8 @@ const under = (pathname: string, prefix: string) =>
   pathname === prefix || pathname.startsWith(`${prefix}/`);
 
 /**
- * The `(app)` route group's frame (web-SSR spec §3), drawn from what the layout read on the server
- * (`initial`, `getShell()`), with no browser read on mount. The frame is chosen at first paint from
+ * The `(app)` route group's frame (web-SSR spec §3), drawn from the shell queries the layout read
+ * on the server (`getShell()`, hydrated into the browser's cache), with no browser read on mount. The frame is chosen at first paint from
  * the props and the route:
  * 1. the org chooser, without a current org (outside `/admin`);
  * 2. the setup frame, while the org is not ready on a setup route (web-SSR spec §4);
@@ -94,16 +103,69 @@ const under = (pathname: string, prefix: string) =>
  *
  * It provides the session to pages ({@link SessionContext}). An org change is a full navigation to
  * `/` (ruling R4), so the current page stays until the new document arrives; `reload()` re-renders
- * the route on the server (`router.refresh()`). The conversation list, the pending count and the
- * extension pages start from the props and keep their live updates (polls, focus,
- * `cap:conversations-changed`).
+ * the route on the server (`router.refresh()`), which hydrates fresh shell data. The conversation
+ * list, the pending count and the extension pages start from the cache and keep their live updates
+ * (polls, focus, `cap:conversations-changed`).
  */
-export function AppFrame({
+export function AppFrame({ version, children }: { version: string; children: ReactNode }) {
+  const initial = useShellQueries();
+  // `me` is always prefetched by the layout; without it (never on a document load) nothing is drawn.
+  if (initial === null) return null;
+  return (
+    <ShellFrame initial={initial} version={version}>
+      {children}
+    </ShellFrame>
+  );
+}
+
+/**
+ * A shell section's query as the `initial` its hook takes: the data, `null` when the read failed
+ * (the section's error state), `undefined` while nothing is cached (the hook loads it itself).
+ * An error the layout read is not read again on mount.
+ */
+function useSection<T>(o: UseQueryOptions<T, ApiClientError>, orgId: string | null) {
+  const q = useQuery({
+    ...o,
+    enabled: orgId !== null,
+    retryOnMount: retryOnMountOf(o.queryKey),
+  });
+  if (orgId === null) return null;
+  if (q.data !== undefined) return q.data;
+  return q.error === null ? undefined : null;
+}
+
+/** The shell data from the cache the layout filled (web query cache spec §3.1). */
+function useShellQueries(): ShellInitial | null {
+  const me = useQuery(meQuery()).data;
+  const org = me?.memberships.find((m) => m.orgId === me.currentOrgId) ?? null;
+  const orgId = org?.orgId ?? null;
+  // Queries of no org are disabled; the key's org id is then never read.
+  const scope = orgId ?? "";
+  const readiness = useSection(readinessQuery(scope), orgId);
+  const groups = useSection(conversationGroupsQuery(scope), orgId);
+  const pending = useSection(inboxCountQuery(scope), orgId);
+  const extensions = useSection(extensionPagesQuery(scope), orgId);
+  if (me === undefined) return null;
+  return { me, org, readiness: readiness ?? null, groups, pending, extensions };
+}
+
+/** A section hook's `initial` option: omitted while the section is not cached. */
+const seeded = <T,>(initial: T | undefined): { initial?: T } =>
+  initial === undefined ? {} : { initial };
+
+/** {@link ShellData} as the frame takes it: a section not cached yet is `undefined`. */
+type ShellInitial = Omit<ShellData, "groups" | "pending" | "extensions"> & {
+  groups: ShellData["groups"] | undefined;
+  pending: ShellData["pending"] | undefined;
+  extensions: ShellData["extensions"] | undefined;
+};
+
+function ShellFrame({
   initial,
   version,
   children,
 }: {
-  initial: ShellData;
+  initial: ShellInitial;
   version: string;
   children: ReactNode;
 }) {
@@ -116,18 +178,18 @@ export function AppFrame({
   const { me, org: currentOrg, readiness } = initial;
   const orgId = currentOrg?.orgId ?? null;
   const conversations = useConversationGroups(orgId, pathname, {
-    initial: initial.groups,
+    ...seeded(initial.groups),
     onError: (e) =>
       toast.error(e instanceof NoCurrentOrgError ? t("shell.noCurrentOrg") : errorMessage(e)),
   });
-  const pending = usePendingApprovals(orgId, pathname, { initial: initial.pending });
+  const pending = usePendingApprovals(orgId, pathname, seeded(initial.pending));
   const { primary, more, inbox, adminHref, commands } = useNav(
     pending.count,
     navLevelOf(me),
     pending.more,
     me.account.isEnterpriseAdmin,
   );
-  const extensions = useExtensions(orgId, locale, { initial: initial.extensions });
+  const extensions = useExtensions(orgId, locale, seeded(initial.extensions));
   const adminItems = useAdminItems();
   const preferences = usePreferences();
   const [creatingOrg, setCreatingOrg] = useState(false);
