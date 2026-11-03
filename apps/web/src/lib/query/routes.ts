@@ -9,6 +9,7 @@ import type { InboxItem } from "../inbox";
 import { myRole, type OrgRole, roleAtLeast } from "../members";
 import { canEditAgent } from "../org-settings";
 import type { Me } from "../session";
+import type { UiContributionItem, UiLocale } from "../ui";
 import { identitiesQuery, toolGrantsQuery } from "./account";
 import { agentConnectorQueries, agentFormQueries, agentQuery, agentsQuery } from "./agents";
 import { authSourcesQuery } from "./auth";
@@ -49,6 +50,7 @@ import {
 import { conversationGroupsQuery, maybeMeQuery, readinessQuery } from "./shell";
 import { skillQuery, skillsQuery } from "./skills";
 import { trajectoriesQuery, trajectoryFilters, trajectoryQuery } from "./trajectories";
+import { uiViewQuery } from "./ui";
 
 /** What a route's queries are built from. */
 export interface RouteCtx {
@@ -59,6 +61,8 @@ export interface RouteCtx {
   me: Me | null;
   /** The current org; `null` without one. */
   orgId: string | null;
+  /** The page's UI locale (reads that render text in it, such as an extension view). */
+  locale: UiLocale;
 }
 
 /**
@@ -398,7 +402,21 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   { pattern: "/invite/[token]", queries: () => [q(maybeMeQuery())] },
   { pattern: "/login", queries: () => [q(authSourcesQuery()), q(maybeMeQuery())] },
-  { pattern: "/p/[plugin]/[id]", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/p/[plugin]/[id]",
+    // Anyone in the org: the UI contributions, then the page's view when it is a schema view (an
+    // embed's token handshake stays in the browser).
+    queries: ({ orgId }) => (orgId === null ? [] : [q(contributionsQuery(orgId))]),
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, params, locale }, qc) => {
+      const { plugin, id } = params;
+      if (orgId === null || plugin === undefined || id === undefined) return;
+      const items = qc.getQueryData<UiContributionItem[]>(contributionsQuery(orgId).queryKey);
+      const page = items?.find((c) => c.plugin === plugin && c.id === id && c.place === "page");
+      if (page?.kind !== "view") return;
+      await qc.prefetchQuery({ ...uiViewQuery(orgId, { plugin, id }, { locale }), retry: false });
+    },
+  },
   {
     pattern: "/settings/extensions",
     // Org admins: the extensions and the file previewers (a section).

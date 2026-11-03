@@ -1,4 +1,5 @@
 import { notFound, redirect } from "next/navigation";
+import { getLocale } from "next-intl/server";
 import type { ReactNode } from "react";
 import pkg from "../../../package.json";
 import { HydrateCache } from "../../components/HydrateCache";
@@ -21,9 +22,11 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   const qc = serverQueryClient();
   const path = await currentPath();
   const prefetched: { route: "ok" | "unknown" } = { route: "ok" };
+  // The page's locale: an extension view the route prefetches renders in it.
+  const locale = await getLocale();
   // Signed out or a fresh deployment never gets here: the proxy (src/proxy.ts) redirects first.
   const shell = await getShell(qc, async (session) => {
-    prefetched.route = await prefetchRoute(qc, path, session);
+    prefetched.route = await prefetchRoute(qc, path, { ...session, locale });
   });
   // The kernel cannot answer (starting, restarting): a frame that retries by itself (ruling R2).
   if (shell.kind === "unavailable") return <KernelStarting />;

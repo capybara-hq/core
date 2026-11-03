@@ -3,8 +3,9 @@
 import { Button, Skeleton, Stack, useToast } from "@capybara-hq/design";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import { ApiClientError } from "../../lib/api";
+import { retryOnMountOf } from "../../lib/query/client";
 import { useAppMutation } from "../../lib/query/define";
 import { type UiViewTarget, uiViewQuery } from "../../lib/query/ui";
 import {
@@ -53,17 +54,13 @@ const readOf = (t: ViewTarget): UiViewTarget => ({
  * failing (slow, throwing, an invalid view) only affects its own state (review focus 1). Refreshes
  * come from `refreshUiViews` (the UI stream's `event: ui`, coalesced to at most one read in
  * flight per view); `retry(key)` goes back to loading and reads once more; `setView` replaces a
- * view with the one an action returned. `initial` holds views the server already read (by state
- * key): they go into the cache when it has none, so they are not read on mount.
+ * view with the one an action returned. A view the layout prefetched paints from the cache; one
+ * that failed there is not read again on mount (its retry reads it).
  */
 export function useExtensionViews(
   orgId: string,
   targets: readonly ViewTarget[],
-  opts: {
-    conversationId?: string;
-    locale: UiLocale;
-    initial?: Readonly<Record<string, ViewState>>;
-  },
+  opts: { conversationId?: string; locale: UiLocale },
 ): {
   states: Readonly<Record<string, ViewState>>;
   retry(key: string): void;
@@ -77,42 +74,28 @@ export function useExtensionViews(
       locale,
     }),
   );
-  // The server's reads seed the cache once (a failed one stays an error until a retry).
-  useState(() => {
-    targets.forEach((t, i) => {
-      const seed = opts.initial?.[targetKey(t)];
-      const q = queries[i];
-      if (seed?.kind === "ready" && q && qc.getQueryData(q.queryKey) === undefined)
-        qc.setQueryData(q.queryKey, seed.view);
-    });
-  });
-  const failedOnServer = (t: ViewTarget) => opts.initial?.[targetKey(t)]?.kind === "error";
-  const [retried, setRetried] = useState<ReadonlySet<string>>(new Set());
   const results = useQueries({
-    queries: queries.map((q, i) => {
-      const t = targets[i] as ViewTarget;
-      // A view the server failed is not read on mount: its retry reads it.
-      const hold = (failedOnServer(t) && !retried.has(targetKey(t))) || t.paused === true;
-      return { ...q, enabled: !hold, retry: false };
-    }),
+    queries: queries.map((q, i) => ({
+      ...q,
+      enabled: (targets[i] as ViewTarget).paused !== true,
+      retry: false,
+      retryOnMount: retryOnMountOf(q.queryKey),
+    })),
   });
   const states: Record<string, ViewState> = {};
   targets.forEach((t, i) => {
     const r = results[i];
     const key = targetKey(t);
-    const seed = opts.initial?.[key];
     if (r?.data !== undefined) states[key] = { kind: "ready", view: r.data };
     else if (r?.error)
       states[key] = {
         kind: "error",
         code: r.error instanceof ApiClientError ? r.error.code : "unknown",
       };
-    else if (seed?.kind === "error" && !retried.has(key)) states[key] = seed;
     else states[key] = { kind: "loading" };
   });
   const keyed = new Map(targets.map((t, i) => [targetKey(t), queries[i]?.queryKey]));
   const retry = (key: string) => {
-    setRetried((s) => new Set(s).add(key));
     const queryKey = keyed.get(key);
     if (queryKey !== undefined) void qc.resetQueries({ queryKey, exact: true });
   };

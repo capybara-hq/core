@@ -65,7 +65,7 @@ export async function renderRouteWithCache(path: string, routes: Routes, opts: R
     await qc.fetchQuery(meQuery());
     // The shell's readiness (the layout's `getShell()` reads it beside the route).
     if (me.currentOrgId !== null) await qc.fetchQuery(readinessQuery(me.currentOrgId));
-    await prefetchRoute(qc, path, { me, orgId: me.currentOrgId });
+    await prefetchRoute(qc, path, { me, orgId: me.currentOrgId, locale: render.locale ?? "en" });
     page = await pageOf(path);
     state = JSON.parse(JSON.stringify(dehydrateFor(qc))) as DehydratedState;
   } finally {

@@ -1,16 +1,16 @@
-// The trajectory pages and the extension pages render on the server (web-SSR spec §6, task 11):
-// first paint complete without a browser fetch, the gates, and R5's failures. A trajectory view is
-// audited by the kernel, so the page reads it exactly once.
+// The trajectory pages and the extension pages read from the query cache the layout prefetched
+// (web query cache spec §3): first paint complete without a browser read, the loading state on an
+// empty cache, the gates, and R5's failures. A trajectory view is audited by the kernel, so a first
+// load reads it exactly once; each filter set of the list is its own cache entry.
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import PluginPage from "../src/app/(app)/p/[plugin]/[id]/page";
 import { json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
-import { expectNoFirstPaintFetch, type Routes, renderRoute } from "./support/server";
+import { expectNoFirstPaintFetch, type Routes } from "./support/server";
 import { NOT_READY } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -128,9 +128,6 @@ async function renderHeld(path: string, held: string, routes: Routes = ROUTES) {
   });
   return { ...r, release: () => act(async () => release()) };
 }
-
-const plugin = (id: string) => () =>
-  PluginPage({ params: Promise.resolve({ plugin: "board", id }) });
 
 beforeEach(() => {
   resetNavigation("/trajectories");
@@ -389,34 +386,47 @@ describe("/trajectories/[conversationId]", () => {
 });
 
 describe("/p/[plugin]/[id]", () => {
-  it("a view: the contribution and its view are read on the server; the UI stream opens after", async () => {
+  it("a view: a first render from the hydrated cache makes no browser read (the contribution, then its view); the UI stream opens after", async () => {
     const browser = expectNoFirstPaintFetch();
-    const { calls } = await renderRoute(plugin("overview"), ROUTES);
+    const { calls } = await renderRouteWithCache("/p/board/overview", ROUTES);
     expect(screen.getByRole("heading", { name: "Cards" })).toBeTruthy();
     expect(calls.find((c) => c.url.includes("/views/"))?.url).toBe(
       `${UI}/views/board/overview?locale=en`,
     );
     expect(FakeEventSource.instances.some((s) => s.url === `${UI}/stream`)).toBe(true);
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("a view the extension fails draws its own error and retry", async () => {
+  it("the view's locale is in its key: a zh page reads the zh view", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const { calls } = await renderRouteWithCache("/p/board/overview", ROUTES, { locale: "zh" });
+    expect(calls.find((c) => c.url.includes("/views/"))?.url).toBe(
+      `${UI}/views/board/overview?locale=zh`,
+    );
+    expect(screen.getByRole("heading", { name: "Cards" })).toBeTruthy();
+    await settle();
+    expect(browser).toEqual([]);
+  });
+
+  it("a view the extension fails draws its own error (not read again on mount) and retry", async () => {
     const browser = stubApi({
       [`GET ${UI}/views/board/overview`]: () =>
         json(200, { view: { blocks: [{ type: "heading", text: "Again" }] } }),
     });
-    await renderRoute(plugin("overview"), {
+    await renderRouteWithCache("/p/board/overview", {
       ...ROUTES,
       [`GET ${UI}/views/board/overview`]: () =>
         json(502, { error: { code: "ui.render_failed", message: "x" } }),
     });
     expect(screen.getByText(en.errors.ui.render_failed)).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
     await userEvent.setup().click(screen.getByRole("button", { name: en.common.retry }));
     expect(await screen.findByRole("heading", { name: "Again" })).toBeTruthy();
   });
 
-  it("an embed: no view read on the server; the token handshake stays in the browser", async () => {
+  it("an embed: no view read by the layout; the token handshake stays in the browser", async () => {
     const browser = stubApi({
       [`POST ${UI}/embeds/board/live/token`]: () =>
         json(200, {
@@ -426,7 +436,7 @@ describe("/p/[plugin]/[id]", () => {
           expiresIn: 300,
         }),
     });
-    const { calls } = await renderRoute(plugin("live"), ROUTES);
+    const { calls } = await renderRouteWithCache("/p/board/live", ROUTES);
     expect(calls.some((c) => c.url.includes("/views/"))).toBe(false);
     await waitFor(() => expect(document.querySelector("iframe")).not.toBeNull());
     expect(browser.map((c) => c.url)).toEqual([`${UI}/embeds/board/live/token`]);
@@ -434,28 +444,29 @@ describe("/p/[plugin]/[id]", () => {
 
   it("an unknown contribution says so", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(plugin("ghost"), ROUTES);
+    await renderRouteWithCache("/p/board/ghost", ROUTES);
     expect(screen.getByText(en.errors.ui.not_found)).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
+  });
+
+  it("an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld("/p/board/overview", `GET ${UI}/contributions`);
+    await vi.waitFor(() => {
+      if (template("DetailPage") === null) throw new Error("no page");
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByRole("heading", { name: "Cards" })).toBeNull();
+    await release();
+    expect(await screen.findByRole("heading", { name: "Cards" })).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 });
 
 describe("the gates", () => {
-  it.each([["/p/board/overview", plugin("overview")]] as const)(
-    "%s: no org renders nothing; setup goes home",
-    async (_p, page) => {
-      const none = await renderRoute(page, ROUTES, { me: { ...ME, currentOrgId: null } });
-      expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
-      cleanup();
-      await expect(renderRoute(page, ROUTES, { readiness: NOT_READY })).rejects.toThrow(
-        "REDIRECT /",
-      );
-    },
-  );
-
   it("/p/board/overview: a guest may open an extension page", async () => {
     expectNoFirstPaintFetch();
-    await renderRoute(plugin("overview"), ROUTES, { me: as("guest") });
+    await renderRouteWithCache("/p/board/overview", ROUTES, { me: as("guest") });
     expect(noAccess()).toBe(false);
     expect(screen.getByRole("heading", { name: "Cards" })).toBeTruthy();
   });
@@ -465,9 +476,10 @@ describe("the gates", () => {
 const ROUTE_GATES: [string, "member" | null][] = [
   ["/trajectories", "member"],
   ["/trajectories/c1", "member"],
+  ["/p/board/overview", null],
 ];
 
-describe("the gates (query cache)", () => {
+describe("the gates by role", () => {
   it.each(ROUTE_GATES)(
     "%s: below its role no access and nothing read; no org renders nothing; setup goes home",
     async (path, min) => {

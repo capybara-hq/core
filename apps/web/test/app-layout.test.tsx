@@ -12,6 +12,7 @@ import { expectNoFirstPaintFetch, serverRoutes } from "./support/server";
 import { NOT_READY, READY } from "./support/shell";
 
 const req = vi.hoisted(() => ({ headers: new Headers() }));
+vi.mock("next-intl/server", () => ({ getLocale: async () => "en" }));
 vi.mock("next/headers", () => ({ headers: async () => req.headers }));
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({

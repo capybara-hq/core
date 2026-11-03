@@ -13,6 +13,7 @@ import { makeQueryClient, type WireError } from "../query/client";
 import { matchRoute, type RouteCtx, UNKNOWN_ROUTE } from "../query/routes";
 import type { Me } from "../session";
 import { isSignedOut } from "../signed-out";
+import { uiLocale } from "../ui";
 
 /** One query client per server request. */
 export const serverQueryClient = cache((): QueryClient => makeQueryClient());
@@ -48,12 +49,18 @@ export function dehydrateFor(qc: QueryClient): DehydratedState {
 export async function prefetchRoute(
   qc: QueryClient,
   path: string,
-  session: { me: Me | null; orgId: string | null },
+  session: { me: Me | null; orgId: string | null; locale?: string },
   opts: { signedOutRedirect: boolean } = { signedOutRedirect: true },
 ): Promise<"ok" | "unknown"> {
   const match = matchRoute(path);
   if (match === null || match.entry.pattern === UNKNOWN_ROUTE) return "unknown";
-  const ctx: RouteCtx = { params: match.params, search: match.search, ...session };
+  const ctx: RouteCtx = {
+    params: match.params,
+    search: match.search,
+    me: session.me,
+    orgId: session.orgId,
+    locale: uiLocale(session.locale ?? "en"),
+  };
   const queries = match.entry.queries(ctx);
   // A server read is not retried: the first paint waits for it, and the page's retry action or
   // the browser reads it again.
