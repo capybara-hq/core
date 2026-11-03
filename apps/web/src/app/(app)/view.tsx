@@ -136,7 +136,9 @@ function Overview({ orgId }: { orgId: string }) {
             navLevelOf(me) !== "guest",
           ),
         }}
-        loading={{ stats: 0, sections: 2 }}
+        // The loaded content's static shape: inbox and recent in the main column, the org and my
+        // agents in the side column.
+        loading={{ stats: 0, mainSide: { main: 2, side: 2 } }}
       />
     );
   }

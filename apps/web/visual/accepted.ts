@@ -89,7 +89,13 @@ export const LOADING_TEMPLATES: {
   pairs: { loaded: string; loading: string; dataOnly?: Record<string, string> }[];
 }[] = [
   { name: "detail", pairs: [{ loaded: "default", loading: "loading" }] },
-  { name: "overview", pairs: [{ loaded: "default", loading: "loading" }] },
+  {
+    name: "overview",
+    pairs: [
+      { loaded: "default", loading: "loading" },
+      { loaded: "main-side", loading: "loading-main-side" },
+    ],
+  },
   {
     name: "inbox",
     pairs: [

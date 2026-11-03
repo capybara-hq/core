@@ -9,6 +9,7 @@ import {
   DetailPage,
   Field,
   FormSection,
+  Grid,
   type HeaderAction,
   InboxPage,
   Input,
@@ -133,6 +134,21 @@ function overviewBlocks(): ReactNode {
         <OverviewPage
           header={loadingHeader(PATH.slice(0, 1), 1, OVERVIEW_HEADER.description)}
           loading={{ stats: 4, sections: 2 }}
+        />
+      </RefBlock>
+      {/* The home overview's shape: a main-side grid of two card stacks (spec §5.6). */}
+      <RefBlock id="template-overview-main-side" width={W} height={H}>
+        <OverviewPage header={OVERVIEW_HEADER}>
+          <Grid columns="main-side">
+            <Stack gap={16}>{sections}</Stack>
+            <Stack gap={16}>{sections}</Stack>
+          </Grid>
+        </OverviewPage>
+      </RefBlock>
+      <RefBlock id="template-overview-loading-main-side" width={W} height={H}>
+        <OverviewPage
+          header={loadingHeader(PATH.slice(0, 1), 1, OVERVIEW_HEADER.description)}
+          loading={{ stats: 0, mainSide: { main: 2, side: 2 } }}
         />
       </RefBlock>
     </>

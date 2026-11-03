@@ -456,10 +456,10 @@ The two `right-panel` widths of 544 hold only at the width the `template-convers
 
 ### 5.6 Overview (T1)
 - Order in the content column: PageHeader → StatCards (the header's `metrics`) → the page's sections (cards, lists), separated by `space.3`.
-- **Loading** (`OverviewPage.loading`, `{ stats?, sections? }`): the header is its loading state (§4.2); `stats` stat cards (default 4) in the loaded card's box (the `panel` card with a `small` label slot over a `metric` value slot), unless the header's own `metrics` are given, which render for real; `sections` card-shaped blocks (default 2, as in §5.2) in place of `children`. One busy announcement (§6.29). Nothing animates.
+- **Loading** (`OverviewPage.loading`, `{ stats?, sections?, mainSide? }`): the header is its loading state (§4.2); `stats` stat cards (default 4) in the loaded card's box (the `panel` card with a `small` label slot over a `metric` value slot), unless the header's own `metrics` are given, which render for real; `sections` card-shaped blocks (default 2, as in §5.2) in place of `children`; a page whose content is a `Grid columns="main-side"` of two card stacks (gap 16) passes `mainSide: { main, side }` (the cards of each column) instead, and the blocks stand in the same grid and stacks, so the side column does not move when the data lands (state `loading-main-side`, against the loaded `main-side`). One busy announcement (§6.29). Nothing animates.
 
 <!-- states: template-overview -->
-States: `default`, `loading`
+States: `default`, `loading`, `main-side`, `loading-main-side`
 
 <!-- size-table: template-overview -->
 | Part | State | Property | Value |
@@ -468,6 +468,8 @@ States: `default`, `loading`
 | content | loading | max-width | layout.content |
 | skeleton-text[data-size=small] | loading | height | type.small.line |
 | skeleton-text[data-size=metric] | loading | height | type.metric.line |
+| content | main-side | max-width | layout.content |
+| content | loading-main-side | max-width | layout.content |
 
 ### 5.7 Inbox (T6)
 - Rail (240): the filters above the list (`filters`, then `list`); content: the selected item; an optional inspector (400).

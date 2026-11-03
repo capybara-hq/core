@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { SkeletonGroup } from "../display/index";
+import { Grid, Stack } from "../layout/index";
 import { useDesignT } from "../provider";
 import { Body, type PageHeaderProps } from "../shell/index";
 import { LoadingCards, LoadingStats, loadingHeader, TemplateHead, WithStats } from "./frame";
@@ -11,7 +12,9 @@ const LOADING_SECTIONS = 2;
 /**
  * T1 Overview: Single, list width. `loading` draws the page's frame while its data is on the way:
  * the header keeps its rows, `stats` stat cards (default 4; the header's own `metrics` render for
- * real instead) and `sections` card-shaped blocks (default 2) in place of `children`.
+ * real instead) and `sections` card-shaped blocks (default 2) in place of `children`. A page whose
+ * content is a `Grid columns="main-side"` of two card stacks passes `mainSide` (the cards of each
+ * column) instead: the blocks then stand in the same grid, so nothing moves when the data lands.
  */
 export function OverviewPage({
   header,
@@ -19,7 +22,12 @@ export function OverviewPage({
   children,
 }: {
   header: PageHeaderProps;
-  loading?: { stats?: number; sections?: number };
+  loading?: {
+    stats?: number;
+    sections?: number;
+    /** The content is a main-side grid of two card stacks: the cards of each column. */
+    mainSide?: { main: number; side: number };
+  };
   children?: ReactNode;
 }) {
   const t = useDesignT();
@@ -32,7 +40,18 @@ export function OverviewPage({
           <Body layout="single" width="content">
             {known ? null : <LoadingStats count={loading.stats ?? LOADING_STATS} />}
             <WithStats header={header}>
-              <LoadingCards count={loading.sections ?? LOADING_SECTIONS} />
+              {loading.mainSide ? (
+                <Grid columns="main-side">
+                  <Stack gap={16}>
+                    <LoadingCards count={loading.mainSide.main} />
+                  </Stack>
+                  <Stack gap={16}>
+                    <LoadingCards count={loading.mainSide.side} />
+                  </Stack>
+                </Grid>
+              ) : (
+                <LoadingCards count={loading.sections ?? LOADING_SECTIONS} />
+              )}
             </WithStats>
           </Body>
         </SkeletonGroup>

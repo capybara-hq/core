@@ -311,6 +311,13 @@ describe("(app) 页面模板", () => {
       return el as HTMLElement;
     });
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    // the placeholders stand in the loaded page's main-side grid: two cards in each column
+    const grid = page.querySelector('[data-columns="main-side"]');
+    expect(
+      [...(grid?.children ?? [])].map(
+        (c) => c.querySelectorAll('[data-part="loading-card"]').length,
+      ),
+    ).toEqual([2, 2]);
     expect(screen.queryByText("研究助手")).toBeNull();
     await act(async () => release());
     expect((await screen.findAllByText("研究助手")).length).toBeGreaterThan(0);
