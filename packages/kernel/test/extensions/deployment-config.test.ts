@@ -176,6 +176,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
     expect(Object.keys(res.json()).sort()).toEqual(
       [
         "configurable",
+        "displayName",
         "fields",
         "issues",
         "plugin",

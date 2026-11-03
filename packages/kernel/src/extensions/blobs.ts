@@ -137,6 +137,7 @@ export class ExtensionBlobs {
         source: src.source,
         source_ref: src.ref,
         uploaded_by: src.actor,
+        display_name: p.displayName === undefined ? null : JSON.stringify(p.displayName),
       })
       .onConflict((oc) => oc.column("sha256").doNothing())
       .returning("sha256")

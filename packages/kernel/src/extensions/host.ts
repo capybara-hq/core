@@ -7,6 +7,7 @@ import {
   EXTENSION_POINT_CARDINALITY,
   type ExtensionManifest,
   type ExtensionPointRef,
+  type LocalizedName,
   parseExtensionPoint,
   SDK_VERSION,
   type StaticExtensionManifest,
@@ -75,7 +76,7 @@ import {
   setupInstance,
   warnUpgrades,
 } from "./instance.js";
-import { permissionSetOfSection, readMigrationSql } from "./package.js";
+import { declaredDisplayName, permissionSetOfSection, readMigrationSql } from "./package.js";
 import {
   blockingKeys,
   computePermissionSet,
@@ -252,6 +253,8 @@ export interface InspectedExtension {
   dir: string;
   /** 规范化的权限集合，见 {@link computePermissionSet}。 */
   permissions: PermissionSet;
+  /** The plugin.json `displayName` of the module's plugin directory, if any. */
+  displayName: LocalizedName | null;
 }
 
 /** 计算各插件的权限集合（按插件名索引）。 */
@@ -375,6 +378,8 @@ export interface DeclaredExtensionInfo {
   configurable: boolean;
   /** 启动配置里的部署配置按 schema 校验通过（没有 schema 时恒为 true）。 */
   configValid: boolean;
+  /** The plugin.json `displayName` of the module's plugin directory, if any. */
+  displayName: LocalizedName | null;
 }
 
 /** The extension sources of {@link ExtensionHost.load}, loaded in this order (see {@link ExtensionSource}). */
@@ -530,12 +535,18 @@ export class ExtensionHost {
     );
     for (const manifest of ordered) assertSecretsReachable(manifest);
     const sets = await permissionSets(ordered, dirs);
-    return ordered.map((manifest) => ({
-      source: "config",
-      manifest,
-      dir: dirs.get(manifest.name) as string,
-      permissions: sets.get(manifest.name) as PermissionSet,
-    }));
+    const out: InspectedExtension[] = [];
+    for (const manifest of ordered) {
+      const dir = dirs.get(manifest.name) as string;
+      out.push({
+        source: "config",
+        manifest,
+        dir,
+        permissions: sets.get(manifest.name) as PermissionSet,
+        displayName: (await declaredDisplayName(dir)).displayName ?? null,
+      });
+    }
+    return out;
   }
 
   /**
@@ -590,6 +601,11 @@ export class ExtensionHost {
     string,
     { source: "config"; manifest: ExtensionManifest; set: PermissionSet }
   >();
+  /**
+   * Config-declared extensions' display names, read from their plugin directory's plugin.json at
+   * load (from the startup config, the same on every replica; never written elsewhere).
+   */
+  private readonly declaredDisplayNames = new Map<string, LocalizedName>();
   /** 导入过的插件名 → 来源与包（含未加载的；重名被跳过的一方不在这里）。 */
   private readonly sources = new Map<string, { source: ExtensionSource; sha256: string | null }>();
   private didLoad = false;
@@ -714,6 +730,7 @@ export class ExtensionHost {
         manifest: p.manifest,
         set: p.permissions,
       });
+      if (p.displayName) this.declaredDisplayNames.set(p.manifest.name, p.displayName);
       const valid = configValid.get(p.manifest.name);
       if (valid !== undefined) this.configValidity.set(p.manifest.name, valid);
     }
@@ -767,6 +784,7 @@ export class ExtensionHost {
     this.installLoader = p.installs;
     const entries = await importEntries(p.config ?? [], this.resolveFrom);
     await this.claimNames(entries);
+    await this.noteDisplayNames(entries);
     const dirs = new Map(entries.map((e) => [e.manifest.name, e.dir]));
     const urls = new Map(entries.map((e) => [e.manifest.name, e.url]));
     // 有安装记录时：配置声明的插件若 requires 只能由安装记录满足，先挑出来，等安装记录加载完再解析与加载
@@ -849,6 +867,23 @@ export class ExtensionHost {
       this.log.warn("extensionConfig has keys for extensions that are not loaded", {
         keys: orphans,
       });
+    }
+  }
+
+  /**
+   * Records each config-declared extension's display name from its plugin directory's plugin.json
+   * (spec §2.2); an invalid plugin.json only warns (no display name).
+   */
+  private async noteDisplayNames(entries: ImportedEntry[]): Promise<void> {
+    for (const e of entries) {
+      const { displayName, problem } = await declaredDisplayName(e.dir);
+      if (displayName) this.declaredDisplayNames.set(e.manifest.name, displayName);
+      if (problem !== undefined) {
+        this.log.warn("plugin.json of a config-declared extension is invalid; no display name", {
+          plugin: e.manifest.name,
+          problem,
+        });
+      }
     }
   }
 
@@ -1358,15 +1393,23 @@ export class ExtensionHost {
    * Checks the config UI hints of a loaded module's deployment and org schemas (spec §4.1). Invalid
    * hints never fail the load: the form schemas drop their `x-ui` (`configFormSchema`), one warning
    * per `<name>@<version>` is logged, and the returned text goes into the status detail (null when
-   * every hint is valid). The packer refuses such a package; this covers hand-made ones.
+   * every hint is valid). The packer refuses such a package; this covers hand-made ones. It never
+   * throws (it runs after the instance is active, before its status row is written): a conversion
+   * that throws is warned about and reported in the detail the same way.
    */
   private checkConfigUi(manifest: ExtensionManifest): string | null {
     const parts: string[] = [];
     for (const level of ["deployment", "org"] as const) {
       const schema = manifest.config?.[level];
       if (!schema) continue;
-      const { problems } = configFormSchema(schema as z.ZodTypeAny, level);
-      if (problems.length > 0) parts.push(describeConfigUiProblems(level, problems));
+      try {
+        const { problems } = configFormSchema(schema as z.ZodTypeAny, level);
+        if (problems.length > 0) parts.push(describeConfigUiProblems(level, problems));
+      } catch (err) {
+        parts.push(
+          `${level} config UI hints could not be checked (${err instanceof Error ? err.message : String(err)})`,
+        );
+      }
     }
     if (parts.length === 0) return null;
     const detail = parts.join("; ");
@@ -1650,6 +1693,7 @@ export class ExtensionHost {
         configValid:
           this.configValidity.get(name) ??
           (schema ? schema.safeParse(this.extensionConfig[name] ?? {}).success : true),
+        displayName: this.declaredDisplayNames.get(name) ?? null,
       };
     });
   }

@@ -13,6 +13,9 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { createOrg, PW, type Req, session, startKernel, type TestKernel } from "../helpers/runs.js";
 
 const BADHINTS = fileURLToPath(new URL("../fixtures/plugins/badhints/index.ts", import.meta.url));
+const THROWHINTS = fileURLToPath(
+  new URL("../fixtures/plugins/throwhints/index.ts", import.meta.url),
+);
 
 type Schema = { properties: Record<string, Record<string, unknown>>; "x-ui"?: unknown };
 
@@ -53,7 +56,7 @@ describe("config UI hints: load-time validation, static schemas, issue message k
           marketplaces: { official: { enabled: false } },
           http: { port: 0 },
           roles: ["api", "worker"],
-          extensions: [MODEL_FAKE, BADHINTS],
+          extensions: [MODEL_FAKE, BADHINTS, THROWHINTS],
           extensionPermissions: { autoApprove: true },
         },
         {},
@@ -101,6 +104,21 @@ describe("config UI hints: load-time validation, static schemas, issue message k
     );
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatchObject({ level: "warn", version: "0.3.0" });
+  });
+
+  it("a hint check that throws: the extension still loads with a status row, a warning, a detail", async () => {
+    const rows = await db
+      .selectFrom("extension_replica_status")
+      .select(["state", "detail"])
+      .where("plugin", "=", "throwhints")
+      .execute();
+    expect(rows.map((r) => r.state)).toEqual(["loaded"]);
+    expect(rows[0]?.detail).toMatch(/could not be checked/);
+    const warnings = logs.filter(
+      (l) => l.plugin === "throwhints" && typeof l.msg === "string" && /hints/.test(l.msg),
+    );
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ level: "warn" });
   });
 
   it("valid org hints pass through (x-ui, x-hot); a custom issue names its message key", async () => {

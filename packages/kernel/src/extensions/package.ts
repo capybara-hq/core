@@ -1,11 +1,13 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, posix, relative, resolve as resolvePath } from "node:path";
+import { dirname, join, posix, relative, resolve as resolvePath } from "node:path";
 import {
   checkEntryImports,
   type EntryImport,
   isSafePackagePath,
+  type LocalizedName,
   PLUGIN_MANIFEST_FILE,
   type PluginExtensionSection,
+  parsePluginManifest,
 } from "@capybara-hq/plugin-sdk";
 import { init as lexerInit, parse as lexerParse } from "es-module-lexer";
 import { PluginPackageError, readPluginPackage } from "../catalog/plugin-package.js";
@@ -92,6 +94,8 @@ export interface ExtensionPackage {
   size: number;
   packageJson: Record<string, unknown>;
   section: ExtensionPackageSection;
+  /** The plugin.json `displayName`, when the plugin has one. */
+  displayName?: LocalizedName;
   files: { path: string; size: number }[];
   /** Migration-named SQL directly in the `extension.migrations` directory, sorted by file name. */
   migrationSql: { file: string; sql: string }[];
@@ -223,6 +227,7 @@ export async function readExtensionPackage(
     size: plugin.size,
     packageJson: plugin.packageJson,
     section: { ...ext, name: manifest.name, version: manifest.version },
+    ...(manifest.displayName !== undefined && { displayName: manifest.displayName }),
     files: [...files].map(([path, data]) => ({ path, size: data.byteLength })),
     migrationSql,
   };
@@ -277,6 +282,45 @@ export async function readMigrationSql(
   const out: { file: string; sql: string }[] = [];
   for (const file of names) out.push({ file, sql: await readFile(resolvePath(dir, file), "utf8") });
   return out;
+}
+
+/**
+ * The plugin.json `displayName` of the plugin a config-declared extension module belongs to: the
+ * `.capybara-plugin/plugin.json` beside the nearest `package.json` above the module's directory
+ * `dir`. Nothing when there is no such file; `problem` when it cannot be read or is not a valid
+ * plugin.json (the extension then has no display name of its own).
+ */
+export async function declaredDisplayName(
+  dir: string,
+): Promise<{ displayName?: LocalizedName; problem?: string }> {
+  let root: string | undefined;
+  for (let d = resolvePath(dir); ; ) {
+    try {
+      await readFile(join(d, "package.json"));
+      root = d;
+      break;
+    } catch {
+      // none here: go up
+    }
+    const up = dirname(d);
+    if (up === d) return {};
+    d = up;
+  }
+  let text: string;
+  try {
+    text = await readFile(join(root, PLUGIN_MANIFEST_FILE), "utf8");
+  } catch {
+    return {};
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch (e) {
+    return { problem: `${PLUGIN_MANIFEST_FILE} is not valid JSON: ${errMsg(e)}` };
+  }
+  const m = parsePluginManifest(json);
+  if ("errors" in m) return { problem: m.errors.slice(0, 3).join("; ") };
+  return m.displayName === undefined ? {} : { displayName: m.displayName };
 }
 
 /**

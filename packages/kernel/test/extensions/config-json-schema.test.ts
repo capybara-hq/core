@@ -70,6 +70,30 @@ describe("configFormSchema", () => {
     expect(configFormSchema(rec, "connection").problems.length).toBeGreaterThan(0);
   });
 
+  it("stripConfigUi leaves values alone: default, const, enum and examples keep their x-ui keys", () => {
+    const value = { "x-ui": 1, nested: { "x-ui": 2 } };
+    const js = {
+      type: "object",
+      "x-ui": { label: label("Root") },
+      default: structuredClone(value),
+      const: structuredClone(value),
+      enum: [structuredClone(value)],
+      examples: [structuredClone(value)],
+      properties: {
+        a: { type: "object", default: structuredClone(value), "x-ui": { label: label("A") } },
+      },
+    };
+    stripConfigUi(js);
+    expect(js).toEqual({
+      type: "object",
+      default: value,
+      const: value,
+      enum: [value],
+      examples: [value],
+      properties: { a: { type: "object", default: value } },
+    });
+  });
+
   it("stripConfigUi leaves a property named x-ui alone", () => {
     const js = {
       type: "object",

@@ -1,6 +1,10 @@
 {
   "schemaVersion": 1,
   "name": "model-fake",
+  "displayName": {
+    "zh": "模拟模型",
+    "en": "Fake model"
+  },
   "version": "0.1.0-rc.0",
   "publisher": "Capybara",
   "description": "Deterministic scripted model provider (model-provider@2) for runtime tests, e2e tests and keyless demos",

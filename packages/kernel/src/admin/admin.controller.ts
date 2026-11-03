@@ -1,8 +1,9 @@
-import type { Logger } from "@capybara-hq/plugin-sdk";
+import type { LocalizedName, Logger } from "@capybara-hq/plugin-sdk";
 import { Controller, Get, HttpCode, Inject, Param, Patch, Post, Put } from "@nestjs/common";
 import { z } from "zod";
 import { CatalogRequestsService } from "../catalog/requests.service.js";
 import { ExtensionAdmin } from "../extensions/admin-view.js";
+import { ExtensionDisplayNames } from "../extensions/display-name.js";
 import { extensionNeedsAction } from "../extensions/permission-view.js";
 import { type Account, AccountsService } from "../identity/accounts.js";
 import { MAX_PASSWORD_LENGTH } from "../identity/login.js";
@@ -99,6 +100,7 @@ export class AdminController {
     @Inject(ExtensionAdmin) private readonly plugins: ExtensionAdmin,
     @Inject(ProviderRegistry) private readonly registry: ProviderRegistry,
     @Inject(CatalogRequestsService) private readonly catalogRequests: CatalogRequestsService,
+    @Inject(ExtensionDisplayNames) private readonly displayNames: ExtensionDisplayNames,
   ) {}
 
   /** 后台概览的四个数字（只读计数，不含任何对话内容）。 */
@@ -210,11 +212,12 @@ export class AdminController {
 
   /**
    * 模型供应商与模型（后台「模型」页）：每个供应商带状态，列模型失败的标 `error`，不影响其他供应商；
-   * 一并返回价格表与币种（改价仍走 `PUT /admin/model-prices`）。
+   * 一并返回价格表与币种（改价仍走 `PUT /admin/model-prices`）。Each provider carries its extension's
+   * display name (null when it has none).
    */
   @Get("models")
   async getModels(): Promise<{
-    providers: ProviderStatus[];
+    providers: (ProviderStatus & { displayName: LocalizedName | null })[];
     prices: ModelPrice[];
     currency: string;
   }> {
@@ -222,7 +225,11 @@ export class AdminController {
       this.registry.listWithStatus(),
       this.getModelPrices(),
     ]);
-    return { providers, ...prices };
+    const names = await this.displayNames.many(providers.map((p) => p.plugin));
+    return {
+      providers: providers.map((p) => ({ ...p, displayName: names.get(p.plugin) ?? null })),
+      ...prices,
+    };
   }
 
   /** 模型价格表（每百万 token）与币种（部署设置 `priceCurrency`）。 */

@@ -29,7 +29,13 @@ const isObj = (v: unknown): v is Record<string, unknown> =>
 /** Keywords whose value maps names to sub-schemas: their keys are field names, not keywords. */
 const SCHEMA_MAPS = new Set(["properties", "patternProperties", "$defs", "definitions"]);
 
-/** Removes every `x-ui` from a JSON Schema in place (a property named `x-ui` is kept). */
+/** Keywords whose value is data, not a schema: never recursed into. */
+const VALUE_KEYWORDS = new Set(["default", "const", "enum", "examples"]);
+
+/**
+ * Removes every `x-ui` from a JSON Schema in place (a property named `x-ui` is kept, and so are
+ * values: `default`, `const`, `enum` and `examples` are left as they are).
+ */
 export function stripConfigUi(node: unknown): void {
   if (Array.isArray(node)) {
     for (const n of node) stripConfigUi(n);
@@ -38,6 +44,7 @@ export function stripConfigUi(node: unknown): void {
   if (!isObj(node)) return;
   delete node["x-ui"];
   for (const [k, v] of Object.entries(node)) {
+    if (VALUE_KEYWORDS.has(k)) continue;
     if (SCHEMA_MAPS.has(k) && isObj(v)) for (const child of Object.values(v)) stripConfigUi(child);
     else stripConfigUi(v);
   }

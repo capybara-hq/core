@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import type { PluginExtensionSection } from "@capybara-hq/plugin-sdk";
+import type { LocalizedName, PluginExtensionSection } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { core, z } from "zod";
 import type { KernelAppOptions } from "../app.js";
@@ -42,6 +42,7 @@ import {
   secretPathsOf,
   setDeep,
 } from "./deployment-config-store.js";
+import { ExtensionDisplayNames } from "./display-name.js";
 import { ExtensionHost } from "./host.js";
 import { ExtensionInstalls } from "./installs.js";
 import { ExtensionLifecycle } from "./lifecycle.js";
@@ -81,6 +82,8 @@ export interface DeploymentConfigField {
 /** The response of `GET / PUT /api/v1/admin/extensions/:name/config`. */
 export interface DeploymentConfigView {
   plugin: string;
+  /** The plugin's display name (`ExtensionDisplayNames`); null when it has none. */
+  displayName: LocalizedName | null;
   version: string;
   /** 插件声明了部署级配置。 */
   configurable: boolean;
@@ -146,6 +149,7 @@ export class ExtensionDeploymentConfigService {
     @Inject(KERNEL_BUS) private readonly bus: PublishBus,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(KERNEL_APP_OPTIONS) options: Pick<KernelAppOptions, "env" | "extensionConfigSources">,
+    @Inject(ExtensionDisplayNames) private readonly displayNames: ExtensionDisplayNames,
   ) {
     const env = options.env ?? process.env;
     this.sources =
@@ -186,8 +190,11 @@ export class ExtensionDeploymentConfigService {
   /** Admin view; an extension unknown to the deployment -> `extension.not_found`. */
   async view(plugin: string): Promise<DeploymentConfigView> {
     const info = await this.info(plugin);
-    const stored = await this.readStored(plugin, info);
-    return this.render(plugin, info, stored);
+    const [stored, displayName] = await Promise.all([
+      this.readStored(plugin, info),
+      this.displayNames.get(plugin),
+    ]);
+    return this.render(plugin, info, stored, displayName);
   }
 
   /** `REPEATABLE READ` read-only: every stored field from one snapshot. */
@@ -279,7 +286,7 @@ export class ExtensionDeploymentConfigService {
         });
       }
     }
-    return this.render(plugin, info, stored);
+    return this.render(plugin, info, stored, await this.displayNames.get(plugin));
   }
 
   @Transactional()
@@ -371,7 +378,12 @@ export class ExtensionDeploymentConfigService {
     return info;
   }
 
-  private render(plugin: string, info: DeploymentSchemaInfo, stored: Obj): DeploymentConfigView {
+  private render(
+    plugin: string,
+    info: DeploymentSchemaInfo,
+    stored: Obj,
+    displayName: LocalizedName | null,
+  ): DeploymentConfigView {
     const fileValue = this.fileConfig()[plugin];
     const sources = this.sources[plugin];
     const raw = mergeDeploymentConfig(
@@ -414,6 +426,7 @@ export class ExtensionDeploymentConfigService {
     });
     return {
       plugin,
+      displayName,
       version: info.version,
       configurable: info.fields.length > 0,
       fields,

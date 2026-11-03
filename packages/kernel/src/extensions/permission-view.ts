@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { LocalizedName } from "@capybara-hq/plugin-sdk";
 import { pluginSchemaName } from "../ctx/create-ctx.js";
 import { isDestructiveSql, splitSqlStatements } from "../db/sql-statements.js";
 import { type PermissionSet, permissionKeys, WARNINGS_KEY_PREFIX } from "./permission-set.js";
@@ -250,6 +251,8 @@ export function extensionNeedsAction(status: DeploymentExtensionStatus): boolean
 /** One item of the admin extension list (`GET /api/v1/admin/extensions`). */
 export interface AdminExtensionView {
   name: string;
+  /** The plugin's display name (`ExtensionDisplayNames`); null when it has none. */
+  displayName: LocalizedName | null;
   version: string;
   source: ExtensionSource;
   /** 安装记录的包；配置声明为 null。 */

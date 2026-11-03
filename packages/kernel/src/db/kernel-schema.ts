@@ -865,6 +865,12 @@ export interface ExtensionPackagesTable {
   source_ref: string;
   uploaded_by: string | null;
   created_at: Ts;
+  /** 0065: the plugin.json `displayName`; null without one and for packages stored before 0065. */
+  display_name: ColumnType<
+    { zh: string; en: string } | null,
+    string | null | undefined,
+    string | null
+  >;
 }
 
 /** 0030, renamed in 0041: package bytes when there is no object storage. */
