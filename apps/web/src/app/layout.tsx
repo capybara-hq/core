@@ -6,6 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getTranslations } from "next-intl/server";
 import type { ReactNode } from "react";
 import { DesignRoot } from "../components/design-root";
+import { QueryProvider } from "../components/QueryProvider";
 import { isAppLocale, routing } from "../i18n/routing";
 // Server components' loaders (`apiFetch`) reach the kernel through the server transport.
 import "../lib/server/register";
@@ -49,7 +50,9 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
       </head>
       <body>
         <NextIntlClientProvider>
-          <DesignRoot locale={locale}>{children}</DesignRoot>
+          <DesignRoot locale={locale}>
+            <QueryProvider>{children}</QueryProvider>
+          </DesignRoot>
         </NextIntlClientProvider>
       </body>
     </html>
