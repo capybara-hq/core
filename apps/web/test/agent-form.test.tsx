@@ -1,16 +1,16 @@
-import { cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import NewAgentPage from "../src/app/(app)/agents/new/page";
-import AgentsPage from "../src/app/(app)/agents/page";
 import { SetupContext } from "../src/components/shell/setup";
 import { agentFormDefaults, renderEditAgent, renderNewAgent } from "./support/agents";
 import { json as apiJson, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME, renderPage } from "./support/render";
-import { expectNoFirstPaintFetch, onServer, renderRoute } from "./support/server";
+import { expectNoFirstPaintFetch, onServer } from "./support/server";
 import { NOT_READY } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -69,6 +69,9 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
+
+/** Lets pending reads and effects run (a read after mount would show up in the calls). */
+const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
 
 describe("新建 Agent 页（FormPage）", () => {
   it("使用 FormPage 模板，分组「基本信息」「模型」，ActionRow 中「保存」为主操作", async () => {
@@ -372,24 +375,64 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
 
   it("/agents: the list is the first paint, guests included", async () => {
     const browser = expectNoFirstPaintFetch();
-    const { calls } = await renderRoute(
-      () => AgentsPage(),
+    const { calls } = await renderRouteWithCache(
+      "/agents",
       { [`GET ${ORG}/agents`]: ok({ agents: [agent("ag1", "Echo agent")] }) },
       { me: as("guest") },
     );
     expect(calls.map((c) => c.url)).toContain(`${ORG}/agents`);
     expect(screen.getByText("Echo agent")).toBeTruthy();
     expect(screen.queryByRole("link", { name: en.agents.new })).toBeNull();
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/agents: without a current org it renders nothing; while the org is in setup it redirects home", async () => {
-    const none = await renderRoute(() => AgentsPage(), {}, { me: { ...ME, currentOrgId: null } });
+  it("/agents: without a current org it renders nothing; while the org is in setup it goes home", async () => {
+    const none = await renderRouteWithCache("/agents", {}, { me: { ...ME, currentOrgId: null } });
     expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
     expect(template("ListPage")).toBeNull();
-    await expect(renderRoute(() => AgentsPage(), {}, { readiness: NOT_READY })).rejects.toThrow(
-      "REDIRECT /",
+    cleanup();
+    stubApi({});
+    await renderRouteWithCache(
+      "/agents",
+      { [`GET ${ORG}/agents`]: ok({ agents: [] }) },
+      { readiness: NOT_READY },
     );
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+    expect(template("ListPage")).toBeNull();
+  });
+
+  it("/agents: a first render from the hydrated cache makes no browser read", async () => {
+    const browser = stubApi({});
+    await renderRouteWithCache("/agents", {
+      [`GET ${ORG}/agents`]: ok({ agents: [agent("ag1", "Echo agent")] }),
+    });
+    expect(screen.getByText("Echo agent")).toBeTruthy();
+    await settle();
+    expect(browser.filter((c) => c.method === "GET")).toEqual([]);
+  });
+
+  it("/agents: an empty cache shows the template's loading state, then the data", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    await renderRouteEmptyCache("/agents", {
+      [`GET ${ORG}/agents`]: async () => {
+        await held;
+        return apiJson(200, { agents: [agent("ag1", "Echo agent")] });
+      },
+    });
+    const page = await vi.waitFor(() => {
+      const el = template("ListPage");
+      if (el === null) throw new Error("no page yet");
+      return el as HTMLElement;
+    });
+    expect(page.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByText("Echo agent")).toBeNull();
+    await act(async () => release());
+    expect(await screen.findByText("Echo agent")).toBeTruthy();
+    await vi.waitFor(() => expect(page.querySelector("[aria-busy='true']")).toBeNull());
   });
 
   it("/agents/new: models, connectors and skills are in the first paint", async () => {

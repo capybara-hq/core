@@ -35,7 +35,7 @@ export function matchesAgent(a: Agent, query: string): boolean {
  * conversation with that agent picked (`/chat?agent=`, created on the first send). The API returns
  * no last-use time, so there is no trailing text.
  */
-export function AgentRow({ agent, onChanged }: { agent: Agent; onChanged?(): void }) {
+export function AgentRow({ agent }: { agent: Agent }) {
   const t = useTranslations("agents");
   const router = useRouter();
   const session = useContext(SessionContext);
@@ -79,7 +79,6 @@ export function AgentRow({ agent, onChanged }: { agent: Agent; onChanged?(): voi
           ownerAccountId={agent.ownerAccountId}
           needsReassignment={agent.needsReassignment === true}
           onClose={() => setReassigning(false)}
-          {...(onChanged ? { onDone: onChanged } : {})}
         />
       ) : null}
     </>

@@ -1,18 +1,20 @@
 "use client";
 
 import { Button, Dialog, Field, Select, Skeleton, Text, useToast } from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { reassignAgentOwner } from "../lib/agents";
-import { ApiClientError } from "../lib/api";
-import { listMembers } from "../lib/members";
+import { useAppMutation } from "../lib/query/define";
+import { keys } from "../lib/query/keys";
+import { membersQuery } from "../lib/query/members";
 import { useErrorMessage } from "../lib/use-error-message";
-import { useLoad } from "../lib/use-load";
 import { FormError } from "./form-error";
 
 /**
  * 更换负责人 (org admins, `agents.manage`): pick a member of the org (anonymous guests can't own
- * agents, the kernel refuses them) and `POST …/agents/:id/owner`. `onDone` after success.
+ * agents, the kernel refuses them) and `POST …/agents/:id/owner`, which invalidates the agents list
+ * and the agent. `onDone` after success.
  */
 export function ReassignOwnerDialog({
   orgId,
@@ -34,30 +36,21 @@ export function ReassignOwnerDialog({
   const tc = useTranslations("common");
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const { state } = useLoad(
-    () => listMembers(orgId).then((r) => r.members.filter((m) => !m.anonymous)),
-    [orgId],
-  );
-  const [picked, setPicked] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const members = state.kind === "ready" ? state.data : [];
-  const value =
-    picked ?? (members.some((m) => m.account.id === ownerAccountId) ? ownerAccountId : "");
-  const submit = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await reassignAgentOwner(orgId, agentId, value);
+  const membersQ = useQuery(membersQuery(orgId));
+  const reassign = useAppMutation({
+    fn: (accountId: string) => reassignAgentOwner(orgId, agentId, accountId),
+    invalidates: () => [keys.org(orgId).agents(), keys.org(orgId).agent(agentId)],
+    onSuccess: () => {
       toast.success(t("done"));
       onDone?.();
       onClose();
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setBusy(false);
-    }
-  };
+    },
+  });
+  const [picked, setPicked] = useState<string | null>(null);
+  const members = (membersQ.data?.members ?? []).filter((m) => !m.anonymous);
+  const value =
+    picked ?? (members.some((m) => m.account.id === ownerAccountId) ? ownerAccountId : "");
+  const error = reassign.error ? errorMessage(reassign.error) : null;
   return (
     <Dialog
       open
@@ -72,19 +65,19 @@ export function ReassignOwnerDialog({
           </Button>
           <Button
             variant="primary"
-            loading={busy}
+            loading={reassign.isPending}
             disabled={value === "" || (value === ownerAccountId && !needsReassignment)}
-            onClick={() => void submit()}
+            onClick={() => reassign.mutate(value)}
           >
             {t("submit")}
           </Button>
         </>
       }
     >
-      {state.kind === "loading" ? (
+      {membersQ.data === undefined && membersQ.error === null ? (
         <Skeleton rows={2} />
-      ) : state.kind === "error" ? (
-        <FormError message={errorMessage(new ApiClientError(0, state.code, ""))} />
+      ) : membersQ.data === undefined ? (
+        <FormError message={errorMessage(membersQ.error)} />
       ) : members.length === 0 ? (
         <Text tone="muted">{t("none")}</Text>
       ) : (

@@ -24,6 +24,8 @@ export const keys = {
       readiness: (): readonly unknown[] => [...all, "readiness"],
       /** The org's agents list. */
       agents: (): readonly unknown[] => [...all, "agents"],
+      /** One agent. */
+      agent: (agentId: string): readonly unknown[] => [...all, "agent", agentId],
       /** Every view of the sidebar's conversation groups (an invalidation prefix). */
       conversationGroupsAll: (): readonly unknown[] => [...all, "conversationGroups"],
       /** The sidebar's conversation groups of one view (`"default"`: what the layout reads). */

@@ -213,10 +213,11 @@ describe("the route test helpers", () => {
     expect(client.getQueryData(["org", "o1", "agents"])).toEqual({ agents: [agent] });
   });
 
-  it("renderRouteEmptyCache starts from an empty browser cache", async () => {
+  it("renderRouteEmptyCache starts from an empty browser cache: the view reads in the browser", async () => {
     req.headers = new Headers({ "x-cap-path": "/agents" });
-    const { client, findAllByText } = await renderRouteEmptyCache("/agents", agentsRoute);
+    const { calls, client, findAllByText } = await renderRouteEmptyCache("/agents", agentsRoute);
     expect(await findAllByText("Helper agent")).not.toHaveLength(0);
-    expect(client.getQueryData(["org", "o1", "agents"])).toBeUndefined();
+    expect(calls.map(pathOf)).toContain(`${O}/agents`);
+    expect(client.getQueryData(["org", "o1", "agents"])).toEqual({ agents: [agent] });
   });
 });

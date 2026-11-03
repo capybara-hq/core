@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import CatchAllPage from "../src/app/(app)/[...rest]/page";
-import AgentsPage from "../src/app/(app)/agents/page";
 import NotFound from "../src/app/(app)/not-found";
 import HomePage from "../src/app/(app)/page";
 import LoginPage from "../src/app/(auth)/login/page";
@@ -15,6 +14,7 @@ import { activeNavOf } from "../src/components/shell/nav";
 import { navigateBrowser } from "../src/lib/browser";
 import type { Me } from "../src/lib/session";
 import { resetNavigation, router } from "./support/navigation";
+import { renderRouteWithCache } from "./support/query";
 import { ME, renderPage } from "./support/render";
 import { expectNoFirstPaintFetch, onServer, renderRoute } from "./support/server";
 import { frameElement, NOT_READY, renderFrame, shellOf } from "./support/shell";
@@ -316,8 +316,8 @@ describe("(app) 页面模板", () => {
 
   it("Agents page: object rows with the visibility in the meta line (no chip) and the row action Chat", async () => {
     const calls = stubApi({});
-    await renderRoute(
-      () => AgentsPage(),
+    await renderRouteWithCache(
+      "/agents",
       {
         "GET /api/v1/orgs/o1/agents": () => json(200, { agents: [agentRow("ag1", "Echo agent")] }),
       },
@@ -343,7 +343,7 @@ describe("(app) 页面模板", () => {
 
   it("Agents page: tabs with counts (all / mine / shared) and a local search", async () => {
     stubApi({});
-    await renderRoute(() => AgentsPage(), {
+    await renderRouteWithCache("/agents", {
       "GET /api/v1/orgs/o1/agents": () =>
         json(200, {
           agents: [
@@ -370,7 +370,7 @@ describe("(app) 页面模板", () => {
 
   it("Agents page: the empty state is one sentence and the primary action", async () => {
     stubApi({});
-    await renderRoute(() => AgentsPage(), {
+    await renderRouteWithCache("/agents", {
       "GET /api/v1/orgs/o1/agents": () => json(200, { agents: [] }),
     });
     expect(await screen.findByText(en.agents.empty)).toBeTruthy();

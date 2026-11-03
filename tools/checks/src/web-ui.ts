@@ -707,7 +707,6 @@ export interface QueryPending {
 export const QUERY_PENDING: readonly QueryPending[] = [
   { path: "app/(app)/agents/[id]/page.tsx", reason: "pending migration: Task 11" },
   { path: "app/(app)/agents/new/page.tsx", reason: "pending migration: Task 11" },
-  { path: "app/(app)/agents/page.tsx", reason: "pending migration: Task 11" },
   { path: "app/(app)/channels/[id]/page.tsx", reason: "pending migration: Task 11" },
   { path: "app/(app)/channels/[id]/view.tsx", reason: "pending migration: Task 11" },
   { path: "app/(app)/channels/new/page.tsx", reason: "pending migration: Task 11" },
@@ -721,7 +720,6 @@ export const QUERY_PENDING: readonly QueryPending[] = [
   { path: "app/(app)/view.tsx", reason: "pending migration: Task 11" },
   { path: "components/AgentForm.tsx", reason: "pending migration: Task 11" },
   { path: "components/AgentSkills.tsx", reason: "pending migration: Task 11" },
-  { path: "components/ReassignOwnerDialog.tsx", reason: "pending migration: Task 11" },
   { path: "app/(app)/account/connections/page.tsx", reason: "pending migration: Task 12" },
   { path: "app/(app)/account/connections/view.tsx", reason: "pending migration: Task 12" },
   { path: "app/(app)/account/grants/page.tsx", reason: "pending migration: Task 12" },

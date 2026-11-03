@@ -7,7 +7,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zh from "../messages/zh.json";
 import EditAgentPage from "../src/app/(app)/agents/[id]/page";
 import NewAgentPage from "../src/app/(app)/agents/new/page";
-import AgentsPage from "../src/app/(app)/agents/page";
 import CatalogInstallPage from "../src/app/(app)/catalog/[itemId]/install/page";
 import CatalogItemPage from "../src/app/(app)/catalog/[itemId]/page";
 import CatalogPage from "../src/app/(app)/catalog/page";
@@ -38,6 +37,7 @@ import type { OrgRole } from "../src/lib/members";
 import type { Me } from "../src/lib/session";
 import { agentFormDefaults } from "./support/agents";
 import { resetNavigation } from "./support/navigation";
+import { renderRouteWithCache } from "./support/query";
 import { ME, renderPage } from "./support/render";
 import { type Routes, renderRoute } from "./support/server";
 
@@ -292,7 +292,7 @@ describe("role-dependent actions", () => {
     it(`/agents · ${role}: 新建 Agent ${canCreate ? "shown" : "hidden"}`, async () => {
       routes = { [`GET ${O}/agents`]: { agents: [] } };
       resetNavigation("/agents");
-      await renderRoute(() => AgentsPage(), served(), { locale: "zh", me: meAs(role) });
+      await renderRouteWithCache("/agents", served(), { locale: "zh", me: meAs(role) });
       await screen.findByText(zh.agents.empty);
       expect(screen.queryAllByRole("link", { name: zh.agents.new }).length > 0).toBe(canCreate);
     });
@@ -441,7 +441,7 @@ describe("agents: edit, read-only and 更换负责人", () => {
     it(`agent row · ${role}: 编辑 only through the name, 更换负责人 ${admin ? "as a button" : "hidden"}`, async () => {
       routes = { [`GET ${O}/agents`]: { agents: [AGENT("ag1", "a1")] } };
       resetNavigation("/agents");
-      await renderRoute(() => AgentsPage(), served(), { locale: "zh", me: meAs(role) });
+      await renderRouteWithCache("/agents", served(), { locale: "zh", me: meAs(role) });
       await screen.findByText("Agent ag1");
       // 开始会话 is the row's action; the menu never repeats it
       expect(screen.getAllByRole("button", { name: zh.agents.chat })).toHaveLength(1);
@@ -457,6 +457,28 @@ describe("agents: edit, read-only and 更换负责人", () => {
       );
     });
   }
+});
+
+describe("agents list: 更换负责人", () => {
+  it("reassign invalidates the agents list and the agent: the list is read again", async () => {
+    routes = {
+      [`GET ${O}/agents`]: { agents: [AGENT("ag1", "a1")] },
+      [`GET ${O}/members`]: MEMBERS,
+      [`POST ${O}/agents/ag1/owner`]: { agent: AGENT("ag1", "a2") },
+    };
+    resetNavigation("/agents");
+    await renderRouteWithCache("/agents", served(), { locale: "zh", me: meAs("admin") });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: zh.agents.reassign.action }));
+    const dialog = await screen.findByRole("dialog", { name: zh.agents.reassign.title });
+    const select = await within(dialog).findByRole("combobox", { name: zh.agents.reassign.owner });
+    await user.selectOptions(select, "a2");
+    calls = [];
+    await user.click(within(dialog).getByRole("button", { name: zh.agents.reassign.submit }));
+    await vi.waitFor(() =>
+      expect(calls).toEqual([`POST ${O}/agents/ag1/owner`, `GET ${O}/agents`]),
+    );
+  });
 });
 
 describe("trajectories: only the tabs the role can use", () => {

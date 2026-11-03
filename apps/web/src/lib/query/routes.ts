@@ -78,7 +78,10 @@ export const ROUTES: readonly RouteEntry[] = [
   { pattern: "/admin/models", queries: () => [], none: "pending migration" },
   { pattern: "/admin/orgs", queries: () => [], none: "pending migration" },
   { pattern: "/admin/settings", queries: () => [], none: "pending migration" },
-  { pattern: "/agents", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/agents",
+    queries: ({ orgId }) => (orgId === null ? [] : [q(agentsQuery(orgId))]),
+  },
   { pattern: "/agents/[id]", queries: () => [], none: "pending migration" },
   { pattern: "/agents/new", queries: () => [], none: "pending migration" },
   { pattern: "/bind/[token]", queries: () => [], none: "pending migration" },
