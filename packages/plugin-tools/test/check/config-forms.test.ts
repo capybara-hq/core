@@ -1,4 +1,5 @@
-import { readdir } from "node:fs/promises";
+import { cp, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { checkConfigForms } from "../../src/check/config-forms.js";
@@ -40,10 +41,20 @@ describe("checkConfigForms", () => {
   }, 60_000);
 
   it("a private plugin needs no labels", async () => {
-    // plugin-config-ui is private: its org field has a label anyway, and nothing about labels is
-    // reported for the deployment fields either
-    const f = await checkConfigForms([fixture("plugin-config-ui")]);
-    expect(f.some((x) => x.rule === "plugin-config-labels")).toBe(false);
+    // the same extension as plugin-config-labels (unlabelled fields), in a private package
+    expect(await checkConfigForms([fixture("plugin-config-labels-private")])).toEqual([]);
+  }, 60_000);
+
+  it("a malformed package.json is left to Plugin pack", async () => {
+    const dir = await mkdtemp(join(fixture("."), ".tmp-bad-pkg-"));
+    try {
+      await cp(fixture("plugin-config-labels/src"), join(dir, "src"), { recursive: true });
+      await writeFile(join(dir, "package.json"), "{ not json");
+      // esbuild cannot bundle next to a malformed package.json: no finding here, no crash
+      expect(await checkConfigForms([dir])).toEqual([]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   }, 60_000);
 
   it("valid, labelled hints pass; plugins without an extension or config are skipped", async () => {

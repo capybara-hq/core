@@ -8,6 +8,19 @@ import {
 import { importPluginExtension } from "../pack/pack.js";
 import type { Finding } from "./source.js";
 
+/** A plugin's package.json, or undefined when it is missing or not a JSON object. */
+function readPackageJson(file: string): Record<string, unknown> | undefined {
+  if (!existsSync(file)) return undefined;
+  try {
+    const pkg = JSON.parse(readFileSync(file, "utf8")) as unknown;
+    return typeof pkg === "object" && pkg !== null && !Array.isArray(pkg)
+      ? (pkg as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Config forms (extension config forms spec §10): every plugin with an extension (`src/index.ts`)
  * is bundled and imported the way the packer does, and its deployment and org config schemas are
@@ -39,11 +52,9 @@ export async function checkConfigForms(pluginDirs: string[]): Promise<Finding[]>
         message: formatConfigSchemaProblem(p),
       });
     }
-    const pkgFile = join(dir, "package.json");
-    const pkg = existsSync(pkgFile)
-      ? (JSON.parse(readFileSync(pkgFile, "utf8")) as Record<string, unknown>)
-      : {};
-    if (pkg.private === true) continue;
+    const pkg = readPackageJson(join(dir, "package.json"));
+    // a missing or malformed package.json is "Plugin pack"'s finding
+    if (pkg === undefined || pkg.private === true) continue;
     for (const level of ["deployment", "org"] as const) {
       const schema = schemas[level];
       if (schema === undefined) continue;
