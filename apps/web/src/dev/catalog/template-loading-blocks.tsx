@@ -2,6 +2,8 @@
 
 import {
   Card,
+  type Column,
+  DataTable,
   DetailPage,
   type HeaderAction,
   InboxPage,
@@ -73,6 +75,13 @@ const sections: ReactNode = (
 );
 
 const DETAIL_HEADER = { path: PATH, title: "研究助手", actions: ACTIONS };
+// The loading headers draw what the reference sources draw: a title bar and action blocks (the
+// page does not know its title or actions yet); the tabs row is the template's own.
+const loadingHeader = (path: typeof PATH, actions: number) => ({
+  path,
+  title: "",
+  loading: { title: true, actions, tabs: 0 },
+});
 
 function detailBlocks(): ReactNode {
   return (
@@ -84,7 +93,7 @@ function detailBlocks(): ReactNode {
       </RefBlock>
       <RefBlock id="template-detail-loading" width={W} height={H}>
         <DetailPage
-          header={DETAIL_HEADER}
+          header={loadingHeader(PATH, 2)}
           tabs={TABS}
           inspector={inspector}
           loading={{ inspector: true }}
@@ -108,7 +117,10 @@ function overviewBlocks(): ReactNode {
         <OverviewPage header={{ ...OVERVIEW_HEADER, metrics: METRICS }}>{sections}</OverviewPage>
       </RefBlock>
       <RefBlock id="template-overview-loading" width={W} height={H}>
-        <OverviewPage header={OVERVIEW_HEADER} loading={{ stats: 4, sections: 2 }} />
+        <OverviewPage
+          header={loadingHeader(PATH.slice(0, 1), 1)}
+          loading={{ stats: 4, sections: 2 }}
+        />
       </RefBlock>
     </>
   );
@@ -137,7 +149,49 @@ function inboxBlocks(): ReactNode {
         </InboxPage>
       </RefBlock>
       <RefBlock id="template-inbox-loading" width={W} height={H}>
-        <InboxPage header={INBOX_HEADER} filters={FILTERS} loading={{ rows: 4 }} />
+        <InboxPage
+          header={loadingHeader(PATH.slice(0, 1), 1)}
+          filters={FILTERS}
+          loading={{ rows: 4 }}
+        />
+      </RefBlock>
+    </>
+  );
+}
+
+// The inbox whose list is a DataTable (the real /inbox: rowHeight="dense", framed={false}).
+type Item = { id: string; title: string };
+const RECORDS: Item[] = ITEMS.map((title, i) => ({ id: String(i), title }));
+const COLUMNS: Column<Item>[] = [{ key: "title", header: "事项", cell: (r) => r.title }];
+const TABLE = { label: "待处理", columns: COLUMNS, rowHeight: "dense", framed: false } as const;
+
+function inboxRecordsBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="template-inbox-default-records" width={W} height={H}>
+        <InboxPage
+          header={INBOX_HEADER}
+          filters={FILTERS}
+          list={
+            <DataTable<Item>
+              label={TABLE.label}
+              rowHeight="dense"
+              framed={false}
+              columns={COLUMNS}
+              rows={RECORDS}
+              rowKey={(r) => r.id}
+            />
+          }
+        >
+          {sections}
+        </InboxPage>
+      </RefBlock>
+      <RefBlock id="template-inbox-loading-records" width={W} height={H}>
+        <InboxPage
+          header={loadingHeader(PATH.slice(0, 1), 1)}
+          filters={FILTERS}
+          loading={{ list: "records", table: TABLE }}
+        />
       </RefBlock>
     </>
   );
@@ -146,5 +200,10 @@ function inboxBlocks(): ReactNode {
 export const TEMPLATE_LOADING_BLOCKS = {
   "template-detail": detailBlocks,
   "template-overview": overviewBlocks,
-  "template-inbox": inboxBlocks,
+  "template-inbox": () => (
+    <>
+      {inboxBlocks()}
+      {inboxRecordsBlocks()}
+    </>
+  ),
 } as const;

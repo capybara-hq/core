@@ -854,11 +854,3 @@ a.cb-object-name:hover {
   flex-direction: column;
   gap: var(--cb-space-2);
 }
-.cb-loading-row {
-  display: flex;
-  gap: var(--cb-space-3);
-  align-items: center;
-}
-.cb-loading-row > .cb-skeleton-text {
-  flex: none;
-}

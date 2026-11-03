@@ -365,7 +365,7 @@ States: `page`
 - PageTabs: Summary · Runs · Config · Versions · Permissions · Audit (pick per object type), with counts following in faint.
 - Content: sections on the `panel` ground with radius `md` (no border), section header h2 + actions on the right, `space.4` between sections.
 - Inspector: grouped properties, group title small muted, key 8ch wide muted, value single line with ellipsis.
-- **Loading** (`DetailPage.loading`, `{ inspector?, blocks? }`; spec §7.1 of the web query cache design): every region keeps its box, so nothing moves when the data arrives. The header is the PageHeader's loading state (§4.2), the PageTabs stay real (the tabs are static per page), the content is `blocks` card-shaped blocks (default 2) in place of `children`: the `panel` card of the sections above, its head band holding a 30% `body` text slot and its body three text slots (100%, 70%, 55%) `space.2` apart. The inspector is drawn as placeholders (a `small` group title and four key / value rows of `body` slots) only when `inspector` is set; an inspector the page passes for real stays. One busy announcement for the page (§6.29). Nothing animates.
+- **Loading** (`DetailPage.loading`, `{ inspector?, blocks? }`; spec §7.1 of the web query cache design): every region keeps its box, so nothing moves when the data arrives. The header is the PageHeader's loading state (§4.2), the PageTabs stay real (the tabs are static per page), the content is `blocks` card-shaped blocks (default 2) in place of `children`: the `panel` card of the sections above, its head band holding a 30% `body` text slot and its body three text slots (100%, 70%, 55%) `space.2` apart. The inspector is drawn as placeholders only when `inspector` is set: KeyValue's own box (§6.5, the same `dl`) with four rows, each a `body` slot for the 8ch key and a 55% `body` slot for the value (a group title is not drawn: the loaded inspector's groups are the page's); an inspector the page passes for real stays. One busy announcement for the page (§6.29). Nothing animates.
 
 <!-- states: template-detail -->
 States: `default`, `loading`
@@ -377,6 +377,7 @@ States: `default`, `loading`
 | content | loading | max-width | layout.content |
 | loading-card | loading | border-radius | radius.md |
 | skeleton-text[data-size=body] | loading | height | type.body.line |
+| loading-inspector-row | loading | height | type.body.line |
 
 ### 5.3 Form (T4)
 - PageHeader: path ending with the object's name (`new` for a new one); title "Create X" + draft badge; only auxiliary actions on the right (such as "Import from YAML").
@@ -450,16 +451,18 @@ States: `default`, `loading`
 
 ### 5.7 Inbox (T6)
 - Rail (240): the filters above the list (`filters`, then `list`); content: the selected item; an optional inspector (400).
-- **Loading** (`InboxPage.loading`, `{ rows? }`): the header is its loading state (§4.2); the rail's `filters` stay real (they are static); the list is `rows` rows (default 4) in the 64 px row of §6.17: a 36 px mark and two text slots (a `body` one at 55%, a `small` one at 30%); the content is one card-shaped block (§5.2) in place of `children`. A real `inspector` stays. One busy announcement (§6.29). Nothing animates.
+- **Loading** (`InboxPage.loading`, `{ rows? }`): the header is its loading state (§4.2); the rail's `filters` stay real (they are static); the list is `rows` rows (default 4) in the object list's own container (§6.17: the same border, radius and first row) in the 64 px row: a 36 px mark and two text slots (a `body` one at 55%, a `small` one at 30%); `loading.list: "records"` (with `loading.table`: `label`, `columns`, `rowHeight`, `framed`) draws the DataTable's loading state (§6.6) in the caller's table shape instead, for the inbox pages whose list is a DataTable (`rowHeight="dense" framed={false}`); the content is one card-shaped block (§5.2) in place of `children`. A real `inspector` stays. One busy announcement (§6.29). Nothing animates.
 
 <!-- states: template-inbox -->
-States: `default`, `loading`
+States: `default`, `loading`, `default-records`, `loading-records`
 
 <!-- size-table: template-inbox -->
 | Part | State | Property | Value |
 |---|---|---|---|
 | content | default | max-width | layout.content |
 | content | loading | max-width | layout.content |
+| content | default-records | max-width | layout.content |
+| content | loading-records | max-width | layout.content |
 | loading-row | loading | height | 64 |
 | skeleton-box[data-box=mark] | loading | height | 36 |
 

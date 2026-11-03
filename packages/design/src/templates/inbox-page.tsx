@@ -8,6 +8,7 @@ import {
 } from "../display/index";
 import { useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
+import { type Column, DataTable } from "../table/index";
 import { LoadingCards, loadingHeader, TemplateHead } from "./frame";
 
 /** 64 px rows a loading inbox draws when it is not told how many (spec §5.7). */
@@ -16,13 +17,65 @@ const LOADING_ROWS = 4;
 /** One inbox row as placeholders: the object row's box, a mark and two text lines. */
 function LoadingRow() {
   return (
-    <div className="cb-object-row" data-part="loading-row">
+    <li className="cb-object-row" data-part="loading-row">
       <SkeletonBox part="mark" />
       <span className="cb-object-text">
         <SkeletonText width="55%" />
         <SkeletonText width="30%" size="small" />
       </span>
-    </div>
+    </li>
+  );
+}
+
+/** What `InboxPage.loading` takes: object rows (default), or the table shape of a records list. */
+export type InboxLoading =
+  | { list?: "objects"; rows?: number }
+  | {
+      list: "records";
+      /** The caller's table shape: its label, header columns and the DataTable's row height and frame. */
+      table: {
+        label: string;
+        columns: Column<never>[];
+        rowHeight?: "dense" | "default" | "roomy";
+        framed?: boolean;
+      };
+    };
+
+type InboxPageProps = {
+  header: PageHeaderProps;
+  /** The rail's filters, above the list; static, so they stay real while loading. */
+  filters?: ReactNode;
+  inspector?: ReactNode;
+  inspectorTitle?: string;
+  onInspectorClose?: () => void;
+  actionRow?: ActionRowProps;
+  empty?: EmptyStateProps;
+  children?: ReactNode;
+} & ({ loading?: undefined; list: ReactNode } | { loading: InboxLoading; list?: ReactNode });
+
+function LoadingList({ loading }: { loading: InboxLoading }) {
+  if (loading.list === "records") {
+    const { label, columns, rowHeight, framed } = loading.table;
+    return (
+      <DataTable<never>
+        label={label}
+        state="loading"
+        columns={columns}
+        rows={[]}
+        rowKey={() => ""}
+        {...(rowHeight ? { rowHeight } : {})}
+        {...(framed !== undefined ? { framed } : {})}
+      />
+    );
+  }
+  // The loaded ObjectList's own container, so the border, radius and first row are the same.
+  return (
+    <ul className="cb-object-list" data-part="loading-list">
+      {Array.from({ length: loading.rows ?? LOADING_ROWS }, (_, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
+        <LoadingRow key={i} />
+      ))}
+    </ul>
   );
 }
 
@@ -32,7 +85,8 @@ function LoadingRow() {
  * edge. `empty` (no items, a failed load) draws one EmptyState instead of the list + detail split.
  * `filters` sit at the top of the rail, above `list`. `loading` draws the frame while the data is
  * on the way (spec §5.7): the filters stay real (they are static), the list is `rows` 64 px rows
- * (default 4) in place of `list`, the content is a card-shaped block in place of `children`, and a
+ * (default 4) in the object list's own container in place of `list` (`loading.list: "records"`
+ * draws the DataTable's loading state in the caller's table shape instead), the content is a card-shaped block in place of `children`, and a
  * real `inspector` stays.
  */
 export function InboxPage({
@@ -46,26 +100,12 @@ export function InboxPage({
   empty,
   loading,
   children,
-}: {
-  header: PageHeaderProps;
-  list?: ReactNode;
-  filters?: ReactNode;
-  inspector?: ReactNode;
-  inspectorTitle?: string;
-  onInspectorClose?: () => void;
-  actionRow?: ActionRowProps;
-  empty?: EmptyStateProps;
-  loading?: { rows?: number };
-  children?: ReactNode;
-}) {
+}: InboxPageProps) {
   const t = useDesignT();
   const rail = loading ? (
     <>
       {filters}
-      {Array.from({ length: loading.rows ?? LOADING_ROWS }, (_, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
-        <LoadingRow key={i} />
-      ))}
+      <LoadingList loading={loading} />
     </>
   ) : filters != null ? (
     <>

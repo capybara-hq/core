@@ -52,6 +52,16 @@ describe("DetailPage loading", () => {
     expect(screen.getByRole("tab", { name: "运行" })).toBeTruthy();
   });
 
+  it("the inspector placeholder is KeyValue's own box", () => {
+    zh(<DetailPage header={header} tabs={tabs} loading={{ inspector: true }} />);
+    const dl = document.querySelector('[data-part="loading-inspector"]');
+    expect(dl?.tagName).toBe("DL");
+    expect(dl?.className).toBe("cb-kv");
+    expect(dl?.querySelectorAll(".cb-kv-row")).toHaveLength(4);
+    expect(dl?.querySelector(".cb-kv-key")).not.toBeNull();
+    expect(dl?.querySelector(".cb-kv-value")).not.toBeNull();
+  });
+
   it("a real inspector stays while loading unless it is flagged", () => {
     zh(<DetailPage header={header} tabs={tabs} inspector={<p>REAL INSPECTOR</p>} loading={{}} />);
     expect(screen.getByText("REAL INSPECTOR")).toBeTruthy();
@@ -107,6 +117,39 @@ describe("InboxPage loading", () => {
   it("takes the row count as given", () => {
     zh(<InboxPage header={header} loading={{ rows: 6 }} />);
     expect(count('[data-part="loading-row"]')).toBe(6);
+  });
+
+  it("loading rows sit in the object list's own container", () => {
+    zh(<InboxPage header={header} filters={<p>F</p>} loading={{ rows: 2 }} />);
+    const list = document.querySelector('[data-part="loading-list"]');
+    expect(list?.className).toBe("cb-object-list");
+    const rows = list?.querySelectorAll('[data-part="loading-row"]') ?? [];
+    expect(rows).toHaveLength(2);
+    // The first row is the list's first child, so it takes no top border.
+    expect(rows[0]).toBe(list?.firstElementChild);
+  });
+
+  it("a records list draws the DataTable loading state in the caller's table shape", () => {
+    zh(
+      <InboxPage
+        header={header}
+        filters={<p>F</p>}
+        loading={{
+          list: "records",
+          table: {
+            label: "待处理",
+            columns: [{ key: "t", header: "事项", cell: () => null }],
+            rowHeight: "dense",
+            framed: false,
+          },
+        }}
+      />,
+    );
+    expect(count('[data-part="loading-row"]')).toBe(0);
+    expect(document.querySelector('[data-empty="loading"]')).not.toBeNull();
+    expect(screen.getByText("事项")).toBeTruthy();
+    expect(screen.getByText("F")).toBeTruthy();
+    expect(document.querySelector(".cb-table-panel")).not.toBeNull();
   });
 
   it("without loading, the filters sit above the list", () => {

@@ -103,17 +103,23 @@ export function LoadingCards({ count }: { count: number }) {
   );
 }
 
-/** The inspector's properties as placeholders: a group title and key / value rows (spec §5.2). */
+/**
+ * The inspector's properties as placeholders, in KeyValue's own box (spec §5.2): the same `dl`,
+ * one row per key with the 8ch key slot and the value slot, each a `body` line.
+ */
 export function LoadingInspector() {
   return (
-    <div className="cb-loading-stack" data-part="loading-inspector">
-      <SkeletonText width="30%" size="small" />
+    <dl className="cb-kv" data-part="loading-inspector">
       {[0, 1, 2, 3].map((i) => (
-        <div key={i} className="cb-loading-row">
-          <SkeletonText width="30%" />
-          <SkeletonText width="55%" />
+        <div key={i} className="cb-kv-row" data-part="loading-inspector-row">
+          <dt className="cb-kv-key" style={{ width: "8ch" }}>
+            <SkeletonText width="100%" />
+          </dt>
+          <dd className="cb-kv-value">
+            <SkeletonText width="55%" />
+          </dd>
         </div>
       ))}
-    </div>
+    </dl>
   );
 }

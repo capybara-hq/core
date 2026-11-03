@@ -266,7 +266,20 @@
       const loadCrumb = `<nav class="r-ph-crumb" aria-label="路径">${loadSegs
         .map((c) => `<span class="r-ink">${esc(c.label)}</span>`)
         .join("")}</nav>`;
-      return `<header class="r-ph"${o.narrow ? " data-narrow" : ""} aria-busy="true">${loadCrumb}<div class="r-ph-row"><div class="r-ph-text"><div class="r-skel-text" data-part="skeleton-text" data-size="title" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-ph-actions"><div class="r-skel-box" data-part="skeleton-box" data-box="default" style="width:72px"></div><div class="r-skel-box" data-box="default" style="width:72px"></div></div></div><div class="r-ph-tabs r-ph-tabs-loading"><div class="r-ph-tab-slots" data-part="page-header-tab-slots"><div class="r-skel-text" data-size="body" style="width:56px"><span class="r-skel-bar"></span></div><div class="r-skel-text" data-size="body" style="width:56px"><span class="r-skel-bar"></span></div></div></div></header>`;
+      // `o.loading` is true (two actions, two tabs) or { actions, tabs } counts.
+      const nActions = typeof o.loading === "object" ? (o.loading.actions ?? 0) : 2;
+      const nTabs = typeof o.loading === "object" ? (o.loading.tabs ?? 0) : 2;
+      const loadBox = (i) =>
+        `<div class="r-skel-box"${i === 0 ? ' data-part="skeleton-box"' : ""} data-box="default" style="width:72px"></div>`;
+      const loadActions =
+        nActions > 0
+          ? `<div class="r-ph-actions">${Array.from({ length: nActions }, (_, i) => loadBox(i)).join("")}</div>`
+          : "";
+      const loadTabs =
+        nTabs > 0
+          ? `<div class="r-ph-tabs r-ph-tabs-loading"><div class="r-ph-tab-slots" data-part="page-header-tab-slots">${Array.from({ length: nTabs }, () => '<div class="r-skel-text" data-size="body" style="width:56px"><span class="r-skel-bar"></span></div>').join("")}</div></div>`
+          : "";
+      return `<header class="r-ph"${o.narrow ? " data-narrow" : ""} aria-busy="true">${loadCrumb}<div class="r-ph-row"><div class="r-ph-text"><div class="r-skel-text" data-part="skeleton-text" data-size="title" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div>${loadActions}</div>${loadTabs}</header>`;
     }
     const segs = o.path ? F.FORM_PAGE_FIXTURE.path : F.FORM_PAGE_FIXTURE.path.slice(0, 1);
     const crumb = `<nav class="r-ph-crumb" aria-label="路径">${segs

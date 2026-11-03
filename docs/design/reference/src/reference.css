@@ -3566,10 +3566,33 @@ textarea {
 .r-lcard-body {
   padding: 16px;
 }
-.r-lrow-kv {
+.r-lkv {
   display: flex;
-  gap: var(--cb-space-3);
-  align-items: center;
+  flex-direction: column;
+  margin: 0;
+}
+.r-lkv-row {
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+  line-height: var(--cb-type-body-line);
+}
+.r-lkv-key {
+  flex: none;
+  width: 8ch;
+}
+.r-lkv-value {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+.r-llist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--cb-panel);
+  border: 1px solid var(--cb-line-card);
+  border-radius: var(--cb-radius-md);
 }
 .r-lstat .r-skel-text {
   max-width: 100%;
