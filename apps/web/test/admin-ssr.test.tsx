@@ -7,10 +7,6 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import AdminCatalogItemPage from "../src/app/(app)/admin/catalog/[itemId]/page";
-import PluginImportPage from "../src/app/(app)/admin/catalog/import/page";
-import AdminCatalogPage from "../src/app/(app)/admin/catalog/page";
-import CatalogRequestsPage from "../src/app/(app)/admin/catalog/requests/page";
 import MarketplaceEntriesPage from "../src/app/(app)/admin/marketplaces/entries/page";
 import MarketplacesPage from "../src/app/(app)/admin/marketplaces/page";
 import { bodyOf, json, stubApi } from "./support/api";
@@ -506,81 +502,165 @@ describe("first paint comes from the server (no browser fetch)", () => {
     expect(browser.map((c) => c.method)).toContain("POST");
   });
 
-  it("/admin/catalog: the items, with their source from the marketplaces", async () => {
+  it("/admin/catalog: a first render from the hydrated cache makes no browser read (sources from the marketplaces)", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => AdminCatalogPage(), ROUTES);
+    await renderRouteWithCache("/admin/catalog", ROUTES);
     expect(screen.getByText(/^v[^ ]+ · crm · .*Organizations 2$/)).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/admin/catalog: marketplaces the kernel fails only drop the source labels", async () => {
+  it("/admin/catalog: marketplaces the kernel fails only drop the source labels (not read again on mount)", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => AdminCatalogPage(), {
+    await renderRouteWithCache("/admin/catalog", {
       ...ROUTES,
       "GET /api/v1/admin/marketplaces": failing,
     });
     expect(screen.getByText(/^v[^ ]+ · crm · .*Organizations 2$/)).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/admin/catalog/[itemId]: the item, the dependency lookup and the sources", async () => {
+  it("/admin/catalog/[itemId]: a first render from the hydrated cache makes no browser read (dependencies, sources)", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(item(ITEM_ID), ROUTES);
+    await renderRouteWithCache(`/admin/catalog/${ITEM_ID}`, ROUTES);
     expect(screen.getByRole("heading", { name: "crm" })).toBeTruthy();
     expect(screen.getByText(/crm-core/)).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/admin/catalog/[itemId]: a missing item is not found; a failing catalog only leaves dependencies unchecked", async () => {
+  it("/admin/catalog/[itemId]: a missing item is the not-found state in the shell; a failing catalog only leaves dependencies unchecked", async () => {
     expectNoFirstPaintFetch();
-    await expect(
-      renderRoute(item(ITEM_ID), {
-        ...ROUTES,
-        [`GET /api/v1/admin/catalog/items/${ITEM_ID}`]: () =>
-          json(404, { error: { code: "catalog.item_not_found", message: "x" } }),
-      }),
-    ).rejects.toThrow("NOT_FOUND");
-    await renderRoute(item(ITEM_ID), { ...ROUTES, "GET /api/v1/admin/catalog/items": failing });
+    await renderRouteWithCache(`/admin/catalog/${ITEM_ID}`, {
+      ...ROUTES,
+      [`GET /api/v1/admin/catalog/items/${ITEM_ID}`]: () =>
+        json(404, { error: { code: "catalog.item_not_found", message: "x" } }),
+    });
+    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("404");
+    cleanup();
+    await renderRouteWithCache(`/admin/catalog/${ITEM_ID}`, {
+      ...ROUTES,
+      "GET /api/v1/admin/catalog/items": failing,
+    });
     expect(screen.getByText(/crm-core/)).toBeTruthy();
     expect(screen.queryByText(/not in the catalog/)).toBeNull();
   });
 
-  it("/admin/catalog/requests: the pending requests", async () => {
+  it("/admin/catalog/requests: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => CatalogRequestsPage(), ROUTES);
+    await renderRouteWithCache("/admin/catalog/requests", ROUTES);
     expect(screen.getAllByText("Acme · crm").length).toBeGreaterThan(0);
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/admin/catalog/import: no staging starts at the source step; ?staging= opens the review", async () => {
+  it("/admin/catalog/import: no staging starts at the source step; ?staging= opens the review from the cache", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => PluginImportPage({ searchParams: Promise.resolve({}) }), ROUTES);
+    await renderRouteWithCache("/admin/catalog/import", ROUTES);
     expect(
       screen.getByLabelText(en.catalog.admin.review.sourceLabel, { exact: false }),
     ).toBeTruthy();
     cleanup();
-    const { calls } = await renderRoute(
-      () => PluginImportPage({ searchParams: Promise.resolve({ staging: "st1" }) }),
-      ROUTES,
-    );
+    const { calls } = await renderRouteWithCache("/admin/catalog/import?staging=st1", ROUTES);
     expect(calls.map((c) => c.url)).toContain("/api/v1/admin/catalog/imports/st1");
     expect(screen.getByText("@acme/plugin-crm", { exact: false })).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
   });
 
   it("/admin/catalog/import: an expired staging is the page's own problem with a restart, not a not-found", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(
-      () => PluginImportPage({ searchParams: Promise.resolve({ staging: "gone" }) }),
-      {
-        ...ROUTES,
-        "GET /api/v1/admin/catalog/imports/gone": () =>
-          json(404, { error: { code: "plugin.staging_not_found", message: "gone" } }),
-      },
-    );
+    await renderRouteWithCache("/admin/catalog/import?staging=gone", {
+      ...ROUTES,
+      "GET /api/v1/admin/catalog/imports/gone": () =>
+        json(404, { error: { code: "plugin.staging_not_found", message: "gone" } }),
+    });
     expect(screen.getByText(en.catalog.admin.review.gone)).toBeTruthy();
     expect(screen.getByRole("button", { name: en.catalog.admin.review.restart })).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
+  });
+
+  it.each([
+    ["/admin/catalog", "GET /api/v1/admin/catalog/items", "ListPage", "Organizations 2"],
+    [
+      `/admin/catalog/${ITEM_ID}`,
+      `GET /api/v1/admin/catalog/items/${ITEM_ID}`,
+      "DetailPage",
+      "Acme",
+    ],
+    ["/admin/catalog/requests", "GET /api/v1/admin/catalog/requests", "InboxPage", "Acme · crm"],
+    [
+      "/admin/catalog/import?staging=st1",
+      "GET /api/v1/admin/catalog/imports/st1",
+      "WizardPage",
+      "@acme/plugin-crm",
+    ],
+  ])(
+    "%s: an empty cache shows the template's loading state, then the data",
+    async (path, held, name, text) => {
+      const { release } = await renderHeld(path, held);
+      await expectLoading(name, text);
+      await release();
+      expect((await screen.findAllByText(text, { exact: false })).length).toBeGreaterThan(0);
+      await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+    },
+  );
+
+  it("/admin/catalog/requests: a decision invalidates the requests and the overview", async () => {
+    const calls = stubApi({
+      ...ROUTES,
+      "POST /api/v1/admin/catalog/requests/r1/decide": () =>
+        json(200, { request: { id: "r1", status: "approved" } }),
+    });
+    const { client } = await renderRouteWithCache("/admin/catalog/requests", ROUTES);
+    await client.prefetchQuery({
+      queryKey: ["deployment", "adminOverview"],
+      queryFn: () => ({
+        extensionsNeedingAction: 0,
+        catalogRequestsPending: 1,
+        orgs: 0,
+        accounts: 0,
+      }),
+    });
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: en.catalog.admin.requests.approve }));
+    await vi.waitFor(() =>
+      expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+        "POST /api/v1/admin/catalog/requests/r1/decide",
+        "GET /api/v1/admin/catalog/requests?status=pending",
+      ]),
+    );
+    expect(client.getQueryState(["deployment", "adminOverview"])?.isInvalidated).toBe(true);
+  });
+
+  it("/admin/catalog/[itemId]: a policy change writes the answer into the cached item and invalidates the list", async () => {
+    const calls = stubApi({
+      ...ROUTES,
+      [`PUT /api/v1/admin/catalog/items/${ITEM_ID}/policy`]: () =>
+        json(200, catalogItem({ policy: "disabled" })),
+    });
+    const { client } = await renderRouteWithCache(`/admin/catalog/${ITEM_ID}`, ROUTES);
+    await userEvent.setup().click(screen.getByRole("radio", { name: en.catalog.policy.disabled }));
+    await vi.waitFor(() =>
+      expect(
+        (
+          client.getQueryData(["deployment", "catalogItem", ITEM_ID]) as {
+            item: { policy: string };
+          }
+        ).item.policy,
+      ).toBe("disabled"),
+    );
+    // the item is not read again (the answer is its row); the catalog (on screen as the dependency
+    // lookup) is
+    await vi.waitFor(() =>
+      expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+        `PUT /api/v1/admin/catalog/items/${ITEM_ID}/policy`,
+        "GET /api/v1/admin/catalog/items?limit=1000",
+      ]),
+    );
   });
 
   it("/admin/marketplaces: the sources and the offline flag", async () => {
@@ -630,10 +710,6 @@ describe("first paint comes from the server (no browser fetch)", () => {
 });
 
 type Page = () => Promise<ReactNode>;
-const item =
-  (itemId: string): Page =>
-  () =>
-    AdminCatalogItemPage({ params: Promise.resolve({ itemId }) });
 /** The migrated pages (the query cache's gate). */
 const CACHED: string[] = [
   "/admin",
@@ -644,12 +720,12 @@ const CACHED: string[] = [
   "/admin/extensions",
   "/admin/extensions/install",
   "/admin/extensions/demo",
+  "/admin/catalog",
+  `/admin/catalog/${ITEM_ID}`,
+  "/admin/catalog/import",
+  "/admin/catalog/requests",
 ];
 const PAGES: [string, Page][] = [
-  ["/admin/catalog", () => AdminCatalogPage()],
-  ["/admin/catalog/[itemId]", item(ITEM_ID)],
-  ["/admin/catalog/import", () => PluginImportPage({ searchParams: Promise.resolve({}) })],
-  ["/admin/catalog/requests", () => CatalogRequestsPage()],
   ["/admin/marketplaces", () => MarketplacesPage()],
   [
     "/admin/marketplaces/entries",

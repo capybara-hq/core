@@ -1,13 +1,9 @@
-import { NoAccess } from "../../../../../components/NoAccess";
-import { listDeploymentRequests } from "../../../../../lib/catalog";
-import { read } from "../../../../../lib/server/page";
-import { admin } from "../../../../../lib/server/session";
 import Requests from "./view";
 
-/** `/admin/catalog/requests` (enterprise admins): the pending deployment requests, read on the server. */
-export default async function CatalogRequestsPage() {
-  const gate = await admin();
-  if (gate.kind === "noAccess") return <NoAccess need={gate.need} />;
-  const { requests } = await read(listDeploymentRequests());
-  return <Requests initial={requests} />;
+/**
+ * `/admin/catalog/requests` (enterprise admins): the pending deployment requests. It reads nothing:
+ * the layout prefetches them on a first load (`lib/query/routes.ts`).
+ */
+export default function CatalogRequestsPage() {
+  return <Requests />;
 }

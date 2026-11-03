@@ -705,13 +705,6 @@ export interface QueryPending {
   reason: string;
 }
 export const QUERY_PENDING: readonly QueryPending[] = [
-  { path: "app/(app)/admin/catalog/[itemId]/page.tsx", reason: "pending migration: Task 14" },
-  { path: "app/(app)/admin/catalog/[itemId]/view.tsx", reason: "pending migration: Task 14" },
-  { path: "app/(app)/admin/catalog/import/page.tsx", reason: "pending migration: Task 14" },
-  { path: "app/(app)/admin/catalog/import/view.tsx", reason: "pending migration: Task 14" },
-  { path: "app/(app)/admin/catalog/page.tsx", reason: "pending migration: Task 14" },
-  { path: "app/(app)/admin/catalog/requests/page.tsx", reason: "pending migration: Task 14" },
-  { path: "app/(app)/admin/catalog/requests/view.tsx", reason: "pending migration: Task 14" },
   { path: "app/(app)/admin/marketplaces/entries/page.tsx", reason: "pending migration: Task 14" },
   { path: "app/(app)/admin/marketplaces/entries/view.tsx", reason: "pending migration: Task 14" },
   { path: "app/(app)/admin/marketplaces/page.tsx", reason: "pending migration: Task 14" },

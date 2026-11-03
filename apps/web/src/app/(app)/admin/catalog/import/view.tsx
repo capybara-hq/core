@@ -19,6 +19,7 @@ import {
   versionLabel,
   WizardPage,
 } from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import {
@@ -29,7 +30,9 @@ import {
   useCatalogErrorLines,
   useOrigin,
 } from "../../../../../components/CatalogParts";
+import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { FormError } from "../../../../../components/form-error";
+import { NoAccess } from "../../../../../components/NoAccess";
 import { PermissionReview } from "../../../../../components/PermissionReview";
 import { usePagePath } from "../../../../../components/shell/path";
 import { Link, useRouter } from "../../../../../i18n/navigation";
@@ -50,13 +53,22 @@ import {
   showValue,
   uploadPluginPackage,
 } from "../../../../../lib/catalog";
+import {
+  catalogItemsQuery,
+  extensionChangeKeys,
+  stagedImportQuery,
+} from "../../../../../lib/query/admin";
+import { retryOnMountOf } from "../../../../../lib/query/client";
+import { useAppMutation } from "../../../../../lib/query/define";
+import { keys } from "../../../../../lib/query/keys";
+import { useAdmin } from "../../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
 
 type Step = 0 | 1 | 2;
 type Problem = { message: string; extra: string[] };
 /**
- * The staged import named by `?staging=<id>`, read on the server: none (null), the loaded review,
- * or why it could not be loaded (`problem`, the kernel's error as sent).
+ * The staged import named by `?staging=<id>`: none (null), the loaded review, or why it could not
+ * be loaded (`problem`, the kernel's error as sent).
  */
 export type StagedImport = PluginPrepared | null | { problem: StagedFailure };
 export interface StagedFailure {
@@ -95,8 +107,57 @@ type Staged = PluginPrepared | null | { problem: Problem };
  * 3. confirm: "Also install the extension on the deployment" when the plugin brings an extension to
  *    install or upgrade (unchecked, it is only recorded in the catalog and orgs cannot use it yet);
  *    with sensitive items, "I understand the sensitive items" must be checked too.
+ * The staged import comes from the query cache (the layout prefetched it on a first load); a
+ * refusal (4xx: expired, already confirmed) is the page's own problem with a restart. A prepared
+ * import is written into the cache before the address names it; confirming reads the catalog (and
+ * what a deployed extension brings) again.
  */
-export default function PluginImportWizard({ initial }: { initial: StagedImport }) {
+export default function PluginImportView({ staging }: { staging: string | null }) {
+  const gate = useAdmin();
+  if (gate.kind === "pending") return null;
+  if (gate.kind === "noAccess") return <NoAccess need={gate.need} />;
+  if (staging === null) return <PluginImportWizard initial={null} orgId={gate.me.currentOrgId} />;
+  return <StagedImportRead staging={staging} orgId={gate.me.currentOrgId} />;
+}
+
+function StagedImportRead({ staging, orgId }: { staging: string; orgId: string | null }) {
+  const scope = usePagePath("admin");
+  const t = useTranslations("catalog.admin.review");
+  const tw = useTranslations("admin.extensions.wizard");
+  const o = stagedImportQuery(staging);
+  const q = useQuery({ ...o, retryOnMount: retryOnMountOf(o.queryKey) });
+  const e = q.error;
+  // A refusal (expired, confirmed, not found) is the page's own problem, even over a cached review.
+  if (e && e.status >= 400 && e.status < 500) {
+    const { status, code, message, details, rawDetails } = e;
+    return (
+      <PluginImportWizard
+        initial={{ problem: { status, code, message, details, rawDetails } }}
+        orgId={orgId}
+      />
+    );
+  }
+  if (q.data !== undefined) return <PluginImportWizard initial={q.data} orgId={orgId} />;
+  if (e) return <ErrorFrame reset={() => void q.refetch()} />;
+  // The review step while its staged import loads (the source step is skipped for it).
+  return (
+    <WizardPage
+      header={{
+        path: [...scope, { label: "catalog", href: "/admin/catalog" }, { label: "import" }],
+        title: t("title"),
+      }}
+      steps={[t("steps.source"), t("steps.review"), t("steps.confirm")]}
+      current={1}
+      actionRow={{
+        cancel: { label: tw("cancel"), onSelect: () => {} },
+        primary: { label: tw("next"), onSelect: () => {} },
+      }}
+      loading={{ fields: [{ control: "text" }, { control: "card-group" }] }}
+    />
+  );
+}
+
+function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: string | null }) {
   const scope = usePagePath("admin");
   const t = useTranslations("catalog.admin.review");
   const tw = useTranslations("admin.extensions.wizard");
@@ -146,6 +207,31 @@ export default function PluginImportWizard({ initial }: { initial: StagedImport 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<Problem>();
   const [result, setResult] = useState<PluginConfirmResult | null>(null);
+  const qc = useQueryClient();
+  // Prepares only stage the import (nothing cached changes until it is confirmed).
+  const prepareNpm = useAppMutation({
+    fn: (v: { pkg: string; version: string }) => preparePluginNpm(v.pkg, v.version),
+    invalidates: () => [],
+  });
+  const prepareGit = useAppMutation({
+    fn: (v: { url: string; ref: string; path: string }) => preparePluginGit(v.url, v.ref, v.path),
+    invalidates: () => [],
+  });
+  // A confirmed import is a new catalog item or version (and maybe an extension on the
+  // deployment); the staged import is gone.
+  const confirm = useAppMutation({
+    fn: (v: { stagingId: string; body: Parameters<typeof confirmPluginImport>[1] }) =>
+      confirmPluginImport(v.stagingId, v.body),
+    invalidates: () => [
+      catalogItemsQuery().queryKey,
+      keys.deployment().catalogItemsAll(),
+      keys.deployment().marketplaceEntriesAll(),
+      keys.deployment().extensions(),
+      ...extensionChangeKeys(orgId),
+      ...(orgId === null ? [] : [keys.org(orgId).catalog(), keys.org(orgId).catalogItemsAll()]),
+    ],
+    onSuccess: (_, v) => qc.removeQueries({ queryKey: stagedImportQuery(v.stagingId).queryKey }),
+  });
 
   const accept = (p: PluginPrepared) => {
     setPrepared(p);
@@ -175,11 +261,17 @@ export default function PluginImportWizard({ initial }: { initial: StagedImport 
         if (file === null) return;
         p = await uploadPluginPackage(file);
       } else if (source === "npm") {
-        p = await preparePluginNpm(pkg.trim(), version.trim());
+        p = await prepareNpm.mutateAsync({ pkg: pkg.trim(), version: version.trim() });
       } else {
-        p = await preparePluginGit(gitUrl.trim(), gitRef.trim(), gitPath.trim());
+        p = await prepareGit.mutateAsync({
+          url: gitUrl.trim(),
+          ref: gitRef.trim(),
+          path: gitPath.trim(),
+        });
       }
-      // The address names the staged import (a reload comes back to the review)
+      // The address names the staged import (a reload comes back to the review); the page under it
+      // reads the review from the cache.
+      qc.setQueryData(stagedImportQuery(p.stagingId).queryKey, p);
       router.replace(importPageHref(p.stagingId));
       accept(p);
     } catch (e) {
@@ -202,15 +294,18 @@ export default function PluginImportWizard({ initial }: { initial: StagedImport 
     setSubmitting(true);
     setSubmitError(undefined);
     try {
-      const r = await confirmPluginImport(prepared.stagingId, {
-        reviewHash: prepared.review.reviewHash,
-        deployExtension: deployable && deployExtension,
-        // only a changed choice: omitted keeps the plugin's own suggestion
-        ...(!sameNames(pinned, suggestedPinned(prepared.review)) && {
-          pinnedSuggestions: prepared.review.skills
-            .map((s) => s.name)
-            .filter((n) => pinned.includes(n)),
-        }),
+      const r = await confirm.mutateAsync({
+        stagingId: prepared.stagingId,
+        body: {
+          reviewHash: prepared.review.reviewHash,
+          deployExtension: deployable && deployExtension,
+          // only a changed choice: omitted keeps the plugin's own suggestion
+          ...(!sameNames(pinned, suggestedPinned(prepared.review)) && {
+            pinnedSuggestions: prepared.review.skills
+              .map((s) => s.name)
+              .filter((n) => pinned.includes(n)),
+          }),
+        },
       });
       toast.success(t("done", { name: r.item.name }));
       if (r.deploy === null || r.deploy.result !== "failed") {

@@ -19,6 +19,7 @@ import {
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import {
@@ -30,7 +31,9 @@ import {
   useOrigin,
   useSourceLabel,
 } from "../../../../../components/CatalogParts";
+import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { FormError } from "../../../../../components/form-error";
+import { NoAccess } from "../../../../../components/NoAccess";
 import { usePagePath } from "../../../../../components/shell/path";
 import { Link, useRouter } from "../../../../../i18n/navigation";
 import {
@@ -44,15 +47,34 @@ import {
   declaredPermissions,
   displayNameOf,
   installItemToDeployment,
-  type Marketplace,
   type PluginManifest,
   removeCatalogItem,
   setCatalogPolicy,
   skillNameOf,
   templateIdOf,
 } from "../../../../../lib/catalog";
+import {
+  catalogItemQuery,
+  catalogItemsQuery,
+  extensionChangeKeys,
+  marketplacesQuery,
+} from "../../../../../lib/query/admin";
+import { retryOnMountOf } from "../../../../../lib/query/client";
+import { useAppMutation } from "../../../../../lib/query/define";
+import { keys } from "../../../../../lib/query/keys";
+import { usePageQuery } from "../../../../../lib/query/page-query";
+import { useAdmin } from "../../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
-import { useServerState } from "../../../../../lib/use-server-state";
+import NotFound from "../../../not-found";
+
+/**
+ * What a change to a catalog item changes besides the item: the catalog list (its row), and the
+ * current org's view of the catalog (the only org cached).
+ */
+const itemChangeKeys = (orgId: string | null): (readonly unknown[])[] => [
+  keys.deployment().catalog(),
+  ...(orgId === null ? [] : [keys.org(orgId).catalog(), keys.org(orgId).catalogItemsAll()]),
+];
 
 const TABS = ["overview", "versions"] as const;
 type Tab = (typeof TABS)[number];
@@ -68,24 +90,58 @@ type Tab = (typeof TABS)[number];
  * LICENSE text (collapsed). Versions: each version's source, its origin (git host, repo and commit,
  * pinned or following a branch; an archive URL; the npm registry) and import time. Inspector: the
  * icon (shown as `<img>` through the kernel route) and basic facts, with the latest version's origin.
+ * From the query cache (the layout prefetched the three reads on a first load): the item (a 404 is
+ * the not-found state), the marketplaces and the catalog (sections: while they load or when they
+ * failed, the source labels are left out and the dependencies unchecked). A policy change writes the
+ * answer into the cached item.
  */
-export default function DirectoryItemView({
-  initial,
-}: {
-  initial: {
-    detail: CatalogItemDetail;
-    marketplaces: Marketplace[];
-    /** The deployment catalog the dependencies are looked up in; `null` when it could not be read. */
-    catalog: CatalogItem[] | null;
-  };
-}) {
+export default function DirectoryItemViewGate({ itemId }: { itemId: string }) {
+  const gate = useAdmin();
+  if (gate.kind === "pending") return null;
+  if (gate.kind === "noAccess") return <NoAccess need={gate.need} />;
+  return <DirectoryItemRead itemId={itemId} orgId={gate.me.currentOrgId} />;
+}
+
+function DirectoryItemRead({ itemId, orgId }: { itemId: string; orgId: string | null }) {
+  const scope = usePagePath("admin");
+  const t = useTranslations("catalog.admin");
+  const read = usePageQuery(catalogItemQuery(itemId));
+  if (read.kind === "notFound") return <NotFound />;
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
+  if (read.kind === "loading") {
+    return (
+      <DetailPage
+        header={{
+          path: [...scope, { label: "catalog", href: "/admin/catalog" }, { label: itemId }],
+          title: "",
+        }}
+        tabs={{
+          label: t("detail.tabsLabel"),
+          items: TABS.map((x) => ({ id: x, label: t(`detail.tabs.${x}`) })),
+          value: "overview",
+          onChange: () => {},
+        }}
+        // The overview's components and the policy card (the deploy card only for an extension).
+        loading={{ inspector: true, blocks: 2 }}
+      />
+    );
+  }
+  return <DirectoryItemView detail={read.data} orgId={orgId} />;
+}
+
+function DirectoryItemView({ detail, orgId }: { detail: CatalogItemDetail; orgId: string | null }) {
   const scope = usePagePath("admin");
   const t = useTranslations("catalog.admin");
   const td = useTranslations("catalog");
   const locale = useLocale();
   const origin = useOrigin();
-  const [detail, set] = useServerState(initial.detail);
-  const sourceLabel = useSourceLabel(initial.marketplaces);
+  // Sections: no data while they load or when they failed (not read again on mount).
+  const mq = marketplacesQuery();
+  const marketplaces = useQuery({ ...mq, retryOnMount: retryOnMountOf(mq.queryKey) }).data?.items;
+  const cq = catalogItemsQuery();
+  const catalog =
+    useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) }).data?.items ?? null;
+  const sourceLabel = useSourceLabel(marketplaces ?? []);
   const [tab, setTab] = useState<Tab>("overview");
   const item = detail.item;
   const hasIcon = detail.hasIcon === true;
@@ -129,7 +185,7 @@ export default function DirectoryItemView({
       }
     >
       {tab === "overview" ? (
-        <Overview detail={detail} catalog={initial.catalog} onChanged={set} />
+        <Overview detail={detail} catalog={catalog} orgId={orgId} />
       ) : (
         <Versions versions={detail.versions} />
       )}
@@ -146,11 +202,11 @@ export default function DirectoryItemView({
 function Overview({
   detail,
   catalog,
-  onChanged,
+  orgId,
 }: {
   detail: CatalogItemDetail;
   catalog: CatalogItem[] | null;
-  onChanged(next: CatalogItemDetail): void;
+  orgId: string | null;
 }) {
   const t = useTranslations("catalog.admin.detail");
   const tp = useTranslations("catalog.policy");
@@ -168,14 +224,32 @@ function Overview({
   const [version, setVersion] = useState(withExtension[0]?.version ?? item.latestVersion);
   const [deployed, setDeployed] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
+  const qc = useQueryClient();
+  // The answer is the item's row as it is now: it goes into the cached detail.
+  const policy = useAppMutation({
+    fn: (p: CatalogPolicy) => setCatalogPolicy(item.id, p),
+    invalidates: () => itemChangeKeys(orgId),
+    onSuccess: (next) =>
+      qc.setQueryData<CatalogItemDetail>(catalogItemQuery(item.id).queryKey, (d) =>
+        d === undefined ? d : { ...d, item: { ...d.item, ...next } },
+      ),
+  });
+  // The extension lands on the deployment (not enabled yet): the extensions are read again.
+  const install = useAppMutation({
+    fn: (v: string) => installItemToDeployment(item.id, v),
+    invalidates: () => [keys.deployment().extensions(), ...extensionChangeKeys(orgId)],
+  });
+  const remove = useAppMutation({
+    fn: () => removeCatalogItem(item.id),
+    invalidates: () => [...itemChangeKeys(orgId), catalogItemQuery(item.id).queryKey],
+  });
 
-  const changePolicy = async (policy: CatalogPolicy) => {
+  const changePolicy = async (p: CatalogPolicy) => {
     setBusy("policy");
     setError(undefined);
     try {
-      const next = await setCatalogPolicy(item.id, policy);
-      onChanged({ ...detail, item: { ...item, ...next } });
-      toast.success(t("policySaved", { policy: tp(policy) }));
+      await policy.mutateAsync(p);
+      toast.success(t("policySaved", { policy: tp(p) }));
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -187,7 +261,7 @@ function Overview({
     setBusy("deploy");
     setError(undefined);
     try {
-      const p = await installItemToDeployment(item.id, version);
+      const p = await install.mutateAsync(version);
       setDeployed(p.name);
       toast.success(t("deployed", { name: `${p.name} ${versionLabel(p.version)}` }));
     } catch (e) {
@@ -270,7 +344,7 @@ function Overview({
         confirmName={item.name}
         confirmLabel={t("deleteConfirm.confirm")}
         onConfirm={async () => {
-          await removeCatalogItem(item.id).catch((e: unknown) => {
+          await remove.mutateAsync(undefined).catch((e: unknown) => {
             throw new Error(errorMessage(e));
           });
           toast.success(t("deletedToast", { name: item.name }));

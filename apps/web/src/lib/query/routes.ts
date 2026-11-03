@@ -18,8 +18,13 @@ import {
   adminOrgsQuery,
   adminOverviewQuery,
   adminPurposesQuery,
+  catalogItemQuery,
+  catalogItemsQuery,
+  deploymentRequestsQuery,
   deploymentSettingsQuery,
   extensionConfigQuery,
+  marketplacesQuery,
+  stagedImportQuery,
 } from "./admin";
 import { agentConnectorQueries, agentFormQueries, agentQuery, agentsQuery } from "./agents";
 import { authSourcesQuery } from "./auth";
@@ -164,10 +169,31 @@ export const ROUTES: readonly RouteEntry[] = [
     pattern: "/admin/accounts",
     queries: ({ me }) => (enterprise(me) ? [q(adminAccountsQuery())] : []),
   },
-  { pattern: "/admin/catalog", queries: () => [], none: "pending migration" },
-  { pattern: "/admin/catalog/[itemId]", queries: () => [], none: "pending migration" },
-  { pattern: "/admin/catalog/import", queries: () => [], none: "pending migration" },
-  { pattern: "/admin/catalog/requests", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/admin/catalog",
+    // The items and the marketplaces that name their sources (a section).
+    queries: ({ me }) => (enterprise(me) ? [q(catalogItemsQuery()), q(marketplacesQuery())] : []),
+  },
+  {
+    pattern: "/admin/catalog/[itemId]",
+    // The item, and the marketplaces and the catalog its dependencies are looked up in (sections).
+    queries: ({ me, params }) =>
+      enterprise(me) && params.itemId !== undefined
+        ? [q(catalogItemQuery(params.itemId)), q(marketplacesQuery()), q(catalogItemsQuery())]
+        : [],
+  },
+  {
+    pattern: "/admin/catalog/import",
+    // `?staging=<id>`: the staged import's review (no staging: the source step reads nothing).
+    queries: ({ me, search }) => {
+      const staging = search.get("staging") ?? "";
+      return enterprise(me) && staging !== "" ? [q(stagedImportQuery(staging))] : [];
+    },
+  },
+  {
+    pattern: "/admin/catalog/requests",
+    queries: ({ me }) => (enterprise(me) ? [q(deploymentRequestsQuery())] : []),
+  },
   {
     pattern: "/admin/extensions",
     queries: ({ me }) => (enterprise(me) ? [q(adminExtensionsQuery())] : []),

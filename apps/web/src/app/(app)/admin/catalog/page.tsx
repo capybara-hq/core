@@ -1,21 +1,9 @@
-import { NoAccess } from "../../../../components/NoAccess";
-import { listCatalogItems, listMarketplaces } from "../../../../lib/catalog";
-import { read, section } from "../../../../lib/server/page";
-import { admin } from "../../../../lib/server/session";
 import AdminDirectory from "./view";
 
 /**
- * `/admin/catalog` (enterprise admins): the catalog items (required) and the marketplaces that name
- * their sources (a section: a failure only drops the source labels), read on the server.
+ * `/admin/catalog` (enterprise admins): the catalog items and the marketplaces that name their
+ * sources. It reads nothing: the layout prefetches them on a first load (`lib/query/routes.ts`).
  */
-export default async function AdminCatalogPage() {
-  const gate = await admin();
-  if (gate.kind === "noAccess") return <NoAccess need={gate.need} />;
-  const [catalog, marketplaces] = await Promise.all([
-    read(listCatalogItems()),
-    section(listMarketplaces()),
-  ]);
-  return (
-    <AdminDirectory initial={{ items: catalog.items, marketplaces: marketplaces?.items ?? [] }} />
-  );
+export default function AdminCatalogPage() {
+  return <AdminDirectory />;
 }
