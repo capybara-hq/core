@@ -102,8 +102,25 @@ export const LOADING_TEMPLATES: { name: string; pairs: { loaded: string; loading
 ];
 
 /**
- * Parts whose loaded height follows their content (prose bodies, rows of text), so the skeleton
- * cannot match it: x, y and width are still compared. Every other shared part is compared in
- * height as well.
+ * Parts whose loaded size follows the page's content (a prose body, a table's row count, a form
+ * section's fields and help text, a title's text), so the skeleton cannot match it by design: they
+ * are compared in x, y and width only, and a later part of the same name (the second form section)
+ * is not compared in y either, because it sits below the earlier ones.
  */
-export const VARIABLE_HEIGHT: string[] = [];
+export const VARIABLE_HEIGHT: string[] = [
+  "content",
+  "thread",
+  "table",
+  "title",
+  "form-section",
+  "form-section-head",
+  "form-card",
+];
+
+/**
+ * Parts that are not laid out by the page: `link-pending` is the off-screen route announcer, and
+ * `icon` / `icon-button` are numbered by position, so a loaded page with more icons than its
+ * loading block cannot pair them (the title bar and header icons are compared through their own
+ * parts).
+ */
+export const IGNORED_PARTS: string[] = ["link-pending", "icon", "icon-button"];

@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { LOADING_TEMPLATES, VARIABLE_HEIGHT } from "./accepted";
+import { IGNORED_PARTS, LOADING_TEMPLATES, VARIABLE_HEIGHT } from "./accepted";
 import { openReference, THEMES } from "./reference-page";
 
 /**
@@ -45,7 +45,9 @@ for (const theme of THEMES) {
         for (const pair of t.pairs) {
           const loaded = await partBoxes(page, `template-${t.name}-${pair.loaded}`);
           const loading = await partBoxes(page, `template-${t.name}-${pair.loading}`);
-          const shared = Object.keys(loading).filter((k) => k in loaded);
+          const shared = Object.keys(loading).filter(
+            (k) => k in loaded && !IGNORED_PARTS.includes(k.split("#")[0] ?? k),
+          );
           // A template whose loading block shares no part with the loaded one compares nothing.
           expect(shared.length, `${t.name} ${pair.loading}: no shared data-part`).toBeGreaterThan(
             0,
@@ -54,8 +56,12 @@ for (const theme of THEMES) {
             const a = loaded[k] as Box;
             const b = loading[k] as Box;
             const part = k.split("#")[0] ?? k;
-            const props: (keyof Box)[] = VARIABLE_HEIGHT.includes(part)
-              ? ["x", "y", "width"]
+            const variable = VARIABLE_HEIGHT.includes(part);
+            const later = variable && !k.endsWith("#0");
+            const props: (keyof Box)[] = variable
+              ? later
+                ? ["x", "width"]
+                : ["x", "y", "width"]
               : ["x", "y", "width", "height"];
             for (const p of props) {
               if (Math.abs(a[p] - b[p]) > 1) {

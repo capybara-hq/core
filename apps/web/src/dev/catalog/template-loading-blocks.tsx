@@ -89,9 +89,10 @@ const sections: ReactNode = (
 const DETAIL_HEADER = { path: PATH, title: "研究助手", actions: ACTIONS };
 // The loading headers draw what the reference sources draw: a title bar and action blocks (the
 // page does not know its title or actions yet); the tabs row is the template's own.
-const loadingHeader = (path: typeof PATH, actions: number) => ({
+const loadingHeader = (path: typeof PATH, actions: number, description?: string) => ({
   path,
   title: "",
+  ...(description ? { description } : {}),
   loading: { title: true, actions, tabs: 0 },
 });
 
@@ -130,7 +131,7 @@ function overviewBlocks(): ReactNode {
       </RefBlock>
       <RefBlock id="template-overview-loading" width={W} height={H}>
         <OverviewPage
-          header={loadingHeader(PATH.slice(0, 1), 1)}
+          header={loadingHeader(PATH.slice(0, 1), 1, OVERVIEW_HEADER.description)}
           loading={{ stats: 4, sections: 2 }}
         />
       </RefBlock>
