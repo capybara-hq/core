@@ -1,19 +1,16 @@
 // The admin console reads from the query cache the layout prefetched (web query cache spec §3):
 // first paint complete without a browser read, the loading state on an empty cache, the
 // enterprise-admin gate (only the session is read below it), R5's failures and the mutations'
-// cache updates. Pages not migrated yet still render on the server (`renderRoute`).
+// cache updates.
 import { act, cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import MarketplaceEntriesPage from "../src/app/(app)/admin/marketplaces/entries/page";
-import MarketplacesPage from "../src/app/(app)/admin/marketplaces/page";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
-import { expectNoFirstPaintFetch, type Routes, renderRoute } from "./support/server";
+import { expectNoFirstPaintFetch, type Routes } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -254,7 +251,7 @@ async function expectLoading(name: string, text: string) {
   expect(screen.queryByText(text)).toBeNull();
 }
 
-describe("first paint comes from the server (no browser fetch)", () => {
+describe("first paint comes from the hydrated cache (no browser read)", () => {
   it("/admin: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/admin", ROUTES);
@@ -663,20 +660,18 @@ describe("first paint comes from the server (no browser fetch)", () => {
     );
   });
 
-  it("/admin/marketplaces: the sources and the offline flag", async () => {
+  it("/admin/marketplaces: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => MarketplacesPage(), ROUTES);
+    await renderRouteWithCache("/admin/marketplaces", ROUTES);
     expect(screen.getByText("Official marketplace")).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/admin/marketplaces/entries: the entries for the query's source and search", async () => {
+  it("/admin/marketplaces/entries: the entries for the query's source and search come from the cache", async () => {
     const browser = expectNoFirstPaintFetch();
-    const { calls } = await renderRoute(
-      () =>
-        MarketplaceEntriesPage({
-          searchParams: Promise.resolve({ sourceId: "official", q: " crm " }),
-        }),
+    const { calls } = await renderRouteWithCache(
+      "/admin/marketplaces/entries?sourceId=official&q=%20crm%20",
       ROUTES,
     );
     expect(calls.map((c) => c.url)).toContain(
@@ -684,12 +679,12 @@ describe("first paint comes from the server (no browser fetch)", () => {
     );
     expect(screen.getByText("crm")).toBeTruthy();
     expect((screen.getByRole("searchbox") as HTMLInputElement).value).toBe("crm");
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/admin/marketplaces/entries: typing in the search reads in the browser (user-triggered)", async () => {
-    expectNoFirstPaintFetch();
-    await renderRoute(() => MarketplaceEntriesPage({ searchParams: Promise.resolve({}) }), ROUTES);
+  it("/admin/marketplaces/entries: typing in the search reads in the browser, its own cache entry", async () => {
+    const { client } = await renderRouteWithCache("/admin/marketplaces/entries", ROUTES);
     const browser = stubApi({
       "GET /api/v1/admin/marketplaces/entries": () => json(200, { items: [] }),
     });
@@ -697,6 +692,63 @@ describe("first paint comes from the server (no browser fetch)", () => {
     await vi.waitFor(() =>
       expect(browser.map((c) => c.url)).toEqual(["/api/v1/admin/marketplaces/entries?q=zzz"]),
     );
+    expect(await screen.findByText(en.catalog.admin.entries.noResults)).toBeTruthy();
+    // the unfiltered entries stay in their own entry
+    expect(
+      (client.getQueryData(["deployment", "marketplaceEntries", "", ""]) as { items: unknown[] })
+        .items,
+    ).toHaveLength(1);
+  });
+
+  it("/admin/marketplaces: an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld("/admin/marketplaces", "GET /api/v1/admin/marketplaces");
+    await expectLoading("ListPage", "CRM plugin");
+    // the two static sections stay, their fields placeholders
+    expect(
+      screen.getByRole("heading", { name: en.catalog.admin.marketplaces.official }),
+    ).toBeTruthy();
+    expect(screen.queryByDisplayValue(MARKETPLACE.url)).toBeNull();
+    await release();
+    expect(await screen.findByDisplayValue(MARKETPLACE.url)).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
+  it("/admin/marketplaces/entries: an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld(
+      "/admin/marketplaces/entries",
+      "GET /api/v1/admin/marketplaces/entries",
+    );
+    await expectLoading("ListPage", "CRM plugin");
+    await release();
+    expect(await screen.findByText("CRM plugin")).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
+  it("/admin/marketplaces: turning a marketplace off writes the answer into the cache and invalidates the entries", async () => {
+    const calls = stubApi({
+      ...ROUTES,
+      "PATCH /api/v1/admin/marketplaces/official": () =>
+        json(200, { ...MARKETPLACE, enabled: false }),
+    });
+    const { client } = await renderRouteWithCache("/admin/marketplaces", ROUTES);
+    await client.prefetchQuery({
+      queryKey: ["deployment", "marketplaceEntries", "", ""],
+      queryFn: () => ({ items: [] }),
+    });
+    await userEvent.setup().click(screen.getByRole("switch"));
+    await vi.waitFor(() =>
+      expect(
+        (client.getQueryData(["deployment", "marketplaces"]) as { items: { enabled: boolean }[] })
+          .items[0]?.enabled,
+      ).toBe(false),
+    );
+    expect(client.getQueryState(["deployment", "marketplaceEntries", "", ""])?.isInvalidated).toBe(
+      true,
+    );
+    // the list is not read again (the answer is the marketplace)
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "PATCH /api/v1/admin/marketplaces/official",
+    ]);
   });
 
   it("a failing required read is the error state with a retry, not an empty page (not read again on mount)", async () => {
@@ -709,8 +761,7 @@ describe("first paint comes from the server (no browser fetch)", () => {
   });
 });
 
-type Page = () => Promise<ReactNode>;
-/** The migrated pages (the query cache's gate). */
+/** The admin console's pages (the gate from the query cache). */
 const CACHED: string[] = [
   "/admin",
   "/admin/accounts",
@@ -724,13 +775,8 @@ const CACHED: string[] = [
   `/admin/catalog/${ITEM_ID}`,
   "/admin/catalog/import",
   "/admin/catalog/requests",
-];
-const PAGES: [string, Page][] = [
-  ["/admin/marketplaces", () => MarketplacesPage()],
-  [
-    "/admin/marketplaces/entries",
-    () => MarketplaceEntriesPage({ searchParams: Promise.resolve({}) }),
-  ],
+  "/admin/marketplaces",
+  "/admin/marketplaces/entries",
 ];
 
 describe("the enterprise-admin gate", () => {
@@ -748,15 +794,6 @@ describe("the enterprise-admin gate", () => {
     expect(r.calls.map((c) => c.url)).toContain("/api/v1/me");
     expect(document.querySelector("[data-template]")).not.toBeNull();
   });
-
-  it.each(PAGES)(
-    "%s: a non-admin gets no access and only the session is read",
-    async (_p, page) => {
-      const r = await renderRoute(page, ROUTES, { me: NOT_ADMIN });
-      expect(r.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
-      expect(noAccess()).toBe(true);
-    },
-  );
 });
 
 describe("accounts: load more stays in the browser", () => {

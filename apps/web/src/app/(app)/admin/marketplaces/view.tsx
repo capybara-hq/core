@@ -15,12 +15,14 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { useCatalogErrorLines } from "../../../../components/CatalogParts";
+import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
+import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
-import { useRouter } from "../../../../i18n/navigation";
 import { marketplaceTabs } from "../../../../lib/admin-tabs";
 import { issueLines } from "../../../../lib/api";
 import {
@@ -33,8 +35,25 @@ import {
   shortCommit,
   updateMarketplace,
 } from "../../../../lib/catalog";
+import { marketplacesQuery } from "../../../../lib/query/admin";
+import { useAppMutation } from "../../../../lib/query/define";
+import { keys } from "../../../../lib/query/keys";
+import { usePageQuery } from "../../../../lib/query/page-query";
+import { useAdmin } from "../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../lib/use-error-message";
-import { useServerState } from "../../../../lib/use-server-state";
+import NotFound from "../../not-found";
+
+type SourceList = { items: Marketplace[]; offline: boolean };
+
+/**
+ * What a change to a marketplace changes besides the marketplaces: the entries to browse and the
+ * catalog's "newer in the marketplace" marks.
+ */
+const sourceChangeKeys = (): (readonly unknown[])[] => [
+  keys.deployment().marketplaceEntriesAll(),
+  keys.deployment().catalog(),
+  keys.deployment().catalogItemsAll(),
+];
 
 type Problem = { message: string; extra: string[] };
 
@@ -53,22 +72,71 @@ function useProblem(): (e: unknown) => Problem {
  * is a marketplace.json URL or a git repository (`owner/repo` or an https git URL, with an optional
  * branch / tag / commit; the repository holds `.capybara-plugin/marketplace.json`); a git
  * marketplace shows the ref it follows and the commit of its last refresh.
+ * From the query cache (the layout prefetched it on a first load): a change's answer replaces that
+ * marketplace in the cache; adding or removing one reads the list again; each change also
+ * invalidates the entries and the catalog's marks.
  */
-export default function Sources({
-  initial,
-}: {
-  initial: { items: Marketplace[]; offline: boolean };
-}) {
+export default function SourcesView() {
+  const gate = useAdmin();
+  if (gate.kind === "pending") return null;
+  if (gate.kind === "noAccess") return <NoAccess need={gate.need} />;
+  return <SourcesRead />;
+}
+
+function SourcesRead() {
   const scope = usePagePath("admin");
   const t = useTranslations("catalog.admin.marketplaces");
   const ta = useTranslations("catalog.admin");
-  const router = useRouter();
-  const [, startTransition] = useTransition();
-  const [data, set] = useServerState(initial);
-  // Adding or removing a marketplace renders the page on the server again
-  const reload = () => startTransition(() => router.refresh());
+  const read = usePageQuery(marketplacesQuery());
+  if (read.kind === "notFound") return <NotFound />;
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
+  if (read.kind === "loading") {
+    // The two static sections: the official marketplace (its switch, its address, its status)
+    // and the enterprise ones (the add form; the editors above it come with the data).
+    return (
+      <ListPage
+        header={{
+          path: [...scope, { label: "marketplaces" }],
+          title: t("title"),
+          description: t("description"),
+          tabs: marketplaceTabs(ta).map((tab) => ({ ...tab, pending: true })),
+          activeTab: "sources",
+          search: { label: t("search"), value: "", onChange: () => {} },
+        }}
+      >
+        <FormSection
+          id="official"
+          title={t("official")}
+          description={t("officialHint")}
+          loading={{ fields: [{ control: "switch" }, {}, { control: "text" }] }}
+        />
+        <FormSection
+          id="enterprise"
+          title={t("enterprise")}
+          description={t("enterpriseHint")}
+          loading={{
+            fields: [{ control: "text" }, { control: "segmented" }, {}, {}, {}],
+          }}
+        />
+      </ListPage>
+    );
+  }
+  return <Sources data={read.data} />;
+}
+
+function Sources({ data }: { data: SourceList }) {
+  const scope = usePagePath("admin");
+  const t = useTranslations("catalog.admin.marketplaces");
+  const ta = useTranslations("catalog.admin");
+  const qc = useQueryClient();
+  const listKey = marketplacesQuery().queryKey;
+  // Added or removed: the list is read again.
+  const reload = () => void qc.invalidateQueries({ queryKey: listKey });
+  // The answer is the marketplace as it is now: it replaces that one in the cache.
   const replace = (next: Marketplace) =>
-    set({ ...data, items: data.items.map((s) => (s.id === next.id ? next : s)) });
+    qc.setQueryData<SourceList>(listKey, (d) =>
+      d === undefined ? d : { ...d, items: d.items.map((s) => (s.id === next.id ? next : s)) },
+    );
   // The head's search narrows the marketplaces shown, by name or address
   const [q, setQ] = useState("");
   const needle = q.trim().toLowerCase();
@@ -208,6 +276,18 @@ function SourceEditor({
   const refChanged = git && ref.trim() !== (source.ref ?? "");
   const dirty =
     !builtin && (name !== source.name || url !== source.url || token !== "" || refChanged);
+  const update = useAppMutation({
+    fn: (body: Parameters<typeof updateMarketplace>[1]) => updateMarketplace(source.id, body),
+    invalidates: sourceChangeKeys,
+  });
+  const refresh = useAppMutation({
+    fn: () => refreshMarketplace(source.id),
+    invalidates: sourceChangeKeys,
+  });
+  const remove = useAppMutation({
+    fn: () => removeMarketplace(source.id),
+    invalidates: () => [marketplacesQuery().queryKey, ...sourceChangeKeys()],
+  });
 
   const run = async (
     kind: NonNullable<typeof busy>,
@@ -239,7 +319,7 @@ function SourceEditor({
         onChange={(enabled) =>
           void run(
             "toggle",
-            () => updateMarketplace(source.id, { enabled }),
+            () => update.mutateAsync({ enabled }),
             t("saved", { name: source.name }),
           )
         }
@@ -299,7 +379,7 @@ function SourceEditor({
           onClick={() =>
             void run(
               "refresh",
-              () => refreshMarketplace(source.id),
+              () => refresh.mutateAsync(undefined),
               t("refreshed", { name: source.name }),
             )
           }
@@ -316,7 +396,7 @@ function SourceEditor({
                 void run(
                   "save",
                   () =>
-                    updateMarketplace(source.id, {
+                    update.mutateAsync({
                       ...(name !== source.name && { name: name.trim() }),
                       ...(url !== source.url && { url: url.trim() }),
                       ...(refChanged && { ref: ref.trim() === "" ? null : ref.trim() }),
@@ -335,7 +415,7 @@ function SourceEditor({
                 onClick={() =>
                   void run(
                     "token",
-                    () => updateMarketplace(source.id, { token: null }),
+                    () => update.mutateAsync({ token: null }),
                     t("saved", { name: source.name }),
                   )
                 }
@@ -358,7 +438,7 @@ function SourceEditor({
           confirmName={source.name}
           confirmLabel={t("removeConfirm.confirm")}
           onConfirm={async () => {
-            await removeMarketplace(source.id).catch((e: unknown) => {
+            await remove.mutateAsync(undefined).catch((e: unknown) => {
               throw new Error(errorMessage(e));
             });
             toast.success(t("removed", { name: source.name }));
@@ -386,11 +466,15 @@ function AddSource({ onAdded }: { onAdded(): void }) {
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Problem>();
+  const create = useAppMutation({
+    fn: addMarketplace,
+    invalidates: () => [marketplacesQuery().queryKey, ...sourceChangeKeys()],
+  });
   const add = async () => {
     setBusy(true);
     setError(undefined);
     try {
-      const s = await addMarketplace({
+      const s = await create.mutateAsync({
         name: name.trim(),
         url: url.trim(),
         ...(form === "git" && { form, ...(ref.trim() !== "" && { ref: ref.trim() }) }),

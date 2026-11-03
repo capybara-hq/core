@@ -3,8 +3,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import MarketplaceEntriesPage from "../src/app/(app)/admin/marketplaces/entries/page";
-import MarketplacesPage from "../src/app/(app)/admin/marketplaces/page";
 import { defaultSlug, slugOf } from "../src/components/CatalogInstallWizard";
 import {
   MARKETPLACE_ERROR_KINDS,
@@ -20,15 +18,15 @@ import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
-import { expectNoFirstPaintFetch, type Routes, renderRoute } from "./support/server";
+import { expectNoFirstPaintFetch, type Routes } from "./support/server";
 import { NOT_READY } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
-// The admin pages read their query and params on the server: from the address and the route params
-const addressQuery = () => Object.fromEntries(new URLSearchParams(window.location.search));
+// The admin pages take their query and params from the address (a first load of that path)
 /** `/admin/catalog/import` with the address's query (a first load). */
 const importPath = () => `/admin/catalog/import${window.location.search}`;
-const entriesPage = () => MarketplaceEntriesPage({ searchParams: Promise.resolve(addressQuery()) });
+/** `/admin/marketplaces/entries` with the address's query (a first load). */
+const entriesPath = () => `/admin/marketplaces/entries${window.location.search}`;
 /** `/admin/catalog/<id>` (a first load). */
 const adminItemPath = () => `/admin/catalog/${encodeURIComponent(params.current.itemId ?? "")}`;
 const params = { current: {} as Record<string, string> };
@@ -42,7 +40,7 @@ vi.mock("next/navigation", () => ({
   },
 }));
 
-type RenderOpts = Parameters<typeof renderRoute>[2];
+type RenderOpts = Parameters<typeof renderRouteWithCache>[2];
 /** `/catalog` as a first load: the layout prefetches from the latest `stubApi` routes. */
 const renderCatalog = (opts: RenderOpts = {}) =>
   renderRouteWithCache("/catalog", lastStubRoutes(), opts);
@@ -918,7 +916,7 @@ describe("/admin/marketplaces (ListPage)", () => {
         "POST /api/v1/admin/marketplaces/s2/refresh": () =>
           json(200, { ...SOURCES.items[1], lastStatus: "ok", lastError: null }),
       });
-      await renderRoute(() => MarketplacesPage(), lastStubRoutes(), { locale });
+      await renderRouteWithCache("/admin/marketplaces", lastStubRoutes(), { locale });
       expect(template("ListPage")).not.toBeNull();
       const tab = msgs[locale].catalog.admin.tabs;
       expect(
@@ -986,7 +984,7 @@ describe("marketplaces: the two tabs share one head", () => {
         "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
         "GET /api/v1/admin/marketplaces/entries": () => json(200, { items: [ENTRY] }),
       });
-      await renderRoute(() => MarketplacesPage(), lastStubRoutes(), { locale });
+      await renderRouteWithCache("/admin/marketplaces", lastStubRoutes(), { locale });
       const sourcesHead = head();
       expect(within(sourcesHead).getByText(m.marketplaces.description)).toBeTruthy();
       // browse counts the entries of the marketplaces that are listed (the official one is off)
@@ -1002,7 +1000,7 @@ describe("marketplaces: the two tabs share one head", () => {
       cleanup();
 
       resetNavigation("/admin/marketplaces/entries");
-      await renderRoute(entriesPage, lastStubRoutes(), { locale });
+      await renderRouteWithCache(entriesPath(), lastStubRoutes(), { locale });
       const entriesHead = head();
       expect(within(entriesHead).getByText(m.marketplaces.description)).toBeTruthy();
       expect(tabs(entriesHead)).toEqual(counted);
@@ -1013,7 +1011,7 @@ describe("marketplaces: the two tabs share one head", () => {
   it("the sources search filters the marketplaces by name or address", async () => {
     const m = en.catalog.admin.marketplaces;
     stubApi({ "GET /api/v1/admin/marketplaces": () => json(200, SOURCES) });
-    await renderRoute(() => MarketplacesPage(), lastStubRoutes());
+    await renderRouteWithCache("/admin/marketplaces", lastStubRoutes());
     const user = userEvent.setup();
     await user.type(screen.getByRole("searchbox", { name: m.search }), "acme.com");
     expect(screen.queryByDisplayValue(SOURCES.items[0]?.url as string)).toBeNull();
@@ -1195,7 +1193,7 @@ describe("/admin/catalog and marketplace entries", () => {
           truncated: true,
         }),
     });
-    await renderRoute(entriesPage, lastStubRoutes());
+    await renderRouteWithCache(entriesPath(), lastStubRoutes());
     expect(await screen.findByText(c.truncated)).toBeTruthy();
     // One title 市场/Marketplaces with the tabs Browse (active) and Sources
     expect(
@@ -1244,7 +1242,7 @@ describe("/admin/catalog and marketplace entries", () => {
               permissionsMismatch: { missing: ["tools"], extra: [] },
             }),
     });
-    await renderRoute(entriesPage, lastStubRoutes());
+    await renderRouteWithCache(entriesPath(), lastStubRoutes());
     const list = await screen.findByRole("list", { name: c.title });
     const user = userEvent.setup();
     const importIt = async () => {
@@ -1401,7 +1399,7 @@ describe("/admin/catalog and marketplace entries", () => {
       "GET /api/v1/admin/marketplaces/entries": () =>
         json(200, { items: [entry()], truncated: false }),
     });
-    await renderRoute(entriesPage, lastStubRoutes());
+    await renderRouteWithCache(entriesPath(), lastStubRoutes());
     const tabs = await screen.findByRole("tablist", { name: en.catalog.admin.filters.source });
     expect(within(tabs).getAllByRole("tab")).toHaveLength(3);
     await userEvent.setup().click(within(tabs).getAllByRole("tab")[2] as HTMLElement);
@@ -1413,7 +1411,7 @@ describe("/admin/catalog and marketplace entries", () => {
       "GET /api/v1/admin/marketplaces/entries": () =>
         json(200, { items: [entry()], truncated: false }),
     });
-    await renderRoute(entriesPage, lastStubRoutes());
+    await renderRouteWithCache(entriesPath(), lastStubRoutes());
     await screen.findByText(/@acme\/plugin-cat-a/);
     expect(screen.queryByRole("tablist", { name: en.catalog.admin.filters.source })).toBeNull();
   });
@@ -1424,7 +1422,7 @@ describe("/admin/catalog and marketplace entries", () => {
       "GET /api/v1/admin/marketplaces/entries": () =>
         json(200, { items: [entry()], truncated: false }),
     });
-    await renderRoute(entriesPage, lastStubRoutes());
+    await renderRouteWithCache(entriesPath(), lastStubRoutes());
     await screen.findByText(/@acme\/plugin-cat-a/);
     await userEvent
       .setup()
@@ -1642,7 +1640,7 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
           json(200, { offline: false, items: [SOURCES.items[0], GIT_SOURCE] }),
         "POST /api/v1/admin/marketplaces": () => json(201, { ...GIT_SOURCE, id: "g2" }),
       });
-      await renderRoute(() => MarketplacesPage(), lastStubRoutes(), { locale });
+      await renderRouteWithCache("/admin/marketplaces", lastStubRoutes(), { locale });
       expect(await screen.findByText(fill(s.gitInfo, { ref: "release" }))).toBeTruthy();
       expect(screen.getByText(fill(s.lastCommit, { commit: "0123456" }))).toBeTruthy();
       const user = userEvent.setup();
@@ -1668,7 +1666,7 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
       "GET /api/v1/admin/marketplaces": () => json(200, { offline: false, items: [] }),
       "POST /api/v1/admin/marketplaces": () => json(201, { ...GIT_SOURCE, form: "http" }),
     });
-    await renderRoute(() => MarketplacesPage(), lastStubRoutes());
+    await renderRouteWithCache("/admin/marketplaces", lastStubRoutes());
     const add = await screen.findByRole("region", { name: s.add });
     const user = userEvent.setup();
     expect(within(add).queryByRole("textbox", { name: startsWith(s.ref) })).toBeNull();
@@ -1733,7 +1731,7 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
       "POST /api/v1/admin/marketplaces/g1/entries/in-repo/import": () =>
         json(200, { stagingId: "st7", review: REVIEW }),
     });
-    await renderRoute(entriesPage, lastStubRoutes());
+    await renderRouteWithCache(entriesPath(), lastStubRoutes());
     const list = await screen.findByRole("list", { name: c.title });
     const row = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
     const meta = (name: string) => row(name).querySelector(".cb-object-meta")?.textContent ?? "";
@@ -1770,7 +1768,7 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
           },
         }),
     });
-    await renderRoute(entriesPage, lastStubRoutes());
+    await renderRouteWithCache(entriesPath(), lastStubRoutes());
     const list = await screen.findByRole("list", { name: en.catalog.admin.entries.title });
     const user = userEvent.setup();
     await user.click(
@@ -1800,7 +1798,7 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
           },
         }),
     });
-    await renderRoute(entriesPage, lastStubRoutes());
+    await renderRouteWithCache(entriesPath(), lastStubRoutes());
     const list = await screen.findByRole("list", { name: en.catalog.admin.entries.title });
     const user = userEvent.setup();
     await user.click(
@@ -2979,7 +2977,7 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
             ],
           }),
       });
-      await renderRoute(() => MarketplacesPage(), lastStubRoutes(), { locale });
+      await renderRouteWithCache("/admin/marketplaces", lastStubRoutes(), { locale });
       const title = {
         en: "2 entries were skipped by the last refresh",
         zh: fill(s.skipped.title, { n: 2 }),
@@ -3011,7 +3009,7 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
         }),
     });
     stubApi(routes([{ name: "npm-thing", reason: "claude_npm_unpinned" }]));
-    await renderRoute(() => MarketplacesPage(), lastStubRoutes());
+    await renderRouteWithCache("/admin/marketplaces", lastStubRoutes());
     expect(await screen.findByText("1 entry was skipped by the last refresh")).toBeTruthy();
     cleanup();
     vi.unstubAllGlobals();
@@ -3019,7 +3017,7 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
     const many = Array.from({ length: 25 }, () => ({ name: "dup", reason: "invalid_entry" }));
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     stubApi(routes(many));
-    await renderRoute(() => MarketplacesPage(), lastStubRoutes());
+    await renderRouteWithCache("/admin/marketplaces", lastStubRoutes());
     expect(await screen.findByText("25 entries were skipped by the last refresh")).toBeTruthy();
     const line = fill(s.skipped.line, { name: "dup", reason: s.skipped.reasons.invalid_entry });
     expect(screen.getAllByText(line)).toHaveLength(20);

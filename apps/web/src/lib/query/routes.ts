@@ -23,6 +23,7 @@ import {
   deploymentRequestsQuery,
   deploymentSettingsQuery,
   extensionConfigQuery,
+  marketplaceEntriesQuery,
   marketplacesQuery,
   stagedImportQuery,
 } from "./admin";
@@ -211,8 +212,23 @@ export const ROUTES: readonly RouteEntry[] = [
     // The installed extensions (a name clash or an upgrade); `?upgrade=` needs no read.
     queries: ({ me }) => (enterprise(me) ? [q(adminExtensionsQuery())] : []),
   },
-  { pattern: "/admin/marketplaces", queries: () => [], none: "pending migration" },
-  { pattern: "/admin/marketplaces/entries", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/admin/marketplaces",
+    queries: ({ me }) => (enterprise(me) ? [q(marketplacesQuery())] : []),
+  },
+  {
+    pattern: "/admin/marketplaces/entries",
+    // The entries of the address's source and search, and the marketplaces (a section: the tabs).
+    queries: ({ me, search }) =>
+      enterprise(me)
+        ? [
+            q(
+              marketplaceEntriesQuery(search.get("sourceId") ?? "", (search.get("q") ?? "").trim()),
+            ),
+            q(marketplacesQuery()),
+          ]
+        : [],
+  },
   {
     pattern: "/admin/models",
     queries: ({ me }) => (enterprise(me) ? [q(adminModelsQuery()), q(adminPurposesQuery())] : []),

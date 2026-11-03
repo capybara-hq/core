@@ -9,9 +9,11 @@ import {
   Text,
   versionLabel,
 } from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 import { useCatalogErrorLines } from "../../../../../components/CatalogParts";
+import { NoAccess } from "../../../../../components/NoAccess";
 import { usePagePath } from "../../../../../components/shell/path";
 import { useRouter } from "../../../../../i18n/navigation";
 import { marketplaceTabs } from "../../../../../lib/admin-tabs";
@@ -20,14 +22,19 @@ import {
   entryHost,
   importMarketplaceEntry,
   importPageHref,
-  listMarketplaceEntries,
-  type Marketplace,
   type MarketplaceEntry,
   marketplaceSourceText,
   shortCommit,
 } from "../../../../../lib/catalog";
+import {
+  marketplaceEntriesQuery,
+  marketplacesQuery,
+  stagedImportQuery,
+} from "../../../../../lib/query/admin";
+import { retryOnMountOf } from "../../../../../lib/query/client";
+import { useAppMutation } from "../../../../../lib/query/define";
+import { useAdmin } from "../../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
-import { useLoad } from "../../../../../lib/use-load";
 
 /** 搜索框的防抖时长（浏览器里的计时，不涉及服务端状态）。 */
 const SEARCH_DEBOUNCE_MS = 300;
@@ -51,18 +58,19 @@ const keyOf = (e: MarketplaceEntry) => `${e.sourceId}/${e.name}/${e.version ?? "
  * search sits in the page head; the marketplaces become tabs above the list when there is more
  * than one. Errors such as `marketplace.integrity_mismatch` are a fail callout (with the kernel's
  * line naming the host for network and git codes); a warn callout when the entries are truncated.
+ * From the query cache (the layout prefetched the address's entries and the marketplaces on a
+ * first load): each source and search is its own entry (one filter's rows never show under
+ * another); the marketplaces are a section (while they load or when they failed: no source tabs,
+ * no tab counts); a failed entries read is the empty state with a retry.
  */
-export default function Catalog({
-  initial,
-}: {
-  initial: {
-    entries: { items: MarketplaceEntry[]; truncated?: boolean };
-    /** null: the marketplaces failed to load (no source tabs, no tab counts). */
-    sources: Marketplace[] | null;
-    sourceId: string;
-    q: string;
-  };
-}) {
+export default function CatalogView({ sourceId, q }: { sourceId: string; q: string }) {
+  const gate = useAdmin();
+  if (gate.kind === "pending") return null;
+  if (gate.kind === "noAccess") return <NoAccess need={gate.need} />;
+  return <Catalog initial={{ sourceId, q }} />;
+}
+
+function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
   const scope = usePagePath("admin");
   const t = useTranslations("catalog.admin.entries");
   const ta = useTranslations("catalog.admin");
@@ -80,26 +88,35 @@ export default function Catalog({
     const timer = setTimeout(() => setQuery(q.trim()), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [q]);
-  const { state, reload } = useLoad(
-    () =>
-      listMarketplaceEntries({
-        ...(sourceId !== "" && { sourceId }),
-        ...(query !== "" && { q: query }),
-      }),
-    [sourceId, query],
-    { initial: initial.entries },
-  );
+  const eq = marketplaceEntriesQuery(sourceId, query);
+  const entries = useQuery({ ...eq, retryOnMount: retryOnMountOf(eq.queryKey) });
+  const reload = () => void entries.refetch();
+  const state =
+    entries.data !== undefined
+      ? ({ kind: "ready", data: entries.data } as const)
+      : entries.error
+        ? ({ kind: "error" } as const)
+        : ({ kind: "loading" } as const);
+  const mq = marketplacesQuery();
+  const sources = useQuery({ ...mq, retryOnMount: retryOnMountOf(mq.queryKey) }).data?.items;
   const [notice, setNotice] = useState<Notice>();
   const [busy, setBusy] = useState<string>();
   const rows = state.kind === "ready" ? state.data.items : [];
   const truncated = state.kind === "ready" && state.data.truncated === true;
-  const sourceList = initial.sources ?? [];
+  const sourceList = sources ?? [];
+  const qc = useQueryClient();
+  // Stages the entry for review: the answer is the staged import, which the review page reads.
+  const stage = useAppMutation({
+    fn: (e: MarketplaceEntry) => importMarketplaceEntry(e, e.version),
+    invalidates: () => [],
+    onSuccess: (p) => qc.setQueryData(stagedImportQuery(p.stagingId).queryKey, p),
+  });
 
   const doImport = async (e: MarketplaceEntry) => {
     setBusy(keyOf(e));
     setNotice(undefined);
     try {
-      const p = await importMarketplaceEntry(e, e.version);
+      const p = await stage.mutateAsync(e);
       router.push(importPageHref(p.stagingId));
     } catch (err) {
       setNotice({ message: errorMessage(err), extra: [...issueLines(err), ...catalogLines(err)] });
@@ -244,7 +261,7 @@ export default function Catalog({
         title: ta("marketplaces.title"),
         // One head for both tabs (description, tab counts, search): switching never moves the tabs
         description: ta("marketplaces.description"),
-        tabs: marketplaceTabs(ta, initial.sources ?? undefined),
+        tabs: marketplaceTabs(ta, sources),
         activeTab: "browse",
         search: { label: t("search"), value: q, onChange: setQ },
       }}
