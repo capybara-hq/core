@@ -74,3 +74,36 @@ export const ACCEPTED: string[] = [
   // side-by-side review wait for the reference-update and visual-update workflows
   "skeleton",
 ];
+
+/**
+ * Templates with a loading state: skeleton-alignment.spec.ts compares each loading block's part
+ * boxes with the loaded block's. `loaded` / `loading` are the reference block ids (without the
+ * `template-<name>-` prefix) that draw the same page loaded and loading; a template may have
+ * several pairs (List's objects variant, Inbox's records variant).
+ */
+export const LOADING_TEMPLATES: { name: string; pairs: { loaded: string; loading: string }[] }[] = [
+  { name: "detail", pairs: [{ loaded: "default", loading: "loading" }] },
+  { name: "overview", pairs: [{ loaded: "default", loading: "loading" }] },
+  {
+    name: "inbox",
+    pairs: [
+      { loaded: "default", loading: "loading" },
+      { loaded: "default-records", loading: "loading-records" },
+    ],
+  },
+  { name: "form", pairs: [{ loaded: "page", loading: "loading" }] },
+  { name: "settings", pairs: [{ loaded: "default", loading: "loading" }] },
+  { name: "wizard", pairs: [{ loaded: "default", loading: "loading" }] },
+  { name: "auth", pairs: [{ loaded: "default", loading: "loading" }] },
+  // the conversation's loading block is the file-panel block with every part still on its way
+  { name: "conversation", pairs: [{ loaded: "file-panel", loading: "loading" }] },
+  { name: "trace", pairs: [{ loaded: "default", loading: "loading" }] },
+  { name: "list", pairs: [{ loaded: "default-objects", loading: "loading-objects" }] },
+];
+
+/**
+ * Parts whose loaded height follows their content (prose bodies, rows of text), so the skeleton
+ * cannot match it: x, y and width are still compared. Every other shared part is compared in
+ * height as well.
+ */
+export const VARIABLE_HEIGHT: string[] = [];

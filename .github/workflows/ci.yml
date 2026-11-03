@@ -59,7 +59,8 @@ permissions: {}
 #   pack fakes and bootstrap them); core tests load model-fake and the fakes only;
 # - web, visual: when apps/web or packages/design changed, or docs/design/{spec.md,tokens.json}
 #   (EXTRA_INPUTS); visual runs the screenshot regression plus the measuring / state-coverage /
-#   completeness spec (visual/fidelity.spec.ts) and the interaction specs
+#   completeness spec (visual/fidelity.spec.ts), the skeleton alignment spec
+#   (visual/skeleton-alignment.spec.ts: loading boxes equal the loaded page's boxes) and the interaction specs
 #   (visual/*.interaction.spec.ts); by diff because it builds Next and runs Playwright (minutes);
 #   the reference images (reference-update.yml) and the baselines (visual-update.yml) are rendered
 #   only by those manual workflows, never on PRs;
