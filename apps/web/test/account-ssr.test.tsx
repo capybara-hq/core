@@ -1,15 +1,15 @@
 // The organization and personal settings pages render on the server (web-SSR spec §6, task 9):
 // first paint complete without a browser fetch, the gate cases, and the failure modes of R5.
-import { cleanup, screen } from "@testing-library/react";
+import { act, cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import ConnectionsPage from "../src/app/(app)/account/connections/page";
-import GrantsPage from "../src/app/(app)/account/grants/page";
 import IdentitiesPage from "../src/app/(app)/account/identities/page";
-import { json } from "./support/api";
+import { json, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes, renderRoute } from "./support/server";
 import { NOT_READY } from "./support/shell";
@@ -112,6 +112,27 @@ const ROUTES: Routes = {
   "GET /api/v1/auth/sources": () => json(200, { sources: [{ plugin: "fake-im" }] }),
 };
 
+/** Lets pending reads and effects run (a read after mount would show up in the calls). */
+const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
+
+/** A client navigation to `path` with an empty cache whose `held` read answers on `release()`. */
+async function renderHeld(path: string, held: string, routes: Routes = ROUTES) {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  const answer = routes[held];
+  if (answer === undefined) throw new Error(`no route ${held}`);
+  await renderRouteEmptyCache(path, {
+    ...routes,
+    [held]: async (c) => {
+      await gate;
+      return answer(c);
+    },
+  });
+  return { release: () => act(async () => release()) };
+}
+
 const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
 const noAccess = () => template("StatusPage")?.getAttribute("data-kind") === "no-access";
 
@@ -140,11 +161,24 @@ describe("first paint comes from the server (no browser fetch)", () => {
     expect(browser).toEqual([]);
   });
 
-  it("/account/grants", async () => {
+  it("/account/grants: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => GrantsPage(), ROUTES);
+    await renderRouteWithCache("/account/grants", ROUTES);
     expect(screen.getByText(en.connections.grants.empty)).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
+  });
+
+  it("/account/grants: an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld("/account/grants", `GET ${O}/me/tool-grants`);
+    await vi.waitFor(() => {
+      if (template("SettingsPage") === null) throw new Error("no page");
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByText(en.connections.grants.empty)).toBeNull();
+    await release();
+    expect(await screen.findByText(en.connections.grants.empty)).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
   it("/account/identities: no org needed; 验证 only for login plugins the server read", async () => {
@@ -166,7 +200,6 @@ describe("first paint comes from the server (no browser fetch)", () => {
 type Page = () => Promise<ReactNode>;
 const GATES: [string, Page, "guest", boolean][] = [
   ["/account/connections", () => ConnectionsPage(), "guest", true],
-  ["/account/grants", () => GrantsPage(), "guest", true],
 ];
 
 describe("the gates", () => {
@@ -197,30 +230,46 @@ describe("the gates", () => {
     },
   );
 
+  it("/account/grants: no org renders nothing; it is a setup step", async () => {
+    const none = await renderRouteWithCache("/account/grants", ROUTES, {
+      me: { ...ME, currentOrgId: null },
+    });
+    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+    cleanup();
+    await renderRouteWithCache("/account/grants", ROUTES, { readiness: NOT_READY });
+    expect(template("StatusPage")).toBeNull();
+    expect(document.querySelector("h1")).not.toBeNull();
+    await settle();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
   it("/account/identities is no workspace page: it renders while the org is not ready", async () => {
     await renderRoute(() => IdentitiesPage(), ROUTES, { readiness: NOT_READY });
     expect(screen.getByText("Alice Wong")).toBeTruthy();
   });
 });
 
-describe("mutations re-render on the server", () => {
-  it("a revoked grant refreshes the page", async () => {
+describe("mutations invalidate the cache", () => {
+  it("revoking a grant invalidates toolGrants: the grants are read again", async () => {
     let grants = [
       { agentId: "ag1", agentName: "Echo", toolKey: "t__x", specHash: "h", createdAt: T },
     ];
-    const { stubApi, noContent } = await import("./support/api");
-    stubApi({
+    const routes: Routes = {
+      ...ROUTES,
+      [`GET ${O}/me/tool-grants`]: () => json(200, { grants }),
       [`DELETE ${O}/me/tool-grants/ag1/t__x`]: () => {
         grants = [];
         return noContent();
       },
-    });
-    await renderRoute(() => GrantsPage(), {
-      ...ROUTES,
-      [`GET ${O}/me/tool-grants`]: () => json(200, { grants }),
-    });
+    };
+    const calls = stubApi(routes);
+    await renderRouteWithCache("/account/grants", routes);
     await userEvent.setup().click(screen.getByRole("button", { name: /t__x/ }));
     expect(await screen.findByText(en.connections.grants.empty)).toBeTruthy();
-    expect(router.refresh).toHaveBeenCalled();
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      `DELETE ${O}/me/tool-grants/ag1/t__x`,
+      `GET ${O}/me/tool-grants`,
+    ]);
+    expect(router.refresh).not.toHaveBeenCalled();
   });
 });

@@ -15,8 +15,6 @@ export const keys = {
       me: (): readonly unknown[] => [...all, "me"],
       /** `/me` on a public page: `null` when signed out; only under `keys.account("self")`. */
       maybeMe: (): readonly unknown[] => [...all, "maybeMe"],
-      /** The account's linked external identities. */
-      identities: (): readonly unknown[] => [...all, "identities"],
     };
   },
   org(orgId: string) {

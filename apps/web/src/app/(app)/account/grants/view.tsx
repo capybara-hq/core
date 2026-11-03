@@ -9,36 +9,48 @@ import {
   useToast,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { useAccountNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
-import { useRouter } from "../../../../i18n/navigation";
 import { revokeToolGrant, type ToolGrant } from "../../../../lib/approvals";
+import { toolGrantsQuery } from "../../../../lib/query/account";
+import { useAppMutation } from "../../../../lib/query/define";
+import { keys } from "../../../../lib/query/keys";
+import { usePageQuery } from "../../../../lib/query/page-query";
+import { useWorkspace } from "../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 
 /**
- * `/account/grants`：本人「以后都允许」的授权（SettingsPage），可逐条撤销。Read on the server
- * (`page.tsx`); a revoke re-renders the page there.
+ * `/account/grants`：本人「以后都允许」的授权（SettingsPage），可逐条撤销。From the query cache (the
+ * layout prefetched it on a first load); a revoke invalidates the grants, which are read again.
  */
 const keyOf = (g: ToolGrant) => `${g.agentId}/${g.toolKey}`;
 
-export default function Grants({ orgId, initial }: { orgId: string; initial: ToolGrant[] }) {
+export default function GrantsView() {
+  const ws = useWorkspace({ setup: "step" });
+  if (ws.kind !== "ok") return null;
+  return <Grants orgId={ws.orgId} />;
+}
+
+function Grants({ orgId }: { orgId: string }) {
   const scope = usePagePath("home");
   const t = useTranslations("connections");
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const nav = useAccountNav();
-  const router = useRouter();
-  const [, startTransition] = useTransition();
-  const reload = () => startTransition(() => router.refresh());
+  const read = usePageQuery(toolGrantsQuery(orgId));
   const [revoking, setRevoking] = useState<string>();
+  const revokeGrant = useAppMutation({
+    fn: (g: ToolGrant) => revokeToolGrant(orgId, g.agentId, g.toolKey),
+    invalidates: () => [keys.org(orgId).toolGrants()],
+  });
 
   async function revoke(g: ToolGrant) {
     setRevoking(keyOf(g));
     try {
-      await revokeToolGrant(orgId, g.agentId, g.toolKey);
+      await revokeGrant.mutateAsync(g);
       toast.success(t("grants.revoked", { tool: g.toolKey }));
-      reload();
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -74,6 +86,7 @@ export default function Grants({ orgId, initial }: { orgId: string; initial: Too
     },
   ];
 
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
   return (
     <SettingsPage
       header={{
@@ -86,9 +99,9 @@ export default function Grants({ orgId, initial }: { orgId: string; initial: Too
       <DataTable<ToolGrant>
         label={t("nav.grants")}
         columns={columns}
-        rows={initial}
+        rows={read.kind === "ready" ? read.data.grants : []}
         rowKey={keyOf}
-        state="ready"
+        state={read.kind === "ready" ? "ready" : "loading"}
         empty={{ title: t("grants.empty"), hint: t("grants.emptyHint") }}
       />
     </SettingsPage>

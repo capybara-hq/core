@@ -3,10 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import GrantsPage from "../src/app/(app)/account/grants/page";
 import InboxRoute from "../src/app/(app)/inbox/page";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { renderRouteWithCache } from "./support/query";
 import type { renderPage } from "./support/render";
 import { expectNoFirstPaintFetch, renderRoute } from "./support/server";
 
@@ -401,7 +401,9 @@ describe("已记住的授权（SettingsPage）", () => {
         return noContent();
       },
     });
-    const { container } = await renderRoute(GrantsPage, lastStubRoutes(), { locale });
+    const { container } = await renderRouteWithCache("/account/grants", lastStubRoutes(), {
+      locale,
+    });
     expect(container.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
     expect(
       screen.getByRole("link", { name: m.connections.nav.grants }).getAttribute("aria-current"),
