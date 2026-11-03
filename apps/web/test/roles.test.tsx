@@ -223,8 +223,13 @@ const PAGES: [string, ComponentType | ServerPage | RoutePage, "member" | "admin"
   ["/settings/organization", server(() => OrganizationPage()), "member", zh.roles.need.member],
   ["/settings/members", server(() => MembersPage()), "member", zh.roles.need.member],
   ["/settings/sandbox", server(() => SandboxPage()), "member", zh.roles.need.member],
-  ["/skills", server(() => SkillsPage()), "member", zh.roles.need.member],
-  ["/skills/x1", server(() => SkillPage(params({ id: "x1" }))), "member", zh.roles.need.member],
+  ["/skills", route("/skills", () => SkillsPage()), "member", zh.roles.need.member],
+  [
+    "/skills/x1",
+    route("/skills/x1", () => SkillPage(params({ id: "x1" }))),
+    "member",
+    zh.roles.need.member,
+  ],
   ["/catalog", server(() => CatalogPage()), "member", zh.roles.need.member],
   [
     "/catalog/i1",

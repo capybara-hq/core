@@ -32,6 +32,8 @@ export const keys = {
       agentTemplates: (): readonly unknown[] => [...all, "agentTemplates"],
       /** The org skill library. */
       skills: (): readonly unknown[] => [...all, "skills"],
+      /** One org skill (its body, files and versions). */
+      skill: (skillId: string): readonly unknown[] => [...all, "skill", skillId],
       /** The org's channel connections. */
       channels: (): readonly unknown[] => [...all, "channels"],
       /** Every view of the sidebar's conversation groups (an invalidation prefix). */

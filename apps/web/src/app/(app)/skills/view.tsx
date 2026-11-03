@@ -12,30 +12,45 @@ import {
   useToast,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useRef, useState, useTransition } from "react";
+import { useRef, useState } from "react";
+import { ErrorFrame } from "../../../components/ErrorFrame";
 import { FormError } from "../../../components/form-error";
+import { NoAccess } from "../../../components/NoAccess";
 import { usePagePath } from "../../../components/shell/path";
 import { useSession } from "../../../components/shell/session";
-import { useRouter } from "../../../i18n/navigation";
 import { issueLines } from "../../../lib/api";
 import { canUpdateOrg } from "../../../lib/org-settings";
-import { precheckSkillZip, type SkillSummary, uploadSkillZip } from "../../../lib/skills";
+import { useAppMutation } from "../../../lib/query/define";
+import { keys } from "../../../lib/query/keys";
+import { usePageQuery } from "../../../lib/query/page-query";
+import { skillsQuery } from "../../../lib/query/skills";
+import { useWorkspace } from "../../../lib/query/workspace";
+import { precheckSkillZip, uploadSkillZip } from "../../../lib/skills";
 import { useErrorMessage } from "../../../lib/use-error-message";
+import NotFound from "../not-found";
 
 /**
  * `/skills`：组织技能库（object list）。成员可浏览，点一行进详情；管理员另有上传卡片
- * （选 / 拖入 .zip → 登记 → 直传 → 解包校验，同名技能新增版本）。The list is read on the server
- * (`page.tsx`); an upload re-renders it there.
+ * （选 / 拖入 .zip → 登记 → 直传 → 解包校验，同名技能新增版本）。From the query cache (the layout
+ * prefetched it on a first load); an upload invalidates the list.
  */
-export default function SkillsView({ orgId, initial }: { orgId: string; initial: SkillSummary[] }) {
+export default function SkillsView() {
+  const ws = useWorkspace({ min: "member" });
+  if (ws.kind === "pending" || ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  return <Skills orgId={ws.orgId} />;
+}
+
+function Skills({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("skills");
   const { me } = useSession();
   const admin = canUpdateOrg(me);
   const [uploading, setUploading] = useState(false);
-  const router = useRouter();
-  const [, startTransition] = useTransition();
-  const rows = initial;
+  const list = usePageQuery(skillsQuery(orgId));
+  if (list.kind === "notFound") return <NotFound />;
+  if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
+  const rows = list.kind === "ready" ? list.data.skills : [];
   const empty =
     rows.length === 0
       ? {
@@ -71,7 +86,7 @@ export default function SkillsView({ orgId, initial }: { orgId: string; initial:
         }}
         variant="objects"
         listLabel={t("listLabel")}
-        {...(empty ? { empty } : {})}
+        {...(list.kind === "loading" ? { loading: true } : empty ? { empty } : {})}
       >
         {rows.map((s) => (
           <ObjectRow
@@ -93,13 +108,7 @@ export default function SkillsView({ orgId, initial }: { orgId: string; initial:
           size={640}
           footer={<Button onClick={() => setUploading(false)}>{t("upload.close")}</Button>}
         >
-          <UploadCard
-            orgId={orgId}
-            onUploaded={() => {
-              startTransition(() => router.refresh());
-              setUploading(false);
-            }}
-          />
+          <UploadCard orgId={orgId} onUploaded={() => setUploading(false)} />
         </Dialog>
       )}
     </>
@@ -120,6 +129,15 @@ function UploadCard({ orgId, onUploaded }: { orgId: string; onUploaded(): void }
   /** 可重试的文件（上一次上传失败或被取消）。 */
   const [failed, setFailed] = useState<File>();
   const ctrl = useRef<AbortController | null>(null);
+  // An upload adds a skill or a version: the list and that skill are read again.
+  const send = useAppMutation({
+    fn: (v: { file: File; signal: AbortSignal }) =>
+      uploadSkillZip(orgId, v.file, {
+        signal: v.signal,
+        onProgress: (progress) => setBusy({ name: v.file.name, progress }),
+      }),
+    invalidates: (_, r) => [keys.org(orgId).skills(), keys.org(orgId).skill(r.skill.id)],
+  });
 
   async function upload(files: File[]) {
     const file = files[0];
@@ -136,10 +154,7 @@ function UploadCard({ orgId, onUploaded }: { orgId: string; onUploaded(): void }
     const c = new AbortController();
     ctrl.current = c;
     try {
-      const r = await uploadSkillZip(orgId, file, {
-        signal: c.signal,
-        onProgress: (progress) => setBusy({ name: file.name, progress }),
-      });
+      const r = await send.mutateAsync({ file, signal: c.signal });
       toast.success(
         r.created
           ? t("created", { name: r.skill.name })

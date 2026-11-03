@@ -3,12 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import SkillDetailPage from "../src/app/(app)/skills/[id]/page";
-import SkillsPage from "../src/app/(app)/skills/page";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
-import { expectNoFirstPaintFetch, renderRoute } from "./support/server";
+import { expectNoFirstPaintFetch } from "./support/server";
 import { NOT_READY } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -21,17 +20,16 @@ vi.mock("next/navigation", () => ({
   },
 }));
 
-type RenderOpts = Parameters<typeof renderRoute>[2];
-/** `/skills` read on the server from the latest `stubApi` routes (the browser's). */
+type RenderOpts = Parameters<typeof renderRouteWithCache>[2];
+/** `/skills` as a first load: the layout prefetches from the latest `stubApi` routes. */
 const renderSkills = (opts: RenderOpts = {}) =>
-  renderRoute(() => SkillsPage(), lastStubRoutes(), opts);
-/** `/skills/s1` read on the server from the latest `stubApi` routes. */
+  renderRouteWithCache("/skills", lastStubRoutes(), opts);
+/** `/skills/s1` as a first load (routes as in {@link renderSkills}). */
 const renderSkill = (opts: RenderOpts = {}) =>
-  renderRoute(
-    () => SkillDetailPage({ params: Promise.resolve({ id: "s1" }) }),
-    lastStubRoutes(),
-    opts,
-  );
+  renderRouteWithCache("/skills/s1", lastStubRoutes(), opts);
+
+/** Lets pending reads and effects run (a read after mount would show up in the calls). */
+const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
 
 const msgs = { zh, en } as const;
 const LOCALES = ["zh", "en"] as const;
@@ -357,11 +355,31 @@ describe("技能详情（DetailPage）", () => {
     expect(screen.queryByRole("button", { name: en.skills.detail.delete })).toBeNull();
   });
 
-  it("a skill the kernel does not find is the not-found page", async () => {
+  it("a skill the kernel does not find is the not-found state in the shell", async () => {
     stubApi({
       [`GET ${BASE}/s1`]: () => json(404, { error: { code: "skill.not_found", message: "x" } }),
     });
-    await expect(renderSkill({ locale: "zh" })).rejects.toThrow("NOT_FOUND");
+    await renderSkill({ locale: "zh" });
+    expect(screen.getByRole("heading", { level: 1, name: zh.notFound.title })).toBeTruthy();
+  });
+
+  it("deleting a skill invalidates the library: the list is read again when shown", async () => {
+    const calls = stubApi({
+      [`GET ${BASE}`]: () => json(200, { skills: [] }),
+      [`GET ${BASE}/s1`]: () => json(200, detail()),
+      [`DELETE ${BASE}/s1`]: () => noContent(),
+    });
+    const { client } = await renderSkill();
+    // the library is cached (as after a visit to /skills)
+    client.setQueryData(["org", "o1", "skills"], { skills: [skill("s1", "pdf-tools")] });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: en.skills.detail.delete }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByRole("textbox"), "pdf-tools");
+    await user.click(within(dialog).getByRole("button", { name: en.skills.detail.delete }));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/skills"));
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`DELETE ${BASE}/s1`]);
+    expect(client.getQueryState(["org", "o1", "skills"])?.isInvalidated).toBe(true);
   });
 });
 
@@ -382,42 +400,71 @@ describe("the skills pages render on the server (web-SSR spec §6)", () => {
   };
   const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
 
-  it("/skills: the list is the first paint", async () => {
+  it("/skills: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => SkillsPage(), routes);
+    await renderRouteWithCache("/skills", routes);
     expect(screen.getByRole("list", { name: en.skills.listLabel })).toBeTruthy();
     expect(screen.getByText("pdf-tools")).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/skills/<id>: the skill is the first paint", async () => {
+  it("/skills/<id>: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    const { container } = await renderRoute(
-      () => SkillDetailPage({ params: Promise.resolve({ id: "s1" }) }),
-      routes,
-    );
+    const { container } = await renderRouteWithCache("/skills/s1", routes);
     expect(container.querySelector("pre")?.textContent).toBe("# PDF tools\n");
+    await settle();
     expect(browser).toEqual([]);
   });
 
   it.each([
-    ["/skills", () => SkillsPage()],
-    ["/skills/<id>", () => SkillDetailPage({ params: Promise.resolve({ id: "s1" }) })],
+    ["/skills", "ListPage", "pdf-tools"],
+    ["/skills/s1", "DetailPage", "# PDF tools"],
   ])(
-    "%s: a guest gets no access and nothing is read; no org renders nothing; setup redirects home",
-    async (_path, page) => {
-      const guest = await renderRoute(page, routes, { me: GUEST });
+    "%s: an empty cache shows the template's loading state, then the data",
+    async (path, name, text) => {
+      let release: () => void = () => {};
+      const held = new Promise<void>((r) => {
+        release = r;
+      });
+      const later = (body: unknown) => async () => {
+        await held;
+        return json(200, body);
+      };
+      await renderRouteEmptyCache(path, {
+        [`GET ${BASE}`]: later({ skills: [skill("s1", "pdf-tools")] }),
+        [`GET ${BASE}/s1`]: later(detail),
+      });
+      const page = await vi.waitFor(() => {
+        const el = template(name);
+        if (el === null) throw new Error("no page yet");
+        return el as HTMLElement;
+      });
+      expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+      expect(screen.queryAllByText(text, { exact: false })).toEqual([]);
+      await act(async () => release());
+      expect(await screen.findAllByText(text, { exact: false })).not.toHaveLength(0);
+      await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+      expect(page).toBeTruthy();
+    },
+  );
+
+  it.each(["/skills", "/skills/s1"])(
+    "%s: a guest gets no access and nothing is read; no org renders nothing; setup goes home",
+    async (path) => {
+      const guest = await renderRouteWithCache(path, routes, { me: GUEST });
       expect(new Set(guest.calls.map((c) => c.url))).toEqual(
         new Set(["/api/v1/me", "/api/v1/orgs/o1/readiness"]),
       );
       expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
       cleanup();
-      const none = await renderRoute(page, routes, { me: { ...ME, currentOrgId: null } });
+      const none = await renderRouteWithCache(path, routes, { me: { ...ME, currentOrgId: null } });
       expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
       expect(document.body.textContent).toBe("");
-      await expect(renderRoute(page, routes, { readiness: NOT_READY })).rejects.toThrow(
-        "REDIRECT /",
-      );
+      cleanup();
+      expectNoFirstPaintFetch();
+      await renderRouteWithCache(path, routes, { readiness: NOT_READY });
+      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
     },
   );
 });

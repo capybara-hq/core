@@ -2,7 +2,7 @@ import type { QueryClient, UseQueryOptions } from "@tanstack/react-query";
 import { type Agent, setupReady } from "../agents";
 import type { ApiClientError } from "../api";
 import type { Conversation, ConversationEvent } from "../conversations";
-import { myRole, roleAtLeast } from "../members";
+import { myRole, type OrgRole, roleAtLeast } from "../members";
 import { canEditAgent } from "../org-settings";
 import type { Me } from "../session";
 import { agentConnectorQueries, agentFormQueries, agentQuery, agentsQuery } from "./agents";
@@ -21,6 +21,7 @@ import {
   sandboxQuery,
 } from "./conversation";
 import { conversationGroupsQuery, maybeMeQuery, readinessQuery } from "./shell";
+import { skillQuery, skillsQuery } from "./skills";
 
 /** What a route's queries are built from. */
 export interface RouteCtx {
@@ -57,6 +58,10 @@ export interface RouteEntry {
  */
 const q = <T>(o: UseQueryOptions<T, ApiClientError>) =>
   o as unknown as UseQueryOptions<unknown, ApiClientError>;
+
+/** Whether the session's role in its current org reaches `min` (a page gated below it reads nothing). */
+const atLeast = (me: Me | null, min: OrgRole): boolean =>
+  me !== null && roleAtLeast(myRole(me), min);
 
 /**
  * Every `page.tsx` under `app/(app)` and `app/(auth)`, one entry each (a test walks the app dir).
@@ -110,9 +115,7 @@ export const ROUTES: readonly RouteEntry[] = [
     pattern: "/agents/new",
     // Members up (a guest gets no access and nothing is read).
     queries: ({ orgId, me }) =>
-      orgId === null || me === null || !roleAtLeast(myRole(me) ?? "guest", "member")
-        ? []
-        : agentFormQueries(orgId),
+      orgId === null || !atLeast(me, "member") ? [] : agentFormQueries(orgId),
   },
   { pattern: "/bind/[token]", queries: () => [], none: "pending migration" },
   { pattern: "/catalog", queries: () => [], none: "pending migration" },
@@ -192,8 +195,18 @@ export const ROUTES: readonly RouteEntry[] = [
   { pattern: "/settings/sandbox", queries: () => [], none: "pending migration" },
   { pattern: "/settings/tokens", queries: () => [], none: "pending migration" },
   { pattern: "/setup", queries: () => [], none: "pending migration" },
-  { pattern: "/skills", queries: () => [], none: "pending migration" },
-  { pattern: "/skills/[id]", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/skills",
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "member") ? [] : [q(skillsQuery(orgId))],
+  },
+  {
+    pattern: "/skills/[id]",
+    queries: ({ orgId, me, params }) =>
+      orgId === null || params.id === undefined || !atLeast(me, "member")
+        ? []
+        : [q(skillQuery(orgId, params.id))],
+  },
   { pattern: "/trajectories", queries: () => [], none: "pending migration" },
   { pattern: "/trajectories/[conversationId]", queries: () => [], none: "pending migration" },
   // Any other path under (app): its page throws `notFound()` (HTTP 404 inside the App Shell).

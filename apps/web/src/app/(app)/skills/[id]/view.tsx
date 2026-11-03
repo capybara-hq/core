@@ -17,10 +17,17 @@ import {
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { ErrorFrame } from "../../../../components/ErrorFrame";
+import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import { useRouter } from "../../../../i18n/navigation";
 import { canUpdateOrg } from "../../../../lib/org-settings";
+import { useAppMutation } from "../../../../lib/query/define";
+import { keys } from "../../../../lib/query/keys";
+import { usePageQuery } from "../../../../lib/query/page-query";
+import { skillQuery } from "../../../../lib/query/skills";
+import { useWorkspace } from "../../../../lib/query/workspace";
 import {
   deleteSkill,
   type SkillDetail,
@@ -28,24 +35,47 @@ import {
   type SkillVersion,
 } from "../../../../lib/skills";
 import { useErrorMessage } from "../../../../lib/use-error-message";
+import NotFound from "../../not-found";
 
 const TABS = ["content", "files", "versions"] as const;
 type Tab = (typeof TABS)[number];
 
 /**
  * `/skills/[id]`：组织技能详情（DetailPage）：SKILL.md 正文（纯文本，不渲染 HTML / Markdown）、
- * 当前版本的文件、各版本；管理员可删除（输入技能名二次确认）。Read on the server (`page.tsx`).
+ * 当前版本的文件、各版本；管理员可删除（输入技能名二次确认）。From the query cache (the layout
+ * prefetched it on a first load); a skill the kernel does not find is the not-found state.
  */
-export default function SkillView({
-  orgId,
-  initial: skill,
-}: {
-  orgId: string;
-  initial: SkillDetail;
-}) {
+export default function SkillView({ skillId }: { skillId: string }) {
+  const ws = useWorkspace({ min: "member" });
+  if (ws.kind === "pending" || ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  return <Skill key={skillId} orgId={ws.orgId} skillId={skillId} />;
+}
+
+function Skill({ orgId, skillId }: { orgId: string; skillId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("skills");
   const [tab, setTab] = useState<Tab>("content");
+  const read = usePageQuery(skillQuery(orgId, skillId));
+  const tabs = {
+    label: t("detail.tabsLabel"),
+    items: TABS.map((x) => ({ id: x, label: t(`detail.tabs.${x}`) })),
+    value: tab,
+    onChange: (x: string) => setTab(x as Tab),
+  };
+  if (read.kind === "notFound") return <NotFound />;
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
+  if (read.kind === "loading") {
+    return (
+      <DetailPage
+        header={{ path: [...scope, { label: "skills", href: "/skills" }], title: "" }}
+        tabs={tabs}
+        inspectorTitle={t("detail.inspectorTitle")}
+        loading={{ inspector: true }}
+      />
+    );
+  }
+  const skill = read.data;
   return (
     <DetailPage
       header={{
@@ -53,12 +83,7 @@ export default function SkillView({
         title: skill.name,
         count: t("version", { version: skill.currentVersion }),
       }}
-      tabs={{
-        label: t("detail.tabsLabel"),
-        items: TABS.map((x) => ({ id: x, label: t(`detail.tabs.${x}`) })),
-        value: tab,
-        onChange: (x) => setTab(x as Tab),
-      }}
+      tabs={tabs}
       inspectorTitle={t("detail.inspectorTitle")}
       inspector={<Inspector skill={skill} />}
     >
@@ -107,6 +132,11 @@ function ContentTab({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
   const errorMessage = useErrorMessage();
   const { me } = useSession();
   const [confirm, setConfirm] = useState(false);
+  // A delete invalidates the library (the list this page goes back to).
+  const remove = useAppMutation({
+    fn: () => deleteSkill(orgId, skill.id),
+    invalidates: () => [keys.org(orgId).skills()],
+  });
   return (
     <Stack gap={16}>
       {skill.body !== null ? (
@@ -137,7 +167,7 @@ function ContentTab({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
             confirmLabel={t("delete")}
             onConfirm={async () => {
               try {
-                await deleteSkill(orgId, skill.id);
+                await remove.mutateAsync(undefined);
               } catch (e) {
                 throw new Error(errorMessage(e));
               }

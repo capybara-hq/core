@@ -1,14 +1,9 @@
-import { NoAccess } from "../../../components/NoAccess";
-import { read } from "../../../lib/server/page";
-import { workspace } from "../../../lib/server/session";
-import { listSkills } from "../../../lib/skills";
 import SkillsView from "./view";
 
-/** `/skills`: the org's skill library (members up), read on the server. */
-export default async function SkillsPage() {
-  const ws = await workspace({ min: "member" });
-  if (ws.kind === "noOrg") return null;
-  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
-  const { skills } = await read(listSkills(ws.orgId));
-  return <SkillsView orgId={ws.orgId} initial={skills} />;
+/**
+ * `/skills`: the org's skill library (members up). It reads nothing: the layout prefetches the list
+ * on a first load (`lib/query/routes.ts`), and the view reads it from the cache.
+ */
+export default function SkillsPage() {
+  return <SkillsView />;
 }
