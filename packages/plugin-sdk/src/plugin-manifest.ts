@@ -196,7 +196,9 @@ const configSchemaJson = z
   .record(z.string(), z.unknown())
   .refine(
     (v) => new TextEncoder().encode(JSON.stringify(v)).length <= CONFIG_UI_LIMITS.configSchemaBytes,
-    { message: `must be at most ${CONFIG_UI_LIMITS.configSchemaBytes} bytes of JSON (256 KiB)` },
+    {
+      message: `must be at most ${CONFIG_UI_LIMITS.configSchemaBytes} bytes of JSON (${CONFIG_UI_LIMITS.configSchemaBytes / 1024} KiB)`,
+    },
   );
 
 const extensionSection = z.strictObject({

@@ -555,7 +555,16 @@ describe("plugin.json extension.configSchemas", () => {
     expect(r).toMatchObject({ extension: { configSchemas: { deployment } } });
   });
 
-  it("rejects a schema over 256 KiB", () => {
+  it("accepts a schema just under the limit", () => {
+    const overhead = JSON.stringify({ type: "object", description: "" }).length;
+    const fit = {
+      type: "object",
+      description: "x".repeat(CONFIG_UI_LIMITS.configSchemaBytes - overhead),
+    };
+    expect(parsePluginManifest(manifest({ deployment: fit }))).not.toHaveProperty("errors");
+  });
+
+  it("rejects a schema over the limit (CONFIG_UI_LIMITS.configSchemaBytes)", () => {
     const big = { type: "object", description: "x".repeat(CONFIG_UI_LIMITS.configSchemaBytes) };
     const r = parsePluginManifest(manifest({ deployment: big }));
     expect(r).toHaveProperty("errors");

@@ -110,8 +110,11 @@ export const CONFIG_UI_LIMITS = {
   presets: 20,
   /** Root sections. */
   sections: 20,
-  /** UTF-8 bytes of each JSON Schema in `plugin.json` `extension.configSchemas`. */
-  configSchemaBytes: 256 * 1024,
+  /**
+   * UTF-8 bytes of each JSON Schema in `plugin.json` `extension.configSchemas` (96 KiB: two of
+   * them must fit in the 256 KiB `plugin.json` text with the rest of the manifest).
+   */
+  configSchemaBytes: 96 * 1024,
 } as const;
 
 /**

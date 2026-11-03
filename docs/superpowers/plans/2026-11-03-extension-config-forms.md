@@ -58,7 +58,7 @@ follow-ups, not executed here.
   "full: cheap".
 - Limits (spec §3.3): `label` ≤ 100, `help` ≤ 500, `placeholder` ≤ 200 characters per language, both
   non-empty; `x-ui` JSON per schema ≤ 64 KiB; ≤ 200 options, ≤ 20 presets, ≤ 20 sections;
-  `configSchemas.*` ≤ 256 KiB each.
+  `configSchemas.*` ≤ 96 KiB each (ruling: plugin.json as a whole is ≤ 256 KiB).
 - Secrets are stored only at fixed object paths; hints may draw a secret elsewhere, never store it
   elsewhere; no secret value ever appears in a view, an audit or a log.
 
