@@ -46,7 +46,7 @@ import {
 } from "./settings";
 import { conversationGroupsQuery, maybeMeQuery, readinessQuery } from "./shell";
 import { skillQuery, skillsQuery } from "./skills";
-import { trajectoriesQuery, trajectoryFilters } from "./trajectories";
+import { trajectoriesQuery, trajectoryFilters, trajectoryQuery } from "./trajectories";
 
 /** What a route's queries are built from. */
 export interface RouteCtx {
@@ -458,7 +458,14 @@ export const ROUTES: readonly RouteEntry[] = [
             ),
           ],
   },
-  { pattern: "/trajectories/[conversationId]", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/trajectories/[conversationId]",
+    // Members up (the kernel decides who may see it): the latest runs (audited) and the members.
+    queries: ({ orgId, me, params }) =>
+      orgId === null || params.conversationId === undefined || !atLeast(me, "member")
+        ? []
+        : [q(trajectoryQuery(orgId, params.conversationId)), q(membersQuery(orgId))],
+  },
   // Any other path under (app): its page throws `notFound()` (HTTP 404 inside the App Shell).
   { pattern: "/[...rest]", queries: () => [], none: "unknown route: 404" },
 ];

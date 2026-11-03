@@ -6,7 +6,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import PluginPage from "../src/app/(app)/p/[plugin]/[id]/page";
-import TrajectoryPage from "../src/app/(app)/trajectories/[conversationId]/page";
 import { json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
@@ -130,7 +129,6 @@ async function renderHeld(path: string, held: string, routes: Routes = ROUTES) {
   return { ...r, release: () => act(async () => release()) };
 }
 
-const detail = () => TrajectoryPage({ params: Promise.resolve({ conversationId: "c1" }) });
 const plugin = (id: string) => () =>
   PluginPage({ params: Promise.resolve({ plugin: "board", id }) });
 
@@ -292,22 +290,37 @@ describe("/trajectories", () => {
 });
 
 describe("/trajectories/[conversationId]", () => {
-  it("the latest runs, read exactly once (each read is audited), with no browser fetch", async () => {
+  it("a first render from the hydrated cache makes no browser read (the latest runs, read exactly once: each read is audited)", async () => {
     const browser = expectNoFirstPaintFetch();
-    const { calls } = await renderRoute(detail, ROUTES);
+    const { calls } = await renderRouteWithCache("/trajectories/c1", ROUTES);
     expect(screen.getByRole("tree", { name: en.trajectories.detail.waterfall })).toBeTruthy();
     expect(screen.getByText(en.trajectories.detail.audited)).toBeTruthy();
     expect(calls.filter((c) => c.url.startsWith(`${O}/trajectories/c1`)).map((c) => c.url)).toEqual(
       [`${O}/trajectories/c1?limit=10`],
     );
+    await settle();
     expect(browser).toEqual([]);
+  });
+
+  it("an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld("/trajectories/c1", `GET ${O}/trajectories/c1`);
+    await vi.waitFor(() => {
+      if (template("TracePage") === null) throw new Error("no page");
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByRole("tree", { name: en.trajectories.detail.waterfall })).toBeNull();
+    await release();
+    expect(
+      await screen.findByRole("tree", { name: en.trajectories.detail.waterfall }),
+    ).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
   it("earlier runs load in the browser", async () => {
     const browser = stubApi({
       [`GET ${O}/trajectories/c1`]: () => json(200, { ...DETAIL(), runs: [RUN("r1")] }),
     });
-    await renderRoute(detail, {
+    await renderRouteWithCache("/trajectories/c1", {
       ...ROUTES,
       [`GET ${O}/trajectories/c1`]: () => json(200, DETAIL("r2")),
     });
@@ -320,15 +333,58 @@ describe("/trajectories/[conversationId]", () => {
     );
   });
 
-  it("a trajectory the kernel hides is not found", async () => {
-    expectNoFirstPaintFetch();
-    await expect(
-      renderRoute(detail, {
-        ...ROUTES,
-        [`GET ${O}/trajectories/c1`]: () =>
-          json(404, { error: { code: "trajectory.not_found", message: "x" } }),
-      }),
-    ).rejects.toThrow("NOT_FOUND");
+  it("a trajectory the kernel hides is the not-found state in the shell", async () => {
+    await renderRouteWithCache("/trajectories/c1", {
+      ...ROUTES,
+      [`GET ${O}/trajectories/c1`]: () =>
+        json(404, { error: { code: "trajectory.not_found", message: "x" } }),
+    });
+    expect(screen.getByRole("heading", { level: 1, name: en.notFound.title })).toBeTruthy();
+  });
+
+  it("members the kernel refuses only cost the names; another failure is the error state", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRouteWithCache("/trajectories/c1", {
+      ...ROUTES,
+      [`GET ${O}/members`]: () => json(403, { error: { code: "forbidden", message: "x" } }),
+    });
+    expect(screen.getByRole("tree", { name: en.trajectories.detail.waterfall })).toBeTruthy();
+    await settle();
+    expect(browser).toEqual([]);
+    cleanup();
+    stubApi(ROUTES);
+    await renderRouteWithCache("/trajectories/c1", { ...ROUTES, [`GET ${O}/members`]: failing });
+    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("maintenance");
+    await userEvent.setup().click(screen.getByRole("button", { name: en.errors.page.retry }));
+    expect(
+      await screen.findByRole("tree", { name: en.trajectories.detail.waterfall }),
+    ).toBeTruthy();
+  });
+
+  it("adding a run to an eval set invalidates that set and the sets list", async () => {
+    const calls = stubApi({
+      ...ROUTES,
+      [`GET ${O}/eval-sets`]: () =>
+        json(200, {
+          sets: [{ id: "s1", agentId: "ag1", name: "Regression", caseCount: 0, createdAt: T }],
+        }),
+      [`POST ${O}/eval-sets/s1/cases`]: () => json(201, { case: { id: "k9" } }),
+    });
+    const { client } = await renderRouteWithCache("/trajectories/c1", ROUTES);
+    client.setQueryData(["org", "o1", "evalSet", "s1"], { id: "s1" });
+    const u = userEvent.setup();
+    await u.click(screen.getByRole("button", { name: en.trajectories.addToSet.action }));
+    const dialog = await screen.findByRole("dialog");
+    await u.click(
+      await within(dialog).findByRole("button", { name: en.trajectories.addToSet.submit }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      `GET ${O}/eval-sets`,
+      `POST ${O}/eval-sets/s1/cases`,
+      `GET ${O}/eval-sets`,
+    ]);
+    expect(client.getQueryState(["org", "o1", "evalSet", "s1"])?.isInvalidated).toBe(true);
   });
 });
 
@@ -385,26 +441,17 @@ describe("/p/[plugin]/[id]", () => {
 });
 
 describe("the gates", () => {
-  it.each([["/trajectories/c1", detail]] as const)(
-    "%s (members): a guest gets no access and nothing read",
+  it.each([["/p/board/overview", plugin("overview")]] as const)(
+    "%s: no org renders nothing; setup goes home",
     async (_p, page) => {
-      const denied = await renderRoute(page, ROUTES, { me: as("guest") });
-      expect(new Set(denied.calls.map((c) => c.url))).toEqual(
-        new Set(["/api/v1/me", `${O}/readiness`]),
+      const none = await renderRoute(page, ROUTES, { me: { ...ME, currentOrgId: null } });
+      expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+      cleanup();
+      await expect(renderRoute(page, ROUTES, { readiness: NOT_READY })).rejects.toThrow(
+        "REDIRECT /",
       );
-      expect(noAccess()).toBe(true);
     },
   );
-
-  it.each([
-    ["/trajectories/c1", detail],
-    ["/p/board/overview", plugin("overview")],
-  ] as const)("%s: no org renders nothing; setup goes home", async (_p, page) => {
-    const none = await renderRoute(page, ROUTES, { me: { ...ME, currentOrgId: null } });
-    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
-    cleanup();
-    await expect(renderRoute(page, ROUTES, { readiness: NOT_READY })).rejects.toThrow("REDIRECT /");
-  });
 
   it("/p/board/overview: a guest may open an extension page", async () => {
     expectNoFirstPaintFetch();
@@ -415,7 +462,10 @@ describe("the gates", () => {
 });
 
 /** The pages that read through the query cache: path, the role they need (none: any member). */
-const ROUTE_GATES: [string, "member" | null][] = [["/trajectories", "member"]];
+const ROUTE_GATES: [string, "member" | null][] = [
+  ["/trajectories", "member"],
+  ["/trajectories/c1", "member"],
+];
 
 describe("the gates (query cache)", () => {
   it.each(ROUTE_GATES)(

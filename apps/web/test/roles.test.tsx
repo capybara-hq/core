@@ -102,9 +102,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-/** A server page (gate and reads on the server), as the role pass runs it. */
-type ServerPage = { server: () => Promise<ReactNode> };
-const server = (page: () => Promise<ReactNode>): ServerPage => ({ server: page });
 /** A page that reads through the query cache: the layout's prefetch of `path`, then the view. */
 type RoutePage = { route: string; page: () => ReactNode | Promise<ReactNode> };
 const route = (path: string, page: () => ReactNode | Promise<ReactNode>): RoutePage => ({
@@ -112,34 +109,6 @@ const route = (path: string, page: () => ReactNode | Promise<ReactNode>): RouteP
   page,
 });
 const params = <T,>(p: T) => ({ params: Promise.resolve(p) });
-
-/**
- * Runs a server page's gate for `me`: the session reads answer, every other read is a 404. Returns
- * the reads past the gate's own and what the page rendered (none when a read threw).
- */
-async function runServerPage(
-  page: ServerPage,
-  me: Me,
-): Promise<{ reads: string[]; element: ReactNode | undefined }> {
-  const reads: string[] = [];
-  setApiTransport(
-    async (path) => {
-      if (path === "/api/v1/me") return reply(200, me);
-      if (path === "/api/v1/orgs/o1/readiness")
-        return reply(200, { modelProvider: "ready", agents: 1 });
-      reads.push(path);
-      return reply(404, { error: { code: "not_found", message: "x" } });
-    },
-    { everywhere: true },
-  );
-  try {
-    return { reads, element: await page.server() };
-  } catch {
-    return { reads, element: undefined };
-  } finally {
-    setApiTransport(null);
-  }
-}
 
 /**
  * Runs the layout's prefetch of a route page for `me` (the session reads answer, every other read
@@ -173,7 +142,7 @@ async function runRoutePage(page: RoutePage, me: Me): Promise<{ reads: string[] 
   return { reads };
 }
 
-const PAGES: [string, ComponentType | ServerPage | RoutePage, "member" | "admin", string][] = [
+const PAGES: [string, ComponentType | RoutePage, "member" | "admin", string][] = [
   ["/agents/new", route("/agents/new", () => NewAgentPage()), "member", zh.roles.need.member],
   [
     // with a template: the layout prefetches its item and the org's extensions
@@ -288,7 +257,7 @@ const PAGES: [string, ComponentType | ServerPage | RoutePage, "member" | "admin"
   ],
   [
     "/trajectories/cv1",
-    server(() => TrajectoryPage(params({ conversationId: "cv1" }))),
+    route("/trajectories/cv1", () => TrajectoryPage(params({ conversationId: "cv1" }))),
     "member",
     zh.roles.need.member,
   ],
@@ -318,24 +287,6 @@ describe("role gate: pages a role may not open", () => {
             // past the gate: the layout prefetched the page's data
             expect(reads.length).toBeGreaterThan(0);
           }
-          return;
-        }
-        if ("server" in Page) {
-          const { reads, element } = await runServerPage(Page, meAs(role));
-          if (element !== undefined) renderPage(element, { locale: "zh", me: meAs(role) });
-          if (denied) {
-            expect(reads).toEqual([]);
-            expect(noAccess()).toBeTruthy();
-            expect(document.querySelector('[data-part="status-need"]')?.textContent).toBe(
-              `需要：${need}`,
-            );
-          } else {
-            expect(noAccess()).toBeNull();
-            // past the gate: the page reads its data, or renders without reading
-            expect(reads.length > 0 || element !== undefined).toBe(true);
-          }
-          await Promise.resolve();
-          expect(calls).toEqual([]);
           return;
         }
         renderPage(<Page />, { locale: "zh", me: meAs(role) });
