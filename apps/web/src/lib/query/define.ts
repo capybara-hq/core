@@ -10,7 +10,8 @@ import { FRESHNESS, type Freshness } from "./freshness";
 /** The one way to declare a read: a key, the loader call and its freshness class. */
 export function defineQuery<T>(o: {
   key: readonly unknown[];
-  fn: () => Promise<T>;
+  /** Receives TanStack's query function context; `signal` aborts when the read is cancelled. */
+  fn: (ctx: { signal: AbortSignal }) => Promise<T>;
   freshness: Freshness;
 }): UseQueryOptions<T, ApiClientError> {
   return queryOptions<T, ApiClientError>({

@@ -10,6 +10,7 @@ import { ApiClientError } from "../src/lib/api";
 import { loginPathFor } from "../src/lib/auth-sources";
 import { agentsQuery } from "../src/lib/query/agents";
 import { makeQueryClient } from "../src/lib/query/client";
+import { defineQuery } from "../src/lib/query/define";
 import { keys } from "../src/lib/query/keys";
 import { usePageQuery } from "../src/lib/query/page-query";
 import { meQuery, readinessQuery } from "../src/lib/query/shell";
@@ -17,7 +18,7 @@ import { resetSession, useAdmin, useWorkspace } from "../src/lib/query/workspace
 import type { Me } from "../src/lib/session";
 import { isSignedOut } from "../src/lib/signed-out";
 import { json, stubApi } from "./support/api";
-import { pathname, resetNavigation, router } from "./support/navigation";
+import { resetNavigation, router } from "./support/navigation";
 import { ME } from "./support/render";
 import { NOT_READY, READY } from "./support/shell";
 
@@ -165,37 +166,80 @@ describe("a signed-out session on a client read", () => {
 });
 
 describe("resetSession", () => {
-  function Rows({ orgId }: { orgId: string }) {
-    const q = useQuery(agentsQuery(orgId));
-    return <p>{q.data?.agents.map((a) => a.id).join(",") ?? "none"}</p>;
+  /** A probe read of one org whose answer the test controls; records its abort signal. */
+  function probe(orgId: string) {
+    const d: { signal?: AbortSignal; answer: (rows: string[]) => void } = { answer: () => {} };
+    const query = defineQuery<string[]>({
+      key: keys.org(orgId).agents(),
+      fn: ({ signal }) => {
+        d.signal = signal;
+        return new Promise<string[]>((resolve) => {
+          d.answer = resolve;
+        });
+      },
+      freshness: "orgConfig",
+    });
+    return { d, query };
   }
 
-  it("org switch drops a read of the old org that answers late", async () => {
-    let answerA: (r: Response) => void = () => {};
-    stubApi({
-      "GET /api/v1/orgs/A/agents": () => new Promise<Response>((r) => (answerA = r)),
-    });
+  function Probe({ query }: { query: ReturnType<typeof probe>["query"] }) {
+    const q = useQuery(query);
+    return <p>{q.data === undefined ? "none" : (q.data as string[]).join(",")}</p>;
+  }
+
+  it("org switch cancels the old org's read before clearing, and its late answer never shows", async () => {
     const qc = makeQueryClient();
+    const a = probe("A");
+    const b = probe("B");
     const view = render(
       <QueryClientProvider client={qc}>
-        <Rows orgId="A" />
+        <Probe query={a.query} />
       </QueryClientProvider>,
     );
-    await waitFor(() => expect(qc.isFetching()).toBe(1));
-    let current = "A";
+    const seen: string[] = [];
+    const watcher = new MutationObserver(() => seen.push(view.container.textContent ?? ""));
+    watcher.observe(view.container, { subtree: true, childList: true, characterData: true });
+    await waitFor(() => expect(a.d.signal).toBeDefined());
+    expect(a.d.signal?.aborted).toBe(false);
+
+    // the old read must already be cancelled when the cache is cleared
+    let abortedAtClear: boolean | undefined;
+    const clear = qc.clear.bind(qc);
+    qc.clear = () => {
+      abortedAtClear = a.d.signal?.aborted;
+      clear();
+    };
     await resetSession(qc, () => {
-      // the cache is already empty when the navigation starts
       expect(qc.getQueryCache().getAll()).toEqual([]);
-      current = "B";
     });
-    expect(current).toBe("B");
+    expect(abortedAtClear).toBe(true);
+
+    // org B: its own component and read
+    view.rerender(
+      <QueryClientProvider client={qc}>
+        <Probe query={b.query} />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(b.d.signal).toBeDefined());
     await act(async () => {
-      answerA(json(200, { agents: [{ id: "Alpha-row" }] }));
+      a.d.answer(["Alpha-row"]);
       await new Promise((r) => setTimeout(r, 20));
     });
     expect(qc.getQueryData(keys.org("A").agents())).toBeUndefined();
-    expect(qc.getQueryCache().getAll()).toEqual([]);
-    expect(view.container.textContent).not.toContain("Alpha-row");
+    expect(view.container.textContent).toBe("none");
+    await act(async () => {
+      b.d.answer(["Beta-row"]);
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    watcher.disconnect();
+    expect(view.container.textContent).toBe("Beta-row");
+    expect(seen.filter((t) => t.includes("Alpha-row"))).toEqual([]);
+    expect(
+      qc
+        .getQueryCache()
+        .getAll()
+        .map((q) => q.queryKey),
+    ).toEqual([keys.org("B").agents()]);
   });
 
   it("clears and calls then in the same task, with nothing awaited in between", async () => {
@@ -210,5 +254,3 @@ describe("resetSession", () => {
     expect(order).toEqual(["clear", "then"]);
   });
 });
-
-void pathname;
