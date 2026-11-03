@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 import { computePermissionSet, permissionKeys, permissionSetOfPackage } from "@capybara-hq/kernel";
 import {
+  configJsonSchema,
   type ExtensionManifest,
   PLUGIN_MANIFEST_FILE,
   type PluginManifest,
@@ -442,4 +443,49 @@ describe("packPlugin: other behavior", () => {
       /version.*0\.1\.0.*0\.2\.0/,
     );
   });
+});
+
+describe("packPlugin: config schemas (extension config forms spec §4.5)", () => {
+  const cfg = (name: string) => fileURLToPath(new URL(`../fixtures/${name}`, import.meta.url));
+
+  it("writes extension.configSchemas from the module's config schemas, reproducibly", async () => {
+    const a = await packPlugin(fixture("config-hints"), out);
+    const first = await readFile(a.file);
+    const b = await packPlugin(fixture("config-hints"), out);
+    expect((await readFile(b.file)).equals(first)).toBe(true);
+    const manifest = manifestOf(await readTgz(a.file));
+    const mod = (await import(join(fixture("config-hints"), "src/index.ts"))) as {
+      default: ExtensionManifest;
+    };
+    const config = mod.default.config ?? {};
+    expect(manifest.extension?.configSchemas).toEqual({
+      deployment: configJsonSchema(config.deployment as never),
+      org: configJsonSchema(config.org as never),
+    });
+    const props = manifest.extension?.configSchemas?.deployment?.properties;
+    const endpoints = (props as Record<string, Record<string, unknown>> | undefined)?.endpoints;
+    expect(endpoints?.["x-ui"]).toMatchObject({ item: { title: "{name}" } });
+    expect(a.manifest.extension?.configSchemas).toEqual(manifest.extension?.configSchemas);
+  }, 60_000);
+
+  it("a plugin without config schemas gets no configSchemas", async () => {
+    const r = await packPlugin(fixture("metadata"), out);
+    expect(manifestOf(await readTgz(r.file)).extension?.configSchemas).toBeUndefined();
+  });
+
+  it("refuses invalid hints, naming the level, the path and the problem", async () => {
+    const p = packPlugin(cfg("plugin-config-ui"), out);
+    await expect(p).rejects.toThrow(/invalid config UI hints/);
+    await expect(packPlugin(cfg("plugin-config-ui"), out)).rejects.toThrow(
+      /deployment config: mode: widget "switch"/,
+    );
+    await expect(packPlugin(cfg("plugin-config-ui"), out)).rejects.toThrow(
+      /deployment config: token: x-ui\.options/,
+    );
+  }, 60_000);
+
+  it("missing labels do not stop the packer (that is the check's rule)", async () => {
+    const r = await packPlugin(cfg("plugin-config-labels"), out);
+    expect(r.manifest.extension?.configSchemas?.deployment).toBeDefined();
+  }, 60_000);
 });

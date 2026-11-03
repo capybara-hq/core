@@ -1,0 +1,7 @@
+{
+  "name": "@capybara-hq/plugin-fixture-config-hints",
+  "version": "0.1.0",
+  "description": "Fixture: a plugin with hinted config schemas",
+  "license": "Apache-2.0",
+  "type": "module"
+}

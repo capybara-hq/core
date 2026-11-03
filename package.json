@@ -38,6 +38,7 @@
     "gen:tokens": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/gen-tokens.ts",
     "check:web-ui": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/web-ui.ts",
     "check:plugin-pack": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/plugin-pack.ts",
+    "check:config-forms": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/config-forms.ts",
     "check:test-plugins": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/test-plugins.ts",
     "check:synced-skills": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/synced-skills.ts",
     "check:skills-frontmatter": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/skills-frontmatter.ts",

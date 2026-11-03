@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { checkConfigForms } from "./config-forms.js";
 import { checkDeps } from "./deps.js";
 import { checkMigrations } from "./migrations.js";
 import { checkPluginPack } from "./plugin-pack.js";
@@ -19,7 +20,7 @@ export interface PluginCheckScope {
   root: string;
   /**
    * Plugin directories: every check runs on each (dependency boundary, extension state,
-   * permissions, pack, tool design, test imports, release metadata, and the migrations in
+   * permissions, pack, config forms, tool design, test imports, release metadata, and the migrations in
    * `<plugin>/migrations`).
    */
   plugins: string[];
@@ -56,6 +57,7 @@ export function pluginChecks(scope: PluginCheckScope): NamedCheck[] {
     { name: "Extension state", run: () => checkPluginState(plugins) },
     { name: "Extension permissions", run: () => checkPluginPermissions(plugins) },
     { name: "Plugin pack", run: () => checkPluginPack(plugins) },
+    { name: "Config forms", run: () => checkConfigForms(plugins) },
     {
       name: "Tool design",
       run: () => checkToolDesign([...(scope.toolDesignDirs ?? []), ...plugins]),

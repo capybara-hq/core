@@ -30,6 +30,7 @@ const CHECKS = [
   "Extension state",
   "Extension permissions",
   "Plugin pack",
+  "Config forms",
   "Tool design",
   "Plugin test imports",
   "Plugin release metadata",
@@ -77,9 +78,13 @@ export default defineExtension({
 });
 `;
 
-/** One violation per check: a kernel import, module state, an undeclared hook, a short tool description. */
+/**
+ * One violation per check: a kernel import, module state, an undeclared hook, a config field
+ * without a label, a short tool description.
+ */
 const BAD_TOOL = `import type { KernelConfig } from "@capybara-hq/kernel";
 import { defineExtension } from "@capybara-hq/plugin-sdk";
+import { z } from "zod";
 
 let calls = 0;
 export type Config = KernelConfig;
@@ -90,6 +95,7 @@ export default defineExtension({
   sdk: "^0.1.0-rc.0",
   provides: [],
   permissions: { tools: ["greet"] },
+  config: { deployment: z.object({ greeting: z.string().optional() }) },
   setup(ctx) {
     ctx.hooks.on("model.request", () => undefined, { mode: "observe" });
     ctx.tools.register(
@@ -132,6 +138,7 @@ function writePlugin(dir: string, source: string, extra: Record<string, unknown>
     JSON.stringify({
       schemaVersion: 1,
       name: "solo",
+      displayName: { zh: "示例", en: "Solo" },
       version: "0.1.0",
       publisher: "Example",
       description: "A plugin outside the Capybara repository",
@@ -180,6 +187,7 @@ describe("capybara-plugin check outside this repository", () => {
       "plugin-module-state", // Extension state
       "perm-hooks", // Extension permissions
       "plugin-pack-dropped", // Plugin pack
+      "plugin-config-labels", // Config forms
       "tool-description", // Tool design
       "plugin-test-imports", // Plugin test imports
       "plugin-release-metadata", // Plugin release metadata

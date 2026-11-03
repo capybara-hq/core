@@ -30,8 +30,11 @@ permissions: {}
 #   tests load only model-fake, OFFICIAL_EXCEPTIONS is empty, and test-plugins-stale-exception: an
 #   exception that no longer loads its plugins fails); plugin-test-imports (plugin tests reach
 #   nothing outside their plugin) and plugin-release-metadata (published plugins name the root
-#   package.json's repository; example-* private), both plugin-tools checks: cheap, scan the
-#   plugin tests and read the plugins' package.json files; check:release-metadata: cheap, reads
+#   package.json's repository; example-* private; release-display-name: published plugins have a
+#   displayName), both plugin-tools checks: cheap, scan the plugin tests and read the plugins'
+#   package.json / plugin.json files; plugin-config-ui and plugin-config-labels (config forms:
+#   valid config UI hints; labelled fields of published plugins): cheap, one bundle and import
+#   per plugin with an extension, like the pack check; check:release-metadata: cheap, reads
 #   the workspace package.json files and the compose image tag; check:terms: cheap, a text scan of the tracked files for the old extension /
 #   catalog / plugin names; check:kernel-conventions: cheap, parses the kernel source, its tests
 #   and its callers (about a second) for the patterns the Nest refactor removed; and check:bootstrap: cheap offline (the manifest parses; its npm pins

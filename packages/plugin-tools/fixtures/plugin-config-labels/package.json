@@ -1,0 +1,7 @@
+{
+  "name": "@capybara-hq/plugin-fixture-config-labels",
+  "version": "0.1.0",
+  "description": "Fixture: a public plugin whose config fields lack labels",
+  "license": "Apache-2.0",
+  "type": "module"
+}

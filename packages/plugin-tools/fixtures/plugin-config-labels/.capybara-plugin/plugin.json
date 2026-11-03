@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "name": "fixture-config-labels",
+  "displayName": { "zh": "标签示例", "en": "Labels fixture" },
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Fixture: a public plugin whose config fields lack labels"
+}

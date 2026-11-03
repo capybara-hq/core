@@ -1,21 +1,42 @@
-import { defineExtension, MODEL_PROVIDER_EXTENSION_POINT_V2 } from "@capybara-hq/plugin-sdk";
+import {
+  type ConfigUiHints,
+  defineExtension,
+  MODEL_PROVIDER_EXTENSION_POINT_V2,
+} from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { createFakeProvider } from "./script.js";
 
-/** 部署级配置：可用模型列表，默认一个 fake-1。 */
+/**
+ * Form labels (zod meta `ui`, extension config forms spec §3). Written as plain meta rather than
+ * the SDK's `ui()` so the bundle imports nothing an older host SDK lacks.
+ */
+const label = (zh: string, en: string): { ui: ConfigUiHints } => ({ ui: { label: { zh, en } } });
+
+/** Deployment config: the available models (default: one, fake-1). */
 const DeploymentConfig = z.object({
   models: z
     .array(
       z.object({
-        id: z.string().min(1),
-        contextWindow: z.number().int().positive().optional(),
-        streamIdleTimeoutMs: z.number().int().positive().optional(),
-        /** 声明支持图片 / 文档输入（默认 false）。 */
-        vision: z.boolean().optional(),
-        documents: z.boolean().optional(),
+        id: z.string().min(1).meta(label("模型 ID", "Model ID")),
+        contextWindow: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .meta(label("上下文窗口", "Context window")),
+        streamIdleTimeoutMs: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .meta(label("流空闲超时（毫秒）", "Stream idle timeout (ms)")),
+        /** Declares image / document input support (default false). */
+        vision: z.boolean().optional().meta(label("图片输入", "Image input")),
+        documents: z.boolean().optional().meta(label("文档输入", "Document input")),
       }),
     )
-    .optional(),
+    .optional()
+    .meta(label("模型", "Models")),
 });
 
 /**
