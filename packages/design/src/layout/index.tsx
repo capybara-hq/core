@@ -63,7 +63,7 @@ export function Card({
   children?: ReactNode;
 }) {
   return (
-    <section className="cb-card" data-tone={tone}>
+    <section className="cb-card" data-part="card" data-tone={tone}>
       {title || actions ? (
         <header className="cb-card-head">
           <div className="cb-card-title">{title}</div>

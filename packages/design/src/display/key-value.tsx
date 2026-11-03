@@ -15,10 +15,10 @@ export type KeyValueProps = {
 export function KeyValue({ rows, keyWidth = "8ch", columns = 1 }: KeyValueProps) {
   const grid = columns === 2;
   return (
-    <dl className="cb-kv" data-columns={grid ? "2" : undefined}>
+    <dl className="cb-kv" data-part="key-value" data-columns={grid ? "2" : undefined}>
       {rows.map((r, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: 行顺序由调用方给定
-        <div key={i} className="cb-kv-row">
+        <div key={i} className="cb-kv-row" data-part="key-value-row">
           <dt className="cb-kv-key" style={grid ? undefined : { width: keyWidth }}>
             {r.k}
           </dt>

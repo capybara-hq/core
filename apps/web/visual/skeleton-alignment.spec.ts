@@ -2,6 +2,7 @@ import { expect, type Page, test } from "@playwright/test";
 import {
   DATA_ONLY_PARTS,
   IGNORED_PARTS,
+  LOADING_ALIASES,
   LOADING_TEMPLATES,
   VARIABLE_HEIGHT,
   VARIABLE_WIDTH,
@@ -16,30 +17,49 @@ import { openReference, THEMES } from "./reference-page";
  */
 const ORIGIN = `http://localhost:${process.env.CAPYBARA_VISUAL_PORT ?? "3100"}`;
 
-type Box = { x: number; y: number; width: number; height: number };
+/** `scroller` numbers the nearest ancestor that clips or scrolls vertically (0: none). */
+type Box = { x: number; y: number; width: number; height: number; scroller: number };
 
 /** Every `[data-part]` box of a block, keyed by `<part>#<n>` (n counts the part's occurrences). */
 async function partBoxes(page: Page, block: string): Promise<Record<string, Box>> {
-  return page.evaluate((id) => {
-    const b = document.querySelector(`[data-ref-block="${id}"]`);
-    if (!b) throw new Error(`no block ${id}`);
-    const origin = b.getBoundingClientRect();
-    const seen: Record<string, number> = {};
-    const out: Record<string, { x: number; y: number; width: number; height: number }> = {};
-    for (const el of b.querySelectorAll("[data-part]")) {
-      const part = el.getAttribute("data-part") ?? "";
-      const n = seen[part] ?? 0;
-      seen[part] = n + 1;
-      const r = el.getBoundingClientRect();
-      out[`${part}#${n}`] = {
-        x: r.x - origin.x,
-        y: r.y - origin.y,
-        width: r.width,
-        height: r.height,
+  return page.evaluate(
+    ([id, aliases]) => {
+      const b = document.querySelector(`[data-ref-block="${id}"]`);
+      if (!b) throw new Error(`no block ${id}`);
+      const origin = b.getBoundingClientRect();
+      const seen: Record<string, number> = {};
+      const out: Record<
+        string,
+        { x: number; y: number; width: number; height: number; scroller: number }
+      > = {};
+      const scrollers: Element[] = [];
+      const scrollerOf = (el: Element) => {
+        for (let p = el.parentElement; p && p !== b; p = p.parentElement) {
+          if (getComputedStyle(p).overflowY !== "visible") {
+            if (!scrollers.includes(p)) scrollers.push(p);
+            return scrollers.indexOf(p) + 1;
+          }
+        }
+        return 0;
       };
-    }
-    return out;
-  }, block);
+      for (const el of b.querySelectorAll("[data-part]")) {
+        const raw = el.getAttribute("data-part") ?? "";
+        const part = aliases[raw] ?? raw;
+        const n = seen[part] ?? 0;
+        seen[part] = n + 1;
+        const r = el.getBoundingClientRect();
+        out[`${part}#${n}`] = {
+          x: r.x - origin.x,
+          y: r.y - origin.y,
+          width: r.width,
+          height: r.height,
+          scroller: scrollerOf(el),
+        };
+      }
+      return out;
+    },
+    [block, LOADING_ALIASES] as const,
+  );
 }
 
 for (const theme of THEMES) {
@@ -75,28 +95,35 @@ for (const theme of THEMES) {
               count(loaded, nameOf(k)) === count(loading, nameOf(k)),
           );
           expect(paired.length, `${where}: no part pairs`).toBeGreaterThan(0);
-          // The exempt parts above a part move it by their height difference: it is corrected for.
+          // The exempt parts above a part, in the same scrolling region, move it by their height
+          // difference: it is corrected for. Parts outside (the action row, the status bar, the
+          // composer) are anchored to the window and compared as they are.
           const exempt = paired.filter((k) => nameOf(k) in VARIABLE_HEIGHT);
           const shift = (k: string) => {
             const a = loaded[k] as Box;
             const above = exempt.filter((e) => {
               const b = loaded[e] as Box;
-              return e !== k && b.y + b.height <= a.y + 1;
+              const overlapsX = b.x < a.x + a.width && a.x < b.x + b.width;
+              return e !== k && b.scroller === a.scroller && overlapsX && b.y + b.height <= a.y + 1;
             });
-            const outer = above.filter((e) => {
+            // Count each region once: a box inside (or equal to) one already counted is skipped.
+            const taken: string[] = [];
+            for (const e of [...above].sort(
+              (x, y) => (loaded[y] as Box).height - (loaded[x] as Box).height,
+            )) {
               const b = loaded[e] as Box;
-              return !above.some((o) => {
+              const inside = taken.some((o) => {
                 const c = loaded[o] as Box;
                 return (
-                  o !== e &&
                   c.x <= b.x + 1 &&
                   c.y <= b.y + 1 &&
-                  c.y + c.height >= b.y + b.height - 1 &&
-                  (c.height > b.height + 1 || o < e)
+                  c.x + c.width >= b.x + b.width - 1 &&
+                  c.y + c.height >= b.y + b.height - 1
                 );
               });
-            });
-            return outer.reduce(
+              if (!inside) taken.push(e);
+            }
+            return taken.reduce(
               (sum, e) => sum + (loading[e] as Box).height - (loaded[e] as Box).height,
               0,
             );

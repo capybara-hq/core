@@ -126,6 +126,18 @@ export const VARIABLE_HEIGHT: Record<string, string> = {
 export const IGNORED_PARTS: string[] = ["link-pending", "icon", "icon-button"];
 
 /**
+ * Loading parts that stand in for a loaded part of another name: they pair with it by that name
+ * (the box rows in the spec keep the `loading-` names).
+ */
+export const LOADING_ALIASES: Record<string, string> = {
+  "loading-card": "card",
+  "loading-inspector": "key-value",
+  "loading-inspector-row": "key-value-row",
+  "loading-switch-list": "switch-list",
+  "loading-switch-row": "switch-row",
+};
+
+/**
  * Parts of the loaded page that the loading block does not draw, by design: they exist only when
  * the data does (real text, rows, cells, actions). Every other loaded part, by name and count, must
  * be present while loading. Each entry carries its reason.
