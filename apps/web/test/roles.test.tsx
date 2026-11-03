@@ -219,7 +219,7 @@ const PAGES: [string, ComponentType | ServerPage | RoutePage, "member" | "admin"
   ],
   [
     "/evals/runs/r1",
-    server(() => EvalRunPage(params({ runId: "r1" }))),
+    route("/evals/runs/r1", () => EvalRunPage(params({ runId: "r1" }))),
     "admin",
     zh.roles.need.admin,
   ],

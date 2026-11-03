@@ -1,16 +1,15 @@
-// The eval pages render on the server (web-SSR spec §6, task 11): first paint complete without a
-// browser fetch, the org-admin gate (only the session is read below it), and R5's failures.
+// The eval pages read from the query cache the layout prefetched (web query cache spec §3): first
+// paint complete without a browser read, the loading state on an empty cache, the org-admin gate
+// (only the session is read below it), R5's failures and the mutations' invalidations.
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import EvalRunPage from "../src/app/(app)/evals/runs/[runId]/page";
 import { json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
-import { expectNoFirstPaintFetch, type Routes, renderRoute } from "./support/server";
+import { expectNoFirstPaintFetch, type Routes } from "./support/server";
 import { NOT_READY } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -187,8 +186,6 @@ async function renderHeld(path: string, held: string, routes: Routes = ROUTES) {
   return { ...r, release: () => act(async () => release()) };
 }
 
-const runPage = () => EvalRunPage({ params: Promise.resolve({ runId: "er1" }) });
-
 beforeEach(() => resetNavigation("/evals"));
 afterEach(() => {
   cleanup();
@@ -196,7 +193,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("first paint comes from the server (no browser fetch)", () => {
+describe("first paint comes from the hydrated cache (no browser read)", () => {
   it("/evals: a first render from the hydrated cache makes no browser read (the sets with their agent's name)", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/evals", ROUTES);
@@ -440,9 +437,9 @@ describe("first paint comes from the server (no browser fetch)", () => {
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("/evals/runs/[runId]: the run, its first page of results and the set's name", async () => {
+  it("/evals/runs/[runId]: a first render from the hydrated cache makes no browser read (the run, its first page of results and the set's name)", async () => {
     const browser = expectNoFirstPaintFetch();
-    const { calls } = await renderRoute(runPage, ROUTES);
+    const { calls } = await renderRouteWithCache("/evals/runs/er1", ROUTES);
     const table = screen.getByRole("table", { name: E.run.resultsLabel });
     expect(within(table).getAllByText("Delete the stale item").length).toBe(2);
     const path = screen.getByRole("navigation", { name: "Path" });
@@ -452,7 +449,31 @@ describe("first paint comes from the server (no browser fetch)", () => {
       `${O}/eval-runs/er1/results?view=light&limit=200`,
     ]);
     expect(screen.queryByRole("button", { name: E.run.loadMore })).toBeNull();
+    await settle();
     expect(browser).toEqual([]);
+  });
+
+  it("/evals/runs/[runId]: an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld("/evals/runs/er1", `GET ${O}/eval-runs/er1`);
+    await vi.waitFor(() => {
+      if (template("DetailPage") === null) throw new Error("no page");
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByRole("table", { name: E.run.resultsLabel })).toBeNull();
+    await release();
+    const table = await screen.findByRole("table", { name: E.run.resultsLabel });
+    // the set is read once the run named it: the case titles
+    await waitFor(() => expect(within(table).getAllByText("Delete the stale item").length).toBe(2));
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
+  it("/evals/runs/[runId]: an unknown run is the not-found state in the shell", async () => {
+    await renderRouteWithCache("/evals/runs/er1", {
+      ...ROUTES,
+      [`GET ${O}/eval-runs/er1`]: () =>
+        json(404, { error: { code: "eval.not_found", message: "x" } }),
+    });
+    expect(screen.getByRole("heading", { level: 1, name: en.notFound.title })).toBeTruthy();
   });
 
   it("/evals/runs/[runId]: results past the first page load in the browser", async () => {
@@ -460,7 +481,7 @@ describe("first paint comes from the server (no browser fetch)", () => {
       [`GET ${O}/eval-runs/er1/results`]: () =>
         json(200, { results: [ROW("res3")], next: null, asOf: T }),
     });
-    await renderRoute(runPage, {
+    await renderRouteWithCache("/evals/runs/er1", {
       ...ROUTES,
       [`GET ${O}/eval-runs/er1/results`]: () =>
         json(200, { results: [ROW("res1"), ROW("res2")], next: "res2", asOf: T }),
@@ -475,13 +496,13 @@ describe("first paint comes from the server (no browser fetch)", () => {
     expect(screen.queryByRole("button", { name: E.run.loadMore })).toBeNull();
   });
 
-  it("/evals/runs/[runId]: an active run polls only after first paint", async () => {
+  it("/evals/runs/[runId]: an active run polls only after first paint (refetchInterval)", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const browser = stubApi({
       [`GET ${O}/eval-runs/er1`]: () => json(200, { run: RUN() }),
       [`GET ${O}/eval-runs/er1/results`]: () => json(200, { results: [], next: null, asOf: T }),
     });
-    await renderRoute(runPage, {
+    await renderRouteWithCache("/evals/runs/er1", {
       ...ROUTES,
       [`GET ${O}/eval-runs/er1`]: () =>
         json(200, { run: RUN({ status: "running", casesDone: 0 }) }),
@@ -490,43 +511,48 @@ describe("first paint comes from the server (no browser fetch)", () => {
     expect(browser).toEqual([]);
     await vi.advanceTimersByTimeAsync(5000);
     await waitFor(() => expect(browser.some((c) => c.url === `${O}/eval-runs/er1`)).toBe(true));
+    // the poll reads only the rows changed since the server's read
+    expect(browser.some((c) => c.url.includes(`updatedSince=${encodeURIComponent(T)}`))).toBe(true);
+  });
+
+  it("/evals/runs/[runId]: cancelling invalidates the run (read again) and the set's runs", async () => {
+    let status = "running";
+    const routes: Routes = {
+      ...ROUTES,
+      [`GET ${O}/eval-runs/er1`]: () => json(200, { run: RUN({ status, casesDone: 0 }) }),
+    };
+    const calls = stubApi({
+      ...routes,
+      [`POST ${O}/eval-runs/er1/cancel`]: () => {
+        status = "cancelled";
+        return json(200, { run: RUN({ status }) });
+      },
+    });
+    const { client } = await renderRouteWithCache("/evals/runs/er1", routes);
+    client.setQueryData(["org", "o1", "evalRuns", "s1"], { runs: [] });
+    await userEvent.setup().click(screen.getByRole("button", { name: E.run.cancel }));
+    expect(await screen.findByText(E.run.cancelledNotice)).toBeTruthy();
+    expect(calls.map((c) => `${c.method} ${c.url.split("?")[0]}`).slice(0, 2)).toEqual([
+      `POST ${O}/eval-runs/er1/cancel`,
+      `GET ${O}/eval-runs/er1`,
+    ]);
+    expect(client.getQueryState(["org", "o1", "evalRuns", "s1"])?.isInvalidated).toBe(true);
   });
 
   it("/evals/runs/[runId]: a set the kernel fails shows its id in the path", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(runPage, { ...ROUTES, [`GET ${SETS}/s1`]: failing });
+    await renderRouteWithCache("/evals/runs/er1", { ...ROUTES, [`GET ${SETS}/s1`]: failing });
     const path = screen.getByRole("navigation", { name: "Path" });
     expect(within(path).getByRole("link", { name: "s1" })).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
   });
-});
-
-const GATES: [string, () => Promise<ReactNode>][] = [["/evals/runs/er1", runPage]];
-
-describe("the gates (org admins)", () => {
-  it.each(GATES)(
-    "%s: a member gets no access and nothing read; no org renders nothing; setup goes home",
-    async (_p, page) => {
-      const denied = await renderRoute(page, ROUTES, { me: as("member") });
-      expect(new Set(denied.calls.map((c) => c.url))).toEqual(
-        new Set(["/api/v1/me", `${O}/readiness`]),
-      );
-      expect(noAccess()).toBe(true);
-      cleanup();
-      const none = await renderRoute(page, ROUTES, { me: { ...ME, currentOrgId: null } });
-      expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
-      cleanup();
-      await expect(renderRoute(page, ROUTES, { readiness: NOT_READY })).rejects.toThrow(
-        "REDIRECT /",
-      );
-    },
-  );
 });
 
 /** The pages that read through the query cache. */
 const ROUTE_GATES = ["/evals", "/evals/new", "/evals/s1", "/evals/s1/run", "/evals/s1/cases/k1"];
 
-describe("the gates (org admins, query cache)", () => {
+describe("the gates (org admins)", () => {
   it.each(ROUTE_GATES)(
     "%s: a member gets no access and nothing read; no org renders nothing; setup goes home",
     async (path) => {

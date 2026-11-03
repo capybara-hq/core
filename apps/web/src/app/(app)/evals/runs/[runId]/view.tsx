@@ -18,13 +18,16 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
+import { keepPreviousData, type Query, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useState } from "react";
+import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { FormError } from "../../../../../components/form-error";
+import { NoAccess } from "../../../../../components/NoAccess";
 import { usePagePath } from "../../../../../components/shell/path";
 import { grouped, useFormatCost } from "../../../../../components/TrajectoryParts";
 import { Link } from "../../../../../i18n/navigation";
-import { ApiClientError } from "../../../../../lib/api";
+import type { ApiClientError } from "../../../../../lib/api";
 import { lineDiff } from "../../../../../lib/diff";
 import {
   cancelEvalRun,
@@ -35,151 +38,131 @@ import {
   evalResultMark,
   evalRunMark,
   formatRate,
-  getEvalResult,
-  getEvalRun,
   labelEvalResult,
-  listEvalResultRows,
-  listEvalResultRowsPage,
   mergeResultRows,
   rowOf,
   runActive,
   sideOf,
   type ToolCallDiffEntry,
 } from "../../../../../lib/evals";
+import { retryOnMountOf } from "../../../../../lib/query/client";
+import { useAppMutation } from "../../../../../lib/query/define";
+import {
+  type EvalRunState,
+  evalResultPageQuery,
+  evalResultQuery,
+  evalRunPollMs,
+  evalRunQuery,
+  evalSetQuery,
+} from "../../../../../lib/query/evals";
+import { keys } from "../../../../../lib/query/keys";
+import { usePageQuery } from "../../../../../lib/query/page-query";
+import { useWorkspace } from "../../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
-import { useLoad } from "../../../../../lib/use-load";
-import { useServerState } from "../../../../../lib/use-server-state";
-
-/** 执行中的运行每隔多久重读一次（浏览器内轮询）。 */
-const POLL_MS = 5000;
-/** 没有变化时轮询逐次加倍放慢，最慢这么久一次。 */
-const MAX_POLL_MS = 30_000;
+import NotFound from "../../../not-found";
 
 const TABS = ["results", "summary"] as const;
 type Tab = (typeof TABS)[number];
 
 /**
  * `/evals/runs/[runId]`: an eval run (DetailPage). The header is the status, progress, token use /
- * cap and the summary rates. The run, the first page of results and the set (for the case titles
- * and the path) come from the server; further pages load in the browser ("Load more"). While queued
- * or running the page polls the run and the results after first paint (the next read is scheduled
- * once the last one finished; 5 s, doubling up to 30 s while nothing changes), and it can be
- * cancelled. The table reads the light view (no content blocks); the polling reads only rows changed
- * since the last read (`updatedSince`) and merges them by id. The "Results" tab lists every result;
- * opening one loads its full row in the inspector: the text diff (lineDiff + CodeBlock), the tool
- * call diff, drift reasons, the judge's reason and the human label; a whole-run replay's result
- * links to the eval conversation's trajectory. The "Summary" tab is the summary and the candidate.
+ * cap and the summary rates. From the query cache (the layout prefetched it on a first load): the
+ * run with the first page of results, and the set (a section, for the case titles and the path).
+ * Further pages load in the browser ("Load more"). While queued or running the page polls the run
+ * and the results after first paint (`refetchInterval`: one read at a time, 5 s after a change,
+ * doubling up to 30 s while nothing changes), and it can be cancelled. The table reads the light
+ * view (no content blocks); the polling reads only rows changed since the last read
+ * (`updatedSince`) and merges them by id. The "Results" tab lists every result; opening one loads
+ * its full row in the inspector: the text diff (lineDiff + CodeBlock), the tool call diff, drift
+ * reasons, the judge's reason and the human label; a whole-run replay's result links to the eval
+ * conversation's trajectory. The "Summary" tab is the summary and the candidate.
  */
-export type EvalRunData = {
-  run: EvalRun;
-  /** The light rows loaded so far (id order). */
-  rows: EvalResultRow[];
-  /** The cursor of the next page of results (`null`: every page is loaded). */
-  next: string | null;
-  /** The next poll's `updatedSince` (null when the kernel gave none: every read is complete). */
-  asOf: string | null;
+export type EvalRunData = EvalRunState & {
   /** Case titles by case id (empty when the set could not be read: the case id shows). */
   titles: Record<string, string>;
   /** The set's name for the path line (null when it could not be read). */
   setName: string | null;
 };
 
-export default function EvalRunInOrg({
-  orgId,
-  runId,
-  initial,
-}: {
-  orgId: string;
-  runId: string;
-  initial: EvalRunData;
-}) {
-  const [data, set] = useServerState(initial);
-  /** The latest data (the polling and refreshes replace the run and results on top of it). */
-  const latest = useRef(data);
-  latest.current = data;
-  const active = runActive(data.run.status);
+export default function EvalRunPageView({ runId }: { runId: string }) {
+  const ws = useWorkspace({ min: "admin" });
+  if (ws.kind === "pending" || ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  return <EvalRunInOrg orgId={ws.orgId} runId={runId} />;
+}
 
-  /** Reads the run and the changed result rows again (not the set); whether the progress changed. */
-  const refresh = useCallback(async (): Promise<boolean> => {
-    const since = latest.current.asOf ?? undefined;
-    const [{ run }, page] = await Promise.all([
-      getEvalRun(orgId, runId),
-      listEvalResultRows(orgId, runId, since),
-    ]);
-    const prev = latest.current;
-    // A complete read (every page): without `since` the read was one; when the run just ended,
-    // read every light row once more (an incremental read can miss the last rows written at the
-    // same instant as the previous asOf), then the polling stops
-    const complete =
-      since === undefined
-        ? page
-        : runActive(prev.run.status) && !runActive(run.status)
-          ? await listEvalResultRows(orgId, runId)
-          : null;
-    set({
-      ...prev,
-      run,
-      rows: complete !== null ? complete.rows : mergeResultRows(prev.rows, page.rows),
-      next: complete !== null ? null : prev.next,
-      asOf: (complete ?? page).asOf ?? prev.asOf,
-    });
-    return (
-      prev.run.status !== run.status ||
-      prev.run.casesDone !== run.casesDone ||
-      prev.run.tokensUsed !== run.tokensUsed
-    );
-  }, [orgId, runId, set]);
+/** How often the run is polled: by its cached state (none once it ended). */
+const pollInterval = (q: Query<EvalRunState, ApiClientError>) => evalRunPollMs(q.state.data);
 
+function EvalRunInOrg({ orgId, runId }: { orgId: string; runId: string }) {
+  const scope = usePagePath("org");
+  const t = useTranslations("evals");
+  const qc = useQueryClient();
+  // A read on top of the cached rows is a poll (see `evalRunQuery`).
+  const runQ = evalRunQuery(orgId, runId, qc);
+  const read = usePageQuery({ ...runQ, refetchInterval: pollInterval });
+  const setId = read.kind === "ready" ? read.data.run.setId : undefined;
+  const setQ = evalSetQuery(orgId, setId ?? "");
+  const set = useQuery({
+    ...setQ,
+    enabled: setId !== undefined,
+    retryOnMount: retryOnMountOf(setQ.queryKey),
+  }).data;
+  const [tab, setTab] = useState<Tab>("results");
+  /** Reads the run and the changed result rows again (a poll now). */
+  const refresh = useCallback(
+    () => void qc.invalidateQueries({ queryKey: runQ.queryKey }),
+    [qc, runQ.queryKey],
+  );
   /** The next page of results after the loaded ones (merged by id: polled rows may be in it). */
   const [loadingMore, setLoadingMore] = useState(false);
-  const loadMore = useCallback(async () => {
-    const after = latest.current.next;
-    if (after === null) return;
+  const loadMore = async () => {
+    const after = qc.getQueryData<EvalRunState>(runQ.queryKey)?.next;
+    if (after == null) return;
     setLoadingMore(true);
     try {
-      const page = await listEvalResultRowsPage(orgId, runId, { after });
-      const prev = latest.current;
-      set({ ...prev, rows: mergeResultRows(prev.rows, page.rows), next: page.next });
+      const page = await qc.fetchQuery(evalResultPageQuery(orgId, runId, after));
+      qc.setQueryData<EvalRunState>(runQ.queryKey, (prev) =>
+        prev === undefined
+          ? prev
+          : { ...prev, rows: mergeResultRows(prev.rows, page.rows), next: page.next },
+      );
     } catch {
       // Kept as it was: the button stays to try again.
     } finally {
       setLoadingMore(false);
     }
-  }, [orgId, runId, set]);
-
-  // While active, poll: the next read is scheduled after the last one finished (a slow read is
-  // never interrupted or doubled), 5 s after a change, doubling up to 30 s while nothing changes;
-  // stops when the run ends (active turns false) or on unmount.
-  // ssr-exempt: live updates after first paint (the run is still in progress)
-  useEffect(() => {
-    if (!active) return;
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let delay = POLL_MS;
-    const tick = async () => {
-      let changed = false;
-      try {
-        changed = await refresh();
-      } catch {
-        // A failed read keeps the last data and tries again later.
-      }
-      if (stopped) return;
-      delay = changed ? POLL_MS : Math.min(delay * 2, MAX_POLL_MS);
-      timer = setTimeout(() => void tick(), delay);
-    };
-    timer = setTimeout(() => void tick(), delay);
-    return () => {
-      stopped = true;
-      clearTimeout(timer);
-    };
-  }, [active, refresh]);
-
+  };
+  if (read.kind === "notFound") return <NotFound />;
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
+  const tabs = {
+    label: t("run.tabsLabel"),
+    items: TABS.map((x) => ({ id: x, label: t(`run.tabs.${x}`) })),
+    value: tab,
+    onChange: (x: string) => setTab(x as Tab),
+  };
+  if (read.kind === "loading") {
+    return (
+      <DetailPage
+        header={{ path: [...scope, { label: "evals", href: "/evals" }], title: "" }}
+        tabs={tabs}
+        inspectorTitle={t("run.inspector.title")}
+        loading={{}}
+      />
+    );
+  }
+  const data: EvalRunData = {
+    ...read.data,
+    titles: Object.fromEntries((set?.cases ?? []).map((c) => [c.id, c.title])),
+    setName: set?.name ?? null,
+  };
   return (
     <EvalRunView
       orgId={orgId}
       data={data}
-      onChange={set}
-      onRefresh={() => void refresh().catch(() => {})}
+      tab={tab}
+      onTab={setTab}
+      onRefresh={refresh}
       loadingMore={loadingMore}
       onLoadMore={() => void loadMore()}
     />
@@ -189,14 +172,16 @@ export default function EvalRunInOrg({
 function EvalRunView({
   orgId,
   data,
-  onChange,
+  tab,
+  onTab,
   onRefresh,
   loadingMore,
   onLoadMore,
 }: {
   orgId: string;
   data: EvalRunData;
-  onChange(data: EvalRunData): void;
+  tab: Tab;
+  onTab(tab: Tab): void;
   onRefresh(): void;
   loadingMore: boolean;
   onLoadMore(): void;
@@ -207,7 +192,8 @@ function EvalRunView({
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const { run, rows, titles } = data;
-  const [tab, setTab] = useState<Tab>("results");
+  const qc = useQueryClient();
+  const runKey = keys.org(orgId).evalRun(run.id);
   const [selected, setSelected] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const active = runActive(run.status);
@@ -215,15 +201,18 @@ function EvalRunView({
   const current = rows.find((r) => r.id === selected);
   const s = run.summary;
 
+  // The run (read again: a poll) and the set's runs change.
+  const cancelRun = useAppMutation({
+    fn: () => cancelEvalRun(orgId, run.id),
+    invalidates: () => [runKey, keys.org(orgId).evalRuns(run.setId)],
+  });
   const cancel = async () => {
     // 页头按钮没有加载态：请求进行中再点不重复发
     if (cancelling) return;
     setCancelling(true);
     try {
-      const r = await cancelEvalRun(orgId, run.id);
-      onChange({ ...data, run: r.run });
+      await cancelRun.mutateAsync(undefined);
       toast.success(t("run.cancelled"));
-      onRefresh();
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -234,13 +223,14 @@ function EvalRunView({
   /** 标注写入后：就地更新表里这一行（沿用原 `updatedAt`，下一次轮询再带回新的），再重读运行（汇总随之更新）。 */
   const labeled = useCallback(
     (r: EvalResult) => {
-      onChange({
-        ...data,
-        rows: data.rows.map((x) => (x.id === r.id ? rowOf(r, x.updatedAt) : x)),
-      });
+      qc.setQueryData<EvalRunState>(runKey, (prev) =>
+        prev === undefined
+          ? prev
+          : { ...prev, rows: prev.rows.map((x) => (x.id === r.id ? rowOf(r, x.updatedAt) : x)) },
+      );
       onRefresh();
     },
-    [data, onChange, onRefresh],
+    [qc, runKey, onRefresh],
   );
 
   const metrics: MetricProps[] = [
@@ -364,7 +354,7 @@ function EvalRunView({
           ...(x === "results" && { count: rows.length }),
         })),
         value: tab,
-        onChange: (x) => setTab(x as Tab),
+        onChange: (x) => onTab(x as Tab),
       }}
       inspectorTitle={t("run.inspector.title")}
       inspector={
@@ -546,29 +536,25 @@ function ResultPanel({
   onLabeled(r: EvalResult): void;
 }) {
   const errorMessage = useErrorMessage();
-  // ssr-exempt: the full row loads when the person opens a result (none is open at first paint)
-  const { state, reload, set } = useLoad(
-    () => getEvalResult(orgId, runId, row.id).then((r) => r.result),
-    [orgId, runId, row.id],
-  );
-  const seen = useRef(row.updatedAt);
-  useEffect(() => {
-    if (seen.current === row.updatedAt) return;
-    seen.current = row.updatedAt;
-    reload();
-  }, [row.updatedAt, reload]);
-  if (state.kind === "loading") return <Skeleton rows={4} />;
-  if (state.kind === "error") {
-    return <FormError message={errorMessage(new ApiClientError(0, state.code, ""))} />;
+  const qc = useQueryClient();
+  // The full row loads when the person opens a result (none is open at first paint); a newer
+  // `updatedAt` (from the polling) is another read, and the last content stays meanwhile.
+  const q = evalResultQuery(orgId, runId, row.id, row.updatedAt);
+  const read = useQuery({ ...q, placeholderData: keepPreviousData });
+  if (read.data === undefined) {
+    if (read.error) {
+      return <FormError message={errorMessage(read.error)} />;
+    }
+    return <Skeleton rows={4} />;
   }
   return (
     <ResultInspector
       orgId={orgId}
       mode={mode}
-      result={state.data}
+      result={read.data}
       title={title}
       onLabeled={(r) => {
-        set(r);
+        qc.setQueryData(q.queryKey, r);
         onLabeled(r);
       }}
     />
@@ -596,6 +582,11 @@ function ResultInspector({
   const [pending, setPending] = useState<EvalLabel | "clear" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const reason = (code: string) => (te.has(code) ? te(code) : code);
+  // The answer is the labeled result: the caller writes it into the cache (no read).
+  const labelResult = useAppMutation({
+    fn: (body: { label: EvalLabel | null; note?: string }) => labelEvalResult(orgId, r.id, body),
+    invalidates: () => [],
+  });
 
   const base = sideOf(mode, r.baseline);
   const cand = sideOf(mode, r.candidate);
@@ -606,7 +597,7 @@ function ResultInspector({
     setPending(value ?? "clear");
     setError(null);
     try {
-      const res = await labelEvalResult(orgId, r.id, {
+      const res = await labelResult.mutateAsync({
         label: value,
         ...(value !== null && note.trim() !== "" && { note }),
       });

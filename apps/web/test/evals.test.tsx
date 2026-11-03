@@ -3,14 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import EvalRunPage from "../src/app/(app)/evals/runs/[runId]/page";
 import { activeNavOf } from "../src/components/shell/nav";
 import { type EvalResult, type EvalRun, rowOf } from "../src/lib/evals";
 import type { TrajectoryRun } from "../src/lib/trajectories";
 import { bodyOf, type Call, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
-import { renderRoute } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -22,7 +20,7 @@ vi.mock("next/navigation", () => ({
   },
 }));
 
-const params = <T,>(p: T) => ({ params: Promise.resolve(p) });
+const _params = <T,>(p: T) => ({ params: Promise.resolve(p) });
 
 const msgs = { zh, en } as const;
 const ORG = "/api/v1/orgs/o1";
@@ -789,11 +787,9 @@ describe("评测运行（DetailPage）", () => {
     async (locale) => {
       const m = msgs[locale].evals;
       stubApi(routes(() => evalRun(), [result()]));
-      const { container } = await renderRoute(
-        () => EvalRunPage(params({ runId: "er1" })),
-        lastStubRoutes(),
-        { locale },
-      );
+      const { container } = await renderRouteWithCache("/evals/runs/er1", lastStubRoutes(), {
+        locale,
+      });
       expect(container.querySelector('[data-template="DetailPage"]')).not.toBeNull();
       const table = await screen.findByRole("table", { name: m.run.resultsLabel });
       const row = await within(table).findByRole("row", { name: /Delete the stale item/ });
@@ -862,10 +858,7 @@ describe("评测运行（DetailPage）", () => {
         },
       ),
     );
-    const { container } = await renderRoute(
-      () => EvalRunPage(params({ runId: "er1" })),
-      lastStubRoutes(),
-    );
+    const { container } = await renderRouteWithCache("/evals/runs/er1", lastStubRoutes());
     const table = await screen.findByRole("table", { name: E.run.resultsLabel });
     const user = userEvent.setup();
     await user.click(await within(table).findByText("Delete the stale item"));
@@ -915,7 +908,7 @@ describe("评测运行（DetailPage）", () => {
         ],
       ),
     );
-    await renderRoute(() => EvalRunPage(params({ runId: "er1" })), lastStubRoutes());
+    await renderRouteWithCache("/evals/runs/er1", lastStubRoutes());
     expect(
       await screen.findByText(fill(E.run.capped, { used: "1,200", cap: "1,000" })),
     ).toBeTruthy();
@@ -930,7 +923,7 @@ describe("评测运行（DetailPage）", () => {
         [],
       ),
     );
-    await renderRoute(() => EvalRunPage(params({ runId: "er1" })), lastStubRoutes());
+    await renderRouteWithCache("/evals/runs/er1", lastStubRoutes());
     expect(
       await screen.findByText(fill(E.run.failed, { reason: en.errors.eval.too_many_errors })),
     ).toBeTruthy();
@@ -964,7 +957,7 @@ describe("评测运行（DetailPage）", () => {
         },
       ),
     );
-    await renderRoute(() => EvalRunPage(params({ runId: "er1" })), lastStubRoutes());
+    await renderRouteWithCache("/evals/runs/er1", lastStubRoutes());
     await screen.findByRole("table", { name: E.run.resultsLabel });
     expect(screen.getByText(E.run.polling)).toBeTruthy();
     expect(runReads).toBe(1);
@@ -990,7 +983,7 @@ describe("评测运行（DetailPage）", () => {
     const calls = stubApi(
       routes(() => evalRun({ status, casesDone: 1, summary: null, finishedAt: null }), [result()]),
     );
-    await renderRoute(() => EvalRunPage(params({ runId: "er1" })), lastStubRoutes());
+    await renderRouteWithCache("/evals/runs/er1", lastStubRoutes());
     await screen.findByRole("table", { name: E.run.resultsLabel });
     status = "completed";
     await act(() => vi.advanceTimersByTimeAsync(5000));
@@ -1040,7 +1033,7 @@ describe("评测运行（DetailPage）", () => {
         },
       ),
     );
-    await renderRoute(() => EvalRunPage(params({ runId: "er1" })), lastStubRoutes());
+    await renderRouteWithCache("/evals/runs/er1", lastStubRoutes());
     await screen.findByRole("table", { name: E.run.resultsLabel });
     expect(runReads).toBe(1);
     done = 1;
@@ -1101,7 +1094,7 @@ describe("评测运行（DetailPage）", () => {
         ],
       ),
     );
-    await renderRoute(() => EvalRunPage(params({ runId: "er1" })), lastStubRoutes());
+    await renderRouteWithCache("/evals/runs/er1", lastStubRoutes());
     const table = await screen.findByRole("table", { name: E.run.resultsLabel });
     const row = await within(table).findByRole("row", { name: /Delete the stale item/ });
     expect(within(row).getByText(E.run.wholeRun)).toBeTruthy();
@@ -1117,7 +1110,7 @@ describe("评测运行（DetailPage）", () => {
   it.each(["zh", "en"] as const)("漂移原因走 i18n，不认识的显示原始码（%s）", async (locale) => {
     const m = msgs[locale].evals;
     stubApi(routes(() => evalRun(), [result({ drift: ["system_hash", "brand_new_reason"] })]));
-    await renderRoute(() => EvalRunPage(params({ runId: "er1" })), lastStubRoutes(), { locale });
+    await renderRouteWithCache("/evals/runs/er1", lastStubRoutes(), { locale });
     const table = await screen.findByRole("table", { name: m.run.resultsLabel });
     await userEvent.setup().click(await within(table).findByText(m.run.mismatch));
     const inspector = within(await screen.findByRole("region", { name: m.run.inspector.title }));
@@ -1158,10 +1151,7 @@ describe("评测运行（DetailPage）", () => {
         },
       ),
     );
-    const { calls: server } = await renderRoute(
-      () => EvalRunPage(params({ runId: "er1" })),
-      lastStubRoutes(),
-    );
+    const { calls: server } = await renderRouteWithCache("/evals/runs/er1", lastStubRoutes());
     const table = await screen.findByRole("table", { name: E.run.resultsLabel });
     // The first read (the server's) is the light view, without updatedSince
     expect(calls.filter((c) => c.url.includes("/results"))).toHaveLength(0);
@@ -1203,7 +1193,7 @@ describe("评测运行（DetailPage）", () => {
 
   it("汇总标签页：估算里评委的份额单列", async () => {
     stubApi(routes(() => evalRun(), [result()]));
-    await renderRoute(() => EvalRunPage(params({ runId: "er1" })), lastStubRoutes());
+    await renderRouteWithCache("/evals/runs/er1", lastStubRoutes());
     await screen.findByRole("table", { name: E.run.resultsLabel });
     await userEvent.setup().click(screen.getByRole("tab", { name: E.run.tabs.summary }));
     expect(

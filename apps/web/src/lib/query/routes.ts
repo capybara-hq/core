@@ -26,7 +26,14 @@ import {
   queueQuery,
   sandboxQuery,
 } from "./conversation";
-import { evalCaseQuery, evalRunsQuery, evalSetQuery, evalSetsQuery } from "./evals";
+import {
+  type EvalRunState,
+  evalCaseQuery,
+  evalRunQuery,
+  evalRunsQuery,
+  evalSetQuery,
+  evalSetsQuery,
+} from "./evals";
 import { membersQuery } from "./members";
 import { overviewQueries } from "./overview";
 import {
@@ -358,7 +365,22 @@ export const ROUTES: readonly RouteEntry[] = [
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "admin") ? [] : [q(agentsQuery(orgId))],
   },
-  { pattern: "/evals/runs/[runId]", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/evals/runs/[runId]",
+    // Org admins: the run with its first page of results, then its set (a section: case titles).
+    queries: ({ orgId, me, params }) =>
+      orgId === null || params.runId === undefined || !atLeast(me, "admin")
+        ? []
+        : [q(evalRunQuery(orgId, params.runId))],
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, me, params }, qc) => {
+      const runId = params.runId;
+      if (orgId === null || runId === undefined || !atLeast(me, "admin")) return;
+      const state = qc.getQueryData<EvalRunState>(evalRunQuery(orgId, runId).queryKey);
+      if (state === undefined) return;
+      await qc.prefetchQuery({ ...evalSetQuery(orgId, state.run.setId), retry: false });
+    },
+  },
   { pattern: "/inbox", queries: () => [], none: "pending migration" },
   { pattern: "/invite/[token]", queries: () => [q(maybeMeQuery())] },
   { pattern: "/login", queries: () => [q(authSourcesQuery()), q(maybeMeQuery())] },
