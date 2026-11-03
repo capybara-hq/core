@@ -311,6 +311,11 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
       detailRoutes(S3);
       await renderRoute(detailPage, lastStubRoutes(), { locale });
       expect(template("DetailPage")).not.toBeNull();
+      // waiting for config: the page opens on the Config tab
+      const user = userEvent.setup();
+      const configTab = await screen.findByRole("tab", { name: p.detail.tabs.config });
+      expect(configTab.getAttribute("aria-selected")).toBe("true");
+      await user.click(screen.getByRole("tab", { name: p.detail.tabs.overview }));
       await screen.findByText(p.detail.requiredNote);
       expect(screen.getByText(p.source.bootstrap)).toBeTruthy();
       expect(screen.queryByRole("button", { name: p.detail.actions.disable })).toBeNull();
@@ -327,7 +332,6 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
       expect(p.detail.requiredNote).toContain(
         locale === "zh" ? "由预装步骤从 npm 安装（版本与校验和已固定）。" : "from npm",
       );
-      const user = userEvent.setup();
       await user.click(
         screen.getByRole("tab", { name: new RegExp(`^${p.detail.tabs.permissions}`) }),
       );
@@ -553,7 +557,7 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
     "配置：只读字段显示来源且不可改；密钥不回显，只能设置或清除；保存只发改动（补丁）（%s）",
     async (locale) => {
       const p = msgs[locale].admin.extensions;
-      const sf = msgs[locale].schemaForm;
+      const sf = msgs[locale].configForm;
       const calls = detailRoutes(plugin(), {
         "GET /api/v1/admin/extensions/demo/config": () =>
           json(200, {
@@ -613,7 +617,7 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
       expect(region.disabled).toBe(true);
       expect(region.value).toBe("eu-1");
       expect(
-        screen.getAllByText(new RegExp(escapeRe(p.config.source.file))).length,
+        screen.getAllByText(locale === "zh" ? /来自配置文件/ : /From the config file/).length,
       ).toBeGreaterThan(0);
       // 密钥：不回显值、密码框，可清除
       const token = screen.getByLabelText("token") as HTMLInputElement;
@@ -629,7 +633,7 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
       await user.click(
         screen.getByRole("button", { name: fill(sf.clearLabel, { field: "token" }) }),
       );
-      await user.type(screen.getByLabelText("limits.burst"), "5");
+      await user.type(screen.getByLabelText("burst"), "5");
       await user.click(screen.getByRole("button", { name: p.config.save }));
       await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
       expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
@@ -637,6 +641,88 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
       });
     },
   );
+
+  it("pending config without hints: opens on the form, lists what is missing; endpoints as a repeater, keys as a record", async () => {
+    const p = msgs.en.admin.extensions;
+    const calls = detailRoutes(plugin({ status: "pending_config", configValid: false }), {
+      "GET /api/v1/admin/extensions/demo/config": () =>
+        json(200, {
+          plugin: "demo",
+          displayName: null,
+          version: "1.0.0",
+          configurable: true,
+          schema: {
+            type: "object",
+            properties: {
+              endpoints: {
+                type: "array",
+                minItems: 1,
+                items: {
+                  type: "object",
+                  properties: { name: { type: "string" }, baseUrl: { type: "string" } },
+                  required: ["name", "baseUrl"],
+                },
+              },
+              apiKeys: {
+                type: "object",
+                propertyNames: { type: "string" },
+                additionalProperties: { type: "string" },
+                "x-secret": true,
+              },
+            },
+            required: ["endpoints"],
+          },
+          fields: [
+            { path: "endpoints", secret: false, hot: false, source: "unset", readonly: false },
+            {
+              path: "apiKeys",
+              secret: true,
+              hot: false,
+              source: "unset",
+              readonly: false,
+              set: false,
+            },
+          ],
+          valid: false,
+          validated: true,
+          issues: [{ path: "endpoints", segments: ["endpoints"], message: "expected array" }],
+        }),
+      "PUT /api/v1/admin/extensions/demo/config": () =>
+        json(200, {
+          plugin: "demo",
+          version: "1.0.0",
+          configurable: true,
+          schema: null,
+          fields: [],
+          valid: true,
+          validated: true,
+          issues: [],
+        }),
+    });
+    await renderRoute(detailPage, lastStubRoutes(), { locale: "en" });
+    expect(
+      await screen.findByText(fill(p.config.pendingMissing, { fields: "endpoints" })),
+    ).toBeTruthy();
+    // the view's issue sits on the repeater
+    expect(screen.getByText("expected array")).toBeTruthy();
+    const user = userEvent.setup();
+    const list = screen.getByRole("group", { name: "endpoints" });
+    await user.click(within(list).getByRole("button", { name: /Add/ }));
+    await user.type(within(list).getByLabelText(/^name/), "vllm");
+    await user.type(within(list).getByLabelText(/^baseUrl/), "http://vllm.internal/v1");
+    const keys = screen.getByRole("group", { name: "apiKeys" });
+    await user.click(within(keys).getByRole("button", { name: /Add/ }));
+    await user.type(within(keys).getByLabelText("Key 1"), "vllm");
+    await user.type(within(keys).getByLabelText("Value 1"), "sk-1");
+    await user.click(screen.getByRole("button", { name: p.config.save }));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
+      values: {
+        endpoints: [{ name: "vllm", baseUrl: "http://vllm.internal/v1" }],
+        apiKeys: { vllm: "sk-1" },
+      },
+    });
+  });
 });
 
 function escapeRe(s: string): string {

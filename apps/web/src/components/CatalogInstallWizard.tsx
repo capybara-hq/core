@@ -40,14 +40,10 @@ import {
   type OAuthClientDraft,
   OAuthClientFields,
 } from "./ConnectorForm";
+import { ConfigForm } from "./config-form/ConfigForm";
+import { hasConfigFields } from "./config-form/model";
+import { orgConfig } from "./config-form/org";
 import { FormError } from "./form-error";
-import {
-  draftToConfig,
-  initialDraft,
-  type SchemaDraft,
-  SchemaForm,
-  schemaFields,
-} from "./SchemaForm";
 import { usePagePath } from "./shell/path";
 
 export type TemplateDraft = {
@@ -291,9 +287,7 @@ function Wizard({
       ? undefined
       : orgExtensions.find((o) => o.plugin === detail.extension);
   const withConfig =
-    own !== undefined && !own.enabled && schemaFields(own.orgConfigSchema).length > 0
-      ? own
-      : undefined;
+    own !== undefined && !own.enabled && hasConfigFields(own.orgConfigSchema) ? own : undefined;
   const hasExtensionStep = detail.extension !== null;
   const steps = [
     ...templates.map((c) =>
@@ -310,9 +304,11 @@ function Wizard({
   const [drafts, setDrafts] = useState<Record<string, TemplateDraft>>(() =>
     Object.fromEntries(templates.map((c) => [c.id, initialTemplateDraft(c, locale, item.name)])),
   );
-  const [config, setConfig] = useState<SchemaDraft>(() =>
-    withConfig ? initialDraft(withConfig.orgConfigSchema, null) : {},
-  );
+  // The extension step's config as the form last reported it (kept across steps).
+  const [config, setConfig] = useState<{ value: Record<string, unknown>; ok: boolean }>({
+    value: {},
+    ok: true,
+  });
   const [showRequired, setShowRequired] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<{ message: string; extra: string[] }>();
@@ -332,10 +328,7 @@ function Wizard({
     draft !== undefined &&
     (needsClient(template.auth) || template.ownership === "personal") &&
     missingInput(template, draft) !== undefined;
-  const configResult = withConfig
-    ? draftToConfig(schemaFields(withConfig.orgConfigSchema), config, "create")
-    : undefined;
-  const configErrors = configResult !== undefined && Object.keys(configResult.errors).length > 0;
+  const configErrors = withConfig !== undefined && !config.ok;
 
   const submit = async () => {
     setSubmitting(true);
@@ -347,7 +340,7 @@ function Wizard({
           templates.map((c) => [c.id, connectorInput(c, drafts[c.id] as TemplateDraft)]),
         ),
       }),
-      ...(configResult !== undefined && { extensionConfig: configResult.config }),
+      ...(withConfig !== undefined && { extensionConfig: config.value }),
     };
     try {
       const r = await installCatalogItem(orgId, item.id, body);
@@ -441,12 +434,13 @@ function Wizard({
             )}
             {withConfig !== undefined && (
               <Card title={withConfig.plugin}>
-                <SchemaForm
+                <ConfigForm
                   schema={withConfig.orgConfigSchema}
-                  draft={config}
-                  onChange={setConfig}
-                  mode="create"
+                  value={config.value}
                   showRequired={showRequired}
+                  onChange={(value, _entries, state) =>
+                    setConfig({ value: orgConfig(value), ok: state.problems.length === 0 })
+                  }
                 />
               </Card>
             )}

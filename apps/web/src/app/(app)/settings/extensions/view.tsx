@@ -12,20 +12,16 @@ import {
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { ConfigForm } from "../../../../components/config-form/ConfigForm";
+import { hasConfigFields } from "../../../../components/config-form/model";
+import { orgConfig, orgFormMeta } from "../../../../components/config-form/org";
 import { FilePreviewersSection } from "../../../../components/FilePreviewersSection";
 import { FormError } from "../../../../components/form-error";
 import { PermissionReview } from "../../../../components/PermissionReview";
-import {
-  changedCount,
-  draftToConfig,
-  initialDraft,
-  SchemaForm,
-  schemaFields,
-} from "../../../../components/SchemaForm";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { Link } from "../../../../i18n/navigation";
-import { ApiClientError, issueLines } from "../../../../lib/api";
+import { ApiClientError, configIssues, issueLines } from "../../../../lib/api";
 import {
   type OrgExtension,
   type PermissionGroup,
@@ -33,6 +29,7 @@ import {
   putOrgExtension,
   syncDirectory,
 } from "../../../../lib/extensions";
+import type { ConfigIssue } from "../../../../lib/json-schema";
 import type { OrgFilePreviewer } from "../../../../lib/previewers";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import { useServerState } from "../../../../lib/use-server-state";
@@ -117,12 +114,19 @@ function ExtensionSection({
   const [busy, setBusy] = useState<"toggle" | "save" | "sync">();
   const [problem, setProblem] = useState<ToggleProblem>();
   const schema = plugin.orgConfigSchema;
-  const [baseline, setBaseline] = useState(() => initialDraft(schema, plugin.config));
-  const [draft, setDraft] = useState(baseline);
-  const [saveError, setSaveError] = useState<{ message: string; extra: string[] }>();
-  const fields = schemaFields(schema);
-  const { config, errors } = draftToConfig(fields, draft, "edit", plugin.secrets);
-  const dirty = changedCount(draft, baseline);
+  // Bumped after a save: the form starts again from the saved config.
+  const [round, setRound] = useState(0);
+  const [form, setForm] = useState<{
+    config: Record<string, unknown>;
+    ok: boolean;
+    dirty: boolean;
+  }>({ config: orgConfig(plugin.config), ok: true, dirty: false });
+  const [saveError, setSaveError] = useState<{
+    message: string;
+    extra: string[];
+    issues: ConfigIssue[];
+  }>();
+  const hasFields = hasConfigFields(schema);
   const directory = provides(plugin, "directory");
   // 部署上停用（或尚未加载）：只显示组织的启用设置，不能修改
   const unavailable = plugin.available === false;
@@ -166,14 +170,19 @@ function ExtensionSection({
     setBusy("save");
     setSaveError(undefined);
     try {
-      const { extension: next } = await putOrgExtension(orgId, plugin.plugin, { config });
-      const fresh = initialDraft(next.orgConfigSchema, next.config);
-      setBaseline(fresh);
-      setDraft(fresh);
+      const { extension: next } = await putOrgExtension(orgId, plugin.plugin, {
+        config: form.config,
+      });
       onSaved(next);
+      setRound((r) => r + 1);
       toast.success(t("configSaved", { plugin: plugin.plugin }));
     } catch (e) {
-      setSaveError({ message: errorMessage(e), extra: issueLines(e) });
+      const issues = configIssues(e);
+      setSaveError({
+        message: errorMessage(e),
+        extra: issues.length > 0 ? [] : issueLines(e),
+        issues,
+      });
     } finally {
       setBusy(undefined);
     }
@@ -247,19 +256,25 @@ function ExtensionSection({
         </Stack>
       )}
       <Permissions groups={plugin.permissions} plugin={plugin.plugin} />
-      {!unavailable && plugin.configurable && fields.length > 0 && (
+      {!unavailable && plugin.configurable && hasFields && (
         <Stack gap={12}>
           <Text variant="small" tone="muted">
             {t("configTitle")}
           </Text>
-          <SchemaForm
+          <ConfigForm
+            key={round}
             schema={schema}
-            draft={draft}
-            onChange={setDraft}
-            mode="edit"
-            secrets={plugin.secrets}
+            value={plugin.config ?? {}}
+            meta={orgFormMeta(plugin.secrets)}
+            issues={saveError?.issues ?? []}
             disabled={busy !== undefined}
-            showRequired={dirty > 0}
+            onChange={(value, _entries, state) =>
+              setForm({
+                config: orgConfig(value),
+                ok: state.problems.length === 0,
+                dirty: state.dirty,
+              })
+            }
           />
           {saveError !== undefined && (
             <FormError message={saveError.message} extra={saveError.extra} />
@@ -269,7 +284,7 @@ function ExtensionSection({
             <Button
               variant="secondary"
               loading={busy === "save"}
-              disabled={busy !== undefined || dirty === 0 || Object.keys(errors).length > 0}
+              disabled={busy !== undefined || !form.dirty || !form.ok}
               aria-label={t("saveLabel", { plugin: plugin.plugin })}
               onClick={() => void save()}
             >

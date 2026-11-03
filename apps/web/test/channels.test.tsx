@@ -430,7 +430,7 @@ describe("渠道连接详情（DetailPage）", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("tab", { name: d.tabs.credentials }));
     const secret = screen.getByLabelText(/^appSecret/) as HTMLInputElement;
-    expect(secret.placeholder).toBe(en.schemaForm.secretSet);
+    expect(secret.placeholder).toBe(en.configForm.secretSet);
     const save = screen.getByRole("button", { name: d.saveCredentials });
     expect(save).toHaveProperty("disabled", true);
     await user.click(screen.getByRole("button", { name: "Replace appSecret" }));

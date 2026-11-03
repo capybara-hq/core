@@ -1369,9 +1369,24 @@
       "newOnly": "Only applies to newly created sandboxes; existing sandboxes keep the limits they were created with until they are destroyed."
     }
   },
-  "schemaForm": {
+  "configForm": {
     "none": "—",
+    "issues": "The config has problems:",
+    "advanced": "Advanced",
+    "options": "Options",
+    "add": "Add",
+    "itemN": "Item {n}",
+    "key": "Key",
+    "value": "Value",
     "jsonHint": "Enter a JSON value.",
+    "linesHint": "One item per line.",
+    "hot": "applies immediately",
+    "readonly": "{source, select, env {From an environment variable (read-only)} file {From the config file (read-only)} nacos {From Nacos (read-only)} other {Read-only}}",
+    "tristate": {
+      "default": "Default",
+      "on": "On",
+      "off": "Off"
+    },
     "secretSet": "•••••••• (set)",
     "secretWillClear": "Will be cleared when saved",
     "replace": "Replace",
@@ -1386,7 +1401,15 @@
       "required": "Required",
       "number": "Enter a number",
       "integer": "Enter a whole number",
-      "json": "Invalid JSON"
+      "json": "Invalid JSON",
+      "min": "At least {limit}",
+      "gt": "Must be greater than {limit}",
+      "max": "At most {limit}",
+      "lt": "Must be less than {limit}",
+      "minLength": "At least {limit} characters",
+      "maxLength": "At most {limit} characters",
+      "minItems": "At least {limit} items",
+      "maxItems": "At most {limit} items"
     }
   },
   "channels": {
@@ -2471,23 +2494,17 @@
       "config": {
         "none": "This extension has no deployment config.",
         "hint": "Fields given by the startup config (config file, Nacos, environment variables) are read-only. Fields that apply immediately take effect on save; for the others the extension reloads after saving (no restart).",
-        "invalid": "The config is incomplete or invalid; the extension is waiting for config:",
+        "invalid": "The config is incomplete or invalid; the extension is waiting for config. The reasons are shown next to the fields.",
         "notValidated": "This extension is not loaded right now: saving does not validate; it is validated when the extension loads.",
-        "source": {
-          "env": "From an environment variable (read-only)",
-          "file": "From the config file (read-only)",
-          "nacos": "From Nacos (read-only)",
-          "db": "Saved in the admin console",
-          "default": "Default value",
-          "unset": "Not set"
-        },
-        "secretSet": "Set",
-        "secretUnset": "Not set",
-        "hot": "applies immediately",
-        "reload": "extension reloads after saving",
         "save": "Save config",
         "saving": "Saving; reloading the extension can take up to about {seconds} seconds.",
-        "saved": "Config saved."
+        "saved": "Config saved.",
+        "saveInvalid": "The config did not pass validation; fix the fields marked below.",
+        "pendingMissing": "The extension is waiting for config. Required fields missing: {fields}.",
+        "listSep": ", ",
+        "willReload": "Saving reloads the extension, which can take up to about {seconds} seconds.",
+        "appliesNow": "These changes apply as soon as they are saved.",
+        "noChanges": "No changes yet."
       },
       "tabs": {
         "all": "All",

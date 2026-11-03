@@ -33,14 +33,10 @@ import {
   TemplateStep,
 } from "./CatalogInstallWizard";
 import { useCatalogErrorLines } from "./CatalogParts";
+import { ConfigForm } from "./config-form/ConfigForm";
+import { hasConfigFields } from "./config-form/model";
+import { orgConfig } from "./config-form/org";
 import { FormError } from "./form-error";
-import {
-  draftToConfig,
-  initialDraft,
-  type SchemaDraft,
-  SchemaForm,
-  schemaFields,
-} from "./SchemaForm";
 
 type Problem = { message: string; extra: string[] };
 
@@ -93,7 +89,11 @@ export function PluginUpgradeDialog({
   const catalogLines = useCatalogErrorLines();
   const [loaded, setLoaded] = useState<Loaded | "loading" | { problem: Problem }>("loading");
   const [drafts, setDrafts] = useState<Record<string, TemplateDraft>>({});
-  const [config, setConfig] = useState<SchemaDraft>({});
+  // The extension's config as the form last reported it.
+  const [config, setConfig] = useState<{ value: Record<string, unknown>; ok: boolean }>({
+    value: {},
+    ok: true,
+  });
   const [showRequired, setShowRequired] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<Problem>();
@@ -137,7 +137,7 @@ export function PluginUpgradeDialog({
       setError(undefined);
       setShowRequired(false);
       setDrafts({});
-      setConfig({});
+      setConfig({ value: {}, ok: true });
       setRefreshing(false);
       return;
     }
@@ -151,7 +151,7 @@ export function PluginUpgradeDialog({
         // A plugin's extension has the plugin's name
         const own = (await listOrgExtensions(orgId).catch(() => ({ extensions: [] }))).extensions;
         const ext = own.find((o) => o.plugin === install.name);
-        if (ext !== undefined && schemaFields(ext.orgConfigSchema).length > 0) withConfig = ext;
+        if (ext !== undefined && hasConfigFields(ext.orgConfigSchema)) withConfig = ext;
       }
       return { preview, templates, withConfig };
     })().then(
@@ -167,11 +167,6 @@ export function PluginUpgradeDialog({
           }
           return out;
         });
-        setConfig((c) =>
-          next.withConfig !== undefined && Object.keys(c).length === 0
-            ? initialDraft(next.withConfig.orgConfigSchema, null)
-            : c,
-        );
       },
       (e: unknown) => {
         if (!live) return;
@@ -197,10 +192,7 @@ export function PluginUpgradeDialog({
     const changed = preview?.inputs.credentialsChanged.includes(id) === true;
     return missingInput(c, d, { personalCredential: !changed }) !== undefined;
   });
-  const configResult = ready?.withConfig
-    ? draftToConfig(schemaFields(ready.withConfig.orgConfigSchema), config, "create")
-    : undefined;
-  const configErrors = configResult !== undefined && Object.keys(configResult.errors).length > 0;
+  const configErrors = ready?.withConfig !== undefined && !config.ok;
 
   const templateName = (c: OrgCatalogTemplate) =>
     c.displayName ? displayNameOf({ name: c.id, displayName: c.displayName }, locale) : c.id;
@@ -228,7 +220,7 @@ export function PluginUpgradeDialog({
       version: preview.to,
       diffHash: preview.diffHash,
       ...(Object.keys(connectors).length > 0 && { connectors }),
-      ...(configResult !== undefined && { extensionConfig: configResult.config }),
+      ...(ready.withConfig !== undefined && { extensionConfig: config.value }),
     };
     setSubmitting(true);
     setError(undefined);
@@ -340,12 +332,13 @@ export function PluginUpgradeDialog({
                 <Text variant="small" tone="muted">
                   {t("extensionConfig")}
                 </Text>
-                <SchemaForm
+                <ConfigForm
                   schema={loaded.withConfig.orgConfigSchema}
-                  draft={config}
-                  onChange={setConfig}
-                  mode="create"
+                  value={config.value}
                   showRequired={showRequired}
+                  onChange={(value, _entries, state) =>
+                    setConfig({ value: orgConfig(value), ok: state.problems.length === 0 })
+                  }
                 />
               </Stack>
             </Card>

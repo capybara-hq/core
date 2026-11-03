@@ -4,6 +4,8 @@
  * registered {@link ApiTransport} (`lib/server/register.ts`).
  */
 
+import type { ConfigIssue } from "./json-schema";
+
 /** 内核要求非安全方法带的 CSRF 头。 */
 export const CSRF_HEADER = "X-Capybara-Csrf";
 
@@ -190,4 +192,30 @@ export function issueLines(e: unknown): string[] {
   return e instanceof ApiClientError
     ? e.details.map((d) => (d.path === "" ? d.message : `${d.path}: ${d.message}`))
     : [];
+}
+
+/**
+ * The config issues of an `extension.config_invalid` / `validation_failed` error (kernel
+ * `ConfigIssue`, from the envelope's raw details): the config form maps them onto its fields.
+ */
+export function configIssues(e: unknown): ConfigIssue[] {
+  if (!(e instanceof ApiClientError)) return [];
+  return e.rawDetails.flatMap((d): ConfigIssue[] => {
+    if (typeof d !== "object" || d === null) return [];
+    const { path, segments, message, messageKey } = d as Record<string, unknown>;
+    if (typeof message !== "string") return [];
+    const segs =
+      Array.isArray(segments) &&
+      segments.every((s) => typeof s === "string" || typeof s === "number")
+        ? (segments as (string | number)[])
+        : undefined;
+    return [
+      {
+        path: typeof path === "string" ? path : "",
+        message,
+        ...(segs !== undefined && { segments: segs }),
+        ...(typeof messageKey === "string" && { messageKey }),
+      },
+    ];
+  });
 }

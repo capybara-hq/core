@@ -60,7 +60,8 @@ const POLL_MAX = 20;
  *   (sensitive items must be acknowledged first); read-only for built-in extensions, marked
  *   pre-approved.
  * - Config: the deployment config (sources read-only, secrets can only be set or cleared, hot fields
- *   apply at once, the others reload after saving).
+ *   apply at once, the others reload after saving); a pending-config extension opens on it, with
+ *   the missing fields listed.
  * Actions only write the desired state and return; the page re-reads while the state is converging.
  */
 export default function ExtensionDetail({
@@ -78,9 +79,12 @@ export default function ExtensionDetail({
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [data, set] = useServerState(initial.list);
-  const [tab, setTab] = useState<Tab>("overview");
-  const [polls, setPolls] = useState(0);
   const plugin = data.extensions.find((p) => p.name === name);
+  // An extension waiting for config opens on its config form.
+  const [tab, setTab] = useState<Tab>(() =>
+    plugin?.status === "pending_config" ? "config" : "overview",
+  );
+  const [polls, setPolls] = useState(0);
   // A change to an extension (a model provider enabled or configured) moves the org's readiness,
   // which the workspace shell shows: the server renders the page and its frame again.
   const refresh = () => startTransition(() => router.refresh());
@@ -154,6 +158,7 @@ export default function ExtensionDetail({
         <ExtensionDeploymentConfig
           drainSeconds={data.drainSeconds}
           initial={initial.config}
+          pending={plugin.status === "pending_config"}
           onChanged={refresh}
         />
       )}

@@ -14,19 +14,15 @@ import {
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { AgentSelect, PolicyRadio } from "../../../../components/ChannelFields";
+import { ConfigForm } from "../../../../components/config-form/ConfigForm";
+import { channelConfig } from "../../../../components/config-form/channel";
 import { FormError } from "../../../../components/form-error";
-import {
-  draftToConfig,
-  initialDraft,
-  type SchemaDraft,
-  SchemaForm,
-  schemaFields,
-} from "../../../../components/SchemaForm";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import type { Agent } from "../../../../lib/agents";
-import { ApiClientError, issueLines } from "../../../../lib/api";
+import { ApiClientError, configIssues, issueLines } from "../../../../lib/api";
 import { createChannel, getChannelSchema, type UnboundPolicy } from "../../../../lib/channels";
+import type { ConfigIssue } from "../../../../lib/json-schema";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import { useLoad } from "../../../../lib/use-load";
 
@@ -60,10 +56,14 @@ export default function NewChannelView({
   const preset = initial.preset;
   const [agentId, setAgentId] = useState(preset.agentId);
   const [policy, setPolicy] = useState<UnboundPolicy>("bind");
-  // 草稿属于当时所选的插件：换插件后回到新 schema 的初始草稿
-  const [stored, setStored] = useState<{ plugin: string; draft: SchemaDraft }>();
+  // The config belongs to the plugin picked then: another plugin starts its own form (keyed).
+  const [form, setForm] = useState<{
+    plugin: string;
+    config: Record<string, unknown>;
+    ok: boolean;
+  }>();
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<{ message: string; extra: string[] }>();
+  const [error, setError] = useState<{ message: string; extra: string[]; issues: ConfigIssue[] }>();
   const schema = useLoad(
     () =>
       plugin === "" ? Promise.resolve(null) : getChannelSchema(orgId, plugin).then((r) => r.schema),
@@ -74,11 +74,9 @@ export default function NewChannelView({
 
   const ready = initial;
   const js = schema.state.kind === "ready" ? schema.state.data : null;
-  const draft = stored?.plugin === plugin ? stored.draft : initialDraft(js, null);
-  const setDraft = (next: SchemaDraft) => setStored({ plugin, draft: next });
-  const fields = schemaFields(js);
-  const { config, errors: configErrors } = draftToConfig(fields, draft, "create");
-  const configInvalid = Object.keys(configErrors).length > 0;
+  const current = form?.plugin === plugin ? form : undefined;
+  const config = current?.config ?? {};
+  const configInvalid = current?.ok === false;
   const missing = [
     plugin === "",
     name.trim() === "",
@@ -102,9 +100,11 @@ export default function NewChannelView({
       });
       router.push(preset.returnTo ?? `/channels/${channel.id}`);
     } catch (e) {
+      const issues = configIssues(e);
       setError({
         message: errorMessage(e),
-        extra: issueLines(e),
+        extra: issues.length > 0 ? [] : issueLines(e),
+        issues,
       });
     } finally {
       setPending(false);
@@ -167,12 +167,15 @@ export default function NewChannelView({
         ) : schema.state.kind === "error" ? (
           <FormError message={errorMessage(new ApiClientError(0, schema.state.code, ""))} />
         ) : (
-          <SchemaForm
+          <ConfigForm
+            key={plugin}
             schema={js}
-            draft={draft}
-            onChange={setDraft}
-            mode="create"
+            value={{}}
+            issues={error?.issues ?? []}
             disabled={pending}
+            onChange={(value, _entries, state) =>
+              setForm({ plugin, config: channelConfig(value), ok: state.problems.length === 0 })
+            }
           />
         )}
       </FormSection>

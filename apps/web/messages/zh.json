@@ -1369,9 +1369,24 @@
       "newOnly": "只对新建的沙箱生效；已有的沙箱沿用创建时的限额，直到被销毁。"
     }
   },
-  "schemaForm": {
+  "configForm": {
     "none": "—",
+    "issues": "配置有问题：",
+    "advanced": "高级",
+    "options": "选项",
+    "add": "添加",
+    "itemN": "第 {n} 项",
+    "key": "键",
+    "value": "值",
     "jsonHint": "填写 JSON 值。",
+    "linesHint": "每行一项。",
+    "hot": "即时生效",
+    "readonly": "{source, select, env {来自环境变量（只读）} file {来自配置文件（只读）} nacos {来自 Nacos（只读）} other {只读}}",
+    "tristate": {
+      "default": "默认",
+      "on": "开",
+      "off": "关"
+    },
     "secretSet": "••••••••（已设置）",
     "secretWillClear": "保存后将清除",
     "replace": "替换",
@@ -1386,7 +1401,15 @@
       "required": "必填",
       "number": "请输入数字",
       "integer": "请输入整数",
-      "json": "JSON 格式不正确"
+      "json": "JSON 格式不正确",
+      "min": "不能小于 {limit}",
+      "gt": "必须大于 {limit}",
+      "max": "不能大于 {limit}",
+      "lt": "必须小于 {limit}",
+      "minLength": "至少 {limit} 个字符",
+      "maxLength": "最多 {limit} 个字符",
+      "minItems": "至少 {limit} 项",
+      "maxItems": "最多 {limit} 项"
     }
   },
   "channels": {
@@ -2471,23 +2494,17 @@
       "config": {
         "none": "这个扩展没有部署级配置。",
         "hint": "启动配置（配置文件、Nacos、环境变量）给出的字段只读；即时生效的字段保存后马上生效，其余字段保存后扩展会重新加载（不重启）。",
-        "invalid": "配置不完整或不合法，扩展待配置：",
+        "invalid": "配置不完整或不合法，扩展待配置。原因标在对应字段旁。",
         "notValidated": "这个扩展当前没有加载：保存时不校验，加载时再校验。",
-        "source": {
-          "env": "来自环境变量（只读）",
-          "file": "来自配置文件（只读）",
-          "nacos": "来自 Nacos（只读）",
-          "db": "已在后台保存",
-          "default": "使用默认值",
-          "unset": "未设置"
-        },
-        "secretSet": "已设置",
-        "secretUnset": "未设置",
-        "hot": "即时生效",
-        "reload": "保存后扩展重新加载",
         "save": "保存配置",
         "saving": "正在保存；扩展重新加载最多需要约 {seconds} 秒。",
-        "saved": "配置已保存。"
+        "saved": "配置已保存。",
+        "saveInvalid": "配置没有通过校验，请按字段旁的提示修改。",
+        "pendingMissing": "扩展待配置，还缺这些必填项：{fields}。",
+        "listSep": "、",
+        "willReload": "保存后扩展会重新加载，最多约需 {seconds} 秒。",
+        "appliesNow": "这些改动保存后立即生效。",
+        "noChanges": "还没有改动。"
       },
       "tabs": {
         "all": "全部",

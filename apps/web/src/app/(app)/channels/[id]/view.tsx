@@ -17,18 +17,13 @@ import {
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { AgentSelect, ChannelStatusMark, PolicyRadio } from "../../../../components/ChannelFields";
+import { ConfigForm } from "../../../../components/config-form/ConfigForm";
+import { channelConfig, channelFormMeta } from "../../../../components/config-form/channel";
 import { FormError } from "../../../../components/form-error";
-import {
-  changedCount,
-  draftToConfig,
-  initialDraft,
-  SchemaForm,
-  schemaFields,
-} from "../../../../components/SchemaForm";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import type { Agent } from "../../../../lib/agents";
-import { issueLines } from "../../../../lib/api";
+import { configIssues, issueLines } from "../../../../lib/api";
 import {
   type ChannelConnection,
   deleteChannel,
@@ -36,7 +31,7 @@ import {
   type UnboundPolicy,
   updateChannel,
 } from "../../../../lib/channels";
-import type { JsonSchema } from "../../../../lib/json-schema";
+import type { ConfigIssue, JsonSchema } from "../../../../lib/json-schema";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import { useServerState } from "../../../../lib/use-server-state";
 
@@ -289,10 +284,13 @@ function CredentialsTab({
   const t = useTranslations("channels");
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const [baseline] = useState(() => initialDraft(schema, channel.config));
-  const [draft, setDraft] = useState(baseline);
+  const [form, setForm] = useState({
+    config: channelConfig(channel.config),
+    ok: true,
+    dirty: false,
+  });
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<{ message: string; extra: string[] }>();
+  const [error, setError] = useState<{ message: string; extra: string[]; issues: ConfigIssue[] }>();
   if (schema === null) {
     return (
       <Card title={t("detail.credentialsTitle")}>
@@ -300,21 +298,20 @@ function CredentialsTab({
       </Card>
     );
   }
-  const fields = schemaFields(schema);
-  const { config, errors } = draftToConfig(fields, draft, "edit", channel.secrets);
-  const dirty = changedCount(draft, baseline);
 
   async function save() {
     setPending(true);
     setError(undefined);
     try {
-      const { channel: next } = await updateChannel(orgId, channel.id, { config });
+      const { channel: next } = await updateChannel(orgId, channel.id, { config: form.config });
       onSaved(next);
       toast.success(t("detail.credentialsSaved"));
     } catch (e) {
+      const issues = configIssues(e);
       setError({
         message: errorMessage(e),
-        extra: issueLines(e),
+        extra: issues.length > 0 ? [] : issueLines(e),
+        issues,
       });
     } finally {
       setPending(false);
@@ -327,21 +324,26 @@ function CredentialsTab({
         <Text variant="prose" tone="muted">
           {t("detail.credentialsHint")}
         </Text>
-        <SchemaForm
+        <ConfigForm
           schema={schema}
-          draft={draft}
-          onChange={setDraft}
-          mode="edit"
-          secrets={channel.secrets}
+          value={channel.config ?? {}}
+          meta={channelFormMeta(channel.secrets)}
+          issues={error?.issues ?? []}
           disabled={pending}
-          showRequired={dirty > 0}
+          onChange={(value, _entries, state) =>
+            setForm({
+              config: channelConfig(value),
+              ok: state.problems.length === 0,
+              dirty: state.dirty,
+            })
+          }
         />
         {error !== undefined && <FormError message={error.message} extra={error.extra} />}
         <Stack direction="row">
           <Button
             variant="primary"
             loading={pending}
-            disabled={dirty === 0 || Object.keys(errors).length > 0}
+            disabled={!form.dirty || !form.ok}
             onClick={() => void save()}
           >
             {t("detail.saveCredentials")}
