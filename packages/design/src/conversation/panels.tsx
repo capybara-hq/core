@@ -329,7 +329,8 @@ export type RightPanelProps = {
   onBack?(): void;
   /** Header actions before full screen and close (icon buttons, Stop). */
   actions?: ReactNode;
-  onFullscreen(): void;
+  /** The full-screen button is left out without it (a loading panel has nothing to expand). */
+  onFullscreen?(): void;
   onClose(): void;
   state?: BlockState;
   failure?: { name?: string; reason?: string };
@@ -431,11 +432,13 @@ export function RightPanel({
         ) : null}
         <span className="cb-rpanel-grow" />
         {actions}
-        <IconButton
-          label={t("panel.fullscreen")}
-          icon={<Icon name="maximize-2" size={16} />}
-          onClick={onFullscreen}
-        />
+        {onFullscreen ? (
+          <IconButton
+            label={t("panel.fullscreen")}
+            icon={<Icon name="maximize-2" size={16} />}
+            onClick={onFullscreen}
+          />
+        ) : null}
         <IconButton
           label={t("overlay.close")}
           icon={<Icon name="x" size={16} />}

@@ -591,7 +591,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       ? `<span class="r-panel-title r-ellipsis">${esc(o.title)}</span>`
       : `<button class="r-panel-title r-btn" data-variant="ghost"${o.switching ? ' aria-expanded="true" data-state="hover" style="anchor-name: --r-open-trigger"' : ""}><span class="r-ellipsis">${esc(o.title)}</span>${icon("chevron-down", 14)}</button>`;
     const actions = (o.actions || []).join("");
-    return `<header class="r-panel-head">${back}${badge}${title}${meta}<span class="r-grow"></span>${actions}${iconBtn("maximize-2", K.fullscreen)}${iconBtn("x", K.close)}</header>`;
+    return `<header class="r-panel-head">${back}${badge}${title}${meta}<span class="r-grow"></span>${actions}${o.noFullscreen ? "" : iconBtn("maximize-2", K.fullscreen)}${iconBtn("x", K.close)}</header>`;
   }
 
   function todoList(big) {
@@ -782,7 +782,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       const turns = `<div class="r-ucol" data-part="loading-turn"><div class="r-bubble-slot">${skel("100%", "prose")}</div></div><div data-part="loading-turn">${skel("100%", "prose")}</div><div data-part="loading-turn">${skel("70%", "prose")}</div>`;
       const centerL = `<div class="r-conv-center"><div class="r-conv-scroll"><div class="r-thread">${turns}</div></div><div class="r-conv-composer">${composer({ state: "idle" })}</div></div>`;
       const mainL = `<main class="r-main r-conv-main">${titleBar({ pressed: "files", loading: true })}<div class="r-conv-cols">${centerL}</div>${convStatus({ idle: true })}</main>`;
-      const panelL = `<aside class="r-rpanel" aria-label="右侧面板" aria-busy="true">${panelHeader({ title: "右侧面板", switcher: false })}<div class="r-panel-body"><div class="r-skel-list">${[56, 72, 48, 64].map((w) => `<span class="r-skel" style="width:${w}%"></span>`).join("")}</div></div></aside>`;
+      const panelL = `<aside class="r-rpanel" aria-label="右侧面板" aria-busy="true">${panelHeader({ title: "文件", switcher: false, noFullscreen: true })}<div class="r-panel-body"><div class="r-skel-list">${[56, 72, 48, 64].map((w) => `<span class="r-skel" style="width:${w}%"></span>`).join("")}</div></div></aside>`;
       return `<div class="r-app r-conv-app" aria-busy="true">${side}${mainL}${panelL}</div>`;
     }
     const running = o.state === "properties";

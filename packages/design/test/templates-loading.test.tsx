@@ -504,23 +504,39 @@ describe("ConversationPage loading", () => {
   });
 
   it("composer keeps its box while the thread loads", () => {
-    const { rerender } = zh(<ConversationPage {...convProps()} loading={{ thread: true }} />);
-    const box = () => document.querySelector(".cb-conv-composer");
-    const input = screen.getByLabelText("REAL COMPOSER");
-    expect(box()?.contains(input)).toBe(true);
-    // Disabled while the thread loads: nothing in it can be used.
-    expect(box()?.hasAttribute("inert")).toBe(true);
-    expect(box()?.parentElement?.className).toBe("cb-conv-center");
-    // The same element stays when the thread arrives (a draft is not lost).
-    rerender(
-      <DesignProvider locale="zh">
-        <ConversationPage {...convProps()} />
-      </DesignProvider>,
+    const composer = ({ sendDisabled }: { sendDisabled: boolean }) => (
+      <div>
+        <textarea aria-label="REAL COMPOSER" />
+        <button type="button" disabled={sendDisabled}>
+          SEND
+        </button>
+      </div>
     );
-    expect(screen.getByLabelText("REAL COMPOSER")).toBe(input);
+    const ui = (loading?: ConversationPageProps["loading"]) => (
+      <DesignProvider locale="zh">
+        <ConversationPage {...convProps({ composer })} {...(loading ? { loading } : {})} />
+      </DesignProvider>
+    );
+    const { rerender } = render(ui({ thread: true }));
+    const box = () => document.querySelector(".cb-conv-composer");
+    const input = screen.getByLabelText("REAL COMPOSER") as HTMLTextAreaElement;
+    expect(box()?.contains(input)).toBe(true);
+    expect(box()?.parentElement?.className).toBe("cb-conv-center");
+    // Not inert: focusable and editable; only send is blocked.
     expect(box()?.hasAttribute("inert")).toBe(false);
-    expect(screen.getByText("REAL THREAD")).toBeTruthy();
-    expect(busy()).toHaveLength(0);
+    input.focus();
+    expect(document.activeElement).toBe(input);
+    expect((screen.getByText("SEND") as HTMLButtonElement).disabled).toBe(true);
+    // Loading ends: same node, same focus, send is allowed.
+    rerender(ui());
+    expect(screen.getByLabelText("REAL COMPOSER")).toBe(input);
+    expect(document.activeElement).toBe(input);
+    expect((screen.getByText("SEND") as HTMLButtonElement).disabled).toBe(false);
+    // And loading starts again: still the same focused node.
+    rerender(ui({ thread: true }));
+    expect(screen.getByLabelText("REAL COMPOSER")).toBe(input);
+    expect(document.activeElement).toBe(input);
+    expect((screen.getByText("SEND") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("the title bar keeps its icons and path, and the title is a bar", () => {
@@ -533,7 +549,6 @@ describe("ConversationPage loading", () => {
     expect(title?.querySelector('[data-part="skeleton-text"]')).not.toBeNull();
     // The thread is real and the composer is usable: only the title is loading.
     expect(screen.getByText("REAL THREAD")).toBeTruthy();
-    expect(document.querySelector(".cb-conv-composer")?.hasAttribute("inert")).toBe(false);
     expect(busy()).toHaveLength(1);
   });
 
@@ -544,8 +559,24 @@ describe("ConversationPage loading", () => {
     const props = document.querySelector('[data-part="properties"]');
     expect(
       props?.querySelectorAll('[data-part="property-section"][data-state="loading"]').length,
-    ).toBe(2);
+    ).toBe(1);
+    // Only the always-present Context section: no Files placeholder.
+    expect(props?.textContent).toContain("上下文");
+    expect(props?.textContent).not.toContain("文件");
     expect(busy()).toHaveLength(1);
+  });
+
+  it("the loading right panel takes the caller's title and has no full-screen button", () => {
+    zh(
+      <ConversationPage
+        {...convProps({ right: "panel" })}
+        loading={{ rightArea: { title: "文件" } }}
+      />,
+    );
+    const slot = document.querySelector('[data-part="panel-slot"]');
+    expect(slot?.querySelector('[data-part="panel-title"]')?.textContent).toBe("文件");
+    expect(slot?.querySelector('[aria-label="全屏"]')).toBeNull();
+    expect(slot?.querySelector('[aria-label="关闭"]')).not.toBeNull();
   });
 
   it("a closed right area stays closed while loading", () => {
@@ -709,5 +740,56 @@ describe("ListPage loading", () => {
       document.querySelector('[data-part="page-header"] [data-part="skeleton-text"]'),
     ).not.toBeNull();
     expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+});
+
+describe("loading never remounts a page", () => {
+  it("ListPage keeps its search input node and focus across loading toggles", () => {
+    const withSearch = {
+      ...header,
+      search: { label: "搜索", value: "", onChange: noop },
+    };
+    const ui = (loading: boolean) => (
+      <DesignProvider locale="zh">
+        <ListPage header={withSearch} variant="objects" listLabel="l" loading={loading}>
+          <ObjectRow mark={{ text: "a" }} name="a" />
+        </ListPage>
+      </DesignProvider>
+    );
+    const { rerender } = render(ui(false));
+    const input = screen.getByRole("searchbox", { name: "搜索" });
+    input.focus();
+    expect(document.activeElement).toBe(input);
+    rerender(ui(true));
+    expect(screen.getByRole("searchbox", { name: "搜索" })).toBe(input);
+    expect(document.activeElement).toBe(input);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    rerender(ui(false));
+    expect(screen.getByRole("searchbox", { name: "搜索" })).toBe(input);
+    expect(document.activeElement).toBe(input);
+    expect(screen.queryAllByRole("status")).toHaveLength(0);
+  });
+
+  it("TracePage keeps its head node across loading toggles", () => {
+    const ui = (loading: boolean) => (
+      <DesignProvider locale="zh">
+        <TracePage
+          header={header}
+          waterfall={<p>W</p>}
+          detail={<p>D</p>}
+          {...(loading ? { loading: {} } : {})}
+        />
+      </DesignProvider>
+    );
+    const { rerender } = render(ui(false));
+    const head = document.querySelector(".cb-template-head");
+    const body = document.querySelector(".cb-trace");
+    rerender(ui(true));
+    expect(document.querySelector(".cb-template-head")).toBe(head);
+    expect(document.querySelector(".cb-trace")).toBe(body);
+    rerender(ui(false));
+    expect(document.querySelector(".cb-template-head")).toBe(head);
+    expect(document.querySelector(".cb-trace")).toBe(body);
+    expect(screen.queryAllByRole("status")).toHaveLength(0);
   });
 });

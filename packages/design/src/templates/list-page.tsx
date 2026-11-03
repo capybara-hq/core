@@ -144,11 +144,9 @@ export function ListPage({
   );
   return (
     <div className="cb-template" data-template="ListPage" data-width="content">
-      {loading ? (
-        <SkeletonGroup label={header.title || t("table.loading")}>{page}</SkeletonGroup>
-      ) : (
-        page
-      )}
+      <SkeletonGroup label={header.title || t("table.loading")} active={loading}>
+        {page}
+      </SkeletonGroup>
     </div>
   );
 }

@@ -67,11 +67,9 @@ export function TracePage({
   );
   return (
     <div className="cb-template" data-template="TracePage" data-width="content">
-      {loading ? (
-        <SkeletonGroup label={header.title || t("table.loading")}>{page}</SkeletonGroup>
-      ) : (
-        page
-      )}
+      <SkeletonGroup label={header.title || t("table.loading")} active={loading !== undefined}>
+        {page}
+      </SkeletonGroup>
     </div>
   );
 }

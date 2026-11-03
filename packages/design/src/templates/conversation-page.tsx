@@ -79,7 +79,12 @@ export type ConversationPageProps = {
   newConversation?: { agentName: string; description?: string };
   /** The thread; it follows the bottom while the reader is at the bottom. */
   thread?: ReactNode;
-  composer: ReactNode;
+  /**
+   * The composer. A function receives `{ sendDisabled }`, true while the thread loads: the
+   * composer stays mounted and editable, and only sending is blocked (pass it to the composer's
+   * `send.disabled`).
+   */
+  composer: ReactNode | ((state: { sendDisabled: boolean }) => ReactNode);
   status: ConversationStatus;
   /** Shown when `right` is "properties". */
   properties?: ReactNode;
@@ -94,13 +99,13 @@ export type ConversationPageProps = {
   layout?: "auto" | "sheet" | "inline";
   /**
    * Parts whose data is on the way (spec §5.4, §7.1). `thread`: three placeholder turns in the
-   * thread column, and the composer, which stays real, is inert (disabled) meanwhile. `title`: a
-   * bar in the title's place (the path and every icon stay real). `rightArea`: the open right
-   * area draws its own loading state (the right panel's `loading`, or two loading property
-   * sections) instead of `panel` / `properties`; a closed area stays closed. One announcement
+   * thread column; the composer stays real and editable, only sending is blocked (see `composer`).
+   * `title`: a bar in the title's place (the path and every icon stay real). `rightArea` (`true`,
+   * or `{ title }`, the open panel's title): the open right area draws its own loading state (the
+   * right panel's `loading`, or one loading Context section) instead of `panel` / `properties`; a closed area stays closed. One announcement
    * for all of it.
    */
-  loading?: { thread?: boolean; title?: boolean; rightArea?: boolean };
+  loading?: { thread?: boolean; title?: boolean; rightArea?: boolean | { title?: string } };
   /** The reference set only: the sheet drawn in its positioned box, not over the window. */
   reference?: boolean;
 };
@@ -231,6 +236,10 @@ export function ConversationPage({
     setDragging(false);
   };
 
+  const composerNode =
+    typeof composer === "function"
+      ? composer({ sendDisabled: loading?.thread === true })
+      : composer;
   const center = newConversation ? (
     <div className="cb-conv-center">
       <div className="cb-conv-scroll" data-center="true">
@@ -239,7 +248,7 @@ export function ConversationPage({
           {newConversation.description ? (
             <p className="cb-conv-new-desc">{newConversation.description}</p>
           ) : null}
-          {composer}
+          {composerNode}
         </div>
       </div>
     </div>
@@ -250,28 +259,24 @@ export function ConversationPage({
           {loading?.thread ? <LoadingThread /> : thread}
         </div>
       </div>
-      <div className="cb-conv-composer" inert={loading?.thread === true}>
-        {composer}
-      </div>
+      <div className="cb-conv-composer">{composerNode}</div>
     </div>
   );
 
-  const loadingRight = loading?.rightArea === true;
+  const loadingRight = loading?.rightArea !== undefined && loading.rightArea !== false;
+  const rightTitle =
+    typeof loading?.rightArea === "object" && loading.rightArea.title !== undefined
+      ? loading.rightArea.title
+      : t("panel.label");
   const propertiesNode = loadingRight ? (
     <PropertiesPanel>
       <PropertySection title={t("props.context")} state="loading" />
-      <PropertySection title={t("props.files")} state="loading" />
     </PropertiesPanel>
   ) : (
     properties
   );
   const panelNode = loadingRight ? (
-    <RightPanel
-      title={t("panel.label")}
-      state="loading"
-      onFullscreen={() => {}}
-      onClose={onCloseRight}
-    />
+    <RightPanel title={rightTitle} state="loading" onClose={onCloseRight} />
   ) : (
     panel
   );

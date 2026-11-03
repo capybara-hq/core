@@ -752,7 +752,12 @@ function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }
                 state === "subagent-panel" ? "subagent" : state === "properties" ? "main" : "file",
               )
         }
-        composer={<ComposerBox {...composerProps(isNew ? "new" : running ? "running" : "idle")} />}
+        composer={({ sendDisabled }) => {
+          const c = composerProps(isNew ? "new" : running ? "running" : "idle");
+          return (
+            <ComposerBox {...c} send={sendDisabled ? { ...c.send, disabled: true } : c.send} />
+          );
+        }}
         status={
           isNew
             ? { context: "grant@示例组织:/chat", version: X.version }
@@ -772,7 +777,7 @@ function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }
         onCloseRight={() => setRight("none")}
         // `loading`: the file-panel block with every part still on its way (spec §5.4).
         {...(state === "loading"
-          ? { loading: { thread: true, title: true, rightArea: true } }
+          ? { loading: { thread: true, title: true, rightArea: { title: "文件" } } }
           : {})}
         {...(live
           ? {}
