@@ -104,6 +104,8 @@ export const LOADING_TEMPLATES: {
         loaded: "default-records",
         loading: "loading-records",
         dataOnly: {
+          row: "the loaded table rows; the loading DataTable draws its own skeleton rows",
+          cell: "the loaded table cells; the loading DataTable draws its own skeleton rows",
           card: "the inbox content is one card-shaped block while loading (spec §5.7); the loaded page has its own sections",
         },
       },
@@ -114,7 +116,28 @@ export const LOADING_TEMPLATES: {
   { name: "wizard", pairs: [{ loaded: "default", loading: "loading" }] },
   { name: "auth", pairs: [{ loaded: "default", loading: "loading" }] },
   // the conversation's loading block is the file-panel block with every part still on its way
-  { name: "conversation", pairs: [{ loaded: "file-panel", loading: "loading" }] },
+  {
+    name: "conversation",
+    pairs: [
+      {
+        loaded: "file-panel",
+        loading: "loading",
+        dataOnly: {
+          button: "the loaded file panel's action; loading draws the panel's loading bars",
+          prose: "the loaded assistant text; loading draws prose bars",
+          markdown: "the loaded assistant text; loading draws prose bars",
+          "tool-line": "the loaded tool rows; loading draws prose bars",
+          "file-card": "the loaded file panel content; loading draws the panel's loading bars",
+          "file-name": "the loaded file panel content; loading draws the panel's loading bars",
+          "type-badge": "the loaded file panel content; loading draws the panel's loading bars",
+          "panel-meta": "the loaded file panel content; loading draws the panel's loading bars",
+          "preview-table": "the loaded file preview; loading draws the panel's loading bars",
+          "preview-table-head": "the loaded file preview; loading draws the panel's loading bars",
+          "preview-table-cell": "the loaded file preview; loading draws the panel's loading bars",
+        },
+      },
+    ],
+  },
   {
     name: "trace",
     pairs: [
@@ -136,7 +159,6 @@ export const VARIABLE_HEIGHT: Record<string, string> = {
   table: "the loaded table has the fixture's rows; the loading DataTable draws its own row count",
   "form-section":
     "the loaded fields carry help text and paired controls the placeholders cannot know",
-  "form-section-head": "stretches to the form-section's row, so it has the section's height",
   card: "a loaded section card is as tall as its content; the loading card is the three-line shape",
   "form-card": "the loaded fields carry help text and paired controls the placeholders cannot know",
 };
@@ -161,6 +183,12 @@ export const LOADING_ALIASES: Record<string, string> = {
   "loading-switch-row": "switch-row",
   "page-header-title-bar": "page-header-title",
   "page-header-action-slots": "page-header-actions",
+  "loading-field": "field",
+  "loading-bubble": "bubble",
+  // `<ancestor part> > <part>`: a placeholder box whose own part name is the generic skeleton-box
+  "page-header-action-slots > skeleton-box": "button",
+  "loading-switch-row > skeleton-box": "switch",
+  "auth-card > skeleton-box": "button",
 };
 
 /**
@@ -169,35 +197,25 @@ export const LOADING_ALIASES: Record<string, string> = {
  * be present while loading. Each entry carries its reason.
  */
 export const DATA_ONLY_PARTS: Record<string, string> = {
-  button:
-    "real buttons (header actions, a submit, a panel action); loading draws placeholder slots",
-  "field-label": "the loaded form fields; loading draws field placeholders (loading-field)",
-  input: "the loaded form fields; loading draws field placeholders (loading-field)",
-  "input-control": "the loaded form fields; loading draws field placeholders (loading-field)",
-  textarea: "the loaded form fields; loading draws field placeholders (loading-field)",
-  select: "the loaded form fields; loading draws field placeholders (loading-field)",
-  segmented: "the loaded form fields; loading draws field placeholders (loading-field)",
-  segment: "the loaded form fields; loading draws field placeholders (loading-field)",
-  switch: "the loaded switches; loading draws a 32 x 20 box in the switch row (loading-switch-row)",
-  "switch-knob": "the loaded switches; loading draws a 32 x 20 box in the switch row",
+  "field-label": "the label text of a loaded field; counted through `field`",
+  input:
+    "the loaded control kinds are page data; the loading field (loading-field) stands in for each field and its count is compared through `field`",
+  "input-control":
+    "the loaded control kinds are page data; the loading field (loading-field) stands in for each field and its count is compared through `field`",
+  textarea:
+    "the loaded control kinds are page data; the loading field (loading-field) stands in for each field and its count is compared through `field`",
+  select:
+    "the loaded control kinds are page data; the loading field (loading-field) stands in for each field and its count is compared through `field`",
+  segmented:
+    "the loaded control kinds are page data; the loading field (loading-field) stands in for each field and its count is compared through `field`",
+  segment:
+    "the loaded control kinds are page data; the loading field (loading-field) stands in for each field and its count is compared through `field`",
+  "switch-knob": "the knob inside a loaded switch; the switch box itself is counted (`switch`)",
   "field-error": "a validation message exists only for typed data",
   "action-row-unsaved":
     "an unsaved count the page cannot know yet; the loading action row has none (spec §5.3)",
   "action-row-errors":
     "an error count the page cannot know yet; the loading action row has none (spec §5.3)",
-  row: "the loaded table rows; the loading DataTable draws its own skeleton rows",
-  cell: "the loaded table cells; the loading DataTable draws its own skeleton rows",
-  bubble: "the loaded user turn; loading draws loading-turn boxes (spec §5.4)",
-  prose: "the loaded assistant text; loading draws prose bars",
-  markdown: "the loaded assistant text; loading draws prose bars",
-  "tool-line": "the loaded tool rows; loading draws prose bars",
-  "file-card": "the loaded file panel content; loading draws the right panel's loading bars",
-  "file-name": "the loaded file panel content; loading draws the right panel's loading bars",
-  "type-badge": "the loaded file panel content; loading draws the right panel's loading bars",
-  "panel-meta": "the loaded file panel content; loading draws the right panel's loading bars",
-  "preview-table": "the loaded file preview; loading draws the right panel's loading bars",
-  "preview-table-head": "the loaded file preview; loading draws the right panel's loading bars",
-  "preview-table-cell": "the loaded file preview; loading draws the right panel's loading bars",
 };
 
 /**
@@ -215,3 +233,10 @@ export const VARIABLE_WIDTH: Record<string, string> = {
 
 /** Variable-width parts that sit at the right edge: their right edge is compared instead of x. */
 export const RIGHT_ALIGNED: string[] = ["page-header-actions"];
+
+/**
+ * A part whose height is that of another part of the same index (a grid cell stretched to its
+ * row): in the loading block it is compared with the followed part's loading height, not with the
+ * loaded height, which is data-driven.
+ */
+export const FOLLOWS_HEIGHT: Record<string, string> = { "form-section-head": "form-section" };

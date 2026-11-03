@@ -115,7 +115,7 @@ function LoadingThread() {
   return (
     <>
       <div className="cb-user-msg" data-part="loading-turn">
-        <div className="cb-bubble-slot">
+        <div className="cb-bubble-slot" data-part="loading-bubble">
           <SkeletonText width="100%" size="prose" />
         </div>
       </div>
