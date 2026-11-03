@@ -41,7 +41,7 @@ import { agentFormDefaults } from "./support/agents";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { ME, renderPage } from "./support/render";
-import { type Routes, renderRoute } from "./support/server";
+import type { Routes } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -282,7 +282,7 @@ const PAGES: [string, ComponentType | ServerPage | RoutePage, "member" | "admin"
   ],
   [
     "/trajectories",
-    server(() => TrajectoriesPage({ searchParams: Promise.resolve({}) })),
+    route("/trajectories", () => TrajectoriesPage({ searchParams: Promise.resolve({}) })),
     "member",
     zh.roles.need.member,
   ],
@@ -583,10 +583,7 @@ describe("trajectories: only the tabs the role can use", () => {
         [`GET ${O}/trajectories`]: { items: [], next: null },
       };
       resetNavigation("/trajectories");
-      await renderRoute(() => TrajectoriesPage({ searchParams: Promise.resolve({}) }), served(), {
-        locale: "zh",
-        me: meAs(role),
-      });
+      await renderRouteWithCache("/trajectories", served(), { locale: "zh", me: meAs(role) });
       const h1 = screen.getByRole("heading", { level: 1 });
       expect(h1.textContent).toBe(admin ? zh.trajectories.title : zh.trajectories.tabs.runs);
       expect(screen.queryByRole("link", { name: new RegExp(zh.evals.tabs.sets) }) !== null).toBe(

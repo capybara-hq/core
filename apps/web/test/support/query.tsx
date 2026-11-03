@@ -10,7 +10,7 @@ import { matchRoute } from "../../src/lib/query/routes";
 import { meQuery, readinessQuery } from "../../src/lib/query/shell";
 import { dehydrateFor, prefetchRoute } from "../../src/lib/server/query";
 import { type Call, stubApi } from "./api";
-import { ME, renderPage, testQueryClient } from "./render";
+import { ME, pageElement, renderPage, testQueryClient } from "./render";
 
 export { testQueryClient };
 
@@ -73,7 +73,16 @@ export async function renderRouteWithCache(path: string, routes: Routes, opts: R
   }
   const client = testQueryClient();
   const view = renderPage(withCache(page, state), { ...render, client });
-  return { calls, client, ...view };
+  /**
+   * A client navigation to `to` under the same layout: the page of `to` replaces this one inside
+   * the same `HydrationBoundary` (the layout does not run again), with the same browser cache.
+   * Its browser reads go through `stubApi` (install the routes first).
+   */
+  const navigate = async (to: string) => {
+    const next = await pageOf(to);
+    view.rerender(pageElement(withCache(next, state), render));
+  };
+  return { calls, client, navigate, ...view };
 }
 
 /**

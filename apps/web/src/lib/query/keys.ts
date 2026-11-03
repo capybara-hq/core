@@ -130,6 +130,24 @@ export const keys = {
         resultId,
         updatedAt,
       ],
+      /**
+       * The trajectory list under one set of filters (each set its own entry), from its first
+       * page (`before: ""`) or after a cursor.
+       */
+      trajectories: (agentId: string, status: string, before = ""): readonly unknown[] => [
+        ...all,
+        "trajectories",
+        agentId,
+        status,
+        before,
+      ],
+      /** A conversation's trajectory: its latest runs (`before: ""`) or the runs before a cursor. */
+      trajectory: (conversationId: string, before = ""): readonly unknown[] => [
+        ...all,
+        "trajectory",
+        conversationId,
+        before,
+      ],
       /** The org's models (by provider). */
       models: (): readonly unknown[] => [...all, "models"],
       /** The org's connectors. */

@@ -1,15 +1,15 @@
 // The trajectory pages and the extension pages render on the server (web-SSR spec §6, task 11):
 // first paint complete without a browser fetch, the gates, and R5's failures. A trajectory view is
 // audited by the kernel, so the page reads it exactly once.
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import PluginPage from "../src/app/(app)/p/[plugin]/[id]/page";
 import TrajectoryPage from "../src/app/(app)/trajectories/[conversationId]/page";
-import TrajectoriesPage from "../src/app/(app)/trajectories/page";
 import { json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes, renderRoute } from "./support/server";
 import { NOT_READY } from "./support/shell";
@@ -109,10 +109,27 @@ const ROUTES: Routes = {
     json(200, { view: { blocks: [{ type: "heading", text: "Cards" }] } }),
 };
 
-const list =
-  (q: Record<string, string> = {}) =>
-  () =>
-    TrajectoriesPage({ searchParams: Promise.resolve(q) });
+/** Lets pending reads and effects run (a read after mount would show up in the calls). */
+const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
+
+/** A client navigation to `path` with an empty cache whose `held` read answers on `release()`. */
+async function renderHeld(path: string, held: string, routes: Routes = ROUTES) {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  const answer = routes[held];
+  if (answer === undefined) throw new Error(`no route ${held}`);
+  const r = await renderRouteEmptyCache(path, {
+    ...routes,
+    [held]: async (c) => {
+      await gate;
+      return answer(c);
+    },
+  });
+  return { ...r, release: () => act(async () => release()) };
+}
+
 const detail = () => TrajectoryPage({ params: Promise.resolve({ conversationId: "c1" }) });
 const plugin = (id: string) => () =>
   PluginPage({ params: Promise.resolve({ plugin: "board", id }) });
@@ -128,9 +145,9 @@ afterEach(() => {
 });
 
 describe("/trajectories", () => {
-  it("the first page and the agents, with no browser fetch", async () => {
+  it("a first render from the hydrated cache makes no browser read (the first page and the agents)", async () => {
     const browser = expectNoFirstPaintFetch();
-    const { calls } = await renderRoute(list(), ROUTES);
+    const { calls } = await renderRouteWithCache("/trajectories", ROUTES);
     const table = screen.getByRole("table", { name: en.trajectories.title });
     expect(within(table).getByText("Clean up")).toBeTruthy();
     expect(
@@ -142,12 +159,13 @@ describe("/trajectories", () => {
     expect(calls.find((c) => c.url.startsWith(`${O}/trajectories`))?.url).toBe(
       `${O}/trajectories?limit=50`,
     );
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("the filters come from the query and are read on the server", async () => {
+  it("the filters come from the query and are read by the layout", async () => {
     const browser = expectNoFirstPaintFetch();
-    const { calls } = await renderRoute(list({ agentId: "ag1", status: "failed" }), ROUTES);
+    const { calls } = await renderRouteWithCache("/trajectories?agentId=ag1&status=failed", ROUTES);
     expect(calls.find((c) => c.url.startsWith(`${O}/trajectories`))?.url).toBe(
       `${O}/trajectories?limit=50&agentId=ag1&status=failed`,
     );
@@ -159,34 +177,102 @@ describe("/trajectories", () => {
       (screen.getByRole("combobox", { name: en.trajectories.filters.status }) as HTMLSelectElement)
         .value,
     ).toBe("failed");
+    await settle();
     expect(browser).toEqual([]);
   });
 
   it("an unknown status in the query is no filter", async () => {
-    expectNoFirstPaintFetch();
-    const { calls } = await renderRoute(list({ status: "bogus" }), ROUTES);
+    const browser = expectNoFirstPaintFetch();
+    const { calls } = await renderRouteWithCache("/trajectories?status=bogus", ROUTES);
     expect(calls.find((c) => c.url.startsWith(`${O}/trajectories`))?.url).toBe(
       `${O}/trajectories?limit=50`,
     );
+    await settle();
+    expect(browser).toEqual([]);
   });
 
-  it("changing a filter is a navigation (the server reads the new list)", async () => {
+  it("changing a filter is a navigation", async () => {
     expectNoFirstPaintFetch();
-    await renderRoute(list({ status: "failed" }), ROUTES);
+    await renderRouteWithCache("/trajectories?status=failed", ROUTES);
     await userEvent
       .setup()
       .selectOptions(screen.getByRole("combobox", { name: en.trajectories.filters.agent }), "ag1");
     expect(router.replace).toHaveBeenCalledWith("/trajectories?agentId=ag1&status=failed");
   });
 
+  it("trajectories: a new agent filter never shows the previous filter's rows", async () => {
+    const byAgent = (agent: string) =>
+      json(200, {
+        items: [{ ...ITEM(`c-${agent}`, `Run of ${agent}`), agentId: agent }],
+        next: null,
+      });
+    const { navigate } = await renderRouteWithCache("/trajectories?agentId=a", {
+      ...ROUTES,
+      [`GET ${O}/trajectories`]: () => byAgent("a"),
+    });
+    expect(screen.getByText("Run of a")).toBeTruthy();
+    // ?agentId=b answers only on release
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const browser = stubApi({
+      [`GET ${O}/trajectories`]: async () => {
+        await held;
+        return byAgent("b");
+      },
+    });
+    resetNavigation("/trajectories?agentId=b");
+    await act(() => navigate("/trajectories?agentId=b"));
+    await waitFor(() =>
+      expect(browser.map((c) => c.url)).toEqual([`${O}/trajectories?limit=50&agentId=b`]),
+    );
+    // while b loads: none of a's rows, the table's loading state
+    expect(screen.queryByText("Run of a")).toBeNull();
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    await act(async () => release());
+    expect(await screen.findByText("Run of b")).toBeTruthy();
+    expect(screen.queryByText("Run of a")).toBeNull();
+    await waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
+  it("a hydrated error of one filter does not keep a new filter from reading", async () => {
+    const { navigate } = await renderRouteWithCache("/trajectories?agentId=a", {
+      ...ROUTES,
+      [`GET ${O}/trajectories`]: failing,
+    });
+    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("maintenance");
+    const browser = stubApi(ROUTES);
+    resetNavigation("/trajectories?agentId=b");
+    await act(() => navigate("/trajectories?agentId=b"));
+    expect(await screen.findByText("Clean up")).toBeTruthy();
+    expect(browser.map((c) => c.url)).toEqual([`${O}/trajectories?limit=50&agentId=b`]);
+  });
+
+  it("an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld("/trajectories", `GET ${O}/trajectories`);
+    await vi.waitFor(() => {
+      if (template("ListPage") === null) throw new Error("no page");
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByText("Clean up")).toBeNull();
+    await release();
+    expect(await screen.findByText("Clean up")).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
   it("agents the kernel fails keep the list (the filter offers what the query names)", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(list({ agentId: "ag9" }), { ...ROUTES, [`GET ${O}/agents`]: failing });
+    await renderRouteWithCache("/trajectories?agentId=ag9", {
+      ...ROUTES,
+      [`GET ${O}/agents`]: failing,
+    });
     expect(screen.getByRole("table", { name: en.trajectories.title })).toBeTruthy();
     expect(
       (screen.getByRole("combobox", { name: en.trajectories.filters.agent }) as HTMLSelectElement)
         .value,
     ).toBe("ag9");
+    await settle();
     expect(browser).toEqual([]);
   });
 
@@ -194,7 +280,7 @@ describe("/trajectories", () => {
     const browser = stubApi({
       [`GET ${O}/trajectories`]: () => json(200, { items: [ITEM("c3", "Third")], next: null }),
     });
-    await renderRoute(list(), {
+    await renderRouteWithCache("/trajectories", {
       ...ROUTES,
       [`GET ${O}/trajectories`]: () => json(200, { items: [ITEM("c1", "Clean up")], next: "c1" }),
     });
@@ -299,19 +385,18 @@ describe("/p/[plugin]/[id]", () => {
 });
 
 describe("the gates", () => {
-  it.each([
-    ["/trajectories", list()],
-    ["/trajectories/c1", detail],
-  ] as const)("%s (members): a guest gets no access and nothing read", async (_p, page) => {
-    const denied = await renderRoute(page, ROUTES, { me: as("guest") });
-    expect(new Set(denied.calls.map((c) => c.url))).toEqual(
-      new Set(["/api/v1/me", `${O}/readiness`]),
-    );
-    expect(noAccess()).toBe(true);
-  });
+  it.each([["/trajectories/c1", detail]] as const)(
+    "%s (members): a guest gets no access and nothing read",
+    async (_p, page) => {
+      const denied = await renderRoute(page, ROUTES, { me: as("guest") });
+      expect(new Set(denied.calls.map((c) => c.url))).toEqual(
+        new Set(["/api/v1/me", `${O}/readiness`]),
+      );
+      expect(noAccess()).toBe(true);
+    },
+  );
 
   it.each([
-    ["/trajectories", list()],
     ["/trajectories/c1", detail],
     ["/p/board/overview", plugin("overview")],
   ] as const)("%s: no org renders nothing; setup goes home", async (_p, page) => {
@@ -327,4 +412,30 @@ describe("the gates", () => {
     expect(noAccess()).toBe(false);
     expect(screen.getByRole("heading", { name: "Cards" })).toBeTruthy();
   });
+});
+
+/** The pages that read through the query cache: path, the role they need (none: any member). */
+const ROUTE_GATES: [string, "member" | null][] = [["/trajectories", "member"]];
+
+describe("the gates (query cache)", () => {
+  it.each(ROUTE_GATES)(
+    "%s: below its role no access and nothing read; no org renders nothing; setup goes home",
+    async (path, min) => {
+      if (min !== null) {
+        const denied = await renderRouteWithCache(path, ROUTES, { me: as("guest") });
+        expect(new Set(denied.calls.map((c) => c.url))).toEqual(
+          new Set(["/api/v1/me", `${O}/readiness`]),
+        );
+        expect(noAccess()).toBe(true);
+        cleanup();
+      }
+      const none = await renderRouteWithCache(path, ROUTES, { me: { ...ME, currentOrgId: null } });
+      expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+      expect(document.body.textContent).toBe("");
+      cleanup();
+      expectNoFirstPaintFetch();
+      await renderRouteWithCache(path, ROUTES, { readiness: NOT_READY });
+      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+    },
+  );
 });

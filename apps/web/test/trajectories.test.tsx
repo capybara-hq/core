@@ -4,11 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import TrajectoryPage from "../src/app/(app)/trajectories/[conversationId]/page";
-import TrajectoriesPage from "../src/app/(app)/trajectories/page";
 import { activeNavOf } from "../src/components/shell/nav";
 import { type SpanLabels, type TrajectoryRun, trajectorySpans } from "../src/lib/trajectories";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { renderRoute } from "./support/server";
 
@@ -25,7 +25,6 @@ vi.mock("next/navigation", () => ({
 /** The member list the detail page reads for the starter's name: none unless a test gives some. */
 const NO_MEMBERS = { "GET /api/v1/orgs/o1/members": () => json(200, { members: [] }) };
 const detailPage = () => TrajectoryPage({ params: Promise.resolve({ conversationId: "c1" }) });
-const listPage = () => TrajectoriesPage({ searchParams: Promise.resolve({}) });
 
 const msgs = { zh, en } as const;
 
@@ -704,7 +703,9 @@ describe("运行记录列表（ListPage）", () => {
       [`GET ${LIST}`]: () =>
         json(200, { items: [item("c1", "completed"), item("c2", null)], next: null }),
     });
-    const { container, calls } = await renderRoute(listPage, lastStubRoutes(), { locale: "zh" });
+    const { container, calls } = await renderRouteWithCache("/trajectories", lastStubRoutes(), {
+      locale: "zh",
+    });
     expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
     const table = await screen.findByRole("table", { name: zh.trajectories.title });
     expect(within(table).getByText("Clean up")).toBeTruthy();
@@ -739,9 +740,8 @@ describe("运行记录列表（ListPage）", () => {
     );
     expect(router.replace).toHaveBeenLastCalledWith("/trajectories?status=failed");
     cleanup();
-    const filtered = await renderRoute(
-      () =>
-        TrajectoriesPage({ searchParams: Promise.resolve({ agentId: "ag1", status: "failed" }) }),
+    const filtered = await renderRouteWithCache(
+      "/trajectories?agentId=ag1&status=failed",
       lastStubRoutes(),
       { locale: "zh" },
     );
