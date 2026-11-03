@@ -25,8 +25,9 @@ import {
   queueQuery,
   sandboxQuery,
 } from "./conversation";
+import { membersQuery } from "./members";
 import { overviewQueries } from "./overview";
-import { orgSettingsQuery } from "./settings";
+import { invitationsQuery, orgSettingsQuery } from "./settings";
 import { conversationGroupsQuery, maybeMeQuery, readinessQuery } from "./shell";
 import { skillQuery, skillsQuery } from "./skills";
 
@@ -299,7 +300,14 @@ export const ROUTES: readonly RouteEntry[] = [
   { pattern: "/login", queries: () => [q(authSourcesQuery()), q(maybeMeQuery())] },
   { pattern: "/p/[plugin]/[id]", queries: () => [], none: "pending migration" },
   { pattern: "/settings/extensions", queries: () => [], none: "pending migration" },
-  { pattern: "/settings/members", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/settings/members",
+    // Members up; admins also read the invitations.
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "member")
+        ? []
+        : [q(membersQuery(orgId)), ...(atLeast(me, "admin") ? [q(invitationsQuery(orgId))] : [])],
+  },
   { pattern: "/settings/models", queries: () => [], none: "pending migration" },
   {
     pattern: "/settings/organization",

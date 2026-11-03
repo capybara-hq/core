@@ -228,7 +228,12 @@ const PAGES: [string, ComponentType | ServerPage | RoutePage, "member" | "admin"
     "member",
     zh.roles.need.member,
   ],
-  ["/settings/members", server(() => MembersPage()), "member", zh.roles.need.member],
+  [
+    "/settings/members",
+    route("/settings/members", () => MembersPage()),
+    "member",
+    zh.roles.need.member,
+  ],
   [
     "/settings/sandbox",
     route("/settings/sandbox", () => SandboxPage()),
@@ -576,7 +581,7 @@ describe("read-only pages say why (R3)", () => {
     it(`/settings/members · ${role}: ${role === "member" ? "a read-only line" : "no line"}`, async () => {
       routes = { [`GET ${O}/members`]: MEMBERS, [`GET ${O}/invitations`]: { invitations: [] } };
       resetNavigation("/settings/members");
-      await renderRoute(() => MembersPage(), served(), { locale: "zh", me: meAs(role) });
+      await renderRouteWithCache("/settings/members", served(), { locale: "zh", me: meAs(role) });
       await screen.findByText("Mia");
       const line = zh.roles.readOnly.replace("{role}", zh.members.roles.member);
       expect(screen.queryByText(line) !== null).toBe(role === "member");

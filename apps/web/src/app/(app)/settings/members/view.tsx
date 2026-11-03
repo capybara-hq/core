@@ -18,13 +18,15 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
+import { NoAccess } from "../../../../components/NoAccess";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
-import { useRouter } from "../../../../i18n/navigation";
 import {
   changeMemberRole,
   createInvitation,
@@ -43,8 +45,17 @@ import {
   roleAtLeast,
   transferOwnership,
 } from "../../../../lib/members";
+import { retryOnMountOf } from "../../../../lib/query/client";
+import { useAppMutation } from "../../../../lib/query/define";
+import { keys } from "../../../../lib/query/keys";
+import { membersQuery } from "../../../../lib/query/members";
+import { usePageQuery } from "../../../../lib/query/page-query";
+import { invitationsQuery } from "../../../../lib/query/settings";
+import { useWorkspace } from "../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../lib/use-error-message";
-import { useServerState } from "../../../../lib/use-server-state";
+import NotFound from "../../not-found";
+
+type Pending = { member: Member; action: "remove" | "transfer" };
 
 /**
  * `/settings/members`: the org's members (SettingsPage, group 组织, with the settings sub-nav).
@@ -52,18 +63,18 @@ import { useServerState } from "../../../../lib/use-server-state";
  * one-time link, revocable); owners also transfer ownership. Anonymous visitor rows (a channel
  * connection's anonymous policy) have a disabled role control, no remove or transfer, and the
  * 「匿名访客」 badge. The UI only hides actions; the kernel decides.
- * Read on the server (`page.tsx`): the members and, for admins, the invitations (a section: a
- * failure draws the invitation table's error state, retried with `router.refresh()`).
+ * From the query cache (the layout prefetched it on a first load): the members and, for admins,
+ * the invitations (a section: a failure draws the invitation table's error state, with a retry).
+ * A change invalidates what it changes; a transfer also reads the session again (my role).
  */
-export interface MembersData {
-  members: Member[];
-  /** `null` for a viewer who can't manage, or when the kernel could not read them. */
-  invitations: Invitation[] | null;
+export default function MembersView() {
+  const ws = useWorkspace({ min: "member", setup: "step" });
+  if (ws.kind === "pending" || ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  return <Members orgId={ws.orgId} />;
 }
 
-type Pending = { member: Member; action: "remove" | "transfer" };
-
-export default function Members({ orgId, initial }: { orgId: string; initial: MembersData }) {
+function Members({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const nav = useOrgSettingsNav();
   const t = useTranslations("members");
@@ -72,29 +83,40 @@ export default function Members({ orgId, initial }: { orgId: string; initial: Me
   const errorMessage = useErrorMessage();
   const { me } = useSession();
   const sessionRole = myRole(me);
-  // After a transfer this account is an admin, but the session's props say owner until the
-  // server's re-render arrives: act as an admin meanwhile (no owner-only actions).
+  // After a transfer this account is an admin, but the session may say owner until it is read
+  // again: act as an admin meanwhile (no owner-only actions).
   const [transferredAs, setTransferredAs] = useState<OrgRole>();
   const role: OrgRole | undefined =
     transferredAs !== undefined && sessionRole === transferredAs ? "admin" : sessionRole;
   const manage = roleAtLeast(role, "admin");
   const owner = role === "owner";
-  const router = useRouter();
-  const [, startTransition] = useTransition();
-  const refresh = () => startTransition(() => router.refresh());
-  const [members, setMembers] = useServerState(initial.members);
+  const read = usePageQuery(membersQuery(orgId));
   const [pending, setPending] = useState<Pending | null>(null);
   const [inviting, setInviting] = useState(false);
-  const rows = members;
-
-  const replace = (accountId: string, next: OrgRole) =>
-    setMembers(rows.map((m) => (m.account.id === accountId ? { ...m, role: next } : m)));
+  const changeRole = useAppMutation({
+    fn: (v: { accountId: string; role: OrgRole }) => changeMemberRole(orgId, v.accountId, v.role),
+    invalidates: () => [keys.org(orgId).members()],
+  });
+  if (read.kind === "notFound") return <NotFound />;
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
+  const rows = read.kind === "ready" ? read.data.members : [];
+  const header = {
+    path: [...scope, { label: "settings", href: "/settings/organization" }, { label: "members" }],
+    title: t("title"),
+    ...(read.kind === "ready" ? { count: String(rows.length) } : {}),
+    // Members read the list; managing it is for admins (R3: say why it is read-only)
+    ...(manage || role === undefined
+      ? {}
+      : { description: tr("readOnly", { role: t(`roles.${role}`) }) }),
+    actions: manage
+      ? [{ label: t("invite"), variant: "primary" as const, onSelect: () => setInviting(true) }]
+      : [],
+  };
 
   async function change(m: Member, next: OrgRole) {
     if (next === m.role) return;
     try {
-      await changeMemberRole(orgId, m.account.id, next);
-      replace(m.account.id, next);
+      await changeRole.mutateAsync({ accountId: m.account.id, role: next });
       toast.success(t("roleChanged", { name: m.account.displayName, role: t(`roles.${next}`) }));
     } catch (e) {
       toast.error(errorMessage(e));
@@ -177,26 +199,7 @@ export default function Members({ orgId, initial }: { orgId: string; initial: Me
   };
 
   return (
-    <SettingsPage
-      nav={nav}
-      activeNav="members"
-      header={{
-        path: [
-          ...scope,
-          { label: "settings", href: "/settings/organization" },
-          { label: "members" },
-        ],
-        title: t("title"),
-        // Members read the list; managing it is for admins (R3: say why it is read-only)
-        ...(manage || role === undefined
-          ? {}
-          : { description: tr("readOnly", { role: t(`roles.${role}`) }) }),
-        count: String(rows.length),
-        actions: manage
-          ? [{ label: t("invite"), variant: "primary", onSelect: () => setInviting(true) }]
-          : [],
-      }}
-    >
+    <SettingsPage nav={nav} activeNav="members" header={header}>
       <Stack gap={24}>
         <DataTable
           label={t("title")}
@@ -204,19 +207,11 @@ export default function Members({ orgId, initial }: { orgId: string; initial: Me
           rows={rows}
           rowKey={(m) => m.account.id}
           rowLabel={(m) => m.account.displayName}
-          state="ready"
+          state={read.kind === "ready" ? "ready" : "loading"}
           empty={{ title: t("empty") }}
           {...(manage ? { rowMenu: menu } : {})}
         />
-        {manage && (
-          <Invitations
-            orgId={orgId}
-            initial={initial.invitations}
-            refresh={refresh}
-            inviting={inviting}
-            setInviting={setInviting}
-          />
-        )}
+        {manage && <Invitations orgId={orgId} inviting={inviting} setInviting={setInviting} />}
       </Stack>
       {pending !== null && (
         <ConfirmDialog
@@ -224,25 +219,9 @@ export default function Members({ orgId, initial }: { orgId: string; initial: Me
           pending={pending}
           onClose={() => setPending(null)}
           onDone={() => {
-            const { member, action } = pending;
+            // After a transfer this account is an admin: shown at once (the session is read again)
+            if (pending.action === "transfer") setTransferredAs(sessionRole);
             setPending(null);
-            if (action === "remove") {
-              setMembers(rows.filter((m) => m.account.id !== member.account.id));
-            } else {
-              // After a transfer this account is an admin: shown at once, then the server re-reads
-              // the session (navigation, permissions) and the members.
-              setTransferredAs(sessionRole);
-              setMembers(
-                rows.map((m) =>
-                  m.account.id === member.account.id
-                    ? { ...m, role: "owner" }
-                    : m.account.id === me.account.id
-                      ? { ...m, role: "admin" }
-                      : m,
-                ),
-              );
-              refresh();
-            }
           }}
         />
       )}
@@ -269,6 +248,17 @@ function ConfirmDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { member, action } = pending;
+  const qc = useQueryClient();
+  const remove = useAppMutation({
+    fn: (accountId: string) => removeMember(orgId, accountId),
+    invalidates: () => [keys.org(orgId).members()],
+  });
+  // A transfer changes my role too: the session (`/me`) is read again.
+  const transfer = useAppMutation({
+    fn: (accountId: string) => transferOwnership(orgId, accountId),
+    invalidates: () => [keys.org(orgId).members()],
+    onSuccess: () => void qc.invalidateQueries({ queryKey: keys.account("self").me() }),
+  });
   const name = member.account.displayName;
   const danger = action === "remove";
 
@@ -277,10 +267,10 @@ function ConfirmDialog({
     setError(null);
     try {
       if (action === "remove") {
-        await removeMember(orgId, member.account.id);
+        await remove.mutateAsync(member.account.id);
         toast.success(t("removed", { name }));
       } else {
-        await transferOwnership(orgId, member.account.id);
+        await transfer.mutateAsync(member.account.id);
         toast.success(t("transferred", { name }));
       }
       onDone();
@@ -326,28 +316,29 @@ function ConfirmDialog({
 /** 邀请列表（管理员）：状态、过期时间；待接受的可以撤销。新建邀请的对话框也在这里。 */
 function Invitations({
   orgId,
-  initial,
-  refresh,
   inviting,
   setInviting,
 }: {
   orgId: string;
-  initial: Invitation[] | null;
-  refresh(): void;
   inviting: boolean;
   setInviting(v: boolean): void;
 }) {
   const t = useTranslations("members");
   const toast = useToast();
   const errorMessage = useErrorMessage();
+  const invitationsQ = invitationsQuery(orgId);
+  const read = useQuery({ ...invitationsQ, retryOnMount: retryOnMountOf(invitationsQ.queryKey) });
   // 最近的在前
-  const rows = initial === null ? [] : [...initial].reverse();
+  const rows = read.data === undefined ? [] : [...read.data.invitations].reverse();
+  const revokeOne = useAppMutation({
+    fn: (id: string) => revokeInvitation(orgId, id),
+    invalidates: () => [keys.org(orgId).invitations()],
+  });
 
   async function revoke(inv: Invitation) {
     try {
-      await revokeInvitation(orgId, inv.id);
+      await revokeOne.mutateAsync(inv.id);
       toast.success(t("invitations.revoked"));
-      refresh();
     } catch (e) {
       toast.error(errorMessage(e));
     }
@@ -392,8 +383,8 @@ function Invitations({
         rows={rows}
         rowKey={(i) => i.id}
         rowLabel={(i) => `${t(`roles.${i.role}`)} · ${formatDateTime(i.createdAt)}`}
-        state={initial === null ? "error" : "ready"}
-        error={{ code: "unknown", onRetry: refresh }}
+        state={read.data !== undefined ? "ready" : read.error ? "error" : "loading"}
+        error={{ code: read.error?.code ?? "unknown", onRetry: () => void read.refetch() }}
         empty={{ title: t("invitations.empty") }}
         isDisabled={(i) => i.status !== "pending"}
         rowMenu={(i) =>
@@ -402,23 +393,13 @@ function Invitations({
             : []
         }
       />
-      {inviting && (
-        <InviteDialog orgId={orgId} onCreated={refresh} onClose={() => setInviting(false)} />
-      )}
+      {inviting && <InviteDialog orgId={orgId} onClose={() => setInviting(false)} />}
     </Stack>
   );
 }
 
 /** 新建邀请：选角色与有效期 → 生成后显示可复制的链接（令牌只返回这一次）。 */
-function InviteDialog({
-  orgId,
-  onCreated,
-  onClose,
-}: {
-  orgId: string;
-  onCreated(): void;
-  onClose(): void;
-}) {
+function InviteDialog({ orgId, onClose }: { orgId: string; onClose(): void }) {
   const t = useTranslations("members");
   const tc = useTranslations("common");
   const locale = useLocale();
@@ -431,14 +412,17 @@ function InviteDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [link, setLink] = useState<string | null>(null);
+  const invite = useAppMutation({
+    fn: (v: { role: InvitableRole; expiresInHours: number }) => createInvitation(orgId, v),
+    invalidates: () => [keys.org(orgId).invitations()],
+  });
 
   const create = async () => {
     setBusy(true);
     setError(null);
     try {
-      const { token } = await createInvitation(orgId, { role, expiresInHours: hours });
+      const { token } = await invite.mutateAsync({ role, expiresInHours: hours });
       setLink(inviteUrl(window.location.origin, locale, token));
-      onCreated();
     } catch (e) {
       setError(errorMessage(e));
     } finally {

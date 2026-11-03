@@ -6,7 +6,6 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import ExtensionsPage from "../src/app/(app)/settings/extensions/page";
-import MembersPage from "../src/app/(app)/settings/members/page";
 import ModelsPage from "../src/app/(app)/settings/models/page";
 import PluginsPage from "../src/app/(app)/settings/plugins/page";
 import TokensPage from "../src/app/(app)/settings/tokens/page";
@@ -224,42 +223,59 @@ describe("first paint comes from the server (no browser fetch)", () => {
     expect(cached?.sandboxLimits).toEqual({ cpu: 2, memoryMb: 4096, source: "deployment" });
   });
 
-  it("/settings/members: members and, for an admin, the invitations", async () => {
+  it("/settings/members: a first render from the hydrated cache makes no browser read (members and, for an admin, the invitations)", async () => {
     const browser = expectNoFirstPaintFetch();
-    const { calls } = await renderRoute(() => MembersPage(), ROUTES);
+    const { calls } = await renderRouteWithCache("/settings/members", ROUTES);
     expect(screen.getByText("Bob")).toBeTruthy();
     expect(screen.getByText(en.members.invitations.status.pending)).toBeTruthy();
     expect(calls.map((c) => c.url)).toContain(`${O}/invitations`);
+    await settle();
     expect(browser).toEqual([]);
   });
 
   it("/settings/members: a member reads no invitations", async () => {
     const browser = expectNoFirstPaintFetch();
-    const { calls } = await renderRoute(() => MembersPage(), ROUTES, { me: as("member") });
+    const { calls } = await renderRouteWithCache("/settings/members", ROUTES, { me: as("member") });
     expect(screen.getByText("Bob")).toBeTruthy();
     expect(calls.map((c) => c.url)).not.toContain(`${O}/invitations`);
     expect(screen.queryByText(en.members.invitations.title)).toBeNull();
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/settings/members: invitations the kernel fails draw the table's error, retried on the server", async () => {
-    const browser = expectNoFirstPaintFetch();
-    const { calls } = await renderRoute(() => MembersPage(), {
+  it("/settings/members: invitations the kernel fails draw the table's error; retry reads them in the browser", async () => {
+    let fail = true;
+    const answer = ROUTES[`GET ${O}/invitations`] as NonNullable<Routes[string]>;
+    const routes: Routes = {
       ...ROUTES,
-      [`GET ${O}/invitations`]: failing,
-    });
+      [`GET ${O}/invitations`]: (c) => (fail ? failing() : answer(c)),
+    };
+    const browser = stubApi(routes);
+    await renderRouteWithCache("/settings/members", routes);
     expect(screen.getByText("Bob")).toBeTruthy();
-    await userEvent.setup().click(screen.getByRole("button", { name: en.common.retry }));
-    expect(router.refresh).toHaveBeenCalled();
-    expect(calls.filter((c) => c.url === `${O}/invitations`).length).toBe(2);
+    await settle();
+    // the hydrated error is not read again on mount
     expect(browser).toEqual([]);
+    fail = false;
+    await userEvent.setup().click(screen.getByRole("button", { name: en.common.retry }));
+    expect(await screen.findByText(en.members.invitations.status.pending)).toBeTruthy();
+    expect(browser.map((c) => `${c.method} ${c.url}`)).toEqual([`GET ${O}/invitations`]);
+    expect(router.refresh).not.toHaveBeenCalled();
   });
 
-  it("/settings/members: a failing member list is an error, not an empty page", async () => {
-    expectNoFirstPaintFetch();
-    await expect(
-      renderRoute(() => MembersPage(), { ...ROUTES, [`GET ${O}/members`]: failing }),
-    ).rejects.toThrow();
+  it("/settings/members: a failing member list is the error state, not an empty page", async () => {
+    stubApi(ROUTES);
+    await renderRouteWithCache("/settings/members", { ...ROUTES, [`GET ${O}/members`]: failing });
+    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("maintenance");
+    expect(screen.queryByText("Bob")).toBeNull();
+  });
+
+  it("/settings/members: an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld("/settings/members", `GET ${O}/members`);
+    await expectLoading("SettingsPage", "Bob");
+    await release();
+    expect(await screen.findByText("Bob")).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
   it("/settings/models, /plugins, /extensions, /tokens", async () => {
@@ -288,7 +304,6 @@ describe("first paint comes from the server (no browser fetch)", () => {
 
 type Page = () => Promise<ReactNode>;
 const GATES: [string, Page, "member" | "admin" | "guest", boolean][] = [
-  ["/settings/members", () => MembersPage(), "member", true],
   ["/settings/models", () => ModelsPage(), "admin", true],
   ["/settings/plugins", () => PluginsPage(), "admin", false],
   ["/settings/extensions", () => ExtensionsPage(), "admin", false],
@@ -328,6 +343,7 @@ describe("the gates", () => {
 const ROUTE_GATES: [string, "member" | "admin", boolean][] = [
   ["/settings/organization", "member", false],
   ["/settings/sandbox", "member", false],
+  ["/settings/members", "member", true],
 ];
 
 describe("the gates (query cache)", () => {
