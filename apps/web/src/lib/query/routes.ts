@@ -25,6 +25,7 @@ import {
   queueQuery,
   sandboxQuery,
 } from "./conversation";
+import { evalSetsQuery } from "./evals";
 import { membersQuery } from "./members";
 import { overviewQueries } from "./overview";
 import {
@@ -296,11 +297,22 @@ export const ROUTES: readonly RouteEntry[] = [
         : [q(orgCatalogItemQuery(orgId, itemId)), q(orgExtensionsQuery(orgId))];
     },
   },
-  { pattern: "/evals", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/evals",
+    // Org admins: the sets, and the agents for their names (a section).
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "admin")
+        ? []
+        : [q(evalSetsQuery(orgId)), q(agentsQuery(orgId))],
+  },
   { pattern: "/evals/[setId]", queries: () => [], none: "pending migration" },
   { pattern: "/evals/[setId]/cases/[caseId]", queries: () => [], none: "pending migration" },
   { pattern: "/evals/[setId]/run", queries: () => [], none: "pending migration" },
-  { pattern: "/evals/new", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/evals/new",
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "admin") ? [] : [q(agentsQuery(orgId))],
+  },
   { pattern: "/evals/runs/[runId]", queries: () => [], none: "pending migration" },
   { pattern: "/inbox", queries: () => [], none: "pending migration" },
   { pattern: "/invite/[token]", queries: () => [q(maybeMeQuery())] },

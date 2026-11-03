@@ -197,8 +197,8 @@ const PAGES: [string, ComponentType | ServerPage | RoutePage, "member" | "admin"
     "admin",
     zh.roles.need.admin,
   ],
-  ["/evals", server(() => EvalsPage()), "admin", zh.roles.need.admin],
-  ["/evals/new", server(() => NewEvalSetPage()), "admin", zh.roles.need.admin],
+  ["/evals", route("/evals", () => EvalsPage()), "admin", zh.roles.need.admin],
+  ["/evals/new", route("/evals/new", () => NewEvalSetPage()), "admin", zh.roles.need.admin],
   ["/evals/s1", server(() => EvalSetPage(params({ setId: "s1" }))), "admin", zh.roles.need.admin],
   [
     "/evals/s1/run",

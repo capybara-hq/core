@@ -93,6 +93,43 @@ export const keys = {
       orgFilePreviewers: (): readonly unknown[] => [...all, "orgFilePreviewers"],
       /** The org's service tokens. */
       serviceTokens: (): readonly unknown[] => [...all, "serviceTokens"],
+      /** The org's eval sets. */
+      evalSets: (): readonly unknown[] => [...all, "evalSets"],
+      /** One eval set (with its cases). */
+      evalSet: (setId: string): readonly unknown[] => [...all, "evalSet", setId],
+      /** An eval set's runs. */
+      evalRuns: (setId: string): readonly unknown[] => [...all, "evalRuns", setId],
+      /** One eval case's snapshot trajectory. */
+      evalCase: (setId: string, caseId: string): readonly unknown[] => [
+        ...all,
+        "evalCase",
+        setId,
+        caseId,
+      ],
+      /** The cost estimate of an eval run's input (`body`: the input as JSON). */
+      evalEstimate: (setId: string, body: string): readonly unknown[] => [
+        ...all,
+        "evalEstimate",
+        setId,
+        body,
+      ],
+      /** One eval run and the result rows read so far (the polling's state). */
+      evalRun: (runId: string): readonly unknown[] => [...all, "evalRun", runId],
+      /** A page of an eval run's result rows after a cursor ("Load more"). */
+      evalResultPage: (runId: string, after: string): readonly unknown[] => [
+        ...all,
+        "evalResultPage",
+        runId,
+        after,
+      ],
+      /** One eval result's full row, as of a row's `updatedAt`. */
+      evalResult: (runId: string, resultId: string, updatedAt: string): readonly unknown[] => [
+        ...all,
+        "evalResult",
+        runId,
+        resultId,
+        updatedAt,
+      ],
       /** The org's models (by provider). */
       models: (): readonly unknown[] => [...all, "models"],
       /** The org's connectors. */

@@ -6,14 +6,13 @@ import zh from "../messages/zh.json";
 import EvalCasePage from "../src/app/(app)/evals/[setId]/cases/[caseId]/page";
 import EvalSetPage from "../src/app/(app)/evals/[setId]/page";
 import RunWizardPage from "../src/app/(app)/evals/[setId]/run/page";
-import NewEvalSetPage from "../src/app/(app)/evals/new/page";
-import EvalsPage from "../src/app/(app)/evals/page";
 import EvalRunPage from "../src/app/(app)/evals/runs/[runId]/page";
 import { activeNavOf } from "../src/components/shell/nav";
 import { type EvalResult, type EvalRun, rowOf } from "../src/lib/evals";
 import type { TrajectoryRun } from "../src/lib/trajectories";
 import { bodyOf, type Call, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { renderRouteWithCache } from "./support/query";
 import { renderRoute } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -257,7 +256,7 @@ describe("评测集列表（ListPage）", () => {
         [`GET ${SETS}`]: () => json(200, { sets: [SET] }),
         [`GET ${ORG}/agents`]: () => json(200, { agents: [AGENT] }),
       });
-      const { container } = await renderRoute(() => EvalsPage(), lastStubRoutes(), { locale });
+      const { container } = await renderRouteWithCache("/evals", lastStubRoutes(), { locale });
       expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
       const list = await screen.findByRole("list", { name: m.tabs.sets });
       const row = await within(list).findByRole("listitem");
@@ -284,7 +283,7 @@ describe("评测集列表（ListPage）", () => {
       [`GET ${SETS}`]: () => json(200, { sets: [] }),
       [`GET ${ORG}/agents`]: () => json(200, { agents: [AGENT] }),
     });
-    await renderRoute(() => EvalsPage(), lastStubRoutes());
+    await renderRouteWithCache("/evals", lastStubRoutes());
     expect(await screen.findByText(E.empty)).toBeTruthy();
   });
 });
@@ -295,7 +294,7 @@ describe("新建评测集（FormPage）", () => {
       [`GET ${ORG}/agents`]: () => json(200, { agents: [AGENT] }),
       [`POST ${SETS}`]: () => json(201, { set: { ...SET, rubric: "Be exact." } }),
     });
-    const { container } = await renderRoute(() => NewEvalSetPage(), lastStubRoutes());
+    const { container } = await renderRouteWithCache("/evals/new", lastStubRoutes());
     expect(container.querySelector('[data-template="FormPage"]')).not.toBeNull();
     const user = userEvent.setup();
     const agent = await screen.findByRole("combobox", { name: E.form.agentLabel });
@@ -328,7 +327,7 @@ describe("新建评测集: a create form", () => {
   const AG2 = { ...AGENT, id: "ag2", definition: { ...AGENT.definition, name: "Second" } };
   it("starts on the first field, says nothing about unsaved changes, and needs a name", async () => {
     stubApi({ [`GET ${ORG}/agents`]: () => json(200, { agents: [AGENT, AG2] }) });
-    await renderRoute(() => NewEvalSetPage(), lastStubRoutes(), { locale: "zh" });
+    await renderRouteWithCache("/evals/new", lastStubRoutes(), { locale: "zh" });
     const Z = zh.evals.form;
     const agent = await screen.findByRole("combobox", { name: Z.agentLabel });
     expect(document.activeElement).toBe(agent);
@@ -343,10 +342,7 @@ describe("新建评测集: a create form", () => {
 
   it("?agentId= (from a trajectory's 加入评测集) presets the agent", async () => {
     stubApi({ [`GET ${ORG}/agents`]: () => json(200, { agents: [AGENT, AG2] }) });
-    await renderRoute(
-      () => NewEvalSetPage({ searchParams: Promise.resolve({ agentId: "ag2" }) }),
-      lastStubRoutes(),
-    );
+    await renderRouteWithCache("/evals/new?agentId=ag2", lastStubRoutes());
     const agent = (await screen.findByRole("combobox", {
       name: E.form.agentLabel,
     })) as HTMLSelectElement;

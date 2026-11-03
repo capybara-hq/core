@@ -1,6 +1,6 @@
 // The eval pages render on the server (web-SSR spec §6, task 11): first paint complete without a
 // browser fetch, the org-admin gate (only the session is read below it), and R5's failures.
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,11 +8,10 @@ import en from "../messages/en.json";
 import EvalCasePage from "../src/app/(app)/evals/[setId]/cases/[caseId]/page";
 import EvalSetPage from "../src/app/(app)/evals/[setId]/page";
 import RunWizardPage from "../src/app/(app)/evals/[setId]/run/page";
-import NewEvalSetPage from "../src/app/(app)/evals/new/page";
-import EvalsPage from "../src/app/(app)/evals/page";
 import EvalRunPage from "../src/app/(app)/evals/runs/[runId]/page";
 import { json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes, renderRoute } from "./support/server";
 import { NOT_READY } from "./support/shell";
@@ -170,6 +169,27 @@ const ROUTES: Routes = {
     json(200, { results: [ROW("res1"), ROW("res2")], next: null, asOf: T }),
 };
 
+/** Lets pending reads and effects run (a read after mount would show up in the calls). */
+const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
+
+/** A client navigation to `path` with an empty cache whose `held` read answers on `release()`. */
+async function renderHeld(path: string, held: string, routes: Routes = ROUTES) {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  const answer = routes[held];
+  if (answer === undefined) throw new Error(`no route ${held}`);
+  const r = await renderRouteEmptyCache(path, {
+    ...routes,
+    [held]: async (c) => {
+      await gate;
+      return answer(c);
+    },
+  });
+  return { ...r, release: () => act(async () => release()) };
+}
+
 const setPage = () => EvalSetPage({ params: Promise.resolve({ setId: "s1" }) });
 const wizardPage = () => RunWizardPage({ params: Promise.resolve({ setId: "s1" }) });
 const casePage = () => EvalCasePage({ params: Promise.resolve({ setId: "s1", caseId: "k1" }) });
@@ -183,27 +203,63 @@ afterEach(() => {
 });
 
 describe("first paint comes from the server (no browser fetch)", () => {
-  it("/evals: the sets with their agent's name", async () => {
+  it("/evals: a first render from the hydrated cache makes no browser read (the sets with their agent's name)", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => EvalsPage(), ROUTES);
+    await renderRouteWithCache("/evals", ROUTES);
     const list = screen.getByRole("list", { name: E.tabs.sets });
     expect(within(list).getByText(/Helper · .*1/)).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/evals: agents the kernel fails only cost the names (the id shows)", async () => {
+  it("/evals: agents the kernel fails only cost the names (the id shows; not read again on mount)", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => EvalsPage(), { ...ROUTES, [`GET ${O}/agents`]: failing });
+    await renderRouteWithCache("/evals", { ...ROUTES, [`GET ${O}/agents`]: failing });
     expect(screen.getByText(/ag1 · .*1/)).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/evals/new: the agents to choose from", async () => {
+  it("/evals/new: a first render from the hydrated cache makes no browser read (the agents to choose from)", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => NewEvalSetPage(), ROUTES);
+    await renderRouteWithCache("/evals/new", ROUTES);
     const agent = screen.getByRole("combobox", { name: E.form.agentLabel }) as HTMLSelectElement;
     expect(agent.value).toBe("ag1");
+    await settle();
     expect(browser).toEqual([]);
+  });
+
+  it.each([
+    ["/evals", `GET ${SETS}`, "ListPage", "Regression"],
+    ["/evals/new", `GET ${O}/agents`, "FormPage", "Helper"],
+  ])(
+    "%s: an empty cache shows the template's loading state, then the data",
+    async (path, held, name, text) => {
+      const { release } = await renderHeld(path, held);
+      await vi.waitFor(() => {
+        if (template(name) === null) throw new Error("no page");
+      });
+      expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+      expect(screen.queryByText(text)).toBeNull();
+      await release();
+      expect(await screen.findByText(text)).toBeTruthy();
+      await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+    },
+  );
+
+  it("/evals/new: creating a set invalidates the sets list", async () => {
+    const calls = stubApi({
+      ...ROUTES,
+      [`POST ${SETS}`]: () => json(201, { set: { ...SET, id: "s2" } }),
+    });
+    const { client } = await renderRouteWithCache("/evals/new", ROUTES);
+    client.setQueryData(["org", "o1", "evalSets"], { sets: [SET] });
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: new RegExp(E.form.nameLabel) }), "Nightly");
+    await user.click(screen.getByRole("button", { name: E.form.submit }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/evals/s2"));
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`POST ${SETS}`]);
+    expect(client.getQueryState(["org", "o1", "evalSets"])?.isInvalidated).toBe(true);
   });
 
   it("/evals/[setId]: the cases, the inspector's agent and the runs tab", async () => {
@@ -337,8 +393,6 @@ describe("first paint comes from the server (no browser fetch)", () => {
 });
 
 const GATES: [string, () => Promise<ReactNode>][] = [
-  ["/evals", () => EvalsPage()],
-  ["/evals/new", () => NewEvalSetPage()],
   ["/evals/s1", setPage],
   ["/evals/s1/run", wizardPage],
   ["/evals/s1/cases/k1", casePage],
@@ -361,6 +415,30 @@ describe("the gates (org admins)", () => {
       await expect(renderRoute(page, ROUTES, { readiness: NOT_READY })).rejects.toThrow(
         "REDIRECT /",
       );
+    },
+  );
+});
+
+/** The pages that read through the query cache. */
+const ROUTE_GATES = ["/evals", "/evals/new"];
+
+describe("the gates (org admins, query cache)", () => {
+  it.each(ROUTE_GATES)(
+    "%s: a member gets no access and nothing read; no org renders nothing; setup goes home",
+    async (path) => {
+      const denied = await renderRouteWithCache(path, ROUTES, { me: as("member") });
+      expect(new Set(denied.calls.map((c) => c.url))).toEqual(
+        new Set(["/api/v1/me", `${O}/readiness`]),
+      );
+      expect(noAccess()).toBe(true);
+      cleanup();
+      const none = await renderRouteWithCache(path, ROUTES, { me: { ...ME, currentOrgId: null } });
+      expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+      expect(document.body.textContent).toBe("");
+      cleanup();
+      expectNoFirstPaintFetch();
+      await renderRouteWithCache(path, ROUTES, { readiness: NOT_READY });
+      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
     },
   );
 });
