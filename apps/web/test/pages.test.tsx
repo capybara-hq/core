@@ -1,4 +1,4 @@
-import { cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,7 +6,6 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import CatchAllPage from "../src/app/(app)/[...rest]/page";
 import NotFound from "../src/app/(app)/not-found";
-import HomePage from "../src/app/(app)/page";
 import LoginPage from "../src/app/(auth)/login/page";
 import SetupPage from "../src/app/(auth)/setup/page";
 import { ErrorFrame } from "../src/components/ErrorFrame";
@@ -14,9 +13,9 @@ import { activeNavOf } from "../src/components/shell/nav";
 import { navigateBrowser } from "../src/lib/browser";
 import type { Me } from "../src/lib/session";
 import { resetNavigation, router } from "./support/navigation";
-import { renderRouteWithCache } from "./support/query";
+import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME, renderPage } from "./support/render";
-import { expectNoFirstPaintFetch, onServer, renderRoute } from "./support/server";
+import { expectNoFirstPaintFetch, renderRoute } from "./support/server";
 import { frameElement, NOT_READY, renderFrame, shellOf } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -150,11 +149,36 @@ describe("(app) 页面模板", () => {
   }
 
   it("the overview: what waits on me (allow once in place), conversations to pick up, the org, my agents", async () => {
-    // the first paint is the server's: the browser only sends the decision
+    const routes = overviewRoutes();
+    let decided = false;
+    const inboxAfter = () =>
+      json(200, {
+        truncated: false,
+        items: [
+          {
+            type: "skill_change",
+            id: "sc1",
+            createdAt: ago(60),
+            skillChange: {
+              id: "sc1",
+              agent: { id: "ag2", name: "客服分流" },
+              skillId: "s1",
+              name: "refund-policy",
+            },
+          },
+        ],
+      });
+    // the first paint is the cache's: the browser only sends the decision and the invalidated reads
     const calls = stubApi({
-      "POST /api/v1/orgs/o1/approvals/ap1/decision": () => json(200, { approval: { id: "ap1" } }),
+      ...routes,
+      "GET /api/v1/orgs/o1/inbox": () =>
+        decided ? inboxAfter() : routes["GET /api/v1/orgs/o1/inbox"](),
+      "POST /api/v1/orgs/o1/approvals/ap1/decision": () => {
+        decided = true;
+        return json(200, { approval: { id: "ap1" } });
+      },
     });
-    await renderRoute(() => HomePage(), overviewRoutes(), { locale: "zh" });
+    await renderRouteWithCache("/", overviewRoutes(), { locale: "zh" });
     expect(template("OverviewPage")).not.toBeNull();
     const h = zh.home;
     expect(screen.getByRole("heading", { level: 1, name: h.title })).toBeTruthy();
@@ -206,7 +230,8 @@ describe("(app) 页面模板", () => {
     expect(screen.getByRole("link", { name: h.newConversation }).getAttribute("href")).toBe(
       "/chat",
     );
-    // allowing an approval in place sends "approve once" and re-renders the page on the server
+    expect(calls).toEqual([]);
+    // allowing an approval in place sends "approve once"; the inbox is read again, no refresh
     await user.click(
       within(rows[0] as HTMLElement).getByRole("button", { name: h.inbox.approveOnce }),
     );
@@ -216,20 +241,87 @@ describe("(app) 页面模板", () => {
         scope: "once",
       }),
     );
-    await vi.waitFor(() => expect(router.refresh).toHaveBeenCalled());
-    expect(calls.filter((c) => c.method === "GET")).toEqual([]);
-    // the decided approval is gone at once, not when the server's new overview lands
-    expect(
-      within(screen.getByRole("list", { name: h.inbox.title }))
-        .getAllByRole("listitem")
-        .map((r) => r.textContent),
-    ).toEqual([expect.stringContaining("客服分流 想更新技能 refund-policy")]);
+    await vi.waitFor(() =>
+      expect(
+        within(screen.getByRole("list", { name: h.inbox.title }))
+          .getAllByRole("listitem")
+          .map((r) => r.textContent),
+      ).toEqual([expect.stringContaining("客服分流 想更新技能 refund-policy")]),
+    );
+    expect(router.refresh).not.toHaveBeenCalled();
+  });
+
+  it("approving in place invalidates inbox, inboxCount, conversationGroups and the approval", async () => {
+    const routes = overviewRoutes();
+    const calls = stubApi({
+      ...routes,
+      "POST /api/v1/orgs/o1/approvals/ap1/decision": () => json(200, { approval: { id: "ap1" } }),
+    });
+    const { client } = await renderRouteWithCache("/", routes, { locale: "zh" });
+    // the sidebar's count is cached too (the shell reads it)
+    client.setQueryData(["org", "o1", "inboxCount"], { count: 2, more: false });
+    const rows = within(screen.getByRole("list", { name: zh.home.inbox.title })).getAllByRole(
+      "listitem",
+    );
+    await userEvent
+      .setup()
+      .click(
+        within(rows[0] as HTMLElement).getByRole("button", { name: zh.home.inbox.approveOnce }),
+      );
+    await vi.waitFor(() => expect(screen.getByText(zh.home.inbox.approved)).toBeTruthy());
+    // the active ones are read again: the inbox and the conversation groups
+    const reads = calls.filter((c) => c.method === "GET").map((c) => c.url);
+    expect(new Set(reads)).toEqual(
+      new Set(["/api/v1/orgs/o1/inbox", "/api/v1/orgs/o1/conversations/groups"]),
+    );
+    expect(client.getQueryState(["org", "o1", "inboxCount"])?.isInvalidated).toBe(true);
+  });
+
+  it("/: a first render from the hydrated cache makes no browser read", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const { calls } = await renderRouteWithCache("/", overviewRoutes());
+    expect(screen.getByRole("list", { name: en.home.agentsCard.title })).toBeTruthy();
+    // the conversations to pick up share the sidebar's read: one groups read on the server
+    expect(calls.filter((c) => c.url.startsWith("/api/v1/orgs/o1/conversations/groups"))).toEqual([
+      expect.objectContaining({ url: "/api/v1/orgs/o1/conversations/groups" }),
+    ]);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(browser).toEqual([]);
+  });
+
+  it("/: an empty cache shows the template's loading state, then the data", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const routes = overviewRoutes();
+    const later = Object.fromEntries(
+      Object.entries(routes).map(([k, f]) => [
+        k,
+        async () => {
+          await held;
+          return f();
+        },
+      ]),
+    );
+    await renderRouteEmptyCache("/", later);
+    const page = await vi.waitFor(() => {
+      const el = template("OverviewPage");
+      if (el === null) throw new Error("no page yet");
+      return el as HTMLElement;
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByText("研究助手")).toBeNull();
+    await act(async () => release());
+    expect((await screen.findAllByText("研究助手")).length).toBeGreaterThan(0);
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+    expect(page).toBeTruthy();
   });
 
   it("the overview hides counts this role may not read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(
-      () => HomePage(),
+    await renderRouteWithCache(
+      "/",
       overviewRoutes({
         "GET /api/v1/orgs/o1/members": () => json(403, { error: { code: "forbidden" } }),
       }),
@@ -237,56 +329,41 @@ describe("(app) 页面模板", () => {
     screen.getByRole("list", { name: en.home.inbox.title });
     expect(screen.queryByText(en.home.members)).toBeNull();
     expect(screen.getByText(en.home.skills)).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 20));
     expect(browser).toEqual([]);
   });
 
-  it("without a current org or while the org is in setup, the page draws nothing itself (the frame draws it)", async () => {
-    stubApi({});
-    const none = await renderRoute(() => HomePage(), {}, { me: { ...ME, currentOrgId: null } });
+  it("without a current org or while the org is in setup, the page reads and draws nothing (the frame draws it)", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const none = await renderRouteWithCache("/", {}, { me: { ...ME, currentOrgId: null } });
     expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
     expect(template("OverviewPage")).toBeNull();
-    // outside a frame (no setup context) the page asks for one re-render
-    expect(router.refresh).toHaveBeenCalledTimes(1);
     cleanup();
-    router.refresh.mockReset();
-    const setup = await renderRoute(() => HomePage(), {}, { readiness: NOT_READY });
+    const setup = await renderRouteWithCache("/", {}, { readiness: NOT_READY });
     expect(new Set(setup.calls.map((c) => c.url))).toEqual(
       new Set(["/api/v1/me", "/api/v1/orgs/o1/readiness"]),
     );
     expect(template("OverviewPage")).toBeNull();
-  });
-
-  it("the org is not ready but the frame still draws the ready shell (stale layout props): refreshes once", async () => {
-    stubApi({});
-    // an admin removed the last model; a client navigation reused the layout's old props
-    const { element } = await onServer(() => HomePage(), {}, { readiness: NOT_READY });
-    const view = renderFrame(shellOf(), element);
-    await vi.waitFor(() => expect(router.refresh).toHaveBeenCalledTimes(1));
-    expect(template("OverviewPage")).toBeNull();
-    // the same output again (the refresh's answer before the layout's arrives): no second refresh
-    view.update(shellOf(), element);
-    expect(router.refresh).toHaveBeenCalledTimes(1);
-  });
-
-  it("the org is not ready and the frame draws the setup home: no refresh", async () => {
-    stubApi({});
-    const { element } = await onServer(() => HomePage(), {}, { readiness: NOT_READY });
-    renderFrame(shellOf(ME, { readiness: NOT_READY }), element);
-    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 20));
+    // the frame draws from the cached readiness: no re-render of the layout, no browser read
     expect(router.refresh).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(browser).toEqual([]);
   });
 
-  it("the org was left but the frame still draws its shell: refreshes once", async () => {
-    stubApi({});
-    const { element } = await onServer(() => HomePage(), {}, { me: { ...ME, currentOrgId: null } });
-    renderFrame(shellOf(), element);
-    await vi.waitFor(() => expect(router.refresh).toHaveBeenCalledTimes(1));
+  it("the org stops being ready while the overview shows: the view draws nothing (the frame draws the setup home)", async () => {
+    expectNoFirstPaintFetch();
+    const { client } = await renderRouteWithCache("/", overviewRoutes());
+    expect(template("OverviewPage")).not.toBeNull();
+    await act(async () => client.setQueryData(["org", "o1", "readiness"], NOT_READY));
+    expect(template("OverviewPage")).toBeNull();
+    expect(router.refresh).not.toHaveBeenCalled();
   });
 
   it("the inbox and the conversations are sections: a failed read draws that panel's own state", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(
-      () => HomePage(),
+    await renderRouteWithCache(
+      "/",
       overviewRoutes({
         "GET /api/v1/orgs/o1/inbox": () => json(500, { error: { code: "internal" } }),
         "GET /api/v1/orgs/o1/conversations/groups": () =>
@@ -298,6 +375,8 @@ describe("(app) 页面模板", () => {
     expect(screen.getByText(en.home.recent.unavailable)).toBeTruthy();
     // the agents card still renders
     expect(screen.getByRole("list", { name: en.home.agentsCard.title })).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 20));
+    // a section that failed on the first load is not read again on mount
     expect(browser).toEqual([]);
   });
 

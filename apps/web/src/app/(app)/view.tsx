@@ -9,53 +9,157 @@ import {
   type ItemListRow,
   KeyValue,
   OverviewPage,
+  Skeleton,
   Stack,
   TextLink,
   untitledLabel,
   useToast,
 } from "@capybara-hq/design";
+import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { ErrorFrame } from "../../components/ErrorFrame";
+import { NoAccess } from "../../components/NoAccess";
 import { navLevelOf } from "../../components/shell/nav";
 import { usePagePath } from "../../components/shell/path";
 import { useSession } from "../../components/shell/session";
 import { useRouter } from "../../i18n/navigation";
-import type { Agent, ProviderModels } from "../../lib/agents";
+import { type Agent, type ProviderModels, setupReady } from "../../lib/agents";
+import type { ApiClientError } from "../../lib/api";
 import { decideApproval } from "../../lib/approvals";
 import type { Conversation } from "../../lib/conversations";
 import type { InboxItem } from "../../lib/inbox";
+import { agentsQuery } from "../../lib/query/agents";
+import { retryOnMountOf } from "../../lib/query/client";
+import { connectorsQuery, modelsQuery } from "../../lib/query/conversation";
+import { useAppMutation } from "../../lib/query/define";
+import { inboxQuery } from "../../lib/query/inbox";
+import { keys } from "../../lib/query/keys";
+import { membersQuery } from "../../lib/query/members";
+import { usePageQuery } from "../../lib/query/page-query";
+import { conversationGroupsQuery, readinessQuery } from "../../lib/query/shell";
+import { skillsQuery } from "../../lib/query/skills";
+import { useWorkspace } from "../../lib/query/workspace";
 import { useErrorMessage } from "../../lib/use-error-message";
+import NotFound from "./not-found";
 
 export type OverviewData = {
   agents: Agent[];
   providers: ProviderModels[];
-  /** `null` when the kernel could not read it (a section: the panel draws its own error). */
-  inbox: InboxItem[] | null;
-  /** `null` when the kernel could not read it (a section: the panel draws its own error). */
-  recent: (Conversation & { agentName: string })[] | null;
+  /**
+   * `undefined` while it is read; `null` when the kernel could not read it (a section: the panel
+   * draws its own error).
+   */
+  inbox: InboxItem[] | null | undefined;
+  /** As `inbox`. */
+  recent: (Conversation & { agentName: string })[] | null | undefined;
   /** Agent ids by latest activity (the groups' order). */
   recentAgents: string[];
   counts: { skills?: number; connectors?: number; members?: number };
 };
 
+/** How many conversations the overview offers to pick up. */
+const RECENT = 5;
+
 /**
- * `/`: the overview, from the server's read (`page.tsx`). What waits on me (the inbox, approvals
- * approvable in place), the conversations to pick up, the organization at a glance and the agents
- * I use most. A decision re-renders the page on the server (`router.refresh()`).
+ * `/`: the overview, from the query cache (the layout prefetched it on a first load). What waits on
+ * me (the inbox, approvals approvable in place), the conversations to pick up, the organization at
+ * a glance and the agents I use most. Until the org is ready the frame draws the setup home here,
+ * and the view draws nothing. A decision invalidates the inbox and the conversations.
  */
-export default function HomeView({ orgId, initial }: { orgId: string; initial: OverviewData }) {
-  return <Overview orgId={orgId} data={initial} />;
+export default function HomeView() {
+  const ws = useWorkspace({ setup: "home" });
+  if (ws.kind === "pending" || ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  return <Home orgId={ws.orgId} />;
 }
 
-function Overview({ orgId, data }: { orgId: string; data: OverviewData }) {
+function Home({ orgId }: { orgId: string }) {
+  const readiness = useQuery(readinessQuery(orgId)).data;
+  if (readiness === undefined || !setupReady(readiness)) return null;
+  return <Overview orgId={orgId} />;
+}
+
+/** `null` when the role may not read it (403 / 404), `undefined` while it is read. */
+const optionalOf = <T,>(q: UseQueryResult<T, ApiClientError>): T | null | undefined =>
+  q.data !== undefined
+    ? q.data
+    : q.error !== null && (q.error.status === 403 || q.error.status === 404)
+      ? null
+      : undefined;
+
+function Overview({ orgId }: { orgId: string }) {
   const t = useTranslations("home");
   const { me } = useSession();
-  const router = useRouter();
-  const [, startTransition] = useTransition();
+  const home = usePagePath("home");
+  const agents = usePageQuery(agentsQuery(orgId));
+  const models = usePageQuery(modelsQuery(orgId));
+  const inboxQ = inboxQuery(orgId);
+  const inbox = useQuery({ ...inboxQ, retryOnMount: retryOnMountOf(inboxQ.queryKey) });
+  const groupsQ = conversationGroupsQuery(orgId);
+  const groups = useQuery({ ...groupsQ, retryOnMount: retryOnMountOf(groupsQ.queryKey) });
+  const skillsQ = skillsQuery(orgId);
+  const skills = useQuery({ ...skillsQ, retryOnMount: retryOnMountOf(skillsQ.queryKey) });
+  const connectorsQ = connectorsQuery(orgId);
+  const connectors = useQuery({
+    ...connectorsQ,
+    retryOnMount: retryOnMountOf(connectorsQ.queryKey),
+  });
+  const membersQ = membersQuery(orgId);
+  const members = useQuery({ ...membersQ, retryOnMount: retryOnMountOf(membersQ.queryKey) });
   const membership = me.memberships.find((m) => m.orgId === orgId);
   const tRoles = useTranslations("members.roles");
   const role = membership ? tRoles(membership.role as "owner") : "";
   const orgName = membership?.name ?? "";
+  // The counts this role may not read are left out; any other failure fails the page.
+  const optional = [skills, connectors, members] as UseQueryResult<unknown, ApiClientError>[];
+  const fatal = optional.find(
+    (q) => q.data === undefined && q.error !== null && optionalOf(q) === undefined,
+  );
+  if (agents.kind === "notFound" || models.kind === "notFound") return <NotFound />;
+  if (agents.kind === "error") return <ErrorFrame reset={agents.retry} />;
+  if (models.kind === "error") return <ErrorFrame reset={models.retry} />;
+  if (fatal) return <ErrorFrame reset={() => void fatal.refetch()} />;
+  if (
+    agents.kind === "loading" ||
+    models.kind === "loading" ||
+    optional.some((q) => optionalOf(q) === undefined)
+  ) {
+    return (
+      <OverviewPage
+        header={{
+          path: home,
+          title: t("title"),
+          description: t("dailyDescription", { org: orgName, role }),
+          actions: overviewActions(
+            { newAgent: t("newAgent"), newConversation: t("newConversation") },
+            navLevelOf(me) !== "guest",
+          ),
+        }}
+        loading={{ stats: 0, sections: 2 }}
+      />
+    );
+  }
+  // The conversations to pick up: the newest rows of the sidebar's groups.
+  const recent = groups.data?.groups
+    .flatMap((g) => g.conversations.map((c) => ({ ...c, agentName: g.agent.name })))
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+    .slice(0, RECENT);
+  const skillsN = optionalOf(skills);
+  const connectorsN = optionalOf(connectors);
+  const membersN = optionalOf(members);
+  const data: OverviewData = {
+    agents: agents.data.agents,
+    providers: models.data.providers,
+    inbox: inbox.data !== undefined ? inbox.data.items : inbox.error !== null ? null : undefined,
+    recent: recent !== undefined ? recent : groups.error !== null ? null : undefined,
+    recentAgents: groups.data?.groups.map((g) => g.agent.id) ?? [],
+    counts: {
+      ...(skillsN ? { skills: skillsN.skills.length } : {}),
+      ...(connectorsN ? { connectors: connectorsN.connectors.length } : {}),
+      ...(membersN ? { members: membersN.members.length } : {}),
+    },
+  };
   // Org settings open from member up (guests get the no-access page there, R4)
   const member = navLevelOf(me) !== "guest";
   const orgCard = (
@@ -89,15 +193,18 @@ function Overview({ orgId, data }: { orgId: string; data: OverviewData }) {
   );
 
   return (
-    <DailyOverview
-      orgId={orgId}
-      data={data}
-      orgName={orgName}
-      role={role}
-      orgCard={orgCard}
-      onChanged={() => startTransition(() => router.refresh())}
-    />
+    <DailyOverview orgId={orgId} data={data} orgName={orgName} role={role} orgCard={orgCard} />
   );
+}
+
+/** The header's actions: 新建 Agent for members up (`agents.create`, R1), a new conversation. */
+function overviewActions(labels: { newAgent: string; newConversation: string }, member: boolean) {
+  return [
+    ...(member
+      ? [{ label: labels.newAgent, variant: "default" as const, href: "/agents/new" }]
+      : []),
+    { label: labels.newConversation, variant: "primary" as const, href: "/chat" },
+  ];
 }
 
 /** Day to day: what waits on me, the conversations to pick up, the org, my agents. */
@@ -107,14 +214,12 @@ function DailyOverview({
   orgName,
   role,
   orgCard,
-  onChanged,
 }: {
   orgId: string;
   data: OverviewData;
   orgName: string;
   role: string;
   orgCard: React.ReactNode;
-  onChanged(): void;
 }) {
   const home = usePagePath("home");
   const t = useTranslations("home");
@@ -124,19 +229,23 @@ function DailyOverview({
   const errorMessage = useErrorMessage();
   const { me } = useSession();
   const [approving, setApproving] = useState<string>();
-  // Approvals decided here: hidden at once, before the server's new overview arrives.
-  const [decided, setDecided] = useState<ReadonlySet<string>>(new Set());
-  const inbox = (data.inbox ?? []).filter(
-    (i) => !(i.type === "tool_approval" && decided.has(i.approval.id)),
-  );
+  // An approval decided here changes the inbox (and its count) and the conversation's state.
+  const decide = useAppMutation({
+    fn: (id: string) => decideApproval(orgId, id, { decision: "approve", scope: "once" }),
+    invalidates: (id) => [
+      keys.org(orgId).inbox(),
+      keys.org(orgId).inboxCount(),
+      keys.org(orgId).conversationGroupsAll(),
+      keys.org(orgId).approval(id),
+    ],
+  });
+  const inbox = data.inbox ?? [];
 
   async function approve(id: string) {
     setApproving(id);
     try {
-      await decideApproval(orgId, id, { decision: "approve", scope: "once" });
+      await decide.mutateAsync(id);
       toast.success(t("inbox.approved"));
-      setDecided((s) => new Set(s).add(id));
-      onChanged();
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -238,13 +347,10 @@ function DailyOverview({
           pending > 0
             ? t("dailyDescriptionPending", { org: orgName, role, count: pending })
             : t("dailyDescription", { org: orgName, role }),
-        actions: [
-          // agents.create: members up (R1)
-          ...(navLevelOf(me) !== "guest"
-            ? [{ label: t("newAgent"), variant: "default" as const, href: "/agents/new" }]
-            : []),
-          { label: t("newConversation"), variant: "primary" as const, href: "/chat" },
-        ],
+        actions: overviewActions(
+          { newAgent: t("newAgent"), newConversation: t("newConversation") },
+          navLevelOf(me) !== "guest",
+        ),
       }}
     >
       <Grid columns="main-side">
@@ -253,18 +359,26 @@ function DailyOverview({
             title={pending > 0 ? t("inbox.titleCount", { count: pending }) : t("inbox.title")}
             actions={<TextLink href="/inbox">{t("inbox.open")}</TextLink>}
           >
-            <ItemList
-              label={t("inbox.title")}
-              rows={inboxRows}
-              empty={data.inbox === null ? t("inbox.unavailable") : t("inbox.empty")}
-            />
+            {data.inbox === undefined ? (
+              <Skeleton rows={3} />
+            ) : (
+              <ItemList
+                label={t("inbox.title")}
+                rows={inboxRows}
+                empty={data.inbox === null ? t("inbox.unavailable") : t("inbox.empty")}
+              />
+            )}
           </Card>
           <Card title={t("recent.title")}>
-            <ItemList
-              label={t("recent.title")}
-              rows={recentRows}
-              empty={data.recent === null ? t("recent.unavailable") : t("recent.empty")}
-            />
+            {data.recent === undefined ? (
+              <Skeleton rows={3} />
+            ) : (
+              <ItemList
+                label={t("recent.title")}
+                rows={recentRows}
+                empty={data.recent === null ? t("recent.unavailable") : t("recent.empty")}
+              />
+            )}
           </Card>
         </Stack>
         <Stack gap={16}>

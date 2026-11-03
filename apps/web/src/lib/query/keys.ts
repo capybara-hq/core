@@ -58,6 +58,8 @@ export const keys = {
         kind,
         params,
       ],
+      /** My inbox (its items). */
+      inbox: (): readonly unknown[] => [...all, "inbox"],
       inboxCount: (): readonly unknown[] => [...all, "inboxCount"],
       extensionPages: (): readonly unknown[] => [...all, "extensionPages"],
       /** The org's members. */

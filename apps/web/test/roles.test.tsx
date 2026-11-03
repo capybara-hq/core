@@ -19,7 +19,6 @@ import EvalRunWizardPage from "../src/app/(app)/evals/[setId]/run/page";
 import NewEvalSetPage from "../src/app/(app)/evals/new/page";
 import EvalsPage from "../src/app/(app)/evals/page";
 import EvalRunPage from "../src/app/(app)/evals/runs/[runId]/page";
-import HomePage from "../src/app/(app)/page";
 import ExtensionsSettingsPage from "../src/app/(app)/settings/extensions/page";
 import MembersPage from "../src/app/(app)/settings/members/page";
 import ModelsSettingsPage from "../src/app/(app)/settings/models/page";
@@ -364,8 +363,8 @@ describe("role-dependent actions", () => {
       const ok = (body: unknown) => () => reply(200, body);
       const gone = () => reply(404, { error: { code: "not_found", message: "x" } });
       resetNavigation("/");
-      await renderRoute(
-        () => HomePage(),
+      await renderRouteWithCache(
+        "/",
         {
           [`GET ${O}/agents`]: ok({ agents: [AGENT("ag1")] }),
           [`GET ${O}/models`]: ok({ providers: [] }),
