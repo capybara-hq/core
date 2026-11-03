@@ -3,6 +3,7 @@ import {
   COUNT_ONLY,
   DATA_ONLY_PARTS,
   FOLLOWS_HEIGHT,
+  HEIGHT_ONLY,
   IGNORED_PARTS,
   LOADING_ALIASES,
   LOADING_TEMPLATES,
@@ -141,7 +142,8 @@ for (const theme of THEMES) {
             const props = (["x", "y", "width", "height"] as const).filter(
               (p) =>
                 !(p === "height" && part in VARIABLE_HEIGHT) &&
-                !(p === "width" && part in VARIABLE_WIDTH),
+                !(p === "width" && part in VARIABLE_WIDTH) &&
+                !((p === "x" || p === "width") && part in HEIGHT_ONLY),
             );
             for (const p of props) {
               const right = p === "x" && RIGHT_ALIGNED.includes(part);

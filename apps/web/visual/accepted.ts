@@ -188,7 +188,7 @@ export const LOADING_ALIASES: Record<string, string> = {
   // `<ancestor part> > <part>`: a placeholder box whose own part name is the generic skeleton-box
   "page-header-action-slots > skeleton-box": "button",
   "loading-switch-row > skeleton-box": "switch",
-  "auth-card > skeleton-box": "button",
+  "card > skeleton-box": "button",
 };
 
 /**
@@ -250,4 +250,13 @@ export const FOLLOWS_HEIGHT: Record<string, string> = { "form-section-head": "fo
  */
 export const COUNT_ONLY: Record<string, string> = {
   field: "loaded fields differ in height by control and help text, and two can share a row",
+};
+
+/**
+ * Parts compared in y and height only: their width (and so the x of the ones after them) is the
+ * label's text, which a placeholder cannot know (a header action slot is 72 px, a real button is
+ * as wide as its label).
+ */
+export const HEIGHT_ONLY: Record<string, string> = {
+  button: "a real button is as wide as its label; the header's action slots are 72 px",
 };
