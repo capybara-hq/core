@@ -5,13 +5,13 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import ConnectionsPage from "../src/app/(app)/account/connections/page";
 import ConnectorDetailPage from "../src/app/(app)/connectors/[connectorId]/page";
-import AppsPage from "../src/app/(app)/connectors/page";
 import { navigateBrowser } from "../src/lib/browser";
 import type { Me } from "../src/lib/session";
 import { useLoad } from "../src/lib/use-load";
 import { renderNewAgent } from "./support/agents";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { expectNoFirstPaintFetch, onServer, renderRoute } from "./support/server";
 import { NOT_READY, renderFrame, shellOf } from "./support/shell";
@@ -27,8 +27,9 @@ vi.mock("next/navigation", () => ({
   },
 }));
 type RenderOpts = Parameters<typeof renderRoute>[2];
-/** `/connectors` read on the server from the latest `stubApi` routes (the browser's). */
-const renderList = (opts: RenderOpts = {}) => renderRoute(() => AppsPage(), lastStubRoutes(), opts);
+/** `/connectors` as a first load: the layout prefetches from the latest `stubApi` routes. */
+const renderList = (opts: RenderOpts = {}) =>
+  renderRouteWithCache("/connectors", lastStubRoutes(), opts);
 const detailPage = () => ConnectorDetailPage({ params: Promise.resolve({ connectorId: "app1" }) });
 /** `/connectors/app1` read on the server from the latest `stubApi` routes. */
 const renderDetail = (opts: RenderOpts = {}) => renderRoute(detailPage, lastStubRoutes(), opts);
@@ -79,6 +80,9 @@ beforeEach(() => {
   resetNavigation("/connectors");
   vi.mocked(navigateBrowser).mockReset();
 });
+/** Lets pending reads and effects run (a read after mount would show up in the calls). */
+const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -769,11 +773,44 @@ describe("the connectors pages render on the server (web-SSR spec §6)", () => {
     "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }),
   };
 
-  it("/connectors: the list is the first paint, guests included", async () => {
+  it("/connectors: a first render from the hydrated cache makes no browser read (guests too)", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(() => AppsPage(), routes, { me: GUEST });
+    await renderRouteWithCache("/connectors", routes, { me: GUEST });
     expect(within(screen.getByRole("list", { name: en.connectors.title })).getByText("Fixture"));
+    await settle();
     expect(browser).toEqual([]);
+  });
+
+  it("/connectors: an empty cache shows the template's loading state, then the data", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    await renderRouteEmptyCache("/connectors", {
+      "GET /api/v1/orgs/o1/connectors": async () => {
+        await held;
+        return json(200, { connectors: [summary()] });
+      },
+    });
+    await vi.waitFor(() => {
+      if (document.querySelector('[data-template="ListPage"]') === null) throw new Error("no page");
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByText("Fixture")).toBeNull();
+    await act(async () => release());
+    expect(await screen.findByText("Fixture")).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
+  it("/connectors: no org renders nothing; setup goes home", async () => {
+    const none = await renderRouteWithCache("/connectors", routes, {
+      me: { ...ME, currentOrgId: null },
+    });
+    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+    expect(document.body.textContent).toBe("");
+    cleanup();
+    await renderRouteWithCache("/connectors", routes, { readiness: NOT_READY });
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
   });
 
   it("/connectors/<id>: the connector is the first paint, guests included", async () => {
@@ -792,13 +829,15 @@ describe("the connectors pages render on the server (web-SSR spec §6)", () => {
     ).rejects.toThrow("NOT_FOUND");
   });
 
-  it.each([
-    ["/connectors", () => AppsPage()],
-    ["/connectors/<id>", detailPage],
-  ])("%s: no org renders nothing; setup redirects home", async (_path, page) => {
-    const none = await renderRoute(page, routes, { me: { ...ME, currentOrgId: null } });
-    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
-    expect(document.body.textContent).toBe("");
-    await expect(renderRoute(page, routes, { readiness: NOT_READY })).rejects.toThrow("REDIRECT /");
-  });
+  it.each([["/connectors/<id>", detailPage]])(
+    "%s: no org renders nothing; setup redirects home",
+    async (_path, page) => {
+      const none = await renderRoute(page, routes, { me: { ...ME, currentOrgId: null } });
+      expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+      expect(document.body.textContent).toBe("");
+      await expect(renderRoute(page, routes, { readiness: NOT_READY })).rejects.toThrow(
+        "REDIRECT /",
+      );
+    },
+  );
 });

@@ -218,7 +218,11 @@ export const ROUTES: readonly RouteEntry[] = [
       );
     },
   },
-  { pattern: "/connectors", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/connectors",
+    // Guests read the list too.
+    queries: ({ orgId }) => (orgId === null ? [] : [q(connectorsQuery(orgId))]),
+  },
   { pattern: "/connectors/[connectorId]", queries: () => [], none: "pending migration" },
   { pattern: "/connectors/install", queries: () => [], none: "pending migration" },
   { pattern: "/evals", queries: () => [], none: "pending migration" },
