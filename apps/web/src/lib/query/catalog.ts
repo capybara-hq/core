@@ -1,4 +1,4 @@
-import { getOrgCatalogItem, listOrgCatalog } from "../catalog";
+import { getOrgCatalogItem, listOrgCatalog, previewPluginUpgrade } from "../catalog";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
 
@@ -37,3 +37,11 @@ export const pluginChangeKeys = (orgId: string): (readonly unknown[])[] => {
     k.agentTemplates(),
   ];
 };
+
+/** What upgrading an installed plugin to `version` changes and needs (the upgrade dialog's read). */
+export const pluginUpgradePreviewQuery = (orgId: string, installId: string, version: string) =>
+  defineQuery({
+    key: keys.org(orgId).pluginUpgradePreview(installId, version),
+    fn: () => previewPluginUpgrade(orgId, installId, version),
+    freshness: "live",
+  });

@@ -1,19 +1,11 @@
-import { NoAccess } from "../../../../components/NoAccess";
-import { getOrgCatalogItem } from "../../../../lib/catalog";
-import { read } from "../../../../lib/server/page";
-import { workspace } from "../../../../lib/server/session";
 import CatalogItemView from "./view";
 
 /**
  * `/catalog/[itemId]` (members up; a setup step, web-order spec §3.8): a catalog item from the
- * org's view, read on the server; a missing one is not found.
+ * org's view. It reads nothing: the layout prefetches the item on a first load
+ * (`lib/query/routes.ts`); a missing one is the not-found state in the shell.
  */
 export default async function CatalogItemPage({ params }: { params: Promise<{ itemId: string }> }) {
-  const ws = await workspace({ min: "member", setup: "step" });
-  if (ws.kind === "noOrg") return null;
-  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
   const { itemId } = await params;
-  return (
-    <CatalogItemView orgId={ws.orgId} initial={await read(getOrgCatalogItem(ws.orgId, itemId))} />
-  );
+  return <CatalogItemView itemId={itemId} />;
 }

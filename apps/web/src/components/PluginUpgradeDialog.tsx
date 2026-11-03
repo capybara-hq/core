@@ -10,6 +10,7 @@ import {
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 import { ApiClientError } from "../lib/api";
@@ -18,12 +19,14 @@ import {
   displayNameOf,
   type OrgCatalogTemplate,
   type PluginUpgradeBody,
-  previewPluginUpgrade,
   type UpgradePreview,
   upgradePlugin,
 } from "../lib/catalog";
 import { extensionLabel, labelLocale } from "../lib/extension-label";
-import { listOrgExtensions, type OrgExtension } from "../lib/extensions";
+import type { OrgExtension } from "../lib/extensions";
+import { pluginChangeKeys, pluginUpgradePreviewQuery } from "../lib/query/catalog";
+import { orgExtensionsQuery } from "../lib/query/channels";
+import { useAppMutation } from "../lib/query/define";
 import { useErrorMessage } from "../lib/use-error-message";
 import {
   connectorInput,
@@ -79,7 +82,7 @@ export function PluginUpgradeDialog({
   open: boolean;
   onOpenChange(open: boolean): void;
   /** After an upgrade (`upgraded`) or a submitted approval request (`requested`). */
-  onDone(result: "upgraded" | "requested"): void;
+  onDone?(result: "upgraded" | "requested"): void;
 }) {
   const t = useTranslations("catalog.upgrade");
   const ti = useTranslations("catalog.org.install");
@@ -88,7 +91,7 @@ export function PluginUpgradeDialog({
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const catalogLines = useCatalogErrorLines();
-  const [loaded, setLoaded] = useState<Loaded | "loading" | { problem: Problem }>("loading");
+  const qc = useQueryClient();
   const [drafts, setDrafts] = useState<Record<string, TemplateDraft>>({});
   // The extension's config as the form last reported it.
   const [config, setConfig] = useState<{ value: Record<string, unknown>; ok: boolean }>({
@@ -98,9 +101,18 @@ export function PluginUpgradeDialog({
   const [showRequired, setShowRequired] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<Problem>();
-  const [generation, setGeneration] = useState(0);
   /** A stale confirm is fetching the new preview: confirm waits for it. */
   const [refreshing, setRefreshing] = useState(false);
+  // The preview, read while the dialog is open; the org's extensions only when the upgrade enables
+  // the plugin's extension (a failure there asks no config, as before).
+  const previewQ = pluginUpgradePreviewQuery(orgId, install.id, target);
+  const previewRead = useQuery({ ...previewQ, enabled: open });
+  const needsExtension = previewRead.data?.inputs.extensionConfig === true;
+  const extensions = useQuery({ ...orgExtensionsQuery(orgId), enabled: open && needsExtension });
+  const upgrade = useAppMutation({
+    fn: (body: PluginUpgradeBody) => upgradePlugin(orgId, install.id, body),
+    invalidates: () => pluginChangeKeys(orgId),
+  });
 
   /**
    * `plugin.upgrade_failed`: the failed step (in which dependency) and whether this org's
@@ -129,56 +141,49 @@ export function PluginUpgradeDialog({
     extra: [...failureLines(e), ...catalogLines(e)],
   });
 
-  // Loads the preview when the dialog opens (and again after a stale confirm)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reloads on open / target / generation
-  useEffect(() => {
-    if (!open) {
-      // Closed: the next opening starts from a fresh preview
-      setLoaded("loading");
-      setError(undefined);
-      setShowRequired(false);
-      setDrafts({});
-      setConfig({ value: {}, ok: true });
-      setRefreshing(false);
-      return;
+  const loaded: Loaded | "loading" | { problem: Problem } = (() => {
+    const preview = previewRead.data;
+    if (preview === undefined) {
+      return previewRead.error !== null ? { problem: problem(previewRead.error) } : "loading";
     }
-    let live = true;
-    (async () => {
-      const preview = await previewPluginUpgrade(orgId, install.id, target);
-      // The target version's templates (the preview carries the ones its inputs name)
-      const templates = new Map(preview.templates.map((c) => [c.id, c]));
-      let withConfig: OrgExtension | undefined;
-      if (preview.inputs.extensionConfig) {
-        // A plugin's extension has the plugin's name
-        const own = (await listOrgExtensions(orgId).catch(() => ({ extensions: [] }))).extensions;
-        const ext = own.find((o) => o.plugin === install.name);
-        if (ext !== undefined && hasConfigFields(ext.orgConfigSchema)) withConfig = ext;
+    if (needsExtension && extensions.data === undefined && extensions.error === null) {
+      return "loading";
+    }
+    // The target version's templates (the preview carries the ones its inputs name)
+    const templates = new Map(preview.templates.map((c) => [c.id, c]));
+    // A plugin's extension has the plugin's name
+    const ext = needsExtension
+      ? extensions.data?.extensions.find((o) => o.plugin === install.name)
+      : undefined;
+    const withConfig = ext !== undefined && hasConfigFields(ext.orgConfigSchema) ? ext : undefined;
+    return { preview, templates, withConfig };
+  })();
+
+  // Closed: the next opening starts from a fresh preview.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resets on close only
+  useEffect(() => {
+    if (open) return;
+    setError(undefined);
+    setShowRequired(false);
+    setDrafts({});
+    setConfig({ value: {}, ok: true });
+    setRefreshing(false);
+    qc.removeQueries({ queryKey: previewQ.queryKey });
+  }, [open]);
+
+  // Keep what was typed when the preview is read again (a stale confirm reads a new one).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: follows the preview's answers
+  useEffect(() => {
+    const preview = previewRead.data;
+    if (preview === undefined) return;
+    setDrafts((d) => {
+      const out: Record<string, TemplateDraft> = {};
+      for (const c of preview.templates) {
+        out[c.id] = d[c.id] ?? initialTemplateDraft(c, locale, install.name);
       }
-      return { preview, templates, withConfig };
-    })().then(
-      (next) => {
-        if (!live) return;
-        setLoaded(next);
-        setRefreshing(false);
-        // Keep what was typed when the preview is fetched again
-        setDrafts((d) => {
-          const out: Record<string, TemplateDraft> = {};
-          for (const [id, c] of next.templates) {
-            out[id] = d[id] ?? initialTemplateDraft(c, locale, install.name);
-          }
-          return out;
-        });
-      },
-      (e: unknown) => {
-        if (!live) return;
-        setLoaded({ problem: problem(e) });
-        setRefreshing(false);
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [open, orgId, install.id, target, generation]);
+      return out;
+    });
+  }, [previewRead.data]);
 
   const ready = typeof loaded === "object" && "preview" in loaded ? loaded : undefined;
   const preview = ready?.preview;
@@ -226,13 +231,13 @@ export function PluginUpgradeDialog({
     setSubmitting(true);
     setError(undefined);
     try {
-      const r = await upgradePlugin(orgId, install.id, body);
+      const r = await upgrade.mutateAsync(body);
       if ("request" in r) {
         toast.success(t("requested"));
-        onDone("requested");
+        onDone?.("requested");
       } else {
         toast.success(t("done", { name: install.name, version: versionLabel(preview.to) }));
-        onDone("upgraded");
+        onDone?.("upgraded");
       }
       onOpenChange(false);
     } catch (e) {
@@ -240,7 +245,7 @@ export function PluginUpgradeDialog({
       // The catalog or this install changed since the preview: show the new one
       if (e instanceof ApiClientError && e.code === "plugin.upgrade_stale") {
         setRefreshing(true);
-        setGeneration((g) => g + 1);
+        void previewRead.refetch().finally(() => setRefreshing(false));
       }
     } finally {
       setSubmitting(false);

@@ -10,7 +10,6 @@ import CatalogRequestsPage from "../src/app/(app)/admin/catalog/requests/page";
 import MarketplaceEntriesPage from "../src/app/(app)/admin/marketplaces/entries/page";
 import MarketplacesPage from "../src/app/(app)/admin/marketplaces/page";
 import InstallPage from "../src/app/(app)/catalog/[itemId]/install/page";
-import OrgCatalogItemPage from "../src/app/(app)/catalog/[itemId]/page";
 import InboxRoute from "../src/app/(app)/inbox/page";
 import ExtensionsPage from "../src/app/(app)/settings/extensions/page";
 import PluginsPage from "../src/app/(app)/settings/plugins/page";
@@ -56,10 +55,9 @@ const installPage = () =>
 /** `/catalog` as a first load: the layout prefetches from the latest `stubApi` routes. */
 const renderCatalog = (opts: RenderOpts = {}) =>
   renderRouteWithCache("/catalog", lastStubRoutes(), opts);
-const itemPage = () =>
-  OrgCatalogItemPage({ params: Promise.resolve({ itemId: params.current.itemId ?? "" }) });
-/** `/catalog/<id>` read on the server from the latest `stubApi` routes. */
-const renderItem = (opts: RenderOpts = {}) => renderRoute(itemPage, lastStubRoutes(), opts);
+/** `/catalog/<id>` as a first load: the layout prefetches from the latest `stubApi` routes. */
+const renderItem = (opts: RenderOpts = {}) =>
+  renderRouteWithCache(`/catalog/${params.current.itemId ?? ""}`, lastStubRoutes(), opts);
 /** `/catalog/<id>/install` read on the server from the latest `stubApi` routes (the browser's). */
 const renderInstall = (opts: RenderOpts = {}) => renderRoute(installPage, lastStubRoutes(), opts);
 
@@ -2287,6 +2285,44 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
     expect(within(dialog).queryByText("crm", { exact: true })).toBeNull();
   });
 
+  it("upgrading from the catalog item invalidates the catalog, the items and what the plugin brings", async () => {
+    params.current = { itemId: ID };
+    const calls = stubApi({
+      [`GET ${ORG}/catalog/${ID}`]: () =>
+        json(200, {
+          item: orgItem({
+            name: "crm",
+            installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: "1.1.0" },
+          }),
+          hasIcon: false,
+          extension: null,
+          templates: [],
+          dependencies: [],
+          skills: [],
+        }),
+      [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () => json(200, NO_INPUTS),
+      [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
+        json(200, { install: { ...UPGRADABLE, version: "1.1.0" } }),
+    });
+    const { client } = await renderItem();
+    client.setQueryData(["org", "o1", "connectors"], { connectors: [] });
+    client.setQueryData(["org", "o1", "skills"], { skills: [] });
+    const m = en.catalog;
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: m.org.action.upgrade }));
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByText(m.upgrade.noChanges);
+    await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
+    // the item (shown) is read again; the cached lists are marked stale
+    await vi.waitFor(() =>
+      expect(
+        calls.filter((c) => c.method === "GET" && c.url === `${ORG}/catalog/${ID}`),
+      ).toHaveLength(1),
+    );
+    expect(client.getQueryState(["org", "o1", "connectors"])?.isInvalidated).toBe(true);
+    expect(client.getQueryState(["org", "o1", "skills"])?.isInvalidated).toBe(true);
+  });
+
   it.each(LOCALES)(
     "a failed upgrade names the step, the dependency and whether the components were put back (%s)",
     async (locale) => {
@@ -3060,7 +3096,6 @@ describe("/catalog and /catalog/[itemId] render on the server (web-SSR spec §6)
     account: { ...ME.account, isEnterpriseAdmin: false },
     memberships: [{ ...ME.memberships[0], role: "guest" } as Me["memberships"][number]],
   };
-  const item = () => OrgCatalogItemPage({ params: Promise.resolve({ itemId: ID }) });
 
   it("/catalog: a first render from the hydrated cache makes no browser read; it is a setup step", async () => {
     const browser = expectNoFirstPaintFetch();
@@ -3097,32 +3132,69 @@ describe("/catalog and /catalog/[itemId] render on the server (web-SSR spec §6)
     expect(document.body.textContent).toBe("");
   });
 
-  it("/catalog/<id>: the item is the first paint; it is a setup step; a missing one is not found", async () => {
+  it("/catalog/<id>: a first render from the hydrated cache makes no browser read; it is a setup step", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRoute(item, routes, { readiness: NOT_READY });
+    await renderRouteWithCache(`/catalog/${ID}`, routes, { readiness: NOT_READY });
     expect(screen.getByRole("heading", { level: 1, name: "crm" })).toBeTruthy();
     expect(screen.getByText("· crm")).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
-    await expect(
-      renderRoute(item, {
-        [`GET ${ORG}/catalog/${ID}`]: () =>
-          json(404, { error: { code: "catalog.item_not_found", message: "x" } }),
-      }),
-    ).rejects.toThrow("NOT_FOUND");
+    expect(router.replace).not.toHaveBeenCalled();
   });
 
-  it.each([["/catalog/<id>", item]])(
-    "%s: a guest gets no access and nothing is read; no org renders nothing",
-    async (_p, page) => {
-      const guest = await renderRoute(page, routes, { me: GUEST });
-      expect(new Set(guest.calls.map((c) => c.url))).toEqual(
-        new Set(["/api/v1/me", `${ORG}/readiness`]),
-      );
-      expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
-      cleanup();
-      const none = await renderRoute(page, routes, { me: { ...ME, currentOrgId: null } });
-      expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
-      expect(document.body.textContent).toBe("");
-    },
-  );
+  it("/catalog/<id>: an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld(`/catalog/${ID}`, routes, `GET ${ORG}/catalog/${ID}`);
+    await vi.waitFor(() => {
+      if (template("DetailPage") === null) throw new Error("no page");
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByRole("heading", { level: 1, name: "crm" })).toBeNull();
+    await release();
+    expect(await screen.findByRole("heading", { level: 1, name: "crm" })).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
+  it("/catalog/<id>: an item the kernel does not find is the not-found state in the shell", async () => {
+    expectNoFirstPaintFetch();
+    await renderRouteWithCache(`/catalog/${ID}`, {
+      [`GET ${ORG}/catalog/${ID}`]: () =>
+        json(404, { error: { code: "catalog.item_not_found", message: "x" } }),
+    });
+    expect(screen.getByRole("heading", { level: 1, name: en.notFound.title })).toBeTruthy();
+  });
+
+  it("/catalog/<id>: a guest gets no access and nothing is read; no org renders nothing", async () => {
+    const guest = await renderRouteWithCache(`/catalog/${ID}`, routes, { me: GUEST });
+    expect(new Set(guest.calls.map((c) => c.url))).toEqual(
+      new Set(["/api/v1/me", `${ORG}/readiness`]),
+    );
+    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
+    cleanup();
+    const none = await renderRouteWithCache(`/catalog/${ID}`, routes, {
+      me: { ...ME, currentOrgId: null },
+    });
+    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+    expect(document.body.textContent).toBe("");
+  });
+
+  it("requesting an install invalidates the catalog and the item: the item is read again", async () => {
+    params.current = { itemId: ID };
+    const calls = stubApi({
+      [`GET ${ORG}/catalog/${ID}`]: () =>
+        json(200, { ...detail, extension: null, item: orgItem({ name: "crm" }) }),
+      [`POST ${ORG}/catalog/${ID}/requests`]: () =>
+        json(201, { request: { id: "r1" }, created: true }),
+    });
+    const { client } = await renderItem({ me: MEMBER });
+    client.setQueryData(["org", "o1", "catalog"], { items: [orgItem()] });
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: en.catalog.org.action.request }));
+    await vi.waitFor(() =>
+      expect(calls.filter((c) => c.method === "GET").map((c) => c.url)).toEqual([
+        `${ORG}/catalog/${ID}`,
+      ]),
+    );
+    expect(client.getQueryState(["org", "o1", "catalog"])?.isInvalidated).toBe(true);
+  });
 });

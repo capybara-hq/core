@@ -6,6 +6,9 @@ import { type ReactNode, useState } from "react";
 import { Link, useRouter } from "../i18n/navigation";
 import { issueLines } from "../lib/api";
 import { installCatalogItem, type OrgCatalogItem, requestCatalogItem } from "../lib/catalog";
+import { pluginChangeKeys } from "../lib/query/catalog";
+import { useAppMutation } from "../lib/query/define";
+import { keys } from "../lib/query/keys";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useCatalogErrorLines } from "./CatalogParts";
 import { FormError } from "./form-error";
@@ -33,17 +36,18 @@ export function useOrgItemStatus(): (item: OrgCatalogItem) => string {
  *   dependencies included, and asks for template input and the extension's org config);
  *   `needs_approval` asks an enterprise admin (the install call returns 202 and creates a request);
  * - members: "Request install" for installable items (goes to the org admins' inbox).
+ *
+ * Each action invalidates what it changes (the catalog's view of the item, and for an install or
+ * an upgrade what the plugin brings), so the page shows the new state.
  */
 export function CatalogInstallAction({
   orgId,
   item,
   admin,
-  onChanged,
 }: {
   orgId: string;
   item: OrgCatalogItem;
   admin: boolean;
-  onChanged(): void;
 }) {
   const t = useTranslations("catalog.org.action");
   const toast = useToast();
@@ -53,13 +57,21 @@ export function CatalogInstallAction({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ message: string; extra: string[] }>();
   const [upgrading, setUpgrading] = useState(false);
+  // Asking for approval may install at once (the kernel decides): it changes what an install does.
+  const install = useAppMutation({
+    fn: () => installCatalogItem(orgId, item.id, {}),
+    invalidates: () => pluginChangeKeys(orgId),
+  });
+  const ask = useAppMutation({
+    fn: () => requestCatalogItem(orgId, item.id, ""),
+    invalidates: () => [keys.org(orgId).catalog(), keys.org(orgId).catalogItemsAll()],
+  });
 
   const run = async (op: () => Promise<string>) => {
     setBusy(true);
     setError(undefined);
     try {
       toast.success(await op());
-      onChanged();
     } catch (e) {
       setError({ message: errorMessage(e), extra: [...issueLines(e), ...catalogLines(e)] });
     } finally {
@@ -69,12 +81,12 @@ export function CatalogInstallAction({
 
   const askApproval = () =>
     run(async () => {
-      const r = await installCatalogItem(orgId, item.id, {});
+      const r = await install.mutateAsync(undefined);
       return "request" in r ? t("approvalRequested") : t("installed", { name: item.name });
     });
   const request = () =>
     run(async () => {
-      await requestCatalogItem(orgId, item.id, "");
+      await ask.mutateAsync(undefined);
       return t("requested");
     });
 
@@ -99,7 +111,6 @@ export function CatalogInstallAction({
               target={target}
               open={upgrading}
               onOpenChange={setUpgrading}
-              onDone={onChanged}
             />
           </>
         )}

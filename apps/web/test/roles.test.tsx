@@ -235,7 +235,7 @@ const PAGES: [string, ComponentType | ServerPage | RoutePage, "member" | "admin"
   ["/catalog", route("/catalog", () => CatalogPage()), "member", zh.roles.need.member],
   [
     "/catalog/i1",
-    server(() => CatalogItemPage(params({ itemId: "i1" }))),
+    route("/catalog/i1", () => CatalogItemPage(params({ itemId: "i1" }))),
     "member",
     zh.roles.need.member,
   ],

@@ -141,7 +141,13 @@ export const ROUTES: readonly RouteEntry[] = [
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "member") ? [] : [q(orgCatalogQuery(orgId))],
   },
-  { pattern: "/catalog/[itemId]", queries: () => [], none: "pending migration" },
+  {
+    pattern: "/catalog/[itemId]",
+    queries: ({ orgId, me, params }) =>
+      orgId === null || params.itemId === undefined || !atLeast(me, "member")
+        ? []
+        : [q(orgCatalogItemQuery(orgId, params.itemId))],
+  },
   { pattern: "/catalog/[itemId]/install", queries: () => [], none: "pending migration" },
   {
     pattern: "/channels",

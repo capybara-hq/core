@@ -2,15 +2,14 @@
 
 import { Card, DetailPage, KeyValue, Stack, Text, versionLabel } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
-import { useTransition } from "react";
 import {
   CatalogInstallAction,
   useOrgItemStatus,
 } from "../../../../components/CatalogInstallAction";
 import { CatalogIcon, ComponentSection } from "../../../../components/CatalogParts";
+import { ErrorFrame } from "../../../../components/ErrorFrame";
+import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
-import { useSession } from "../../../../components/shell/session";
-import { useRouter } from "../../../../i18n/navigation";
 import {
   agentTemplateNameOf,
   displayNameOf,
@@ -21,20 +20,58 @@ import {
   skillNameOf,
 } from "../../../../lib/catalog";
 import { canUpdateOrg } from "../../../../lib/org-settings";
+import { orgCatalogItemQuery } from "../../../../lib/query/catalog";
+import { usePageQuery } from "../../../../lib/query/page-query";
+import { useWorkspace } from "../../../../lib/query/workspace";
+import type { Me } from "../../../../lib/session";
+import NotFound from "../../not-found";
 
 /**
  * `/catalog/[itemId]`: a plugin in the catalog from the org's view (DetailPage). Summary,
  * the latest version's components (its extension, skills, connector templates with endpoint and
  * auth, dependencies installed with it); actions follow `installable` (CatalogInstallAction).
- * Inspector: the icon (shown as `<img>` through the kernel route) and basic facts. Read on the
- * server (`page.tsx`); an install action re-renders it there.
+ * Inspector: the icon (shown as `<img>` through the kernel route) and basic facts. From the query
+ * cache (the layout prefetched it on a first load); a missing item is the not-found state. An
+ * action invalidates the item, which is read again.
  */
-export default function CatalogItemView({
+export default function CatalogItemView({ itemId }: { itemId: string }) {
+  const ws = useWorkspace({ min: "member", setup: "step" });
+  if (ws.kind === "pending" || ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  return <CatalogItem key={itemId} orgId={ws.orgId} itemId={itemId} me={ws.me} />;
+}
+
+function CatalogItem({ orgId, itemId, me }: { orgId: string; itemId: string; me: Me }) {
+  const scope = usePagePath("org");
+  const t = useTranslations("catalog.org");
+  const read = usePageQuery(orgCatalogItemQuery(orgId, itemId));
+  if (read.kind === "notFound") return <NotFound />;
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
+  if (read.kind === "loading") {
+    return (
+      <DetailPage
+        header={{ path: [...scope, { label: "catalog", href: "/catalog" }], title: "" }}
+        tabs={{
+          label: t("detail.tabsLabel"),
+          items: [{ id: "overview", label: t("detail.tabs.overview") }],
+          value: "overview",
+          onChange: () => {},
+        }}
+        loading={{ inspector: true }}
+      />
+    );
+  }
+  return <CatalogItemDetail orgId={orgId} detail={read.data} me={me} />;
+}
+
+function CatalogItemDetail({
   orgId,
-  initial: detail,
+  detail,
+  me,
 }: {
   orgId: string;
-  initial: OrgCatalogDetail;
+  detail: OrgCatalogDetail;
+  me: Me;
 }) {
   const scope = usePagePath("org");
   const t = useTranslations("catalog.org");
@@ -42,9 +79,6 @@ export default function CatalogItemView({
   const tc = useTranslations("catalog.components");
   const locale = useLocale();
   const status = useOrgItemStatus();
-  const { me } = useSession();
-  const router = useRouter();
-  const [, startTransition] = useTransition();
   const item = detail.item;
 
   return (
@@ -81,12 +115,7 @@ export default function CatalogItemView({
     >
       <Stack gap={16}>
         {item.description !== "" && <Text variant="prose">{item.description}</Text>}
-        <CatalogInstallAction
-          orgId={orgId}
-          item={item}
-          admin={canUpdateOrg(me)}
-          onChanged={() => startTransition(() => router.refresh())}
-        />
+        <CatalogInstallAction orgId={orgId} item={item} admin={canUpdateOrg(me)} />
         <ComponentSection
           title={tc("extension")}
           count={detail.extension === null ? 0 : 1}
