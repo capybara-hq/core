@@ -1,5 +1,6 @@
 import { Button } from "../controls/button";
 import { EmptyState } from "../display/empty-state";
+import { useSkeletonAnnounces } from "../display/skeleton";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import type { DataTableProps } from "./types";
@@ -16,12 +17,18 @@ export function EmptyArea<T>({
   noResults?: DataTableProps<T>["noResults"] | undefined;
 }) {
   const t = useDesignT();
+  // Inside a skeleton group the group announces the load once (spec §6.29).
+  const announces = useSkeletonAnnounces();
   if (kind === "loading") {
     // Skeleton rows under the header, row.dense high (spec §6.6); no spinner.
     // The bars are decorative; the status text is for assistive tech.
     return (
-      <div className="cb-table-empty" data-empty="loading" role="status">
-        <span className="cb-sr-only">{t("table.loading")}</span>
+      <div
+        className="cb-table-empty"
+        data-empty="loading"
+        {...(announces ? { role: "status" } : {})}
+      >
+        {announces ? <span className="cb-sr-only">{t("table.loading")}</span> : null}
         {[52, 40, 60, 44, 36].map((w) => (
           <div key={w} className="cb-table-skel-row" aria-hidden="true">
             <span className="cb-table-skel" data-part="skeleton-bar" data-width={w} />

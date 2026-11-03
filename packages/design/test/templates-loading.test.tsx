@@ -1,6 +1,14 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { DesignProvider, DetailPage, InboxPage, OverviewPage } from "../src/index";
+import {
+  type Column,
+  DataTable,
+  DesignProvider,
+  DetailPage,
+  type InboxLoading,
+  InboxPage,
+  OverviewPage,
+} from "../src/index";
 
 afterEach(cleanup);
 const zh = (ui: React.ReactElement) => render(<DesignProvider locale="zh">{ui}</DesignProvider>);
@@ -97,6 +105,22 @@ describe("OverviewPage loading", () => {
   });
 });
 
+describe("DataTable loading announcement", () => {
+  it("announces by itself when it stands alone", () => {
+    zh(
+      <DataTable<{ id: string }>
+        label="t"
+        state="loading"
+        columns={[{ key: "a", header: "A", cell: () => null }]}
+        rows={[]}
+        rowKey={(r) => r.id}
+      />,
+    );
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getByText("正在加载")).toBeTruthy();
+  });
+});
+
 describe("InboxPage loading", () => {
   it("InboxPage loading draws the frame and no children", () => {
     zh(
@@ -150,6 +174,20 @@ describe("InboxPage loading", () => {
     expect(screen.getByText("事项")).toBeTruthy();
     expect(screen.getByText("F")).toBeTruthy();
     expect(document.querySelector(".cb-table-panel")).not.toBeNull();
+    // The page's group announces once; the table adds none (spec §6.29).
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getAllByText("正在加载")).toHaveLength(1);
+  });
+
+  it("takes a page's own typed columns without a cast", () => {
+    type Row = { id: string; title: string };
+    const columns: Column<Row>[] = [{ key: "title", header: "事项", cell: (r) => r.title }];
+    const loading: InboxLoading = {
+      list: "records",
+      table: { label: "待处理", columns, rowHeight: "dense", framed: false },
+    };
+    zh(<InboxPage header={header} loading={loading} />);
+    expect(screen.getByText("事项")).toBeTruthy();
   });
 
   it("without loading, the filters sit above the list", () => {
