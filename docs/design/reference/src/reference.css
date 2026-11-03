@@ -3771,3 +3771,74 @@ textarea {
   flex-direction: column;
   gap: 16px;
 }
+
+/* ── List and trace loading states (spec §5.1, §5.11) ────────────────────── */
+
+.r-ph-count[data-pending="true"] {
+  color: var(--cb-faint);
+}
+.r-skel-text[data-size="prose"] {
+  height: var(--cb-type-prose-line);
+}
+/* A list page's body is not padded at the top (the header's own space is the gap). */
+.r-tpl-main[data-flat] {
+  padding-top: 0;
+}
+.r-tpl-head[data-stats] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+}
+.r-trace {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr) 400px;
+  min-height: 0;
+  padding: 0 var(--cb-content-pad, 32px);
+}
+.r-trace-wf {
+  min-width: 0;
+  padding-right: var(--cb-space-4);
+}
+.r-trace-detail {
+  min-width: 0;
+  padding: 0 0 0 var(--cb-space-4);
+  border-left: 1px solid var(--cb-line-soft);
+}
+.r-wf {
+  display: flex;
+  flex-direction: column;
+}
+.r-wf-row {
+  display: grid;
+  grid-template-columns: 40% minmax(80px, 1fr) 10ch 9ch;
+  align-items: center;
+  box-sizing: border-box;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--cb-line);
+}
+.r-wf-name {
+  display: flex;
+  min-width: 0;
+}
+.r-wf-track {
+  height: 28px;
+  border-left: 1px solid var(--cb-line);
+}
+
+/* The conversation page while it loads (spec §5.4): the title bar's bar, the thread's user box. */
+.r-title[data-loading="true"] {
+  flex: none;
+  width: 30%;
+}
+.r-title[data-loading="true"] > .r-ellipsis {
+  flex: 1;
+}
+.r-bubble-slot {
+  box-sizing: border-box;
+  width: 45%;
+  padding: var(--cb-pad-default-y) var(--cb-pad-default-x);
+  border: 1px solid transparent;
+}

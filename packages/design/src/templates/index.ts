@@ -13,7 +13,7 @@ export {
 export { DetailPage } from "./detail-page";
 export { FormPage, FormSection } from "./form-page";
 export { type InboxLoading, InboxPage } from "./inbox-page";
-export { ListPage } from "./list-page";
+export { type ListLoading, ListPage } from "./list-page";
 export { PAGE_TEMPLATES, type PageTemplateName } from "./names";
 export { OnboardingPage } from "./onboarding-page";
 export { OverviewPage } from "./overview-page";

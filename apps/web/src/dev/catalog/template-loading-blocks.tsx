@@ -13,15 +13,20 @@ import {
   InboxPage,
   Input,
   KeyValue,
+  ListPage,
   ObjectList,
   ObjectRow,
   OverviewPage,
   SettingsPage,
+  SpanWaterfall,
   Stack,
   Text,
+  TracePage,
   WizardPage,
 } from "@capybara-hq/design";
+import { LIST_PAGE_FIXTURE, PAGE_HEADER_FIXTURE } from "@capybara-hq/design/fixtures";
 import type { ReactNode } from "react";
+import { TRACE_SPANS } from "./fixtures";
 import { RefBlock } from "./ref-block";
 
 // The loading states of the Detail, Overview and Inbox templates (spec §5.2, §5.6, §5.7). Each
@@ -327,7 +332,90 @@ function authBlocks(): ReactNode {
   );
 }
 
+// List and Trace (spec §5.1, §5.11). The list is the objects variant with a tabs row (the loading
+// page keeps its tabs with a dash for the counts); the trace's waterfall loading has as many rows as
+// the loaded fixture has spans.
+
+const LIST_ACTIONS: HeaderAction[] = [
+  { label: LIST_PAGE_FIXTURE.secondaryAction, variant: "default" },
+  { label: LIST_PAGE_FIXTURE.primaryAction, variant: "primary", icon: "plus" },
+];
+const LIST_HEADER = {
+  path: PATH.slice(0, 1),
+  title: PAGE_HEADER_FIXTURE.title,
+  actions: LIST_ACTIONS,
+  tabs: PAGE_HEADER_FIXTURE.tabs,
+  activeTab: "all",
+  search: { label: PAGE_HEADER_FIXTURE.search, value: "", onChange: noop },
+};
+const AGENTS = ["研究助手", "周报助手", "客服助手"];
+
+/** The loading states of the List template; `template-list-page` stays in reference-blocks. */
+export function listLoadingBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="template-list-default-objects" width={W} height={H}>
+        <ListPage header={LIST_HEADER} variant="objects" listLabel="Agents">
+          {AGENTS.map((name) => (
+            <ObjectRow key={name} mark={{ text: name }} name={name} description="检索资料并整理" />
+          ))}
+        </ListPage>
+      </RefBlock>
+      <RefBlock id="template-list-loading-objects" width={W} height={H}>
+        <ListPage header={LIST_HEADER} variant="objects" listLabel="Agents" loading />
+      </RefBlock>
+    </>
+  );
+}
+
+const TRACE_HEADER = {
+  path: PATH.slice(0, 1),
+  title: "退款工单 A1043",
+  actions: ACTIONS.slice(0, 1),
+};
+const TRACE_METRICS = [
+  { label: "总 TOKEN", value: "12,408" },
+  { label: "成本（估算）", value: "0.0412 USD" },
+  { label: "调用数", value: "6" },
+  { label: "耗时", value: "6.8s" },
+];
+
+function traceBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="template-trace-default" width={W} height={H}>
+        <TracePage
+          header={{ ...TRACE_HEADER, metrics: TRACE_METRICS }}
+          waterfall={
+            <SpanWaterfall
+              label="Span 瀑布"
+              spans={TRACE_SPANS}
+              selectedId="s0"
+              onSelect={noop}
+              labels={{ empty: "这个对话还没有开始过运行。" }}
+            />
+          }
+          detail={
+            <Card title="工具调用 · crm__refund_order">
+              <KeyValue rows={PROPERTIES} />
+            </Card>
+          }
+        />
+      </RefBlock>
+      <RefBlock id="template-trace-loading" width={W} height={H}>
+        <TracePage
+          header={loadingHeader(PATH.slice(0, 1), 1)}
+          waterfall={null}
+          detail={null}
+          loading={{ spans: TRACE_SPANS.length, stats: TRACE_METRICS.length }}
+        />
+      </RefBlock>
+    </>
+  );
+}
+
 export const TEMPLATE_LOADING_BLOCKS = {
+  "template-trace": traceBlocks,
   "template-settings": settingsBlocks,
   "template-wizard": wizardBlocks,
   "template-auth": authBlocks,

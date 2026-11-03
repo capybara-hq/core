@@ -75,6 +75,7 @@ const GROUPS = [
       "template-detail",
       "template-overview",
       "template-inbox",
+      "template-trace",
       "template-settings",
       "template-wizard",
       "template-auth",

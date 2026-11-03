@@ -632,7 +632,7 @@ function rightPanelBlocks(): ReactNode {
 
 // ── Template ────────────────────────────────────────────────────────────────
 
-type TemplateState = "properties" | "file-panel" | "subagent-panel" | "new" | "sheet";
+type TemplateState = "properties" | "file-panel" | "subagent-panel" | "new" | "sheet" | "loading";
 
 function thread(kind: "main" | "file" | "subagent"): ReactNode {
   if (kind === "subagent")
@@ -770,6 +770,10 @@ function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }
         panel={panelNode}
         right={right}
         onCloseRight={() => setRight("none")}
+        // `loading`: the file-panel block with every part still on its way (spec §5.4).
+        {...(state === "loading"
+          ? { loading: { thread: true, title: true, rightArea: true } }
+          : {})}
         {...(live
           ? {}
           : {
@@ -782,7 +786,14 @@ function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }
 }
 
 function templateConversationBlocks(): ReactNode {
-  const states: TemplateState[] = ["properties", "file-panel", "subagent-panel", "new", "sheet"];
+  const states: TemplateState[] = [
+    "properties",
+    "file-panel",
+    "subagent-panel",
+    "new",
+    "sheet",
+    "loading",
+  ];
   return (
     <>
       {states.map((s) => (

@@ -18,14 +18,14 @@ export function SkeletonAnnouncement() {
   return <span className="cb-sr-only">{t("table.loading")}</span>;
 }
 
-export type SkeletonTextSize = "body" | "small" | "title" | "metric" | "heading";
+export type SkeletonTextSize = "body" | "small" | "title" | "metric" | "heading" | "prose";
 export type SkeletonTextWidth = "30%" | "45%" | "55%" | "70%" | "100%" | number;
 
 const px = (w: SkeletonTextWidth) => (typeof w === "number" ? `${w}px` : w);
 
 /**
  * One text placeholder (spec §6.29): a slot exactly one line box of its type size high (`body`,
- * `small`, `title` (the h1 size), `heading` (the h2 size) or `metric` (the StatCard value size)), so the layout is the
+ * `small`, `title` (the h1 size), `heading` (the h2 size), `prose` (the thread's prose line) or `metric` (the StatCard value size)), so the layout is the
  * loaded one, holding a bar (`space.3` high, `selected`, radius `sm`) centred in it. `width` is the slot's and the bar's. Decorative:
  * the group announces.
  */
@@ -82,15 +82,28 @@ export function SkeletonBox({
 /**
  * The busy region of a loading page or panel (spec §6.29): `aria-busy`, named by `label`, with
  * one hidden "正在加载 / Loading". A group inside a group adds nothing, so a template that draws
- * several loading parts announces once.
+ * several loading parts announces once. `active={false}` makes the group transparent (no status,
+ * no announcement) while keeping the element tree, so a page whose parts load one at a time keeps
+ * its children mounted when the load ends.
  */
-export function SkeletonGroup({ label, children }: { label: string; children: ReactNode }) {
+export function SkeletonGroup({
+  label,
+  active = true,
+  children,
+}: {
+  label: string;
+  active?: boolean;
+  children: ReactNode;
+}) {
   const nested = useContext(InGroup);
   if (nested) return <div className="cb-skeleton-group">{children}</div>;
   return (
-    <InGroup.Provider value={true}>
-      <div className="cb-skeleton-group" role="status" aria-label={label} aria-busy="true">
-        <SkeletonAnnouncement />
+    <InGroup.Provider value={active}>
+      <div
+        className="cb-skeleton-group"
+        {...(active ? { role: "status", "aria-label": label, "aria-busy": "true" } : {})}
+      >
+        {active ? <SkeletonAnnouncement /> : null}
         {children}
       </div>
     </InGroup.Provider>

@@ -471,6 +471,10 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
 
   // ── Title bar ──────────────────────────────────────────────────────────
 
+  /** A text placeholder in the one bar look (spec §6.29). */
+  const skel = (w, size) =>
+    `<div class="r-skel-text" data-part="skeleton-text" data-size="${size}" style="width:${w}"><span class="r-skel-bar" data-part="skeleton-bar"></span></div>`;
+
   function titleBar(o = {}) {
     const untitled = o.state === "untitled";
     const title = untitled
@@ -490,7 +494,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     const more = o.state === "overflow"
       ? `<div class="r-menu r-more-menu" role="menu"><div class="r-menu-item" role="menuitem">${icon("list-checks", 14)}待办</div><div class="r-menu-item" role="menuitem">${icon("extension", 14)}任务看板</div></div>`
       : "";
-    return `<header class="r-titlebar"${o.narrow ? " data-narrow" : ""}><button class="r-title"${untitled ? " data-untitled" : ""} aria-haspopup="menu" aria-expanded="${menuOpen}"${menuOpen ? ' data-state="hover"' : ""} title="${esc(title)}"><span class="r-ellipsis">${esc(title)}</span>${icon("chevron-down", 14)}</button>${iconBtn("panel-right", K.properties, { pressed: pressed === "properties" })}<span class="r-vsep" aria-hidden="true"></span>${group2}${o.narrow ? "" : iconBtn("more-vertical", K.more, { pressed: o.state === "overflow" })}${menu}${more}</header>`;
+    return `<header class="r-titlebar"${o.narrow ? " data-narrow" : ""}>${o.loading ? `<span class="r-title" data-loading="true" data-part="title"><span class="r-ellipsis">${skel("100%", "body")}</span></span>` : `<button class="r-title"${untitled ? " data-untitled" : ""} aria-haspopup="menu" aria-expanded="${menuOpen}"${menuOpen ? ' data-state="hover"' : ""} title="${esc(title)}"><span class="r-ellipsis">${esc(title)}</span>${icon("chevron-down", 14)}</button>`}${iconBtn("panel-right", K.properties, { pressed: pressed === "properties" })}<span class="r-vsep" aria-hidden="true"></span>${group2}${o.narrow ? "" : iconBtn("more-vertical", K.more, { pressed: o.state === "overflow" })}${menu}${more}</header>`;
   }
 
   // ── Sub-agents ─────────────────────────────────────────────────────────
@@ -771,6 +775,15 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     if (o.state === "new") {
       const body = `<div class="r-conv-new"><h2 class="r-h2">${esc(C.agent.name)}</h2><p class="r-prose-small r-muted">检索资料、核对数据并整理成报告。</p>${composer({ state: "new" })}</div>`;
       return `<div class="r-app">${sidebar({ mode: "full", active: "new", activeConversation: null })}<main class="r-main"><header class="r-titlebar"><span class="r-title" data-untitled>${esc(F.NEW_CONVERSATION_LABEL)}</span></header><div class="r-conv-scroll" data-center>${body}</div>${convStatus({ new: true })}</main></div>`;
+    }
+    if (o.state === "loading") {
+      // Every part on its way (spec §5.4): a title bar, three thread turns, the composer inert, and
+      // the right panel's own loading state.
+      const turns = `<div class="r-ucol" data-part="loading-turn"><div class="r-bubble-slot">${skel("100%", "prose")}</div></div><div data-part="loading-turn">${skel("100%", "prose")}</div><div data-part="loading-turn">${skel("70%", "prose")}</div>`;
+      const centerL = `<div class="r-conv-center"><div class="r-conv-scroll"><div class="r-thread">${turns}</div></div><div class="r-conv-composer">${composer({ state: "idle" })}</div></div>`;
+      const mainL = `<main class="r-main r-conv-main">${titleBar({ pressed: "files", loading: true })}<div class="r-conv-cols">${centerL}</div>${convStatus({ idle: true })}</main>`;
+      const panelL = `<aside class="r-rpanel" aria-label="右侧面板" aria-busy="true">${panelHeader({ title: "右侧面板", switcher: false })}<div class="r-panel-body"><div class="r-skel-list">${[56, 72, 48, 64].map((w) => `<span class="r-skel" style="width:${w}%"></span>`).join("")}</div></div></aside>`;
+      return `<div class="r-app r-conv-app" aria-busy="true">${side}${mainL}${panelL}</div>`;
     }
     const running = o.state === "properties";
     const props = o.state === "properties" ? propertiesPanel() : "";

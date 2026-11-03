@@ -23,6 +23,8 @@ export const ACCEPTED: string[] = [
   "template-detail",
   "template-overview",
   "template-inbox",
+  // the trace template's loading state (spec §5.11), accepted with the other template loading states
+  "template-trace",
   "template-settings",
   "template-wizard",
   "template-auth",

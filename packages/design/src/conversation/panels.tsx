@@ -1,5 +1,6 @@
 import { type CSSProperties, type JSX, type KeyboardEvent, type ReactNode, useRef } from "react";
 import { Button, IconButton } from "../controls/button";
+import { useSkeletonAnnounces } from "../display/skeleton";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { useDesignT } from "../provider";
@@ -14,11 +15,20 @@ import { fillCopy } from "./tool-copy";
 
 export type BlockState = "ready" | "loading" | "failed";
 
-/** Skeleton bars (`selected`, radius `sm`, `aria-busy`): loading never spins in a block. */
+/**
+ * Skeleton bars (`selected`, radius `sm`, `aria-busy`): loading never spins in a block. Inside a
+ * skeleton group (a loading page) the group announces, so the bars are only decorative.
+ */
 export function SkeletonBars({ widths = [56, 72, 48, 64] }: { widths?: number[] }): JSX.Element {
   const t = useDesignT();
+  const announces = useSkeletonAnnounces();
   return (
-    <div className="cb-skeleton-list" role="status" aria-busy="true" aria-label={t("card.loading")}>
+    <div
+      className="cb-skeleton-list"
+      {...(announces
+        ? { role: "status", "aria-busy": "true", "aria-label": t("card.loading") }
+        : { "aria-hidden": "true" })}
+    >
       {widths.map((w, i) => (
         <span
           // biome-ignore lint/suspicious/noArrayIndexKey: the bars are positional

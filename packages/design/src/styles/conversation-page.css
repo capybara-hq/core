@@ -402,13 +402,6 @@ span.cb-title-btn {
   flex-direction: column;
   gap: var(--cb-space-2);
 }
-.cb-skeleton-bar {
-  display: block;
-  width: var(--cb-skeleton-w, 60%);
-  height: var(--cb-space-3);
-  border-radius: var(--cb-radius-sm);
-  background: var(--cb-selected);
-}
 
 /* Task list (a checklist extension view; todo's card, section and panel). */
 .cb-task-list {
@@ -683,7 +676,7 @@ button.cb-property-row {
  * the inline area until then, so it never widens the page (no horizontal scroll, no flash).
  */
 @media (max-width: 1279px) {
-  .cb-conv-page[data-layout="auto"]:not([data-sheet]) > .cb-conv-panel,
+  .cb-conv-page[data-layout="auto"]:not([data-sheet]) .cb-conv-panel,
   .cb-conv-page[data-layout="auto"]:not([data-sheet]) .cb-conv-cols > [data-part="properties"] {
     display: none;
   }
@@ -818,4 +811,22 @@ button.cb-property-row {
 }
 .cb-ref-board-card[data-current="true"] {
   box-shadow: inset 2px 0 0 var(--cb-accent);
+}
+
+/* The title while the conversation loads: a bar in the title's own box, 30% of the bar. */
+.cb-title-btn[data-loading="true"] {
+  flex: none;
+  width: 30%;
+  cursor: default;
+}
+.cb-title-btn[data-loading="true"] > .cb-title-text {
+  flex: 1;
+}
+
+/* The thread while it loads: a user bubble's box (45%, right) and two prose lines. */
+.cb-conv-thread .cb-user-msg > .cb-bubble-slot {
+  box-sizing: border-box;
+  width: 45%;
+  padding: var(--cb-pad-default-y) var(--cb-pad-default-x);
+  border: 1px solid transparent;
 }

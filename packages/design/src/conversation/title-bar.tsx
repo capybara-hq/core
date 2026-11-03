@@ -1,6 +1,7 @@
 import { type JSX, useEffect, useRef, useState } from "react";
 import { Button, IconButton } from "../controls/button";
 import { Input } from "../controls/inputs";
+import { SkeletonText } from "../display/skeleton";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { Dialog } from "../overlays/dialog";
@@ -40,6 +41,11 @@ export type TitleBarProps = {
   properties: { pressed: boolean; onToggle(): void };
   /** Files, then the extensions' panels in contribution order. */
   panels: TitleBarPanel[];
+  /**
+   * The title is not known yet (the conversation is loading): a bar 30% of the bar's width in the
+   * title's box in place of the title menu; the path and every icon stay real.
+   */
+  loading?: boolean;
   /** The reference set only: menus drawn open and a fixed number of visible panel icons. */
   reference?: { titleMenu?: boolean; moreMenu?: boolean; visiblePanels?: number };
 };
@@ -70,6 +76,7 @@ export function TitleBar({
   menu,
   properties,
   panels,
+  loading,
   reference,
 }: TitleBarProps): JSX.Element {
   const t = useDesignT();
@@ -133,25 +140,33 @@ export function TitleBar({
           ))}
         </nav>
       ) : null}
-      <ConvMenu
-        inline={reference?.titleMenu === true}
-        label={t("titlebar.menu")}
-        // The reference hangs both menus `space.2` above the bar's bottom edge: 2 below the button.
-        sideOffset={2}
-        trigger={
-          <button
-            type="button"
-            className="cb-title-btn"
-            data-part="title"
-            data-untitled={title === null ? "true" : undefined}
-            title={text}
-          >
-            <span className="cb-title-text">{text}</span>
-            <Icon name="chevron-down" size={14} />
-          </button>
-        }
-        entries={entries}
-      />
+      {loading ? (
+        <span className="cb-title-btn" data-part="title" data-loading="true">
+          <span className="cb-title-text">
+            <SkeletonText width="100%" />
+          </span>
+        </span>
+      ) : (
+        <ConvMenu
+          inline={reference?.titleMenu === true}
+          label={t("titlebar.menu")}
+          // The reference hangs both menus `space.2` above the bar's bottom edge: 2 below the button.
+          sideOffset={2}
+          trigger={
+            <button
+              type="button"
+              className="cb-title-btn"
+              data-part="title"
+              data-untitled={title === null ? "true" : undefined}
+              title={text}
+            >
+              <span className="cb-title-text">{text}</span>
+              <Icon name="chevron-down" size={14} />
+            </button>
+          }
+          entries={entries}
+        />
+      )}
       <IconButton
         part="title-bar-button"
         label={t("titlebar.properties")}

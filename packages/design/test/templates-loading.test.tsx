@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   AuthPage,
   type Column,
+  ConversationPage,
+  type ConversationPageProps,
   DataTable,
   DesignProvider,
   DetailPage,
@@ -10,8 +12,12 @@ import {
   FormSection,
   type InboxLoading,
   InboxPage,
+  ListPage,
+  ObjectRow,
   OverviewPage,
   SettingsPage,
+  SpanWaterfall,
+  TracePage,
   WizardPage,
 } from "../src/index";
 
@@ -437,5 +443,271 @@ describe("AuthPage loading", () => {
     zh(<AuthPage title="" loading={{ fields: 1 }} />);
     expect(screen.queryByRole("heading")).toBeNull();
     expect(document.querySelector('.cb-auth-head [data-size="title"]')).not.toBeNull();
+  });
+});
+
+const noop = () => {};
+const convProps = (over: Partial<ConversationPageProps> = {}): ConversationPageProps => ({
+  titleBar: {
+    path: [{ label: "示例组织" }, { label: "研究助手" }],
+    title: "分析 9 月示例表差异",
+    untitled: "未命名会话",
+    menu: [{ id: "rename", label: "重命名", icon: "square-pen", onSelect: noop }],
+    properties: { pressed: false, onToggle: noop },
+    panels: [{ id: "files", label: "文件", icon: "file-text", pressed: false, onOpen: noop }],
+  },
+  thread: <p>REAL THREAD</p>,
+  composer: <textarea aria-label="REAL COMPOSER" />,
+  status: { context: "grant@示例组织:/chat/9f3a", version: "v0.1.0" },
+  properties: <p>REAL PROPERTIES</p>,
+  panel: <p>REAL PANEL</p>,
+  right: "none",
+  onCloseRight: noop,
+  layout: "inline",
+  ...over,
+});
+const busy = () => document.querySelectorAll('[role="status"][aria-busy="true"]');
+
+describe("ConversationPage loading", () => {
+  it("ConversationPage loading draws the frame and no children", () => {
+    zh(
+      <ConversationPage
+        {...convProps({ right: "panel" })}
+        loading={{ thread: true, title: true, rightArea: true }}
+      />,
+    );
+    expect(screen.queryByText("REAL THREAD")).toBeNull();
+    expect(screen.queryByText("REAL PANEL")).toBeNull();
+    expect(document.querySelector('[data-template="ConversationPage"]')).not.toBeNull();
+    // The real thread column: three turns, a user bar at 45% right-aligned, then two prose bars.
+    const thread = document.querySelector('[data-part="thread"]');
+    expect(thread?.className).toBe("cb-conv-thread");
+    expect(thread?.closest(".cb-conv-scroll")).not.toBeNull();
+    const turns = thread?.querySelectorAll('[data-part="loading-turn"]') ?? [];
+    expect(turns).toHaveLength(3);
+    expect(turns[0]?.className).toBe("cb-user-msg");
+    expect(turns[0]?.querySelector('[data-part="skeleton-text"]')).not.toBeNull();
+    const widths = [...(thread?.querySelectorAll('[data-part="skeleton-text"]') ?? [])].map(
+      (e) => (e as HTMLElement).style.width,
+    );
+    expect(widths).toEqual(["100%", "100%", "70%"]);
+    expect(thread?.querySelectorAll('[data-part="skeleton-text"][data-size="prose"]').length).toBe(
+      3,
+    );
+    // The right panel is the panel's own loading state, in the panel slot.
+    const slot = document.querySelector('[data-part="panel-slot"]');
+    expect(slot?.querySelector('[data-part="right-panel"]')).not.toBeNull();
+    expect(slot?.querySelector('[data-part="panel-body"][data-state="loading"]')).not.toBeNull();
+    // One announcement for the whole page.
+    expect(busy()).toHaveLength(1);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("composer keeps its box while the thread loads", () => {
+    const { rerender } = zh(<ConversationPage {...convProps()} loading={{ thread: true }} />);
+    const box = () => document.querySelector(".cb-conv-composer");
+    const input = screen.getByLabelText("REAL COMPOSER");
+    expect(box()?.contains(input)).toBe(true);
+    // Disabled while the thread loads: nothing in it can be used.
+    expect(box()?.hasAttribute("inert")).toBe(true);
+    expect(box()?.parentElement?.className).toBe("cb-conv-center");
+    // The same element stays when the thread arrives (a draft is not lost).
+    rerender(
+      <DesignProvider locale="zh">
+        <ConversationPage {...convProps()} />
+      </DesignProvider>,
+    );
+    expect(screen.getByLabelText("REAL COMPOSER")).toBe(input);
+    expect(box()?.hasAttribute("inert")).toBe(false);
+    expect(screen.getByText("REAL THREAD")).toBeTruthy();
+    expect(busy()).toHaveLength(0);
+  });
+
+  it("the title bar keeps its icons and path, and the title is a bar", () => {
+    zh(<ConversationPage {...convProps()} loading={{ title: true }} />);
+    const bar = document.querySelector('[data-part="title-bar"]');
+    expect(bar?.querySelectorAll('[data-part="title-bar-button"]')).toHaveLength(2);
+    expect(screen.getByText("研究助手")).toBeTruthy();
+    expect(screen.queryByText("分析 9 月示例表差异")).toBeNull();
+    const title = bar?.querySelector('[data-part="title"]');
+    expect(title?.querySelector('[data-part="skeleton-text"]')).not.toBeNull();
+    // The thread is real and the composer is usable: only the title is loading.
+    expect(screen.getByText("REAL THREAD")).toBeTruthy();
+    expect(document.querySelector(".cb-conv-composer")?.hasAttribute("inert")).toBe(false);
+    expect(busy()).toHaveLength(1);
+  });
+
+  it("loading parts are independent: a loading right area leaves the thread real", () => {
+    zh(<ConversationPage {...convProps({ right: "properties" })} loading={{ rightArea: true }} />);
+    expect(screen.getByText("REAL THREAD")).toBeTruthy();
+    expect(screen.queryByText("REAL PROPERTIES")).toBeNull();
+    const props = document.querySelector('[data-part="properties"]');
+    expect(
+      props?.querySelectorAll('[data-part="property-section"][data-state="loading"]').length,
+    ).toBe(2);
+    expect(busy()).toHaveLength(1);
+  });
+
+  it("a closed right area stays closed while loading", () => {
+    zh(<ConversationPage {...convProps()} loading={{ thread: true, rightArea: true }} />);
+    expect(document.querySelector('[data-part="panel-slot"]')).toBeNull();
+    expect(document.querySelector('[data-part="properties"]')).toBeNull();
+  });
+});
+
+const spans = [
+  { id: "a", kind: "run", label: "run", startMs: 0, durationMs: 100, status: "ok" },
+  { id: "b", parentId: "a", kind: "tool", label: "t", startMs: 10, durationMs: 50, status: "ok" },
+] as const;
+
+describe("TracePage loading", () => {
+  it("TracePage loading draws the frame and no children", () => {
+    zh(
+      <TracePage
+        header={header}
+        waterfall={<p>REAL WATERFALL</p>}
+        detail={<p>REAL DETAIL</p>}
+        loading={{}}
+      />,
+    );
+    expect(screen.queryByText("REAL WATERFALL")).toBeNull();
+    expect(screen.queryByText("REAL DETAIL")).toBeNull();
+    expect(document.querySelector('[data-template="TracePage"]')).not.toBeNull();
+    expect(count(".cb-trace")).toBe(1);
+    expect(count(".cb-trace-waterfall .cb-waterfall")).toBe(1);
+    expect(count(".cb-trace-detail")).toBe(1);
+    // Four stat slots, six rows by default, a card-shaped detail.
+    expect(count('[data-part="stat-card"]')).toBe(4);
+    expect(count('[data-part="loading-span-row"]')).toBe(6);
+    expect(count('.cb-trace-detail [data-part="loading-card"]')).toBe(1);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("takes the row count as given", () => {
+    zh(<TracePage header={header} waterfall={null} detail={null} loading={{ spans: 9 }} />);
+    expect(count('[data-part="loading-span-row"]')).toBe(9);
+  });
+
+  it("a loading row is the loaded row's own box", () => {
+    zh(<TracePage header={header} waterfall={null} detail={null} loading={{ spans: 1 }} />);
+    const row = document.querySelector('[data-part="loading-span-row"]');
+    expect(row?.className).toBe("cb-waterfall-row");
+    expect(row?.parentElement?.className).toBe("cb-waterfall");
+    for (const part of ["name", "track", "status", "ms"]) {
+      expect(row?.querySelector(`.cb-waterfall-${part}`), part).not.toBeNull();
+    }
+    // The loaded row has the same four cells.
+    cleanup();
+    zh(
+      <TracePage
+        header={header}
+        waterfall={
+          <SpanWaterfall
+            spans={[...spans]}
+            selectedId={null}
+            onSelect={noop}
+            labels={{ empty: "无" }}
+          />
+        }
+        detail={null}
+      />,
+    );
+    const real = document.querySelector(".cb-waterfall-row");
+    expect(real?.className).toBe("cb-waterfall-row");
+    expect(real?.children).toHaveLength(row?.children.length ?? -1);
+  });
+
+  it("real metrics stay while loading; the slots are for unknown ones", () => {
+    zh(
+      <TracePage
+        header={{ ...header, metrics: [{ label: "调用数", value: "6" }] }}
+        waterfall={null}
+        detail={null}
+        loading={{}}
+      />,
+    );
+    expect(screen.getByText("调用数")).toBeTruthy();
+    expect(count('[data-part="stat-card"]')).toBe(1);
+  });
+});
+
+describe("ListPage loading", () => {
+  const listHeader = {
+    ...header,
+    tabs: [
+      { id: "all", label: "全部", count: 12 },
+      { id: "mine", label: "我的", count: 3 },
+    ],
+    activeTab: "all",
+  };
+
+  it("list loading boxes equal loaded boxes", () => {
+    zh(
+      <ListPage header={listHeader} variant="objects" listLabel="列表">
+        <ObjectRow mark={{ text: "a" }} name="a" description="描述" />
+        <ObjectRow mark={{ text: "b" }} name="b" description="描述" />
+      </ListPage>,
+    );
+    const loaded = document.querySelector(".cb-object-list");
+    const loadedRow = loaded?.querySelector(".cb-object-row");
+    const loadedKinds = [...(loadedRow?.children ?? [])].map((c) => c.className.split(" ")[0]);
+    cleanup();
+    zh(<ListPage header={listHeader} variant="objects" listLabel="列表" loading />);
+    const list = document.querySelector(".cb-object-list");
+    // The same container and row elements, a mark and a text column in each row.
+    expect(list?.tagName).toBe("UL");
+    const rows = list?.querySelectorAll(":scope > .cb-object-row") ?? [];
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toBe(list?.firstElementChild);
+    const kinds = [...(rows[0]?.children ?? [])]
+      .map((c) => c.className.split(" ")[0])
+      .filter((c) => c !== "cb-sr-only");
+    expect(kinds.slice(0, 1)).toEqual(["cb-skeleton-box"]);
+    expect(loadedKinds.slice(0, 1)).toEqual(["cb-object-mark"]);
+    expect(rows[0]?.querySelector('[data-part="skeleton-box"][data-box="mark"]')).not.toBeNull();
+    // Two text lines in the text column, in the one bar look: no old bars.
+    const text = rows[0]?.querySelector(".cb-object-text");
+    expect(text?.querySelectorAll('[data-part="skeleton-text"]')).toHaveLength(2);
+    expect(count(".cb-object-bar")).toBe(0);
+    // Tab labels stay and the counts are the muted dash; nothing else announces.
+    expect(screen.getByRole("tab", { name: /全部/ })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: /我的/ })).toBeTruthy();
+    expect(document.querySelectorAll('.cb-tab-count[data-pending="true"]')).toHaveLength(2);
+    expect(document.body.textContent).not.toContain("12");
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("a records page without a table shape draws bars in the one bar look", () => {
+    zh(<ListPage header={header} loading />);
+    expect(count(".cb-skeleton-row")).toBe(0);
+    expect(count('.cb-skeleton [data-part="skeleton-text"]')).toBe(4);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("a records page takes the DataTable shape of its list", () => {
+    const columns: Column<{ id: string }>[] = [{ key: "n", header: "名称", cell: (r) => r.id }];
+    zh(
+      <ListPage
+        header={header}
+        loading={{ table: { label: "列表", columns, rowHeight: "default" } }}
+      />,
+    );
+    expect(screen.getByText("名称")).toBeTruthy();
+    expect(document.querySelector('[data-empty="loading"]')).not.toBeNull();
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getAllByText("正在加载")).toHaveLength(1);
+  });
+
+  it("stat slots stand in for metrics the page does not know yet", () => {
+    zh(<ListPage header={header} loading={{ stats: 3 }} />);
+    expect(count('[data-part="stat-card"]')).toBe(3);
+  });
+
+  it("an unknown title is a bar", () => {
+    zh(<ListPage header={{ ...header, title: "" }} loading />);
+    expect(
+      document.querySelector('[data-part="page-header"] [data-part="skeleton-text"]'),
+    ).not.toBeNull();
+    expect(screen.getAllByRole("status")).toHaveLength(1);
   });
 });

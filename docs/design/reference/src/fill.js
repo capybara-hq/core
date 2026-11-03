@@ -302,7 +302,7 @@
       ? `<div class="r-ph-tabs"><label class="r-search">${icon("search", 14)}<span class="r-sr">${esc(P.search)}</span><input placeholder="${esc(P.search)}"></label><div class="r-ph-tablist" role="tablist">${P.tabs
           .map(
             (t, i) =>
-              `<span role="tab" aria-selected="${i === 0}">${esc(t.label)}<span class="r-ph-count">${t.count}</span></span>`,
+              `<span role="tab" aria-selected="${i === 0}">${esc(t.label)}${o.pending ? '<span class="r-ph-count" data-pending="true">–</span>' : `<span class="r-ph-count">${t.count}</span>`}</span>`,
           )
           .join("")}</div></div>`
       : "";
@@ -476,6 +476,28 @@
     return `<div class="r-app">${sidebar({ active: "agents", activeConversation: null })}<main class="r-main"><div class="r-main-scroll"><div class="r-content" data-width="content">${head}${formSections(o)}</div></div>${actionRow(o)}${statusBar({ context: P.status.context, pageStatus: P.status.pageStatus })}</main></div>`;
   }
 
+  // ── List and trace loading states (spec §5.1, §5.11) ──────────────────────
+
+  const skelText = (w, size = "body") =>
+    `<div class="r-skel-text" data-part="skeleton-text" data-size="${size}" style="width:${w}"><span class="r-skel-bar" data-part="skeleton-bar"></span></div>`;
+
+  /** The objects list while loading: the real header with dashes for the counts, three object rows. */
+  function listLoadingObjects() {
+    const row = `<li class="r-lrow" data-part="loading-row"><div class="r-skel-box" data-part="skeleton-box" data-box="mark"></div><div class="r-lrow-text">${skelText("30%")}${skelText("55%")}</div></li>`;
+    const head = pageHeader({ title: F.PAGE_HEADER_FIXTURE.title, actions: true, tabs: true, pending: true });
+    return `<div class="r-tpl" aria-busy="true"><div class="r-tpl-head">${head}</div><div class="r-tpl-body"><div class="r-tpl-main" data-flat><ul class="r-llist" data-part="loading-list">${row.repeat(3)}</ul></div></div></div>`;
+  }
+
+  /** The trace page while loading: stat slots, 11 waterfall rows (the loaded fixture's spans), a card. */
+  function traceLoading() {
+    const stat = `<div class="r-stat r-lstat" data-part="stat-card"><div class="r-stat-label">${skelText("55%", "small")}</div><div class="r-stat-value">${skelText("45%", "metric")}</div></div>`;
+    const row = (i) =>
+      `<div class="r-wf-row" data-part="loading-span-row"><div class="r-wf-name">${skelText(i % 2 === 0 ? "70%" : "55%")}</div><div class="r-wf-track"></div><div class="r-wf-status"></div><div class="r-wf-ms">${skelText("100%")}</div></div>`;
+    const card = `<section class="r-lcard" data-part="loading-card"><header class="r-lcard-head">${skelText("30%")}</header><div class="r-lcard-body">${skelText("100%")}${skelText("70%")}${skelText("55%")}</div></section>`;
+    const head = pageHeader({ loading: { actions: 1, tabs: 0 } });
+    return `<div class="r-tpl" aria-busy="true"><div class="r-tpl-head" data-stats>${head}<div class="r-stats">${stat.repeat(4)}</div></div><div class="r-tpl-body"><div class="r-trace"><div class="r-trace-wf"><div class="r-wf">${Array.from({ length: 11 }, (_, i) => row(i)).join("")}</div></div><div class="r-trace-detail">${card}</div></div></div></div>`;
+  }
+
   function drawer(o) {
     return `<div class="r-drawer-stage"><div class="r-drawer-page"><div class="r-drawer-bar"><button class="r-icon-btn" aria-label="${esc(F.SIDEBAR_COPY.menu)}" aria-expanded="true">${icon("menu")}</button><span class="r-ellipsis">${esc(F.LIST_PAGE_FIXTURE.title)}</span><button class="r-icon-btn r-drawer-bar-end" aria-label="${esc(F.SIDEBAR_COPY.search)} ${esc(F.SIDEBAR_COPY.searchShortcut)}">${icon("search")}</button></div><div class="r-drawer-body">${pageHeader({ description: true })}${stats({})}</div>${statusBar({ noPageStatus: true })}</div><div class="r-scrim"></div><div class="r-drawer" role="dialog" aria-modal="true" aria-label="导航">${sidebar({ ...o, mode: "drawer" })}</div></div>`;
   }
@@ -515,6 +537,8 @@
     pagination,
     "form-sections": formSections,
     "list-page": listPage,
+    "list-loading-objects": listLoadingObjects,
+    "trace-loading": traceLoading,
     "form-page": formPage,
     "icon-grid": iconGrid,
   };

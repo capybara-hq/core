@@ -64,7 +64,7 @@ import { CONVERSATION_PAGE_BLOCKS } from "./conversation-page-blocks";
 import { COMMANDS } from "./fixtures";
 import { RefBlock } from "./ref-block";
 import { type SidebarFixture, sidebarProps, statusFixture } from "./shell-fixture";
-import { TEMPLATE_LOADING_BLOCKS } from "./template-loading-blocks";
+import { listLoadingBlocks, TEMPLATE_LOADING_BLOCKS } from "./template-loading-blocks";
 import { SetupHomeBody, setupFrameProps } from "./templates/setup";
 
 // The /dev/ui side of the reference set (docs/design/reference/src): one RefBlock per state, with
@@ -671,6 +671,7 @@ function skeletonBlocks(): ReactNode {
           <SkeletonText width="30%" size="title" />
           <SkeletonText width="55%" />
           <SkeletonText width="70%" size="small" />
+          <SkeletonText width="100%" size="prose" />
         </Stack>
       </RefBlock>
       <RefBlock id="skeleton-box" width={400} pad>
@@ -964,11 +965,14 @@ function FormTemplateBody({ loading }: { loading?: boolean }) {
 
 function templateListBlocks(): ReactNode {
   return (
-    <RefBlock id="template-list-page" width={TEMPLATE_W} height={TEMPLATE_H}>
-      <ShellFixture active="connectors" route="/connectors">
-        <ListTemplateBody />
-      </ShellFixture>
-    </RefBlock>
+    <>
+      <RefBlock id="template-list-page" width={TEMPLATE_W} height={TEMPLATE_H}>
+        <ShellFixture active="connectors" route="/connectors">
+          <ListTemplateBody />
+        </ShellFixture>
+      </RefBlock>
+      {listLoadingBlocks()}
+    </>
   );
 }
 

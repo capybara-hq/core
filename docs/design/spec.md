@@ -348,10 +348,10 @@ A new page **must** pick one of the following templates; a new template requires
 - PageHeader: title + total, description, secondary actions on the right + Create (primary); metrics ≤ 5 as StatCards.
 - **One primary per screen**: while `empty` is drawn with a `primary` action, the template leaves the head's primary out and the empty state carries it (the head's other actions stay); with rows, while loading, or when the empty state has no primary action, the head keeps it. Pages pass the same action to both and never draw two.
 - StatusBar page status: the number of filter results.
-- **Variants** (`variant`): `records` (default) holds a DataTable; `objects` wraps its ObjectRows (§6.17) in one ObjectList panel (things people own and configure: agents, skills, connectors, plugins, extensions). The `callout` prop draws a Callout (§6.19) in the header between the title row and the tabs; `empty` draws an EmptyState (§6.18) instead of the content. `loading` draws skeleton rows (§6.17) instead of the content or `empty` until the first answer; the head keeps its real layout meanwhile (title, actions, tabs with counts shown as a `faint` "–", search), so nothing moves when the answer arrives. Exception: a tab that exists only when the data holds something different from 全部 cannot be known before the answer and appears after it. An object list has no rail: tabs with counts in the header replace the filters.
+- **Variants** (`variant`): `records` (default) holds a DataTable; `objects` wraps its ObjectRows (§6.17) in one ObjectList panel (things people own and configure: agents, skills, connectors, plugins, extensions). The `callout` prop draws a Callout (§6.19) in the header between the title row and the tabs; `empty` draws an EmptyState (§6.18) instead of the content. `loading` (`true`, or `{ rows?, stats?, table? }`; spec §7.1 of the web query cache design) draws the page's frame until the first answer, with one busy announcement (§6.29): the head keeps its real layout (§4.2: the path, a known title, actions and search for real, an unknown title is a `title` bar; the tabs stay with their counts shown as a `faint` "–"), so nothing moves when the answer arrives; `stats` stat card placeholders stand in for `metrics` the page does not know yet (§5.6); the list is skeleton rows in the loaded list's own container: for `objects`, the ObjectList panel with `rows` rows (default 3), each the object row's box with a 36 px mark box and a name and a description line in the one bar look (§6.17), and for `records`, the DataTable's own loading state in the caller's `table` shape (`label`, `columns`, `rowHeight`, `framed`, as InboxPage, §5.7), else four full-width `body` bars (`Skeleton({ rows })`); the action row, when there is one, stays with its buttons disabled. Loading wins over `empty`. Exception: a tab that exists only when the data holds something different from 全部 cannot be known before the answer and appears after it. An object list has no rail: tabs with counts in the header replace the filters.
 
 <!-- states: template-list -->
-States: `page`
+States: `page`, `default-objects`, `loading-objects`
 
 <!-- size-table: template-list -->
 | Part | State | Property | Value |
@@ -359,6 +359,10 @@ States: `page`
 | sidebar | page | width | layout.sidebar |
 | content | page | max-width | layout.content |
 | status-bar | page | height | layout.status-bar |
+| content | default-objects | max-width | layout.content |
+| content | loading-objects | max-width | layout.content |
+| skeleton-box[data-box=mark] | loading-objects | height | 36 |
+| skeleton-text[data-size=body] | loading-objects | height | type.body.line |
 
 ### 5.2 Detail (T3)
 - PageHeader: path ending with the object's name; name + version (faint) + status; actions: Edit (default), Trial run (secondary), `more-horizontal`.
@@ -418,9 +422,10 @@ States: `page`, `loading`
 - **Status bar** (read-only, §4.4): left `user@org:/chat/<id>` and "第 N 轮 · 已用 <elapsed>" / "Turn N · <elapsed>"; right the run status ("空闲" / "Idle", "运行中" / "Running", "等待批准" / "Waiting for approval"), "上下文 N%" / "Context N%" and the version.
 - **Runs** (design note, unslop fixes 2026-11-03): every run that ended closes with a **run row** (§6.16.23), a quiet mono line `运行 · <model> · <duration> · <tokens>` with its status mark, built from the log alone (`run_started`, `model_call`, `usage`, `run_finished` / `run_failed` / `run_aborted`). A finished run's row is collapsed and uncoloured except its `ok` check; a failed run's row is open at first and red only in its mark, its status word and the failure sentence; its detail holding the failure (ErrorDetail: the sentence in the reader's language, the raw kernel text behind 原始错误), 重试 (the last failure only, while nothing runs), 查看轨迹 (`/trajectories/<conversationId>`, only for those the kernel lets read it: org admins and owners, or the agent's owner) and, for an enterprise admin when the model service is misconfigured (`model.auth`, `model.unconfigured`, `run.model_unavailable`), 去配置模型服务 (`/admin/extensions`). A stopped run's row names who stopped it. The run row replaces the stopped, failed and hook-denied dividers (no run is drawn twice); a running run shows nothing new (the live indicators stay). The properties panel's Context section adds the last run's line (model, duration, tokens; cost only when the log carries one, which it does not today).
 - Extension slots, files and sub-agents: §6.16.16–§6.16.18, §6.16.15.
+- **Loading** (`ConversationPage.loading`, `{ thread?, title?, rightArea? }`, per part; spec §7.1 of the web query cache design): every region keeps its box and the page announces once (§6.29). `thread`: the real thread column (`.cb-conv-scroll`, with its scrollbar gutter, and the thread at most `layout.chat` wide, items `space.3` apart) holds three turns: a user bubble's box (the bubble's padding and 1 px border, 45% of the thread, right-aligned) with a `prose` bar in it, then two `prose` bars, 100% and 70% wide; a `prose` slot is one `type.prose.line` high (§6.29). The composer always renders for real and keeps its box; while the thread loads it is inert (disabled), and it stays mounted when the thread arrives, so a draft is never lost. `title`: the title bar keeps its path and every icon (properties toggle, panel icons); the title is a `body` bar in the title's own box, 30% of the bar wide, in place of the title menu. `rightArea`: an open right area draws its own loading state instead of `panel` / `properties`: the right panel's `loading` state (§6.16.18: the head with "右侧面板" / "Right panel", full screen and close, and the block's loading bars in the body) or the properties panel with two loading sections (上下文 / Context, 文件 / Files; §6.16.17); a closed area stays closed. Nothing animates.
 
 <!-- states: template-conversation -->
-States: `properties`, `file-panel`, `subagent-panel`, `new`, `sheet`
+States: `properties`, `file-panel`, `subagent-panel`, `new`, `sheet`, `loading`
 
 The two `right-panel` widths of 544 hold only at the width the `template-conversation` blocks render (a 1280 window with the full sidebar): 1280 − `layout.sidebar` (256) − `layout.chat-min` (480). At other widths the panel follows the clamp in §6.16 (right panel).
 
@@ -441,6 +446,11 @@ The two `right-panel` widths of 544 hold only at the width the `template-convers
 | sidebar | sheet | width | layout.sidebar-rail |
 | right-panel | sheet | width | layout.panel |
 | status-bar | sheet | height | layout.status-bar |
+| title-bar | loading | height | layout.title-bar |
+| thread | loading | max-width | layout.chat |
+| right-panel | loading | width | 544 |
+| skeleton-text[data-size=prose] | loading | height | type.prose.line |
+| status-bar | loading | height | layout.status-bar |
 
 ### 5.6 Overview (T1)
 - Order in the content column: PageHeader → StatCards (the header's `metrics`) → the page's sections (cards, lists), separated by `space.3`.
@@ -517,6 +527,24 @@ States: `default`, `loading`
 | auth-card | loading | width | 400 |
 | skeleton-box[data-box=default] | loading | height | control.default |
 | skeleton-box[data-box=prominent] | loading | height | control.prominent |
+
+### 5.11 Trace (T8)
+- Layout: Single in the content width (`layout.content`, §4.3): the stats (the header's `metrics` as StatCards, §5.6) in the head, then the span waterfall (§6.10) and the selected span's detail right after it; from 1280 the detail is a 400 px right panel inside the width with a `line-soft` left divider, both columns scrolling on their own, and the stats, waterfall and detail share one left edge.
+- **Loading** (`TracePage.loading`, `{ spans?, stats? }`; spec §7.1 of the web query cache design): every region keeps its box and the page announces once (§6.29). The header is its loading state (§4.2); the stats are real when the header carries `metrics`, otherwise `stats` stat card placeholders (default 4: a `small` label slot over a `metric` value slot in the loaded card's box, §5.6); the waterfall is `spans` rows (default 6; a page that knows the count passes it) in the waterfall's own container and row box (28 px high, with its `line` bottom border, the name column 40%, the time track with its `line` left border, the status cell and the duration column), each with a `body` name bar (70% / 55% alternating) and a `body` duration bar filling its column; a loading row has no hover and no pointer; the detail is a card-shaped block (§5.2: the head band's 30% bar and three text bars) in the detail column's own box. Nothing animates.
+
+<!-- states: template-trace -->
+States: `default`, `loading`
+
+<!-- size-table: template-trace -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| content | default | max-width | layout.content |
+| content | loading | max-width | layout.content |
+| skeleton-text[data-size=small] | loading | height | type.small.line |
+| skeleton-text[data-size=metric] | loading | height | type.metric.line |
+| skeleton-text[data-size=body] | loading | height | type.body.line |
+| loading-span-row | loading | height | 28 |
+| loading-card | loading | border-radius | radius.md |
 
 ---
 
@@ -1759,7 +1787,7 @@ States: `ok`, `ok-open`, `failed`, `stopped`
 - A 36 px mark (radius `md`, `selected` ground): the one avatar-tile rule, the upper-cased first grapheme of the display name in 600 (mono like the whole UI; `initialOf`, as the org switcher and the account row), for extensions and plugins too; an icon only for rows that are steps, not objects (the setup page); `tone="warn"` tints it with `warn` at 15% when the object needs attention.
 - Text column: line 1 the name (600; a link when `href`; `mono` for package names) and chips (`small`, 1px `line` border, radius `sm`; `tone="warn"` draws the warn tint without a border). A chip is a scope or an attention mark (组织共享, 敏感); plain facts such as a version or 必需 are meta text, never a chip; line 2 the description in `muted` prose, one line with an ellipsis; line 3 the meta in `faint`, `small`, one line.
 - At the right: a state label (`state`: `ok` / `warn` / `fail` colored, `muted` in `faint`), a short `trailing` text in `faint`, one row action (`action`: a `default` dense button or link, never `primary`: the page head holds the one primary of the screen, and a row that needs attention says so in its `state`) and the `more-horizontal` overflow menu (`menu`). Below 640 the row wraps, and its action and menu buttons are at least 40 px (tap targets).
-- **Loading** (`ObjectList.loading`, `true` for 3 rows or a row count; `ListPage.loading` on a list page): the panel draws skeleton rows in the row shape instead of its rows — a 36 px mark and two 12 px bars (30% and 55% wide) on the `hover` ground, radius `sm` — and the list is `aria-busy` with a hidden "正在加载 / Loading". It wins over `empty`, so no empty state flashes before the first answer; a `records` ListPage draws a Skeleton instead.
+- **Loading** (`ObjectList.loading`, `true` for 3 rows or a row count; `ListPage.loading` on a list page): the panel draws skeleton rows in the row's shape instead of its rows (the same `.cb-object-row` box, 64 px at least, with its divider and first-row rule): a `mark` box (36 × 36, radius `md`, §6.29) and a name line and a description line in the text column, `body` bars 30% and 55% wide in the one bar look (§6.29), and the list is `aria-busy` with a hidden "正在加载 / Loading" (none of its own inside a skeleton group, which announces once). It wins over `empty`, so no empty state flashes before the first answer; a `records` ListPage draws the DataTable's loading state in the caller's table shape, else a Skeleton (§6.29), instead.
 
 ### 6.18 EmptyState
 
@@ -1772,7 +1800,7 @@ One empty state for the whole product, in two styles only. `EmptyState({ text, h
 
 ### 6.20 PendingState
 
-`PendingState({ frame?, delayMs? })`: the neutral loading state of a page whose outcome is not known yet (the app frame before it knows whether to draw the shell or the setup layout). It draws nothing shaped like any of the outcomes (no sidebar, no composer outline, no checklist): only the `bg` ground, a `status` region marked busy with a hidden "正在加载 / Loading", and after 300 ms (`PENDING_DELAY_MS`) three quiet 12 px bars (`hover` ground, radius `sm`; 30 %, 70 %, 45 % wide) in a centered chat-width column. `frame="app"` fills the window, `page` the content area. Rule: never show a placeholder shaped like one of two possible outcomes; skeletons in the frame's shape are for loads whose frame is already known (§6.17).
+`PendingState({ frame?, delayMs? })`: the neutral loading state of a page whose outcome is not known yet (the app frame before it knows whether to draw the shell or the setup layout). It draws nothing shaped like any of the outcomes (no sidebar, no composer outline, no checklist): only the `bg` ground, a `status` region marked busy with a hidden "正在加载 / Loading", and after 300 ms (`PENDING_DELAY_MS`) three quiet bars in the one bar look of §6.29 (`space.3` high on the `selected` ground, radius `sm`; 30 %, 70 %, 45 % wide) in a centered chat-width column. `frame="app"` fills the window, `page` the content area. Rule: never show a placeholder shaped like one of two possible outcomes; skeletons in the frame's shape are for loads whose frame is already known (§6.17).
 
 ### 6.19 Callout
 
@@ -1956,10 +1984,10 @@ States: `default`, `empty`, `masked`
 The placeholder primitives every loading state is built from, so a template's loading state is shaped like its loaded page (§5): `SkeletonText`, `SkeletonBox` and `SkeletonGroup`. **Nothing here animates**, in any motion mode (no shimmer, no pulse), so the reduced-motion rule of §6.11 holds without a special case.
 
 - **One bar look**: a skeleton bar is `space.3` (12 px) high on the `selected` ground, radius `sm`: the look of DataTable's (§6.6) and the sidebar's (§6.13) bars. Every bar of every loading state has it; there is no second bar.
-- `SkeletonText({ width, size? })`: a **slot** exactly one line box of its type size high, `body` (default, `type.body.line`), `small` (`type.small.line`), `title` (the h1 size, `type.h1.line`) or `metric` (the StatCard value size, `type.metric.line`), so the layout is the loaded one and nothing moves when the text arrives. The slot holds one bar (the look above) centred vertically, as wide as the slot. `width` is `30%`, `45%`, `55%`, `70%`, `100%` or a pixel number.
+- `SkeletonText({ width, size? })`: a **slot** exactly one line box of its type size high, `body` (default, `type.body.line`), `small` (`type.small.line`), `title` (the h1 size, `type.h1.line`), `heading` (the h2 size, `type.h2.line`), `prose` (a thread's prose line, `type.prose.line`) or `metric` (the StatCard value size, `type.metric.line`), so the layout is the loaded one and nothing moves when the text arrives. The slot holds one bar (the look above) centred vertically, as wide as the slot. `width` is `30%`, `45%`, `55%`, `70%`, `100%` or a pixel number.
 - `SkeletonBox({ part, height?, width? })`: a block shaped like a control or a mark, on the `selected` ground, radius `sm`. `part` is `dense`, `default` or `prominent` (the control height of §2.5), `mark` (36 × 36, radius `md`, the ObjectRow mark) or `block` (`height` pixels, default 96). `width` is pixels; without it the box fills its container.
 - `SkeletonGroup({ label, children })`: the busy region: `role="status"` named by `label`, `aria-busy="true"`, and one hidden "正在加载 / Loading". A group inside a group, and a component that draws its own loading state (PageHeader, ObjectList), adds no second announcement; the bars and blocks themselves are `aria-hidden`. The group draws no box of its own (`display: contents`).
-- Not yet reconciled with this look, and kept as they are until the templates' loading states land (ListPage, Task 9): the existing `Skeleton({ rows })` (`.cb-skeleton-row`, stacked 20 px rows on the `hover` ground, ListPage's `records` loading) and the 12 px `hover` bars of ObjectList (§6.17) and PendingState (§6.20). New loading states use the primitives above.
+- **One look everywhere**: the bars of DataTable (§6.6), the sidebar (§6.13), ObjectList (§6.17), `Skeleton({ rows })` (stacked full-width `body` slots, `space.2` apart; the dialogs' and panels' placeholder rows), PendingState (§6.20) and a block's loading bars (§6.16.16, §6.16.18) are all this bar: `space.3` high, `selected`, radius `sm`. Placeholders that stand in for text of a known line are `SkeletonText` slots; the older looks (20 px rows and 12 px bars on the `hover` ground) are gone.
 - Rule: a skeleton takes the size of what replaces it (a line of text its line box, a control its control height), so the swap moves nothing; no skeleton stands in for text whose width could change the layout of its row.
 
 <!-- states: skeleton -->
@@ -1971,6 +1999,7 @@ States: `text`, `box`, `group`
 | skeleton-text[data-size=title] | text | height | type.h1.line |
 | skeleton-text[data-size=body] | text | height | type.body.line |
 | skeleton-text[data-size=small] | text | height | type.small.line |
+| skeleton-text[data-size=prose] | text | height | type.prose.line |
 | skeleton-bar | text | height | space.3 |
 | skeleton-bar | text | background-color | color.selected |
 | skeleton-bar | text | border-radius | radius.sm |
