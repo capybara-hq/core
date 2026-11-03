@@ -30,11 +30,10 @@ import {
 } from "../../../../components/TrajectoryParts";
 import { addEvalCase } from "../../../../lib/evals";
 import { canUpdateOrg } from "../../../../lib/org-settings";
-import { retryOnMountOf } from "../../../../lib/query/client";
 import { useAppMutation } from "../../../../lib/query/define";
 import { evalSetsQuery } from "../../../../lib/query/evals";
 import { keys } from "../../../../lib/query/keys";
-import { membersQuery } from "../../../../lib/query/members";
+import { useMemberNames } from "../../../../lib/query/member-names";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { trajectoryQuery } from "../../../../lib/query/trajectories";
 import { useWorkspace } from "../../../../lib/query/workspace";
@@ -65,15 +64,11 @@ export default function TrajectoryPageView({ conversationId }: { conversationId:
 function TrajectoryData({ orgId, conversationId }: { orgId: string; conversationId: string }) {
   const scope = usePagePath("org");
   const read = usePageQuery(trajectoryQuery(orgId, conversationId));
-  const membersQ = membersQuery(orgId);
-  const members = useQuery({ ...membersQ, retryOnMount: retryOnMountOf(membersQ.queryKey) });
+  const names = useMemberNames(orgId);
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
-  const refused = members.error?.status === 403 || members.error?.status === 404;
-  if (members.error && members.data === undefined && !refused) {
-    return <ErrorFrame reset={() => void members.refetch()} />;
-  }
-  if (read.kind === "loading" || (members.data === undefined && !refused)) {
+  if (names.kind === "error") return <ErrorFrame reset={names.retry} />;
+  if (read.kind === "loading" || names.kind === "loading") {
     return (
       <TracePage
         header={{ path: [...scope, { label: "trajectories", href: "/trajectories" }], title: "" }}
@@ -83,10 +78,7 @@ function TrajectoryData({ orgId, conversationId }: { orgId: string; conversation
       />
     );
   }
-  const people = Object.fromEntries(
-    (members.data?.members ?? []).map((m) => [m.account.id, m.account.displayName]),
-  );
-  return <TrajectoryView orgId={orgId} first={read.data} people={people} />;
+  return <TrajectoryView orgId={orgId} first={read.data} people={names.people} />;
 }
 
 function TrajectoryView({

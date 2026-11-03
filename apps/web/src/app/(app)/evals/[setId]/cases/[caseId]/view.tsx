@@ -16,7 +16,7 @@ import {
 import type { EvalCaseDetail } from "../../../../../../lib/evals";
 import { retryOnMountOf } from "../../../../../../lib/query/client";
 import { evalCaseQuery, evalSetQuery } from "../../../../../../lib/query/evals";
-import { membersQuery } from "../../../../../../lib/query/members";
+import { useMemberNames } from "../../../../../../lib/query/member-names";
 import { usePageQuery } from "../../../../../../lib/query/page-query";
 import { useWorkspace } from "../../../../../../lib/query/workspace";
 import { indexTrajectory } from "../../../../../../lib/trajectories";
@@ -43,16 +43,12 @@ function EvalCase({ orgId, setId, caseId }: { orgId: string; setId: string; case
   const detail = usePageQuery(evalCaseQuery(orgId, setId, caseId));
   const setQ = evalSetQuery(orgId, setId);
   const set = useQuery({ ...setQ, retryOnMount: retryOnMountOf(setQ.queryKey) }).data;
-  const membersQ = membersQuery(orgId);
-  const members = useQuery({ ...membersQ, retryOnMount: retryOnMountOf(membersQ.queryKey) });
+  const names = useMemberNames(orgId);
   const parent = { label: set?.name ?? setId, href: `/evals/${encodeURIComponent(setId)}` };
   if (detail.kind === "notFound") return <NotFound />;
   if (detail.kind === "error") return <ErrorFrame reset={detail.retry} />;
-  const refused = members.error?.status === 403 || members.error?.status === 404;
-  if (members.error && members.data === undefined && !refused) {
-    return <ErrorFrame reset={() => void members.refetch()} />;
-  }
-  if (detail.kind === "loading" || (members.data === undefined && !refused)) {
+  if (names.kind === "error") return <ErrorFrame reset={names.retry} />;
+  if (detail.kind === "loading" || names.kind === "loading") {
     return (
       <TracePage
         header={{ path: [...scope, { label: "evals", href: "/evals" }, parent], title: "" }}
@@ -62,10 +58,7 @@ function EvalCase({ orgId, setId, caseId }: { orgId: string; setId: string; case
       />
     );
   }
-  const people = Object.fromEntries(
-    (members.data?.members ?? []).map((m) => [m.account.id, m.account.displayName]),
-  );
-  return <CaseTrajectory parent={parent} detail={detail.data} people={people} />;
+  return <CaseTrajectory parent={parent} detail={detail.data} people={names.people} />;
 }
 
 function CaseTrajectory({
