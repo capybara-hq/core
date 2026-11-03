@@ -1,13 +1,14 @@
 "use client";
 
 import { Button, Dialog, Skeleton, Stack, Text, TextLink } from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { ApiClientError } from "../lib/api";
-import { listMembers } from "../lib/members";
 import { leaveOrg } from "../lib/orgs";
+import { useAppMutation } from "../lib/query/define";
+import { membersQuery } from "../lib/query/members";
 import { useErrorMessage } from "../lib/use-error-message";
-import { useLoad } from "../lib/use-load";
 import { FormError } from "./form-error";
 
 /**
@@ -34,22 +35,20 @@ export function LeaveOrgDialog({
   const errorMessage = useErrorMessage();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const owners = useLoad(
-    () =>
-      owner
-        ? listMembers(orgId).then((r) => r.members.filter((m) => m.role === "owner").length)
-        : Promise.resolve(0),
-    [orgId, owner],
-  );
-  const lastOwner = owner && owners.state.kind === "ready" && owners.state.data <= 1;
-  const checking = owner && owners.state.kind === "loading";
+  // Only an owner needs the count.
+  const members = useQuery({ ...membersQuery(orgId), enabled: owner });
+  const owners = members.data?.members.filter((m) => m.role === "owner").length;
+  const lastOwner = owner && owners !== undefined && owners <= 1;
   // Couldn't count the owners: say so (with a retry) rather than offer a leave that may be refused
-  const countFailed = owner && owners.state.kind === "error";
+  const countFailed = owner && owners === undefined && members.error !== null;
+  const checking = owner && owners === undefined && !countFailed;
+  // Leaving moves to another org (`onLeft`), which ends the cache's session.
+  const leaveMutation = useAppMutation({ fn: leaveOrg, invalidates: () => [] });
   const leave = async () => {
     setBusy(true);
     setError(null);
     try {
-      await leaveOrg(orgId);
+      await leaveMutation.mutateAsync(orgId);
       onLeft();
     } catch (e) {
       setError(errorMessage(e));
@@ -87,7 +86,9 @@ export function LeaveOrgDialog({
           <Button variant="ghost" onClick={onClose}>
             {tc("cancel")}
           </Button>
-          {countFailed ? <Button onClick={owners.reload}>{tc("retry")}</Button> : null}
+          {countFailed ? (
+            <Button onClick={() => void members.refetch()}>{tc("retry")}</Button>
+          ) : null}
           {checking || countFailed ? null : (
             <Button variant="danger-solid" loading={busy} onClick={() => void leave()}>
               {t("confirm")}
@@ -98,8 +99,8 @@ export function LeaveOrgDialog({
     >
       {checking ? (
         <Skeleton rows={2} />
-      ) : countFailed && owners.state.kind === "error" ? (
-        <FormError message={errorMessage(new ApiClientError(0, owners.state.code, ""))} />
+      ) : countFailed && members.error !== null ? (
+        <FormError message={errorMessage(new ApiClientError(0, members.error.code, ""))} />
       ) : (
         <Text variant="prose">{t("description")}</Text>
       )}

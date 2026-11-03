@@ -75,3 +75,18 @@ export async function resetSession(qc: QueryClient, then: () => void): Promise<v
   qc.clear();
   then();
 }
+
+/** Set (in the browser) once a sign-out started; the page then navigates away for good. */
+let signingOut = false;
+
+/**
+ * Marks a sign-out in progress: until the navigation to sign-in, a read answering 401 `auth.*` is
+ * expected, and the session guard leaves it to the sign-out instead of sending the page to sign-in
+ * with a return path.
+ */
+export function markSigningOut(): void {
+  if (typeof window !== "undefined") signingOut = true;
+}
+
+/** Whether a sign-out is in progress ({@link markSigningOut}). */
+export const isSigningOut = (): boolean => signingOut;

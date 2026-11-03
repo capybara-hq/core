@@ -38,6 +38,19 @@ async function pageOf(path: string): Promise<ReactNode> {
   });
 }
 
+/**
+ * A browser query client with the app's defaults, retrying without the backoff delay (the one
+ * retry of a 5xx still happens, at once).
+ */
+export function testQueryClient(): QueryClient {
+  const client = makeQueryClient();
+  client.setDefaultOptions({
+    ...client.getDefaultOptions(),
+    queries: { ...client.getDefaultOptions().queries, retryDelay: 0 },
+  });
+  return client;
+}
+
 /** `page` inside a browser query client holding `state`, as the layout's `HydrationBoundary`. */
 function withCache(page: ReactNode, client: QueryClient, state?: DehydratedState) {
   return (
@@ -69,7 +82,7 @@ export async function renderRouteWithCache(path: string, routes: Routes, opts: R
   } finally {
     setApiTransport(null);
   }
-  const client = makeQueryClient();
+  const client = testQueryClient();
   const view = renderPage(withCache(page, client, state), render);
   return { calls, client, ...view };
 }
@@ -95,6 +108,6 @@ export async function renderRouteEmptyCache(
     setApiTransport(null);
   }
   const calls = stubApi(all);
-  const client = makeQueryClient();
+  const client = testQueryClient();
   return { calls, client, ...renderPage(withCache(page, client), render) };
 }

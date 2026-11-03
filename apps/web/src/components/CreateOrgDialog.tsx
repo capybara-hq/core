@@ -3,6 +3,7 @@
 import { Button, Dialog, Field, Input } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { useAppMutation } from "../lib/query/define";
 import { createOrg } from "../lib/session";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useSession } from "./shell/session";
@@ -26,6 +27,8 @@ export function CreateOrgDialog({
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  // The org switch that follows ends the cache's session: nothing to invalidate.
+  const create = useAppMutation({ fn: createOrg, invalidates: () => [] });
   // Opened again: start from an empty form.
   const [wasOpen, setWasOpen] = useState(open);
   if (wasOpen !== open) {
@@ -46,7 +49,7 @@ export function CreateOrgDialog({
     setBusy(true);
     setError(undefined);
     try {
-      const { org } = await createOrg(trimmed);
+      const { org } = await create.mutateAsync(trimmed);
       // Stays busy: the frame closes the dialog once the new org's frame arrives.
       await switchOrg(org.id);
     } catch (e) {

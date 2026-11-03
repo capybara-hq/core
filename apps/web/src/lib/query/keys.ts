@@ -24,14 +24,26 @@ export const keys = {
       readiness: (): readonly unknown[] => [...all, "readiness"],
       /** The org's agents list. */
       agents: (): readonly unknown[] => [...all, "agents"],
+      /** Every view of the sidebar's conversation groups (an invalidation prefix). */
+      conversationGroupsAll: (): readonly unknown[] => [...all, "conversationGroups"],
       /** The sidebar's conversation groups of one view (`"default"`: what the layout reads). */
       conversationGroups: (view: string): readonly unknown[] => [
         ...all,
         "conversationGroups",
         view,
       ],
+      /** A page of a sidebar group or of groups past the first (More / More groups). */
+      conversationGroupsMore: (kind: "rows" | "groups", params: string): readonly unknown[] => [
+        ...all,
+        "conversationGroups",
+        "more",
+        kind,
+        params,
+      ],
       inboxCount: (): readonly unknown[] => [...all, "inboxCount"],
       extensionPages: (): readonly unknown[] => [...all, "extensionPages"],
+      /** The org's members. */
+      members: (): readonly unknown[] => [...all, "members"],
     };
   },
   deployment() {

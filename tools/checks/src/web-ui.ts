@@ -709,8 +709,6 @@ export const QUERY_PENDING: readonly QueryPending[] = [
   { path: "app/(app)/chat/page.tsx", reason: "pending migration: Task 10" },
   { path: "components/ApprovalCard.tsx", reason: "pending migration: Task 10" },
   { path: "components/ConnectCard.tsx", reason: "pending migration: Task 10" },
-  { path: "components/CreateOrgDialog.tsx", reason: "pending migration: Task 10" },
-  { path: "components/LeaveOrgDialog.tsx", reason: "pending migration: Task 10" },
   { path: "components/QuestionCard.tsx", reason: "pending migration: Task 10" },
   { path: "components/SessionFilePreview.tsx", reason: "pending migration: Task 10" },
   { path: "components/conversation/ComposerBar.tsx", reason: "pending migration: Task 10" },
@@ -726,13 +724,6 @@ export const QUERY_PENDING: readonly QueryPending[] = [
   { path: "components/conversation/useQueue.tsx", reason: "pending migration: Task 10" },
   { path: "components/extension-ui/EmbedTab.tsx", reason: "pending migration: Task 10" },
   { path: "components/extension-ui/ExtensionViewTab.tsx", reason: "pending migration: Task 10" },
-  {
-    path: "components/shell/AppFrame.tsx",
-    reason:
-      "pending migration: Task 10 (rewrites the shell: org switch, sign-out and the shell queries it builds with an empty org id when there is no org)",
-  },
-  { path: "components/shell/conversations.tsx", reason: "pending migration: Task 10" },
-  { path: "components/shell/nav.tsx", reason: "pending migration: Task 10" },
   { path: "components/use-draft-files.ts", reason: "pending migration: Task 10" },
   { path: "app/(app)/agents/[id]/page.tsx", reason: "pending migration: Task 11" },
   { path: "app/(app)/agents/new/page.tsx", reason: "pending migration: Task 11" },

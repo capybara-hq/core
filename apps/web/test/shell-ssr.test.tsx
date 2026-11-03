@@ -10,12 +10,16 @@ import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zh from "../messages/zh.json";
 import ErrorPage from "../src/app/(app)/error";
+import { SessionGuard } from "../src/components/SessionGuard";
 import { KernelStarting } from "../src/components/shell/KernelStarting";
+import { ApiClientError } from "../src/lib/api";
 import { navigateBrowser } from "../src/lib/browser";
+import { keys } from "../src/lib/query/keys";
+import { conversationGroupsQuery, inboxCountQuery } from "../src/lib/query/shell";
 import type { Me } from "../src/lib/session";
 import { broadcastSession, useSessionSync } from "../src/lib/session-sync";
-import { bodyOf, noContent, stubApi } from "./support/api";
-import { Link, resetNavigation, router } from "./support/navigation";
+import { bodyOf, json, noContent, stubApi } from "./support/api";
+import { Link, pathname, resetNavigation, router } from "./support/navigation";
 import { ME } from "./support/render";
 import { expectNoFirstPaintFetch } from "./support/server";
 import {
@@ -445,5 +449,89 @@ describe("cross-tab session sync", () => {
     expect(router.push).not.toHaveBeenCalled();
     act(() => other.postMessage({ kind: "signed-out", from: "another-tab", at: 2 }));
     await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("persistent sidebar sections (web query cache spec §6)", () => {
+  const groupsGets = (calls: { method: string; url: string }[]) =>
+    calls.filter((c) => c.method === "GET" && c.url.includes("/conversations/groups"));
+  const inboxGets = (calls: { method: string; url: string }[]) =>
+    calls.filter((c) => c.method === "GET" && c.url.includes("/inbox"));
+
+  it("sidebar refetches stale groups on path change and not fresh ones", async () => {
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/conversations/groups": () =>
+        json(200, { groups: [], next: null, archivedCount: 0 }),
+      "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [] }),
+    });
+    const view = renderFrame(shellOf(ME));
+    const move = async (to: string) => {
+      pathname.current = to;
+      view.rerender(frameElement(shellOf(ME), <p>page body</p>, {}, view.client));
+      await act(() => new Promise((r) => setTimeout(r, 20)));
+    };
+    // fresh from the layout: a path change reads nothing
+    await move("/agents");
+    expect(calls).toEqual([]);
+    // the groups went stale (31 s old), the count is still fresh: only the groups are read
+    const groups = conversationGroupsQuery("o1").queryKey;
+    view.client.setQueryData(groups, view.client.getQueryData(groups), {
+      updatedAt: Date.now() - 31_000,
+    });
+    await move("/skills");
+    await vi.waitFor(() => expect(groupsGets(calls)).toHaveLength(1));
+    expect(inboxGets(calls)).toHaveLength(0);
+    // now both are stale
+    const count = inboxCountQuery("o1").queryKey;
+    view.client.setQueryData(count, view.client.getQueryData(count), {
+      updatedAt: Date.now() - 31_000,
+    });
+    await move("/connectors");
+    await vi.waitFor(() => expect(inboxGets(calls)).toHaveLength(1));
+    expect(groupsGets(calls)).toHaveLength(1);
+  });
+
+  it("a path change with the same pathname reads nothing", async () => {
+    const calls = stubApi({});
+    const view = renderFrame(shellOf(ME));
+    const groups = conversationGroupsQuery("o1").queryKey;
+    view.client.setQueryData(groups, view.client.getQueryData(groups), { updatedAt: 0 });
+    view.rerender(frameElement(shellOf(ME), <p>page body</p>, {}, view.client));
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("signing out (sign-out race)", () => {
+  const signedOut = () => new ApiClientError(401, "auth.session_expired", "expired");
+
+  it("a 401 read while the sign-out is pending leaves the navigation to the sign-out", async () => {
+    let release: (r: Response) => void = () => {};
+    stubApi({
+      "POST /api/v1/auth/logout": () =>
+        new Promise<Response>((r) => {
+          release = r;
+        }),
+    });
+    const view = renderFrame(shellOf(ME), <SessionGuard>page body</SessionGuard>);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "账户: Grant" }));
+    await user.click(await screen.findByRole("menuitem", { name: zh.common.logout }));
+    // the logout's own 401 storm: a read finds the session gone before the answer
+    await act(async () => {
+      await view.client
+        .prefetchQuery({
+          queryKey: keys.org("o1").agents(),
+          queryFn: () => Promise.reject(signedOut()),
+          retry: false,
+        })
+        .catch(() => {});
+    });
+    expect(router.replace).not.toHaveBeenCalled();
+    await act(async () => {
+      release(noContent());
+    });
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/login"));
+    expect(router.replace).not.toHaveBeenCalled();
   });
 });

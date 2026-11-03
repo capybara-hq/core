@@ -1,22 +1,27 @@
 "use client";
 
 import type { SidebarConversations, SidebarFilter, SidebarGroup } from "@capybara-hq/design";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "../../i18n/navigation";
 import {
   archiveConversation,
-  CONVERSATIONS_CHANGED,
   type Conversation,
   type ConversationGroup,
   type ConversationGroupsPage,
   type ConversationSearch,
   deleteConversation,
-  listConversationGroups,
-  listConversations,
-  NoCurrentOrgError,
-  notifyConversationsChanged,
   renameConversation,
 } from "../../lib/conversations";
+import { retryOnMountOf } from "../../lib/query/client";
+import { useAppMutation } from "../../lib/query/define";
+import { keys } from "../../lib/query/keys";
+import {
+  conversationGroupsQuery,
+  groupsViewKey,
+  moreConversationsQuery,
+  moreGroupsQuery,
+} from "../../lib/query/shell";
 
 /** The conversation id of a `/chat/<id>` route. */
 export function activeIdFrom(pathname: string): string | undefined {
@@ -26,23 +31,25 @@ export function activeIdFrom(pathname: string): string | undefined {
 
 type Loaded = {
   orgId: string;
+  /** When the first page it was built on was read (`dataUpdatedAt`): a newer one merges into it. */
+  base?: number | undefined;
   /** The view the groups belong to (`viewKey`): a refresh merges only into the same view. */
   view: string;
-  /** The archived list (else the live one): until a new filter's answer arrives, the rows of the
-   * same list stay shown (the design narrows them locally). */
+  /** The archived list (else the live one). */
   archived: boolean;
   groups: ConversationGroup[];
   next: string | null;
 };
+const EMPTY_LOADED: Loaded = { orgId: "", view: "", archived: false, groups: [], next: null };
 
 /** The view the list shows: the live or the archived list, narrowed by the kernel's search. */
 type View = { archived: boolean; q: string; state: SidebarFilter["state"] };
-const viewKey = (v: View) => JSON.stringify([v.archived, v.q.trim(), v.state]);
 const searchOf = (v: View): ConversationSearch => ({
   q: v.q,
   state: v.state,
   ...(v.archived ? { archived: true } : {}),
 });
+const viewKey = (v: View) => groupsViewKey(searchOf(v));
 
 /**
  * The loaded list without one conversation; a group left empty goes too (also one with `more`:
@@ -55,28 +62,12 @@ function withoutRow(l: Loaded, id: string): Loaded {
   return { ...l, groups };
 }
 
-type ViewState = {
-  orgId: string | null | undefined;
-  filter: SidebarFilter;
-  archivedOpen: boolean;
-  settledQ: string;
-};
-const DEFAULT_VIEW: Omit<ViewState, "orgId"> = {
+/** The sidebar's defaults: the view the `(app)` layout reads on the server. */
+const DEFAULT_VIEW: { filter: SidebarFilter; archivedOpen: boolean; settledQ: string } = {
   filter: { q: "", state: "all" },
   archivedOpen: false,
   settledQ: "",
 };
-/** The view the `(app)` layout reads on the server (the sidebar's defaults). */
-const DEFAULT_KEY = viewKey({ archived: false, q: "", state: "all" });
-
-/** The server's page as the loaded default view of `orgId`. */
-const seedOf = (orgId: string, page: ConversationGroupsPage): Loaded => ({
-  orgId,
-  view: DEFAULT_KEY,
-  archived: false,
-  groups: page.groups,
-  next: page.next,
-});
 
 /** Typing in the filter asks the kernel once the input settles (the rows narrow at once). */
 const QUERY_SETTLE_MS = 200;
@@ -132,13 +123,6 @@ export function mergeRefresh(old: Loaded, fresh: Loaded): Loaded {
 
 export type ConversationGroupsOptions = {
   /**
-   * The default view as the `(app)` layout read it on the server: shown at first paint with no
-   * browser read, and merged in again whenever the server sends a new one (`router.refresh()`).
-   * `null`: the server read failed (the section's error state with 重试). Omitted: the hook loads
-   * on mount.
-   */
-  initial?: ConversationGroupsPage | null;
-  /**
    * A failed action the viewer started (group ＋, More, More groups, rename, archive, delete):
    * AppFrame shows a toast.
    */
@@ -148,79 +132,76 @@ export type ConversationGroupsOptions = {
 /** The periodic reload of the groups (state dots of background conversations). */
 const GROUPS_POLL_MS = 30_000;
 
+/** The archived flag of a view key (`groupsViewKey`). */
+const archivedOfKey = (k: unknown): boolean =>
+  typeof k === "string" && k !== "default" && (JSON.parse(k) as [boolean])[0] === true;
+
+/** The sidebar of an account without a current org: an empty list, nothing to read. */
+export function noOrgConversations(pathname: string): SidebarConversations {
+  const activeId = activeIdFrom(pathname);
+  const noop = () => {};
+  return {
+    state: "ready",
+    groups: [],
+    moreGroups: false,
+    onMoreGroups: noop,
+    onRetry: noop,
+    filter: { q: "", state: "all", onChange: noop },
+    archived: { count: 0, open: false, onOpenChange: noop },
+    onRename: async () => {},
+    onArchive: async () => {},
+    onDelete: async () => {},
+    ...(activeId ? { activeId } : {}),
+  };
+}
+
 /**
  * The sidebar's conversation section for the current user (web order §2.1): my conversations
- * grouped by agent, seeded from the server (`options.initial`) or loaded on an org change,
- * refreshed on a route into `/chat/*` (a new conversation shows), when the window gets focus, every
- * 30 s and after a row action. State lives in this browser only.
+ * grouped by agent, read through the query cache (web query cache spec §6). The first page of each
+ * view is a query (`conversationGroupsQuery`, the layout prefetches the default one); it is read
+ * again every 30 s, on a path change while stale (AppFrame) and when a write invalidates it. State
+ * lives in this browser only.
  *
- * `orgId`: `undefined` while the session loads (the section shows its skeleton), `null` when the
- * account has no current org (an empty list), else the org. A refresh keeps the rows and groups
- * the viewer opened with More / More groups past the fresh page (`mergeRefresh`); an org or view
- * change starts over. Only the latest load applies.
+ * What the viewer opened with More / More groups past the first page stays local and is merged
+ * into each fresh first page (`mergeRefresh`); an org or view change starts over.
  *
  * The filter (`q`, `state`) is sent to the kernel; the archived list loads `…/groups?archived=1`
- * and swaps the list in place. The archived count is the `archivedCount` of the latest load (the
- * kernel counts it whatever the view). Rename, archive and delete call the kernel and reload;
- * deleting the open conversation goes to `/chat`.
+ * and swaps the list in place. The archived count is the `archivedCount` of the shown answer (the
+ * kernel counts it whatever the view). Rename, archive and delete call the kernel and invalidate
+ * every view; deleting the open conversation goes to `/chat`.
  *
  * Paging is by cursor (`next` → `after`): a group that gets new activity between two pages can
  * come back on a later page, so pages are merged by agent id.
  */
 export function useConversationGroups(
-  orgId: string | null | undefined,
+  orgId: string,
   pathname: string,
   options: ConversationGroupsOptions = {},
 ): SidebarConversations {
   const router = useRouter();
-  const initial = options.initial;
-  const [loaded, setLoaded] = useState<Loaded | null>(() =>
-    orgId != null && initial != null ? seedOf(orgId, initial) : null,
-  );
-  const [failed, setFailed] = useState<string | null>(() =>
-    orgId != null && initial === null ? orgId : null,
-  );
-  // The filter and archived view belong to one org: another org reads the defaults at once, so
-  // its first load never carries the old org's view.
-  const [viewState, setViewState] = useState<ViewState>({ orgId, ...DEFAULT_VIEW });
-  const effective: ViewState = viewState.orgId === orgId ? viewState : { orgId, ...DEFAULT_VIEW };
-  const { filter, archivedOpen, settledQ } = effective;
-  const setView = (patch: Partial<Omit<ViewState, "orgId">>) =>
-    setViewState((v) => ({ ...(v.orgId === orgId ? v : { orgId, ...DEFAULT_VIEW }), ...patch }));
+  const qc = useQueryClient();
+  const [viewState, setViewState] = useState(DEFAULT_VIEW);
+  // Rows and groups paged in past the first page, for one view.
+  const [paged, setPaged] = useState<Loaded | null>(null);
+  // The filter, archived view and paged rows belong to one org: another org starts over.
+  const [scope, setScope] = useState(orgId);
+  if (scope !== orgId) {
+    setScope(orgId);
+    setViewState(DEFAULT_VIEW);
+    setPaged(null);
+  }
+  const { filter, archivedOpen, settledQ } = viewState;
+  const setView = (patch: Partial<typeof DEFAULT_VIEW>) =>
+    setViewState((v) => ({ ...v, ...patch }));
   const setFilter = (f: SidebarFilter) => setView({ filter: f });
   const setArchivedOpen = (open: boolean) => setView({ archivedOpen: open });
-  const [archivedCount, setArchivedCount] = useState<{ orgId: string; n: number } | null>(() =>
-    orgId != null && initial?.archivedCount !== undefined
-      ? { orgId, n: initial.archivedCount }
-      : null,
-  );
-  // The org and view whose rows came from the server: the load effect skips them (no browser read
-  // at first paint, nor after a refresh); any other view loads.
-  const seededFor = useRef<string | null>(
-    orgId != null && initial !== undefined ? `${orgId}|${DEFAULT_KEY}` : null,
-  );
-  // New props from the server: merge the fresh default page into what is shown (the same org and
-  // view), replace another org's rows, keep a filtered view the viewer opened.
-  const [seed, setSeed] = useState(initial);
-  if (initial !== undefined && seed !== initial) {
-    setSeed(initial);
-    const filtered = loaded !== null && loaded.orgId === orgId && loaded.view !== DEFAULT_KEY;
-    if (orgId != null && initial === null) {
-      if (loaded?.orgId !== orgId) setFailed(orgId);
-    } else if (orgId != null && initial !== null && !filtered) {
-      seededFor.current = `${orgId}|${DEFAULT_KEY}`;
-      const fresh = seedOf(orgId, initial);
-      setLoaded(loaded?.orgId === orgId ? mergeRefresh(loaded, fresh) : fresh);
-      setFailed(null);
-      if (initial.archivedCount !== undefined)
-        setArchivedCount({ orgId, n: initial.archivedCount });
-    }
-  }
   // The q sent to the kernel: the filter's once typing settles.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: setView reads the current org
   useEffect(() => {
     if (filter.q === settledQ) return;
-    const timer = setTimeout(() => setView({ settledQ: filter.q }), QUERY_SETTLE_MS);
+    const timer = setTimeout(
+      () => setViewState((v) => ({ ...v, settledQ: filter.q })),
+      QUERY_SETTLE_MS,
+    );
     return () => clearTimeout(timer);
   }, [filter.q, settledQ]);
   const view = useMemo<View>(
@@ -228,97 +209,72 @@ export function useConversationGroups(
     [archivedOpen, settledQ, filter.state],
   );
   const key = viewKey(view);
-  // The org and view whose answer is awaited: an answer for another (after a switch) is dropped.
-  const current = useRef<string | null | undefined>(orgId);
-  current.current = orgId;
-  const currentView = useRef(view);
-  currentView.current = view;
+  const query = conversationGroupsQuery(orgId, searchOf(view));
+  const q = useQuery({
+    ...query,
+    retryOnMount: retryOnMountOf(query.queryKey),
+    refetchInterval: GROUPS_POLL_MS,
+    // While a new filter of the same list loads, the previous filter's rows stay shown (the
+    // design narrows them locally); the live and the archived list never stand in for each other.
+    placeholderData: (prev, prevQuery) =>
+      prevQuery !== undefined &&
+      prevQuery.queryKey[1] === orgId &&
+      archivedOfKey(prevQuery.queryKey.at(-1)) === view.archived
+        ? prev
+        : undefined,
+  });
+  const fresh: Loaded | null =
+    q.data === undefined || q.isPlaceholderData
+      ? null
+      : {
+          orgId,
+          base: q.dataUpdatedAt,
+          view: key,
+          archived: view.archived,
+          groups: q.data.groups,
+          next: q.data.next,
+        };
+  const own = paged !== null && paged.orgId === orgId && paged.view === key ? paged : null;
+  // The paged rows hold the first page they were built on; a newer first page merges into them.
+  const mine: Loaded | null =
+    fresh === null
+      ? q.data === undefined
+        ? null
+        : { orgId, view: "", archived: view.archived, groups: q.data.groups, next: q.data.next }
+      : own === null
+        ? fresh
+        : own.base === fresh.base
+          ? own
+          : { ...mergeRefresh(own, fresh), base: fresh.base };
+  // What is shown, for the paging handlers (an answer for another view is dropped).
+  const shown = useRef(mine);
+  shown.current = mine;
+  const currentKey = useRef(key);
+  currentKey.current = key;
   const pathnameRef = useRef(pathname);
   pathnameRef.current = pathname;
-  // Only the latest load applies (m5): an older answer for the same org is dropped.
-  const seq = useRef(0);
   const onError = useRef(options.onError);
   onError.current = options.onError;
 
-  const load = useCallback(async (org: string) => {
-    const mine = ++seq.current;
-    const v = currentView.current;
-    const k = viewKey(v);
-    try {
-      const page = await listConversationGroups(org, searchOf(v));
-      if (current.current !== org || mine !== seq.current) return;
-      if (page.archivedCount !== undefined) setArchivedCount({ orgId: org, n: page.archivedCount });
-      const fresh = {
-        orgId: org,
-        view: k,
-        archived: v.archived,
-        groups: page.groups,
-        next: page.next,
-      };
-      setLoaded((l) =>
-        l !== null && l.orgId === org && l.view === k ? mergeRefresh(l, fresh) : fresh,
-      );
-      setFailed(null);
-    } catch {
-      if (current.current !== org || mine !== seq.current) return;
-      setFailed(org);
-    }
-  }, []);
+  // `shown` carries the time of the first page it stands for (merged or not).
+  const update = (k: string, f: (l: Loaded) => Loaded) => {
+    const l = shown.current;
+    if (l === null || l.view !== k || currentKey.current !== k) return;
+    setPaged(f(l));
+  };
 
-  // A new org or view: load it (rows of the same list stay until the answer replaces them; another
-  // org's rows are never shown, see `mine`), unless the server already sent it.
-  useEffect(() => {
-    if (orgId === null || orgId === undefined) return;
-    if (seededFor.current === `${orgId}|${key}`) return;
-    seededFor.current = null;
-    void load(orgId);
-  }, [orgId, key, load]);
-
-  // Into a conversation: refresh, so a conversation started elsewhere shows.
-  const inChat = pathname.startsWith("/chat/") ? pathname : null;
-  const lastChat = useRef(inChat);
-  useEffect(() => {
-    if (inChat === null || inChat === lastChat.current || orgId === null || orgId === undefined) {
-      lastChat.current = inChat;
-      return;
-    }
-    lastChat.current = inChat;
-    void load(orgId);
-  }, [inChat, orgId, load]);
-
-  useEffect(() => {
-    if (orgId === null || orgId === undefined) return;
-    const onFocus = () => void load(orgId);
-    window.addEventListener("focus", onFocus);
-    // A title changed (generated or renamed), a conversation was archived or deleted, the open
-    // conversation's run started, ended or began waiting.
-    window.addEventListener(CONVERSATIONS_CHANGED, onFocus);
-    // Conversations in the background have no stream here: a cheap periodic reload keeps their
-    // state dots current (the inbox count polls at the same pace). Skipped while the tab is hidden.
-    const timer = setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      void load(orgId);
-    }, GROUPS_POLL_MS);
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      window.removeEventListener(CONVERSATIONS_CHANGED, onFocus);
-      clearInterval(timer);
-    };
-  }, [orgId, load]);
-
-  const update = (org: string, k: string, f: (l: Loaded) => Loaded) =>
-    setLoaded((l) => (l === null || l.orgId !== org || l.view !== k ? l : f(l)));
-
-  const onMore = async (org: string, g: ConversationGroup) => {
+  const onMore = async (g: ConversationGroup) => {
     const last = g.conversations.at(-1);
-    const v = currentView.current;
+    const k = key;
     try {
-      const page = await listConversations(org, {
-        agentId: g.agent.id,
-        ...(last ? { after: last.id } : {}),
-        ...searchOf(v),
-      });
-      update(org, viewKey(v), (l) => ({
+      const page = await qc.fetchQuery(
+        moreConversationsQuery(orgId, {
+          agentId: g.agent.id,
+          ...(last ? { after: last.id } : {}),
+          ...searchOf(view),
+        }),
+      );
+      update(k, (l) => ({
         ...l,
         groups: l.groups.map((x) =>
           x.agent.id !== g.agent.id
@@ -335,88 +291,73 @@ export function useConversationGroups(
       }));
     } catch (e) {
       // The More row stays; the viewer can try again.
-      if (current.current === org) onError.current?.(e);
+      onError.current?.(e);
     }
   };
 
-  const onMoreGroups = async (org: string, after: string) => {
-    const v = currentView.current;
+  const onMoreGroups = async (after: string) => {
+    const k = key;
     try {
-      const page = await listConversationGroups(org, { after, ...searchOf(v) });
-      update(org, viewKey(v), (l) => ({
-        ...l,
-        groups: mergeGroups(l.groups, page.groups),
-        next: page.next,
-      }));
+      const page = await qc.fetchQuery(moreGroupsQuery(orgId, { after, ...searchOf(view) }));
+      update(k, (l) => ({ ...l, groups: mergeGroups(l.groups, page.groups), next: page.next }));
     } catch (e) {
       // The More groups row stays.
-      if (current.current === org) onError.current?.(e);
+      onError.current?.(e);
     }
   };
 
   // Group ＋ opens a new conversation with that agent picked; it is created on first send.
   const onNew = (agentId: string) => router.push(`/chat?agent=${encodeURIComponent(agentId)}`);
 
-  // The row actions: the kernel call, then every list reloads; a failure is reported, and
-  // rename and delete reject so the row stays as it was.
-  const act = async (
-    call: (org: string) => Promise<unknown>,
-    rethrow: boolean,
-    removed?: string,
-  ) => {
+  // A row that left this view goes at once, from the cached first page and from the paged rows (a
+  // merge keeps rows the fresh page lacks, so it would bring the row back); every view is then
+  // read again.
+  const dropRow = (id: string) => {
+    const l = shown.current;
+    qc.setQueryData<ConversationGroupsPage>(query.queryKey, (page) =>
+      page === undefined
+        ? page
+        : { ...page, groups: withoutRow({ ...EMPTY_LOADED, groups: page.groups }, id).groups },
+    );
+    // Built on the page just written: the next render shows it as it is.
+    const base = qc.getQueryState(query.queryKey)?.dataUpdatedAt;
+    if (l !== null && l.view === key) setPaged({ ...withoutRow(l, id), base });
+  };
+  const invalidates = () => [keys.org(orgId).conversationGroupsAll()];
+  const rename = useAppMutation({
+    fn: (v: { id: string; title: string }) => renameConversation(orgId, v.id, v.title),
+    invalidates,
+  });
+  // The row goes as soon as the kernel answers, before the views are read again.
+  const archive = useAppMutation({
+    fn: async (v: { id: string; archived: boolean }) => {
+      await archiveConversation(orgId, v.id, v.archived);
+      dropRow(v.id);
+    },
+    invalidates,
+  });
+  const remove = useAppMutation({
+    fn: async (id: string) => {
+      await deleteConversation(orgId, id);
+      dropRow(id);
+      // The open conversation is gone: back to a new one.
+      if (activeIdFrom(pathnameRef.current) === id) router.push("/chat");
+    },
+    invalidates,
+  });
+  // A failure is reported; rename and delete reject so the row stays as it was.
+  const report = async (p: Promise<unknown>, rethrow: boolean) => {
     try {
-      if (orgId === null || orgId === undefined) throw new NoCurrentOrgError();
-      await call(orgId);
-      // A row that left this view goes at once; the refresh merges into what is left (a merge
-      // keeps rows the fresh page lacks, so it would bring the row back).
-      if (removed !== undefined)
-        setLoaded((l) => (l === null || l.orgId !== orgId ? l : withoutRow(l, removed)));
-      notifyConversationsChanged();
+      await p;
     } catch (e) {
       onError.current?.(e);
       if (rethrow) throw e;
     }
   };
-  const actions = {
-    filter: { ...filter, onChange: setFilter },
-    archived: {
-      count: orgId != null && archivedCount?.orgId === orgId ? archivedCount.n : 0,
-      open: archivedOpen,
-      onOpenChange: setArchivedOpen,
-    },
-    onRename: (id: string, title: string) => act((org) => renameConversation(org, id, title), true),
-    onArchive: (id: string, archived: boolean) =>
-      act((org) => archiveConversation(org, id, archived), false, id),
-    onDelete: (id: string) =>
-      act(
-        async (org) => {
-          await deleteConversation(org, id);
-          // The open conversation is gone: back to a new one.
-          if (activeIdFrom(pathnameRef.current) === id) router.push("/chat");
-        },
-        true,
-        id,
-      ),
-  };
 
   const activeId = activeIdFrom(pathname);
-  const noop = () => {};
-  if (orgId === null || orgId === undefined) {
-    return {
-      state: orgId === null ? "ready" : "loading",
-      groups: [],
-      moreGroups: false,
-      onMoreGroups: noop,
-      onRetry: noop,
-      ...actions,
-      ...(activeId ? { activeId } : {}),
-    };
-  }
-  // The rows of this org and list (live or archived). While a new filter loads, the previous
-  // filter's rows stay shown (the design narrows them locally); switching between the live and
-  // the archived list, or the org, shows the skeleton until the answer arrives.
-  const mine = loaded?.orgId === orgId && loaded.archived === archivedOpen ? loaded : null;
-  const state = failed === orgId && mine === null ? "error" : mine === null ? "loading" : "ready";
+  // Loading shows the skeleton: the first answer of this list (live or archived) is on its way.
+  const state = mine !== null ? "ready" : q.error !== null ? "error" : "loading";
   const toRow = (c: Conversation) => ({
     id: c.id,
     title: c.title,
@@ -429,7 +370,7 @@ export function useConversationGroups(
     agentName: g.agent.name,
     conversations: g.conversations.map(toRow),
     more: g.more,
-    onMore: () => void onMore(orgId, g),
+    onMore: () => void onMore(g),
     onNew: () => onNew(g.agent.id),
   }));
   const next = mine?.next ?? null;
@@ -440,13 +381,19 @@ export function useConversationGroups(
     scope: orgId,
     moreGroups: next !== null,
     onMoreGroups: () => {
-      if (next !== null) void onMoreGroups(orgId, next);
+      if (next !== null) void onMoreGroups(next);
     },
-    onRetry: () => {
-      setFailed(null);
-      void load(orgId);
+    onRetry: () => void q.refetch(),
+    filter: { ...filter, onChange: setFilter },
+    archived: {
+      count: q.data?.archivedCount ?? 0,
+      open: archivedOpen,
+      onOpenChange: setArchivedOpen,
     },
-    ...actions,
+    onRename: (id: string, title: string) => report(rename.mutateAsync({ id, title }), true),
+    onArchive: (id: string, archived: boolean) =>
+      report(archive.mutateAsync({ id, archived }), false),
+    onDelete: (id: string) => report(remove.mutateAsync(id), true),
     ...(activeId ? { activeId } : {}),
   };
 }

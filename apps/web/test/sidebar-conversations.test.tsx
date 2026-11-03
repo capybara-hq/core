@@ -4,13 +4,17 @@ import {
   Sidebar,
   type SidebarProps,
 } from "@capybara-hq/design";
+import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useConversationGroups } from "../src/components/shell/conversations";
+import { noOrgConversations, useConversationGroups } from "../src/components/shell/conversations";
 import type { ConversationGroupsPage } from "../src/lib/conversations";
+import { keys } from "../src/lib/query/keys";
+import { conversationGroupsQuery } from "../src/lib/query/shell";
 import { bodyOf, json, noContent, stubApi } from "./support/api";
 import { Link, router } from "./support/navigation";
+import { testQueryClient } from "./support/query";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -50,29 +54,31 @@ const base: Omit<SidebarProps, "conversations"> = {
 };
 const onError = vi.fn();
 
-function Harness({
-  orgId,
-  path = "/",
-  initial,
-}: {
-  orgId: string | null | undefined;
-  path?: string;
-  initial?: ConversationGroupsPage | null;
-}) {
-  const conversations = useConversationGroups(orgId, path, {
-    onError,
-    ...(initial !== undefined ? { initial } : {}),
-  });
+function Harness({ orgId, path = "/" }: { orgId: string; path?: string }) {
+  const conversations = useConversationGroups(orgId, path, { onError });
   return <Sidebar {...base} conversations={conversations} mode="full" />;
 }
 
-const frame = (orgId: string | null | undefined, path?: string) => (
-  <DesignProvider locale="zh" link={Link as LinkComponent}>
-    <Harness orgId={orgId} {...(path ? { path } : {})} />
-  </DesignProvider>
+/** The query client of the latest `show` (the browser's cache). */
+let client: QueryClient = testQueryClient();
+
+const frame = (orgId: string, path?: string) => (
+  <QueryClientProvider client={client}>
+    <DesignProvider locale="zh" link={Link as LinkComponent}>
+      <Harness orgId={orgId} {...(path ? { path } : {})} />
+    </DesignProvider>
+  </QueryClientProvider>
 );
-const show = (orgId: string | null | undefined, path?: string) => render(frame(orgId, path));
+const show = (orgId: string, path?: string) => {
+  client = testQueryClient();
+  return render(frame(orgId, path));
+};
 const section = () => screen.getByRole("region", { name: "会话" });
+/** A write elsewhere (a rename, the open conversation's run) invalidates every view. */
+const invalidate = (orgId = "o1") =>
+  act(async () => {
+    await client.invalidateQueries({ queryKey: keys.org(orgId).conversationGroupsAll() });
+  });
 
 describe("useConversationGroups", () => {
   it("renders my groups; untitled rows read 未命名会话; the row under /chat/<id> is current", async () => {
@@ -160,11 +166,7 @@ describe("useConversationGroups", () => {
     });
     const r = show("o1");
     await screen.findByRole("link", { name: "A 的会话" });
-    r.rerender(
-      <DesignProvider locale="zh" link={Link as LinkComponent}>
-        <Harness orgId="o2" />
-      </DesignProvider>,
-    );
+    r.rerender(frame("o2"));
     expect(screen.queryByRole("link", { name: "A 的会话" })).toBeNull();
     expect(section().getAttribute("aria-busy")).toBe("true");
     await act(async () => {
@@ -191,7 +193,7 @@ describe("useConversationGroups", () => {
     expect(calls.some((c) => c.method === "POST")).toBe(false);
   });
 
-  it("reloads when a conversation's title changed (cap:conversations-changed)", async () => {
+  it("reloads when its query is invalidated (a conversation's title changed)", async () => {
     let title = "一";
     stubApi({
       "GET /api/v1/orgs/o1/conversations/groups": () =>
@@ -200,9 +202,7 @@ describe("useConversationGroups", () => {
     show("o1");
     await screen.findByRole("link", { name: "一" });
     title = "新的标题";
-    act(() => {
-      window.dispatchEvent(new Event("cap:conversations-changed"));
-    });
+    await invalidate();
     expect(await screen.findByRole("link", { name: "新的标题" })).toBeTruthy();
   });
 
@@ -242,73 +242,78 @@ describe("useConversationGroups", () => {
     expect(JSON.parse(localStorage.getItem("cap.sidebar.collapsed.o1") ?? "[]")).toEqual(["a1"]);
   });
 
-  it("no current org (null): an empty ready list, no request", () => {
+  it("no current org: an empty ready list, no request", () => {
     const calls = stubApi({});
-    show(null);
+    render(
+      <DesignProvider locale="zh" link={Link as LinkComponent}>
+        <Sidebar {...base} conversations={noOrgConversations("/")} mode="full" />
+      </DesignProvider>,
+    );
     expect(within(section()).getByText("还没有会话。")).toBeTruthy();
-    expect(calls).toHaveLength(0);
-  });
-
-  it("session still loading (undefined): busy, no empty hint, no request (I2)", () => {
-    const calls = stubApi({});
-    show(undefined);
-    expect(section().getAttribute("aria-busy")).toBe("true");
-    expect(within(section()).queryByText("还没有会话。")).toBeNull();
     expect(calls).toHaveLength(0);
   });
 });
 
-describe("useConversationGroups seeded from the server (web-SSR §3.1)", () => {
-  const seeded = (orgId: string, initial: ConversationGroupsPage | null, path = "/") => (
-    <DesignProvider locale="zh" link={Link as LinkComponent}>
-      <Harness orgId={orgId} path={path} initial={initial} />
-    </DesignProvider>
-  );
+describe("useConversationGroups from the cache the layout filled (web query cache §3.1)", () => {
   const page = (title: string): ConversationGroupsPage => ({
     groups: [group("a1", "研究助手", [conv("c1", "a1", title)])],
     next: null,
     archivedCount: 3,
   });
+  /** `show` with the default view already cached (`data`), as the layout's prefetch leaves it. */
+  const seeded = (orgId: string, data: ConversationGroupsPage) => {
+    client = testQueryClient();
+    client.setQueryData(conversationGroupsQuery(orgId).queryKey, data);
+    return render(frame(orgId));
+  };
 
-  it("the server's page paints at once, with no browser read", async () => {
+  it("the cached page paints at once, with no browser read", async () => {
     const calls = stubApi({});
-    render(seeded("o1", page("一")));
+    seeded("o1", page("一"));
     expect(screen.getByRole("link", { name: "一" })).toBeTruthy();
     expect(within(section()).getByRole("button", { name: /已归档/ })).toBeTruthy();
     await act(() => new Promise((r) => setTimeout(r, 20)));
     expect(calls).toEqual([]);
   });
 
-  it("a failed server read: the error state, and 重试 loads", async () => {
+  it("a failed read without data: the error state, and 重试 loads", async () => {
+    let fail = true;
     const calls = stubApi({
-      "GET /api/v1/orgs/o1/conversations/groups": () => json(200, page("重试后")),
+      "GET /api/v1/orgs/o1/conversations/groups": () =>
+        fail ? json(500, { error: { code: "internal", message: "x" } }) : json(200, page("重试后")),
     });
-    render(seeded("o1", null));
-    expect(calls).toEqual([]);
+    show("o1");
+    expect(await within(section()).findByText("会话列表加载失败")).toBeTruthy();
+    const failed = calls.length;
+    fail = false;
     await userEvent.click(within(section()).getByRole("button", { name: "重试" }));
     expect(await screen.findByRole("link", { name: "重试后" })).toBeTruthy();
+    expect(calls.length).toBe(failed + 1);
   });
 
-  it("new props from the server replace the rows; another org's page never shows the old rows", () => {
-    stubApi({});
-    const r = render(seeded("o1", page("一")));
-    r.rerender(seeded("o1", page("刷新后")));
-    expect(screen.getByRole("link", { name: "刷新后" })).toBeTruthy();
-    expect(screen.queryByRole("link", { name: "一" })).toBeNull();
-    r.rerender(seeded("o2", { groups: [], next: null }));
-    expect(screen.queryByRole("link", { name: "刷新后" })).toBeNull();
-  });
-
-  it("live updates continue: focus and the 30 s poll read again", async () => {
-    const calls = stubApi({
-      "GET /api/v1/orgs/o1/conversations/groups": () => json(200, page("新")),
+  it("new data in the cache replaces the rows; another org's list never shows the old rows", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o2/conversations/groups": () => new Promise<Response>(() => {}),
     });
-    render(seeded("o1", page("一")));
+    const r = seeded("o1", page("一"));
+    await act(async () => {
+      client.setQueryData(conversationGroupsQuery("o1").queryKey, page("刷新后"));
+    });
+    expect(await screen.findByRole("link", { name: "刷新后" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "一" })).toBeNull();
+    r.rerender(frame("o2"));
+    expect(screen.queryByRole("link", { name: "刷新后" })).toBeNull();
+    expect(section().getAttribute("aria-busy")).toBe("true");
+  });
+
+  it("window focus reads nothing (the next path change or the poll does)", async () => {
+    const calls = stubApi({});
+    seeded("o1", page("一"));
     act(() => {
       window.dispatchEvent(new Event("focus"));
     });
-    expect(await screen.findByRole("link", { name: "新" })).toBeTruthy();
-    expect(calls).toHaveLength(1);
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(calls).toEqual([]);
   });
 });
 
@@ -345,13 +350,14 @@ describe("useConversationGroups refresh (I1)", () => {
     return { calls, pageOneCalls: () => pageOne };
   }
 
-  it("More, then a route into the older conversation: the row stays listed and current", async () => {
+  it("More, then a route into the older conversation and a refresh: the row stays listed and current", async () => {
     const { pageOneCalls } = api();
     const r = show("o1", "/agents");
     await screen.findByRole("link", { name: "一" });
     await userEvent.click(within(section()).getByRole("button", { name: "显示更多" }));
     await screen.findByRole("link", { name: "二" });
     r.rerender(frame("o1", "/chat/c0"));
+    await invalidate();
     await vi.waitFor(() => expect(pageOneCalls()).toBe(2));
     // let the refresh's answer apply
     await act(async () => {});
@@ -360,15 +366,13 @@ describe("useConversationGroups refresh (I1)", () => {
     expect(within(section()).queryByRole("button", { name: "显示更多" })).toBeNull();
   });
 
-  it("More, then window focus: the loaded rows stay; a new conversation shows first", async () => {
+  it("More, then a refresh: the loaded rows stay; a new conversation shows first", async () => {
     const { pageOneCalls } = api({ fresh: true });
     show("o1");
     await screen.findByRole("link", { name: "一" });
     await userEvent.click(within(section()).getByRole("button", { name: "显示更多" }));
     await screen.findByRole("link", { name: "二" });
-    await act(async () => {
-      window.dispatchEvent(new Event("focus"));
-    });
+    await invalidate();
     expect(pageOneCalls()).toBe(2);
     await screen.findByRole("link", { name: "新的" });
     const names = within(section())
@@ -383,9 +387,7 @@ describe("useConversationGroups refresh (I1)", () => {
     await screen.findByRole("link", { name: "一" });
     await userEvent.click(screen.getByRole("button", { name: "更多分组" }));
     await screen.findByRole("link", { name: "九" });
-    await act(async () => {
-      window.dispatchEvent(new Event("focus"));
-    });
+    await invalidate();
     await vi.waitFor(() =>
       expect(calls.filter((c) => c.url.endsWith("/conversations/groups"))).toHaveLength(2),
     );
@@ -393,16 +395,6 @@ describe("useConversationGroups refresh (I1)", () => {
     expect(screen.getByRole("link", { name: "九" })).toBeTruthy();
     // a2 was the last page: no More groups row comes back
     expect(screen.queryByRole("button", { name: "更多分组" })).toBeNull();
-  });
-
-  it("a route into /chat/* reloads, so a conversation started elsewhere shows", async () => {
-    api({ fresh: true });
-    const r = show("o1", "/agents");
-    await screen.findByRole("link", { name: "一" });
-    expect(screen.queryByRole("link", { name: "新的" })).toBeNull();
-    r.rerender(frame("o1", "/chat/c2"));
-    const row = await screen.findByRole("link", { name: "新的" });
-    expect(row.getAttribute("aria-current")).toBe("page");
   });
 
   it("an older refresh answering last does not overwrite a newer one (m5)", async () => {
@@ -424,8 +416,9 @@ describe("useConversationGroups refresh (I1)", () => {
     show("o1");
     await screen.findByRole("link", { name: "一" });
     await act(async () => {
-      window.dispatchEvent(new Event("focus"));
-      window.dispatchEvent(new Event("focus"));
+      const queryKey = keys.org("o1").conversationGroupsAll();
+      void client.invalidateQueries({ queryKey });
+      void client.invalidateQueries({ queryKey });
     });
     expect(answers).toHaveLength(2);
     await act(async () => {
@@ -654,9 +647,7 @@ describe("useConversationGroups refresh drops rows that left the view (review r1
     await userEvent.click(within(section()).getByRole("button", { name: "显示更多" }));
     await screen.findByRole("link", { name: "一" });
     archivedElsewhere = true;
-    await act(async () => {
-      window.dispatchEvent(new Event("cap:conversations-changed"));
-    });
+    await invalidate();
     await vi.waitFor(() => expect(screen.queryByRole("link", { name: "三" })).toBeNull());
     const names = within(section())
       .getAllByRole("link")
@@ -688,9 +679,7 @@ describe("useConversationGroups refresh drops rows that left the view (review r1
     show("o1");
     await screen.findByRole("link", { name: "一" });
     stopped = true;
-    await act(async () => {
-      window.dispatchEvent(new Event("focus"));
-    });
+    await invalidate();
     await vi.waitFor(() => expect(screen.queryByRole("link", { name: "一" })).toBeNull());
   });
 
@@ -711,9 +700,7 @@ describe("useConversationGroups refresh drops rows that left the view (review r1
     await userEvent.click(screen.getByRole("button", { name: "更多分组" }));
     await screen.findByRole("link", { name: "九" });
     gone = true;
-    await act(async () => {
-      window.dispatchEvent(new Event("focus"));
-    });
+    await invalidate();
     await vi.waitFor(() => expect(screen.queryByRole("link", { name: "九" })).toBeNull());
   });
 
@@ -798,7 +785,7 @@ describe("useConversationGroups filter races (review r1)", () => {
     await screen.findByRole("link", { name: "一" });
     // a refresh of the unfiltered list is in flight
     await act(async () => {
-      window.dispatchEvent(new Event("focus"));
+      void client.invalidateQueries({ queryKey: keys.org("o1").conversationGroupsAll() });
     });
     const user = userEvent.setup();
     await user.click(within(section()).getByRole("button", { name: "筛选会话" }));

@@ -1,11 +1,14 @@
 "use client";
 
 import type { CommandGroup, IconName, SidebarNavItem } from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback } from "react";
 import { useRouter } from "../../i18n/navigation";
-import { listInbox } from "../../lib/inbox";
-import { listUiContributions, type UiContributionItem, uiLocale } from "../../lib/ui";
+import { retryOnMountOf } from "../../lib/query/client";
+import { keys } from "../../lib/query/keys";
+import { extensionPagesQuery, inboxCountQuery } from "../../lib/query/shell";
+import { type UiContributionItem, uiLocale } from "../../lib/ui";
 import { ADMIN_PAGES, type AdminPageId } from "../admin-nav";
 
 /**
@@ -104,7 +107,7 @@ export function navLevelOf(me: {
   return role === "member" ? "member" : "guest";
 }
 
-/** 收件箱待处理数的刷新间隔（浏览器内轮询，不涉及服务端状态）。 */
+/** How often the inbox count is read again (in the browser; no server state involved). */
 const PENDING_POLL_MS = 30_000;
 
 const under = (pathname: string, prefix: string) =>
@@ -140,67 +143,29 @@ export function activeNavOf(pathname: string): string {
   return pathname === "/" ? "overview" : "";
 }
 
-type PendingCount = { count: number; more: boolean };
-
 /**
- * The current user's pending inbox count (`GET /inbox`: tool approvals and skill changes), read
- * again when the org or the route changes, every 30 s and on `refresh()`; 0 without an org or when
- * the read fails. `more`: the inbox was truncated (more than `count` items).
- *
- * `options.initial` is the count the `(app)` layout read on the server (`null`: that read failed):
- * shown at first paint with no browser read, and again whenever the server sends a new one.
+ * The current user's pending inbox count (`GET /inbox`: tool approvals and skill changes) from the
+ * query cache: read again every 30 s, on a path change while stale (AppFrame) and on `refresh()`;
+ * 0 while it loads or when the read fails. `more`: the inbox was truncated (more than `count`
+ * items).
  */
-export function usePendingApprovals(
-  orgId: string | null,
-  pathname: string,
-  options: { initial?: PendingCount | null } = {},
-): { count: number; more: boolean; refresh(): void } {
-  const { initial } = options;
-  const [count, setCount] = useState(initial?.count ?? 0);
-  const [more, setMore] = useState(initial?.more ?? false);
-  const [nonce, setNonce] = useState(0);
-  // The org, route and refresh the server's count stands for: the effect does not read it again.
-  const seededFor = useRef<string | null>(
-    initial !== undefined ? `${orgId}|${pathname}|${nonce}` : null,
+export function usePendingApprovals(orgId: string): {
+  count: number;
+  more: boolean;
+  refresh(): void;
+} {
+  const qc = useQueryClient();
+  const query = inboxCountQuery(orgId);
+  const { data } = useQuery({
+    ...query,
+    retryOnMount: retryOnMountOf(query.queryKey),
+    refetchInterval: PENDING_POLL_MS,
+  });
+  const refresh = useCallback(
+    () => void qc.invalidateQueries({ queryKey: keys.org(orgId).inboxCount() }),
+    [qc, orgId],
   );
-  const [seed, setSeed] = useState(initial);
-  if (initial !== undefined && seed !== initial) {
-    setSeed(initial);
-    setCount(initial?.count ?? 0);
-    setMore(initial?.more ?? false);
-    seededFor.current = `${orgId}|${pathname}|${nonce}`;
-  }
-  useEffect(() => {
-    if (orgId === null) {
-      setCount(0);
-      return;
-    }
-    let disposed = false;
-    const load = () =>
-      listInbox(orgId).then(
-        (r) => {
-          if (disposed) return;
-          setCount(r.items.length);
-          setMore(r.truncated === true);
-        },
-        () => {
-          if (disposed) return;
-          setCount(0);
-          setMore(false);
-        },
-      );
-    if (seededFor.current !== `${orgId}|${pathname}|${nonce}`) {
-      seededFor.current = null;
-      void load();
-    }
-    const timer = setInterval(() => void load(), PENDING_POLL_MS);
-    return () => {
-      disposed = true;
-      clearInterval(timer);
-    };
-  }, [orgId, pathname, nonce]);
-  const refresh = useCallback(() => setNonce((n) => n + 1), []);
-  return { count, more, refresh };
+  return { count: data?.count ?? 0, more: data?.more ?? false, refresh };
 }
 
 /** 插件页面的路由：`/p/<插件>/<贡献 id>`。 */
@@ -210,44 +175,23 @@ export const pluginPageHref = (plugin: string, id: string) =>
 /**
  * The sidebar's Extensions group: the page contributions (`place: "page"`) of the current org's
  * enabled extensions, schema views and embeds alike, labelled by the page title; when two pages
- * share a title, each label gets its plugin name. Empty without an org, pages or on a failed read
- * (the group is then hidden). `options.initial`: the pages the `(app)` layout read on the server
- * (`null`: that read failed), used instead of a browser read and again on every new one.
+ * share a title, each label gets its plugin name. Empty while loading, without pages or on a failed
+ * read (the group is then hidden).
  */
 export function useExtensions(
-  orgId: string | null,
+  orgId: string,
   locale: string,
-  options: { initial?: UiContributionItem[] | null } = {},
 ): { id: string; label: string; href: string }[] {
-  const { initial } = options;
-  const [pages, setPages] = useState<UiContributionItem[]>(initial ?? []);
-  const seededFor = useRef<string | null>(initial !== undefined ? `${orgId}` : null);
-  const [seed, setSeed] = useState(initial);
-  if (initial !== undefined && seed !== initial) {
-    setSeed(initial);
-    setPages(initial ?? []);
-    seededFor.current = `${orgId}`;
-  }
-  useEffect(() => {
-    if (orgId === null) {
-      setPages([]);
-      return;
-    }
-    if (seededFor.current === orgId) return;
-    seededFor.current = null;
-    let disposed = false;
-    listUiContributions(orgId).then(
-      ({ items }) => {
-        if (!disposed) setPages(items.filter((c) => c.place === "page"));
-      },
-      () => {
-        if (!disposed) setPages([]);
-      },
-    );
-    return () => {
-      disposed = true;
-    };
-  }, [orgId]);
+  const query = extensionPagesQuery(orgId);
+  const pages = useQuery({ ...query, retryOnMount: retryOnMountOf(query.queryKey) }).data ?? [];
+  return extensionItems(pages, locale);
+}
+
+/** The Extensions group's items for `pages`. */
+function extensionItems(
+  pages: readonly UiContributionItem[],
+  locale: string,
+): { id: string; label: string; href: string }[] {
   const lang = uiLocale(locale);
   const titles = pages.map((p) => p.title[lang]);
   return pages.map((p) => {

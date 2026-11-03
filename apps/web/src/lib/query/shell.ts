@@ -1,6 +1,10 @@
 import { getReadiness } from "../agents";
 import { ApiClientError } from "../api";
-import { listConversationGroups } from "../conversations";
+import {
+  type ConversationSearch,
+  listConversationGroups,
+  listConversations,
+} from "../conversations";
 import { listInbox } from "../inbox";
 import { getMe, type Me } from "../session";
 import { listUiContributions } from "../ui";
@@ -42,11 +46,43 @@ export const readinessQuery = (orgId: string) =>
     freshness: "orgConfig",
   });
 
-/** The sidebar's conversation groups; `"default"` is the unfiltered live list the layout reads. */
-export const conversationGroupsQuery = (orgId: string, view = "default") =>
+/**
+ * The key of a sidebar view: `"default"` for the unfiltered live list (what the layout reads), else
+ * the archived flag, the trimmed query and the state.
+ */
+export function groupsViewKey(s: ConversationSearch = {}): string {
+  const archived = s.archived === true;
+  const q = (s.q ?? "").trim();
+  const state = s.state ?? "all";
+  return !archived && q === "" && state === "all"
+    ? "default"
+    : JSON.stringify([archived, q, state]);
+}
+
+/** The sidebar's conversation groups (first page) of one view, `search` as the kernel takes it. */
+export const conversationGroupsQuery = (orgId: string, search: ConversationSearch = {}) =>
   defineQuery({
-    key: keys.org(orgId).conversationGroups(view),
-    fn: () => listConversationGroups(orgId),
+    key: keys.org(orgId).conversationGroups(groupsViewKey(search)),
+    fn: () => listConversationGroups(orgId, search),
+    freshness: "live",
+  });
+
+/** A group's next rows (the sidebar's More), after its last shown row. */
+export const moreConversationsQuery = (
+  orgId: string,
+  opts: { agentId: string; after?: string } & ConversationSearch,
+) =>
+  defineQuery({
+    key: keys.org(orgId).conversationGroupsMore("rows", JSON.stringify(opts)),
+    fn: () => listConversations(orgId, opts),
+    freshness: "live",
+  });
+
+/** The groups past the shown ones (the sidebar's More groups). */
+export const moreGroupsQuery = (orgId: string, opts: { after: string } & ConversationSearch) =>
+  defineQuery({
+    key: keys.org(orgId).conversationGroupsMore("groups", JSON.stringify(opts)),
+    fn: () => listConversationGroups(orgId, opts),
     freshness: "live",
   });
 

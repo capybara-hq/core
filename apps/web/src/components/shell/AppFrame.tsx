@@ -7,9 +7,10 @@ import {
   OverviewPage,
   SetupPage,
   type SidebarContext,
+  type SidebarConversations,
   useToast,
 } from "@capybara-hq/design";
-import { type UseQueryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import {
   type ReactNode,
@@ -27,24 +28,19 @@ import { ApiClientError } from "../../lib/api";
 import { loginPathFor } from "../../lib/auth-sources";
 import { navigateBrowser } from "../../lib/browser";
 import { useConnectResultToast } from "../../lib/connect";
-import { NoCurrentOrgError } from "../../lib/conversations";
+import { CONVERSATIONS_CHANGED, NoCurrentOrgError } from "../../lib/conversations";
 import { usePreferences } from "../../lib/preferences";
 import { retryOnMountOf } from "../../lib/query/client";
-import {
-  conversationGroupsQuery,
-  extensionPagesQuery,
-  inboxCountQuery,
-  meQuery,
-  readinessQuery,
-} from "../../lib/query/shell";
-import { resetSession } from "../../lib/query/workspace";
-import type { ShellData } from "../../lib/server/session";
-import { logout, setCurrentOrg } from "../../lib/session";
+import { useAppMutation } from "../../lib/query/define";
+import { keys } from "../../lib/query/keys";
+import { meQuery, readinessQuery } from "../../lib/query/shell";
+import { markSigningOut, resetSession } from "../../lib/query/workspace";
+import { logout, type Me, type Membership, setCurrentOrg } from "../../lib/session";
 import { broadcastSession, useSessionSync } from "../../lib/session-sync";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { CreateOrgDialog } from "../CreateOrgDialog";
 import { LeaveOrgDialog } from "../LeaveOrgDialog";
-import { useConversationGroups } from "./conversations";
+import { noOrgConversations, useConversationGroups } from "./conversations";
 import {
   activeAdminOf,
   activeNavOf,
@@ -95,8 +91,8 @@ const under = (pathname: string, prefix: string) =>
 
 /**
  * The `(app)` route group's frame (web-SSR spec §3), drawn from the shell queries the layout read
- * on the server (`getShell()`, hydrated into the browser's cache), with no browser read on mount. The frame is chosen at first paint from
- * the props and the route:
+ * on the server (`getShell()`, hydrated into the browser's cache), with no browser read on mount.
+ * The frame is chosen at first paint from the cache and the route:
  * 1. the org chooser, without a current org (outside `/admin`);
  * 2. the setup frame, while the org is not ready on a setup route (web-SSR spec §4);
  * 3. otherwise the App Shell: the sidebar in its work or admin context (web order §2.1–§2.2), the
@@ -105,93 +101,131 @@ const under = (pathname: string, prefix: string) =>
  * It provides the session to pages ({@link SessionContext}). An org change is a full navigation to
  * `/` (ruling R4), so the current page stays until the new document arrives; `reload()` re-renders
  * the route on the server (`router.refresh()`), which hydrates fresh shell data. The conversation
- * list, the pending count and the extension pages start from the cache and keep their live updates
- * (polls, focus, `cap:conversations-changed`).
+ * list, the pending count and the extension pages read their queries directly; the frame stays
+ * mounted across navigations, so on each path change it refetches the stale ones of the list and
+ * the count (web query cache spec §6, "Persistent components").
  */
 export function AppFrame({ version, children }: { version: string; children: ReactNode }) {
-  const initial = useShellQueries();
+  const me = useQuery(meQuery()).data;
   // `me` is always prefetched by the layout; without it (never on a document load) nothing is drawn.
-  if (initial === null) return null;
+  if (me === undefined) return null;
+  const org = me.memberships.find((m) => m.orgId === me.currentOrgId) ?? null;
+  // Org-scoped queries are built only with an org.
+  if (org === null) {
+    return (
+      <ShellFrame me={me} org={null} readiness={null} sections={null} version={version}>
+        {children}
+      </ShellFrame>
+    );
+  }
   return (
-    <ShellFrame initial={initial} version={version}>
+    <OrgFrame me={me} org={org} version={version}>
       {children}
-    </ShellFrame>
+    </OrgFrame>
   );
 }
 
-/**
- * A shell section's query as the `initial` its hook takes: the data, `null` when the read failed
- * (the section's error state), `undefined` while nothing is cached (the hook loads it itself).
- * An error the layout read is not read again on mount.
- */
-function useSection<T>(o: UseQueryOptions<T, ApiClientError>, orgId: string | null) {
-  const q = useQuery({
-    ...o,
-    enabled: orgId !== null,
-    retryOnMount: retryOnMountOf(o.queryKey),
-  });
-  if (orgId === null) return null;
-  if (q.data !== undefined) return q.data;
-  return q.error === null ? undefined : null;
-}
-
-/** The shell data from the cache the layout filled (web query cache spec §3.1). */
-function useShellQueries(): ShellInitial | null {
-  const me = useQuery(meQuery()).data;
-  const org = me?.memberships.find((m) => m.orgId === me.currentOrgId) ?? null;
-  const orgId = org?.orgId ?? null;
-  // Queries of no org are disabled; the key's org id is then never read.
-  const scope = orgId ?? "";
-  const readiness = useSection(readinessQuery(scope), orgId);
-  const groups = useSection(conversationGroupsQuery(scope), orgId);
-  const pending = useSection(inboxCountQuery(scope), orgId);
-  const extensions = useSection(extensionPagesQuery(scope), orgId);
-  if (me === undefined) return null;
-  return { me, org, readiness: readiness ?? null, groups, pending, extensions };
-}
-
-/** A section hook's `initial` option: omitted while the section is not cached. */
-const seeded = <T,>(initial: T | undefined): { initial?: T } =>
-  initial === undefined ? {} : { initial };
-
-/** {@link ShellData} as the frame takes it: a section not cached yet is `undefined`. */
-type ShellInitial = Omit<ShellData, "groups" | "pending" | "extensions"> & {
-  groups: ShellData["groups"] | undefined;
-  pending: ShellData["pending"] | undefined;
-  extensions: ShellData["extensions"] | undefined;
+/** The sidebar's sections of the current org, each read from its own query. */
+type Sections = {
+  conversations: SidebarConversations;
+  pending: { count: number; more: boolean; refresh(): void };
+  extensions: { id: string; label: string; href: string }[];
 };
 
-function ShellFrame({
-  initial,
+/** The frame of an account with a current org: readiness and the sidebar sections. */
+function OrgFrame({
+  me,
+  org,
   version,
   children,
 }: {
-  initial: ShellInitial;
+  me: Me;
+  org: Membership;
   version: string;
   children: ReactNode;
 }) {
   const t = useTranslations();
   const locale = useLocale();
+  const qc = useQueryClient();
+  const pathname = usePathname();
+  const errorMessage = useErrorMessage();
+  const toast = useToast();
+  const { orgId } = org;
+  const readinessQ = readinessQuery(orgId);
+  // A failed readiness read draws the shell (as the server's `null` did).
+  const readiness =
+    useQuery({ ...readinessQ, retryOnMount: retryOnMountOf(readinessQ.queryKey) }).data ?? null;
+  const conversations = useConversationGroups(orgId, pathname, {
+    onError: (e) =>
+      toast.error(e instanceof NoCurrentOrgError ? t("shell.noCurrentOrg") : errorMessage(e)),
+  });
+  const pending = usePendingApprovals(orgId);
+  const extensions = useExtensions(orgId, locale);
+  // Persistent sections never remount, so `refetchOnMount` never fires for them: each path change
+  // refetches their stale queries (fresh ones stay as they are).
+  const lastPath = useRef(pathname);
+  useEffect(() => {
+    if (lastPath.current === pathname) return;
+    lastPath.current = pathname;
+    for (const queryKey of [keys.org(orgId).conversationGroupsAll(), keys.org(orgId).inboxCount()])
+      void qc.refetchQueries({ queryKey, stale: true, type: "active" });
+  }, [pathname, qc, orgId]);
+  // A title changed (generated or renamed), a conversation was archived or deleted, the open
+  // conversation's run started, ended or began waiting: the groups are read again.
+  useEffect(() => {
+    const changed = () =>
+      void qc.invalidateQueries({ queryKey: keys.org(orgId).conversationGroupsAll() });
+    window.addEventListener(CONVERSATIONS_CHANGED, changed);
+    return () => window.removeEventListener(CONVERSATIONS_CHANGED, changed);
+  }, [qc, orgId]);
+  return (
+    <ShellFrame
+      me={me}
+      org={org}
+      readiness={readiness}
+      sections={{ conversations, pending, extensions }}
+      version={version}
+    >
+      {children}
+    </ShellFrame>
+  );
+}
+
+const NO_PENDING: Sections["pending"] = { count: 0, more: false, refresh: () => {} };
+
+function ShellFrame({
+  me,
+  org: currentOrg,
+  readiness,
+  sections,
+  version,
+  children,
+}: {
+  me: Me;
+  org: Membership | null;
+  /** `null` only without a current org (or when its read failed). */
+  readiness: OrgReadiness | null;
+  /** `null` without a current org: nothing org-scoped is read. */
+  sections: Sections | null;
+  version: string;
+  children: ReactNode;
+}) {
+  const t = useTranslations();
   const router = useRouter();
   const qc = useQueryClient();
   const pathname = usePathname();
   const errorMessage = useErrorMessage();
   const toast = useToast();
-  const { me, org: currentOrg, readiness } = initial;
   const orgId = currentOrg?.orgId ?? null;
-  const conversations = useConversationGroups(orgId, pathname, {
-    ...seeded(initial.groups),
-    onError: (e) =>
-      toast.error(e instanceof NoCurrentOrgError ? t("shell.noCurrentOrg") : errorMessage(e)),
-  });
-  const pending = usePendingApprovals(orgId, pathname, seeded(initial.pending));
+  const conversations = sections?.conversations ?? noOrgConversations(pathname);
+  const pending = sections?.pending ?? NO_PENDING;
   const { primary, more, inbox, adminHref, commands } = useNav(
     pending.count,
     navLevelOf(me),
     pending.more,
     me.account.isEnterpriseAdmin,
   );
-  const extensions = useExtensions(orgId, locale, seeded(initial.extensions));
+  const extensions = sections?.extensions ?? [];
   const adminItems = useAdminItems();
   const preferences = usePreferences();
   const [creatingOrg, setCreatingOrg] = useState(false);
@@ -219,10 +253,16 @@ function ShellFrame({
     void resetSession(qc, () => navigateBrowser("/"));
   }, [qc]);
   const reload = useCallback(async () => startRefresh(() => router.refresh()), [router]);
+  // Both end the cache's session themselves (`resetSession`): nothing to invalidate.
+  const { mutateAsync: putCurrentOrg } = useAppMutation({
+    fn: setCurrentOrg,
+    invalidates: () => [],
+  });
+  const { mutateAsync: postLogout } = useAppMutation({ fn: logout, invalidates: () => [] });
   const switchOrg = useCallback(
     async (next: string | null) => {
       try {
-        await setCurrentOrg(next);
+        await putCurrentOrg(next);
       } catch (e) {
         if (e instanceof ApiClientError && e.status === 401) {
           await resetSession(qc, () =>
@@ -234,7 +274,7 @@ function ShellFrame({
       broadcastSession("org-switched");
       openHome();
     },
-    [openHome, qc],
+    [openHome, qc, putCurrentOrg],
   );
   // A failed switch from a menu says why (the menu has closed).
   const selectOrg = (next: string) =>
@@ -257,8 +297,11 @@ function ShellFrame({
   );
 
   async function onLogout() {
+    // A read that finds the session gone while signing out is expected: the session guard stands
+    // down, so it cannot send the page to sign-in with a return path meanwhile.
+    markSigningOut();
     try {
-      await logout();
+      await postLogout();
     } finally {
       broadcastSession("signed-out");
       await resetSession(qc, () => navigateBrowser("/login"));
