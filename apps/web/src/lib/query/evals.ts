@@ -83,22 +83,25 @@ async function firstRead(orgId: string, runId: string): Promise<EvalRunState> {
 }
 
 /**
- * One poll on top of `prev`: the run, and the result rows changed since the last read (merged by
- * id). When the run just ended every light row is read once more (an incremental read can miss the
- * last rows written at the same instant as the previous `asOf`).
+ * One poll on top of the cached state: the run, and the result rows changed since the last read
+ * (merged by id). When the run just ended every light row is read once more (an incremental read
+ * can miss the last rows written at the same instant as the previous `asOf`). `latest` reads the
+ * cache again after the reads: what changed meanwhile ("Load more" pages, a label) is kept.
  */
-async function poll(orgId: string, runId: string, prev: EvalRunState): Promise<EvalRunState> {
-  const since = prev.asOf ?? undefined;
+async function poll(
+  orgId: string,
+  runId: string,
+  latest: () => EvalRunState,
+): Promise<EvalRunState> {
+  const since = latest().asOf ?? undefined;
   const [{ run }, page] = await Promise.all([
     getEvalRun(orgId, runId),
     listEvalResultRows(orgId, runId, since),
   ]);
+  const ended = runActive(latest().run.status) && !runActive(run.status);
   const complete =
-    since === undefined
-      ? page
-      : runActive(prev.run.status) && !runActive(run.status)
-        ? await listEvalResultRows(orgId, runId)
-        : null;
+    since === undefined ? page : ended ? await listEvalResultRows(orgId, runId) : null;
+  const prev = latest();
   const changed =
     prev.run.status !== run.status ||
     prev.run.casesDone !== run.casesDone ||
@@ -124,7 +127,8 @@ export const evalRunQuery = (orgId: string, runId: string, qc?: QueryClient) => 
     key,
     fn: () => {
       const prev = qc?.getQueryData<EvalRunState>(key);
-      return prev === undefined ? firstRead(orgId, runId) : poll(orgId, runId, prev);
+      if (qc === undefined || prev === undefined) return firstRead(orgId, runId);
+      return poll(orgId, runId, () => qc.getQueryData<EvalRunState>(key) ?? prev);
     },
     freshness: "live",
   });

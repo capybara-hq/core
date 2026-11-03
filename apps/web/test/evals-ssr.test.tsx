@@ -496,6 +496,53 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(screen.queryByRole("button", { name: E.run.loadMore })).toBeNull();
   });
 
+  it("/evals/runs/[runId]: a Load more that lands while a poll is in flight survives the poll", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const browser = stubApi({
+      [`GET ${O}/eval-runs/er1`]: () =>
+        json(200, { run: RUN({ status: "running", casesDone: 0 }) }),
+      [`GET ${O}/eval-runs/er1/results`]: async (c) => {
+        if (c.url.includes("after=")) {
+          return json(200, { results: [ROW("res3")], next: "res3", asOf: T });
+        }
+        await held;
+        return json(200, { results: [], next: null, asOf: "2026-10-22T08:00:05.000Z" });
+      },
+    });
+    await renderRouteWithCache("/evals/runs/er1", {
+      ...ROUTES,
+      [`GET ${O}/eval-runs/er1`]: () =>
+        json(200, { run: RUN({ status: "running", casesDone: 0 }) }),
+      [`GET ${O}/eval-runs/er1/results`]: () =>
+        json(200, { results: [ROW("res1"), ROW("res2")], next: "res2", asOf: T }),
+    });
+    // the poll starts and its results read is held
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    await waitFor(() => expect(browser.some((c) => c.url.includes("updatedSince="))).toBe(true));
+    // Load more lands first
+    await userEvent
+      .setup({ advanceTimers: vi.advanceTimersByTime })
+      .click(screen.getByRole("button", { name: E.run.loadMore }));
+    const table = screen.getByRole("table", { name: E.run.resultsLabel });
+    await waitFor(() => expect(within(table).getAllByText("Delete the stale item").length).toBe(3));
+    // then the poll answers: the loaded page and its newer cursor stay
+    await act(async () => release());
+    await waitFor(() =>
+      expect(browser.filter((c) => c.url.includes("updatedSince=")).length).toBe(1),
+    );
+    await act(() => vi.advanceTimersByTimeAsync(50));
+    expect(within(table).getAllByText("Delete the stale item").length).toBe(3);
+    expect(screen.getByRole("button", { name: E.run.loadMore })).toBeTruthy();
+    await userEvent
+      .setup({ advanceTimers: vi.advanceTimersByTime })
+      .click(screen.getByRole("button", { name: E.run.loadMore }));
+    await waitFor(() => expect(browser.some((c) => c.url.includes("after=res3"))).toBe(true));
+  });
+
   it("/evals/runs/[runId]: an active run polls only after first paint (refetchInterval)", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const browser = stubApi({
