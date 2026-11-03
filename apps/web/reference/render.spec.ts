@@ -51,6 +51,10 @@ const PAGES = [
   "file-picker",
   // the run row: a run's model, duration, tokens and outcome
   "run-row",
+  // config forms: arrays of objects, compact rows, records
+  "repeater",
+  "field-row",
+  "key-value-editor",
 ];
 const THEMES = ["dark", "light"] as const;
 const BLOCK_ID = /^[a-z-]+-[a-z0-9-]+$/;

@@ -105,6 +105,8 @@ const ICONS = {
   lock: "lock",
   // The setup frame: a step waiting for someone else.
   clock: "clock",
+  // Config forms: the Repeater's drag handle.
+  "grip-vertical": "grip-vertical",
 };
 
 const entries = Object.entries(ICONS).map(([name, file]) => {

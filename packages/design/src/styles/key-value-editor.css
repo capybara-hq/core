@@ -1,0 +1,30 @@
+/* KeyValueEditor (spec §6.28): rows of key / value inputs with a remove button each. */
+.cb-kv-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-kv-editor-head,
+.cb-kv-editor-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) var(--cb-control-dense);
+  align-items: center;
+  gap: var(--cb-space-2);
+}
+.cb-kv-editor-head {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-kv-editor-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cb-kv-editor-foot {
+  display: flex;
+}

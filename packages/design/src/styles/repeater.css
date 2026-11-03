@@ -1,0 +1,167 @@
+/* Repeater (spec §6.26): an array of objects in a config form, one hairline card per item. */
+.cb-repeater {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-repeater:focus {
+  outline: none;
+}
+.cb-repeater-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cb-repeater-li {
+  min-width: 0;
+}
+.cb-repeater-item {
+  min-width: 0;
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-md);
+  transition: border-color var(--cb-motion-hover);
+}
+.cb-repeater-item:focus {
+  outline: none;
+}
+.cb-repeater-item:focus-visible {
+  border-color: var(--cb-line-strong);
+}
+.cb-repeater-item[data-invalid="true"] {
+  border-color: var(--cb-fail);
+}
+.cb-repeater-item[data-drop="true"] {
+  border-color: var(--cb-line-strong);
+  background: var(--cb-hover);
+}
+.cb-repeater-item[data-dragging="true"] {
+  opacity: 0.5;
+}
+.cb-repeater-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+  min-height: var(--cb-row-default);
+  padding: 0 var(--cb-space-1) 0 var(--cb-space-3);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.cb-repeater-item[data-collapsed="true"] > .cb-repeater-head {
+  border-bottom: 0;
+}
+/* With a handle or a toggle first, the head starts closer to the edge. */
+.cb-repeater-head:has(> .cb-repeater-handle:first-child, > .cb-icon-btn:first-child) {
+  padding-left: var(--cb-space-1);
+}
+.cb-repeater-handle {
+  display: inline-flex;
+  flex: none;
+  color: var(--cb-faint);
+  cursor: grab;
+  touch-action: none;
+}
+.cb-repeater-handle:hover {
+  color: var(--cb-muted);
+}
+.cb-repeater-titles {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: var(--cb-space-2);
+  min-width: 0;
+  overflow: hidden;
+}
+.cb-repeater-title {
+  flex: none;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--cb-ink);
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-repeater-subtitle {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-repeater-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+.cb-repeater-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+  min-width: 0;
+  padding: var(--cb-space-3);
+}
+.cb-repeater-empty {
+  margin: 0;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+}
+.cb-repeater-foot {
+  display: flex;
+}
+
+/* Rows: compact items (a FieldRow each) split by line-soft, the actions at the row's end. */
+.cb-repeater[data-variant="rows"] > .cb-repeater-list {
+  gap: 0;
+}
+.cb-repeater[data-variant="rows"] .cb-repeater-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--cb-space-2);
+  padding: var(--cb-space-2) 0;
+  border: 0;
+  border-radius: 0;
+}
+.cb-repeater[data-variant="rows"] .cb-repeater-li + .cb-repeater-li > .cb-repeater-item {
+  border-top: 1px solid var(--cb-line-soft);
+}
+.cb-repeater[data-variant="rows"] .cb-repeater-li:first-child > .cb-repeater-item {
+  padding-top: 0;
+}
+.cb-repeater[data-variant="rows"] .cb-repeater-item[data-invalid="true"] {
+  box-shadow: inset 2px 0 0 var(--cb-fail);
+}
+.cb-repeater[data-variant="rows"] .cb-repeater-body {
+  flex: 1;
+  padding: 0;
+}
+/* Handle and actions sit on the inputs' line: control.default high, below the first row's labels. */
+.cb-repeater[data-variant="rows"] .cb-repeater-handle,
+.cb-repeater[data-variant="rows"] .cb-repeater-actions {
+  align-self: flex-start;
+  min-height: var(--cb-control-default);
+}
+.cb-repeater[data-variant="rows"] .cb-repeater-handle {
+  align-items: center;
+}
+.cb-repeater[data-variant="rows"] .cb-repeater-li:first-child .cb-repeater-handle,
+.cb-repeater[data-variant="rows"] .cb-repeater-li:first-child .cb-repeater-actions {
+  margin-top: var(--cb-space-6);
+}
+@media (max-width: 639px) {
+  .cb-repeater[data-variant="rows"] .cb-repeater-li:first-child .cb-repeater-handle,
+  .cb-repeater[data-variant="rows"] .cb-repeater-li:first-child .cb-repeater-actions {
+    margin-top: 0;
+  }
+}

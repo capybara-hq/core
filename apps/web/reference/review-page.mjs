@@ -64,6 +64,10 @@ const GROUPS = [
     title: "Role pass: no access, danger zone, secret reveal",
     components: ["no-access", "danger-zone", "secret-reveal"],
   },
+  {
+    title: "Config forms: repeater, field row, key / value editor",
+    components: ["repeater", "field-row", "key-value-editor"],
+  },
 ];
 const COMPONENTS = GROUPS.flatMap((g) => g.components);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);

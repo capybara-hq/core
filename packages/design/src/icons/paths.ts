@@ -77,6 +77,7 @@ export const ICON_NAMES = [
   "sliders",
   "lock",
   "clock",
+  "grip-vertical",
 ] as const;
 
 export type IconName = (typeof ICON_NAMES)[number];
@@ -505,5 +506,13 @@ export const ICON_NODES: Record<IconName, readonly IconNode[]> = {
   clock: [
     ["circle", { cx: "12", cy: "12", r: "10" }],
     ["path", { d: "M12 6v6l4 2" }],
+  ],
+  "grip-vertical": [
+    ["circle", { cx: "9", cy: "12", r: "1" }],
+    ["circle", { cx: "9", cy: "5", r: "1" }],
+    ["circle", { cx: "9", cy: "19", r: "1" }],
+    ["circle", { cx: "15", cy: "12", r: "1" }],
+    ["circle", { cx: "15", cy: "5", r: "1" }],
+    ["circle", { cx: "15", cy: "19", r: "1" }],
   ],
 };

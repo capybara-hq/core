@@ -243,6 +243,17 @@
   color: var(--cb-disabled);
   cursor: not-allowed;
 }
+/* A menu item's help (a Repeater preset): muted, one line, after the label. */
+.cb-menu-description {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .cb-menu-shortcut {
   color: var(--cb-faint);
   font-size: var(--cb-type-small-size);

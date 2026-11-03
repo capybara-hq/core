@@ -21,6 +21,8 @@ export type MenuItem =
       current?: boolean;
       /** A leading 16 px icon (a navigation menu's items carry the main nav's icons). */
       icon?: IconName;
+      /** One muted line of help after the label (a Repeater preset's help). */
+      description?: string;
     } & (
       | { onSelect(): void; href?: undefined; submenu?: undefined }
       /** 导航项：以 DesignProvider 的 link 渲染。 */
@@ -196,6 +198,9 @@ function MenuItems({ items }: { items: MenuItem[] }) {
         ) : (
           <>
             <MenuLabel item={item} />
+            {item.description ? (
+              <span className="cb-menu-description">{item.description}</span>
+            ) : null}
             {item.shortcut ? <span className="cb-menu-shortcut">{item.shortcut}</span> : null}
           </>
         )}

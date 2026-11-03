@@ -87,6 +87,10 @@ export const REFERENCE_COMPONENTS = [
   "error-detail",
   "file-picker",
   "run-row",
+  // config forms
+  "repeater",
+  "field-row",
+  "key-value-editor",
 ] as const;
 
 export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];

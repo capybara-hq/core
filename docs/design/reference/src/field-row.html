@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>FieldRow · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>FieldRow</h1>
+<p>A compact row of small fields: labels on the first row only, an Advanced disclosure per row, a stack below 640 (spec §6.27).</p>
+<div class="r-blocks">
+<section data-ref-block="field-row-first" style="width:720px" data-pad>
+  <div class="r-field-rows">
+      <div class="r-field-row" data-part="field-row" data-first="true">
+        <div class="r-field-row-fields" data-part="field-row-fields">
+          <div class="r-field"><span class="r-label" data-part="field-label">模型 ID</span><input class="r-input" value="deepseek-chat"></div>
+          <div class="r-field"><span class="r-label">上下文窗口</span><input class="r-input" value="128000"></div>
+          <div class="r-field"><span class="r-label">最大输出</span><input class="r-input" value="8192"></div>
+          <span class="r-field-row-check"><span class="r-cfg-box"></span>图片</span>
+          <button class="r-field-row-toggle" data-part="field-row-toggle">高级<span class="r-field-row-caret"><i data-icon="chevron-right" data-size="12"></i></span></button>
+        </div>
+
+      </div>
+      <div class="r-field-row" data-part="field-row" data-first="false">
+        <div class="r-field-row-fields" data-part="field-row-fields">
+          <div class="r-field"><span class="r-label" data-part="field-label">模型 ID</span><input class="r-input" value="deepseek-reasoner"></div>
+          <div class="r-field"><span class="r-label">上下文窗口</span><input class="r-input" value="128000"></div>
+          <div class="r-field"><span class="r-label">最大输出</span><input class="r-input" value="32768"></div>
+          <span class="r-field-row-check"><span class="r-cfg-box"></span>图片</span>
+          <button class="r-field-row-toggle" data-part="field-row-toggle">高级<span class="r-field-row-caret"><i data-icon="chevron-right" data-size="12"></i></span></button>
+        </div>
+
+      </div>
+  </div>
+</section>
+<section data-ref-block="field-row-advanced-open" style="width:720px" data-pad>
+  <div class="r-field-rows">
+      <div class="r-field-row" data-part="field-row" data-first="true">
+        <div class="r-field-row-fields" data-part="field-row-fields">
+          <div class="r-field"><span class="r-label" data-part="field-label">模型 ID</span><input class="r-input" value="deepseek-chat"></div>
+          <div class="r-field"><span class="r-label">上下文窗口</span><input class="r-input" value="128000"></div>
+          <div class="r-field"><span class="r-label">最大输出</span><input class="r-input" value="8192"></div>
+          <span class="r-field-row-check"><span class="r-cfg-box"></span>图片</span>
+          <button class="r-field-row-toggle" data-part="field-row-toggle">高级<span class="r-field-row-caret"><i data-icon="chevron-down" data-size="12"></i></span></button>
+        </div>
+        <div class="r-field-row-more" data-part="field-row-more"><div class="r-field"><span class="r-label">流空闲超时 <span class="r-faint">选填</span></span><input class="r-input" placeholder="60000"></div></div>
+      </div>
+      <div class="r-field-row" data-part="field-row" data-first="false">
+        <div class="r-field-row-fields" data-part="field-row-fields">
+          <div class="r-field"><span class="r-label" data-part="field-label">模型 ID</span><input class="r-input" value="deepseek-reasoner"></div>
+          <div class="r-field"><span class="r-label">上下文窗口</span><input class="r-input" value="128000"></div>
+          <div class="r-field"><span class="r-label">最大输出</span><input class="r-input" value="32768"></div>
+          <span class="r-field-row-check"><span class="r-cfg-box"></span>图片</span>
+          <button class="r-field-row-toggle" data-part="field-row-toggle">高级<span class="r-field-row-caret"><i data-icon="chevron-right" data-size="12"></i></span></button>
+        </div>
+
+      </div>
+  </div>
+</section>
+<section data-ref-block="field-row-narrow" style="width:390px" data-pad>
+  <div class="r-field-rows">
+      <div class="r-field-row" data-part="field-row" data-first="true">
+        <div class="r-field-row-fields" data-part="field-row-fields">
+          <div class="r-field"><span class="r-label" data-part="field-label">模型 ID</span><input class="r-input" value="deepseek-chat"></div>
+          <div class="r-field"><span class="r-label">上下文窗口</span><input class="r-input" value="128000"></div>
+          <div class="r-field"><span class="r-label">最大输出</span><input class="r-input" value="8192"></div>
+          <span class="r-field-row-check"><span class="r-cfg-box"></span>图片</span>
+          <button class="r-field-row-toggle" data-part="field-row-toggle">高级<span class="r-field-row-caret"><i data-icon="chevron-right" data-size="12"></i></span></button>
+        </div>
+
+      </div>
+      <div class="r-field-row" data-part="field-row" data-first="false">
+        <div class="r-field-row-fields" data-part="field-row-fields">
+          <div class="r-field"><span class="r-label" data-part="field-label">模型 ID</span><input class="r-input" value="deepseek-reasoner"></div>
+          <div class="r-field"><span class="r-label">上下文窗口</span><input class="r-input" value="128000"></div>
+          <div class="r-field"><span class="r-label">最大输出</span><input class="r-input" value="32768"></div>
+          <span class="r-field-row-check"><span class="r-cfg-box"></span>图片</span>
+          <button class="r-field-row-toggle" data-part="field-row-toggle">高级<span class="r-field-row-caret"><i data-icon="chevron-right" data-size="12"></i></span></button>
+        </div>
+
+      </div>
+  </div>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

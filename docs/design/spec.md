@@ -640,7 +640,7 @@ Selection rules: the user needs to decide → Dialog; view / edit one object wit
 - **Dangerous confirmation**: the ordinary frame and title (`line-strong`, `ink`): the red is only on the destructive button; explains the consequences and recoverability; the object name must be typed, the confirm button is disabled until it matches, and is danger-solid once it matches.
 - **Sheet**: slides out from the right, width 480 / 720, `panel` background + `line-strong` left line + `shadow-sheet`; no scrim by default (the list is still operable). Header: name + version + open in a new page `external-link` + close `x`; may contain Tabs; footer: actions. Closing with unsaved changes needs a second confirmation.
 - **Links**: the design package is framework-agnostic; links in the sidebar navigation, the PageHeader path, Tabs, Sheet, TextLink and LinkCard are rendered through the `link` component of `DesignProvider` (default `<a>`); `apps/web` passes next-intl's `Link` to get client-side navigation and the locale prefix. Pages should not build `<a href>` themselves for in-site navigation.
-- **Popover / Menu**: `panel` background + `line-strong` border + radius `md` + `shadow-1`; it keeps 8 px from the viewport's edges (collision padding) and, opening below or above its trigger, is at least as wide as the trigger (the org switcher, the account row; a flyout to the side keeps its own width); menu items are `row.default` high with padding `pad.default.x`, optionally led by a 16 px `muted` icon (a navigation menu's items carry the main nav's icons); the current choice of a single-choice set (the current org, the language) is an ordinary item in `ink` with a `check`, never drawn disabled; a filter Popover has a search `>` at the top and "Clear / Apply ↵" at the bottom; a hovered item gets a `hover` background. The trigger button is outlined in the accent color when open and holding a value.
+- **Popover / Menu**: `panel` background + `line-strong` border + radius `md` + `shadow-1`; it keeps 8 px from the viewport's edges (collision padding) and, opening below or above its trigger, is at least as wide as the trigger (the org switcher, the account row; a flyout to the side keeps its own width); menu items are `row.default` high with padding `pad.default.x`, optionally led by a 16 px `muted` icon (a navigation menu's items carry the main nav's icons); an item may carry a description after its label (`small`, `muted`, one line with an ellipsis; a Repeater preset's help); the current choice of a single-choice set (the current org, the language) is an ordinary item in `ink` with a `check`, never drawn disabled; a filter Popover has a search `>` at the top and "Clear / Apply ↵" at the bottom; a hovered item gets a `hover` background. The trigger button is outlined in the accent color when open and holding a value.
 - **No menu of one**: an overflow menu (`more-horizontal` in a page head or an object row, More on the conversation title bar) is drawn only when it holds two or more actions a person can take, or one destructive one (separators and disabled items don't count). With none it is not drawn; with one safe action, that action is drawn directly in its place (a button or link). A destructive (`danger`) action is never promoted out of its menu: a menu whose only action is dangerous stays a `more-horizontal` menu with that one item. A table's row menu keeps its column, so a row with one action keeps `⋯`, and a row with none shows no button (§6.6). Never list an action twice on one screen (a menu item that repeats a visible button, the name link or a sidebar entry).
 - **Command palette (⌘K)**: width 560, input with a `>` prefix; group titles small faint; the current item has the `selected` background + a 1px `line-strong` outline (neutral, §2.3); key hints at the bottom.
   - **Items** are one `row.dense` line, gap `space.2`: the label (`ink`), then an optional hint (`faint`, a skill's argument hint "[issue-number]"), then optional tags (`micro` `muted` on the `selected` ground, radius `sm`, padding 0 `space.1`, the picker-menu tag), then an optional description (`muted`, filling the rest of the line with an ellipsis), then an optional source, a secondary label (`small` `faint`, at the end of the line: the plugin a skill comes from, "superpowers"), then an optional shortcut (`Kbd`, at the end).
@@ -668,7 +668,7 @@ States: `skills`, `filtered`
 | palette-source | skills | font-size | type.small |
 | palette-item | filtered | height | row.dense |
 | palette-item[data-selected=true] | filtered | background-color | color.selected |
-- **Toast**: stacked at the bottom right, `panel` background + `line-strong` border + radius `md` + `shadow-1`, a 2px status-color bar on the left (ok / accent / fail); success auto-dismisses after 4s; an error must be dismissed manually and may carry "View →"; a progress type carries a segmented progress bar.
+- **Toast**: stacked at the bottom right, `panel` background + `line-strong` border + radius `md` + `shadow-1`, a 2px status-color bar on the left (ok / accent / fail); success auto-dismisses after 4s, or after 8s when it carries an undo ("撤销" / "Undo", no arrow; a Repeater's remove, §6.26); an error must be dismissed manually and may carry "View →"; a progress type carries a segmented progress bar.
 
 ### 6.8 Charts
 - Bar charts stack discrete blocks (pixel style), `line-strong` for normal values, `fail` marks the failure count, and the current period uses the accent color.
@@ -1773,6 +1773,76 @@ States: `default`, `chosen`
 | file-picker-hint | default | font-size | type.small |
 | button | default | height | control.default |
 | file-picker-status | chosen | row-gap | space.2 |
+
+### 6.26 Repeater
+
+`Repeater({ label, items, addLabel, onAdd, presets?, onRemove, onMove?, onToggle?, min?, max?, disabled?, empty?, variant? })` with `RepeaterItem { key, title?, subtitle?, body, invalid?, collapsed? }`: an array of objects in a config form (an extension's endpoints, an endpoint's models; config forms spec §5). A `group` named by `label` around a list (`ul`) of items, `space.2` apart; each item is a `group` named by its title (an untitled item by its position, "第 2 项" / "Item 2").
+
+- **Cards** (`variant="cards"`, default): a 1px `line` hairline card, radius `md`, no fill (the form card's `panel` shows through). The head is one line at least `row.default` high, split from the body by `line-soft`: the drag handle (`grip-vertical` 14, `faint`, only with `onMove`), a collapse chevron (`chevron-down` / `chevron-right`, a dense icon button with `aria-expanded`, only with `onToggle`), the title (`body`, 500, `ink`, one line with an ellipsis), the subtitle after it (`small`, `muted`, mono, one line with an ellipsis; a template such as `{baseUrl}`), and at the right the dense icon buttons move up / move down (`arrow-up` / `arrow-down`, only with `onMove`) and remove (`trash-2`), each named with the item ("上移 deepseek", "移除 deepseek"). The body holds the item's fields, padding `space.3`, `space.3` between fields. A `collapsed` card (with `onToggle`) draws only its head. An `invalid` card's border is `fail`.
+- **Rows** (`variant="rows"`): compact items without a head, one `FieldRow` (§6.27) each, `space.2` above and below, split by `line-soft`; the handle and the actions sit at the row's ends on the inputs' line (below the first row's labels); an invalid row carries a 2px `fail` bar on its left. Titles only name the rows.
+- **Footer**: a dense `default` button with `plus` and the caller's words ("添加端点" / "Add endpoint"). With `presets` it opens a menu (§6.7) of the presets, each with its help as the item's description, then a separator and "空白" / "Blank"; the button carries a `chevron-down` after its words. `onAdd(presetId?)` gets the preset's id, or nothing for a blank item. After an add, focus goes to the new item's first field (else the item).
+- **Remove** acts at once: `onRemove(key)` removes the item and returns a restore function; the Repeater shows a success toast "已移除「deepseek」。" / `Removed "deepseek".` whose "撤销" / "Undo" action calls it (the toast stays 8 s). Focus moves to the next item (else the previous, else the add button).
+- **Reorder** (`onMove(key, to)`): the move buttons, dragging a card by its handle, or Alt+↑ / Alt+↓ anywhere inside a focused item; focus stays on what had it (a move button that became disabled hands it to its sibling). Move up is disabled on the first item, move down on the last.
+- **Limits and states**: remove is disabled while there are `min` items or fewer, add while there are `max` or more. Without items the list gives way to `empty` (`prose-small`, `muted`). `disabled` (a field given by the startup config) disables add, remove, move and dragging, and hides the handle.
+
+<!-- states: repeater -->
+States: `default`, `rows`, `invalid`, `empty`
+
+<!-- size-table: repeater -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| repeater | default | row-gap | space.2 |
+| repeater-item | default | border-radius | radius.md |
+| repeater-item | default | border-top-color | color.line |
+| repeater-head | default | height | row.default |
+| repeater-head | default | border-bottom-color | color.line-soft |
+| repeater-title | default | color | color.ink |
+| repeater-title | default | font-size | type.body |
+| repeater-subtitle | default | color | color.muted |
+| repeater-subtitle | default | font-size | type.small |
+| repeater-body | default | padding-top | space.3 |
+| repeater-remove | default | width | control.dense |
+| repeater-add | default | height | control.dense |
+| repeater-item | rows | padding-bottom | space.2 |
+| repeater-item | invalid | border-top-color | color.fail |
+| repeater-empty | empty | color | color.muted |
+| repeater-empty | empty | font-size | type.prose-small |
+
+### 6.27 FieldRow
+
+`FieldRow({ children, advanced?, first?, defaultAdvancedOpen? })`: a compact row of small fields for an object whose form hints say `layout: "row"` (a model: ID, context window, max output, the capability checkboxes). The fields (`Field`s) share the row equally, `space.3` apart; checkboxes and other non-field children keep their own width and sit on the inputs' line. Labels are drawn on the first row only (`first`); later rows keep them as the fields' accessible names, out of sight, so a list of rows reads as one table. With `advanced`, a "高级" / "Advanced" toggle ends the row (`small`, `muted`, a `faint` `chevron-right` / `chevron-down` 12 after the words, `aria-expanded`, `aria-controls`; `ink` on a `hover` ground); open, the advanced fields follow under the row, `space.2` below, wrapping at their own width under a 1px `line` guide on the left, indented `space.2` (the Disclosure body, §6.5), their labels always drawn; `defaultAdvancedOpen` starts it open (an issue inside it). **Below 640** the row stacks: one field per line, `space.2` apart, every label drawn; consecutive rows are split by `line-soft` with `space.2` above.
+
+<!-- states: field-row -->
+States: `first`, `advanced-open`, `narrow`
+
+<!-- size-table: field-row -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| field-row-fields | first | column-gap | space.3 |
+| field-label | first | font-size | type.body |
+| field-row-toggle | first | height | control.default |
+| field-row-toggle | first | color | color.muted |
+| field-row-more | advanced-open | padding-left | space.2 |
+| field-row-more | advanced-open | border-left-color | color.line |
+| field-row-fields | narrow | row-gap | space.2 |
+
+### 6.28 KeyValueEditor
+
+`KeyValueEditor({ label, value, onChange, keyLabel, valueLabel, disabled? })`: a record of scalars without form hints (request headers, labels) as rows of two dense inputs, the key (2 parts) and the value (3 parts), and a dense remove icon button (`trash-2`, "移除 X-Org" / "Remove X-Org"; an empty key is named by its row), `space.2` apart both ways. A `group` named by `label`; above the rows a line of column labels (`keyLabel`, `valueLabel`; `small`, `muted`; hidden from screen readers, the inputs are named "名称 1", "值 1"). Under them a dense `default` "添加" / "Add" button with `plus` appends an empty row and focuses its key. Without rows only the button is drawn. `disabled` disables the inputs and both buttons. `value` is an ordered list of pairs; duplicate or empty keys are the form's to validate.
+
+<!-- states: key-value-editor -->
+States: `default`, `empty`
+
+<!-- size-table: key-value-editor -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| kv-editor | default | row-gap | space.2 |
+| kv-editor-row | default | column-gap | space.2 |
+| kv-editor-head | default | color | color.muted |
+| kv-editor-head | default | font-size | type.small |
+| input | default | height | control.dense |
+| kv-editor-add | default | height | control.dense |
+| kv-editor-add | empty | height | control.dense |
 
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.

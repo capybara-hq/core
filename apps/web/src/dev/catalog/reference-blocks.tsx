@@ -55,6 +55,7 @@ import {
   TABLE_SELECTED_ROW,
 } from "@capybara-hq/design/fixtures";
 import { createContext, type ReactNode, useContext } from "react";
+import { CONFIG_FORM_BLOCKS } from "./config-form-blocks";
 import { CONVERSATION_BLOCKS } from "./conversation-blocks";
 import { CONVERSATION_PAGE_BLOCKS } from "./conversation-page-blocks";
 import { COMMANDS } from "./fixtures";
@@ -1043,4 +1044,5 @@ export const REFERENCE_BLOCKS = {
   "secret-reveal": secretRevealBlocks,
   "error-detail": errorDetailBlocks,
   "file-picker": filePickerBlocks,
+  ...CONFIG_FORM_BLOCKS,
 } as const;
