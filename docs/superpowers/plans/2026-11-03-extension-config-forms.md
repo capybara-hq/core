@@ -116,7 +116,8 @@ follow-ups, not executed here.
     secret record; `keyBy` not a string property; `secrets` at level `org`; `section` without root
     `sections`; `messages` below the root; disallowed hint (`widget`) on a secret node; x-ui > 64 KiB.
     One green case: the openai-compatible-shaped schema of spec §6 has no problems.
-  - `parsePluginManifest` accepts `extension.configSchemas` and rejects one over the 96 KiB limit (`CONFIG_UI_LIMITS.configSchemaBytes`).
+  - `parsePluginManifest` accepts `extension.configSchemas` and rejects one over the 96 KiB limit
+    (`CONFIG_UI_LIMITS.configSchemaBytes`).
 - [ ] **Step 2: Run** `pnpm exec vitest run packages/plugin-sdk/test/config-ui.test.ts`; expected
   FAIL (module not found).
 - [ ] **Step 3: Implement.** `secret()` and `ui()` both write

@@ -242,13 +242,22 @@ channel connection errors.
 
 `staticDeploymentSchema` (no imported module on this replica: pending approval, disabled, import
 failed) gives only `{ path, secret, hot }` today, so those extensions get the flat form. The packer
-writes the JSON Schemas into the package: `extension.configSchemas: { deployment?: JsonSchema; org?:
-JsonSchema }` in `plugin.json` (beside `manifest`, ≤ 96 KiB each; `plugin.json` as a whole is
-≤ 256 KiB). The kernel returns it as `schema` with `validated: false` (unchanged semantics: no validation until load). It is **not** part
-of the `manifest_mismatch` comparison: the packer's and the host's zod may serialize slightly
+writes the JSON Schemas into the package: `extension.configSchemas: { deployment?: JsonSchema;
+org?: JsonSchema }` in `plugin.json` (beside `manifest`, ≤ 96 KiB each as compact JSON; the packed
+`plugin.json` text as a whole is ≤ 256 KiB, `PLUGIN_MANIFEST_LIMITS.manifestChars`, which the
+packer checks on the pretty-printed text it writes). The kernel returns it as `schema` with
+`validated: false` (unchanged semantics: no validation until load). It is **not** part of the
+`manifest_mismatch` comparison: the packer's and the host's zod may serialize slightly
 differently, and the field list in `manifest.config` already pins the shape. Old packages without
 `configSchemas` keep today's flat fallback. A package using `ui()` needs an `sdk` range that
 includes this SDK release, so older kernels refuse it by the SDK range before reading the section.
+
+Ruling (final review): a plugin packed with the new plugin-tools that declares config carries
+`extension.configSchemas` even when it uses no `ui()` (its `sdk` range may still admit an older
+SDK). An older kernel's strict section parser refuses such a package with an "unrecognized key"
+error instead of through the SDK range. This is acceptable before 1.0: the kernel and the plugins
+move together (the bootstrap pins and the official marketplace are released in step), so a
+deployment upgrades the kernel before it imports plugins packed by the new toolchain.
 
 ## 5. Web renderer
 
@@ -459,6 +468,9 @@ AGENTS.md CI section lists them.
   (`displayName`, `keys`, `segments`, `messageKey`), so the CLI and older web builds keep working.
 - `hot` moves from `hot` to `x-hot` in the JSON Schema; the web is the only reader and changes in the
   same release.
+- Packages packed by the new plugin-tools that declare config carry `extension.configSchemas`, which
+  an older kernel refuses ("unrecognized key" from its strict section parser) rather than by the SDK
+  range: accepted before 1.0, since the kernel and the plugins move together (§4.5 ruling).
 
 ## 12. Out of scope
 

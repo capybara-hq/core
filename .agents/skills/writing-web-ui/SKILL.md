@@ -226,6 +226,7 @@ Rule implementation: `tools/checks/src/web-ui.ts`; every rule has a violating-fi
 | `web-ui-template` | a `src/app/**/page.tsx` that renders none of the 12 templates "imported from `@capybara-hq/design`" | Pick a §5 template as the skeleton |
 | `web-ui-page-path` | a `header` of a page template (all but `ConversationPage`, `AuthPage`, `OnboardingPage`, `StatusPage`, `TracePage`, `InboxPage`) in a `src/app/(app)/**/page.tsx` without a `path` property, or one the rule cannot follow (reported as "cannot be confirmed statically"): no literal `path` beside a spread, an imported or called value, a spread element without `header` | Pass `header={{ path: [...scope, { label }], title }}` inline or as a same-file const object literal; a page that builds its header elsewhere passes `path` and `title` through and writes the literal itself (see `WizardView`) |
 | `design-char-icon` | A character used as an icon (`▾ ▴ ▸ ◂ ✓ ✗ ✕ ◐ › ‹ « » ● ○ ⠿ ▤ ⋯ ↻ ↗ ↕ ▲ ▼ ‖ ⊘ ◆ □ ■ ▶ ∅ ☰ ⚙ ⌕ ▦`) in a string, template literal or JSX text of non-test code in `apps/web/src` or `packages/design/src`, or in a value of `apps/web/messages/*.json`; the message names the icon to use. Box-drawing (`─ │ └`), `⌘`, `↵`, `→`, `·` and `…` are text and allowed | `<Icon name="chevron-down">` (or an `IconButton` with an `Icon`, `Text icon="circle-x"`, `MenuItem.checked`); keep the accessible name in text or `aria-label` |
+| `web-ui-extension-label` | A provider / extension label built by hand that shows the extension id: a template literal that puts `<…>.provider` (or `provider`) before ` / `, or one holding such an expression as the value of a `label` property or JSX attribute (spaced or not), outside `lib/extension-label.ts`; option values (`value:`, encode helpers) stay allowed | `extensionLabel(x, locale)` / `modelLabel(provider, model, locale)` from `apps/web/src/lib/extension-label.ts` (the display name in the page locale, else the id) |
 | `design-color-literal` | `#hex` / `rgb()` / `hsl()` in `packages/design/src` outside `styles/tokens.css` (both CSS and TS strings are checked; `color-mix()` referencing tokens is allowed) | Define a token in `tokens.css` and use `var(--cb-…)` |
 
 `web-ui-template` has two exemptions: `app/dev/**` (the development catalog page; the other rules still apply), and pages that only handle 404 -- containing no JSX and calling `notFound()` imported from `next/navigation` (e.g. `(app)/[...rest]/page.tsx`), where the page is rendered by the `StatusPage` in the `not-found.tsx` of the same segment. Don't use this exemption to write other pages.
@@ -235,6 +236,18 @@ Rule implementation: `tools/checks/src/web-ui.ts`; every rule has a violating-fi
 Test files (`*.test.*`) are not checked. The package import rule is a blacklist: when introducing a new style / UI dependency, add it to `FORBIDDEN_PKG`.
 
 **First paint follows the window through CSS.** `useMediaQuery` reads `false` on the server and during hydration, so a layout chosen only in JS (rail vs full sidebar, a Sheet vs an inline panel) is drawn in its wide form until the first client render. Below the breakpoint, CSS media queries must already give the narrow first paint (the sidebar draws both variants and shows one; the conversation page hides its inline right area below 1280 until it becomes the Sheet). A "no horizontal page scroll" check that samples before that render fails only under load; pin the first paint with a JS-off case (`test.use({ javaScriptEnabled: false })`, see `apps/web/visual/conversation.interaction.spec.ts` and `sidebar.interaction.spec.ts`).
+
+## Extension config forms
+
+Every extension config form (deployment config, org extension settings, channel connections, the
+catalog install wizard, the plugin upgrade dialog) is drawn by one renderer, the config-form module
+`apps/web/src/components/config-form` (`ConfigForm.tsx` draws a JSON Schema with its `x-ui` hints;
+`model.ts` builds the field tree and reads a draft back; `deployment.ts`, `org.ts` and
+`channel.ts` adapt each API's view and save body). Don't write another schema form. It is built
+only from design pieces: `Repeater` (arrays of objects: item titles, presets, move / remove /
+undo), `FieldRow` / `FieldRowGroup` (compact rows, e.g. an endpoint's models), `KeyValueEditor`
+(records, `maskValues` for secret records). A missing piece is added to `packages/design` through
+the steps below, never styled in `apps/web`.
 
 ## Adding a component or template
 
