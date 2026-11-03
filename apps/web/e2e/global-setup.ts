@@ -37,7 +37,7 @@ import { randomBytes } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer, type ServerResponse } from "node:http";
-import { register } from "node:module";
+import { registerHooks } from "node:module";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -45,12 +45,16 @@ import { fileURLToPath } from "node:url";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import { GenericContainer, Wait } from "testcontainers";
 
-// 按路径加载的内核测试工具（plugin-packages.ts 等）会 import workspace 包（@capybara-hq/plugin-sdk）：与 CLI 入口
-// （apps/capybara/bin/capybara.mjs）一样补上 `@capybara-hq/source` 导出条件，解析到 src 而不是 dist
-// （CI 的 e2e 只 pnpm install、不 build，没有 dist）。只影响之后的 import，所以放在任何动态 import 之前
-register(
-  "data:text/javascript,export function resolve(s, c, next) { return next(s, { ...c, conditions: [...c.conditions, '@capybara-hq/source'] }); }",
-);
+// The kernel test helpers loaded by path (plugin-packages.ts and others) import workspace packages
+// (@capybara-hq/plugin-sdk): add the `@capybara-hq/source` export condition, as the CLI entry
+// (apps/capybara/bin/capybara.mjs) does, so they resolve to src, not dist (CI's e2e installs but
+// does not build). It affects later imports only, so it comes before any dynamic import. In-thread
+// `registerHooks` (Node >= 22.15): the off-thread `register` loader failed next to Playwright's
+// own loader on Node 24.11 (ERR_INVALID_RETURN_PROPERTY_VALUE).
+registerHooks({
+  resolve: (specifier, context, next) =>
+    next(specifier, { ...context, conditions: [...context.conditions, "@capybara-hq/source"] }),
+});
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const webDir = fileURLToPath(new URL("../", import.meta.url));
