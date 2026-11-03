@@ -11,7 +11,7 @@ import {
   Skeleton,
   Text,
 } from "@capybara-hq/design";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { AgentSelect, PolicyRadio } from "../../../../components/ChannelFields";
 import { ConfigForm } from "../../../../components/config-form/ConfigForm";
@@ -21,7 +21,9 @@ import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import type { Agent } from "../../../../lib/agents";
 import { ApiClientError, configIssues, issueLines } from "../../../../lib/api";
+import type { LocalizedName } from "../../../../lib/catalog";
 import { createChannel, getChannelSchema, type UnboundPolicy } from "../../../../lib/channels";
+import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
 import type { ConfigIssue } from "../../../../lib/json-schema";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import { useLoad } from "../../../../lib/use-load";
@@ -40,7 +42,7 @@ export default function NewChannelView({
 }: {
   orgId: string;
   initial: {
-    plugins: string[];
+    plugins: { name: string; displayName: LocalizedName | null }[];
     agents: Agent[];
     preset: { agentId: string; returnTo: string | undefined };
   };
@@ -48,6 +50,7 @@ export default function NewChannelView({
   const scope = usePagePath("org");
   const t = useTranslations("channels");
   const tc = useTranslations("common");
+  const lang = labelLocale(useLocale());
   const router = useRouter();
   const errorMessage = useErrorMessage();
   const [plugin, setPlugin] = useState("");
@@ -151,7 +154,7 @@ export default function NewChannelView({
             onChange={(e) => setPlugin(e.target.value)}
             options={[
               ...(plugin === "" ? [{ value: "", label: t("form.pluginPlaceholder") }] : []),
-              ...ready.plugins.map((p) => ({ value: p, label: p })),
+              ...ready.plugins.map((p) => ({ value: p.name, label: extensionLabel(p, lang) })),
             ]}
           />
         </Field>

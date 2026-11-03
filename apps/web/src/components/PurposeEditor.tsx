@@ -12,6 +12,7 @@ import {
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { findModel, keepDeclared, type ParamValue, type ProviderModels } from "../lib/agents";
+import { labelLocale, modelLabel } from "../lib/extension-label";
 import {
   decodeModel,
   encodeModel,
@@ -196,6 +197,7 @@ function PurposeEditor({
 }) {
   const t = useTranslations("models.purpose");
   const locale = useLocale();
+  const lang = labelLocale(locale);
   const saved = savedOf(view, scope);
   const ref = decodeModel(draft.model);
   const decl = ref === null ? [] : (findModel(providers, ref)?.parameters ?? []);
@@ -207,7 +209,7 @@ function PurposeEditor({
     ...providers.flatMap((p) =>
       p.models.map((m) => ({
         value: encodeModel({ provider: p.provider, model: m.id }),
-        label: `${p.provider} / ${m.displayName}`,
+        label: modelLabel({ name: p.provider, displayName: p.displayName }, m.displayName, lang),
       })),
     ),
   ];
@@ -215,12 +217,12 @@ function PurposeEditor({
   if (saved !== null && !options.some((o) => o.value === encodeModel(saved.model))) {
     options.push({
       value: encodeModel(saved.model),
-      label: t("unavailable", { target: `${saved.model.provider} / ${saved.model.model}` }),
+      label: t("unavailable", { target: targetName(providers, saved.model, lang) }),
     });
   }
 
   const defaultText =
-    view.default === null ? t("unset") : targetName(providers, view.default.model);
+    view.default === null ? t("unset") : targetName(providers, view.default.model, lang);
 
   return (
     <div data-purpose={view.purpose}>

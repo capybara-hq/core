@@ -18,7 +18,7 @@ import {
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useState, useTransition } from "react";
 import { ExtensionStatusMark } from "../../../../../components/AdminExtensionParts";
 import { ExtensionDeploymentConfig } from "../../../../../components/ExtensionDeploymentConfig";
@@ -40,6 +40,7 @@ import {
   uninstallExtension,
 } from "../../../../../lib/admin-extensions";
 import { ApiClientError } from "../../../../../lib/api";
+import { extensionLabel, labelLocale } from "../../../../../lib/extension-label";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
 import { useServerState } from "../../../../../lib/use-server-state";
 
@@ -79,7 +80,10 @@ export default function ExtensionDetail({
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [data, set] = useServerState(initial.list);
+  const lang = labelLocale(useLocale());
   const plugin = data.extensions.find((p) => p.name === name);
+  // The title shows the display name; the id (also the URL segment) is muted meta in the overview.
+  const label = plugin ? extensionLabel(plugin, lang) : name;
   // An extension waiting for config opens on its config form.
   const [tab, setTab] = useState<Tab>(() =>
     plugin?.status === "pending_config" ? "config" : "overview",
@@ -124,8 +128,8 @@ export default function ExtensionDetail({
   return (
     <DetailPage
       header={{
-        path: [...scope, { label: "extensions", href: "/admin/extensions" }, { label: name }],
-        title: name,
+        path: [...scope, { label: "extensions", href: "/admin/extensions" }, { label }],
+        title: label,
         ...(plugin && {
           count: versionLabel(plugin.version),
           status: <ExtensionStatusMark status={plugin.status} />,
@@ -180,6 +184,7 @@ function Overview({
   onRefresh(): void;
 }) {
   const t = useTranslations("admin.extensions");
+  const lang = labelLocale(useLocale());
   const toast = useToast();
   const router = useRouter();
   const errorMessage = useErrorMessage();
@@ -266,6 +271,7 @@ function Overview({
       <KeyValue
         columns={2}
         rows={[
+          ...(plugin.displayName ? [{ k: t("detail.fields.id"), v: plugin.name }] : []),
           { k: t("detail.fields.source"), v: t(`source.${displaySource(plugin)}`) },
           { k: t("detail.fields.version"), v: versionLabel(plugin.version) },
           {
@@ -375,7 +381,7 @@ function Overview({
         onOpenChange={(open) => {
           if (!open) setConfirm(null);
         }}
-        title={t("detail.disableConfirm.title", { name: plugin.name })}
+        title={t("detail.disableConfirm.title", { name: extensionLabel(plugin, lang) })}
         footer={
           <>
             <Button variant="ghost" onClick={() => setConfirm(null)}>

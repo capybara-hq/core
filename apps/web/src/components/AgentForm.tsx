@@ -33,6 +33,7 @@ import {
 import { ApiClientError } from "../lib/api";
 import { type ConnectorDetail, type ConnectorSummary, getConnector } from "../lib/connectors";
 import type { ModelRef } from "../lib/conversations";
+import { labelLocale, modelLabel } from "../lib/extension-label";
 import { PINNED_SKILLS_LIMITS, pinnedProblemsOf, type SkillSummary } from "../lib/skills";
 import { useErrorMessage } from "../lib/use-error-message";
 import {
@@ -152,6 +153,7 @@ export function useAgentForm(
 ): AgentFormView {
   const t = useTranslations("agents");
   const locale = useLocale();
+  const lang = labelLocale(locale);
   const errorMessage = useErrorMessage();
   const { me } = useSession();
   const providers = data.providers;
@@ -284,7 +286,11 @@ export function useAgentForm(
   const options = providers.flatMap((p) =>
     p.models.map((m) => ({
       value: encode({ provider: p.provider, model: m.id }),
-      label: `${p.provider} / ${m.displayName || m.id}`,
+      label: modelLabel(
+        { name: p.provider, displayName: p.displayName },
+        m.displayName || m.id,
+        lang,
+      ),
     })),
   );
   const noModels = options.length === 0;

@@ -17,6 +17,7 @@ import { useState } from "react";
 import { FormError } from "../../../../components/form-error";
 import { usePurposeDrafts } from "../../../../components/PurposeEditor";
 import { usePagePath } from "../../../../components/shell/path";
+import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
 import {
   type AdminModelInfo,
   type AdminModels,
@@ -112,6 +113,10 @@ function ProviderModels({
 }) {
   const t = useTranslations("models");
   const locale = useLocale();
+  const providerName = extensionLabel(
+    { name: p.provider, displayName: p.displayName },
+    labelLocale(locale),
+  );
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const [editing, setEditing] = useState<string>();
@@ -206,22 +211,22 @@ function ProviderModels({
     <Stack gap={8}>
       <Stack direction="row" gap={8} align="center">
         <Text variant="h2" as="h3">
-          {p.provider}
+          {providerName}
         </Text>
-        {p.plugin !== p.provider ? (
+        {p.displayName || p.plugin !== p.provider ? (
           <Text variant="small" tone="muted">
-            {p.plugin}
+            {p.displayName ? p.provider : p.plugin}
           </Text>
         ) : null}
       </Stack>
       {p.status === "error" ? (
         <FormError
-          message={t("admin.providerError", { provider: p.provider })}
+          message={t("admin.providerError", { provider: providerName })}
           extra={p.error === undefined ? [] : [p.error]}
         />
       ) : (
         <DataTable
-          label={p.provider}
+          label={providerName}
           columns={columns}
           rows={p.models}
           rowKey={keyOf}

@@ -133,6 +133,19 @@ describe("checkWebUi", () => {
     });
   });
 
+  describe("web-ui-extension-label", () => {
+    it("flags a hand-built provider-slash-model template label outside lib/extension-label.ts", () => {
+      const f = run("provider-label");
+      expect(f.map((x) => [x.rule, x.file.split("/").at(-1), x.line])).toEqual([
+        ["web-ui-extension-label", "Picker.tsx", 1],
+      ]);
+      expect(f[0]?.message).toContain("modelLabel");
+    });
+    it("allows the helper file itself", () => {
+      expect(run("provider-label-ok")).toEqual([]);
+    });
+  });
+
   describe("server-rendered pages (web-ssr-*)", () => {
     const at = (name: string, pending: SsrPending[] = []) =>
       run(name, pending).map((x) => [x.rule, x.file.split("/").at(-1), x.line]);

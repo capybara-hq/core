@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { useContext, useState } from "react";
 import { useRouter } from "../i18n/navigation";
 import type { Agent } from "../lib/agents";
+import { modelLabel } from "../lib/extension-label";
 import { canUpdateOrg } from "../lib/org-settings";
 import { ReassignOwnerDialog } from "./ReassignOwnerDialog";
 import { navLevelOf } from "./shell/nav";
@@ -23,7 +24,8 @@ export function inScope(a: Agent, scope: AgentScope, accountId: string | undefin
 export function matchesAgent(a: Agent, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (q === "") return true;
-  const model = `${a.definition.model.provider} / ${a.definition.model.model}`;
+  // The definition stores only the provider id, so the search matches the id.
+  const model = modelLabel({ name: a.definition.model.provider }, a.definition.model.model, "en");
   return `${a.definition.name} ${model}`.toLowerCase().includes(q);
 }
 
@@ -51,7 +53,8 @@ export function AgentRow({ agent, onChanged }: { agent: Agent; onChanged?(): voi
   // Visibility is plain metadata (mono muted meta text), never a chip.
   const meta = [
     t(`scope.${agent.visibility}`),
-    `${def.model.provider} / ${def.model.model}`,
+    // The list has no providers list (it would cost a vendor call): the provider id stands in.
+    modelLabel({ name: def.model.provider }, def.model.model, "en"),
     ...(skills > 0 ? [t("meta.skills", { n: skills })] : []),
     ...(tools > 0 ? [t("meta.tools", { n: tools })] : []),
   ].join(" · ");

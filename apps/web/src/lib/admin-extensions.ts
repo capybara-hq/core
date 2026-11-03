@@ -64,6 +64,8 @@ export interface ExtensionReplica {
 /** One row of the admin extension list (kernel `AdminExtensionView`). */
 export interface AdminExtension {
   name: string;
+  /** The extension's display name; null when it has none (show the id). */
+  displayName?: LocalizedName | null;
   version: string;
   source: ExtensionLoadSource;
   /** An install record's package source; null for a config-declared extension. */

@@ -10,7 +10,7 @@ import {
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { ConfigForm } from "../../../../components/config-form/ConfigForm";
 import { hasConfigFields } from "../../../../components/config-form/model";
@@ -22,6 +22,7 @@ import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { Link } from "../../../../i18n/navigation";
 import { ApiClientError, configIssues, issueLines } from "../../../../lib/api";
+import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
 import {
   type OrgExtension,
   type PermissionGroup,
@@ -109,6 +110,10 @@ function ExtensionSection({
   onSaved(p: OrgExtension): void;
 }) {
   const t = useTranslations("extensions");
+  const label = extensionLabel(
+    { name: plugin.plugin, displayName: plugin.displayName },
+    labelLocale(useLocale()),
+  );
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const [busy, setBusy] = useState<"toggle" | "save" | "sync">();
@@ -141,7 +146,7 @@ function ExtensionSection({
         ...(force ? { force } : {}),
       });
       onSaved(next);
-      toast.success(t(enabled ? "enabledToast" : "disabledToast", { plugin: plugin.plugin }));
+      toast.success(t(enabled ? "enabledToast" : "disabledToast", { plugin: label }));
     } catch (e) {
       if (e instanceof ApiClientError && e.code === "extension.dependency_missing")
         setProblem({
@@ -175,7 +180,7 @@ function ExtensionSection({
       });
       onSaved(next);
       setRound((r) => r + 1);
-      toast.success(t("configSaved", { plugin: plugin.plugin }));
+      toast.success(t("configSaved", { plugin: label }));
     } catch (e) {
       const issues = configIssues(e);
       setSaveError({
@@ -203,12 +208,14 @@ function ExtensionSection({
   return (
     <FormSection
       id={`plugin-${plugin.plugin}`}
-      title={plugin.plugin}
-      description={versionLabel(plugin.version)}
+      title={label}
+      description={[plugin.displayName ? plugin.plugin : null, versionLabel(plugin.version)]
+        .filter((x): x is string => x !== null)
+        .join(" · ")}
     >
       <Stack direction="row" gap={12} align="center">
         <Switch
-          label={t("enableLabel", { plugin: plugin.plugin })}
+          label={t("enableLabel", { plugin: label })}
           checked={plugin.enabled}
           disabled={busy !== undefined || unavailable || required}
           onChange={(on) => void toggle(on)}
@@ -285,7 +292,7 @@ function ExtensionSection({
               variant="secondary"
               loading={busy === "save"}
               disabled={busy !== undefined || !form.dirty || !form.ok}
-              aria-label={t("saveLabel", { plugin: plugin.plugin })}
+              aria-label={t("saveLabel", { plugin: label })}
               onClick={() => void save()}
             >
               {t("save")}
@@ -302,7 +309,7 @@ function ExtensionSection({
             <Button
               loading={busy === "sync"}
               disabled={busy !== undefined}
-              aria-label={t("syncLabel", { plugin: plugin.plugin })}
+              aria-label={t("syncLabel", { plugin: label })}
               onClick={() => void sync()}
             >
               {t("sync")}

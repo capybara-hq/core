@@ -2368,6 +2368,7 @@
         },
         "notFound": "The extension does not exist or has been uninstalled.",
         "fields": {
+          "id": "ID",
           "source": "Source",
           "version": "Version",
           "desired": "Desired state",

@@ -1,4 +1,5 @@
 import { apiFetch } from "./api";
+import type { LocalizedName } from "./catalog";
 import type { ModelRef } from "./conversations";
 
 /** 内核 agent API 的类型（只声明界面用到的字段）。 */
@@ -167,6 +168,8 @@ export interface ModelInfo {
 
 export interface ProviderModels {
   provider: string;
+  /** The provider extension's display name; null when it has none (show the id). */
+  displayName?: LocalizedName | null;
   models: ModelInfo[];
 }
 

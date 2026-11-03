@@ -12,6 +12,7 @@ import { useSession } from "../../../../components/shell/session";
 import { useRouter } from "../../../../i18n/navigation";
 import type { Agent } from "../../../../lib/agents";
 import type { ChannelConnection } from "../../../../lib/channels";
+import { modelLabel } from "../../../../lib/extension-label";
 import { canUpdateOrg } from "../../../../lib/org-settings";
 
 /**
@@ -70,7 +71,8 @@ function ViewAgent({ agent }: { agent: Agent }) {
             { k: t("agents.form.nameLabel"), v: def.name },
             {
               k: t("agents.form.modelLabel"),
-              v: `${def.model.provider} / ${def.model.model}`,
+              // Read-only view without a providers list: the provider id stands in.
+              v: modelLabel({ name: def.model.provider }, def.model.model, "en"),
             },
             { k: t("agents.form.visibilityLabel"), v: t(`agents.scope.${agent.visibility}`) },
           ]}

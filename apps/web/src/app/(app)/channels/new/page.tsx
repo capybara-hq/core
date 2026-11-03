@@ -27,7 +27,9 @@ export default async function NewChannelPage({
     <NewChannelView
       orgId={ws.orgId}
       initial={{
-        plugins: extensions.filter((p) => p.enabled && provides(p, "channel")).map((p) => p.plugin),
+        plugins: extensions
+          .filter((p) => p.enabled && provides(p, "channel"))
+          .map((p) => ({ name: p.plugin, displayName: p.displayName ?? null })),
         agents,
         preset: channelFormPreset(query),
       }}

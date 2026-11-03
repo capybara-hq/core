@@ -1,7 +1,7 @@
 "use client";
 
 import { ListPage, ObjectRow } from "@capybara-hq/design";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { usePagePath } from "../../../../components/shell/path";
 import {
@@ -10,6 +10,7 @@ import {
   type ExtensionStatus,
   replicaSummary,
 } from "../../../../lib/admin-extensions";
+import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
 
 type TabId = "all" | "attention" | "enabled" | "disabled";
 
@@ -44,6 +45,7 @@ export default function AdminPlugins({
 }) {
   const scope = usePagePath("admin");
   const t = useTranslations("admin.extensions");
+  const lang = labelLocale(useLocale());
   const [tab, setTab] = useState<TabId>("all");
   const all = initial.extensions;
   const groups: Record<Exclude<TabId, "all">, AdminExtension[]> = {
@@ -87,7 +89,7 @@ export default function AdminPlugins({
           tone: "warn" as const,
           children: t("callout", {
             n: attention.length,
-            names: attention.map((p) => p.name).join(", "),
+            names: attention.map((p) => extensionLabel(p, lang)).join(", "),
           }),
           action: {
             label: t("calloutFix"),
@@ -129,7 +131,10 @@ export default function AdminPlugins({
         const r = replicaSummary(p);
         // Plain facts are meta text, not badges: the version and "required" lead the meta line;
         // only "sensitive" stays a (warn) chip.
+        const label = extensionLabel(p, lang);
         const meta = [
+          // The id stays visible as muted meta next to a display name.
+          p.displayName ? p.name : null,
           `v${p.version}`,
           p.required ? t("required") : null,
           points > 0 ? t("meta.points", { n: points }) : null,
@@ -147,9 +152,9 @@ export default function AdminPlugins({
         return (
           <ObjectRow
             key={p.name}
-            mark={{ text: p.name, tone: attn ? "warn" : "neutral" }}
-            name={p.name}
-            mono
+            mark={{ text: label, tone: attn ? "warn" : "neutral" }}
+            name={label}
+            {...(p.displayName ? {} : { mono: true })}
             href={detail}
             {...(p.sensitive ? { chips: [{ label: t("sensitive"), tone: "warn" as const }] } : {})}
             meta={meta}

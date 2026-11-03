@@ -255,6 +255,41 @@ function pagePathFindings(file: string, p: ParsedFile): Finding[] {
   return out;
 }
 
+/** The one file that may join a provider and a model into a label. */
+const EXTENSION_LABEL_FILE = "lib/extension-label.ts";
+
+/**
+ * A template literal that puts `<…>.provider` (or `provider`) before ` / `: a provider label built by
+ * hand shows the extension id. Labels go through `modelLabel` / `extensionLabel` (display names).
+ */
+function extensionLabelFindings(p: ParsedFile): Finding[] {
+  const out: Finding[] = [];
+  walk(p.program, (n) => {
+    if (n.type !== "TemplateLiteral") return;
+    const exprs = n.expressions as Node[];
+    const quasis = n.quasis as Node[];
+    exprs.forEach((e, i) => {
+      const name =
+        e.type === "Identifier"
+          ? (e.name as string)
+          : e.type === "MemberExpression" && !e.computed
+            ? ((e.property as Node).name as string | undefined)
+            : undefined;
+      const next = (quasis[i + 1]?.value as { cooked: string | null } | undefined)?.cooked;
+      if (name === "provider" && typeof next === "string" && next.startsWith(" / ")) {
+        out.push({
+          file: p.file,
+          line: p.lineOf(n.start),
+          rule: "web-ui-extension-label",
+          message:
+            "provider label built by hand shows the extension id; use modelLabel / extensionLabel from lib/extension-label.ts (display names)",
+        });
+      }
+    });
+  });
+  return out;
+}
+
 function checkWebFile(file: string, isTest: boolean, webSrcDir: string): Finding[] {
   if (isTest) return [];
   const p = parseFile(file);
@@ -344,6 +379,7 @@ function checkWebFile(file: string, isTest: boolean, webSrcDir: string): Finding
   out.push(...charIconFindings(p));
 
   const segs = relative(webSrcDir, file).split(sep);
+  if (segs.join("/") !== EXTENSION_LABEL_FILE) out.push(...extensionLabelFindings(p));
   const exempt = TEMPLATE_EXEMPT_PREFIX.every((s, i) => segs[i] === s);
   if (segs[0] === "app" && /^page\.[jt]sx?$/.test(segs.at(-1) ?? "") && !exempt) {
     if (!usesDesignTemplate(p) && !isNotFoundOnlyPage(p) && !viewUsesTemplate(file, p)) {

@@ -2368,6 +2368,7 @@
         },
         "notFound": "扩展不存在或已卸载。",
         "fields": {
+          "id": "标识",
           "source": "来源",
           "version": "版本",
           "desired": "期望状态",
