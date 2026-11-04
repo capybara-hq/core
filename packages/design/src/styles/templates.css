@@ -42,8 +42,12 @@
   gap: 0;
   padding: 0;
 }
-/* Stacked: the head above a fields card across the full width (an editor), at every width. */
-.cb-form-section[data-layout="stacked"] {
+/*
+ * Stacked: the head above a fields card across the full width (an editor), at every width. Every
+ * section of a SettingsPage is stacked: the sub-nav already holds the titles' column.
+ */
+.cb-form-section[data-layout="stacked"],
+.cb-settings-content .cb-form-section {
   grid-template-columns: minmax(0, 1fr);
   gap: var(--cb-space-3);
 }
