@@ -79,9 +79,14 @@ export function isHydratedError(queryHash: string): boolean {
   return hydratedErrors.has(queryHash);
 }
 
-/** The observer option for a query's key: no refetch on mount for an error from the server. */
+/**
+ * The observer option for a query's key: no refetch on mount for an error from the server. On the
+ * server it is always false: a server render never fetches, and with `retryOnMount` on, TanStack
+ * draws a failed query as pending there, while the browser (which recorded the error) draws the
+ * failure, a hydration mismatch on every page whose first-load read failed.
+ */
 export const retryOnMountOf = (queryKey: readonly unknown[]): boolean =>
-  !isHydratedError(hashKey(queryKey));
+  !onServer() && !isHydratedError(hashKey(queryKey));
 
 /**
  * Called with the browser's pathname on every render of the provider: the first call records the
