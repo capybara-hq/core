@@ -161,14 +161,27 @@ describe("sandbox-fake background task shims", () => {
     const pids = await members(p, h, sid);
     expect(pids.length).toBeGreaterThan(0);
     for (const pid of pids) expect(hostAlive(pid)).toBe(true);
-    // the exec's own process group is gone: the session outlived it
-    expect((await exec(p, h, `pgrep -s ${sid} > /dev/null; echo $?`)).stdout).toBe("0\n");
+    // no exec command runs any more (the exec that started the session ended), yet it lives on
+    expect(await readdir(join(root, "instances", h.id, "procs"))).toEqual([]);
+    for (const pid of pids) expect(hostAlive(pid)).toBe(true);
 
     expect((await exec(p, h, `pkill -s ${sid}`)).exitCode).toBe(0);
     await until(async () => (await exec(p, h, `pgrep -s ${sid}`)).exitCode === 1);
     for (const pid of pids) await until(() => !hostAlive(pid));
     // nothing left to signal
     expect((await exec(p, h, `pkill -KILL -s ${sid}`)).exitCode).toBe(1);
+  });
+
+  it("a sid without a session record matches nothing, even a live host process, at once", async () => {
+    const p = createFakeSandbox(root);
+    const h = await p.create({ name: "cap-u", image: "i", limits, signal: sig() });
+    // this test process: alive, same user, and never started by the fake's setsid
+    const t0 = Date.now();
+    expect(await exec(p, h, `pgrep -s ${process.pid}`)).toMatchObject({ exitCode: 1, stdout: "" });
+    expect((await exec(p, h, `pkill -KILL -s ${process.pid}`)).exitCode).toBe(1);
+    expect((await exec(p, h, "pkill -KILL -s 999999")).exitCode).toBe(1);
+    expect(Date.now() - t0).toBeLessThan(3000);
+    expect(hostAlive(process.pid)).toBe(true);
   });
 
   it("pkill takes a signal: -TERM, -KILL", async () => {

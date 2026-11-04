@@ -38,7 +38,9 @@ import { z } from "zod";
  *   on macOS, which has no `setsid` or `timeout`. A shim session is a process group: `setsid` starts
  *   its command in a new session (whose process group has the session's id) and records
  *   `root/instances/<id>/sessions/<its own pid>` = that id, the pid `echo $!` printed; `timeout`
- *   keeps its command in its group; `pgrep -s` / `pkill -s` resolve a session through that record.
+ *   keeps its command in its group; `pgrep -s` / `pkill -s` resolve a session through that record
+ *   only (a sid without one matches nothing; one whose setsid shim is still starting in an exec's
+ *   group, recorded in `root/instances/<id>/groups/<pgid>`, is waited for).
  *   The shims are written by {@link createFakeSandbox}, not shipped as files: the plugin package
  *   carries only the entry.
  * - `suspend` and `destroy` kill every process the instance started (exec commands and sessions),
@@ -76,27 +78,36 @@ const INSTANCE_ENV = "CAPYBARA_FAKE_SANDBOX_INSTANCE";
 
 /** Shared by `pgrep` and `pkill`: the live pids of the sessions named by `-s <list>`. */
 const SESSION_LOOKUP = `const { execFileSync } = process.getBuiltinModule("node:child_process");
-const { readFileSync } = process.getBuiltinModule("node:fs");
+const { existsSync, readFileSync } = process.getBuiltinModule("node:fs");
 const { join } = process.getBuiltinModule("node:path");
 /**
- * The process group of a session: the record of the setsid shim whose pid it is. That shim may
- * still be starting (\`echo $!\` returns before it runs): wait for its record while it lives.
+ * The process group of a session: the record of the setsid shim whose pid it is, else null (no
+ * such session: match nothing, as real \`pkill -s\` does). The shim may still be starting
+ * (\`echo $!\` returns before it runs): while that pid lives in the process group of one of this
+ * instance's execs (\`groups/<pgid>\`), wait for its record. Any other pid is never waited for.
  */
 function resolveSession(sid) {
   const dir = process.env.${INSTANCE_ENV};
-  if (!dir) return sid;
+  if (!dir) return null;
   const end = Date.now() + 5000;
-  for (;;) {
+  const record = () => {
     try {
       const pgid = readFileSync(join(dir, "sessions", sid), "utf8").trim();
-      if (pgid !== "") return pgid;
-    } catch {}
-    try {
-      process.kill(Number(sid), 0);
+      return pgid === "" ? null : pgid;
     } catch {
-      return sid;
+      return null;
     }
-    if (Date.now() > end) return sid;
+  };
+  for (;;) {
+    const recorded = record();
+    if (recorded !== null) return recorded;
+    let pgid = "";
+    try {
+      pgid = execFileSync("ps", ["-o", "pgid=", "-p", sid], { encoding: "utf8" }).trim();
+    } catch {}
+    // the shim may have written its record and exited since the read above
+    if (pgid === "" || !existsSync(join(dir, "groups", pgid))) return record();
+    if (Date.now() > end) return null;
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
   }
 }
@@ -107,7 +118,8 @@ function sessionPids(list) {
       process.stderr.write("invalid session id: " + sid + "\\n");
       process.exit(2);
     }
-    groups.add(resolveSession(sid));
+    const pgid = resolveSession(sid);
+    if (pgid !== null) groups.add(pgid);
   }
   const ps = execFileSync("ps", ["-A", "-o", "pid=,pgid=,stat="], { encoding: "utf8" });
   const pids = [];
@@ -128,7 +140,7 @@ function usage(name) {
 const SHIMS: Record<string, string> = {
   setsid: `#!/usr/bin/env node
 const { spawn } = process.getBuiltinModule("node:child_process");
-const { mkdirSync, writeFileSync } = process.getBuiltinModule("node:fs");
+const { mkdirSync, renameSync, writeFileSync } = process.getBuiltinModule("node:fs");
 const { join } = process.getBuiltinModule("node:path");
 const [cmd, ...args] = process.argv.slice(2);
 if (!cmd) {
@@ -145,7 +157,10 @@ child.on("spawn", () => {
   const dir = process.env.${INSTANCE_ENV};
   if (dir) {
     mkdirSync(join(dir, "sessions"), { recursive: true });
-    writeFileSync(join(dir, "sessions", String(process.pid)), String(child.pid));
+    // through a rename: a reader never sees an empty record
+    const record = join(dir, "sessions", String(process.pid));
+    writeFileSync(record + ".tmp", String(child.pid));
+    renameSync(record + ".tmp", record);
   }
   child.unref();
   process.exit(0);
@@ -469,6 +484,11 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
         if (pidFile) {
           mkdirSync(dirname(pidFile), { recursive: true });
           writeFileSync(pidFile, args.tag ?? "");
+          // kept after the command ends: a setsid shim it started in the background may still be
+          // starting in this group when pgrep / pkill ask for its session
+          const group = join(instanceDir(root, h.id), "groups", String(child.pid));
+          mkdirSync(dirname(group), { recursive: true });
+          writeFileSync(group, "");
         }
         const timer = setTimeout(() => {
           timedOut = true;

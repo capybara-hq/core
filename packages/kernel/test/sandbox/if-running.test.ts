@@ -226,7 +226,38 @@ describe("ifRunning", () => {
   });
 });
 
+describe("ifRunning with a signal", () => {
+  it("gives up waiting for the lease promptly when the signal aborts", async () => {
+    const s = service();
+    await use(s);
+    const instance = (await s.currentInstance(conv())) as { createdAt: Date };
+    const leases = sandboxLeasesFor({ redis, log: {} });
+    const held = await leases.tryExclusive(conv());
+    expect(held).not.toBeNull();
+    try {
+      const ac = new AbortController();
+      let ran = false;
+      const t0 = Date.now();
+      const pending = s.ifRunning(
+        conv(),
+        instance,
+        async () => {
+          ran = true;
+        },
+        ac.signal,
+      );
+      setTimeout(() => ac.abort(new Error("shutting down")), 200);
+      await expect(pending).rejects.toThrow("shutting down");
+      expect(Date.now() - t0).toBeLessThan(2000);
+      expect(ran).toBe(false);
+    } finally {
+      await held?.release();
+    }
+  });
+});
+
 describe("kills of lost tasks after a resume", () => {
+  // 4242 / 777 have no session record in the fake, so its pkill matches nothing on the host
   it("runs one kill exec naming the sid of this instance's task and clears every flag", async () => {
     const s = service();
     await use(s);

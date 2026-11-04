@@ -356,21 +356,23 @@ export class SandboxService {
    * instance is `other_instance`. Otherwise `fn` runs under a shared lease, as a `withSandbox`
    * holder does (its tag on every exec, crashed holders' commands killed), and `last_used_at`
    * moves forward when it ends. Waits for the lease up to `sandbox.lockWaitSeconds`
-   * (`sandbox.busy`); the signal passed to `fn` aborts when the lease is lost. Errors of `fn`
-   * (`SandboxGoneError` too) are thrown as they are.
+   * (`sandbox.busy`); `signal` (optional) ends the wait with its abort reason. The signal passed
+   * to `fn` aborts with `signal` or when the lease is lost. Errors of `fn` (`SandboxGoneError`
+   * too) are thrown as they are.
    */
   async ifRunning<T>(
     conversationId: string,
     instance: { createdAt: Date },
     fn: (p: TaggedProvider, h: SandboxHandle, signal: AbortSignal) => Promise<T>,
+    signal: AbortSignal = new AbortController().signal,
   ): Promise<IfRunningResult<T>> {
     const p = this.require();
     const conv = conversationId;
     const cap = this.effectiveCap(p);
     const deadline = Date.now() + this.config.get().sandbox.lockWaitSeconds * 1000;
     const token = randomUUID();
-    const never = new AbortController().signal;
     for (;;) {
+      if (signal.aborted) throw abortReason(signal);
       const row = await this.db
         .selectFrom("sandboxes")
         .selectAll()
@@ -393,12 +395,13 @@ export class SandboxService {
             lease,
             (r): r is Row & { handle: SandboxHandle } =>
               this.usable(r, p, null) && isInstance(r, want),
-            never,
+            signal,
           );
           if (e) {
             try {
               const impl = tagged(p.impl, lease.token, () => this.register(conv, lease.token));
-              return { kind: "ran", value: await fn(impl, e.handle, lease.signal) };
+              const sig = AbortSignal.any([signal, lease.signal]);
+              return { kind: "ran", value: await fn(impl, e.handle, sig) };
             } finally {
               await this.leave(conv, e);
             }
@@ -408,7 +411,7 @@ export class SandboxService {
         }
       }
       if (Date.now() + this.pollMs > deadline) throw sandboxBusy();
-      await sleep(this.pollMs + Math.floor(Math.random() * this.pollMs), never);
+      await sleep(this.pollMs + Math.floor(Math.random() * this.pollMs), signal);
     }
   }
 
