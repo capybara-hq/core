@@ -705,7 +705,8 @@ describe("SettingsPage loading", () => {
 
   it("every FormSection inside a SettingsPage is stacked (the sub-nav holds the title column)", () => {
     const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
-    const rule = css.match(/([^{}]*)\{[^{}]*grid-template-columns: minmax\(0, 1fr\);[^{}]*\}/g) ?? [];
+    const rule =
+      css.match(/([^{}]*)\{[^{}]*grid-template-columns: minmax\(0, 1fr\);[^{}]*\}/g) ?? [];
     expect(rule.some((r) => r.includes(".cb-settings-content .cb-form-section"))).toBe(true);
   });
 
