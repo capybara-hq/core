@@ -384,26 +384,44 @@ const OUTPUT = new Set<ConversationEvent["type"]>([
   "subagent_started",
 ]);
 
+/** How long a message this tab sent waits for its run before the page stops expecting one. */
+export const AWAIT_RUN_MS = 60_000;
+
 /**
  * The newest user message this tab sent (`sentHere`: its `clientMessageId`s) that no run took up
  * yet: no run started after it, no run failed or stopped after it, and no finished run consumed
- * it. False when there is none: the conversation is idle (or the kernel could not deliver it).
+ * it. Null when there is none: the conversation is idle (or the kernel could not deliver it).
+ */
+export function awaitedMessage(
+  events: readonly ConversationEvent[],
+  sentHere: ReadonlySet<string>,
+): ConversationEvent | null {
+  let u: ConversationEvent | null = null;
+  for (const e of events) {
+    if (e.type === "user_message") {
+      const id = e.payload.clientMessageId;
+      u = id !== undefined && sentHere.has(id) ? e : null;
+    } else if (u !== null) {
+      if (e.type === "run_started" || e.type === "run_failed" || e.type === "run_aborted") u = null;
+      else if (e.type === "run_finished" && e.payload.consumedUpToSeq >= u.seq) u = null;
+    }
+  }
+  return u;
+}
+
+/**
+ * A message this tab sent waits for its run ({@link awaitedMessage}), unless no run is coming:
+ * the queue is paused (the kernel holds the conversation's sends), or {@link AWAIT_RUN_MS} passed
+ * since the message without a `run_started` (a backstop: the page then follows the log alone).
  */
 export function awaitingRun(
   events: readonly ConversationEvent[],
   sentHere: ReadonlySet<string>,
+  s: { paused: boolean; now: number },
 ): boolean {
-  let u: number | null = null;
-  for (const e of events) {
-    if (e.type === "user_message") {
-      const id = e.payload.clientMessageId;
-      u = id !== undefined && sentHere.has(id) ? e.seq : null;
-    } else if (u !== null) {
-      if (e.type === "run_started" || e.type === "run_failed" || e.type === "run_aborted") u = null;
-      else if (e.type === "run_finished" && e.payload.consumedUpToSeq >= u) u = null;
-    }
-  }
-  return u !== null;
+  if (s.paused) return false;
+  const u = awaitedMessage(events, sentHere);
+  return u !== null && s.now - Date.parse(u.createdAt) <= AWAIT_RUN_MS;
 }
 
 /** The run in progress per the log (started, not ended), or null. */
@@ -427,12 +445,18 @@ function activeRun(events: readonly ConversationEvent[]): { runId: string; seq: 
 export function workingLineVisible(
   events: readonly ConversationEvent[],
   drafts: readonly TimelineDraft[],
-  s: { waiting: boolean; pending: number; sentHere: ReadonlySet<string> },
+  s: {
+    waiting: boolean;
+    pending: number;
+    sentHere: ReadonlySet<string>;
+    paused: boolean;
+    now: number;
+  },
 ): boolean {
   if (s.waiting) return false;
   if (s.pending > 0) return true;
   const run = activeRun(events);
-  if (run === null) return awaitingRun(events, s.sentHere);
+  if (run === null) return awaitingRun(events, s.sentHere, s);
   if (drafts.some((d) => d.runId === run.runId && (d.text !== "" || d.thinking !== "")))
     return false;
   const open = new Set<string>();

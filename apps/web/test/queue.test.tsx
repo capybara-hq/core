@@ -174,4 +174,24 @@ describe("queued messages", () => {
     await vi.waitFor(() => expect((input as HTMLTextAreaElement).value).toBe("third"));
     expect(screen.queryByText("third", { selector: '[data-part="bubble"]' })).toBeNull();
   });
+
+  it("a queued message the stream delivers leaves the list in the same tick: its text shows once (L4)", async () => {
+    api();
+    await renderChatRoute();
+    const list = await screen.findByRole("group", { name: "Queued messages" });
+    expect(list.querySelector('[data-queue-item="q1"]')).not.toBeNull();
+    // the queue's read still lists it: only the log says it was sent
+    act(() =>
+      FakeEventSource.instances[0]?.emit(
+        "event",
+        userMsg(3, "first queued", { clientMessageId: "cm-q1" }),
+      ),
+    );
+    expect(document.querySelector('[data-queue-item="q1"]')).toBeNull();
+    expect(screen.getAllByText("first queued")).toHaveLength(1);
+    expect(
+      screen.getByText("first queued").closest("[data-entry]")?.getAttribute("data-entry"),
+    ).toBe("user");
+    expect(document.querySelector('[data-queue-item="q2"]')).not.toBeNull();
+  });
 });

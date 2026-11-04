@@ -735,6 +735,7 @@
     "fileTypeNotAllowed": "不支持这种文件类型。可以上传：{types}。",
     "newPlaceholder": "想让 {agent} 做什么？",
     "queueHint": "按 ↵ 加入队列，按 Ctrl+↵ 立即发送",
+    "sendAfterCreate": "会话创建后即可继续发送",
     "queueHintMac": "按 ↵ 加入队列，按 ⌘↵ 立即发送",
     "queueLabel": "排队的消息",
     "rename": "重命名",

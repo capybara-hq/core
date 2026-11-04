@@ -14,7 +14,7 @@ export type PendingSend = {
 };
 
 /** The `clientMessageId`s of the log's user messages. */
-function loggedIds(events: readonly ConversationEvent[] | undefined): ReadonlySet<string> {
+export function loggedIds(events: readonly ConversationEvent[] | undefined): ReadonlySet<string> {
   const out = new Set<string>();
   for (const e of events ?? [])
     if (e.type === "user_message" && e.payload.clientMessageId !== undefined)

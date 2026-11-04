@@ -1,6 +1,6 @@
 "use client";
 
-import { type ConversationPageProps, Stack, untitledLabel } from "@capybara-hq/design";
+import { type ConversationPageProps, Stack, Text, untitledLabel } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
@@ -77,6 +77,8 @@ export function useNewConversationPage(
   const pending = usePendingSends(undefined);
   /** A failed create's draft, for the composer the new layout mounts again. */
   const [restore, setRestore] = useState<{ n: number; draft?: ComposerDraft }>({ n: 0 });
+  /** A second ↵ came before the conversation exists: the composer says why it waits. */
+  const [blocked, setBlocked] = useState(false);
 
   const send = async (m: ComposerMessage): Promise<SendResult> => {
     if (!agent) return { ok: false, error: new Error("no agent") };
@@ -87,12 +89,14 @@ export function useNewConversationPage(
         agentId: agent.id,
         message: { ...m, ...selection.pending },
       });
+      setBlocked(false);
       router.replace(`/chat/${encodeURIComponent(conversation.id)}`);
       void qc.invalidateQueries({ queryKey: keys.org(orgId).conversationGroupsAll() });
       return { ok: true };
     } catch (e) {
       setError(errorMessage(e));
       pending.drop(m.clientMessageId);
+      setBlocked(false);
       setRestore((r) => ({ n: r.n + 1, ...(m.draft !== undefined ? { draft: m.draft } : {}) }));
       return { ok: false, error: e };
     }
@@ -116,6 +120,11 @@ export function useNewConversationPage(
       <Stack gap={8}>
         {error !== undefined && <FormError message={error} />}
         {agents !== undefined && usable.length === 0 ? <FormError message={t("noAgents")} /> : null}
+        {sent && blocked ? (
+          <Text variant="small" tone="muted">
+            {t("sendAfterCreate")}
+          </Text>
+        ) : null}
         <ComposerBar
           key={`${sent ? "sent" : "new"}:${restore.n}`}
           orgId={orgId}
@@ -124,6 +133,9 @@ export function useNewConversationPage(
           running={false}
           // one message at a time until the conversation exists (it has no queue yet)
           sendDisabled={!agent || sent}
+          onBlocked={() => {
+            if (sent) setBlocked(true);
+          }}
           onSend={send}
           pickers={{
             agent: {

@@ -180,6 +180,7 @@ export function ComposerBar({
   placeholder,
   sendDisabled,
   initialDraft,
+  onBlocked,
 }: {
   orgId: string;
   /** The conversation's agent (the `/` menu lists its skills); undefined while loading. */
@@ -198,6 +199,8 @@ export function ComposerBar({
   sendDisabled?: boolean;
   /** A failed send's draft to start from (read at mount). */
   initialDraft?: ComposerDraft | undefined;
+  /** ↵ with a draft while `sendDisabled` (the caller says why; the draft stays). */
+  onBlocked?(): void;
 }) {
   const t = useTranslations("chat");
   const tc = useTranslations("common");
@@ -274,6 +277,7 @@ export function ComposerBar({
     const sentSkill = skill;
     const sentAttachments = attachments;
     const value = text.trim();
+    if (sendDisabled && !empty(value)) onBlocked?.();
     if (drafts.blocking || sendDisabled || resolving.current) return;
     const sent = files.flatMap((f) => (f.id !== undefined ? [{ key: f.key, id: f.id }] : []));
     // Files alone can be sent; `@` resources need text (their bodies follow content[0]).

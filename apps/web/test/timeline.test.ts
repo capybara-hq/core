@@ -2,6 +2,7 @@ import { summarizeTools } from "@capybara-hq/design";
 import { describe, expect, it } from "vitest";
 import type { ConversationEvent, ToolInfo } from "../src/lib/conversations";
 import {
+  awaitingRun,
   buildEventTimeline,
   buildTimeline,
   runStats,
@@ -563,6 +564,9 @@ describe("workingLineVisible (conversation send spec §2.2)", () => {
       waiting: s.waiting ?? false,
       pending: s.pending ?? 0,
       sentHere: new Set(s.sent ?? []),
+      paused: false,
+      // just after the last event (the 60 s backstop has its own tests)
+      now: Date.parse(events.at(-1)?.createdAt ?? new Date(0).toISOString()) + 1000,
     });
 
   it("shows for a pending send, before the log has anything of it", () => {
@@ -671,5 +675,38 @@ describe("workingLineVisible (conversation send spec §2.2)", () => {
     expect(at(ended, { sent: ["m1"] })).toBe(false);
     expect(at([user(1, "hi"), runStart(2)], { waiting: true })).toBe(false);
     expect(at([])).toBe(false);
+  });
+});
+
+describe("awaitingRun gives up (review round 2, item 3)", () => {
+  const mine = (seq: number, at: string) => ({
+    ...user(seq, "hi", { clientMessageId: "m1" }),
+    createdAt: at,
+  });
+  const sent = new Set(["m1"]);
+  const at0 = Date.parse("2026-11-04T10:00:00.000Z");
+
+  it("waits for the run of a message this tab sent, within 60 s of it", () => {
+    const events = [mine(1, "2026-11-04T10:00:00.000Z")];
+    expect(awaitingRun(events, sent, { paused: false, now: at0 + 59_000 })).toBe(true);
+  });
+
+  it("a run that never starts stops waiting 60 s after the message (the backstop)", () => {
+    const events = [mine(1, "2026-11-04T10:00:00.000Z")];
+    expect(awaitingRun(events, sent, { paused: false, now: at0 + 60_001 })).toBe(false);
+    expect(
+      workingLineVisible(events, [], {
+        waiting: false,
+        pending: 0,
+        sentHere: sent,
+        paused: false,
+        now: at0 + 60_001,
+      }),
+    ).toBe(false);
+  });
+
+  it("a paused queue means no run is coming", () => {
+    const events = [mine(1, "2026-11-04T10:00:00.000Z")];
+    expect(awaitingRun(events, sent, { paused: true, now: at0 })).toBe(false);
   });
 });

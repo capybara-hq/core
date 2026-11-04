@@ -13,7 +13,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
-import type { ModelRef } from "../../lib/conversations";
+import type { ConversationEvent, ModelRef } from "../../lib/conversations";
 import { agentsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
 import { modelsQuery, renameWithRow, sentHereOf } from "../../lib/query/conversation";
@@ -22,6 +22,8 @@ import { useAppMutation } from "../../lib/query/mutation";
 import { runParts } from "../../lib/run-row";
 import { usageTotal, useSubagents, useUsageWithSubagents } from "../../lib/subagents";
 import {
+  AWAIT_RUN_MS,
+  awaitedMessage,
   awaitingRun,
   buildEventTimeline,
   type FailedRun,
@@ -86,6 +88,23 @@ function RunStatsText({
   }, [ticking]);
   const ms = startedAt === null ? null : (endedAt ?? (ticking ? now : Date.now())) - startedAt;
   return <>{t("stats", { n: turns, elapsed: ms === null ? "—" : elapsed(ms, locale) })}</>;
+}
+
+/**
+ * The time `awaitingRun` reads, re-rendering once when the awaited message's run is overdue
+ * ({@link AWAIT_RUN_MS} after it): the working line and the running mode then follow the log.
+ */
+function useAwaitBackstop(awaited: ConversationEvent | null): number {
+  const [, setTick] = useState(0);
+  const due = awaited === null ? null : Date.parse(awaited.createdAt) + AWAIT_RUN_MS + 1;
+  useEffect(() => {
+    if (due === null) return;
+    const wait = due - Date.now();
+    if (wait <= 0) return;
+    const id = setTimeout(() => setTick((n) => n + 1), wait);
+    return () => clearTimeout(id);
+  }, [due]);
+  return Date.now();
 }
 
 /** What Task 20 adds around the thread: the right area (title-bar panels, properties, panel). */
@@ -172,7 +191,7 @@ export function useConversationPage(
     [conv.events, info, locale, conv.state.progress, views],
   );
   const entries = useMemo(() => withDrafts(base, conv.state.drafts), [base, conv.state.drafts]);
-  const queue = useQueue(orgId, conversationId, conv.merge);
+  const queue = useQueue(orgId, conversationId, conv.merge, conv.events);
   const pending = usePendingSends(conv.events);
   const [renaming, setRenaming] = useState(false);
   const [renameBusy, setRenameBusy] = useState(false);
@@ -182,7 +201,8 @@ export function useConversationPage(
   // a pending send of this view, a message this tab sent that waits for its run, or a run per the
   // log. While any holds, ↵ queues.
   // (not memoized: the set changes with this view's sends, each of which re-renders it)
-  const awaiting = awaitingRun(conv.events, sentHere);
+  const awaitAt = useAwaitBackstop(awaitedMessage(conv.events, sentHere));
+  const awaiting = awaitingRun(conv.events, sentHere, { paused: queue.paused, now: awaitAt });
   const busy = conv.running || pending.shown.length > 0 || awaiting;
   const active = busy || conv.waiting;
   const stats = useMemo(() => runStats(conv.events), [conv.events]);
@@ -355,6 +375,8 @@ export function useConversationPage(
       waiting: conv.waiting,
       pending: pending.shown.length,
       sentHere,
+      paused: queue.paused,
+      now: awaitAt,
     }),
     composer: ({ sendDisabled }) => (
       <Stack gap={8}>

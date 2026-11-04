@@ -42,6 +42,12 @@ vi.mock("next/navigation", () => ({
 
 const BASE = "/api/v1/orgs/o1/conversations/c1";
 
+/** `e` as the kernel answers a write: stamped now (the fixtures' times are in the past). */
+const now = <T extends { createdAt: string }>(e: T): T => ({
+  ...e,
+  createdAt: new Date().toISOString(),
+});
+
 /** The page's background reads, plus `extra`. */
 function api(extra: Record<string, (c: Call) => Response | Promise<Response>>, id = "c1") {
   const base = `/api/v1/orgs/o1/conversations/${id}`;
@@ -519,7 +525,9 @@ describe("the conversation page (ConversationPage)", () => {
         [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
         [`POST ${BASE}/messages`]: (c) => {
           const b = bodyOf(c) as { text: string; clientMessageId: string };
-          return json(202, { event: userMsg(++n, b.text, { clientMessageId: b.clientMessageId }) });
+          return json(202, {
+            event: now(userMsg(++n, b.text, { clientMessageId: b.clientMessageId })),
+          });
         },
         [`POST ${BASE}/queue`]: () => json(201, { item: null }),
       });
@@ -550,11 +558,54 @@ describe("the conversation page (ConversationPage)", () => {
       expect(container.querySelector('[data-part="working-line"]')).not.toBeNull();
       // the log has the message, its run has not started: still running, all three agree
       await vi.waitFor(() => expect(posts(d.calls, `${BASE}/messages`)).toHaveLength(1));
-      const event = userMsg(2, "next", { clientMessageId: d.cmid() });
+      const event = now(userMsg(2, "next", { clientMessageId: d.cmid() }));
       await act(async () => d.answer(json(202, { event })));
       expect(screen.getByRole("button", { name: en.chat.stop })).toBeTruthy();
       expect(status()).toContain(en.chat.status.running);
       expect(container.querySelector('[data-part="working-line"]')).not.toBeNull();
+    });
+
+    it("a paused queue means no run is coming: no line, the status follows the log (round 2, 3)", async () => {
+      api({
+        [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+        [`GET ${BASE}/queue`]: () => json(200, { items: [], paused: true }),
+        [`POST ${BASE}/messages`]: (c) => {
+          const b = bodyOf(c) as { text: string; clientMessageId: string };
+          return json(202, {
+            event: now(userMsg(2, b.text, { clientMessageId: b.clientMessageId })),
+          });
+        },
+      });
+      const { container } = await renderChat();
+      await screen.findByText("hi");
+      await userEvent.setup().type(input(), "next{Enter}");
+      await vi.waitFor(() => expect(container.querySelector("[data-pending]")).toBeNull());
+      expect(container.querySelector('[data-part="working-line"]')).toBeNull();
+      expect(screen.queryByRole("button", { name: en.chat.stop })).toBeNull();
+    });
+
+    it("a run that never starts: the line goes 60 s after the message (the backstop)", async () => {
+      api({
+        [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+        [`POST ${BASE}/messages`]: (c) => {
+          const b = bodyOf(c) as { text: string; clientMessageId: string };
+          // written 150 ms short of the backstop
+          const at = new Date(Date.now() - 60_000 + 150).toISOString();
+          return json(202, {
+            event: { ...userMsg(2, b.text, { clientMessageId: b.clientMessageId }), createdAt: at },
+          });
+        },
+      });
+      const { container } = await renderChat();
+      await screen.findByText("hi");
+      await userEvent.setup().type(input(), "next{Enter}");
+      await vi.waitFor(() => expect(container.querySelector("[data-pending]")).toBeNull());
+      expect(container.querySelector('[data-part="working-line"]')).not.toBeNull();
+      await vi.waitFor(
+        () => expect(container.querySelector('[data-part="working-line"]')).toBeNull(),
+        { timeout: 1000 },
+      );
+      expect(screen.queryByRole("button", { name: en.chat.stop })).toBeNull();
     });
 
     it("a message the kernel wrote but could not deliver shows no line after the error", async () => {
@@ -1234,7 +1285,7 @@ describe("the first message from /chat (conversation send spec §2.1)", () => {
     const d = await startNew();
     await userEvent.setup().type(input(), "start{Enter}");
     await vi.waitFor(() => expect(d.calls.some((c) => c.method === "POST")).toBe(true));
-    const event = userMsg(1, "start", { clientMessageId: d.cmid() });
+    const event = now(userMsg(1, "start", { clientMessageId: d.cmid() }));
     const conversation = CONV("c9").conversation;
     await act(async () => d.answer(json(201, { conversation, event })));
     // the groups' read never answers: the navigation does not wait for it
@@ -1263,6 +1314,23 @@ describe("the first message from /chat (conversation send spec §2.1)", () => {
     const reads = calls.filter((x) => x.method === "GET").map((x) => x.url.split("?")[0]);
     for (const path of [C9, `${C9}/events`, `${C9}/queue`, `${C9}/files`, `${C9}/sandbox`])
       expect(reads).not.toContain(path);
+  });
+
+  it("a second ↵ before the conversation exists keeps the text and says why, until it exists", async () => {
+    const d = await startNew();
+    const user = userEvent.setup();
+    await user.type(input(), "start{Enter}");
+    expect(screen.queryByText(en.chat.sendAfterCreate)).toBeNull();
+    await user.type(input(), "again{Enter}");
+    expect(input()).toHaveProperty("value", "again");
+    expect(screen.getByText(en.chat.sendAfterCreate)).toBeTruthy();
+    expect(zh.chat.sendAfterCreate).toBe("会话创建后即可继续发送");
+    expect(en.chat.sendAfterCreate).toBe("You can send again once the conversation is created");
+    expect(d.calls.filter((c) => c.method === "POST")).toHaveLength(1);
+    const event = now(userMsg(1, "start", { clientMessageId: d.cmid() }));
+    await act(async () => d.answer(json(201, { conversation: CONV("c9").conversation, event })));
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
+    expect(screen.queryByText(en.chat.sendAfterCreate)).toBeNull();
   });
 
   it("a failed create goes back to the new conversation with the text in the composer", async () => {

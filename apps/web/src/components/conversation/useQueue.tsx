@@ -3,7 +3,7 @@
 import { QueuedMessage, QueuePaused, Stack, useToast } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   type ConversationEvent,
   deleteQueued,
@@ -20,6 +20,7 @@ import { queueQuery } from "../../lib/query/conversation";
 import { useAppMutation } from "../../lib/query/mutation";
 import { useErrorMessage } from "../../lib/use-error-message";
 import type { ComposerMessage } from "./ComposerBar";
+import { loggedIds } from "./PendingBubbles";
 import type { SendResult } from "./useConversation";
 
 /** A message being queued: shown at once, until the queue's read has it (or the POST failed). */
@@ -46,6 +47,8 @@ export function useQueue(
   orgId: string,
   conversationId: string,
   merge: (events: ConversationEvent[]) => void,
+  /** The log: an item it already holds (sent after the turn) is left out at once (review L4). */
+  events?: readonly ConversationEvent[],
 ): QueueView & {
   reload(): void;
   edit(id: string, text: string): Promise<boolean>;
@@ -57,11 +60,20 @@ export function useQueue(
   const toast = useToast();
   const qc = useQueryClient();
   const query = queueQuery(orgId, conversationId);
-  const state = useQuery({ ...query, retryOnMount: retryOnMountOf(query.queryKey) }).data ?? EMPTY;
+  const read = useQuery({ ...query, retryOnMount: retryOnMountOf(query.queryKey) }).data ?? EMPTY;
+  // A queued message the log holds was sent (the kernel logs it with the item's clientMessageId):
+  // it leaves the list in the same render as its bubble enters the thread, before the re-read.
+  const logged = useMemo(() => loggedIds(events), [events]);
+  const state = useMemo(() => {
+    const items = read.items.filter((it) => !logged.has(it.clientMessageId));
+    return items.length === read.items.length ? read : { ...read, items };
+  }, [read, logged]);
   const [adding, setAdding] = useState<PendingQueued[]>([]);
   // A pending message the queue's read already holds shows once, as the read's item.
-  const queuedIds = new Set(state.items.map((it) => it.clientMessageId));
-  const pending = adding.filter((p) => !queuedIds.has(p.clientMessageId));
+  const queuedIds = new Set(read.items.map((it) => it.clientMessageId));
+  const pending = adding.filter(
+    (p) => !queuedIds.has(p.clientMessageId) && !logged.has(p.clientMessageId),
+  );
   const reload = useCallback(
     () => void qc.invalidateQueries({ queryKey: query.queryKey }),
     [qc, query.queryKey],
