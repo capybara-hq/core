@@ -121,7 +121,7 @@ changes for channel extensions: these are ordinary cards (`kind` approval / ques
 
 | `kind` | Content | Interaction |
 |---|---|---|
-| `approval` | title, tool / connector,  agent, argument preview (already redacted by the kernel by key name and connection secrets, ≤500 characters), optional scopes `scopes`, `expiresAt`, `state`, `decidedBy`, `webUrl` | when `pending`, one approve button per scope + reject + web link; in other states the buttons are removed and only the state and a "details" link are shown |
+| `approval` | title, `toolName` (carries `<display name> [<tool>]`, just the name for a builtin; the kernel no longer sets `appName` on approval cards, connect cards still carry it), agent, argument preview (already redacted by the kernel by key name and connection secrets, ≤500 characters), optional scopes `scopes`, `expiresAt`, `state`, `decidedBy`, `webUrl` | when `pending`, one approve button per scope + reject + web link; in other states the buttons are removed and only the state and a "details" link are shown |
 | `question` | `form` (`InputForm`), `state`, `answerSummary`, `webUrl` | when `questionRenderableInline(form)` is true (exactly one enum field, single-select ≤5 / multi-select ≤10, no "other" allowed) it is answered inside the IM, otherwise only the web link is given |
 | `connect` | `appName` (connect cards still carry it), `url` | link button |
 | `bind` | `text`, `url` | link button (the kernel sends it only in direct messages) |
