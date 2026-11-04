@@ -30,6 +30,7 @@ import {
   toolKeysOf,
   usedTokens,
   withDrafts,
+  workingLineVisible,
 } from "../../lib/timeline";
 import { useToolInfo } from "../../lib/tool-info";
 import { useErrorMessage } from "../../lib/use-error-message";
@@ -330,6 +331,12 @@ export function useConversationPage(
       </>
     ),
     queue: <QueueList queue={queue} />,
+    // decided from the log and this view's pending bubbles (spec §2.2)
+    working: workingLineVisible(entries, {
+      running: conv.running,
+      waiting: conv.waiting,
+      pending: pending.shown.length,
+    }),
     composer: ({ sendDisabled }) => (
       <Stack gap={8}>
         {conv.error !== undefined && <FormError message={conv.error} />}

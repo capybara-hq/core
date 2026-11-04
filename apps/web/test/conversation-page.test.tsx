@@ -442,6 +442,76 @@ describe("the conversation page (ConversationPage)", () => {
       expect(bubbles("next")).toHaveLength(1);
     });
 
+    it("the working line shows from the send until the first output, again after a tool result, and goes at the run's end", async () => {
+      const d = deferredSend();
+      const { container } = await renderChat();
+      await screen.findByText("hi");
+      const line = () => container.querySelector('[data-part="working-line"]');
+      // the log's last message has no run yet: the line already shows (the run is on its way)
+      act(() => FakeEventSource.instances[0]?.emit("event", runStarted(2)));
+      act(() =>
+        FakeEventSource.instances[0]?.emit(
+          "event",
+          ev(3, "run_finished", { reason: "end_turn", consumedUpToSeq: 1 }),
+        ),
+      );
+      expect(line()).toBeNull();
+      const user = userEvent.setup();
+      await user.type(input(), "next{Enter}");
+      expect(line()).not.toBeNull();
+      const es = FakeEventSource.instances[0] as FakeEventSource;
+      act(() => es.emit("event", userMsg(4, "next", { clientMessageId: d.cmid() })));
+      act(() => es.emit("event", runStarted(5, "r2")));
+      expect(line()).not.toBeNull();
+      // after the line, the thread's last output: exactly one line
+      expect(container.querySelectorAll('[data-part="working-line"]')).toHaveLength(1);
+      act(() =>
+        es.emit(
+          "event",
+          ev(
+            6,
+            "assistant_message",
+            {
+              step: 0,
+              stopReason: "tool_use",
+              content: [
+                { type: "tool_call", id: "t1", name: "sandbox_bash", input: { command: "ls" } },
+              ],
+            },
+            "r2",
+          ),
+        ),
+      );
+      act(() =>
+        es.emit(
+          "event",
+          ev(
+            7,
+            "tool_call_started",
+            { step: 0, callId: "t1", toolKey: "sandbox_bash", specHash: "h" },
+            "r2",
+          ),
+        ),
+      );
+      expect(line()).toBeNull();
+      act(() =>
+        es.emit(
+          "event",
+          ev(
+            8,
+            "tool_result",
+            { step: 0, callId: "t1", toolKey: "sandbox_bash", content: "ok", isError: false },
+            "r2",
+          ),
+        ),
+      );
+      expect(line()).not.toBeNull();
+      act(() =>
+        es.emit("event", ev(9, "run_finished", { reason: "end_turn", consumedUpToSeq: 4 }, "r2")),
+      );
+      expect(line()).toBeNull();
+    });
+
     it("a failed POST drops the pending bubble and puts the text back", async () => {
       const d = deferredSend();
       await renderChat();

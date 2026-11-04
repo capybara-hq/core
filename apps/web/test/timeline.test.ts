@@ -7,6 +7,7 @@ import {
   runStats,
   type TimelineEntry,
   withDrafts,
+  workingLineVisible,
 } from "../src/lib/timeline";
 
 let t = 0;
@@ -542,5 +543,74 @@ describe("final review fixes", () => {
     expect(out).toEqual(
       buildTimeline(events, [{ runId: "r1", step: 0, text: "hel", thinking: "" }], new Map(), "en"),
     );
+  });
+});
+
+describe("workingLineVisible (conversation send spec §2.2)", () => {
+  const runStart = (seq: number) =>
+    ev(seq, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } });
+  const at = (
+    events: ConversationEvent[],
+    s: { running: boolean; waiting?: boolean; pending?: number },
+    drafts: { runId: string; step: number; text: string; thinking: string }[] = [],
+  ) =>
+    workingLineVisible(buildTimeline(events, drafts, new Map(), "en"), {
+      running: s.running,
+      waiting: s.waiting ?? false,
+      pending: s.pending ?? 0,
+    });
+
+  it("shows after a send: the pending bubble, before the log has anything of it", () => {
+    expect(at([], { running: false, pending: 1 })).toBe(true);
+    // a follow-up after a finished run
+    const done = [user(1, "hi"), runStart(2), ev(3, "run_finished", { reason: "end_turn" })];
+    expect(at(done, { running: false, pending: 1 })).toBe(true);
+  });
+
+  it("shows for a message no run has answered yet, and after run_started", () => {
+    expect(at([user(1, "hi")], { running: false })).toBe(true);
+    expect(at([user(1, "hi"), runStart(2)], { running: true })).toBe(true);
+  });
+
+  it("is gone at the first output: thinking, prose, a running tool", () => {
+    const base = [user(1, "hi"), runStart(2)];
+    expect(at(base, { running: true }, [{ runId: "r1", step: 0, text: "", thinking: "hmm" }])).toBe(
+      false,
+    );
+    expect(at(base, { running: true }, [{ runId: "r1", step: 0, text: "He", thinking: "" }])).toBe(
+      false,
+    );
+    const tool = [
+      ...base,
+      calls(3, [{ id: "c1", name: "sandbox_bash", input: { command: "ls" } }]),
+      started(4, "c1", "sandbox_bash"),
+    ];
+    expect(at(tool, { running: true })).toBe(false);
+  });
+
+  it("shows again after a tool result while the model has not answered", () => {
+    const events = [
+      user(1, "hi"),
+      runStart(2),
+      calls(3, [{ id: "c1", name: "sandbox_bash", input: { command: "ls" } }]),
+      started(4, "c1", "sandbox_bash"),
+      result(5, "c1", "sandbox_bash"),
+    ];
+    expect(at(events, { running: true })).toBe(true);
+    // the answer streams: gone again
+    expect(
+      at(events, { running: true }, [{ runId: "r1", step: 1, text: "Done", thinking: "" }]),
+    ).toBe(false);
+  });
+
+  it("is gone at the run's end, also without output, and while waiting for a person", () => {
+    const ended = [
+      user(1, "hi"),
+      runStart(2),
+      ev(3, "run_failed", { error: { code: "x", message: "m" } }),
+    ];
+    expect(at(ended, { running: false })).toBe(false);
+    expect(at([user(1, "hi"), runStart(2)], { running: true, waiting: true })).toBe(false);
+    expect(at([], { running: false })).toBe(false);
   });
 });

@@ -373,6 +373,37 @@ export function withDrafts(base: EventTimeline, drafts: readonly TimelineDraft[]
   return added ? out : base.entries;
 }
 
+/**
+ * Whether the working line shows (conversation send spec §2.2): from a send (a pending bubble) or
+ * a run start until the run's first output, and again after a tool result while the model has
+ * not answered. It never shows while the run waits for a person (the card is the output) or after
+ * the run ended (its run row). A user message no run has answered yet (sent, its run not started)
+ * counts as a send. `entries` are the thread's, drafts included.
+ */
+export function workingLineVisible(
+  entries: readonly TimelineEntry[],
+  s: { running: boolean; waiting: boolean; pending: number },
+): boolean {
+  if (s.waiting) return false;
+  if (s.pending > 0) return true;
+  const last = entries.at(-1);
+  if (last === undefined) return false;
+  if (last.kind === "user" || last.kind === "task") return true;
+  if (!s.running) return false;
+  switch (last.kind) {
+    // the model has not answered what these brought in yet
+    case "tools":
+      return last.rows.every((r) => r.row.status !== "running" && r.row.status !== "pending");
+    case "files":
+    case "card":
+    case "divider":
+    case "skill-report":
+      return true;
+    default:
+      return false;
+  }
+}
+
 /** The timeline of the log (no drafts); see {@link buildTimeline}. */
 export function buildEventTimeline(
   events: readonly ConversationEvent[],
