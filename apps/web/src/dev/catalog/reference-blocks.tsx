@@ -30,6 +30,8 @@ import {
   Input,
   type LinkComponent,
   ListPage,
+  ObjectList,
+  ObjectRow,
   PageHeader,
   SecretReveal,
   Segmented,
@@ -48,6 +50,7 @@ import {
   SwitchList,
   Text,
   Textarea,
+  TitleBar,
   useDesignLocale,
   useStatusBar,
 } from "@capybara-hq/design";
@@ -635,6 +638,15 @@ function pageHeaderBlocks(): ReactNode {
           actions={ACTIONS}
         />
       </RefBlock>
+      {/* An object's page leads row 2 with its avatar at 40 (spec §4.2, §6.30). */}
+      <RefBlock id="page-header-avatar" width={LIST} pad>
+        <PageHeader
+          path={LP}
+          title="研究助手"
+          description={L.description}
+          avatar={<Avatar value={{ kind: "preset", id: "capybara" }} name="研究助手" size={40} />}
+        />
+      </RefBlock>
       {/* Loading (spec §4.2): the title is a title-size bar, two action blocks and two tab bars
           stand in for what the page does not know yet. */}
       <RefBlock id="page-header-loading" width={LIST} pad>
@@ -1131,6 +1143,23 @@ function filePickerBlocks(): ReactNode {
 
 // ── Avatar (spec §6.30) ─────────────────────────────────────────────────────
 
+/** The default sidebar with an avatar on each conversation group's row. */
+function sidebarWithAvatars(): ReturnType<typeof sidebarProps> {
+  const p = sidebarProps({}, here);
+  const c = p.conversations;
+  if (!c) return p;
+  return {
+    ...p,
+    conversations: {
+      ...c,
+      groups: c.groups.map((g, i) => ({
+        ...g,
+        agentAvatar: { kind: "preset" as const, id: AVATAR_PRESET_IDS[i % 10] ?? "capybara" },
+      })),
+    },
+  };
+}
+
 function avatarBlocks(): ReactNode {
   return (
     <>
@@ -1154,6 +1183,34 @@ function avatarBlocks(): ReactNode {
             <Avatar key={size} value={null} name="研究助手" size={size} />
           ))}
         </Stack>
+      </RefBlock>
+      {/* Where the avatar sits (spec §6.30): the title bar's path (16), a sidebar group row (16)
+          and an object / agent list row (28). */}
+      <RefBlock id="avatar-title-bar" width={760}>
+        <TitleBar
+          title="整理季度报表"
+          untitled=""
+          path={[
+            { label: "acme" },
+            { label: "研究助手", avatar: { kind: "preset", id: "capybara" } },
+          ]}
+          menu={[]}
+          properties={{ pressed: false, onToggle: noop }}
+          panels={[]}
+        />
+      </RefBlock>
+      <RefBlock id="avatar-sidebar-row" width={SIDEBAR_W} height={SIDEBAR_H}>
+        <Sidebar {...sidebarWithAvatars()} mode="full" />
+      </RefBlock>
+      <RefBlock id="avatar-list-row" width={640} pad>
+        <ObjectList label="智能体">
+          <ObjectRow
+            mark={{ avatar: { kind: "preset", id: "fox" } }}
+            name="研究助手"
+            description="整理资料并给出摘要"
+          />
+          <ObjectRow mark={{ avatar: null }} name="周报助手" description="每周五生成周报" />
+        </ObjectList>
       </RefBlock>
       <RefBlock id="avatar-picker" width={640} pad>
         <AvatarPicker value={{ kind: "preset", id: "capybara" }} onChange={noop} onUpload={noop} />

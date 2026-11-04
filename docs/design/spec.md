@@ -236,7 +236,7 @@ See §6.13 for the component. Width `layout.sidebar`; below 1280 an icon rail of
 - Content width: the header shares the body's one content width (`layout.content`, 1120, centered; §4.3). It sits `space.6` below the top of the content area and `space.3` above the body (StatCards or the table).
 
 <!-- states: page-header -->
-States: `title`, `path`, `description-actions`, `long-title`, `narrow`, `loading`, `narrow-loading`
+States: `title`, `path`, `description-actions`, `long-title`, `narrow`, `loading`, `narrow-loading`, `avatar`
 
 <!-- size-table: page-header -->
 | Part | State | Property | Value |
@@ -260,6 +260,8 @@ States: `title`, `path`, `description-actions`, `long-title`, `narrow`, `loading
 | skeleton-box[data-box=default] | loading | height | control.default |
 | skeleton-box[data-box=default] | narrow-loading | height | 40 |
 | page-header-tab-slots | narrow-loading | height | 40 |
+| page-header-avatar avatar | avatar | width | 40 |
+| page-header-avatar avatar | avatar | height | 40 |
 
 ### 4.3 Body layouts and content widths
 
@@ -2240,7 +2242,7 @@ An agent's picture, everywhere an agent appears (the new conversation page, the 
 - `AvatarPicker({ value, onChange, onUpload?, uploadOffReason?, label?, disabled? })` (`disabled`: every tile disabled while the owner saves, the value still shown): the ten presets as one radio group (named `label`, default "头像" / "Avatar"; each radio named by its preset's name), 48 px tiles (a 40 avatar, 3 px padding, a 1 px border, radius `md`) `space.2` apart and wrapping, then an upload tile (`upload` icon, "上传图片" / "Upload image"; `line` dashed border) that opens a file dialog for png, jpg or webp and passes the file to `onUpload` (cropping and the 2 MB limit are the caller's). A checked tile is neutral (§2.3): `selected` ground and a `line-strong` border; hover is the `hover` ground; keyboard focus the accent ring. When `value` is an image, the upload tile shows it and is the checked one; if that image fails to load, the tile shows the `upload` icon again. Without `onUpload` the upload tile is disabled (`disabled` icon color) and `uploadOffReason` (default "这里不能上传图片。" / "Uploading is not available here.") is written under the tiles in `small` `muted`, and describes the tile; presets still work.
 
 <!-- states: avatar -->
-States: `presets`, `sizes`, `initial`, `picker`, `picker-upload-off`
+States: `presets`, `sizes`, `initial`, `title-bar`, `sidebar-row`, `list-row`, `picker`, `picker-upload-off`
 
 <!-- size-table: avatar -->
 | Part | State | Property | Value |
@@ -2268,8 +2270,15 @@ States: `presets`, `sizes`, `initial`, `picker`, `picker-upload-off`
 | avatar[data-size=64] | sizes | border-top-left-radius | radius.md |
 | avatar | initial | background-color | color.selected |
 | avatar | initial | color | color.ink |
+| avatar[data-size=24] | initial | font-size | type.small |
 | avatar[data-size=28] | initial | font-size | type.small |
 | avatar[data-size=40] | initial | font-size | type.h2 |
+| avatar | title-bar | width | 16 |
+| avatar | title-bar | height | 16 |
+| group-label avatar | sidebar-row | width | 16 |
+| group-label avatar | sidebar-row | height | 16 |
+| avatar | list-row | width | 28 |
+| avatar | list-row | height | 28 |
 | avatar-tile | picker | width | 48 |
 | avatar-tile | picker | height | 48 |
 | avatar-tile[data-state=checked] | picker | background-color | color.selected |
