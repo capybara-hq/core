@@ -394,7 +394,8 @@ export async function withPathLease<T>(
 
 /** 本部署是否有沙箱：没有时返回「不可用」原因（注册表据此把沙箱工具报为不可用）。 */
 export const unavailableWhenNoSandbox =
-  (deps: Pick<SandboxToolDeps, "sandbox">) => (): string | null =>
+  (deps: Pick<SandboxToolDeps, "sandbox">) =>
+  (_ctx?: { orgId: string }): string | null =>
     deps.sandbox.available ? null : SANDBOX_UNAVAILABLE_REASON;
 
 /** 读出的字节是否像二进制（开头 8 KB 里有 NUL）。 */

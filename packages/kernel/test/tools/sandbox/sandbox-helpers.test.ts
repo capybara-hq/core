@@ -489,15 +489,17 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
     const r = rig({ storage: false });
     r.files.set("/workspace/out.txt", new TextEncoder().encode("x"));
     const deliver = r.tool("Deliver");
-    expect(deliver.unavailable?.()).toMatch(/^File storage is not configured in this deployment/);
+    expect(deliver.unavailable?.({ orgId: "o" })).toMatch(
+      /^File storage is not configured in this deployment/,
+    );
     // 其他沙箱工具不受影响
-    expect(r.tool("Read").unavailable?.()).toBeNull();
+    expect(r.tool("Read").unavailable?.({ orgId: "o" })).toBeNull();
     await expect(deliver.run({ file_path: "/workspace/out.txt" }, callCtx())).rejects.toThrow(
       /File storage is not configured/,
     );
     expect(r.reads()).toBe(0);
     expect(r.puts).toEqual([]);
-    expect(rig().tool("Deliver").unavailable?.()).toBeNull();
+    expect(rig().tool("Deliver").unavailable?.({ orgId: "o" })).toBeNull();
   });
 
   it("deliver deletes the uploaded object when writing artifact_created fails", async () => {

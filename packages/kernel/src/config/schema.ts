@@ -1170,6 +1170,67 @@ export const KernelConfigSchema = z.object({
         ),
     })
     .prefault({} as never),
+  web: z
+    .object({
+      search: z
+        .object({
+          maxResults: z
+            .number()
+            .int()
+            .min(1)
+            .max(20)
+            .default(10)
+            .meta(
+              meta({
+                hot: true,
+                description:
+                  "Maximum number of results one WebSearch call returns to the model, however many the search provider returns",
+              }),
+            ),
+        })
+        .prefault({} as never),
+      fetch: z
+        .object({
+          maxPageChars: z
+            .number()
+            .int()
+            .positive()
+            .default(400_000)
+            .meta(
+              meta({
+                hot: true,
+                description:
+                  "Maximum characters of a fetched page kept for answering a WebFetch prompt; longer pages are truncated",
+              }),
+            ),
+          maxAnswerTokens: z
+            .number()
+            .int()
+            .positive()
+            .default(4000)
+            .meta(
+              meta({
+                hot: true,
+                description:
+                  "Maximum output tokens of the model call that answers a WebFetch prompt from the page",
+              }),
+            ),
+          cacheSeconds: z
+            .number()
+            .int()
+            .min(0)
+            .default(900)
+            .meta(
+              meta({
+                hot: true,
+                description:
+                  "Seconds a fetched page is cached per organization and URL; 0 turns the cache off",
+              }),
+            ),
+        })
+        .prefault({} as never),
+    })
+    .prefault({} as never),
   sandbox: z
     .object({
       image: z

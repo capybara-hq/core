@@ -127,8 +127,8 @@ export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
     spec: SPEC,
     defaultPolicy: "allow",
     // 没有沙箱或没有对象存储都交付不了（先报沙箱的原因）
-    unavailable: () =>
-      unavailableWhenNoSandbox(deps)() ?? (deps.storage.available ? null : NO_STORAGE_REASON),
+    unavailable: (ctx) =>
+      unavailableWhenNoSandbox(deps)(ctx) ?? (deps.storage.available ? null : NO_STORAGE_REASON),
     timeoutMs: () => 2 * sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx) {
       // 存储在调用前就核对：不为一个交付不了的文件去 stat / 读沙箱

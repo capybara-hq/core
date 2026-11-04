@@ -27,6 +27,11 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "subagents.maxConcurrentPerRun": () => {},
   "subagents.maxDispatchesPerRun": () => {},
   "subagents.maxTokensPerRun": () => {},
+  // The web tools read these limits through the config service on every call.
+  "web.search.maxResults": () => {},
+  "web.fetch.maxPageChars": () => {},
+  "web.fetch.maxAnswerTokens": () => {},
+  "web.fetch.cacheSeconds": () => {},
 };
 
 const HOT_PATHS = configFields(KernelConfigSchema)
