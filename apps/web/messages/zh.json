@@ -621,6 +621,48 @@
       "submit": "更换",
       "done": "负责人已更换",
       "none": "没有可选的成员"
+    },
+    "page": {
+      "navGroup": "Agent",
+      "sections": {
+        "basics": "基本信息",
+        "quick-actions": "快捷操作",
+        "prompt": "提示词",
+        "model": "模型",
+        "tools": "工具",
+        "skills": "技能",
+        "subagents": "子 Agent",
+        "channels": "渠道"
+      },
+      "startChat": "开始对话",
+      "reassign": "重新指派负责人",
+      "leave": {
+        "title": "放弃未保存的修改？",
+        "body": "这个分组还有没保存的修改。可以继续编辑，或者放弃修改、打开另一个分组。",
+        "keep": "继续编辑",
+        "discard": "放弃修改"
+      },
+      "discard": "放弃",
+      "reload": "重新加载",
+      "avatarLabel": "头像",
+      "uploadOff": "上传图片需要对象存储，这个部署还没有配置。可以先选一只动物。",
+      "uploadFailed": "读不了这张图片。请选择 png、jpg 或 webp 文件。",
+      "descriptionLabel": "简介",
+      "descriptionHelp": "一句话说明这个 agent 做什么。给人看的，模型看不到。",
+      "membersLabel": "可以使用的成员",
+      "membersLoading": "正在加载成员…",
+      "membersFailed": "成员列表加载失败。",
+      "quickActions": {
+        "hint": "新对话页上显示的快捷入口，最多 {max} 个。点一个，输入框就填上它的内容。",
+        "list": "快捷操作",
+        "add": "添加快捷操作",
+        "none": "还没有快捷操作。",
+        "titleLabel": "标题",
+        "titleRequired": "请输入标题。",
+        "bodyLabel": "内容",
+        "bodyHelp": "填进输入框的文字。",
+        "bodyRequired": "请输入内容。"
+      }
     }
   },
   "skills": {

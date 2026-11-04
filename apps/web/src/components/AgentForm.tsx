@@ -206,6 +206,12 @@ function decode(v: string): ModelRef | null {
   return i <= 0 ? null : { provider: v.slice(0, i), model: v.slice(i + 1) };
 }
 
+/**
+ * The agent page's sections still drawn by this form until each has its own component (Task 7):
+ * with one of them, {@link useAgentForm} draws only that section and keeps the rest as saved.
+ */
+export type AgentFormSection = "prompt" | "model" | "tools" | "skills" | "subagents";
+
 /** What {@link useAgentForm} gives the page to put in FormPage (sections, ActionRow). */
 export type AgentFormView = {
   /** 表单分组（FormSection），作为 FormPage 的 children。 */
@@ -234,6 +240,7 @@ export function useAgentForm(
   onDone: (agent?: Agent) => void,
   data: AgentFormData,
   existing?: Agent,
+  only?: AgentFormSection,
 ): AgentFormView {
   const t = useTranslations("agents");
   const locale = useLocale();
@@ -593,6 +600,20 @@ export function useAgentForm(
           (visibility === "private" && confirmSkillWrite ? 1 : 0) +
           subagents.unsaved;
 
+  /** Whether this form draws section `s` (all of them without `only`). */
+  const shows = (s: AgentFormSection) => only === undefined || only === s;
+  const instructionsField = (
+    <Field label={t("form.instructionsLabel")} optional help={t("form.instructionsHelp")}>
+      <Textarea
+        code
+        name="instructions"
+        rows={6}
+        maxLength={100_000}
+        value={instructions}
+        onChange={(e) => setInstructions(e.target.value)}
+      />
+    </Field>
+  );
   const sections = (
     <form onSubmit={onSubmit} onKeyDown={onKeyDown} noValidate>
       <Stack gap={16}>
@@ -609,180 +630,184 @@ export function useAgentForm(
         )}
         {error !== undefined && <FormError message={error} extra={otherErrors} />}
         <div>
-          <FormSection
-            id="basic"
-            title={t("form.basicSection")}
-            description={t("form.basicSectionHint")}
-          >
-            <Field
-              label={t("form.nameLabel")}
-              required
-              count={{ value: name.length, max: NAME_MAX }}
-              {...(nameError ? { error: t("form.nameRequired") } : {})}
+          {only === "prompt" && (
+            <FormSection id="prompt" title={t("page.sections.prompt")}>
+              {instructionsField}
+            </FormSection>
+          )}
+          {only === undefined && (
+            <FormSection
+              id="basic"
+              title={t("form.basicSection")}
+              description={t("form.basicSectionHint")}
             >
-              <Input
-                name="name"
-                maxLength={NAME_MAX}
-                value={name}
-                onChange={(e) => {
-                  setName(e.target.value);
-                  if (e.target.value.trim() !== "") setNameError(false);
-                }}
-              />
-            </Field>
-            <Field label={t("form.instructionsLabel")} optional help={t("form.instructionsHelp")}>
-              <Textarea
-                code
-                name="instructions"
-                rows={6}
-                maxLength={100_000}
-                value={instructions}
-                onChange={(e) => setInstructions(e.target.value)}
-              />
-            </Field>
-            <Field label={t("form.visibilityLabel")}>
-              <Select
-                name="visibility"
-                value={visibility}
-                onChange={(e) => setVisibility(e.target.value as AgentVisibility)}
-                options={[
-                  ...VISIBILITIES,
-                  // 指定成员的可见范围只能经 API 设置：修改时保留这个选项
-                  ...(initial.visibility === "members" ? (["members"] as const) : []),
-                ].map((v) => ({ value: v, label: t(`form.visibility.${v}`) }))}
-              />
-            </Field>
-          </FormSection>
-          <FormSection
-            id="model"
-            title={t("form.modelSection")}
-            description={t("form.modelSectionHint")}
-          >
-            <Field
-              label={t("form.modelLabel")}
-              required
-              {...(noModels ? { error: t("form.noModels") } : {})}
+              <Field
+                label={t("form.nameLabel")}
+                required
+                count={{ value: name.length, max: NAME_MAX }}
+                {...(nameError ? { error: t("form.nameRequired") } : {})}
+              >
+                <Input
+                  name="name"
+                  maxLength={NAME_MAX}
+                  value={name}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    if (e.target.value.trim() !== "") setNameError(false);
+                  }}
+                />
+              </Field>
+              {instructionsField}
+              <Field label={t("form.visibilityLabel")}>
+                <Select
+                  name="visibility"
+                  value={visibility}
+                  onChange={(e) => setVisibility(e.target.value as AgentVisibility)}
+                  options={[
+                    ...VISIBILITIES,
+                    // 指定成员的可见范围只能经 API 设置：修改时保留这个选项
+                    ...(initial.visibility === "members" ? (["members"] as const) : []),
+                  ].map((v) => ({ value: v, label: t(`form.visibility.${v}`) }))}
+                />
+              </Field>
+            </FormSection>
+          )}
+          {shows("model") && (
+            <FormSection
+              id="model"
+              title={t("form.modelSection")}
+              description={t("form.modelSectionHint")}
             >
-              <Select
-                name="model"
-                disabled={noModels}
-                value={model}
-                onChange={(e) => onModelChange(e.target.value)}
-                options={options}
-              />
-            </Field>
-            <Field label={t("form.fallbackLabel")} optional>
-              <Select
-                name="fallback"
-                value={fallback}
-                onChange={(e) => onFallbackChange(e.target.value)}
-                options={[{ value: "", label: t("form.fallbackNone") }, ...options]}
-              />
-            </Field>
-          </FormSection>
-          <FormSection
-            id="tools"
-            title={t("form.toolsSection")}
-            description={t("form.toolsSectionHint")}
-          >
-            {/* biome-ignore lint/a11y/useSemanticElements: fieldset 带浏览器默认边框与内边距，apps/web 不能写样式；用 role=group 分组 */}
-            <div role="group" aria-label={t("form.builtinLabel")}>
-              <Stack gap={4}>
-                <Text variant="small" tone="muted">
-                  {t("form.builtinLabel")}
-                </Text>
-                {BUILTIN_TOOLS.map((name) => (
-                  <Checkbox
-                    key={name}
-                    label={t(`form.builtin.${name}`)}
-                    checked={builtins.includes(name)}
-                    onChange={(on) =>
-                      setBuiltins((cur) => (on ? [...cur, name] : cur.filter((x) => x !== name)))
-                    }
-                  />
-                ))}
-              </Stack>
-            </div>
-            {/* biome-ignore lint/a11y/useSemanticElements: fieldset 带浏览器默认边框与内边距，apps/web 不能写样式；用 role=group 分组 */}
-            <div role="group" aria-label={t("form.connectorsLabel")}>
-              <Stack gap={4}>
-                <Text variant="small" tone="muted">
-                  {t("form.connectorsLabel")}
-                </Text>
-                {apps.length === 0 && (
-                  <Text variant="small" tone="faint">
-                    {t("form.noConnectors")}
+              <Field
+                label={t("form.modelLabel")}
+                required
+                {...(noModels ? { error: t("form.noModels") } : {})}
+              >
+                <Select
+                  name="model"
+                  disabled={noModels}
+                  value={model}
+                  onChange={(e) => onModelChange(e.target.value)}
+                  options={options}
+                />
+              </Field>
+              <Field label={t("form.fallbackLabel")} optional>
+                <Select
+                  name="fallback"
+                  value={fallback}
+                  onChange={(e) => onFallbackChange(e.target.value)}
+                  options={[{ value: "", label: t("form.fallbackNone") }, ...options]}
+                />
+              </Field>
+            </FormSection>
+          )}
+          {shows("tools") && (
+            <FormSection
+              id="tools"
+              title={t("form.toolsSection")}
+              description={t("form.toolsSectionHint")}
+            >
+              {/* biome-ignore lint/a11y/useSemanticElements: fieldset 带浏览器默认边框与内边距，apps/web 不能写样式；用 role=group 分组 */}
+              <div role="group" aria-label={t("form.builtinLabel")}>
+                <Stack gap={4}>
+                  <Text variant="small" tone="muted">
+                    {t("form.builtinLabel")}
                   </Text>
-                )}
-                {apps.map((a) => (
-                  <Checkbox
-                    key={a.id}
-                    label={t("form.connectorTools", { name: a.name })}
-                    checked={selectedConnectors.includes(a.id)}
-                    onChange={(on) => toggleConnector(a.id, on)}
-                  />
-                ))}
-              </Stack>
-            </div>
-            {toolKeys.length > 0 && (
-              <Stack gap={4}>
-                <Text variant="small" tone="muted">
-                  {t("form.policiesLabel")}
-                </Text>
-                {toolKeys.map((key) => (
-                  <div key={key} data-policy={key}>
-                    <Field label={key}>
-                      <Select
-                        value={policies[key] ?? ""}
-                        onChange={(e) => {
-                          const v = e.target.value as TightenedPolicy | "";
-                          setPolicies((cur) => {
-                            const next = { ...cur };
-                            if (v === "") delete next[key];
-                            else next[key] = v;
-                            return next;
-                          });
-                        }}
-                        options={[
-                          { value: "", label: t("form.policy.default") },
-                          { value: "ask", label: t("form.policy.ask") },
-                          { value: "deny", label: t("form.policy.deny") },
-                        ]}
-                      />
-                    </Field>
-                  </div>
-                ))}
-              </Stack>
-            )}
-          </FormSection>
-          <FormSection
-            id="skills"
-            title={t("form.skillsSection")}
-            description={t("form.skillsSectionHint")}
-          >
-            <OrgSkillsPicker skills={orgSkills} value={skillIds} onChange={onOrgSkillsChange} />
-            <PinnedSkillsPicker
-              skills={pinnable}
-              selected={[...skillIds, ...own.skills.map((s) => s.id)]}
-              value={pinned}
-              onChange={setPinned}
-              changed={!sameJson(pinned, initial.pinned)}
-            />
-            {visibility === "private" && (
-              <SkillWriteSwitch value={confirmSkillWrite} onChange={setConfirmSkillWrite} />
-            )}
-            {existing && (
-              <OwnSkills
-                orgId={orgId}
-                agentId={existing.id}
-                skills={own.skills}
-                canDelete={existing.ownerAccountId === me.account.id}
-                onDeleted={(id) => setPinned((cur) => cur.filter((x) => x !== id))}
+                  {BUILTIN_TOOLS.map((name) => (
+                    <Checkbox
+                      key={name}
+                      label={t(`form.builtin.${name}`)}
+                      checked={builtins.includes(name)}
+                      onChange={(on) =>
+                        setBuiltins((cur) => (on ? [...cur, name] : cur.filter((x) => x !== name)))
+                      }
+                    />
+                  ))}
+                </Stack>
+              </div>
+              {/* biome-ignore lint/a11y/useSemanticElements: fieldset 带浏览器默认边框与内边距，apps/web 不能写样式；用 role=group 分组 */}
+              <div role="group" aria-label={t("form.connectorsLabel")}>
+                <Stack gap={4}>
+                  <Text variant="small" tone="muted">
+                    {t("form.connectorsLabel")}
+                  </Text>
+                  {apps.length === 0 && (
+                    <Text variant="small" tone="faint">
+                      {t("form.noConnectors")}
+                    </Text>
+                  )}
+                  {apps.map((a) => (
+                    <Checkbox
+                      key={a.id}
+                      label={t("form.connectorTools", { name: a.name })}
+                      checked={selectedConnectors.includes(a.id)}
+                      onChange={(on) => toggleConnector(a.id, on)}
+                    />
+                  ))}
+                </Stack>
+              </div>
+              {toolKeys.length > 0 && (
+                <Stack gap={4}>
+                  <Text variant="small" tone="muted">
+                    {t("form.policiesLabel")}
+                  </Text>
+                  {toolKeys.map((key) => (
+                    <div key={key} data-policy={key}>
+                      <Field label={key}>
+                        <Select
+                          value={policies[key] ?? ""}
+                          onChange={(e) => {
+                            const v = e.target.value as TightenedPolicy | "";
+                            setPolicies((cur) => {
+                              const next = { ...cur };
+                              if (v === "") delete next[key];
+                              else next[key] = v;
+                              return next;
+                            });
+                          }}
+                          options={[
+                            { value: "", label: t("form.policy.default") },
+                            { value: "ask", label: t("form.policy.ask") },
+                            { value: "deny", label: t("form.policy.deny") },
+                          ]}
+                        />
+                      </Field>
+                    </div>
+                  ))}
+                </Stack>
+              )}
+            </FormSection>
+          )}
+          {shows("skills") && (
+            <FormSection
+              id="skills"
+              title={t("form.skillsSection")}
+              description={t("form.skillsSectionHint")}
+            >
+              <OrgSkillsPicker skills={orgSkills} value={skillIds} onChange={onOrgSkillsChange} />
+              <PinnedSkillsPicker
+                skills={pinnable}
+                selected={[...skillIds, ...own.skills.map((s) => s.id)]}
+                value={pinned}
+                onChange={setPinned}
+                changed={!sameJson(pinned, initial.pinned)}
               />
-            )}
-          </FormSection>
-          {subagents.section}
-          {modelDecl.length > 0 && (
+              {visibility === "private" && (
+                <SkillWriteSwitch value={confirmSkillWrite} onChange={setConfirmSkillWrite} />
+              )}
+              {existing && (
+                <OwnSkills
+                  orgId={orgId}
+                  agentId={existing.id}
+                  skills={own.skills}
+                  canDelete={existing.ownerAccountId === me.account.id}
+                  onDeleted={(id) => setPinned((cur) => cur.filter((x) => x !== id))}
+                />
+              )}
+            </FormSection>
+          )}
+          {shows("subagents") && subagents.section}
+          {shows("model") && modelDecl.length > 0 && (
             <FormSection
               id="params"
               title={t("form.modelParamsTitle")}
@@ -797,7 +822,7 @@ export function useAgentForm(
               />
             </FormSection>
           )}
-          {fallbackDecl.length > 0 && (
+          {shows("model") && fallbackDecl.length > 0 && (
             <FormSection
               id="fallback-params"
               title={t("form.fallbackParamsTitle")}

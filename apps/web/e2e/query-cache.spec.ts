@@ -322,7 +322,7 @@ test("a reload paints complete with no skeleton and no browser read", async ({ p
     );
 
   for (const [path, template] of [
-    [`/agents/${agentId}`, "FormPage"],
+    [`/agents/${agentId}`, "SettingsPage"],
     [`/chat/${conversation}`, "ConversationPage"],
     ["/agents", "ListPage"],
   ] as const) {
@@ -361,7 +361,7 @@ test("a client navigation to an uncached page shows the template's loading state
 
   await page.locator(`a[href="/agents/${agentId}"]`).click();
   await expect(page).toHaveURL(new RegExp(`/agents/${agentId}$`));
-  const form = page.locator('[data-template="FormPage"]');
+  const form = page.locator('[data-template="SettingsPage"]');
   await expect(form).toBeVisible();
   await expect(form.locator('[aria-busy="true"]').first()).toBeAttached();
   await expect.poll(() => held.length).toBeGreaterThan(0);

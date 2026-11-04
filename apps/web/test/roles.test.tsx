@@ -325,6 +325,12 @@ const AGENT = (id: string, owner = "someone") => ({
   visibility: "org",
   ownerAccountId: owner,
   currentVersion: 1,
+  profile: {
+    avatar: null,
+    description: "",
+    quickActions: [],
+    updatedAt: "2026-11-04T10:00:00.000Z",
+  },
   definition: { name: `Agent ${id}`, instructions: "", model: { provider: "p", model: "m" } },
   updatedAt: "2026-10-01T00:00:00Z",
 });
@@ -397,7 +403,12 @@ const MEMBERS = {
 };
 
 describe("agents: edit, read-only and 更换负责人", () => {
-  const agentPage = async (role: OrgRole, owner: string, extra: Record<string, unknown> = {}) => {
+  const agentPage = async (
+    role: OrgRole,
+    owner: string,
+    extra: Record<string, unknown> = {},
+    search = "",
+  ) => {
     routes = {
       [`GET ${O}/agents/x1`]: { agent: { ...AGENT("x1", owner), ...extra } },
       [`GET ${O}/models`]: MODELS,
@@ -410,7 +421,7 @@ describe("agents: edit, read-only and 更换负责人", () => {
     };
     resetNavigation("/agents/x1");
     await renderRouteWithCache(
-      "/agents/x1",
+      `/agents/x1${search}`,
       { ...agentFormDefaults("x1"), ...served() },
       { locale: "zh", me: meAs(role) },
     );
@@ -419,15 +430,15 @@ describe("agents: edit, read-only and 更换负责人", () => {
   for (const role of ROLES) {
     const edits = role === "admin" || role === "owner";
     it(`/agents/<id> of someone else · ${role}: ${edits ? "the form" : "read-only"}`, async () => {
-      await agentPage(role, "someone");
+      // the read-only sections: the model shows without the providers list
+      await agentPage(role, "someone", {}, edits ? "" : "?s=model");
       if (edits) {
         expect(await screen.findByRole("button", { name: zh.agents.form.submit })).toBeTruthy();
-        expect(screen.getByRole("button", { name: zh.agents.reassign.action })).toBeTruthy();
+        expect(screen.getByRole("button", { name: zh.agents.page.reassign })).toBeTruthy();
       } else {
-        expect(await screen.findByText(zh.agents.readOnly)).toBeTruthy();
+        expect(await screen.findByText("p / m")).toBeTruthy();
         expect(screen.queryByRole("button", { name: zh.agents.form.submit })).toBeNull();
-        expect(screen.queryByRole("button", { name: zh.agents.reassign.action })).toBeNull();
-        expect(screen.getByText("p / m")).toBeTruthy();
+        expect(screen.queryByRole("button", { name: zh.agents.page.reassign })).toBeNull();
       }
     });
   }
@@ -435,7 +446,7 @@ describe("agents: edit, read-only and 更换负责人", () => {
   it("a member who owns the agent edits it, without 更换负责人", async () => {
     await agentPage("member", "a1");
     expect(await screen.findByRole("button", { name: zh.agents.form.submit })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: zh.agents.reassign.action })).toBeNull();
+    expect(screen.queryByRole("button", { name: zh.agents.page.reassign })).toBeNull();
   });
 
   it("a guest who still owns an agent cannot edit it (agents.create is member up)", async () => {
@@ -446,7 +457,7 @@ describe("agents: edit, read-only and 更换负责人", () => {
   it("an admin changes the owner: picks a member (no anonymous guests) and posts it", async () => {
     await agentPage("admin", "someone");
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: zh.agents.reassign.action }));
+    await user.click(await screen.findByRole("button", { name: zh.agents.page.reassign }));
     const dialog = await screen.findByRole("dialog", { name: zh.agents.reassign.title });
     const select = await within(dialog).findByRole("combobox", { name: zh.agents.reassign.owner });
     expect(within(select).queryByRole("option", { name: /Anonymous/ })).toBeNull();
@@ -459,7 +470,7 @@ describe("agents: edit, read-only and 更换负责人", () => {
   it("an agent that needs reassignment can be confirmed to its current owner", async () => {
     await agentPage("admin", "a2", { needsReassignment: true });
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: zh.agents.reassign.action }));
+    await user.click(await screen.findByRole("button", { name: zh.agents.page.reassign }));
     const dialog = await screen.findByRole("dialog", { name: zh.agents.reassign.title });
     await within(dialog).findByRole("combobox", { name: zh.agents.reassign.owner });
     const submit = within(dialog).getByRole("button", { name: zh.agents.reassign.submit });
@@ -471,7 +482,7 @@ describe("agents: edit, read-only and 更换负责人", () => {
   it("without needsReassignment the current owner is not a change", async () => {
     await agentPage("admin", "a2");
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: zh.agents.reassign.action }));
+    await user.click(await screen.findByRole("button", { name: zh.agents.page.reassign }));
     const dialog = await screen.findByRole("dialog", { name: zh.agents.reassign.title });
     await within(dialog).findByRole("combobox", { name: zh.agents.reassign.owner });
     expect(within(dialog).getByRole("button", { name: zh.agents.reassign.submit })).toHaveProperty(

@@ -50,6 +50,12 @@ const agent = (over: Record<string, unknown> = {}) => ({
   ownerAccountId: "a1",
   visibility: "org",
   currentVersion: 3,
+  profile: {
+    avatar: null,
+    description: "",
+    quickActions: [],
+    updatedAt: "2026-11-04T10:00:00.000Z",
+  },
   memberIds: null,
   needsReassignment: false,
   createdAt: T,
@@ -194,8 +200,8 @@ describe("编辑 agent（FormPage）", () => {
       ...routes(),
       [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: agent(), warnings: [] }),
     });
-    const { container } = await renderEditAgent();
-    expect(container.querySelector('[data-template="FormPage"]')).not.toBeNull();
+    const { container } = await renderEditAgent({ section: "skills" });
+    expect(container.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
     const group = await screen.findByRole("group", { name: en.agents.form.orgSkillsLabel });
     const live = await within(group).findByRole("checkbox", { name: /pdf-tools/ });
     expect(live).toHaveProperty("checked", true);
@@ -203,10 +209,7 @@ describe("编辑 agent（FormPage）", () => {
       name: en.agents.form.deletedSkill.replace("{id}", "gone"),
     });
     expect(deleted).toHaveProperty("checked", true);
-    expect(screen.getByRole("textbox", { name: en.agents.form.nameLabel })).toHaveProperty(
-      "value",
-      "Helper",
-    );
+    expect(screen.getByRole("heading", { level: 1, name: "Helper" })).toBeTruthy();
     const user = userEvent.setup();
     await user.click(deleted);
     await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
@@ -224,7 +227,8 @@ describe("编辑 agent（FormPage）", () => {
     expect(body.definition.instructions).toBe("Be helpful.");
     // 没改可见性：不发
     expect(body.visibility).toBeUndefined();
-    expect(router.push).toHaveBeenCalledWith("/agents");
+    // the section's save stays on the page
+    expect(router.push).not.toHaveBeenCalled();
   });
 
   it.each(["zh", "en"] as const)(
@@ -240,7 +244,7 @@ describe("编辑 agent（FormPage）", () => {
           return noContent();
         },
       });
-      await renderEditAgent({ locale });
+      await renderEditAgent({ locale, section: "skills" });
       const list = await screen.findByRole("group", { name: m.agents.form.ownSkillsLabel });
       expect(await within(list).findByText("notes-style · v2")).toBeTruthy();
       expect(within(list).queryByRole("checkbox")).toBeNull();
@@ -276,7 +280,7 @@ describe("编辑 agent（FormPage）", () => {
       ...routes({ definition: { ...def, tools, skills: { orgSkills: ["s1"], future: 1 } } }),
       [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: agent(), warnings: [] }),
     });
-    await renderEditAgent();
+    await renderEditAgent({ section: "skills" });
     const group = await screen.findByRole("group", { name: en.agents.form.orgSkillsLabel });
     await within(group).findByRole("checkbox", { name: /pdf-tools/ });
     await userEvent.setup().click(screen.getByRole("button", { name: en.agents.form.submit }));
@@ -298,7 +302,7 @@ describe("编辑 agent（FormPage）", () => {
         [`PATCH ${ORG}/agents/ag1`]: () =>
           json(409, { error: { code: "agent.version_conflict", message: "changed" } }),
       });
-      await renderEditAgent({ locale });
+      await renderEditAgent({ locale, section: "skills" });
       const m = msgs[locale];
       const group = await screen.findByRole("group", { name: m.agents.form.orgSkillsLabel });
       await within(group).findByRole("checkbox", { name: /pdf-tools/ });
@@ -311,7 +315,7 @@ describe("编辑 agent（FormPage）", () => {
   it("「运行记录」入口：负责人与组织管理员可见，指向按该 agent 筛选的运行记录", async () => {
     // 组织 owner（管理员）且是负责人
     stubApi(routes());
-    await renderEditAgent();
+    await renderEditAgent({ section: "skills" });
     const link = await screen.findByRole("link", { name: en.agents.runHistory });
     expect(link.getAttribute("href")).toBe("/trajectories?agentId=ag1");
     cleanup();
@@ -333,7 +337,7 @@ describe("编辑 agent（FormPage）", () => {
 
   it("编辑：共享 agent 没有确认开关；私有 agent 已是 ask 时勾选，取消勾选去掉 writePolicy 键", async () => {
     stubApi(routes());
-    await renderEditAgent();
+    await renderEditAgent({ section: "skills" });
     await screen.findByRole("group", { name: en.agents.form.orgSkillsLabel });
     expect(screen.queryByRole("checkbox", { name: en.agents.form.confirmSkillWrite })).toBeNull();
     cleanup();
@@ -346,7 +350,7 @@ describe("编辑 agent（FormPage）", () => {
       }),
       [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: agent(), warnings: [] }),
     });
-    await renderEditAgent();
+    await renderEditAgent({ section: "skills" });
     const sw = await screen.findByRole("checkbox", { name: en.agents.form.confirmSkillWrite });
     expect(sw).toHaveProperty("checked", true);
     const user = userEvent.setup();
@@ -361,7 +365,7 @@ describe("编辑 agent（FormPage）", () => {
 
   it("不是负责人：自己的技能没有删除按钮", async () => {
     stubApi(routes({ ownerAccountId: "someone-else" }));
-    await renderEditAgent();
+    await renderEditAgent({ section: "skills" });
     const list = await screen.findByRole("group", { name: en.agents.form.ownSkillsLabel });
     await within(list).findByText("notes-style · v2");
     expect(within(list).queryByRole("button")).toBeNull();
@@ -454,7 +458,7 @@ describe("pinned skills (skills.pinned)", () => {
       [`GET ${ORG}/agents/ag1/skills`]: () =>
         json(500, { error: { code: "internal", message: "x" } }),
     });
-    await renderEditAgent();
+    await renderEditAgent({ section: "skills" });
     const again = await screen.findByRole("group", { name: f.pinnedLabel });
     expect(await within(again).findByText(f.pinnedUnavailable)).toBeTruthy();
     expect(within(again).queryByRole("checkbox", { name: /k1/ })).toBeNull();
@@ -466,7 +470,7 @@ describe("pinned skills (skills.pinned)", () => {
       ...editRoutes({ orgSkills: ["s3"] }),
       [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: agent(), warnings: [] }),
     });
-    await renderEditAgent();
+    await renderEditAgent({ section: "skills" });
     const user = userEvent.setup();
     const org = await screen.findByRole("group", { name: f.orgSkillsLabel });
     const pinned = screen.getByRole("group", { name: f.pinnedLabel });
@@ -494,7 +498,7 @@ describe("pinned skills (skills.pinned)", () => {
   it("a fourth pin is disabled with the tooMany hint; the token estimate sums the pinned skills", async () => {
     const f = en.agents.form;
     stubApi(editRoutes({ orgSkills: ["s1", "s2", "s3", "s4"], pinned: ["s1", "s2", "s3"] }));
-    await renderEditAgent();
+    await renderEditAgent({ section: "skills" });
     const pinned = await screen.findByRole("group", { name: f.pinnedLabel });
     const slides = await within(pinned).findByRole("checkbox", {
       name: fill(f.pinSkill, { name: "slides" }),
@@ -533,7 +537,7 @@ describe("pinned skills (skills.pinned)", () => {
           },
         }),
     });
-    await renderEditAgent();
+    await renderEditAgent({ section: "skills" });
     const pinned = await screen.findByRole("group", { name: f.pinnedLabel });
     expect(
       await within(pinned).findByText(fill(f.overLimit, { bytes: 40000, max: 32768 })),
@@ -576,7 +580,7 @@ describe("pinned skills (skills.pinned)", () => {
         ...editRoutes({ orgSkills: ["s1", "s2", "s3", "s4"], pinned: ["s4"] }),
         [`GET ${ORG}/skills`]: () => json(200, { skills }),
       });
-      await renderEditAgent({ locale });
+      await renderEditAgent({ locale, section: "skills" });
       const org = await screen.findByRole("group", { name: f.orgSkillsLabel });
       await within(org).findByRole("checkbox", { name: /release-check/ });
       // release-check and old-pin are manual, review runs as a sub-agent
@@ -612,7 +616,7 @@ describe("pinned skills (skills.pinned)", () => {
           },
         }),
     });
-    await renderEditAgent();
+    await renderEditAgent({ section: "skills" });
     await screen.findByRole("group", { name: f.pinnedLabel });
     await userEvent.setup().click(screen.getByRole("button", { name: f.submit }));
     expect(

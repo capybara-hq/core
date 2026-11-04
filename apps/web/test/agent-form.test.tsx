@@ -246,6 +246,12 @@ describe("the agent page lists its channels (spec 3.3.1)", () => {
     ownerAccountId: "a1",
     visibility: "org",
     currentVersion: 1,
+    profile: {
+      avatar: null,
+      description: "",
+      quickActions: [],
+      updatedAt: "2026-11-04T10:00:00.000Z",
+    },
     memberIds: null,
     needsReassignment: false,
     createdAt: T,
@@ -299,7 +305,7 @@ describe("the agent page lists its channels (spec 3.3.1)", () => {
 
   it("lists only this agent's connections; 接入渠道 presets the agent and the way back", async () => {
     stubApi(routes());
-    await renderEditAgent({ locale: "zh" });
+    await renderEditAgent({ locale: "zh", section: "channels" });
     const section = await screen.findByRole("region", { name: zh.agents.channels.title });
     const list = await within(section).findByRole("list", { name: zh.agents.channels.title });
     expect(within(list).getByRole("link", { name: "Team Slack" }).getAttribute("href")).toBe(
@@ -321,7 +327,7 @@ describe("the agent page lists its channels (spec 3.3.1)", () => {
       account: { ...ME.account, isEnterpriseAdmin: false },
       memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],
     };
-    await renderEditAgent({ me: member });
+    await renderEditAgent({ me: member, section: "channels" });
     const section = await screen.findByRole("region", { name: en.agents.channels.title });
     await within(section).findByText("Team Slack");
     expect(within(section).queryByRole("button", { name: en.agents.channels.connect })).toBeNull();
@@ -343,6 +349,12 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
     ownerAccountId: owner,
     visibility: "org",
     currentVersion: 1,
+    profile: {
+      avatar: null,
+      description: "",
+      quickActions: [],
+      updatedAt: "2026-11-04T10:00:00.000Z",
+    },
     memberIds: null,
     needsReassignment: false,
     createdAt: T,
@@ -477,15 +489,19 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
     expect(browser).toEqual([]);
   });
 
-  it("/agents/<id>: the form, the selected connector's tools and the channels are the first paint", async () => {
+  it("/agents/<id>?s=tools: the form, the selected connector's tools and the channels are the first paint", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderEditAgent({
+    const view = await renderEditAgent({
       routes: { ...formRoutes, [`GET ${ORG}/agents/ag1`]: ok({ agent: agent("ag1", "Helper") }) },
       readiness: NOT_READY,
+      section: "tools",
     });
     expect(screen.getByRole("heading", { level: 1, name: "Helper" })).toBeTruthy();
     expect(document.querySelector('[data-policy="tracker__find"]')).not.toBeNull();
+    // another section paints from what the first load prefetched
+    await view.navigate("/agents/ag1?s=channels");
     expect(screen.getByRole("region", { name: en.agents.channels.title })).toBeTruthy();
+    await settle();
     expect(browser).toEqual([]);
   });
 
@@ -530,12 +546,12 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
     expect(browser.filter((c) => c.method === "GET")).toEqual([]);
   });
 
-  it("/agents/<id>: an empty cache shows the template's loading state, then the data", async () => {
+  it("/agents/<id>?s=tools: an empty cache shows the template's loading state, then the data", async () => {
     let release: () => void = () => {};
     const held = new Promise<void>((r) => {
       release = r;
     });
-    await renderRouteEmptyCache(`/agents/ag1`, {
+    await renderRouteEmptyCache(`/agents/ag1?s=tools`, {
       ...agentFormDefaults(),
       ...formRoutes,
       [`GET ${ORG}/agents/ag1`]: ok({ agent: agent("ag1", "Echo") }),
@@ -545,19 +561,17 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
       },
     });
     const page = await vi.waitFor(() => {
-      const el = template("FormPage");
+      const el = template("SettingsPage");
       if (el === null || el.querySelector("[aria-busy='true']") === null)
         throw new Error("no loading page yet");
       return el as HTMLElement;
     });
-    // the form's static sections, as placeholders
-    expect(page.querySelectorAll('[data-part="form-section"]').length).toBe(6);
-    expect(screen.queryByRole("textbox", { name: en.agents.form.nameLabel })).toBeNull();
+    // the open section's static frame, as a placeholder; the head is the agent's already
+    expect(page.querySelectorAll('[data-part="form-section"]').length).toBe(1);
+    expect(screen.getByRole("heading", { level: 1, name: "Echo" })).toBeTruthy();
+    expect(screen.queryByRole("group", { name: en.agents.form.builtinLabel })).toBeNull();
     await act(async () => release());
-    expect(await screen.findByRole("textbox", { name: en.agents.form.nameLabel })).toHaveProperty(
-      "value",
-      "Echo",
-    );
+    expect(await screen.findByRole("group", { name: en.agents.form.builtinLabel })).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
@@ -593,7 +607,7 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
     expect(browser.filter((c) => c.method === "GET")).toEqual([]);
   });
 
-  it("saving an agent invalidates the agents list, the agent and readiness", async () => {
+  it("saving basics invalidates the agents list and the agent: the open agent is read again", async () => {
     const browser = stubApi({
       ...sessionRoutes(),
       ...agentFormDefaults(),
@@ -608,12 +622,17 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
     await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), " 2");
     browser.length = 0;
     await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
-    const reads = browser.filter((c) => c.method === "GET").map((c) => c.url);
-    // the active ones are read again: the agents list (the sub-agents section), the agent, readiness
-    expect(new Set(reads)).toEqual(
-      new Set([`${ORG}/agents`, `${ORG}/agents/ag1`, `${ORG}/readiness`]),
+    await vi.waitFor(() =>
+      expect(browser.filter((c) => c.method === "GET").map((c) => c.url)).toContain(
+        `${ORG}/agents/ag1`,
+      ),
     );
+    await settle();
+    // the save stays on the page; the active one is read again: the agent (the agents list is
+    // invalidated too, but nothing on Basics observes it)
+    const reads = browser.filter((c) => c.method === "GET").map((c) => c.url);
+    expect(new Set(reads)).toEqual(new Set([`${ORG}/agents/ag1`]));
+    expect(router.push).not.toHaveBeenCalled();
   });
 
   it("editing the prompt of an agent saved with prompt files sends instructions only", async () => {
@@ -639,6 +658,7 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
     });
     await renderEditAgent({
       routes: { ...formRoutes, [`GET ${ORG}/agents/ag1`]: ok({ agent: withFiles }) },
+      section: "prompt",
     });
     const user = userEvent.setup();
     await user.type(
@@ -646,7 +666,7 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
       " more",
     );
     await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
+    await vi.waitFor(() => expect(browser.some((c) => c.method === "PATCH")).toBe(true));
     const patch = browser.find((c) => c.method === "PATCH");
     const body = bodyOf(patch) as { definition: Record<string, unknown> };
     expect(body.definition.instructions).toBe("# AGENTS.md\n\na\n\n# B.md\n\nb more");
@@ -661,6 +681,7 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
         [`GET ${ORG}/agents/ag1`]: ok({ agent: agent("ag1", "Helper") }),
         [`GET ${ORG}/channels`]: () => apiJson(500, { error: { code: "internal" } }),
       },
+      section: "channels",
     });
     expect(screen.getByText(en.agents.channels.loadFailed)).toBeTruthy();
     expect(browser).toEqual([]);

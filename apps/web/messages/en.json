@@ -621,6 +621,48 @@
       "submit": "Change",
       "done": "Owner changed",
       "none": "No members to choose from"
+    },
+    "page": {
+      "navGroup": "Agent",
+      "sections": {
+        "basics": "Basics",
+        "quick-actions": "Quick actions",
+        "prompt": "Prompt",
+        "model": "Model",
+        "tools": "Tools",
+        "skills": "Skills",
+        "subagents": "Sub-agents",
+        "channels": "Channels"
+      },
+      "startChat": "Start a conversation",
+      "reassign": "Reassign owner",
+      "leave": {
+        "title": "Discard unsaved changes?",
+        "body": "This section has changes that are not saved. Keep editing, or discard them and open the other section.",
+        "keep": "Keep editing",
+        "discard": "Discard changes"
+      },
+      "discard": "Discard",
+      "reload": "Reload",
+      "avatarLabel": "Avatar",
+      "uploadOff": "Uploading needs object storage, which this deployment has not configured. Pick one of the animals instead.",
+      "uploadFailed": "The image could not be read. Pick a png, jpg or webp file.",
+      "descriptionLabel": "Description",
+      "descriptionHelp": "One line about what this agent is for. People see it; the model does not.",
+      "membersLabel": "Members who can use it",
+      "membersLoading": "Loading members…",
+      "membersFailed": "The members could not be loaded.",
+      "quickActions": {
+        "hint": "Up to {max} shortcuts people see on the new conversation page. Picking one fills the composer with its text.",
+        "list": "Quick actions",
+        "add": "Add a quick action",
+        "none": "No quick actions yet.",
+        "titleLabel": "Title",
+        "titleRequired": "Enter a title.",
+        "bodyLabel": "Text",
+        "bodyHelp": "What goes into the composer.",
+        "bodyRequired": "Enter the text."
+      }
     }
   },
   "skills": {

@@ -152,7 +152,7 @@ test("管理员上传技能包，agent 选用它；对话里 skill_load 的时�
   expect(agent?.definition.skills?.orgSkills).toHaveLength(1);
   expect(agent?.definition.skills?.pinned).toEqual(agent?.definition.skills?.orgSkills);
   // the edit page shows it pinned after a reload
-  await page.goto(`/agents/${agent?.id}`);
+  await page.goto(`/agents/${agent?.id}?s=skills`);
   await page.reload();
   await expect(
     page
@@ -234,8 +234,8 @@ test("共享 agent 用 skill_write 改技能：发起人确认工具调用，负
   await expect(page.getByText(zh.inbox.skillChange.approved)).toBeVisible();
   await expect(list.getByText(`${zh.inbox.skillChange.label} · team-glossary`)).toHaveCount(0);
 
-  // 3. 批准后成为 agent 自己的技能：编辑页只读列出
-  await page.goto(`/agents/${agentId}`);
+  // 3. 批准后成为 agent 自己的技能：编辑页的技能分组只读列出
+  await page.goto(`/agents/${agentId}?s=skills`);
   const own = page.getByRole("group", { name: zh.agents.form.ownSkillsLabel });
   await expect(own.getByText("team-glossary · v1")).toBeVisible();
 });

@@ -251,8 +251,10 @@ export const ROUTES: readonly RouteEntry[] = [
     pattern: "/agents/[id]",
     queries: ({ orgId, params }) =>
       orgId === null || params.id === undefined ? [] : [q(agentQuery(orgId, params.id))],
-    // A viewer who may change the agent also gets the form's reads, the tools of the connectors
-    // it uses and the channel connections; anyone else the read-only view (the agent only).
+    // A viewer who may change the agent also gets every section's reads (whichever `?s=` opens,
+    // so a section switch paints at once): the form's reads, the tools of the connectors it uses,
+    // the channel connections and the attachment limits (Basics: whether uploads are on); anyone
+    // else the read-only sections (the agent only).
     // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
     then: async ({ orgId, params, me }, qc) => {
       const id = params.id;
@@ -264,6 +266,7 @@ export const ROUTES: readonly RouteEntry[] = [
           ...agentFormQueries(orgId, id),
           ...agentConnectorQueries(orgId, agent),
           q(channelsQuery(orgId)),
+          q(attachmentLimitsQuery(orgId)),
         ].map((o) => qc.prefetchQuery({ ...o, retry: false })),
       );
     },

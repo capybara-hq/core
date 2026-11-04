@@ -237,6 +237,11 @@ a.cb-pageheader-path-seg:hover {
   gap: var(--cb-space-3);
   min-width: 0;
 }
+.cb-pageheader-avatar {
+  display: inline-flex;
+  flex: none;
+  align-self: center;
+}
 .cb-pageheader-text {
   flex: 1;
   min-width: 0;

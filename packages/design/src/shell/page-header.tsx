@@ -36,6 +36,8 @@ export type PageHeaderProps = {
   path: { label: string; href?: string }[];
   /** Row 2: an h1, one line with an ellipsis, the full text in `title`. */
   title: string;
+  /** Row 2, before the title and description: the object's avatar (an `Avatar` at 40). */
+  avatar?: ReactNode;
   /** One line under the title (`prose-small`, `muted`), with an ellipsis. */
   description?: string;
   count?: React.ReactNode;
@@ -232,6 +234,11 @@ export function PageHeader(p: PageHeaderProps) {
         </nav>
       ) : null}
       <div className="cb-pageheader-row">
+        {shown(p.avatar) ? (
+          <span className="cb-pageheader-avatar" data-part="page-header-avatar">
+            {p.avatar}
+          </span>
+        ) : null}
         <div className="cb-pageheader-text">
           <div className="cb-pageheader-titleline">
             {loading?.title ? (

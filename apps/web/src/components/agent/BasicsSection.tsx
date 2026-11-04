@@ -1,0 +1,403 @@
+"use client";
+
+import {
+  AvatarPicker,
+  type AvatarValue,
+  Callout,
+  Card,
+  Checkbox,
+  Field,
+  FormSection,
+  Input,
+  KeyValue,
+  Select,
+  Stack,
+  Text,
+  Textarea,
+} from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslations } from "next-intl";
+import { useEffect, useState } from "react";
+import {
+  type Agent,
+  type AgentAvatar,
+  type AgentDefinitionInput,
+  type AgentVisibility,
+  type AgentWarning,
+  avatarValue,
+  type ProfileInput,
+  updateAgent,
+  uploadAvatar,
+} from "../../lib/agents";
+import { ApiClientError } from "../../lib/api";
+import { cropAvatar } from "../../lib/avatar-crop";
+import { retryOnMountOf } from "../../lib/query/client";
+import { attachmentLimitsQuery } from "../../lib/query/conversation";
+import { keys } from "../../lib/query/keys";
+import { membersQuery } from "../../lib/query/members";
+import { useAppMutation, useUpdateProfile } from "../../lib/query/mutation";
+import { useErrorMessage } from "../../lib/use-error-message";
+import { FormError } from "../form-error";
+import { AgentSectionFrame, useAgentPage } from "./frame";
+import { useSectionDraft } from "./useSectionDraft";
+
+const NAME_MAX = 80;
+const DESCRIPTION_MAX = 500;
+const VISIBILITIES = ["private", "org", "members"] as const satisfies readonly AgentVisibility[];
+/** The kernel's answers that mean someone else saved first: the section offers a reload. */
+export const CONFLICT_CODES = new Set(["agent.profile_conflict", "agent.version_conflict"]);
+
+/** The profile part of Basics (saved with `PATCH …/profile`). */
+type ProfilePart = { avatar: AgentAvatar; description: string };
+/** The agent part of Basics (the agent PATCH: the name is in the definition). */
+type AgentPart = { name: string; visibility: AgentVisibility; memberIds: string[] };
+
+const profilePartOf = (a: Agent): ProfilePart => ({
+  avatar: a.profile.avatar,
+  description: a.profile.description,
+});
+const agentPartOf = (a: Agent): AgentPart => ({
+  name: a.definition.name,
+  visibility: a.visibility,
+  memberIds: a.memberIds ?? [],
+});
+const sameJson = (x: unknown, y: unknown) => JSON.stringify(x) === JSON.stringify(y);
+
+/**
+ * The saved definition with only the name changed. The prompt files and the retired `avatarUrl`
+ * are left out, as the form does: the kernel keeps the prompt files when `instructions` is their
+ * joined text, and the profile owns avatars.
+ */
+function definitionWithName(agent: Agent, name: string): AgentDefinitionInput {
+  const {
+    instructionFiles: _files,
+    avatarUrl: _avatarUrl,
+    ...kept
+  }: Record<string, unknown> = agent.definition;
+  return { ...(kept as unknown as AgentDefinitionInput), name };
+}
+
+/** A failure of one of Basics' two saves: a conflict offers the reload. */
+function SaveError({ error, onReload }: { error: unknown; onReload(): void }) {
+  const t = useTranslations("agents.page");
+  const errorMessage = useErrorMessage();
+  if (error instanceof ApiClientError && CONFLICT_CODES.has(error.code)) {
+    return (
+      <Callout tone="fail" action={{ label: t("reload"), onSelect: onReload }}>
+        {errorMessage(error)}
+      </Callout>
+    );
+  }
+  return <FormError message={errorMessage(error)} />;
+}
+
+/**
+ * 基本信息 Basics (agent profile design §3.2): avatar, name, description, visibility and members.
+ * One Save makes up to two requests: the profile (avatar, description) and the agent PATCH (name,
+ * visibility, members, with `expectedVersion`). Each part keeps its own draft: when one request
+ * fails, the other part's saved changes stay and only the failed part's edits are kept. An upload
+ * is cropped square in the browser, uploaded, and saved as `{ kind: "upload", uploadId }`.
+ */
+export function BasicsSection() {
+  const { editable } = useAgentPage();
+  return editable ? <BasicsEdit /> : <BasicsReadOnly />;
+}
+
+function BasicsReadOnly() {
+  const t = useTranslations("agents");
+  const { agent } = useAgentPage();
+  return (
+    <AgentSectionFrame>
+      <FormSection id="basics" title={t("page.sections.basics")}>
+        <Text tone="muted">{t("readOnly")}</Text>
+        <KeyValue
+          rows={[
+            { k: t("form.nameLabel"), v: agent.definition.name },
+            ...(agent.profile.description !== ""
+              ? [{ k: t("page.descriptionLabel"), v: agent.profile.description }]
+              : []),
+            { k: t("form.visibilityLabel"), v: t(`scope.${agent.visibility}`) },
+          ]}
+        />
+      </FormSection>
+    </AgentSectionFrame>
+  );
+}
+
+function BasicsEdit() {
+  const t = useTranslations("agents");
+  const qc = useQueryClient();
+  const errorMessage = useErrorMessage();
+  const { orgId, agent } = useAgentPage();
+  const profile = useSectionDraft(profilePartOf(agent));
+  const basic = useSectionDraft(agentPartOf(agent));
+  // What each part's edits were made on: a save over a newer one is a 409 with a reload.
+  const [profileBase, setProfileBase] = useState<string | null>(null);
+  const [versionBase, setVersionBase] = useState<number | null>(null);
+  const [preview, setPreview] = useState<{ uploadId: string; src: string } | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [storageOff, setStorageOff] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [profileError, setProfileError] = useState<unknown>(null);
+  const [agentError, setAgentError] = useState<unknown>(null);
+  const [warnings, setWarnings] = useState<AgentWarning[]>([]);
+  const [nameError, setNameError] = useState(false);
+  useEffect(() => () => (preview ? URL.revokeObjectURL(preview.src) : undefined), [preview]);
+
+  const limitsQ = attachmentLimitsQuery(orgId);
+  const limits = useQuery({ ...limitsQ, retryOnMount: retryOnMountOf(limitsQ.queryKey) });
+  const membersQ = membersQuery(orgId);
+  const members = useQuery({ ...membersQ, retryOnMount: retryOnMountOf(membersQ.queryKey) });
+  const updateProfile = useUpdateProfile(orgId, agent.id);
+  // the upload only registers a file: the profile save that names it changes the agent
+  const upload = useAppMutation({
+    fn: (square: Blob) => uploadAvatar(orgId, agent.id, square),
+    invalidates: () => [],
+  });
+  const saveAgent = useAppMutation({
+    fn: (input: {
+      definition?: AgentDefinitionInput;
+      visibility?: AgentVisibility;
+      memberIds?: string[];
+      expectedVersion: number;
+    }) => updateAgent(orgId, agent.id, input),
+    invalidates: () => [keys.org(orgId).agents(), keys.org(orgId).agent(agent.id)],
+  });
+
+  const editProfile = (next: Partial<ProfilePart>) => {
+    if (!profile.dirty) setProfileBase(agent.profile.updatedAt);
+    profile.set(next);
+  };
+  const editBasic = (next: Partial<AgentPart>) => {
+    if (!basic.dirty) setVersionBase(agent.currentVersion);
+    basic.set(next);
+  };
+
+  const uploadOff = storageOff || limits.data?.available === false;
+  async function onUpload(file: File) {
+    setUploadError(null);
+    setUploading(true);
+    try {
+      const square = await cropAvatar(file);
+      const { uploadId } = await upload.mutateAsync(square);
+      setPreview(
+        typeof URL.createObjectURL === "function"
+          ? { uploadId, src: URL.createObjectURL(square) }
+          : null,
+      );
+      editProfile({ avatar: { kind: "upload", uploadId } });
+    } catch (e) {
+      if (e instanceof ApiClientError && e.code === "storage.unavailable") setStorageOff(true);
+      else setUploadError(e instanceof ApiClientError ? errorMessage(e) : t("page.uploadFailed"));
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  const d = profile.draft;
+  const b = basic.draft;
+  /** What the picker shows: a preset, the new upload's preview, or the saved image. */
+  const pickerValue: AvatarValue =
+    d.avatar === null
+      ? null
+      : d.avatar.kind === "preset"
+        ? d.avatar
+        : d.avatar.kind === "upload" && preview?.uploadId === d.avatar.uploadId
+          ? { kind: "image", src: preview.src }
+          : avatarValue(agent, orgId);
+
+  const savedProfile = profilePartOf(agent);
+  const savedBasic = agentPartOf(agent);
+  const changed = {
+    avatar: !sameJson(d.avatar, savedProfile.avatar),
+    description: d.description !== savedProfile.description,
+    name: b.name.trim() !== savedBasic.name,
+    visibility: b.visibility !== savedBasic.visibility,
+    members: b.visibility === "members" && !sameJson(b.memberIds, savedBasic.memberIds),
+  };
+  const unsaved = Object.values(changed).filter(Boolean).length;
+  const dirty = profile.dirty || basic.dirty;
+
+  async function save() {
+    if (pending || uploading) return;
+    const name = b.name.trim();
+    setNameError(name === "");
+    if (name === "") return;
+    const profileInput: ProfileInput = {
+      // an `external` avatar is migrated data: never written back
+      ...(changed.avatar && d.avatar?.kind !== "external" ? { avatar: d.avatar } : {}),
+      ...(changed.description ? { description: d.description } : {}),
+    };
+    const sendProfile = Object.keys(profileInput).length > 0;
+    const sendAgent = changed.name || changed.visibility || changed.members;
+    setPending(true);
+    setProfileError(null);
+    setAgentError(null);
+    setWarnings([]);
+    const [p, a] = await Promise.allSettled([
+      sendProfile
+        ? updateProfile.mutateAsync({
+            ...profileInput,
+            expectedUpdatedAt: profileBase ?? agent.profile.updatedAt,
+          })
+        : Promise.resolve(null),
+      sendAgent
+        ? saveAgent.mutateAsync({
+            ...(changed.name ? { definition: definitionWithName(agent, name) } : {}),
+            ...(changed.visibility ? { visibility: b.visibility } : {}),
+            ...(b.visibility === "members" && (changed.members || changed.visibility)
+              ? { memberIds: b.memberIds }
+              : {}),
+            expectedVersion: versionBase ?? agent.currentVersion,
+          })
+        : Promise.resolve(null),
+    ]);
+    // each part on its own: a saved part follows the saved agent, a failed one keeps its edits
+    if (p.status === "fulfilled") {
+      profile.reset();
+      setProfileBase(null);
+    } else setProfileError(p.reason);
+    if (a.status === "fulfilled") {
+      basic.reset();
+      setVersionBase(null);
+      setWarnings(a.value?.warnings ?? []);
+    } else setAgentError(a.reason);
+    setPending(false);
+  }
+
+  function discard() {
+    profile.reset();
+    basic.reset();
+    setProfileBase(null);
+    setVersionBase(null);
+    setProfileError(null);
+    setAgentError(null);
+    setNameError(false);
+    setUploadError(null);
+  }
+
+  /** Someone else saved first: read the agent again and start over from it. */
+  async function reload() {
+    await qc.refetchQueries({ queryKey: keys.org(orgId).agent(agent.id) });
+    discard();
+  }
+
+  const orgMembers = (members.data?.members ?? []).filter((m) => !m.anonymous);
+  const errors = (nameError ? 1 : 0) + (profileError ? 1 : 0) + (agentError ? 1 : 0);
+  return (
+    <AgentSectionFrame
+      dirty={dirty}
+      actionRow={{
+        unsaved,
+        errors,
+        ...(dirty ? { cancel: { label: t("page.discard"), onSelect: discard } } : {}),
+        primary: {
+          label: t("form.submit"),
+          onSelect: () => void save(),
+          loading: pending,
+          disabled: pending || uploading || !dirty || b.name.trim() === "",
+        },
+      }}
+    >
+      <Stack gap={16}>
+        {warnings.length > 0 && (
+          <Card tone="danger" title={t("form.warningsTitle")}>
+            <Stack gap={4}>
+              {warnings.map((w) => (
+                <Text key={w} tone="warn" icon="circle-alert">
+                  {t.has(`warnings.${w}`) ? t(`warnings.${w}`) : t("warnings.unknown", { code: w })}
+                </Text>
+              ))}
+            </Stack>
+          </Card>
+        )}
+        {profileError ? <SaveError error={profileError} onReload={() => void reload()} /> : null}
+        {agentError ? <SaveError error={agentError} onReload={() => void reload()} /> : null}
+        <FormSection id="basics" title={t("page.sections.basics")}>
+          <Stack gap={4}>
+            <AvatarPicker
+              value={pickerValue}
+              label={t("page.avatarLabel")}
+              onChange={(v) => {
+                if (v?.kind === "preset") editProfile({ avatar: v });
+              }}
+              {...(uploadOff
+                ? { uploadOffReason: t("page.uploadOff") }
+                : { onUpload: (f: File) => void onUpload(f) })}
+            />
+            {uploadError ? <FormError message={uploadError} /> : null}
+          </Stack>
+          <Field
+            label={t("form.nameLabel")}
+            required
+            count={{ value: b.name.length, max: NAME_MAX }}
+            {...(nameError ? { error: t("form.nameRequired") } : {})}
+          >
+            <Input
+              name="name"
+              maxLength={NAME_MAX}
+              value={b.name}
+              onChange={(e) => {
+                editBasic({ name: e.target.value });
+                if (e.target.value.trim() !== "") setNameError(false);
+              }}
+            />
+          </Field>
+          <Field
+            label={t("page.descriptionLabel")}
+            optional
+            help={t("page.descriptionHelp")}
+            count={{ value: d.description.length, max: DESCRIPTION_MAX }}
+          >
+            <Textarea
+              name="description"
+              rows={3}
+              maxLength={DESCRIPTION_MAX}
+              value={d.description}
+              onChange={(e) => editProfile({ description: e.target.value })}
+            />
+          </Field>
+          <Field label={t("form.visibilityLabel")}>
+            <Select
+              name="visibility"
+              value={b.visibility}
+              onChange={(e) => editBasic({ visibility: e.target.value as AgentVisibility })}
+              options={VISIBILITIES.map((v) => ({ value: v, label: t(`form.visibility.${v}`) }))}
+            />
+          </Field>
+          {b.visibility === "members" && (
+            // biome-ignore lint/a11y/useSemanticElements: fieldset 带浏览器默认边框与内边距，apps/web 不能写样式；用 role=group 分组
+            <div role="group" aria-label={t("page.membersLabel")}>
+              <Stack gap={4}>
+                <Text variant="small" tone="muted">
+                  {t("page.membersLabel")}
+                </Text>
+                {members.data === undefined ? (
+                  <Text variant="small" tone="faint">
+                    {members.error === null ? t("page.membersLoading") : t("page.membersFailed")}
+                  </Text>
+                ) : (
+                  orgMembers.map((m) => (
+                    <Checkbox
+                      key={m.account.id}
+                      label={m.account.displayName}
+                      checked={b.memberIds.includes(m.account.id)}
+                      onChange={(on) =>
+                        editBasic({
+                          memberIds: on
+                            ? [...b.memberIds, m.account.id]
+                            : b.memberIds.filter((x) => x !== m.account.id),
+                        })
+                      }
+                    />
+                  ))
+                )}
+              </Stack>
+            </div>
+          )}
+        </FormSection>
+      </Stack>
+    </AgentSectionFrame>
+  );
+}

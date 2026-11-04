@@ -19,6 +19,14 @@ export function agentFormDefaults(agentId = "ag1"): Routes {
     [`GET ${ORG}/members`]: ok({ members: [] }),
     [`GET ${ORG}/agents/${agentId}/skills`]: ok({ skills: [] }),
     [`GET ${ORG}/channels`]: ok({ channels: [] }),
+    [`GET ${ORG}/attachments/limits`]: ok({
+      types: ["image/png"],
+      maxBytes: 1,
+      imageMaxBytes: 1,
+      maxPerMessage: 1,
+      requestMediaBytes: 1,
+      available: true,
+    }),
   };
 }
 
@@ -33,11 +41,14 @@ export function renderNewAgent(opts: Opts = {}) {
   return renderRouteWithCache("/agents/new", { ...agentFormDefaults(), ...routes }, rest);
 }
 
-/** `/agents/<id>` as a first load renders it (routes as in {@link renderNewAgent}). */
-export function renderEditAgent(opts: Opts & { id?: string } = {}) {
-  const { id = "ag1", routes = lastStubRoutes(), ...rest } = opts;
+/**
+ * `/agents/<id>` (or one of its sections, `?s=<section>`) as a first load renders it (routes as in
+ * {@link renderNewAgent}).
+ */
+export function renderEditAgent(opts: Opts & { id?: string; section?: string } = {}) {
+  const { id = "ag1", section, routes = lastStubRoutes(), ...rest } = opts;
   return renderRouteWithCache(
-    `/agents/${encodeURIComponent(id)}`,
+    `/agents/${encodeURIComponent(id)}${section === undefined ? "" : `?s=${section}`}`,
     { ...agentFormDefaults(id), ...routes },
     rest,
   );
