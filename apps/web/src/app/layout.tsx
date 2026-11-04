@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 import { DesignRoot } from "../components/design-root";
 import { QueryProvider } from "../components/QueryProvider";
 import { isAppLocale, routing } from "../i18n/routing";
+import { parseTimeZone, TIME_ZONE_COOKIE } from "../lib/time";
 // Server components' loaders (`apiFetch`) reach the kernel through the server transport.
 import "../lib/server/register";
 
@@ -31,12 +32,22 @@ export async function generateMetadata() {
  * The root layout. The language comes from next-intl's request config (the `NEXT_LOCALE` cookie or
  * Accept-Language, see `i18n/request.ts`); the theme from the `cb-theme` cookie (tokens are defined
  * only under `:root[data-theme]`, so data-theme is always written; an invalid value falls back to
- * dark). Provides the next-intl and design system contexts.
+ * dark); the clock server-rendered times are written with (`ServerClock`) from the request's time
+ * and the `cb-tz` cookie. Provides the next-intl and design system contexts.
  */
 export default async function RootLayout({ children }: { children: ReactNode }) {
   const requested = await getLocale();
   const locale = isAppLocale(requested) ? requested : routing.defaultLocale;
-  const theme = parseTheme((await cookies()).get(THEME_COOKIE)?.value);
+  const jar = await cookies();
+  const theme = parseTheme(jar.get(THEME_COOKIE)?.value);
+  // The render's clock: server-rendered times hydrate with it (the viewer's zone once the browser
+  // has written it to the cookie, the server's before)
+  const clock = {
+    now: Date.now(),
+    timeZone:
+      parseTimeZone(jar.get(TIME_ZONE_COOKIE)?.value) ??
+      new Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
   return (
     <html lang={locale} data-theme={theme}>
       <head>
@@ -50,7 +61,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
       </head>
       <body>
         <NextIntlClientProvider>
-          <DesignRoot locale={locale}>
+          <DesignRoot locale={locale} clock={clock}>
             <QueryProvider>{children}</QueryProvider>
           </DesignRoot>
         </NextIntlClientProvider>

@@ -7,10 +7,11 @@ import {
   StatusBar,
   SubagentTask,
   subagentDuration,
+  useNow,
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import type { ConversationEvent, ModelRef } from "../../lib/conversations";
 import { conversationQuery } from "../../lib/query/conversation";
 import { toolsLine } from "../../lib/subagents";
@@ -41,18 +42,6 @@ export type SubagentPanelProps = {
   onClose(): void;
   onFullscreen(): void;
 };
-
-/** Re-renders every second while `active` (the header's running time). */
-function useNow(active: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!active) return;
-    setNow(Date.now());
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [active]);
-  return now;
-}
 
 /**
  * A sub-agent opened on the right (`#subagent=<id>`, spec §5.6): its record read-only. The id comes
@@ -116,7 +105,8 @@ function ChildRecord({
   )?.payload as Started | undefined;
   const model = latestModel(child.events);
   const active = child.running || child.waiting;
-  const now = useNow(active);
+  // re-read every second while active (the header's running time)
+  const now = useNow(active ? 1000 : 0);
   // the latest run: its start, and its end once it is over
   let runStart: number | undefined;
   let runEnd: number | undefined;

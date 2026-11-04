@@ -1,4 +1,5 @@
 import { type ComponentType, createContext, type ReactNode, useContext } from "react";
+import { type ServerClock, ServerClockProvider } from "./clock";
 import { type DesignKey, type Locale, messages } from "./i18n";
 
 /** 框架无关的链接组件；apps/web 可传入 next-intl 的 Link。 */
@@ -34,6 +35,7 @@ export function DesignProvider({
   locale,
   link,
   useLinkPending,
+  clock,
   children,
 }: {
   locale: Locale;
@@ -44,13 +46,18 @@ export function DesignProvider({
    * inside the provider's `link`. Without it nothing is ever pending.
    */
   useLinkPending?: () => boolean;
+  /**
+   * The server render's clock (apps/web: the root layout's time and time zone): server-rendered
+   * times hydrate with it, then follow the browser's clock (`useNow`, `useTimeZone`).
+   */
+  clock?: ServerClock;
   children: ReactNode;
 }) {
   return (
     <LocaleContext.Provider value={locale}>
       <LinkContext.Provider value={link ?? DefaultLink}>
         <LinkPendingContext.Provider value={useLinkPending ?? neverPending}>
-          {children}
+          <ServerClockProvider clock={clock}>{children}</ServerClockProvider>
         </LinkPendingContext.Provider>
       </LinkContext.Provider>
     </LocaleContext.Provider>

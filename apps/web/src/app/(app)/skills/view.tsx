@@ -9,6 +9,7 @@ import {
   ObjectRow,
   Stack,
   Text,
+  useTimeZone,
   useToast,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
@@ -42,6 +43,7 @@ export default function SkillsView() {
 }
 
 function Skills({ orgId }: { orgId: string }) {
+  const timeZone = useTimeZone();
   const scope = usePagePath("org");
   const t = useTranslations("skills");
   const { me } = useSession();
@@ -96,7 +98,7 @@ function Skills({ orgId }: { orgId: string }) {
             href={`/skills/${encodeURIComponent(s.id)}`}
             mono
             description={s.description}
-            meta={`${t("version", { version: s.currentVersion })} · ${formatDateTime(s.updatedAt)}`}
+            meta={`${t("version", { version: s.currentVersion })} · ${formatDateTime(s.updatedAt, "full", timeZone)}`}
           />
         ))}
       </ListPage>

@@ -1,7 +1,12 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import type { ServerClock } from "@capybara-hq/design";
 import type { DehydratedState, QueryClient } from "@tanstack/react-query";
+import { act } from "@testing-library/react";
 import type { ReactNode } from "react";
+import { hydrateRoot, type Root } from "react-dom/client";
+import { renderToString } from "react-dom/server";
+import { vi } from "vitest";
 import { HydrateCache } from "../../src/components/HydrateCache";
 import type { OrgReadiness } from "../../src/lib/agents";
 import { setApiTransport } from "../../src/lib/api";
@@ -54,7 +59,8 @@ function withCache(page: ReactNode, state?: DehydratedState) {
  * Install the browser's routes (`stubApi`, `expectNoFirstPaintFetch`) first. Returns the server
  * calls and the browser's client.
  */
-export async function renderRouteWithCache(path: string, routes: Routes, opts: RouteOpts = {}) {
+/** The server half of a document load: the layout's and the route's prefetch, and the page. */
+async function serverLoad(path: string, routes: Routes, opts: RouteOpts) {
   const { readiness, ...render } = opts;
   const me = render.me ?? ME;
   const calls = serverRoutes({ ...sessionRoutes(me, readiness), ...routes });
@@ -71,6 +77,11 @@ export async function renderRouteWithCache(path: string, routes: Routes, opts: R
   } finally {
     setApiTransport(null);
   }
+  return { calls, state, page, render };
+}
+
+export async function renderRouteWithCache(path: string, routes: Routes, opts: RouteOpts = {}) {
+  const { calls, state, page, render } = await serverLoad(path, routes, opts);
   const client = testQueryClient();
   const view = renderPage(withCache(page, state), { ...render, client });
   /**
@@ -136,4 +147,58 @@ export async function renderRouteEmptyCache(
   // A client the test seeded (what an earlier navigation left in the cache), or a fresh one.
   const client = render.client ?? testQueryClient();
   return { calls, client, ...renderPage(withCache(page), { ...render, client }) };
+}
+
+/**
+ * A document load of `path` as the browser gets it: the server renders the page to HTML (with
+ * `clock`, the root layout's {@link ServerClock}; none: the old behavior, each side its own), then, once `beforeHydrate` has run (to move the
+ * browser's clock), the browser hydrates that HTML with the dehydrated cache. Returns the
+ * container and the hydration errors React reported (`onRecoverableError`, and hydration
+ * `console.error`s such as attribute mismatches), so a test can assert there were none.
+ */
+export async function hydrateRouteWithCache(
+  path: string,
+  routes: Routes,
+  opts: RouteOpts & { clock?: ServerClock; beforeHydrate?: () => void },
+) {
+  const { clock, beforeHydrate, ...rest } = opts;
+  const { state, page, render } = await serverLoad(path, routes, rest);
+  const html = renderToString(
+    pageElement(withCache(page, state), {
+      ...render,
+      client: testQueryClient(),
+      ...(clock !== undefined && { clock }),
+    }),
+  );
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  document.body.append(container);
+  beforeHydrate?.();
+  const errors: string[] = [];
+  const consoleError = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+    const text = args.map(String).join(" ");
+    if (/hydrat|didn't match/i.test(text)) errors.push(text);
+  });
+  const client = testQueryClient();
+  let root: Root | undefined;
+  try {
+    await act(async () => {
+      root = hydrateRoot(
+        container,
+        pageElement(withCache(page, state), {
+          ...render,
+          client,
+          ...(clock !== undefined && { clock }),
+        }),
+        { onRecoverableError: (e) => errors.push(String(e)) },
+      );
+    });
+  } finally {
+    consoleError.mockRestore();
+  }
+  const unmount = () => {
+    act(() => root?.unmount());
+    container.remove();
+  };
+  return { container, errors, html, client, unmount };
 }

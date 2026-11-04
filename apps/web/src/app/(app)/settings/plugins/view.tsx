@@ -8,6 +8,7 @@ import {
   SettingsPage,
   Stack,
   Text,
+  useTimeZone,
   versionLabel,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
@@ -148,6 +149,7 @@ function InstallCard({
   usedBy: string[];
   onUninstalled(r: UninstallReport): void;
 }) {
+  const timeZone = useTimeZone();
   const t = useTranslations("catalog.plugins");
   const ti = useTranslations("catalog.org.install.step");
   const errorMessage = useErrorMessage();
@@ -202,7 +204,7 @@ function InstallCard({
       >
         <Stack gap={8}>
           <Text tone={install.status === "failed" ? "fail" : "muted"}>
-            {`${t(`status.${install.status}`)} · ${t("installedAt", { at: formatDateTime(install.installedAt) })}`}
+            {`${t(`status.${install.status}`)} · ${t("installedAt", { at: formatDateTime(install.installedAt, "full", timeZone) })}`}
           </Text>
           {install.deploymentPending ? (
             <Text tone="warn">{t("deploymentPending")}</Text>

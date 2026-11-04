@@ -1,6 +1,6 @@
 "use client";
 
-import { formatDateTime, ListPage, ObjectRow } from "@capybara-hq/design";
+import { formatDateTime, ListPage, ObjectRow, useTimeZone } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { ErrorFrame } from "../../../components/ErrorFrame";
@@ -28,6 +28,7 @@ export default function EvalSetsView() {
 }
 
 function EvalSets({ orgId }: { orgId: string }) {
+  const timeZone = useTimeZone();
   const scope = usePagePath("org");
   const t = useTranslations("evals");
   const list = usePageQuery(evalSetsQuery(orgId));
@@ -68,7 +69,7 @@ function EvalSets({ orgId }: { orgId: string }) {
           name={s.name}
           href={`/evals/${encodeURIComponent(s.id)}`}
           meta={t("setMeta", { agent: agentName(s.agentId), n: s.caseCount })}
-          trailing={formatDateTime(s.createdAt)}
+          trailing={formatDateTime(s.createdAt, "full", timeZone)}
         />
       ))}
     </ListPage>

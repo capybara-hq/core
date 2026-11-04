@@ -16,6 +16,7 @@ import {
   Stack,
   StatusMark,
   Text,
+  useTimeZone,
   useToast,
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
@@ -315,6 +316,7 @@ function RunsTab({
   code: string;
   onRetry(): void;
 }) {
+  const timeZone = useTimeZone();
   const t = useTranslations("evals");
   const router = useRouter();
   const columns: Column<EvalRun>[] = [
@@ -351,7 +353,7 @@ function RunsTab({
       columns={columns}
       rows={runs ?? []}
       rowKey={(r) => r.id}
-      rowLabel={(r) => formatDateTime(r.createdAt)}
+      rowLabel={(r) => formatDateTime(r.createdAt, "full", timeZone)}
       state={state}
       error={{ code, onRetry }}
       empty={{ title: t("set.runsEmpty") }}

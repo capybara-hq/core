@@ -16,6 +16,7 @@ import {
   Stack,
   StatusMark,
   Text,
+  useTimeZone,
   useToast,
 } from "@capybara-hq/design";
 import { keepPreviousData, type Query, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -266,6 +267,7 @@ function EvalRunView({
   loadingMore: boolean;
   onLoadMore(): void;
 }) {
+  const timeZone = useTimeZone();
   const scope = usePagePath("org");
   const t = useTranslations("evals");
   const te = useTranslations("errors");
@@ -356,9 +358,9 @@ function EvalRunView({
           ...scope,
           { label: "evals", href: "/evals" },
           { label: data.setName ?? run.setId, href: `/evals/${encodeURIComponent(run.setId)}` },
-          { label: formatDateTime(run.createdAt) },
+          { label: formatDateTime(run.createdAt, "full", timeZone) },
         ],
-        title: t("run.title", { time: formatDateTime(run.createdAt) }),
+        title: t("run.title", { time: formatDateTime(run.createdAt, "full", timeZone) }),
         status: (
           <StatusMark status={evalRunMark(run.status)} label={t(`runStatus.${run.status}`)} />
         ),

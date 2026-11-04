@@ -1,4 +1,9 @@
-import { DesignProvider, type LinkComponent, ToastProvider } from "@capybara-hq/design";
+import {
+  DesignProvider,
+  type LinkComponent,
+  type ServerClock,
+  ToastProvider,
+} from "@capybara-hq/design";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
@@ -25,6 +30,8 @@ type PageOpts = {
   session?: Partial<Session>;
   /** The browser's query client (a fresh one unless given). */
   client?: QueryClient;
+  /** The server render's clock (the root layout passes it to `DesignProvider`). */
+  clock?: ServerClock;
 };
 
 /**
@@ -59,7 +66,7 @@ export function renderPage(ui: ReactNode, opts: PageOpts = {}) {
 /** `ui` inside the providers of {@link renderPage} (for `rerender`). */
 export function pageElement(
   ui: ReactNode,
-  { locale = "en", me = ME, session = {} }: PageOpts = {},
+  { locale = "en", me = ME, session = {}, client, clock }: PageOpts = {},
 ) {
   const value: Session = {
     me,
@@ -68,9 +75,13 @@ export function pageElement(
     ...session,
   };
   return (
-    <QueryClientProvider client={pageClient}>
+    <QueryClientProvider client={client ?? pageClient}>
       <NextIntlClientProvider locale={locale} messages={locale === "zh" ? zh : en}>
-        <DesignProvider locale={locale} link={Link as LinkComponent}>
+        <DesignProvider
+          locale={locale}
+          link={Link as LinkComponent}
+          {...(clock !== undefined && { clock })}
+        >
           <ToastProvider>
             <SessionContext.Provider value={value}>{ui}</SessionContext.Provider>
           </ToastProvider>

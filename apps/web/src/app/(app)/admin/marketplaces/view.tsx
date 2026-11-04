@@ -13,6 +13,7 @@ import {
   Stack,
   SwitchField,
   Text,
+  useTimeZone,
   useToast,
 } from "@capybara-hq/design";
 import { useQueryClient } from "@tanstack/react-query";
@@ -230,6 +231,7 @@ function SourceStatus({ source }: { source: Marketplace }) {
  * error as one sentence (by its kind) with the kernel's raw text behind the ErrorDetail toggle.
  */
 function StatusLine({ source }: { source: Marketplace }) {
+  const timeZone = useTimeZone();
   const t = useTranslations("catalog.admin.marketplaces");
   if (source.lastStatus === "error") {
     const raw = source.lastError ?? "";
@@ -245,7 +247,7 @@ function StatusLine({ source }: { source: Marketplace }) {
     <Text tone="muted">
       {t("statusValue.ok", {
         n: source.entryCount,
-        at: source.lastRefreshedAt ? formatDateTime(source.lastRefreshedAt) : "—",
+        at: source.lastRefreshedAt ? formatDateTime(source.lastRefreshedAt, "full", timeZone) : "—",
       })}
     </Text>
   );
