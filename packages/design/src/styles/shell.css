@@ -41,9 +41,13 @@
 }
 
 .cb-shell {
+  /* The shell fills the window and scrolls only inside its regions: it is a containing block that
+     clips its overflow, so nothing in it can make the document scrollable (review fix L3). */
+  position: relative;
   display: flex;
   height: 100vh;
   min-height: 0;
+  overflow: clip;
   background: var(--cb-bg);
   color: var(--cb-ink);
 }

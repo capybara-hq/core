@@ -607,6 +607,9 @@ button.cb-property-row {
   min-width: 0;
 }
 .cb-conv-scroll {
+  /* The containing block of what the thread holds: an absolutely positioned descendant (a
+     screen-reader copy) is clipped here instead of growing the document (review fix L3). */
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow-y: auto;

@@ -9,6 +9,12 @@ html {
   scrollbar-color: var(--cb-scroll-thumb) transparent;
 }
 
+:root:has(.cb-shell:not(.cb-ref-block .cb-shell)) {
+  /* Under the App Shell the document never scrolls (pages without it, auth and /dev/ui reference
+     pages, keep their scroll). */
+  overflow: hidden;
+}
+
 body {
   margin: 0;
   background: var(--cb-bg);
