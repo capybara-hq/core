@@ -18,6 +18,7 @@ import { OrgLock } from "./org-lock.js";
  * - `locale`：组织默认语言（`zh` / `en`，默认 en），机器人在 IM 里说的固定话术按它选择。
  * - `sandboxToolPolicy`：沙箱工具的默认策略（M5 T8，默认 allow）。为 `ask` 时除只读的
  *   `Read` / `Glob` / `Grep` 外都需要审批（执行时实时读取）。
+ * - `wakeOnBackgroundTask`：组织对 `runtime.wakeOnBackgroundTask` 的覆盖（缺省跟随部署），见 {@link effectiveWakeOnBackgroundTask}。
  * - `sandboxEgress`：组织的沙箱出站（Ruling M19 / D6），缺省跟随部署的 `sandbox.limits.egress` + `allowHosts`。
  *   见 {@link effectiveSandboxEgress}。存量值非法时按 `none` 读（宁可断网，不悄悄放宽到部署默认）。
  */
@@ -56,6 +57,8 @@ export const OrgSettingsSchema = z.object({
   locale: z.enum(["zh", "en"]).default("en").catch("en"),
   sandboxToolPolicy: z.enum(["allow", "ask"]).default("allow").catch("allow"),
   sandboxEgress: SandboxEgressSettingSchema.optional().catch({ mode: "none" }),
+  /** Overrides `runtime.wakeOnBackgroundTask`; absent follows the deployment. */
+  wakeOnBackgroundTask: z.boolean().optional().catch(undefined),
 });
 
 export type OrgSettings = z.infer<typeof OrgSettingsSchema>;
@@ -66,6 +69,7 @@ export const OrgSettingsPatchSchema = z
     toolSearch: z.enum(["on", "off"]).optional(),
     locale: z.enum(["zh", "en"]).optional(),
     sandboxToolPolicy: z.enum(["allow", "ask"]).optional(),
+    wakeOnBackgroundTask: z.boolean().optional(),
     /** null 清除（恢复跟随部署默认）。 */
     sandboxEgress: SandboxEgressSettingSchema.nullable().optional(),
   })
@@ -89,6 +93,14 @@ export function effectiveSandboxEgress(
   if (org.mode === "none" || deployment.egress === "none")
     return { egress: "none", allowHosts: [] };
   return { egress: "allowlist", allowHosts: [...(org.allowHosts ?? deployment.allowHosts)] };
+}
+
+/** Whether a finished background task wakes an idle conversation: the org's setting, else the deployment's. */
+export function effectiveWakeOnBackgroundTask(
+  deployment: boolean,
+  org: OrgSettings["wakeOnBackgroundTask"],
+): boolean {
+  return org ?? deployment;
 }
 
 /**

@@ -705,6 +705,15 @@ export const KernelConfigSchema = z.object({
         .positive()
         .default(50)
         .meta(meta({ description: "Maximum model steps per agent run before the final wrap-up" })),
+      wakeOnBackgroundTask: z
+        .boolean()
+        .default(true)
+        .meta(
+          meta({
+            description:
+              "Whether the finish of a background Bash task starts a run on an idle conversation (the person who started the task's run is the trigger); an organization can override it in its settings. When false the event is only logged and shown, and the next message picks it up",
+          }),
+        ),
       maxRunSeconds: z
         .number()
         .int()
@@ -822,6 +831,7 @@ export const KernelConfigSchema = z.object({
     })
     .default({
       maxSteps: 50,
+      wakeOnBackgroundTask: true,
       maxRunSeconds: DEFAULT_MAX_RUN_SECONDS,
       streamIdleMs: 60000,
       maxOutputTokens: 16000,
@@ -1227,6 +1237,45 @@ export const KernelConfigSchema = z.object({
               "Largest file in bytes an agent may deliver from its sandbox to the user as an artifact (Deliver)",
           }),
         ),
+      background: z
+        .object({
+          maxTasks: z
+            .number()
+            .int()
+            .min(1)
+            .max(100)
+            .default(10)
+            .meta(
+              meta({
+                description:
+                  "Most background Bash tasks (run_in_background) that may run at once in one conversation's sandbox, sub-agents included; a launch beyond it is refused",
+              }),
+            ),
+          maxSeconds: z
+            .number()
+            .int()
+            .positive()
+            .default(21600)
+            .meta(
+              meta({
+                description:
+                  "Longest a background Bash task may run, in seconds; the task is killed at its deadline and ends as timed_out. Not limited by sandbox.limits.maxCommandSeconds or runtime.maxRunSeconds",
+              }),
+            ),
+          pollSeconds: z
+            .number()
+            .int()
+            .min(1)
+            .default(10)
+            .meta(
+              meta({
+                hot: true,
+                description:
+                  "How often the worker checks the running background Bash tasks of every sandbox for a finish, in seconds",
+              }),
+            ),
+        })
+        .prefault({} as never),
       limits: z
         .object({
           cpu: z

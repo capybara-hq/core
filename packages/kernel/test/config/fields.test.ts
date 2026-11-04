@@ -27,6 +27,7 @@ describe("configFields", () => {
       "subagents.maxDispatchesPerRun",
       "subagents.maxTokensPerRun",
       "sandbox.maxConcurrentCommands",
+      "sandbox.background.pollSeconds",
       "evals.orgConcurrency",
       "hooks.timeoutMs",
       "log.level",

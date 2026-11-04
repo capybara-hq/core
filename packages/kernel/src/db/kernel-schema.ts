@@ -702,6 +702,34 @@ export interface SkillChangeRequestsTable {
   created_at: Ts;
 }
 
+/** 0070_background_tasks.sql: a Bash command running in the background in a conversation's sandbox. */
+export interface BackgroundTasksTable {
+  id: string;
+  org_id: string;
+  conversation_id: string;
+  sandbox_conversation_id: string;
+  run_id: string;
+  call_id: string;
+  trigger_account_id: string;
+  description: string;
+  command: string;
+  sid: string;
+  output_path: string;
+  status: ColumnType<
+    "running" | "completed" | "failed" | "stopped" | "timed_out" | "lost",
+    string | undefined,
+    string
+  >;
+  lost_reason: ColumnType<string | null, string | null | undefined, string | null>;
+  exit_code: ColumnType<number | null, number | null | undefined, number | null>;
+  started_at: Ts;
+  finished_at: TsNullable;
+  deadline_at: Date | string;
+  sandbox_created_at: Date | string;
+  kill_pending: ColumnType<boolean, boolean | undefined, boolean>;
+  read_offset: ColumnType<string, number | string | undefined, number | string>;
+}
+
 /** 0023_sandboxes.sql：按对话的沙箱（见 sandbox/sandbox.service.ts）。 */
 export interface SandboxesTable {
   conversation_id: string;
@@ -991,6 +1019,7 @@ export interface KernelDatabase {
   directory_exclusions: DirectoryExclusionsTable;
   attachments: AttachmentsTable;
   sandboxes: SandboxesTable;
+  background_tasks: BackgroundTasksTable;
   skills: SkillsTable;
   skill_versions: SkillVersionsTable;
   skill_change_requests: SkillChangeRequestsTable;

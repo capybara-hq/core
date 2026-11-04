@@ -23,6 +23,8 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "hooks.timeoutMs": () => {},
   // SandboxService reads the shared-lease cap at every acquisition.
   "sandbox.maxConcurrentCommands": () => {},
+  // The background task poller reads its period at every tick (`@LockedInterval`).
+  "sandbox.background.pollSeconds": () => {},
   // Sub-agent limits are read at every dispatch, child step and tool resolution.
   "subagents.maxConcurrentPerRun": () => {},
   "subagents.maxDispatchesPerRun": () => {},

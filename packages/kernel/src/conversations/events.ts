@@ -742,6 +742,26 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       text: z.string(),
     }),
   ),
+  /**
+   * A background Bash task ended (spec 2026-11-05-background-bash-design §2). Not rendered for the
+   * model yet (request building skips it until the task that renders it). `reported`: a TaskOutput
+   * or TaskStop in the same run already told the model, so the event counts as consumed and never
+   * wakes a run. `lastLines` is the tail of the task's output.
+   */
+  ev(
+    "background_task_finished",
+    z.object({
+      taskId: z.string().min(1).max(64),
+      description: z.string(),
+      status: z.enum(["completed", "failed", "stopped", "timed_out", "lost"]),
+      exitCode: z.number().int().nullable(),
+      elapsedMs: count,
+      lastLines: z.string().max(4000),
+      outputPath: z.string(),
+      reported: z.boolean(),
+      lostReason: z.string().optional(),
+    }),
+  ),
   ev("compaction_summary", z.object({ coversUpToSeq: seqNo, text: z.string() })),
   ev("compaction_failed", z.object({ attempt: count, reason: z.string() })),
   ev(
