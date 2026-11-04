@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
-import { replies, send, startChat } from "./support/chat";
+import { newAgent, replies, send, startChat } from "./support/chat";
 import { mainNavLink } from "./support/nav";
 import { signIn } from "./support/sign-in";
 
@@ -23,13 +23,7 @@ test("建评测集 → 从对话抽样 → 单步运行 → 标注，汇总随�
 
   // 1. 新建 agent（model-fake），对话一轮，等运行结束
   const agentName = `Eval agent ${Date.now()}`;
-  await page.goto("/agents/new");
-  await page.getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true }).fill(agentName);
-  await page
-    .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
-    .selectOption("model-fake/fake-1");
-  await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/agents$/);
+  await newAgent(page, agentName);
   await startChat(page, agentName);
   await send(page, "echo:eval me please");
   await expect(replies(page).last()).toHaveText(/eval me please/);

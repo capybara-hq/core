@@ -1,6 +1,13 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
-import { composer, startChat, toolGroup } from "./support/chat";
+import {
+  composer,
+  newAgent,
+  openAgentSection,
+  saveSection,
+  startChat,
+  toolGroup,
+} from "./support/chat";
 import { signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -129,17 +136,16 @@ test("管理员上传技能包，agent 选用它；对话里 Skill 的时间线�
   await expect(page).toHaveURL(/\/skills\/[^/]+$/);
   await expect(page.locator("pre")).toContainText("# Notes");
 
-  // 3. 新建 agent，在技能分组里勾选它，并置顶（skills.pinned）
-  await page.goto("/agents/new");
+  // 3. 新建 agent，在 agent 页面的「技能」分组里勾选它，并置顶（skills.pinned）
+  await newAgent(page, "Skill agent");
+  await openAgentSection(page, "skills");
   const group = page.getByRole("group", { name: zh.agents.form.orgSkillsLabel });
   await group.getByRole("checkbox", { name: new RegExp(SKILL) }).check();
   const pinnedGroup = page.getByRole("group", { name: zh.agents.form.pinnedLabel });
   await pinnedGroup
     .getByRole("checkbox", { name: fill(zh.agents.form.pinSkill, { name: SKILL }) })
     .check();
-  await page.getByRole("textbox", { name: zh.agents.form.nameLabel }).fill("Skill agent");
-  await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/agents$/);
+  await saveSection(page);
 
   // 4. 对话：model-fake 按脚本调用 Skill，时间线显示工具给的中文摘要
   const agents = (await (await page.request.get(`/api/v1/orgs/${orgId}/agents`)).json()) as {
@@ -366,8 +372,9 @@ test("phase D: invoke skills from the / menu and typed, queue one, run a forked 
   await expect(page.locator('[data-entry="user"]').filter({ hasText: "slow:300:" })).toBeVisible();
   await expect(input).toHaveValue("");
   await expect(page.locator('[data-entry="prose"][data-streaming="true"]')).toBeVisible();
+  // while the run goes, ↵ queues (⌘↵ / Ctrl+↵ would send now; conversation send design D1)
   await input.fill("/e2e-fix-issue 9");
-  await input.press("ControlOrMeta+Enter");
+  await input.press("Enter");
   const queue = page.locator('[data-entry="queue"]');
   await expect(queue.locator('[data-part="bubble-skill"]')).toHaveText("/e2e-fix-issue");
   await expect(queue).toHaveCount(0, { timeout: 60_000 });

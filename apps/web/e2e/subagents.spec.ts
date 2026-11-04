@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
+import { newAgent, openAgentSection, saveSection } from "./support/chat";
 import { signIn } from "./support/sign-in";
 
 /** UI copy from the zh message file (not repeated here). */
@@ -11,24 +12,20 @@ const S = zh.agents.form.subagents;
 
 /** A new model-fake agent with the agent tool switched on in the Sub-agents section. */
 async function createLead(page: Page, name: string) {
-  await page.goto("/agents/new");
-  await expect(page.locator('[data-template="FormPage"]')).toBeVisible();
-  await page.getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true }).fill(name);
-  await page
-    .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
-    .selectOption("model-fake/fake-1");
+  await newAgent(page, name);
+  await openAgentSection(page, "subagents");
   const section = page.getByRole("region", { name: S.section });
   await section.getByRole("checkbox", { name: S.agentTool }).check();
   await expect(section.getByRole("checkbox", { name: S.general })).toBeChecked();
-  await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/agents$/);
+  await saveSection(page);
 }
 
+/** Opens the agent's page from the Agents list (the name links to it) at its Sub-agents section. */
 async function openAgent(page: Page, name: string) {
   await page.goto("/agents");
-  // the name links to the agent's page (its menu holds 编辑 only beside other actions)
   await page.getByRole("listitem").filter({ hasText: name }).getByRole("link", { name }).click();
-  await expect(page.locator('[data-template="FormPage"]')).toBeVisible();
+  await expect(page.locator('[data-template="SettingsPage"]')).toBeVisible();
+  await openAgentSection(page, "subagents");
 }
 
 test("the agent page's Sub-agents section: dispatchable and an allowlisted org agent", async ({
@@ -36,14 +33,10 @@ test("the agent page's Sub-agents section: dispatchable and an allowlisted org a
 }) => {
   await signIn(page);
   // an agent others may dispatch
-  await page.goto("/agents/new");
-  await page.getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true }).fill("Analyst");
-  await page
-    .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
-    .selectOption("model-fake/fake-1");
+  await newAgent(page, "Analyst");
+  await openAgentSection(page, "subagents");
   await page.getByRole("switch", { name: S.dispatchable }).click();
-  await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/agents$/);
+  await saveSection(page);
   await openAgent(page, "Analyst");
   await expect(page.getByRole("switch", { name: S.dispatchable })).toHaveAttribute(
     "aria-checked",
@@ -62,8 +55,7 @@ test("the agent page's Sub-agents section: dispatchable and an allowlisted org a
   await section
     .getByRole("textbox", { name: S.agentDescription.replace("{name}", "Analyst") })
     .fill("Answers data questions.");
-  await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/agents$/);
+  await saveSection(page);
   await openAgent(page, "Team lead");
   await expect(
     page.getByRole("region", { name: S.section }).getByRole("checkbox", { name: /Analyst/ }),

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { newAgent } from "./support/chat";
 import { mainNavLink } from "./support/nav";
 import { signIn } from "./support/sign-in";
 
@@ -82,13 +83,7 @@ test("假渠道：启用插件 → 建渠道连接 → IM 里未绑定的人收�
   await expect(enable).toHaveAttribute("aria-checked", "true");
 
   // 2. 新建一个 agent（model-fake）
-  await page.goto("/agents/new");
-  await page.getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true }).fill("IM agent");
-  await page
-    .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
-    .selectOption("model-fake/fake-1");
-  await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/agents$/);
+  await newAgent(page, "IM agent");
 
   // 3. 渠道（管理员可见的一级导航）→ 新建连接
   await (await mainNavLink(page, zh.nav.channels)).click();
