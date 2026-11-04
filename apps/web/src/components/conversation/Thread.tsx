@@ -3,6 +3,7 @@
 import {
   type BubbleAttachment,
   BubbleAttachments,
+  Button,
   Disclosure,
   FileOutputs,
   ImageOutput,
@@ -126,6 +127,8 @@ export type ThreadProps = {
   openSubagent?: string;
   /** Opens a sub-agent in the right panel (`#subagent=`). */
   onOpenSubagent?(id: string): void;
+  /** Opens a background task's output in the right panel (`#bg-<taskId>`). */
+  onOpenTask?(taskId: string): void;
   /** Renders a sub-agent's task message (the sub-agent panel); nothing without it. */
   renderTask?(e: Extract<TimelineEntry, { kind: "task" }>): ReactNode;
   /**
@@ -143,6 +146,7 @@ type EntryCallbacks = {
     | "onMoreFiles"
     | "onOpenOutput"
     | "onOpenSubagent"
+    | "onOpenTask"
     | "renderCard"
     | "renderTask"]?: ThreadProps[K] | undefined;
 };
@@ -169,7 +173,13 @@ type EntryContext = {
   /** The run rows' links this reader may follow. */
   links: { trajectory: boolean; configureModels: boolean };
   /** Which callbacks are given (an absent one hides its control). */
-  has: { retry: boolean; openFile: boolean; moreFiles: boolean; openSubagent: boolean };
+  has: {
+    retry: boolean;
+    openFile: boolean;
+    moreFiles: boolean;
+    openSubagent: boolean;
+    openTask: boolean;
+  };
   cb: { readonly current: EntryCallbacks };
 };
 
@@ -195,6 +205,7 @@ export function Thread({
   renderCard,
   openSubagent,
   onOpenSubagent,
+  onOpenTask,
   live = true,
   renderTask,
   runLinks,
@@ -257,6 +268,7 @@ export function Thread({
     onMoreFiles,
     onOpenOutput,
     onOpenSubagent,
+    onOpenTask,
     renderCard,
     renderTask,
   };
@@ -269,6 +281,7 @@ export function Thread({
   const hasOpenFile = onOpenFile !== undefined;
   const hasMoreFiles = onMoreFiles !== undefined;
   const hasOpenSubagent = onOpenSubagent !== undefined;
+  const hasOpenTask = onOpenTask !== undefined;
   const ctx = useMemo<EntryContext>(
     () => ({
       orgId,
@@ -293,6 +306,7 @@ export function Thread({
         openFile: hasOpenFile,
         moreFiles: hasMoreFiles,
         openSubagent: hasOpenSubagent,
+        openTask: hasOpenTask,
       },
       cb,
     }),
@@ -319,6 +333,7 @@ export function Thread({
       hasOpenFile,
       hasMoreFiles,
       hasOpenSubagent,
+      hasOpenTask,
     ],
   );
 
@@ -367,6 +382,7 @@ const EntryView = memo(
 
 function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   const t = useTranslations("chat");
+  const tb = useTranslations("background");
   const te = useTranslations("errors");
   const locale = useLocale();
   const { me } = useSession();
@@ -399,6 +415,9 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   const onOpenSubagent = c.has.openSubagent
     ? (id: string) => cb.current.onOpenSubagent?.(id)
     : undefined;
+  const onOpenTask = c.has.openTask
+    ? (taskId: string) => cb.current.onOpenTask?.(taskId)
+    : undefined;
   const { renderCard, renderTask } = cb.current;
 
   const who = (id: string | null) =>
@@ -409,7 +428,11 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
         : (c.names.get(id) ?? t("anotherMember"));
 
   const rowWithSize = (r: TimelineTool): ToolRowData => {
-    const row = r.lines ? { ...r.row, extra: t("toolLines", r.lines) } : r.row;
+    const row = r.lines
+      ? { ...r.row, extra: t("toolLines", r.lines) }
+      : r.background
+        ? { ...r.row, extra: tb("inBackground") }
+        : r.row;
     const total = r.outputId ? sizes.get(r.outputId) : undefined;
     const out = row.detail?.output;
     if (total === undefined || out === undefined) return row;
@@ -630,8 +653,15 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
       case "thinking":
         if (e.model !== null && reasoningOf(e.model) === false) return null;
         return <ThinkingRow seconds={e.seconds} text={e.text} live={e.live} />;
-      case "tools":
-        return (
+      case "tools": {
+        const tasks = onOpenTask
+          ? e.rows.flatMap((r) =>
+              r.background?.taskId
+                ? [{ id: r.background.taskId, name: r.row.description ?? r.background.taskId }]
+                : [],
+            )
+          : [];
+        const group = (
           <ToolGroup
             rows={e.rows.map(rowWithSize)}
             onViewAll={(rowId) => {
@@ -649,6 +679,26 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
             }}
           />
         );
+        if (tasks.length === 0 || !onOpenTask) return group;
+        // A background call's link to its task's output (background Bash spec §5).
+        return (
+          <Stack gap={4}>
+            {group}
+            <Stack direction="row" gap={4} wrap>
+              {tasks.map((task) => (
+                <Button
+                  key={task.id}
+                  variant="ghost"
+                  density="dense"
+                  onClick={() => onOpenTask(task.id)}
+                >
+                  {tb("openTask", { name: task.name })}
+                </Button>
+              ))}
+            </Stack>
+          </Stack>
+        );
+      }
       case "subagents":
         return (
           <SubagentGroup
@@ -689,6 +739,27 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
         return files(e.files);
       case "divider":
         return divider(e);
+      case "background":
+        return (
+          <RunDivider
+            kind="fallback"
+            text={
+              e.exitCode === null
+                ? tb("noticeNoCode", {
+                    description: e.description,
+                    status: tb(`status.${e.status}`),
+                  })
+                : tb("notice", {
+                    description: e.description,
+                    status: tb(`status.${e.status}`),
+                    code: e.exitCode,
+                  })
+            }
+            {...(onOpenTask
+              ? { action: { label: tb("open"), onClick: () => onOpenTask(e.taskId) } }
+              : {})}
+          />
+        );
       case "run":
         return run(e);
     }

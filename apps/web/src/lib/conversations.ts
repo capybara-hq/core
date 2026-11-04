@@ -233,6 +233,23 @@ type EventBody =
         }[];
       };
     }
+  /** A background `Bash` task ended (background Bash spec §2): the thread's one-line notice. */
+  | {
+      type: "background_task_finished";
+      payload: {
+        taskId: string;
+        description: string;
+        status: Exclude<BackgroundTaskStatus, "running">;
+        exitCode: number | null;
+        elapsedMs: number;
+        /** The output's last lines (at most 20 lines, 4000 characters). */
+        lastLines: string;
+        outputPath: string;
+        reported: boolean;
+        lostReason?: string;
+        stoppedBy?: "person";
+      };
+    }
   | { type: "compaction_summary"; payload: { coversUpToSeq: number; text: string } }
   | { type: "compaction_failed"; payload: { attempt: number; reason: string } }
   | {
@@ -420,6 +437,40 @@ export interface SubagentView {
   usage: ConversationUsage;
   pendingApprovalIds: string[];
   pendingQuestionIds: string[];
+}
+
+/** A background `Bash` task's status (kernel `BackgroundTaskStatus`). */
+export type BackgroundTaskStatus =
+  | "running"
+  | "completed"
+  | "failed"
+  | "stopped"
+  | "timed_out"
+  | "lost";
+
+/** A background task (`GET .../conversations/:id/background-tasks`). */
+export interface BackgroundTaskView {
+  id: string;
+  /** The conversation the task was asked for. */
+  conversationId: string;
+  /** The sub-agent (child conversation) that started it; null for the conversation's own. */
+  subagentId: string | null;
+  description: string;
+  command: string;
+  status: BackgroundTaskStatus;
+  exitCode: number | null;
+  lostReason: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  /** A stop is under way (another request is handling it); the task still runs. */
+  stopping: boolean;
+}
+
+/** The end of a task's output (`live`: read from the sandbox; `event`: the finish's last lines). */
+export interface BackgroundTaskOutput {
+  text: string;
+  truncated: boolean;
+  source: "live" | "event";
 }
 
 const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/conversations`;
@@ -703,6 +754,23 @@ export const listSubagents = (orgId: string, id: string, limit = 100) =>
 /** The conversation's token usage, its sub-agents' included. */
 export const getConversationUsage = (orgId: string, id: string) =>
   apiFetch<{ usage: ConversationUsage }>(`${one(orgId, id)}/usage`);
+
+/** The conversation's background tasks and its sub-agents', newest first. */
+export const listBackgroundTasks = (orgId: string, id: string) =>
+  apiFetch<{ tasks: BackgroundTaskView[] }>(`${one(orgId, id)}/background-tasks`);
+
+/** A person's stop: the task after it (`running` with `stopping` while the stop goes on). */
+export const stopBackgroundTask = (orgId: string, id: string, taskId: string) =>
+  apiFetch<{ task: BackgroundTaskView }>(
+    `${one(orgId, id)}/background-tasks/${encodeURIComponent(taskId)}/stop`,
+    { method: "POST" },
+  );
+
+/** The end of a task's output; 409 `background_task.output_unavailable` when nothing is readable. */
+export const readBackgroundTaskOutput = (orgId: string, id: string, taskId: string) =>
+  apiFetch<BackgroundTaskOutput>(
+    `${one(orgId, id)}/background-tasks/${encodeURIComponent(taskId)}/output`,
+  );
 
 /** 中止当前运行：202 `{ runId }`；没有活跃运行时内核返回 409 `run.not_active`。 */
 export const abortRun = (orgId: string, id: string) =>

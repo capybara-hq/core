@@ -11,14 +11,17 @@ import {
   listConnectors,
 } from "../connectors";
 import {
+  type BackgroundTaskOutput,
   type Conversation,
   type ConversationEvent,
   getConversation,
   getConversationUsage,
   getToolInfo,
   listAllEvents,
+  listBackgroundTasks,
   listQueue,
   listSubagents,
+  readBackgroundTaskOutput,
   readToolOutput,
   renameConversation,
   type ToolInfo,
@@ -104,6 +107,61 @@ export const usageQuery = (orgId: string, id: string) =>
     fn: () => getConversationUsage(orgId, id).then((r) => r.usage),
     freshness: "live",
   });
+
+/**
+ * Whether the log names background tasks the background section reads (background Bash spec §5):
+ * a `Bash` call with `run_in_background: true`, a `background_task_finished`, or a dispatched
+ * sub-agent (whose own tasks the section nests under it; they are in the child's log, not here).
+ */
+export function hasBackgroundTasks(events: readonly ConversationEvent[]): boolean {
+  return events.some(
+    (e) =>
+      e.type === "background_task_finished" ||
+      e.type === "subagent_dispatched" ||
+      (e.type === "assistant_message" &&
+        e.payload.content.some(
+          (b) =>
+            b.type === "tool_call" &&
+            b.name === "Bash" &&
+            typeof b.input === "object" &&
+            b.input !== null &&
+            (b.input as Record<string, unknown>).run_in_background === true,
+        )),
+  );
+}
+
+/** The background tasks, the conversation's and its sub-agents', newest first. */
+export const backgroundTasksQuery = (orgId: string, id: string) =>
+  defineQuery({
+    key: keys.org(orgId).conversation(id).background(),
+    fn: () => listBackgroundTasks(orgId, id).then((r) => r.tasks),
+    freshness: "live",
+  });
+
+/** How often the output panel reads a running task's output again. */
+export const TASK_OUTPUT_POLL_MS = 2000;
+
+/**
+ * A task's output tail; `null` when nothing is readable now (409
+ * `background_task.output_unavailable`: the sandbox is suspended or gone). Polled every
+ * {@link TASK_OUTPUT_POLL_MS} while the task runs ({@link taskOutputPollMs}); `changed: background`
+ * reads it once more when the task finishes.
+ */
+export const taskOutputQuery = (orgId: string, id: string, taskId: string) =>
+  defineQuery<BackgroundTaskOutput | null>({
+    key: keys.org(orgId).conversation(id).backgroundOutput(taskId),
+    fn: () =>
+      readBackgroundTaskOutput(orgId, id, taskId).catch((e: unknown) => {
+        if (e instanceof ApiClientError && e.code === "background_task.output_unavailable")
+          return null;
+        throw e;
+      }),
+    freshness: "live",
+  });
+
+/** The output query's `refetchInterval`: every 2 s while the task runs, never once it ended. */
+export const taskOutputPollMs = (status: string | undefined): number | false =>
+  status === "running" ? TASK_OUTPUT_POLL_MS : false;
 
 /** The most keys one `GET …/tools?keys=` takes (kernel `TOOL_INFO_MAX_KEYS`). */
 const TOOL_BATCH = 100;
@@ -267,7 +325,8 @@ export const connectorResourcesQuery = (orgId: string) =>
 /**
  * What the conversation page reads once it has the log and the row (the route's `then`, as
  * today's snapshot did): the tool info the events name, the sub-agents and usage once one was
- * dispatched, the members once a run another account stopped shows, and the agent's invocable
+ * dispatched, the background tasks once the log names one ({@link hasBackgroundTasks}), the
+ * members once a run another account stopped shows, and the agent's invocable
  * skills (with the conversation's trial drafts when it is the caller's).
  */
 export function conversationFollowUps(
@@ -286,6 +345,7 @@ export function conversationFollowUps(
     add(subagentsQuery(orgId, id));
     add(usageQuery(orgId, id));
   }
+  if (hasBackgroundTasks(events)) add(backgroundTasksQuery(orgId, id));
   const stoppedByOther = events.some(
     (e) =>
       e.type === "run_aborted" &&
@@ -428,8 +488,8 @@ export function seedNewConversation(
 
 /**
  * What a reopened stream's catch-up makes stale when it delivered events (spec §6, "Returning to
- * a conversation"): the queue, files, sandbox, sub-agents, usage, the row, the tool info and the
- * conversation's extension views. Otherwise they follow their freshness class.
+ * a conversation"): the queue, files, sandbox, sub-agents, usage, background tasks, the row, the
+ * tool info and the conversation's extension views. Otherwise they follow their freshness class.
  */
 export const CONVERSATION_SIDE_KEYS = (orgId: string, id: string): (readonly unknown[])[] => {
   const c = keys.org(orgId).conversation(id);
@@ -439,6 +499,7 @@ export const CONVERSATION_SIDE_KEYS = (orgId: string, id: string): (readonly unk
     c.sandbox(),
     c.subagents(),
     c.usage(),
+    c.background(),
     c.row(),
     c.toolInfoAll(),
     keys.org(orgId).uiViews(id),

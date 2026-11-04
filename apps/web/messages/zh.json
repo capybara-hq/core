@@ -3329,6 +3329,22 @@
     "contextTotal": "含子 agent 的 token 总数 {n}",
     "background": "后台任务"
   },
+  "background": {
+    "inBackground": "后台运行",
+    "openTask": "查看「{name}」的输出",
+    "notice": "后台任务「{description}」{status} · 退出码 {code}",
+    "noticeNoCode": "后台任务「{description}」{status}",
+    "open": "打开",
+    "panelTitle": "后台任务",
+    "notFound": "找不到这个后台任务。",
+    "status": {
+      "completed": "已完成",
+      "failed": "失败",
+      "stopped": "已停止",
+      "timed_out": "已超时",
+      "lost": "已丢失"
+    }
+  },
   "orgChooser": {
     "title": "选择组织",
     "titleNone": "新建组织",

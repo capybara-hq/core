@@ -129,6 +129,7 @@ export type RightAreaSlot = {
     | "renderCard"
     | "openSubagent"
     | "onOpenSubagent"
+    | "onOpenTask"
   >;
 };
 

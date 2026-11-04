@@ -211,6 +211,8 @@ export function useConversation(orgId: string, conversationId: string): Conversa
       }
       if (what === "queue") invalidate(c.queue());
       if (what === "files") invalidate(c.files());
+      // A task started or finished (also a sub-agent's): the list and the open outputs.
+      if (what === "background") invalidate(c.background());
     };
     const scope = `${orgId}/${conversationId}`;
     const delivered = deliveredOf(qc);
