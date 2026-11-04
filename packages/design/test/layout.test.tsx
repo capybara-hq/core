@@ -25,6 +25,18 @@ describe("布局原语", () => {
     expect(screen.getByText(/第一行/).getAttribute("data-pre")).toBe("true");
   });
 
+  it("Grid list-detail: the list and detail columns", () => {
+    render(
+      <Grid columns="list-detail">
+        <span>列表</span>
+        <span>详情</span>
+      </Grid>,
+    );
+    expect(screen.getByText("列表").parentElement?.getAttribute("data-columns")).toBe(
+      "list-detail",
+    );
+  });
+
   it("Stack / Grid / Card 暴露属性", () => {
     render(
       <Stack gap={12} direction="row">

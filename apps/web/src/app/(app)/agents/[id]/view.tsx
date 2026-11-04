@@ -3,7 +3,7 @@
 import { SettingsPage } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { AgentPage } from "../../../../components/agent/AgentPage";
-import { useSectionNav } from "../../../../components/agent/frame";
+import { loadingSection, useSectionNav } from "../../../../components/agent/frame";
 import { READ_ONLY_FIELDS, SECTION_FIELDS, sectionOf } from "../../../../components/agent/sections";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
@@ -74,12 +74,11 @@ function AgentPageLoading({ agentId, section }: { agentId: string; section: stri
       activeNav={open}
       loading={{
         sections: [
-          {
-            fields: editable
-              ? SECTION_FIELDS[open]
-              : (READ_ONLY_FIELDS[open] ?? SECTION_FIELDS[open]),
-            title: t(`sections.${open}`),
-          },
+          loadingSection(
+            open,
+            editable ? SECTION_FIELDS[open] : (READ_ONLY_FIELDS[open] ?? SECTION_FIELDS[open]),
+            t,
+          ),
         ],
       }}
     />

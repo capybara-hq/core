@@ -66,6 +66,15 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+.cb-grid[data-columns="list-detail"] {
+  grid-template-columns: 220px minmax(0, 1fr);
+  align-items: start;
+}
+@media (max-width: 639px) {
+  .cb-grid[data-columns="list-detail"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 
 .cb-stack[data-gap="0"],
 .cb-grid[data-gap="0"] {

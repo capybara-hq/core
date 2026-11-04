@@ -665,7 +665,7 @@
       },
       "uploadType": "Pick a png, jpg or webp image.",
       "prompt": {
-        "hint": "The prompt is shown to the model: the files in this order, each under a # name line when there are several. Write it in English.",
+        "hint": "The files go to the model in this order. Write them in English.",
         "filesLabel": "Prompt files",
         "add": "Add a file",
         "nameLabel": "File name",

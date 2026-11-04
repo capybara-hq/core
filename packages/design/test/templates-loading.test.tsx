@@ -669,6 +669,61 @@ describe("SettingsPage loading", () => {
     expect(lines.map((l) => l.getAttribute("data-size"))).toEqual(["body", "small", "small"]);
   });
 
+  it("list-editor shape: list rows, add and count beside a titled editor card (name, 16-line textarea)", () => {
+    zh(
+      <SettingsPage
+        header={header}
+        nav={nav}
+        activeNav="general"
+        loading={{
+          sections: [{ title: "提示词", fields: [{ control: "list-editor", options: 2 }] }],
+        }}
+      />,
+    );
+    const grid = document.querySelector('[data-part="loading-list-editor"]');
+    // the loaded layout's own grid: a 220 px list beside the editor, one column on phones
+    expect(grid?.getAttribute("data-columns")).toBe("list-detail");
+    expect(grid?.getAttribute("data-gap")).toBe("16");
+    const [list, card] = [...(grid?.children ?? [])];
+    expect(list?.getAttribute("data-gap")).toBe("8");
+    const repeater = list?.querySelector('[data-part="loading-repeater"]');
+    expect(repeater?.getAttribute("data-variant")).toBe("rows");
+    expect(repeater?.querySelectorAll('[data-part="loading-repeater-item"]')).toHaveLength(2);
+    expect(repeater?.querySelector(".cb-repeater-foot [data-box]")?.getAttribute("data-box")).toBe(
+      "dense",
+    );
+    expect(list?.lastElementChild?.getAttribute("data-size")).toBe("small");
+    expect(card?.getAttribute("data-part")).toBe("loading-list-editor-card");
+    const fields = card?.querySelectorAll('[data-part="loading-field"]') ?? [];
+    expect(fields).toHaveLength(2);
+    expect(fields[0]?.querySelector("[data-box]")?.getAttribute("data-box")).toBe("default");
+    const area = fields[1]?.querySelector('[data-box="textarea"]') as HTMLElement | null;
+    expect(area?.style.getPropertyValue("--cb-skeleton-rows")).toBe("16");
+    // both fields keep their help line
+    for (const f of fields) expect(f.lastElementChild?.getAttribute("data-size")).toBe("small");
+  });
+
+  it("the list-detail grid collapses to one column below 640; label-less rows keep their ends on their line", () => {
+    const controls = readFileSync(
+      resolve(import.meta.dirname, "../src/styles/controls.css"),
+      "utf8",
+    );
+    const wide = controls.indexOf('.cb-grid[data-columns="list-detail"] {');
+    expect(controls.slice(wide, controls.indexOf("}", wide))).toContain(
+      "grid-template-columns: 220px minmax(0, 1fr)",
+    );
+    const narrow = controls.indexOf("@media (max-width: 639px)", wide);
+    expect(narrow).toBeGreaterThan(wide);
+    expect(controls.slice(narrow, controls.indexOf("}\n}", narrow))).toContain(
+      "grid-template-columns: minmax(0, 1fr)",
+    );
+    const repeater = readFileSync(
+      resolve(import.meta.dirname, "../src/styles/repeater.css"),
+      "utf8",
+    );
+    expect(repeater).toContain(":not(:has(.cb-field-head))");
+  });
+
   it("a card's list: a small label and the list's small lines after the body lines", () => {
     zh(
       <SettingsPage

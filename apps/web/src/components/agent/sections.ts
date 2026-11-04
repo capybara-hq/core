@@ -54,7 +54,8 @@ export const SECTION_FIELDS: Record<AgentSection, FieldShape[]> = {
     { control: "select" },
   ],
   "quick-actions": [{ control: "card-group", options: 2 }],
-  prompt: [{ control: "textarea", rows: 6, help: true }],
+  // the file list (one row: AGENTS.md) beside the open file's name and 16-line content
+  prompt: [{ control: "list-editor", options: 1, rows: 16 }],
   model: [{ control: "select" }, { control: "select" }],
   tools: [{ control: "card-group", options: 2 }],
   skills: [{ control: "card-group", options: 2 }],
@@ -67,4 +68,12 @@ export const READ_ONLY_FIELDS: Partial<Record<AgentSection, FieldShape[]>> = {
   basics: [{ control: "text" }, { control: "key-value" }],
   "quick-actions": [{ control: "card-group", options: 2 }],
   model: [{ control: "key-value" }],
+};
+
+/**
+ * The description a section's `FormSection` shows under its title, when it has one the page
+ * knows before the data (its loading frame draws it for real): an `agents.page` message key.
+ */
+export const SECTION_DESCRIPTIONS: Partial<Record<AgentSection, "prompt.hint">> = {
+  prompt: "prompt.hint",
 };

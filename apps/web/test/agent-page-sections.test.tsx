@@ -231,10 +231,78 @@ describe("the agent page's sections with their own saves (agent profile design Â
     // a name without .md is refused the same way
     await user.clear(nameBox());
     await user.type(nameBox(), "notes.txt");
-    expect(screen.getByText(PR.nameInvalid)).toBeTruthy();
     await user.click(save());
     await settle();
+    expect(screen.getByText(PR.nameInvalid)).toBeTruthy();
     expect(patches(calls)).toEqual([]);
+  });
+
+  it("prompt: name errors show on blur or on save, not while typing", async () => {
+    stubApi(routes());
+    await renderEditAgent({ section: "prompt" });
+    const user = userEvent.setup();
+    await user.click(within(fileList()).getByRole("button", { name: PR.add }));
+    await user.clear(nameBox());
+    await user.type(nameBox(), "Style");
+    // mid-typing: nothing yet, though "Style" is not a valid name
+    expect(screen.queryByText(PR.nameInvalid)).toBeNull();
+    await user.type(nameBox(), ".md");
+    expect(screen.queryByText(PR.nameDuplicate)).toBeNull();
+    // leaving the field shows it: a case variant of STYLE.md
+    await user.tab();
+    expect(screen.getByText(PR.nameDuplicate)).toBeTruthy();
+    expect(nameBox().getAttribute("aria-invalid")).toBe("true");
+    // typing again hides it until the field is left
+    await user.type(nameBox(), "x");
+    expect(screen.queryByText(PR.nameInvalid)).toBeNull();
+    await user.type(nameBox(), "{Backspace}");
+    // a save shows every file's problem: STYLE.md is a duplicate of Style.md too
+    await user.click(save());
+    await user.click(within(fileList()).getByRole("button", { name: "STYLE.md" }));
+    expect(nameBox().value).toBe("STYLE.md");
+    expect(screen.getByText(PR.nameDuplicate)).toBeTruthy();
+  });
+
+  it("prompt: a titled section whose loading frame has the loaded shape", async () => {
+    stubApi(routes());
+    await renderEditAgent({ section: "prompt" });
+    const section = screen.getByRole("region", { name: en.agents.page.sections.prompt });
+    expect(within(section).getByRole("heading", { level: 2 }).textContent).toBe(
+      en.agents.page.sections.prompt,
+    );
+    expect(within(section).getByText(PR.hint)).toBeTruthy();
+    const grid = section.querySelector('[data-columns="list-detail"]');
+    expect(grid?.children).toHaveLength(2);
+    cleanup();
+
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    await renderRouteEmptyCache("/agents/ag1?s=prompt", {
+      ...routes(),
+      [`GET ${ORG}/agents/ag1`]: async () => {
+        await held;
+        return json(200, { agent: agent() });
+      },
+    });
+    const loading = await vi.waitFor(() => {
+      const el = document.querySelector('[data-part="loading-list-editor"]');
+      if (el === null) throw new Error("no loading frame yet");
+      return el;
+    });
+    // the same title and description, the same grid: a list row beside an editor card
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe(
+      en.agents.page.sections.prompt,
+    );
+    expect(screen.getByText(PR.hint)).toBeTruthy();
+    expect(loading.getAttribute("data-columns")).toBe("list-detail");
+    expect(loading.querySelectorAll('[data-part="loading-repeater-item"]')).toHaveLength(1);
+    expect(loading.querySelector('[data-box="textarea"]')?.getAttribute("style")).toContain(
+      "--cb-skeleton-rows: 16",
+    );
+    await act(async () => release());
+    expect(await screen.findByRole("textbox", { name: PR.nameLabel })).toBeTruthy();
   });
 
   it("prompt: the counts show the joined characters against 100 000 and the files against 20", async () => {

@@ -164,7 +164,11 @@ export function loadingActionRow(row: ActionRowProps): ActionRowProps {
  * cards beside the controls (no stack): `text` is one `prose` line (a hint the section always
  * shows, the prose-small line); `card-group` is a small label line over a gap-12 stack of `options` untitled cards
  * (default {@link LOADING_GROUP_CARDS}), each a `body` line over `rows` `small` lines (default 2),
- * as a labelled list of cards (an extension's permissions) draws.
+ * as a labelled list of cards (an extension's permissions) draws. `list-editor` is a list beside
+ * the open item's editor (`Grid columns="list-detail"`, gap 16): on the left a rows `Repeater`'s
+ * own list of `options` rows (default 1), each a `control.default` slot, its add button slot
+ * (dense, 88 px) and a `small` count line (gap 8); on the right a titled `Card` with a name field
+ * (an input with its help line) over a `rows`-line textarea with its help line (default 16), gap 12.
  */
 export type FieldShape = {
   control?:
@@ -177,7 +181,8 @@ export type FieldShape = {
     | "key-value"
     | "switch"
     | "text"
-    | "card-group";
+    | "card-group"
+    | "list-editor";
   help?: boolean;
   rows?: number;
   pair?: boolean;
@@ -312,10 +317,59 @@ function LoadingKeyValue({
   );
 }
 
+/** A list beside the open item's editor (`list-editor`, see {@link FieldShape}). */
+function LoadingListEditor({ items, rows }: { items: number; rows: number }) {
+  return (
+    <div
+      className="cb-grid"
+      data-columns="list-detail"
+      data-gap="16"
+      data-part="loading-list-editor"
+    >
+      <Stack gap={8}>
+        <div className="cb-repeater" data-variant="rows" data-part="loading-repeater">
+          <ul className="cb-repeater-list">
+            {Array.from({ length: Math.max(1, items) }, (_, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
+              <li key={i} className="cb-repeater-li">
+                <div className="cb-repeater-item" data-part="loading-repeater-item">
+                  <div className="cb-repeater-body">
+                    <SkeletonBox part="default" />
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="cb-repeater-foot">
+            <SkeletonBox part="dense" width={88} />
+          </div>
+        </div>
+        <SkeletonText width="70%" size="small" />
+      </Stack>
+      <section className="cb-card" data-part="loading-list-editor-card">
+        <header className="cb-card-head">
+          <div className="cb-card-title" data-loading="true">
+            <SkeletonText width="45%" />
+          </div>
+        </header>
+        <div className="cb-card-body">
+          <Stack gap={12}>
+            <LoadingField shape={{ help: true }} />
+            <LoadingField shape={{ control: "textarea", rows, help: true }} />
+          </Stack>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 /** One field placeholder: the loaded `.cb-field`'s own markup, with slots where the data goes. */
 function LoadingField({ shape }: { shape: FieldShape }) {
   // A hint is `Text variant="prose"`, whose line is prose-small's (20, the `body` line).
   if (shape.control === "text") return <SkeletonText width="70%" />;
+  if (shape.control === "list-editor") {
+    return <LoadingListEditor items={shape.options ?? 1} rows={shape.rows ?? 16} />;
+  }
   if (shape.control === "card-group") {
     return <LoadingCardGroup cards={shape.options ?? LOADING_GROUP_CARDS} rows={shape.rows ?? 2} />;
   }

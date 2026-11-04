@@ -1,12 +1,18 @@
 "use client";
 
-import { type ActionRowProps, type PageHeaderProps, SettingsPage } from "@capybara-hq/design";
+import {
+  type ActionRowProps,
+  type FieldShape,
+  type PageHeaderProps,
+  SettingsPage,
+} from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { createContext, type ReactNode, useContext, useEffect } from "react";
 import type { Agent } from "../../lib/agents";
 import {
   type AgentSection,
   READ_ONLY_FIELDS,
+  SECTION_DESCRIPTIONS,
   SECTION_FIELDS,
   sectionHref,
   sectionsFor,
@@ -32,6 +38,20 @@ export function useAgentPage(): AgentPageValue {
   const v = useContext(AgentPageContext);
   if (v === null) throw new Error("useAgentPage outside AgentPage");
   return v;
+}
+
+/** A section's loading frame: its field layout, title and the description it knows. */
+export function loadingSection(
+  section: AgentSection,
+  fields: FieldShape[],
+  t: (key: string) => string,
+): { fields: FieldShape[]; title: string; description?: string } {
+  const description = SECTION_DESCRIPTIONS[section];
+  return {
+    fields,
+    title: t(`sections.${section}`),
+    ...(description !== undefined ? { description: t(description) } : {}),
+  };
 }
 
 /** The nav of the sections this viewer sees. */
@@ -82,9 +102,7 @@ export function AgentSectionFrame({
       nav={page.nav}
       activeNav={page.section}
       {...(actionRow ? { actionRow } : {})}
-      {...(loading
-        ? { loading: { sections: [{ fields, title: t(`sections.${page.section}`) }] } }
-        : {})}
+      {...(loading ? { loading: { sections: [loadingSection(page.section, fields, t)] } } : {})}
     >
       {children}
     </SettingsPage>

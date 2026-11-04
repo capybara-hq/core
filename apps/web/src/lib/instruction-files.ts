@@ -40,17 +40,18 @@ export type FileNameProblem = "invalid" | "duplicate";
 
 /**
  * What the kernel would refuse about each name: not `<1–64 characters>.md` or with a control,
- * bidi or format character (`invalid`), or the same as an earlier file's ignoring case
- * (`duplicate`). One entry per file, null when the name is fine.
+ * bidi or format character (`invalid`), or the same as another file's ignoring case
+ * (`duplicate`, on every file that shares it). One entry per file, null when the name is fine.
  */
 export function fileNameProblems(files: readonly InstructionFile[]): (FileNameProblem | null)[] {
-  const seen = new Set<string>();
-  return files.map((f) => {
+  const counts = new Map<string, number>();
+  for (const f of files) {
     const key = f.name.toLowerCase();
-    const dup = seen.has(key);
-    seen.add(key);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return files.map((f) => {
     if (!NAME_RE.test(f.name) || CONTROL_OR_HIDDEN_RE.test(f.name)) return "invalid";
-    return dup ? "duplicate" : null;
+    return (counts.get(f.name.toLowerCase()) ?? 0) > 1 ? "duplicate" : null;
   });
 }
 

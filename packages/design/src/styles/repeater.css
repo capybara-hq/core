@@ -159,6 +159,17 @@
 .cb-repeater[data-variant="rows"] .cb-repeater-li:first-child .cb-repeater-actions {
   margin-top: var(--cb-space-6);
 }
+/* A row without field labels (a list of names) keeps its ends on its own line. */
+.cb-repeater[data-variant="rows"]
+  .cb-repeater-li:first-child
+  > .cb-repeater-item:not(:has(.cb-field-head))
+  > .cb-repeater-handle,
+.cb-repeater[data-variant="rows"]
+  .cb-repeater-li:first-child
+  > .cb-repeater-item:not(:has(.cb-field-head))
+  > .cb-repeater-actions {
+  margin-top: 0;
+}
 @media (max-width: 639px) {
   .cb-repeater[data-variant="rows"] .cb-repeater-li:first-child .cb-repeater-handle,
   .cb-repeater[data-variant="rows"] .cb-repeater-li:first-child .cb-repeater-actions {
