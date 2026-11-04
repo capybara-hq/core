@@ -234,6 +234,8 @@ export function ComposerBar({
   const [args, setArgs] = useState<Record<string, string>>({});
   const [rendering, setRendering] = useState(false);
   const draft = useRef<{ key: string; id: string } | undefined>(initialDraft?.id);
+  /** A typed `/name` is being resolved (the skills read): a second ↵ waits for it. */
+  const resolving = useRef(false);
   const trigger = useRef<{ char: string; pos: number; picked: boolean } | null>(null);
 
   // A new agent (a new conversation's picker) has other skills: its chip and list go.
@@ -272,7 +274,7 @@ export function ComposerBar({
     const sentSkill = skill;
     const sentAttachments = attachments;
     const value = text.trim();
-    if (drafts.blocking || sendDisabled) return;
+    if (drafts.blocking || sendDisabled || resolving.current) return;
     const sent = files.flatMap((f) => (f.id !== undefined ? [{ key: f.key, id: f.id }] : []));
     // Files alone can be sent; `@` resources need text (their bodies follow content[0]).
     if (empty(value)) return;
@@ -286,11 +288,36 @@ export function ComposerBar({
             ? ("image" as const)
             : ("file" as const),
       }));
-    // The composer clears at once (conversation send spec §2.1): the message shows as pending
-    // where it was sent, and comes back here if the kernel refuses it.
-    setText("");
-    setSkill(null);
-    setAttachments([]);
+    // the chip, else a typed `/name args` naming a listed skill (spec §3.2)
+    let invoke = skill !== null ? invokeName(skill) : undefined;
+    let args = value;
+    let typedInvoke = false;
+    if (invoke === undefined) {
+      const typed = parseSlashCommand(value);
+      if (typed !== null) {
+        resolving.current = true;
+        const list = skills ?? (await loadSkills().finally(() => (resolving.current = false)));
+        resolving.current = false;
+        if (findInvocable(list, typed.name) !== undefined) {
+          invoke = typed.name;
+          args = typed.args;
+          typedInvoke = true;
+        }
+      }
+    }
+    // The composer clears now, with the pending bubble in the same render (conversation send
+    // spec §2.1; a typed `/name` first resolves, review fix 4): the message shows where it was
+    // sent and comes back here if the kernel refuses it. Only what was sent is cleared (the
+    // person may have typed on while the skills were read).
+    setText((cur) =>
+      cur === sentText
+        ? ""
+        : cur.startsWith(sentText)
+          ? cur.slice(sentText.length).trimStart()
+          : cur,
+    );
+    setSkill((cur) => (cur === sentSkill ? null : cur));
+    setAttachments((cur) => cur.filter((a) => !sentAttachments.includes(a)));
     const taken = drafts.take(sent.map((f) => f.key));
     const restore = () => {
       setText((cur) => (cur.trim() === "" ? sentText : `${sentText}\n${cur}`));
@@ -301,21 +328,6 @@ export function ComposerBar({
       ]);
       drafts.restore(taken);
     };
-    // the chip, else a typed `/name args` naming a listed skill (spec §3.2)
-    let invoke = skill !== null ? invokeName(skill) : undefined;
-    let args = value;
-    let typedInvoke = false;
-    if (invoke === undefined) {
-      const typed = parseSlashCommand(value);
-      if (typed !== null) {
-        const list = skills ?? (await loadSkills());
-        if (findInvocable(list, typed.name) !== undefined) {
-          invoke = typed.name;
-          args = typed.args;
-          typedInvoke = true;
-        }
-      }
-    }
     const message = (text: string, name: string | undefined): ComposerMessage => {
       const key = draftKey(text, attachments, fileIds, name);
       if (draft.current?.key !== key) draft.current = { key, id: newClientMessageId() };

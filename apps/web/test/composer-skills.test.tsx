@@ -655,4 +655,37 @@ describe("a new conversation", () => {
     expect(calls.some((c) => c.url === INVOCABLE)).toBe(true);
     act(() => {});
   });
+
+  it("a typed /name resolves before the composer clears, then the pending bubble shows with it (review fix 4)", async () => {
+    resetNavigation("/chat");
+    let answer: (r: Response) => void = () => {};
+    const calls = api({
+      [`GET ${ORG}/conversations/groups`]: () => json(200, { groups: [] }),
+      [`GET ${INVOCABLE}`]: () =>
+        new Promise<Response>((r) => {
+          answer = r;
+        }),
+      [`POST ${ORG}/conversations`]: () => new Promise<Response>(() => {}),
+    });
+    await renderRouteWithCache("/chat", {
+      [`GET ${ORG}/agents`]: () => json(200, AGENTS),
+      [`GET ${ORG}/models`]: () => json(200, MODELS),
+      [`GET ${ORG}/conversations/groups`]: () => json(200, { groups: [] }),
+      [`GET ${ORG}/attachments/limits`]: () => json(200, LIMITS),
+    });
+    const user = userEvent.setup();
+    await user.click(input());
+    await user.paste("/fix-issue 7");
+    await user.keyboard("{Enter}");
+    await vi.waitFor(() => expect(calls.some((c) => c.url === INVOCABLE)).toBe(true));
+    // still resolving: the text stays, nothing pending yet
+    expect(input()).toHaveProperty("value", "/fix-issue 7");
+    expect(document.querySelector("[data-pending]")).toBeNull();
+    await act(async () => answer(json(200, SKILLS)));
+    await vi.waitFor(() => expect(document.querySelector("[data-pending]")).not.toBeNull());
+    expect(input()).toHaveProperty("value", "");
+    const pending = document.querySelector("[data-pending]") as HTMLElement;
+    expect(pending.querySelector('[data-part="bubble-skill"]')?.textContent).toBe("/fix-issue");
+    expect(posts(calls, `${ORG}/conversations`)).toHaveLength(1);
+  });
 });

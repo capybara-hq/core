@@ -48,22 +48,39 @@ describe("WorkingLine (spec §6.16.24)", () => {
     vi.useFakeTimers();
     const { container } = wrap(<WorkingLine />);
     const status = screen.getByRole("status");
-    const spoken = () =>
-      [...status.querySelectorAll("*")]
-        .filter((el) => el.closest('[aria-hidden="true"]') === null && el.children.length === 0)
-        .map((el) => el.textContent)
-        .join("");
-    expect(spoken()).toBe("规划中…");
-    expect(
-      container.querySelector('[data-part="working-caption"]')?.getAttribute("aria-hidden"),
-    ).toBe("true");
+    expect(status.textContent).toBe("规划中…");
+    // the visible line (mark and rotating captions) is hidden from assistive tech
+    expect(container.querySelector('[data-part="working-line"]')?.getAttribute("aria-hidden")).toBe(
+      "true",
+    );
     const before = status.innerHTML;
     act(() => {
       vi.advanceTimersByTime(10_000);
     });
     // the rotation is CSS: the DOM (and so what a screen reader hears) never changes
     expect(status.innerHTML).toBe(before);
-    expect(spoken()).toBe("规划中…");
+  });
+
+  it("keeps its live region mounted and fills it when the line starts", () => {
+    const { container, rerender } = wrap(<WorkingLine active={false} />);
+    const status = screen.getByRole("status");
+    expect(status.textContent).toBe("");
+    expect(container.querySelector('[data-part="working-line"]')).toBeNull();
+    rerender(
+      <DesignProvider locale="zh">
+        <WorkingLine active />
+      </DesignProvider>,
+    );
+    // the same region, now filled: the change is what a screen reader announces
+    expect(screen.getByRole("status")).toBe(status);
+    expect(status.textContent).toBe("规划中…");
+    rerender(
+      <DesignProvider locale="zh">
+        <WorkingLine active={false} />
+      </DesignProvider>,
+    );
+    expect(screen.getByRole("status")).toBe(status);
+    expect(status.textContent).toBe("");
   });
 
   it("walks and rotates only without reduced motion; still draws frame 1 and the first caption", () => {
@@ -120,6 +137,14 @@ describe("ConversationPage working line", () => {
       (el) => el.getAttribute("data-testid") ?? el.getAttribute("data-part"),
     );
     expect(order).toEqual(["thread", "working-line", "queue"]);
+  });
+
+  it("keeps the line's live region mounted while `working` is false", () => {
+    const { container } = wrap(
+      <ConversationPage {...base} thread={<div>t</div>} working={false} />,
+    );
+    expect(container.querySelector('[data-part="working-line"]')).toBeNull();
+    expect(container.querySelector('[data-part="working-status"]')?.textContent).toBe("");
   });
 
   it("draws no line unless asked", () => {

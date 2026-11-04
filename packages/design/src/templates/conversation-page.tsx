@@ -271,7 +271,8 @@ export function ConversationPage({
           ) : (
             <>
               {thread}
-              {working ? <WorkingLine /> : null}
+              {/* kept mounted (its live region) once the page uses it */}
+              {working !== undefined ? <WorkingLine active={working} /> : null}
               {queue}
             </>
           )}

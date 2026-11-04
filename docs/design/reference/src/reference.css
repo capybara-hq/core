@@ -1471,6 +1471,15 @@ textarea {
 .r-tline > .r-tlabel {
   flex: 0 1 auto;
 }
+/* Visually hidden, read by assistive tech (the working line's live region). */
+.r-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 /* The working line's mark (§6.16.24): the §3 bitmap at unit 1 in a 16 box, accent. */
 .r-working-mark {
   display: inline-flex;

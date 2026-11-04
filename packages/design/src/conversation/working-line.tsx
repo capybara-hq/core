@@ -1,5 +1,5 @@
-import type { JSX } from "react";
-import { CAPYBARA_BITMAP } from "../display/logo";
+import { type JSX, useEffect, useState } from "react";
+import { bitmapCells, CAPYBARA_BITMAP } from "../display/logo";
 import type { DesignKey } from "../i18n";
 import { useDesignT } from "../provider";
 
@@ -16,38 +16,49 @@ const LEGS_2: readonly string[] = ["...XX.X.XX....", "...XX.X.XX...."];
 
 const BODY_ROWS = 8;
 
-/** Unit squares of the `X` cells of `rows`, the first row drawn at `top`. */
-function cells(rows: readonly string[], top: number): string {
-  const out: string[] = [];
-  rows.forEach((row, i) => {
-    for (let x = 0; x < row.length; x++) if (row[x] === "X") out.push(`M${x} ${top + i}h1v1h-1z`);
-  });
-  return out.join("");
-}
-
-const BODY = cells(CAPYBARA_BITMAP.slice(0, BODY_ROWS), 0);
-const FRAME_1 = cells(CAPYBARA_BITMAP.slice(BODY_ROWS), BODY_ROWS);
-const FRAME_2 = cells(LEGS_2, BODY_ROWS);
+const BODY = bitmapCells(CAPYBARA_BITMAP.slice(0, BODY_ROWS), 1);
+const FRAME_1 = bitmapCells(CAPYBARA_BITMAP.slice(BODY_ROWS), 1, BODY_ROWS);
+const FRAME_2 = bitmapCells(LEGS_2, 1, BODY_ROWS);
 
 export type WorkingLineProps = {
   /** Draws the reduced-motion form whatever the system says (the reference set's state). */
   still?: boolean;
+  /**
+   * The line shows (default). Off, only its live region stays mounted, empty, so the next start
+   * is announced (`ConversationPage` keeps it mounted this way).
+   */
+  active?: boolean;
 };
 
 /**
  * The working line (§6.16.24): from a person's send until the run's first output, the pixel
  * capybara walking (two leg frames, 400 ms apart) and a caption rotating every 2.4 s. Both are CSS
  * animations, so reduced motion (or `still`) leaves frame 1 and the first caption. A status
- * announced once: the rotating captions are hidden from assistive tech, a hidden copy of the
- * first one is what is read. No timer.
+ * announced once: a polite status region, kept mounted, is filled with the first caption after
+ * the line starts (a region filled as it is inserted may not be read); the line itself and its
+ * rotating captions are hidden from assistive tech. No timer.
  */
-export function WorkingLine({ still }: WorkingLineProps): JSX.Element {
+export function WorkingLine({ still, active = true }: WorkingLineProps): JSX.Element {
+  const t = useDesignT();
+  const [said, setSaid] = useState(false);
+  useEffect(() => setSaid(active), [active]);
+  return (
+    <>
+      <div className="cb-sr-only" role="status" data-part="working-status">
+        {active && said ? t(CAPTIONS[0] as DesignKey) : ""}
+      </div>
+      {active ? <WorkingLineBody still={still === true} /> : null}
+    </>
+  );
+}
+
+function WorkingLineBody({ still }: { still: boolean }): JSX.Element {
   const t = useDesignT();
   return (
     <div
       className="cb-tool-line cb-working-line"
       data-part="working-line"
-      role="status"
+      aria-hidden="true"
       data-still={still ? "true" : undefined}
     >
       <span className="cb-working-mark" data-part="working-mark" aria-hidden="true">
@@ -73,7 +84,6 @@ export function WorkingLine({ still }: WorkingLineProps): JSX.Element {
           <span key={k}>{t(k)}</span>
         ))}
       </span>
-      <span className="cb-sr-only">{t(CAPTIONS[0] as DesignKey)}</span>
     </div>
   );
 }

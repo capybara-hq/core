@@ -1819,8 +1819,9 @@ States: `ok`, `ok-open`, `failed`, `stopped`
   captions share one box, so the line keeps the widest one's width.
 - **Reduced motion** (and `still`, the reference set's form): the mark stands still on frame 1 and
   the caption stays on its first entry.
-- **A11y**: `role="status"` whose only readable text is a hidden copy of the first caption: it is
-  announced once, never on a rotation (the rotating captions are `aria-hidden`).
+- **A11y**: a polite `role="status"` region (visually hidden) stays mounted while the page uses the
+  line and is filled with the first caption when the line starts, so it is announced once per
+  start, never on a rotation; the line itself (mark and rotating captions) is `aria-hidden`.
 - Existing tokens only, no new colours.
 
 <!-- states: working-line -->

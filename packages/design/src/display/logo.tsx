@@ -15,6 +15,20 @@ export const CAPYBARA_BITMAP: readonly string[] = [
 const COLS = 14;
 const ROWS = 10;
 
+/**
+ * The `X` cells of bitmap `rows` as one SVG path of `scale`-sized squares, the first row drawn
+ * at row `top` (the logo, the working line's mark and its leg frames).
+ */
+export function bitmapCells(rows: readonly string[], scale: number, top = 0): string {
+  const out: string[] = [];
+  rows.forEach((row, i) => {
+    const y = top + i;
+    for (let x = 0; x < row.length; x++)
+      if (row[x] === "X") out.push(`M${x * scale} ${y * scale}h${scale}v${scale}h${-scale}z`);
+  });
+  return out.join("");
+}
+
 export function Logo({
   scale = 3,
   tone = "accent",
@@ -24,12 +38,6 @@ export function Logo({
   tone?: "accent" | "muted";
   wordmark?: boolean;
 }) {
-  const cells: string[] = [];
-  CAPYBARA_BITMAP.forEach((row, y) => {
-    for (let x = 0; x < row.length; x++) {
-      if (row[x] === "X") cells.push(`M${x * scale} ${y * scale}h${scale}v${scale}h${-scale}z`);
-    }
-  });
   return (
     <span className="cb-logo" data-tone={tone}>
       <svg
@@ -40,7 +48,7 @@ export function Logo({
         aria-hidden="true"
         focusable="false"
       >
-        <path d={cells.join("")} />
+        <path d={bitmapCells(CAPYBARA_BITMAP, scale)} />
       </svg>
       {wordmark ? <span className="cb-logo-word">CAPYBARA</span> : null}
     </span>
