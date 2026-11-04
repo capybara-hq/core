@@ -999,7 +999,8 @@ type Usage = Extract<ConversationEvent, { type: "usage" }>["payload"];
 
 /**
  * The context the agent works with: the latest step call's usage (no purpose). Compaction measures
- * the old history and a title call a short excerpt, so neither counts.
+ * the old history, a title call a short excerpt and a `web_fetch` call one fetched page, so none
+ * counts.
  */
 export function latestUsage(events: readonly ConversationEvent[]): Usage | null {
   for (let i = events.length - 1; i >= 0; i--) {

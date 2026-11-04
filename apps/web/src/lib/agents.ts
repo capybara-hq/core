@@ -18,11 +18,28 @@ export type AgentToolRef =
 export type TightenedPolicy = "ask" | "deny";
 
 /**
- * 网页可选的内置工具（内核没有列出内置工具的接口；`ToolSearch` 与 `Skill` 由内核自动加入）。
- * 新建时默认勾选 {@link DEFAULT_BUILTIN_TOOLS}（与内核的默认工具一致）。
+ * Builtin tools the web offers (the kernel has no route listing builtins; it adds `ToolSearch` and
+ * `Skill` itself). A new agent starts with {@link DEFAULT_BUILTIN_TOOLS} checked (the kernel's
+ * defaults); the web tools are never checked by default.
  */
-export const BUILTIN_TOOLS = ["AskUserQuestion", "ReadToolOutput", "SkillWrite"] as const;
+export const BUILTIN_TOOLS = [
+  "AskUserQuestion",
+  "ReadToolOutput",
+  "SkillWrite",
+  "WebSearch",
+  "WebFetch",
+] as const;
 export const DEFAULT_BUILTIN_TOOLS: readonly string[] = ["AskUserQuestion", "ReadToolOutput"];
+
+/**
+ * The builtin web tools and the extension point that serves each (web tools spec §3.4): the form
+ * offers one only while `GET …/extension-points/available` reports its point available, or when
+ * the agent already selected it.
+ */
+export const WEB_TOOL_POINTS: Readonly<Record<string, string>> = {
+  WebSearch: "web-search",
+  WebFetch: "web-fetch",
+};
 
 export interface AgentDefinitionInput {
   name: string;

@@ -132,8 +132,12 @@ type EventBody =
         outputTokens: number;
         cacheReadTokens: number;
         cacheWriteTokens: number;
-        /** `compaction`: the usage of a compaction call, not of the step's call. */
-        purpose?: "compaction" | "title";
+        /**
+         * Set when the usage is not the step's call: `compaction`, `title`, or `web_fetch` (a
+         * `WebFetch` extraction call, with that call's `callId`).
+         */
+        purpose?: "compaction" | "title" | "web_fetch";
+        callId?: string;
       };
     }
   | { type: "reminder"; payload: { step: number; text: string } }

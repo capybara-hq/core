@@ -30,6 +30,7 @@ import {
   type ProviderModels,
   type TightenedPolicy,
   updateAgent,
+  WEB_TOOL_POINTS,
 } from "../lib/agents";
 import { ApiClientError } from "../lib/api";
 import {
@@ -39,6 +40,7 @@ import {
   listConnectors,
 } from "../lib/connectors";
 import type { ModelRef } from "../lib/conversations";
+import { listAvailableExtensionPoints } from "../lib/extensions";
 import { PINNED_SKILLS_LIMITS, pinnedProblemsOf, type SkillSummary } from "../lib/skills";
 import { toolLabel, toolLabelText } from "../lib/tool-label";
 import { useErrorMessage } from "../lib/use-error-message";
@@ -152,6 +154,8 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
   const [apps, setApps] = useState<ConnectorSummary[]>();
   const [selectedConnectors, setSelectedConnectors] = useState<string[]>(initial.apps);
   const [connectorDetails, setConnectorDetails] = useState<Record<string, ConnectorDetail>>({});
+  /** The extension points with a provider for the org now (the web tools' availability). */
+  const [availablePoints, setAvailablePoints] = useState<ReadonlySet<string>>();
   const [policies, setPolicies] = useState<Record<string, TightenedPolicy>>(initial.policies);
   const orgList = useOrgSkills(orgId);
   const orgSkills = orgList.skills;
@@ -207,6 +211,42 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
       disposed = true;
     };
   }, [orgId]);
+
+  // Which web tools the org can serve now (unreadable: none is offered, saved ones stay listed)
+  useEffect(() => {
+    let disposed = false;
+    listAvailableExtensionPoints(orgId).then(
+      (r) => {
+        if (!disposed)
+          setAvailablePoints(new Set(r.points.filter((p) => p.available).map((p) => p.point)));
+      },
+      () => {
+        if (!disposed) setAvailablePoints(new Set());
+      },
+    );
+    return () => {
+      disposed = true;
+    };
+  }, [orgId]);
+
+  /**
+   * The builtin tools the form lists: a web tool only while its point has a provider, or when the
+   * agent selected it (a saved reference is never dropped silently).
+   */
+  const listedBuiltins = BUILTIN_TOOLS.filter((name) => {
+    const point = WEB_TOOL_POINTS[name];
+    return (
+      point === undefined ||
+      initial.builtins.includes(name) ||
+      builtins.includes(name) ||
+      availablePoints?.has(point) === true
+    );
+  });
+  /** A selected web tool the org cannot serve now. */
+  const webUnavailable = builtins.some((name) => {
+    const point = WEB_TOOL_POINTS[name];
+    return point !== undefined && availablePoints !== undefined && !availablePoints.has(point);
+  });
 
   // 连接器的工具列表只用于收紧策略：读不到时只是不显示该连接器的策略选项
   const loadConnectorDetail = (connectorId: string) =>
@@ -604,7 +644,7 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
                 <Text variant="small" tone="muted">
                   {t("form.builtinLabel")}
                 </Text>
-                {BUILTIN_TOOLS.map((name) => (
+                {listedBuiltins.map((name) => (
                   <Checkbox
                     key={name}
                     label={t(`form.builtin.${name}`)}
@@ -614,6 +654,11 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
                     }
                   />
                 ))}
+                {webUnavailable && (
+                  <Text variant="small" tone="muted">
+                    {t("form.webUnavailable")}
+                  </Text>
+                )}
               </Stack>
             </div>
             {/* biome-ignore lint/a11y/useSemanticElements: fieldset 带浏览器默认边框与内边距，apps/web 不能写样式；用 role=group 分组 */}

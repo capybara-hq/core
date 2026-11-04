@@ -17,6 +17,7 @@ import { FilePreviewersSection } from "../../../../../components/FilePreviewersS
 import { FormError } from "../../../../../components/form-error";
 import { OrgGate } from "../../../../../components/OrgGate";
 import { PermissionReview } from "../../../../../components/PermissionReview";
+import { PointDefaultsSection } from "../../../../../components/PointDefaultsSection";
 import {
   changedCount,
   draftToConfig,
@@ -46,7 +47,8 @@ import { useLoad } from "../../../../../lib/use-load";
  * that is currently unavailable on the deployment (e.g. disabled by an enterprise admin) shows
  * "Unavailable": the switch is read-only (the org's setting is kept). A required bootstrap plugin
  * shows "Required": the switch is read-only (always on) and its org config can still be set. Below the
- * extensions, the org's file previewers (`file-preview@1`) in order, when any is provided.
+ * extensions, the org's default providers of the points several extensions provide (web tools spec
+ * §6), and the org's file previewers (`file-preview@1`) in order, when any is provided.
  */
 export default function ExtensionsPage() {
   return <OrgGate>{(orgId) => <Plugins key={orgId} orgId={orgId} />}</OrgGate>;
@@ -57,9 +59,12 @@ function Plugins({ orgId }: { orgId: string }) {
   const errorMessage = useErrorMessage();
   const nav = useSettingsNav();
   const { state, set } = useLoad(() => listOrgExtensions(orgId).then((r) => r.extensions), [orgId]);
+  // Enabling, disabling or configuring an extension can change the default providers' candidates
+  const [changes, setChanges] = useState(0);
   const replace = (next: OrgExtension) => {
     if (state.kind !== "ready") return;
     set(state.data.map((p) => (p.plugin === next.plugin ? next : p)));
+    setChanges((n) => n + 1);
   };
   return (
     <SettingsPage header={{ title: t("title") }} nav={nav} activeNav="extensions">
@@ -74,6 +79,7 @@ function Plugins({ orgId }: { orgId: string }) {
           <ExtensionSection key={p.plugin} orgId={orgId} plugin={p} onSaved={replace} />
         ))
       )}
+      <PointDefaultsSection orgId={orgId} refresh={changes} />
       <FilePreviewersSection orgId={orgId} />
     </SettingsPage>
   );
