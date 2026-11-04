@@ -143,6 +143,7 @@ export {
   ToolBox,
   ToolDetail,
   ToolLabel,
+  ToolLink,
   ToolRow,
   type ToolRowData,
   type ToolRowProps,

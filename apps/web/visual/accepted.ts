@@ -31,6 +31,10 @@ export const ACCEPTED: string[] = [
   "prose",
   "thinking-row",
   "user-bubble",
+  // background Bash plan Task 9 added states: run-divider `notice`, tool-group and tool-row
+  // `linked`, task-output-panel `stopping`; their blocks and size-table rows are in place, the
+  // reference PNGs and the side-by-side review wait for the reference-update and visual-update
+  // workflows
   "run-divider",
   "tool-group",
   "tool-row",

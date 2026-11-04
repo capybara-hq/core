@@ -1,7 +1,13 @@
 import type { JSX, ReactNode } from "react";
 import { useDesignT } from "../provider";
 
-export type DividerKind = "stopped" | "failed" | "compacted" | "fallback" | "hook-denied";
+export type DividerKind =
+  | "stopped"
+  | "failed"
+  | "compacted"
+  | "fallback"
+  | "hook-denied"
+  | "notice";
 
 export type RunDividerProps = {
   kind: DividerKind;
@@ -9,7 +15,8 @@ export type RunDividerProps = {
   text: string;
   /**
    * The link button after the text: Retry for `failed`, the summary toggle for `compacted`
-   * (`expanded` sets aria-expanded and the default label). The label defaults by kind.
+   * (`expanded` sets aria-expanded and the default label), Open for a `notice` (a background
+   * task's finish, which opens the task). The label defaults by kind.
    */
   action?: { label?: string; onClick(): void; expanded?: boolean };
   /** The compacted summary, shown below the divider while it is given. */
@@ -26,7 +33,9 @@ export function RunDivider({ kind, text, action, children }: RunDividerProps): J
     action?.label ??
     (kind === "compacted"
       ? t(action?.expanded ? "conv.hideSummary" : "conv.viewSummary")
-      : t("conv.retry"));
+      : kind === "notice"
+        ? t("conv.open")
+        : t("conv.retry"));
   return (
     <div className="cb-run-divider-wrap">
       <div

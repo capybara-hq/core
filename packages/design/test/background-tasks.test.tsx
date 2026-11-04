@@ -185,6 +185,45 @@ describe("BackgroundTasks task rows", () => {
 });
 
 describe("TaskOutputPanel", () => {
+  it("stopping: no stop button, Stopping… announced politely", () => {
+    const { container } = wrap(
+      <TaskOutputPanel
+        description="pnpm dev"
+        command="pnpm dev"
+        status="running"
+        elapsed="2m 28s"
+        text="ready"
+        source="sandbox"
+        stopping
+        onStop={vi.fn()}
+      />,
+      "en",
+    );
+    expect(screen.queryByRole("button", { name: "Stop pnpm dev" })).toBeNull();
+    const el = container.querySelector('[data-part="task-output-stopping"]') as HTMLElement;
+    expect(el.textContent).toBe("Stopping…");
+    expect(el.getAttribute("role")).toBe("status");
+    expect(el.getAttribute("aria-live")).toBe("polite");
+  });
+
+  it("a finished task ignores stopping: neither the button nor the stopping text", () => {
+    const { container } = wrap(
+      <TaskOutputPanel
+        description="pnpm dev"
+        command="pnpm dev"
+        status="stopped"
+        elapsed="2m 28s"
+        text="ready"
+        source="sandbox"
+        stopping
+        onStop={vi.fn()}
+      />,
+      "en",
+    );
+    expect(screen.queryByRole("button", { name: "Stop pnpm dev" })).toBeNull();
+    expect(container.querySelector('[data-part="task-output-stopping"]')).toBeNull();
+  });
+
   it("shows the command in mono and the text in a CodeBlock", async () => {
     const onStop = vi.fn();
     const { container } = wrap(

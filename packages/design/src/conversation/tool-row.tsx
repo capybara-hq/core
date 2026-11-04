@@ -40,6 +40,12 @@ export type ToolRowData = {
   error?: string;
   /** The extension whose policy hook denied the call. */
   blockedBy?: string;
+  /**
+   * A link at the row's end (§6.16.9): a background `Bash` call's task, "查看「…」的输出" /
+   * "View output of …", which opens the task's output on the right. The row's toggle and the link
+   * are two buttons side by side.
+   */
+  link?: { label: string; onOpen(): void };
   detail?: {
     input?: [string, string][];
     command?: string;
@@ -118,6 +124,20 @@ export function ToolLabel({ row }: { row: ToolRowData }): JSX.Element {
         <span className="cb-muted">{` · ${t("tool.cancelled")}`}</span>
       ) : null}
     </span>
+  );
+}
+
+/** The row's link (§6.16.9), a link button after the toggle. */
+export function ToolLink({ link }: { link: NonNullable<ToolRowData["link"]> }): JSX.Element {
+  return (
+    <button
+      type="button"
+      className="cb-link-btn cb-tool-link"
+      data-part="tool-link"
+      onClick={link.onOpen}
+    >
+      {link.label}
+    </button>
   );
 }
 
@@ -341,6 +361,51 @@ export function ToolRow({
       {end}
     </>
   );
+  const toggle = () => {
+    setAnimate(true);
+    if (open === undefined) setOwn((o) => !o);
+    onToggle?.();
+  };
+  const detail =
+    expandable && isOpen ? (
+      <ToolDetail
+        row={row}
+        id={id}
+        animate={animate}
+        {...(onViewAll ? { onViewAll } : {})}
+        {...(onCopy ? { onCopy } : {})}
+      />
+    ) : null;
+  if (row.link) {
+    // a row with a link: the toggle (or the label) and the link side by side, never nested
+    return (
+      <div className="cb-tool-item" data-open={expandable && isOpen ? "true" : undefined}>
+        <div
+          className="cb-tool-row"
+          data-part="tool-row"
+          data-status={row.status}
+          data-waiting={waiting ? row.waiting : undefined}
+          data-linked="true"
+        >
+          {expandable ? (
+            <button
+              type="button"
+              className="cb-tool-toggle"
+              aria-expanded={isOpen}
+              aria-controls={isOpen ? id : undefined}
+              onClick={toggle}
+            >
+              {inner}
+            </button>
+          ) : (
+            <span className="cb-tool-toggle">{inner}</span>
+          )}
+          <ToolLink link={row.link} />
+        </div>
+        {detail}
+      </div>
+    );
+  }
   return (
     <div className="cb-tool-item" data-open={expandable && isOpen ? "true" : undefined}>
       {expandable ? (
@@ -352,11 +417,7 @@ export function ToolRow({
           data-waiting={waiting ? row.waiting : undefined}
           aria-expanded={isOpen}
           aria-controls={isOpen ? id : undefined}
-          onClick={() => {
-            setAnimate(true);
-            if (open === undefined) setOwn((o) => !o);
-            onToggle?.();
-          }}
+          onClick={toggle}
         >
           {inner}
         </button>
@@ -370,15 +431,7 @@ export function ToolRow({
           {inner}
         </div>
       )}
-      {expandable && isOpen ? (
-        <ToolDetail
-          row={row}
-          id={id}
-          animate={animate}
-          {...(onViewAll ? { onViewAll } : {})}
-          {...(onCopy ? { onCopy } : {})}
-        />
-      ) : null}
+      {detail}
     </div>
   );
 }

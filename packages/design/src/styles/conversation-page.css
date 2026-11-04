@@ -874,7 +874,8 @@ button.cb-property-row {
   align-items: center;
   gap: var(--cb-space-2);
 }
-.cb-task-output-head > button {
+.cb-task-output-head > button,
+.cb-task-output-stopping {
   margin-left: auto;
 }
 .cb-task-command {

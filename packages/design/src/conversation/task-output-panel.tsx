@@ -20,6 +20,11 @@ export type TaskOutputPanelProps = {
    * tail the finish event carried, so a note says the full output is unavailable.
    */
   source: "sandbox" | "event";
+  /**
+   * A stop is under way (the task view's `stopping`, or this page's stop in flight): the task still
+   * runs, the stop button gives way to "正在停止…" / "Stopping…", announced politely.
+   */
+  stopping?: boolean;
   onStop(): void;
 };
 
@@ -34,7 +39,8 @@ const STATUS_COPY = {
 
 /**
  * A background task's output in the right panel's body: the command in the design's monospace,
- * the status and elapsed time with a stop button while it runs, the unavailable note when only the
+ * the status and elapsed time with a stop button while it runs ("Stopping…" once a stop is under
+ * way), the unavailable note when only the
  * finish event's tail is left, and the last lines in a `CodeBlock`.
  */
 export function TaskOutputPanel({
@@ -44,6 +50,7 @@ export function TaskOutputPanel({
   elapsed,
   text,
   source,
+  stopping,
   onStop,
 }: TaskOutputPanelProps): JSX.Element {
   const t = useDesignT();
@@ -55,7 +62,17 @@ export function TaskOutputPanel({
           {t(STATUS_COPY[status])}
         </span>
         <span className="cb-faint">{elapsed}</span>
-        {status === "running" ? (
+        {status === "running" && stopping === true ? (
+          <span
+            className="cb-muted cb-task-output-stopping"
+            data-part="task-output-stopping"
+            role="status"
+            aria-live="polite"
+          >
+            {t("background.stopping")}
+          </span>
+        ) : null}
+        {status === "running" && stopping !== true ? (
           <IconButton
             density="dense"
             label={fillCopy(t("background.stop"), { name: description })}

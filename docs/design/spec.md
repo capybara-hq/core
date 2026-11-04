@@ -1339,11 +1339,11 @@ States: `default`, `attachments`, `skill`
 #### 6.16.7 Run divider
 
 - A centered line between two 1px `line` rules that fill the width: `small` `muted`, gap `space.3`, on one line, `role="status"`.
-- On the conversation page a run's end is the run row (§6.16.23): the thread draws only **compacted** and **fallback** dividers; the stopped, failed and hook-denied kinds stay in the component.
-- Kinds: **stopped** "已停止 · <who> <time>"; **failed** (the whole divider `fail`) "运行失败：<reason> · 重试" where Retry re-sends the last user message (text and files) and is folded into this divider rather than drawing a second bubble; **compacted** "较早的对话已压缩 · 节省 <n> · 查看摘要", which toggles the summary below it (`panel` ground, radius `md`, padding `space.3`, `prose-small` `muted`; the link reads "收起摘要" / "Hide summary" while open); **fallback** "所选模型 <a> 已不可用，本条起改用 agent 的模型 <b>" (a switched-to model disappeared); **hook-denied** (`fail`) "运行被扩展「<extension>」拦截：<reason>" (`run.hook_denied`).
+- On the conversation page a run's end is the run row (§6.16.23): the thread draws only **compacted**, **fallback** and **notice** dividers; the stopped, failed and hook-denied kinds stay in the component.
+- Kinds: **stopped** "已停止 · <who> <time>"; **failed** (the whole divider `fail`) "运行失败：<reason> · 重试" where Retry re-sends the last user message (text and files) and is folded into this divider rather than drawing a second bubble; **compacted** "较早的对话已压缩 · 节省 <n> · 查看摘要", which toggles the summary below it (`panel` ground, radius `md`, padding `space.3`, `prose-small` `muted`; the link reads "收起摘要" / "Hide summary" while open); **fallback** "所选模型 <a> 已不可用，本条起改用 agent 的模型 <b>" (a switched-to model disappeared); **hook-denied** (`fail`) "运行被扩展「<extension>」拦截：<reason>" (`run.hook_denied`); **notice** (`muted`, never `fail`, whatever it reports) a quiet line about something that happened outside a run: a background task's finish "后台任务「<description>」<status> · 退出码 <code> · 打开" / "Background task “<description>” <status> · exit code <code> · Open", whose action ("打开" / "Open" by default) opens the task's output on the right.
 
 <!-- states: run-divider -->
-States: `stopped`, `failed`, `compacted`, `compacted-open`, `fallback`, `hook-denied`
+States: `stopped`, `failed`, `compacted`, `compacted-open`, `fallback`, `hook-denied`, `notice`
 
 <!-- size-table: run-divider -->
 | Part | State | Property | Value |
@@ -1362,16 +1362,19 @@ States: `stopped`, `failed`, `compacted`, `compacted-open`, `fallback`, `hook-de
 | divider-summary | compacted-open | color | color.muted |
 | run-divider | fallback | color | color.muted |
 | run-divider | hook-denied | color | color.fail |
+| run-divider | notice | color | color.muted |
+| run-divider | notice | font-size | type.small |
 
 #### 6.16.8 Tool group
 
 - **One call** is a tool line: the row label (§6.16.9) and a chevron when it has detail; opening it shows the detail (or the diff) in a tool box below.
 - **Two or more consecutive calls** form a group: a header tool line (the summary) and, when open, the **tool box**: `panel` ground, radius `md`, `small` type, overflow hidden, one row per call, rows divided by `line-soft`. A finished group is collapsed by default; a running group is open and its header has no chevron.
 - **Summary** (copy in §7): counts by kind with each kind's verb, joined by "，" / ", " in a fixed order (commands, tools, reads, edits, as reference set B draws it); failures add "（N 个失败）" / " (N failed)" in `fail`; edits add " · +a −b" in `faint`; a group whose rows all read, or all edit, one path names it in `ink` ("已读取 示例表.xlsx"). Running: a `spinner` (16), the running verb of the running row's kind and " · 已完成 N 个" / " · N done" in `faint`; when every live call waits for a person (§6.16.9), no spinner and the waiting word in `accent` instead of the verb ("等待你回答 · 已完成 N 个").
+- **One call with a link** (§6.16.9): the tool line holds its toggle (the label and the chevron) and, after it, the link; the two are separate buttons.
 - Groups sit between prose and end at prose, a user message, a human-in-the-loop card, a sub-agent group or a divider. Pages never group calls themselves: `apps/web/src/lib/timeline.ts` turns events into groups.
 
 <!-- states: tool-group -->
-States: `single`, `running`, `collapsed`, `collapsed-failed`, `one-object`, `expanded`, `edited`
+States: `single`, `running`, `collapsed`, `collapsed-failed`, `one-object`, `expanded`, `edited`, `linked`
 
 <!-- size-table: tool-group -->
 | Part | State | Property | Value |
@@ -1392,6 +1395,9 @@ States: `single`, `running`, `collapsed`, `collapsed-failed`, `one-object`, `exp
 | tool-box | expanded | font-size | type.small |
 | tool-row | expanded | height | row.dense |
 | tool-line | edited | height | row.dense |
+| tool-line | linked | height | row.dense |
+| tool-link | linked | color | color.muted |
+| tool-link | linked | font-size | type.small |
 
 #### 6.16.9 Tool row
 
@@ -1401,6 +1407,7 @@ States: `single`, `running`, `collapsed`, `collapsed-failed`, `one-object`, `exp
   - **Preview**: a shell row (`Bash`) shows the `description` the model wrote; every other row its key argument: the tool's declared `keyArgs` (else the first string argument; Read / Write / Edit the path, Glob / Grep the pattern, Skill the skill). The preview is its first line, cut at 80 characters with "…".
   - Edits add "+a −b" as the extra, unless the edit could not be diffed (a `Write` over a binary or very large file: `truncated` without hunks), which shows no line counts and no diff.
   - **The question tool** (`AskUserQuestion`, kind `question`, which the web derives from the builtin's name; the kernel's kind stays `meta`): the name slot reads the verb "已提问" / "Asked" (600), the preview the first question's `header`, else its question, else the tool's title. Its question card (§6.16.12) stays below.
+- **Link** (`link`: a label and an action): a background `Bash` call (`run_in_background: true`) links its task, "查看「<description>」的输出" / "View output of <description>", which opens the task's output on the right (§6.16.18); its row reads "后台运行" / "In background" as the extra, which replaces any other extra. The link is a link button (`small` `muted`, underlined, `ink` on hover) at the row's end, after the chevron; the row is then a plain container holding its toggle (a button with the label and the chevron, `aria-expanded`) and the link, never one inside the other. Without detail the toggle is the label alone.
 - **Status**: running — a `spinner` (16) before the label, the label `ink`, the elapsed time in `faint` at the end ("12 秒" / "12s", "1 分 03 秒" / "1m 03s"); waiting for a person — a live call with a pending approval, question or connection (the web reads it from the log: `approval_requested` without its decision, `question_asked` without its answer, `connection_required` before the result) has no spinner and no timer: the label `ink` and at the end the waiting word in `accent`, "等待你回答" / "Waiting for your answer", "等待你批准" / "Waiting for your approval", "等待你连接" / "Waiting for you to connect"; once answered the row runs as before; done — no mark; failed — "失败" in `fail` and " · <the error's first line>" in `muted` (a shell command with a non-zero exit or a timeout is a failure); blocked by a policy hook — failed, "被扩展「<extension>」拒绝" / `Denied by extension "<extension>"`.
 - **Expanded detail**: padding 0 `space.3` `space.3`, gap `space.2`, two labelled blocks, each a label column (`micro` 600 `faint`, "IN" / "OUT" in English, "输入" / "输出" in Chinese, `4ch` wide, gap `space.2`) beside its body:
   - **IN**: the command for a shell row as `$ <command>` (the `$` `faint`, the command `ink`); else the inputs as a key / value grid (columns `max-content` and the rest, gap `space.1` × `space.3`, keys `faint`, values `ink`, breaking anywhere). Omitted when there is no input;
@@ -1408,7 +1415,7 @@ States: `single`, `running`, `collapsed`, `collapsed-failed`, `one-object`, `exp
   - An edit's expanded form stays its diff (§6.16.10), without labels.
 
 <!-- states: tool-row -->
-States: `default`, `hover`, `focus`, `running`, `failed`, `expanded-command`, `expanded-connector`, `expanded-failed`, `large-output`, `hook-denied`, `waiting`
+States: `default`, `hover`, `focus`, `running`, `failed`, `expanded-command`, `expanded-connector`, `expanded-failed`, `large-output`, `hook-denied`, `waiting`, `linked`
 
 <!-- size-table: tool-row -->
 | Part | State | Property | Value |
@@ -1450,6 +1457,9 @@ States: `default`, `hover`, `focus`, `running`, `failed`, `expanded-command`, `e
 | tool-row | waiting | height | row.dense |
 | tool-label | waiting | color | color.ink |
 | waiting-word | waiting | color | color.accent |
+| tool-row | linked | height | row.dense |
+| tool-link | linked | color | color.muted |
+| tool-link | linked | font-size | type.small |
 
 #### 6.16.10 Diff block
 
@@ -1639,7 +1649,7 @@ States: `view`, `embed`, `loading`, `failed`
 - The properties panel is `layout.properties` wide and sits **inside** the middle column, under its title bar, right of the thread (padding `space.2` `space.4` `space.4` 0); its sections stack `space.2` apart and it scrolls on its own.
 - A section: `panel` ground, no border, radius `md`, padding `space.3`, gap `space.1`; a head with the title in `muted` and a value at the right, `space.1` above the body.
 - Built-in sections, in order: **Context** (the usage ratio as the value; a meter `space.1` high, `line` track, `ink` fill, radius `sm`; "<model> · <sandbox status>" and "连接器：…" / "Connectors: …" in `small` `muted`; the last run's line "上次运行 · <model> · <duration> · <tokens>" / "Last run · …" in `small` `muted` (`context-last-run`, once a run ended; cost joins it only when the log carries one); once the conversation has sub-agents, a last `small` `muted` line with its tokens including theirs, worded by the page); extension sections (`place: "section"`, in contribution order, rendered `dense`); **Files** (the count as the value, the conversation's own files and its sub-agents' deliveries; rows `row.dense`: type badge, name with an ellipsis, for a sub-agent's file "来自 <sub-agent>" / "from <sub-agent>" in `faint` (at most 40% of the row, with an ellipsis), size in `muted`; then "全部 N 个文件" / "All N files" with `chevron-right` 12 in `muted`); **Background tasks** (sub-agents and background Bash tasks, running ones only; rows `row.dense`: `spinner`, name, duration `muted`, a dense stop icon button `square` 12 named "停止「<name>」" / "Stop <name>"; a task whose stop is under way keeps its `spinner` and shows "正在停止…" / "Stopping…" in `muted` instead of the button; a sub-agent's own tasks are nested under it, indented `space.4` (a task with a parent is nested whatever the parent's status); then "已完成 N 项" / "N completed" with a chevron, counting finished tasks and sub-agents together and opening the newest). The section shows running items only: finished tasks and sub-agents are not rows, they are counted in "N completed". `BackgroundTaskRow`'s finished states exist for places that list finished tasks: no `spinner`, ending with the status word: "已完成" / "Done", "已停止" / "Stopped" and "已丢失" / "Lost" in `muted` (success is not colored), "失败" / "Failed" and "已超时" / "Timed out" in `fail`.
-- **Task output** (`TaskOutputPanel`, the body of the right panel for a task, §6.16.18): a head line with the status word (`muted`, `fail` when failed or timed out), the elapsed time in `faint` and, while running, a dense stop icon button at the right; the command in the design's monospace (`font.mono`, which the size table cannot express: it holds numbers and colors only) in `ink`; when only the finish event's tail is left (the sandbox is suspended) the note "输出不可读（沙箱已暂停）" / "Output unavailable (sandbox suspended)" in `muted` above the last lines; the last lines in a `CodeBlock` (§6.8). The elements sit `space.2` apart.
+- **Task output** (`TaskOutputPanel`, the body of the right panel for a task, §6.16.18): a head line with the status word (`muted`, `fail` when failed or timed out), the elapsed time in `faint` and, while running, a dense stop icon button at the right (once a stop is under way, the task view's `stopping` or the page's own stop in flight, "正在停止…" / "Stopping…" in `muted` with `role="status"` instead of the button); the command in the design's monospace (`font.mono`, which the size table cannot express: it holds numbers and colors only) in `ink`; when only the finish event's tail is left (the sandbox is suspended) the note "输出不可读（沙箱已暂停）" / "Output unavailable (sandbox suspended)" in `muted` above the last lines; the last lines in a `CodeBlock` (§6.8). The elements sit `space.2` apart.
 - A failing extension section shows the load-failure line in that section only.
 
 <!-- states: property-section -->
@@ -1680,7 +1690,7 @@ States: `running`, `done`, `failed`, `stopped`, `lost`, `nested`
 | task-row[data-nested=true] | nested | padding-left | space.4 |
 
 <!-- states: task-output-panel -->
-States: `running`, `finished`, `unavailable`
+States: `running`, `finished`, `unavailable`, `stopping`
 
 <!-- size-table: task-output-panel -->
 | Part | State | Property | Value |
@@ -1689,6 +1699,7 @@ States: `running`, `finished`, `unavailable`
 | icon-button | running | width | control.dense |
 | task-output-status | finished | color | color.muted |
 | task-output-note | unavailable | color | color.muted |
+| task-output-stopping | stopping | color | color.muted |
 
 #### 6.16.18 Right panel
 

@@ -557,9 +557,10 @@ function taskOutputBlocks(): ReactNode {
     status: BackgroundTaskItem["status"],
     source: "sandbox" | "event",
     elapsed: string,
+    stopping = false,
   ) => (
     <RefBlock
-      id={`task-output-panel-${ID[status === "running" ? "running" : source]}`}
+      id={`task-output-panel-${stopping ? "stopping" : ID[status === "running" ? "running" : source]}`}
       width={420}
       pad
     >
@@ -570,6 +571,7 @@ function taskOutputBlocks(): ReactNode {
         elapsed={elapsed}
         text={"ready in 412 ms\nlistening on http://localhost:3000"}
         source={source}
+        stopping={stopping}
         onStop={noop}
       />
     </RefBlock>
@@ -577,6 +579,7 @@ function taskOutputBlocks(): ReactNode {
   return (
     <>
       {body("running", "sandbox", "2分28秒")}
+      {body("running", "sandbox", "2分28秒", true)}
       {body("completed", "sandbox", "1分12秒")}
       {body("completed", "event", "1分12秒")}
     </>
