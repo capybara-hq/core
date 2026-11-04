@@ -181,7 +181,7 @@ export const OLD_REFERENCES: { re: RegExp; what: string; allowedIn?: RuleExempti
         reason: "release notes of the rename say what the old keys were",
       },
       {
-        path: /^packages\/kernel\/test\/tools\/(?:legacy-keys|legacy-data|builtin-names|rename-compat|pipeline|policy)\.test\.ts$/,
+        path: /^packages\/kernel\/test\/tools\/(?:legacy-keys|legacy-data|builtin-names|rename-compat|pipeline|policy|info)\.test\.ts$/,
         reason: "tests of the old-key compatibility (stored data, in-flight calls, the frozen map)",
       },
       {
@@ -195,6 +195,10 @@ export const OLD_REFERENCES: { re: RegExp; what: string; allowedIn?: RuleExempti
       {
         path: /^(?:apps\/web|packages\/plugin-sdk)\/test\/tool-key\.test\.ts$/,
         reason: "pins that an old key is not a valid or displayable extension tool key",
+      },
+      {
+        path: /^apps\/web\/test\/timeline-rc\.test\.ts$/,
+        reason: "renders a log written with the old keys (the kernel supplies their aliases)",
       },
     ],
   },

@@ -19,14 +19,15 @@ const lang = (locale: string): Lang => (locale.startsWith("zh") ? "zh" : "en");
 
 /** The label of a tool from its display metadata (`GET …/conversations/:id/tools`). */
 export function toolLabel(
-  info: Pick<ToolInfo, "key" | "title" | "source"> & { tool?: string | null },
+  info: Pick<ToolInfo, "key" | "title" | "source" | "aliasOf"> & { tool?: string | null },
   locale: string,
 ): ToolLabelParts {
   const tooltip = info.title ? { tooltip: info.title } : {};
   const local = info.tool ?? localTool(info.key) ?? info.key;
   switch (info.source.kind) {
     case "builtin":
-      return { name: info.key, ...tooltip };
+      // an older key of a builtin (history logged before a rename) shows the current name
+      return { name: info.aliasOf ?? info.key, ...tooltip };
     case "connector":
       return { name: info.source.name, tool: local, ...tooltip };
     case "extension":

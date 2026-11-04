@@ -514,7 +514,9 @@ export function buildEventTimeline(
         if (text !== "") out.push({ kind: "prose", key, text, streaming: false });
         for (const b of e.payload.content) {
           if (b.type !== "tool_call") continue;
-          if (b.name === AGENT_TOOL) {
+          const ti = info.get(b.name);
+          // an older key of a current tool (history logged before a rename): the kernel says which
+          if ((ti?.aliasOf ?? b.name) === AGENT_TOOL) {
             const rec = asRecord(b.input);
             const sub: TimelineSubagent = {
               row: {
@@ -532,7 +534,6 @@ export function buildEventTimeline(
             agentCalls.set(callKey(e.runId, b.id), { sub, runId: e.runId });
             continue;
           }
-          const ti = info.get(b.name);
           const input = b.input;
           const rec = asRecord(input);
           const group = openGroup();

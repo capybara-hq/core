@@ -209,6 +209,36 @@ describe("GET /conversations/:id/tools", () => {
     expect(t.Agent).toMatchObject({ kind: "tool", keyArgs: ["description", "subagent_type"] });
   });
 
+  it("an rc builtin key (old history) answers as its current tool with aliasOf and the old key arguments", async () => {
+    const { req, orgId, conversationId } = await setup();
+    const res = await tools(req, orgId, conversationId, [
+      "sandbox_bash",
+      "sandbox_read",
+      "agent",
+      "Bash",
+    ]);
+    expect(res.statusCode, res.body).toBe(200);
+    const t = byKey(res);
+    expect(t.sandbox_bash).toEqual({
+      key: "sandbox_bash",
+      aliasOf: "Bash",
+      title: null,
+      kind: "command",
+      sandbox: true,
+      keyArgs: ["command"],
+      tool: null,
+      source: { kind: "builtin" },
+    });
+    // the logged input of an rc call carries the old parameter names
+    expect(t.sandbox_read).toMatchObject({ aliasOf: "Read", kind: "read", keyArgs: ["path"] });
+    expect(t.agent).toMatchObject({
+      aliasOf: "Agent",
+      keyArgs: ["description", "subagent_type"],
+      source: { kind: "builtin" },
+    });
+    expect(t.Bash).not.toHaveProperty("aliasOf");
+  });
+
   it("a connector tool returns its MCP title and key arguments, named by the connector", async () => {
     const { req, orgId, conversationId } = await setup();
     const inst = await req({

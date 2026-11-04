@@ -615,6 +615,11 @@ export const resumeQueue = (orgId: string, id: string) =>
 /** Display metadata of a tool (kernel `ToolInfo`). */
 export interface ToolInfo {
   key: string;
+  /**
+   * Set when `key` is an older name of a current tool (history logged before a rename): that
+   * tool's key. The rest describes that tool; the page treats the call as a call to it.
+   */
+  aliasOf?: string;
   title: string | null;
   kind: "command" | "read" | "edit" | "search" | "connector" | "meta" | "tool";
   /** True exactly for the builtin tools that run in the conversation's sandbox. */
