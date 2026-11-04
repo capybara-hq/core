@@ -11,7 +11,7 @@ export {
   PANEL_WIDTH_KEY,
 } from "./conversation-page";
 export { DetailPage } from "./detail-page";
-export { FormPage, FormSection } from "./form-page";
+export { FormPage, FormSection, type FormSectionLayout } from "./form-page";
 export type { BlockShape, CardShape, FieldShape } from "./frame";
 export { type InboxLoading, InboxPage } from "./inbox-page";
 export { type ListLoading, ListPage } from "./list-page";

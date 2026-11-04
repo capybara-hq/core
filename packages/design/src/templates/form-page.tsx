@@ -93,17 +93,23 @@ function withoutUnsaved({ unsaved: _, ...rest }: ActionRowProps): ActionRowProps
   return rest;
 }
 
+/** How a form section places its head (spec §5.3). */
+export type FormSectionLayout = "columns" | "stacked";
+
 /**
  * A form section (spec §5.3): two columns, the title (h2) and a prose-small muted description on
  * the left, the fields on a `panel` card on the right. Sections are separated by spacing.
  * `loading` keeps the title and description real and draws `fields` field placeholders in the
  * card (a count of default inputs, or the page's static `FieldShape`s) in place of `children`; a `flush` section keeps its flush card and draws `fields` switch rows instead; a section whose data
  * is ready renders for real next to loading ones. Outside a loading page it announces itself.
+ * `layout="stacked"` puts the head above a fields card across the full width, for content that
+ * needs it (an editor); below 960 every section is stacked anyway.
  */
 export function FormSection({
   id,
   title,
   description,
+  layout = "columns",
   flush,
   loading,
   children,
@@ -111,6 +117,8 @@ export function FormSection({
   id: string;
   title: string;
   description?: string;
+  /** `columns` (default): the head column beside the card; `stacked`: the head above it. */
+  layout?: FormSectionLayout;
   /** The card without padding, for content that reaches its edges (a SwitchList). */
   flush?: boolean;
   /**
@@ -126,6 +134,7 @@ export function FormSection({
       id={id}
       className="cb-form-section"
       data-part="form-section"
+      data-layout={layout === "stacked" ? "stacked" : undefined}
       aria-label={title}
       aria-busy={loading && announces ? "true" : undefined}
     >
@@ -167,7 +176,9 @@ export function LoadingFormSection({
   cards,
   title,
   description,
+  layout = "columns",
 }: {
+  layout?: FormSectionLayout;
   fields?: number | FieldShape[];
   cards?: CardShape[];
   title?: string;
@@ -178,6 +189,7 @@ export function LoadingFormSection({
     <section
       className="cb-form-section"
       data-part="form-section"
+      data-layout={layout === "stacked" ? "stacked" : undefined}
       aria-busy={announces ? "true" : undefined}
     >
       {announces ? <SkeletonAnnouncement /> : null}

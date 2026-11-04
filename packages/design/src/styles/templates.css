@@ -42,6 +42,11 @@
   gap: 0;
   padding: 0;
 }
+/* Stacked: the head above a fields card across the full width (an editor), at every width. */
+.cb-form-section[data-layout="stacked"] {
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--cb-space-3);
+}
 @media (max-width: 959px) {
   .cb-form-section {
     grid-template-columns: minmax(0, 1fr);

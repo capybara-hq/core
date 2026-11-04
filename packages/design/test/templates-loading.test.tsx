@@ -703,6 +703,59 @@ describe("SettingsPage loading", () => {
     for (const f of fields) expect(f.lastElementChild?.getAttribute("data-size")).toBe("small");
   });
 
+  it("FormSection layout: columns by default, stacked puts the head above a full-width card, loading too", () => {
+    zh(
+      <>
+        <FormSection id="a" title="默认">
+          <span>内容</span>
+        </FormSection>
+        <FormSection id="b" title="提示词" description="说明" layout="stacked">
+          <span>编辑器</span>
+        </FormSection>
+      </>,
+    );
+    const [plain, stacked] = [...document.querySelectorAll('[data-part="form-section"]')];
+    // an existing section renders as before: no layout attribute, the two-column rule
+    expect(plain?.hasAttribute("data-layout")).toBe(false);
+    expect(stacked?.getAttribute("data-layout")).toBe("stacked");
+    // the same parts in the same order: the head, then the card
+    expect([...(stacked?.children ?? [])].map((c) => c.getAttribute("data-part"))).toEqual([
+      "form-section-head",
+      "form-card",
+    ]);
+    cleanup();
+    zh(
+      <SettingsPage
+        header={header}
+        nav={nav}
+        activeNav="general"
+        loading={{
+          sections: [
+            {
+              title: "提示词",
+              description: "说明",
+              layout: "stacked",
+              fields: [{ control: "list-editor" }],
+            },
+            { title: "其他", fields: 1 },
+          ],
+        }}
+      />,
+    );
+    const loading = [...document.querySelectorAll('[data-part="form-section"]')];
+    expect(loading[0]?.getAttribute("data-layout")).toBe("stacked");
+    expect(loading[0]?.querySelector('[data-part="loading-list-editor"]')).not.toBeNull();
+    expect(loading[1]?.hasAttribute("data-layout")).toBe(false);
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
+    const at = css.indexOf('.cb-form-section[data-layout="stacked"] {');
+    expect(css.slice(at, css.indexOf("}", at))).toContain("grid-template-columns: minmax(0, 1fr)");
+    // the default two-column rule is untouched
+    const base = css.indexOf(".cb-form-section {");
+    expect(css.slice(base, css.indexOf("}", base))).toContain(
+      "grid-template-columns: 240px minmax(0, 1fr)",
+    );
+  });
+
   it("the list-detail grid collapses to one column below 640; label-less rows keep their ends on their line", () => {
     const controls = readFileSync(
       resolve(import.meta.dirname, "../src/styles/controls.css"),

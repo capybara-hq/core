@@ -271,8 +271,12 @@ describe("the agent page's sections with their own saves (agent profile design Â
       en.agents.page.sections.prompt,
     );
     expect(within(section).getByText(PR.hint)).toBeTruthy();
+    // stacked: the head above a full-width card, so the editor has the content's width
+    expect(section.getAttribute("data-layout")).toBe("stacked");
     const grid = section.querySelector('[data-columns="list-detail"]');
     expect(grid?.children).toHaveLength(2);
+    // the other sections keep the two columns
+    expect(document.querySelectorAll('[data-part="form-section"][data-layout]')).toHaveLength(1);
     cleanup();
 
     let release: () => void = () => {};
@@ -297,6 +301,9 @@ describe("the agent page's sections with their own saves (agent profile design Â
     );
     expect(screen.getByText(PR.hint)).toBeTruthy();
     expect(loading.getAttribute("data-columns")).toBe("list-detail");
+    expect(loading.closest('[data-part="form-section"]')?.getAttribute("data-layout")).toBe(
+      "stacked",
+    );
     expect(loading.querySelectorAll('[data-part="loading-repeater-item"]')).toHaveLength(1);
     expect(loading.querySelector('[data-box="textarea"]')?.getAttribute("style")).toContain(
       "--cb-skeleton-rows: 16",

@@ -1,4 +1,4 @@
-import type { FieldShape } from "@capybara-hq/design";
+import type { FieldShape, FormSectionLayout } from "@capybara-hq/design";
 
 /**
  * The agent page's sections (agent profile design §3.2), in nav order. The URL keeps the open one
@@ -76,4 +76,9 @@ export const READ_ONLY_FIELDS: Partial<Record<AgentSection, FieldShape[]>> = {
  */
 export const SECTION_DESCRIPTIONS: Partial<Record<AgentSection, "prompt.hint">> = {
   prompt: "prompt.hint",
+};
+
+/** Sections whose `FormSection` is stacked (the head above a full-width card): the editors. */
+export const SECTION_LAYOUTS: Partial<Record<AgentSection, FormSectionLayout>> = {
+  prompt: "stacked",
 };

@@ -123,7 +123,12 @@ export function PromptSection() {
     >
       <Stack gap={16}>
         <SaveFeedback save={save} onReload={() => void save.reload(discard)} />
-        <FormSection id="prompt" title={tp("sections.prompt")} description={t("hint")}>
+        <FormSection
+          id="prompt"
+          layout="stacked"
+          title={tp("sections.prompt")}
+          description={t("hint")}
+        >
           <Grid columns="list-detail">
             <Stack gap={8}>
               <Repeater

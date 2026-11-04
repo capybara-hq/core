@@ -3,7 +3,7 @@ import { SkeletonGroup } from "../display/skeleton";
 import { Stack } from "../layout/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
-import { LoadingFormSection } from "./form-page";
+import { type FormSectionLayout, LoadingFormSection } from "./form-page";
 import {
   type CardShape,
   type FieldShape,
@@ -56,6 +56,8 @@ export function SettingsPage({
       cards?: CardShape[];
       title?: string;
       description?: string;
+      /** The loaded section's `FormSection` layout (default `columns`). */
+      layout?: FormSectionLayout;
     }[];
     cards?: CardShape[] | { shape?: CardShape; count?: number };
   };
