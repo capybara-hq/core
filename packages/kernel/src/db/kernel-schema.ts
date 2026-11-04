@@ -713,7 +713,8 @@ export interface BackgroundTasksTable {
   trigger_account_id: string;
   description: string;
   command: string;
-  sid: string;
+  /** NULL while the launch is reserved but not started (0071). */
+  sid: string | null;
   output_path: string;
   status: ColumnType<
     "running" | "completed" | "failed" | "stopped" | "timed_out" | "lost",
@@ -725,7 +726,8 @@ export interface BackgroundTasksTable {
   started_at: Ts;
   finished_at: TsNullable;
   deadline_at: Date | string;
-  sandbox_created_at: Date | string;
+  /** NULL while the launch is reserved but not started (0071). */
+  sandbox_created_at: Date | string | null;
   kill_pending: ColumnType<boolean, boolean | undefined, boolean>;
   read_offset: ColumnType<string, number | string | undefined, number | string>;
 }

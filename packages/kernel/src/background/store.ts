@@ -5,6 +5,7 @@ import type { BackgroundTasksTable } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { BackgroundLaunchLock } from "./launch-lock.js";
 
 export type BackgroundTaskStatus =
   | "running"
@@ -27,8 +28,11 @@ export interface BackgroundTaskRow {
   triggerAccountId: string;
   description: string;
   command: string;
-  /** The session id (the pid `setsid` started). */
-  sid: string;
+  /**
+   * The session id (the pid `setsid` started). Null while the launch is reserved but has not
+   * started: readers that act on the process (the poller, stops) skip such a row.
+   */
+  sid: string | null;
   /** Relative to `/workspace`. */
   outputPath: string;
   status: BackgroundTaskStatus;
@@ -37,8 +41,8 @@ export interface BackgroundTaskRow {
   startedAt: Date;
   finishedAt: Date | null;
   deadlineAt: Date;
-  /** The sandbox instance the task started in. */
-  sandboxCreatedAt: Date;
+  /** The sandbox instance the task started in; null while reserved, like `sid`. */
+  sandboxCreatedAt: Date | null;
   /** Marked lost while its process may still exist. */
   killPending: boolean;
   /** The bytes `TaskOutput` has already returned. */
@@ -49,6 +53,9 @@ export type BackgroundTaskInsert = Omit<
   BackgroundTaskRow,
   "status" | "finishedAt" | "exitCode" | "lostReason" | "killPending" | "readOffset"
 >;
+
+/** A launch's reservation: the row before the command started (no `sid`, no instance yet). */
+export type BackgroundTaskReservation = Omit<BackgroundTaskInsert, "sid" | "sandboxCreatedAt">;
 
 const toRow = (r: Selectable<BackgroundTasksTable>): BackgroundTaskRow => ({
   id: r.id,
@@ -68,7 +75,7 @@ const toRow = (r: Selectable<BackgroundTasksTable>): BackgroundTaskRow => ({
   startedAt: new Date(r.started_at),
   finishedAt: r.finished_at === null ? null : new Date(r.finished_at),
   deadlineAt: new Date(r.deadline_at),
-  sandboxCreatedAt: new Date(r.sandbox_created_at),
+  sandboxCreatedAt: r.sandbox_created_at === null ? null : new Date(r.sandbox_created_at),
   killPending: r.kill_pending,
   readOffset: Number(r.read_offset),
 });
@@ -77,13 +84,58 @@ const toRow = (r: Selectable<BackgroundTasksTable>): BackgroundTaskRow => ({
  * Background Bash tasks (spec §4.1): one `capybara.background_tasks` row per command started with
  * `run_in_background`. The store only reads and writes rows; the launch, the poller and the tools
  * that drive them are other providers.
+ *
+ * A launch first reserves its row ({@link BackgroundTaskStore.reserve}: `running`, `sid` null),
+ * then starts the command and sets `sid` ({@link BackgroundTaskStore.markStarted}), or finishes
+ * the row as `failed` ({@link BackgroundTaskStore.failLaunch}). A running row with a null `sid`
+ * counts against `maxTasks` but has no process to check or stop: the poller and stops must skip
+ * it (the launch that reserved it settles it).
  */
 @Injectable()
 export class BackgroundTaskStore {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(BackgroundLaunchLock) private readonly launchLock: BackgroundLaunchLock,
   ) {}
+
+  /**
+   * Reserves a launch: under the sandbox's launch lock, counts the running tasks of
+   * `row.sandboxConversationId` and inserts `row` as `running` (no `sid`) when fewer than
+   * `maxTasks` run. False (nothing written) when the sandbox already runs `maxTasks`.
+   */
+  @Transactional()
+  async reserve(row: BackgroundTaskReservation, maxTasks: number): Promise<boolean> {
+    await this.launchLock.lock(row.sandboxConversationId);
+    if ((await this.countRunning(row.sandboxConversationId)) >= maxTasks) return false;
+    await this.insert({ ...row, sid: null, sandboxCreatedAt: null });
+    return true;
+  }
+
+  /** Records the started command of a reserved row; false when the row is no longer running. */
+  async markStarted(id: string, to: { sid: string; sandboxCreatedAt: Date }): Promise<boolean> {
+    const r = await this.db
+      .updateTable("background_tasks")
+      .set({ sid: to.sid, sandbox_created_at: to.sandboxCreatedAt })
+      .where("id", "=", id)
+      .where("status", "=", "running")
+      .where("sid", "is", null)
+      .executeTakeFirst();
+    return Number(r.numUpdatedRows) > 0;
+  }
+
+  /**
+   * Finishes a reserved row whose launch failed as `failed`, with `reason` in `lost_reason`. No
+   * `background_task_finished` event: the launching call reports the failure itself.
+   */
+  async failLaunch(id: string, reason: string): Promise<void> {
+    await this.db
+      .updateTable("background_tasks")
+      .set({ status: "failed", finished_at: sql<Date>`now()`, lost_reason: reason })
+      .where("id", "=", id)
+      .where("status", "=", "running")
+      .execute();
+  }
 
   async insert(row: BackgroundTaskInsert): Promise<void> {
     await this.db

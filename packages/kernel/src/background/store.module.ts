@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { BackgroundLaunchLock } from "./launch-lock.js";
 import { BackgroundTaskStore } from "./store.js";
 
 /**
@@ -6,7 +7,7 @@ import { BackgroundTaskStore } from "./store.js";
  * import it while `BackgroundModule`'s launch and poller import `SandboxModule`, without a cycle.
  */
 @Module({
-  providers: [BackgroundTaskStore],
+  providers: [BackgroundTaskStore, BackgroundLaunchLock],
   exports: [BackgroundTaskStore],
 })
 export class BackgroundStoreModule {}

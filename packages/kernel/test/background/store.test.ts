@@ -2,10 +2,12 @@ import { fileURLToPath } from "node:url";
 import { startTestPostgres, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { BackgroundLaunchLock } from "../../src/background/launch-lock.js";
 import { type BackgroundTaskInsert, BackgroundTaskStore } from "../../src/background/store.js";
 import { ConversationEventSchema } from "../../src/conversations/events.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
+import { XactLock } from "../../src/infra/database/xact-lock.js";
 import {
   effectiveWakeOnBackgroundTask,
   parseOrgSettings,
@@ -27,7 +29,11 @@ beforeAll(async () => {
   });
   raw = createDb(pgc.url, 5);
   const h = handlesFor(raw);
-  store = new BackgroundTaskStore(h.db, h.txHost);
+  store = new BackgroundTaskStore(
+    h.db,
+    h.txHost,
+    new BackgroundLaunchLock(new XactLock(h.db, h.txHost), h.txHost),
+  );
 }, 120_000);
 afterAll(async () => {
   await raw?.destroy();

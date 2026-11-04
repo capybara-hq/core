@@ -167,7 +167,9 @@ next person message would pick it up.
   - `run_id` and `call_id` of the launch;
   - `trigger_account_id`;
   - `description` and `command` (the command is kept for display and audit);
-  - `sid`: the session id, which is the pid that `setsid` started;
+  - `sid`: the session id, which is the pid that `setsid` started. It is null while a launch is
+    reserved (the row is inserted, counted against `maxTasks`, before the launch exec); the poller
+    and stops skip such a row, and a failed launch finishes it as `failed`;
   - `output_path`, relative to `/workspace` (`.capybara/tasks/<id>.out`);
   - `status`: `running`, `completed`, `failed`, `stopped`, `timed_out` or `lost`, plus a
     `lost_reason`;
@@ -192,12 +194,14 @@ next person message would pick it up.
      that maps `/workspace` (sandbox-fake) needs no rewriting inside the script;
   2. writes the command to `.capybara/tasks/<id>.sh`. The command arrives base64 in the exec, so
      nothing is quoted by hand;
-  3. runs `setsid nohup sh -c 'timeout -s KILL <s> sh <id>.sh; echo $? > <id>.exit' > <id>.out 2>&1 < /dev/null & echo $!`;
+  3. runs `setsid nohup sh -c 'timeout -s KILL <s> bash <id>.sh; echo $? > <id>.exit' > <id>.out 2>&1 < /dev/null & echo $!`.
+     The command runs in `bash`, the shell a foreground `Bash` call uses (sandbox-docker and
+     sandbox-e2b run `/bin/bash -c`), so bash syntax works the same in the background;
   4. reads the pid. It is the session id (`sid`). GNU `timeout` without `--foreground` puts itself
      in a process group of its own, so the command does not run in the `setsid` process group.
      The session holds every process: stopping uses `pkill -s <sid>` and liveness uses
      `pgrep -s <sid>`, the same approach as sandbox-docker's `KILL_TREE`.
-- This works on every provider that runs `sh` with `setsid`, `timeout`, `pkill` and `pgrep`:
+- This works on every provider that runs `sh` and `bash` with `setsid`, `timeout`, `pkill` and `pgrep`:
   sandbox-docker and sandbox-e2b. A provider without them fails the launch with a readable error.
 - **sandbox-fake** (the test fixture, which runs on the host) changes:
   - it puts small node shims for `setsid`, `timeout`, `pkill -s` and `pgrep -s` first on its PATH,

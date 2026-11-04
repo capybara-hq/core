@@ -45,11 +45,11 @@ describe("startedText", () => {
   });
 });
 
-describe("launchScript", () => {
+describe("launchScript", { timeout: 30_000 }, () => {
   it("starts the command detached under timeout -s KILL, output and exit status in task files", () => {
     const s = launchScript("bt_abcdef", "echo hi", 60);
     expect(s).toContain(
-      "setsid nohup sh -c 'timeout -s KILL 60 sh .capybara/tasks/bt_abcdef.sh; echo $? > .capybara/tasks/bt_abcdef.exit' > .capybara/tasks/bt_abcdef.out 2>&1 < /dev/null &\necho $!",
+      "setsid nohup sh -c 'timeout -s KILL 60 bash .capybara/tasks/bt_abcdef.sh; echo $? > .capybara/tasks/bt_abcdef.exit' > .capybara/tasks/bt_abcdef.out 2>&1 < /dev/null &\necho $!",
     );
     // the command travels base64, never quoted by hand
     expect(s).toContain(Buffer.from("echo hi").toString("base64"));
@@ -94,6 +94,34 @@ describe("launchScript", () => {
     expect(await readFile(join(dir, "bt_rtrip2.sh"), "utf8")).toBe(command);
     expect(await readFile(join(dir, "bt_rtrip2.out"), "utf8")).toBe(fg.stdout);
     expect(await readFile(join(dir, "bt_rtrip2.exit"), "utf8")).toBe("0\n");
+  });
+
+  it("runs the command with bash, as a foreground Bash call does", async () => {
+    const p = createFakeSandbox(root);
+    const h = await p.create({ name: "cap-launch-b", image: "i", limits, signal: sig() });
+    const r = await p.exec(h, {
+      command: launchScript("bt_bash22", "[[ 1 == 1 ]] && echo ok; echo {1..3}", 60),
+      cwd: "/workspace",
+      timeoutMs: 10_000,
+      maxOutputBytes: 10_000,
+      signal: sig(),
+    });
+    expect(r.exitCode).toBe(0);
+    const dir = join(root, "instances", h.id, "fs", "workspace", ".capybara", "tasks");
+    await until(() => existsSync(join(dir, "bt_bash22.exit")));
+    expect(await readFile(join(dir, "bt_bash22.out"), "utf8")).toBe("ok\n1 2 3\n");
+    expect(await readFile(join(dir, "bt_bash22.exit"), "utf8")).toBe("0\n");
+  });
+
+  it("refuses an id that is not a task id and seconds that are not a positive integer", () => {
+    for (const id of ["bt_ABCDEF", "bt_abc", "bt_abcdef; rm -rf /", "x_abcdef", "bt_abcde1"]) {
+      expect(() => launchScript(id, "true", 60)).toThrow("invalid background task id");
+    }
+    for (const seconds of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => launchScript("bt_abcdef", "true", seconds)).toThrow(
+        "invalid background task seconds",
+      );
+    }
   });
 
   it("writes the exit status of a failing command and kills one past its seconds (137)", async () => {

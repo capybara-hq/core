@@ -12,6 +12,7 @@ import {
   clip,
   display,
   inSandbox,
+  noSandboxError,
   runBudgetNote,
   runTimeLeftMs,
   type SandboxToolDeps,
@@ -133,12 +134,42 @@ export function formatExec(r: ExecResult, seconds: number, budgetClamped = false
 
 /** The most output the launch exec keeps (it prints only the session id, or an error). */
 const LAUNCH_MAX_OUTPUT_BYTES = 64 * 1024;
+/** The time limit of the kill of a command that started but could not be recorded. */
+const LAUNCH_KILL_TIMEOUT_MS = 10_000;
+/** Above about this many bytes of base64, a provider may refuse the launch exec's command. */
+const LARGE_COMMAND_BASE64_BYTES = 96 * 1024;
+const SID_RE = /^[1-9][0-9]*$/;
+
+/** How a launch ended, decided under the call's lease. */
+type Launch =
+  | { kind: "started" }
+  /** Nothing runs (any process the launch printed was killed). */
+  | { kind: "not_started"; why: string }
+  /** The command started, but its row could not be completed: it was killed. */
+  | { kind: "unrecorded"; why: string };
+
+/** Why a launch exec did not start the command, for the model and the row's reason. */
+function launchFailure(r: ExecResult): string {
+  if (r.timedOut) return `the launch did not finish within ${LAUNCH_EXEC_TIMEOUT_MS / 1000}s`;
+  if (r.exitCode === null) return "the launch was stopped before it finished";
+  const said = clip(r.stderr || (r.exitCode === 0 ? "" : r.stdout), 500).replace(/\.$/, "");
+  if (said !== "") return said;
+  return r.exitCode === 0
+    ? "the launch printed no session id"
+    : `the launch exited with code ${r.exitCode}`;
+}
 
 /**
- * `Bash` with `run_in_background` (spec 2026-11-05-background-bash-design §2.1, §4.2): refused
- * past `sandbox.background.maxTasks` running tasks in the sandbox, else one short launch exec
- * under the call's shared lease, then a `running` task row. The command keeps running in a
- * session of its own under its own `timeout` (default and maximum {@link backgroundMaxSeconds}).
+ * `Bash` with `run_in_background` (spec 2026-11-05-background-bash-design §2.1, §4.2):
+ * 1. reserves the task's row (`BackgroundTaskStore.reserve`: `running`, no `sid`), refused once
+ *    the sandbox runs `sandbox.background.maxTasks` tasks; the count and the insert are one step
+ *    under the sandbox's launch lock;
+ * 2. runs one short launch exec under the call's shared lease, and in the same lease records the
+ *    session id and the instance (`markStarted`); a command that started but could not be
+ *    recorded is killed there (`pkill -KILL -s <sid>`), so no process runs untracked;
+ * 3. any failure finishes the row as `failed` with the reason (`failLaunch`).
+ * The command runs in a session of its own under its own `timeout` (default and maximum
+ * {@link backgroundMaxSeconds}).
  */
 async function runInBackground(
   deps: SandboxToolDeps,
@@ -151,6 +182,12 @@ async function runInBackground(
       "Background tasks are not available here; call Bash without run_in_background.",
     );
   }
+  if (ctx.runId === undefined) {
+    throw new ToolError(
+      "Background tasks can only be started from an agent run; call Bash without run_in_background.",
+    );
+  }
+  if (!sandbox.available) throw noSandboxError();
   const currentInstance = sandbox.currentInstance.bind(sandbox);
   const cfg = deps.config.get();
   const maxMs = backgroundMaxSeconds(cfg) * 1000;
@@ -158,52 +195,99 @@ async function runInBackground(
   const seconds = Math.max(1, Math.ceil(Math.min(requested ?? maxMs, maxMs) / 1000));
   const root = sandboxConversationOf(ctx);
   const maxTasks = cfg.sandbox.background.maxTasks;
-  if (sandbox.available && (await background.countRunning(root)) >= maxTasks) {
+  const id = newTaskId();
+  const description = input.description ?? clip(input.command, 120);
+  const startedAt = new Date();
+  const reserved = await background.reserve(
+    {
+      id,
+      orgId: ctx.orgId,
+      conversationId: ctx.conversationId,
+      sandboxConversationId: root,
+      runId: ctx.runId,
+      callId: ctx.callId,
+      // the run's trigger account (the pipeline passes `runs.trigger_account_id` as `accountId`)
+      triggerAccountId: ctx.accountId,
+      description,
+      command: input.command,
+      outputPath: taskOutputPath(id),
+      startedAt,
+      deadlineAt: new Date(startedAt.getTime() + seconds * 1000),
+    },
+    maxTasks,
+  );
+  if (!reserved) {
     throw new ToolError(
       `${maxTasks} background tasks are already running; stop one with TaskStop or wait for one to finish, then retry`,
     );
   }
-  const id = newTaskId();
-  const description = input.description ?? clip(input.command, 120);
-  const { value, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
-    const r = await p.exec(h, {
-      command: launchScript(id, input.command, seconds),
-      cwd: "/workspace",
-      timeoutMs: LAUNCH_EXEC_TIMEOUT_MS,
-      maxOutputBytes: LAUNCH_MAX_OUTPUT_BYTES,
-      signal,
-    });
-    // under the shared lease: no rebuild can come between the launch and this read
-    return { r, instance: await currentInstance(root) };
-  });
-  const { r, instance } = value;
-  const sid = r.stdout.trim();
-  if (r.exitCode !== 0 || !/^[1-9][0-9]*$/.test(sid) || instance === null) {
-    const why = r.timedOut
-      ? `the launch did not finish within ${LAUNCH_EXEC_TIMEOUT_MS / 1000}s`
-      : clip(r.stderr || r.stdout || `exit code ${r.exitCode}`, 500);
+
+  let launch: Launch;
+  let notices: string[];
+  try {
+    ({ value: launch, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
+      // A fresh signal: a command must be killed even when the call was just aborted. Repeated
+      // until the session is empty: right after the launch, a process may fork between pkill's
+      // listing and its signals, and the child would live on.
+      const kill = (sid: string) =>
+        p
+          .exec(h, {
+            command: `for i in 1 2 3 4 5 6 7 8 9 10; do pkill -KILL -s ${sid} || exit 0; sleep 0.2; done; exit 1`,
+            cwd: "/workspace",
+            timeoutMs: LAUNCH_KILL_TIMEOUT_MS,
+            maxOutputBytes: 4096,
+            signal: AbortSignal.timeout(LAUNCH_KILL_TIMEOUT_MS),
+          })
+          .catch(() => undefined);
+      const r = await p.exec(h, {
+        command: launchScript(id, input.command, seconds),
+        cwd: "/workspace",
+        timeoutMs: LAUNCH_EXEC_TIMEOUT_MS,
+        maxOutputBytes: LAUNCH_MAX_OUTPUT_BYTES,
+        signal,
+      });
+      const out = r.stdout.trim();
+      const sid = SID_RE.test(out) ? out : null;
+      if (sid === null || r.exitCode !== 0) {
+        if (sid !== null) await kill(sid);
+        return { kind: "not_started", why: launchFailure(r) } satisfies Launch;
+      }
+      try {
+        // under the shared lease: no rebuild can come between the launch and this read
+        const instance = await currentInstance(root);
+        if (instance === null) throw new Error("the sandbox instance could not be read");
+        if (!(await background.markStarted(id, { sid, sandboxCreatedAt: instance.createdAt }))) {
+          throw new Error("its task record was finished meanwhile");
+        }
+        return { kind: "started" } satisfies Launch;
+      } catch (e) {
+        await kill(sid);
+        return { kind: "unrecorded", why: e instanceof Error ? e.message : String(e) } as Launch;
+      }
+    }));
+  } catch (e) {
+    // no sandbox, a busy or lost lease, an abort: nothing was recorded as started
+    await background
+      .failLaunch(id, `launch failed: ${e instanceof Error ? e.message : String(e)}`)
+      .catch(() => undefined);
+    throw e;
+  }
+  if (launch.kind === "not_started") {
+    await background.failLaunch(id, launch.why);
+    const large =
+      Math.ceil(Buffer.byteLength(input.command, "utf8") / 3) * 4 > LARGE_COMMAND_BASE64_BYTES
+        ? " A very large command (over about 96 KB after base64) cannot be started in the background; write it to a script under /workspace and run that instead."
+        : "";
     throw new ToolError(
-      `The background task could not be started: ${why}. Check the sandbox or run the command without run_in_background.`,
+      `The background task was not started: ${launch.why}. Check the sandbox, or call Bash without run_in_background.${large}`,
     );
   }
-  const startedAt = new Date();
-  await background.insert({
-    id,
-    orgId: ctx.orgId,
-    conversationId: ctx.conversationId,
-    sandboxConversationId: root,
-    runId: ctx.runId ?? "",
-    callId: ctx.callId,
-    // the run's trigger account (the pipeline passes `runs.trigger_account_id` as `accountId`)
-    triggerAccountId: ctx.accountId,
-    description,
-    command: input.command,
-    sid,
-    outputPath: taskOutputPath(id),
-    startedAt,
-    deadlineAt: new Date(startedAt.getTime() + seconds * 1000),
-    sandboxCreatedAt: instance.createdAt,
-  });
+  if (launch.kind === "unrecorded") {
+    await background.failLaunch(id, `started but not recorded: ${launch.why}`);
+    throw new ToolError(
+      `The background command started but could not be recorded (${launch.why}), so it was stopped. Retry, or call Bash without run_in_background.`,
+    );
+  }
   const lowered =
     requested !== undefined && requested > maxMs
       ? `\n[timeout ${requested} ms is over the background task maximum; it was lowered to ${maxMs} ms.]`

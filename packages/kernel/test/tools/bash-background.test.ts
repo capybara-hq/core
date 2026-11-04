@@ -1,19 +1,21 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { SandboxHandle, SandboxProvider } from "@capybara-hq/plugin-sdk";
+import type { ExecResult, SandboxHandle, SandboxProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { startedText } from "../../src/background/launch.js";
+import { BackgroundLaunchLock } from "../../src/background/launch-lock.js";
 import { BackgroundTaskStore } from "../../src/background/store.js";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
+import { XactLock } from "../../src/infra/database/xact-lock.js";
 import { type SandboxToolDeps, sandboxTools } from "../../src/tools/builtins/sandbox/index.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
 import { createFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
@@ -40,6 +42,10 @@ let provider: SandboxProvider | undefined;
 let fake: SandboxProvider;
 /** The fake instances created by a test (destroyed after it: their tasks die with them). */
 let handles: SandboxHandle[];
+/** Replaces the result of the launch exec (the one that runs `setsid nohup`), when set. */
+let launchResult: ExecResult | undefined;
+/** `currentInstance` answers null, when set (the instance cannot be read after the launch). */
+let noInstance: boolean;
 
 const signal = () => AbortSignal.timeout(30_000);
 
@@ -53,7 +59,11 @@ beforeAll(async () => {
   db = kernelDb(raw);
   redis = new Redis(rdc.url);
   const h = handlesFor(raw);
-  store = new BackgroundTaskStore(h.db, h.txHost);
+  store = new BackgroundTaskStore(
+    h.db,
+    h.txHost,
+    new BackgroundLaunchLock(new XactLock(h.db, h.txHost), h.txHost),
+  );
 }, 120_000);
 
 afterAll(async () => {
@@ -74,6 +84,12 @@ beforeEach(async () => {
     handles.push(h);
     return h;
   };
+  fake.exec = (h, args) =>
+    launchResult !== undefined && args.command.includes("setsid nohup")
+      ? Promise.resolve(launchResult)
+      : impl.exec(h, args);
+  launchResult = undefined;
+  noInstance = false;
   provider = fake;
   config = configWith({});
   seed = await seedConversation(raw);
@@ -110,8 +126,11 @@ function bash(): BuiltinTool {
     log: {},
     lockPollMs: 20,
   });
+  const wrapped = Object.create(sandbox) as typeof sandbox;
+  wrapped.currentInstance = (conv) =>
+    noInstance ? Promise.resolve(null) : sandbox.currentInstance(conv);
   const deps: SandboxToolDeps = {
-    sandbox,
+    sandbox: wrapped,
     background: store,
     attachments: {
       listForConversation: async () => [],
@@ -135,6 +154,12 @@ const ctx = (over: Partial<BuiltinCallContext> = {}): BuiltinCallContext => ({
   ...over,
 });
 
+/** A call context without a run id. */
+const withoutRun = (): BuiltinCallContext => {
+  const { runId: _, ...rest } = ctx();
+  return rest;
+};
+
 const textOf = (r: Awaited<ReturnType<BuiltinTool["run"]>>): string =>
   "content" in r ? (r.content[0] as { text: string }).text : "";
 
@@ -146,6 +171,14 @@ const sandboxCreatedAt = async (conv: string): Promise<Date> =>
       .where("conversation_id", "=", conv)
       .executeTakeFirstOrThrow()
   ).created_at;
+
+async function until(cond: () => Promise<boolean>, ms = 10_000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!(await cond())) {
+    if (Date.now() > end) throw new Error("condition not met in time");
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
 
 /** Whether `pgrep -s <sid>` finds a process in the conversation's sandbox. */
 async function alive(sid: string): Promise<boolean> {
@@ -159,7 +192,9 @@ async function alive(sid: string): Promise<boolean> {
   return r.exitCode === 0;
 }
 
-describe("Bash run_in_background", () => {
+// each test spawns several node shims (setsid, pgrep, pkill) per launch and check: under a loaded
+// full run that takes seconds, past vitest's 5 s default
+describe("Bash run_in_background", { timeout: 30_000 }, () => {
   it("returns the started text at once and records a running task", async () => {
     const t0 = Date.now();
     const c = ctx();
@@ -197,7 +232,7 @@ describe("Bash run_in_background", () => {
     expect(row.deadlineAt.getTime() - row.startedAt.getTime()).toBe(600_000);
     expect(row.sandboxCreatedAt).toEqual(await sandboxCreatedAt(seed.conversationId));
     // the command lives on after the call
-    expect(await alive(row.sid)).toBe(true);
+    expect(await alive(row.sid as string)).toBe(true);
   });
 
   it("a sub-agent's task is its own conversation's, counted in the parent's sandbox", async () => {
@@ -233,6 +268,76 @@ describe("Bash run_in_background", () => {
     expect(await store.countRunning(seed.conversationId)).toBe(4);
   });
 
+  it("six launches at once with maxTasks 4: exactly four start, two are refused", async () => {
+    const tool = bash();
+    const results = await Promise.allSettled(
+      Array.from({ length: 6 }, (_, i) =>
+        tool.run(
+          { command: "sleep 30", description: `Parallel ${i}`, run_in_background: true },
+          ctx(),
+        ),
+      ),
+    );
+    const refused = results.filter((r) => r.status === "rejected");
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(4);
+    expect(refused).toHaveLength(2);
+    for (const r of refused) {
+      expect(String((r as PromiseRejectedResult).reason)).toContain(
+        "4 background tasks are already running",
+      );
+    }
+    const running = await store.runningIn(seed.conversationId);
+    expect(running).toHaveLength(4);
+    for (const t of running) expect(t.sid).toMatch(/^[1-9][0-9]*$/);
+  });
+
+  it("a launch that fails (a missing program) is a readable error and the row ends failed", async () => {
+    launchResult = {
+      exitCode: 127,
+      stdout: "",
+      stderr:
+        "Background tasks need bash, setsid, nohup, timeout, pgrep, pkill, base64 in the sandbox; setsid is missing.\n",
+      truncated: false,
+      timedOut: false,
+    };
+    await expect(
+      bash().run({ command: "sleep 30", description: "No setsid", run_in_background: true }, ctx()),
+    ).rejects.toThrow(
+      "The background task was not started: Background tasks need bash, setsid, nohup, timeout, pgrep, pkill, base64 in the sandbox; setsid is missing. Check the sandbox, or call Bash without run_in_background.",
+    );
+    const [row] = await store.listFor([seed.conversationId]);
+    expect(row).toMatchObject({ status: "failed", sid: null, description: "No setsid" });
+    expect(row?.lostReason).toContain("setsid is missing");
+    expect(row?.finishedAt).not.toBeNull();
+    expect(await store.countRunning(seed.conversationId)).toBe(0);
+  });
+
+  it("a command that started but cannot be recorded is killed and the row ends failed", async () => {
+    noInstance = true;
+    await expect(
+      bash().run({ command: "sleep 30", description: "Untracked", run_in_background: true }, ctx()),
+    ).rejects.toThrow(
+      "The background command started but could not be recorded (the sandbox instance could not be read), so it was stopped.",
+    );
+    const [row] = await store.listFor([seed.conversationId]);
+    expect(row).toMatchObject({ status: "failed", sid: null });
+    // every session the fake's setsid started is gone
+    const h = handles[0] as SandboxHandle;
+    const sids = await readdir(join(root, "instances", h.id, "sessions"));
+    expect(sids.length).toBe(1);
+    for (const sid of sids) await until(async () => !(await alive(sid)));
+  });
+
+  it("refuses without a run id and records nothing", async () => {
+    await expect(
+      bash().run(
+        { command: "sleep 30", description: "No run", run_in_background: true },
+        withoutRun(),
+      ),
+    ).rejects.toThrow("Background tasks can only be started from an agent run");
+    expect(await store.listFor([seed.conversationId])).toEqual([]);
+  });
+
   it("without a sandbox the tool is unavailable and a call fails with the usual error", async () => {
     provider = undefined;
     const tool = bash();
@@ -240,7 +345,7 @@ describe("Bash run_in_background", () => {
     await expect(
       tool.run({ command: "sleep 30", description: "x", run_in_background: true }, ctx()),
     ).rejects.toThrow(/No sandbox is configured in this deployment/);
-    expect(await store.countRunning(seed.conversationId)).toBe(0);
+    expect(await store.listFor([seed.conversationId])).toEqual([]);
   });
 
   it("clamps timeout to the background maximum (itself at most maxCommandSeconds) and says so", async () => {

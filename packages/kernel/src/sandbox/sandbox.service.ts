@@ -935,7 +935,8 @@ export class SandboxService {
     const rows = await this.background.pendingKills(conversationId);
     if (rows.length === 0) return;
     const mine = rows.filter(
-      (r) => r.sandboxCreatedAt.getTime() === createdAt && SID_RE.test(r.sid),
+      (r): r is typeof r & { sid: string } =>
+        r.sandboxCreatedAt?.getTime() === createdAt && r.sid !== null && SID_RE.test(r.sid),
     );
     let cleared = rows;
     if (mine.length > 0) {
@@ -964,7 +965,8 @@ export class SandboxService {
           conversationId,
           err,
         });
-        cleared = rows.filter((r) => !mine.includes(r));
+        const kept = new Set(mine.map((r) => r.id));
+        cleared = rows.filter((r) => !kept.has(r.id));
       }
     }
     await this.background.clearKill(cleared.map((r) => r.id));

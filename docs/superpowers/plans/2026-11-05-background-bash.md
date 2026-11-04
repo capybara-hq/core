@@ -154,7 +154,7 @@ Untested by the task-level tests, most likely to bite first:
 - Consumes: `BackgroundTaskStore.insert` / `countRunning`, and `SandboxService.currentInstance` (Tasks 1-2).
 - Produces:
   - `newTaskId(): string`, which matches `/^bt_[a-z2-7]{6}$/`.
-  - `launchScript(id: string, command: string, seconds: number): string`. It builds the shell that writes `.capybara/tasks/<id>.sh` from base64, then runs `setsid nohup sh -c 'timeout -s KILL <seconds> sh .capybara/tasks/<id>.sh; echo $? > .capybara/tasks/<id>.exit' > .capybara/tasks/<id>.out 2>&1 < /dev/null & echo $!`.
+  - `launchScript(id: string, command: string, seconds: number): string`. It builds the shell that writes `.capybara/tasks/<id>.sh` from base64, then runs `setsid nohup sh -c 'timeout -s KILL <seconds> bash .capybara/tasks/<id>.sh; echo $? > .capybara/tasks/<id>.exit' > .capybara/tasks/<id>.out 2>&1 < /dev/null & echo $!`.
   - `startedText(id: string, description: string): string`. It returns spec §2.1's text exactly, with the path `/workspace/.capybara/tasks/<id>.out`.
 
 - [ ] **Step 1: Write failing tests:**

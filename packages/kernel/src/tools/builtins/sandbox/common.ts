@@ -25,7 +25,7 @@ export interface SandboxToolDeps {
   sandbox: Pick<SandboxService, "available" | "withSandbox"> &
     Partial<Pick<SandboxService, "pathLease" | "currentInstance">>;
   /** Background `Bash` tasks; absent in test stubs, where `run_in_background` is refused. */
-  background?: Pick<BackgroundTaskStore, "insert" | "countRunning">;
+  background?: Pick<BackgroundTaskStore, "reserve" | "markStarted" | "failLaunch">;
   attachments: Pick<AttachmentsService, "listForConversation" | "openForConversation">;
   storage: Pick<StorageService, "kernel" | "available">;
   /** `publishChanged`: `Deliver` announces `changed: files` (UI refresh B). */
@@ -58,6 +58,12 @@ const NO_SANDBOX_TEXT =
   "No sandbox is configured in this deployment; ask an administrator to install a sandbox plugin, or do the task without the sandbox.";
 /** 没有沙箱提供方时「工具不可用」的原因（进提醒，内核在后面补句号）：与调用时的错误同一句话。 */
 export const SANDBOX_UNAVAILABLE_REASON = NO_SANDBOX_TEXT.slice(0, -1);
+
+/** The error of a sandbox call in a deployment without a sandbox provider. */
+export function noSandboxError(): ToolError {
+  return new ToolError(NO_SANDBOX_TEXT);
+}
+
 const PATH_BUSY_TEXT = "Another sub-agent is writing this file; wait a moment and retry.";
 const LOCK_LOST_TEXT =
   "The sandbox operation was interrupted because the sandbox lock was lost; check the sandbox state and retry.";
