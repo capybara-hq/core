@@ -68,7 +68,11 @@ export type PageHeaderProps = {
    * draw when the page does not know its actions or tabs yet; the ones given in `actions` /
    * `tabs` always render for real, and then no placeholder is drawn.
    */
-  loading?: { title?: boolean; actions?: number; tabs?: number };
+  /**
+   * The header's loading state (spec §4.2): `title` draws a title bar, `avatar` a 40 px block where
+   * the object's avatar will be (so the row keeps the loaded height), `actions` / `tabs` slot counts.
+   */
+  loading?: { title?: boolean; avatar?: boolean; actions?: number; tabs?: number };
 };
 
 /** Spec §4.2: metrics ≤ 5, at most one solid primary. Throws in development and tests. */
@@ -237,6 +241,10 @@ export function PageHeader(p: PageHeaderProps) {
         {shown(p.avatar) ? (
           <span className="cb-pageheader-avatar" data-part="page-header-avatar">
             {p.avatar}
+          </span>
+        ) : loading?.avatar ? (
+          <span className="cb-pageheader-avatar" data-part="page-header-avatar">
+            <SkeletonBox part="block" width={40} height={40} />
           </span>
         ) : null}
         <div className="cb-pageheader-text">
