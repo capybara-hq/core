@@ -26,6 +26,7 @@ environment of one command only. **Never print, `cat` or paste the values**; nev
 | 1 | Upgrade a release-candidate database dump (conversations, grants, agent versions using `toolPolicies`, an inline sub-agent template, an eval set) with `capybara migrate` and start the kernel | Migration 0063 applies; at most one `tools.legacy_key_unmapped` WARN; agents run | |
 | 2 | Check grants after the upgrade | **Builtin grants will not match** (the spec hash changed), so people are asked again once: expected. Connector and extension grants (`mcp__…` / `plugin__…`) still apply without a prompt | |
 | 3 | Start a call that waits for approval on the old build, upgrade, then approve | The call completes; the approval card shows `<display name> [<tool>]` | |
+| 3a | As step 3 with a `sandbox_edit` / `sandbox_write` call on an existing file | Approved once, not asked again; it then fails with "File has not been read yet" (rc reads recorded no digest): expected, the model reads the file again and retries | |
 | 4 | Continue an old conversation (history holding old tool names) | The run continues; the model uses the new names; no error from the provider | |
 | 5 | Full-run replay of an eval case recorded before the rename | Matches the recordings, no `tool_unmatched`; the result reports `legacyKeyMatch` | |
 | 6 | A Claude Code plugin whose skill names Bash / Read / Edit / Skill / TodoWrite, on an agent with a sandbox and the todo plugin | The skill runs with the shorter tool map; TodoWrite becomes `plugin__todo__write` | |

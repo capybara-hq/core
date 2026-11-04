@@ -1673,6 +1673,37 @@ describe("release-candidate tool keys", () => {
     ]);
   });
 
+  it("an rc approval (old spec hash) approved after the upgrade runs the call once, without asking again", async () => {
+    await insertRun();
+    const seen: unknown[] = [];
+    resolved = [{ ...builtin("Bash"), defaultPolicy: "ask" as const }];
+    builtinHandlers = {
+      Bash: async (input) => {
+        seen.push(input);
+        return { content: [{ type: "text", text: "ran" }] };
+      },
+    };
+    await modelCall(["sandbox_bash"]);
+    await assistant([{ id: "c1", name: "sandbox_bash", input: { command: "ls" } }]);
+    const first = await pipeline().runStep(stepCtx());
+    expect(first.kind).toBe("suspended");
+    const id = first.kind === "suspended" ? first.waitingFor.id : "";
+    // the approval was created by the rc kernel: it carries the old definition's hash
+    await sql`UPDATE capybara.approvals SET status = 'approved', spec_hash = 'rc-spec-hash' WHERE id = ${id}`.execute(
+      raw,
+    );
+    expect(await pipeline().runStep(stepCtx())).toEqual({ kind: "done" });
+    expect(seen).toEqual([{ command: "ls" }]);
+    const evs = await eventsOf(db, seed.conversationId);
+    expect(resultsOf(evs)).toEqual([
+      expect.objectContaining({ toolKey: "sandbox_bash", isError: false, content: "ran" }),
+    ]);
+    const rows = await sql<{ n: number }>`
+      SELECT count(*)::int AS n FROM capybara.approvals WHERE call_id = 'c1'
+    `.execute(raw);
+    expect(rows.rows[0]?.n).toBe(1);
+  });
+
   it("an in-flight old <x>__<tool> key runs as mcp__x__tool / plugin__x__tool when x is in only one scope", async () => {
     await modelCall(["docs__read", "probe__echo"]);
     const evs = await runCalls([

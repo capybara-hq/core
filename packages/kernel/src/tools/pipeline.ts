@@ -112,6 +112,12 @@ const timeoutText = (key: string, ms: number) =>
   `Tool ${key} timed out after ${ms / 1000}s. The operation may or may not have completed; verify before retrying.`;
 const failedText = (key: string, errName: string) =>
   `Tool ${key} failed (${errName}). The operation may not have completed; check before retrying or try another approach.`;
+/**
+ * Is a logged call key the `Agent` tool: the current key, or the rc `agent` of a call dispatched
+ * before the rename (spec §9; a builtin maps without a scope)?
+ */
+const isAgentCallKey = (key: string): boolean =>
+  key === AGENT_TOOL || legacyToolKey(key) === AGENT_TOOL;
 /** The connector slugs and extension names among the run's tools (to read old `<x>__<tool>` keys). */
 const legacyScopeOf = (tools: readonly ResolvedTool[]): LegacyScope => {
   const connectorSlugs = new Set<string>();
@@ -531,7 +537,7 @@ export class ToolPipeline {
     let open = 0;
     for (const call of calls) {
       if (await eventLog.findByIdem(ctx.conversationId, idem.result(ctx.runId, call.id))) continue;
-      if (call.name === AGENT_TOOL) {
+      if (isAgentCallKey(call.name)) {
         const row = await dispatchOfCall(this.deps.db, ctx.runId, call.id);
         if (row) {
           if (!(await this.finishAgentCall(ctx, row, call, resolve))) open++;
@@ -589,10 +595,11 @@ export class ToolPipeline {
     // while the child runs. The call's approval (forCall: its latest) is by construction the one
     // that let this dispatch start, since a dispatch happens only after an approved decision.
     const approval = await this.deps.approvals.forCall(ctx.runId, call.id);
+    // the result keeps the logged key (`agent` for a call dispatched before the rename, spec §9)
     await this.writeResult(
       ctx,
       row.parentCallId,
-      AGENT_TOOL,
+      call.name,
       { content: r.content, isError: r.isError },
       [finishedEvent(row, r.finished)],
       {
@@ -696,6 +703,8 @@ export class ToolPipeline {
     if (!run) return none;
     const conversationId = run.conversation_id;
     const inputs = new Map<string, unknown>();
+    // the logged key of each call (`agent` for a call dispatched before the rename, spec §9)
+    const names = new Map<string, string>();
     const events: AppendEvent[] = [];
     const calls: { step: number; callId: string; input: unknown; r: StoppedAgentResult }[] = [];
     for (const d of dispatches) {
@@ -715,8 +724,16 @@ export class ToolPipeline {
           .where("idem_key", "=", assistantIdemKey(runId, d.step))
           .executeTakeFirst();
         const content = (msg?.payload as { content?: unknown[] } | undefined)?.content ?? [];
-        for (const b of content as { type: string; id?: string; input?: unknown }[]) {
-          if (b.type === "tool_call" && b.id !== undefined) inputs.set(b.id, b.input);
+        for (const b of content as {
+          type: string;
+          id?: string;
+          name?: string;
+          input?: unknown;
+        }[]) {
+          if (b.type === "tool_call" && b.id !== undefined) {
+            inputs.set(b.id, b.input);
+            if (b.name !== undefined) names.set(b.id, b.name);
+          }
         }
       }
       const input = inputs.get(d.parent_call_id);
@@ -757,7 +774,7 @@ export class ToolPipeline {
         payload: {
           step: d.step,
           callId: d.parent_call_id,
-          toolKey: AGENT_TOOL,
+          toolKey: names.get(d.parent_call_id) ?? AGENT_TOOL,
           content: r.content,
           isError: r.isError,
         },
@@ -1010,7 +1027,12 @@ export class ToolPipeline {
     // （不写 tool_call_started：此时尚未开始执行）。
     let approval = await this.deps.approvals.forCall(ctx.runId, call.id);
     // 批准的是旧定义（等待期间工具定义变了）：原批准不适用于当前定义，策略仍需审批时按新定义重新审批。
-    const stale = approval?.status === "approved" && approval.specHash !== tool.specHash;
+    // An in-flight rc call (spec §9) is the exception: its approval was asked under the rc definition
+    // of the same call, and the rename changed every builtin's definition; the person approved this
+    // very call, so the approval stands.
+    const approvedHere =
+      approval?.status === "approved" && (legacy || approval.specHash === tool.specHash);
+    const stale = approval?.status === "approved" && !approvedHere;
     if ((!approval || stale) && typeof decision === "object" && "ask" in decision) {
       approval = await this.deps.approvals.request({
         attempt: (approval?.attempt ?? 0) + 1,
@@ -1034,7 +1056,7 @@ export class ToolPipeline {
     }
     // 走到这里即放行：在（与当前定义一致的）审批下执行，否则是授权或策略放行
     const authorization: Authorization =
-      approval?.status === "approved" && approval.specHash === tool.specHash
+      approval?.status === "approved" && approvedHere
         ? approvalAuthorization(approval)
         : typeof decision === "object" && "grant" in decision
           ? { grant: decision.grant }
