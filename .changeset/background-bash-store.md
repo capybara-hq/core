@@ -1,5 +1,5 @@
 ---
-"@capybara-hq/kernel": patch
+"@capybara-hq/kernel": minor
 ---
 
 Background Bash foundation: the `capybara.background_tasks` table and its store, the

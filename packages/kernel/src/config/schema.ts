@@ -1244,7 +1244,7 @@ export const KernelConfigSchema = z.object({
             .int()
             .min(1)
             .max(100)
-            .default(10)
+            .default(4)
             .meta(
               meta({
                 description:
@@ -1255,11 +1255,11 @@ export const KernelConfigSchema = z.object({
             .number()
             .int()
             .positive()
-            .default(21600)
+            .default(7200)
             .meta(
               meta({
                 description:
-                  "Longest a background Bash task may run, in seconds; the task is killed at its deadline and ends as timed_out. Not limited by sandbox.limits.maxCommandSeconds or runtime.maxRunSeconds",
+                  "Longest a background Bash task may run, in seconds; the task is killed at its deadline and ends as timed_out. Clamped to sandbox.limits.maxCommandSeconds; not limited by runtime.maxRunSeconds",
               }),
             ),
           pollSeconds: z

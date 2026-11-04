@@ -11,7 +11,7 @@ import {
   parseOrgSettings,
 } from "../../src/orgs/settings.service.js";
 import { truncateTables } from "../helpers/db.js";
-import { handlesFor } from "../helpers/identity.js";
+import { handlesFor, orgSettingsFor } from "../helpers/identity.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
 let pgc: TestContainer;
@@ -215,5 +215,21 @@ describe("background_task_finished event and the org override", () => {
     expect(effectiveWakeOnBackgroundTask(true, undefined)).toBe(true);
     expect(effectiveWakeOnBackgroundTask(true, false)).toBe(false);
     expect(effectiveWakeOnBackgroundTask(false, true)).toBe(true);
+  });
+
+  it("the org override can be set and cleared with null (back to the deployment value)", async () => {
+    await sql`INSERT INTO capybara.memberships (org_id, account_id, role)
+      VALUES (${seed.orgId}, ${seed.accountId}, 'owner')`.execute(raw);
+    const svc = orgSettingsFor(raw, () => ({ sandbox: { limits: {} } }));
+    const deployment = true;
+    const effective = async () =>
+      effectiveWakeOnBackgroundTask(deployment, (await svc.get(seed.orgId)).wakeOnBackgroundTask);
+    expect(await effective()).toBe(true);
+    await svc.update(seed.orgId, { wakeOnBackgroundTask: false }, seed.accountId);
+    expect((await svc.get(seed.orgId)).wakeOnBackgroundTask).toBe(false);
+    expect(await effective()).toBe(false);
+    await svc.update(seed.orgId, { wakeOnBackgroundTask: null }, seed.accountId);
+    expect((await svc.get(seed.orgId)).wakeOnBackgroundTask).toBeUndefined();
+    expect(await effective()).toBe(true);
   });
 });

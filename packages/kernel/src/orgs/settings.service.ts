@@ -69,7 +69,8 @@ export const OrgSettingsPatchSchema = z
     toolSearch: z.enum(["on", "off"]).optional(),
     locale: z.enum(["zh", "en"]).optional(),
     sandboxToolPolicy: z.enum(["allow", "ask"]).optional(),
-    wakeOnBackgroundTask: z.boolean().optional(),
+    /** null clears (follow the deployment again). */
+    wakeOnBackgroundTask: z.boolean().nullable().optional(),
     /** null 清除（恢复跟随部署默认）。 */
     sandboxEgress: SandboxEgressSettingSchema.nullable().optional(),
   })
@@ -234,14 +235,15 @@ export class OrgSettingsService {
     const changes = Object.fromEntries(
       Object.entries(patch)
         .filter(([, v]) => v !== undefined)
-        // null 清除 sandboxEgress：恢复跟随部署默认
+        // null clears sandboxEgress / wakeOnBackgroundTask: follow the deployment default again
         .map(([k, v]) => [k, v === null ? undefined : v]),
     ) as Partial<OrgSettings>;
     const after: OrgSettings = { ...before, ...changes };
     if (after.sandboxEgress === undefined) delete after.sandboxEgress;
+    if (after.wakeOnBackgroundTask === undefined) delete after.wakeOnBackgroundTask;
     if (sameSettings(before, after)) return before;
     // 与存量合并：保留本版本不认识的键（清除的 sandboxEgress 不留在存量里）
-    const { sandboxEgress: _old, ...rest } = stored;
+    const { sandboxEgress: _old, wakeOnBackgroundTask: _oldWake, ...rest } = stored;
     await this.db
       .updateTable("orgs")
       .set({ settings: JSON.stringify({ ...rest, ...after }) })
