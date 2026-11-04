@@ -8,7 +8,11 @@ import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { BackgroundTaskFinisher } from "../../src/background/finish.js";
 import { launchScript, newTaskId, taskOutputPath } from "../../src/background/launch.js";
-import { BACKGROUND_PRUNE_JOB, BackgroundTaskPollJob } from "../../src/background/poll.job.js";
+import {
+  BACKGROUND_PRUNE_JOB,
+  BackgroundTaskPollJob,
+  LAUNCH_ABANDONED_AFTER_MS,
+} from "../../src/background/poll.job.js";
 import { BackgroundTaskStopper } from "../../src/background/stop.js";
 import { type BackgroundTaskRow, BackgroundTaskStore } from "../../src/background/store.js";
 import { EventLog } from "../../src/conversations/event-log.js";
@@ -442,6 +446,57 @@ describe("polling", () => {
     expect(await job.pollOnce()).toBe(0);
     expect((await store.get(id))?.status).toBe("running");
     await store.failLaunch(id, "test");
+  }, 60_000);
+
+  it("fails a reservation abandoned by its launch after 2 minutes, never a younger or claimed one", async () => {
+    const c = await conversation();
+    const reserve = async (startedAt: Date) => {
+      const id = newTaskId();
+      await store.reserve(
+        {
+          id,
+          orgId: c.orgId,
+          conversationId: c.conversationId,
+          sandboxConversationId: c.conversationId,
+          runId: "run-x",
+          callId: "call-x",
+          triggerAccountId: c.accountId,
+          description: "d",
+          command: "true",
+          outputPath: taskOutputPath(id),
+          startedAt,
+          deadlineAt: new Date(startedAt.getTime() + 3_600_000),
+        },
+        10,
+      );
+      return id;
+    };
+    const old = new Date(Date.now() - LAUNCH_ABANDONED_AFTER_MS - 1000);
+    const abandoned = await reserve(old);
+    const young = await reserve(new Date(Date.now() - LAUNCH_ABANDONED_AFTER_MS + 30_000));
+    const claimed = await reserve(old);
+    expect(await store.claimStop(claimed)).toBe(true);
+    // a launch that completed at that moment (its sid set) is no longer a reservation
+    const completing = await reserve(old);
+    expect(
+      await store.markStarted(completing, { sid: "424242", sandboxCreatedAt: new Date() }),
+    ).toBe("started");
+
+    await job.pollOnce();
+    expect(await store.get(abandoned)).toMatchObject({
+      status: "failed",
+      lostReason: "launch_abandoned",
+      sid: null,
+    });
+    expect((await store.get(abandoned))?.finishedAt).not.toBeNull();
+    // no event: the command never started and the model never saw the task's id
+    expect(await finishedEvents(c.conversationId, abandoned)).toEqual([]);
+    expect((await store.get(young))?.status).toBe("running");
+    expect((await store.get(claimed))?.status).toBe("running");
+    // the completed launch keeps its sid (the poll then checks it like any started task)
+    expect((await store.get(completing))?.sid).toBe("424242");
+    expect((await store.get(completing))?.lostReason).not.toBe("launch_abandoned");
+    for (const id of [young, claimed]) await store.failLaunch(id, "test");
   }, 60_000);
 });
 

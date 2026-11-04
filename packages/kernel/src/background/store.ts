@@ -102,7 +102,8 @@ const unclaimed = sql<boolean>`(stopping_at IS NULL OR stopping_at < now() - ${S
  * then starts the command and sets `sid` ({@link BackgroundTaskStore.markStarted}), or finishes
  * the row as `failed` ({@link BackgroundTaskStore.failLaunch}). A running row with a null `sid`
  * counts against `maxTasks` but has no process to check or stop: the poller and stops must skip
- * it (the launch that reserved it settles it).
+ * it (the launch that reserved it settles it; one left over by a launch that died is failed by the
+ * poller, {@link BackgroundTaskStore.failAbandonedLaunches}).
  */
 @Injectable()
 export class BackgroundTaskStore {
@@ -198,6 +199,25 @@ export class BackgroundTaskStore {
       // only a reservation that never started: a row with its sid is tracked by the poller
       .where("sid", "is", null)
       .execute();
+  }
+
+  /**
+   * Finishes as `failed` (`lost_reason` `launch_abandoned`) every reservation that started before
+   * `before` and never got its sid nor a stop's claim: the launch that reserved it died (a crashed
+   * replica). Conditional on `sid` still null, so a launch completing at that moment wins. No
+   * `background_task_finished` event: the command never started and the model never saw its id.
+   * Returns how many rows it finished.
+   */
+  async failAbandonedLaunches(before: Date): Promise<number> {
+    const r = await this.db
+      .updateTable("background_tasks")
+      .set({ status: "failed", finished_at: sql<Date>`now()`, lost_reason: "launch_abandoned" })
+      .where("status", "=", "running")
+      .where("sid", "is", null)
+      .where("stopping_at", "is", null)
+      .where("started_at", "<", before)
+      .executeTakeFirst();
+    return Number(r.numUpdatedRows);
   }
 
   async insert(row: BackgroundTaskInsert): Promise<void> {

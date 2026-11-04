@@ -17,6 +17,12 @@ export const BACKGROUND_POLL_JOB = "background-task-poll";
 /** The daily prune of finished background tasks older than `tools.outputRetentionDays`. */
 export const BACKGROUND_PRUNE_JOB = "background-task-prune";
 
+/**
+ * A reservation (`sid` null) older than this has lost its launch: a launch takes at most its 30 s
+ * exec plus the lease wait, so only a launching process that died leaves one this old.
+ */
+export const LAUNCH_ABANDONED_AFTER_MS = 120_000;
+
 /** The time limit of one sandbox's poll exec. */
 const POLL_EXEC_TIMEOUT_MS = 30_000;
 /** The most output one poll exec keeps (a line per task, with a tail when it ended). */
@@ -96,7 +102,10 @@ export function polledAs(
 export class BackgroundTaskPollJob {
   constructor(
     @Inject(BackgroundTaskStore)
-    private readonly store: Pick<BackgroundTaskStore, "runningStarted" | "pruneFinished">,
+    private readonly store: Pick<
+      BackgroundTaskStore,
+      "runningStarted" | "pruneFinished" | "failAbandonedLaunches"
+    >,
     @Inject(BackgroundTaskFinisher) private readonly finisher: BackgroundTaskFinisher,
     @Inject(SandboxService)
     private readonly sandbox: Pick<SandboxService, "available" | "ifRunning">,
@@ -113,8 +122,15 @@ export class BackgroundTaskPollJob {
   /**
    * One poll of every running task (the body of {@link poll}); returns how many tasks finished.
    * A sandbox whose poll fails (busy, a provider error) is logged and tried again next tick.
+   * First, reservations abandoned by a launch that died ({@link LAUNCH_ABANDONED_AFTER_MS}) are
+   * failed, so they stop holding a slot of `sandbox.background.maxTasks` (not counted in the
+   * result: they never started).
    */
   async pollOnce(signal: AbortSignal = new AbortController().signal): Promise<number> {
+    const abandoned = await this.store.failAbandonedLaunches(
+      new Date(Date.now() - LAUNCH_ABANDONED_AFTER_MS),
+    );
+    if (abandoned > 0) this.log.warn("abandoned background launches failed", { count: abandoned });
     if (!this.sandbox.available) return 0;
     const groups = new Map<string, BackgroundTaskRow[]>();
     for (const t of await this.store.runningStarted()) {

@@ -232,6 +232,8 @@ next person message would pick it up.
   - no exit file and no process means `lost` (`process_gone`);
   - another instance (a rebuild) means `lost` (`sandbox_recreated`);
   - a sandbox that is suspended or gone means `lost` (`sandbox_suspended` / `sandbox_gone`).
+  - a reservation (`sid` null, no stop claim) older than 2 minutes means `failed`
+    (`launch_abandoned`): the launching process died before it started the command.
 - **A lost task whose process may live on** gets `kill_pending = true`. This is the case for E2B,
   whose pause keeps processes, and for a suspended sandbox. Right after any resume of that sandbox,
   `SandboxService` (under the exclusive lease, next to its existing `killAll`) runs
