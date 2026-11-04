@@ -40,7 +40,7 @@ import { AGENT, Log, MODEL } from "../runtime/context/fixtures.js";
 
 const dummy = {} as never;
 const builtins = () =>
-  new BuiltinTools(dummy, dummy, dummy, dummy, dummy, dummy, dummy, dummy, dummy).list();
+  new BuiltinTools(dummy, dummy, dummy, dummy, dummy, dummy, dummy, dummy, dummy, dummy).list();
 
 const repoFile = (path: string) =>
   readFileSync(fileURLToPath(new URL(`../../../../${path}`, import.meta.url)), "utf8");
@@ -100,10 +100,8 @@ describe("builtin names", () => {
   it("the tools BuiltinTools builds are exactly BUILTIN_TOOL_NAMES", () => {
     const names = builtins().map((t) => t.spec.name);
     for (const n of names) expect(BUILTIN_TOOL_NAMES as readonly string[]).toContain(n);
-    // WebFetch is named here and built by its own task; it is not built yet.
-    const built = BUILTIN_TOOL_NAMES.filter((n) => n !== BUILTIN.WebFetch);
-    expect(new Set(names)).toEqual(new Set(built));
-    expect(names).toHaveLength(built.length);
+    expect(new Set(names)).toEqual(new Set(BUILTIN_TOOL_NAMES));
+    expect(names).toHaveLength(BUILTIN_TOOL_NAMES.length);
   });
 
   it("no builtin description or schema names an old builtin", () => {

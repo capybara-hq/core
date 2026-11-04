@@ -17,7 +17,7 @@ import { sandboxTools } from "./sandbox/index.js";
 import { skillLoadTool } from "./skill-load.js";
 import { skillWriteTool } from "./skill-write.js";
 import { toolSearchTool } from "./tool-search.js";
-import { webTools } from "./web/index.js";
+import { extractNotAvailable, WebPages, webTools } from "./web/index.js";
 
 /**
  * The kernel's builtin tools, built once from the injected services (their specs: names,
@@ -39,6 +39,7 @@ export class BuiltinTools {
     @Inject(EventLog) eventLog: EventLog,
     @Inject(SandboxService) sandbox: SandboxService,
     @Inject(ExtensionPointDefaults) points: ExtensionPointDefaults,
+    @Inject(WebPages) webPages: WebPages,
   ) {
     const sandboxDeps: SandboxToolDeps = {
       sandbox,
@@ -68,7 +69,8 @@ export class BuiltinTools {
       // 自写技能：agent 定义显式引用才可用
       skillWriteTool({ changes: skillChanges }),
       // web search / fetch through the org's default provider (web tools spec §3)
-      ...webTools({ points, config }),
+      // (the WebFetch extraction call is not built yet: it always fails, never returning a page)
+      ...webTools({ points, config, cache: webPages, extract: extractNotAvailable }),
     ];
   }
 

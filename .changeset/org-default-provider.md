@@ -22,3 +22,11 @@ org's default `web-search@1` provider, filters the results again (absolute http(
 unique, within `allowed_domains` / `blocked_domains`, at most `web.search.maxResults`) and heads
 every result with `Search date: YYYY-MM-DD (UTC).`; provider errors map to fixed texts. Calls to
 `web-search@1` and `web-fetch@1` providers are counted in flight and drained on disable / upgrade.
+
+Kernel: the builtin `WebFetch` tool (default `ask`, read-only, open-world): checks the URL
+(absolute https after upgrading `http`, no credentials, at most 2000 characters, a public host,
+also for the provider's final URL), fetches the page with the org's default `web-fetch@1`
+provider through a Redis page cache (`cache:web_page:<orgId>:<provider>:<sha256(url)>`, TTL
+`web.fetch.cacheSeconds`), returns the new URL for a redirect to another host, and cuts pages to
+`web.fetch.maxPageChars` with a `[truncated]` marker. The extraction call is not built yet: until
+it is, a fetched page ends in the extraction error and is never returned to the model.

@@ -13,6 +13,7 @@ import { StorageModule } from "../storage/storage.module.js";
 import { ApprovalsService } from "./approvals.service.js";
 import { Breaker } from "./breaker.js";
 import { BuiltinTools } from "./builtins/builtin-tools.js";
+import { WebPages } from "./builtins/web/page-cache.js";
 import { ConnectorContent } from "./connector-content.js";
 import { ConnectorsService } from "./connectors.service.js";
 import { Credentials } from "./credentials.js";
@@ -52,6 +53,7 @@ import { ToolRegistry } from "./registry.js";
     Credentials,
     ToolOutputs,
     BuiltinTools,
+    WebPages,
     ToolRegistry,
     ApprovalsService,
     QuestionsService,
