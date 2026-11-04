@@ -48,7 +48,9 @@ During rc2 acceptance (2026-11-04), measured from the Enter key against a kernel
   - The new-conversation view switches at once to the conversation layout. It is the same
     `ConversationPage` template, so nothing shifts: the pending bubble, then the working line.
   - When the create POST answers, the cache is seeded with the answer: the row into
-    `conversationQuery`, `[event]` into `eventsQuery` through `appendEvents`.
+    `conversationQuery`, and every event the create wrote (the answer's `events`, from seq 1: a
+    `model_switched` before the message when the send switched model or effort; `event` stays
+    for compatibility) into `eventsQuery` through `appendEvents`.
   - The page then navigates with `router.replace` to `/chat/<id>`. The groups invalidation is
     not awaited before navigating.
   - `/chat/<id>` paints from the seeded cache, and its stream opens right away from the

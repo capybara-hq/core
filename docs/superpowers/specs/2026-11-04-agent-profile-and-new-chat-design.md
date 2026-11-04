@@ -1,6 +1,6 @@
 # Agent profile, agent page, new conversation page, background section
 
-Status: for approval (2026-11-04, from rc2 acceptance; builder check done)
+Status: approved (2026-11-04, from rc2 acceptance; builder check done)
 Order of work: part 1 → 2 → 3 → 4. Each part ships on its own and depends only on the parts
 before it.
 

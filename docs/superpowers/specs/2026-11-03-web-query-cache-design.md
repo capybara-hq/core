@@ -201,7 +201,7 @@ would re-read every mounted query); `refetchOnMount` on (stale data refreshes on
   that (Q3).
 - **A send writes what it knows** (amended by the conversation send spec 2026-11-04 §2.1, §2.4): a
   follow-up's answer goes into the log through `appendEvents`; the first message's create answer
-  seeds the new conversation (`seedNewConversation`: the row, `[event]` into the log, and an empty
+  seeds the new conversation (`seedNewConversation`: the row, the create's `events` from seq 1 into the log, and an empty
   queue, no files and no sandbox as known answers), and `/chat` navigates without awaiting the
   groups' invalidation. `/chat/<id>` then reads none of those and opens its stream after the
   event's seq. Pending bubbles and the working line are per view, never cached.

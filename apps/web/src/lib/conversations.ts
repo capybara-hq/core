@@ -469,7 +469,12 @@ export const createConversationWithMessage = (
   agentId: string,
   message: Omit<MessageInput, "retryOf">,
 ) =>
-  apiFetch<{ conversation: Conversation; event: ConversationEvent }>(base(orgId), {
+  apiFetch<{
+    conversation: Conversation;
+    event: ConversationEvent;
+    /** Every event the create wrote, from seq 1 (a `model_switched` first); older kernels omit it. */
+    events?: ConversationEvent[];
+  }>(base(orgId), {
     method: "POST",
     body: JSON.stringify({ agentId, message: messageBody(message) }),
   });

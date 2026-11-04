@@ -221,8 +221,36 @@ describe("model and effort switching", { timeout: 60_000 }, () => {
       },
     });
     expect(res.statusCode, res.body).toBe(201);
-    const { conversation } = res.json() as { conversation: { id: string; selection: unknown } };
+    const {
+      conversation,
+      event,
+      events: answered,
+    } = res.json() as {
+      conversation: { id: string; selection: unknown };
+      event: Ev;
+      events: Ev[];
+    };
     expect(conversation.selection).toEqual({ model: FAKE_2, effort: "low" });
+    // the answer carries every event the create wrote, in seq order (the web seeds its log)
+    expect(answered.map((e) => [e.seq, e.type])).toEqual([
+      [1, "model_switched"],
+      [2, "user_message"],
+    ]);
+    expect(event).toMatchObject({ seq: 2, type: "user_message" });
+    // a retry of the same first send answers the same events
+    const again = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations`,
+      payload: {
+        agentId,
+        message: { text: "echo:first", clientMessageId: "m-1", model: FAKE_2, effort: "low" },
+      },
+    });
+    expect(again.statusCode, again.body).toBe(200);
+    expect((again.json() as { events: Ev[] }).events.map((e) => [e.seq, e.type])).toEqual([
+      [1, "model_switched"],
+      [2, "user_message"],
+    ]);
     await waitForTerminal(db, conversation.id, 1, 20_000);
     const events = await eventsOf(db, conversation.id);
     expect(events.slice(0, 2).map((e) => [e.seq, e.type])).toEqual([

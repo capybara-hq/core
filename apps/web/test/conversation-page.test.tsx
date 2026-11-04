@@ -1331,6 +1331,45 @@ describe("the first message from /chat (conversation send spec §2.1)", () => {
       expect(reads).not.toContain(path);
   });
 
+  it("a create that switched the model answers both events: /chat/<id> reads no events and streams after the last (no skeleton)", async () => {
+    const d = await startNew();
+    await userEvent.setup().type(input(), "start{Enter}");
+    await vi.waitFor(() => expect(d.calls.some((c) => c.method === "POST")).toBe(true));
+    const switched = ev(
+      1,
+      "model_switched",
+      {
+        model: { provider: "model-fake", model: "fake-2" },
+        effort: null,
+        byAccountId: "a1",
+        reason: "user",
+      },
+      null,
+      "c9",
+    );
+    const event = { ...userMsg(2, "start", { clientMessageId: d.cmid() }), conversationId: "c9" };
+    const conversation = CONV("c9").conversation;
+    await act(async () => d.answer(json(201, { conversation, event, events: [switched, event] })));
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
+    const c = keys.org("o1").conversation("c9");
+    expect(d.client.getQueryData(c.events())).toEqual([switched, event]);
+
+    cleanup();
+    FakeEventSource.instances = [];
+    resetNavigation("/chat/c9");
+    params.conversationId = "c9";
+    const { container, calls } = await renderRouteEmptyCache("/chat/c9", snapshotDefaults("c9"), {
+      client: d.client,
+    });
+    // painted from the seed: the bubble, never the thread's loading state
+    expect(screen.getByText("start", { selector: '[data-part="bubble"]' })).toBeTruthy();
+    expect(container.querySelector('[data-part="loading-turn"]')).toBeNull();
+    expect(FakeEventSource.instances.map((e) => e.url)).toEqual([`${C9}/stream?after=2`]);
+    await new Promise((r) => setTimeout(r, 20));
+    const reads = calls.filter((x) => x.method === "GET").map((x) => x.url.split("?")[0]);
+    expect(reads).not.toContain(`${C9}/events`);
+  });
+
   it("a second ↵ before the conversation exists keeps the text and says why, until it exists", async () => {
     const d = await startNew();
     const user = userEvent.setup();

@@ -275,7 +275,11 @@ export class ConversationsController {
     @Inject(ConversationFiles) private readonly files: ConversationFiles,
   ) {}
 
-  /** 201 when created; 200 when `message.clientMessageId` repeats an earlier first send. */
+  /**
+   * 201 when created; 200 when `message.clientMessageId` repeats an earlier first send. With a
+   * message the answer has `event` (the `user_message`) and `events`: every event the first send
+   * wrote, in seq order from seq 1 (a `model_switched` first when it switched).
+   */
   @Post()
   @OrgAction("agents.use")
   async create(
@@ -283,7 +287,11 @@ export class ConversationsController {
     @CurrentOrg() org: OrgContext,
     @ZBody(ConversationCreateBodyDto) body: z.infer<typeof CreateBody>,
     @Res({ passthrough: true }) reply: FastifyReply,
-  ): Promise<{ conversation: ConversationView; event?: ConversationEvent }> {
+  ): Promise<{
+    conversation: ConversationView;
+    event?: ConversationEvent;
+    events?: ConversationEvent[];
+  }> {
     const p = requireUser(principal);
     if (body.message === undefined) {
       return {
@@ -301,7 +309,7 @@ export class ConversationsController {
       ...(m.skill !== undefined && { skill: m.skill }),
     });
     reply.status(out.created ? 201 : 200);
-    return { conversation: out.conversation, event: out.event };
+    return { conversation: out.conversation, event: out.event, events: out.events };
   }
 
   /**

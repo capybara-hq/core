@@ -392,27 +392,31 @@ export function sentHereOf(qc: QueryClient, orgId: string, id: string): Map<stri
 
 /**
  * A conversation just created with its first message (conversation send spec §2.1): the create's
- * answer is the row and the log's first event, and a new conversation has an empty queue, no
- * files and no sandbox, so those are known answers too and `/chat/<id>` reads none of them; its
- * stream opens after the event's seq. An event after seq 1 (a model switch logged before the
- * message) means the log holds events the answer did not carry: the log is then not seeded and
- * the page reads it whole.
+ * answer is the row and every event the create wrote (`events`, from seq 1: a `model_switched`
+ * before the message when the send switched; an older kernel answers only `event`), and a new
+ * conversation has an empty queue, no files and no sandbox, so those are known answers too and
+ * `/chat/<id>` reads none of them; its stream opens after the last event's seq. A log that does
+ * not start at seq 1 (an older kernel's `event` after a switch) holds events the answer did not
+ * carry: it is then not seeded and the page reads it whole.
  */
 export function seedNewConversation(
   qc: QueryClient,
   orgId: string,
   conversation: Conversation,
-  event: ConversationEvent,
+  answer: { event: ConversationEvent; events?: readonly ConversationEvent[] },
   /** This tab's clock when the message was sent (default: now). */
   sentAt: number = Date.now(),
 ): void {
   const c = keys.org(orgId).conversation(conversation.id);
+  const { event } = answer;
   if (event.type === "user_message" && event.payload.clientMessageId !== undefined)
     sentHereOf(qc, orgId, conversation.id).set(event.payload.clientMessageId, sentAt);
   qc.setQueryData<Conversation>(c.row(), conversation);
-  if (event.seq === 1) {
+  const log = [...(answer.events ?? [event])].sort((a, b) => a.seq - b.seq);
+  const whole = log.every((e, i) => e.seq === i + 1);
+  if (whole) {
     qc.setQueryData<ConversationEvent[]>(c.events(), (cur) => cur ?? []);
-    appendEvents(qc, orgId, conversation.id, [event]);
+    appendEvents(qc, orgId, conversation.id, log);
   }
   const empty = <T>(key: readonly unknown[], value: T) => {
     if (qc.getQueryData(key) === undefined) qc.setQueryData<T>(key, value);

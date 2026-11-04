@@ -300,13 +300,20 @@ export class ConversationsService {
    * message's `clientMessageId` (`create_request_id`), so a retried send returns the same
    * conversation and event with `created: false`. An agent the caller cannot use →
    * `agent.not_found` and nothing is written. Queues a run afterwards, like `postUserMessage`.
+   * `events` are every event the create wrote, in seq order from seq 1 (a `model_switched` before
+   * the message when the send switched), so a client can seed the new conversation's log whole.
    */
   async createWithMessage(
     orgId: string,
     accountId: string,
     agentId: string,
     input: UserMessageInput & { clientMessageId: string },
-  ): Promise<{ conversation: ConversationView; event: ConversationEvent; created: boolean }> {
+  ): Promise<{
+    conversation: ConversationView;
+    event: ConversationEvent;
+    events: ConversationEvent[];
+    created: boolean;
+  }> {
     const agent = await this.agents.get(orgId, agentId, accountId);
     const prior = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
     if (prior) return prior;
@@ -314,15 +321,16 @@ export class ConversationsService {
     const extra = await this.resolveExtra(orgId, accountId, input);
     const invoked = await this.prepareSkill(orgId, agentId, undefined, agent.definition, input);
     const id = randomUUID();
-    const written = await this.createIn(id, orgId, accountId, agentId, input, next, extra, invoked);
-    if (!written) {
+    const all = await this.createIn(id, orgId, accountId, agentId, input, next, extra, invoked);
+    const written = all?.at(-1);
+    if (!all || !written) {
       const raced = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
       if (!raced) throw new ApiError("conflict", "The conversation is being created; retry");
       return raced;
     }
     await this.eventLog.notify(id, written.seq);
     await this.runs.ensureRun(id);
-    return { conversation: await this.rowView(id), event: written, created: true };
+    return { conversation: await this.rowView(id), event: written, events: all, created: true };
   }
 
   /** The conversation row and its first message (undefined: a concurrent retry committed first). */
@@ -337,7 +345,7 @@ export class ConversationsService {
     next: Selection | null,
     extra: ResolvedExtra,
     invoked: RenderedInvocation | undefined,
-  ): Promise<ConversationEvent | undefined> {
+  ): Promise<ConversationEvent[] | undefined> {
     const row = await this.db
       .insertInto("conversations")
       .values({
@@ -371,7 +379,12 @@ export class ConversationsService {
     accountId: string,
     agentId: string,
     clientMessageId: string,
-  ): Promise<{ conversation: ConversationView; event: ConversationEvent; created: false } | null> {
+  ): Promise<{
+    conversation: ConversationView;
+    event: ConversationEvent;
+    events: ConversationEvent[];
+    created: false;
+  } | null> {
     const row = await this.db
       .selectFrom("conversations")
       .select(COLUMNS)
@@ -389,8 +402,12 @@ export class ConversationsService {
     }
     const event = await this.eventLog.findByIdem(row.id, userMessageIdemKey(clientMessageId));
     if (!event) return null;
+    // what the first send wrote: the log from its start up to the message
+    const events = (await this.eventLog.readAfter(row.id, 0, event.seq)).filter(
+      (e) => e.seq <= event.seq,
+    );
     await this.runs.ensureRun(row.id);
-    return { conversation: toView(row), event, created: false };
+    return { conversation: toView(row), event, events, created: false };
   }
 
   private async rowView(id: string): Promise<ConversationView> {
@@ -949,7 +966,16 @@ export class ConversationsService {
     invoked: RenderedInvocation | undefined,
   ): Promise<ConversationEvent> {
     const blocks = await this.bindIn(orgId, conversationId, accountId, input.files ?? []);
-    return this.writeMessage(conversationId, accountId, input, next, extra, blocks, invoked);
+    const written = await this.writeMessage(
+      conversationId,
+      accountId,
+      input,
+      next,
+      extra,
+      blocks,
+      invoked,
+    );
+    return written.at(-1) as ConversationEvent;
   }
 
   /**
@@ -999,7 +1025,8 @@ export class ConversationsService {
 
   /**
    * Writes the message (preceded by its `model_switched` when it switches) inside `t` and updates
-   * `conversations.selection`; returns the `user_message` event. The caller notifies after commit.
+   * `conversations.selection`; returns the events written, in seq order (the `user_message`
+   * last). The caller notifies after commit.
    */
   @Transactional({ propagation: "mandatory" })
   private async writeMessage(
@@ -1010,7 +1037,7 @@ export class ConversationsService {
     extra: ResolvedExtra,
     blocks: LogContentBlock[],
     invoked: RenderedInvocation | undefined,
-  ): Promise<ConversationEvent> {
+  ): Promise<ConversationEvent[]> {
     const events: AppendEvent[] = [];
     if (next !== null) {
       events.push({
@@ -1033,7 +1060,7 @@ export class ConversationsService {
         .where("id", "=", conversationId)
         .execute();
     }
-    return written.at(-1) as ConversationEvent;
+    return written;
   }
 
   /**

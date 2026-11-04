@@ -68,7 +68,7 @@ export function useNewConversationPage(
   const create = useAppMutation({
     fn: async (v: { agentId: string; message: MessageInput; sentAt: number }) => {
       const r = await createConversationWithMessage(orgId, v.agentId, v.message);
-      seedNewConversation(qc, orgId, r.conversation, r.event, v.sentAt);
+      seedNewConversation(qc, orgId, r.conversation, r, v.sentAt);
       return r;
     },
     invalidates: () => [],
