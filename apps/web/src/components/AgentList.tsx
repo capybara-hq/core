@@ -4,7 +4,7 @@ import { ObjectRow } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useContext, useState } from "react";
 import { useRouter } from "../i18n/navigation";
-import type { Agent } from "../lib/agents";
+import { type Agent, avatarValue } from "../lib/agents";
 import { modelLabel } from "../lib/extension-label";
 import { canUpdateOrg } from "../lib/org-settings";
 import { ReassignOwnerDialog } from "./ReassignOwnerDialog";
@@ -63,7 +63,7 @@ export function AgentRow({ agent }: { agent: Agent }) {
   return (
     <>
       <ObjectRow
-        mark={{ text: def.name }}
+        mark={{ text: def.name, avatar: avatarValue(agent, agent.orgId) }}
         name={def.name}
         {...(canEdit ? { href: editHref } : {})}
         meta={meta}

@@ -16,8 +16,9 @@ test("send from /chat: the composer clears at once, the working line, then a str
   const orgId = await currentOrg(page);
   const agentId = await createAgent(page, orgId, "Cap send");
   await page.goto(`/chat?agent=${agentId}`);
-  await expect(page.locator('[data-part="new-conversation-body"] h2')).not.toHaveText("—");
   const input = composer(page);
+  // the agent is picked (the composer's placeholder names it)
+  await expect(input).not.toHaveAttribute("placeholder", /—/);
   await input.fill(`slow:200:${LONG}`);
   await input.press("Enter");
   // the composer is empty within 100 ms, long before the create answers

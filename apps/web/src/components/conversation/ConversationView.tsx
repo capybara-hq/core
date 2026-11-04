@@ -13,6 +13,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { avatarValue } from "../../lib/agents";
 import type { ModelRef } from "../../lib/conversations";
 import { agentsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
@@ -163,6 +164,12 @@ export function useConversationPage(
     "org",
     ...(agent ? [{ label: agent.definition.name, href: `/agents/${agent.id}` }] : []),
   );
+  // The agent's segment leads with its avatar (16, spec §6.30), from the cached agents.
+  const titlePath = agent
+    ? path.map((seg, i) =>
+        i === path.length - 1 ? { ...seg, avatar: avatarValue(agent, orgId) } : seg,
+      )
+    : path;
   const modelsQ = modelsQuery(orgId);
   const providers = useQuery({ ...modelsQ, retryOnMount: retryOnMountOf(modelsQ.queryKey) }).data
     ?.providers;
@@ -348,7 +355,7 @@ export function useConversationPage(
   const createdAt = conv.conversation ? new Date(conv.conversation.createdAt) : new Date();
   const page: ConversationPageProps = {
     titleBar: {
-      path,
+      path: titlePath,
       title: conv.conversation?.title ?? null,
       untitled: untitledLabel(createdAt, locale),
       menu,

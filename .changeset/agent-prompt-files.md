@@ -1,5 +1,5 @@
 ---
-"@capybara-hq/kernel": patch
+"@capybara-hq/kernel": minor
 ---
 
 Agent definitions take the system prompt as named `.md` files (`instructionFiles`, 1–20 unique

@@ -78,6 +78,14 @@ export const CONV = (id = "c1", extra: Record<string, unknown> = {}) => ({
   },
 });
 
+/** An agent's profile as the kernel answers it for an agent created before profiles existed. */
+export const PROFILE = {
+  avatar: null,
+  description: "",
+  quickActions: [],
+  updatedAt: "2026-10-26T06:00:00.000Z",
+};
+
 export const AGENTS = {
   agents: [
     {
@@ -92,6 +100,7 @@ export const AGENTS = {
         model: { provider: "model-fake", model: "fake-1" },
         fallback: null,
       },
+      profile: PROFILE,
       updatedAt: "2026-10-26T06:00:00.000Z",
     },
     {
@@ -106,6 +115,7 @@ export const AGENTS = {
         model: { provider: "model-fake", model: "fake-1" },
         fallback: null,
       },
+      profile: PROFILE,
       updatedAt: "2026-10-26T06:00:00.000Z",
     },
   ],

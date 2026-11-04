@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { Button, IconButton, Input } from "../controls/index";
+import { Avatar, type AvatarValue } from "../display/avatar";
 import { formatDateTime } from "../display/date-time";
 import { EmptyState } from "../display/empty-state";
 import { Segmented } from "../display/tabs";
@@ -32,6 +33,8 @@ export type SidebarConversation = {
 export type SidebarGroup = {
   agentId: string;
   agentName: string;
+  /** The agent's avatar, drawn at 16 before the name (§6.30; `null`: the initial); absent, none. */
+  agentAvatar?: AvatarValue;
   conversations: SidebarConversation[];
   /** The group has more conversations than it shows: a "Show more" row calls `onMore`. */
   more: boolean;
@@ -488,6 +491,9 @@ function Group({
           title={g.agentName}
           onClick={onToggle}
         >
+          {g.agentAvatar !== undefined ? (
+            <Avatar value={g.agentAvatar} name={g.agentName} size={16} />
+          ) : null}
           <span className="cb-sidebar-label">{g.agentName}</span>
           <Icon name={collapsed ? "chevron-right" : "chevron-down"} size={12} />
         </button>

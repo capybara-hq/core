@@ -214,6 +214,7 @@ describe("the route test helpers", () => {
   const agent = {
     id: "ag1",
     definition: { name: "Helper agent", model: { provider: "model-fake", model: "fake-1" } },
+    profile: { avatar: null, description: "", quickActions: [], updatedAt: "2026-10-26T06:00:00Z" },
   };
   const agentsRoute = { [`GET ${O}/agents`]: () => json(200, { agents: [agent] }) };
 

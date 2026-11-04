@@ -26,8 +26,8 @@ const LONG = "Capybaras are the largest living rodents and very calm swimmers. "
 async function newChat(page: Page, agentId: string) {
   await page.goto(`/chat?agent=${agentId}`);
   await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
-  // The agent is picked once the agents list loaded (the heading names it).
-  await expect(page.locator('[data-part="new-conversation-body"] h2')).not.toHaveText("—");
+  // The agent is picked once the agents list loaded (the composer's placeholder names it).
+  await expect(composer(page)).not.toHaveAttribute("placeholder", /—/);
 }
 
 // exact: a stopped run's row is named "… 已停止 …" too
@@ -42,7 +42,10 @@ test("a new conversation is created on the first send only; the title is generat
   const orgId = await currentOrg(page);
   const agentId = await createAgent(page, orgId, "Cap first send");
   await newChat(page, agentId);
-  await expect(page.getByRole("heading", { name: "Cap first send" })).toBeVisible();
+  await expect(composer(page)).toHaveAttribute(
+    "placeholder",
+    zh.chat.newPlaceholder.replace("{agent}", "Cap first send"),
+  );
   // Nothing exists before the first send.
   const before = await page.request.get(`/api/v1/orgs/${orgId}/conversations?agentId=${agentId}`);
   expect(((await before.json()) as { conversations: unknown[] }).conversations).toHaveLength(0);

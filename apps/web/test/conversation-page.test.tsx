@@ -107,7 +107,7 @@ describe("the conversation page (ConversationPage)", () => {
     expect(screen.getByText("hi").closest("[data-entry]")?.getAttribute("data-entry")).toBe("user");
   });
 
-  it("the title bar path is <org slug> / <agent> / before the title; the agent links to its page", async () => {
+  it("the title bar path is <org slug> / <agent> / before the title; the agent links to its page with its avatar", async () => {
     api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }) });
     const { container } = await renderChat("en");
     await screen.findByText("hi");
@@ -115,6 +115,11 @@ describe("the conversation page (ConversationPage)", () => {
     const nav = await within(bar).findByRole("navigation", { name: "Path" });
     const link = await within(nav).findByRole("link", { name: "Echo agent" });
     expect(link.getAttribute("href")).toBe("/agents/ag1");
+    // the agent's avatar (16) leads its segment: an agent without one shows its initial
+    const avatar = link.querySelector('[data-part="avatar"]') as HTMLElement;
+    expect(avatar.getAttribute("data-size")).toBe("16");
+    expect(avatar.textContent).toBe("E");
+    avatar.remove();
     expect(nav.textContent).toBe("acme/Echo agent/");
   });
 
@@ -1197,6 +1202,10 @@ const NEW_CHAT = {
   "GET /api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
 };
 
+/** A chip of the new conversation's agents row. */
+const agentChip = (name: string) =>
+  within(screen.getByRole("group", { name: "Choose an agent" })).getByRole("button", { name });
+
 describe("a new conversation (/chat)", () => {
   it("?agent= picks the agent; the first send creates the conversation and replaces the URL", async () => {
     resetNavigation("/chat");
@@ -1206,7 +1215,7 @@ describe("a new conversation (/chat)", () => {
     });
     const { calls: server } = await renderRouteWithCache("/chat?agent=ag2", NEW_CHAT);
     // the first paint is the server's: agents, the most recent agent and the models
-    expect(screen.getByRole("heading", { name: "Second agent" })).toBeTruthy();
+    expect(agentChip("Second agent").getAttribute("aria-pressed")).toBe("true");
     expect(server.map((c) => c.url)).toEqual(
       expect.arrayContaining([
         "/api/v1/orgs/o1/agents",
@@ -1238,7 +1247,7 @@ describe("a new conversation (/chat)", () => {
     expect(bar.textContent).toContain("UTC+8");
   });
 
-  it("without ?agent= the agent most recently talked to is picked, and can be changed", async () => {
+  it("without ?agent= the agent most recently talked to is picked, and the agents row changes it", async () => {
     resetNavigation("/chat");
     expectNoFirstPaintFetch();
     await renderRouteWithCache("/chat", {
@@ -1256,11 +1265,12 @@ describe("a new conversation (/chat)", () => {
           next: null,
         }),
     });
-    expect(screen.getByRole("heading", { name: "Second agent" })).toBeTruthy();
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: `${en.chat.pickAgent}: Second agent` }));
-    await user.click(await screen.findByRole("menuitemradio", { name: /Echo agent/ }));
-    expect(await screen.findByRole("heading", { name: "Echo agent" })).toBeTruthy();
+    expect(agentChip("Second agent").getAttribute("aria-pressed")).toBe("true");
+    // the agents row changes it (the composer has no agent picker here)
+    expect(screen.queryByRole("button", { name: `${en.chat.pickAgent}: Second agent` })).toBeNull();
+    await userEvent.setup().click(agentChip("Echo agent"));
+    expect(agentChip("Echo agent").getAttribute("aria-pressed")).toBe("true");
+    expect(input().getAttribute("placeholder")).toBe("What should Echo agent do?");
   });
 });
 
@@ -1403,7 +1413,8 @@ describe("the new conversation once the org can run", () => {
     resetNavigation("/chat");
     expectNoFirstPaintFetch();
     const { container } = await renderRouteWithCache("/chat", NEW_CHAT);
-    expect(screen.getByRole("heading", { name: /agent/i })).toBeTruthy();
+    expect(agentChip("Echo agent")).toBeTruthy();
+    expect(input()).toBeTruthy();
     expect(container.querySelector('[data-template="OnboardingPage"]')).toBeNull();
   });
 

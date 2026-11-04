@@ -465,6 +465,10 @@ a.cb-item-list-title:hover {
   color: var(--cb-ink);
   font-weight: 600;
 }
+/* An agent's row: its 28 px avatar centred in the mark's 36 px place, on no ground of its own. */
+.cb-object-mark[data-kind="avatar"] {
+  background: transparent;
+}
 .cb-object-mark[data-tone="warn"] {
   background: color-mix(in srgb, var(--cb-warn) 15%, transparent);
   color: var(--cb-warn);

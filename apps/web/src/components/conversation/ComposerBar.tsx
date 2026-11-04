@@ -20,7 +20,9 @@ import { useTranslations } from "next-intl";
 import {
   type ChangeEvent,
   type KeyboardEvent,
+  type Ref,
   useEffect,
+  useImperativeHandle,
   useRef,
   useState,
   useSyncExternalStore,
@@ -107,6 +109,26 @@ export type ComposerDraft = {
   id?: { key: string; id: string };
 };
 
+/** What a page may do to its composer from outside (the new conversation's quick actions). */
+export type ComposerControl = {
+  /**
+   * Replaces the text with `text` and focuses the input. The text it replaced is one undo step:
+   * the next ⌘Z / Ctrl+Z, before any other edit, brings it back.
+   */
+  fill(text: string): void;
+  /** Focuses the input (a new conversation's agent was picked). */
+  focus(): void;
+};
+
+/** ⌘Z on a Mac, Ctrl+Z elsewhere (either is taken: the browser's own undo also takes both). */
+export const isUndoKey = (e: {
+  key: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+}) => (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z";
+
 /** The name a picked skill is invoked by: `<plugin>:<name>` for a plugin's skill. */
 const invokeName = (s: InvocableSkill) => (s.plugin ? `${s.plugin}:${s.name}` : s.name);
 
@@ -181,6 +203,7 @@ export function ComposerBar({
   sendDisabled,
   initialDraft,
   onBlocked,
+  control,
 }: {
   orgId: string;
   /** The conversation's agent (the `/` menu lists its skills); undefined while loading. */
@@ -193,7 +216,8 @@ export function ComposerBar({
   onSend(m: ComposerMessage): Promise<SendResult>;
   /** Queue the message (↵ while running); absent before the conversation exists. */
   onQueue?(m: ComposerMessage): Promise<SendResult>;
-  pickers: { agent: PickerProps; model: PickerProps; effort?: PickerProps };
+  /** The agent picker is absent on the new conversation page (its agents row picks). */
+  pickers: { agent?: PickerProps; model: PickerProps; effort?: PickerProps };
   placeholder: string;
   /** Nothing can be sent yet (a new conversation whose agent, or a thread, is still loading). */
   sendDisabled?: boolean;
@@ -201,6 +225,8 @@ export function ComposerBar({
   initialDraft?: ComposerDraft | undefined;
   /** ↵ with a draft while `sendDisabled` (the caller says why; the draft stays). */
   onBlocked?(): void;
+  /** Filled with {@link ComposerControl} while this composer is mounted. */
+  control?: Ref<ComposerControl>;
 }) {
   const t = useTranslations("chat");
   const tc = useTranslations("common");
@@ -382,6 +408,16 @@ export function ComposerBar({
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    // The one undo step of a fill: only while the text is still what the fill put there.
+    const undo = undoFill.current;
+    if (undo !== null && isUndoKey(e)) {
+      undoFill.current = null;
+      if (text === undo.text) {
+        e.preventDefault();
+        setText(undo.before);
+        return;
+      }
+    }
     if (e.key !== "Enter" || e.nativeEvent.isComposing || e.shiftKey) return;
     e.preventDefault();
     // While a run is going ↵ queues for after the turn and ⌘↵ / Ctrl+↵ sends now (interjects).
@@ -400,6 +436,8 @@ export function ComposerBar({
   }
 
   function onChange(next: string, el?: HTMLTextAreaElement | null) {
+    // An edit after a fill: ⌘Z is the browser's own again.
+    undoFill.current = null;
     const caret = el?.selectionStart ?? next.length;
     if (text === "" && next === "/" && skill === null) {
       openPalette("prompts", 0);
@@ -579,6 +617,30 @@ export function ComposerBar({
 
   const hint = running ? t(mac ? "queueHintMac" : "queueHint") : undefined;
   const textEl = useRef<HTMLTextAreaElement>(null);
+  /**
+   * The text a fill replaced, while the fill's text is unedited. A controlled textarea's value set
+   * by React is not on the browser's undo stack, so the composer keeps this one step itself.
+   */
+  const undoFill = useRef<{ before: string; text: string } | null>(null);
+  const textNow = useRef(text);
+  textNow.current = text;
+  useImperativeHandle(
+    control,
+    () => ({
+      fill(next: string) {
+        const before = textNow.current;
+        undoFill.current = before === next ? null : { before, text: next };
+        textNow.current = next;
+        setText(next);
+        // a value set from outside puts the caret after the text
+        textEl.current?.focus();
+      },
+      focus() {
+        textEl.current?.focus();
+      },
+    }),
+    [],
+  );
 
   return (
     <>

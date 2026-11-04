@@ -6,6 +6,7 @@ import {
   useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { Input } from "../controls/inputs";
@@ -69,11 +70,14 @@ export function AgentRow({
 }: AgentRowProps): JSX.Element | null {
   const t = useDesignT();
   const [open, setOpen] = useState(false);
+  // A pick in the panel leaves the focus where `onSelect` put it (the page's composer), not on 更多.
+  const picked = useRef(false);
   if (agents.length <= 1) return null;
   const shown = visibleAgents(agents, Math.max(1, max), selected);
   const hidden = agents.length - shown.length;
   const more = moreLabel ?? t("agents.more").replace("{n}", String(hidden));
   const pick = (id: string) => {
+    picked.current = true;
     setOpen(false);
     onSelect(id);
   };
@@ -146,6 +150,11 @@ export function AgentRow({
           align="start"
           sideOffset={4}
           collisionPadding={COLLISION_PADDING}
+          onCloseAutoFocus={(e) => {
+            if (!picked.current) return;
+            picked.current = false;
+            e.preventDefault();
+          }}
         >
           {panel}
         </RP.Content>

@@ -48,7 +48,11 @@ export async function startChat(page: Page, agentName: string): Promise<void> {
     .click();
   await expect(page).toHaveURL(/\/chat\?agent=[^&]+$/);
   await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
-  await expect(page.getByRole("heading", { name: agentName })).toBeVisible();
+  // the agent is picked: the composer's placeholder names it
+  await expect(composer(page)).toHaveAttribute(
+    "placeholder",
+    zh.chat.newPlaceholder.replace("{agent}", agentName),
+  );
   await expect(composer(page)).toBeEnabled();
 }
 

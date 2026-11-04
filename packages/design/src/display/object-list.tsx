@@ -4,6 +4,7 @@ import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { Menu, type MenuItem, menuActions, menuLone } from "../overlays/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
+import { Avatar, type AvatarValue } from "./avatar";
 import { initialOf } from "./initial";
 import { SkeletonBox, SkeletonText, useSkeletonAnnounces } from "./skeleton";
 
@@ -11,9 +12,10 @@ export type ObjectRowProps = {
   /**
    * The 36 px mark: `text` is the display name, drawn as its upper-cased first grapheme (the one
    * avatar-tile rule); `icon` only for rows that are steps, not objects; `warn` when it needs
-   * attention.
+   * attention. `avatar` (an agent's row): its `Avatar` at 28 (§6.30) in the mark's 36 px place;
+   * `null` draws the initial square.
    */
-  mark: { text?: string; icon?: IconName; tone?: "neutral" | "warn" };
+  mark: { text?: string; icon?: IconName; tone?: "neutral" | "warn"; avatar?: AvatarValue };
   name: string;
   /** The name links here. */
   href?: string;
@@ -116,9 +118,15 @@ export function ObjectRow({
   const slots: (RowButton | undefined)[] = [action, single];
   return (
     <li className="cb-object-row">
-      <span className="cb-object-mark" data-tone={mark.tone ?? "neutral"} aria-hidden="true">
-        {mark.icon ? <Icon name={mark.icon} size={16} /> : initialOf(mark.text ?? "")}
-      </span>
+      {mark.avatar !== undefined ? (
+        <span className="cb-object-mark" data-kind="avatar" aria-hidden="true">
+          <Avatar value={mark.avatar} name={mark.text ?? name} size={28} />
+        </span>
+      ) : (
+        <span className="cb-object-mark" data-tone={mark.tone ?? "neutral"} aria-hidden="true">
+          {mark.icon ? <Icon name={mark.icon} size={16} /> : initialOf(mark.text ?? "")}
+        </span>
+      )}
       <span className="cb-object-text">
         <span className="cb-object-line">
           {href ? (

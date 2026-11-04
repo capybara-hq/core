@@ -109,6 +109,17 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The agent's segment: its 16 px avatar, space.1, then the name (the name takes the ellipsis). */
+.cb-title-path-seg[data-avatar="true"] {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+}
+.cb-title-path-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 a.cb-title-path-seg:hover {
   color: var(--cb-ink);
 }

@@ -1,11 +1,26 @@
 "use client";
 
-import { type ConversationPageProps, Stack, Text, untitledLabel } from "@capybara-hq/design";
+import {
+  AgentRow,
+  type AgentRowItem,
+  type ConversationPageProps,
+  Greeting,
+  QuickActions,
+  Stack,
+  Text,
+  untitledLabel,
+} from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "../../i18n/navigation";
-import { createConversationWithMessage, type MessageInput } from "../../lib/conversations";
+import { type Agent, avatarValue } from "../../lib/agents";
+import {
+  type ConversationGroup,
+  createConversationWithMessage,
+  type MessageInput,
+} from "../../lib/conversations";
+import { type GreetingLines, greetingBucket, pickGreeting } from "../../lib/greeting";
 import { agentsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
 import { modelsQuery, seedNewConversation } from "../../lib/query/conversation";
@@ -15,18 +30,51 @@ import { conversationGroupsQuery } from "../../lib/query/shell";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { FormError } from "../form-error";
 import { useSession } from "../shell/session";
-import { ComposerBar, type ComposerDraft, type ComposerMessage } from "./ComposerBar";
+import {
+  ComposerBar,
+  type ComposerControl,
+  type ComposerDraft,
+  type ComposerMessage,
+} from "./ComposerBar";
 import { useStatusSignature } from "./ConversationView";
 import { PendingBubbles, usePendingSends } from "./PendingBubbles";
 import type { SendResult } from "./useConversation";
 import { useSelection } from "./useSelection";
 
 /**
- * A new conversation (`/chat`, spec §5.2): an empty page with the composer, the agent picker
- * enabled. The agent is `?agent=` when usable, else the one most recently talked to, else the
- * first. Nothing is created before the first send: it posts `POST /conversations` with the message
- * (and any model / effort pick), then replaces the URL with the new conversation's. The agents,
- * the most recent agent (the sidebar's first group) and the models come from the query cache.
+ * The agents in the row's order: by this person's most recent conversation with each (the sidebar's
+ * groups, most recent first), then by name. Returns the order and the ids that have a recent
+ * conversation (the panel's 「最近用过」), most recent first.
+ */
+export function orderAgents(
+  agents: Agent[],
+  groups: readonly Pick<ConversationGroup, "agent">[],
+  locale: string,
+): { ordered: Agent[]; recent: string[] } {
+  const usable = new Set(agents.map((a) => a.id));
+  const recent: string[] = [];
+  for (const g of groups) {
+    if (usable.has(g.agent.id) && !recent.includes(g.agent.id)) recent.push(g.agent.id);
+  }
+  const rank = new Map(recent.map((id, i) => [id, i]));
+  const ordered = [...agents].sort((a, b) => {
+    const ra = rank.get(a.id) ?? Number.POSITIVE_INFINITY;
+    const rb = rank.get(b.id) ?? Number.POSITIVE_INFINITY;
+    if (ra !== rb) return ra - rb;
+    return a.definition.name.localeCompare(b.definition.name, locale);
+  });
+  return { ordered, recent };
+}
+
+/**
+ * A new conversation (`/chat`, spec §5.2, agent profile design §4): the greeting, the agents row,
+ * the selected agent's quick actions and the composer (no agent picker: the row picks). The agent
+ * is `?agent=` when usable, else the one most recently talked to, else the first in the row's
+ * order. The greeting is picked after mount (the server draws its same-height placeholder, so the
+ * first paint matches). A quick action fills the composer (one ⌘Z step brings the text back).
+ * Nothing is created before the first send: it posts `POST /conversations` with the message (and
+ * any model / effort pick), then replaces the URL with the new conversation's. The agents, the
+ * most recent agent (the sidebar's first group) and the models come from the query cache.
  *
  * The send is instant (conversation send spec §2.1): the page switches to the conversation layout
  * at once with the pending bubble and the working line; the create's answer seeds the new
@@ -54,12 +102,25 @@ export function useNewConversationPage(
   const recentKnown = groups.data !== undefined || groups.error !== null;
   const [picked, setPicked] = useState<string | null>(null);
   const [error, setError] = useState<string>();
-  const usable = agents ?? [];
+  const { ordered: usable, recent: recentIds } = orderAgents(
+    agents ?? [],
+    groups.data?.groups ?? [],
+    locale,
+  );
   // Until the recent agent is known, nothing is picked (the default would flip under the person).
   const agent =
     usable.find((a) => a.id === picked) ??
     usable.find((a) => a.id === preferredAgent) ??
     (recentKnown ? (usable.find((a) => a.id === recent) ?? usable[0]) : undefined);
+  const composer = useRef<ComposerControl>(null);
+  /** The greeting line, picked in the browser after mount (null: the placeholder). */
+  const [greeting, setGreeting] = useState<string | null>(null);
+  const displayName = session.me.account.displayName;
+  const lines = t.raw("greeting") as GreetingLines;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: picked once per mount, not per render
+  useEffect(() => {
+    setGreeting(pickGreeting(greetingBucket(new Date().getHours()), displayName, lines));
+  }, []);
   const modelsQ = modelsQuery(orgId);
   const providers = useQuery({ ...modelsQ, retryOnMount: retryOnMountOf(modelsQ.queryKey) }).data
     ?.providers;
@@ -105,6 +166,17 @@ export function useNewConversationPage(
   };
 
   const name = agent?.definition.name ?? "—";
+  const rowItems: AgentRowItem[] = usable.map((a) => ({
+    id: a.id,
+    name: a.definition.name,
+    description: a.profile.description,
+    avatar: avatarValue(a, orgId),
+  }));
+  const quickActions = agent?.profile.quickActions ?? [];
+  const selectAgent = (id: string) => {
+    setPicked(id);
+    composer.current?.focus();
+  };
   // Sent: the conversation layout, the pending bubble then the working line (spec §2.1).
   const sent = pending.shown.length > 0;
   return {
@@ -117,7 +189,30 @@ export function useNewConversationPage(
     },
     ...(sent
       ? { thread: <PendingBubbles items={pending.shown} />, working: true }
-      : { newConversation: { agentName: name } }),
+      : {
+          newConversation: {
+            greeting: <Greeting text={greeting} sub={t("greeting.sub")} />,
+            agents: (
+              <AgentRow
+                agents={rowItems}
+                {...(agent ? { selected: agent.id } : {})}
+                recent={recentIds}
+                onSelect={selectAgent}
+              />
+            ),
+            quickActions: (
+              <QuickActions
+                // keyed by agent: another agent's line starts closed
+                key={agent?.id ?? ""}
+                items={quickActions.map((q, i) => ({ id: String(i), title: q.title }))}
+                onPick={(id) => {
+                  const body = quickActions[Number(id)]?.body;
+                  if (body !== undefined) composer.current?.fill(body);
+                }}
+              />
+            ),
+          },
+        }),
     composer: (
       <Stack gap={8}>
         {error !== undefined && <FormError message={error} />}
@@ -139,23 +234,8 @@ export function useNewConversationPage(
             if (sent) setBlocked(true);
           }}
           onSend={send}
+          control={composer}
           pickers={{
-            agent: {
-              label: t("pickAgent"),
-              value: name,
-              disabled: usable.length === 0,
-              groups: [
-                {
-                  items: usable.map((a) => ({
-                    id: a.id,
-                    label: a.definition.name,
-                    checked: a.id === agent?.id,
-                  })),
-                },
-              ],
-              note: t("agentLocked"),
-              onPick: setPicked,
-            },
             model: selection.modelPicker,
             ...(selection.effortPicker ? { effort: selection.effortPicker } : {}),
           }}

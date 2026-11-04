@@ -1,6 +1,7 @@
 import { type JSX, useEffect, useRef, useState } from "react";
 import { Button, IconButton } from "../controls/button";
 import { Input } from "../controls/inputs";
+import { Avatar, type AvatarValue } from "../display/avatar";
 import { SkeletonText } from "../display/skeleton";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
@@ -30,8 +31,11 @@ export type TitleBarPanel = {
 };
 
 export type TitleBarProps = {
-  /** The path before the title, `<org> / <agent> /` (mono, faint); a segment with `href` links. */
-  path?: { label: string; href?: string }[];
+  /**
+   * The path before the title, `<org> / <agent> /` (mono, faint); a segment with `href` links. A
+   * segment with `avatar` (the agent's) leads with its `Avatar` at 16 (§6.30; `null`: the initial).
+   */
+  path?: { label: string; href?: string; avatar?: AvatarValue }[];
   /** The title; null until one is generated or given. */
   title: string | null;
   /** Shown while `title` is null: "未命名会话 · 10-26 14:02" (`untitledLabel`). */
@@ -49,6 +53,17 @@ export type TitleBarProps = {
   /** The reference set only: menus drawn open and a fixed number of visible panel icons. */
   reference?: { titleMenu?: boolean; moreMenu?: boolean; visiblePanels?: number };
 };
+
+/** A path segment's content: the label, led by the avatar when it has one. */
+function pathSegment(c: { label: string; avatar?: AvatarValue }) {
+  if (c.avatar === undefined) return c.label;
+  return (
+    <>
+      <Avatar value={c.avatar} name={c.label} size={16} />
+      <span className="cb-title-path-label">{c.label}</span>
+    </>
+  );
+}
 
 /** Width of one title-bar icon button plus the bar's gap. */
 const SLOT = 28 + 4;
@@ -127,11 +142,20 @@ export function TitleBar({
             // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional (labels may repeat)
             <span key={`${i}-${c.label}`} className="cb-title-path-item">
               {c.href !== undefined ? (
-                <Link href={c.href} className="cb-title-path-seg">
-                  {c.label}
+                <Link
+                  href={c.href}
+                  className="cb-title-path-seg"
+                  data-avatar={c.avatar !== undefined ? "true" : undefined}
+                >
+                  {pathSegment(c)}
                 </Link>
               ) : (
-                <span className="cb-title-path-seg">{c.label}</span>
+                <span
+                  className="cb-title-path-seg"
+                  data-avatar={c.avatar !== undefined ? "true" : undefined}
+                >
+                  {pathSegment(c)}
+                </span>
               )}
               <span className="cb-title-path-sep" aria-hidden="true">
                 /
