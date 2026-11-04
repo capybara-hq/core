@@ -45,7 +45,7 @@ function TraceBody() {
           <Text variant="small" tone="muted">
             查看运行记录会记入审计。
           </Text>
-          <Card title="工具调用 · crm__refund_order">
+          <Card title="工具调用 · mcp__crm__refund_order">
             <Stack gap={12}>
               <Grid columns={2} gap={16}>
                 <IoBlock label="IN" text={'{\n  "order": "A1043",\n  "amount": 620\n}'} />

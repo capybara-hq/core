@@ -927,7 +927,7 @@ export const KernelConfigSchema = z.object({
         .int()
         .positive()
         .default(20000)
-        .meta(meta({ description: "Maximum characters returned by one read_tool_output call" })),
+        .meta(meta({ description: "Maximum characters returned by one ReadToolOutput call" })),
       oauthAllowInsecureLoopback: z
         .boolean()
         .default(false)
@@ -1213,7 +1213,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Largest file in bytes an agent may deliver from its sandbox to the user as an artifact (sandbox_deliver)",
+              "Largest file in bytes an agent may deliver from its sandbox to the user as an artifact (Deliver)",
           }),
         ),
       limits: z

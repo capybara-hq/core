@@ -56,6 +56,8 @@ describe("checkTerms", () => {
       ["terms-reference", ...at("docs/guide.md", "parseCatalogIndex")],
       ["terms-reference", ...at("docs/guide.md", "`CatalogIndex`")],
       ["terms-reference", ...at("docs/guide.md", "appBundleTgz")],
+      ["terms-reference", ...at("docs/guide.md", "`sandbox_bash`")],
+      ["terms-reference", ...at("docs/guide.md", "`tool_search` result")],
       ["terms-reference", ...at("packages/kernel/src/packages/tgz.ts", "definePlugin")],
     ]);
     expect(f[0]?.message).toContain('"definePlugin"');
@@ -65,6 +67,27 @@ describe("checkTerms", () => {
     expect(f[12]?.message).toContain('"writing-apps"');
     expect(f[13]?.message).toContain("an old package format name");
     expect(f[13]?.message).toContain('"app.yaml"');
+  });
+
+  it("an old builtin tool key is reported with the new names; exempt homes and the word agent pass", () => {
+    const root = fixture("violations");
+    const guide = join(root, "docs/guide.md");
+    const hits = checkTerms(root).filter((x) => x.file === guide && /tool key/.test(x.message));
+    expect(hits.map((x) => x.line)).toEqual([
+      lineOf(guide, "`sandbox_bash`"),
+      lineOf(guide, "`tool_search` result"),
+    ]);
+    expect(hits[0]?.message).toContain('"sandbox_bash"');
+    expect(hits[0]?.message).toContain("Bash");
+    // the frozen map, the legacy text rewriter, recordings, historical specs and synced skills
+    const exempt = checkTerms(root).filter((x) =>
+      /legacy-keys|legacy-text|fixtures\/pre-tool-rename|superpowers|skills\/onboarding/.test(
+        x.file,
+      ),
+    );
+    expect(exempt).toEqual([]);
+    // `agent` alone never matches
+    expect(checkTerms(fixture("clean"))).toEqual([]);
   });
 
   it("the legacy-format detector may name the old formats, and nothing else old", () => {

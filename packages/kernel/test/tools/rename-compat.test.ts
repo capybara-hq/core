@@ -14,7 +14,9 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
-import { caseBase } from "../../src/evals/runs.service.js";
+import { legacyScopeOf, recordedCalls } from "../../src/evals/recorded-tools.js";
+import { runBaseline } from "../../src/evals/run-replay.js";
+import { caseBase, versionDefinition } from "../../src/evals/runs.service.js";
 import {
   type CaseSnapshot,
   readSnapshot,
@@ -77,6 +79,69 @@ describe("改名前录制的会话：还原零漂移", () => {
       expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
       expect(out.request, `model_call seq ${c.seq}`).toEqual(fixture.requests[i]);
     }
+  });
+});
+
+describe("a recording made before the tool rename (full-run replay input)", () => {
+  const rc = JSON.parse(
+    readFileSync(
+      fileURLToPath(
+        new URL("../evals/fixtures/pre-tool-rename/conversation.json", import.meta.url),
+      ),
+      "utf8",
+    ),
+  ) as Fixture;
+
+  /** The snapshot seen as each of its runs (replay reads one run's calls). */
+  const perRun = [...new Set(rc.snapshot.events.flatMap((e) => (e.runId ? [e.runId] : [])))].map(
+    (runId) => ({ ...rc.snapshot, runId }),
+  );
+
+  it("reads the connectors and extensions from the snapshot alone", () => {
+    const scope = legacyScopeOf(rc.snapshot);
+    expect([...scope.extensionNames]).toEqual(["tools-probe"]);
+    expect([...scope.connectorSlugs]).toEqual(["docs"]);
+  });
+
+  it("recorded calls are keyed by the current names and parameters; nothing is left in rc form", () => {
+    const calls = perRun.flatMap((snap) => recordedCalls(snap));
+    const keys = calls.map((c) => c.toolKey);
+    expect(keys).toEqual(
+      expect.arrayContaining([
+        "Bash",
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Skill",
+        "ToolSearch",
+        "ReadToolOutput",
+        "mcp__docs__search",
+        "plugin__tools-probe__echo",
+      ]),
+    );
+    expect(keys.filter((k) => /^(sandbox_|skill_|tool_search|read_tool_output)/.test(k))).toEqual(
+      [],
+    );
+    expect(calls.every((c) => c.legacy === true)).toBe(true);
+    const edit = calls.find((c) => c.toolKey === "Edit");
+    expect(edit?.inputKey).toBe(
+      '{"file_path":"/workspace/src/b.md","new_string":"gamma","old_string":"alpha","replace_all":true}',
+    );
+    // the timeout is milliseconds now; the display-only description is ignored when matching
+    const bash = calls.find((c) => c.toolKey === "Bash" && c.inputKey.includes("timeout"));
+    expect(bash?.inputKey).toBe(
+      '{"command":"mkdir -p /workspace/src && echo hello > /workspace/src/a.txt","timeout":20000}',
+    );
+  });
+
+  it("the baseline summary names the same current tools", () => {
+    const names = perRun.flatMap((snap) => runBaseline(snap).toolCalls.map((c) => c.name));
+    expect(names.length).toBeGreaterThan(0);
+    expect(
+      names.filter((n) => /^(sandbox_|skill_load|tool_search|read_tool_output)/.test(n)),
+    ).toEqual([]);
   });
 });
 
@@ -214,11 +279,11 @@ describe("改名后的路由与旧 agent 版本", () => {
     ).toEqual([{ kind: "connector", connectorId: id, tools: "all" }]);
 
     const convId = await createConv(req, orgId, agentId);
-    await postMessage(req, orgId, convId, 'tool:kb__search:{"q":"x"}');
+    await postMessage(req, orgId, convId, 'tool:mcp__kb__search:{"q":"x"}');
     await waitForTerminal(db, convId, 1, 20_000);
     const results = (await eventsOf(db, convId)).filter((e) => e.type === "tool_result");
     expect(results.map((e) => e.payload)).toMatchObject([
-      { toolKey: "kb__search", content: "hits for x", isError: false },
+      { toolKey: "mcp__kb__search", content: "hits for x", isError: false },
     ]);
   }, 60_000);
 
@@ -245,8 +310,72 @@ describe("改名后的路由与旧 agent 版本", () => {
       .get(ToolRegistry)
       .forAgent(orgId, base?.definition ?? { tools: [] });
     const keys = resolved.tools.map((t) => t.key);
-    expect(keys).toEqual(expect.arrayContaining(["fx_docs__search", "fx_priv__search"]));
+    expect(keys).toEqual(expect.arrayContaining(["mcp__fx_docs__search", "mcp__fx_priv__search"]));
     expect(JSON.stringify(resolved.unavailable)).not.toContain("undefined");
     expect(resolved.unavailable).toEqual([]);
+  }, 60_000);
+
+  it("a pre-rename (rc) agent version and eval case: old builtin names read as the new ones and resolve", async () => {
+    const created = await req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/agents`,
+      payload: {
+        definition: {
+          name: "Rc",
+          instructions: "Be helpful.",
+          model: { provider: "model-fake", model: "fake-1" },
+          tools: [{ kind: "builtin", name: "ToolSearch" }],
+        },
+        visibility: "org",
+      },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const agentId = (created.json() as { agent: { id: string } }).agent.id;
+    const stored = await db
+      .selectFrom("agent_versions")
+      .select("definition")
+      .where("agent_id", "=", agentId)
+      .executeTakeFirstOrThrow();
+    const rc = {
+      ...(stored.definition as Record<string, unknown>),
+      tools: [
+        { kind: "builtin", name: "tool_search" },
+        { kind: "builtin", name: "ask_user" },
+      ],
+      toolPolicies: { ask_user: "ask" },
+    };
+    await db
+      .updateTable("agent_versions")
+      .set({ definition: JSON.stringify(rc) })
+      .where("agent_id", "=", agentId)
+      .execute();
+
+    // the candidate agent version of an eval run
+    const candidate = await versionDefinition(db, agentId, 1);
+    expect(candidate?.tools).toEqual([
+      { kind: "builtin", name: "ToolSearch" },
+      { kind: "builtin", name: "AskUserQuestion" },
+    ]);
+    expect(candidate?.toolPolicies).toEqual({ AskUserQuestion: "ask" });
+    // an eval case whose snapshot recorded the rc definition
+    const snap = readSnapshot({
+      ...structuredClone(fixture.snapshot),
+      agentId,
+      agentVersion: 1,
+      definitions: { "1": rc },
+    });
+    const base = await caseBase(db, snap);
+    expect(base?.definition.tools).toEqual(candidate?.tools);
+    const resolved = await k.app
+      .get(ToolRegistry)
+      .forAgent(orgId, base?.definition ?? { tools: [] });
+    expect(resolved.tools.map((t) => t.key)).toContain("AskUserQuestion");
+    expect(resolved.unavailable).toEqual([]);
+
+    // and it runs: a plain message completes on the rc version
+    const convId = await createConv(req, orgId, agentId);
+    await postMessage(req, orgId, convId, "echo:hello");
+    const [end] = await waitForTerminal(db, convId, 1, 20_000);
+    expect(end?.type).toBe("run_finished");
   }, 60_000);
 });

@@ -6,7 +6,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 
 /**
- * 连接器 resources 的两个内核工具（brief：`<connectorSlug>__list_resources`、`<connectorSlug>__read_resource {uri}`）。
+ * 连接器 resources 的两个内核工具（brief：`mcp__<slug>__list_resources`、`mcp__<slug>__read_resource {uri}`）。
  *
  * 设计：安装 / 刷新连接器时，连接器会话带 `listResources` 方法即视为支持 resources（不额外调用，免得多一次外连
  * 和多一种失败），内核把这两个工具作为 `source = 'resources'` 的行写进 `connector_tools`（迁移 0013）。这样它们和

@@ -32,6 +32,7 @@ import { assistantIdemKey, modelCallIdemKey } from "../../src/runtime/model-call
 import type { Breaker } from "../../src/tools/breaker.js";
 import { notLoadedText, toolSearchTool } from "../../src/tools/builtins/tool-search.js";
 import { type ConnectorAuth, CredentialMissing } from "../../src/tools/credentials.js";
+import { legacyHint } from "../../src/tools/legacy-keys.js";
 import type { ToolOutputs } from "../../src/tools/outputs.js";
 import {
   type DecidePolicy,
@@ -111,7 +112,7 @@ function pluginTool(
 ): ResolvedTool {
   const spec = pluginSpec(name, schema);
   return {
-    key: `probe__${name}`,
+    key: `plugin__probe__${name}`,
     source: { kind: "plugin", plugin: "probe", name },
     spec,
     specHash: specHash(spec),
@@ -122,7 +123,7 @@ function pluginTool(
 function appTool(slug: string, connectorId: string, name: string): ResolvedTool {
   const spec = pluginSpec(name);
   return {
-    key: `${slug}__${name}`,
+    key: `mcp__${slug}__${name}`,
     source: { kind: "connector", connectorId, name },
     spec,
     specHash: specHash(spec),
@@ -188,7 +189,7 @@ let resolved: ResolvedTool[] = [];
 let unavailable: UnavailableTool[] = [];
 /** `tools: "all"` 连接器里未启用的工具（不提醒，只在被调用时给原因）。 */
 let hidden: UnavailableTool[] = [];
-/** forAgent 报告的 tool_search 是否生效。 */
+/** forAgent 报告的 ToolSearch 是否生效。 */
 let toolSearch = false;
 /** 内置工具的处理函数（名字 → 处理函数）。 */
 let builtinHandlers: Record<string, BuiltinHandler> = {};
@@ -206,7 +207,7 @@ function pipeline(): ToolPipeline {
       findConnector: (kind: string) => (kind === "test" ? testConnector : undefined),
       handler: (source) =>
         source.kind === "plugin"
-          ? handlers[`${source.plugin}__${source.name}`]
+          ? handlers[`plugin__${source.plugin}__${source.name}`]
           : source.kind === "builtin"
             ? builtinHandlers[source.name]
             : undefined,
@@ -283,38 +284,38 @@ beforeEach(async () => {
     name: "Docs",
   });
   handlers = {
-    probe__echo: async (input) => {
+    plugin__probe__echo: async (input) => {
       record("echo", input);
       return { content: [{ type: "text", text: `echo ${JSON.stringify(input)}` }] };
     },
-    probe__slow: async (input) => {
+    plugin__probe__slow: async (input) => {
       record("slow", input);
       return new Promise<ToolResult>(() => {}); // 不响应 signal 的处理函数
     },
-    probe__gated: async (input) => {
+    plugin__probe__gated: async (input) => {
       record("gated", input);
       return { content: [{ type: "text", text: "gated ran" }] };
     },
-    probe__banned: async (input) => {
+    plugin__probe__banned: async (input) => {
       record("banned", input);
       return { content: [{ type: "text", text: "banned ran" }] };
     },
-    probe__form: async (input) => {
+    plugin__probe__form: async (input) => {
       record("form", input);
       return {
         kind: "input_required",
         form: { title: "t", fields: [{ key: "a", label: "A", schema: { type: "string" } }] },
       };
     },
-    probe__big: async (input) => {
+    plugin__probe__big: async (input) => {
       record("big", input);
       return { content: [{ type: "text", text: "x".repeat(300) }] };
     },
-    probe__ctx: async (_input, ctx: ToolCallContext) => {
+    plugin__probe__ctx: async (_input, ctx: ToolCallContext) => {
       record("ctx", { ...ctx, signal: undefined });
       return { content: [{ type: "text", text: "ok" }] };
     },
-    probe__throws: async () => {
+    plugin__probe__throws: async () => {
       throw new Error("internal detail with token abc");
     },
   };
@@ -398,9 +399,9 @@ describe("validateInput", () => {
       required: ["text"],
       additionalProperties: false,
     });
-    expect(validateInput("probe__echo", spec, { text: "hi" })).toBeNull();
-    const msg = validateInput("probe__echo", spec, { n: 0, mode: "c", extra: 1 }) as string;
-    expect(msg.startsWith("Invalid arguments for probe__echo: ")).toBe(true);
+    expect(validateInput("plugin__probe__echo", spec, { text: "hi" })).toBeNull();
+    const msg = validateInput("plugin__probe__echo", spec, { n: 0, mode: "c", extra: 1 }) as string;
+    expect(msg.startsWith("Invalid arguments for plugin__probe__echo: ")).toBe(true);
     expect(msg).toContain("must have required property 'text'");
     expect(msg).toContain("/n must be >= 1");
     expect(msg).toContain('/mode must be equal to one of the allowed values ["a","b"]');
@@ -445,13 +446,13 @@ describe("validateInput", () => {
       const w = warns();
       const opts = { untrusted: true, log: w.log };
       expect(
-        validateInput("app__x", spec, { pattern: "p", q: "b", mail: "nope" }, opts),
+        validateInput("mcp__app__x", spec, { pattern: "p", q: "b", mail: "nope" }, opts),
       ).toBeNull();
-      expect(validateInput("app__x", spec, { q: "b" }, opts)).toContain(
+      expect(validateInput("mcp__app__x", spec, { q: "b" }, opts)).toContain(
         "must have required property 'pattern'",
       );
       // 受信任（插件 / 内置）的 schema 照常校验 pattern
-      expect(validateInput("p__x", spec, { pattern: "p", q: "b" })).toContain(
+      expect(validateInput("mcp__p__x", spec, { pattern: "p", q: "b" })).toContain(
         "/q must match pattern",
       );
     });
@@ -463,8 +464,8 @@ describe("validateInput", () => {
         additionalProperties: false,
       });
       const opts = { untrusted: true };
-      expect(validateInput("app__x", spec, { x_a: "s" }, opts)).toBeNull();
-      expect(validateInput("app__x", spec, { x_a: 1 }, opts)).toContain("/x_a must be string");
+      expect(validateInput("mcp__app__x", spec, { x_a: "s" }, opts)).toBeNull();
+      expect(validateInput("mcp__app__x", spec, { x_a: 1 }, opts)).toContain("/x_a must be string");
     });
 
     describe("剥离只在正向位置放宽：否定 / 条件 / unevaluated* 位置被剥 → 跳过校验并按缓存键 warn 一次", () => {
@@ -548,12 +549,12 @@ describe("validateInput", () => {
           const w = warns();
           const opts = { untrusted: true, log: w.log };
           // 即便参数明显不合 schema 的其余约束也不拦（整个 schema 不校验）
-          expect(validateInput(`app__neg_${name}`, spec, input, opts)).toBeNull();
-          expect(validateInput(`app__neg_${name}`, spec, 42, opts)).toBeNull();
+          expect(validateInput(`mcp__app__neg_${name}`, spec, input, opts)).toBeNull();
+          expect(validateInput(`mcp__app__neg_${name}`, spec, 42, opts)).toBeNull();
           expect(w.lines).toEqual([
             {
               msg: "tool input schema not validated",
-              meta: { toolKey: `app__neg_${name}`, reason },
+              meta: { toolKey: `mcp__app__neg_${name}`, reason },
             },
           ]);
         });
@@ -569,8 +570,10 @@ describe("validateInput", () => {
         });
         const w = warns();
         const opts = { untrusted: true, log: w.log };
-        expect(validateInput("app__pos", spec, { a: "s", b: "zzz" }, opts)).toBeNull();
-        expect(validateInput("app__pos", spec, { a: 1 }, opts)).toContain("/a must NOT be valid");
+        expect(validateInput("mcp__app__pos", spec, { a: "s", b: "zzz" }, opts)).toBeNull();
+        expect(validateInput("mcp__app__pos", spec, { a: 1 }, opts)).toContain(
+          "/a must NOT be valid",
+        );
         expect(w.lines).toEqual([]);
       });
     });
@@ -586,17 +589,17 @@ describe("validateInput", () => {
       const deepSpec = pluginSpec("deep", deep);
       const w = warns();
       const opts = { untrusted: true, log: w.log };
-      expect(validateInput("app__big", big, { a: 1 }, opts)).toBeNull();
-      expect(validateInput("app__big", big, { a: 2 }, opts)).toBeNull();
-      expect(validateInput("app__deep", deepSpec, { n: 1 }, opts)).toBeNull();
+      expect(validateInput("mcp__app__big", big, { a: 1 }, opts)).toBeNull();
+      expect(validateInput("mcp__app__big", big, { a: 2 }, opts)).toBeNull();
+      expect(validateInput("mcp__app__deep", deepSpec, { n: 1 }, opts)).toBeNull();
       expect(w.lines).toEqual([
         {
           msg: "tool input schema not validated",
-          meta: { toolKey: "app__big", reason: "schema larger than 65536 bytes" },
+          meta: { toolKey: "mcp__app__big", reason: "schema larger than 65536 bytes" },
         },
         {
           msg: "tool input schema not validated",
-          meta: { toolKey: "app__deep", reason: "schema nested deeper than 32 levels" },
+          meta: { toolKey: "mcp__app__deep", reason: "schema nested deeper than 32 levels" },
         },
       ]);
     });
@@ -604,11 +607,11 @@ describe("validateInput", () => {
     it("schema 无法编译 → 不拦截，按缓存键只 warn 一次", () => {
       const spec = pluginSpec("bad", { type: "object", properties: { a: { $ref: "#/nope" } } });
       const w = warns();
-      expect(validateInput("p__bad", spec, { a: 1 }, { log: w.log })).toBeNull();
-      expect(validateInput("p__bad", spec, { a: 1 }, { log: w.log })).toBeNull();
+      expect(validateInput("mcp__p__bad", spec, { a: 1 }, { log: w.log })).toBeNull();
+      expect(validateInput("mcp__p__bad", spec, { a: 1 }, { log: w.log })).toBeNull();
       expect(w.lines).toHaveLength(1);
       expect(w.lines[0]?.msg).toBe("tool input schema failed to compile; validation skipped");
-      expect(w.lines[0]?.meta).toMatchObject({ toolKey: "p__bad" });
+      expect(w.lines[0]?.meta).toMatchObject({ toolKey: "mcp__p__bad" });
     });
 
     it("不同工具的 schema 用同一个 $id 不互相影响", () => {
@@ -622,24 +625,26 @@ describe("validateInput", () => {
         type: "object",
         required: ["b"],
       });
-      expect(validateInput("p__a", a, {})).toContain("must have required property 'a'");
-      expect(validateInput("p__b", b, {})).toContain("must have required property 'b'");
+      expect(validateInput("mcp__p__a", a, {})).toContain("must have required property 'a'");
+      expect(validateInput("mcp__p__b", b, {})).toContain("must have required property 'b'");
     });
   });
 });
 
 describe("ToolPipeline.runStep", () => {
   it("合法调用：先写 tool_call_started 再执行，写 tool_result 与审计（不含参数值）", async () => {
-    const evs = await runCalls([{ id: "c1", name: "probe__echo", input: { text: "secret-arg" } }]);
+    const evs = await runCalls([
+      { id: "c1", name: "plugin__probe__echo", input: { text: "secret-arg" } },
+    ]);
     const echo = resolved[0] as ResolvedTool;
     expect(startedOf(evs)).toEqual([
-      { step: 1, callId: "c1", toolKey: "probe__echo", specHash: echo.specHash },
+      { step: 1, callId: "c1", toolKey: "plugin__probe__echo", specHash: echo.specHash },
     ]);
     expect(resultsOf(evs)).toEqual([
       {
         step: 1,
         callId: "c1",
-        toolKey: "probe__echo",
+        toolKey: "plugin__probe__echo",
         content: 'echo {"text":"secret-arg"}',
         isError: false,
         contentTypes: ["text"],
@@ -656,7 +661,7 @@ describe("ToolPipeline.runStep", () => {
     });
     // R6 审计链：谁（actor = 发起人）→ 经哪个 agent（id + 版本）→ 做了什么（工具、调用）→ 凭什么放行
     expect(audits[0]?.detail).toEqual({
-      toolKey: "probe__echo",
+      toolKey: "plugin__probe__echo",
       isError: false,
       durationMs: expect.any(Number),
       agentId: seed.agentId,
@@ -671,7 +676,7 @@ describe("ToolPipeline.runStep", () => {
 
   it("审计链：审批放行记审批 id / 批准人 / 范围；记住的授权记 grant；连接器工具记 connectorId", async () => {
     await insertRun();
-    await assistant([{ id: "c1", name: "probe__gated", input: { k: "secret-arg" } }]);
+    await assistant([{ id: "c1", name: "plugin__probe__gated", input: { k: "secret-arg" } }]);
     const first = await pipeline().runStep(stepCtx());
     const approvalId = first.kind === "suspended" ? first.waitingFor.id : "";
     await sql`UPDATE capybara.approvals SET status = 'approved', scope = 'once',
@@ -679,15 +684,15 @@ describe("ToolPipeline.runStep", () => {
     expect(await pipeline().runStep(stepCtx())).toEqual({ kind: "done" });
 
     // 记住的授权（本会话）放行
-    const gated = resolved.find((t) => t.key === "probe__gated") as ResolvedTool;
+    const gated = resolved.find((t) => t.key === "plugin__probe__gated") as ResolvedTool;
     await sql`INSERT INTO capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash)
-      VALUES (${seed.conversationId}, 'probe__gated', ${gated.specHash})`.execute(raw);
+      VALUES (${seed.conversationId}, 'plugin__probe__gated', ${gated.specHash})`.execute(raw);
     const firstRun = runId;
     runId = randomUUID();
-    await runCalls([{ id: "c2", name: "probe__gated", input: {} }]);
+    await runCalls([{ id: "c2", name: "plugin__probe__gated", input: {} }]);
     const secondRun = runId;
     runId = randomUUID();
-    await runCalls([{ id: "c3", name: "docs__read", input: {} }]);
+    await runCalls([{ id: "c3", name: "mcp__docs__read", input: {} }]);
 
     const audits = await db
       .selectFrom("audit_events")
@@ -707,7 +712,7 @@ describe("ToolPipeline.runStep", () => {
         actor_account_id: seed.accountId,
         detail: {
           ...chain,
-          toolKey: "probe__gated",
+          toolKey: "plugin__probe__gated",
           runId: firstRun,
           callId: "c1",
           approvalId,
@@ -719,7 +724,7 @@ describe("ToolPipeline.runStep", () => {
         actor_account_id: seed.accountId,
         detail: {
           ...chain,
-          toolKey: "probe__gated",
+          toolKey: "plugin__probe__gated",
           runId: secondRun,
           callId: "c2",
           grant: "session",
@@ -729,7 +734,7 @@ describe("ToolPipeline.runStep", () => {
         actor_account_id: seed.accountId,
         detail: {
           ...chain,
-          toolKey: "docs__read",
+          toolKey: "mcp__docs__read",
           runId,
           callId: "c3",
           connectorId,
@@ -741,7 +746,7 @@ describe("ToolPipeline.runStep", () => {
   });
 
   it("处理函数拿到 orgId / accountId（对话发起人）/ agentId / conversationId / callId", async () => {
-    await runCalls([{ id: "c1", name: "probe__ctx", input: {} }]);
+    await runCalls([{ id: "c1", name: "plugin__probe__ctx", input: {} }]);
     expect(handlerCalls.ctx?.[0]).toMatchObject({
       orgId: seed.orgId,
       accountId: seed.accountId,
@@ -752,44 +757,46 @@ describe("ToolPipeline.runStep", () => {
   });
 
   it("参数校验失败：不执行、不写 tool_call_started，结果含路径与 schema", async () => {
-    const evs = await runCalls([{ id: "c1", name: "probe__echo", input: { text: 1 } }]);
+    const evs = await runCalls([{ id: "c1", name: "plugin__probe__echo", input: { text: 1 } }]);
     expect(handlerCalls.echo).toBeUndefined();
     expect(startedOf(evs)).toEqual([]);
     const [r] = resultsOf(evs);
     expect(r?.isError).toBe(true);
-    expect(r?.content).toContain("Invalid arguments for probe__echo: /text must be string");
+    expect(r?.content).toContain("Invalid arguments for plugin__probe__echo: /text must be string");
     expect(r?.content).toContain(`Input schema: ${JSON.stringify(ECHO_SCHEMA)}`);
   });
 
-  it("未知工具：列出可用工具；启用 tool_search 时提示用它加载", async () => {
+  it("未知工具：列出可用工具；启用 ToolSearch 时提示用它加载", async () => {
     resolved = [pluginTool("echo", "allow", ECHO_SCHEMA), pluginTool("big")];
     let evs = await runCalls([{ id: "c1", name: "nope", input: {} }]);
     expect(resultsOf(evs)[0]).toMatchObject({
       toolKey: "nope",
       isError: true,
-      content: 'Unknown tool "nope". Available tools: probe__big, probe__echo.',
+      content: 'Unknown tool "nope". Available tools: plugin__probe__big, plugin__probe__echo.',
     });
-    resolved = [...resolved, { ...pluginTool("x"), key: "tool_search" }];
+    resolved = [...resolved, { ...pluginTool("x"), key: "ToolSearch" }];
     runId = randomUUID();
     evs = await runCalls([{ id: "c2", name: "nope", input: {} }]);
     expect(resultsOf(evs)[1]?.content).toBe(
-      'Unknown tool "nope". Available tools: probe__big, probe__echo, tool_search. Use tool_search to load other tools.',
+      'Unknown tool "nope". Available tools: ToolSearch, plugin__probe__big, plugin__probe__echo. Use ToolSearch to load other tools.',
     );
   });
 
   it("本步不可用的工具：说明原因而不是「未知」", async () => {
-    unavailable = [{ ref: "docs__write", reason: "Tool is disabled" }];
-    const evs = await runCalls([{ id: "c1", name: "docs__write", input: {} }]);
-    expect(resultsOf(evs)[0]?.content).toBe('Tool "docs__write" is unavailable: Tool is disabled.');
+    unavailable = [{ ref: "mcp__docs__write", reason: "Tool is disabled" }];
+    const evs = await runCalls([{ id: "c1", name: "mcp__docs__write", input: {} }]);
+    expect(resultsOf(evs)[0]?.content).toBe(
+      'Tool "mcp__docs__write" is unavailable: Tool is disabled.',
+    );
   });
 
   it("tools: all 的连接器里待复核 / 停用的工具（hidden）：被调用时给事实原因而不是「未知」", async () => {
-    hidden = [{ ref: "docs__drop", reason: "Tool is pending review" }];
-    const evs = await runCalls([{ id: "c1", name: "docs__drop", input: {} }]);
+    hidden = [{ ref: "mcp__docs__drop", reason: "Tool is pending review" }];
+    const evs = await runCalls([{ id: "c1", name: "mcp__docs__drop", input: {} }]);
     expect(resultsOf(evs)[0]).toMatchObject({
-      toolKey: "docs__drop",
+      toolKey: "mcp__docs__drop",
       isError: true,
-      content: 'Tool "docs__drop" is unavailable: Tool is pending review.',
+      content: 'Tool "mcp__docs__drop" is unavailable: Tool is pending review.',
     });
   });
 
@@ -801,12 +808,14 @@ describe("ToolPipeline.runStep", () => {
       content: "FULL",
     });
     let evs = await runCalls([
-      { id: "c1", name: "probe__echo", input: { text: { $output: out.id } } },
+      { id: "c1", name: "plugin__probe__echo", input: { text: { $output: out.id } } },
     ]);
     expect(handlerCalls.echo).toEqual([{ text: "FULL" }]);
     expect(resultsOf(evs)[0]?.isError).toBe(false);
     runId = randomUUID();
-    evs = await runCalls([{ id: "c2", name: "probe__echo", input: { text: { $output: "gone" } } }]);
+    evs = await runCalls([
+      { id: "c2", name: "plugin__probe__echo", input: { text: { $output: "gone" } } },
+    ]);
     expect(handlerCalls.echo).toHaveLength(1);
     expect(resultsOf(evs)[1]?.content).toMatch(/^Output gone not found or expired/);
     // 同组织别的会话的存档不能引用
@@ -821,7 +830,7 @@ describe("ToolPipeline.runStep", () => {
     });
     runId = randomUUID();
     evs = await runCalls([
-      { id: "c3", name: "probe__echo", input: { text: { $output: foreign.id } } },
+      { id: "c3", name: "plugin__probe__echo", input: { text: { $output: foreign.id } } },
     ]);
     expect(handlerCalls.echo).toHaveLength(1);
     expect(resultsOf(evs)[2]?.content).toMatch(/not found or expired/);
@@ -830,9 +839,9 @@ describe("ToolPipeline.runStep", () => {
   it("策略：deny → 拒绝说明；ask → 建审批并暂停（之后的调用留到续跑）；decidePolicy 可注入", async () => {
     await insertRun();
     await assistant([
-      { id: "c1", name: "probe__banned", input: {} },
-      { id: "c2", name: "probe__gated", input: { a: 1 } },
-      { id: "c3", name: "probe__echo", input: { text: "later" } },
+      { id: "c1", name: "plugin__probe__banned", input: {} },
+      { id: "c2", name: "plugin__probe__gated", input: { a: 1 } },
+      { id: "c3", name: "plugin__probe__echo", input: { text: "later" } },
     ]);
     const out = await pipeline().runStep(stepCtx());
     let evs = await eventsOf(db, seed.conversationId);
@@ -842,10 +851,14 @@ describe("ToolPipeline.runStep", () => {
     expect(rest).toEqual([]);
     expect(deny).toMatchObject({
       isError: true,
-      content: "Tool probe__banned is denied by policy.",
+      content: "Tool plugin__probe__banned is denied by policy.",
     });
     const requested = evs.find((e) => e.type === "approval_requested");
-    expect(requested?.payload).toMatchObject({ step: 1, callId: "c2", toolKey: "probe__gated" });
+    expect(requested?.payload).toMatchObject({
+      step: 1,
+      callId: "c2",
+      toolKey: "plugin__probe__gated",
+    });
     const approvalId = (requested?.payload as { approvalId: string } | undefined)?.approvalId;
     expect(out).toEqual({
       kind: "suspended",
@@ -866,7 +879,7 @@ describe("ToolPipeline.runStep", () => {
     expect(await pipeline().runStep(stepCtx())).toEqual({ kind: "done" });
     evs = await eventsOf(db, seed.conversationId);
     expect(resultsOf(evs).map((r) => [r.callId, r.content])).toEqual([
-      ["c1", "Tool probe__banned is denied by policy."],
+      ["c1", "Tool plugin__probe__banned is denied by policy."],
       ["c2", "The user denied this tool call."],
       ["c3", 'echo {"text":"later"}'],
     ]);
@@ -878,8 +891,8 @@ describe("ToolPipeline.runStep", () => {
       return "allow";
     };
     runId = randomUUID();
-    evs = await runCalls([{ id: "c3", name: "probe__gated", input: {} }]);
-    expect(seen).toEqual([`probe__gated|Helper|${seed.accountId}|${runId}`]);
+    evs = await runCalls([{ id: "c3", name: "plugin__probe__gated", input: {} }]);
+    expect(seen).toEqual([`plugin__probe__gated|Helper|${seed.accountId}|${runId}`]);
     expect(handlerCalls.gated).toHaveLength(1);
 
     // 默认判定为执行时实时读取（createDecidePolicy）：管理员把连接器工具改为 deny 立即生效
@@ -888,17 +901,17 @@ describe("ToolPipeline.runStep", () => {
       raw,
     );
     runId = randomUUID();
-    evs = await runCalls([{ id: "c4", name: "docs__read", input: {} }]);
+    evs = await runCalls([{ id: "c4", name: "mcp__docs__read", input: {} }]);
     expect(conn.calls).toBe(0);
     expect(resultsOf(evs).find((r) => r.callId === "c4")).toMatchObject({
       isError: true,
-      content: "Tool docs__read is denied by policy.",
+      content: "Tool mcp__docs__read is denied by policy.",
     });
   });
 
   it("approval_requested names the asking policy; a deny reason reaches the model in the result", async () => {
     await insertRun();
-    await assistant([{ id: "c1", name: "probe__gated", input: {} }]);
+    await assistant([{ id: "c1", name: "plugin__probe__gated", input: {} }]);
     const first = await pipeline().runStep(stepCtx());
     const id = first.kind === "suspended" ? first.waitingFor.id : "";
     let evs = await eventsOf(db, seed.conversationId);
@@ -921,7 +934,7 @@ describe("ToolPipeline.runStep", () => {
 
   it("批准后等待期间工具定义变了：不执行，按新定义重新审批（attempt 2）并继续等待；再批准后执行", async () => {
     await insertRun();
-    await assistant([{ id: "c1", name: "probe__gated", input: {} }]);
+    await assistant([{ id: "c1", name: "plugin__probe__gated", input: {} }]);
     const first = await pipeline().runStep(stepCtx());
     expect(first.kind).toBe("suspended");
     const id1 = first.kind === "suspended" ? first.waitingFor.id : "";
@@ -931,7 +944,7 @@ describe("ToolPipeline.runStep", () => {
       type: "object",
       properties: { x: { type: "string" } },
     });
-    resolved = resolved.map((t) => (t.key === "probe__gated" ? changed : t));
+    resolved = resolved.map((t) => (t.key === "plugin__probe__gated" ? changed : t));
     const second = await pipeline().runStep(stepCtx());
     expect(handlerCalls.gated).toBeUndefined();
     expect(second.kind).toBe("suspended");
@@ -953,7 +966,7 @@ describe("ToolPipeline.runStep", () => {
 
   it("审批超时说明的小时数按该审批的等待时长（创建到到期）计算，不读当前配置", async () => {
     await insertRun();
-    await assistant([{ id: "c1", name: "probe__gated", input: {} }]);
+    await assistant([{ id: "c1", name: "plugin__probe__gated", input: {} }]);
     const first = await pipeline().runStep(stepCtx());
     const id = first.kind === "suspended" ? first.waitingFor.id : "";
     await sql`UPDATE capybara.approvals SET status = 'expired',
@@ -967,7 +980,7 @@ describe("ToolPipeline.runStep", () => {
 
   it("处理函数返回 input_required → 建输入请求（写 question_asked）并暂停；已写 tool_call_started、无结果", async () => {
     await insertRun();
-    await assistant([{ id: "c1", name: "probe__form", input: {} }]);
+    await assistant([{ id: "c1", name: "plugin__probe__form", input: {} }]);
     const out = await pipeline().runStep(stepCtx());
     const evs = await eventsOf(db, seed.conversationId);
     expect(resultsOf(evs)).toEqual([]);
@@ -987,23 +1000,23 @@ describe("ToolPipeline.runStep", () => {
   });
 
   it("处理函数抛出非 ToolError：只给模型错误类名，不回显内部消息", async () => {
-    const evs = await runCalls([{ id: "c1", name: "probe__throws", input: {} }]);
+    const evs = await runCalls([{ id: "c1", name: "plugin__probe__throws", input: {} }]);
     const r = resultsOf(evs)[0];
     expect(r?.isError).toBe(true);
-    expect(r?.content).toContain("Tool probe__throws failed (Error)");
+    expect(r?.content).toContain("Tool plugin__probe__throws failed (Error)");
     expect(r?.content).not.toContain("abc");
   });
 
   it("超时：不响应 signal 的插件工具也按 tools.timeoutMs 结束，给可执行的错误", async () => {
     toolsCfg = { timeoutMs: 150 };
     const t0 = Date.now();
-    const evs = await runCalls([{ id: "c1", name: "probe__slow", input: {} }]);
-    // probe__slow never settles; 4 s leaves room for CI load.
+    const evs = await runCalls([{ id: "c1", name: "plugin__probe__slow", input: {} }]);
+    // plugin__probe__slow never settles; 4 s leaves room for CI load.
     expect(Date.now() - t0).toBeLessThan(4000);
     expect(resultsOf(evs)[0]).toMatchObject({
       isError: true,
       content:
-        "Tool probe__slow timed out after 0.15s. The operation may or may not have completed; verify before retrying.",
+        "Tool plugin__probe__slow timed out after 0.15s. The operation may or may not have completed; verify before retrying.",
     });
   });
 
@@ -1013,8 +1026,8 @@ describe("ToolPipeline.runStep", () => {
       new Promise((_, reject) => {
         signal.addEventListener("abort", () => reject(new Error("aborted by signal")));
       });
-    const evs = await runCalls([{ id: "c1", name: "docs__read", input: {} }]);
-    expect(resultsOf(evs)[0]?.content).toMatch(/^Tool docs__read timed out after 0.15s/);
+    const evs = await runCalls([{ id: "c1", name: "mcp__docs__read", input: {} }]);
+    expect(resultsOf(evs)[0]?.content).toMatch(/^Tool mcp__docs__read timed out after 0.15s/);
     expect(conn.signals[0]?.aborted).toBe(true);
     expect(conn).toMatchObject({ opened: 1, closed: 1 });
   });
@@ -1024,20 +1037,20 @@ describe("ToolPipeline.runStep", () => {
       lastOpen?.onToolsChanged?.();
       return { content: [{ type: "text", text: `called ${name}` }] };
     };
-    const evs = await runCalls([{ id: "c1", name: "docs__read", input: {} }]);
+    const evs = await runCalls([{ id: "c1", name: "mcp__docs__read", input: {} }]);
     expect(resultsOf(evs).map((r) => r.content)).toEqual(["called read"]);
     expect(toolsChanged).toEqual([[seed.orgId, connectorId]]);
   });
 
   it("连接器工具调用把已复核的定义（connector_tools.spec）作为 ctx.spec 传给连接器", async () => {
-    await runCalls([{ id: "c1", name: "docs__read", input: {} }]);
+    await runCalls([{ id: "c1", name: "mcp__docs__read", input: {} }]);
     expect(conn.ctxs).toEqual([{ spec: pluginSpec("read") }]);
   });
 
   it("连接器工具正常调用：每次调用打开并关闭会话", async () => {
     const evs = await runCalls([
-      { id: "c1", name: "docs__read", input: {} },
-      { id: "c2", name: "docs__read", input: {} },
+      { id: "c1", name: "mcp__docs__read", input: {} },
+      { id: "c2", name: "mcp__docs__read", input: {} },
     ]);
     expect(resultsOf(evs).map((r) => r.content)).toEqual(["called read", "called read"]);
     expect(conn).toMatchObject({ opened: 2, closed: 2, calls: 2 });
@@ -1049,14 +1062,14 @@ describe("ToolPipeline.runStep", () => {
     };
     const calls = Array.from({ length: 6 }, (_, i) => ({
       id: `c${i}`,
-      name: "docs__read",
+      name: "mcp__docs__read",
       input: {},
     }));
     const evs = await runCalls(calls);
     expect(conn.calls).toBe(5);
     const rs = resultsOf(evs);
     expect(
-      rs.slice(0, 5).every((r) => r.isError && r.content.startsWith("Tool docs__read failed")),
+      rs.slice(0, 5).every((r) => r.isError && r.content.startsWith("Tool mcp__docs__read failed")),
     ).toBe(true);
     expect(rs[5]).toMatchObject({
       isError: true,
@@ -1070,7 +1083,7 @@ describe("ToolPipeline.runStep", () => {
     };
     const calls = Array.from({ length: 6 }, (_, i) => ({
       id: `c${i}`,
-      name: "docs__read",
+      name: "mcp__docs__read",
       input: {},
     }));
     const evs = await runCalls(calls);
@@ -1087,7 +1100,7 @@ describe("ToolPipeline.runStep", () => {
     };
     const calls = Array.from({ length: 6 }, (_, i) => ({
       id: `c${i}`,
-      name: "docs__read",
+      name: "mcp__docs__read",
       input: {},
     }));
     const evs = await runCalls(calls);
@@ -1102,7 +1115,7 @@ describe("ToolPipeline.runStep", () => {
     connCall = () => new Promise<ToolResult>(() => {});
     const calls = Array.from({ length: 6 }, (_, i) => ({
       id: `c${i}`,
-      name: "docs__read",
+      name: "mcp__docs__read",
       input: {},
     }));
     const evs = await runCalls(calls);
@@ -1116,7 +1129,7 @@ describe("ToolPipeline.runStep", () => {
     connCall = async () => ({ content: [{ type: "text", text: "bad input" }], isError: true });
     const calls = Array.from({ length: 6 }, (_, i) => ({
       id: `c${i}`,
-      name: "docs__read",
+      name: "mcp__docs__read",
       input: {},
     }));
     const evs = await runCalls(calls);
@@ -1132,7 +1145,7 @@ describe("ToolPipeline.runStep", () => {
     });
     await seedAppTool(priv, "read");
     resolved = [appTool("priv", priv, "read")];
-    const evs = await runCalls([{ id: "c1", name: "priv__read", input: {} }]);
+    const evs = await runCalls([{ id: "c1", name: "mcp__priv__read", input: {} }]);
     const cr = evs.filter((e) => e.type === "connection_required");
     expect(cr.map((e) => e.payload)).toEqual([
       { step: 1, callId: "c1", appId: priv, appName: "Private Docs" },
@@ -1158,7 +1171,7 @@ describe("ToolPipeline.runStep", () => {
     await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
       VALUES (${parentConv}, ${seed.orgId}, ${seed.agentId}, ${seed.accountId})`.execute(raw);
     const parent = { conversationId: parentConv, runId: randomUUID(), callId: "pc1" };
-    const evs = await runCalls([{ id: "c1", name: "priv__read", input: {} }], { parent });
+    const evs = await runCalls([{ id: "c1", name: "mcp__priv__read", input: {} }], { parent });
     expect(evs.filter((e) => e.type === "connection_required")).toHaveLength(1);
     const mirrored = (await eventsOf(db, parentConv)).filter((e) => e.type === "subagent_waiting");
     expect(mirrored.map((e) => ({ runId: e.runId, payload: e.payload }))).toEqual([
@@ -1168,7 +1181,7 @@ describe("ToolPipeline.runStep", () => {
           subagentId: seed.conversationId,
           childRunId: runId,
           kind: "connect",
-          toolKey: "priv__read",
+          toolKey: "mcp__priv__read",
         },
       },
     ]);
@@ -1182,7 +1195,7 @@ describe("ToolPipeline.runStep", () => {
     });
     await seedAppTool(orgApp, "read");
     resolved = [appTool("orgc", orgApp, "read")];
-    const evs = await runCalls([{ id: "c1", name: "orgc__read", input: {} }]);
+    const evs = await runCalls([{ id: "c1", name: "mcp__orgc__read", input: {} }]);
     expect(evs.some((e) => e.type === "connection_required")).toBe(false);
     expect(resultsOf(evs)[0]?.content).toBe(
       "Org Docs has no organization credential configured; ask an organization admin to set it up.",
@@ -1191,7 +1204,7 @@ describe("ToolPipeline.runStep", () => {
 
   it("超大结果转存：tool_result 只含预览与存档 id", async () => {
     toolsCfg = { outputSpillChars: 100, outputPreviewChars: 10 };
-    const evs = await runCalls([{ id: "c1", name: "probe__big", input: {} }]);
+    const evs = await runCalls([{ id: "c1", name: "plugin__probe__big", input: {} }]);
     const r = resultsOf(evs)[0];
     expect(r?.outputId).toBeDefined();
     expect(
@@ -1217,9 +1230,9 @@ describe("ToolPipeline.runStep", () => {
 
   it("一步多个调用按顺序处理；已有结果的跳过，有开始无结果的记为结果未知且不执行", async () => {
     await assistant([
-      { id: "c1", name: "probe__echo", input: { text: "1" } },
-      { id: "c2", name: "probe__echo", input: { text: "2" } },
-      { id: "c3", name: "probe__echo", input: { text: "3" } },
+      { id: "c1", name: "plugin__probe__echo", input: { text: "1" } },
+      { id: "c2", name: "plugin__probe__echo", input: { text: "2" } },
+      { id: "c3", name: "plugin__probe__echo", input: { text: "3" } },
     ]);
     // c1 已完成、c2 已开始（进程在执行中崩溃）
     await eventLog.append(seed.conversationId, [
@@ -1227,19 +1240,25 @@ describe("ToolPipeline.runStep", () => {
         type: "tool_call_started",
         runId,
         idemKey: `tool_started:${runId}:c1`,
-        payload: { step: 1, callId: "c1", toolKey: "probe__echo", specHash: "h" },
+        payload: { step: 1, callId: "c1", toolKey: "plugin__probe__echo", specHash: "h" },
       },
       {
         type: "tool_result",
         runId,
         idemKey: `tool_result:${runId}:c1`,
-        payload: { step: 1, callId: "c1", toolKey: "probe__echo", content: "done", isError: false },
+        payload: {
+          step: 1,
+          callId: "c1",
+          toolKey: "plugin__probe__echo",
+          content: "done",
+          isError: false,
+        },
       },
       {
         type: "tool_call_started",
         runId,
         idemKey: `tool_started:${runId}:c2`,
-        payload: { step: 1, callId: "c2", toolKey: "probe__echo", specHash: "h" },
+        payload: { step: 1, callId: "c2", toolKey: "plugin__probe__echo", specHash: "h" },
       },
     ]);
     await pipeline().runStep(stepCtx());
@@ -1268,11 +1287,11 @@ describe("ToolPipeline.runStep", () => {
       runId,
     };
     expect(audits.map((a) => a.detail)).toEqual([
-      { ...chain, callId: "c2", toolKey: "probe__echo", isError: true, durationMs: null },
+      { ...chain, callId: "c2", toolKey: "plugin__probe__echo", isError: true, durationMs: null },
       {
         ...chain,
         callId: "c3",
-        toolKey: "probe__echo",
+        toolKey: "plugin__probe__echo",
         isError: false,
         durationMs: expect.any(Number),
         policy: "allow",
@@ -1285,8 +1304,8 @@ describe("ToolPipeline.runStep", () => {
     ac.abort();
     const evs = await runCalls(
       [
-        { id: "c1", name: "probe__echo", input: { text: "1" } },
-        { id: "c2", name: "docs__read", input: {} },
+        { id: "c1", name: "plugin__probe__echo", input: { text: "1" } },
+        { id: "c2", name: "mcp__docs__read", input: {} },
       ],
       { signal: ac.signal },
     );
@@ -1305,7 +1324,7 @@ describe("ToolPipeline.runStep", () => {
         signal.addEventListener("abort", () => reject(new Error("aborted")));
         setTimeout(() => ac.abort(), 50);
       });
-    const evs = await runCalls([{ id: "c1", name: "docs__read", input: {} }], {
+    const evs = await runCalls([{ id: "c1", name: "mcp__docs__read", input: {} }], {
       signal: ac.signal,
     });
     expect(resultsOf(evs)[0]).toMatchObject({ isError: true, content: RUN_STOPPED_DURING_TEXT });
@@ -1322,7 +1341,7 @@ describe("ToolPipeline.runStep", () => {
         throw new Error("simulated crash");
       }
     };
-    await assistant([{ id: "c1", name: "probe__echo", input: { text: "1" } }]);
+    await assistant([{ id: "c1", name: "plugin__probe__echo", input: { text: "1" } }]);
     await expect(pipeline().runStep(stepCtx())).rejects.toThrow("simulated crash");
     await pipeline().runStep(stepCtx());
     const evs = await eventsOf(db, seed.conversationId);
@@ -1331,17 +1350,17 @@ describe("ToolPipeline.runStep", () => {
   });
 });
 
-describe("tool_search 模式", () => {
+describe("ToolSearch 模式", () => {
   const search = toolSearchTool();
   const searchTool: ResolvedTool = {
-    key: "tool_search",
-    source: { kind: "builtin", name: "tool_search" },
+    key: "ToolSearch",
+    source: { kind: "builtin", name: "ToolSearch" },
     spec: search.spec,
     specHash: specHash(search.spec),
     defaultPolicy: "allow",
   };
 
-  /** 本步的 model_call（模型实际收到的工具；catalog 非空 = 该请求处于 tool_search 模式）。 */
+  /** 本步的 model_call（模型实际收到的工具；catalog 非空 = 该请求处于 ToolSearch 模式）。 */
   async function modelCall(keys: string[], catalog: boolean, attempt = 1): Promise<void> {
     const sent = resolved.filter((t) => keys.includes(t.key));
     await eventLog.append(seed.conversationId, [
@@ -1376,17 +1395,17 @@ describe("tool_search 模式", () => {
   beforeEach(() => {
     toolSearch = true;
     resolved = [...resolved, searchTool];
-    builtinHandlers = { tool_search: search.run };
+    builtinHandlers = { ToolSearch: search.run };
   });
 
   it("目录里有、但本步请求没加载的工具 → 明确错误（不自动加载），处理函数不被调用", async () => {
-    await modelCall(["tool_search"], true);
-    const evs = await runCalls([{ id: "c1", name: "probe__echo", input: { text: "x" } }]);
+    await modelCall(["ToolSearch"], true);
+    const evs = await runCalls([{ id: "c1", name: "plugin__probe__echo", input: { text: "x" } }]);
     expect(resultsOf(evs)).toEqual([
       expect.objectContaining({
-        toolKey: "probe__echo",
+        toolKey: "plugin__probe__echo",
         isError: true,
-        content: notLoadedText("probe__echo"),
+        content: notLoadedText("plugin__probe__echo"),
       }),
     ]);
     expect(handlerCalls.echo).toBeUndefined();
@@ -1394,46 +1413,46 @@ describe("tool_search 模式", () => {
   });
 
   it("按最后一次尝试的 model_call 判断：已加载（在请求的 tools 里）→ 照常执行", async () => {
-    await modelCall(["tool_search"], true, 1);
-    await modelCall(["tool_search", "probe__echo"], true, 2);
-    const evs = await runCalls([{ id: "c1", name: "probe__echo", input: { text: "x" } }]);
+    await modelCall(["ToolSearch"], true, 1);
+    await modelCall(["ToolSearch", "plugin__probe__echo"], true, 2);
+    const evs = await runCalls([{ id: "c1", name: "plugin__probe__echo", input: { text: "x" } }]);
     expect(resultsOf(evs)[0]).toMatchObject({ isError: false });
     expect(handlerCalls.echo).toHaveLength(1);
   });
 
-  it("请求不在 tool_search 模式（没有 catalog，全部工具已发送）→ 不做加载检查", async () => {
-    await modelCall(["tool_search"], false);
-    const evs = await runCalls([{ id: "c1", name: "probe__echo", input: { text: "x" } }]);
+  it("请求不在 ToolSearch 模式（没有 catalog，全部工具已发送）→ 不做加载检查", async () => {
+    await modelCall(["ToolSearch"], false);
+    const evs = await runCalls([{ id: "c1", name: "plugin__probe__echo", input: { text: "x" } }]);
     expect(resultsOf(evs)[0]).toMatchObject({ isError: false });
   });
 
-  it("tool_search 的结果写 loadedTools（日志是已加载集合的唯一来源）；同一步里调用刚加载的工具仍报未加载", async () => {
-    await modelCall(["tool_search"], true);
+  it("ToolSearch 的结果写 loadedTools（日志是已加载集合的唯一来源）；同一步里调用刚加载的工具仍报未加载", async () => {
+    await modelCall(["ToolSearch"], true);
     const evs = await runCalls([
-      { id: "c1", name: "tool_search", input: { query: "echo" } },
-      { id: "c2", name: "probe__echo", input: { text: "x" } },
+      { id: "c1", name: "ToolSearch", input: { query: "echo" } },
+      { id: "c2", name: "plugin__probe__echo", input: { text: "x" } },
     ]);
     const [r1, r2] = resultsOf(evs);
     expect(r1).toMatchObject({
-      toolKey: "tool_search",
+      toolKey: "ToolSearch",
       isError: false,
-      loadedTools: ["probe__echo"],
+      loadedTools: ["plugin__probe__echo"],
     });
-    expect(r1?.content).toContain("probe__echo");
-    expect(r2).toMatchObject({ isError: true, content: notLoadedText("probe__echo") });
+    expect(r1?.content).toContain("plugin__probe__echo");
+    expect(r2).toMatchObject({ isError: true, content: notLoadedText("plugin__probe__echo") });
   });
 
-  it("未知工具：只列内置工具与本步请求里发送的工具，再提示用 tool_search 加载其他工具", async () => {
-    await modelCall(["tool_search", "probe__echo"], true);
+  it("未知工具：只列内置工具与本步请求里发送的工具，再提示用 ToolSearch 加载其他工具", async () => {
+    await modelCall(["ToolSearch", "plugin__probe__echo"], true);
     const evs = await runCalls([{ id: "c1", name: "nope", input: {} }]);
     expect(resultsOf(evs)[0]?.content).toBe(
-      'Unknown tool "nope". Available tools: probe__echo, tool_search. Use tool_search to load other tools.',
+      'Unknown tool "nope". Available tools: ToolSearch, plugin__probe__echo. Use ToolSearch to load other tools.',
     );
   });
 
   it("没有匹配时不写 loadedTools", async () => {
-    await modelCall(["tool_search"], true);
-    const evs = await runCalls([{ id: "c1", name: "tool_search", input: { query: "zzzz" } }]);
+    await modelCall(["ToolSearch"], true);
+    const evs = await runCalls([{ id: "c1", name: "ToolSearch", input: { query: "zzzz" } }]);
     expect(resultsOf(evs)[0]).not.toHaveProperty("loadedTools");
   });
 });
@@ -1462,7 +1481,10 @@ describe("plugin hooks (tool.preExecute)", () => {
   it("a denial writes hook_denied, its audit entry and the tool_result together; the tool never runs", async () => {
     const f = fakeHooks(denial);
     pluginHooks = f.hooks;
-    const evs = await runCalls([{ id: "c1", name: "probe__echo", input: { text: "1" } }], chat);
+    const evs = await runCalls(
+      [{ id: "c1", name: "plugin__probe__echo", input: { text: "1" } }],
+      chat,
+    );
     expect(handlerCalls.echo ?? []).toHaveLength(0);
     expect(startedOf(evs)).toEqual([]);
     expect(resultsOf(evs)[0]).toMatchObject({
@@ -1482,7 +1504,7 @@ describe("plugin hooks (tool.preExecute)", () => {
   });
 
   it("sticky: a logged denial without a result (crash between the old two writes) stays denied after the hook flips to allow", async () => {
-    await assistant([{ id: "c1", name: "probe__echo", input: { text: "1" } }]);
+    await assistant([{ id: "c1", name: "plugin__probe__echo", input: { text: "1" } }]);
     // the state an old crash left behind: hook_denied logged, no tool_result
     await eventLog.append(seed.conversationId, [
       {
@@ -1523,7 +1545,7 @@ describe("plugin hooks (tool.preExecute)", () => {
       log: silent,
     });
     const parent = { conversationId: randomUUID(), runId: randomUUID(), callId: "pc1" };
-    const evs = await runCalls([{ id: "c1", name: "probe__echo", input: { text: "1" } }], {
+    const evs = await runCalls([{ id: "c1", name: "plugin__probe__echo", input: { text: "1" } }], {
       conversationKind: "subagent",
       parent,
     });
@@ -1542,11 +1564,174 @@ describe("plugin hooks (tool.preExecute)", () => {
   it("no hooks fire outside chat conversations", async () => {
     const f = fakeHooks(denial);
     pluginHooks = f.hooks;
-    const evs = await runCalls([{ id: "c1", name: "probe__echo", input: { text: "1" } }], {
+    const evs = await runCalls([{ id: "c1", name: "plugin__probe__echo", input: { text: "1" } }], {
       conversationKind: "eval",
     });
     expect(f.runs).toEqual([]);
     expect(handlerCalls.echo).toHaveLength(1);
     expect(evs.some((e) => e.type === "hook_denied")).toBe(false);
+  });
+});
+
+describe("release-candidate tool keys", () => {
+  const builtin = (
+    key: string,
+    schema: Record<string, unknown> = { type: "object" },
+  ): ResolvedTool => {
+    const spec = pluginSpec(key, schema);
+    return {
+      key,
+      source: { kind: "builtin", name: key },
+      spec,
+      specHash: specHash(spec),
+      defaultPolicy: "allow",
+    };
+  };
+
+  /** The model_call of step 1 offering exactly `keys` (no catalog: not ToolSearch mode). */
+  async function modelCall(keys: string[]): Promise<void> {
+    await eventLog.append(seed.conversationId, [
+      {
+        type: "model_call",
+        runId,
+        idemKey: modelCallIdemKey(runId, 1, 1),
+        payload: {
+          step: 1,
+          attempt: 1,
+          provider: "stub",
+          model: "s-1",
+          fallback: false,
+          request: {
+            fromSeq: 1,
+            toSeq: 1,
+            summarySeq: null,
+            systemHash: "x",
+            reminderSeqs: [],
+            tools: keys.map((key) => ({ key, specHash: "h" })),
+          },
+        },
+      },
+    ]);
+  }
+
+  it("a legacy key the issuing request did not offer gets the unknown-tool text plus the hint", async () => {
+    resolved = [builtin("Bash")];
+    await modelCall(["Bash"]);
+    const evs = await runCalls([{ id: "c1", name: "sandbox_bash", input: { command: "ls" } }]);
+    const r = resultsOf(evs)[0];
+    expect(r).toMatchObject({ toolKey: "sandbox_bash", isError: true });
+    expect(r?.content).toContain(legacyHint("sandbox_bash"));
+    expect(startedOf(evs)).toEqual([]);
+  });
+
+  it("an in-flight legacy call (the request offered the old key) runs as the new tool and is logged under the old key", async () => {
+    const seen: unknown[] = [];
+    resolved = [builtin("Bash")];
+    builtinHandlers = {
+      Bash: async (input) => {
+        seen.push(input);
+        return { content: [{ type: "text", text: "ran" }] };
+      },
+    };
+    await modelCall(["sandbox_bash"]);
+    const evs = await runCalls([
+      { id: "c1", name: "sandbox_bash", input: { command: "ls", timeoutSeconds: 3 } },
+    ]);
+    expect(seen).toEqual([{ command: "ls", timeout: 3000 }]);
+    expect(resultsOf(evs)[0]).toMatchObject({
+      toolKey: "sandbox_bash",
+      isError: false,
+      content: "ran",
+    });
+    expect(startedOf(evs)[0]).toMatchObject({ toolKey: "Bash" });
+  });
+
+  it("an approval waiting before the upgrade resumes by call id: the call runs as Edit with the translated input", async () => {
+    await insertRun();
+    const seen: unknown[] = [];
+    const edit = { ...builtin("Edit"), defaultPolicy: "ask" as const };
+    resolved = [edit];
+    builtinHandlers = {
+      Edit: async (input) => {
+        seen.push(input);
+        return { content: [{ type: "text", text: "edited" }] };
+      },
+    };
+    await modelCall(["sandbox_edit"]);
+    await assistant([
+      { id: "c1", name: "sandbox_edit", input: { path: "/a", oldText: "x", newText: "y" } },
+    ]);
+    const first = await pipeline().runStep(stepCtx());
+    expect(first.kind).toBe("suspended");
+    const id = first.kind === "suspended" ? first.waitingFor.id : "";
+    await sql`UPDATE capybara.approvals SET status = 'approved' WHERE id = ${id}`.execute(raw);
+    expect(await pipeline().runStep(stepCtx())).toEqual({ kind: "done" });
+    expect(seen).toEqual([{ file_path: "/a", old_string: "x", new_string: "y" }]);
+    const evs = await eventsOf(db, seed.conversationId);
+    expect(resultsOf(evs)).toEqual([
+      expect.objectContaining({ toolKey: "sandbox_edit", isError: false, content: "edited" }),
+    ]);
+  });
+
+  it("an rc approval (old spec hash) approved after the upgrade runs the call once, without asking again", async () => {
+    await insertRun();
+    const seen: unknown[] = [];
+    resolved = [{ ...builtin("Bash"), defaultPolicy: "ask" as const }];
+    builtinHandlers = {
+      Bash: async (input) => {
+        seen.push(input);
+        return { content: [{ type: "text", text: "ran" }] };
+      },
+    };
+    await modelCall(["sandbox_bash"]);
+    await assistant([{ id: "c1", name: "sandbox_bash", input: { command: "ls" } }]);
+    const first = await pipeline().runStep(stepCtx());
+    expect(first.kind).toBe("suspended");
+    const id = first.kind === "suspended" ? first.waitingFor.id : "";
+    // the approval was created by the rc kernel: it carries the old definition's hash
+    await sql`UPDATE capybara.approvals SET status = 'approved', spec_hash = 'rc-spec-hash' WHERE id = ${id}`.execute(
+      raw,
+    );
+    expect(await pipeline().runStep(stepCtx())).toEqual({ kind: "done" });
+    expect(seen).toEqual([{ command: "ls" }]);
+    const evs = await eventsOf(db, seed.conversationId);
+    expect(resultsOf(evs)).toEqual([
+      expect.objectContaining({ toolKey: "sandbox_bash", isError: false, content: "ran" }),
+    ]);
+    const rows = await sql<{ n: number }>`
+      SELECT count(*)::int AS n FROM capybara.approvals WHERE call_id = 'c1'
+    `.execute(raw);
+    expect(rows.rows[0]?.n).toBe(1);
+  });
+
+  it("an in-flight old <x>__<tool> key runs as mcp__x__tool / plugin__x__tool when x is in only one scope", async () => {
+    await modelCall(["docs__read", "probe__echo"]);
+    const evs = await runCalls([
+      { id: "c1", name: "docs__read", input: {} },
+      { id: "c2", name: "probe__echo", input: { text: "hi" } },
+    ]);
+    const [r1, r2] = resultsOf(evs);
+    expect(r1).toMatchObject({ toolKey: "docs__read", isError: false, content: "called read" });
+    expect(r2).toMatchObject({ toolKey: "probe__echo", isError: false });
+    expect(handlerCalls.echo).toEqual([{ text: "hi" }]);
+    expect(startedOf(evs).map((p) => p.toolKey)).toEqual([
+      "mcp__docs__read",
+      "plugin__probe__echo",
+    ]);
+  });
+
+  it("an ambiguous or unknown owner gives the plain unknown-tool error, without a hint", async () => {
+    resolved = [...resolved, appTool("probe", connectorId, "echo")];
+    await modelCall(["probe__echo", "nope__x"]);
+    const evs = await runCalls([
+      { id: "c1", name: "probe__echo", input: { text: "hi" } },
+      { id: "c2", name: "nope__x", input: {} },
+    ]);
+    for (const r of resultsOf(evs)) {
+      expect(r.isError).toBe(true);
+      expect(r.content).toMatch(/^Unknown tool "/);
+      expect(r.content).not.toContain("no longer exists");
+    }
+    expect(handlerCalls.echo).toBeUndefined();
   });
 });

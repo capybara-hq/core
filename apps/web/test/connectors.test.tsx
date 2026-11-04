@@ -42,7 +42,7 @@ const summary = (over: Record<string, unknown> = {}) => ({
 
 const tool = (name: string, over: Record<string, unknown> = {}) => ({
   name,
-  key: `fixture__${name}`,
+  key: `mcp__fixture__${name}`,
   description: `${name} things`,
   inputSchema: {},
   annotations: null,
@@ -111,7 +111,7 @@ describe("连接器详情（DetailPage）", () => {
     const { container } = renderPage(<ConnectorDetailPage />, { locale });
     expect(container.querySelector('[data-template="DetailPage"]')).not.toBeNull();
     const policy = await screen.findByRole("combobox", {
-      name: m.connectors.tools.policyLabel.replace("{tool}", "fixture__delete_item"),
+      name: m.connectors.tools.policyLabel.replace("{tool}", "mcp__fixture__delete_item"),
     });
     const tabs = screen.getByRole("tablist", { name: m.connectors.detail.tabsLabel });
     expect(
@@ -131,7 +131,7 @@ describe("连接器详情（DetailPage）", () => {
     });
     await user.click(
       screen.getByRole("switch", {
-        name: m.connectors.tools.enabledLabel.replace("{tool}", "fixture__delete_item"),
+        name: m.connectors.tools.enabledLabel.replace("{tool}", "mcp__fixture__delete_item"),
       }),
     );
     expect(bodyOf(calls.filter((c) => c.method === "PATCH")[1])).toEqual({
@@ -212,7 +212,7 @@ describe("连接器详情（DetailPage）", () => {
 
 describe("连接器详情：复核页签（漂移检测）", () => {
   const changed = tool("getPet", {
-    key: "fixture__getPet",
+    key: "mcp__fixture__getPet",
     status: "pending_review",
     description: "Get a pet",
     inputSchema: { type: "object", properties: { id: { type: "integer" } } },
@@ -228,14 +228,14 @@ describe("连接器详情：复核页签（漂移检测）", () => {
     },
   });
   const added = tool("newOne", {
-    key: "fixture__newOne",
+    key: "mcp__fixture__newOne",
     status: "pending_review",
     description: "Brand new",
     connectorData: null,
     reviewedAt: null,
     pending: null,
   });
-  const gone = tool("oldOne", { key: "fixture__oldOne", status: "disabled", missing: true });
+  const gone = tool("oldOne", { key: "mcp__fixture__oldOne", status: "disabled", missing: true });
 
   it.each(LOCALES)(
     "列出新旧定义（描述、inputSchema、注解、路由数据）；批准 / 拒绝 → POST review（%s）",
@@ -261,12 +261,12 @@ describe("连接器详情：复核页签（漂移检测）", () => {
       expect(screen.getByText(m.connectors.tools.missing)).toBeTruthy();
       expect(
         screen.getByRole("switch", {
-          name: m.connectors.tools.enabledLabel.replace("{tool}", "fixture__oldOne"),
+          name: m.connectors.tools.enabledLabel.replace("{tool}", "mcp__fixture__oldOne"),
         }),
       ).toHaveProperty("disabled", true);
       await user.click(screen.getByRole("tab", { name: `${m.connectors.detail.tabs.review}2` }));
 
-      const card = screen.getByRole("region", { name: "fixture__getPet" });
+      const card = screen.getByRole("region", { name: "mcp__fixture__getPet" });
       expect(within(card).getByText(`${r.changedTool}`)).toBeTruthy();
       const field = (label: string, side: "current" | "new") =>
         within(card).getByRole("textbox", { name: `${label} · ${r[side]}` }) as HTMLTextAreaElement;
@@ -282,7 +282,7 @@ describe("连接器详情：复核页签（漂移检测）", () => {
       expect(within(card).queryByText(r.changed.replace("{field}", r.annotations))).toBeNull();
 
       // 新工具：只有新定义
-      const fresh = screen.getByRole("region", { name: "fixture__newOne" });
+      const fresh = screen.getByRole("region", { name: "mcp__fixture__newOne" });
       expect(within(fresh).getByText(`${r.newTool}`)).toBeTruthy();
       expect(
         (
@@ -296,21 +296,23 @@ describe("连接器详情：复核页签（漂移检测）", () => {
       ).toBeNull();
 
       // 不再提供的工具
-      expect(screen.getByText("fixture__oldOne")).toBeTruthy();
+      expect(screen.getByText("mcp__fixture__oldOne")).toBeTruthy();
 
       await user.click(
         within(card).getByRole("button", {
-          name: r.approveLabel.replace("{tool}", "fixture__getPet"),
+          name: r.approveLabel.replace("{tool}", "mcp__fixture__getPet"),
         }),
       );
       expect(bodyOf(calls.find((c) => c.url.endsWith("/tools/getPet/review")))).toEqual({
         action: "approve",
       });
       await vi.waitFor(() =>
-        expect(screen.queryByRole("region", { name: "fixture__getPet" })).toBeNull(),
+        expect(screen.queryByRole("region", { name: "mcp__fixture__getPet" })).toBeNull(),
       );
       await user.click(
-        screen.getByRole("button", { name: r.rejectLabel.replace("{tool}", "fixture__newOne") }),
+        screen.getByRole("button", {
+          name: r.rejectLabel.replace("{tool}", "mcp__fixture__newOne"),
+        }),
       );
       expect(bodyOf(calls.find((c) => c.url.endsWith("/tools/newOne/review")))).toEqual({
         action: "reject",
@@ -325,7 +327,7 @@ describe("连接器详情：复核页签（漂移检测）", () => {
       const m = msgs[locale];
       const r = m.connectors.review;
       const legacy = tool("fresh", {
-        key: "fixture__fresh",
+        key: "mcp__fixture__fresh",
         status: "pending_review",
         description: "Fresh v1",
         reviewedAt: null,
@@ -338,14 +340,14 @@ describe("连接器详情：复核页签（漂移检测）", () => {
         },
       });
       const rejected = tool("nope", {
-        key: "fixture__nope",
+        key: "mcp__fixture__nope",
         status: "disabled",
         description: "Rejected once",
         reviewedAt: null,
         pending: null,
       });
       const broken = tool("broken", {
-        key: "fixture__broken",
+        key: "mcp__fixture__broken",
         status: "disabled",
         reviewedAt: T,
         issue: "Tool inputSchema must be an object",
@@ -366,13 +368,13 @@ describe("连接器详情：复核页签（漂移检测）", () => {
       expect(await screen.findByText(m.connectors.tools.neverReviewed)).toBeTruthy();
       expect(
         screen.getByRole("switch", {
-          name: m.connectors.tools.enabledLabel.replace("{tool}", "fixture__nope"),
+          name: m.connectors.tools.enabledLabel.replace("{tool}", "mcp__fixture__nope"),
         }),
       ).toHaveProperty("disabled", true);
       // 页签计数：待复核的，加上带待复核新定义而停用的（不合规的 broken），让管理员注意到
       await user.click(screen.getByRole("tab", { name: `${m.connectors.detail.tabs.review}2` }));
 
-      const fresh = screen.getByRole("region", { name: "fixture__fresh" });
+      const fresh = screen.getByRole("region", { name: "mcp__fixture__fresh" });
       expect(within(fresh).getByText(`${r.newTool}`)).toBeTruthy();
       expect(
         (
@@ -385,29 +387,29 @@ describe("连接器详情：复核页签（漂移检测）", () => {
         within(fresh).queryByRole("textbox", { name: `${r.description} · ${r.current}` }),
       ).toBeNull();
 
-      const rej = screen.getByRole("region", { name: "fixture__nope" });
+      const rej = screen.getByRole("region", { name: "mcp__fixture__nope" });
       expect(within(rej).getByText(new RegExp(`${r.rejectedNewTool}$`))).toBeTruthy();
       expect(
         within(rej).getByRole("button", {
-          name: r.approveLabel.replace("{tool}", "fixture__nope"),
+          name: r.approveLabel.replace("{tool}", "mcp__fixture__nope"),
         }),
       ).toBeTruthy();
       expect(
         within(rej).queryByRole("button", {
-          name: r.rejectLabel.replace("{tool}", "fixture__nope"),
+          name: r.rejectLabel.replace("{tool}", "mcp__fixture__nope"),
         }),
       ).toBeNull();
 
-      const bad = screen.getByRole("region", { name: "fixture__broken" });
+      const bad = screen.getByRole("region", { name: "mcp__fixture__broken" });
       expect(within(bad).getByText("Tool inputSchema must be an object")).toBeTruthy();
       expect(
         within(bad).getByRole("button", {
-          name: r.approveLabel.replace("{tool}", "fixture__broken"),
+          name: r.approveLabel.replace("{tool}", "mcp__fixture__broken"),
         }),
       ).toHaveProperty("disabled", true);
       expect(
         within(bad).getByRole("button", {
-          name: r.rejectLabel.replace("{tool}", "fixture__broken"),
+          name: r.rejectLabel.replace("{tool}", "mcp__fixture__broken"),
         }),
       ).toHaveProperty("disabled", false);
     },
@@ -423,7 +425,7 @@ describe("连接器详情：复核页签（漂移检测）", () => {
     await user.click(
       await screen.findByRole("tab", { name: `${en.connectors.detail.tabs.review}1` }),
     );
-    expect(screen.getByRole("region", { name: "fixture__newOne" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "mcp__fixture__newOne" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: en.connectors.review.approve })).toBeNull();
     cleanup();
     stubApi({ "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }) });
@@ -617,25 +619,23 @@ describe("新建 agent：工具选择与策略收紧", () => {
     const user = userEvent.setup();
     expect(await screen.findByRole("region", { name: m.agents.form.toolsSection })).toBeTruthy();
     await user.type(screen.getByRole("textbox", { name: m.agents.form.nameLabel }), "Tooly");
-    // 内置工具默认勾选；取消 read_tool_output
-    await user.click(
-      screen.getByRole("checkbox", { name: m.agents.form.builtin.read_tool_output }),
-    );
+    // 内置工具默认勾选；取消 ReadToolOutput
+    await user.click(screen.getByRole("checkbox", { name: m.agents.form.builtin.ReadToolOutput }));
     await user.click(
       await screen.findByRole("checkbox", {
         name: m.agents.form.connectorTools.replace("{name}", "Fixture"),
       }),
     );
-    const policy = await screen.findByRole("combobox", { name: "fixture__delete_item" });
+    const policy = await screen.findByRole("combobox", { name: "Fixture [delete_item]" });
     await user.selectOptions(policy, "deny");
     await user.click(screen.getByRole("button", { name: m.agents.form.submit }));
     expect(posts[0]).toMatchObject({
       definition: {
         tools: [
-          { kind: "builtin", name: "ask_user" },
+          { kind: "builtin", name: "AskUserQuestion" },
           { kind: "connector", connectorId: "app1", tools: "all" },
         ],
-        toolPolicies: { fixture__delete_item: "deny" },
+        toolPolicies: { mcp__fixture__delete_item: "deny" },
       },
     });
   });
@@ -673,7 +673,7 @@ describe("连接器详情的工具栏刷新", () => {
     );
     await vi.waitFor(() => expect(button.getAttribute("aria-busy")).toBeNull());
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
-    expect(screen.queryByText("fixture__delete_item")).toBeNull();
+    expect(screen.queryByText("mcp__fixture__delete_item")).toBeNull();
   });
 });
 

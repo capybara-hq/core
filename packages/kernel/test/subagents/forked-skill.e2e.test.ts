@@ -690,7 +690,7 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
           name: "Lead",
           instructions: "Lead the work.",
           model: { provider: "model-script", model: "script-1" },
-          tools: [{ kind: "builtin", name: "sandbox_bash" }],
+          tools: [{ kind: "builtin", name: "Bash" }],
           skills: { orgSkills: [narrow.id, general.id] },
           subagents: { templates: [template] },
         },
@@ -712,11 +712,11 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
         ).join(""),
       ),
     );
-    const HINT = "run those commands with sandbox_bash";
+    const HINT = "run those commands with Bash";
     expect(tasks.map((t) => t.includes(HINT))).toEqual([false, true]);
   });
 
-  describe("final review I1: the sub-agent's skill_load of the invoked skill", () => {
+  describe("final review I1: the sub-agent's Skill of the invoked skill", () => {
     const SCRIPT = { "scripts/run.sh": '#!/bin/sh\necho "review ok"\n' };
     const LOAD_RULES: ScriptRule[] = [
       {
@@ -725,12 +725,12 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
       },
       {
         when: { systemIncludes: CHILD, assistantTurns: 0 },
-        reply: { toolCalls: [{ name: "skill_load", input: { name: "review" } }] },
+        reply: { toolCalls: [{ name: "Skill", input: { skill: "review" } }] },
       },
       { when: { systemIncludes: CHILD }, reply: { text: "child refused" } },
     ];
 
-    /** The parent agent: sandbox_bash, the given skills and sub-agents. */
+    /** The parent agent: Bash, the given skills and sub-agents. */
     async function lead(skills: string[], subagents?: Record<string, unknown>): Promise<string> {
       const res = await owner({
         method: "POST",
@@ -740,7 +740,7 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
             name: "Lead",
             instructions: "Lead the work.",
             model: { provider: "model-script", model: "script-1" },
-            tools: [{ kind: "builtin", name: "sandbox_bash" }],
+            tools: [{ kind: "builtin", name: "Bash" }],
             skills: { orgSkills: skills },
             ...(subagents !== undefined && { subagents }),
           },
@@ -751,13 +751,13 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
       return (res.json() as { agent: { id: string } }).agent.id;
     }
 
-    /** The child's skill_load result, after the parent's fork run ended. */
+    /** The child's Skill result, after the parent's fork run ended. */
     async function childLoad(conv: string): Promise<{ isError: boolean; content: string }> {
       await waitForTerminal(db, conv, 1, 60_000);
       const [child] = await childRunsOf(db, conv);
       const events = await eventsOf(db, child?.conversationId as string);
-      const result = ofType(events, "tool_result").find((r) => r.payload.toolKey === "skill_load");
-      expect(result, "the child called skill_load").toBeDefined();
+      const result = ofType(events, "tool_result").find((r) => r.payload.toolKey === "Skill");
+      expect(result, "the child called Skill").toBeDefined();
       return {
         isError: result?.payload.isError === true,
         content: JSON.stringify(result?.payload.content),
@@ -785,7 +785,7 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
             name: "Analyst",
             instructions: "Analyse.",
             model: { provider: "model-script", model: "script-1" },
-            tools: [{ kind: "builtin", name: "sandbox_bash" }],
+            tools: [{ kind: "builtin", name: "Bash" }],
             subagents: { dispatchable: true },
           },
           visibility: "org",

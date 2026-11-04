@@ -33,7 +33,7 @@ const build = (events: ConversationEvent[], tools?: RequestTool[]) =>
 function result(log: Log, callId: string, content: string, step = 1, isError = false) {
   return log.add({
     type: "tool_result",
-    payload: { step, callId, toolKey: "docs__search", content, isError },
+    payload: { step, callId, toolKey: "mcp__docs__search", content, isError },
   });
 }
 
@@ -49,43 +49,53 @@ describe("buildModelRequest 工具", () => {
   it("工具按 key 排序（与传入顺序无关），name 用模型可见的 key；meta 记录 key 与指纹", () => {
     const log = new Log();
     log.user("hi");
-    const tools = [tool("zeta__b"), tool("ask_user"), tool("docs__search"), tool("Docs__a")];
+    const tools = [
+      tool("mcp__zeta__b"),
+      tool("AskUserQuestion"),
+      tool("mcp__docs__search"),
+      tool("Docs__a"),
+    ];
     const a = build(log.events, tools);
     const b = build(log.events, [...tools].reverse());
     expect(a.request.tools.map((t) => t.name)).toEqual([
+      "AskUserQuestion",
       "Docs__a",
-      "ask_user",
-      "docs__search",
-      "zeta__b",
+      "mcp__docs__search",
+      "mcp__zeta__b",
     ]);
     expect(b.request.tools).toEqual(a.request.tools);
     expect(a.request.tools[2]).toEqual({
-      name: "docs__search",
+      name: "mcp__docs__search",
       description: "Tool search.",
       inputSchema: { type: "object", properties: { q: { type: "string" } } },
     });
     expect(a.meta.tools).toEqual([
+      { key: "AskUserQuestion", specHash: "h-AskUserQuestion" },
       { key: "Docs__a", specHash: "h-Docs__a" },
-      { key: "ask_user", specHash: "h-ask_user" },
-      { key: "docs__search", specHash: "h-docs__search" },
-      { key: "zeta__b", specHash: "h-zeta__b" },
+      { key: "mcp__docs__search", specHash: "h-mcp__docs__search" },
+      { key: "mcp__zeta__b", specHash: "h-mcp__zeta__b" },
     ]);
     // 不改动入参
-    expect(tools.map((t) => t.key)).toEqual(["zeta__b", "ask_user", "docs__search", "Docs__a"]);
+    expect(tools.map((t) => t.key)).toEqual([
+      "mcp__zeta__b",
+      "AskUserQuestion",
+      "mcp__docs__search",
+      "Docs__a",
+    ]);
   });
 
   it("连接器的 connectorData 不发给模型（只进指纹与存档）", () => {
     const log = new Log();
     log.user("hi");
     const t: RequestTool = {
-      key: "pets__get",
+      key: "mcp__pets__get",
       spec: { ...spec("get"), connectorData: { method: "get", path: "/pets/{id}" } },
       specHash: "h",
     };
     const { request } = build(log.events, [t]);
     expect(request.tools).toEqual([
       {
-        name: "pets__get",
+        name: "mcp__pets__get",
         description: "Tool get.",
         inputSchema: { type: "object", properties: { q: { type: "string" } } },
       },
@@ -100,15 +110,15 @@ describe("buildModelRequest 工具", () => {
     log.assistant(
       [
         { type: "text", text: "Searching." },
-        { type: "tool_call", id: "c1", name: "docs__search", input: { q: "a" } },
-        { type: "tool_call", id: "c2", name: "docs__search", input: { q: "b" } },
+        { type: "tool_call", id: "c1", name: "mcp__docs__search", input: { q: "a" } },
+        { type: "tool_call", id: "c2", name: "mcp__docs__search", input: { q: "b" } },
       ],
       "tool_use",
       1,
     );
     log.add({
       type: "tool_call_started",
-      payload: { step: 1, callId: "c2", toolKey: "docs__search", specHash: "h" },
+      payload: { step: 1, callId: "c2", toolKey: "mcp__docs__search", specHash: "h" },
     });
     // 写入顺序与调用顺序相反：仍按调用顺序还原
     result(log, "c2", "result b", 1, true);
@@ -123,8 +133,8 @@ describe("buildModelRequest 工具", () => {
         role: "assistant",
         content: [
           { type: "text", text: "Searching." },
-          { type: "tool_call", id: "c1", name: "docs__search", input: { q: "a" } },
-          { type: "tool_call", id: "c2", name: "docs__search", input: { q: "b" } },
+          { type: "tool_call", id: "c1", name: "mcp__docs__search", input: { q: "a" } },
+          { type: "tool_call", id: "c2", name: "mcp__docs__search", input: { q: "b" } },
         ],
       },
       {
@@ -145,7 +155,7 @@ describe("buildModelRequest 工具", () => {
     log.user("go");
     log.modelCall(1, 1);
     log.assistant(
-      [{ type: "tool_call", id: "c1", name: "docs__search", input: {} }],
+      [{ type: "tool_call", id: "c1", name: "mcp__docs__search", input: {} }],
       "tool_use",
       1,
     );
@@ -228,7 +238,7 @@ describe("压缩边界不切开工具调用与结果", () => {
     log.user("q2");
     log.modelCall(3, 1);
     log.assistant(
-      [{ type: "tool_call", id: "c1", name: "docs__search", input: {} }],
+      [{ type: "tool_call", id: "c1", name: "mcp__docs__search", input: {} }],
       "tool_use",
       1,
     );
@@ -275,10 +285,13 @@ describe("压缩记录包含工具结果", () => {
   it("tool_result 事件进入对话记录", () => {
     const log = new Log();
     log.user("q1");
-    log.assistant([{ type: "tool_call", id: "c1", name: "docs__search", input: {} }], "tool_use");
+    log.assistant(
+      [{ type: "tool_call", id: "c1", name: "mcp__docs__search", input: {} }],
+      "tool_use",
+    );
     result(log, "c1", "the answer", 1, true);
     log.user("q2");
     const plan = compactionPlan(log.events, 1);
-    expect(plan?.transcript).toContain("Tool result docs__search (error): the answer");
+    expect(plan?.transcript).toContain("Tool result mcp__docs__search (error): the answer");
   });
 });

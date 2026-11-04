@@ -14,10 +14,10 @@ import { OrgLock } from "./org-lock.js";
 /**
  * 组织设置（`capybara.orgs.settings` jsonb）。读取宽松：缺失或非法的字段按默认值，未知键保留不动
  * （更新时与存量合并），新版本加字段不需要迁移。
- * - `toolSearch`：工具超过阈值时是否改用目录 + `tool_search`（D11，默认 on）。
+ * - `toolSearch`：工具超过阈值时是否改用目录 + `ToolSearch`（D11，默认 on）。
  * - `locale`：组织默认语言（`zh` / `en`，默认 en），机器人在 IM 里说的固定话术按它选择。
  * - `sandboxToolPolicy`：沙箱工具的默认策略（M5 T8，默认 allow）。为 `ask` 时除只读的
- *   `sandbox_read` / `sandbox_glob` / `sandbox_grep` 外都需要审批（执行时实时读取）。
+ *   `Read` / `Glob` / `Grep` 外都需要审批（执行时实时读取）。
  * - `sandboxEgress`：组织的沙箱出站（Ruling M19 / D6），缺省跟随部署的 `sandbox.limits.egress` + `allowHosts`。
  *   见 {@link effectiveSandboxEgress}。存量值非法时按 `none` 读（宁可断网，不悄悄放宽到部署默认）。
  */

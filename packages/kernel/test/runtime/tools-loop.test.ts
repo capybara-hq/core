@@ -100,7 +100,7 @@ describe("tools 节点（LangGraphLoop + 执行管线）", () => {
           ? ["1", "2", "3"].map((n) => ({
               type: "tool_call",
               id: `c${n}`,
-              name: "probe__echo",
+              name: "plugin__probe__echo",
               input: { text: n },
             }))
           : [{ type: "text", text: "done" }];
@@ -119,7 +119,7 @@ describe("tools 节点（LangGraphLoop + 执行管线）", () => {
     inputSchema: { type: "object", properties: { text: { type: "string" } } },
   };
   const echo: ResolvedTool = {
-    key: "probe__echo",
+    key: "plugin__probe__echo",
     source: { kind: "plugin", plugin: "probe", name: "echo" },
     spec: echoSpec,
     specHash: specHash(echoSpec),
@@ -317,7 +317,6 @@ describe("端到端：model-fake 脚本工具调用 → 连接器工具与插件
   });
 
   beforeEach(async () => {
-    const { AccountsService } = await import("../../src/identity/accounts.js");
     const raw = createDb(pgc.url, 2);
     await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
     await accountsFor(kernelDb(raw)).createLocal({
@@ -386,14 +385,14 @@ describe("端到端：model-fake 脚本工具调用 → 连接器工具与插件
     const db = kernelDb(createDb(pgc.url, 2));
     try {
       const convId = await createConv(req, orgId, agentId);
-      await postMessage(req, orgId, convId, 'tool:open__read:{"q":"x"}');
+      await postMessage(req, orgId, convId, 'tool:mcp__open__read:{"q":"x"}');
       await waitForTerminal(db, convId, 1);
-      await postMessage(req, orgId, convId, 'tool:mem-connector__echo:{"text":"hi"}');
+      await postMessage(req, orgId, convId, 'tool:plugin__mem-connector__echo:{"text":"hi"}');
       await waitForTerminal(db, convId, 2);
       const evs = await eventsOf(db, convId);
       expect(resultsOf(evs).map((r) => [r.toolKey, r.content, r.isError])).toEqual([
-        ["open__read", "called read", false],
-        ["mem-connector__echo", '{"text":"hi"}', false],
+        ["mcp__open__read", "called read", false],
+        ["plugin__mem-connector__echo", '{"text":"hi"}', false],
       ]);
       expect(memState().calls).toEqual([{ server: "open", name: "read", input: { q: "x" } }]);
       expect(memState().echoCalls).toBe(1);
@@ -412,8 +411,8 @@ describe("端到端：model-fake 脚本工具调用 → 连接器工具与插件
         .where("action", "=", "tool.called")
         .execute();
       expect(audits.map((a) => (a.detail as { toolKey: string }).toolKey)).toEqual([
-        "open__read",
-        "mem-connector__echo",
+        "mcp__open__read",
+        "plugin__mem-connector__echo",
       ]);
     } finally {
       await db.destroy();

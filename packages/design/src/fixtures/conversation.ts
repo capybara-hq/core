@@ -109,12 +109,17 @@ export type FixtureDiffLine = {
 export type FixtureTool = {
   id: string;
   kind: "command" | "read" | "edit" | "search" | "connector" | "meta" | "tool";
-  /** The row's verb (已运行 / 已读取 / 已修改 / 已使用 / 正在运行 …). */
-  verb: string;
-  /** The connector or extension the tool comes from. */
-  source?: string;
-  /** The tool's declared title, or the shell command's `description`. */
-  title: string;
+  /**
+   * The bold name: a builtin's tool name ("Bash", "Read"), or the connector's / plugin's display
+   * name of a connector or extension tool.
+   */
+  name: string;
+  /** A connector or extension tool's local name, shown in brackets. */
+  tool?: string;
+  /** The tool's declared title (the row's tooltip). */
+  tooltip?: string;
+  /** A shell command's `description`. */
+  description?: string;
   /** Key arguments, shown in body color. */
   keyArg?: string;
   /** Extra info after the key arguments (faint). */
@@ -132,11 +137,15 @@ export type FixtureTool = {
   removed?: number;
 };
 
-const cmd = (id: string, title: string, status: FixtureTool["status"] = "done"): FixtureTool => ({
+const cmd = (
+  id: string,
+  description: string,
+  status: FixtureTool["status"] = "done",
+): FixtureTool => ({
   id,
   kind: "command",
-  verb: "已运行",
-  title,
+  name: "Bash",
+  description,
   status,
   ...(status === "failed" ? { error: "退出码 1" } : {}),
 });
@@ -158,9 +167,9 @@ export const TOOL_FIXTURES: Record<
     {
       id: "t_single_search",
       kind: "connector",
-      verb: "已使用",
-      source: "Acme 工单",
-      title: "搜索工单",
+      name: "Acme 工单",
+      tool: "search_tickets",
+      tooltip: "搜索工单",
       keyArg: "#反馈 本周",
       extra: "42 条",
       status: "done",
@@ -168,8 +177,7 @@ export const TOOL_FIXTURES: Record<
     {
       id: "t_single_read",
       kind: "read",
-      verb: "已读取",
-      title: "",
+      name: "Read",
       keyArg: "reports/2026-09/示例表.xlsx",
       extra: "第 1–120 行",
       status: "done",
@@ -191,17 +199,17 @@ export const TOOL_FIXTURES: Record<
     {
       id: "t_done_7",
       kind: "connector",
-      verb: "已使用",
-      source: "Acme 文档",
-      title: "获取文件元数据",
+      name: "Acme 文档",
+      tool: "get_file_metadata",
+      tooltip: "获取文件元数据",
       status: "done",
     },
     {
       id: "t_done_8",
       kind: "connector",
-      verb: "已使用",
-      source: "Acme 文档",
-      title: "获取文件权限",
+      name: "Acme 文档",
+      tool: "get_file_permissions",
+      tooltip: "获取文件权限",
       status: "done",
     },
   ],
@@ -216,17 +224,17 @@ export const TOOL_FIXTURES: Record<
     {
       id: "t_fail_7",
       kind: "connector",
-      verb: "已使用",
-      source: "Acme 文档",
-      title: "获取文件元数据",
+      name: "Acme 文档",
+      tool: "get_file_metadata",
+      tooltip: "获取文件元数据",
       status: "done",
     },
     {
       id: "t_fail_8",
       kind: "connector",
-      verb: "已使用",
-      source: "Acme 文档",
-      title: "获取文件权限",
+      name: "Acme 文档",
+      tool: "get_file_permissions",
+      tooltip: "获取文件权限",
       status: "done",
     },
   ],
@@ -236,8 +244,7 @@ export const TOOL_FIXTURES: Record<
     {
       id: "t_one_2",
       kind: "read",
-      verb: "已读取",
-      title: "",
+      name: "Read",
       keyArg: "示例流程交付说明.pdf",
       status: "done",
     },
@@ -247,17 +254,16 @@ export const TOOL_FIXTURES: Record<
     {
       id: "t_exp_meta",
       kind: "meta",
-      verb: "已加载的工具",
-      title: "",
+      name: "ToolSearch",
       extra: "Acme 文档 6 个",
       status: "done",
     },
     {
       id: "t_exp_conn",
       kind: "connector",
-      verb: "已使用",
-      source: "Acme 文档",
-      title: "获取文件元数据",
+      name: "Acme 文档",
+      tool: "get_file_metadata",
+      tooltip: "获取文件元数据",
       keyArg: "示例流程交付说明.pdf",
       status: "done",
       durationMs: 800,
@@ -271,17 +277,17 @@ export const TOOL_FIXTURES: Record<
     {
       id: "t_exp_perm",
       kind: "connector",
-      verb: "已使用",
-      source: "Acme 文档",
-      title: "获取文件权限",
+      name: "Acme 文档",
+      tool: "get_file_permissions",
+      tooltip: "获取文件权限",
       status: "done",
     },
     {
       id: "t_exp_failed",
       kind: "connector",
-      verb: "已使用",
-      source: "Acme 文档",
-      title: "获取文件元数据",
+      name: "Acme 文档",
+      tool: "get_file_metadata",
+      tooltip: "获取文件元数据",
       status: "failed",
       durationMs: 400,
       input: [["fileId", "9zY8xW7vU6tS5rQ4pO3nM2lK1jI0hG-abC"]],
@@ -292,8 +298,8 @@ export const TOOL_FIXTURES: Record<
     {
       id: "t_exp_cmd",
       kind: "command",
-      verb: "",
-      title: "更新草稿里的 PDF 链接",
+      name: "Bash",
+      description: "更新草稿里的 PDF 链接",
       status: "done",
       durationMs: 2100,
       command: "python scripts/update_draft.py --channel 示例-支持 --pdf 示例流程交付说明.pdf",
@@ -306,8 +312,7 @@ export const TOOL_FIXTURES: Record<
     {
       id: "t_diff_1",
       kind: "edit",
-      verb: "已修改",
-      title: "",
+      name: "Edit",
       keyArg: "scripts/calc.py",
       status: "done",
       added: 2,
@@ -333,8 +338,7 @@ export const TOOL_FIXTURES: Record<
     {
       id: "t_diff_2",
       kind: "edit",
-      verb: "已修改",
-      title: "",
+      name: "Edit",
       keyArg: "scripts/report.py",
       status: "done",
       added: 40,
@@ -343,8 +347,7 @@ export const TOOL_FIXTURES: Record<
     {
       id: "t_diff_3",
       kind: "edit",
-      verb: "已修改",
-      title: "",
+      name: "Edit",
       keyArg: "reports/对账报告.md",
       status: "done",
       added: 6,
@@ -355,8 +358,7 @@ export const TOOL_FIXTURES: Record<
     {
       id: "t_large",
       kind: "command",
-      verb: "已运行",
-      title: "",
+      name: "Bash",
       keyArg: 'grep -rn "示例表" scripts/',
       status: "done",
       command: 'grep -rn "示例表" scripts/',
@@ -369,9 +371,9 @@ export const TOOL_FIXTURES: Record<
     {
       id: "t_hook",
       kind: "connector",
-      verb: "已使用",
-      source: "Acme 工单",
-      title: "发送消息",
+      name: "Acme 工单",
+      tool: "send_message",
+      tooltip: "发送消息",
       keyArg: "#示例-支持",
       status: "failed",
       error: "被扩展「合规审查」拒绝",
@@ -443,7 +445,7 @@ export const HITL_FIXTURE: {
 } = {
   approval: {
     tool: "Acme 工单: 发送消息",
-    toolKey: "acme_tickets__send_message",
+    toolKey: "mcp__acme_tickets__send_message",
     args: [
       ["channel", "#示例-支持"],
       ["text", "15 条流程已逐条核对完，可以交给你试运行……"],
@@ -473,13 +475,13 @@ export const HITL_FIXTURE: {
     who: "grant",
     approved: {
       tool: "Acme 工单: 发送消息",
-      toolKey: "acme_tickets__send_message",
+      toolKey: "mcp__acme_tickets__send_message",
       at: "10:32",
       scope: "仅这一次",
     },
     denied: {
       tool: "Acme 表格: 写入单元格",
-      toolKey: "acme_sheets__write_cells",
+      toolKey: "mcp__acme_sheets__write_cells",
       at: "10:35",
       reason: "先别写，等财务确认",
     },

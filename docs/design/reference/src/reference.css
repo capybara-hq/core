@@ -1228,6 +1228,21 @@ textarea {
   gap: var(--cb-space-2);
   padding: 0 var(--cb-space-3) var(--cb-space-3);
 }
+.r-tio {
+  display: flex;
+  gap: var(--cb-space-2);
+}
+.r-tio-l {
+  flex: none;
+  width: 4ch;
+  color: var(--cb-faint);
+  font-size: var(--cb-type-micro-size);
+  font-weight: 700;
+}
+.r-tio-b {
+  min-width: 0;
+  flex: 1;
+}
 .r-kv {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);

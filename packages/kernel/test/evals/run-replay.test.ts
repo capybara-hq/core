@@ -159,7 +159,7 @@ beforeAll(async () => {
         tools: [
           { kind: "plugin", plugin: "tools-count", name: "count" },
           { kind: "plugin", plugin: "tools-count", name: "ask" },
-          { kind: "builtin", name: "sandbox_bash" },
+          { kind: "builtin", name: "Bash" },
         ],
       },
       visibility: "org",
@@ -406,7 +406,7 @@ describe("整轮回放", { timeout: 60_000 }, () => {
   it("候选等于基线：工具序列与原运行一致、unmatched 0，工具处理函数 0 次、没有审批、没有沙箱调用", async () => {
     // 原运行是真实运行：工具确实执行了一次
     const conv = await createConv(admin, orgId, agentId);
-    await postMessage(admin, orgId, conv, 'tool:tools-count__count:{"n":7}');
+    await postMessage(admin, orgId, conv, 'tool:plugin__tools-count__count:{"n":7}');
     await waitForTerminal(db, conv);
     expect(toolsCountState().count).toBe(1);
     const [src] = await db
@@ -432,7 +432,7 @@ describe("整轮回放", { timeout: 60_000 }, () => {
     expect(cand.unmatched).toBe(0);
     expect(r?.drift).toEqual([]);
     expect(cand.outcome).toBe("completed");
-    expect(cand.toolCalls).toEqual([{ name: "tools-count__count", input: { n: 7 } }]);
+    expect(cand.toolCalls).toEqual([{ name: "plugin__tools-count__count", input: { n: 7 } }]);
     expect(cand.toolCalls).toEqual(base.toolCalls);
     expect(cand.finalContent).toEqual(base.finalContent);
     expect(cand.stopReason).toBe("end_turn");
@@ -537,14 +537,14 @@ describe("整轮回放", { timeout: 60_000 }, () => {
 
   it("Review Focus 3：参数不同或没有记录的工具都不执行；模型收到英文错误，结果标 unmatched", async () => {
     const setId = await createSet();
-    // 记录的是 n=1，模型现在给 n=2；第二个用例让模型调用从未记录过的 sandbox_bash
+    // 记录的是 n=1，模型现在给 n=2；第二个用例让模型调用从未记录过的 Bash
     const c1 = await createConv(admin, orgId, agentId);
-    await seedRun(c1, "rf3-args", 'tool:tools-count__ask:{"n":2}', [
-      { name: "tools-count__ask", input: { n: 1 }, content: "recorded ask" },
+    await seedRun(c1, "rf3-args", 'tool:plugin__tools-count__ask:{"n":2}', [
+      { name: "plugin__tools-count__ask", input: { n: 1 }, content: "recorded ask" },
     ]);
     const c2 = await createConv(admin, orgId, agentId);
-    await seedRun(c2, "rf3-sandbox", 'tool:sandbox_bash:{"command":"touch /workspace/pwned"}', [
-      { name: "tools-count__count", input: { n: 1 }, content: "recorded count" },
+    await seedRun(c2, "rf3-sandbox", 'tool:Bash:{"command":"touch /workspace/pwned"}', [
+      { name: "plugin__tools-count__count", input: { n: 1 }, content: "recorded count" },
     ]);
     await addCase(setId, c1, "rf3-args");
     await addCase(setId, c2, "rf3-sandbox");
@@ -571,7 +571,7 @@ describe("整轮回放", { timeout: 60_000 }, () => {
       expect(text).toContain(REPLAY_NO_RECORDING);
     }
     const names = rs.map((r) => (r.candidate as RunReplayResult).toolCalls[0]?.name).sort();
-    expect(names).toEqual(["sandbox_bash", "tools-count__ask"]);
+    expect(names).toEqual(["Bash", "plugin__tools-count__ask"]);
     expect(toolsCountState()).toEqual({ count: before.count, ask: before.ask });
     expect(await approvalsCount()).toBe(before.approvals);
     expect((await readFakeSandboxOps(root)).length).toBe(before.sandbox);
@@ -590,25 +590,22 @@ describe("整轮回放", { timeout: 60_000 }, () => {
     }
   });
 
-  it("sandbox_bash matching ignores description: old recordings match new calls and the reverse", async () => {
+  it("Bash matching ignores description: old recordings match new calls and the reverse", async () => {
     const setId = await createSet();
     // recorded before UI refresh B (no description); the model now passes one
     const c1 = await createConv(admin, orgId, agentId);
-    await seedRun(
-      c1,
-      "desc-old",
-      'tool:sandbox_bash:{"command":"echo hi","description":"Say hi"}',
-      [{ name: "sandbox_bash", input: { command: "echo hi" }, content: "hi\n[exit code: 0]" }],
-    );
+    await seedRun(c1, "desc-old", 'tool:Bash:{"command":"echo hi","description":"Say hi"}', [
+      { name: "Bash", input: { command: "echo hi" }, content: "hi\n[exit code: 0]" },
+    ]);
     // recorded with a description; the model now passes a different one
     const c2 = await createConv(admin, orgId, agentId);
     await seedRun(
       c2,
       "desc-new",
-      'tool:sandbox_bash:{"command":"echo yo","description":"Another wording"}',
+      'tool:Bash:{"command":"echo yo","description":"Another wording"}',
       [
         {
-          name: "sandbox_bash",
+          name: "Bash",
           input: { command: "echo yo", description: "Greet" },
           content: "yo\n[exit code: 0]",
         },
@@ -634,6 +631,85 @@ describe("整轮回放", { timeout: 60_000 }, () => {
     expect((await readFakeSandboxOps(root)).length).toBe(sandboxBefore);
   });
 
+  it("an rc recording replays against the current names: legacyKeyMatch, no tool-call difference, nothing executed", async () => {
+    const setId = await createSet();
+    // recorded by the release candidate: sandbox_edit with path / oldText / newText, an extension
+    // tool by its <plugin>__<tool> key; the model now calls Edit with file_path and so on
+    const c1 = await createConv(admin, orgId, agentId);
+    await seedRun(
+      c1,
+      "legacy-edit",
+      'tool:Edit:{"file_path":"/workspace/a.txt","old_string":"a","new_string":"b","replace_all":true}',
+      [
+        {
+          name: "sandbox_edit",
+          input: { path: "/workspace/a.txt", oldText: "a", newText: "b", replaceAll: true },
+          content: "Edited /workspace/a.txt: replaced 2 occurrences.",
+        },
+      ],
+    );
+    const c2 = await createConv(admin, orgId, agentId);
+    await seedRun(c2, "legacy-ext", "tool:plugin__tools-count__count:{}", [
+      { name: "tools-count__count", input: {}, content: "recorded count" },
+    ]);
+    const c3 = await createConv(admin, orgId, agentId);
+    await seedRun(c3, "new-edit", 'tool:Edit:{"file_path":"/workspace/z.txt","old_string":"a"}', [
+      { name: "Edit", input: { file_path: "/workspace/z.txt", old_string: "a" }, content: "ok" },
+    ]);
+    await addCase(setId, c1, "legacy-edit");
+    await addCase(setId, c2, "legacy-ext");
+    await addCase(setId, c3, "new-edit");
+    const sandboxBefore = (await readFakeSandboxOps(root)).length;
+    const run = await startRun(setId, {});
+    expect((await finished(run.id)).status).toBe("completed");
+    const rs = await results(run.id);
+    expect(rs).toHaveLength(3);
+    type Call = { name: string; input: unknown };
+    const byCandidate = (name: string) => {
+      const r = rs.find((x) => (x.candidate as RunReplayResult).toolCalls[0]?.name === name);
+      if (!r) throw new Error(`no result whose candidate called ${name}`);
+      return r;
+    };
+    for (const r of rs) {
+      expect(r.status, JSON.stringify(r.error)).toBe("done");
+      expect((r.candidate as RunReplayResult).unmatched).toBe(0);
+      expect(r.drift).not.toContain("tool_unmatched");
+      const diff = r.diff as { toolCallsMatch: boolean; toolCalls: { kind: string }[] };
+      expect(diff.toolCallsMatch).toBe(true);
+      expect(diff.toolCalls.map((t) => t.kind)).toEqual(["same"]);
+      const [result] = (await evalEvents(r)).filter((e) => e.type === "tool_result");
+      expect(result?.payload).toMatchObject({ isError: false });
+    }
+    const baselineCalls = (r: EvalResultView) => (r.baseline as { toolCalls: Call[] }).toolCalls;
+    // sandbox_edit {path, oldText, ...} read as Edit {file_path, old_string, ...}
+    const edits = rs.filter((r) => (r.candidate as RunReplayResult).toolCalls[0]?.name === "Edit");
+    expect(edits).toHaveLength(2);
+    const legacyEdit = edits.find((r) =>
+      JSON.stringify(baselineCalls(r)[0]?.input).includes('"replace_all":true'),
+    );
+    expect(legacyEdit && (legacyEdit.candidate as RunReplayResult).legacyKeyMatch).toBe(true);
+    expect(legacyEdit && baselineCalls(legacyEdit)).toEqual([
+      {
+        name: "Edit",
+        input: {
+          file_path: "/workspace/a.txt",
+          old_string: "a",
+          new_string: "b",
+          replace_all: true,
+        },
+      },
+    ]);
+    // the extension tool recorded as tools-count__count
+    const ext = byCandidate("plugin__tools-count__count");
+    expect((ext.candidate as RunReplayResult).legacyKeyMatch).toBe(true);
+    expect(baselineCalls(ext)[0]?.name).toBe("plugin__tools-count__count");
+    // a recording already in the current names is not a legacy match
+    const current = edits.find((r) => r !== legacyEdit);
+    expect(current).toBeDefined();
+    expect((current?.candidate as RunReplayResult | undefined)?.legacyKeyMatch).toBeUndefined();
+    expect((await readFakeSandboxOps(root)).length).toBe(sandboxBefore);
+  });
+
   it("the run's skills snapshot is copied with pinned and toolMap unchanged (phase B)", async () => {
     const setId = await createSet();
     const conv = await createConv(admin, orgId, agentId);
@@ -656,8 +732,8 @@ describe("整轮回放", { timeout: 60_000 }, () => {
     await seedRun(
       conv,
       "pinned-copy",
-      'tool:tools-count__count:{"n":1}',
-      [{ name: "tools-count__count", input: { n: 1 }, content: "recorded count" }],
+      'tool:plugin__tools-count__count:{"n":1}',
+      [{ name: "plugin__tools-count__count", input: { n: 1 }, content: "recorded count" }],
       undefined,
       catalog,
     );
@@ -856,8 +932,8 @@ describe("整轮回放", { timeout: 60_000 }, () => {
     await seedRun(
       conv,
       "interject",
-      'tool:tools-count__count:{"n":3}',
-      [{ name: "tools-count__count", input: { n: 3 }, content: "counted 3" }],
+      'tool:plugin__tools-count__count:{"n":3}',
+      [{ name: "plugin__tools-count__count", input: { n: 3 }, content: "counted 3" }],
       "echo:interjected",
     );
     await addCase(setId, conv, "interject");
@@ -891,8 +967,8 @@ describe("整轮回放", { timeout: 60_000 }, () => {
   it("达到 token 上限：loop 在下一次请求前停下，结果 skipped，运行 capped", async () => {
     const setId = await createSet();
     const conv = await createConv(admin, orgId, agentId);
-    await seedRun(conv, "capped", 'tool:tools-count__count:{"n":4}', [
-      { name: "tools-count__count", input: { n: 4 }, content: "counted 4" },
+    await seedRun(conv, "capped", 'tool:plugin__tools-count__count:{"n":4}', [
+      { name: "plugin__tools-count__count", input: { n: 4 }, content: "counted 4" },
     ]);
     await addCase(setId, conv, "capped");
     const run = await startRun(setId, { tokenCap: 1 });
@@ -936,8 +1012,8 @@ describe("整轮回放", { timeout: 60_000 }, () => {
   it("上限恰好等于一次完整回放的用量：最后一次请求越限，回放已做完，结果 done、运行 capped", async () => {
     const setId = await createSet();
     const conv = await createConv(admin, orgId, agentId);
-    await seedRun(conv, "exact", 'tool:tools-count__count:{"n":6}', [
-      { name: "tools-count__count", input: { n: 6 }, content: "counted 6" },
+    await seedRun(conv, "exact", 'tool:plugin__tools-count__count:{"n":6}', [
+      { name: "plugin__tools-count__count", input: { n: 6 }, content: "counted 6" },
     ]);
     await addCase(setId, conv, "exact");
     // 先量出一次完整回放的用量（确定性：model-fake 的用量只取决于请求内容）
@@ -965,8 +1041,8 @@ describe("整轮回放", { timeout: 60_000 }, () => {
   it("删除评测集：评测对话一并删除", async () => {
     const setId = await createSet();
     const conv = await createConv(admin, orgId, agentId);
-    await seedRun(conv, "purge", 'tool:tools-count__count:{"n":8}', [
-      { name: "tools-count__count", input: { n: 8 }, content: "counted 8" },
+    await seedRun(conv, "purge", 'tool:plugin__tools-count__count:{"n":8}', [
+      { name: "plugin__tools-count__count", input: { n: 8 }, content: "counted 8" },
     ]);
     await addCase(setId, conv, "purge");
     const run = await startRun(setId, {});
@@ -982,8 +1058,8 @@ describe("整轮回放", { timeout: 60_000 }, () => {
   it("崩溃后运行已停下：重试跳过该用例时删掉崩溃留下的、还在执行的评测对话", async () => {
     const setId = await createSet();
     const conv = await createConv(admin, orgId, agentId);
-    await seedRun(conv, "leftover", 'tool:tools-count__count:{"n":6}', [
-      { name: "tools-count__count", input: { n: 6 }, content: "counted 6" },
+    await seedRun(conv, "leftover", 'tool:plugin__tools-count__count:{"n":6}', [
+      { name: "plugin__tools-count__count", input: { n: 6 }, content: "counted 6" },
     ]);
     await addCase(setId, conv, "leftover");
     cancelThenCrash = true;
@@ -1010,8 +1086,8 @@ describe("整轮回放", { timeout: 60_000 }, () => {
   it("崩溃后从头重跑：旧的评测对话被删掉，只剩一份结果", async () => {
     const setId = await createSet();
     const conv = await createConv(admin, orgId, agentId);
-    await seedRun(conv, "crash", 'tool:tools-count__count:{"n":5}', [
-      { name: "tools-count__count", input: { n: 5 }, content: "counted 5" },
+    await seedRun(conv, "crash", 'tool:plugin__tools-count__count:{"n":5}', [
+      { name: "plugin__tools-count__count", input: { n: 5 }, content: "counted 5" },
     ]);
     await addCase(setId, conv, "crash");
     crashOnce = true;
@@ -1033,8 +1109,8 @@ describe("整轮回放", { timeout: 60_000 }, () => {
   it("请求前检查出 DB 错误：按崩溃交给 BullMQ 重试，从头重跑后 done", async () => {
     const setId = await createSet();
     const conv = await createConv(admin, orgId, agentId);
-    await seedRun(conv, "dberr", 'tool:tools-count__count:{"n":4}', [
-      { name: "tools-count__count", input: { n: 4 }, content: "counted 4" },
+    await seedRun(conv, "dberr", 'tool:plugin__tools-count__count:{"n":4}', [
+      { name: "plugin__tools-count__count", input: { n: 4 }, content: "counted 4" },
     ]);
     await addCase(setId, conv, "dberr");
     checkFailed = 0;
@@ -1056,8 +1132,8 @@ describe("整轮回放", { timeout: 60_000 }, () => {
   it("计费一直写不进去：尝试用尽后结果记 error，评测对话被删掉", async () => {
     const setId = await createSet();
     const conv = await createConv(admin, orgId, agentId);
-    await seedRun(conv, "chargeerr", 'tool:tools-count__count:{"n":3}', [
-      { name: "tools-count__count", input: { n: 3 }, content: "counted 3" },
+    await seedRun(conv, "chargeerr", 'tool:plugin__tools-count__count:{"n":3}', [
+      { name: "plugin__tools-count__count", input: { n: 3 }, content: "counted 3" },
     ]);
     await addCase(setId, conv, "chargeerr");
     chargeFailed = 0;
@@ -1094,8 +1170,8 @@ describe("整轮回放", { timeout: 60_000 }, () => {
   it("尝试用尽后删除评测对话也失败：结果照常记 error，运行照常结束", async () => {
     const setId = await createSet();
     const conv = await createConv(admin, orgId, agentId);
-    await seedRun(conv, "delerr", 'tool:tools-count__count:{"n":2}', [
-      { name: "tools-count__count", input: { n: 2 }, content: "counted 2" },
+    await seedRun(conv, "delerr", 'tool:plugin__tools-count__count:{"n":2}', [
+      { name: "plugin__tools-count__count", input: { n: 2 }, content: "counted 2" },
     ]);
     await addCase(setId, conv, "delerr");
     chargeFailures = -1;

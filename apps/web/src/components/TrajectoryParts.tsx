@@ -12,6 +12,7 @@ import {
 import { useLocale, useTranslations } from "next-intl";
 import type { ReactNode } from "react";
 import { Link } from "../i18n/navigation";
+import { toolLabelOfKey, toolLabelText } from "../lib/tool-label";
 import {
   inputTotal,
   type ModelUsage,
@@ -254,6 +255,8 @@ function ToolDetail({ call }: { call: TrajectoryToolCall }) {
   const locale = useLocale();
   const hookRows = useHookRows();
   const rows: { k: ReactNode; v: ReactNode }[] = [
+    // the raw key stays as secondary text under the label
+    { k: t("key"), v: call.toolKey },
     { k: t("duration"), v: formatSpanDuration(call.durationMs) },
     {
       k: t("started"),
@@ -300,7 +303,7 @@ function ToolDetail({ call }: { call: TrajectoryToolCall }) {
     );
   }
   return (
-    <Card title={t("title", { name: call.toolKey })}>
+    <Card title={t("title", { name: toolLabelText(toolLabelOfKey(call.toolKey)) })}>
       <Stack gap={12}>
         <IoBlock label="IN" text={pretty(call.input)} />
         <IoBlock label="OUT" text={call.result === null ? t("noResult") : call.result.content} />

@@ -22,7 +22,7 @@ const APPROVAL = {
   conversationId: "c1",
   runId: "r1",
   callId: "call_1",
-  toolKey: "fixture__delete_item",
+  toolKey: "mcp__fixture__delete_item",
   toolName: "delete_item",
   connector: { id: "app1", name: "Fixture", slug: "fixture" },
   agent: { id: "ag1", name: "Echo agent" },
@@ -40,10 +40,12 @@ const APPROVAL = {
 };
 
 const INFO: ToolInfo = {
-  key: "fixture__delete_item",
+  key: "mcp__fixture__delete_item",
   title: "Delete item",
   kind: "connector",
+  sandbox: false,
   keyArgs: ["id"],
+  tool: "delete_item",
   source: { kind: "connector", id: "app1", name: "Fixture" },
 };
 
@@ -57,7 +59,7 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
   const item = (decided: ApprovalItem["decided"] = null): ApprovalItem => ({
     approvalId: "ap1",
     callId: "call_1",
-    toolKey: "fixture__delete_item",
+    toolKey: "mcp__fixture__delete_item",
     input: { reason: "cleanup", id: "x1" },
     expiresAt: EXPIRES,
     policy: "connector",
@@ -71,8 +73,8 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
       locale: "zh",
     });
     await screen.findByRole("button", { name: "本会话内都批准" });
-    expect(screen.getByText("Fixture: Delete item")).toBeTruthy();
-    expect(screen.getByText("fixture__delete_item")).toBeTruthy();
+    expect(screen.getByText("Fixture [delete_item]")).toBeTruthy();
+    expect(screen.getByText("mcp__fixture__delete_item")).toBeTruthy();
     const keys = [...container.querySelectorAll('[data-part="kv-key"]')].map((k) => k.textContent);
     expect(keys).toEqual(["id", "reason"]);
     expect(screen.getByText(zh.approval.policy.connector)).toBeTruthy();
@@ -93,7 +95,7 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
     renderPage(<ApprovalCard orgId="o1" item={item()} info={INFO} />, { locale: "zh" });
     await userEvent.setup().click(await screen.findByRole("button", { name: label }));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ decision: "approve", scope });
-    expect(await screen.findByText(/你 批准了 Fixture: Delete item/)).toBeTruthy();
+    expect(await screen.findByText(/你 批准了 Fixture \[delete_item\]/)).toBeTruthy();
   });
 
   it("a role escalation offers only once; deny sends the reason", async () => {
@@ -129,8 +131,8 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
       expect(
         await screen.findByText(
           m.approval.otherApproverFor
-            .replace("{tool}", "Fixture: Delete item")
-            .replace("{key}", "fixture__delete_item"),
+            .replace("{tool}", "Fixture [delete_item]")
+            .replace("{key}", "mcp__fixture__delete_item"),
         ),
       ).toBeTruthy();
       expect(screen.queryByRole("button", { name: /批准|Approve/ })).toBeNull();
@@ -153,7 +155,7 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
       />,
       { locale: "zh", me: ME },
     );
-    expect(screen.getByText(/someone 拒绝了 Fixture: Delete item/)).toBeTruthy();
+    expect(screen.getByText(/someone 拒绝了 Fixture \[delete_item\]/)).toBeTruthy();
     expect(screen.getByText(/「too risky」/)).toBeTruthy();
     expect(calls).toHaveLength(0);
   });
@@ -352,7 +354,7 @@ describe("the approval block lists every scope only when allowed", () => {
         item={{
           approvalId: "ap1",
           callId: "call_1",
-          toolKey: "fixture__delete_item",
+          toolKey: "mcp__fixture__delete_item",
           input: {},
           expiresAt: EXPIRES,
           decided: null,
@@ -368,7 +370,7 @@ describe("the approval block lists every scope only when allowed", () => {
 });
 
 describe("QuestionCard: a single choice question", () => {
-  it("shows ask_user's question as the title (the field draws no label of its own)", () => {
+  it("shows AskUserQuestion's question as the title (the field draws no label of its own)", () => {
     renderPage(
       <QuestionCard
         orgId="o1"

@@ -3,7 +3,7 @@ import type { KernelConfigService } from "../../infra/config/kernel-config.servi
 import type { BuiltinTool } from "../registry.js";
 
 const SPEC: ToolSpec = {
-  name: "ask_user",
+  name: "AskUserQuestion",
   description:
     "Ask the user one or more multiple-choice questions and wait for the answers. Use it when you " +
     "need the user's preference or decision to continue, or when a request is ambiguous; do not use " +
@@ -126,7 +126,7 @@ const text = (t: string, zh: string, en: string) => ({
 });
 
 /**
- * 内置工具 `ask_user`：用通用的输入请求机制实现——首次调用返回 `input_required`，
+ * 内置工具 `AskUserQuestion`：用通用的输入请求机制实现——首次调用返回 `input_required`，
  * 内核暂停运行并展示表单；用户回答（或超时）后用同一 input 再次调用，按 `ctx.resume` 生成结果。
  * 默认 allow（提问本身就是让用户参与，不再审批）。
  */

@@ -263,7 +263,7 @@ describe("model and effort switching", { timeout: 60_000 }, () => {
       method: "POST",
       url: `/api/v1/orgs/${orgId}/agents`,
       payload: {
-        // default builtin tools (ask_user) so the run can wait for an answer
+        // default builtin tools (AskUserQuestion) so the run can wait for an answer
         definition: { name: "Asker", instructions: "Ask.", model: FAKE_1 },
         visibility: "org",
       },
@@ -271,7 +271,7 @@ describe("model and effort switching", { timeout: 60_000 }, () => {
     expect(res.statusCode, res.body).toBe(201);
     const asker = (res.json() as { agent: { id: string } }).agent.id;
     const conv = await createConv(owner, orgId, asker);
-    const ask = `tool:ask_user:${JSON.stringify({
+    const ask = `tool:AskUserQuestion:${JSON.stringify({
       questions: [
         {
           question: "Which one?",

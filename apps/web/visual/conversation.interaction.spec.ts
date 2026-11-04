@@ -55,7 +55,7 @@ test("opening a group and a row inside it animates both", async ({ page }) => {
   const sel = '[data-ref-block="tool-group-collapsed"] .cb-expand';
   expect((await animation(page, sel)).name).toBe("cb-expand");
   const e = block(page, "tool-group-expanded");
-  const row = e.getByRole("button", { name: /获取文件元数据 失败/ });
+  const row = e.getByRole("button", { name: /\[get_file_metadata\] 失败/ });
   await row.click();
   await expect(row).toHaveAttribute("aria-expanded", "true");
   const detail = e.locator('[data-part="tool-detail"][data-animate="true"]');

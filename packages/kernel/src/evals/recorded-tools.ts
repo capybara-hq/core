@@ -1,5 +1,12 @@
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import { assistantIdemKey } from "../runtime/model-call.js";
+import { MATCH_IGNORED_FIELDS } from "../tools/builtin-names.js";
+import {
+  isLegacyPrefixedKey,
+  type LegacyScope,
+  legacyToolInput,
+  legacyToolKey,
+} from "../tools/legacy-keys.js";
 import { RUN_STOPPED_TEXT, type ToolPipeline, type ToolStepContext } from "../tools/pipeline.js";
 import type { CaseSnapshot } from "./snapshot.js";
 
@@ -20,11 +27,81 @@ export interface RecordedCall {
   inputKey: string;
   content: string;
   isError: boolean;
-  /** 原结果里的 `tool_search` 已加载工具（照抄：之后请求的已加载集合由日志还原）。 */
+  /** 原结果里的 `ToolSearch` 已加载工具（照抄：之后请求的已加载集合由日志还原）。 */
   loadedTools?: string[];
   contentTypes?: string[];
   /** 原 `tool_call_started` 的定义指纹（没有开始事件的调用为空串）。 */
   specHash: string;
+  /** The recorded call used release-candidate names; `toolKey` and `inputKey` are already the current ones. */
+  legacy?: true;
+}
+
+/**
+ * The connectors and extensions an rc `<x>__<tool>` key can name, from positive evidence in the
+ * snapshot only (a head with no evidence, or evidence of both kinds, stays unmapped, so its
+ * recorded calls are unmatched, which is a safe miss):
+ * - a connector: the tool definition the key was recorded with (`toolSpecs`, found by the specHash of
+ *   its `tool_call_started` or its `model_call` tools / catalog entry) has `connectorData`;
+ * - an extension: that definition exists without `connectorData` and its name is the key's tool
+ *   part, or an agent definition names exactly that tool as a `{ kind: "plugin", plugin: x, name }` ref.
+ */
+export function legacyScopeOf(s: CaseSnapshot): LegacyScope {
+  const hashes = new Map<string, Set<string>>();
+  const note = (key: string, hash: string | undefined) => {
+    if (!isLegacyPrefixedKey(key)) return;
+    const set = hashes.get(key) ?? new Set<string>();
+    if (hash !== undefined && hash !== "") set.add(hash);
+    hashes.set(key, set);
+  };
+  for (const e of s.events) {
+    if (e.type === "tool_call_started") {
+      const p = e.payload as { toolKey: string; specHash?: string };
+      note(p.toolKey, p.specHash);
+    } else if (e.type === "model_call") {
+      type Entry = { key: string; specHash: string };
+      const r = (e.payload as { request?: { tools?: Entry[]; catalog?: Entry[] } }).request;
+      for (const t of [...(r?.tools ?? []), ...(r?.catalog ?? [])]) note(t.key, t.specHash);
+    }
+  }
+  const extensionNames = new Set<string>();
+  const connectorSlugs = new Set<string>();
+  const planted = new Set<string>();
+  for (const def of Object.values(s.definitions)) {
+    for (const t of def.tools) if (t.kind === "plugin") planted.add(`${t.plugin}__${t.name}`);
+  }
+  for (const [key, set] of hashes) {
+    const i = key.indexOf("__");
+    const head = key.slice(0, i);
+    const tool = key.slice(i + 2);
+    for (const h of set) {
+      const spec = s.toolSpecs[h];
+      if (spec === undefined) continue;
+      if ((spec as { connectorData?: unknown }).connectorData !== undefined) {
+        connectorSlugs.add(head);
+      } else if (spec.name === tool) {
+        extensionNames.add(head);
+      }
+    }
+  }
+  for (const key of planted) {
+    if (hashes.has(key)) extensionNames.add(key.slice(0, key.indexOf("__")));
+  }
+  return { connectorSlugs, extensionNames };
+}
+
+/**
+ * A recorded call in the current names: an rc builtin or `<x>__<tool>` key becomes its current
+ * key with the input's parameters renamed. Only the recorded side is ever normalized; a call
+ * already in current names (or one that cannot be mapped) is returned as is.
+ */
+export function currentCall(
+  name: string,
+  input: unknown,
+  scope: LegacyScope,
+): { name: string; input: unknown; legacy: boolean } {
+  const key = legacyToolKey(name, scope);
+  if (key === null) return { name, input, legacy: false };
+  return { name: key, input: legacyToolInput(name, input), legacy: true };
 }
 
 /** 规范化 JSON：对象键递归按码点排序，数组保持顺序；`undefined` 按 JSON 规则省略。 */
@@ -41,15 +118,6 @@ export function canonicalJson(v: unknown): string {
   };
   return JSON.stringify(norm(v) ?? null);
 }
-
-/**
- * Input fields left out when matching, per tool: display-only arguments the model writes that do not
- * change what the tool does. `sandbox_bash`'s `description` became required in UI refresh B, so a
- * recording without it and a replayed call with one (or a different wording) still match.
- */
-const MATCH_IGNORED_FIELDS: Readonly<Record<string, readonly string[]>> = {
-  sandbox_bash: ["description"],
-};
 
 /** The matching key of a call: the canonical JSON of its input without the ignored fields. */
 export function matchKey(toolKey: string, input: unknown): string {
@@ -94,6 +162,7 @@ export function recordedCalls(s: CaseSnapshot): RecordedCall[] {
       if (!started.has(p.callId)) started.set(p.callId, p.specHash);
     }
   }
+  const scope = legacyScopeOf(s);
   const out: RecordedCall[] = [];
   for (const e of own) {
     if (e.type !== "assistant_message") continue;
@@ -103,9 +172,11 @@ export function recordedCalls(s: CaseSnapshot): RecordedCall[] {
       const call = b as unknown as { id: string; name: string; input: unknown };
       const r = results.get(call.id);
       if (!r) continue;
+      const cur = currentCall(call.name, call.input, scope);
       out.push({
-        toolKey: call.name,
-        inputKey: matchKey(call.name, call.input),
+        toolKey: cur.name,
+        inputKey: matchKey(cur.name, cur.input),
+        ...(cur.legacy && { legacy: true as const }),
         content: r.content,
         isError: r.isError,
         ...(r.loadedTools !== undefined && { loadedTools: r.loadedTools }),
@@ -136,8 +207,14 @@ export interface RecordedToolPipelineDeps {
 export class RecordedToolPipeline implements Pick<ToolPipeline, "runStep"> {
   private readonly used = new Set<number>();
   private misses = 0;
+  private legacyHits = 0;
 
   constructor(private readonly d: RecordedToolPipelineDeps) {}
+
+  /** Calls so far matched with a recording made under release-candidate tool names. */
+  legacyMatches(): number {
+    return this.legacyHits;
+  }
 
   /** 至今没有匹配到记录的调用数。 */
   unmatched(): number {
@@ -206,6 +283,7 @@ export class RecordedToolPipeline implements Pick<ToolPipeline, "runStep"> {
     );
     if (i < 0) return undefined;
     this.used.add(i);
+    if (this.d.recordings[i]?.legacy === true) this.legacyHits++;
     return this.d.recordings[i];
   }
 }

@@ -102,7 +102,7 @@ function makeZip(files: Record<string, string>): Buffer {
 
 const SKILL = "e2e-notes";
 
-test("管理员上传技能包，agent 选用它；对话里 skill_load 的时间线摘要显示加载的技能与版本", async ({
+test("管理员上传技能包，agent 选用它；对话里 Skill 的时间线摘要显示加载的技能与版本", async ({
   page,
 }) => {
   await signIn(page);
@@ -139,7 +139,7 @@ test("管理员上传技能包，agent 选用它；对话里 skill_load 的时�
   await page.getByRole("button", { name: zh.agents.form.submit }).click();
   await expect(page).toHaveURL(/\/zh\/agents$/);
 
-  // 4. 对话：model-fake 按脚本调用 skill_load，时间线显示工具给的中文摘要
+  // 4. 对话：model-fake 按脚本调用 Skill，时间线显示工具给的中文摘要
   const agents = (await (await page.request.get(`/api/v1/orgs/${orgId}/agents`)).json()) as {
     agents: {
       id: string;
@@ -165,14 +165,14 @@ test("管理员上传技能包，agent 选用它；对话里 skill_load 的时�
   const convId = ((await conv.json()) as { conversation: { id: string } }).conversation.id;
   await page.goto(`/zh/chat/${convId}`);
   const input = composer(page);
-  await input.fill(`tool:skill_load:${JSON.stringify({ name: SKILL })}`);
+  await input.fill(`tool:Skill:${JSON.stringify({ skill: SKILL })}`);
   await input.press("Enter");
-  const tool = toolGroup(page, "skill_load");
+  const tool = toolGroup(page, "Skill");
   await expect(tool).toHaveAttribute("data-tool-status", "done");
   await expect(tool).toContainText(`加载技能 ${SKILL}（版本 1）`);
 });
 
-test("共享 agent 用 skill_write 改技能：发起人确认工具调用，负责人在收件箱看到差异并批准", async ({
+test("共享 agent 用 SkillWrite 改技能：发起人确认工具调用，负责人在收件箱看到差异并批准", async ({
   page,
 }) => {
   await signIn(page);
@@ -185,7 +185,7 @@ test("共享 agent 用 skill_write 改技能：发起人确认工具调用，负
         name: "Shared writer",
         instructions: "Write skills.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "builtin", name: "skill_write" }],
+        tools: [{ kind: "builtin", name: "SkillWrite" }],
       },
       visibility: "org",
     },
@@ -199,7 +199,7 @@ test("共享 agent 用 skill_write 改技能：发起人确认工具调用，负
   const convId = ((await conv.json()) as { conversation: { id: string } }).conversation.id;
   await page.goto(`/zh/chat/${convId}`);
 
-  // 1. 共享 agent 的 skill_write 固定要确认：发起人（也是负责人）在对话里批准工具调用
+  // 1. 共享 agent 的 SkillWrite 固定要确认：发起人（也是负责人）在对话里批准工具调用
   const write = {
     name: "team-glossary",
     description: "Use for team terms.",
@@ -209,11 +209,11 @@ test("共享 agent 用 skill_write 改技能：发起人确认工具调用，负
     ],
   };
   const input = composer(page);
-  await input.fill(`tool:skill_write:${JSON.stringify(write)}`);
+  await input.fill(`tool:SkillWrite:${JSON.stringify(write)}`);
   await input.press("Enter");
   const approval = page.locator('[data-role="approval"]');
   await approval.getByRole("button", { name: designZh("hitl.approve"), exact: true }).click();
-  await expect(toolGroup(page, "skill_write")).toHaveAttribute("data-tool-status", "done");
+  await expect(toolGroup(page, "SkillWrite")).toHaveAttribute("data-tool-status", "done");
 
   // 2. 收件箱：技能变更卡片显示 agent、文件与差异；负责人批准
   await page.goto("/zh/inbox");

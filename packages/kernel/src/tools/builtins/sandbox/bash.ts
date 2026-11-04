@@ -1,4 +1,4 @@
-import { type ExecResult, ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
+import type { ExecResult, ToolSpec } from "@capybara-hq/plugin-sdk";
 import type { BuiltinTool } from "../../registry.js";
 import {
   clip,
@@ -12,17 +12,17 @@ import {
   withNotices,
 } from "./common.js";
 
-/** 不给 `timeoutSeconds` 时的命令超时（秒），不超过 `sandbox.limits.maxCommandSeconds`。 */
+/** The command timeout in seconds when `timeout` is not given, at most `sandbox.limits.maxCommandSeconds`. */
 export const BASH_DEFAULT_TIMEOUT_SECONDS = 120;
 /** The longest `description` (the shell row shows it instead of the command). */
 export const BASH_DESCRIPTION_MAX_CHARS = 120;
-/** bash 结果超过这么多字符即转存（走现有输出存档，模型用 read_tool_output 分页读）。 */
+/** bash 结果超过这么多字符即转存（走现有输出存档，模型用 ReadToolOutput 分页读）。 */
 export const BASH_SPILL_CHARS = 30_000;
 /** 一次命令最多收集的输出字节（stdout + stderr）；超出的丢弃并在结果里说明。 */
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 
 const SPEC: ToolSpec = {
-  name: "sandbox_bash",
+  name: "Bash",
   // Display only (the tool row; not in the fingerprint, never sent to the model).
   keyArgs: ["command"],
   description:
@@ -34,10 +34,10 @@ const SPEC: ToolSpec = {
     "Files the user attached to the conversation are under /workspace/attachments, " +
     "and skill files under /skills (read-only). Each call runs in a fresh shell (no state such as " +
     "cd or environment variables carries over). The result has stdout, stderr and the exit code; " +
-    "long output is saved and can be paged with read_tool_output. A command that runs longer than " +
-    "timeoutSeconds is stopped. Prefer sandbox_read, sandbox_write, sandbox_edit, sandbox_glob and " +
-    "sandbox_grep for reading, writing and searching files. To give a file to the user, use " +
-    "sandbox_deliver. Other sub-agents of this conversation may run commands in this sandbox at " +
+    "long output is saved and can be paged with ReadToolOutput. A command that runs longer than " +
+    "timeout milliseconds is stopped. Prefer Read, Write, Edit, Glob and " +
+    "Grep for reading, writing and searching files. To give a file to the user, use " +
+    "Deliver. Other sub-agents of this conversation may run commands in this sandbox at " +
     "the same time. Always pass description: a few words saying what the command is for; the " +
     "user sees it instead of the command.",
   inputSchema: {
@@ -55,10 +55,10 @@ const SPEC: ToolSpec = {
         description:
           'What this command does, in a few words (e.g. "Generate the final PDF"). Shown to the user.',
       },
-      timeoutSeconds: {
+      timeout: {
         type: "integer",
         minimum: 1,
-        description: `Seconds before the command is stopped. Default ${BASH_DEFAULT_TIMEOUT_SECONDS}; the deployment sets a maximum (7200 by default).`,
+        description: `Milliseconds before the command is stopped. Default ${BASH_DEFAULT_TIMEOUT_SECONDS * 1000}; the deployment sets a maximum (7200000 by default); a larger value is lowered to it.`,
       },
     },
     required: ["command", "description"],
@@ -70,16 +70,17 @@ interface BashInput {
   command: string;
   /** Required since UI refresh B; calls recorded before it have none. */
   description?: string;
-  timeoutSeconds?: number;
+  /** Milliseconds. */
+  timeout?: number;
 }
 
-/** 本次命令的超时（秒）：给定的值，或默认值（不超过上限）。 */
-const secondsFor = (input: BashInput, max: number): number =>
-  input.timeoutSeconds ?? Math.min(BASH_DEFAULT_TIMEOUT_SECONDS, max);
+/** This command's timeout in milliseconds: the given value or the default, at most the maximum. */
+const msFor = (input: BashInput, maxSeconds: number): number =>
+  Math.min(input.timeout ?? BASH_DEFAULT_TIMEOUT_SECONDS * 1000, maxSeconds * 1000);
 
 /**
  * 命令结果 → 给模型的文本。`budgetClamped`：运行的时限把超时收紧到了 `seconds`（Ruling M20），超时说明改为
- * 指向 `runtime.maxRunSeconds`，而不是让模型加大 timeoutSeconds。
+ * 指向 `runtime.maxRunSeconds`，而不是让模型加大 timeout。
  */
 export function formatExec(r: ExecResult, seconds: number, budgetClamped = false): string {
   const parts: string[] = [];
@@ -93,7 +94,7 @@ export function formatExec(r: ExecResult, seconds: number, budgetClamped = false
     );
   } else if (r.timedOut) {
     parts.push(
-      `[timedOut: the command did not finish within ${seconds}s and was stopped. The sandbox is still usable; pass a larger timeoutSeconds (up to the deployment maximum), or split the work into shorter steps that save progress to files under /workspace.]`,
+      `[timedOut: the command did not finish within ${seconds}s and was stopped. The sandbox is still usable; pass a larger timeout in milliseconds (up to the deployment maximum), or split the work into shorter steps that save progress to files under /workspace.]`,
     );
   } else if (r.exitCode === null) {
     parts.push(
@@ -106,7 +107,7 @@ export function formatExec(r: ExecResult, seconds: number, budgetClamped = false
   return parts.join("\n");
 }
 
-/** 内置工具 `sandbox_bash`：在本对话的沙箱里执行命令。 */
+/** 内置工具 `Bash`：在本对话的沙箱里执行命令。 */
 export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
   return {
     spec: SPEC,
@@ -117,35 +118,38 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
     timeoutMs: (input) => {
       const cfg = deps.config.get();
       const max = cfg.sandbox.limits.maxCommandSeconds;
-      return Math.min(secondsFor(input as BashInput, max), max) * 1000 + sandboxBaseTimeoutMs(cfg);
+      return msFor(input as BashInput, max) + sandboxBaseTimeoutMs(cfg);
     },
     async run(input, ctx) {
       const { command, description } = input as BashInput;
       const max = deps.config.get().sandbox.limits.maxCommandSeconds;
-      const req = (input as BashInput).timeoutSeconds;
-      if (req !== undefined && req > max) {
-        throw new ToolError(
-          `timeoutSeconds ${req} is over the limit of ${max} seconds; pass a value of at most ${max}.`,
-        );
-      }
-      const asked = secondsFor(input as BashInput, max);
-      // 运行截止前命令要自己超时（Ruling M20）：在拿到沙箱之后算，等锁与恢复用掉的时间一并扣掉
-      let seconds = asked;
+      const requested = (input as BashInput).timeout;
+      const maxMs = max * 1000;
+      const askedMs = msFor(input as BashInput, max);
+      // The run's deadline makes the command time out itself first (Ruling M20): counted after the
+      // sandbox is obtained, so the time spent waiting for the lock and resuming is deducted
+      let ms = askedMs;
       const { value: r, notices } = await inSandbox(deps, ctx, ({ h, p, signal }) => {
-        const left = Math.floor(runTimeLeftMs(ctx.runDeadline) / 1000);
-        seconds = Math.max(1, Math.min(asked, left));
+        const left = Math.floor(runTimeLeftMs(ctx.runDeadline) / 1000) * 1000;
+        ms = Math.max(1000, Math.min(askedMs, left));
         return p.exec(h, {
           command,
           cwd: "/workspace",
-          timeoutMs: seconds * 1000,
+          timeoutMs: ms,
           maxOutputBytes: MAX_OUTPUT_BYTES,
           signal,
         });
       });
-      const clamped = seconds < asked;
+      const seconds = ms / 1000;
+      const clamped = ms < askedMs;
       const shown = clip(command, 120);
+      const lowered =
+        requested !== undefined && requested > maxMs
+          ? `\n[timeout ${requested} ms is over the deployment maximum; it was lowered to ${maxMs} ms.]`
+          : "";
+      const text = formatExec(r, seconds, clamped) + lowered;
       return {
-        content: [{ type: "text", text: withNotices(notices, formatExec(r, seconds, clamped)) }],
+        content: [{ type: "text", text: withNotices(notices, text) }],
         isError: r.timedOut || r.exitCode === null,
         // display only: a non-zero exit shows as failed on the row, `isError` stays as it was
         view: {

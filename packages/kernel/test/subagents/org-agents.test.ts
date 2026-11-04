@@ -45,13 +45,13 @@ const MEM_CONNECTOR = fixture("mem-connector");
 const ANALYST = "You are the analyst";
 const SCRIPT = { provider: "model-script", model: "script-1" };
 
-const agentCall = (input: Record<string, unknown>) => ({ name: "agent", input });
+const agentCall = (input: Record<string, unknown>) => ({ name: "Agent", input });
 
 const RULES: ScriptRule[] = [
   // the analyst (child)
   {
     when: { systemIncludes: ANALYST, lastUserIncludes: "cred:", assistantTurns: 0 },
-    reply: { toolCalls: [{ name: "mine__search", input: {} }] },
+    reply: { toolCalls: [{ name: "mcp__mine__search", input: {} }] },
   },
   {
     when: { systemIncludes: ANALYST, lastToolResultIncludes: "called search" },
@@ -61,8 +61,8 @@ const RULES: ScriptRule[] = [
     when: { systemIncludes: ANALYST, lastUserIncludes: "policy:", assistantTurns: 0 },
     reply: {
       toolCalls: [
-        { name: "mine__create", input: {} },
-        { name: "mine__remove", input: {} },
+        { name: "mcp__mine__create", input: {} },
+        { name: "mcp__mine__remove", input: {} },
       ],
     },
   },
@@ -169,7 +169,7 @@ const ANALYST_DEF = (over: Record<string, unknown> = {}) => ({
   model: SCRIPT,
   tools: [{ kind: "connector", connectorId, tools: "all" }],
   // its own ask on create
-  toolPolicies: { mine__create: "ask" },
+  toolPolicies: { mcp__mine__create: "ask" },
   subagents: { dispatchable: true },
   ...over,
 });
@@ -256,10 +256,10 @@ beforeEach(async () => {
         instructions: "Lead the work.",
         model: SCRIPT,
         tools: [
-          { kind: "builtin", name: "agent" },
+          { kind: "builtin", name: "Agent" },
           { kind: "connector", connectorId, tools: ["remove"] },
         ],
-        toolPolicies: { mine__remove: "deny" },
+        toolPolicies: { mcp__mine__remove: "deny" },
         subagents: {
           agents: [{ agentId: analystId, as: "analyst", description: "Answers data questions." }],
         },
@@ -286,7 +286,7 @@ const finalText = (events: ConversationEvent[]) =>
     .join("");
 
 const agentResults = (events: ConversationEvent[]) =>
-  ofType(events, "tool_result").filter((r) => r.payload.toolKey === "agent");
+  ofType(events, "tool_result").filter((r) => r.payload.toolKey === "Agent");
 
 async function childrenOf(parent: string) {
   return db
@@ -462,7 +462,7 @@ describe("dispatching an org agent", () => {
       20_000,
       "pending approval",
     );
-    expect(approval).toMatchObject({ tool_key: "mine__create", requested_for: ids.member });
+    expect(approval).toMatchObject({ tool_key: "mcp__mine__create", requested_for: ids.member });
     // neither owner can decide it
     for (const req of [ana, owner]) {
       const r = await req({
@@ -482,9 +482,11 @@ describe("dispatching an org agent", () => {
     expect(finalText(await eventsOf(db, conv))).toBe("policy done");
 
     const cev = await eventsOf(db, child);
-    const remove = ofType(cev, "tool_result").find((r) => r.payload.toolKey === "mine__remove");
+    const remove = ofType(cev, "tool_result").find(
+      (r) => r.payload.toolKey === "mcp__mine__remove",
+    );
     expect(remove?.payload).toMatchObject({
-      content: "Tool mine__remove is denied by policy.",
+      content: "Tool mcp__mine__remove is denied by policy.",
       isError: true,
     });
     const grants = await db
@@ -492,7 +494,7 @@ describe("dispatching an org agent", () => {
       .select(["account_id", "agent_id", "tool_key"])
       .execute();
     expect(grants).toEqual([
-      { account_id: ids.member, agent_id: analystId, tool_key: "mine__create" },
+      { account_id: ids.member, agent_id: analystId, tool_key: "mcp__mine__create" },
     ]);
   }, 60_000);
 });
@@ -565,7 +567,7 @@ describe("the gates", () => {
           name: "Other",
           instructions: "x",
           model: SCRIPT,
-          tools: [{ kind: "builtin", name: "agent" }],
+          tools: [{ kind: "builtin", name: "Agent" }],
           subagents: { agents: [{ agentId: hiddenId, as: "hidden", description: "Hidden." }] },
         },
         visibility: "private",
@@ -656,10 +658,10 @@ describe("follow-ups", () => {
           instructions: "Lead the work.",
           model: SCRIPT,
           tools: [
-            { kind: "builtin", name: "agent" },
+            { kind: "builtin", name: "Agent" },
             { kind: "connector", connectorId, tools: ["remove"] },
           ],
-          toolPolicies: { mine__remove: "deny" },
+          toolPolicies: { mcp__mine__remove: "deny" },
           subagents: { agents: [] },
         },
       },
@@ -703,7 +705,7 @@ describe("follow-ups", () => {
           name: "Lead",
           instructions: "Lead the work.",
           model: SCRIPT,
-          tools: [{ kind: "builtin", name: "agent" }],
+          tools: [{ kind: "builtin", name: "Agent" }],
           subagents: { agents: [] },
         },
       },

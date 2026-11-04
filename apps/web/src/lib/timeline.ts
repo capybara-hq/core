@@ -15,6 +15,7 @@ import type {
   ModelRef,
   ToolInfo,
 } from "./conversations";
+import { toolLabel, toolLabelOfKey } from "./tool-label";
 
 /**
  * The conversation timeline (UI refresh B, spec §5.5–§5.8): the one pure builder that turns the
@@ -94,7 +95,7 @@ export interface TimelineTool {
   callId: string;
   toolKey: string;
   input: unknown;
-  /** The archive of a cut output (`read_tool_output`), or null. */
+  /** The archive of a cut output (`ReadToolOutput`), or null. */
   outputId: string | null;
   /** A read's line range; the thread shows it as the row's extra through i18n (m10). */
   lines?: { from: number; to: number };
@@ -216,7 +217,7 @@ export interface TimelineDraft {
 
 const TERMINAL = new Set<ConversationEvent["type"]>(["run_finished", "run_failed", "run_aborted"]);
 /** The builtin tool that dispatches sub-agents. */
-export const AGENT_TOOL = "agent";
+export const AGENT_TOOL = "Agent";
 const stepKey = (runId: string, step: number) => `${runId}:${step}`;
 const callKey = (runId: string | null, callId: string) => `${runId ?? ""}\u0000${callId}`;
 /** A row id that is a call key (an `agent` call never dispatched), not a sub-agent id. */
@@ -513,7 +514,9 @@ export function buildEventTimeline(
         if (text !== "") out.push({ kind: "prose", key, text, streaming: false });
         for (const b of e.payload.content) {
           if (b.type !== "tool_call") continue;
-          if (b.name === AGENT_TOOL) {
+          const ti = info.get(b.name);
+          // an older key of a current tool (history logged before a rename): the kernel says which
+          if ((ti?.aliasOf ?? b.name) === AGENT_TOOL) {
             const rec = asRecord(b.input);
             const sub: TimelineSubagent = {
               row: {
@@ -531,23 +534,21 @@ export function buildEventTimeline(
             agentCalls.set(callKey(e.runId, b.id), { sub, runId: e.runId });
             continue;
           }
-          const ti = info.get(b.name);
           const input = b.input;
           const rec = asRecord(input);
           const group = openGroup();
-          const builtinVerb =
-            ti?.source.kind === "builtin" && (ti.kind === "read" || ti.kind === "edit");
           const keyArg = keyArgOf(input, ti);
           const kind = ti?.kind ?? "tool";
           const command = kind === "command" && typeof rec.command === "string";
+          // Claude Code's look: "Bash", "CRM [search]"; before the info arrives, from the key
+          const label = ti ? toolLabel(ti, locale) : toolLabelOfKey(b.name);
           const row: ToolRowData = {
             id: callKey(e.runId, b.id),
             kind,
-            title: builtinVerb ? "" : (ti?.title ?? b.name),
+            name: label.name,
             status: "pending",
-            ...(ti?.source.kind === "connector" || ti?.source.kind === "extension"
-              ? { source: ti.source.name }
-              : {}),
+            ...(label.tool !== undefined ? { tool: label.tool } : {}),
+            ...(label.tooltip !== undefined ? { tooltip: label.tooltip } : {}),
             ...(keyArg !== undefined && keyArg !== "" ? { keyArg } : {}),
             ...(typeof rec.description === "string" && rec.description !== ""
               ? { description: rec.description }
@@ -612,11 +613,14 @@ export function buildEventTimeline(
         if (c.started !== null && !Number.isNaN(end)) row.durationMs = Math.max(0, end - c.started);
         if (view?.kind === "command" && view.description) row.description = view.description;
         if (view?.kind === "edit") {
-          row.added = view.added;
-          row.removed = view.removed;
           row.keyArg = view.path;
-          const diff: DiffData = { hunks: view.hunks, truncated: view.truncated };
-          row.detail = { ...row.detail, diff };
+          // A Write over a binary or very large file has no diff: no "+0 −0", no empty diff block
+          if (!(view.truncated && view.hunks.length === 0)) {
+            row.added = view.added;
+            row.removed = view.removed;
+            const diff: DiffData = { hunks: view.hunks, truncated: view.truncated };
+            row.detail = { ...row.detail, diff };
+          }
         }
         if (view?.kind === "read") {
           row.keyArg = view.path;

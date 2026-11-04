@@ -264,9 +264,10 @@ describe("phase C acceptance: superpowers subagent-driven-development", {
           name: "Builder",
           instructions: INSTRUCTIONS,
           model: SCRIPT,
-          tools: ["agent", "sandbox_bash", "sandbox_read", "sandbox_write", "sandbox_edit"].map(
-            (name) => ({ kind: "builtin", name }),
-          ),
+          tools: ["Agent", "Bash", "Read", "Write", "Edit"].map((name) => ({
+            kind: "builtin",
+            name,
+          })),
           skills: {
             orgSkills: [
               "subagent-driven-development",
@@ -309,7 +310,7 @@ describe("phase C acceptance: superpowers subagent-driven-development", {
     // the skill's scripts ran in the sandbox
     const results = ofType(events, "tool_result");
     for (const r of results) expect(r.payload.isError, r.payload.content).toBe(false);
-    const loads = results.filter((r) => r.payload.toolKey === "skill_load");
+    const loads = results.filter((r) => r.payload.toolKey === "Skill");
     // (the first one also starts the sandbox, whose notice comes first)
     expect(
       loads.map((r) => /Loaded skill "[^"]+" \(version \d+\)\./.exec(r.payload.content)?.[0]),
@@ -317,7 +318,7 @@ describe("phase C acceptance: superpowers subagent-driven-development", {
       'Loaded skill "subagent-driven-development" (version 1).',
       'Loaded skill "dispatching-parallel-agents" (version 1).',
     ]);
-    const bash = results.filter((r) => r.payload.toolKey === "sandbox_bash");
+    const bash = results.filter((r) => r.payload.toolKey === "Bash");
     expect(bash.map((r) => r.payload.content.split("\n").at(-1))).toEqual(
       Array(bash.length).fill("[exit code: 0]"),
     );
@@ -352,7 +353,7 @@ describe("phase C acceptance: superpowers subagent-driven-development", {
     expect(final?.tierFallback).toBe(true);
 
     // every agent result is the child's reply plus the status line
-    const agentResults = results.filter((r) => r.payload.toolKey === "agent");
+    const agentResults = results.filter((r) => r.payload.toolKey === "Agent");
     expect(agentResults).toHaveLength(8);
     for (const r of agentResults) {
       expect(r.payload.content).toMatch(
@@ -409,7 +410,7 @@ describe("phase C acceptance: superpowers subagent-driven-development", {
         expect(system[0]).not.toContain(INSTRUCTIONS);
       }
       // children never see the agent tool
-      expect(first?.tools?.map((t) => t.name)).not.toContain("agent");
+      expect(first?.tools?.map((t) => t.name)).not.toContain("Agent");
     }
     // the follow-up's request carries the implementer's earlier history
     const followUp = original.find(

@@ -2,6 +2,7 @@ import { isAgentVisibleTo } from "../../agents/agent-lookup.js";
 import { type AgentDefinition, normalizeStoredDefinition } from "../../agents/definition.js";
 import type { KernelSchemaDb } from "../../db/kernel-schema.js";
 import { audit } from "../../identity/audit.js";
+import { normalizeStoredDefinitionIn } from "../../tools/legacy-data.js";
 
 /**
  * The gates an org agent sub-agent passes (spec §5.5), checked at every dispatch and every
@@ -47,7 +48,7 @@ export async function checkOrgAgent(
   if (!(a.parentDefinition.subagents?.agents ?? []).some((x) => x.agentId === a.agentId)) {
     return { ok: false, gate: "allowlist" };
   }
-  const definition = normalizeStoredDefinition(row.definition);
+  const definition = await normalizeStoredDefinitionIn(db, a.orgId, row.definition);
   if (definition.subagents?.dispatchable !== true) return { ok: false, gate: "dispatchable" };
   if (!(await isAgentVisibleTo(db, a.agentId, a.triggerAccountId))) {
     return { ok: false, gate: "visibility" };

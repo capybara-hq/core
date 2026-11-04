@@ -63,14 +63,14 @@ describe("ToolCallRow", () => {
   it("默认只显示一行，展开后显示 IN / OUT", async () => {
     wrap(
       <ToolCallRow
-        name="slack__search"
+        name="plugin__slack__search"
         summary="搜索 #feedback 本周消息 · 42 条"
         status="done"
         input='{"q":"feedback"}'
         output="42 results"
       />,
     );
-    const head = screen.getByRole("button", { name: /slack__search/ });
+    const head = screen.getByRole("button", { name: /plugin__slack__search/ });
     expect(head.textContent).toContain("搜索 #feedback 本周消息 · 42 条");
     expect(head.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByText("IN")).toBeNull();

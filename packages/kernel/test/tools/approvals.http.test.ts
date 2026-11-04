@@ -117,7 +117,7 @@ function request(over: Partial<ApprovalRequestInput> = {}): Promise<ApprovalReco
     runId,
     step: 1,
     callId: `c-${randomUUID().slice(0, 8)}`,
-    toolKey: "docs__create_doc",
+    toolKey: "mcp__docs__create_doc",
     specHash: "hash-1",
     connectorId,
     input: { title: "Q3 plan" },
@@ -200,7 +200,7 @@ describe("列表与详情的可见性", () => {
     expect((res.json() as { approval: unknown }).approval).toMatchObject({
       id: a.id,
       status: "pending",
-      toolKey: "docs__create_doc",
+      toolKey: "mcp__docs__create_doc",
       toolName: "create_doc",
       connector: { id: connectorId, name: "Docs", slug: "docs" },
       input: { title: "Q3 plan" },
@@ -278,7 +278,7 @@ describe("决定", () => {
     expect(grants).toEqual([
       {
         conversation_id: conversationId,
-        tool_key: "docs__create_doc",
+        tool_key: "mcp__docs__create_doc",
         spec_hash: "hash-1",
         connector_id: connectorId,
       },
@@ -301,7 +301,10 @@ describe("决定", () => {
       .where("action", "=", "approval.decided")
       .execute();
     expect(audit).toHaveLength(1);
-    expect(audit[0]?.detail).toMatchObject({ toolKey: "docs__create_doc", decision: "approved" });
+    expect(audit[0]?.detail).toMatchObject({
+      toolKey: "mcp__docs__create_doc",
+      decision: "approved",
+    });
 
     const again = await initiator.req({
       method: "POST",
@@ -329,7 +332,7 @@ describe("决定", () => {
       expect.objectContaining({
         agentId,
         agentName: "Writer",
-        toolKey: "docs__create_doc",
+        toolKey: "mcp__docs__create_doc",
         specHash: "hash-1",
       }),
     ]);
@@ -338,15 +341,15 @@ describe("决定", () => {
     expect((others.json() as { grants: unknown[] }).grants).toEqual([]);
     await other.req({
       method: "DELETE",
-      url: `/api/v1/orgs/${orgId}/me/tool-grants/${agentId}/docs__create_doc`,
+      url: `/api/v1/orgs/${orgId}/me/tool-grants/${agentId}/mcp__docs__create_doc`,
     });
     expect(await db.selectFrom("tool_grants").selectAll().execute()).toMatchObject([
-      { tool_key: "docs__create_doc", spec_hash: "hash-1", connector_id: connectorId },
+      { tool_key: "mcp__docs__create_doc", spec_hash: "hash-1", connector_id: connectorId },
     ]);
 
     const del = await initiator.reqB({
       method: "DELETE",
-      url: `/api/v1/orgs/${orgId}/me/tool-grants/${agentId}/docs__create_doc`,
+      url: `/api/v1/orgs/${orgId}/me/tool-grants/${agentId}/mcp__docs__create_doc`,
     });
     expect(del.statusCode).toBe(204);
     expect(await db.selectFrom("tool_grants").selectAll().execute()).toEqual([]);
@@ -456,7 +459,7 @@ describe("决定", () => {
       await sql`INSERT INTO capybara.approvals (id, org_id, conversation_id, run_id, call_id, attempt,
           tool_key, spec_hash, connector_id, input, requested_for, expires_at)
         VALUES (${randomUUID()}, ${orgId}, ${conversationId}, ${runId}, 'c-first', 1,
-          'docs__create_doc', 'hash-1', ${connectorId}, '{}'::jsonb, ${initiator.account.id},
+          'mcp__docs__create_doc', 'hash-1', ${connectorId}, '{}'::jsonb, ${initiator.account.id},
           now() + interval '1 hour')`.execute(t);
       inserted();
       await released;

@@ -59,7 +59,7 @@ const HOOKS_PROBE = fixture("hooks-probe");
 const STOPPED = "The run was stopped while this sub-agent was working; it was stopped too.";
 const CHILD = "You are a sub-agent";
 const agentCall = (prompt: string) => ({
-  name: "agent",
+  name: "Agent",
   input: { description: "Task", prompt },
 });
 
@@ -67,7 +67,7 @@ const RULES: ScriptRule[] = [
   {
     when: { systemIncludes: CHILD, lastUserIncludes: "task-write", assistantTurns: 0 },
     reply: {
-      toolCalls: [{ name: "sandbox_write", input: { path: "/workspace/c.txt", content: "c" } }],
+      toolCalls: [{ name: "Write", input: { file_path: "/workspace/c.txt", content: "c" } }],
     },
   },
   // a child that keeps running until it is stopped (the barrier is never reached)
@@ -96,7 +96,7 @@ const RULES: ScriptRule[] = [
     reply: {
       toolCalls: [
         agentCall("task-one"),
-        { name: "sandbox_bash", input: { description: "Wait", command: "sleep 30" } },
+        { name: "Bash", input: { description: "Wait", command: "sleep 30" } },
       ],
     },
   },
@@ -176,11 +176,11 @@ beforeEach(async () => {
         name: "Lead",
         instructions: "Lead the work.",
         model: { provider: "model-script", model: "script-1" },
-        tools: ["agent", "sandbox_write", "sandbox_bash"].map((name) => ({
+        tools: ["Agent", "Write", "Bash"].map((name) => ({
           kind: "builtin",
           name,
         })),
-        toolPolicies: { sandbox_write: "ask" },
+        toolPolicies: { Write: "ask" },
       },
       visibility: "org",
     },
@@ -202,7 +202,7 @@ type Ev<T extends ConversationEvent["type"]> = ConversationEvent & {
 const ofType = <T extends ConversationEvent["type"]>(events: ConversationEvent[], type: T) =>
   events.filter((e): e is Ev<T> => e.type === type);
 const agentResults = (events: ConversationEvent[]) =>
-  ofType(events, "tool_result").filter((r) => r.payload.toolKey === "agent");
+  ofType(events, "tool_result").filter((r) => r.payload.toolKey === "Agent");
 const finalText = (events: ConversationEvent[]) =>
   ofType(events, "assistant_message")
     .at(-1)
@@ -300,7 +300,7 @@ describe("stopping a parent that waits on sub-agents", () => {
       .where("action", "=", "tool.called")
       .execute();
     const agentAudits = audits.filter(
-      (a) => (a.detail as { toolKey?: string }).toolKey === "agent",
+      (a) => (a.detail as { toolKey?: string }).toolKey === "Agent",
     );
     expect(agentAudits.map((a) => (a.detail as { callId: string }).callId).sort()).toEqual(
       [...calls].sort(),
@@ -321,7 +321,7 @@ describe("stopping a parent that waits on sub-agents", () => {
       10_000,
       "parent postExecute",
     );
-    expect(post).toMatchObject({ toolKey: "agent", content: STOPPED, isError: true, runId });
+    expect(post).toMatchObject({ toolKey: "Agent", content: STOPPED, isError: true, runId });
     expect(calls).toContain(post.callId);
     // once per call: three agent results, three tool.postExecute (review m7); the cancelled
     // approval of the writer child fires none

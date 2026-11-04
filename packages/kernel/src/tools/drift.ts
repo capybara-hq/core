@@ -1,5 +1,6 @@
 import {
   type AuthInjection,
+  connectorToolKey,
   type Logger,
   TOOL_TITLE_MAX,
   type ToolAnnotations,
@@ -21,7 +22,7 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { HIDDEN_FORMAT_RE } from "../text.js";
 import { type ConnectorAuth, CredentialMissing, Credentials, isOAuth } from "./credentials.js";
-import { toolKey, toolKeyIssue } from "./naming.js";
+import { toolKeyIssue } from "./naming.js";
 import { redactDeep, redactorFor } from "./redact.js";
 import { canonicalJson, policyFromAnnotations, specHash, ToolRegistry } from "./registry.js";
 import { resourceToolSpecs } from "./resources.js";
@@ -156,7 +157,7 @@ export function snapshot(
       ...(isObj(s.connectorData) && { connectorData: s.connectorData }),
       ...displayFields(s),
     };
-    let issue = toolKeyIssue(toolKey(slug, name));
+    let issue = toolKeyIssue(connectorToolKey(slug, name));
     if (!issue && !isObj(s.inputSchema)) issue = "Tool inputSchema must be an object";
     if (issue) issues.push({ name, reason: issue });
     rows.push({ name, spec, specHash: specHash(spec), issue, source: "connector" });
@@ -171,7 +172,7 @@ export function snapshot(
         });
         continue;
       }
-      const issue = toolKeyIssue(toolKey(slug, spec.name));
+      const issue = toolKeyIssue(connectorToolKey(slug, spec.name));
       if (issue) issues.push({ name: spec.name, reason: issue });
       rows.push({ name: spec.name, spec, specHash: specHash(spec), issue, source: "resources" });
     }
@@ -225,7 +226,7 @@ const displayOf = (spec: unknown): string => {
 
 /** 工具当前不能启用的原因（视图、启用与复核校验共用）。 */
 export function toolIssue(slug: string, spec: ToolSpec): string | null {
-  const keyIssue = toolKeyIssue(toolKey(slug, spec.name));
+  const keyIssue = toolKeyIssue(connectorToolKey(slug, spec.name));
   if (keyIssue) return keyIssue;
   if (!isObj(spec.inputSchema)) return "Tool inputSchema must be an object";
   return null;

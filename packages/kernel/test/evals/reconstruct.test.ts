@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -380,7 +381,7 @@ async function snapshotOf(convId: string, runId?: string): Promise<CaseSnapshot>
 const reset = () => capture.reset();
 
 describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
-  it("多步工具、tool_search 加载、审批续跑、技能目录快照与变更、提醒、跨运行插话、工具不可用", async () => {
+  it("多步工具、ToolSearch 加载、审批续跑、技能目录快照与变更、提醒、跨运行插话、工具不可用", async () => {
     reset();
     const alpha = await seedSkill("alpha", "Alpha body.");
     const agentId = await createAgent(
@@ -394,8 +395,8 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
       await waitForTerminal(db, conv, ++n, 30_000);
     };
 
-    // tool_search 加载 echo，再调用它（第 2 步带轮次提醒）
-    await turn('tool:tool_search:{"query":"echo"}');
+    // ToolSearch 加载 echo，再调用它（第 2 步带轮次提醒）
+    await turn('tool:ToolSearch:{"query":"echo"}');
     const loaded = (await eventsOf(db, conv)).find((e) => e.type === "tool_result");
     expect(loaded?.type === "tool_result" && loaded.payload.loadedTools?.length).toBe(1);
     const echoKey = (loaded?.type === "tool_result" && loaded.payload.loadedTools?.[0]) as string;
@@ -410,7 +411,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     });
     expect(decided.statusCode, decided.body).toBe(200);
     await waitForTerminal(db, conv, ++n, 30_000);
-    await turn('tool:skill_load:{"name":"alpha"}');
+    await turn('tool:Skill:{"skill":"alpha"}');
 
     // 技能新版本：下一轮写新快照（变更提醒）
     await seedSkill("alpha", "Alpha body v2.", alpha);
@@ -466,6 +467,17 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
         e.payload.content.some((b) => b.type === "text" && b.text === "thinking slowly"),
     ) as ConversationEvent;
     expect(interjected.seq).toBeLessThan(slowReply.seq);
+
+    // a recording made after the tool rename: its system texts name the new builtins (and the
+    // reconstruction below renders the same texts, zero drift)
+    const systemTexts = [
+      ...lastReq.system.map((s) => s.text),
+      ...lastReq.messages.flatMap((m) => (m.role === "system" ? [m.content as string] : [])),
+    ].join("\n");
+    expect(systemTexts).toContain("call Skill with the skill's name");
+    expect(systemTexts).toContain("call Skill again before relying on earlier instructions");
+    expect(systemTexts).toContain("first call ToolSearch with keywords");
+    expect(systemTexts).not.toMatch(/skill_load|tool_search/);
 
     const snap = await snapshotOf(conv);
     await expectZeroDrift(conv, snap);
@@ -669,7 +681,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
       await waitForTerminal(db, conv, ++n, 30_000);
     };
     await turn("echo:first");
-    await turn('tool:skill_load:{"name":"superpowers:brainstorming"}');
+    await turn('tool:Skill:{"skill":"superpowers:brainstorming"}');
     // a new version of the pinned skill: the next run writes a snapshot with the new body
     await seedSkill("pinned-rules", "Always answer in limericks.", pinned);
     for (let i = 0; i < 5; i++) await turn(`long:${300 + i}`);
@@ -717,20 +729,22 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
   });
 
   it("an old snapshot keeps its old map text; a new snapshot gets the new one; both reconstruct with zero drift", async () => {
-    // The phase B line for Task / Agent (before phase C, sub-agents spec §16.5)
-    const OLD_MAP = CLAUDE_CODE_TOOL_MAP.split("\n")
-      .flatMap((l) =>
-        l.startsWith("- Task and Agent (sub-agents) -> agent")
-          ? ["- Task and Agent (sub-agents) -> not available: do the steps yourself, in order"]
-          : l.startsWith("- TaskOutput, TaskStop")
-            ? []
-            : [l],
-      )
-      .join("\n");
+    // The map text written before the tool-naming change, frozen: old snapshots keep it
+    const OLD_MAP = [
+      "Some skills in this conversation were written for Claude Code and name its tools. Use these tools instead:",
+      "- Bash -> sandbox_bash",
+      "- Read -> sandbox_read; Write -> sandbox_write; Edit and MultiEdit -> sandbox_edit; Glob -> sandbox_glob; Grep -> sandbox_grep",
+      '- Skill -> skill_load (a name such as "superpowers:brainstorming" also works)',
+      "- TodoWrite -> plugin__todo__write when it is in your tools; otherwise keep the task list in your replies",
+      "- AskUserQuestion -> ask_user",
+      "- ToolSearch -> tool_search when it is in your tools",
+      "- Task and Agent (sub-agents) -> agent when it is in your tools (subagent_type names one of the types its description lists; model names haiku / sonnet / opus -> fast / standard / capable; SendMessage to a sub-agent -> agent with resume); otherwise not available: do the steps yourself, in order",
+      "- TaskOutput, TaskStop -> not available",
+      "- Any other tool a skill names (for example WebFetch, WebSearch, NotebookEdit, EnterWorktree) -> not available unless one of your tools does the same job",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal Claude Code variable the model reads
+      "The sandbox tools exist only when this agent has a sandbox; without them a skill's scripts cannot run. A path such as ${CLAUDE_PLUGIN_ROOT}/skills/<name>/... means /skills/<name>/... after skill_load has copied that skill into the sandbox.",
+    ].join("\n");
     expect(OLD_MAP).not.toBe(CLAUDE_CODE_TOOL_MAP);
-    expect(CLAUDE_CODE_TOOL_MAP).toContain(
-      "- Task and Agent (sub-agents) -> agent when it is in your tools (subagent_type names one of the types its description lists; model names haiku / sonnet / opus -> fast / standard / capable; SendMessage to a sub-agent -> agent with resume); otherwise not available: do the steps yourself, in order\n- TaskOutput, TaskStop -> not available\n",
-    );
     reset();
     const brain = await seedSkill("planning-map", "Plan first.", undefined, {
       format: "claude-code",
@@ -777,7 +791,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 
-  it("phase D: two inline invocations, a skill_load of the manual one and a compaction over them: the line after the summary, zero drift", async () => {
+  it("phase D: two inline invocations, a Skill of the manual one and a compaction over them: the line after the summary, zero drift", async () => {
     reset();
     const fix = await seedSkill("fix-issue", "Fix GitHub issue $ARGUMENTS.");
     const brainstorm = await seedSkill("brainstorm", "Brainstorm before building.", undefined, {
@@ -804,7 +818,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     };
     await invoke("fix-issue", "12");
     await invoke("brainstorm", "");
-    await turn('tool:skill_load:{"name":"brainstorm"}');
+    await turn('tool:Skill:{"skill":"brainstorm"}');
     for (let i = 0; i < 5; i++) await turn(`long:${300 + i}`);
 
     const events = await eventsOf(db, conv);
@@ -821,7 +835,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
       summary?.type === "compaction_summary" && summary.payload.coversUpToSeq,
     ).toBeGreaterThanOrEqual(invokedSeqs[1] as number);
     const line =
-      "Skills the user invoked earlier in this conversation: brainstorm, fix-issue. Call skill_load with a name to read its instructions again.";
+      "Skills the user invoked earlier in this conversation: brainstorm, fix-issue. Call Skill with a name to read its instructions again.";
     const withLine = sent.filter((r) =>
       r.messages.some((m) => m.role === "system" && m.content === line),
     );
@@ -841,7 +855,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 
-  it("phase D: an agent with only a manual-only skill gets skill_load once it is invoked, copies its files, zero drift", async () => {
+  it("phase D: an agent with only a manual-only skill gets Skill once it is invoked, copies its files, zero drift", async () => {
     reset();
     const deploy = await seedSkill("deploy", "Run scripts/deploy.sh.", undefined, {
       invocation: { model: false, user: true },
@@ -852,10 +866,10 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
       { skills: { orgSkills: [deploy] } },
     );
     const conv = await createConv(owner, orgId, agentId);
-    // before any invocation: no snapshot (the model's catalog is empty), so no skill_load
+    // before any invocation: no snapshot (the model's catalog is empty), so no Skill
     await postMessage(owner, orgId, conv, "hello");
     await waitForTerminal(db, conv, 1, 30_000);
-    expect(sent[0]?.tools.map((t) => t.name)).not.toContain("skill_load");
+    expect(sent[0]?.tools.map((t) => t.name)).not.toContain("Skill");
     const res = await owner({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
@@ -866,10 +880,10 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     const invoked = (await eventsOf(db, conv)).filter((e) => e.type === "user_message").at(-1);
     const first = invoked?.type === "user_message" ? invoked.payload.content[0] : undefined;
     expect(first?.type === "text" && first.text).toContain(
-      'call skill_load with "deploy" to copy them to /skills/deploy/',
+      'call Skill with "deploy" to copy them to /skills/deploy/',
     );
-    expect(sent[1]?.tools.map((t) => t.name)).toContain("skill_load");
-    await postMessage(owner, orgId, conv, 'tool:skill_load:{"name":"deploy"}');
+    expect(sent[1]?.tools.map((t) => t.name)).toContain("Skill");
+    await postMessage(owner, orgId, conv, 'tool:Skill:{"skill":"deploy"}');
     await waitForTerminal(db, conv, 3, 30_000);
     const loaded = (await eventsOf(db, conv)).filter((e) => e.type === "tool_result").at(-1);
     expect(loaded?.type === "tool_result" && loaded.payload.isError).toBe(false);
@@ -925,7 +939,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     }
   });
 
-  it("phase D: an inline invocation with arguments and files, its skill_load, a fork invocation with its report and a compaction over both: zero drift; a candidate that deselects the skills still replays the recorded text", async () => {
+  it("phase D: an inline invocation with arguments and files, its Skill, a fork invocation with its report and a compaction over both: zero drift; a candidate that deselects the skills still replays the recorded text", async () => {
     reset();
     const fix = await seedSkill(
       "fix-bug",
@@ -960,7 +974,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     /** Arguments that look like placeholders (Review Focus 1), written without a template literal. */
     const args = `12 '$1' $${"{CLAUDE_SKILL_DIR}"}`;
     await invoke("fix-bug", args);
-    await turn('tool:skill_load:{"name":"fix-bug"}');
+    await turn('tool:Skill:{"skill":"fix-bug"}');
     await invoke("audit", "src");
     for (let i = 0; i < 5; i++) await turn(`long:${400 + i}`);
 
@@ -973,12 +987,12 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     expect(first?.type === "text" && first.text).toContain(
       `Fix the bug ${args} with scripts/fix.sh.`,
     );
-    // the person's skill_load (model-fake may also call the first tool on its own)
+    // the person's Skill (model-fake may also call the first tool on its own)
     expect(
       events.some(
         (e) =>
           e.type === "tool_result" &&
-          e.payload.toolKey === "skill_load" &&
+          e.payload.toolKey === "Skill" &&
           !e.payload.isError &&
           e.payload.content.includes("fix.sh"),
       ),
@@ -996,7 +1010,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     );
     // the line names the inline invocation only (a fork's instructions went to its sub-agent)
     const line =
-      "Skills the user invoked earlier in this conversation: fix-bug. Call skill_load with a name to read its instructions again.";
+      "Skills the user invoked earlier in this conversation: fix-bug. Call Skill with a name to read its instructions again.";
     expect(
       parent.some((r) => r.messages.some((m) => m.role === "system" && m.content === line)),
     ).toBe(true);
@@ -1036,7 +1050,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
       });
       expect(res.statusCode, res.body).toBe(200);
     };
-    const key = "hooks-probe__probe_echo";
+    const key = "plugin__hooks-probe__probe_echo";
     await enable(true);
     try {
       const cfg = await owner({
@@ -1113,20 +1127,20 @@ describe("reconstructRequest: UI refresh B model switches", { timeout: 120_000 }
 });
 
 describe("reconstructRequest: UI refresh B tool views", { timeout: 120_000 }, () => {
-  it("sandbox_bash with description, a failing exit and an edit diff: zero drift, views not in requests", async () => {
+  it("Bash with description, a failing exit and an edit diff: zero drift, views not in requests", async () => {
     reset();
     const agentId = await createAgent(
       { provider: "model-fake", model: "fake-1" },
       {
-        tools: ["sandbox_bash", "sandbox_write"].map((name) => ({ kind: "builtin", name })),
+        tools: ["Bash", "Write"].map((name) => ({ kind: "builtin", name })),
       },
     );
     const conv = await createConv(owner, orgId, agentId);
     const bash = { command: "echo hi && exit 3", description: "Greet and fail" };
-    await postMessage(owner, orgId, conv, `tool:sandbox_bash:${JSON.stringify(bash)}`);
+    await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(bash)}`);
     await waitForTerminal(db, conv, 1, 30_000);
-    const write = { path: "/workspace/n.txt", content: "a\nb\n" };
-    await postMessage(owner, orgId, conv, `tool:sandbox_write:${JSON.stringify(write)}`);
+    const write = { file_path: "/workspace/n.txt", content: "a\nb\n" };
+    await postMessage(owner, orgId, conv, `tool:Write:${JSON.stringify(write)}`);
     await waitForTerminal(db, conv, 2, 30_000);
     const views = (await eventsOf(db, conv)).flatMap((e) =>
       e.type === "tool_result" && e.payload.view !== undefined ? [e.payload.view] : [],
@@ -1140,24 +1154,24 @@ describe("reconstructRequest: UI refresh B tool views", { timeout: 120_000 }, ()
     await expectZeroDrift(conv, snap);
   });
 
-  it("a pre-B log: sandbox_bash recorded without description reconstructs with zero drift", async () => {
+  it("a pre-B log: Bash recorded without description reconstructs with zero drift", async () => {
     reset();
     const agentId = await createAgent(
       { provider: "model-fake", model: "fake-1" },
-      { tools: [{ kind: "builtin", name: "sandbox_bash" }] },
+      { tools: [{ kind: "builtin", name: "Bash" }] },
     );
     const conv = await createConv(owner, orgId, agentId);
     const bash = { command: "echo old", description: "Old call" };
-    await postMessage(owner, orgId, conv, `tool:sandbox_bash:${JSON.stringify(bash)}`);
+    await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(bash)}`);
     await waitForTerminal(db, conv, 1, 30_000);
     const live = await snapshotOf(conv);
 
-    // Rewrite it as a log from before B: the old sandbox_bash definition (no description
+    // Rewrite it as a log from before B: the old Bash definition (no description
     // argument) under its own fingerprint, and a call whose input has no description.
     const s = structuredClone(live);
     const hashes = new Map<string, string>();
     for (const [hash, spec] of Object.entries(s.toolSpecs)) {
-      if (spec.name !== "sandbox_bash") continue;
+      if (spec.name !== "Bash") continue;
       const schema = structuredClone(spec.inputSchema) as {
         properties: Record<string, unknown>;
         required: string[];
@@ -1181,10 +1195,10 @@ describe("reconstructRequest: UI refresh B tool views", { timeout: 120_000 }, ()
       const o = v as Record<string, unknown>;
       if (typeof o.specHash === "string" && hashes.has(o.specHash))
         o.specHash = hashes.get(o.specHash);
-      if (o.name === "sandbox_bash" && o.input !== null && typeof o.input === "object")
+      if (o.name === "Bash" && o.input !== null && typeof o.input === "object")
         delete (o.input as Record<string, unknown>).description;
       // pre-B tool results carry no view
-      if (o.toolKey === "sandbox_bash") delete o.view;
+      if (o.toolKey === "Bash") delete o.view;
       for (const x of Object.values(o)) strip(x);
     };
     strip(s.events);
@@ -1197,7 +1211,7 @@ describe("reconstructRequest: UI refresh B tool views", { timeout: 120_000 }, ()
         ? v.flatMap(callInputs)
         : v !== null && typeof v === "object"
           ? [
-              ...((v as { name?: unknown }).name === "sandbox_bash" && "input" in v
+              ...((v as { name?: unknown }).name === "Bash" && "input" in v
                 ? [(v as { input: unknown }).input]
                 : []),
               ...Object.values(v).flatMap(callInputs),
@@ -1211,7 +1225,7 @@ describe("reconstructRequest: UI refresh B tool views", { timeout: 120_000 }, ()
     for (const c of calls) {
       const out = reconstructRequest(s, c.seq, { model: info });
       expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
-      const tool = out.request.tools.find((t) => t.name === "sandbox_bash");
+      const tool = out.request.tools.find((t) => t.name === "Bash");
       expect(JSON.stringify(tool?.inputSchema)).not.toContain('"description":{');
       for (const input of callInputs(out.request.messages)) {
         expect(input).toEqual({ command: "echo old" });
@@ -1234,7 +1248,7 @@ describe("reconstructRequest：漂移原因", { timeout: 60_000 }, () => {
       { tools: PROBE_TOOLS },
     );
     const conv = await createConv(owner, orgId, agentId);
-    await postMessage(owner, orgId, conv, 'tool:tool_search:{"query":"second"}');
+    await postMessage(owner, orgId, conv, 'tool:ToolSearch:{"query":"second"}');
     await waitForTerminal(db, conv, 1, 30_000);
     snap = await snapshotOf(conv);
     const last = modelCalls(toEvents(snap)).at(-1) as ModelCallEvent;
@@ -1286,8 +1300,8 @@ describe("reconstructRequest：漂移原因", { timeout: 60_000 }, () => {
     const call = s.events.find((e) => e.seq === seq) as { payload: unknown };
     const tools = (call.payload as { request: { tools: { key: string; specHash: string }[] } })
       .request.tools;
-    // 内置的 tool_search 不在目录里：去掉它只影响工具列表，不影响 system
-    const victim = tools.find((t) => t.key === "tool_search") as { key: string; specHash: string };
+    // 内置的 ToolSearch 不在目录里：去掉它只影响工具列表，不影响 system
+    const victim = tools.find((t) => t.key === "ToolSearch") as { key: string; specHash: string };
     delete s.toolSpecs[victim.specHash];
     const out = reconstructRequest(s, seq, { model: info });
     expect(out.drift).toEqual(["tool_spec_missing"]);
@@ -1479,5 +1493,71 @@ describe("takeSnapshot", { timeout: 60_000 }, () => {
     // 别的组织拿不到
     const other = await takeSnapshot(db, randomUUID(), conv, runId, 4_194_304).catch((e) => e);
     expect((other as ApiError).code).toBe("conversation.not_found");
+  });
+});
+
+describe("reconstructRequest: a recording from before the tool rename", () => {
+  type Fixture = { model: ModelInfo; snapshot: CaseSnapshot; requests: ModelRequest[] };
+  const fixture = JSON.parse(
+    readFileSync(
+      fileURLToPath(new URL("./fixtures/pre-tool-rename/conversation.json", import.meta.url)),
+      "utf8",
+    ),
+  ) as Fixture;
+
+  it("covers every old builtin, a connector key, an extension key, a pinned skill, a notice, an invoked skill and a compaction", () => {
+    const events = fixture.snapshot.events;
+    const keys = new Set(
+      events.flatMap((e) =>
+        e.type === "tool_result" ? [(e.payload as { toolKey: string }).toolKey] : [],
+      ),
+    );
+    for (const k of [
+      "sandbox_bash",
+      "sandbox_read",
+      "sandbox_write",
+      "sandbox_edit",
+      "sandbox_glob",
+      "sandbox_grep",
+      "skill_load",
+      "tool_search",
+      "read_tool_output",
+      "docs__search",
+      "tools-probe__echo",
+    ]) {
+      expect(keys.has(k), k).toBe(true);
+    }
+    const types = new Set(events.map((e) => e.type));
+    for (const t of ["compaction_summary", "skills_catalog", "approval_decided"]) {
+      expect(types.has(t as ConversationEvent["type"]), t).toBe(true);
+    }
+    const catalogs = events.filter((e) => e.type === "skills_catalog");
+    expect(catalogs).toHaveLength(2);
+    const first = catalogs[0]?.payload as { pinned?: unknown[]; toolMap?: string };
+    expect(first.pinned).toHaveLength(1);
+    expect(first.toolMap).toBeDefined();
+    expect(
+      events.some((e) => e.type === "user_message" && (e.payload as { skill?: unknown }).skill),
+    ).toBe(true);
+  });
+
+  it("every model_call reconstructs with zero drift and equals what the provider received, with the legacy skill texts", () => {
+    const calls = modelCalls(toEvents(fixture.snapshot));
+    expect(calls).toHaveLength(fixture.requests.length);
+    const texts = new Set<string>();
+    for (const [i, c] of calls.entries()) {
+      const out = reconstructRequest(fixture.snapshot, c.seq, { model: fixture.model });
+      expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
+      expect(out.request, `model_call seq ${c.seq}`).toEqual(fixture.requests[i]);
+      for (const m of out.request.messages) {
+        if (m.role === "system" && typeof m.content === "string") texts.add(m.content);
+      }
+    }
+    const all = [...texts].join("\n");
+    // the legacy texts name the old tools and appear in the real recording
+    expect(all).toContain("Skills the user invoked earlier in this conversation: fix-bug.");
+    expect(all).toContain("Updated skills (");
+    expect(all).toMatch(/skill_load/);
+    expect(all).not.toMatch(/\bcall Skill\b/);
   });
 });

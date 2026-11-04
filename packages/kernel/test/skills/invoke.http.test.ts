@@ -449,7 +449,7 @@ describe("GET …/agents/:agentId/invocable-skills", { timeout: 60_000 }, () => 
 describe("POST …/messages with skill", { timeout: 60_000 }, () => {
   it("appends one user_message holding the rendered skill, and the model gets it", async () => {
     // manual-only: the model's catalog stays empty, but the invocation makes the run offer
-    // skill_load (its only tool), which model-fake calls first
+    // Skill (its only tool), which model-fake calls first
     const s = await seedSkill({
       name: "fix-issue",
       body: FIX_ISSUE,
@@ -479,7 +479,7 @@ describe("POST …/messages with skill", { timeout: 60_000 }, () => {
     expect(
       reply?.type === "assistant_message" &&
         reply.payload.content.flatMap((b) => (b.type === "tool_call" ? [b.name] : [])),
-    ).toEqual(["skill_load"]);
+    ).toEqual(["Skill"]);
   });
 
   it("resolves <plugin>:<name> to the plugin's skill and renders its bare directory", async () => {
@@ -502,7 +502,7 @@ describe("POST …/messages with skill", { timeout: 60_000 }, () => {
     expect(text).toContain("Read /skills/brainstorming/notes.md first.");
     expect(text).toContain('<skill_invocation name="superpowers:brainstorming" version="1">');
     expect(text).toContain(
-      'Its files are not in the sandbox yet: call skill_load with "superpowers:brainstorming" to copy them to /skills/brainstorming/ before running its scripts.',
+      'Its files are not in the sandbox yet: call Skill with "superpowers:brainstorming" to copy them to /skills/brainstorming/ before running its scripts.',
     );
     expect(m?.payload.skill).toMatchObject({
       name: "brainstorming",
@@ -569,27 +569,27 @@ describe("POST …/messages with skill", { timeout: 60_000 }, () => {
     expect(await eventsOf(db, conv)).toEqual([]);
   });
 
-  it("always adds the load files line when the version has files, and the shell line only with sandbox_bash", async () => {
-    // an ordinary skill is in the model's catalog, so the run offers skill_load
+  it("always adds the load files line when the version has files, and the shell line only with Bash", async () => {
+    // an ordinary skill is in the model's catalog, so the run offers Skill
     const tool = await seedSkill({
       name: "tool",
       body: "Run it:\n!`git status`\n",
       files: { "run.sh": "echo hi" },
     });
-    const withBash = await createAgent([tool.id], [{ kind: "builtin", name: "sandbox_bash" }]);
+    const withBash = await createAgent([tool.id], [{ kind: "builtin", name: "Bash" }]);
     const c1 = await createConv(owner, orgId, withBash);
     expect((await send(c1, { text: "", skill: { name: "tool" } })).statusCode).toBe(202);
     const t1 = firstText((await userMessages(c1))[0]);
-    expect(t1).toContain('call skill_load with "tool" to copy them to /skills/tool/');
+    expect(t1).toContain('call Skill with "tool" to copy them to /skills/tool/');
     expect(
       t1.endsWith(
-        "Lines written as !`command` were meant to run before you read this; run those commands with sandbox_bash if you need their output.",
+        "Lines written as !`command` were meant to run before you read this; run those commands with Bash if you need their output.",
       ),
     ).toBe(true);
     await waitForTerminal(db, c1, 1, 30_000);
 
     // a manual-only skill alone leaves the catalog empty, but the invocation itself makes the next
-    // run offer skill_load (any user_message.skill); no shell tool
+    // run offer Skill (any user_message.skill); no shell tool
     const manual = await seedSkill({
       name: "manual",
       body: "Run it:\n!`git status`\n",
@@ -602,10 +602,10 @@ describe("POST …/messages with skill", { timeout: 60_000 }, () => {
     const t2 = firstText((await userMessages(c2))[0]);
     expect(
       t2.endsWith(
-        '\n\nIts files are not in the sandbox yet: call skill_load with "manual" to copy them to /skills/manual/ before running its scripts.',
+        '\n\nIts files are not in the sandbox yet: call Skill with "manual" to copy them to /skills/manual/ before running its scripts.',
       ),
     ).toBe(true);
-    expect(t2).not.toContain("sandbox_bash");
+    expect(t2).not.toContain("Bash");
     await waitForTerminal(db, c2, 1, 30_000);
 
     // no other files: no files line

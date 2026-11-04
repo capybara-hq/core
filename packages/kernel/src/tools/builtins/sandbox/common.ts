@@ -22,8 +22,9 @@ export interface SandboxToolDeps {
     Partial<Pick<SandboxService, "pathLease">>;
   attachments: Pick<AttachmentsService, "listForConversation" | "openForConversation">;
   storage: Pick<StorageService, "kernel" | "available">;
-  /** `publishChanged`: `sandbox_deliver` announces `changed: files` (UI refresh B). */
-  eventLog: Pick<EventLog, "append"> & Partial<Pick<EventLog, "publishChanged">>;
+  /** `publishChanged`: `Deliver` announces `changed: files` (UI refresh B). */
+  eventLog: Pick<EventLog, "append" | "latestFileState"> &
+    Partial<Pick<EventLog, "publishChanged">>;
   config: Pick<KernelConfigService, "get">;
 }
 
@@ -139,9 +140,9 @@ export function checkPath(path: string, field = "path"): string {
   return path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
 }
 
-/** 写入类工具的路径：`/skills` 是技能文件的只读副本。 */
+/** A writing tool's `file_path`: `/skills` is the read-only copy of the skill files. */
 export function checkWritable(path: string): string {
-  const p = checkPath(path);
+  const p = checkPath(path, "file_path");
   if (p === "/skills" || p.startsWith("/skills/")) {
     throw new ToolError(
       `Path ${clip(p, 200)} is read-only (/skills holds skill files); pass a path under /workspace or /tmp instead.`,

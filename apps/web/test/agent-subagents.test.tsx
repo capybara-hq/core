@@ -51,7 +51,7 @@ const agent = (
     fallback: null,
     modelParams: {},
     fallbackParams: {},
-    tools: [{ kind: "builtin", name: "ask_user" }],
+    tools: [{ kind: "builtin", name: "AskUserQuestion" }],
     toolPolicies: {},
     ...over.definition,
   },
@@ -149,8 +149,8 @@ describe("the agent page's Sub-agents section", () => {
       definition: Record<string, unknown>;
     };
     expect(body.definition.tools).toEqual([
-      { kind: "builtin", name: "ask_user" },
-      { kind: "builtin", name: "agent" },
+      { kind: "builtin", name: "AskUserQuestion" },
+      { kind: "builtin", name: "Agent" },
     ]);
     expect(body.definition.subagents).toEqual({
       templates: ["t1"],
@@ -180,7 +180,7 @@ describe("the agent page's Sub-agents section", () => {
       const m = (locale === "zh" ? zh : en).agents.form.subagents;
       const lead = agent("ag1", "Lead", {
         definition: {
-          tools: [{ kind: "builtin", name: "agent" }],
+          tools: [{ kind: "builtin", name: "Agent" }],
           subagents: {
             inline: [{ name: "Bad Name", description: "x", instructions: "y" }],
             agents: [{ agentId: "ag2", as: "analyst", description: "d" }],
@@ -218,7 +218,7 @@ describe("the agent page's Sub-agents section", () => {
   it("a validation_failed save marks the empty required fields of an inline template (batch 14 review m8)", async () => {
     const lead = agent("ag1", "Lead", {
       definition: {
-        tools: [{ kind: "builtin", name: "agent" }],
+        tools: [{ kind: "builtin", name: "Agent" }],
         subagents: { inline: [{ name: "helper", description: "", instructions: "Help." }] },
       },
     });
@@ -248,7 +248,7 @@ describe("the agent page's Sub-agents section", () => {
       ...agent("ag1", "Lead", {
         visibility: "members",
         definition: {
-          tools: [{ kind: "builtin", name: "agent" }],
+          tools: [{ kind: "builtin", name: "Agent" }],
           subagents: { agents: [{ agentId: "ag2", as: "analyst", description: "d" }] },
         },
       }),
@@ -281,15 +281,15 @@ describe("the agent page's Sub-agents section", () => {
     };
     expect(body.definition.subagents).toEqual({ dispatchable: true });
     // turning on dispatchable alone does not offer the agent tool
-    expect(body.definition.tools).toEqual([{ kind: "builtin", name: "ask_user" }]);
+    expect(body.definition.tools).toEqual([{ kind: "builtin", name: "AskUserQuestion" }]);
   });
 
   it("an untouched agent with a tiered inline template (jsonb key order) has no unsaved change", async () => {
     const lead = agent("ag1", "Lead", {
       definition: {
         tools: [
-          { kind: "builtin", name: "ask_user" },
-          { kind: "builtin", name: "agent" },
+          { kind: "builtin", name: "AskUserQuestion" },
+          { kind: "builtin", name: "Agent" },
         ],
         // jsonb orders keys by length: model comes before description and instructions
         subagents: {

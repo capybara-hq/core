@@ -404,11 +404,21 @@ export const FORM_PAGE_FIXTURE: {
           kind: "switches",
           id: "tools",
           rows: [
-            { name: "sandbox_bash", description: "在沙箱里运行命令", policy: "自动", on: true },
-            { name: "acme_docs__search", description: "检索产品文档", policy: "自动", on: true },
-            { name: "tickets__update", description: "更新工单状态", policy: "需要审批", on: true },
+            { name: "Bash", description: "在沙箱里运行命令", policy: "自动", on: true },
             {
-              name: "ledger__post_entry",
+              name: "mcp__acme_docs__search",
+              description: "检索产品文档",
+              policy: "自动",
+              on: true,
+            },
+            {
+              name: "mcp__tickets__update",
+              description: "更新工单状态",
+              policy: "需要审批",
+              on: true,
+            },
+            {
+              name: "mcp__ledger__post_entry",
               description: "过账记账凭证",
               policy: "已关闭",
               on: false,

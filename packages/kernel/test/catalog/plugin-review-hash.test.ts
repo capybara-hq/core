@@ -83,6 +83,6 @@ describe("pluginReviewHash", () => {
     const one = hash({ agentTemplates: [reviewer] });
     expect(one).not.toBe(base);
     expect(hash({ agentTemplates: [{ ...reviewer, model: "fast" }] })).not.toBe(one);
-    expect(hash({ agentTemplates: [{ ...reviewer, tools: ["sandbox_read"] }] })).not.toBe(one);
+    expect(hash({ agentTemplates: [{ ...reviewer, tools: ["Read"] }] })).not.toBe(one);
   });
 });

@@ -129,7 +129,7 @@ export const isGeneralAlias = (agent: string): boolean => GENERAL_ALIASES.has(ag
  * `general-purpose` for no `agent` and Claude's built-in types; else a roster type (a bare name
  * prefers the skill's own plugin's template `<plugin>:<name>`, then {@link findType}). An `agent`
  * that does not resolve falls back to `general-purpose` and is returned as `unknown`. `inRoster`:
- * the type is one the parent's `agent` tool offers (`general-purpose` is not when
+ * the type is one the parent's `Agent` tool offers (`general-purpose` is not when
  * `subagents.general === false`, which does not block a person's fork invocation).
  */
 export async function resolveSkillForkType(

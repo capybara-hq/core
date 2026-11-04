@@ -524,7 +524,7 @@ describe("启动时加载安装记录", () => {
     });
     expect(put.statusCode, put.body).toBe(200);
     const tools = (await k.app.get(ToolRegistry).forAgent(orgId, { tools: [ref] })).tools;
-    expect(tools.map((t) => t.key)).toEqual(["fake-tools-ui__write"]);
+    expect(tools.map((t) => t.key)).toEqual(["plugin__fake-tools-ui__write"]);
     await stopAll();
     const after = await db
       .selectFrom("extension_replica_status")
@@ -885,7 +885,7 @@ describe("引导插件（取代内置插件）", () => {
     expect(put.json().error.code).toBe("extension.required");
     const ref = { kind: "plugin" as const, plugin: "fake-tools-ui", name: "write" };
     const tools = (await k.app.get(ToolRegistry).forAgent(orgId, { tools: [ref] })).tools;
-    expect(tools.map((t) => t.key)).toEqual(["fake-tools-ui__write"]);
+    expect(tools.map((t) => t.key)).toEqual(["plugin__fake-tools-ui__write"]);
     expect((await k.app.get(ExtensionHost).enabledPlugins(orgId)).has("fake-tools-ui")).toBe(true);
     // The same package uploaded again is just the installed package (nothing new to approve)
     const res = await upload(admin, toolsUi);

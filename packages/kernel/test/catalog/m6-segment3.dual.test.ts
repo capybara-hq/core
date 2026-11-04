@@ -65,21 +65,21 @@ import { bundlePlugin, mcpTemplate, SVG_ICON, skillPlugin, templatePlugin } from
  *    template + a skill, depending on fake-dep-provider already in the catalog) from the enterprise
  *    marketplace, one review, its extension deployed, both replicas load it without a restart; an
  *    org admin installs it on B: extension enabled, connector created with a tool snapshot, skill
- *    stored; the agent calls the connector tool and the extension tool, and `skill_load` reads the
+ *    stored; the agent calls the connector tool and the extension tool, and `Skill` reads the
  *    skill;
  * 3. Uninstall: the connector is referenced by an agent -> `kept` lists it (used_by_agents), the
  *    extension and the skill are removed, the agent still runs (dependency components arrive with Task 5);
  * 4. Policy and requests: the template item is needs_approval, a member request -> org admin
  *    approval (moved up) -> install possible only after enterprise admin approval; a member requests
  *    a skill, installed after approval; with `customConnectors: deny` a custom connector gets 403;
- * 5. Private agent with `writePolicy: "ask"`: `skill_write` creates an approval that takes effect
+ * 5. Private agent with `writePolicy: "ask"`: `SkillWrite` creates an approval that takes effect
  *    once approved;
  * 6. Rename regression: T22's `pre-rename` fixture replays a single step with drift []; a
  *    single-step eval with it as the case shows no drift; an old agent version saved with
  *    `{kind:"app"}` runs on both replicas;
  * 7. Org upgrade across replicas (phase A1, spec §10): a declarative plugin (a skill and a connector
  *    template) installed at 1.0.0 on B is upgraded to 2.0.0 through A; B then shows the install at
- *    2.0.0 with nothing newer, the skill's new version (`skill_load` in a run on B reads it), the
+ *    2.0.0 with nothing newer, the skill's new version (`Skill` in a run on B reads it), the
  *    connector's new template default and its kept credential.
  *
  * "Without a restart": the replica ids (regenerated at each kernel start) and child process pids
@@ -685,7 +685,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     expect(crm).toBeDefined();
     appSkillId = (crm as { id: string }).id;
 
-    // agent：连接器工具、fake-tools-ui、skill_load（引用应用带来的技能）
+    // agent：连接器工具、fake-tools-ui、Skill（引用应用带来的技能）
     const ag = await ok("boss", 0, "POST", `${base}/agents`, {
       definition: {
         name: "Sales",
@@ -694,7 +694,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
         tools: [
           { kind: "connector", connectorId, tools: "all" },
           { kind: "plugin", plugin: "fake-tools-ui", name: "write" },
-          { kind: "builtin", name: "skill_load" },
+          { kind: "builtin", name: "Skill" },
         ],
         skills: { orgSkills: [appSkillId] },
       },
@@ -702,20 +702,20 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     });
     agentId = (ag.agent as { id: string }).id;
     const conv = await newConv("boss", 1, agentId);
-    const r1 = await call("boss", 0, conv, "docs__search", { q: "deals" }, 1);
+    const r1 = await call("boss", 0, conv, "mcp__docs__search", { q: "deals" }, 1);
     expect(r1.isError, String(r1.content)).toBe(false);
     expect(String(r1.content)).toContain("hits for deals");
     const r2 = await call(
       "boss",
       1,
       conv,
-      "fake-tools-ui__write",
+      "plugin__fake-tools-ui__write",
       { items: [{ text: "Call", status: "pending" }] },
       2,
     );
     expect(r2.isError, String(r2.content)).toBe(false);
     expect(String(r2.content)).toContain("List updated (1 items)");
-    const r3 = await call("boss", 0, conv, "skill_load", { name: "crm-notes" }, 3);
+    const r3 = await call("boss", 0, conv, "Skill", { skill: "crm-notes" }, 3);
     expect(r3.isError, String(r3.content)).toBe(false);
     expect(String(r3.content)).toContain("# crm-notes");
   });
@@ -756,7 +756,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     expect((await ok("boss", 1, "GET", `${base}/plugin-installs`)).installs).toEqual([]);
     // agent 仍能运行：连接器工具照常可用
     const conv = await newConv("boss", 1, agentId);
-    const r = await call("boss", 0, conv, "docs__search", { q: "after" }, 1);
+    const r = await call("boss", 0, conv, "mcp__docs__search", { q: "after" }, 1);
     expect(r.isError, String(r.content)).toBe(false);
     expect(String(r.content)).toContain("hits for after");
     // agent 定义里仍留着对 fake-tools-ui 的引用（插件已在本组织停用）：运行照常结束，调它只得到工具错误
@@ -769,7 +769,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       "boss",
       1,
       conv,
-      "fake-tools-ui__write",
+      "plugin__fake-tools-ui__write",
       { items: [{ text: "Call", status: "pending" }] },
       2,
     );
@@ -858,20 +858,20 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     }
   });
 
-  it("5. 私有 agent writePolicy ask：skill_write 产生审批，批准后直接生效", async () => {
+  it("5. 私有 agent writePolicy ask：SkillWrite 产生审批，批准后直接生效", async () => {
     const ag = await ok("boss", 0, "POST", `${base}/agents`, {
       definition: {
         name: "Mine",
         instructions: "Write skills.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "builtin", name: "skill_write" }],
+        tools: [{ kind: "builtin", name: "SkillWrite" }],
         skills: { writePolicy: "ask" },
       },
       visibility: "private",
     });
     const privateId = (ag.agent as { id: string }).id;
     const conv = await newConv("boss", 1, privateId);
-    await send("boss", 0, conv, "skill_write", {
+    await send("boss", 0, conv, "SkillWrite", {
       name: "asked",
       description: "Use when asked.",
       files: [{ path: "SKILL.md", content: "# Asked v1" }],
@@ -885,9 +885,9 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
           .where("status", "=", "pending")
           .executeTakeFirst(),
       30_000,
-      "skill_write approval",
+      "SkillWrite approval",
     );
-    expect(a.tool_key).toBe("skill_write");
+    expect(a.tool_key).toBe("SkillWrite");
     expect(
       await db.selectFrom("skills").select("id").where("agent_id", "=", privateId).execute(),
     ).toEqual([]);
@@ -995,7 +995,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       .execute();
     for (const i of [0, 1] as const) {
       const conv = await newConv("boss", i, legacyId);
-      const r = await call("boss", i, conv, "docs__search", { q: `replica ${i}` }, 1);
+      const r = await call("boss", i, conv, "mcp__docs__search", { q: `replica ${i}` }, 1);
       expect(r.isError, String(r.content)).toBe(false);
       expect(String(r.content)).toContain(`hits for replica ${i}`);
     }
@@ -1081,14 +1081,14 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
         name: "Kit",
         instructions: "Load the skill.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "builtin", name: "skill_load" }],
+        tools: [{ kind: "builtin", name: "Skill" }],
         skills: { orgSkills: [skill?.id] },
       },
       visibility: "org",
     });
     const kitAgent = (ag.agent as { id: string }).id;
     const before = await newConv("boss", 1, kitAgent);
-    const r1 = await call("boss", 1, before, "skill_load", { name: "kit-notes" }, 1);
+    const r1 = await call("boss", 1, before, "Skill", { skill: "kit-notes" }, 1);
     expect(String(r1.content)).toContain("Steps 1.0.0.");
 
     // A: preview and upgrade
@@ -1140,7 +1140,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       definition: { skills: { orgSkills: [skill?.id] } },
     });
     const conv = await newConv("boss", 1, kitAgent);
-    const r2 = await call("boss", 1, conv, "skill_load", { name: "kit-notes" }, 1);
+    const r2 = await call("boss", 1, conv, "Skill", { skill: "kit-notes" }, 1);
     expect(r2.isError, String(r2.content)).toBe(false);
     expect(String(r2.content)).toContain("Steps 2.0.0.");
     expect([h.replicas[0].pid, h.replicas[1].pid]).toEqual(bootPids);

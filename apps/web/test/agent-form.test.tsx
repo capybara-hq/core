@@ -93,8 +93,8 @@ describe("新建 Agent 页（FormPage）", () => {
         fallbackParams: {},
         // 默认勾选两个内置工具；没有收紧策略
         tools: [
-          { kind: "builtin", name: "ask_user" },
-          { kind: "builtin", name: "read_tool_output" },
+          { kind: "builtin", name: "AskUserQuestion" },
+          { kind: "builtin", name: "ReadToolOutput" },
         ],
         toolPolicies: {},
       },

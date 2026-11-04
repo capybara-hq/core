@@ -209,7 +209,7 @@ type EventBody =
       };
     }
   | {
-      /** agent 经 `sandbox_deliver` 交付的文件（产物）：字节在对象存储，经 artifacts 下载接口取。 */
+      /** agent 经 `Deliver` 交付的文件（产物）：字节在对象存储，经 artifacts 下载接口取。 */
       type: "artifact_created";
       payload: {
         artifactId: string;
@@ -615,12 +615,21 @@ export const resumeQueue = (orgId: string, id: string) =>
 /** Display metadata of a tool (kernel `ToolInfo`). */
 export interface ToolInfo {
   key: string;
+  /**
+   * Set when `key` is an older name of a current tool (history logged before a rename): that
+   * tool's key. The rest describes that tool; the page treats the call as a call to it.
+   */
+  aliasOf?: string;
   title: string | null;
   kind: "command" | "read" | "edit" | "search" | "connector" | "meta" | "tool";
+  /** True exactly for the builtin tools that run in the conversation's sandbox. */
+  sandbox: boolean;
   keyArgs: string[];
+  /** A connector or extension tool's local name (`mcp__crm__delete` -> `delete`); else null. */
+  tool: string | null;
   source:
     | { kind: "builtin" }
-    | { kind: "extension"; name: string }
+    | { kind: "extension"; name: string; displayName: { zh: string; en: string } }
     | { kind: "connector"; id: string; name: string }
     | { kind: "unknown" };
 }

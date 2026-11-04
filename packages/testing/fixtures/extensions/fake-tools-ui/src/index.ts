@@ -11,7 +11,7 @@ import { z } from "zod";
  * Test fake of a tool + UI extension: the kernel contracts an extension tool, a schema-rendered
  * view, a migration and a full plugin bundle exercise, without the official todo plugin. Like todo
  * it needs no object store (storage is `fake-storage-user`'s).
- * - tool `write` (model-visible `fake-tools-ui__write`, default policy allow): replaces the
+ * - tool `write` (model-visible `plugin__fake-tools-ui__write`, default policy allow): replaces the
  *   conversation's item list in the extension's own table, then invalidates the view `tasks`;
  * - view `tasks` (conversation tab): badge `<done>/<total>` and a checklist;
  * - the plugin also ships the skill `fake-notes` and the connector template `fake-notes`

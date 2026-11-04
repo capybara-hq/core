@@ -13,6 +13,7 @@ import {
 import { type FileOutput, listFiles } from "../../lib/files";
 import { formatRightHash, parseRightHash, type RightTarget } from "../../lib/right-area";
 import type { TimelineEntry, TimelineTool } from "../../lib/timeline";
+import { toolLabelText } from "../../lib/tool-label";
 import {
   listUiContributions,
   type UiContributionItem,
@@ -111,7 +112,7 @@ function useContributions(orgId: string, version: number): UiContributionItem[] 
 
 /**
  * The conversation's file outputs (the kernel's order); read again on `changed: files`
- * (and reconnects). Sub-agents cannot deliver files (`sandbox_deliver` is removed for children),
+ * (and reconnects). Sub-agents cannot deliver files (`Deliver` is removed for children),
  * so their lists are not read (Task 22 ruling, final review I5); the Files rows' `from` marking
  * stays ready for when they can.
  */
@@ -181,7 +182,10 @@ function OutputPanel({
   return (
     <RightPanel
       title={title}
-      meta={tool.toolKey}
+      meta={toolLabelText({
+        name: tool.row.name,
+        ...(tool.row.tool !== undefined ? { tool: tool.row.tool } : {}),
+      })}
       body="flush"
       onClose={onClose}
       onFullscreen={onFullscreen}

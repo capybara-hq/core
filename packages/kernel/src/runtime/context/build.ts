@@ -12,9 +12,11 @@ import type { AgentDefinition } from "../../agents/definition.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
 import { catalogText, isAlwaysLoaded } from "../../tools/builtins/tool-search.js";
 import type { ResolvedTool } from "../../tools/registry.js";
+import { LEGACY_CATALOG_HEADER, LEGACY_SKILL_TEXTS, usesLegacyToolNames } from "./legacy-text.js";
 import {
   invokedSkillNames,
   invokedSkillsText,
+  SKILL_TEXTS,
   type SkillsSnapshot,
   skillsCatalogEvents,
   snapshotChangeText,
@@ -53,10 +55,10 @@ export interface ModelCallMeta {
   params: Record<string, ParamValue>;
   /**
    * 请求带的工具（按发送顺序）及定义指纹；定义本身按指纹存在 `capybara.tool_specs`。
-   * 未启用 tool_search 时按 key 排序；启用时见 {@link BuildModelRequestInput.toolSearch}。
+   * 未启用 ToolSearch 时按 key 排序；启用时见 {@link BuildModelRequestInput.toolSearch}。
    */
   tools: { key: string; specHash: string }[];
-  /** 启用 tool_search 时 system 第二块目录里的工具（按 key 排序）及定义指纹；未启用没有该字段。 */
+  /** 启用 ToolSearch 时 system 第二块目录里的工具（按 key 排序）及定义指纹；未启用没有该字段。 */
   catalog?: { key: string; specHash: string }[];
   /** 请求的 `toolChoice`（收尾调用为 `"none"`）；未设置则没有该字段。 */
   toolChoice?: "auto" | "none";
@@ -99,8 +101,8 @@ export interface BuildModelRequestInput {
    */
   tools?: RequestTool[];
   /**
-   * 启用 tool_search（spec 5.5，由 `ToolRegistry.forAgent` 判定）。启用且有工具时：
-   * - `tools` 只放内置工具（含 `tool_search`，按 key 排序）与**已加载**工具的完整定义；
+   * 启用 ToolSearch（spec 5.5，由 `ToolRegistry.forAgent` 判定）。启用且有工具时：
+   * - `tools` 只放内置工具（含 `ToolSearch`，按 key 排序）与**已加载**工具的完整定义；
    *   已加载 = 日志中全部 `tool_result.loadedTools` 的并集（含摘要之前的；不在本步可用工具中的忽略），
    *   按首次加载顺序追加在内置工具之后——新加载只在末尾追加，已发送的工具顺序不变；
    * - 其余工具（不论是否已加载）以目录形式放进 system 第二个块（按 key 排序，打缓存断点），
@@ -518,7 +520,7 @@ export function summaryText(summary: string): string {
  * 由会话事件日志 + agent 定义构建模型请求（纯函数，不做 I/O）。
  * - system：`BEHAVIOR_RULES + "\n\n" + agent.instructions` 一个块，打缓存断点（a sub-agent's log:
  *   `BEHAVIOR_RULES`, its preamble and its instructions, all from its `subagent_started`）；日志里第一份 `skills_catalog`
- *   快照在任何 `model_call` 之前时，技能目录接在这个块末尾（Ruling M17，见 ./skills.ts）；启用 tool_search 时
+ *   快照在任何 `model_call` 之前时，技能目录接在这个块末尾（Ruling M17，见 ./skills.ts）；启用 ToolSearch 时
  *   第二个块是工具目录（见 {@link BuildModelRequestInput.toolSearch}）；
  * - 之后的 `skills_catalog` 在所在位置渲染为 system 变更提醒；被压缩摘要覆盖的，若摘要时生效的目录与 system 里的
  *   不同，紧随摘要补一条完整的当前目录；
@@ -683,6 +685,10 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     const k = resultKey(e.runId, e.payload.callId);
     if (!results.has(k)) results.set(k, e.payload);
   }
+  // System texts naming a builtin: a request whose tools were recorded before the tool rename
+  // renders the frozen pre-rename wording, so it rebuilds exactly (tool naming spec §10)
+  const legacyNames = usesLegacyToolNames(input.tools ?? []);
+  const skillTexts = legacyNames ? LEGACY_SKILL_TEXTS : SKILL_TEXTS;
   // 技能目录（Ruling M17）：第一份快照进 system；之后的每份在所在位置追加变更提醒（相对上一份快照）。
   const skillSnaps = skillsCatalogEvents(events);
   const systemSkills = systemSkillsCatalog(events);
@@ -699,11 +705,11 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     const covered = skillSnaps.filter((e) => e.seq <= after).at(-1);
     // (phase B: plus the current pinned skills and tool-name map when they differ from system's)
     if (covered && covered !== systemSkills) {
-      const text = snapshotCurrentText(systemSkills?.payload, covered.payload);
+      const text = snapshotCurrentText(systemSkills?.payload, covered.payload, skillTexts);
       if (text !== "") messages.push({ role: "system", content: text });
     }
     // phase D: the skills a person invoked in the summarised range, by name (from the log only)
-    const invoked = invokedSkillsText(invokedSkillNames(events, after));
+    const invoked = invokedSkillsText(invokedSkillNames(events, after), skillTexts);
     if (invoked !== "") messages.push({ role: "system", content: invoked });
   }
   for (const [i, e] of events.entries()) {
@@ -776,7 +782,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
         break;
       case "skills_catalog":
         if (e !== systemSkills) {
-          const text = snapshotChangeText(prevSnapshot.get(e.seq), e.payload);
+          const text = snapshotChangeText(prevSnapshot.get(e.seq), e.payload, skillTexts);
           if (text !== "") messages.push({ role: "system", content: text });
         }
         break;
@@ -797,7 +803,9 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       : `${BEHAVIOR_RULES}\n\n${agent.instructions}`;
   const system = [
     {
-      text: systemSkills ? `${base}\n\n${snapshotSystemText(systemSkills.payload)}` : base,
+      text: systemSkills
+        ? `${base}\n\n${snapshotSystemText(systemSkills.payload, skillTexts)}`
+        : base,
       cache: true,
     },
   ];
@@ -813,7 +821,10 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     tools = [...sorted.filter((t) => isAlwaysLoaded(t.key)), ...loaded];
     if (deferred.length > 0) {
       catalog = deferred;
-      system.push({ text: catalogText(deferred), cache: true });
+      system.push({
+        text: catalogText(deferred, legacyNames ? LEGACY_CATALOG_HEADER : undefined),
+        cache: true,
+      });
     }
   }
   const request: ModelRequest = {
@@ -858,7 +869,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
 }
 
 /**
- * 日志里 `tool_search` 加载过的工具 key（全部 `tool_result.loadedTools` 的并集，按首次出现顺序）。
+ * 日志里 `ToolSearch` 加载过的工具 key（全部 `tool_result.loadedTools` 的并集，按首次出现顺序）。
  * 不看压缩摘要的边界：加载过的工具在摘要之后仍保持加载（模型可能凭摘要继续使用它们，且已发送的工具列表只追加）。
  */
 export function loadedToolKeys(events: readonly ConversationEvent[]): string[] {

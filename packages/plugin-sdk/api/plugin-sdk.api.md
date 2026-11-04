@@ -110,6 +110,9 @@ export interface BootstrapManifest {
 export const BootstrapManifestSchema: z.ZodType<BootstrapManifest>;
 
 // @public
+export const BUILTIN_TOOL_NAME_RE: RegExp;
+
+// @public
 export interface CardAction {
     action: "approve" | "deny" | "answer";
     answer?: FormAnswer;
@@ -429,6 +432,9 @@ export interface ConnectorTemplateSpec {
     plugin: string;
     pluginVersion?: string;
 }
+
+// @public
+export function connectorToolKey(slug: string, tool: string): string;
 
 // @public
 export type ContentBlock =
@@ -816,6 +822,9 @@ export interface ExtensionStorage {
         signal?: AbortSignal;
     }): Promise<ObjectHead>;
 }
+
+// @public
+export function extensionToolKey(plugin: string, tool: string): string;
 
 // @public
 export interface ExternalIdentity {
@@ -1472,6 +1481,20 @@ export interface ParsedSkillMd {
 }
 
 // @public
+export type ParsedToolKey = {
+    kind: "builtin";
+    name: string;
+} | {
+    kind: "connector";
+    slug: string;
+    tool: string;
+} | {
+    kind: "extension";
+    plugin: string;
+    tool: string;
+};
+
+// @public
 export function parseEmbedChildMessage(m: unknown): EmbedChildMessage | null;
 
 // @public
@@ -1502,6 +1525,9 @@ export function parseSkillMd(text: string, options?: ParseSkillMdOptions): Parse
 export interface ParseSkillMdOptions {
     invocationKeys?: boolean;
 }
+
+// @public
+export function parseToolKey(key: string): ParsedToolKey | null;
 
 // @public
 export const PLUGIN_MANIFEST_FILE = ".capybara-plugin/plugin.json";

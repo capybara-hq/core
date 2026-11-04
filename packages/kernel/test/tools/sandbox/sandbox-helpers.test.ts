@@ -139,7 +139,7 @@ describe("assignAttachmentNames", () => {
   });
 });
 
-describe("sandbox_bash time limit", () => {
+describe("Bash time limit", () => {
   it("covers the command timeout plus the lock / create margin, capped by maxCommandSeconds", () => {
     const cfg = KernelConfigSchema.parse({
       db: { url: "postgres://x/y" },
@@ -156,16 +156,16 @@ describe("sandbox_bash time limit", () => {
       // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
       eventLog: {} as any,
       config: { get: () => cfg },
-    }).find((t) => t.spec.name === "sandbox_bash");
+    }).find((t) => t.spec.name === "Bash");
     // 等锁 + 创建 / 恢复 + 停命令的兜底（E2B 重启沙箱约 160 秒）
     const margin =
       cfg.tools.timeoutMs + cfg.sandbox.lockWaitSeconds * 1000 + SANDBOX_SETUP_MARGIN_MS;
     expect(SANDBOX_SETUP_MARGIN_MS).toBeGreaterThanOrEqual(160_000);
     expect(sandboxBaseTimeoutMs(cfg)).toBe(margin);
     expect(bash?.spillChars).toBe(30_000);
-    expect(bash?.timeoutMs?.({ command: "x", timeoutSeconds: 600 })).toBe(600_000 + margin);
+    expect(bash?.timeoutMs?.({ command: "x", timeout: 600_000 })).toBe(600_000 + margin);
     expect(bash?.timeoutMs?.({ command: "x" })).toBe(120_000 + margin);
-    expect(bash?.timeoutMs?.({ command: "x", timeoutSeconds: 99_999 })).toBe(7_200_000 + margin);
+    expect(bash?.timeoutMs?.({ command: "x", timeout: 99_999_000 })).toBe(7_200_000 + margin);
   });
 });
 
@@ -190,8 +190,8 @@ describe("glob / grep command timeout (fix wave S2 minor 2)", () => {
   });
 
   it.each([
-    ["sandbox_glob", { pattern: "*.txt" }],
-    ["sandbox_grep", { pattern: "x" }],
+    ["Glob", { pattern: "*.txt" }],
+    ["Grep", { pattern: "x" }],
   ])("%s passes the time left in the call to exec", async (name, input) => {
     let now = 5_000_000;
     const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
@@ -202,7 +202,7 @@ describe("glob / grep command timeout (fix wave S2 minor 2)", () => {
         exec: async (_h: unknown, a: { timeoutMs: number }) => {
           timeouts.push(a.timeoutMs);
           return {
-            exitCode: name === "sandbox_grep" ? 1 : 0,
+            exitCode: name === "Grep" ? 1 : 0,
             stdout: "",
             stderr: "",
             truncated: false,
@@ -249,15 +249,7 @@ describe("shellQuote", () => {
 
 describe("registry without a sandbox provider", () => {
   it("sandbox tools are built-in names and resolve as unavailable with an actionable reason", async () => {
-    for (const t of [
-      "sandbox_bash",
-      "sandbox_read",
-      "sandbox_write",
-      "sandbox_edit",
-      "sandbox_glob",
-      "sandbox_grep",
-      "sandbox_deliver",
-    ]) {
+    for (const t of ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "Deliver"]) {
       expect(BUILTIN_TOOL_NAMES as readonly string[]).toContain(t);
     }
     const tools = sandboxTools({
@@ -276,11 +268,11 @@ describe("registry without a sandbox provider", () => {
     const host = { tools: () => [], list: () => [] } as unknown as ExtensionHost;
     const registry = new ToolRegistry({} as KernelDb, host, host, { list: () => tools });
     const got = await registry.forAgent("org", {
-      tools: [{ kind: "builtin", name: "sandbox_bash" }],
+      tools: [{ kind: "builtin", name: "Bash" }],
     });
     expect(got.tools).toEqual([]);
     expect(got.unavailable).toHaveLength(1);
-    expect(got.unavailable[0]?.ref).toBe("sandbox_bash");
+    expect(got.unavailable[0]?.ref).toBe("Bash");
     expect(got.unavailable[0]?.reason).toMatch(/sandbox/i);
     expect(got.unavailable[0]?.reason).toMatch(/administrator/);
   });
@@ -345,10 +337,10 @@ describe("attachment sync", () => {
             masterKey: Buffer.alloc(32, 7).toString("base64"),
           }),
       },
-    }).find((t) => t.spec.name === "sandbox_read");
+    }).find((t) => t.spec.name === "Read");
     mem.files.set("/workspace/f.txt", new TextEncoder().encode("hello\n"));
     const r = (await read?.run(
-      { path: "/workspace/f.txt" },
+      { file_path: "/workspace/f.txt" },
       {
         orgId: "o",
         accountId: "a",
@@ -469,7 +461,7 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
       failWrite: "/workspace/attachments/.capybara-sync.json",
     });
     r.files.set("/workspace/f.txt", new TextEncoder().encode("hi\n"));
-    const out = r.text(await r.tool("sandbox_read").run({ path: "/workspace/f.txt" }, callCtx()));
+    const out = r.text(await r.tool("Read").run({ file_path: "/workspace/f.txt" }, callCtx()));
     expect(out).toContain("Attachments copied into the sandbox: /workspace/attachments/ok.csv");
     expect(out).not.toContain("could not be copied");
     expect(r.files.has("/workspace/attachments/.capybara-sync.json")).toBe(false);
@@ -479,31 +471,33 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
     const r = rig();
     r.files.set("/workspace/out.txt", new TextEncoder().encode("x"));
     await expect(
-      r
-        .tool("sandbox_deliver")
-        .run({ path: "/workspace/out.txt", name: "bad\u0001name" }, callCtx()),
+      r.tool("Deliver").run({ file_path: "/workspace/out.txt", name: "bad\u0001name" }, callCtx()),
     ).rejects.toThrow(/control characters/);
     await expect(
-      r
-        .tool("sandbox_deliver")
-        .run({ path: "/workspace/out.txt", name: "x".repeat(300) }, callCtx()),
+      r.tool("Deliver").run({ file_path: "/workspace/out.txt", name: "x".repeat(300) }, callCtx()),
     ).rejects.toThrow(/plain file name/);
     expect(r.puts).toEqual([]);
+  });
+
+  it("deliver: the description suggests tar -czf, not zip (the sandbox image has no zip)", () => {
+    const d = rig().tool("Deliver").spec.description;
+    expect(d).toContain("tar -czf");
+    expect(d).not.toContain("zip");
   });
 
   it("deliver without an object store: unavailable with an English reason, fails before stat / read", async () => {
     const r = rig({ storage: false });
     r.files.set("/workspace/out.txt", new TextEncoder().encode("x"));
-    const deliver = r.tool("sandbox_deliver");
+    const deliver = r.tool("Deliver");
     expect(deliver.unavailable?.()).toMatch(/^File storage is not configured in this deployment/);
     // 其他沙箱工具不受影响
-    expect(r.tool("sandbox_read").unavailable?.()).toBeNull();
-    await expect(deliver.run({ path: "/workspace/out.txt" }, callCtx())).rejects.toThrow(
+    expect(r.tool("Read").unavailable?.()).toBeNull();
+    await expect(deliver.run({ file_path: "/workspace/out.txt" }, callCtx())).rejects.toThrow(
       /File storage is not configured/,
     );
     expect(r.reads()).toBe(0);
     expect(r.puts).toEqual([]);
-    expect(rig().tool("sandbox_deliver").unavailable?.()).toBeNull();
+    expect(rig().tool("Deliver").unavailable?.()).toBeNull();
   });
 
   it("deliver deletes the uploaded object when writing artifact_created fails", async () => {
@@ -514,7 +508,7 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
     });
     r.files.set("/workspace/out.txt", new TextEncoder().encode("x"));
     await expect(
-      r.tool("sandbox_deliver").run({ path: "/workspace/out.txt" }, callCtx()),
+      r.tool("Deliver").run({ file_path: "/workspace/out.txt" }, callCtx()),
     ).rejects.toThrow("db down");
     expect(r.puts).toHaveLength(1);
     expect(r.deletes).toEqual(r.puts);
@@ -528,7 +522,9 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
         stderr: "grep: ./secret: Permission denied",
       },
     });
-    const out = r.text(await r.tool("sandbox_grep").run({ pattern: "hit" }, callCtx()));
+    const out = r.text(
+      await r.tool("Grep").run({ pattern: "hit", output_mode: "content" }, callCtx()),
+    );
     expect(out).toContain("/workspace/a.txt:1:hit");
     expect(out).toContain("[grep also reported errors: grep: ./secret: Permission denied]");
   });
@@ -541,7 +537,9 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
         stderr: "grep: ./secret: Permission denied",
       },
     });
-    const out = r.text(await r.tool("sandbox_grep").run({ pattern: "hit" }, callCtx()));
+    const out = r.text(
+      await r.tool("Grep").run({ pattern: "hit", output_mode: "content" }, callCtx()),
+    );
     expect(out).toContain("No matches for hit in /workspace.");
     expect(out).toContain("[grep also reported errors:");
     expect(out).not.toContain(".capybara-sync.json");
@@ -551,7 +549,76 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
     const r = rig({
       exec: { exitCode: 0, stdout: "./we\nird.txt\u0000./b.txt\u0000", stderr: "" },
     });
-    const out = r.text(await r.tool("sandbox_glob").run({ pattern: "*.txt" }, callCtx()));
+    const out = r.text(await r.tool("Glob").run({ pattern: "*.txt" }, callCtx()));
     expect(out.split("\n")).toEqual(["/workspace/b.txt", "/workspace/we\\nird.txt"]);
+  });
+});
+
+describe("read before write over Read's byte limit", () => {
+  it("overwriting a file over 10 MB that the conversation itself just wrote succeeds", async () => {
+    const files = new Map<string, Uint8Array>();
+    const p = {
+      readFile: async (_h: unknown, path: string, o: { maxBytes: number }) => {
+        const d = files.get(path);
+        if (d === undefined) return null;
+        return { data: d.subarray(0, o.maxBytes), truncated: d.byteLength > o.maxBytes };
+      },
+      writeFile: async (_h: unknown, path: string, data: Uint8Array) => {
+        files.set(path, data);
+      },
+      stat: async (_h: unknown, path: string) => {
+        const d = files.get(path);
+        return d === undefined ? null : { size: d.byteLength, isDir: false };
+      },
+    };
+    // the log: the latest view.file of each path, as the conversation's tool_results record it
+    const recorded = new Map<string, { size: number; sha256: string }>();
+    const sandbox = {
+      available: true,
+      withSandbox: async (
+        _ctx: unknown,
+        fn: (h: unknown, p: unknown, info: unknown, s: AbortSignal) => Promise<unknown>,
+      ) => fn({ id: "x" }, p, { fresh: false, recreated: false }, new AbortController().signal),
+    } as unknown as SandboxToolDeps["sandbox"];
+    const tools = sandboxTools({
+      sandbox,
+      // biome-ignore lint/suspicious/noExplicitAny: test stub
+      attachments: { listForConversation: async () => [] } as any,
+      // biome-ignore lint/suspicious/noExplicitAny: never called
+      storage: {} as any,
+      eventLog: {
+        append: async () => [],
+        latestFileState: async (_c: string, path: string) => recorded.get(path) ?? null,
+      },
+      config: {
+        get: () =>
+          KernelConfigSchema.parse({
+            db: { url: "postgres://x/y" },
+            redis: { url: "redis://x" },
+            masterKey: Buffer.alloc(32, 7).toString("base64"),
+          }),
+      },
+    });
+    const write = tools.find((t) => t.spec.name === "Write") as BuiltinTool;
+    const ctx = {
+      orgId: "o",
+      accountId: "a",
+      agentId: "g",
+      conversationId: "c",
+      callId: "call",
+      signal: new AbortController().signal,
+    };
+    const run = async (content: string) => {
+      const r = (await write.run({ file_path: "/workspace/big.txt", content }, ctx)) as {
+        view: { file: { path: string; size: number; sha256: string } };
+      };
+      const { path, ...state } = r.view.file;
+      recorded.set(path, state);
+      return r;
+    };
+    const first = await run("a".repeat(11_000_000));
+    expect(first.view.file.size).toBe(11_000_000);
+    const second = await run("small\n");
+    expect(second.view.file.size).toBe(6);
   });
 });

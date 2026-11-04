@@ -12,7 +12,7 @@ const DEFAULT_LIMIT = 200;
 const FOOTER_RESERVE = 200;
 
 const SPEC: ToolSpec = {
-  name: "read_tool_output",
+  name: "ReadToolOutput",
   description:
     "Read a saved tool output by its id, page by page. Large tool results are truncated in the " +
     "conversation and saved in full; the truncation notice gives the output id. Lines are numbered " +
@@ -108,7 +108,7 @@ export function readPage(
   return [parts.join("\n"), ...(cut === null ? [] : [cut]), footer].join("\n");
 }
 
-/** 内置工具 `read_tool_output`：读本会话未过期的输出存档（只读、默认 allow）。 */
+/** 内置工具 `ReadToolOutput`：读本会话未过期的输出存档（只读、默认 allow）。 */
 export function readToolOutputTool(deps: {
   outputs: Pick<ToolOutputs, "load">;
   config: Pick<KernelConfigService, "get">;

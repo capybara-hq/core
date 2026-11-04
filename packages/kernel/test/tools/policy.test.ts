@@ -12,7 +12,6 @@ import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { createLogger } from "../../src/log.js";
 import type { PolicyContext } from "../../src/tools/pipeline.js";
 import {
   createDecidePolicy,
@@ -85,8 +84,8 @@ describe("decide", () => {
     expect(decide({ ...base, connectorDefault: "allow", agentOverride: "ask" })).toBe("ask");
   });
 
-  it("R3 固定询问清单：M5 起含 skill_write（改共享技能），只对共享 agent 生效", () => {
-    expect([...R3_FIXED_ASK_TOOL_KEYS]).toEqual(["skill_write"]);
+  it("R3 固定询问清单：M5 起含 SkillWrite（改共享技能），只对共享 agent 生效", () => {
+    expect([...R3_FIXED_ASK_TOOL_KEYS]).toEqual(["SkillWrite"]);
     const tool = (key: string) =>
       ({
         key,
@@ -95,19 +94,19 @@ describe("decide", () => {
         specHash: "h",
         defaultPolicy: "allow",
       }) as ResolvedTool;
-    expect(isFixedAsk(tool("skill_write"), "org")).toBe(true);
-    expect(isFixedAsk(tool("skill_write"), "members")).toBe(true);
-    expect(isFixedAsk(tool("skill_write"), "private")).toBe(false);
+    expect(isFixedAsk(tool("SkillWrite"), "org")).toBe(true);
+    expect(isFixedAsk(tool("SkillWrite"), "members")).toBe(true);
+    expect(isFixedAsk(tool("SkillWrite"), "private")).toBe(false);
     // 不知道可见性时按共享处理（更严）
-    expect(isFixedAsk(tool("skill_write"), undefined)).toBe(true);
-    expect(isFixedAsk(tool("skill_load"), "org")).toBe(false);
+    expect(isFixedAsk(tool("SkillWrite"), undefined)).toBe(true);
+    expect(isFixedAsk(tool("Skill"), "org")).toBe(false);
   });
 
-  it("skill_write 的私有 agent 开关（D10）：私有且 ask → 固定询问；缺省 / allow → 不问；共享不论取值都问", () => {
+  it("SkillWrite 的私有 agent 开关（D10）：私有且 ask → 固定询问；缺省 / allow → 不问；共享不论取值都问", () => {
     const t = {
-      key: "skill_write",
-      source: { kind: "builtin", name: "skill_write" },
-      spec: { name: "skill_write", description: "d", inputSchema: { type: "object" } },
+      key: "SkillWrite",
+      source: { kind: "builtin", name: "SkillWrite" },
+      spec: { name: "SkillWrite", description: "d", inputSchema: { type: "object" } },
       specHash: "h",
       defaultPolicy: "allow",
     } as ResolvedTool;
@@ -130,7 +129,6 @@ let db: KernelSchemaDb;
 let redis: Redis;
 let sub: ReturnType<typeof createBusSubscriber>;
 let eventLog: EventLog;
-const silent = createLogger("error", { write: () => {} });
 const cfg = KernelConfigSchema.parse({
   db: { url: "postgres://x/y" },
   redis: { url: "redis://x" },
@@ -183,7 +181,7 @@ const SPEC: ToolSpec = {
 
 function appTool(overrides: Partial<ResolvedTool> = {}): ResolvedTool {
   return {
-    key: "docs__create_doc",
+    key: "mcp__docs__create_doc",
     source: { kind: "connector", connectorId, name: "create_doc" },
     spec: SPEC,
     specHash: specHash(SPEC),
@@ -194,7 +192,7 @@ function appTool(overrides: Partial<ResolvedTool> = {}): ResolvedTool {
 
 function pluginTool(spec: ToolSpec, overrides: Partial<ResolvedTool> = {}): ResolvedTool {
   return {
-    key: `probe__${spec.name}`,
+    key: `plugin__probe__${spec.name}`,
     source: { kind: "plugin", plugin: "probe", name: spec.name },
     spec,
     specHash: specHash(spec),
@@ -290,7 +288,7 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     const d = await createDecidePolicy(db)(appTool(), agentDef, ctx);
     expect(d).toEqual({
       ask: {
-        toolKey: "docs__create_doc",
+        toolKey: "mcp__docs__create_doc",
         specHash: specHash(SPEC),
         connectorId,
         requestedFor: seed.accountId,
@@ -303,7 +301,7 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
   it("which policy asked: agent tightening, connector, the tool's default", async () => {
     await setAppTool("allow");
     const policy = createDecidePolicy(db);
-    const tightened = { ...agentDef, toolPolicies: { docs__create_doc: "ask" as const } };
+    const tightened = { ...agentDef, toolPolicies: { mcp__docs__create_doc: "ask" as const } };
     expect(await policy(appTool(), tightened, ctx)).toMatchObject({ ask: { policy: "agent" } });
     await setAppTool("ask");
     expect(await policy(appTool(), agentDef, ctx)).toMatchObject({ ask: { policy: "connector" } });
@@ -321,10 +319,10 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
 
   it("which policy asked: org (sandboxToolPolicy) and fixed (requiresUserInteraction, R3)", async () => {
     const policy = createDecidePolicy(db);
-    const bashSpec = { name: "sandbox_bash", description: "d", inputSchema: { type: "object" } };
+    const bashSpec = { name: "Bash", description: "d", inputSchema: { type: "object" } };
     const bash: ResolvedTool = {
-      key: "sandbox_bash",
-      source: { kind: "builtin", name: "sandbox_bash" },
+      key: "Bash",
+      source: { kind: "builtin", name: "Bash" },
       spec: bashSpec,
       specHash: specHash(bashSpec),
       defaultPolicy: "allow",
@@ -355,11 +353,11 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     const { toolPolicies: _, ...legacy } = agentDef;
     expect(await policy(appTool(), legacy as AgentDefinition, ctx)).toBe("allow");
     expect(
-      await policy(appTool(), { ...agentDef, toolPolicies: { docs__create_doc: "ask" } }, ctx),
+      await policy(appTool(), { ...agentDef, toolPolicies: { mcp__docs__create_doc: "ask" } }, ctx),
     ).toMatchObject({ ask: {} });
     // 运行中负责人把当前版本收紧为 deny：立即生效
     await sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
-      VALUES (${seed.agentId}, 2, ${JSON.stringify({ ...agentDef, toolPolicies: { docs__create_doc: "deny" } })}::jsonb,
+      VALUES (${seed.agentId}, 2, ${JSON.stringify({ ...agentDef, toolPolicies: { mcp__docs__create_doc: "deny" } })}::jsonb,
         ${seed.accountId})`.execute(raw);
     await sql`UPDATE capybara.agents SET current_version = 2 WHERE id = ${seed.agentId}`.execute(
       raw,
@@ -384,7 +382,7 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     expect(await policy(appTool(), agentDef, child)).toBe("allow");
     const setParent = async (version: number, p: "ask" | "deny") => {
       await sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
-        VALUES (${seed.agentId}, ${version}, ${JSON.stringify({ ...agentDef, toolPolicies: { docs__create_doc: p } })}::jsonb,
+        VALUES (${seed.agentId}, ${version}, ${JSON.stringify({ ...agentDef, toolPolicies: { mcp__docs__create_doc: p } })}::jsonb,
           ${seed.accountId})`.execute(raw);
       await sql`UPDATE capybara.agents SET current_version = ${version} WHERE id = ${seed.agentId}`.execute(
         raw,
@@ -398,10 +396,69 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     // the dispatched agent's owner can tighten it too (its current version, R5)
     await setParent(4, "ask");
     await sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
-      VALUES ('ag-analyst', 2, ${JSON.stringify({ ...agentDef, toolPolicies: { docs__create_doc: "deny" } })}::jsonb,
+      VALUES ('ag-analyst', 2, ${JSON.stringify({ ...agentDef, toolPolicies: { mcp__docs__create_doc: "deny" } })}::jsonb,
         ${seed.accountId})`.execute(raw);
     await sql`UPDATE capybara.agents SET current_version = 2 WHERE id = 'ag-analyst'`.execute(raw);
     expect(await policy(appTool(), agentDef, child)).toBe("deny");
+  });
+
+  it("an rc current version's deny (old builtin and connector keys) still tightens a run of another version", async () => {
+    await setAppTool("allow");
+    const policy = createDecidePolicy(db);
+    const bashSpec = { name: "Bash", description: "d", inputSchema: { type: "object" } };
+    const bash: ResolvedTool = {
+      key: "Bash",
+      source: { kind: "builtin", name: "Bash" },
+      spec: bashSpec,
+      specHash: specHash(bashSpec),
+      defaultPolicy: "allow",
+    };
+    expect(await policy(appTool(), agentDef, ctx)).toBe("allow");
+    expect(await policy(bash, agentDef, ctx)).toBe("allow");
+    // the current version (2) was saved by a release candidate; the run uses version 1
+    await sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
+      VALUES (${seed.agentId}, 2, ${JSON.stringify({ ...agentDef, toolPolicies: { sandbox_bash: "deny", docs__create_doc: "deny" } })}::jsonb,
+        ${seed.accountId})`.execute(raw);
+    await sql`UPDATE capybara.agents SET current_version = 2 WHERE id = ${seed.agentId}`.execute(
+      raw,
+    );
+    expect(await policy(appTool(), agentDef, ctx)).toBe("deny");
+    expect(await policy(bash, agentDef, ctx)).toBe("deny");
+  });
+
+  it("an org agent sub-agent: an rc parent's current deny (old builtin and connector keys) denies the child's call", async () => {
+    await setAppTool("allow");
+    const policy = createDecidePolicy(db);
+    await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
+      VALUES ('ag-rc-child', ${seed.orgId}, ${seed.accountId}, 'org', 1)`.execute(raw);
+    await sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
+      VALUES ('ag-rc-child', 1, ${JSON.stringify(agentDef)}::jsonb, ${seed.accountId})`.execute(
+      raw,
+    );
+    const child: PolicyContext = {
+      ...ctx,
+      agentId: "ag-rc-child",
+      conversationId: "child-conv",
+      parentConversationId: seed.conversationId,
+    };
+    const readSpec = { name: "Read", description: "d", inputSchema: { type: "object" } };
+    const read: ResolvedTool = {
+      key: "Read",
+      source: { kind: "builtin", name: "Read" },
+      spec: readSpec,
+      specHash: specHash(readSpec),
+      defaultPolicy: "allow",
+    };
+    expect(await policy(appTool(), agentDef, child)).toBe("allow");
+    expect(await policy(read, agentDef, child)).toBe("allow");
+    await sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
+      VALUES (${seed.agentId}, 2, ${JSON.stringify({ ...agentDef, toolPolicies: { sandbox_read: "deny", docs__create_doc: "deny" } })}::jsonb,
+        ${seed.accountId})`.execute(raw);
+    await sql`UPDATE capybara.agents SET current_version = 2 WHERE id = ${seed.agentId}`.execute(
+      raw,
+    );
+    expect(await policy(appTool(), agentDef, child)).toBe("deny");
+    expect(await policy(read, agentDef, child)).toBe("deny");
   });
 
   it("记住的授权：spec_hash 一致才把 ask 放行；定义变化后失效（D8）", async () => {
@@ -409,13 +466,15 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     const policy = createDecidePolicy(db);
     const hash = specHash(SPEC);
     await sql`INSERT INTO capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash, connector_id)
-      VALUES (${seed.conversationId}, 'docs__create_doc', ${hash}, ${connectorId})`.execute(raw);
+      VALUES (${seed.conversationId}, 'mcp__docs__create_doc', ${hash}, ${connectorId})`.execute(
+      raw,
+    );
     expect(await policy(appTool(), agentDef, ctx)).toEqual({ grant: "session" });
     await sql`UPDATE capybara.conversation_tool_grants SET spec_hash = 'stale'`.execute(raw);
     expect(await policy(appTool(), agentDef, ctx)).toMatchObject({ ask: {} });
 
     await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash, connector_id)
-      VALUES (${seed.orgId}, ${seed.accountId}, ${seed.agentId}, 'docs__create_doc', ${hash}, ${connectorId})`.execute(
+      VALUES (${seed.orgId}, ${seed.accountId}, ${seed.agentId}, 'mcp__docs__create_doc', ${hash}, ${connectorId})`.execute(
       raw,
     );
     expect(await policy(appTool(), agentDef, ctx)).toEqual({ grant: "always" });
@@ -437,9 +496,9 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     // 旧连接器（同 slug、同工具 key、同定义）留下的授权
     const oldApp = randomUUID();
     await sql`INSERT INTO capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash, connector_id)
-      VALUES (${seed.conversationId}, 'docs__create_doc', ${hash}, ${oldApp})`.execute(raw);
+      VALUES (${seed.conversationId}, 'mcp__docs__create_doc', ${hash}, ${oldApp})`.execute(raw);
     await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash, connector_id)
-      VALUES (${seed.orgId}, ${seed.accountId}, ${seed.agentId}, 'docs__create_doc', ${hash}, ${oldApp})`.execute(
+      VALUES (${seed.orgId}, ${seed.accountId}, ${seed.agentId}, 'mcp__docs__create_doc', ${hash}, ${oldApp})`.execute(
       raw,
     );
     expect(await policy(appTool(), agentDef, ctx)).toMatchObject({ ask: { connectorId } });
@@ -474,15 +533,15 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
       raw,
     );
     expect(await createDecidePolicy(db)(tool, agentDef, ctx)).toMatchObject({
-      ask: { toolKey: "probe__confirm", requestedFor: seed.accountId },
+      ask: { toolKey: "plugin__probe__confirm", requestedFor: seed.accountId },
     });
   });
 
-  it("skill_write 私有 agent（D10）：缺省不问；当前版本设为 ask 即时生效且记住的授权无效；共享 agent 设 allow 仍 ask", async () => {
+  it("SkillWrite 私有 agent（D10）：缺省不问；当前版本设为 ask 即时生效且记住的授权无效；共享 agent 设 allow 仍 ask", async () => {
     const tool: ResolvedTool = {
-      key: "skill_write",
-      source: { kind: "builtin", name: "skill_write" },
-      spec: { name: "skill_write", description: "d", inputSchema: { type: "object" } },
+      key: "SkillWrite",
+      source: { kind: "builtin", name: "SkillWrite" },
+      spec: { name: "SkillWrite", description: "d", inputSchema: { type: "object" } },
       specHash: "h-sw",
       defaultPolicy: "allow",
     };
@@ -509,13 +568,13 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     await setCurrent(2);
     // 记住的授权不放行固定 ask
     await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash)
-      VALUES (${seed.orgId}, ${seed.accountId}, ${seed.agentId}, 'skill_write', 'h-sw')`.execute(
+      VALUES (${seed.orgId}, ${seed.accountId}, ${seed.agentId}, 'SkillWrite', 'h-sw')`.execute(
       raw,
     );
     await sql`INSERT INTO capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash)
-      VALUES (${seed.conversationId}, 'skill_write', 'h-sw')`.execute(raw);
+      VALUES (${seed.conversationId}, 'SkillWrite', 'h-sw')`.execute(raw);
     expect(await policy(tool, agentDef, ctx)).toMatchObject({
-      ask: { toolKey: "skill_write", requestedFor: seed.accountId },
+      ask: { toolKey: "SkillWrite", requestedFor: seed.accountId },
     });
     // 改回 allow 后不再询问
     await ver(3, "allow");
@@ -525,7 +584,7 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     await sql`UPDATE capybara.agents SET visibility = 'org' WHERE id = ${seed.agentId}`.execute(
       raw,
     );
-    expect(await policy(tool, agentDef, ctx)).toMatchObject({ ask: { toolKey: "skill_write" } });
+    expect(await policy(tool, agentDef, ctx)).toMatchObject({ ask: { toolKey: "SkillWrite" } });
   });
 
   it("R1：requiredRole 高于发起人实时角色 → 按角色升级（approverRole = 所需角色，requestedFor = null）", async () => {
@@ -536,7 +595,7 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     const policy = createDecidePolicy(db);
     expect(await policy(tool, agentDef, ctx)).toEqual({
       ask: {
-        toolKey: "probe__admin_op",
+        toolKey: "plugin__probe__admin_op",
         specHash: tool.specHash,
         connectorId: null,
         requestedFor: null,
@@ -571,7 +630,7 @@ describe("ApprovalsService.request", () => {
       runId,
       step: 1,
       callId: "c1",
-      toolKey: "docs__create_doc",
+      toolKey: "mcp__docs__create_doc",
       specHash: specHash(SPEC),
       connectorId,
       input: { title: "x" },
@@ -584,7 +643,7 @@ describe("ApprovalsService.request", () => {
       orgId: seed.orgId,
       runId,
       callId: "c1",
-      toolKey: "docs__create_doc",
+      toolKey: "mcp__docs__create_doc",
       status: "pending",
       requestedFor: seed.accountId,
       approverRole: null,
@@ -609,7 +668,7 @@ describe("ApprovalsService.request", () => {
         step: 1,
         callId: "c1",
         approvalId: a.id,
-        toolKey: "docs__create_doc",
+        toolKey: "mcp__docs__create_doc",
         expiresAt: a.expiresAt,
       },
     });
@@ -624,7 +683,7 @@ describe("ApprovalsService.request", () => {
         runId,
         step: 1,
         callId: "c2",
-        toolKey: "docs__create_doc",
+        toolKey: "mcp__docs__create_doc",
         specHash: "h",
         connectorId: null,
         input: {},

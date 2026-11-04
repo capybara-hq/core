@@ -44,7 +44,7 @@ import {
  * `commands-demo` Claude Code plugin (a checked-in fixture on a local fake git server, no network)
  * and an org installs it; an agent selects all its skills. The model's catalog lists the command
  * `fix-issue` and the forked `review`, never the manual-only `manual-script`; the model loads
- * `fix-issue` with `$ARGUMENTS` as written; the person invokes `/fix-issue 123` inline,
+ * `fix-issue` with `args: "123"`; the person invokes `/fix-issue 123` inline,
  * `/manual-script` (the model then copies its script to the sandbox) and the forked `/review src`
  * (a `commands-demo:code-reviewer` sub-agent reports, the parent answers); every model request of
  * the conversation and of the sub-agent reconstructs from the log with `drift: []`.
@@ -71,11 +71,11 @@ const RULES: ScriptRule[] = [
   { when: { lastUserIncludes: "Report from the sub-agent" }, reply: { text: "parent answered" } },
   {
     when: { lastUserIncludes: "LOAD fix-issue" },
-    reply: { toolCalls: [{ name: "skill_load", input: { name: "fix-issue" } }] },
+    reply: { toolCalls: [{ name: "Skill", input: { skill: "fix-issue", args: "123" } }] },
   },
   {
     when: { lastUserIncludes: '<skill_invocation name="manual-script"' },
-    reply: { toolCalls: [{ name: "skill_load", input: { name: "manual-script" } }] },
+    reply: { toolCalls: [{ name: "Skill", input: { skill: "manual-script" } }] },
   },
   { when: {}, reply: { text: "done" } },
 ];
@@ -252,8 +252,8 @@ describe("phase D acceptance: commands, manual-only and forked skills", {
           name: "Fixer",
           instructions: "Fix what you are asked to.",
           model: SCRIPT,
-          // a sandbox tool: skill_load copies a skill's files only for an agent that can run them
-          tools: [{ kind: "builtin", name: "sandbox_bash" }],
+          // a sandbox tool: Skill copies a skill's files only for an agent that can run them
+          tools: [{ kind: "builtin", name: "Bash" }],
           skills: { orgSkills: skills.map((s) => s.id) },
           subagents: { templates: templates.map((t) => t.id) },
         },
@@ -285,7 +285,7 @@ describe("phase D acceptance: commands, manual-only and forked skills", {
     ]);
   });
 
-  it("the catalog lists fix-issue and review, not manual-script; the model's skill_load returns $ARGUMENTS as written", async () => {
+  it("the catalog lists fix-issue and review, not manual-script; the model's Skill renders it with args", async () => {
     capture.reset();
     state.convId = await createConv(admin, orgId, state.agentId as string);
     await send({ text: "LOAD fix-issue" });
@@ -297,10 +297,10 @@ describe("phase D acceptance: commands, manual-only and forked skills", {
     expect(system).toContain("fix-issue");
     expect(system).not.toContain("manual-script");
     const loaded = ofType(events, "tool_result")[0];
-    expect(loaded?.payload.toolKey).toBe("skill_load");
+    expect(loaded?.payload.toolKey).toBe("Skill");
     expect(loaded?.payload.isError, loaded?.payload.content).toBe(false);
     expect(loaded?.payload.content).toContain(
-      "Fix GitHub issue $ARGUMENTS following our coding standards.",
+      "Fix GitHub issue 123 following our coding standards.",
     );
     expect(lastReply(events)).toBe("loaded fix-issue");
   });
@@ -322,17 +322,17 @@ describe("phase D acceptance: commands, manual-only and forked skills", {
     expect(lastReply(events)).toBe("done");
   });
 
-  it("/manual-script, then the model's skill_load copies scripts/run.sh to the sandbox", async () => {
+  it("/manual-script, then the model's Skill copies scripts/run.sh to the sandbox", async () => {
     const seq = await send({ text: "", skill: { name: "manual-script" } });
     await waitForTerminal(db, state.convId as string, 3, 30_000);
     const events = await eventsOf(db, state.convId as string);
     const msg = ofType(events, "user_message").find((e) => e.seq === seq);
     expect(msg?.payload.skill).toMatchObject({ name: "manual-script", mode: "inline" });
     expect(texts(msg?.payload.content ?? [])[0]).toContain(
-      'call skill_load with "manual-script" to copy them to /skills/manual-script/',
+      'call Skill with "manual-script" to copy them to /skills/manual-script/',
     );
     const loaded = ofType(events, "tool_result").at(-1);
-    expect(loaded?.payload.toolKey).toBe("skill_load");
+    expect(loaded?.payload.toolKey).toBe("Skill");
     expect(loaded?.payload.isError, loaded?.payload.content).toBe(false);
     expect(loaded?.payload.content).toContain("/skills/manual-script/");
     expect(await sandboxFile(state.convId as string, "skills/manual-script/scripts/run.sh")).toBe(

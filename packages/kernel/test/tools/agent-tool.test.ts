@@ -70,7 +70,7 @@ describe("agentToolSpec", () => {
       ],
       4,
     );
-    expect(spec.name).toBe("agent");
+    expect(spec.name).toBe("Agent");
     expect(spec.description).toBe(
       `${HEAD}` +
         "- general-purpose: a copy of you with your tools and skills, for multi-step work.\n" +
@@ -167,9 +167,9 @@ describe("agentToolSpec", () => {
     });
     expect(agentTool.spec).toEqual(spec);
     expect(agentTool.defaultPolicy).toBe("allow");
-    expect(AGENT_TOOL).toBe("agent");
-    expect(BUILTIN_TOOL_NAMES as readonly string[]).toContain("agent");
-    expect(isAlwaysLoaded("agent")).toBe(true);
+    expect(AGENT_TOOL).toBe("Agent");
+    expect(BUILTIN_TOOL_NAMES as readonly string[]).toContain("Agent");
+    expect(isAlwaysLoaded("Agent")).toBe(true);
   });
 });
 
@@ -446,8 +446,8 @@ describe("tool resolution", { timeout: 60_000 }, () => {
     const a = await orgAgent(def({ name: "Data Analyst", subagents: { dispatchable: true } }));
     const parent = def({
       tools: [
-        { kind: "builtin", name: "read_tool_output" },
-        { kind: "builtin", name: "agent" },
+        { kind: "builtin", name: "ReadToolOutput" },
+        { kind: "builtin", name: "Agent" },
       ],
       subagents: {
         templates: [t],
@@ -456,7 +456,7 @@ describe("tool resolution", { timeout: 60_000 }, () => {
       },
     });
     const { tools } = await k.app.get(ToolRegistry).forAgent(orgId, parent);
-    const tool = tools.find((x) => x.key === "agent");
+    const tool = tools.find((x) => x.key === "Agent");
     expect(tool?.defaultPolicy).toBe("allow");
     expect(tool?.spec).toEqual(agentToolSpec(await resolveRoster(db, orgId, parent), 4));
     expect(
@@ -469,29 +469,29 @@ describe("tool resolution", { timeout: 60_000 }, () => {
     ).toBe(true);
     // without subagents the tool lists general-purpose only
     const plain = await k.app.get(ToolRegistry).forAgent(orgId, {
-      tools: [{ kind: "builtin", name: "agent" }],
+      tools: [{ kind: "builtin", name: "Agent" }],
     });
-    expect(plain.tools.map((x) => x.key)).toEqual(["agent"]);
+    expect(plain.tools.map((x) => x.key)).toEqual(["Agent"]);
     expect(plain.tools[0]?.spec).toEqual(agentTool.spec);
   });
 
   it("an empty roster offers no agent tool at all", async () => {
     const r = await k.app.get(ToolRegistry).forAgent(orgId, {
       tools: [
-        { kind: "builtin", name: "read_tool_output" },
-        { kind: "builtin", name: "agent" },
+        { kind: "builtin", name: "ReadToolOutput" },
+        { kind: "builtin", name: "Agent" },
       ],
       subagents: { general: false },
     });
-    expect(r.tools.map((x) => x.key)).toEqual(["read_tool_output"]);
+    expect(r.tools.map((x) => x.key)).toEqual(["ReadToolOutput"]);
     expect(r.unavailable).toEqual([]);
   });
 
   it("a child's tool resolution never contains agent", async () => {
     const parent = def({
       tools: [
-        { kind: "builtin", name: "read_tool_output" },
-        { kind: "builtin", name: "agent" },
+        { kind: "builtin", name: "ReadToolOutput" },
+        { kind: "builtin", name: "Agent" },
       ],
       subagents: { inline: [{ name: "scout", description: "Find.", instructions: "Look." }] },
     });
@@ -509,7 +509,7 @@ describe("tool resolution", { timeout: 60_000 }, () => {
         { orgId, parent, parentAgentId, entry },
       );
       const { tools } = await k.app.get(ToolRegistry).forAgent(orgId, child.definition);
-      expect(tools.map((x) => x.key)).toEqual(["read_tool_output"]);
+      expect(tools.map((x) => x.key)).toEqual(["ReadToolOutput"]);
     }
   });
 });

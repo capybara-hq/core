@@ -31,10 +31,10 @@ import { MODEL } from "../runtime/context/fixtures.js";
  * fake-object-store（SeaweedFS）与测试用假沙箱插件（两个副本共用一个 root 目录，相当于共用一个提供方），
  * 全部经 HTTP 操作，请求在两个副本之间交替：
  *
- * 1. 共享 agent 的 `skill_write`：R3 固定确认（发起人批准）→ 生成变更申请；发起对话可试用草稿，另一对话看不到；
- *    负责人在副本 B 上批准 → 另一对话（副本 A）下一次运行开始时追加目录快照（「新技能」提醒），`skill_load` 拿到内容；
+ * 1. 共享 agent 的 `SkillWrite`：R3 固定确认（发起人批准）→ 生成变更申请；发起对话可试用草稿，另一对话看不到；
+ *    负责人在副本 B 上批准 → 另一对话（副本 A）下一次运行开始时追加目录快照（「新技能」提醒），`Skill` 拿到内容；
  * 2. 第二版同样走一遍：批准前另一对话仍是 v1，批准后它在下一次运行开始时看到「Updated skills」提醒并加载到 v2；
- * 3. 带脚本的技能：`skill_load` 把文件复制进沙箱 `/skills/<name>/`，`sandbox_bash` 用 `sh` 执行脚本。
+ * 3. 带脚本的技能：`Skill` 把文件复制进沙箱 `/skills/<name>/`，`Bash` 用 `sh` 执行脚本。
  */
 
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
@@ -175,9 +175,9 @@ describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙�
     return { ...t, result: t.result as ToolResult };
   }
 
-  /** 共享 agent 上的 skill_write：R3 固定确认 → 发起人在另一个副本上批准 → 等运行结束。 */
+  /** 共享 agent 上的 SkillWrite：R3 固定确认 → 发起人在另一个副本上批准 → 等运行结束。 */
   async function sharedWrite(i: 0 | 1, convId: string, input: unknown, n: number) {
-    await send("member", i, convId, "skill_write", input);
+    await send("member", i, convId, "SkillWrite", input);
     const a = await waitFor(
       () =>
         db
@@ -187,9 +187,9 @@ describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙�
           .where("status", "=", "pending")
           .executeTakeFirst(),
       30_000,
-      "skill_write approval",
+      "SkillWrite approval",
     );
-    expect(a.tool_key).toBe("skill_write");
+    expect(a.tool_key).toBe("SkillWrite");
     // 确认之前没有变更申请
     expect(await pendingChanges()).toHaveLength(0);
     const other: 0 | 1 = i === 0 ? 1 : 0;
@@ -198,7 +198,7 @@ describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙�
     });
     expect(d.status, JSON.stringify(d.json)).toBe(200);
     const t = await terminal(convId, n);
-    expect(t.result?.toolKey).toBe("skill_write");
+    expect(t.result?.toolKey).toBe("SkillWrite");
     return t.result as ToolResult;
   }
 
@@ -231,8 +231,8 @@ describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙�
         instructions: "Use skills.",
         model: { provider: "model-fake", model: "fake-1" },
         tools: [
-          { kind: "builtin", name: "skill_write" },
-          { kind: "builtin", name: "sandbox_bash" },
+          { kind: "builtin", name: "SkillWrite" },
+          { kind: "builtin", name: "Bash" },
         ],
       },
       visibility: "org",
@@ -266,10 +266,10 @@ describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙�
     });
     expect(await db.selectFrom("skills").select("id").execute()).toHaveLength(0);
 
-    const mine1 = await call("member", 1, convM, "skill_load", { name: "fruit-sum" }, 2);
+    const mine1 = await call("member", 1, convM, "Skill", { skill: "fruit-sum" }, 2);
     expect(mine1.result.isError, mine1.result.content).toBe(false);
     expect(mine1.result.content).toContain("Fruit sum v1");
-    const theirs1 = await call("other", 0, convX, "skill_load", { name: "fruit-sum" }, 1);
+    const theirs1 = await call("other", 0, convX, "Skill", { skill: "fruit-sum" }, 1);
     expect(theirs1.result.isError).toBe(true);
     expect(theirs1.result.content).not.toContain("Fruit sum v1");
     expect(await catalogs(convX)).toHaveLength(0);
@@ -286,11 +286,11 @@ describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙�
     expect(ok1.status, JSON.stringify(ok1.json)).toBe(200);
 
     // 另一对话（副本 A）的下一次运行开始时追加快照，「新技能」提醒进消息，加载成功
-    const x2 = await call("other", 0, convX, "skill_load", { name: "fruit-sum" }, 2);
+    const x2 = await call("other", 0, convX, "Skill", { skill: "fruit-sum" }, 2);
     expect(x2.result.isError, x2.result.content).toBe(false);
     expect(x2.result.content).toContain("Fruit sum v1");
     expect(x2.result.content).toContain("version 1");
-    // agent 有沙箱工具：skill_load 把脚本复制进沙箱，这是本对话首次使用沙箱
+    // agent 有沙箱工具：Skill 把脚本复制进沙箱，这是本对话首次使用沙箱
     expect(x2.result.content).toContain(SANDBOX_STARTED_NOTICE);
     const snapX2 = ofType(x2.evs, "skills_catalog");
     expect(snapX2).toHaveLength(1);
@@ -302,9 +302,9 @@ describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙�
     expect(w2.isError, w2.content).toBe(false);
     const [req2] = await pendingChanges();
     expect(req2?.skill_id).not.toBeNull();
-    const mine2 = await call("member", 0, convM, "skill_load", { name: "fruit-sum" }, 4);
+    const mine2 = await call("member", 0, convM, "Skill", { skill: "fruit-sum" }, 4);
     expect(mine2.result.content).toContain("Fruit sum v2");
-    const x3 = await call("other", 1, convX, "skill_load", { name: "fruit-sum" }, 3);
+    const x3 = await call("other", 1, convX, "Skill", { skill: "fruit-sum" }, 3);
     expect(x3.result.content).toContain("Fruit sum v1");
     expect(x3.result.content).not.toContain("Fruit sum v2");
     expect(ofType(x3.evs, "skills_catalog")).toHaveLength(0);
@@ -313,7 +313,7 @@ describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙�
       decision: "approve",
     });
     expect(ok2.status, JSON.stringify(ok2.json)).toBe(200);
-    const x4 = await call("other", 0, convX, "skill_load", { name: "fruit-sum" }, 4);
+    const x4 = await call("other", 0, convX, "Skill", { skill: "fruit-sum" }, 4);
     expect(x4.result.isError, x4.result.content).toBe(false);
     expect(x4.result.content).toContain("Fruit sum v2");
     expect(x4.result.content).toContain("version 2");
@@ -325,8 +325,8 @@ describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙�
     expect((snapX4[0] as CatalogEvent).seq).toBeLessThan(firstCall.seq);
     expect(await firstRequestText(convX, x4.runId, def)).toContain("Updated skills");
 
-    // ---- 3. 脚本进沙箱：skill_load 复制到 /skills/fruit-sum/，sandbox_bash 用 sh 执行 ----
-    // 上一步 skill_load 已把 v2 复制进同一个沙箱（覆盖 v1 的文件，沙箱不重建）
+    // ---- 3. 脚本进沙箱：Skill 复制到 /skills/fruit-sum/，Bash 用 sh 执行 ----
+    // 上一步 Skill 已把 v2 复制进同一个沙箱（覆盖 v1 的文件，沙箱不重建）
     expect(x4.result.content).not.toContain(SANDBOX_STARTED_NOTICE);
     const box = await db
       .selectFrom("sandboxes")
@@ -342,7 +342,7 @@ describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙�
       "other",
       1,
       convX,
-      "sandbox_bash",
+      "Bash",
       { description: "Test step", command: "sh /skills/fruit-sum/run.sh" },
       5,
     );

@@ -2,7 +2,7 @@ import { ApiClientError, apiFetch } from "./api";
 import type { ConversationEvent } from "./conversations";
 
 /**
- * 产物（agent 经 `sandbox_deliver` 交付的文件）与对话沙箱的状态。产物列表从会话日志的 `artifact_created`
+ * 产物（agent 经 `Deliver` 交付的文件）与对话沙箱的状态。产物列表从会话日志的 `artifact_created`
  * 重建（日志是唯一事实源），字节经内核的 artifacts 接口取：
  * - 下载 `GET .../artifacts/:id/download`：302 到预签名地址，一律 attachment；
  * - 缩略图 `?inline=1`：内核只对位图（PNG / JPEG / GIF / WebP）给 inline，SVG / HTML 等一律仍是 attachment；

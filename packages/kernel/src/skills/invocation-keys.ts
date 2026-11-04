@@ -4,7 +4,7 @@ import { parseSkillMd } from "@capybara-hq/plugin-sdk";
  * The SKILL.md invocation keys (package ecosystem phase D) and their lenient reading: readers of
  * stored files (catalog install and upgrade) and the Claude Code translation drop a key the strict
  * `parseSkillMd` checks would refuse, with the reason, instead of refusing the skill or storing an
- * invocation nobody can use. Uploads, native imports and `skill_write` stay strict.
+ * invocation nobody can use. Uploads, native imports and `SkillWrite` stay strict.
  */
 
 /** The frontmatter keys that make up a skill's invocation metadata. */

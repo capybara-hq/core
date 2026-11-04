@@ -13,3 +13,5 @@ Each entry has one of `PACKAGE_KINDS`.
 Read the old index with `parseCatalogIndex(json)`.
 It returns a `CatalogIndex`.
 Tests build a bundle with `appBundleTgz()`.
+The agent can call `sandbox_bash` and `skill_load(` in a prompt.
+The `tool_search` result is archived by `read_tool_output`.

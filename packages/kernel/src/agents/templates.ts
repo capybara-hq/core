@@ -3,7 +3,10 @@ import type { AgentTemplate, AgentTemplateTier } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { loadLegacyScope } from "../tools/legacy-data.js";
+import type { LegacyScope } from "../tools/legacy-keys.js";
 import { canonicalJson } from "../tools/registry.js";
+import { needsLegacyScope, normalizeToolKeys } from "./definition.js";
 
 /**
  * Agent templates installed in an org from plugins (sub-agents spec §16): `agent_templates` (one
@@ -61,16 +64,32 @@ const baseQuery = (db: KernelSchemaDb, orgId: string) =>
 
 type RawRow = Awaited<ReturnType<ReturnType<typeof baseQuery>["execute"]>>[number];
 
-const rowOf = (r: RawRow): TemplateRow => ({
+/**
+ * A stored template row; its tool keys read as current keys (tool naming spec §8.3): old builtin
+ * names always, rc `<x>__<tool>` keys with `scope` (see {@link scopedRows}).
+ */
+const rowOf = (r: RawRow, scope?: LegacyScope): TemplateRow => ({
   id: r.id,
   name: r.name,
   plugin: r.plugin_name,
   version: r.current_version,
-  template: r.definition as AgentTemplate,
+  template: normalizeToolKeys(r.definition, scope) as AgentTemplate,
   sourceFormat: r.source_format,
   catalogItemId: r.catalog_item_id,
   catalogVersion: r.catalog_version,
 });
+
+/** The rows of one org as {@link TemplateRow}s, reading the org's legacy scope once when needed. */
+async function scopedRows(
+  db: KernelSchemaDb,
+  orgId: string,
+  rows: readonly RawRow[],
+): Promise<TemplateRow[]> {
+  const scope = rows.some((r) => needsLegacyScope(r.definition))
+    ? await loadLegacyScope(db, orgId)
+    : undefined;
+  return rows.map((r) => rowOf(r, scope));
+}
 
 /** The live templates of `ids` in the org (deleted and foreign ids are left out), by id. */
 export async function loadTemplates(
@@ -82,7 +101,7 @@ export async function loadTemplates(
   const rows = await baseQuery(db, orgId)
     .where("t.id", "in", [...ids])
     .execute();
-  return new Map(rows.map((r) => [r.id, rowOf(r)]));
+  return new Map((await scopedRows(db, orgId, rows)).map((t) => [t.id, t]));
 }
 
 /** Reads the org's agent templates (consumed by the roster, the agent page and Task 19's API). */
@@ -126,7 +145,8 @@ export class AgentTemplatesService {
         : q.where("t.plugin_name", "=", ref.slice(0, i)).where("t.name", "=", ref.slice(i + 1));
     const r = await q.executeTakeFirst();
     if (!r) return null;
-    const t = rowOf(r);
+    const [t] = await scopedRows(this.db.db, orgId, [r]);
+    if (!t) return null;
     return { id: t.id, version: t.version, plugin: t.plugin, template: t.template };
   }
 }

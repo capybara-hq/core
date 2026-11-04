@@ -8,6 +8,7 @@ import { sandboxGrepTool } from "./grep.js";
 import { sandboxReadTool } from "./read.js";
 import { sandboxWriteTool } from "./write.js";
 
+export { SANDBOX_ASK_TOOL_NAMES, SANDBOX_TOOL_NAMES } from "../../builtin-names.js";
 export { BASH_SPILL_CHARS, formatExec } from "./bash.js";
 export {
   assignAttachmentNames,
@@ -23,7 +24,6 @@ export {
   shellQuote,
 } from "./common.js";
 export { compileGlob, GlobPatternError, MAX_GLOB_STARS } from "./glob-match.js";
-export { SANDBOX_ASK_TOOL_NAMES, SANDBOX_TOOL_NAMES } from "./names.js";
 
 /**
  * 沙箱内置工具（M5 T8）：bash / read / write / edit / glob / grep / deliver，都在本对话的沙箱上执行

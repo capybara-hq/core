@@ -96,12 +96,11 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
 
   // ── Tool rows and groups ───────────────────────────────────────────────
 
-  /** "verb source: title key · extra" with the key arguments in body color. */
+  /** "**name [tool]** preview · extra" (design spec §6.16.9: the Claude Code look). */
   function toolLabel(t) {
-    let lead;
-    if (t.kind === "command" && t.title) lead = t.title;
-    else lead = [t.verb, t.source ? `${t.source}: ${t.title}` : t.title].filter(Boolean).join(" ");
-    const key = t.keyArg ? ` <span class="r-em">${esc(t.keyArg)}</span>` : "";
+    const name = `<b class="r-em">${esc(t.tool ? `${t.name} [${t.tool}]` : t.name)}</b>`;
+    const preview = t.kind === "command" && t.description ? t.description : t.keyArg;
+    const key = preview ? ` ${esc(preview)}` : "";
     const extra =
       t.kind === "edit" && t.added !== undefined
         ? ` <span class="r-faint">· +${t.added} −${t.removed}</span>`
@@ -109,27 +108,35 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
           ? ` <span class="r-faint">· ${esc(t.extra)}</span>`
           : "";
     const fail = t.status === "failed" ? ` ${failWord}<span class="r-muted"> · ${esc(t.error)}</span>` : "";
-    return `<span class="r-tlabel">${esc(lead)}${key}${extra}${fail}</span>`;
+    return `<span class="r-tlabel"${t.tooltip ? ` title="${esc(t.tooltip)}"` : ""}>${name}${key}${extra}${fail}</span>`;
   }
 
   function toolDetail(t, o = {}) {
     const parts = [];
-    if (t.input) {
+    const io = (label, body) =>
+      `<div class="r-tio"><span class="r-tio-l">${label}</span><div class="r-tio-b">${body}</div></div>`;
+    let input = "";
+    if (t.command) input = `<div class="r-tcmd"><span class="r-faint">$</span> ${esc(t.command)}</div>`;
+    else if (t.input) {
+      input = `<div class="r-kv">${t.input.map(([k, v]) => `<span class="r-kv-k">${esc(k)}</span><span class="r-kv-v">${esc(v)}</span>`).join("")}</div>`;
+    }
+    if (input) parts.push(io("IN", input));
+    if (t.output) {
+      const foot = [];
+      if (t.outputBytes) {
+        foot.push(`<span>输出 ${Math.round(t.outputBytes / 1024)} KB，已显示前 4 KB</span>`);
+        foot.push(`<button class="r-linkbtn">${esc(K.viewAll)}</button>`);
+      } else if (t.durationMs !== undefined) {
+        foot.push(`<span>${(t.durationMs / 1000).toFixed(1)} 秒</span>`);
+        foot.push(`<button class="r-linkbtn">${esc(K.copyOutput)}</button>`);
+      }
       parts.push(
-        `<div class="r-kv">${t.input.map(([k, v]) => `<span class="r-kv-k">${esc(k)}</span><span class="r-kv-v">${esc(v)}</span>`).join("")}</div>`,
+        io(
+          "OUT",
+          `<pre class="r-tout">${esc(t.output)}</pre>${foot.length ? `<div class="r-tfoot">${foot.join("")}</div>` : ""}`,
+        ),
       );
     }
-    if (t.command) parts.push(`<div class="r-tcmd"><span class="r-faint">$</span> ${esc(t.command)}</div>`);
-    if (t.output) parts.push(`<pre class="r-tout">${esc(t.output)}</pre>`);
-    const foot = [];
-    if (t.outputBytes) {
-      foot.push(`<span>输出 ${Math.round(t.outputBytes / 1024)} KB，已显示前 4 KB</span>`);
-      foot.push(`<button class="r-linkbtn">${esc(K.viewAll)}</button>`);
-    } else if (t.durationMs !== undefined) {
-      foot.push(`<span>${(t.durationMs / 1000).toFixed(1)} 秒</span>`);
-      if (t.output) foot.push(`<button class="r-linkbtn">${esc(K.copyOutput)}</button>`);
-    }
-    if (foot.length) parts.push(`<div class="r-tfoot">${foot.join("")}</div>`);
     return `<div class="r-tdetail"${o.flush ? " data-flush" : ""}>${parts.join("")}</div>`;
   }
 

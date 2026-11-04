@@ -12,28 +12,30 @@ import {
   unavailableWhenNoSandbox,
   withNotices,
 } from "./common.js";
+import { normalizeSandboxPath, recordedFile } from "./file-state.js";
 
 /** 不给 `limit` 时一次读的行数。 */
 const DEFAULT_LIMIT = 2000;
 /** 单行最多显示的字符数（更长的截断并注明）。 */
 const MAX_LINE_CHARS = 2000;
-/** 最多读出的字节数（更大的文件只读开头，并说明用 sandbox_bash 读其余部分）。 */
+/** 最多读出的字节数（更大的文件只读开头，并说明用 Bash 读其余部分）。 */
 export const READ_MAX_BYTES = 10 * 1024 * 1024;
 
 const SPEC: ToolSpec = {
-  name: "sandbox_read",
+  name: "Read",
   // Display only (the tool row; not in the fingerprint, never sent to the model).
-  keyArgs: ["path"],
+  keyArgs: ["file_path"],
   description:
     "Read a text file from this conversation's sandbox, with line numbers. Use it to look at " +
     "source code, data files, logs and files the user attached (under /workspace/attachments). " +
     "Paths are absolute, under /workspace, /skills or /tmp. Lines are numbered from 1; pass " +
-    "offset and limit to read part of a long file. Binary files are not shown; use sandbox_bash " +
-    "to inspect them. Do not use it to list directories; use sandbox_glob instead.",
+    "offset and limit to read part of a long file. Binary files are not shown; use Bash " +
+    "to inspect them. Do not use it to list directories; use Glob instead. Read a file before you " +
+    "write it: Write and Edit fail on a file you have not read, or one changed since you read it.",
   inputSchema: {
     type: "object",
     properties: {
-      path: {
+      file_path: {
         type: "string",
         minLength: 1,
         description: 'Absolute path of the file, e.g. "/workspace/src/main.py".',
@@ -49,22 +51,21 @@ const SPEC: ToolSpec = {
         description: `Maximum number of lines to read. Default ${DEFAULT_LIMIT}.`,
       },
     },
-    required: ["path"],
+    required: ["file_path"],
     additionalProperties: false,
   },
   annotations: { readOnlyHint: true },
 };
 
 interface ReadInput {
-  path: string;
+  file_path: string;
   offset?: number;
   limit?: number;
 }
 
-const notFound = (path: string) =>
-  `File not found: ${clip(path, 200)}. Check the path with sandbox_glob.`;
+const notFound = (path: string) => `File not found: ${clip(path, 200)}. Check the path with Glob.`;
 const isDirectory = (path: string) =>
-  `${clip(path, 200)} is a directory; use sandbox_glob to list its files.`;
+  `${clip(path, 200)} is a directory; use Glob to list its files.`;
 const pastEnd = (offset: number, total: number) =>
   `offset ${offset} is past the end of the file (${total} lines); pass an offset of at most ${total}.`;
 
@@ -96,7 +97,7 @@ export function numberLines(text: string, offset: number, limit: number): string
   return out.join("\n");
 }
 
-/** 内置工具 `sandbox_read`：读沙箱里的文本文件（只读，组织策略为 ask 时也不审批）。 */
+/** 内置工具 `Read`：读沙箱里的文本文件（只读，组织策略为 ask 时也不审批）。 */
 export function sandboxReadTool(deps: SandboxToolDeps): BuiltinTool {
   return {
     spec: SPEC,
@@ -105,7 +106,7 @@ export function sandboxReadTool(deps: SandboxToolDeps): BuiltinTool {
     timeoutMs: () => sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx) {
       const { offset = 1, limit = DEFAULT_LIMIT } = input as ReadInput;
-      const path = checkPath((input as ReadInput).path);
+      const path = checkPath((input as ReadInput).file_path, "file_path");
       const { value, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
         const st = await p.stat(h, path, signal);
         if (st === null) throw new ToolError(notFound(path));
@@ -118,7 +119,7 @@ export function sandboxReadTool(deps: SandboxToolDeps): BuiltinTool {
       // display only: the line range shown on the row
       let range: { fromLine?: number; toLine?: number } = {};
       if (looksBinary(value.data)) {
-        text = `Binary file (${value.size} bytes); use sandbox_bash to inspect it (for example file or xxd).`;
+        text = `Binary file (${value.size} bytes); use Bash to inspect it (for example file or xxd).`;
       } else if (value.data.byteLength === 0) {
         text = "(empty file)";
       } else {
@@ -129,13 +130,18 @@ export function sandboxReadTool(deps: SandboxToolDeps): BuiltinTool {
           toLine: Math.min(fileLines(decoded).length, offset - 1 + limit),
         };
         if (value.truncated) {
-          text += `\n[Only the first ${READ_MAX_BYTES} bytes of this ${value.size}-byte file were read; use sandbox_bash (e.g. sed -n or tail) for the rest.]`;
+          text += `\n[Only the first ${READ_MAX_BYTES} bytes of this ${value.size}-byte file were read; use Bash (e.g. sed -n or tail) for the rest.]`;
         }
       }
       return {
         content: [{ type: "text", text: withNotices(notices, text) }],
         display: display(`读取 ${clip(path, 180)}`, `Read ${clip(path, 180)}`),
-        view: { kind: "read", path: viewPath(path), ...range },
+        view: {
+          kind: "read",
+          path: viewPath(path),
+          ...range,
+          file: recordedFile(normalizeSandboxPath(path), value.data, value.size),
+        },
       };
     },
   };

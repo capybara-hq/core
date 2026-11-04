@@ -126,7 +126,7 @@ const callTool = (plugin: string) => {
     .get(ExtensionHost)
     .tools()
     .find((x) => x.plugin === plugin && x.spec.name === "wait");
-  if (!t) throw new Error(`tool ${plugin}__wait is not available`);
+  if (!t) throw new Error(`tool plugin__${plugin}__wait is not available`);
   const signal = new AbortController().signal;
   return t.inflight.run(signal, (s) =>
     t.handler({}, { signal: s } as unknown as Parameters<ToolHandler>[1]),
@@ -627,7 +627,7 @@ describe("policy hooks across upgrade and disable (M-1, N-2)", { timeout: 90_000
         runId: "run-1",
         step: 1,
         callId: "call-1",
-        toolKey: "x__y",
+        toolKey: "mcp__x__y",
         specHash: "h",
         input,
       },

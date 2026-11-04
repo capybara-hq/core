@@ -382,9 +382,9 @@
       "toolsSectionHint": "Tools the agent may call. A policy can only be tightened: ask for approval, or deny.",
       "builtinLabel": "Built-in tools",
       "builtin": {
-        "ask_user": "Ask the user (ask_user)",
-        "read_tool_output": "Read archived tool output (read_tool_output)",
-        "skill_write": "Write skills (skill_write)"
+        "AskUserQuestion": "Ask the user (AskUserQuestion)",
+        "ReadToolOutput": "Read archived tool output (ReadToolOutput)",
+        "SkillWrite": "Write skills (SkillWrite)"
       },
       "connectorsLabel": "Connectors",
       "connectorTools": "All tools of {name}",
@@ -405,7 +405,7 @@
       "deletedSkill": "Deleted skill ({id})",
       "deletedSkillHint": "A deleted skill is ignored when the agent runs. Uncheck it to remove the reference.",
       "ownSkillsLabel": "Skills written by this agent",
-      "ownSkillsHint": "The agent writes these with skill_write. On a shared agent, each change waits for the owner's approval in the inbox.",
+      "ownSkillsHint": "The agent writes these with SkillWrite. On a shared agent, each change waits for the owner's approval in the inbox.",
       "noOwnSkills": "This agent has not written any skills.",
       "ownSkillVersion": "{name} · v{version}",
       "deleteOwnSkill": "Delete",
@@ -416,7 +416,7 @@
       "pinnedLabel": "Pinned skills",
       "pinnedLoading": "Loading skills…",
       "pinnedUnavailable": "The skill lists could not be read; the pinned skills are kept as they are.",
-      "pinnedHint": "A pinned skill's instructions are always in the model's context, without skill_load. Pin at most 3 of the selected skills, with SKILL.md files of at most 32 KB in total.",
+      "pinnedHint": "A pinned skill's instructions are always in the model's context, without calling Skill. Pin at most 3 of the selected skills, with SKILL.md files of at most 32 KB in total.",
       "noPinnable": "Select skills above to pin them.",
       "pinSkill": "Pin {name}",
       "suggested": "Suggested",
@@ -924,7 +924,7 @@
       "nameLabel": "Name",
       "nameRequired": "Enter a name.",
       "slugLabel": "Slug",
-      "slugHelp": "Lowercase letters, digits and underscores, up to 24 characters. Leave empty to derive it from the name.",
+      "slugHelp": "Lowercase letters, digits and underscores, up to 24 characters. Leave empty to derive it from the name. A shorter slug leaves room for longer tool names; a tool key is at most 64 characters.",
       "urlLabel": "Endpoint URL",
       "urlHelp": "The MCP endpoint, for example https://example.com/mcp",
       "urlRequired": "Enter the endpoint URL.",
@@ -1169,6 +1169,7 @@
       "columns": {
         "agent": "Agent",
         "tool": "Tool",
+        "key": "Tool key",
         "created": "Since",
         "actions": "Actions"
       },
@@ -1188,9 +1189,9 @@
     "readonly": "Only admins can change organization settings.",
     "toolSearch": {
       "title": "Tool search",
-      "description": "When an agent has many tools, the model gets a tool catalog and loads definitions on demand with tool_search.",
+      "description": "When an agent has many tools, the model gets a tool catalog and loads definitions on demand with ToolSearch.",
       "on": "On",
-      "onHint": "Switch to the catalog + tool_search above the threshold (recommended).",
+      "onHint": "Switch to the catalog + ToolSearch above the threshold (recommended).",
       "off": "Off",
       "offHint": "Always send every tool definition to the model."
     },
@@ -1201,7 +1202,7 @@
     },
     "sandbox": {
       "title": "Sandbox tools",
-      "description": "Default policy when agents use the sandbox (run commands, write and deliver files); the read-only sandbox_read / sandbox_glob / sandbox_grep always run directly.",
+      "description": "Default policy when agents use the sandbox (run commands, write and deliver files); the read-only Read / Glob / Grep always run directly.",
       "allow": "Allow",
       "allowHint": "Sandbox tools run without approval (default).",
       "ask": "Ask first",
@@ -1571,6 +1572,7 @@
       },
       "tool": {
         "title": "Tool call · {name}",
+        "key": "Tool key",
         "result": "Result",
         "noResult": "(no result)",
         "error": "Error",
@@ -2914,7 +2916,7 @@
         "confirmStep": "Confirm",
         "name": "Connector name",
         "slug": "Slug",
-        "slugHelp": "Prefix of the tool names: starts with a lowercase letter, lowercase letters, digits and underscores, at most 24 characters; empty derives it from the name.",
+        "slugHelp": "Prefix of the tool names: starts with a lowercase letter, lowercase letters, digits and underscores, at most 24 characters; empty derives it from the name. A shorter slug leaves room for longer tool names; a tool key is at most 64 characters.",
         "endpoint": "Endpoint",
         "endpointHint": "Read-only fields are set by the template and cannot be changed.",
         "credential": "Credentials",

@@ -4,6 +4,7 @@ import { checkMigrations } from "./migrations.js";
 import { checkPluginPack } from "./plugin-pack.js";
 import { checkPluginPermissions } from "./plugin-permissions.js";
 import { checkPluginState } from "./plugin-state.js";
+import { checkPluginToolKeys } from "./plugin-tool-keys.js";
 import { checkPluginReleaseMetadata } from "./release-metadata.js";
 import { printCheck } from "./report.js";
 import type { Finding } from "./source.js";
@@ -60,6 +61,7 @@ export function pluginChecks(scope: PluginCheckScope): NamedCheck[] {
       name: "Tool design",
       run: () => checkToolDesign([...(scope.toolDesignDirs ?? []), ...plugins]),
     },
+    { name: "Tool key length", run: () => checkPluginToolKeys(plugins) },
     { name: "Plugin test imports", run: () => checkPluginTestImports(plugins) },
     {
       name: "Plugin release metadata",

@@ -68,7 +68,7 @@ async function readPrefix(body: ReadableStream<Uint8Array>, max: number): Promis
 }
 
 /**
- * 产物（M5 T8 / T11）：agent 经 `sandbox_deliver` 交付的文件。先按会话流的规则判定会话可见
+ * 产物（M5 T8 / T11）：agent 经 `Deliver` 交付的文件。先按会话流的规则判定会话可见
  * （不可见 → `conversation.not_found`），再只在这个会话的日志里找 `artifact_created`
  * （没有 → `conversation.artifact_not_found`）。
  *

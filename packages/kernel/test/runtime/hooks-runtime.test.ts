@@ -47,7 +47,7 @@ import {
 const HOOKS_PROBE = fileURLToPath(
   new URL("../fixtures/plugins/hooks-probe/index.ts", import.meta.url),
 );
-const TOOL = "hooks-probe__probe_echo";
+const TOOL = "plugin__hooks-probe__probe_echo";
 const HOOK_TIMEOUT_MS = 400;
 
 /** Requests model-fake actually received. */

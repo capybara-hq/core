@@ -4,4 +4,4 @@ description: Keep a short item list for the conversation with the fake-tools-ui 
 ---
 # fake-notes
 
-Call `fake-tools-ui__write` with every item of the list.
+Call `plugin__fake-tools-ui__write` with every item of the list.

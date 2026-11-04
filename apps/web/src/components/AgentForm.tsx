@@ -40,6 +40,7 @@ import {
 } from "../lib/connectors";
 import type { ModelRef } from "../lib/conversations";
 import { PINNED_SKILLS_LIMITS, pinnedProblemsOf, type SkillSummary } from "../lib/skills";
+import { toolLabel, toolLabelText } from "../lib/tool-label";
 import { useErrorMessage } from "../lib/use-error-message";
 import {
   OrgSkillsPicker,
@@ -226,6 +227,22 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
     );
     if (on && connectorDetails[connectorId] === undefined) void loadConnectorDetail(connectorId);
   }
+
+  /** How the policy rows name a tool: builtins by name, connector tools as "<connector> [<tool>]". */
+  const policyLabel = (key: string): string => {
+    for (const id of selectedConnectors) {
+      const d = connectorDetails[id];
+      const x = d?.tools.find((x) => x.key === key);
+      if (d && x)
+        return toolLabelText(
+          toolLabel(
+            { key, title: null, tool: x.name, source: { kind: "connector", id, name: d.name } },
+            locale,
+          ),
+        );
+    }
+    return toolLabelText(toolLabel({ key, title: null, source: { kind: "builtin" } }, locale));
+  };
 
   /** 当前引用的工具 key（用于策略收紧）：内置工具名 + 已选连接器中启用的工具。 */
   const toolKeys = [
@@ -627,7 +644,7 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
                 </Text>
                 {toolKeys.map((key) => (
                   <div key={key} data-policy={key}>
-                    <Field label={key}>
+                    <Field label={policyLabel(key)}>
                       <Select
                         value={policies[key] ?? ""}
                         onChange={(e) => {

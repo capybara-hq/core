@@ -76,7 +76,7 @@ const refused = (content: string): DispatchOutcome => ({ kind: "refused", conten
 
 /**
  * A dispatch for a person's fork invocation (phase D spec §6.2, `advanceSkillForks`), not for a
- * model's `agent` call: `general-purpose` is always available (the `agent` tool and
+ * model's `Agent` call: `general-purpose` is always available (the `Agent` tool and
  * `subagents.general` do not gate it), an unknown type falls back to it with a warning, and the
  * child records the invoked skill.
  */
@@ -119,7 +119,7 @@ export interface DispatchPlan {
 }
 
 /**
- * Dispatches the sub-agent of one `agent` call (spec §7.1), after the pipeline's validation,
+ * Dispatches the sub-agent of one `Agent` call (spec §7.1), after the pipeline's validation,
  * policy, approval and `tool.preExecute` stages. A new sub-agent: resolves its type and effective
  * definition, then in one transaction (holding the parent run's row lock, so the dispatches of one
  * run serialize) inserts the child conversation, appends `subagent_started` and the task message,
@@ -408,7 +408,7 @@ const taskMessage = (
   prompt: string,
   narrowed?: FollowUpNarrowing,
   /**
-   * A fork invocation's record: the child's log then holds the invocation, so its `skill_load`
+   * A fork invocation's record: the child's log then holds the invocation, so its `Skill`
    * is offered and resolves the invoked version (phase D).
    */
   skill?: SkillForkDispatch["skill"],

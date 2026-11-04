@@ -11,3 +11,4 @@ Plugins (bundles) are described in `writing-plugins`.
 A plugin's manifest is `.capybara-plugin/plugin.json`; a marketplace publishes `marketplace.json`
 (`parseMarketplaceManifest`); compose files such as `my-app.yaml` or `webapp.yaml` are not the old
 bundle manifest, and `capybara.kinds`, `PACKAGE_KINDS_V2` style names are other identifiers.
+The agent tool dispatches a sub-agent; `Bash` and `Skill` run commands and skills.

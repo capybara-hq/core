@@ -32,7 +32,7 @@ import { ApiClientError } from "../lib/api";
 import { listMembers } from "../lib/members";
 
 /** The builtin tool that dispatches sub-agents. */
-export const AGENT_TOOL = "agent";
+export const AGENT_TOOL = "Agent";
 
 /** Limits of the kernel schema (`SubagentsSchema`). */
 const INLINE_MAX = 10;

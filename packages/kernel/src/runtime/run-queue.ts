@@ -76,7 +76,7 @@ export class RunQueue {
     /** 运行以孤儿结束（标记失败 / 直接中止）后删除它的 checkpoint thread（thread_id = runId）。 */
     @Inject(KyselyCheckpointSaver)
     private readonly checkpoints: Pick<KyselyCheckpointSaver, "deleteThread">,
-    /** The run's open `agent` call results, in the orphan repair's transaction (sub-agents spec §12). */
+    /** The run's open `Agent` call results, in the orphan repair's transaction (sub-agents spec §12). */
     @Inject(ToolPipeline) private readonly pipeline: Pick<ToolPipeline, "stopOpenAgentCalls">,
     @Inject(KernelEvents) private readonly events: KernelEvents,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "error" | "warn">,
@@ -88,7 +88,7 @@ export class RunQueue {
   }
 
   /**
-   * The `beforeTerminal` of an orphan repair: writes the run's open `agent` call results in the
+   * The `beforeTerminal` of an orphan repair: writes the run's open `Agent` call results in the
    * repair's transaction; `fire()` runs their observe hooks after the commit (review m1).
    */
   private stopOpenCalls(runId: string): {
