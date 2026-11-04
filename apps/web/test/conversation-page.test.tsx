@@ -20,7 +20,7 @@ import {
   userMsg,
 } from "./support/conversation";
 import { resetNavigation, router } from "./support/navigation";
-import { renderRouteWithCache } from "./support/query";
+import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { currentPageClient, ME, pageElement } from "./support/render";
 import { expectNoFirstPaintFetch, onServer } from "./support/server";
 import { renderFrame, shellOf } from "./support/shell";
@@ -1059,6 +1059,82 @@ describe("a new conversation (/chat)", () => {
     await user.click(screen.getByRole("button", { name: `${en.chat.pickAgent}: Second agent` }));
     await user.click(await screen.findByRole("menuitemradio", { name: /Echo agent/ }));
     expect(await screen.findByRole("heading", { name: "Echo agent" })).toBeTruthy();
+  });
+});
+
+describe("the first message from /chat (conversation send spec §2.1)", () => {
+  const C9 = "/api/v1/orgs/o1/conversations/c9";
+
+  async function startNew() {
+    resetNavigation("/chat");
+    let answer: (r: Response) => void = () => {};
+    let cmid = "";
+    const calls = stubApi({
+      "POST /api/v1/orgs/o1/conversations": (c) => {
+        cmid = (bodyOf(c) as { message: { clientMessageId: string } }).message.clientMessageId;
+        return new Promise<Response>((r) => {
+          answer = r;
+        });
+      },
+      // the sidebar's groups read again after the create, and never answer here
+      "GET /api/v1/orgs/o1/conversations/groups": () => new Promise<Response>(() => {}),
+    });
+    const { client } = await renderRouteWithCache("/chat", NEW_CHAT);
+    return { calls, client, answer: (r: Response) => answer(r), cmid: () => cmid };
+  }
+
+  it("switches to the conversation layout with the pending bubble at once", async () => {
+    const d = await startNew();
+    fireEvent.change(input(), { target: { value: "start" } });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(input()).toHaveProperty("value", "");
+    expect(document.querySelector('[data-part="new-conversation-body"]')).toBeNull();
+    const bubble = screen.getByText("start", { selector: '[data-part="bubble"]' });
+    expect(bubble.closest("[data-pending]")).not.toBeNull();
+    await vi.waitFor(() => expect(d.calls.some((c) => c.method === "POST")).toBe(true));
+  });
+
+  it("seeds the cache from the answer and navigates without waiting for the groups", async () => {
+    const d = await startNew();
+    await userEvent.setup().type(input(), "start{Enter}");
+    await vi.waitFor(() => expect(d.calls.some((c) => c.method === "POST")).toBe(true));
+    const event = userMsg(1, "start", { clientMessageId: d.cmid() });
+    const conversation = CONV("c9").conversation;
+    await act(async () => d.answer(json(201, { conversation, event })));
+    // the groups' read never answers: the navigation does not wait for it
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
+    const c = keys.org("o1").conversation("c9");
+    expect(d.client.getQueryData(c.row())).toEqual(conversation);
+    expect(d.client.getQueryData(c.events())).toEqual([event]);
+    expect(d.client.getQueryData(c.queue())).toEqual({ items: [], paused: false });
+    expect(d.client.getQueryData(c.files())).toEqual([]);
+    expect(d.client.getQueryData(c.sandbox())).toBeNull();
+
+    // /chat/c9 paints from the seeded cache: no read of the row, events, queue or files, and
+    // the stream opens after the event's seq
+    cleanup();
+    FakeEventSource.instances = [];
+    resetNavigation("/chat/c9");
+    params.conversationId = "c9";
+    const { calls } = await renderRouteEmptyCache("/chat/c9", snapshotDefaults("c9"), {
+      client: d.client,
+    });
+    expect(screen.getByText("start", { selector: '[data-part="bubble"]' })).toBeTruthy();
+    expect(FakeEventSource.instances.map((e) => e.url)).toEqual([`${C9}/stream?after=1`]);
+    await new Promise((r) => setTimeout(r, 20));
+    const reads = calls.filter((x) => x.method === "GET").map((x) => x.url.split("?")[0]);
+    for (const path of [C9, `${C9}/events`, `${C9}/queue`, `${C9}/files`, `${C9}/sandbox`])
+      expect(reads).not.toContain(path);
+  });
+
+  it("a failed create goes back to the new conversation with the text in the composer", async () => {
+    const d = await startNew();
+    await userEvent.setup().type(input(), "start{Enter}");
+    await vi.waitFor(() => expect(d.calls.some((c) => c.method === "POST")).toBe(true));
+    await act(async () => d.answer(json(500, { error: { code: "internal", message: "boom" } })));
+    await vi.waitFor(() => expect(input()).toHaveProperty("value", "start"));
+    expect(screen.queryByText("start", { selector: '[data-part="bubble"]' })).toBeNull();
+    expect(router.replace).not.toHaveBeenCalled();
   });
 });
 

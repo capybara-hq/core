@@ -367,6 +367,34 @@ export function appendEvents(
 }
 
 /**
+ * A conversation just created with its first message (conversation send spec §2.1): the create's
+ * answer is the row and the log's first event, and a new conversation has an empty queue, no
+ * files and no sandbox, so those are known answers too and `/chat/<id>` reads none of them; its
+ * stream opens after the event's seq. An event after seq 1 (a model switch logged before the
+ * message) means the log holds events the answer did not carry: the log is then not seeded and
+ * the page reads it whole.
+ */
+export function seedNewConversation(
+  qc: QueryClient,
+  orgId: string,
+  conversation: Conversation,
+  event: ConversationEvent,
+): void {
+  const c = keys.org(orgId).conversation(conversation.id);
+  qc.setQueryData<Conversation>(c.row(), conversation);
+  if (event.seq === 1) {
+    qc.setQueryData<ConversationEvent[]>(c.events(), (cur) => cur ?? []);
+    appendEvents(qc, orgId, conversation.id, [event]);
+  }
+  const empty = <T>(key: readonly unknown[], value: T) => {
+    if (qc.getQueryData(key) === undefined) qc.setQueryData<T>(key, value);
+  };
+  empty(c.queue(), { items: [], paused: false });
+  empty(c.files(), []);
+  empty(c.sandbox(), null);
+}
+
+/**
  * What a reopened stream's catch-up makes stale when it delivered events (spec §6, "Returning to
  * a conversation"): the queue, files, sandbox, sub-agents, usage, the row, the tool info and the
  * conversation's extension views. Otherwise they follow their freshness class.

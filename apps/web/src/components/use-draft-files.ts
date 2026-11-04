@@ -59,7 +59,7 @@ function failedIds(e: unknown): Set<string> {
  * 输入框的上传文件：上限取自内核 `GET /attachments/limits`（取到之前用默认值兜底），加文件时先预检、
  * 通过的立即上传；条数按同步更新的 ref 计算，并发加文件（同时拖入、粘贴）也不会超过上限。
  */
-export function useDraftFiles(orgId: string) {
+export function useDraftFiles(orgId: string, initial: readonly DraftFile[] = []) {
   const t = useTranslations("chat");
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -77,12 +77,14 @@ export function useDraftFiles(orgId: string) {
       uploadAttachment(orgId, v.file, { signal: v.signal, onProgress: v.onProgress }),
     invalidates: () => [],
   });
-  const [files, setFilesState] = useState<DraftFile[]>([]);
+  // `initial`: a failed send's files given back to a new composer (their uploads are done).
+  const [files, setFilesState] = useState<DraftFile[]>(() => [...initial]);
   /** 与 `files` 同步的最新值：加文件时据此算剩余名额（state 在同一轮事件里还是旧值）。 */
-  const filesRef = useRef<DraftFile[]>([]);
+  const filesRef = useRef<DraftFile[]>([...initial]);
   /** 进行中的上传（移除或卸载时中止）。 */
   const uploads = useRef(new Map<string, AbortController>());
-  const seq = useRef(0);
+  // New keys never repeat a given-back file's `f<n>`.
+  const seq = useRef(initial.reduce((n, f) => Math.max(n, Number(f.key.slice(1)) || 0), 0));
 
   const update = useCallback((fn: (list: DraftFile[]) => DraftFile[]) => {
     filesRef.current = fn(filesRef.current);

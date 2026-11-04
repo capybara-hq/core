@@ -90,6 +90,21 @@ export type ComposerMessage = Pick<
    * label and the files' names.
    */
   display?: { skill?: string; files: { name: string; kind: "image" | "file" }[] };
+  /**
+   * The draft as it was sent, for a view that outlives this composer (the new conversation's
+   * layout switch remounts it): a failed send gives it to the next composer's `initialDraft`.
+   */
+  draft?: ComposerDraft;
+};
+
+/** A composer's draft handed from one composer to the next (text, chip, resources, files, id). */
+export type ComposerDraft = {
+  text: string;
+  skill: InvocableSkill | null;
+  attachments: DraftAttachment[];
+  files: DraftFile[];
+  /** The draft's `clientMessageId`, kept for the retry (the kernel dedupes it). */
+  id?: { key: string; id: string };
 };
 
 /** The name a picked skill is invoked by: `<plugin>:<name>` for a plugin's skill. */
@@ -164,6 +179,7 @@ export function ComposerBar({
   pickers,
   placeholder,
   sendDisabled,
+  initialDraft,
 }: {
   orgId: string;
   /** The conversation's agent (the `/` menu lists its skills); undefined while loading. */
@@ -180,16 +196,20 @@ export function ComposerBar({
   placeholder: string;
   /** Nothing can be sent yet (a new conversation whose agent, or a thread, is still loading). */
   sendDisabled?: boolean;
+  /** A failed send's draft to start from (read at mount). */
+  initialDraft?: ComposerDraft | undefined;
 }) {
   const t = useTranslations("chat");
   const tc = useTranslations("common");
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const mac = useSyncExternalStore(noSubscribe, isMac, () => true);
-  const [text, setText] = useState("");
-  const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
+  const [text, setText] = useState(initialDraft?.text ?? "");
+  const [attachments, setAttachments] = useState<DraftAttachment[]>(
+    initialDraft?.attachments ?? [],
+  );
   /** The picked skill (the chip), or null. */
-  const [skill, setSkill] = useState<InvocableSkill | null>(null);
+  const [skill, setSkill] = useState<InvocableSkill | null>(initialDraft?.skill ?? null);
   const qc = useQueryClient();
   /** The agent's invocable skills (read again when the menu opens once they are stale). */
   const skillsQ = invocableSkillsQuery(orgId, agentId ?? "", conversationId);
@@ -204,7 +224,7 @@ export function ComposerBar({
       renderConnectorPrompt(orgId, v.p.connectorId, v.p.name, v.values),
     invalidates: () => [],
   });
-  const drafts = useDraftFiles(orgId);
+  const drafts = useDraftFiles(orgId, initialDraft?.files);
   const files = drafts.files;
   const previews = useObjectUrls(files);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -213,12 +233,15 @@ export function ComposerBar({
   const [argsFor, setArgsFor] = useState<ConnectorPrompt | null>(null);
   const [args, setArgs] = useState<Record<string, string>>({});
   const [rendering, setRendering] = useState(false);
-  const draft = useRef<{ key: string; id: string } | undefined>(undefined);
+  const draft = useRef<{ key: string; id: string } | undefined>(initialDraft?.id);
   const trigger = useRef<{ char: string; pos: number; picked: boolean } | null>(null);
 
   // A new agent (a new conversation's picker) has other skills: its chip and list go.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reset on the agent only
+  // (a change, not the mount: a given-back draft keeps its chip)
+  const agentAt = useRef(agentId);
   useEffect(() => {
+    if (agentAt.current === agentId) return;
+    agentAt.current = agentId;
     setSkill(null);
   }, [agentId]);
 
@@ -306,6 +329,13 @@ export function ComposerBar({
         display: {
           files: shownFiles,
           ...(name !== undefined ? { skill: `/${name.slice(name.indexOf(":") + 1)}` } : {}),
+        },
+        draft: {
+          text: sentText,
+          skill: sentSkill,
+          attachments: sentAttachments,
+          files: taken,
+          id: draft.current,
         },
       };
     };
