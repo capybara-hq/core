@@ -1,8 +1,9 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 import {
   defineExtension,
   type ExecResult,
@@ -352,8 +353,37 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
   };
   const procsDir = (h: SandboxHandle) => join(instanceDir(root, h.id), "procs");
   const sessionsDir = (h: SandboxHandle) => join(instanceDir(root, h.id), "sessions");
-  /** Kills every process the instance started: exec commands and shim sessions (by group). */
+  /**
+   * This instance's setsid shims that are still starting: `echo $!` returned and the exec that
+   * started one may have ended, but the shim has not spawned its command nor written its session
+   * record yet (node starts slowly under load). Found as a process running the shim in one of the
+   * instance's exec groups (`groups/<pgid>`).
+   */
+  const startingShims = async (h: SandboxHandle): Promise<number[]> => {
+    const groups = new Set(
+      await readdir(join(instanceDir(root, h.id), "groups")).catch(() => [] as string[]),
+    );
+    if (groups.size === 0) return [];
+    const { stdout } = await promisify(execFile)("ps", ["-A", "-o", "pid=,pgid=,command="]);
+    const shim = join(binDir, "setsid");
+    const out: number[] = [];
+    for (const line of stdout.split("\n")) {
+      const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+      if (m && groups.has(m[2] as string) && (m[3] as string).includes(shim))
+        out.push(Number(m[1]));
+    }
+    return out;
+  };
+  /**
+   * Kills every process the instance started: exec commands and shim sessions (by group). A shim
+   * still starting is waited for first (up to 10 s), so the session it is about to start is killed
+   * too instead of outliving the instance.
+   */
   const killEverything = async (h: SandboxHandle) => {
+    const until = Date.now() + 10_000;
+    while (Date.now() < until && (await startingShims(h)).length > 0) {
+      await sleep(20, new AbortController().signal);
+    }
     const groups = await readdir(procsDir(h)).catch(() => [] as string[]);
     for (const sid of await readdir(sessionsDir(h)).catch(() => [] as string[])) {
       const pgid = await readFile(join(sessionsDir(h), sid), "utf8").catch(() => "");
