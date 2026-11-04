@@ -140,6 +140,8 @@ describe("builtin names", () => {
       BUILTIN.AskUserQuestion,
       BUILTIN.ReadToolOutput,
       BUILTIN.SkillWrite,
+      BUILTIN.WebSearch,
+      BUILTIN.WebFetch,
     ]);
     expect(arrayLiteral(agents, "DEFAULT_BUILTIN_TOOLS")).toEqual(
       DEFAULT_AGENT_TOOLS.map((r) => (r.kind === "builtin" ? r.name : "")),
