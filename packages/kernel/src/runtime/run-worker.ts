@@ -3,6 +3,7 @@ import { Inject, Injectable, Optional } from "@nestjs/common";
 import { DelayedError, type Job, type Worker } from "bullmq";
 import { sql } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
+import { BackgroundTaskStopper } from "../background/stop.js";
 import {
   type ConversationBusMessage,
   conversationTopic,
@@ -166,6 +167,9 @@ export class RunWorker {
      */
     @Inject(ToolPipeline) private readonly pipeline: Pick<ToolPipeline, "stopOpenAgentCalls">,
     @Inject(RunFinish) private readonly finisher: Pick<RunFinish, "finish">,
+    /** After a sub-agent run's terminal commit: stops its child conversation's background tasks. */
+    @Inject(BackgroundTaskStopper)
+    private readonly background: Pick<BackgroundTaskStopper, "stopSubagentTasks">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Optional() @Inject(RUN_HOOKS) private readonly hooks?: RunHooks,
   ) {
@@ -261,14 +265,18 @@ export class RunWorker {
   /**
    * After a sub-agent run's terminal state committed (sub-agents spec §7.3): reports it to the
    * parent. Called with any run id whose conversation may be a child; runs that were not
-   * dispatched are ignored. Errors are logged (the wait sweep repairs a missed call).
+   * dispatched are ignored. Errors are logged (the wait sweep repairs a missed call). Then stops
+   * the child conversation's running background tasks (background Bash spec §4.3: nobody can read
+   * or stop them through the child's model any more); a conversation that is not a sub-agent's is
+   * left alone, and a stop never throws.
    */
-  private async childFinished(runId: string): Promise<void> {
+  private async childFinished(conversationId: string, runId: string): Promise<void> {
     try {
       await this.waits.childFinished(runId);
     } catch (err) {
       this.log.error("cannot report finished sub-agent run to its parent", { runId, err });
     }
+    await this.background.stopSubagentTasks(conversationId);
   }
 
   /**
@@ -364,7 +372,7 @@ export class RunWorker {
     );
     await this.dropCheckpoints(runId);
     // the kind is not loaded here: both are no-ops for the other kind
-    await this.childFinished(runId);
+    await this.childFinished(conversationId, runId);
     await this.stopChildren(runId);
     await this.ensureAfterRun(conversationId, runId);
   }
@@ -436,7 +444,7 @@ export class RunWorker {
     if (!run || TERMINAL_STATUSES.has(run.status)) {
       await this.dropCheckpoints(runId);
       // a sub-agent run whose finisher may have crashed before reporting to the parent (idempotent)
-      if (run) await this.childFinished(runId);
+      if (run) await this.childFinished(conversationId, runId);
       return "ensure";
     }
     // 运行在等人处理（例如暂停后本任务被 stalled 机制重新投递）：不执行，续跑由处理 / 超时发起的新任务负责。
@@ -477,7 +485,7 @@ export class RunWorker {
             .catch((err) => this.log.warn("conversation lock release failed", { runId, err }));
         }
         await this.dropCheckpoints(runId);
-        await this.childFinished(runId);
+        await this.childFinished(conversationId, runId);
         return "ensure";
       }
     }
@@ -558,7 +566,7 @@ export class RunWorker {
     }
     // 运行已到达终态（broken 时已尽力标记失败）：checkpoint 只用于续跑，删除。
     await this.dropCheckpoints(runId);
-    if (conv.kind === "subagent") await this.childFinished(runId);
+    if (conv.kind === "subagent") await this.childFinished(conversationId, runId);
     else await this.stopChildren(runId);
     return "ensure";
   }

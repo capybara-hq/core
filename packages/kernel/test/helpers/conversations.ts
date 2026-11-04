@@ -121,6 +121,7 @@ export function conversationsFor(
     { resolveAttachments: d.resolveAttachments ?? refuse("resolveAttachments") },
     { bindForMessage: d.bindFiles ?? refuse("bindFiles") },
     { prepare: invoker ? (a) => invoker.prepare(a) : refuse("invoker") },
+    { stopForDeletedConversation: async () => {} },
     h.txHost,
   );
 }

@@ -1,4 +1,6 @@
 import { type DynamicModule, Module } from "@nestjs/common";
+import { BackgroundModule } from "../background/background.module.js";
+import { BackgroundTaskPollJob } from "../background/poll.job.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
 import { CatalogJobs } from "../catalog/jobs.js";
 import { ChannelsModule, ChannelWorkersModule } from "../channels/channels.module.js";
@@ -56,6 +58,7 @@ export class WorkerModule {
         AttachmentsModule,
         StorageModule,
         SandboxModule,
+        BackgroundModule,
         ToolsModule,
         CatalogModule,
         OrgsModule,
@@ -68,6 +71,7 @@ export class WorkerModule {
         AttachmentCleanupJob,
         StoragePurgeJob,
         SandboxSweepJobs,
+        BackgroundTaskPollJob,
         ToolJobs,
         CatalogJobs,
         DirectoryScanJob,

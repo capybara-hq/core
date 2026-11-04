@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import type { Redis } from "ioredis";
+import { BackgroundModule } from "../background/background.module.js";
 import { ConversationAccessModule } from "../conversations/access.js";
 import { AttachmentsModule } from "../conversations/attachments.module.js";
 import { EventLogModule } from "../conversations/event-log.js";
@@ -51,6 +52,7 @@ import { DecisionResumer, Waits } from "./waits.js";
     SubagentsModule,
     UsageReportModule,
     TitlesModule,
+    BackgroundModule,
     // the producer side of `wait-timeout` jobs (`MaintenanceProcessor` consumes them)
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],

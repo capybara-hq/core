@@ -184,6 +184,35 @@ export class BackgroundTaskStore {
     return rows.map(toRow);
   }
 
+  /**
+   * Every running task that has started (its `sid` is set), across sandboxes, oldest first: what
+   * the poller checks. A reservation still launching (`sid` null) is left to its launch.
+   */
+  async runningStarted(): Promise<BackgroundTaskRow[]> {
+    const rows = await this.db
+      .selectFrom("background_tasks")
+      .selectAll()
+      .where("status", "=", "running")
+      .where("sid", "is not", null)
+      .orderBy("started_at", "asc")
+      .orderBy("id", "asc")
+      .execute();
+    return rows.map(toRow);
+  }
+
+  /** The running tasks one conversation owns (not those of its sub-agents), oldest first. */
+  async runningOwnedBy(conversationId: string): Promise<BackgroundTaskRow[]> {
+    const rows = await this.db
+      .selectFrom("background_tasks")
+      .selectAll()
+      .where("conversation_id", "=", conversationId)
+      .where("status", "=", "running")
+      .orderBy("started_at", "asc")
+      .orderBy("id", "asc")
+      .execute();
+    return rows.map(toRow);
+  }
+
   async countRunning(sandboxConversationId: string): Promise<number> {
     const r = await this.db
       .selectFrom("background_tasks")

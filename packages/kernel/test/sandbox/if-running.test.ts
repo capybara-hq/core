@@ -149,7 +149,7 @@ describe("ifRunning", () => {
     const r = await s.ifRunning(conv(), { createdAt: new Date() }, async () => {
       ran = true;
     });
-    expect(r).toEqual({ kind: "not_running" });
+    expect(r).toEqual({ kind: "not_running", status: "gone" });
     expect(ran).toBe(false);
     expect(await row()).toBeUndefined();
     expect(calls).toEqual([]);
@@ -166,13 +166,26 @@ describe("ifRunning", () => {
     const r = await s.ifRunning(conv(), instance as { createdAt: Date }, async () => {
       ran = true;
     });
-    expect(r).toEqual({ kind: "not_running" });
+    expect(r).toEqual({ kind: "not_running", status: "suspended" });
     expect(ran).toBe(false);
     expect((await row())?.status).toBe("suspended");
     expect(await fakeSandboxState(root, h.id)).toBe("suspended");
     expect(calls).toEqual([]);
     expect(execs).toEqual([]);
     expect((await readFakeSandboxOps(root)).filter((o) => o[0] === "autostart")).toEqual([]);
+  });
+
+  it("on a destroyed sandbox returns not_running with the row's status", async () => {
+    const s = service();
+    await use(s);
+    const instance = await s.currentInstance(conv());
+    await s.destroyFor(conv());
+    let ran = false;
+    const r = await s.ifRunning(conv(), instance as { createdAt: Date }, async () => {
+      ran = true;
+    });
+    expect(r).toEqual({ kind: "not_running", status: "destroyed" });
+    expect(ran).toBe(false);
   });
 
   it("with a stale createdAt returns other_instance and does not run fn", async () => {

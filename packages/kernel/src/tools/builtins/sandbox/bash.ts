@@ -8,6 +8,7 @@ import {
   taskOutputPath,
   taskSidPath,
 } from "../../../background/launch.js";
+import { KILL_SESSION_TIMEOUT_MS, killSession, SID_RE } from "../../../background/session.js";
 import type { BuiltinCallContext, BuiltinResult, BuiltinTool } from "../../registry.js";
 import {
   clip,
@@ -135,11 +136,8 @@ export function formatExec(r: ExecResult, seconds: number, budgetClamped = false
 
 /** The most output the launch exec keeps (it prints only the session id, or an error). */
 const LAUNCH_MAX_OUTPUT_BYTES = 64 * 1024;
-/** The time limit of the kill of a command that started but could not be recorded. */
-const LAUNCH_KILL_TIMEOUT_MS = 10_000;
 /** Above about this many bytes of base64, a provider may refuse the launch exec's command. */
 const LARGE_COMMAND_BASE64_BYTES = 96 * 1024;
-const SID_RE = /^[1-9][0-9]*$/;
 
 /** How a launch ended, decided under the call's lease. */
 type Launch =
@@ -236,29 +234,15 @@ async function runInBackground(
   let notices: string[];
   try {
     ({ value: launch, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
-      // A fresh signal: a command must be killed even when the call was just aborted. Repeated
-      // until the session is empty (pkill exits 1: no process left): right after the launch, a
-      // process may fork between pkill's listing and its signals, and the child would live on.
-      // Any other pkill status is a failure. True when the session was confirmed empty.
-      const kill = async (sid: string): Promise<boolean> => {
-        const r = await p
-          .exec(h, {
-            command: `for i in 1 2 3 4 5 6 7 8 9 10; do pkill -KILL -s ${sid}; c=$?; [ "$c" -eq 1 ] && exit 0; [ "$c" -eq 0 ] || exit "$c"; sleep 0.2; done; exit 3`,
-            cwd: "/workspace",
-            timeoutMs: LAUNCH_KILL_TIMEOUT_MS,
-            maxOutputBytes: 4096,
-            signal: AbortSignal.timeout(LAUNCH_KILL_TIMEOUT_MS),
-          })
-          .catch(() => undefined);
-        return r?.exitCode === 0;
-      };
+      // right after the launch a process may fork while it is killed: killSession repeats
+      const kill = (sid: string): Promise<boolean> => killSession(p, h, sid);
       // the session id the launch wrote before printing it: the launch may have ended (aborted,
       // timed out, thrown) after starting the command but before its output came back
       const sidFile = async (): Promise<string | null> => {
         const f = await p
           .readFile(h, `/workspace/${taskSidPath(id)}`, {
             maxBytes: 64,
-            signal: AbortSignal.timeout(LAUNCH_KILL_TIMEOUT_MS),
+            signal: AbortSignal.timeout(KILL_SESSION_TIMEOUT_MS),
           })
           .catch(() => null);
         const v = f ? new TextDecoder().decode(f.data).trim() : "";

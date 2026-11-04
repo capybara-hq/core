@@ -106,8 +106,11 @@ export type TaggedProvider = SandboxProvider;
 /** What {@link SandboxService.ifRunning} did. */
 export type IfRunningResult<T> =
   | { kind: "ran"; value: T }
-  /** No sandbox, or the instance is not running (suspended, being created, destroyed). */
-  | { kind: "not_running" }
+  /**
+   * No sandbox, or the instance is not running: `status` is the sandbox row's (`suspended`,
+   * `creating`, `destroyed`, or `running` recorded with another provider), `gone` without a row.
+   */
+  | { kind: "not_running"; status: SandboxesTable["status"] | "gone" }
   /** The sandbox now records another instance (a rebuild). */
   | { kind: "other_instance" };
 
@@ -378,11 +381,11 @@ export class SandboxService {
         .selectAll()
         .where("conversation_id", "=", conv)
         .executeTakeFirst();
-      if (!row) return { kind: "not_running" };
+      if (!row) return { kind: "not_running", status: "gone" };
       if (row.created_at.getTime() !== instance.createdAt.getTime()) {
         return { kind: "other_instance" };
       }
-      if (!this.usable(row, p, null)) return { kind: "not_running" };
+      if (!this.usable(row, p, null)) return { kind: "not_running", status: row.status };
       // the instance this check saw: its handle plus `created_at` (never `generation`, which
       // every lease bumps)
       const want: Instance = { handle: row.handle, createdAt: row.created_at.getTime() };
