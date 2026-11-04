@@ -76,8 +76,21 @@ export type ConversationStatus = {
 
 export type ConversationPageProps = {
   titleBar: TitleBarProps;
-  /** A new conversation (nothing created yet): the agent's name and description over the composer. */
-  newConversation?: { agentName: string; description?: string };
+  /**
+   * A new conversation (nothing created yet; spec §5.4, agent profile design §4): top to bottom
+   * the greeting (else the agent's name and description), the agents row, the selected agent's
+   * quick actions and the composer.
+   */
+  newConversation?: {
+    agentName?: string;
+    description?: string;
+    /** `Greeting` (§6.16.25); replaces the name and description. */
+    greeting?: ReactNode;
+    /** `AgentRow` (§6.16.26), under the greeting. */
+    agents?: ReactNode;
+    /** `QuickActions` (§6.16.27), under the agents row, just over the composer. */
+    quickActions?: ReactNode;
+  };
   /** The thread; it follows the bottom while the reader is at the bottom. */
   thread?: ReactNode;
   /**
@@ -253,11 +266,23 @@ export function ConversationPage({
   const center = newConversation ? (
     <div className="cb-conv-center">
       <div className="cb-conv-scroll" data-center="true">
-        <div className="cb-conv-new" data-part="new-conversation-body">
-          <h2 className="cb-conv-new-name">{newConversation.agentName}</h2>
-          {newConversation.description ? (
-            <p className="cb-conv-new-desc">{newConversation.description}</p>
-          ) : null}
+        <div
+          className="cb-conv-new"
+          data-part="new-conversation-body"
+          data-start={newConversation.greeting ? "true" : undefined}
+        >
+          {newConversation.greeting ?? (
+            <>
+              {newConversation.agentName ? (
+                <h2 className="cb-conv-new-name">{newConversation.agentName}</h2>
+              ) : null}
+              {newConversation.description ? (
+                <p className="cb-conv-new-desc">{newConversation.description}</p>
+              ) : null}
+            </>
+          )}
+          {newConversation.agents ?? null}
+          {newConversation.quickActions ?? null}
           {composerNode}
         </div>
       </div>

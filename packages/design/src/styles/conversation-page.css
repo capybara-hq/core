@@ -666,6 +666,15 @@ button.cb-property-row {
 .cb-conv-new > .cb-file-drop {
   margin-top: var(--cb-space-3);
 }
+/* With the greeting (§5.4, agent profile design §4): greeting, agents row, quick actions and the
+   composer, space.4 apart. */
+.cb-conv-new[data-start="true"] {
+  gap: var(--cb-space-4);
+}
+.cb-conv-new[data-start="true"] > .cb-composer,
+.cb-conv-new[data-start="true"] > .cb-file-drop {
+  margin-top: 0;
+}
 .cb-conv-panel {
   position: relative;
   display: flex;

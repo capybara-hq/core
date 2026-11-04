@@ -1500,3 +1500,219 @@ button.cb-file-card:focus-visible {
 .cb-composer-input::placeholder {
   color: var(--cb-faint);
 }
+
+/* ── Greeting (§6.16.25) ── */
+
+/* The pixel capybara (unit 2, the working line's mark) and one h1-sized line; the line box keeps
+   one height with or without text, so the client's line replaces the server's placeholder in
+   place. The sub line starts under the text. */
+.cb-greeting {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.cb-greeting-line {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  height: var(--cb-type-h1-line);
+  min-width: 0;
+}
+.cb-greeting-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--cb-control-default);
+  height: var(--cb-space-5);
+  color: var(--cb-accent);
+  fill: currentColor;
+}
+.cb-greeting-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--cb-ink);
+  font-size: var(--cb-type-h1-size);
+  line-height: var(--cb-type-h1-line);
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* The caret after the typed text, only while typing (never under reduced motion). */
+.cb-greeting-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.125em;
+  background: var(--cb-accent);
+}
+.cb-greeting-sub {
+  margin: 0;
+  padding-left: calc(var(--cb-control-default) + var(--cb-space-3));
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+}
+
+/* ── Agent row and agent panel (§6.16.26) ── */
+
+.cb-agent-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-agent-row-stage {
+  display: flex;
+  flex-direction: column;
+}
+.cb-agent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  max-width: 200px;
+  height: var(--cb-control-prominent);
+  padding: 0 var(--cb-space-3) 0 var(--cb-space-1);
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-md);
+  background: transparent;
+  color: var(--cb-muted);
+  font: inherit;
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--cb-motion-hover),
+    border-color var(--cb-motion-hover),
+    color var(--cb-motion-hover);
+}
+.cb-agent-chip[data-part="agent-more"] {
+  padding: 0 var(--cb-space-3);
+}
+.cb-agent-chip:hover,
+.cb-agent-chip[data-open="true"] {
+  background: var(--cb-hover);
+  color: var(--cb-ink);
+}
+.cb-agent-chip[aria-pressed="true"] {
+  border-color: var(--cb-ink);
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+}
+.cb-agent-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The panel: the popover's look (§6.7), as wide as the row (its anchor), at most layout.chat. */
+.cb-agent-panel {
+  width: min(var(--radix-popover-trigger-width, var(--cb-layout-chat)), var(--cb-layout-chat));
+  max-width: calc(100vw - 16px);
+  padding: var(--cb-space-2);
+}
+.cb-agent-panel[data-inline="true"] {
+  position: relative;
+  width: 100%;
+  margin-top: var(--cb-space-1);
+  animation: none;
+}
+.cb-agent-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+}
+.cb-agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+  max-height: 320px;
+  overflow-y: auto;
+}
+.cb-agent-group-label {
+  padding: var(--cb-space-1) var(--cb-space-2) 0;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}
+.cb-agent-option {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  height: var(--cb-space-8);
+  padding: 0 var(--cb-space-2);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-ink);
+  cursor: pointer;
+}
+.cb-agent-option[data-current="true"] {
+  background: var(--cb-selected);
+}
+.cb-agent-option[data-active="true"] {
+  background: var(--cb-hover);
+}
+.cb-agent-option-name {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cb-agent-option-desc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cb-agent-empty {
+  margin: 0;
+  padding: var(--cb-space-2);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+
+/* ── Quick actions (§6.16.27) ── */
+
+/* Quiet (U1): muted small text links, no ground or border, ink on hover and focus; each title one
+   line with an ellipsis, shrinking before the line overflows. */
+.cb-quick-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-4);
+  min-width: 0;
+  min-height: var(--cb-control-dense);
+}
+.cb-quick-action {
+  flex: 0 1 auto;
+  min-width: 0;
+  height: var(--cb-control-dense);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--cb-muted);
+  font: inherit;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: color var(--cb-motion-hover);
+}
+.cb-quick-action[data-part="quick-more"] {
+  flex: none;
+}
+.cb-quick-action:hover,
+.cb-quick-action:focus-visible {
+  color: var(--cb-ink);
+}

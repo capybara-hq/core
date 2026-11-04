@@ -142,7 +142,7 @@ export function Menu({
 }
 
 /** Menus keep this far from the viewport's edges (spec §6.7). */
-const COLLISION_PADDING = 8;
+export const COLLISION_PADDING = 8;
 
 /** One level of items; danger items go last, after a separator. */
 function MenuItems({ items }: { items: MenuItem[] }) {

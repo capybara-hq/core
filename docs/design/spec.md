@@ -430,7 +430,7 @@ States: `page`, `loading`
   - The **middle column** holds, top to bottom: the title bar (§6.16.1), the thread (centered, at most `layout.chat` wide, gutters `layout.gutter`, padding `space.4` on top, items `space.3` apart, following the bottom while the reader is at the bottom; it reserves a classic scrollbar's gutter on both sides, `scrollbar-gutter: stable both-edges`, so it keeps the composer's center line whether or not it scrolls), the composer (§6.16.2, at most `layout.chat` plus the gutters wide, centered, `space.3` from the status bar) and the status bar (§4.4). It is never narrower than `layout.chat-min`, except **below 640**, where it fills the window and the title bar, the thread and the composer use `space.4` (16) gutters, so the composer, its send button and the user bubbles never run past the right edge.
   - The **right area** holds one thing at a time: either the **properties panel** (§6.16.17), which sits *inside* the middle column under its title bar so the title bar spans thread and properties, or **one right panel** (§6.16.18), full height beside the middle column, whose title bar then narrows with it. Opening one closes the other; "none" is the default.
 - **Narrow windows**: below 1280 (where the sidebar becomes the rail, §4.3) the right area is a right-side Sheet over the page (`layout.panel` wide, `shadow-sheet`, a `scrim` behind it), closed by Esc, its close button or a click on the scrim; the server render and hydration cannot know the window, so below 1280 a CSS media query hides the inline right area until the first client render makes it the Sheet (the page never scrolls sideways, no flash). At 1280 and above it sits beside the thread; with the full sidebar at exactly 1280 the panel narrows to 544 so the thread keeps `layout.chat-min` (maintainer ruling 2026-10-27).
-- **New conversation**: nothing is created until the first send. The title bar shows "新会话" / "New conversation"; the thread is replaced by a centered column (`layout.chat` wide): the agent's name (`h2`), its description (`prose-small` `muted`) and the composer with the agent picker open for choice; the status bar shows only the context and the version.
+- **New conversation**: nothing is created until the first send. The title bar shows "新会话" / "New conversation"; the thread is replaced by a centered column (`layout.chat` wide) holding, top to bottom and `space.4` apart (agent profile design §4, U1): the greeting (§6.16.25), the agents row (§6.16.26; hidden with one usable agent), the selected agent's quick actions (§6.16.27; hidden when it has none) and the composer, whose control row then has no agent picker (the row chooses the agent; the model and effort pickers stay). `ConversationPage.newConversation` takes them as `greeting`, `agents` and `quickActions`; without a `greeting` the column falls back to the agent's name (`h2`) and description (`prose-small` `muted`), `space.2` apart, over the composer. The status bar shows only the context and the version.
 - **Status bar** (read-only, §4.4): left `user@org:/chat/<id>` and "第 N 轮 · 已用 <elapsed>" / "Turn N · <elapsed>"; right the run status ("空闲" / "Idle", "运行中" / "Running", "等待批准" / "Waiting for approval"), "上下文 N%" / "Context N%" and the version.
 - **Runs** (design note, unslop fixes 2026-11-03): every run that ended closes with a **run row** (§6.16.23), a quiet mono line `运行 · <model> · <duration> · <tokens>` with its status mark, built from the log alone (`run_started`, `model_call`, `usage`, `run_finished` / `run_failed` / `run_aborted`). A finished run's row is collapsed and uncoloured except its `ok` check; a failed run's row is open at first and red only in its mark, its status word and the failure sentence; its detail holding the failure (ErrorDetail: the sentence in the reader's language, the raw kernel text behind 原始错误), 重试 (the last failure only, while nothing runs), 查看轨迹 (`/trajectories/<conversationId>`, only for those the kernel lets read it: org admins and owners, or the agent's owner) and, for an enterprise admin when the model service is misconfigured (`model.auth`, `model.unconfigured`, `run.model_unavailable`), 去配置模型服务 (`/admin/extensions`). A stopped run's row names who stopped it. The run row replaces the stopped, failed and hook-denied dividers (no run is drawn twice); a running run shows nothing new (the live indicators stay). The properties panel's Context section adds the last run's line (model, duration, tokens; cost only when the log carries one, which it does not today).
 - Extension slots, files and sub-agents: §6.16.16–§6.16.18, §6.16.15.
@@ -455,6 +455,10 @@ The two `right-panel` widths of 544 hold only at the width the `template-convers
 | right-panel | subagent-panel | width | 544 |
 | title-bar | new | height | layout.title-bar |
 | new-conversation-body | new | max-width | layout.chat |
+| new-conversation-body | new | row-gap | space.4 |
+| greeting-line | new | height | type.h1.line |
+| agent-chip | new | height | control.prominent |
+| quick-action | new | color | color.muted |
 | sidebar | sheet | width | layout.sidebar-rail |
 | right-panel | sheet | width | layout.panel |
 | status-bar | sheet | height | layout.status-bar |
@@ -1153,7 +1157,7 @@ States: `default`, `untitled`, `rename-menu`, `panel-active`, `overflow`, `long-
 
 - `raised` ground, 1px `line` border, radius `md`, `shadow-float`, padding `space.2` `space.2` `space.2` `space.3`. While its textarea has focus: an `accent` border plus the 3px `focus-ring` halo (the input focus rule of §2.5) over the same shadow.
 - Top to bottom: the attachment strip (§6.16.21) when there are attachments; the textarea (no border or ground, `prose` 15 / 26 `ink`, placeholder `faint`, one line high when empty, growing with its content up to 8 lines and then scrolling, `space.2` below it); the control row.
-- **Control row**, gap `space.1`, pulled left by `space.2` so the ＋ lines up with the text: ＋ (ghost `IconButton`, `plus`, "添加附件" / "Attach files") · agent picker · model picker · effort picker · flexible space · send.
+- **Control row**, gap `space.1`, pulled left by `space.2` so the ＋ lines up with the text: ＋ (ghost `IconButton`, `plus`, "添加附件" / "Attach files") · agent picker · model picker · effort picker · flexible space · send. The agent picker is optional (`pickers.agent`): the new conversation page leaves it out, its agents row chooses the agent (§5.4).
   - Pickers are ghost `default`-step buttons in `muted`: label + `chevron-down` 12, padding 0 `space.2`, opening a picker menu (§6.16.3) above them.
   - The agent picker is a picker only in a new conversation; after the first message it is plain `muted` text with no chevron (`data-locked="true"`, `title` "发送第一条消息后不能再换 agent" / "The agent can't change after the first message").
   - The effort picker is hidden when the selected model declares no `effort` values.
@@ -1847,6 +1851,134 @@ States: `default`, `reduced-motion`
 | working-line | reduced-motion | height | row.dense |
 | working-mark | reduced-motion | width | control.default |
 | working-mark | reduced-motion | color | color.accent |
+
+#### 6.16.25 Greeting
+
+`Greeting({ text?, sub?, still? })` opens a new conversation (agent profile design §4.1, U10).
+
+- **Line**: the pixel capybara of §3 at pixel unit 2 (28 × 20, the working line's mark, §6.16.24),
+  `accent`, `crispEdges`, in a `control.default` × `space.5` box, then `space.3`, then the line:
+  `h1` size and line height, 600, `ink`, one line with an ellipsis; a heading (`h2` element).
+- **Typing**: the line is typed once, on first paint, one character every 40 ms, with a 2 px
+  `accent` caret after the typed text that goes when the line is complete; a re-render with the
+  same line never types it again. **Reduced motion** (and `still`, the reference set's form): the
+  whole line at once, no caret.
+- **Placeholder**: the line is picked on the client from the time-of-day sets (the web's
+  `pickGreeting`), so the server render (and any render without `text`) draws the mark and an empty
+  text box: the line box is always one `type.h1.line` high, and the line replaces the placeholder
+  in place.
+- **Sub line** under the text, aligned with it: `prose-small` `muted`, default "选一个 agent，或从常用
+  任务开始" / "Pick an agent, or start from a common task"; `sub={null}` draws none.
+- **A11y**: the heading's name is the whole line (a visually hidden copy); the typed text and the
+  caret are `aria-hidden`, so the line is read once, never a character at a time. The mark is
+  decorative.
+
+<!-- states: greeting -->
+States: `default`, `placeholder`
+
+<!-- size-table: greeting -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| greeting-line | default | height | type.h1.line |
+| greeting-line | default | column-gap | space.3 |
+| greeting-mark | default | width | control.default |
+| greeting-mark | default | height | space.5 |
+| greeting-mark | default | color | color.accent |
+| greeting-text | default | font-size | type.h1 |
+| greeting-text | default | color | color.ink |
+| greeting-sub | default | font-size | type.prose-small |
+| greeting-sub | default | color | color.muted |
+| greeting-line | placeholder | height | type.h1.line |
+| greeting-mark | placeholder | width | control.default |
+
+#### 6.16.26 Agent row and agent panel
+
+`AgentRow({ agents, selected, onSelect, max = 5, recent, moreLabel })` chooses the agent of a new
+conversation (agent profile design §4.2); `agents` are `{ id, name, description, avatar }` in the
+page's order (most recent use, then name).
+
+- **Row**: chips `space.2` apart, wrapping. A chip is a button `control.prominent` high: an
+  `Avatar` 24 (§6.30), `space.2`, the name (`body`, one line with an ellipsis, the chip at most
+  200 wide), padding `space.1` left and `space.3` right, 1px `line` border, radius `md`, `muted`;
+  hover the `hover` ground and `ink`. The selected chip is `aria-pressed="true"`: `selected` ground,
+  `ink` border and text. The description is the chip's tooltip.
+- **Count**: at most `max` chips, then a "更多 +N" / "More +N" chip (no avatar, padding `space.3`);
+  a selected agent past the first `max` takes the last place, so the selection always shows. With
+  one agent (or none) the row draws nothing.
+- **Panel**: "更多 +N" opens the agent panel in a popover (§6.7 look: `panel` ground, 1px
+  `line-strong` border, radius `md`, `shadow-1`) anchored under the row, as wide as the row (at most
+  `layout.chat`), padding `space.2`. Top to bottom: a search field (`Input`, placeholder
+  "搜索名称或描述" / "Search name or description"), then the groups "最近用过" / "Recently used" (the
+  `recent` ids in order; none when empty) and "全部 N 个" / "All N" (every agent), each under a
+  label (`micro` `muted`). A row is `space.8` high, padding 0 `space.2`, radius `sm`: an `Avatar`
+  28, the name (600, `ink`, at most 40% of the row) and the description on the same line (`small`
+  `muted`, one line with an ellipsis). The selected agent's row has the `selected` ground; the
+  active row (keyboard or pointer) the `hover` ground. The list scrolls past 320.
+- **Search** matches name and description, case-insensitively; N counts the matching agents. No
+  match: no list, one quiet line "没有匹配的 agent" / "No matching agents" (`small` `muted`).
+- **Keyboard**: focus goes to the search when the panel opens and stays there (a combobox with
+  `aria-activedescendant` over a listbox of grouped options); ↑ / ↓ move the active row (wrapping),
+  Enter selects it, Escape closes and gives focus back to "更多 +N". Selecting (Enter or a click)
+  closes the panel.
+
+<!-- states: agent-row -->
+States: `default`, `panel`, `no-match`
+
+<!-- size-table: agent-row -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| agent-row | default | column-gap | space.2 |
+| agent-chip | default | height | control.prominent |
+| agent-chip | default | border-top-color | color.line |
+| agent-chip | default | border-radius | radius.md |
+| agent-chip avatar | default | width | 24 |
+| agent-chip[aria-pressed=true] | default | background-color | color.selected |
+| agent-chip[aria-pressed=true] | default | border-top-color | color.ink |
+| agent-chip[aria-pressed=true] | default | color | color.ink |
+| agent-more | default | height | control.prominent |
+| agent-more | default | color | color.muted |
+| agent-panel-pop | panel | background-color | color.panel |
+| agent-panel-pop | panel | border-top-color | color.line-strong |
+| agent-panel-pop | panel | border-radius | radius.md |
+| agent-panel-pop | panel | padding-top | space.2 |
+| agent-group-label | panel | font-size | type.micro |
+| agent-group-label | panel | color | color.muted |
+| agent-option | panel | height | space.8 |
+| agent-option avatar | panel | width | 28 |
+| agent-option[data-active=true] | panel | background-color | color.hover |
+| agent-option-desc | panel | font-size | type.small |
+| agent-option-desc | panel | color | color.muted |
+| agent-empty | no-match | font-size | type.small |
+| agent-empty | no-match | color | color.muted |
+
+#### 6.16.27 Quick actions
+
+`QuickActions({ items, onPick, max = 4, moreLabel })` lists the selected agent's quick actions
+(agent profile design §4.3); `items` are `{ id, title }` and the page keeps the bodies.
+
+- **Quiet** (U1): one line of text links `space.4` apart, each a button `control.dense` high with
+  no ground and no border, `small` `muted`, `ink` on hover and focus (the focus ring as everywhere);
+  a title is one line with an ellipsis (the whole title is its tooltip), and titles shrink before
+  the line overflows.
+- **Count**: the first `max` show, then a quiet "更多" / "More" link of the same look opens the rest
+  in a small menu (§6.16.3's menu, 160 at least, one item per title). No items: nothing.
+- **Pick**: `onPick(id)`; the page puts the body into the composer and focuses it.
+
+<!-- states: quick-actions -->
+States: `default`, `hover`, `menu`
+
+<!-- size-table: quick-actions -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| quick-actions | default | column-gap | space.4 |
+| quick-action | default | height | control.dense |
+| quick-action | default | font-size | type.small |
+| quick-action | default | color | color.muted |
+| quick-action | default | border-top-width | 0 |
+| quick-more | default | color | color.muted |
+| quick-action[data-ref-forced=true] | hover | color | color.ink |
+| menu | menu | background-color | color.panel |
+| menu-item | menu | height | row.default |
 
 ---
 

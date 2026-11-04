@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AgentRow,
   AppShell,
   AttachmentStrip,
   BackgroundTasks,
@@ -14,6 +15,7 @@ import {
   CsvPreview,
   FileCard,
   FilesSection,
+  Greeting,
   Icon,
   IconButton,
   InlineCard,
@@ -22,6 +24,7 @@ import {
   PropertiesPanel,
   PropertySection,
   Prose,
+  QuickActions,
   ReferenceBoard,
   RightPanel,
   type RightPanelSwitcher,
@@ -45,6 +48,7 @@ import {
   FILE_FIXTURE,
   type FixtureFile,
   type FixtureSubagent,
+  NEW_CONVERSATION_FIXTURE,
   PANEL_FIXTURE,
   PROSE_FIXTURE,
   SKILL_FIXTURE,
@@ -52,7 +56,7 @@ import {
   TOOL_FIXTURES,
 } from "@capybara-hq/design/fixtures";
 import { type ReactNode, useState } from "react";
-import { Block, bytes, csvText, NOW, toRow } from "./conversation-blocks";
+import { Block, bytes, csvText, NEW_CONVERSATION_AGENTS, NOW, toRow } from "./conversation-blocks";
 import { COMMANDS } from "./fixtures";
 import { RefBlock } from "./ref-block";
 import { sidebarProps } from "./shell-fixture";
@@ -739,9 +743,21 @@ function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }
         titleBar={titleBar}
         {...(isNew
           ? {
+              // The new conversation page (agent profile design §4): the greeting, the agents
+              // row and the selected agent's quick actions over the composer.
               newConversation: {
-                agentName: C.agent.name,
-                description: "检索资料、核对数据并整理成报告。",
+                greeting: <Greeting text={NEW_CONVERSATION_FIXTURE.greeting} still />,
+                agents: (
+                  <AgentRow
+                    agents={NEW_CONVERSATION_AGENTS}
+                    selected={NEW_CONVERSATION_FIXTURE.selected}
+                    recent={NEW_CONVERSATION_FIXTURE.recent}
+                    onSelect={noop}
+                  />
+                ),
+                quickActions: (
+                  <QuickActions items={NEW_CONVERSATION_FIXTURE.quickActions} onPick={noop} />
+                ),
               },
             }
           : {})}
@@ -754,8 +770,14 @@ function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }
         }
         composer={({ sendDisabled }) => {
           const c = composerProps(isNew ? "new" : running ? "running" : "idle");
+          // the new conversation page chooses the agent in its row, not in the composer
+          const { agent: _agent, ...pickers } = c.pickers;
           return (
-            <ComposerBox {...c} send={sendDisabled ? { ...c.send, disabled: true } : c.send} />
+            <ComposerBox
+              {...c}
+              pickers={isNew ? pickers : c.pickers}
+              send={sendDisabled ? { ...c.send, disabled: true } : c.send}
+            />
           );
         }}
         status={

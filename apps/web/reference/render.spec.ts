@@ -53,6 +53,10 @@ const PAGES = [
   "run-row",
   // the working line: the walking capybara between a send and the first output
   "working-line",
+  // the new conversation page: the greeting, the agents row and panel, the quick actions
+  "greeting",
+  "agent-row",
+  "quick-actions",
   // agent avatars: the ten pixel animals, the sizes, the initial and the picker
   "avatar",
   // config forms: arrays of objects, compact rows, records

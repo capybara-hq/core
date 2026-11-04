@@ -95,6 +95,10 @@ export const REFERENCE_COMPONENTS = [
   "file-picker",
   "run-row",
   "working-line",
+  // the new conversation page (agent profile design §4)
+  "greeting",
+  "agent-row",
+  "quick-actions",
   // agent avatars (agent profile design §2.3)
   "avatar",
   // config forms

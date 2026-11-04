@@ -1,6 +1,9 @@
 "use client";
 
 import {
+  AgentPanel,
+  AgentRow,
+  type AgentRowItem,
   ApprovalBlock,
   AttachmentStrip,
   BubbleAttachments,
@@ -14,6 +17,7 @@ import {
   FileOutputs,
   FilePreviewFrame,
   type ForcedPseudo,
+  Greeting,
   ImageOutput,
   ImagePreview,
   MarkdownPreview,
@@ -22,6 +26,7 @@ import {
   QuestionBlock,
   QueuedMessage,
   QueuePaused,
+  QuickActions,
   RunDivider,
   RunRow,
   Stack,
@@ -42,6 +47,7 @@ import {
   type FixtureFile,
   type FixtureTool,
   HITL_FIXTURE,
+  NEW_CONVERSATION_FIXTURE,
   PANEL_FIXTURE,
   PROSE_FIXTURE,
   QUEUE_FIXTURE,
@@ -216,6 +222,86 @@ function workingLineBlocks(): ReactNode {
       <Block id="working-line-reduced-motion">
         <WorkingLine still />
       </Block>
+    </>
+  );
+}
+
+// ── New conversation: greeting, agents row, quick actions ───────────────────
+
+const NC = NEW_CONVERSATION_FIXTURE;
+
+/** The fixture's agents as the row takes them. */
+export const NEW_CONVERSATION_AGENTS: AgentRowItem[] = NC.agents.map((a) => ({
+  id: a.id,
+  name: a.name,
+  description: a.description,
+  avatar: a.preset ? { kind: "preset", id: a.preset } : null,
+}));
+
+function greetingBlocks(): ReactNode {
+  return (
+    <>
+      <Block id="greeting-default">
+        <Greeting text={NC.greeting} still />
+      </Block>
+      <Block id="greeting-placeholder">
+        <Greeting />
+      </Block>
+    </>
+  );
+}
+
+function agentRowBlocks(): ReactNode {
+  return (
+    <>
+      <Block id="agent-row-default">
+        <AgentRow
+          agents={NEW_CONVERSATION_AGENTS}
+          selected={NC.selected}
+          recent={NC.recent}
+          onSelect={noop}
+        />
+      </Block>
+      <Block id="agent-row-panel">
+        <AgentRow
+          agents={NEW_CONVERSATION_AGENTS}
+          selected={NC.selected}
+          recent={NC.recent}
+          onSelect={noop}
+          referenceOpen
+        />
+      </Block>
+      <Block id="agent-row-no-match">
+        <AgentPanel
+          agents={NEW_CONVERSATION_AGENTS}
+          recent={NC.recent}
+          selected={NC.selected}
+          onSelect={noop}
+          onClose={noop}
+          defaultQuery={NC.noMatch}
+          inline
+        />
+      </Block>
+    </>
+  );
+}
+
+function quickActionsBlocks(): ReactNode {
+  return (
+    <>
+      <Block id="quick-actions-default">
+        <QuickActions items={NC.quickActions} onPick={noop} />
+      </Block>
+      <Block
+        id="quick-actions-hover"
+        force={{ pseudo: ["hover"], selector: '[data-part="quick-action"]' }}
+      >
+        <QuickActions items={NC.quickActions} onPick={noop} />
+      </Block>
+      {/* room below the line for the menu, as the reference stages it */}
+      <RefBlock id="quick-actions-menu" width={W} height={160} pad>
+        <QuickActions items={NC.quickActions} onPick={noop} referenceOpen />
+      </RefBlock>
     </>
   );
 }
@@ -883,6 +969,9 @@ export const CONVERSATION_BLOCKS = {
   "run-divider": runDividerBlocks,
   "run-row": runRowBlocks,
   "working-line": workingLineBlocks,
+  greeting: greetingBlocks,
+  "agent-row": agentRowBlocks,
+  "quick-actions": quickActionsBlocks,
   "tool-group": toolGroupBlocks,
   "tool-row": toolRowBlocks,
   "diff-block": diffBlockBlocks,

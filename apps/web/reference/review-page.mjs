@@ -59,6 +59,9 @@ const GROUPS = [
       "file-preview",
       "run-row",
       "working-line",
+      "greeting",
+      "agent-row",
+      "quick-actions",
     ],
   },
   {

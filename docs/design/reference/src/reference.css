@@ -1491,6 +1491,183 @@ textarea {
   color: var(--cb-accent);
   fill: currentColor;
 }
+/* Greeting (§6.16.25): the mark (unit 2) and an h1-sized line, one line box high with or without
+   text; the sub line starts under the text. */
+.r-greeting {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+}
+.r-greeting-line {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  height: var(--cb-type-h1-line);
+}
+.r-greeting-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--cb-control-default);
+  height: var(--cb-space-5);
+  color: var(--cb-accent);
+  fill: currentColor;
+}
+.r-greeting-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--cb-ink);
+  font-size: var(--cb-type-h1-size);
+  line-height: var(--cb-type-h1-line);
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.r-greeting-sub {
+  margin: 0;
+  padding-left: calc(var(--cb-control-default) + var(--cb-space-3));
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+}
+/* Agent row (§6.16.26): avatar + name chips; the panel under the row. */
+.r-agent-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cb-space-2);
+}
+.r-agent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  max-width: 200px;
+  height: var(--cb-control-prominent);
+  padding: 0 var(--cb-space-3) 0 var(--cb-space-1);
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-md);
+  background: transparent;
+  color: var(--cb-muted);
+  font: inherit;
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+  white-space: nowrap;
+}
+.r-agent-chip[data-part="agent-more"] {
+  padding: 0 var(--cb-space-3);
+}
+.r-agent-chip[data-open="true"] {
+  background: var(--cb-hover);
+  color: var(--cb-ink);
+}
+.r-agent-chip[aria-pressed="true"] {
+  border-color: var(--cb-ink);
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+}
+.r-agent-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.r-agent-panel {
+  margin-top: var(--cb-space-1);
+  padding: var(--cb-space-2);
+  border: 1px solid var(--cb-line-strong);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel);
+  box-shadow: var(--cb-shadow-1);
+}
+.r-agent-panel-body,
+.r-agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+}
+.r-agent-group-label {
+  padding: var(--cb-space-1) var(--cb-space-2) 0;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}
+.r-agent-option {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  height: var(--cb-space-8);
+  padding: 0 var(--cb-space-2);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-ink);
+}
+.r-agent-option[data-current="true"] {
+  background: var(--cb-selected);
+}
+.r-agent-option[data-active="true"] {
+  background: var(--cb-hover);
+}
+.r-agent-option-name {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.r-agent-option-desc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.r-agent-empty {
+  margin: 0;
+  padding: var(--cb-space-2);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+/* Quick actions (§6.16.27): quiet muted small links, ink on hover; 更多's menu below it. */
+.r-quick-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-4);
+  min-width: 0;
+  min-height: var(--cb-control-dense);
+}
+.r-quick-action {
+  flex: 0 1 auto;
+  min-width: 0;
+  height: var(--cb-control-dense);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--cb-muted);
+  font: inherit;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.r-quick-action[data-state="hover"] {
+  color: var(--cb-ink);
+}
+.r-quick-more-wrap {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+}
+.r-quick-menu {
+  top: calc(100% + var(--cb-space-1));
+  left: 0;
+  min-width: 160px;
+}
 /* Avatar (§6.30): a preset on its ground or the initial square; the picker's 48 px tiles. */
 .r-avatar-row {
   display: flex;
@@ -2956,6 +3133,12 @@ textarea {
 }
 .r-conv-new > .r-composer {
   margin-top: var(--cb-space-3);
+}
+.r-conv-new[data-start] {
+  gap: var(--cb-space-4);
+}
+.r-conv-new[data-start] > .r-composer {
+  margin-top: 0;
 }
 .r-conv-app[data-sheet] > .r-sheet {
   position: absolute;

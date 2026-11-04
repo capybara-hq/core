@@ -5,6 +5,8 @@
  * sub-agents, files, right panel); every name is a placeholder (示例组织, 研究助手, Acme…).
  */
 
+import type { PresetId } from "../display/avatar-presets";
+
 // ── Page, agent, models ─────────────────────────────────────────────────────
 
 export type FixtureModelOption = { id: string; label: string; efforts?: string[] };
@@ -851,4 +853,63 @@ export const PANEL_FIXTURE: {
     { label: "对账报告.md", kind: "file", type: "MD" },
     { label: "差异行.csv", kind: "file", type: "CSV" },
   ],
+};
+
+// ── New conversation: greeting, agents row, quick actions (§6.16.25–§6.16.27) ──
+
+export type FixtureAgent = {
+  id: string;
+  name: string;
+  description: string;
+  /** A preset of the avatars (§6.30), or null for the initial. */
+  preset: PresetId | null;
+};
+
+export const NEW_CONVERSATION_FIXTURE: {
+  greeting: string;
+  agents: FixtureAgent[];
+  selected: string;
+  /** Most recent first: the panel's 最近用过 group. */
+  recent: string[];
+  quickActions: { id: string; title: string }[];
+  /** A search that matches nothing (the panel's no-match state). */
+  noMatch: string;
+} = {
+  greeting: "下午好，grant",
+  agents: [
+    {
+      id: "ag1",
+      name: "研究助手",
+      description: "检索资料、核对数据并整理成报告。",
+      preset: "capybara",
+    },
+    {
+      id: "ag2",
+      name: "财务对账",
+      description: "按月核对总账与银行流水，列出差异。",
+      preset: "owl",
+    },
+    {
+      id: "ag3",
+      name: "合同审阅",
+      description: "审合同条款，标出风险和要改的地方。",
+      preset: "elephant",
+    },
+    { id: "ag4", name: "周报整理", description: "汇总一周的进展，写成周报。", preset: "rabbit" },
+    { id: "ag5", name: "客服助手", description: "回答工单里的常见问题。", preset: "panda" },
+    { id: "ag6", name: "发布说明", description: "从合并记录写发布说明。", preset: null },
+    { id: "ag7", name: "数据看板", description: "查询指标并画成图表。", preset: "whale" },
+    { id: "ag8", name: "翻译", description: "中英互译，保留术语。", preset: "fox" },
+  ],
+  selected: "ag1",
+  recent: ["ag2", "ag1", "ag4"],
+  quickActions: [
+    { id: "q1", title: "核对上月总账与银行流水" },
+    { id: "q2", title: "整理本周进展，按项目写成周报并列出下周计划和风险" },
+    { id: "q3", title: "查一个供应商的背景" },
+    { id: "q4", title: "汇总差异明细" },
+    { id: "q5", title: "写一份会议纪要" },
+    { id: "q6", title: "翻译一份合同" },
+  ],
+  noMatch: "报销",
 };
