@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fake-web-2",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Test fake: a scripted web search and web fetch provider (web-search@1, web-fetch@1)"
+}

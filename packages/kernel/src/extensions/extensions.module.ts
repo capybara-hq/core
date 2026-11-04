@@ -14,6 +14,7 @@ import { ExtensionInstalls } from "./installs.js";
 import { ExtensionLifecycle } from "./lifecycle.js";
 import { PluginApproveLock, PluginDeploymentConfigLock, PluginInstallLock } from "./locks.js";
 import { OrgExtensionConfigs } from "./org-config.js";
+import { ExtensionPointDefaults } from "./point-defaults.js";
 import { ExtensionRegistryModule } from "./registry.js";
 import { ReplicaStatusStore } from "./sources.js";
 
@@ -46,6 +47,7 @@ import { ReplicaStatusStore } from "./sources.js";
     ExtensionAdminOps,
     ExtensionDeploymentConfigService,
     OrgExtensionConfigs,
+    ExtensionPointDefaults,
     BootstrapService,
   ],
   exports: [
@@ -62,6 +64,7 @@ import { ReplicaStatusStore } from "./sources.js";
     ExtensionAdminOps,
     ExtensionDeploymentConfigService,
     OrgExtensionConfigs,
+    ExtensionPointDefaults,
     BootstrapService,
   ],
 })

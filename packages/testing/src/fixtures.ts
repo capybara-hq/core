@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
  * | `fake-bootstrap-b` | `object-store@1` kept in its own PG table; `bucket` + secret `secretKey` |
  * | `fake-dep-provider` / `fake-dep-requirer` | a dependency pair on `counter@1` (the requirer's plugin.json depends on the provider) |
  * | `fake-im` | a whole IM platform for `startFakeChannelServer`: `channel@1` (cards, edits, threads, webhook inbound), `identity-source@1`, `directory@1` (org config `url` of a directory book) and tool `post_announcement` (default policy ask, posts to the platform); deployment config `platformUrl`, `tenant`, `clientId`, secret `clientSecret`. Its `src/index.ts` also exports `makeFakeImChannel`, `fakeImIdentitySource`, `fakeImDirectory` for test extensions that need one part |
+ * | `fake-web` / `fake-web-2` | `web-search@1` and `web-fetch@1`, scripted by a prefix of the query or of the fetched URL's path (`error:<kind>`, `throw:`, `hang:`, `redirect:<url>`, `junk:`, `empty:`, `big:<n>`; see `makeFakeWeb`); results name the provider; org config secret `token`, `configured()` iff it is set (throws for `throw:configured`); calls recorded on `globalThis.__fakeWeb` (`fakeWebProbe`) |
  */
 export const FAKE_EXTENSIONS = [
   "fake-connector",
@@ -34,6 +35,8 @@ export const FAKE_EXTENSIONS = [
   "fake-dep-provider",
   "fake-dep-requirer",
   "fake-im",
+  "fake-web",
+  "fake-web-2",
 ] as const;
 
 /** The name of a fake extension (also its plugin and extension name). */

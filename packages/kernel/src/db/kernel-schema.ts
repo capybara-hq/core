@@ -230,6 +230,16 @@ export interface FilePreviewersTable {
   disabled: ColumnType<boolean, boolean | undefined, boolean>;
 }
 
+/** 0064: an org's default provider of an `org-default` extension point. */
+export interface OrgExtensionPointDefaultsTable {
+  org_id: string;
+  /** The extension point name without the major (`web-search`). */
+  point: string;
+  extension: string;
+  updated_at: Ts;
+  updated_by: string | null;
+}
+
 /** 0059: a queued message (not in the event log until sent). */
 export interface ConversationQueueTable {
   id: string;
@@ -945,6 +955,7 @@ export interface KernelDatabase {
   conversation_events: ConversationEventsTable;
   conversation_queue: ConversationQueueTable;
   file_previewers: FilePreviewersTable;
+  org_extension_point_defaults: OrgExtensionPointDefaultsTable;
   runs: RunsTable;
   subagent_dispatches: SubagentDispatchesTable;
   agent_templates: AgentTemplatesTable;

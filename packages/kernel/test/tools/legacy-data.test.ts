@@ -119,10 +119,18 @@ describe("release-candidate tool keys in stored data", () => {
     return (res.json() as { connector: { id: string } }).connector.id;
   }
 
-  /** Runs migration 0063 again, as on a database that has the rc rows and not the migration. */
+  /**
+   * Runs migration 0063 again, as on a database that has the rc rows and not the migration (later
+   * migrations are idempotent and forgotten too, so 0063 is not out of order); returns 0063 if it
+   * was applied.
+   */
   async function rerunMigration(): Promise<string[]> {
-    await sql`delete from capybara._migrations where name = ${MIGRATION}`.execute(raw);
-    return (await migrate(pgc.url, { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR })).applied;
+    await sql`delete from capybara._migrations where name >= ${MIGRATION}`.execute(raw);
+    const { applied } = await migrate(pgc.url, {
+      schema: KERNEL_SCHEMA,
+      dir: KERNEL_MIGRATIONS_DIR,
+    });
+    return applied.filter((name) => name === MIGRATION);
   }
 
   it("migration 0063 rewrites grants, pending approvals and questions; ambiguous keys stay and are reported", async () => {
