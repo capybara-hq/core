@@ -5,7 +5,7 @@ describe("CLAUDE_CODE_TOOL_MAP", () => {
   it("names the shared Claude Code tools as unchanged and maps only the others", () => {
     const lines = CLAUDE_CODE_TOOL_MAP.split("\n");
     expect(lines.slice(0, 3).join(" ")).toBe(
-      "Some skills in this conversation were written for Claude Code. Its tools Bash, Read, Write, Edit, Glob, Grep, Skill, AskUserQuestion, ToolSearch and Agent have the same names here, when they are in your tools. For the others:",
+      "Some skills in this conversation were written for Claude Code. Its tools Bash, Read, Write, Edit, Glob, Grep, Skill, AskUserQuestion, ToolSearch, Agent, WebFetch and WebSearch have the same names here, when they are in your tools. For the others:",
     );
     expect(lines).toContain("- MultiEdit -> several Edit calls");
     expect(lines).toContain(
