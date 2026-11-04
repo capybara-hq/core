@@ -317,7 +317,6 @@ describe("端到端：model-fake 脚本工具调用 → 连接器工具与插件
   });
 
   beforeEach(async () => {
-    const { AccountsService } = await import("../../src/identity/accounts.js");
     const raw = createDb(pgc.url, 2);
     await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
     await accountsFor(kernelDb(raw)).createLocal({

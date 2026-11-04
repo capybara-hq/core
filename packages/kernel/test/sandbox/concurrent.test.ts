@@ -519,8 +519,9 @@ describe("path leases in the sandbox tools", () => {
       storage: {} as any,
       // The log is not under test here (path leases are): report the file as read and unchanged by
       // returning its live state. read-before-write.test.ts covers the rule itself.
-      // biome-ignore lint/suspicious/noExplicitAny: only latestFileState is called
+      // only latestFileState is called
       eventLog: {
+        append: async () => [],
         latestFileState: async (_conv: string, path: string) =>
           s.withSandbox(
             ctx(),
@@ -531,7 +532,7 @@ describe("path leases in the sandbox tools", () => {
             },
             signal(),
           ),
-      } as any,
+      },
       config: { get: () => config },
     });
   const tool = (s: SandboxService, name: string) =>

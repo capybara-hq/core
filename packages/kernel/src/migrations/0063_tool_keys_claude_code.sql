@@ -210,8 +210,11 @@ CREATE INDEX IF NOT EXISTS questions_legacy_key_idx ON questions (org_id)
 -- a conversation whose view names a file, on every Write and Edit. Without this index it scans
 -- the conversation's events backwards through the primary key, filtering each payload (EXPLAIN
 -- on a 20 000-event conversation: every row removed by the filter for a path never read); with
--- it, one index probe. Partial: only tool_result rows. Not CONCURRENTLY, like the other
--- migrations (a migration runs in one transaction).
+-- it, one index probe. Partial: only tool_result rows. Built without CONCURRENTLY (a migration
+-- runs in one transaction), which locks conversation_events against writes while it builds: this
+-- assumes release-candidate-sized event tables, as the event indexes of 0025 and 0040 did. A
+-- deployment with a large table builds it CONCURRENTLY by hand before upgrading; IF NOT EXISTS
+-- then skips it here.
 CREATE INDEX IF NOT EXISTS conversation_events_file_state_idx
   ON conversation_events (conversation_id, ((payload->'view'->'file'->>'path')), seq DESC)
   WHERE type = 'tool_result';

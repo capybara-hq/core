@@ -12,7 +12,6 @@ import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { createLogger } from "../../src/log.js";
 import type { PolicyContext } from "../../src/tools/pipeline.js";
 import {
   createDecidePolicy,
@@ -130,7 +129,6 @@ let db: KernelSchemaDb;
 let redis: Redis;
 let sub: ReturnType<typeof createBusSubscriber>;
 let eventLog: EventLog;
-const silent = createLogger("error", { write: () => {} });
 const cfg = KernelConfigSchema.parse({
   db: { url: "postgres://x/y" },
   redis: { url: "redis://x" },

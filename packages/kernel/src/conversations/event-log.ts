@@ -277,9 +277,10 @@ export class EventLog {
 
   /**
    * The file state (`tool_result.view.file`) the latest `Read` / `Write` / `Edit` result of this
-   * conversation recorded for `path` (a normalized sandbox path); null when none did. One lookup
-   * per call: it walks the conversation's events backwards on the primary key
-   * (conversation_id, seq) and stops at the first match, so a path never read scans them all.
+   * conversation recorded for `path` (a normalized sandbox path); null when none did. One index
+   * probe per call: the partial index `conversation_events_file_state_idx` of migration 0063
+   * (conversation_id, view.file.path, seq DESC; tool_result rows only) answers it, also for a path
+   * never read (the query's predicate must keep matching that index's expression).
    */
   async latestFileState(
     conversationId: string,
