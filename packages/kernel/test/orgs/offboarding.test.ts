@@ -195,7 +195,7 @@ beforeEach(async () => {
     conversationId,
     runId,
     step: 1,
-    toolKey: "docs__create_doc",
+    toolKey: "mcp__docs__create_doc",
     specHash: "h",
     connectorId,
     input: {},
@@ -220,7 +220,7 @@ beforeEach(async () => {
     step: 1,
     callId: "c3",
     attempt: 1,
-    toolKey: "ask_user",
+    toolKey: "AskUserQuestion",
     form: { title: "Q", fields: [{ key: "x", label: "X", schema: { type: "string" } }] },
     state: null,
   });
@@ -690,7 +690,7 @@ describe("修复波 W1：离职补漏", () => {
   it("删除离职者在该组织的「以后都允许」工具授权；别的组织的、别人的不动", async () => {
     const grant = (orgId: string, accountId: string, agentId: string) =>
       sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash)
-        VALUES (${orgId}, ${accountId}, ${agentId}, 'docs__create_doc', 'h')`.execute(raw);
+        VALUES (${orgId}, ${accountId}, ${agentId}, 'mcp__docs__create_doc', 'h')`.execute(raw);
     await grant(f.orgId, f.leaver.id, f.agentId);
     await grant(f.orgId, f.bystander.id, f.agentId);
     await grant(f.otherOrgId, f.leaver.id, f.otherOrgAgentId);
@@ -714,7 +714,7 @@ describe("修复波 W1：离职补漏", () => {
     const conn = await connection(f.orgId, f.agentId);
     const t1 = await thread(conn, f.leaver.id, "dm:u-leaver");
     await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash)
-      VALUES (${f.orgId}, ${f.leaver.id}, ${f.agentId}, 'docs__create_doc', 'h')`.execute(raw);
+      VALUES (${f.orgId}, ${f.leaver.id}, ${f.agentId}, 'mcp__docs__create_doc', 'h')`.execute(raw);
     await expect(
       kernelTransaction(k, async () => {
         await k.app.get(Offboarding).offboard(f.orgId, f.leaver.id, "removed");

@@ -71,8 +71,8 @@ let orgId: string;
 let ownerId: string;
 let agentId: string;
 
-const ECHO = 'tool:mem-connector__echo:{"text":"hi"}';
-const ASK = 'tool:mem-connector__ask:{"rounds":1}';
+const ECHO = 'tool:plugin__mem-connector__echo:{"text":"hi"}';
+const ASK = 'tool:plugin__mem-connector__ask:{"rounds":1}';
 const ofType = <T extends ConversationEvent["type"]>(evs: ConversationEvent[], type: T) =>
   evs.filter((e): e is Extract<ConversationEvent, { type: T }> => e.type === type);
 
@@ -145,7 +145,7 @@ beforeEach(async () => {
           { kind: "plugin", plugin: "mem-connector", name: "echo" },
           { kind: "plugin", plugin: "mem-connector", name: "ask" },
         ],
-        toolPolicies: { "mem-connector__echo": "ask" },
+        toolPolicies: { "plugin__mem-connector__echo": "ask" },
       },
       visibility: "org",
     },

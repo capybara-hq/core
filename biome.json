@@ -8,6 +8,7 @@
       "!**/dist",
       "!**/coverage",
       "!.superpowers",
+      "!packages/kernel/test/evals/fixtures/pre-tool-rename",
       "!pnpm-lock.yaml",
       "!docs",
       "!tools/checks/fixtures",

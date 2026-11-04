@@ -24,6 +24,7 @@ import {
   sameSnapshot,
 } from "../runtime/context/skills.js";
 import { StorageService } from "../storage/storage.service.js";
+import { BUILTIN } from "../tools/builtin-names.js";
 import { fitPinned, invocationOf, lockLatestCatalog } from "./catalog.js";
 
 /**
@@ -126,7 +127,7 @@ const byName = (a: CatalogSkill, b: CatalogSkill) =>
 
 const notFound = () => new ApiError("skill_change.not_found", "Skill change not found");
 
-/** The body of the SKILL.md a skill_write just stored (as run start would read it); null if unparsable. */
+/** The body of the SKILL.md a SkillWrite just stored (as run start would read it); null if unparsable. */
 function writtenBody(pkg: SkillWritePackage): string | null {
   const md = pkg.files.find((f) => f.path === SKILL_ENTRY_FILE);
   if (!md) return null;
@@ -140,9 +141,9 @@ function writtenBody(pkg: SkillWritePackage): string | null {
 
 /**
  * agent 自写技能与共享 agent 的技能变更审批（M5 T15，R4）：
- * - `write`（工具 `skill_write` 调用）：私有 agent 直接生成新版本；共享 agent 生成一条待负责人批准的申请，
+ * - `write`（工具 `SkillWrite` 调用）：私有 agent 直接生成新版本；共享 agent 生成一条待负责人批准的申请，
  *   期间只有发起对话试用（`resolveEffectiveSkills` 按对话合并）；两种情况都在同一事务里往发起对话追加一份
- *   技能目录快照（Ruling M17：日志是唯一事实源），同一运行的下一步即可 `skill_load`；
+ *   技能目录快照（Ruling M17：日志是唯一事实源），同一运行的下一步即可 `Skill`；
  * - `decide`（HTTP，只有该 agent 当前的负责人）：批准 → 版本对所有对话生效（各对话下一次运行开始时写新快照）；
  *   拒绝 → 删除草稿对象，发起对话下一次运行开始时目录回到当前版本；
  * - 同一 agent 的同名技能最多一条待处理申请：同一对话再写取代旧的（旧的 cancelled、草稿删除、技能 id 不变），
@@ -343,7 +344,7 @@ export class SkillChangesService {
           files: pkg.manifest.files.length,
           agentId: ctx.agentId,
           conversationId: ctx.conversationId,
-          via: "skill_write",
+          via: BUILTIN.SkillWrite,
         },
       });
       outcome = { kind: "version", skillId, version, created: !existing };

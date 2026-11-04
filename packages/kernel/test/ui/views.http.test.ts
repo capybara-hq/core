@@ -543,7 +543,7 @@ describe("插件视图接口", () => {
         payload: {
           step: 0,
           callId: "call-1",
-          toolKey: "ui-probe__probe",
+          toolKey: "plugin__ui-probe__probe",
           content: "probed",
           isError: false,
           card: { plugin: "ui-probe", view: "card", key: "k1" },
@@ -738,10 +738,10 @@ describe("工具显示摘要", () => {
         { text: "Ship", status: "pending" },
       ],
     };
-    await send(`tool:fake-tools-ui__write:${JSON.stringify(items)}`, 1);
+    await send(`tool:plugin__fake-tools-ui__write:${JSON.stringify(items)}`, 1);
     const [r] = await results();
     expect(r?.payload).toMatchObject({
-      toolKey: "fake-tools-ui__write",
+      toolKey: "plugin__fake-tools-ui__write",
       isError: false,
       display: { summary: { zh: "更新条目（3 项）", en: "Updated items (3)" } },
     });
@@ -768,9 +768,9 @@ describe("工具显示摘要", () => {
   });
 
   it("ToolResult.card is recorded on tool_result (display only, never in the model request); an unknown or non-inline view is dropped", async () => {
-    await send('tool:ui-probe__probe:{"card":"card"}', 1);
-    await send('tool:ui-probe__probe:{"card":"nope"}', 2);
-    await send('tool:ui-probe__probe:{"card":"panel"}', 3);
+    await send('tool:plugin__ui-probe__probe:{"card":"card"}', 1);
+    await send('tool:plugin__ui-probe__probe:{"card":"nope"}', 2);
+    await send('tool:plugin__ui-probe__probe:{"card":"panel"}', 3);
     const [good, unknown, notInline] = await results();
     expect(good?.payload.card).toEqual({ plugin: "ui-probe", view: "card", key: "card-key-zz" });
     expect(unknown?.payload.content).toBe("probed");
@@ -791,12 +791,14 @@ describe("工具显示摘要", () => {
   });
 
   it("插件给的摘要不合法 → 丢弃并告警，结果照常写入", async () => {
-    await send('tool:ui-probe__probe:{"bad":true}', 1);
-    await send("tool:ui-probe__probe:{}", 2);
+    await send('tool:plugin__ui-probe__probe:{"bad":true}', 1);
+    await send("tool:plugin__ui-probe__probe:{}", 2);
     const [bad, good] = await results();
     expect(bad?.payload.content).toBe("probed");
     expect(bad?.payload).not.toHaveProperty("display");
-    expect(lines.some((l) => l.includes('"warn"') && l.includes("ui-probe__probe"))).toBe(true);
+    expect(lines.some((l) => l.includes('"warn"') && l.includes("plugin__ui-probe__probe"))).toBe(
+      true,
+    );
     expect(good?.payload.display).toEqual({ summary: { zh: "探测完成", en: "Probe done" } });
   });
 });

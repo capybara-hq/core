@@ -31,7 +31,7 @@ import { openSse, type SseClient, uiFrames } from "../helpers/sse.js";
 /**
  * M4 第三段验收（双副本：两个独立进程的内核副本，共享 PG / Redis / 主密钥）：
  *
- *  1. 扩展视图跨副本实时刷新（假扩展 fake-tools-ui）：`fake-tools-ui__write` 在某个副本的 worker 上执行，**两个**副本上打开的对话 SSE
+ *  1. 扩展视图跨副本实时刷新（假扩展 fake-tools-ui）：`plugin__fake-tools-ui__write` 在某个副本的 worker 上执行，**两个**副本上打开的对话 SSE
  *     都收到 `event: ui`（所以另一个副本一定是经 Redis bus 收到的），两个副本取到的 `tasks` 视图
  *     都是新的 badge 与 checklist。
  *  2. view / embed 的批准规则（spec §4.1、§5.4，审查重点 5）：副本以 ui-a 0.1.0 运行（快照已写入共享 PG），
@@ -140,7 +140,7 @@ afterAll(async () => {
 });
 
 describe("M4 第三段验收（双副本）", () => {
-  it("扩展视图：一个副本执行 fake-tools-ui__write，两个副本的对话 SSE 都收到 event: ui，视图是新的 badge 与清单", async () => {
+  it("扩展视图：一个副本执行 plugin__fake-tools-ui__write，两个副本的对话 SSE 都收到 event: ui，视图是新的 badge 与清单", async () => {
     const ag = await at(0, "POST", `${base}/agents`, {
       definition: {
         name: "Planner",
@@ -180,7 +180,7 @@ describe("M4 第三段验收（双副本）", () => {
       ],
     };
     const sent = await at(0, "POST", `${base}/conversations/${convId}/messages`, {
-      text: `tool:fake-tools-ui__write:${JSON.stringify(items)}`,
+      text: `tool:plugin__fake-tools-ui__write:${JSON.stringify(items)}`,
     });
     expect(sent.status, JSON.stringify(sent.json)).toBe(202);
     await waitForTerminal(db, convId, 1, 30_000);

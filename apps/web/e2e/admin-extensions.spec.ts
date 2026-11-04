@@ -16,10 +16,10 @@ const P = zh.admin.extensions;
 async function callGreet(page: Page, convId: string) {
   await page.goto(`/chat/${convId}`);
   const input = composer(page);
-  await input.fill("tool:greeter__greet:{}");
+  await input.fill("tool:plugin__greeter__greet:{}");
   await input.press("Enter");
   return {
-    tool: toolGroup(page, "greeter__greet").last(),
+    tool: toolGroup(page, "plugin__greeter__greet").last(),
     reply: replies(page).last(),
   };
 }
@@ -122,6 +122,6 @@ test("admin extensions: upload tgz -> review (acknowledge sensitive items) -> in
   // 内核工具管线对 agent 引用、但插件已卸下的工具返回的错误结果（tools/pipeline.ts 的 unavailableText）
   await expect(second.tool).toHaveAttribute("data-tool-status", "failed");
   await expect(second.reply).toHaveText(
-    'Tool result: Tool "greeter__greet" is unavailable: Plugin tool does not exist.',
+    'Tool result: Tool "plugin__greeter__greet" is unavailable: Plugin tool does not exist.',
   );
 });

@@ -45,7 +45,7 @@ const MODEL_SCRIPT = fixture("model-script");
 const SANDBOX_FAKE = fixture("sandbox-fake");
 
 const CHILD = "You are a sub-agent";
-const call = (prompt: string) => ({ name: "agent", input: { description: "Task", prompt } });
+const call = (prompt: string) => ({ name: "Agent", input: { description: "Task", prompt } });
 const calls = (prefix: string, n: number) =>
   Array.from({ length: n }, (_, i) => call(`${prefix}${i + 1}`));
 
@@ -63,7 +63,7 @@ const RULES: ScriptRule[] = [
     when: { systemIncludes: CHILD, lastUserIncludes: "loop-", assistantTurns: 0 },
     reply: {
       text: "working",
-      toolCalls: [{ name: "sandbox_write", input: { path: "/workspace/l.txt", content: "l" } }],
+      toolCalls: [{ name: "Write", input: { file_path: "/workspace/l.txt", content: "l" } }],
       usage: { inputTokens: 12_000 },
     },
   },
@@ -180,7 +180,7 @@ beforeEach(async () => {
         name: "Lead",
         instructions: "Lead the work.",
         model: { provider: "model-script", model: "script-1" },
-        tools: ["agent", "sandbox_write"].map((name) => ({ kind: "builtin", name })),
+        tools: ["Agent", "Write"].map((name) => ({ kind: "builtin", name })),
       },
       visibility: "org",
     },
@@ -200,7 +200,7 @@ type Ev<T extends ConversationEvent["type"]> = ConversationEvent & {
 const ofType = <T extends ConversationEvent["type"]>(events: ConversationEvent[], type: T) =>
   events.filter((e): e is Ev<T> => e.type === type);
 const agentResults = (events: ConversationEvent[]) =>
-  ofType(events, "tool_result").filter((r) => r.payload.toolKey === "agent");
+  ofType(events, "tool_result").filter((r) => r.payload.toolKey === "Agent");
 const finalText = (events: ConversationEvent[]) =>
   ofType(events, "assistant_message")
     .at(-1)
@@ -302,7 +302,7 @@ describe("concurrency", () => {
     expect(refused).toEqual(step1.slice(3));
     // the description names the limit
     const req = capture.sent.find((r) => !isChildRequest(r)) as ModelRequest;
-    expect(req.tools?.find((t) => t.name === "agent")?.description).toContain(
+    expect(req.tools?.find((t) => t.name === "Agent")?.description).toContain(
       "(at most 3 at a time)",
     );
   }, 60_000);
@@ -311,7 +311,7 @@ describe("concurrency", () => {
     const before = await converse("SCENARIO two");
     expect(agentResults(before.events).every((r) => !r.payload.isError)).toBe(true);
     const first = capture.sent.find((r) => !isChildRequest(r)) as ModelRequest;
-    expect(first.tools?.find((t) => t.name === "agent")?.description).toContain(
+    expect(first.tools?.find((t) => t.name === "Agent")?.description).toContain(
       "(at most 4 at a time)",
     );
     await override({ maxConcurrentPerRun: 1 });
@@ -326,7 +326,7 @@ describe("concurrency", () => {
     expect(agentResults(events).map((r) => r.payload.isError)).toEqual([true, false]);
     expect(agentResults(events)[0]?.payload.content).toBe(AGENT_REFUSALS.tooManyConcurrent(1));
     const req = capture.sent.find((r) => !isChildRequest(r)) as ModelRequest;
-    expect(req.tools?.find((t) => t.name === "agent")?.description).toContain(
+    expect(req.tools?.find((t) => t.name === "Agent")?.description).toContain(
       "(at most 1 at a time)",
     );
   }, 60_000);

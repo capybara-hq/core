@@ -12,7 +12,7 @@ import { type DispatchDeps, dispatchSubagent } from "./dispatch.js";
 /**
  * Forked skills (phase D spec §6): a person's invocation of a `context: fork` skill starts its own
  * run (the run boundary, {@link forkBoundary}), whose `prepare` node dispatches the sub-agent
- * through phase C's `dispatchSubagent` before any model call and waits on it like an `agent` call
+ * through phase C's `dispatchSubagent` before any model call and waits on it like an `Agent` call
  * (`subagents` wait `sa-<runId>-0`). When the child has ended, `prepare` appends the model-visible
  * `skill_fork_result` and the parent's model answers. Every terminal path of the run (and the wait
  * sweep) pairs a fork invocation without a report ({@link pairStoppedForks}), so the log never holds
@@ -258,7 +258,7 @@ export const recordedSkillForks = (
  * In the transaction of a run's terminal path (or the wait sweep): the run's fork invocation
  * (its trigger message, by the run boundary) without a report gets one now: the ended child's
  * result (and the parent's missing `subagent_finished`), {@link AGENT_STOPPED_WITH_RUN_TEXT} for a
- * child still active (the caller stops it after its commit, as for `agent` calls), or
+ * child still active (the caller stops it after its commit, as for `Agent` calls), or
  * {@link FORK_NOT_STARTED_TEXT} when nothing was dispatched. Returns the call ids written
  * (`skill-<seq>`) and the highest seq; the caller notifies after its commit.
  */

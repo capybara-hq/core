@@ -635,7 +635,7 @@ function traceBlocks(): ReactNode {
             />
           }
           detail={
-            <Card title="工具调用 · crm__refund_order">
+            <Card title="工具调用 · mcp__crm__refund_order">
               <KeyValue rows={PROPERTIES} />
             </Card>
           }

@@ -20,6 +20,7 @@ import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { useWorkspace } from "../../../../lib/query/workspace";
+import { toolLabelOfKey, toolLabelText } from "../../../../lib/tool-label";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 
 /**
@@ -27,6 +28,7 @@ import { useErrorMessage } from "../../../../lib/use-error-message";
  * layout prefetched it on a first load); a revoke invalidates the grants, which are read again.
  */
 const keyOf = (g: ToolGrant) => `${g.agentId}/${g.toolKey}`;
+const labelOf = (g: ToolGrant) => toolLabelText(toolLabelOfKey(g.toolKey));
 
 export default function GrantsView() {
   const ws = useWorkspace({ setup: "step" });
@@ -53,7 +55,7 @@ function Grants({ orgId }: { orgId: string }) {
     setRevoking(keyOf(g));
     try {
       await revokeGrant.mutateAsync(g);
-      toast.success(t("grants.revoked", { tool: g.toolKey }));
+      toast.success(t("grants.revoked", { tool: labelOf(g) }));
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -63,7 +65,9 @@ function Grants({ orgId }: { orgId: string }) {
 
   const columns: Column<ToolGrant>[] = [
     { key: "agent", header: t("grants.columns.agent"), cell: (g) => g.agentName },
-    { key: "tool", header: t("grants.columns.tool"), cell: (g) => g.toolKey },
+    { key: "tool", header: t("grants.columns.tool"), cell: labelOf },
+    // the raw key stays as secondary text
+    { key: "key", header: t("grants.columns.key"), tone: "muted", cell: (g) => g.toolKey },
     {
       key: "created",
       header: t("grants.columns.created"),
@@ -80,7 +84,7 @@ function Grants({ orgId }: { orgId: string }) {
           variant="danger"
           loading={revoking === keyOf(g)}
           disabled={revoking !== undefined}
-          aria-label={t("grants.revokeLabel", { tool: g.toolKey, agent: g.agentName })}
+          aria-label={t("grants.revokeLabel", { tool: labelOf(g), agent: g.agentName })}
           onClick={() => void revoke(g)}
         >
           {t("grants.revoke")}

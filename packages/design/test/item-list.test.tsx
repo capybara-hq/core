@@ -14,7 +14,7 @@ describe("ItemList", () => {
           {
             id: "a",
             tag: { label: "工具审批", tone: "accent" },
-            title: "研究助手 想调用 sandbox_bash",
+            title: "研究助手 想调用 Bash",
             meta: "2 分钟前",
             href: "/chat/c1",
             status: { label: "等你处理", tone: "accent" },
@@ -28,9 +28,7 @@ describe("ItemList", () => {
     expect(rows).toHaveLength(2);
     const first = rows[0] as HTMLElement;
     expect(
-      within(first)
-        .getByRole("link", { name: "研究助手 想调用 sandbox_bash" })
-        .getAttribute("href"),
+      within(first).getByRole("link", { name: "研究助手 想调用 Bash" }).getAttribute("href"),
     ).toBe("/chat/c1");
     expect(within(first).getByText("工具审批").getAttribute("data-tone")).toBe("accent");
     expect(within(first).getByText("2 分钟前")).toBeTruthy();

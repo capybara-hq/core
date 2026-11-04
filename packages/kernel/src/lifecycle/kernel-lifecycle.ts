@@ -50,6 +50,7 @@ import { GatewayRole } from "../roles/gateway-role.js";
 import { WorkerRole } from "../roles/worker-role.js";
 import { UsageReporter } from "../runtime/usage-report.js";
 import { sandboxConfigWarnings } from "../sandbox/sandbox.service.js";
+import { warnLegacyToolKeys } from "../tools/legacy-data.js";
 import { KERNEL_APP_OPTIONS } from "./tokens.js";
 
 /**
@@ -199,6 +200,12 @@ export class KernelLifecycle
         { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR },
         { connectTimeoutMs: config.db.connectTimeoutMs, signal: this.shutdown.signal },
       ),
+    );
+    this.checkpoint();
+    // Rows still holding a release-candidate tool key that migration 0063 could not map: one
+    // read-only count, a WARN when there are any (tool naming spec §8.2); never blocks the start
+    await warnLegacyToolKeys(this.kdb.db, this.log).catch((e: unknown) =>
+      this.log.warn("tools.legacy_key_count_failed", { error: errMsg(e) }),
     );
     this.checkpoint();
     // official 清单来源按配置同步（幂等；每个副本启动时都做）

@@ -50,22 +50,26 @@ const result = (
 
 const INFO = new Map<string, ToolInfo>([
   [
-    "sandbox_bash",
+    "Bash",
     {
-      key: "sandbox_bash",
+      key: "Bash",
       title: null,
       kind: "command",
+      sandbox: true,
       keyArgs: ["command"],
+      tool: null,
       source: { kind: "builtin" },
     },
   ],
   [
-    "slack__search",
+    "plugin__slack__search",
     {
-      key: "slack__search",
+      key: "plugin__slack__search",
       title: "Search messages",
       kind: "connector",
+      sandbox: false,
       keyArgs: ["query"],
+      tool: "search",
       source: { kind: "connector", id: "k1", name: "Slack" },
     },
   ],
@@ -80,12 +84,12 @@ describe("buildTimeline", () => {
     const events = [
       user(1, "list files"),
       ev(2, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }),
-      calls(3, [{ id: "c1", name: "sandbox_bash", input: { command: "ls -la" } }]),
-      started(4, "c1", "sandbox_bash"),
+      calls(3, [{ id: "c1", name: "Bash", input: { command: "ls -la" } }]),
+      started(4, "c1", "Bash"),
       ev(5, "tool_result", {
         step: 0,
         callId: "c1",
-        toolKey: "sandbox_bash",
+        toolKey: "Bash",
         content: "a\nb",
         isError: false,
       }),
@@ -95,7 +99,7 @@ describe("buildTimeline", () => {
     expect(kinds(out)).toEqual(["user", "tools", "run"]);
     const row = tools(out)[0]?.rows[0]?.row;
     expect(row).toMatchObject({
-      title: "sandbox_bash",
+      name: "Bash",
       keyArg: "ls -la",
       status: "done",
       kind: "tool",
@@ -108,18 +112,18 @@ describe("buildTimeline", () => {
     const events = [
       user(1, "go"),
       calls(2, [
-        { id: "a", name: "sandbox_bash", input: { command: "ls", description: "List files" } },
-        { id: "b", name: "sandbox_bash", input: { command: "false", description: "Fail" } },
-        { id: "c", name: "slack__search", input: { query: "#feedback" } },
+        { id: "a", name: "Bash", input: { command: "ls", description: "List files" } },
+        { id: "b", name: "Bash", input: { command: "false", description: "Fail" } },
+        { id: "c", name: "plugin__slack__search", input: { query: "#feedback" } },
       ]),
-      result(3, "a", "sandbox_bash", {
+      result(3, "a", "Bash", {
         view: { kind: "command", exitCode: 0, timedOut: false, description: "List files" },
       }),
-      result(4, "b", "sandbox_bash", {
+      result(4, "b", "Bash", {
         content: "boom\nmore",
         view: { kind: "command", exitCode: 1, timedOut: false },
       }),
-      result(5, "c", "slack__search"),
+      result(5, "c", "plugin__slack__search"),
     ];
     const out = buildTimeline(events, [], INFO, "zh");
     expect(kinds(out)).toEqual(["user", "tools"]);
@@ -127,34 +131,60 @@ describe("buildTimeline", () => {
     expect(summarizeTools(rows, "zh")).toBe("已运行 2 个命令，已使用 1 个工具（1 个失败）");
     expect(rows[0]).toMatchObject({ description: "List files", detail: { command: "ls" } });
     expect(rows[1]).toMatchObject({ status: "failed", error: "boom" });
+    expect(rows[0]).toMatchObject({ name: "Bash" });
+    expect(rows[0]).not.toHaveProperty("tool");
     expect(rows[2]).toMatchObject({
-      title: "Search messages",
-      source: "Slack",
+      name: "Slack",
+      tool: "search",
+      tooltip: "Search messages",
       keyArg: "#feedback",
     });
+  });
+
+  it("a Write that could not be diffed (truncated, no hunks) has no +0 −0 and no diff", () => {
+    const events = [
+      user(1, "go"),
+      calls(2, [{ id: "w", name: "Write", input: { file_path: "/w/big.bin", content: "x" } }]),
+      result(3, "w", "Write", {
+        view: {
+          kind: "edit",
+          path: "/w/big.bin",
+          created: false,
+          added: 0,
+          removed: 0,
+          hunks: [],
+          truncated: true,
+        },
+      }),
+    ];
+    const row = tools(buildTimeline(events, [], new Map(), "en"))[0]?.rows[0]?.row;
+    expect(row).toMatchObject({ name: "Write", keyArg: "/w/big.bin" });
+    expect(row?.added).toBeUndefined();
+    expect(row?.removed).toBeUndefined();
+    expect(row?.detail?.diff).toBeUndefined();
   });
 
   it("prose between calls and an approval split groups; prose is never folded", () => {
     const events = [
       user(1, "go"),
-      calls(2, [{ id: "a", name: "sandbox_bash", input: { command: "ls" } }]),
-      result(3, "a", "sandbox_bash"),
-      calls(4, [{ id: "b", name: "sandbox_bash", input: { command: "pwd" } }], "Now the folder."),
+      calls(2, [{ id: "a", name: "Bash", input: { command: "ls" } }]),
+      result(3, "a", "Bash"),
+      calls(4, [{ id: "b", name: "Bash", input: { command: "pwd" } }], "Now the folder."),
       ev(5, "approval_requested", {
         step: 0,
         callId: "b",
         approvalId: "ap1",
-        toolKey: "sandbox_bash",
+        toolKey: "Bash",
         expiresAt: "x",
         policy: "agent",
       }),
-      calls(6, [{ id: "c", name: "sandbox_bash", input: { command: "id" } }]),
+      calls(6, [{ id: "c", name: "Bash", input: { command: "id" } }]),
     ];
     const out = buildTimeline(events, [], INFO, "en");
     expect(kinds(out)).toEqual(["user", "tools", "prose", "tools", "approval", "tools"]);
     const ap = out[4];
     expect(ap?.kind === "approval" && ap.item).toMatchObject({
-      toolKey: "sandbox_bash",
+      toolKey: "Bash",
       input: { command: "pwd" },
       policy: "agent",
     });
@@ -164,10 +194,10 @@ describe("buildTimeline", () => {
     const events = [
       user(1, "go"),
       calls(2, [
-        { id: "a", name: "sandbox_deliver", input: { path: "out.csv" } },
-        { id: "b", name: "todo__write", input: { items: [] } },
+        { id: "a", name: "Deliver", input: { path: "out.csv" } },
+        { id: "b", name: "plugin__todo__write", input: { items: [] } },
       ]),
-      result(3, "a", "sandbox_deliver"),
+      result(3, "a", "Deliver"),
       ev(4, "artifact_created", {
         artifactId: "f1",
         name: "out.csv",
@@ -176,7 +206,7 @@ describe("buildTimeline", () => {
         sourcePath: "/w/out.csv",
         callId: "a",
       }),
-      result(5, "b", "todo__write", { card: { plugin: "todo", view: "tasks-card" } }),
+      result(5, "b", "plugin__todo__write", { card: { plugin: "todo", view: "tasks-card" } }),
       calls(6, [], "Done."),
     ];
     const out = buildTimeline(events, [], new Map(), "en");
@@ -188,8 +218,8 @@ describe("buildTimeline", () => {
 
   it("an extension's display summary reads as the row's extra, in the locale", () => {
     const events = [
-      calls(1, [{ id: "a", name: "todo__write", input: { todos: [] } }]),
-      result(2, "a", "todo__write", {
+      calls(1, [{ id: "a", name: "plugin__todo__write", input: { todos: [] } }]),
+      result(2, "a", "plugin__todo__write", {
         display: { summary: { zh: "更新任务清单（2 项）", en: "Updated task list (2 items)" } },
       }),
     ];
@@ -203,7 +233,7 @@ describe("buildTimeline", () => {
 
   it("hook_denied with a callId marks the row as blocked by the extension", () => {
     const events = [
-      calls(1, [{ id: "a", name: "slack__search", input: { query: "x" } }]),
+      calls(1, [{ id: "a", name: "plugin__slack__search", input: { query: "x" } }]),
       ev(2, "hook_denied", {
         mount: "tool.preExecute",
         plugin: "compliance",
@@ -212,7 +242,7 @@ describe("buildTimeline", () => {
         step: 0,
         callId: "a",
       }),
-      result(3, "a", "slack__search", { isError: true, content: "denied" }),
+      result(3, "a", "plugin__slack__search", { isError: true, content: "denied" }),
     ];
     const row = tools(buildTimeline(events, [], INFO, "en"))[0]?.rows[0]?.row;
     expect(row).toMatchObject({ status: "failed", blockedBy: "compliance" });
@@ -397,8 +427,8 @@ describe("buildTimeline", () => {
 
   it("calls of a run that ended without a result are cancelled", () => {
     const events = [
-      calls(1, [{ id: "a", name: "sandbox_bash", input: { command: "sleep 9" } }]),
-      started(2, "a", "sandbox_bash"),
+      calls(1, [{ id: "a", name: "Bash", input: { command: "sleep 9" } }]),
+      started(2, "a", "Bash"),
       ev(3, "run_aborted", { byAccountId: null, reason: "x" }),
     ];
     expect(tools(buildTimeline(events, [], INFO, "en"))[0]?.rows[0]?.row.status).toBe("cancelled");
@@ -519,8 +549,8 @@ describe("final review fixes", () => {
   it("a read's line range is data for the thread's i18n, not a hard-coded string (m10)", () => {
     const events = [
       user(1, "read"),
-      calls(2, [{ id: "r", name: "sandbox_read", input: { path: "a.ts" } }]),
-      result(3, "r", "sandbox_read", {
+      calls(2, [{ id: "r", name: "Read", input: { path: "a.ts" } }]),
+      result(3, "r", "Read", {
         view: { kind: "read", path: "a.ts", fromLine: 3, toLine: 9 },
         display: { summary: { zh: "摘要", en: "summary" } },
       }),
@@ -614,8 +644,8 @@ describe("workingLineVisible (conversation send spec §2.2)", () => {
     expect(at(base, {}, [{ runId: "r1", step: 0, text: "He", thinking: "" }])).toBe(false);
     const tool = [
       ...base,
-      calls(3, [{ id: "c1", name: "sandbox_bash", input: { command: "ls" } }]),
-      started(4, "c1", "sandbox_bash"),
+      calls(3, [{ id: "c1", name: "Bash", input: { command: "ls" } }]),
+      started(4, "c1", "Bash"),
     ];
     expect(at(tool)).toBe(false);
   });
@@ -624,9 +654,9 @@ describe("workingLineVisible (conversation send spec §2.2)", () => {
     const events = [
       user(1, "hi"),
       runStart(2),
-      calls(3, [{ id: "c1", name: "sandbox_bash", input: { command: "ls" } }]),
-      started(4, "c1", "sandbox_bash"),
-      result(5, "c1", "sandbox_bash"),
+      calls(3, [{ id: "c1", name: "Bash", input: { command: "ls" } }]),
+      started(4, "c1", "Bash"),
+      result(5, "c1", "Bash"),
     ];
     expect(at(events)).toBe(true);
     expect(at(events, {}, [{ runId: "r1", step: 1, text: "Done", thinking: "" }])).toBe(false);

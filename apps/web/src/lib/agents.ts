@@ -24,9 +24,9 @@ export type AgentToolRef =
 export type TightenedPolicy = "ask" | "deny";
 
 /**
- * 网页可选的内置工具（内核没有列出内置工具的接口；`tool_search` 与 `skill_load` 由内核自动加入）。
+ * 网页可选的内置工具（内核没有列出内置工具的接口；`ToolSearch` 与 `Skill` 由内核自动加入）。
  */
-export const BUILTIN_TOOLS = ["ask_user", "read_tool_output", "skill_write"] as const;
+export const BUILTIN_TOOLS = ["AskUserQuestion", "ReadToolOutput", "SkillWrite"] as const;
 
 export interface AgentDefinitionInput {
   name: string;
@@ -43,13 +43,13 @@ export interface AgentDefinitionInput {
   modelParams?: Record<string, ParamValue>;
   /** 兜底模型的参数；没有兜底模型时必须为空。 */
   fallbackParams?: Record<string, ParamValue>;
-  /** 引用的工具；创建时不给则由内核填默认（ask_user、read_tool_output）。 */
+  /** 引用的工具；创建时不给则由内核填默认（AskUserQuestion、ReadToolOutput）。 */
   tools?: AgentToolRef[];
   /** 按工具 key 收紧策略。 */
   toolPolicies?: Record<string, TightenedPolicy>;
   /** 选用的组织技能（id）；不用技能时省略。 */
   /**
-   * 技能设置；表单只管 `orgSkills` 与 `writePolicy`（私有 agent 的 skill_write 确认开关，缺省不写），
+   * 技能设置；表单只管 `orgSkills` 与 `writePolicy`（私有 agent 的 SkillWrite 确认开关，缺省不写），
    * 其余键（新版本内核加的）保存时原样带回。
    */
   skills?: {

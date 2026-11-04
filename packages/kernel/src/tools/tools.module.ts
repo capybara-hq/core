@@ -40,7 +40,7 @@ import { ToolRegistry } from "./registry.js";
     StorageModule,
     SkillsModule,
     OrgLockModule,
-    // the `agent` tool's dispatch
+    // the `Agent` tool's dispatch
     SubagentsModule,
     // the builtin sandbox and skill tools run in the conversation's sandbox
     SandboxModule,

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -148,18 +149,18 @@ const byKey = (res: { json(): unknown }) =>
 describe("tool kinds", () => {
   it("map every builtin per the table, and nothing else", () => {
     expect(BUILTIN_TOOL_KINDS).toEqual({
-      sandbox_bash: "command",
-      sandbox_read: "read",
-      sandbox_write: "edit",
-      sandbox_edit: "edit",
-      sandbox_glob: "search",
-      sandbox_grep: "search",
-      sandbox_deliver: "tool",
-      tool_search: "meta",
-      skill_load: "meta",
-      skill_write: "meta",
-      read_tool_output: "meta",
-      ask_user: "meta",
+      Bash: "command",
+      Read: "read",
+      Write: "edit",
+      Edit: "edit",
+      Glob: "search",
+      Grep: "search",
+      Deliver: "tool",
+      ToolSearch: "meta",
+      Skill: "meta",
+      SkillWrite: "meta",
+      ReadToolOutput: "meta",
+      AskUserQuestion: "meta",
     });
   });
 });
@@ -168,38 +169,74 @@ describe("GET /conversations/:id/tools", () => {
   it("builtins: kind and key arguments, no title, source builtin", async () => {
     const { req, orgId, conversationId } = await setup();
     const res = await tools(req, orgId, conversationId, [
+      "Bash",
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "Deliver",
+      "Skill",
+      "ToolSearch",
+      "AskUserQuestion",
+      "Agent",
+    ]);
+    expect(res.statusCode, res.body).toBe(200);
+    const t = byKey(res);
+    expect(t.Bash).toEqual({
+      key: "Bash",
+      title: null,
+      kind: "command",
+      sandbox: true,
+      keyArgs: ["command"],
+      tool: null,
+      source: { kind: "builtin" },
+    });
+    expect(t.Read?.keyArgs).toEqual(["file_path"]);
+    expect(t.Write).toMatchObject({ kind: "edit", keyArgs: ["file_path"] });
+    expect(t.Edit).toMatchObject({ kind: "edit", keyArgs: ["file_path"] });
+    expect(t.Glob).toMatchObject({ kind: "search", keyArgs: ["pattern"] });
+    expect(t.Grep).toMatchObject({ kind: "search", keyArgs: ["pattern", "path"] });
+    expect(t.Deliver).toMatchObject({ kind: "tool", keyArgs: ["file_path"] });
+    expect(t.Deliver).toMatchObject({ sandbox: true });
+    for (const k of ["Skill", "ToolSearch", "AskUserQuestion", "Agent"]) {
+      expect(t[k]?.sandbox, k).toBe(false);
+    }
+    expect(t.Skill).toMatchObject({ kind: "meta", keyArgs: ["skill"] });
+    expect(t.ToolSearch).toMatchObject({ kind: "meta", keyArgs: ["query"] });
+    expect(t.AskUserQuestion).toMatchObject({ kind: "meta", keyArgs: [], title: null });
+    // a sub-agent's task name, then its type (the page shows agent calls as sub-agent rows)
+    expect(t.Agent).toMatchObject({ kind: "tool", keyArgs: ["description", "subagent_type"] });
+  });
+
+  it("an rc builtin key (old history) answers as its current tool with aliasOf and the old key arguments", async () => {
+    const { req, orgId, conversationId } = await setup();
+    const res = await tools(req, orgId, conversationId, [
       "sandbox_bash",
       "sandbox_read",
-      "sandbox_write",
-      "sandbox_edit",
-      "sandbox_glob",
-      "sandbox_grep",
-      "sandbox_deliver",
-      "skill_load",
-      "tool_search",
-      "ask_user",
       "agent",
+      "Bash",
     ]);
     expect(res.statusCode, res.body).toBe(200);
     const t = byKey(res);
     expect(t.sandbox_bash).toEqual({
       key: "sandbox_bash",
+      aliasOf: "Bash",
       title: null,
       kind: "command",
+      sandbox: true,
       keyArgs: ["command"],
+      tool: null,
       source: { kind: "builtin" },
     });
-    expect(t.sandbox_read?.keyArgs).toEqual(["path"]);
-    expect(t.sandbox_write).toMatchObject({ kind: "edit", keyArgs: ["path"] });
-    expect(t.sandbox_edit).toMatchObject({ kind: "edit", keyArgs: ["path"] });
-    expect(t.sandbox_glob).toMatchObject({ kind: "search", keyArgs: ["pattern"] });
-    expect(t.sandbox_grep).toMatchObject({ kind: "search", keyArgs: ["pattern", "path"] });
-    expect(t.sandbox_deliver).toMatchObject({ kind: "tool", keyArgs: ["path"] });
-    expect(t.skill_load).toMatchObject({ kind: "meta", keyArgs: ["name"] });
-    expect(t.tool_search).toMatchObject({ kind: "meta", keyArgs: ["query"] });
-    expect(t.ask_user).toMatchObject({ kind: "meta", keyArgs: [], title: null });
-    // a sub-agent's task name, then its type (the page shows agent calls as sub-agent rows)
-    expect(t.agent).toMatchObject({ kind: "tool", keyArgs: ["description", "subagent_type"] });
+    // the logged input of an rc call carries the old parameter names
+    expect(t.sandbox_read).toMatchObject({ aliasOf: "Read", kind: "read", keyArgs: ["path"] });
+    expect(t.agent).toMatchObject({
+      aliasOf: "Agent",
+      keyArgs: ["description", "subagent_type"],
+      source: { kind: "builtin" },
+    });
+    expect(t.Bash).not.toHaveProperty("aliasOf");
   });
 
   it("a connector tool returns its MCP title and key arguments, named by the connector", async () => {
@@ -217,21 +254,25 @@ describe("GET /conversations/:id/tools", () => {
     });
     expect(inst.statusCode, inst.body).toBe(201);
     const connectorId = (inst.json() as { connector: { id: string } }).connector.id;
-    const res = await tools(req, orgId, conversationId, ["chat__search", "chat__post"]);
+    const res = await tools(req, orgId, conversationId, ["mcp__chat__search", "mcp__chat__post"]);
     expect(res.statusCode, res.body).toBe(200);
     expect((res.json() as { tools: ToolInfo[] }).tools).toEqual([
       {
-        key: "chat__search",
+        key: "mcp__chat__search",
         title: "Search messages",
         kind: "connector",
+        sandbox: false,
         keyArgs: ["query", "channel"],
+        tool: "search",
         source: { kind: "connector", id: connectorId, name: "Acme Chat" },
       },
       {
-        key: "chat__post",
+        key: "mcp__chat__post",
         title: null,
         kind: "connector",
+        sandbox: false,
         keyArgs: [],
+        tool: "post",
         source: { kind: "connector", id: connectorId, name: "Acme Chat" },
       },
     ]);
@@ -265,37 +306,88 @@ describe("GET /conversations/:id/tools", () => {
       .values({ spec_hash: row.spec_hash, spec: stale })
       .onConflict((oc) => oc.column("spec_hash").doUpdateSet({ spec: stale }))
       .execute();
-    const res = await tools(req, orgId, conversationId, ["chat__search"]);
+    const res = await tools(req, orgId, conversationId, ["mcp__chat__search"]);
     expect(res.statusCode, res.body).toBe(200);
-    expect(byKey(res).chat__search?.title).toBe("Search messages");
+    expect(byKey(res).mcp__chat__search?.title).toBe("Search messages");
   });
 
   it("an extension tool returns its registration's title and key arguments", async () => {
     const { req, orgId, conversationId } = await setup();
-    const res = await tools(req, orgId, conversationId, ["mem-connector__echo"]);
+    const res = await tools(req, orgId, conversationId, ["plugin__mem-connector__echo"]);
     expect(res.statusCode, res.body).toBe(200);
-    expect(byKey(res)["mem-connector__echo"]).toEqual({
-      key: "mem-connector__echo",
+    expect(byKey(res)["plugin__mem-connector__echo"]).toEqual({
+      key: "plugin__mem-connector__echo",
       title: "Echo",
       kind: "tool",
+      sandbox: false,
       keyArgs: ["text"],
-      source: { kind: "extension", name: "mem-connector" },
+      tool: "echo",
+      // no catalog item: the plugin name stands in for its display name
+      source: {
+        kind: "extension",
+        name: "mem-connector",
+        displayName: { zh: "mem-connector", en: "mem-connector" },
+      },
     });
+  });
+
+  it("an extension tool is named by its plugin's catalog display name", async () => {
+    const { req, orgId, conversationId } = await setup();
+    await db
+      .insertInto("catalog_items")
+      .values({
+        id: randomUUID(),
+        name: "mem-connector",
+        package_name: "@acme/plugin-mem-connector",
+        publisher: "Acme",
+        display_name: JSON.stringify({ zh: "内存连接器", en: "Mem Connector" }),
+        description: "d",
+        latest_version: "1.0.0",
+        policy: "allow",
+      })
+      .execute();
+    try {
+      const res = await tools(req, orgId, conversationId, ["plugin__mem-connector__echo"]);
+      expect(res.statusCode, res.body).toBe(200);
+      expect(byKey(res)["plugin__mem-connector__echo"]?.source).toEqual({
+        kind: "extension",
+        name: "mem-connector",
+        displayName: { zh: "内存连接器", en: "Mem Connector" },
+      });
+    } finally {
+      await db.deleteFrom("catalog_items").where("name", "=", "mem-connector").execute();
+    }
   });
 
   it("an unknown key comes back as a plain tool; repeated keys once, in request order", async () => {
     const { req, orgId, conversationId } = await setup();
     const res = await tools(req, orgId, conversationId, [
-      "nope__x",
+      "mcp__nope__x",
       "mystery",
-      "ask_user",
-      "nope__x",
+      "AskUserQuestion",
+      "mcp__nope__x",
     ]);
     expect(res.statusCode, res.body).toBe(200);
     expect((res.json() as { tools: ToolInfo[] }).tools).toEqual([
-      { key: "nope__x", title: null, kind: "tool", keyArgs: [], source: { kind: "unknown" } },
-      { key: "mystery", title: null, kind: "tool", keyArgs: [], source: { kind: "unknown" } },
-      expect.objectContaining({ key: "ask_user", kind: "meta" }),
+      {
+        key: "mcp__nope__x",
+        title: null,
+        kind: "tool",
+        sandbox: false,
+        keyArgs: [],
+        tool: "x",
+        source: { kind: "unknown" },
+      },
+      {
+        key: "mystery",
+        title: null,
+        kind: "tool",
+        sandbox: false,
+        keyArgs: [],
+        tool: null,
+        source: { kind: "unknown" },
+      },
+      expect.objectContaining({ key: "AskUserQuestion", kind: "meta" }),
     ]);
   });
 
@@ -304,10 +396,10 @@ describe("GET /conversations/:id/tools", () => {
     const other = await accounts.createLocal({ login: "mem", password: PW, displayName: "M" });
     await members.add(orgId, other.id, "member", owner.id);
     const m = await session("mem");
-    const hidden = await tools(m, orgId, conversationId, ["ask_user"]);
+    const hidden = await tools(m, orgId, conversationId, ["AskUserQuestion"]);
     expect(hidden.statusCode).toBe(404);
     expect(errCode(hidden)).toBe("conversation.not_found");
-    const notUuid = await tools(req, orgId, "not-a-uuid", ["ask_user"]);
+    const notUuid = await tools(req, orgId, "not-a-uuid", ["AskUserQuestion"]);
     expect(notUuid.statusCode).toBe(404);
     expect(errCode(notUuid)).toBe("conversation.not_found");
 
@@ -331,7 +423,7 @@ describe("GET /conversations/:id/tools", () => {
     });
     const svc = await k.http.inject({
       method: "GET",
-      url: `/api/v1/orgs/${orgId}/conversations/${conversationId}/tools?keys=ask_user`,
+      url: `/api/v1/orgs/${orgId}/conversations/${conversationId}/tools?keys=AskUserQuestion`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(svc.statusCode).toBe(403);

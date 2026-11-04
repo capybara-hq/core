@@ -540,11 +540,11 @@ describe("queued skill invocations: more cases (batch 5 review m5)", { timeout: 
       {
         when: { lastUserIncludes: "SPAWN", assistantTurns: 0 },
         reply: {
-          toolCalls: [{ name: "agent", input: { description: "Kid", prompt: "KIDHOLD" } }],
+          toolCalls: [{ name: "Agent", input: { description: "Kid", prompt: "KIDHOLD" } }],
         },
       },
     ]);
-    const agentId = await createAgent([review.id], [{ kind: "builtin", name: "agent" }]);
+    const agentId = await createAgent([review.id], [{ kind: "builtin", name: "Agent" }]);
     const conv = await createConv(owner, orgId, agentId);
     const spawn = await owner({
       method: "POST",

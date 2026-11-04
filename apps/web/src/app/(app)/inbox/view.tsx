@@ -43,6 +43,7 @@ import { useAppMutation } from "../../../lib/query/mutation";
 import { usePageQuery } from "../../../lib/query/page-query";
 import { useWorkspace } from "../../../lib/query/workspace";
 import type { SkillChange } from "../../../lib/skills";
+import { approvalToolLabel, toolLabelText } from "../../../lib/tool-label";
 import { useErrorMessage } from "../../../lib/use-error-message";
 import NotFound from "../not-found";
 
@@ -198,6 +199,7 @@ function Inbox({
               pending: approvals.pending,
               onDecide: (d) => void decideApproval(active.approval, d),
               openConversation: () => router.push(active.approval.conversationPath),
+              locale,
               t,
               ta,
             })
@@ -284,8 +286,7 @@ function titleOf(
   if (item.type === "catalog_request") {
     return `${requestLabel} · ${displayNameOf(item.request.item, locale)}`;
   }
-  const a = item.approval;
-  return a.connector ? `${a.connector.name} · ${a.toolName}` : a.toolName;
+  return toolLabelText(approvalToolLabel(item.approval, locale));
 }
 
 /** 选中项的三块：内容区、Inspector、ActionRow。 */
@@ -305,6 +306,7 @@ function toolApprovalDetail({
   pending,
   onDecide,
   openConversation,
+  locale,
   t,
   ta,
 }: {
@@ -314,6 +316,7 @@ function toolApprovalDetail({
   pending: "approve" | "deny" | undefined;
   onDecide(decision: "approve" | "deny"): void;
   openConversation(): void;
+  locale: string;
   t: Translate;
   ta: Translate;
 }): Detail {
@@ -351,11 +354,7 @@ function toolApprovalDetail({
     content: (
       <div data-approval-id={approval.id}>
         <Card
-          title={
-            approval.connector
-              ? `${approval.connector.name} · ${approval.toolName}`
-              : approval.toolName
-          }
+          title={toolLabelText(approvalToolLabel(approval, locale))}
           actions={<StatusMark status="waiting" label={ta("waiting")} />}
         >
           <Stack gap={12}>

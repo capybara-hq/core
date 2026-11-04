@@ -53,7 +53,7 @@ export interface SubagentParent {
 }
 
 /**
- * 运行在等什么人处理：审批（`approvals` 行）或输入请求（`questions` 行，统一承载 `ask_user`、
+ * 运行在等什么人处理：审批（`approvals` 行）或输入请求（`questions` 行，统一承载 `AskUserQuestion`、
  * 插件工具的 `input_required` 与 MCP elicitation）。`expiresAt` 为 ISO 时间。
  * `subagents` (phase C, spec §7.2): sub-agents dispatched in a step are still running; the id is
  * `sa-<runId>-<step>` (no `:`, it is part of BullMQ job ids).

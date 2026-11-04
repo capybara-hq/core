@@ -1,4 +1,5 @@
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
+import { SKILL_LOAD } from "../../tools/builtin-names.js";
 
 /**
  * 技能目录在模型请求里的渲染（M5 T14，Ruling M17）。纯函数：只取决于日志里的 `skills_catalog` 快照，
@@ -17,21 +18,53 @@ export type PinnedSkill = NonNullable<SkillsSnapshot["pinned"]>[number];
 /** 日志里的 `skills_catalog` 事件。 */
 export type SkillsCatalogEvent = Extract<ConversationEvent, { type: "skills_catalog" }>;
 
-/** 加载技能的内置工具名。 */
-export const SKILL_LOAD = "skill_load";
+/**
+ * The model-visible skills texts that name the skill-loading builtin. A request recorded before the
+ * tool rename renders {@link LEGACY_SKILL_TEXTS} instead (`./legacy-text.ts`, chosen from the
+ * request's tools by `usesLegacyToolNames`), so its system text stays as it was sent.
+ */
+export interface SkillTexts {
+  /** The header of the first catalog (in the system cache segment). */
+  skillsCatalogHeader: string;
+  /** The heading of the added skills in a change notice. */
+  newSkills: string;
+  /** The heading of the updated skills in a change notice. */
+  updatedSkills: string;
+  /** The heading of the current catalog after a compaction summary. */
+  currentSkills: string;
+  /** The line restored after a compaction summary for the invoked skills (`names` non-empty). */
+  invokedSkills: (names: readonly string[]) => string;
+  /** The header of the pinned skills in the system cache segment. */
+  pinnedSkillsHeader: string;
+}
+
+export const SKILL_TEXTS: SkillTexts = Object.freeze({
+  skillsCatalogHeader:
+    "Skills are available in this conversation. A skill is a set of instructions, sometimes with " +
+    "scripts or other files, for a specific kind of task. When a task matches a skill's description, " +
+    `call ${SKILL_LOAD} with the skill's name to read its instructions before you start; do not guess ` +
+    "what a skill says. Available skills:",
+  newSkills: `New skills (call ${SKILL_LOAD} with the name to use one):`,
+  updatedSkills: `Updated skills (call ${SKILL_LOAD} again before relying on earlier instructions):`,
+  currentSkills:
+    "Skills available in this conversation now (this replaces any earlier list of skills; call " +
+    `${SKILL_LOAD} with a name to read a skill's instructions):`,
+  invokedSkills: (names: readonly string[]) =>
+    `Skills the user invoked earlier in this conversation: ${names.join(", ")}. Call ${SKILL_LOAD} with a name to read its instructions again.`,
+  pinnedSkillsHeader:
+    "Pinned skills: the owner of this agent pinned these skills, so their instructions apply " +
+    `throughout this conversation. Follow them without calling ${SKILL_LOAD}; call ${SKILL_LOAD} ` +
+    "only to copy a pinned skill's files into the sandbox.",
+});
 
 /** 目录开头的说明（system 缓存段里的第一份目录）。 */
-export const SKILLS_CATALOG_HEADER =
-  "Skills are available in this conversation. A skill is a set of instructions, sometimes with " +
-  "scripts or other files, for a specific kind of task. When a task matches a skill's description, " +
-  `call ${SKILL_LOAD} with the skill's name to read its instructions before you start; do not guess ` +
-  "what a skill says. Available skills:";
+export const SKILLS_CATALOG_HEADER = SKILL_TEXTS.skillsCatalogHeader;
 
 /** 按码点比较名字（与区域设置无关，结果确定）。 */
 const byName = (a: CatalogSkill, b: CatalogSkill) =>
   a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
 
-/** 目录里每个技能描述最多的码点数（超出确定地截断；`skill_load` 仍返回完整正文）。 */
+/** 目录里每个技能描述最多的码点数（超出确定地截断；`Skill` 仍返回完整正文）。 */
 export const CATALOG_DESCRIPTION_MAX_CHARS = 300;
 
 /** 折叠成一行，按码点截到 {@link CATALOG_DESCRIPTION_MAX_CHARS}。 */
@@ -49,8 +82,11 @@ const line = (s: CatalogSkill) => `- ${s.name}: ${shortDescription(s.description
 const lines = (skills: readonly CatalogSkill[]) => [...skills].sort(byName).map(line).join("\n");
 
 /** 第一份目录（进 system 缓存段），按名字排序。 */
-export function skillsCatalogText(skills: readonly CatalogSkill[]): string {
-  return `${SKILLS_CATALOG_HEADER}\n${lines(skills)}`;
+export function skillsCatalogText(
+  skills: readonly CatalogSkill[],
+  texts: SkillTexts = SKILL_TEXTS,
+): string {
+  return `${texts.skillsCatalogHeader}\n${lines(skills)}`;
 }
 
 /** 两份快照是否相同（按 id、版本、名字、描述与来源）。顺序无关。 */
@@ -105,7 +141,7 @@ export function sameSnapshot(a: SkillsSnapshot, b: SkillsSnapshot): boolean {
 /**
  * The catalog differences between two snapshots. `pinnedIds` (the next snapshot's pinned ids, phase
  * B) are left out of `updated`: a pinned skill's new body is rendered by {@link pinnedChangeText},
- * and the pinned header says not to call `skill_load` for it.
+ * and the pinned header says not to call `Skill` for it.
  */
 function catalogChanges(
   prev: readonly CatalogSkill[],
@@ -136,16 +172,15 @@ export function skillsChangeText(
   prev: readonly CatalogSkill[],
   next: readonly CatalogSkill[],
   pinnedIds?: ReadonlySet<string>,
+  texts: SkillTexts = SKILL_TEXTS,
 ): string {
   const { added, updated, removed } = catalogChanges(prev, next, pinnedIds);
   const parts = ["The skills available in this conversation have changed."];
   if (added.length > 0) {
-    parts.push(`New skills (call ${SKILL_LOAD} with the name to use one):\n${lines(added)}`);
+    parts.push(`${texts.newSkills}\n${lines(added)}`);
   }
   if (updated.length > 0) {
-    parts.push(
-      `Updated skills (call ${SKILL_LOAD} again before relying on earlier instructions):\n${lines(updated)}`,
-    );
+    parts.push(`${texts.updatedSkills}\n${lines(updated)}`);
   }
   if (removed.length > 0) {
     parts.push(
@@ -160,14 +195,14 @@ export function skillsChangeText(
 }
 
 /** 压缩摘要之后补上的「当前目录」（与 system 里的第一份不同时）：完整列出，替代之前的目录与提醒。 */
-export function skillsCurrentText(skills: readonly CatalogSkill[]): string {
+export function skillsCurrentText(
+  skills: readonly CatalogSkill[],
+  texts: SkillTexts = SKILL_TEXTS,
+): string {
   if (skills.length === 0) {
     return "No skills are available in this conversation now (this replaces any earlier list of skills).";
   }
-  return (
-    "Skills available in this conversation now (this replaces any earlier list of skills; call " +
-    `${SKILL_LOAD} with a name to read a skill's instructions):\n${lines(skills)}`
-  );
+  return `${texts.currentSkills}\n${lines(skills)}`;
 }
 
 // ---- Skills a person invoked (phase D spec §4.4; model-visible, English) ----
@@ -176,9 +211,12 @@ export function skillsCurrentText(skills: readonly CatalogSkill[]): string {
  * The line restored after a compaction summary whose range holds inline skill invocations
  * (`names`: distinct, code point order); empty for none. Bodies are not re-injected.
  */
-export function invokedSkillsText(names: readonly string[]): string {
+export function invokedSkillsText(
+  names: readonly string[],
+  texts: SkillTexts = SKILL_TEXTS,
+): string {
   if (names.length === 0) return "";
-  return `Skills the user invoked earlier in this conversation: ${names.join(", ")}. Call ${SKILL_LOAD} with a name to read its instructions again.`;
+  return texts.invokedSkills(names);
 }
 
 /** The distinct names (code point order) of the inline invocations in `events` up to `upToSeq`. */
@@ -256,10 +294,7 @@ export function systemSkillsCatalog(
 // ---- Pinned skills and the tool-name map (phase B, spec §9.1, §9.4; model-visible, English) ----
 
 /** The header of the pinned skills in the system cache segment. */
-export const PINNED_SKILLS_HEADER =
-  "Pinned skills: the owner of this agent pinned these skills, so their instructions apply " +
-  `throughout this conversation. Follow them without calling ${SKILL_LOAD}; call ${SKILL_LOAD} ` +
-  "only to copy a pinned skill's files into the sandbox.";
+export const PINNED_SKILLS_HEADER = SKILL_TEXTS.pinnedSkillsHeader;
 
 /** One pinned skill with its body. */
 export function pinnedBlock(p: PinnedSkill): string {
@@ -267,8 +302,11 @@ export function pinnedBlock(p: PinnedSkill): string {
 }
 
 /** The pinned skills of the system snapshot (non-empty), after the catalog. */
-export function pinnedSystemText(pinned: readonly PinnedSkill[]): string {
-  return `${PINNED_SKILLS_HEADER}\n\n${pinned.map(pinnedBlock).join("\n\n")}`;
+export function pinnedSystemText(
+  pinned: readonly PinnedSkill[],
+  texts: SkillTexts = SKILL_TEXTS,
+): string {
+  return `${texts.pinnedSkillsHeader}\n\n${pinned.map(pinnedBlock).join("\n\n")}`;
 }
 
 /**
@@ -322,7 +360,11 @@ export function toolMapChangeText(next: string | undefined): string {
  * nothing else differs: logs before phase B render exactly as before), the pinned change, the
  * tool-name map change; joined by blank lines.
  */
-export function snapshotChangeText(prev: SkillsSnapshot | undefined, next: SkillsSnapshot): string {
+export function snapshotChangeText(
+  prev: SkillsSnapshot | undefined,
+  next: SkillsSnapshot,
+  texts: SkillTexts = SKILL_TEXTS,
+): string {
   const prevSkills = prev?.skills ?? [];
   const pinnedDiff = !samePinned(prev?.pinned, next.pinned);
   const mapDiff = prev?.toolMap !== next.toolMap;
@@ -337,7 +379,7 @@ export function snapshotChangeText(prev: SkillsSnapshot | undefined, next: Skill
     : !sameSkills(prevSkills, next.skills);
   const parts: string[] = [];
   if (catalogDiff || (!pinnedDiff && !mapDiff)) {
-    parts.push(skillsChangeText(prevSkills, next.skills, pinnedIds));
+    parts.push(skillsChangeText(prevSkills, next.skills, pinnedIds, texts));
   }
   if (pinnedDiff) parts.push(pinnedChangeText(prev?.pinned, next.pinned));
   if (mapDiff) parts.push(toolMapChangeText(next.toolMap));
@@ -352,10 +394,11 @@ export function snapshotChangeText(prev: SkillsSnapshot | undefined, next: Skill
 export function snapshotCurrentText(
   system: SkillsSnapshot | undefined,
   covered: SkillsSnapshot,
+  texts: SkillTexts = SKILL_TEXTS,
 ): string {
   const parts: string[] = [];
   if (!sameSkills(system?.skills ?? [], covered.skills)) {
-    parts.push(skillsCurrentText(covered.skills));
+    parts.push(skillsCurrentText(covered.skills, texts));
   }
   if (!samePinned(system?.pinned, covered.pinned)) parts.push(pinnedCurrentText(covered.pinned));
   if (system?.toolMap !== covered.toolMap) {
@@ -365,9 +408,9 @@ export function snapshotCurrentText(
 }
 
 /** The system snapshot's text after the agent's instructions: catalog, pinned skills, tool map. */
-export function snapshotSystemText(s: SkillsSnapshot): string {
-  let text = skillsCatalogText(s.skills);
-  if (s.pinned && s.pinned.length > 0) text += `\n\n${pinnedSystemText(s.pinned)}`;
+export function snapshotSystemText(s: SkillsSnapshot, texts: SkillTexts = SKILL_TEXTS): string {
+  let text = skillsCatalogText(s.skills, texts);
+  if (s.pinned && s.pinned.length > 0) text += `\n\n${pinnedSystemText(s.pinned, texts)}`;
   if (s.toolMap !== undefined) text += `\n\n${s.toolMap}`;
   return text;
 }

@@ -2,7 +2,7 @@
 
 import { Checkbox, Field, FormSection, Select, Stack, Text } from "@capybara-hq/design";
 import { useQueries } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import {
   type Agent,
@@ -13,6 +13,7 @@ import {
 import type { ConnectorDetail } from "../../lib/connectors";
 import { retryOnMountOf } from "../../lib/query/client";
 import { connectorQuery } from "../../lib/query/conversation";
+import { toolLabel, toolLabelText } from "../../lib/tool-label";
 import { BUILTIN_SET, replaceToolRefs, sameJson, savedDefinition } from "./definition-parts";
 import {
   SaveFeedback,
@@ -52,7 +53,7 @@ const sorted = (xs: string[]) => [...xs].sort();
  * 工具 Tools (agent profile design §3.2): the builtin tools, the active connectors (all their
  * enabled tools) and a tightened policy per referenced tool. Its save sends the saved definition
  * with only `tools` and `toolPolicies` changed: references it does not switch (plugin tools,
- * connectors picked by name, the `agent` tool of Sub-agents) and their policies stay as saved.
+ * connectors picked by name, the `Agent` tool of Sub-agents) and their policies stay as saved.
  */
 export function ToolsSection() {
   return <WithFormData>{(data) => <ToolsEdit data={data} />}</WithFormData>;
@@ -60,6 +61,7 @@ export function ToolsSection() {
 
 function ToolsEdit({ data }: { data: AgentFormData }) {
   const t = useTranslations("agents");
+  const locale = useLocale();
   const { orgId, agent } = useAgentPage();
   const save = useDefinitionSave();
   const actionRow = useSectionActionRow();
@@ -96,6 +98,22 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
       (connectorDetails[id]?.tools ?? []).filter((x) => x.status === "enabled").map((x) => x.key),
     ),
   ];
+
+  /** How the policy rows name a tool: builtins by name, connector tools as "<connector> [<tool>]". */
+  const policyLabel = (key: string): string => {
+    for (const id of d.connectors) {
+      const c = connectorDetails[id];
+      const x = c?.tools.find((x) => x.key === key);
+      if (c && x)
+        return toolLabelText(
+          toolLabel(
+            { key, title: null, tool: x.name, source: { kind: "connector", id, name: c.name } },
+            locale,
+          ),
+        );
+    }
+    return toolLabelText(toolLabel({ key, title: null, source: { kind: "builtin" } }, locale));
+  };
 
   const unsaved = [
     !sameJson(sorted(d.builtins), sorted(saved.builtins)),
@@ -211,7 +229,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
               </Text>
               {toolKeys.map((key) => (
                 <div key={key} data-policy={key}>
-                  <Field label={key}>
+                  <Field label={policyLabel(key)}>
                     <Select
                       value={d.policies[key] ?? ""}
                       disabled={save.pending}

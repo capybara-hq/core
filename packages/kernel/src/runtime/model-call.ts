@@ -241,7 +241,7 @@ export const modelCallIdemKey = (runId: string, step: number, attempt: number): 
 /** 一步最多的模型调用尝试次数（主模型、同模型重试、兜底，见 `ladder`）。 */
 export const MAX_MODEL_ATTEMPTS = 3;
 
-/** 本步解析出的工具与是否启用 tool_search（见 `ToolRegistry.forAgent`），以及本步已取的附件字节。 */
+/** 本步解析出的工具与是否启用 ToolSearch（见 `ToolRegistry.forAgent`），以及本步已取的附件字节。 */
 interface StepTools {
   list: RequestTool[];
   toolSearch: boolean;
@@ -357,7 +357,7 @@ async function runStep(
     }
     // 每步实时解析（连接器 / 插件状态可能在步骤之间变化），解析结果记在 model_call；收尾调用同样带工具
     // a skills catalog snapshot (Ruling M17; an empty one too) or a person's skill invocation in the
-    // log → skill_load is offered (see skillLoadOffered)
+    // log → Skill is offered (see skillLoadOffered)
     const resolved = await deps.tools.forAgent(input.orgId, {
       tools: input.agent.tools ?? [],
       subagents: input.agent.subagents,

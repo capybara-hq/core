@@ -480,9 +480,7 @@ describe("the conversation page (ConversationPage)", () => {
             {
               step: 0,
               stopReason: "tool_use",
-              content: [
-                { type: "tool_call", id: "t1", name: "sandbox_bash", input: { command: "ls" } },
-              ],
+              content: [{ type: "tool_call", id: "t1", name: "Bash", input: { command: "ls" } }],
             },
             "r2",
           ),
@@ -494,7 +492,7 @@ describe("the conversation page (ConversationPage)", () => {
           ev(
             7,
             "tool_call_started",
-            { step: 0, callId: "t1", toolKey: "sandbox_bash", specHash: "h" },
+            { step: 0, callId: "t1", toolKey: "Bash", specHash: "h" },
             "r2",
           ),
         ),
@@ -506,7 +504,7 @@ describe("the conversation page (ConversationPage)", () => {
           ev(
             8,
             "tool_result",
-            { step: 0, callId: "t1", toolKey: "sandbox_bash", content: "ok", isError: false },
+            { step: 0, callId: "t1", toolKey: "Bash", content: "ok", isError: false },
             "r2",
           ),
         ),
@@ -1577,7 +1575,7 @@ describe("tool rows read the tool info API", () => {
                 {
                   type: "tool_call",
                   id: "c1",
-                  name: "slack__search",
+                  name: "plugin__slack__search",
                   input: { query: "#feedback" },
                 },
               ],
@@ -1589,19 +1587,24 @@ describe("tool rows read the tool info API", () => {
         json(200, {
           tools: [
             {
-              key: "slack__search",
+              key: "plugin__slack__search",
               title: "Search messages",
               kind: "connector",
+              sandbox: false,
               keyArgs: ["query"],
+              tool: "search",
               source: { kind: "connector", id: "k1", name: "Slack" },
             },
           ],
         }),
     });
     const { calls: server } = await renderChat("en");
-    // read with the snapshot on the server: the first paint already has the title
-    expect(screen.getByText(/Slack: Search messages/)).toBeTruthy();
-    expect(server.some((c) => c.url.endsWith("/tools?keys=slack__search"))).toBe(true);
+    // read with the snapshot on the server: the first paint already has the tool info.
+    // Claude Code's look: the connector's name and the local tool, the title as the tooltip
+    const name = screen.getByText("Slack [search]");
+    expect(name.closest('[data-part="tool-label"]')?.getAttribute("title")).toBe("Search messages");
+    expect(screen.queryByText(/Slack: Search messages/)).toBeNull();
+    expect(server.some((c) => c.url.endsWith("/tools?keys=plugin__slack__search"))).toBe(true);
     expect(calls.some((c) => c.url.includes("/tools?"))).toBe(false);
   });
 });

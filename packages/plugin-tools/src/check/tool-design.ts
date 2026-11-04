@@ -14,7 +14,7 @@ export type { Finding };
 const MIN_DESCRIPTION = 20;
 const CJK = /[㐀-鿿豈-﫿　-〿＀-￯]/;
 /** 可执行的建议动词：错误信息里至少出现其一（整词、不分大小写）。 */
-const ACTION_VERB = /\b(?:use|call|retry|check|ask|pass|provide)\b/i;
+const ACTION_VERB = /\b(?:use|call|retry|check|ask|pass|provide|read)\b/i;
 
 const WRAPPERS = new Set([
   "ParenthesizedExpression",
@@ -146,7 +146,7 @@ const MSG_DESC_CJK = "工具 description 是模型可见文案，必须是英文
 const MSG_ERR_DYNAMIC =
   "ToolError 的消息必须是字符串字面量或模板（或指向本文件内的此类常量 / 函数），否则无法检查是否可执行";
 const MSG_ERR_ACTION =
-  "ToolError 的消息要让模型知道下一步怎么做：必须含建议动词之一（use / call / retry / check / ask / pass / provide）";
+  "ToolError 的消息要让模型知道下一步怎么做：必须含建议动词之一（use / call / retry / check / ask / pass / provide / read）";
 
 /** 取一个 spec 表达式对应的对象字面量（直接写，或经本文件内的常量引用）。 */
 function specObject(n: Node, env: Env): Node | undefined {
@@ -220,7 +220,7 @@ function scanFile(f: ParsedFile): Finding[] {
  * - tool-description：`ctx.tools.register(spec, …)` 与 `BuiltinTool` 字面量（有 spec 与 run）里的 spec
  *   必须有字符串字面量 description（可 `+` 拼接）、不少于 20 字符、不含中文（模型可见文案一律英文）；
  * - tool-error-actionable：`new ToolError(msg)` 的 msg 是字符串字面量 / 模板（或本文件内的常量、函数返回值），
- *   且含建议动词 use / call / retry / check / ask / pass / provide 之一，让模型知道下一步做什么。
+ *   且含建议动词 use / call / retry / check / ask / pass / provide / read 之一，让模型知道下一步做什么。
  * spec 可以直接写对象字面量，也可以引用本文件内的 const；其他写法（跨文件、动态构造）报 tool-description。
  * 已知缺口：从别的文件导入的消息常量 / 函数不追踪；非 ToolError 类的错误不查；运行时拼出的 spec 不查。
  * 扫描：传入目录下的非测试源码。

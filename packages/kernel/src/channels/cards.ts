@@ -1,7 +1,12 @@
-import type { ChannelCard, FormAnswer, InputForm, OutboundMessage } from "@capybara-hq/plugin-sdk";
+import {
+  type ChannelCard,
+  type FormAnswer,
+  type InputForm,
+  type OutboundMessage,
+  parseToolKey,
+} from "@capybara-hq/plugin-sdk";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import type { ApprovalsService, ApprovalView } from "../tools/approvals.service.js";
-import { KEY_SEPARATOR } from "../tools/naming.js";
 import { type ChannelLocale, phrase } from "./phrases.js";
 
 /** 审批卡片里工具参数预览的最大长度（字符）。 */
@@ -93,11 +98,21 @@ export const conversationUrl = (base: string, conversationId: string) =>
 export const connectUrl = (base: string, connectorId: string) =>
   `${base}/account/connections#connector-${encodeURIComponent(connectorId)}`;
 
-/** 来源内的工具名：连接器工具去掉 `<slug>__`（审批详情已处理），插件工具去掉 `<插件>__`。 */
-function shortToolName(v: ApprovalView): string {
-  if (v.connector) return v.toolName;
-  const i = v.toolKey.indexOf(KEY_SEPARATOR);
-  return i > 0 ? v.toolKey.slice(i + KEY_SEPARATOR.length) : v.toolKey;
+/**
+ * The tool as the card names it (tool naming spec §7): a builtin by its name; a connector or
+ * extension tool as `<display name> [<tool>]` (the connector's name, the plugin's display name in
+ * the card's language), the way the web labels it.
+ */
+export function approvalToolName(
+  v: Pick<ApprovalView, "toolKey" | "toolName" | "connector" | "extension">,
+  locale: ChannelLocale,
+): string {
+  // `toolName` is already the connector's own name for its tool
+  if (v.connector) return `${v.connector.name} [${v.toolName}]`;
+  const parsed = parseToolKey(v.toolKey);
+  const tool = parsed && parsed.kind !== "builtin" ? parsed.tool : v.toolName;
+  if (v.extension) return `${v.extension.displayName[locale]} [${tool}]`;
+  return v.toolKey;
 }
 
 export interface CardDeps {
@@ -137,8 +152,8 @@ export async function approvalCard(
     kind: "approval",
     id: v.id,
     title: phrase("approvalTitle", locale),
-    toolName: shortToolName(v),
-    ...(v.connector && { appName: v.connector.name }),
+    // the label carries the source, so no separate appName (renderers would repeat it)
+    toolName: approvalToolName(v, locale),
     agentName: v.agent.name || "Agent",
     inputPreview: inputPreview(v.input, redact),
     scopes: v.requestedFor === null ? ["once"] : ["once", "session", "always"],

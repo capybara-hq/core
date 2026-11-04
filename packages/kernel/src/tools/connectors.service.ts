@@ -3,6 +3,7 @@ import {
   type AuthHint,
   type AuthInjection,
   type ConnectorOperation,
+  connectorToolKey,
   type ToolAnnotations,
   ToolError,
   type ToolSpec,
@@ -39,7 +40,7 @@ import {
   toolIssue,
 } from "./drift.js";
 import { endpointCredentialIssues, endpointView } from "./endpoint.js";
-import { deriveSlug, isValidSlug, SLUG_RULE, toolKey } from "./naming.js";
+import { deriveSlug, isValidSlug, SLUG_RULE } from "./naming.js";
 import {
   checkOAuthUrl,
   discoverMcp,
@@ -921,7 +922,7 @@ export class ConnectorsService {
       issues = snap.issues;
       tools = snap.rows.map((r) => ({
         name: r.name,
-        key: toolKey(slug, r.name),
+        key: connectorToolKey(slug, r.name),
         description: r.spec.description,
         inputSchema: r.spec.inputSchema,
         annotations: r.spec.annotations ?? null,
@@ -1035,7 +1036,7 @@ export class ConnectorsService {
         const next = t.pending_spec as ToolSpec | null;
         return {
           name: t.name,
-          key: toolKey(r.slug, t.name),
+          key: connectorToolKey(r.slug, t.name),
           description: spec.description,
           inputSchema: spec.inputSchema,
           annotations: spec.annotations ?? null,

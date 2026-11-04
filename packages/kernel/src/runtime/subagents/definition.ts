@@ -1,7 +1,10 @@
 import {
   type AgentTemplate,
   type AgentTemplateTier,
+  connectorToolKey,
+  extensionToolKey,
   type ModelParameter,
+  parseToolKey,
   SKILL_ENTRY_FILE,
   sanitizeParams,
 } from "@capybara-hq/plugin-sdk";
@@ -13,15 +16,11 @@ import { ApiError } from "../../errors.js";
 import type { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import type { ModelPurposesService } from "../../models/purposes.js";
 import { PINNED_SKILLS_LIMITS } from "../../skills/catalog.js";
-import { toolKey } from "../../tools/naming.js";
+import { CHILD_REMOVED_TOOLS } from "../../tools/builtin-names.js";
 import type { ProviderRegistry } from "../providers.js";
 import type { RosterEntry } from "./roster.js";
 
-/**
- * Tools a sub-agent never gets (spec §5.3, §5.5): `agent` (depth 1), `ask_user` (the person does not
- * see the child), `sandbox_deliver` (delivering files is the parent's job) and `skill_write`.
- */
-export const CHILD_REMOVED_TOOLS = ["agent", "ask_user", "sandbox_deliver", "skill_write"] as const;
+export { CHILD_REMOVED_TOOLS } from "../../tools/builtin-names.js";
 
 /**
  * The roster entry's template is gone (an inline template edited away, a plugin template
@@ -121,7 +120,7 @@ async function loadConnectors(
 /**
  * Narrows tool refs by resolved key (spec §5.3): keeps a key when `allow` (if given) lists it and
  * neither `deny` nor {@link CHILD_REMOVED_TOOLS} does. A connector ref with `tools: "all"` stays
- * live only when nothing can narrow it (no allowlist and no deny key under `<slug>__`), so a tool
+ * live only when nothing can narrow it (no allowlist and no deny key under `mcp__<slug>__`), so a tool
  * the connector gains later never slips past the template; otherwise it becomes the kept names, or
  * is dropped. A connector that no longer exists keeps its ref only without an allowlist.
  */
@@ -139,20 +138,23 @@ function narrowTools(
     if (ref.kind === "builtin") {
       if (keep(ref.name)) out.push(ref);
     } else if (ref.kind === "plugin") {
-      if (keep(toolKey(ref.plugin, ref.name))) out.push(ref);
+      if (keep(extensionToolKey(ref.plugin, ref.name))) out.push(ref);
     } else {
       const c = connectors.get(ref.connectorId);
       if (!c) {
         if (allow === null) out.push(ref);
         continue;
       }
-      const prefix = toolKey(c.slug, "");
-      if (ref.tools === "all" && allow === null && ![...deny].some((k) => k.startsWith(prefix))) {
+      const ownsKey = (k: string) => {
+        const parsed = parseToolKey(k);
+        return parsed?.kind === "connector" && parsed.slug === c.slug;
+      };
+      if (ref.tools === "all" && allow === null && ![...deny].some(ownsKey)) {
         out.push(ref);
         continue;
       }
       const names = ref.tools === "all" ? c.tools : ref.tools;
-      const kept = names.filter((name) => keep(toolKey(c.slug, name)));
+      const kept = names.filter((name) => keep(connectorToolKey(c.slug, name)));
       if (kept.length > 0) out.push({ ...ref, tools: kept });
     }
   }

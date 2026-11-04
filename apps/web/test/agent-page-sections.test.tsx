@@ -89,7 +89,7 @@ const agent = (over: Over = {}) => {
       modelParams: {},
       fallbackParams: {},
       tools: [
-        { kind: "builtin", name: "ask_user" },
+        { kind: "builtin", name: "AskUserQuestion" },
         { kind: "plugin", plugin: "todo", name: "write" },
       ],
       toolPolicies: {},
@@ -354,13 +354,13 @@ describe("the agent page's sections with their own saves (agent profile design ย
     });
 
     await view.navigate("/agents/ag1?s=tools");
-    await user.click(screen.getByRole("checkbox", { name: F.builtin.skill_write }));
+    await user.click(screen.getByRole("checkbox", { name: F.builtin.SkillWrite }));
     await user.click(save());
     await vi.waitFor(() => expect(patches(calls)).toHaveLength(2));
     expect(patches(calls)[1]).toEqual({
       definition: {
         ...base,
-        tools: [...saved.definition.tools, { kind: "builtin", name: "skill_write" }],
+        tools: [...saved.definition.tools, { kind: "builtin", name: "SkillWrite" }],
       },
       expectedVersion: 1,
     });
@@ -381,7 +381,7 @@ describe("the agent page's sections with their own saves (agent profile design ย
     expect(patches(calls)[3]).toEqual({
       definition: {
         ...base,
-        tools: [...saved.definition.tools, { kind: "builtin", name: "agent" }],
+        tools: [...saved.definition.tools, { kind: "builtin", name: "Agent" }],
       },
       expectedVersion: 1,
     });
@@ -393,7 +393,7 @@ describe("the agent page's sections with their own saves (agent profile design ย
     const calls = stubApi(routes());
     await renderEditAgent({ section: "tools" });
     const user = userEvent.setup();
-    await user.click(screen.getByRole("checkbox", { name: F.builtin.skill_write }));
+    await user.click(screen.getByRole("checkbox", { name: F.builtin.SkillWrite }));
     await user.click(save());
     await vi.waitFor(() => expect(patches(calls)).toHaveLength(1));
     const body = patches(calls)[0] as { definition: Record<string, unknown> };
@@ -593,7 +593,7 @@ describe("the agent page renders on the server (web-SSR spec ยง6)", () => {
     id: "cn1",
     name: "Tracker",
     status: "active",
-    tools: [{ key: "tracker__find", status: "enabled" }],
+    tools: [{ key: "mcp__tracker__find", status: "enabled" }],
   };
   const formRoutes = {
     [`GET ${ORG}/models`]: ok(MODELS),
@@ -611,7 +611,7 @@ describe("the agent page renders on the server (web-SSR spec ยง6)", () => {
       section: "tools",
     });
     expect(screen.getByRole("heading", { level: 1, name: "Helper" })).toBeTruthy();
-    expect(document.querySelector('[data-policy="tracker__find"]')).not.toBeNull();
+    expect(document.querySelector('[data-policy="mcp__tracker__find"]')).not.toBeNull();
     // another section paints from what the first load prefetched
     await view.navigate("/agents/ag1?s=channels");
     expect(screen.getByRole("region", { name: en.agents.channels.title })).toBeTruthy();

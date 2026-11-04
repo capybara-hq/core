@@ -609,6 +609,10 @@ button.cb-tool-row {
 .cb-tool-row > .cb-tool-label {
   flex: 1;
 }
+.cb-tool-name {
+  color: var(--cb-ink);
+  font-weight: 700;
+}
 .cb-tool-row[data-status="running"] .cb-tool-label,
 .cb-tool-row[data-status="pending"] .cb-tool-label {
   color: var(--cb-ink);
@@ -627,6 +631,26 @@ button.cb-tool-row {
 }
 .cb-tool-box > .cb-tool-detail:first-child {
   padding-top: var(--cb-space-3);
+}
+.cb-tool-io {
+  display: flex;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-tool-io-label {
+  flex: none;
+  width: 4ch;
+  color: var(--cb-faint);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-small-line);
+  font-weight: 700;
+}
+.cb-tool-io-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+  min-width: 0;
 }
 /* The tool and approval argument grid (`data-part="kv"`); scoped so it never lays out the
    KeyValue component (`dl.cb-kv`, a column of rows) as label/value/label/value. */

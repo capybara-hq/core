@@ -72,13 +72,15 @@ const withCard = () => [
   runStarted(2),
   ev(3, "assistant_message", {
     step: 0,
-    content: [{ type: "tool_call", id: "call_1", name: "todo__write", input: { todos: [] } }],
+    content: [
+      { type: "tool_call", id: "call_1", name: "plugin__todo__write", input: { todos: [] } },
+    ],
     stopReason: "tool_use",
   }),
   ev(4, "tool_result", {
     step: 0,
     callId: "call_1",
-    toolKey: "todo__write",
+    toolKey: "plugin__todo__write",
     content: "ok",
     isError: false,
     card: { plugin: "todo", view: "tasks-card" },

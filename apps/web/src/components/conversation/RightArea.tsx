@@ -16,6 +16,7 @@ import { contributionsQuery, filesQuery, toolOutputQuery } from "../../lib/query
 import { useAppMutation } from "../../lib/query/mutation";
 import { formatRightHash, parseRightHash, type RightTarget } from "../../lib/right-area";
 import type { TimelineEntry, TimelineTool } from "../../lib/timeline";
+import { toolLabelText } from "../../lib/tool-label";
 import { type UiContributionItem, type UiOpen, uiKey, uiLocale } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
 import type { RightAreaSlot } from "./ConversationView";
@@ -111,7 +112,10 @@ function OutputPanel({
   return (
     <RightPanel
       title={title}
-      meta={tool.toolKey}
+      meta={toolLabelText({
+        name: tool.row.name,
+        ...(tool.row.tool !== undefined ? { tool: tool.row.tool } : {}),
+      })}
       body="flush"
       onClose={onClose}
       onFullscreen={onFullscreen}
@@ -162,7 +166,7 @@ export function useRightAreaSlot(p: {
   const { target, open, back } = useRightArea();
   // The extensions' contributions (enabled and loaded only) and the conversation's file outputs.
   // A failed read (R5: not read again on mount) shows none: no extension blocks, no files.
-  // Sub-agents cannot deliver files (`sandbox_deliver` is removed for children), so their lists
+  // Sub-agents cannot deliver files (`Deliver` is removed for children), so their lists
   // are not read (Task 22 ruling, final review I5).
   const contributionsQ = contributionsQuery(p.orgId);
   const contributionsR = useQuery({

@@ -88,7 +88,7 @@ describe("(app) 页面模板", () => {
               approval: {
                 id: "ap1",
                 conversationId: "c1",
-                toolName: "sandbox_bash",
+                toolName: "Bash",
                 agent: { id: "ag1", name: "研究助手" },
                 requestedFor: "a1",
                 conversationPath: "/chat/c1",
@@ -185,7 +185,7 @@ describe("(app) 页面模板", () => {
     const inbox = screen.getByRole("list", { name: h.inbox.title });
     const rows = within(inbox).getAllByRole("listitem");
     expect(rows.map((r) => r.textContent)).toEqual([
-      expect.stringContaining("研究助手 想调用 sandbox_bash"),
+      expect.stringContaining("研究助手 想调用 Bash"),
       expect.stringContaining("客服分流 想更新技能 refund-policy"),
     ]);
     expect(screen.getByText("Acme · 所有者 · 2 件事等你处理")).toBeTruthy();
@@ -395,7 +395,7 @@ describe("(app) 页面模板", () => {
       name,
       model: { provider: "model-fake", model: "fake-1" },
       skills: { orgSkills: ["s1", "s2"] },
-      tools: [{ kind: "builtin", name: "ask_user" }],
+      tools: [{ kind: "builtin", name: "AskUserQuestion" }],
     },
     profile: { avatar: null, description: "", quickActions: [], updatedAt: "2026-10-26T06:00:00Z" },
     ...over,

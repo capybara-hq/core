@@ -5,7 +5,7 @@ import { signIn } from "./support/sign-in";
 /** 内核要求非安全方法带的 CSRF 头。 */
 const CSRF = { "X-Capybara-Csrf": "1" };
 
-test("扩展视图（假扩展 fake-tools-ui）：fake-tools-ui__write 之后右侧「条目」面板实时刷新，badge 为「已完成/总数」；时间线显示工具摘要", async ({
+test("扩展视图（假扩展 fake-tools-ui）：plugin__fake-tools-ui__write 之后右侧「条目」面板实时刷新，badge 为「已完成/总数」；时间线显示工具摘要", async ({
   page,
 }) => {
   await signIn(page);
@@ -19,7 +19,7 @@ test("扩展视图（假扩展 fake-tools-ui）：fake-tools-ui__write 之后右
     data: { enabled: true },
   });
   expect(enable.status(), await enable.text()).toBe(200);
-  // 网页的 agent 表单不列插件工具：经 API 建一个引用 fake-tools-ui__write 的 agent
+  // 网页的 agent 表单不列插件工具：经 API 建一个引用 plugin__fake-tools-ui__write 的 agent
   const agent = await page.request.post(`${base}/agents`, {
     headers: CSRF,
     data: {
@@ -59,7 +59,7 @@ test("扩展视图（假扩展 fake-tools-ui）：fake-tools-ui__write 之后右
     ],
   };
   const input = composer(page);
-  await input.fill(`tool:fake-tools-ui__write:${JSON.stringify(items)}`);
+  await input.fill(`tool:plugin__fake-tools-ui__write:${JSON.stringify(items)}`);
   await input.press("Enter");
 
   // 不刷新页面：event: ui 到达后重新取视图，badge 与清单实时更新
@@ -69,7 +69,7 @@ test("扩展视图（假扩展 fake-tools-ui）：fake-tools-ui__write 之后右
   await expect(panel.locator('[aria-current="step"]')).toContainText("Cluster topics");
 
   // 时间线里这次调用是一行带摘要的工具调用，不再显示原样 JSON
-  const row = toolGroup(page, "fake-tools-ui__write");
+  const row = toolGroup(page, "plugin__fake-tools-ui__write");
   await expect(row).toHaveAttribute("data-tool-status", "done");
   await expect(row).toContainText("更新条目（3 项）");
 

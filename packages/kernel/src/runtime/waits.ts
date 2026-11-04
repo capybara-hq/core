@@ -60,7 +60,7 @@ export interface WaitSweepResult {
   /** 运行已终态、被本次扫描取消的审批 / 输入请求。 */
   cancelled: number;
   /**
-   * Finished parent runs whose open `agent` calls had no `tool_result`, repaired (final review
+   * Finished parent runs whose open `Agent` calls had no `tool_result`, repaired (final review
    * I3: the next run would send an unpaired tool call, which providers refuse).
    */
   repaired: number;
@@ -109,7 +109,7 @@ export class Waits implements OnApplicationShutdown {
     @Inject(RunQueue)
     private readonly runQueue: Pick<RunQueue, "enqueue" | "repairOrphan" | "abortIfOrphaned">,
     /**
-     * Writes, in the caller's transaction, the results of a stopped run's open `agent` calls;
+     * Writes, in the caller's transaction, the results of a stopped run's open `Agent` calls;
      * `fire` runs their observe hooks after the commit.
      */
     @Inject(ToolPipeline) private readonly pipeline: Pick<ToolPipeline, "stopOpenAgentCalls">,
@@ -407,7 +407,7 @@ export class Waits implements OnApplicationShutdown {
     return true;
   }
 
-  /** {@link abortWaiting}'s transaction; the open `agent` calls it wrote go back through `st`. */
+  /** {@link abortWaiting}'s transaction; the open `Agent` calls it wrote go back through `st`. */
   @Transactional({ propagation: "requires_new" })
   private async abortWaitingIn(
     conversationId: string,
@@ -459,7 +459,7 @@ export class Waits implements OnApplicationShutdown {
       cancelled.set(q.call_id, { toolKey: spec.toolKey ?? "", text: INPUT_CANCELLED_TEXT });
       if (typeof spec.step === "number") steps.add(spec.step);
     }
-    // a parent waiting on sub-agents (spec §12): its open `agent` calls get their results
+    // a parent waiting on sub-agents (spec §12): its open `Agent` calls get their results
     const agents = await this.pipeline.stopOpenAgentCalls(runId);
     for (const step of agents.steps) steps.add(step);
     const results = await this.stoppedResults(
@@ -713,7 +713,7 @@ export class Waits implements OnApplicationShutdown {
   }
 
   /**
-   * Finished parent runs (past the grace period, within the last day) with an `agent` call that has
+   * Finished parent runs (past the grace period, within the last day) with an `Agent` call that has
    * no `tool_result` (final review I3): a terminal path that skipped `stopOpenAgentCalls`, such as
    * an old replica's abort, would otherwise leave an unpaired tool call that every later request of
    * the conversation sends and providers refuse. Each is repaired under the conversation row lock
@@ -1042,7 +1042,7 @@ export class Waits implements OnApplicationShutdown {
     runId: string,
     steps: number[],
     cancelled: Map<string, { toolKey: string; text: string }>,
-    /** Calls whose result the caller writes itself (open `agent` calls). */
+    /** Calls whose result the caller writes itself (open `Agent` calls). */
     skip: ReadonlySet<string> = new Set(),
   ): Promise<AppendEvent[]> {
     const out: AppendEvent[] = [];

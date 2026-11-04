@@ -49,7 +49,7 @@ import { type TestUsageReporter, usageReporterFor } from "../helpers/runtime.js"
 
 const fx = (n: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${n}/index.ts`, import.meta.url));
-const TOOL = "hooks-probe__probe_echo";
+const TOOL = "plugin__hooks-probe__probe_echo";
 
 let pgc: TestContainer;
 let rd: TestContainer;

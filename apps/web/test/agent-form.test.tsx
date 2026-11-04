@@ -108,7 +108,7 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
     id: "cn1",
     name: "Tracker",
     status: "active",
-    tools: [{ key: "tracker__find", status: "enabled" }],
+    tools: [{ key: "mcp__tracker__find", status: "enabled" }],
   };
   const ok = (body: unknown) => () => apiJson(200, body);
   const formRoutes = {

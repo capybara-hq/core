@@ -70,7 +70,7 @@ const INSTRUCTIONS = "Lead the work.";
 const SCRIPT = { provider: "model-script", model: "script-1" };
 const FAKE = { provider: "model-fake", model: "fake-1" };
 
-const agentCall = (input: Record<string, unknown>) => ({ name: "agent", input });
+const agentCall = (input: Record<string, unknown>) => ({ name: "Agent", input });
 
 const RULES: ScriptRule[] = [
   // a forked skill's child (phase D), then its parent once the report is in
@@ -193,7 +193,7 @@ beforeAll(async () => {
         name: "Lead",
         instructions: INSTRUCTIONS,
         model: SCRIPT,
-        tools: [{ kind: "builtin", name: "agent" }],
+        tools: [{ kind: "builtin", name: "Agent" }],
       },
       visibility: "org",
     },
@@ -355,7 +355,7 @@ describe("full-run replay of a parent with sub-agent calls", { timeout: 120_000 
     expect(r?.drift).toEqual([]);
     const cand = r?.candidate as RunReplayResult;
     expect(cand.unmatched).toBe(0);
-    expect(cand.toolCalls.map((c) => c.name)).toEqual(["agent", "agent", "agent", "agent"]);
+    expect(cand.toolCalls.map((c) => c.name)).toEqual(["Agent", "Agent", "Agent", "Agent"]);
     // only the parent's requests, the same ones: no child was started
     expect(capture.sent.some(isChild)).toBe(false);
     expect(normalizeIds(capture.sent)).toEqual(original);
@@ -364,7 +364,7 @@ describe("full-run replay of a parent with sub-agent calls", { timeout: 120_000 
     expect(evalEvents.filter((e) => e.type.startsWith("subagent_"))).toEqual([]);
     // the recorded results (with their status lines) came back, in the same step for the three
     const agentResults = ofType(evalEvents, "tool_result").filter(
-      (e) => e.payload.toolKey === "agent",
+      (e) => e.payload.toolKey === "Agent",
     );
     expect(agentResults.map((e) => e.payload.step)).toEqual([1, 1, 1, 2]);
     for (const res of agentResults.slice(0, 3)) {
@@ -569,7 +569,7 @@ describe("candidates on child cases (batch 13 review I1, m1)", { timeout: 120_00
           name: "Inline lead",
           instructions: INSTRUCTIONS,
           model: SCRIPT,
-          tools: [{ kind: "builtin", name: "agent" }],
+          tools: [{ kind: "builtin", name: "Agent" }],
           subagents: {
             inline: [
               { name: "helper", description: "Helps.", instructions: "Help.", model: "fast" },
@@ -632,7 +632,7 @@ describe("candidates on child cases (batch 13 review I1, m1)", { timeout: 120_00
         subagentVersion: definition,
       }).drift;
     expect(at(v2(tpl))).toEqual([]);
-    expect(at(v2({ ...tpl, tools: ["sandbox_bash"] }))).toEqual(["subagent_changed"]);
+    expect(at(v2({ ...tpl, tools: ["Bash"] }))).toEqual(["subagent_changed"]);
     // an instructions override with another version reaches the child too (batch 14 review m5)
     const logged = s.subagent?.definition as ReturnType<typeof v2>;
     const overridden = reconstructRequest(s, call.seq, {
@@ -691,7 +691,7 @@ describe("trajectory links", { timeout: 60_000 }, () => {
     const t = res.json() as TrajectoryDetail;
     expect(t.conversation.parent).toBeUndefined();
     const calls = t.runs.flatMap((r) => r.steps.flatMap((s) => s.toolCalls));
-    expect(calls.map((c) => c.toolKey)).toEqual(["agent", "agent", "agent", "agent"]);
+    expect(calls.map((c) => c.toolKey)).toEqual(["Agent", "Agent", "Agent", "Agent"]);
     const children = state.children ?? [];
     const resumed = children.find((c) => c.runs.length === 2) as { id: string; runs: string[] };
     expect(calls.map((c) => c.subagent?.subagentId)).toEqual([

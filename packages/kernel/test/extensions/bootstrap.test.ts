@@ -300,7 +300,7 @@ describe("a fresh deployment", () => {
     const tools = await k.app.get(ToolRegistry).forAgent(orgId, {
       tools: [{ kind: "plugin", plugin: "alpha", name: "wait" }],
     });
-    expect(tools.tools.map((t) => t.key)).toEqual(["alpha__wait"]);
+    expect(tools.tools.map((t) => t.key)).toEqual(["plugin__alpha__wait"]);
   });
 
   it("a required plugin cannot be disabled in an org or on the deployment, nor uninstalled (409 extension.required)", async () => {

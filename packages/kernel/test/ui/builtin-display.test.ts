@@ -30,7 +30,7 @@ type WithDisplay = { display?: { summary: { zh: string; en: string } } };
 const summaryOf = (r: unknown) => (r as WithDisplay).display?.summary;
 
 describe("内置工具的显示摘要", () => {
-  it("read_tool_output：已读取输出 {id}", async () => {
+  it("ReadToolOutput：已读取输出 {id}", async () => {
     const t = readToolOutputTool({
       outputs: { load: async () => "a\nb\nc" },
       config: configFrom(config),
@@ -40,7 +40,7 @@ describe("内置工具的显示摘要", () => {
     expect(validateToolDisplay((r as WithDisplay).display)).toEqual([]);
   });
 
-  it("ask_user：回答 / 超时 / 关闭各有摘要；首次调用（等待回答）没有", async () => {
+  it("AskUserQuestion：回答 / 超时 / 关闭各有摘要；首次调用（等待回答）没有", async () => {
     const t = askUserTool({ config: configFrom(config) });
     const questions = [
       {
@@ -78,7 +78,7 @@ describe("内置工具的显示摘要", () => {
     expect(summaryOf(first)).toBeUndefined();
   });
 
-  it("tool_search：搜索「query」· 加载 N 个 / 无匹配；过长的查询截断，摘要仍合法", async () => {
+  it("ToolSearch：搜索「query」· 加载 N 个 / 无匹配；过长的查询截断，摘要仍合法", async () => {
     const t = toolSearchTool();
     const none = await t.run({ query: "zzz" }, ctx({ tools: [] }));
     expect(summaryOf(none)).toEqual({
@@ -92,7 +92,7 @@ describe("内置工具的显示摘要", () => {
       ctx({
         tools: [
           {
-            key: "docs__search",
+            key: "mcp__docs__search",
             spec: { name: "search", description: "Search docs.", inputSchema: { type: "object" } },
           } as unknown as ResolvedTool,
         ],

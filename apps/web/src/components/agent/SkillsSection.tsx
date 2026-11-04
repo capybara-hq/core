@@ -26,7 +26,7 @@ const draftOf = (a: Agent): Draft => ({
 });
 
 /**
- * 技能 Skills (agent profile design §3.2): the org skills, the pinned ones, the `skill_write`
+ * 技能 Skills (agent profile design §3.2): the org skills, the pinned ones, the `SkillWrite`
  * confirmation and the agent's own skills. The confirmation (`skills.writePolicy`) applies only
  * to private agents, so it shows when the **saved** visibility is private (Basics' draft never
  * counts). Its save sends the saved definition with only `skills` changed, merged: keys the web

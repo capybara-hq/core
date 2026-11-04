@@ -136,7 +136,7 @@ describe("archive and soft delete", { timeout: 60_000 }, () => {
     });
     const askerId = (res.json() as { agent: { id: string } }).agent.id;
     const conv = await createConv(owner, orgId, askerId);
-    const ask = `tool:ask_user:${JSON.stringify({
+    const ask = `tool:AskUserQuestion:${JSON.stringify({
       questions: [
         {
           question: "Which?",

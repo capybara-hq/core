@@ -68,7 +68,7 @@ const agent = (over: Record<string, unknown> = {}) => ({
     modelParams: {},
     fallbackParams: {},
     tools: [
-      { kind: "builtin", name: "ask_user" },
+      { kind: "builtin", name: "AskUserQuestion" },
       { kind: "plugin", plugin: "todo", name: "write" },
     ],
     toolPolicies: {},
@@ -129,7 +129,7 @@ describe("编辑 agent（FormPage）", () => {
     expect(body.definition.skills).toEqual({ orgSkills: ["s1"] });
     expect(body.definition.futureField).toEqual({ keep: true });
     expect(body.definition.tools).toEqual([
-      { kind: "builtin", name: "ask_user" },
+      { kind: "builtin", name: "AskUserQuestion" },
       { kind: "plugin", plugin: "todo", name: "write" },
     ]);
     expect(body.definition.instructions).toBe("Be helpful.");
@@ -180,8 +180,8 @@ describe("编辑 agent（FormPage）", () => {
   it("a skills save keeps the tool order, merges skills (unknown keys kept) and sends expectedVersion", async () => {
     const tools = [
       { kind: "plugin", plugin: "todo", name: "write" },
-      { kind: "builtin", name: "read_tool_output" },
-      { kind: "builtin", name: "ask_user" },
+      { kind: "builtin", name: "ReadToolOutput" },
+      { kind: "builtin", name: "AskUserQuestion" },
     ];
     const def = agent().definition;
     const calls = stubApi({

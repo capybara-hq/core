@@ -1,5 +1,6 @@
+import { connectorToolKey } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
-import { deriveSlug, isValidSlug, toolKey, toolKeyIssue } from "../../src/tools/naming.js";
+import { deriveSlug, isValidSlug, toolKeyIssue } from "../../src/tools/naming.js";
 
 describe("工具命名", () => {
   it("deriveSlug：转小写、折叠非字母数字、去掉开头数字、截到 24 位；推导不出返回 null", () => {
@@ -22,11 +23,18 @@ describe("工具命名", () => {
   });
 
   it("toolKeyIssue：超过 64 字符或含非法字符给出原因，不截断", () => {
-    expect(toolKey("docs", "search")).toBe("docs__search");
-    expect(toolKeyIssue("docs__search")).toBeNull();
+    expect(toolKeyIssue("mcp__docs__search")).toBeNull();
     expect(toolKeyIssue("a".repeat(64))).toBeNull();
     expect(toolKeyIssue("a".repeat(65))).toMatch(/65 characters; the limit is 64/);
-    expect(toolKeyIssue("docs__has space")).toMatch(/outside \[a-zA-Z0-9_-\]/);
-    expect(toolKeyIssue("docs__点")).toMatch(/outside/);
+    expect(toolKeyIssue("mcp__docs__has space")).toMatch(/outside \[a-zA-Z0-9_-\]/);
+    expect(toolKeyIssue("mcp__docs__点")).toMatch(/outside/);
+  });
+
+  it("a connector key with the longest slug leaves 33 characters for the tool name", () => {
+    const slug = "a".repeat(24);
+    expect(toolKeyIssue(connectorToolKey(slug, "b".repeat(34)))).toMatch(
+      /65 characters; the limit is 64/,
+    );
+    expect(toolKeyIssue(connectorToolKey(slug, "b".repeat(33)))).toBeNull();
   });
 });

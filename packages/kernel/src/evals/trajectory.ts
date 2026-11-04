@@ -54,7 +54,7 @@ export interface TrajectoryToolCall {
     byAccountId: string | null;
     decidedAt: string | null;
   } | null;
-  /** 最近一次输入请求（`ask_user`、插件 `input_required`、MCP elicitation）。 */
+  /** 最近一次输入请求（`AskUserQuestion`、插件 `input_required`、MCP elicitation）。 */
   question: {
     questionId: string;
     askedAt: string;
@@ -64,7 +64,7 @@ export interface TrajectoryToolCall {
   /** A `tool.preExecute` policy hook denied the call (it never started). */
   hookDenied?: TrajectoryHookDenial;
   /**
-   * An `agent` call that dispatched (or resumed) a sub-agent (phase C, spec §15.4): the child
+   * An `Agent` call that dispatched (or resumed) a sub-agent (phase C, spec §15.4): the child
    * conversation (`subagentId`, whose trajectory the viewer links to), the run it started and that
    * run's end (`running` until its `subagent_finished`).
    */

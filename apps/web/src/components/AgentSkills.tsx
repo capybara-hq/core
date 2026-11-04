@@ -83,7 +83,7 @@ function SkillTags({ skill }: { skill: Pick<SkillSummary, "manual" | "fork"> }) 
 }
 
 /**
- * 私有 agent 的 `skill_write` 确认开关（`skills.writePolicy`，D10）：勾选 = `ask`，agent 每次写技能前都要负责人确认；
+ * 私有 agent 的 `SkillWrite` 确认开关（`skills.writePolicy`，D10）：勾选 = `ask`，agent 每次写技能前都要负责人确认；
  * 不勾选（缺省）= 直接生效。共享 agent 的技能变更一律走审批，表单只在私有 agent 上显示它。
  */
 export function SkillWriteSwitch({

@@ -233,11 +233,11 @@ describe("connector end to end (fake-connector)", () => {
     expect(byName.search?.defaultPolicy).toBe("allow");
     expect(byName.delete_doc?.defaultPolicy).toBe("ask");
     expect(byName.list_resources).toMatchObject({
-      key: "docs__list_resources",
+      key: "mcp__docs__list_resources",
       defaultPolicy: "allow",
     });
     expect(byName.read_resource).toMatchObject({
-      key: "docs__read_resource",
+      key: "mcp__docs__read_resource",
       defaultPolicy: "allow",
     });
   });
@@ -367,17 +367,17 @@ describe("connector end to end (fake-connector)", () => {
     const agentId = await agentFor(connectorId);
     const convId = await createConv(req, orgId, agentId);
 
-    const search = await runTool(convId, 1, "docs__search", { q: "cats" });
+    const search = await runTool(convId, 1, "mcp__docs__search", { q: "cats" });
     expect(search).toMatchObject({ content: "results for cats; auth=[REDACTED]", isError: false });
     // 假服务确实收到并回显了 token（否则打码断言没有意义）
     expect(mcp.calls.find((c) => c.name === "search")?.headers.authorization).toBe(
       `Bearer ${TOKEN}`,
     );
 
-    const leak = await runTool(convId, 2, "docs__leak_error", {});
+    const leak = await runTool(convId, 2, "mcp__docs__leak_error", {});
     expect(leak).toMatchObject({ content: "denied for [REDACTED]", isError: true });
 
-    const rpc = await runTool(convId, 3, "docs__rpc_error", {});
+    const rpc = await runTool(convId, 3, "mcp__docs__rpc_error", {});
     // The connector's own error text (fake-connector's wording), with the echoed token redacted
     expect(rpc).toMatchObject({
       content:
@@ -385,7 +385,7 @@ describe("connector end to end (fake-connector)", () => {
       isError: true,
     });
 
-    const gw = await runTool(convId, 4, "docs__gateway", {});
+    const gw = await runTool(convId, 4, "mcp__docs__gateway", {});
     expect(gw).toMatchObject({
       content: "The connector's server responded with HTTP 502; retry later.",
       isError: true,
@@ -393,7 +393,7 @@ describe("connector end to end (fake-connector)", () => {
     const failLog = logLines.find((l) => l.includes("fake-connector request failed"));
     expect(failLog).toContain("gateway saw [REDACTED]");
 
-    const huge = await runTool(convId, 5, "docs__huge", {});
+    const huge = await runTool(convId, 5, "mcp__docs__huge", {});
     expect(huge.outputId).toEqual(expect.any(String));
     const archived = await db
       .selectFrom("tool_outputs")
@@ -402,17 +402,17 @@ describe("connector end to end (fake-connector)", () => {
       .executeTakeFirstOrThrow();
     expect(archived.content.endsWith("tail auth=[REDACTED]")).toBe(true);
 
-    const list = await runTool(convId, 6, "docs__list_resources", {});
+    const list = await runTool(convId, 6, "mcp__docs__list_resources", {});
     expect(list.isError).toBe(false);
     expect(JSON.parse(list.content)).toEqual([
       { uri: "docs://handbook", name: "Handbook", mimeType: "text/markdown" },
     ]);
-    const read = await runTool(convId, 7, "docs__read_resource", { uri: "docs://handbook" });
+    const read = await runTool(convId, 7, "mcp__docs__read_resource", { uri: "docs://handbook" });
     expect(read).toMatchObject({ content: "# Handbook", isError: false });
 
     const t0 = Date.now();
-    const slow = await runTool(convId, 8, "docs__slow", {});
-    expect(slow.content).toMatch(/^Tool docs__slow timed out after 2s\./);
+    const slow = await runTool(convId, 8, "mcp__docs__slow", {});
+    expect(slow.content).toMatch(/^Tool mcp__docs__slow timed out after 2s\./);
     expect(slow.isError).toBe(true);
     expect(Date.now() - t0).toBeLessThan(4_000);
 
@@ -449,7 +449,7 @@ describe("connector end to end (fake-connector)", () => {
     const convId = await createConv(req, orgId, agentId);
     const before = mcp.calls.filter((c) => c.name === "delete_doc").length;
 
-    await postMessage(req, orgId, convId, 'tool:docs__delete_doc:{"id":"42"}');
+    await postMessage(req, orgId, convId, 'tool:mcp__docs__delete_doc:{"id":"42"}');
     const asked = (await waitForEvent(
       db,
       convId,
@@ -457,7 +457,7 @@ describe("connector end to end (fake-connector)", () => {
       15_000,
       "approval_requested",
     )) as Extract<ConversationEvent, { type: "approval_requested" }>;
-    expect(asked.payload.toolKey).toBe("docs__delete_doc");
+    expect(asked.payload.toolKey).toBe("mcp__docs__delete_doc");
     await waitFor(
       async () =>
         (
@@ -481,7 +481,7 @@ describe("connector end to end (fake-connector)", () => {
     await waitForTerminal(db, convId, 1, 20_000);
     const results = ofType(await eventsOf(db, convId), "tool_result");
     expect(results.map((r) => r.payload)).toMatchObject([
-      { toolKey: "docs__delete_doc", content: "deleted 42", isError: false },
+      { toolKey: "mcp__docs__delete_doc", content: "deleted 42", isError: false },
     ]);
     expect(mcp.calls.filter((c) => c.name === "delete_doc").length).toBe(before + 1);
   }, 60_000);
@@ -514,9 +514,9 @@ describe("connector end to end (fake-connector)", () => {
       const connectorId = (res.json() as { connector: { id: string } }).connector.id;
       const agentId = await agentFor(connectorId);
       const convId = await createConv(req, orgId, agentId);
-      await runTool(convId, 1, "kb__lookup", {});
+      await runTool(convId, 1, "mcp__kb__lookup", {});
       const firstCall = ofType(await eventsOf(db, convId), "model_call")[0];
-      const used = firstCall?.payload.request.tools?.find((t) => t.key === "kb__lookup");
+      const used = firstCall?.payload.request.tools?.find((t) => t.key === "mcp__kb__lookup");
       expect(used).toBeDefined();
       const oldHash = used?.specHash as string;
 

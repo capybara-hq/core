@@ -291,7 +291,7 @@ describe("MCP elicitation", () => {
   it("表单：中止调用并转成输入请求（文案打码）；回答后重新发起调用，用答案答复同一 elicitation", async () => {
     const agentId = await agentFor(await installConnector());
     const convId = await createConv(req, orgId, agentId);
-    const q = await askedBy(convId, "forms__signup");
+    const q = await askedBy(convId, "mcp__forms__signup");
     expect(q.payload.form).toEqual({
       title: "Sign up (seen [REDACTED])",
       fields: [{ key: "name", label: "Name", schema: { type: "string" }, required: true }],
@@ -301,7 +301,11 @@ describe("MCP elicitation", () => {
 
     await answer(q.payload.questionId, { name: "Ada" });
     const r = await lastResult(convId, 1);
-    expect(r).toMatchObject({ toolKey: "forms__signup", content: "welcome Ada", isError: false });
+    expect(r).toMatchObject({
+      toolKey: "mcp__forms__signup",
+      content: "welcome Ada",
+      isError: false,
+    });
     expect(mcp.calls.filter((c) => c.name === "signup")).toHaveLength(2);
     expect(mcp.elicitations.map((e) => e.result)).toEqual([
       "error",
@@ -314,7 +318,7 @@ describe("MCP elicitation", () => {
   it("URL 模式：卡片带链接与「已完成」；确认后远端收到 accept", async () => {
     const agentId = await agentFor(await installConnector());
     const convId = await createConv(req, orgId, agentId);
-    const q = await askedBy(convId, "forms__connect");
+    const q = await askedBy(convId, "mcp__forms__connect");
     expect(q.payload.form).toMatchObject({
       title: "Connect your account",
       url: expect.stringMatching(/^https:\/\/auth\.example\.com\/connect\?state=/),
@@ -327,7 +331,7 @@ describe("MCP elicitation", () => {
   it("URL 模式未勾选「已完成」→ decline 给远端", async () => {
     const agentId = await agentFor(await installConnector());
     const convId = await createConv(req, orgId, agentId);
-    const q = await askedBy(convId, "forms__connect");
+    const q = await askedBy(convId, "mcp__forms__connect");
     await answer(q.payload.questionId, { completed: false });
     expect(await lastResult(convId, 1)).toMatchObject({ content: "connect decline" });
   }, 60_000);
@@ -335,7 +339,7 @@ describe("MCP elicitation", () => {
   it("超出子集的表单：立即 decline，结果附说明，不暂停", async () => {
     const agentId = await agentFor(await installConnector());
     const convId = await createConv(req, orgId, agentId);
-    await postMessage(req, orgId, convId, "tool:forms__nested:{}");
+    await postMessage(req, orgId, convId, "tool:mcp__forms__nested:{}");
     const r = await lastResult(convId, 1);
     expect(r?.content).toContain("nested decline");
     expect(r?.content).toContain(UNSUPPORTED_ELICITATION_NOTE);
@@ -346,7 +350,7 @@ describe("MCP elicitation", () => {
     const agentId = await agentFor(await installConnector());
     const convId = await createConv(req, orgId, agentId);
     const t0 = Date.now();
-    const q = await askedBy(convId, "forms__pay");
+    const q = await askedBy(convId, "mcp__forms__pay");
     // -32042 路径里连接器 await onElicit：问用户时必须立即结束，不能等满 tools.timeoutMs（30s）
     expect(Date.now() - t0).toBeLessThan(5_000);
     expect(q.payload.form).toMatchObject({

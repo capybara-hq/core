@@ -229,7 +229,7 @@ describe("插件生命周期双副本验收", { timeout: 120_000 }, () => {
     const c = await ok(0, "POST", `/api/v1/orgs/${orgId}/conversations`, { agentId });
     const convId = (c.conversation as { id: string }).id;
     await ok(1, "POST", `/api/v1/orgs/${orgId}/conversations/${convId}/messages`, {
-      text: "tool:life__wait:{}",
+      text: "tool:plugin__life__wait:{}",
     });
     const started = await waitFor(
       async () => (await readdir(gateDir)).find((f) => f.startsWith("started-1.0.0-")),

@@ -13,56 +13,64 @@ import {
   withNotices,
   withPathLease,
 } from "./common.js";
+import {
+  assertReadAndUnchanged,
+  fileStateOf,
+  normalizeSandboxPath,
+  recordedFile,
+} from "./file-state.js";
+import { READ_MAX_BYTES } from "./read.js";
 
-/** 可编辑的最大文件（字节）：更大的用 sandbox_bash 处理。 */
+/** 可编辑的最大文件（字节）：更大的用 Bash 处理。 */
 const EDIT_MAX_BYTES = 10 * 1024 * 1024;
 
 const SPEC: ToolSpec = {
-  name: "sandbox_edit",
+  name: "Edit",
   // Display only (the tool row; not in the fingerprint, never sent to the model).
-  keyArgs: ["path"],
+  keyArgs: ["file_path"],
   description:
-    "Edit a text file in this conversation's sandbox by replacing exact text. oldText must match " +
-    "the file exactly (including whitespace and indentation) and, unless replaceAll is true, occur " +
-    "exactly once; include enough surrounding lines to make it unique. Read the file with " +
-    "sandbox_read first. Use sandbox_write to create a file or replace all of it.",
+    "Edit a text file in this conversation's sandbox by replacing exact text. old_string must match " +
+    "the file exactly (including whitespace and indentation) and, unless replace_all is true, occur " +
+    "exactly once; include enough surrounding lines to make it unique. Read the file first; " +
+    "editing a file you have not read, or one changed since you read it, fails. Use Write to create a file or replace all of it.",
   inputSchema: {
     type: "object",
     properties: {
-      path: {
+      file_path: {
         type: "string",
         minLength: 1,
         description: 'Absolute path of the file, e.g. "/workspace/src/app.py".',
       },
-      oldText: { type: "string", minLength: 1, description: "The exact text to replace." },
-      newText: { type: "string", description: "The replacement text." },
-      replaceAll: {
+      old_string: { type: "string", minLength: 1, description: "The exact text to replace." },
+      new_string: { type: "string", description: "The replacement text." },
+      replace_all: {
         type: "boolean",
-        description: "Replace every occurrence of oldText instead of exactly one. Default false.",
+        description:
+          "Replace every occurrence of old_string instead of exactly one. Default false.",
       },
     },
-    required: ["path", "oldText", "newText"],
+    required: ["file_path", "old_string", "new_string"],
     additionalProperties: false,
   },
 };
 
 interface EditInput {
-  path: string;
-  oldText: string;
-  newText: string;
-  replaceAll?: boolean;
+  file_path: string;
+  old_string: string;
+  new_string: string;
+  replace_all?: boolean;
 }
 
 const notFound = (path: string) =>
-  `File not found: ${clip(path, 200)}. Check the path with sandbox_glob, or use sandbox_write to create it.`;
+  `File not found: ${clip(path, 200)}. Check the path with Glob, or use Write to create it.`;
 const notText = (path: string) =>
-  `${clip(path, 200)} is a directory, a binary file or larger than ${EDIT_MAX_BYTES} bytes; use sandbox_bash to change it.`;
+  `${clip(path, 200)} is a directory, a binary file or larger than ${EDIT_MAX_BYTES} bytes; use Bash to change it.`;
 const SAME_TEXT =
-  "oldText and newText are the same; pass the text you want to change and its replacement.";
+  "old_string and new_string are the same; pass the text you want to change and its replacement.";
 const noMatch = (path: string) =>
-  `oldText was not found in ${clip(path, 200)}; call sandbox_read and pass the exact text, including whitespace.`;
+  `old_string was not found in ${clip(path, 200)}; call Read and pass the exact text, including whitespace.`;
 const ambiguous = (n: number) =>
-  `oldText occurs ${n} times; pass more surrounding text to make it unique, or pass replaceAll: true.`;
+  `old_string occurs ${n} times; pass more surrounding text to make it unique, or pass replace_all: true.`;
 
 /** 出现次数（不重叠）。 */
 function occurrences(text: string, sub: string): number {
@@ -71,7 +79,7 @@ function occurrences(text: string, sub: string): number {
   return n;
 }
 
-/** 内置工具 `sandbox_edit`：按精确文本替换。 */
+/** 内置工具 `Edit`：按精确文本替换。 */
 export function sandboxEditTool(deps: SandboxToolDeps): BuiltinTool {
   return {
     spec: SPEC,
@@ -79,9 +87,9 @@ export function sandboxEditTool(deps: SandboxToolDeps): BuiltinTool {
     unavailable: unavailableWhenNoSandbox(deps),
     timeoutMs: () => sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx) {
-      const { oldText, newText, replaceAll = false } = input as EditInput;
-      const path = checkWritable((input as EditInput).path);
-      if (oldText === newText) throw new ToolError(SAME_TEXT);
+      const { old_string, new_string, replace_all = false } = input as EditInput;
+      const path = checkWritable((input as EditInput).file_path);
+      if (old_string === new_string) throw new ToolError(SAME_TEXT);
       const { value: edit, notices } = await inSandbox(deps, ctx, ({ h, p, signal }) =>
         // read, replace, write: one holder at a time per file
         withPathLease(deps, ctx, path, signal, async (signal) => {
@@ -91,16 +99,33 @@ export function sandboxEditTool(deps: SandboxToolDeps): BuiltinTool {
           const got = await p.readFile(h, path, { maxBytes: EDIT_MAX_BYTES, signal });
           if (got === null) throw new ToolError(notFound(path));
           if (got.truncated || looksBinary(got.data)) throw new ToolError(notText(path));
+          await assertReadAndUnchanged(
+            deps,
+            ctx.conversationId,
+            path,
+            fileStateOf(got.data, st.size),
+          );
           const text = new TextDecoder().decode(got.data);
-          const count = occurrences(text, oldText);
+          const count = occurrences(text, old_string);
           if (count === 0) throw new ToolError(noMatch(path));
-          if (count > 1 && !replaceAll) throw new ToolError(ambiguous(count));
-          // 用函数形式替换：newText 里的 `$&` 等不被当成替换模式
-          const next = replaceAll
-            ? text.split(oldText).join(newText)
-            : text.replace(oldText, () => newText);
-          await p.writeFile(h, path, new TextEncoder().encode(next), signal);
-          return { n: replaceAll ? count : 1, before: text, after: next };
+          if (count > 1 && !replace_all) throw new ToolError(ambiguous(count));
+          // 用函数形式替换：new_string 里的 `$&` 等不被当成替换模式
+          const next = replace_all
+            ? text.split(old_string).join(new_string)
+            : text.replace(old_string, () => new_string);
+          const nextBytes = new TextEncoder().encode(next);
+          await p.writeFile(h, path, nextBytes, signal);
+          return {
+            n: replace_all ? count : 1,
+            before: text,
+            after: next,
+            // over the bytes the next Write / Edit reads back (Read's limit), as Read records it
+            file: recordedFile(
+              normalizeSandboxPath(path),
+              nextBytes.subarray(0, READ_MAX_BYTES),
+              nextBytes.byteLength,
+            ),
+          };
         }),
       );
       const { n } = edit;
@@ -114,6 +139,7 @@ export function sandboxEditTool(deps: SandboxToolDeps): BuiltinTool {
           path: viewPath(path),
           created: false,
           ...lineDiff(edit.before, edit.after),
+          file: edit.file,
         },
       };
     },

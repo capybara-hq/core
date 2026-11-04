@@ -1,5 +1,27 @@
 # @capybara-hq/plugin-tools
 
+## 0.1.0-rc.3
+
+### Patch Changes
+
+- f2317ec: `capybara-plugin check` reports `plugin-tool-key-length`: the key `plugin__<extension>__<tool>` of
+  every `ctx.tools.register` must fit in 64 characters (a name that is not a literal cannot be
+  confirmed, like `perm-tools`).
+- 72bada5: The `tool-error-actionable` check accepts `read` as an action verb in a `ToolError` message.
+- Updated dependencies [8bf0b04]
+- Updated dependencies [e1127f5]
+- Updated dependencies [307c611]
+- Updated dependencies [1beea7e]
+- Updated dependencies [56e83dd]
+- Updated dependencies [48d3983]
+- Updated dependencies [a1bfe76]
+- Updated dependencies [0f4b28a]
+- Updated dependencies [8881b9a]
+- Updated dependencies [32580d3]
+- Updated dependencies [75b1aaf]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.1
+  - @capybara-hq/kernel@0.1.0-rc.3
+
 ## 0.1.0-rc.2
 
 ### Patch Changes

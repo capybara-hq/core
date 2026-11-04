@@ -28,7 +28,7 @@ import { eventsOf, gate, PW, waitFor, waitForEvent, waitForTerminal } from "../h
  * model-fake、假连接器 fake-connector（MCP 客户端，允许本机 http）与假扩展 fake-tools-ui。
  *
  * 1. 插件工具（fake-tools-ui，Ruling A5）：插件未在组织启用 → 运行写不可用提醒，调用得到「不可用」错误；启用后
- *    `fake-tools-ui__write` 按默认 allow 直接执行，结果是清单渲染。
+ *    `plugin__fake-tools-ui__write` 按默认 allow 直接执行，结果是清单渲染。
  * 2. 安装 MCP 连接器（bearer，组织凭据）→ 只读工具直接执行（结果里回显的凭据被打码）→ destructive 工具
  *    请求审批、运行 waiting → 在另一个副本批准（再拒绝 → 409）→ 续跑完成，工具只调用一次。
  * 3. 审批超时（改 `expires_at` 并提前执行超时任务）→ 按拒绝写结果，工具不被调用。
@@ -234,26 +234,26 @@ describe("M3 第一段双副本验收", () => {
     };
 
     // ---- 1. fake-tools-ui 未启用：不可用提醒 + 调用得到明确错误（Ruling A5）----
-    await send(0, conv, "fake-tools-ui__write", ITEMS);
+    await send(0, conv, "plugin__fake-tools-ui__write", ITEMS);
     const t1 = await finish();
     expect(t1.result).toMatchObject({
-      toolKey: "fake-tools-ui__write",
+      toolKey: "plugin__fake-tools-ui__write",
       isError: true,
       content:
-        'Tool "fake-tools-ui__write" is unavailable: Plugin fake-tools-ui is not enabled in this organization.',
+        'Tool "plugin__fake-tools-ui__write" is unavailable: Plugin fake-tools-ui is not enabled in this organization.',
     });
     expect(ofType(t1.evs, "reminder").map((e) => e.payload.text)).toEqual([
-      "The following tools are unavailable in this run: fake-tools-ui__write (Plugin fake-tools-ui is not enabled in this organization)",
+      "The following tools are unavailable in this run: plugin__fake-tools-ui__write (Plugin fake-tools-ui is not enabled in this organization)",
     ]);
     expect(ofType(t1.evs, "tool_call_started")).toEqual([]);
 
     // 启用后：默认 allow，直接执行，结果是清单渲染
     const en = await alt("PUT", `${base}/extensions/fake-tools-ui`, { enabled: true });
     expect(en.status, JSON.stringify(en.json)).toBe(200);
-    await send(1, conv, "fake-tools-ui__write", ITEMS);
+    await send(1, conv, "plugin__fake-tools-ui__write", ITEMS);
     const t2 = await finish();
     expect(t2.result).toMatchObject({
-      toolKey: "fake-tools-ui__write",
+      toolKey: "plugin__fake-tools-ui__write",
       isError: false,
       content: "List updated (3 items):\n[completed] Plan\n[in_progress] Build\n[pending] Ship",
     });
@@ -264,10 +264,10 @@ describe("M3 第一段双副本验收", () => {
     expect(stored.rows.map((r) => r.items)).toEqual([ITEMS.items]);
 
     // ---- 2. 只读工具直接执行；回显的凭据被打码 ----
-    await send(0, conv, "docs__search", { q: "cats" });
+    await send(0, conv, "mcp__docs__search", { q: "cats" });
     const s = await finish();
     expect(s.result).toMatchObject({
-      toolKey: "docs__search",
+      toolKey: "mcp__docs__search",
       isError: false,
       content: "results for cats; auth=[REDACTED]",
     });
@@ -277,7 +277,7 @@ describe("M3 第一段双副本验收", () => {
     );
 
     // ---- destructive 工具：审批 → 运行 waiting → 在另一个副本批准 → 续跑完成 ----
-    await send(0, conv, "docs__delete_doc", { id: "d1" });
+    await send(0, conv, "mcp__docs__delete_doc", { id: "d1" });
     const asked = (await waitForEvent(
       db,
       convId,
@@ -308,7 +308,7 @@ describe("M3 第一段双副本验收", () => {
     const d1 = await finish();
     expect(d1.evs[0]?.runId).toBe(runD1);
     expect(d1.result).toMatchObject({
-      toolKey: "docs__delete_doc",
+      toolKey: "mcp__docs__delete_doc",
       isError: false,
       content: "deleted d1",
     });
@@ -321,7 +321,7 @@ describe("M3 第一段双副本验收", () => {
     ]);
 
     // ---- 3. 审批超时 → 按拒绝 ----
-    await send(1, conv, "docs__delete_doc", { id: "d2" });
+    await send(1, conv, "mcp__docs__delete_doc", { id: "d2" });
     const asked2 = (await waitForEvent(
       db,
       convId,
@@ -355,7 +355,7 @@ describe("M3 第一段双副本验收", () => {
     const d2 = await finish();
     expect(d2.evs[0]?.runId).toBe(runD2);
     expect(ofType(d2.evs, "approval_decided").map((e) => e.payload.decision)).toEqual(["expired"]);
-    expect(d2.result?.toolKey).toBe("docs__delete_doc");
+    expect(d2.result?.toolKey).toBe("mcp__docs__delete_doc");
     expect(d2.result?.isError).toBe(true);
     expect(d2.result?.content).toMatch(/^Approval timed out after \d+h; treated as denied\.$/);
     expect(ofType(d2.evs, "tool_call_started")).toEqual([]);
@@ -364,7 +364,7 @@ describe("M3 第一段双副本验收", () => {
     // ---- 4. 工具执行中杀掉执行它的 worker → 存活副本续跑：结果未知，工具只调用一次 ----
     const conv2Id = await newConv();
     const conv2 = `${base}/conversations/${conv2Id}`;
-    await send(0, conv2, "docs__export", {});
+    await send(0, conv2, "mcp__docs__export", {});
     await waitFor(
       async () => mcp.calls.some((c) => c.name === "export"),
       20_000,
@@ -385,7 +385,7 @@ describe("M3 第一段双副本验收", () => {
     const victimIndex = (victim as { index: 0 | 1 }).index;
     const survivor: 0 | 1 = victimIndex === 0 ? 1 : 0;
     const startedBefore = ofType(await eventsOf(db, conv2Id), "tool_call_started");
-    expect(startedBefore.map((e) => e.payload.toolKey)).toEqual(["docs__export"]);
+    expect(startedBefore.map((e) => e.payload.toolKey)).toEqual(["mcp__docs__export"]);
     await harness.kill(victimIndex);
 
     const [fin] = await waitForTerminal(db, conv2Id, 1, 60_000);
@@ -394,7 +394,7 @@ describe("M3 第一段双副本验收", () => {
     const k = await eventsOf(db, conv2Id);
     expect(ofType(k, "tool_result").map((e) => e.payload)).toEqual([
       expect.objectContaining({
-        toolKey: "docs__export",
+        toolKey: "mcp__docs__export",
         isError: true,
         content: UNKNOWN_RESULT_TEXT,
       }),

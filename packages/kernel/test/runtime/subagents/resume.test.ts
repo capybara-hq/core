@@ -6,6 +6,7 @@ import type { ExtensionContext, ModelRequest } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
+import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
@@ -64,7 +65,7 @@ const SANDBOX_FAKE = fixture("sandbox-fake");
 
 const CHILD = "You are a sub-agent";
 const agentCall = (prompt: string) => ({
-  name: "agent",
+  name: "Agent",
   input: { description: "Task", prompt },
 });
 
@@ -72,7 +73,7 @@ const RULES: ScriptRule[] = [
   {
     when: { systemIncludes: CHILD, lastUserIncludes: "task-write", assistantTurns: 0 },
     reply: {
-      toolCalls: [{ name: "sandbox_write", input: { path: "/workspace/c.txt", content: "c" } }],
+      toolCalls: [{ name: "Write", input: { file_path: "/workspace/c.txt", content: "c" } }],
     },
   },
   { when: { systemIncludes: CHILD }, reply: { text: "child ok" } },
@@ -93,7 +94,7 @@ const RULES: ScriptRule[] = [
     reply: {
       toolCalls: [
         agentCall("task-mixed"),
-        { name: "sandbox_write", input: { path: "/workspace/m.txt", content: "m" } },
+        { name: "Write", input: { file_path: "/workspace/m.txt", content: "m" } },
       ],
     },
   },
@@ -168,8 +169,8 @@ beforeEach(async () => {
         name: "Lead",
         instructions: "Lead the work.",
         model: { provider: "model-script", model: "script-1" },
-        tools: ["agent", "sandbox_write"].map((name) => ({ kind: "builtin", name })),
-        toolPolicies: { sandbox_write: "ask" },
+        tools: ["Agent", "Write"].map((name) => ({ kind: "builtin", name })),
+        toolPolicies: { Write: "ask" },
       },
       visibility: "org",
     },
@@ -190,7 +191,7 @@ type Ev<T extends ConversationEvent["type"]> = ConversationEvent & {
 const ofType = <T extends ConversationEvent["type"]>(events: ConversationEvent[], type: T) =>
   events.filter((e): e is Ev<T> => e.type === type);
 const agentResults = (events: ConversationEvent[]) =>
-  ofType(events, "tool_result").filter((r) => r.payload.toolKey === "agent");
+  ofType(events, "tool_result").filter((r) => r.payload.toolKey === "Agent");
 const finalText = (events: ConversationEvent[]) =>
   ofType(events, "assistant_message")
     .at(-1)
@@ -316,7 +317,7 @@ describe("resume after sub-agents", () => {
       ofType(events, "tool_result")
         .map((r) => r.payload.toolKey)
         .sort(),
-    ).toEqual(["agent", "sandbox_write"]);
+    ).toEqual(["Agent", "Write"]);
     expect(children).toHaveLength(1);
   }, 60_000);
 
@@ -381,6 +382,66 @@ describe("resume after sub-agents", () => {
       .where("id", "=", runId)
       .executeTakeFirstOrThrow();
     expect(Number(run.waited_ms)).toBeGreaterThanOrEqual(3_000);
+  }, 60_000);
+});
+
+describe("a sub-agent call in flight across the tool rename (tool naming spec §9)", () => {
+  /**
+   * Rewrites the parent step's logged call and its request to the rc key `agent`, as a parent that
+   * dispatched before the upgrade logged them (the log itself is never rewritten by the kernel).
+   */
+  async function asRcCall(conv: string, runId: string) {
+    await sql`
+      UPDATE capybara.conversation_events
+         SET payload = replace(payload::text, '"name": "Agent"', '"name": "agent"')::jsonb
+       WHERE conversation_id = ${conv} AND run_id = ${runId} AND type = 'assistant_message'
+    `.execute(db);
+    await sql`
+      UPDATE capybara.conversation_events
+         SET payload = replace(payload::text, '"key": "Agent"', '"key": "agent"')::jsonb
+       WHERE conversation_id = ${conv} AND run_id = ${runId} AND type = 'model_call'
+    `.execute(db);
+    const calls = ofType(await eventsOf(db, conv), "assistant_message").flatMap((m) =>
+      m.payload.content.flatMap((b) => (b.type === "tool_call" ? [b.name] : [])),
+    );
+    expect(calls).toEqual(["agent"]);
+  }
+
+  it("an rc `agent` call whose child finishes gets its result under `agent`; no second dispatch", async () => {
+    const { conv, runId, children } = await startPaused("SCENARIO one");
+    const child = children[0] as (typeof children)[number];
+    await dropChildJobs(subQueue, [child.conversationId]);
+    await asRcCall(conv, runId);
+    await finishChildByHand(
+      db,
+      eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
+      child,
+      "rc child done",
+    );
+    await k.app.get(Waits).childFinished(child.runId);
+    await waitForTerminal(db, conv, 1, 15_000);
+    expect(await runStatus(db, runId)).toBe("completed");
+    const events = await eventsOf(db, conv);
+    const results = ofType(events, "tool_result");
+    expect(results.map((r) => r.payload.toolKey)).toEqual(["agent"]);
+    expect(results[0]?.payload.content).toMatch(/^rc child done\n\n\[agentId: /);
+    expect(finalText(events)).toBe("parent done");
+    expect(ofType(events, "subagent_dispatched")).toHaveLength(1);
+    expect(ofType(events, "subagent_finished")).toHaveLength(1);
+    expect(await childRunsOf(db, conv)).toHaveLength(1);
+  }, 60_000);
+
+  it("stopping a parent that waits on an rc `agent` call writes its result under `agent`", async () => {
+    const { conv, runId } = await startPaused("SCENARIO one");
+    await asRcCall(conv, runId);
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/abort`,
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    await waitForTerminal(db, conv, 1, 15_000);
+    const results = ofType(await eventsOf(db, conv), "tool_result");
+    expect(results.map((r) => r.payload.toolKey)).toEqual(["agent"]);
   }, 60_000);
 });
 

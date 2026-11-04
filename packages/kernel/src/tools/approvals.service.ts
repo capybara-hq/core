@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { connectorToolKey, type LocalizedName, parseToolKey } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
 import { EventLog } from "../conversations/event-log.js";
@@ -11,6 +12,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
 import { ORG_ROLES, type OrgRole, roleAtLeast } from "../orgs/roles.js";
+import { pluginDisplayNames } from "./display-names.js";
 import type { ApprovalPolicySource } from "./pipeline.js";
 
 export { APPROVAL_DENY_REASON_MAX_CHARS } from "../conversations/events.js";
@@ -51,6 +53,8 @@ export interface ApprovalView extends ApprovalRecord {
   /** 来源内的工具原名（连接器工具为连接器里的名字；否则同 `toolKey`）。 */
   toolName: string;
   connector: { id: string; name: string; slug: string } | null;
+  /** An extension tool's plugin (`plugin__<plugin>__<tool>`) and its display name (display only). */
+  extension: { name: string; displayName: LocalizedName } | null;
   agent: { id: string; name: string };
   /**
    * 网页中该会话的路径（不含语言前缀）。A sub-agent's approval links to its parent conversation
@@ -729,11 +733,23 @@ export class ApprovalsService {
             .where("id", "in", connectorIds)
             .execute();
     const connectorById = new Map(apps.map((a) => [a.id, a]));
+    const pluginOf = (r: ApprovalRecord): string | null => {
+      if (r.connectorId !== null) return null;
+      const p = parseToolKey(r.toolKey);
+      return p?.kind === "extension" ? p.plugin : null;
+    };
+    const displayNames = await pluginDisplayNames(
+      db.db,
+      recs.flatMap((r) => {
+        const p = pluginOf(r);
+        return p === null ? [] : [p];
+      }),
+    );
     return recs.flatMap((r) => {
       const c = ctx.get(r.runId);
       if (!c) return [];
       const app = r.connectorId === null ? undefined : connectorById.get(r.connectorId);
-      const prefix = app ? `${app.slug}__` : undefined;
+      const prefix = app ? connectorToolKey(app.slug, "") : undefined;
       return [
         {
           ...r,
@@ -742,6 +758,12 @@ export class ApprovalsService {
               ? r.toolKey.slice(prefix.length)
               : r.toolKey,
           connector: app ? { id: app.id, name: app.name, slug: app.slug } : null,
+          extension: (() => {
+            const p = pluginOf(r);
+            return p === null
+              ? null
+              : { name: p, displayName: displayNames.get(p) ?? { zh: p, en: p } };
+          })(),
           agent: { id: c.agent_id, name: names.get(c.agent_id) ?? "" },
           ...(c.parent_conversation_id !== null
             ? {

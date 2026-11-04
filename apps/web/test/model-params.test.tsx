@@ -370,7 +370,7 @@ const SAVED = {
     fallback: null,
     modelParams: {},
     fallbackParams: {},
-    tools: [{ kind: "builtin", name: "ask_user" }],
+    tools: [{ kind: "builtin", name: "AskUserQuestion" }],
     toolPolicies: {},
   },
 };

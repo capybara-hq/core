@@ -2,6 +2,7 @@ import type { Span, StatusMark } from "@capybara-hq/design";
 import { apiFetch } from "./api";
 import type { SubagentEndStatus } from "./conversations";
 import { extensionLabel } from "./extension-label";
+import { toolLabelOfKey, toolLabelText } from "./tool-label";
 
 /**
  * 内核轨迹 API 的类型（`packages/kernel/src/evals/trajectory*.ts`；只声明界面用到的字段）。Web 层不 import 内核代码。
@@ -298,7 +299,7 @@ export function indexTrajectory(
               id: toolId,
               parentId: stepId,
               kind: "tool",
-              label: call.toolKey,
+              label: toolLabelText(toolLabelOfKey(call.toolKey)),
               startMs: off(start),
               durationMs: call.durationMs,
               status:

@@ -27,6 +27,7 @@ import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import { shortTime } from "../lib/time";
 import type { ApprovalDecision, ApprovalItem } from "../lib/timeline";
+import { toolLabel, toolLabelOfKey, toolLabelText } from "../lib/tool-label";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useSession } from "./shell/session";
 
@@ -158,14 +159,6 @@ export function useDecide(orgId: string) {
   return { decide, pending };
 }
 
-/** The tool as people read it: "<source>: <title>", else the title, else the key. */
-export function toolLabel(key: string, info: ToolInfo | undefined): string {
-  const title = info?.title ?? key;
-  return info?.source.kind === "connector" || info?.source.kind === "extension"
-    ? `${info.source.name}: ${title}`
-    : title;
-}
-
 /**
  * The approval in the conversation (spec §5.7, design `ApprovalBlock`): the tool, its model-visible
  * key and every argument (key arguments first), one approve button per allowed scope, Deny with an
@@ -219,7 +212,7 @@ export function ApprovalCard({
     }
   }
 
-  const tool = toolLabel(item.toolKey, info);
+  const tool = toolLabelText(info ? toolLabel(info, locale) : toolLabelOfKey(item.toolKey));
   const input =
     typeof item.input === "object" && item.input !== null && !Array.isArray(item.input)
       ? (item.input as Record<string, unknown>)

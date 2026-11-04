@@ -19,9 +19,9 @@ import { toolSearchTool } from "./tool-search.js";
 
 /**
  * The kernel's builtin tools, built once from the injected services (their specs: names,
- * descriptions and schemas, are the factories' own and unchanged). `tool_search` and `skill_load`
+ * descriptions and schemas, are the factories' own and unchanged). `ToolSearch` and `Skill`
  * are added to a run by the registry (`forAgent`: organization setting and threshold, a skills
- * catalog snapshot), not by agent definitions; `skill_write` only when a definition names it.
+ * catalog snapshot), not by agent definitions; `SkillWrite` only when a definition names it.
  */
 @Injectable()
 export class BuiltinTools {

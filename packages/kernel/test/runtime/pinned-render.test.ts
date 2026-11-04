@@ -46,7 +46,7 @@ const BASE = `${BEHAVIOR_RULES}\n\n${AGENT.instructions}`;
 const CATALOG_AB =
   "Skills are available in this conversation. A skill is a set of instructions, sometimes with " +
   "scripts or other files, for a specific kind of task. When a task matches a skill's description, " +
-  "call skill_load with the skill's name to read its instructions before you start; do not guess " +
+  "call Skill with the skill's name to read its instructions before you start; do not guess " +
   "what a skill says. Available skills:\n- alpha: Use for alpha tasks.\n- beta: Use for beta tasks.";
 
 describe("pinned skills and the tool map in the request", () => {
@@ -70,7 +70,7 @@ describe("pinned skills and the tool map in the request", () => {
     expect(systemText(log.events)).toBe(
       `${BASE}\n\n${CATALOG_AB}\n\n` +
         "Pinned skills: the owner of this agent pinned these skills, so their instructions apply " +
-        "throughout this conversation. Follow them without calling skill_load; call skill_load only " +
+        "throughout this conversation. Follow them without calling Skill; call Skill only " +
         "to copy a pinned skill's files into the sandbox.\n\n" +
         '<pinned_skill name="beta" version="1">\nBeta rules.\n</pinned_skill>\n\n' +
         '<pinned_skill name="alpha" version="1">\nAlpha rules.\n</pinned_skill>' +
@@ -96,8 +96,8 @@ describe("pinned skills and the tool map in the request", () => {
     expect(after.request.messages.slice(0, before.request.messages.length)).toEqual(
       before.request.messages,
     );
-    // a pinned skill is not listed under "Updated skills (call skill_load again ...)": its new
-    // body is in the message, and the pinned header says not to call skill_load for it
+    // a pinned skill is not listed under "Updated skills (call Skill again ...)": its new
+    // body is in the message, and the pinned header says not to call Skill for it
     expect(notices(log.events)).toEqual([
       'Pinned skill "alpha" (version 2) now applies to this conversation and replaces any ' +
         'previous version of it:\n\n<pinned_skill name="alpha" version="2">\nAlpha v2.\n</pinned_skill>',
@@ -118,7 +118,7 @@ describe("pinned skills and the tool map in the request", () => {
     snapshot(log, { skills: [a2, b2], pinned: [pin(a2, "Alpha v2.")] });
     expect(notices(log.events)).toEqual([
       "The skills available in this conversation have changed.\n\n" +
-        "Updated skills (call skill_load again before relying on earlier instructions):\n" +
+        "Updated skills (call Skill again before relying on earlier instructions):\n" +
         "- beta: Use for beta tasks.\n\n" +
         'Pinned skill "alpha" (version 2) now applies to this conversation and replaces any ' +
         'previous version of it:\n\n<pinned_skill name="alpha" version="2">\nAlpha v2.\n</pinned_skill>',
@@ -135,7 +135,7 @@ describe("pinned skills and the tool map in the request", () => {
     snapshot(log, { skills: [skill("alpha", 2)] });
     expect(notices(log.events)).toEqual([
       "The skills available in this conversation have changed.\n\n" +
-        "Updated skills (call skill_load again before relying on earlier instructions):\n" +
+        "Updated skills (call Skill again before relying on earlier instructions):\n" +
         "- alpha: Use for alpha tasks.",
     ]);
   });
@@ -210,7 +210,7 @@ describe("pinned skills and the tool map in the request", () => {
       role: "system",
       content:
         "Skills available in this conversation now (this replaces any earlier list of skills; call " +
-        "skill_load with a name to read a skill's instructions):\n" +
+        "Skill with a name to read a skill's instructions):\n" +
         "- alpha: Use for alpha tasks.\n- beta: Use for beta tasks.\n\n" +
         "Pinned skills now (this replaces any earlier pinned skills):\n\n" +
         '<pinned_skill name="beta" version="1">\nB.\n</pinned_skill>\n\n' +

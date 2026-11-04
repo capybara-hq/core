@@ -12,7 +12,7 @@ const AnswerBody = z.object({ answer: z.record(z.string().max(200), z.unknown())
 class QuestionAnswerBody extends createZodDto(AnswerBody, "QuestionAnswerBody") {}
 
 /**
- * 输入请求（`ask_user`、插件工具的 `input_required`）：`/api/v1/orgs/:orgId/questions`。
+ * 输入请求（`AskUserQuestion`、插件工具的 `input_required`）：`/api/v1/orgs/:orgId/questions`。
  * 动作用 `approvals.decide`（访客起、仅限用户主体）：回答必须由人做出，agent / 服务令牌不能代答；
  * 具体是否允许由服务判定——只有该运行的发起人能读取与回答，其他成员 403。
  */

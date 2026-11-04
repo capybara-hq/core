@@ -10,18 +10,20 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useEffect, useMemo, useRef } from "react";
-import type { ConversationEvent, ModelRef, SubagentView } from "../../lib/conversations";
+import type { ConversationEvent, ModelRef, SubagentView, ToolInfo } from "../../lib/conversations";
 import type { FileOutput } from "../../lib/files";
 import { retryOnMountOf } from "../../lib/query/client";
 import { connectorsQuery, sandboxQuery } from "../../lib/query/conversation";
+import { useToolInfo } from "../../lib/tool-info";
+import { parseToolKey } from "../../lib/tool-key";
 import type { UiContributionItem } from "../../lib/ui";
 import { BackgroundSection } from "./BackgroundSection";
 import { type BlockContext, ExtensionSection } from "./ExtensionBlocks";
 
-/** A connector tool's key is `<connector slug>__<tool>`. */
+/** A connector tool's key is `mcp__<connector slug>__<tool>`. */
 const slugOf = (toolKey: string): string | null => {
-  const i = toolKey.indexOf("__");
-  return i > 0 ? toolKey.slice(0, i) : null;
+  const parsed = parseToolKey(toolKey);
+  return parsed?.kind === "connector" ? parsed.slug : null;
 };
 
 /**
@@ -53,8 +55,23 @@ export function connectorsUsed(
   return out;
 }
 
-const sandboxUses = (events: readonly ConversationEvent[]): number =>
-  events.filter((e) => e.type === "tool_result" && e.payload.toolKey.startsWith("sandbox_")).length;
+/**
+ * How many sandbox tool results the events hold, or null while the metadata of any result key is
+ * still unknown (so the count never jumps when it arrives).
+ */
+const sandboxUses = (
+  events: readonly ConversationEvent[],
+  info: ReadonlyMap<string, ToolInfo>,
+): number | null => {
+  let n = 0;
+  for (const e of events) {
+    if (e.type !== "tool_result") continue;
+    const i = info.get(e.payload.toolKey);
+    if (i === undefined) return null;
+    if (i.sandbox) n++;
+  }
+  return n;
+};
 
 /**
  * The built-in Context section (the old Context tab): the context ratio of the latest step's usage,
@@ -93,13 +110,22 @@ export function ContextSection({
   );
   const sandboxQ = sandboxQuery(orgId, conversationId);
   const sandbox = useQuery({ ...sandboxQ, retryOnMount: retryOnMountOf(sandboxQ.queryKey) });
-  const uses = useMemo(() => sandboxUses(events), [events]);
+  const resultKeys = useMemo(
+    () => [
+      ...new Set(events.flatMap((e) => (e.type === "tool_result" ? [e.payload.toolKey] : []))),
+    ],
+    [events],
+  );
+  const toolInfo = useToolInfo(orgId, conversationId, resultKeys);
+  const uses = useMemo(() => sandboxUses(events, toolInfo), [events, toolInfo]);
   // A sandbox tool result since the last look may have started, stopped or replaced it.
-  const seenUses = useRef(uses);
+  const seenUses = useRef<number | null>(null);
   useEffect(() => {
-    if (uses === seenUses.current) return;
+    if (uses === null) return;
+    const prev = seenUses.current;
     seenUses.current = uses;
-    void qc.invalidateQueries({ queryKey: sandboxQ.queryKey });
+    // The first resolved count is the baseline, not a change.
+    if (prev !== null && uses !== prev) void qc.invalidateQueries({ queryKey: sandboxQ.queryKey });
   }, [uses, qc, sandboxQ.queryKey]);
   const sandboxText =
     sandbox.data === undefined

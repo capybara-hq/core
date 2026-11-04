@@ -1,7 +1,7 @@
 /**
  * Agent templates (`agents/<name>.md` in a plugin; sub-agents spec §16.1): Markdown with YAML
  * frontmatter, the body being the instructions. A template is a type an agent with the builtin
- * `agent` tool can dispatch as a sub-agent (`<plugin>:<name>` in its roster). Used by the kernel,
+ * `Agent` tool can dispatch as a sub-agent (`<plugin>:<name>` in its roster). Used by the kernel,
  * the packer and `capybara-plugin check`.
  */
 import { readFrontmatter } from "./frontmatter.js";

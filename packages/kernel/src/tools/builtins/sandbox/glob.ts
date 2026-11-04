@@ -20,7 +20,7 @@ const MAX_RESULTS = 1000;
 const MAX_FIND_BYTES = 8 * 1024 * 1024;
 
 const SPEC: ToolSpec = {
-  name: "sandbox_glob",
+  name: "Glob",
   // Display only (the tool row; not in the fingerprint, never sent to the model).
   keyArgs: ["pattern"],
   description:
@@ -28,7 +28,7 @@ const SPEC: ToolSpec = {
     'locate files by name, e.g. pattern "**/*.py" for all Python files. The pattern is matched ' +
     "against paths relative to path (default /workspace): * matches within one directory, ** " +
     "matches across directories, ? matches one character, {a,b} matches either. Returns absolute " +
-    "paths sorted by name, up to 1000. To search file contents, use sandbox_grep.",
+    "paths sorted by name, up to 1000. To search file contents, use Grep.",
   inputSchema: {
     type: "object",
     properties: {
@@ -61,7 +61,7 @@ const notDirectory = (path: string) =>
 const FIND_FAILED =
   "Listing files did not finish in time; pass a narrower path or pattern and retry.";
 
-/** 内置工具 `sandbox_glob`：按文件名模式找文件（只读）。 */
+/** 内置工具 `Glob`：按文件名模式找文件（只读）。 */
 export function sandboxGlobTool(deps: SandboxToolDeps): BuiltinTool {
   return {
     spec: SPEC,
@@ -106,7 +106,7 @@ export function sandboxGlobTool(deps: SandboxToolDeps): BuiltinTool {
             .map((rel) => `${base}/${rel}`)
             .filter((abs) => abs !== SYNC_MARKER)
             .sort()
-            // 文件名里的换行显示为 `\n`（与 sandbox_grep 一致），一行一个文件
+            // 文件名里的换行显示为 `\n`（与 Grep 一致），一行一个文件
             .map((abs) => abs.replace(/\n/g, "\\n"))
         );
       });

@@ -155,7 +155,7 @@ describe("agent 定义的工具", () => {
     expect((got.json() as AgentRes).agent.definition.tools).toEqual([]);
   });
 
-  it("创建时省略 tools → 默认 ask_user + read_tool_output；修改时省略 tools 不注入默认值", async () => {
+  it("创建时省略 tools → 默认 AskUserQuestion + ReadToolOutput；修改时省略 tools 不注入默认值", async () => {
     const res = await createAgent({});
     expect(res.statusCode, res.body).toBe(201);
     const { agent } = res.json() as AgentRes;
@@ -181,17 +181,21 @@ describe("agent 定义的工具", () => {
     const connectorId = await installConnector("docs");
     const res = await createAgent({
       tools: [
-        { kind: "builtin", name: "ask_user" },
+        { kind: "builtin", name: "AskUserQuestion" },
         { kind: "plugin", plugin: "tools-probe", name: "echo" },
         { kind: "connector", connectorId, tools: "all" },
       ],
-      toolPolicies: { docs__read: "ask", docs__write: "deny", "tools-probe__echo": "deny" },
+      toolPolicies: {
+        mcp__docs__read: "ask",
+        mcp__docs__write: "deny",
+        "plugin__tools-probe__echo": "deny",
+      },
     });
     expect(res.statusCode, res.body).toBe(201);
     expect((res.json() as AgentRes).agent.definition.toolPolicies).toEqual({
-      docs__read: "ask",
-      docs__write: "deny",
-      "tools-probe__echo": "deny",
+      mcp__docs__read: "ask",
+      mcp__docs__write: "deny",
+      "plugin__tools-probe__echo": "deny",
     });
   });
 
@@ -199,7 +203,7 @@ describe("agent 定义的工具", () => {
     const connectorId = await installConnector("docs");
     const missing = await createAgent({
       tools: [
-        { kind: "builtin", name: "ask_user" },
+        { kind: "builtin", name: "AskUserQuestion" },
         { kind: "connector", connectorId: randomUUID(), tools: "all" },
       ],
     });
@@ -247,17 +251,20 @@ describe("agent 定义的工具", () => {
     const connectorId = await installConnector("docs");
     const loosen = await createAgent({
       tools: [{ kind: "connector", connectorId, tools: "all" }],
-      toolPolicies: { docs__write: "allow" },
+      toolPolicies: { mcp__docs__write: "allow" },
     });
     expect(loosen.statusCode).toBe(400);
-    expect(detailPaths(loosen)).toEqual(["definition.toolPolicies.docs__write"]);
+    expect(detailPaths(loosen)).toEqual(["definition.toolPolicies.mcp__docs__write"]);
 
     const unknown = await createAgent({
       tools: [{ kind: "connector", connectorId, tools: ["read"] }],
-      toolPolicies: { docs__write: "deny", ask_user: "ask" },
+      toolPolicies: { mcp__docs__write: "deny", AskUserQuestion: "ask" },
     });
     expect(unknown.statusCode).toBe(400);
-    expect(detailPaths(unknown)).toEqual(["toolPolicies.docs__write", "toolPolicies.ask_user"]);
+    expect(detailPaths(unknown)).toEqual([
+      "toolPolicies.mcp__docs__write",
+      "toolPolicies.AskUserQuestion",
+    ]);
 
     // PATCH 同样校验
     const ok = await createAgent({ tools: [{ kind: "connector", connectorId, tools: ["read"] }] });
@@ -270,12 +277,12 @@ describe("agent 定义的工具", () => {
           name: "Helper",
           model: MODEL,
           tools: [{ kind: "connector", connectorId, tools: ["read"] }],
-          toolPolicies: { docs__write: "deny" },
+          toolPolicies: { mcp__docs__write: "deny" },
         },
       },
     });
     expect(patched.statusCode).toBe(400);
-    expect(detailPaths(patched)).toEqual(["toolPolicies.docs__write"]);
+    expect(detailPaths(patched)).toEqual(["toolPolicies.mcp__docs__write"]);
   });
 });
 
@@ -327,8 +334,8 @@ describe("运行时：工具带入请求，不可用工具写提醒（Review Foc
     const { tools } = await k.app.get(ToolRegistry).forAgent(orgId, agent.definition);
     const hash = (key: string) => tools.find((t) => t.key === key)?.specHash;
     expect(call?.payload.request.tools).toEqual([
-      { key: "docs__read", specHash: hash("docs__read") },
-      { key: "docs__write", specHash: hash("docs__write") },
+      { key: "mcp__docs__read", specHash: hash("mcp__docs__read") },
+      { key: "mcp__docs__write", specHash: hash("mcp__docs__write") },
     ]);
     expect(await ofType(convId, "reminder")).toEqual([]);
   });
@@ -356,7 +363,7 @@ describe("运行时：工具带入请求，不可用工具写提醒（Review Foc
 
     const reminders = await ofType(convId, "reminder");
     expect(reminders.map((e) => e.payload.text)).toEqual([
-      `${TOOLS_UNAVAILABLE_PREFIX}tools-probe__echo (Plugin tools-probe is not enabled in this organization), docs__* (App docs was deleted)`,
+      `${TOOLS_UNAVAILABLE_PREFIX}plugin__tools-probe__echo (Plugin tools-probe is not enabled in this organization), mcp__docs__* (App docs was deleted)`,
     ]);
     const [call] = await ofType(convId, "model_call");
     expect(call?.payload.request.tools).toEqual([]);
@@ -386,10 +393,12 @@ describe("运行时：工具带入请求，不可用工具写提醒（Review Foc
     await step(agent.definition, convId, runId, 3);
     const texts = (await ofType(convId, "reminder")).map((e) => e.payload.text);
     expect(texts).toEqual([
-      `${TOOLS_UNAVAILABLE_PREFIX}tools-probe__echo (Plugin tools-probe is not enabled in this organization)`,
+      `${TOOLS_UNAVAILABLE_PREFIX}plugin__tools-probe__echo (Plugin tools-probe is not enabled in this organization)`,
       TOOLS_AVAILABLE_AGAIN,
     ]);
     const calls = await ofType(convId, "model_call");
-    expect(calls.at(-1)?.payload.request.tools?.map((t) => t.key)).toEqual(["tools-probe__echo"]);
+    expect(calls.at(-1)?.payload.request.tools?.map((t) => t.key)).toEqual([
+      "plugin__tools-probe__echo",
+    ]);
   });
 });

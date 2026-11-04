@@ -364,16 +364,16 @@ describe("漂移检测（后台检查）", () => {
         },
       ],
     });
-    expect(tools.map((t) => t.key)).toEqual(["docs__delete_doc"]);
+    expect(tools.map((t) => t.key)).toEqual(["mcp__docs__delete_doc"]);
     expect(unavailable).toEqual([
-      { ref: "docs__search", reason: "Tool is pending review" },
-      { ref: "docs__create_doc", reason: "Tool no longer exists in app docs" },
-      { ref: "docs__list_docs", reason: "Tool is pending review" },
+      { ref: "mcp__docs__search", reason: "Tool is pending review" },
+      { ref: "mcp__docs__create_doc", reason: "Tool no longer exists in app docs" },
+      { ref: "mcp__docs__list_docs", reason: "Tool is pending review" },
     ]);
     const all = await k.app.get(ToolRegistry).forAgent(orgId, {
       tools: [{ kind: "connector", connectorId: app.id, tools: "all" }],
     });
-    expect(all.tools.map((t) => t.key)).toEqual(["docs__delete_doc"]);
+    expect(all.tools.map((t) => t.key)).toEqual(["mcp__docs__delete_doc"]);
   });
 
   it("消失后又回来：按新增处理（待复核）", async () => {
@@ -505,7 +505,10 @@ describe("复核", () => {
     const { tools } = await k.app.get(ToolRegistry).forAgent(orgId, {
       tools: [{ kind: "connector", connectorId: app.id, tools: "all" }],
     });
-    expect(tools.map((t) => t.key).sort()).toEqual(["docs__delete_doc", "docs__list_docs"]);
+    expect(tools.map((t) => t.key).sort()).toEqual([
+      "mcp__docs__delete_doc",
+      "mcp__docs__list_docs",
+    ]);
   });
 
   it("变化后的定义不合规：不采用（存 pending 并停用），approve 被拒；修好后与上次复核的定义对比", async () => {
@@ -673,7 +676,7 @@ describe("复核", () => {
     await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
       VALUES ('cv-d', ${orgId}, 'ag-d', ${owner.id})`.execute(raw);
     await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash, connector_id)
-      VALUES (${orgId}, ${owner.id}, 'ag-d', 'docs__create_doc', ${oldHash}, ${app.id})`.execute(
+      VALUES (${orgId}, ${owner.id}, 'ag-d', 'mcp__docs__create_doc', ${oldHash}, ${app.id})`.execute(
       raw,
     );
 
@@ -701,7 +704,7 @@ describe("复核", () => {
     const t1 = await resolve();
     expect(t1?.specHash).not.toBe(oldHash);
     expect(t1 && (await decide(t1, agent, ctx))).toMatchObject({
-      ask: { toolKey: "docs__create_doc" },
+      ask: { toolKey: "mcp__docs__create_doc" },
     });
     // 授权行仍在（只是指纹不符）
     expect(

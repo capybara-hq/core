@@ -70,7 +70,7 @@ const RULES: ScriptRule[] = [
     when: { lastUserIncludes: "SCENARIO hang", assistantTurns: 0 },
     reply: {
       toolCalls: ["a", "b"].map((x) => ({
-        name: "agent",
+        name: "Agent",
         input: { description: `Part ${x}`, prompt: `task-hang-${x}` },
       })),
     },
@@ -79,14 +79,14 @@ const RULES: ScriptRule[] = [
     when: { lastUserIncludes: "SCENARIO two", assistantTurns: 0 },
     reply: {
       toolCalls: ["a", "b"].map((x) => ({
-        name: "agent",
+        name: "Agent",
         input: { description: `Part ${x}`, prompt: `task-${x}` },
       })),
     },
   },
   {
     when: { lastUserIncludes: "SCENARIO one", assistantTurns: 0 },
-    reply: { toolCalls: [{ name: "agent", input: { description: "Task", prompt: "task-one" } }] },
+    reply: { toolCalls: [{ name: "Agent", input: { description: "Task", prompt: "task-one" } }] },
   },
   { when: { lastToolResultIncludes: "[agentId:" }, reply: { text: "parent done" } },
 ];
@@ -175,7 +175,7 @@ async function setup(req: Req): Promise<void> {
         name: "Lead",
         instructions: "Lead the work.",
         model: { provider: "model-script", model: "script-1" },
-        tools: [{ kind: "builtin", name: "agent" }],
+        tools: [{ kind: "builtin", name: "Agent" }],
       },
       visibility: "org",
     },
@@ -254,7 +254,7 @@ describe("sub-agents across two replicas", () => {
     const cev = await eventsOf(db, child.conversationId);
     expect(ofType(cev, "run_failed")[0]?.payload.error.code).toBe("run.stalled");
     const events = await eventsOf(db, conv);
-    const result = ofType(events, "tool_result").find((r) => r.payload.toolKey === "agent");
+    const result = ofType(events, "tool_result").find((r) => r.payload.toolKey === "Agent");
     expect(result?.payload.isError).toBe(true);
     expect(result?.payload.content).toContain("failed (run.stalled)");
     expect(ofType(events, "subagent_finished")[0]?.payload).toMatchObject({
@@ -349,7 +349,7 @@ describe("sub-agents across two replicas", () => {
     );
     const events = await eventsOf(db, conv);
     expect(ofType(events, "run_aborted")).toHaveLength(1);
-    const results = ofType(events, "tool_result").filter((r) => r.payload.toolKey === "agent");
+    const results = ofType(events, "tool_result").filter((r) => r.payload.toolKey === "Agent");
     expect(results.map((r) => r.payload.content)).toEqual([
       "The run was stopped while this sub-agent was working; it was stopped too.",
       "The run was stopped while this sub-agent was working; it was stopped too.",

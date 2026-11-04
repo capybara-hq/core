@@ -327,7 +327,7 @@ describe("/admin/catalog/import (WizardPage)", () => {
                 description: "Reviews work.",
                 instructions: "Review it carefully.",
                 model: "fast",
-                tools: ["sandbox_read", "sandbox_bash"],
+                tools: ["Read", "Bash"],
               },
               {
                 name: "planner",
@@ -352,9 +352,7 @@ describe("/admin/catalog/import (WizardPage)", () => {
     const agents = await screen.findByRole("region", { name: c.agentTemplates });
     const tier = msgs[locale].agents.form.subagents.tier;
     expect(within(agents).getByText(`reviewer · ${tier.fast}`)).toBeTruthy();
-    expect(
-      within(agents).getByText(fill(c.agentTools, { tools: "sandbox_read, sandbox_bash" })),
-    ).toBeTruthy();
+    expect(within(agents).getByText(fill(c.agentTools, { tools: "Read, Bash" }))).toBeTruthy();
     expect(within(agents).getByText(`planner · ${tier.inherit}`)).toBeTruthy();
     expect(within(agents).getByText(c.agentToolsInherit)).toBeTruthy();
   });

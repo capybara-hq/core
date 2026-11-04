@@ -22,6 +22,8 @@ export default defineExtension({
         if (input.id === "4") throw new ToolError(nope(input.id)); // FUNCTION
         if (input.id === "5") throw new ToolError(input.msg); // DYNAMIC
         if (input.id === "6") throw new ToolError("Unused up and reused."); // WORD BOUNDARY
+        // "read" is an action verb: accepted, no marker
+        if (input.id === "7") throw new ToolError("Read it first.");
         return { content: [] };
       },
     );

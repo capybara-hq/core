@@ -1,11 +1,19 @@
-import type { ToolSpec } from "@capybara-hq/plugin-sdk";
+import {
+  connectorToolKey,
+  extensionToolKey,
+  type LocalizedName,
+  parseToolKey,
+  type ToolSpec,
+} from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { ConversationAccess } from "../conversations/access.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { UUID_RE } from "../ui/registry.js";
-import { KEY_SEPARATOR, toolKey } from "./naming.js";
+import { BUILTIN_TOOL_KINDS, SANDBOX_TOOL_NAMES } from "./builtin-names.js";
+import { pluginDisplayNames } from "./display-names.js";
+import { isLegacyBuiltinKey, LEGACY_BUILTINS, type LegacyBuiltin } from "./legacy-keys.js";
 import { ToolRegistry } from "./registry.js";
 
 /**
@@ -18,34 +26,34 @@ export type ToolKind = "command" | "read" | "edit" | "search" | "connector" | "m
 export interface ToolInfo {
   /** The model-visible tool key, as asked for. */
   key: string;
+  /**
+   * Set only for a release-candidate builtin key (old history, tool naming spec §9): the current
+   * tool it stands for. Everything else describes that tool, with `keyArgs` in the old parameter
+   * names the logged input carries. Pages map a call's name through it (the `Agent` row, labels).
+   */
+  aliasOf?: string;
   /** The declared display title (`ToolSpec.title`), or null. */
   title: string | null;
   kind: ToolKind;
+  /** True exactly for the builtin tools that run in the conversation's sandbox. */
+  sandbox: boolean;
   /** The declared key arguments (`ToolSpec.keyArgs`), or []. */
   keyArgs: string[];
+  /**
+   * The local tool name parsed from a connector or extension key (`mcp__crm__delete` -> `delete`),
+   * shown in brackets after the source's display name; null for builtins and unparsable keys.
+   */
+  tool: string | null;
   source:
     | { kind: "builtin" }
-    | { kind: "extension"; name: string }
+    /** `displayName`: the plugin's catalog display name, else its name. */
+    | { kind: "extension"; name: string; displayName: LocalizedName }
     | { kind: "connector"; id: string; name: string }
     /** No tool with this key exists now (removed connector, unloaded extension, …). */
     | { kind: "unknown" };
 }
 
-/** Kinds of the kernel builtin tools; a builtin missing here is a plain `tool`. */
-export const BUILTIN_TOOL_KINDS: Readonly<Record<string, ToolKind>> = {
-  sandbox_bash: "command",
-  sandbox_read: "read",
-  sandbox_write: "edit",
-  sandbox_edit: "edit",
-  sandbox_glob: "search",
-  sandbox_grep: "search",
-  sandbox_deliver: "tool",
-  tool_search: "meta",
-  skill_load: "meta",
-  skill_write: "meta",
-  read_tool_output: "meta",
-  ask_user: "meta",
-};
+export { BUILTIN_TOOL_KINDS } from "./builtin-names.js";
 
 /** At most this many keys per request, each at most {@link TOOL_INFO_KEY_MAX} characters. */
 export const TOOL_INFO_MAX_KEYS = 100;
@@ -63,7 +71,7 @@ const display = (spec: ToolSpec | undefined) => ({
 
 /**
  * Presentation metadata for `keys` in this org, in request order with repeats dropped. Builtins
- * by name; `<prefix>__<tool>` keys first as a loaded extension's registration, then as a live
+ * by name (a release-candidate builtin key as its current tool, with `aliasOf`); `plugin__<plugin>__<tool>` keys as a loaded extension's registration, and `mcp__<slug>__<tool>` keys as a live
  * connector's current stored tool (its reviewed definition, never a pending one). Anything else
  * comes back as an unknown plain tool.
  *
@@ -85,18 +93,14 @@ export async function toolInfo(
   const unique = [...new Set(keys)];
   const builtins = new Map(deps.registry.builtinSpecs().map((s) => [s.name, s]));
   const extensions = new Map(
-    deps.registry.extensionToolSpecs().map((t) => [toolKey(t.plugin, t.spec.name), t]),
+    deps.registry.extensionToolSpecs().map((t) => [extensionToolKey(t.plugin, t.spec.name), t]),
   );
-  const split = (key: string): [string, string] | null => {
-    const i = key.indexOf(KEY_SEPARATOR);
-    return i > 0 ? [key.slice(0, i), key.slice(i + KEY_SEPARATOR.length)] : null;
-  };
   const slugs = [
     ...new Set(
       unique.flatMap((k) => {
         if (builtins.has(k) || extensions.has(k)) return [];
-        const p = split(k);
-        return p ? [p[0]] : [];
+        const p = parseToolKey(k);
+        return p?.kind === "connector" ? [p.slug] : [];
       }),
     ),
   ];
@@ -111,16 +115,41 @@ export async function toolInfo(
           .where("c.deleted_at", "is", null)
           .where("c.slug", "in", slugs)
           .execute();
-  const connectorTools = new Map(connectorRows.map((r) => [toolKey(r.slug, r.tool), r]));
+  const connectorTools = new Map(connectorRows.map((r) => [connectorToolKey(r.slug, r.tool), r]));
+  const displayNames = await pluginDisplayNames(
+    deps.db,
+    unique.flatMap((k) => {
+      const e = extensions.get(k);
+      return e ? [e.plugin] : [];
+    }),
+  );
+  const localTool = (key: string): string | null => {
+    const p = parseToolKey(key);
+    return p && p.kind !== "builtin" ? p.tool : null;
+  };
+
+  const builtinInfo = (key: string, name: string, spec: ToolSpec): ToolInfo => ({
+    key,
+    ...display(spec),
+    kind: BUILTIN_TOOL_KINDS[name] ?? "tool",
+    sandbox: (SANDBOX_TOOL_NAMES as readonly string[]).includes(name),
+    tool: null,
+    source: { kind: "builtin" },
+  });
 
   return unique.map((key): ToolInfo => {
     const b = builtins.get(key);
-    if (b) {
+    if (b) return builtinInfo(key, key, b);
+    const legacy = isLegacyBuiltinKey(key) ? (LEGACY_BUILTINS[key] as LegacyBuiltin) : undefined;
+    const current = legacy && builtins.get(legacy.name);
+    if (legacy && current) {
+      // the logged input of an rc call names the old parameters: key arguments in those names
+      const oldName = new Map(Object.entries(legacy.params).map(([o, n]) => [n, o]));
+      const info = builtinInfo(key, legacy.name, current);
       return {
-        key,
-        ...display(b),
-        kind: BUILTIN_TOOL_KINDS[key] ?? "tool",
-        source: { kind: "builtin" },
+        ...info,
+        aliasOf: legacy.name,
+        keyArgs: info.keyArgs.map((a) => oldName.get(a) ?? a),
       };
     }
     const e = extensions.get(key);
@@ -129,7 +158,13 @@ export async function toolInfo(
         key,
         ...display(e.spec),
         kind: "tool",
-        source: { kind: "extension", name: e.plugin },
+        sandbox: false,
+        tool: e.spec.name,
+        source: {
+          kind: "extension",
+          name: e.plugin,
+          displayName: displayNames.get(e.plugin) ?? { zh: e.plugin, en: e.plugin },
+        },
       };
     const c = connectorTools.get(key);
     if (c) {
@@ -138,10 +173,20 @@ export async function toolInfo(
         key,
         ...display(c.spec as ToolSpec),
         kind: "connector",
+        sandbox: false,
+        tool: c.tool,
         source: { kind: "connector", id: c.id, name: c.name },
       };
     }
-    return { key, title: null, kind: "tool", keyArgs: [], source: { kind: "unknown" } };
+    return {
+      key,
+      title: null,
+      kind: "tool",
+      sandbox: false,
+      keyArgs: [],
+      tool: localTool(key),
+      source: { kind: "unknown" },
+    };
   });
 }
 

@@ -282,6 +282,29 @@ export class EventLog {
     return r && (toEvent(r) as Extract<ConversationEvent, { type: T }>);
   }
 
+  /**
+   * The file state (`tool_result.view.file`) the latest `Read` / `Write` / `Edit` result of this
+   * conversation recorded for `path` (a normalized sandbox path); null when none did. One index
+   * probe per call: the partial index `conversation_events_file_state_idx` of migration 0063
+   * (conversation_id, view.file.path, seq DESC; tool_result rows only) answers it, also for a path
+   * never read (the query's predicate must keep matching that index's expression).
+   */
+  async latestFileState(
+    conversationId: string,
+    path: string,
+  ): Promise<{ size: number; sha256: string } | null> {
+    const r = await this.db
+      .selectFrom("conversation_events")
+      .select(sql<{ size: number; sha256: string }>`payload->'view'->'file'`.as("file"))
+      .where("conversation_id", "=", conversationId)
+      .where("type", "=", "tool_result")
+      .where(sql<boolean>`payload->'view'->'file'->>'path' = ${path}`)
+      .orderBy("seq", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    return r ? { size: r.file.size, sha256: r.file.sha256 } : null;
+  }
+
   private validate(e: AppendEvent): ConversationEventBody {
     const r = ConversationEventSchema.safeParse({ type: e.type, payload: e.payload });
     if (!r.success) {

@@ -11,6 +11,7 @@ export { checkMigrations, checkSql } from "./migrations.js";
 export { checkPluginPack, PLUGIN_PACK_MAX_BYTES } from "./plugin-pack.js";
 export { checkPluginPermissions } from "./plugin-permissions.js";
 export { checkPluginState } from "./plugin-state.js";
+export { checkPluginToolKeys, TOOL_KEY_MAX } from "./plugin-tool-keys.js";
 export { syncPluginVersions } from "./plugin-versions.js";
 export { checkPluginReleaseMetadata } from "./release-metadata.js";
 export { formatFinding, printCheck } from "./report.js";

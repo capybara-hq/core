@@ -280,8 +280,8 @@ describe("manifest.invocation", { timeout: 60_000 }, () => {
     );
   });
 
-  it("skill_write of a SKILL.md with disable-model-invocation: true creates a manual-only version", async () => {
-    const agent = await agentId({}, [{ kind: "builtin", name: "skill_write" }]);
+  it("SkillWrite of a SKILL.md with disable-model-invocation: true creates a manual-only version", async () => {
+    const agent = await agentId({}, [{ kind: "builtin", name: "SkillWrite" }]);
     const conv = await createConv(owner, orgId, agent);
     const input = {
       name: "notes",
@@ -294,7 +294,7 @@ describe("manifest.invocation", { timeout: 60_000 }, () => {
         },
       ],
     };
-    await postMessage(owner, orgId, conv, `tool:skill_write:${JSON.stringify(input)}`);
+    await postMessage(owner, orgId, conv, `tool:SkillWrite:${JSON.stringify(input)}`);
     await waitForTerminal(db, conv, 1, 30_000);
     const row = await db
       .selectFrom("skills")

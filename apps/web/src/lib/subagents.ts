@@ -10,6 +10,8 @@ import type {
 } from "./conversations";
 import { retryOnMountOf } from "./query/client";
 import { subagentsQuery, usageQuery } from "./query/conversation";
+import { extensionToolKey } from "./tool-key";
+import { toolLabelOfKey, toolLabelText } from "./tool-label";
 
 /**
  * Sub-agents on the conversation page (UI refresh B Task 21, phase C §14): the parent's list
@@ -122,7 +124,11 @@ export const usageTotal = (u: ConversationUsage) =>
 
 /** A tool of a sub-agent's frozen definition as the task line names it. */
 export const subagentToolName = (r: SubagentToolRef): string =>
-  r.kind === "builtin" ? r.name : r.kind === "plugin" ? `${r.plugin}__${r.name}` : r.connectorId;
+  r.kind === "connector"
+    ? r.connectorId
+    : toolLabelText(
+        toolLabelOfKey(r.kind === "builtin" ? r.name : extensionToolKey(r.plugin, r.name)),
+      );
 
 /** The tools of the task line: up to three names, then "+N". */
 export function toolsLine(tools: readonly SubagentToolRef[] | undefined, none: string): string {

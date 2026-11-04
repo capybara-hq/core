@@ -46,7 +46,7 @@ const approval = (id: string, over: Record<string, unknown> = {}) => ({
   conversationId: `c-${id}`,
   runId: "r1",
   callId: `call-${id}`,
-  toolKey: `fixture__${id}`,
+  toolKey: `mcp__fixture__${id}`,
   toolName: `tool_${id}`,
   connector: { id: "app1", name: "Fixture", slug: "fixture" },
   agent: { id: "ag1", name: "Echo agent" },
@@ -135,8 +135,8 @@ describe("收件箱（InboxPage）", () => {
       expect(calls).toEqual([]);
       expect(container.querySelector('[data-template="InboxPage"]')).not.toBeNull();
       const table = await screen.findByRole("table", { name: m.inbox.listLabel });
-      expect(within(table).getByText("Fixture · tool_a")).toBeTruthy();
-      expect(within(table).getByText("Fixture · tool_b")).toBeTruthy();
+      expect(within(table).getByText("Fixture [tool_a]")).toBeTruthy();
+      expect(within(table).getByText("Fixture [tool_b]")).toBeTruthy();
       // 默认选中第一条
       const detail = container.querySelector('[data-approval-id="a"]') as HTMLElement;
       expect(detail).not.toBeNull();
@@ -178,7 +178,7 @@ describe("收件箱（InboxPage）", () => {
     );
     const user = userEvent.setup();
     const table = await screen.findByRole("table", { name: m.inbox.listLabel });
-    await user.click(within(table).getByText("Fixture · tool_b"));
+    await user.click(within(table).getByText("Fixture [tool_b]"));
     expect(container.querySelector('[data-approval-id="b"]')).not.toBeNull();
     await user.click(screen.getByLabelText(new RegExp(m.approval.scope.always)));
     const row = screen.getByRole("region", {
@@ -191,7 +191,7 @@ describe("收件箱（InboxPage）", () => {
     });
     // the decision invalidates the inbox: it is read again in the browser, the route is not
     // refreshed
-    await vi.waitFor(() => expect(screen.queryByText("Fixture · tool_b")).toBeNull());
+    await vi.waitFor(() => expect(screen.queryByText("Fixture [tool_b]")).toBeNull());
     expect(router.refresh).not.toHaveBeenCalled();
     expect(server.filter((c) => c.url.endsWith("/inbox"))).toHaveLength(1);
     await vi.waitFor(() =>
@@ -276,7 +276,7 @@ describe("收件箱：技能变更", () => {
         { locale },
       );
       const table = await screen.findByRole("table", { name: m.inbox.listLabel });
-      expect(within(table).getByText("Fixture · tool_a")).toBeTruthy();
+      expect(within(table).getByText("Fixture [tool_a]")).toBeTruthy();
       await userEvent
         .setup()
         .click(within(table).getByText(`${m.inbox.skillChange.label} · notes-style`));
@@ -420,12 +420,12 @@ describe("the inbox from the cache", () => {
       if (document.querySelector('[data-template="InboxPage"]') === null) throw new Error("none");
     });
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
-    expect(screen.queryByText("Fixture · tool_a")).toBeNull();
+    expect(screen.queryByText("Fixture [tool_a]")).toBeNull();
     // the status bar draws nothing while the inbox loads (not "0 pending")
     expect(statusBar.mock.calls.length).toBeGreaterThan(0);
     expect(statusBar.mock.calls.every(([v]) => v === null)).toBe(true);
     await act(async () => release());
-    expect(await screen.findAllByText("Fixture · tool_a")).not.toHaveLength(0);
+    expect(await screen.findAllByText("Fixture [tool_a]")).not.toHaveLength(0);
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
     expect(statusBar).toHaveBeenLastCalledWith("· 1 pending");
   });
@@ -438,14 +438,14 @@ describe("已记住的授权（SettingsPage）", () => {
       {
         agentId: "ag1",
         agentName: "Echo agent",
-        toolKey: "fixture__delete_item",
+        toolKey: "mcp__fixture__delete_item",
         specHash: "h",
         createdAt: T,
       },
     ];
     const calls = stubApi({
       "GET /api/v1/orgs/o1/me/tool-grants": () => json(200, { grants }),
-      "DELETE /api/v1/orgs/o1/me/tool-grants/ag1/fixture__delete_item": () => {
+      "DELETE /api/v1/orgs/o1/me/tool-grants/ag1/mcp__fixture__delete_item": () => {
         grants = [];
         return noContent();
       },
@@ -457,11 +457,13 @@ describe("已记住的授权（SettingsPage）", () => {
     expect(
       screen.getByRole("link", { name: m.connections.nav.grants }).getAttribute("aria-current"),
     ).toBe("page");
-    expect(await screen.findByText("fixture__delete_item")).toBeTruthy();
+    // the label, with the raw key kept as secondary text
+    expect(await screen.findByText("fixture [delete_item]")).toBeTruthy();
+    expect(screen.getByText("mcp__fixture__delete_item")).toBeTruthy();
     await userEvent.setup().click(
       screen.getByRole("button", {
         name: m.connections.grants.revokeLabel
-          .replace("{tool}", "fixture__delete_item")
+          .replace("{tool}", "fixture [delete_item]")
           .replace("{agent}", "Echo agent"),
       }),
     );

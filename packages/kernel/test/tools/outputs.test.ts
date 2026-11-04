@@ -183,7 +183,7 @@ describe("spillIfLarge", () => {
     const id = r.outputId as string;
     expect(r.content).toBe(
       `01234\n…\n[Output truncated: ${big.length} chars, 3 lines. Full output id: ${id}. ` +
-        `Use read_tool_output to page through it, or pass {"$output":"${id}"} as a tool argument.]`,
+        `Use ReadToolOutput to page through it, or pass {"$output":"${id}"} as a tool argument.]`,
     );
     expect(await outputs.load(mineScope(), id)).toBe(big);
   });

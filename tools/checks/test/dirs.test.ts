@@ -47,6 +47,7 @@ describe("scan scope of the plugin-scoped checks", () => {
       "Plugin pack",
       "Config forms",
       "Tool design",
+      "Tool key length",
       "Plugin test imports",
       "Plugin release metadata",
     ]);

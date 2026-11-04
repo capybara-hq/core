@@ -16,9 +16,9 @@ import { AgentSectionFrame, useAgentPage } from "./frame";
 const isAgentTool = (r: AgentToolRef) => r.kind === "builtin" && r.name === AGENT_TOOL;
 
 /**
- * 子 Agent Sub-agents (agent profile design §3.2): the `agent` tool and the `subagents` block.
+ * 子 Agent Sub-agents (agent profile design §3.2): the `Agent` tool and the `subagents` block.
  * The rules that depend on who can see the agent (the "shared more widely" warning) read the
- * **saved** visibility. Its save sends the saved definition with only the `agent` tool reference
+ * **saved** visibility. Its save sends the saved definition with only the `Agent` tool reference
  * and `subagents` changed (no block when there is nothing and there was nothing).
  */
 export function SubagentsSection() {

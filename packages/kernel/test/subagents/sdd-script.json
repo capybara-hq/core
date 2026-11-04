@@ -10,7 +10,7 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "sandbox_bash",
+            "name": "Bash",
             "input": {
               "description": "Test step",
               "command": "cat /workspace/.superpowers/sdd/plan/task-1-brief.md"
@@ -28,7 +28,7 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "sandbox_bash",
+            "name": "Bash",
             "input": {
               "description": "Test step",
               "command": "printf 'hello' > greeting.txt && git add greeting.txt && git commit -qm 'feat: greeting file' && git log --oneline -1"
@@ -56,7 +56,7 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "sandbox_bash",
+            "name": "Bash",
             "input": {
               "description": "Test step",
               "command": "printf 'hello\\n' > greeting.txt && git commit -qam 'fix: end greeting.txt with a newline' && git log --oneline -1"
@@ -84,9 +84,9 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "sandbox_read",
+            "name": "Read",
             "input": {
-              "path": "/workspace/.superpowers/sdd/plan/review-1.diff"
+              "file_path": "/workspace/.superpowers/sdd/plan/review-1.diff"
             }
           }
         ]
@@ -111,7 +111,7 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "sandbox_bash",
+            "name": "Bash",
             "input": {
               "description": "Test step",
               "command": "git show --stat --format=%s HEAD"
@@ -139,7 +139,7 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "sandbox_bash",
+            "name": "Bash",
             "input": {
               "description": "Test step",
               "command": "cat /workspace/.superpowers/sdd/plan/task-2-brief.md"
@@ -157,7 +157,7 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "sandbox_bash",
+            "name": "Bash",
             "input": {
               "description": "Test step",
               "command": "printf 'bye\\n' > farewell.txt && git add farewell.txt && git commit -qm 'feat: farewell file' && git log --oneline -1"
@@ -185,9 +185,9 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "sandbox_read",
+            "name": "Read",
             "input": {
-              "path": "/workspace/.superpowers/sdd/plan/review-2.diff"
+              "file_path": "/workspace/.superpowers/sdd/plan/review-2.diff"
             }
           }
         ]
@@ -212,9 +212,9 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "sandbox_read",
+            "name": "Read",
             "input": {
-              "path": "/workspace/.superpowers/sdd/plan/final.diff"
+              "file_path": "/workspace/.superpowers/sdd/plan/final.diff"
             }
           }
         ],
@@ -244,7 +244,7 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "sandbox_bash",
+            "name": "Bash",
             "input": {
               "description": "Test step",
               "command": "cat greeting.txt farewell.txt"
@@ -276,9 +276,9 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "skill_load",
+            "name": "Skill",
             "input": {
-              "name": "superpowers:subagent-driven-development"
+              "skill": "superpowers:subagent-driven-development"
             }
           }
         ]
@@ -292,9 +292,9 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "sandbox_write",
+            "name": "Write",
             "input": {
-              "path": "/workspace/plan.md",
+              "file_path": "/workspace/plan.md",
               "content": "# Greeting files plan\n\n**Goal:** two small text files.\n\n### Task 1: Greeting file\n\nCreate `greeting.txt` containing the line `hello`, and commit it.\n\n### Task 2: Farewell file\n\nCreate `farewell.txt` containing the line `bye`, and commit it.\n"
             }
           }
@@ -309,7 +309,7 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "sandbox_bash",
+            "name": "Bash",
             "input": {
               "description": "Test step",
               "command": "git init -q && git config user.email sdd@example.com && git config user.name SDD && git add plan.md && git commit -qm 'docs: plan' && git tag task1-base && bash /skills/subagent-driven-development/scripts/task-brief /workspace/plan.md 1"
@@ -326,7 +326,7 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "agent",
+            "name": "Agent",
             "input": {
               "description": "Implement Task 1",
               "model": "fast",
@@ -344,7 +344,7 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "sandbox_bash",
+            "name": "Bash",
             "input": {
               "description": "Test step",
               "command": "bash /skills/subagent-driven-development/scripts/review-package /workspace/plan.md task1-base HEAD /workspace/.superpowers/sdd/plan/review-1.diff"
@@ -361,7 +361,7 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "agent",
+            "name": "Agent",
             "input": {
               "description": "Review Task 1",
               "prompt": "REVIEW-1: You are reviewing Task 1 of /workspace/plan.md. The review package is /workspace/.superpowers/sdd/plan/review-1.diff. Report spec compliance and any issues with their severity."
@@ -378,7 +378,7 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "agent",
+            "name": "Agent",
             "input": {
               "description": "Fix Task 1",
               "resume": "{{agentId:1}}",
@@ -396,7 +396,7 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "agent",
+            "name": "Agent",
             "input": {
               "description": "Re-review Task 1",
               "model": "fast",
@@ -414,7 +414,7 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "sandbox_bash",
+            "name": "Bash",
             "input": {
               "description": "Test step",
               "command": "git tag task2-base && bash /skills/subagent-driven-development/scripts/task-brief /workspace/plan.md 2"
@@ -431,7 +431,7 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "agent",
+            "name": "Agent",
             "input": {
               "description": "Implement Task 2",
               "model": "fast",
@@ -449,7 +449,7 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "sandbox_bash",
+            "name": "Bash",
             "input": {
               "description": "Test step",
               "command": "bash /skills/subagent-driven-development/scripts/review-package /workspace/plan.md task2-base HEAD /workspace/.superpowers/sdd/plan/review-2.diff"
@@ -466,7 +466,7 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "agent",
+            "name": "Agent",
             "input": {
               "description": "Review Task 2",
               "prompt": "REVIEW-2: You are reviewing Task 2 of /workspace/plan.md. The review package is /workspace/.superpowers/sdd/plan/review-2.diff. Report spec compliance and any issues with their severity."
@@ -483,9 +483,9 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "skill_load",
+            "name": "Skill",
             "input": {
-              "name": "dispatching-parallel-agents"
+              "skill": "dispatching-parallel-agents"
             }
           }
         ]
@@ -499,7 +499,7 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "sandbox_bash",
+            "name": "Bash",
             "input": {
               "description": "Test step",
               "command": "bash /skills/subagent-driven-development/scripts/review-package /workspace/plan.md task1-base HEAD /workspace/.superpowers/sdd/plan/final.diff"
@@ -516,7 +516,7 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "agent",
+            "name": "Agent",
             "input": {
               "description": "Final review",
               "subagent_type": "superpowers:code-reviewer",
@@ -525,7 +525,7 @@
             }
           },
           {
-            "name": "agent",
+            "name": "Agent",
             "input": {
               "description": "Check files",
               "model": "fast",

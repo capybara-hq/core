@@ -2,7 +2,9 @@ import { createHash } from "node:crypto";
 import {
   type ObjectStore,
   parseSkillMd,
+  renderSkillBody,
   SKILL_ENTRY_FILE,
+  SKILL_INVOCATION_LIMITS,
   SKILLS_SANDBOX_ROOT,
   skillSandboxPath,
   ToolError,
@@ -18,6 +20,7 @@ import { type CatalogSkill, latestInvocation } from "../../runtime/context/skill
 import { dispatchOfChildRun } from "../../runtime/subagents/child.js";
 import { resolveSkillForkType } from "../../runtime/subagents/roster.js";
 import { invocationOf, resolveSkills } from "../../skills/catalog.js";
+import { AGENT_TOOL, SANDBOX_TOOL_NAMES } from "../builtin-names.js";
 import type { BuiltinCallContext, BuiltinTool } from "../registry.js";
 import {
   clip,
@@ -29,10 +32,9 @@ import {
   withNotices,
   withPathLease,
 } from "./sandbox/common.js";
-import { SANDBOX_TOOL_NAMES } from "./sandbox/names.js";
 
 /**
- * 内置工具 `skill_load`（M5 T14，Ruling M17）：按日志里最新一份技能目录快照把名字解析为 id 与版本，返回该版本
+ * 内置工具 `Skill`（M5 T14，Ruling M17）：按日志里最新一份技能目录快照把名字解析为 id 与版本，返回该版本
  * SKILL.md 的正文与文件清单（结果里写明版本）。技能带其他文件时把整个技能复制进本对话沙箱的 `/skills/<name>/`
  * （提供方以 root 写，命令用户只读）；没有沙箱提供方时只给正文，并说明脚本不可用。
  *
@@ -60,27 +62,33 @@ const MAX_LISTED_FILES = 200;
 const MAX_LISTED_NAMES = 50;
 
 const SPEC: ToolSpec = {
-  name: "skill_load",
+  name: "Skill",
   // Display only (the tool row; not in the fingerprint, never sent to the model).
-  keyArgs: ["name"],
+  keyArgs: ["skill"],
   description:
     "Load a skill from the skills list: returns the skill's instructions " +
     "(its SKILL.md) and the list of its files. Call it before starting a task that matches a " +
     "skill's description, then follow the returned instructions. If the skill has scripts or other " +
     "files, they are copied read-only to /skills/<name>/ in this conversation's sandbox; run scripts " +
     "there with an interpreter (sh, python3, node). Call it again when the skills list changes or " +
-    "the sandbox was recreated. Do not use it for skills that are not in the list.",
+    "the sandbox was recreated. Pass args when the task gives the skill arguments (they replace " +
+    "$ARGUMENTS and $1, $2… in the instructions). Do not use it for skills that are not in the list.",
   inputSchema: {
     type: "object",
     properties: {
-      name: {
+      skill: {
         type: "string",
         minLength: 1,
         maxLength: 64,
         description: 'The skill name exactly as listed, e.g. "pdf-report".',
       },
+      args: {
+        type: "string",
+        maxLength: SKILL_INVOCATION_LIMITS.argumentsMaxChars,
+        description: 'Optional arguments for the skill, e.g. "123 api".',
+      },
     },
-    required: ["name"],
+    required: ["skill"],
     additionalProperties: false,
   },
   annotations: { readOnlyHint: true },
@@ -96,7 +104,7 @@ const STORAGE_UNAVAILABLE_TEXT =
 const notInCatalog = (name: string, skills: readonly CatalogSkill[]): string => {
   const names = skills.slice(0, MAX_LISTED_NAMES).map((s) => s.name);
   const more = skills.length > names.length ? ", …" : "";
-  return `Skill "${clip(name, 80)}" is not in the skills catalog for this conversation; call skill_load with one of the listed names: ${names.join(", ")}${more}.`;
+  return `Skill "${clip(name, 80)}" is not in the skills catalog for this conversation; call Skill with one of the listed names: ${names.join(", ")}${more}.`;
 };
 
 const removedText = (name: string): string =>
@@ -104,7 +112,7 @@ const removedText = (name: string): string =>
 
 /** Phase D spec §4.4: the line before a forked skill's instructions (model-visible, English). */
 const forkAvailableText = (type: string): string =>
-  `This skill is written to run in a sub-agent: call agent with subagent_type "${type}" and a prompt containing these instructions and the details of the task, then use its report; do not follow the instructions yourself.`;
+  `This skill is written to run in a sub-agent: call Agent with subagent_type "${type}" and a prompt containing these instructions and the details of the task, then use its report; do not follow the instructions yourself.`;
 const FORK_UNAVAILABLE_TEXT =
   "This skill is written to run in a sub-agent, which is not available here; follow the instructions yourself.";
 
@@ -114,7 +122,7 @@ const integrityText = (name: string): string =>
 /** 依赖：沙箱工具的依赖，加上读技能行用的库与读快照用的日志。 */
 export interface SkillLoadDeps extends SandboxToolDeps {
   db: KernelSchemaDb;
-  eventLog: Pick<EventLog, "append" | "latestOfType">;
+  eventLog: Pick<EventLog, "append" | "latestOfType" | "latestFileState">;
 }
 
 /** 标记文件里一个技能的记录。 */
@@ -436,7 +444,7 @@ async function invokedEntry(
 }
 
 /**
- * The line before a forked skill's instructions (spec §4.4): run it through `agent` when this step
+ * The line before a forked skill's instructions (spec §4.4): run it through `Agent` when this step
  * offers the tool and the skill's type is in the agent's roster, else follow it yourself.
  */
 async function forkLine(
@@ -446,7 +454,7 @@ async function forkLine(
   plugin: string | undefined,
 ): Promise<string> {
   const hasAgent = (ctx.tools ?? []).some(
-    (t) => t.source.kind === "builtin" && t.source.name === "agent",
+    (t) => t.source.kind === "builtin" && t.source.name === AGENT_TOOL,
   );
   if (!hasAgent) return FORK_UNAVAILABLE_TEXT;
   const agent = await runAgent(db, ctx);
@@ -455,7 +463,7 @@ async function forkLine(
   return type.inRoster ? forkAvailableText(type.agentType) : FORK_UNAVAILABLE_TEXT;
 }
 
-/** 内置工具 `skill_load`（见文件头）。 */
+/** 内置工具 `Skill`（见文件头）。 */
 export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
   return {
     spec: SPEC,
@@ -463,7 +471,7 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
     // 可能要创建 / 恢复沙箱并复制文件：与沙箱工具同一时限
     timeoutMs: () => sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx: BuiltinCallContext) {
-      const asked = (input as { name: string }).name;
+      const { skill: asked, args } = input as { skill: string; args?: string };
       const snap = await deps.eventLog.latestOfType(ctx.conversationId, "skills_catalog");
       const skills = snap?.payload.skills ?? [];
       let entry = findEntry(skills, asked);
@@ -541,12 +549,22 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
           "or `node`; the files are not executable, so `./script` does not work. Write outputs under " +
           `/workspace, not ${SKILLS_SANDBOX_ROOT}.${stale}`;
       }
-      const fork = invocationOf(manifest).fork;
+      const invocation = invocationOf(manifest);
+      const fork = invocation.fork;
+      let instructions: string;
+      try {
+        instructions = renderSkillBody(parsed.body.trim(), invocation, args ?? "", name);
+      } catch (e) {
+        if (!(e instanceof RangeError)) throw e;
+        throw new ToolError(
+          `Skill "${name}" cannot be rendered: ${e.message}; check the args against the skill's placeholders and retry with shorter args.`,
+        );
+      }
       const text = [
         ...(fork ? [await forkLine(deps.db, ctx, fork, entry.plugin)] : []),
         `Loaded skill "${name}" (version ${entry.version}).`,
         filesText,
-        `<skill name="${name}" version="${entry.version}">\n${parsed.body.trim()}\n</skill>`,
+        `<skill name="${name}" version="${entry.version}">\n${instructions}\n</skill>`,
       ].join("\n\n");
       return {
         content: [{ type: "text", text: withNotices(notices, text) }],

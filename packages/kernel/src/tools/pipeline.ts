@@ -5,6 +5,7 @@ import {
   type InputForm,
   type InputRequired,
   type Logger,
+  parseToolKey,
   type ToolDisplay,
   ToolError,
   validateInputForm,
@@ -55,6 +56,7 @@ import { SubagentsService } from "../runtime/subagents/subagents.service.js";
 import { skillLoadOfferedIn } from "../skills/catalog.js";
 import { type ApprovalRecord, type ApprovalScope, ApprovalsService } from "./approvals.service.js";
 import { Breaker, breakerOpenMessage } from "./breaker.js";
+import { TOOL_SEARCH } from "./builtin-names.js";
 import {
   AGENT_STOPPED_WITH_RUN_TEXT,
   AGENT_TOOL,
@@ -65,6 +67,7 @@ import { isAlwaysLoaded, notLoadedText } from "./builtins/tool-search.js";
 import { type ConnectorAuth, CredentialMissing, Credentials } from "./credentials.js";
 import { ToolDrift } from "./drift.js";
 import { ElicitationSession } from "./elicitation.js";
+import { type LegacyScope, legacyHint, legacyToolInput, legacyToolKey } from "./legacy-keys.js";
 import { renderResult, resolveOutputRefs, spillIfLarge, ToolOutputs } from "./outputs.js";
 import { createDecidePolicy } from "./policy.js";
 import { type QuestionRecord, QuestionsService } from "./questions.service.js";
@@ -109,9 +112,32 @@ const timeoutText = (key: string, ms: number) =>
   `Tool ${key} timed out after ${ms / 1000}s. The operation may or may not have completed; verify before retrying.`;
 const failedText = (key: string, errName: string) =>
   `Tool ${key} failed (${errName}). The operation may not have completed; check before retrying or try another approach.`;
-const unknownToolText = (name: string, keys: string[], toolSearch: boolean) =>
+/**
+ * Is a logged call key the `Agent` tool: the current key, or the rc `agent` of a call dispatched
+ * before the rename (spec §9; a builtin maps without a scope)?
+ */
+const isAgentCallKey = (key: string): boolean =>
+  key === AGENT_TOOL || legacyToolKey(key) === AGENT_TOOL;
+/** The connector slugs and extension names among the run's tools (to read old `<x>__<tool>` keys). */
+const legacyScopeOf = (tools: readonly ResolvedTool[]): LegacyScope => {
+  const connectorSlugs = new Set<string>();
+  const extensionNames = new Set<string>();
+  for (const t of tools) {
+    const p = parseToolKey(t.key);
+    if (p?.kind === "connector") connectorSlugs.add(p.slug);
+    else if (p?.kind === "extension") extensionNames.add(p.plugin);
+  }
+  return { connectorSlugs, extensionNames };
+};
+const unknownToolText = (
+  name: string,
+  keys: string[],
+  toolSearch: boolean,
+  hint: string | null = null,
+) =>
   `Unknown tool "${name}". Available tools: ${keys.length === 0 ? "(none)" : keys.join(", ")}.` +
-  (toolSearch ? " Use tool_search to load other tools." : "");
+  (toolSearch ? " Use ToolSearch to load other tools." : "") +
+  (hint === null ? "" : ` ${hint}`);
 const unavailableText = (name: string, reason: string) =>
   `Tool "${name}" is unavailable: ${reason}.`;
 const deniedText = (key: string) => `Tool ${key} is denied by policy.`;
@@ -246,8 +272,8 @@ interface PipelineDeps {
    */
   onToolsChanged(orgId: string, connectorId: string): void;
   /**
-   * Dispatches the sub-agent of an `agent` call (sub-agents spec §7.1; `dispatchSubagent`). Without
-   * it, `agent` calls reach the builtin's guard, which refuses them.
+   * Dispatches the sub-agent of an `Agent` call (sub-agents spec §7.1; `dispatchSubagent`). Without
+   * it, `Agent` calls reach the builtin's guard, which refuses them.
    */
   readonly subagents:
     | {
@@ -307,7 +333,7 @@ export type ExecOutcome =
 
 type ToolCall = { id: string; name: string; input: unknown };
 
-/** The result written for an open `agent` call of a stopped run. */
+/** The result written for an open `Agent` call of a stopped run. */
 type StoppedAgentResult = { content: string; isError: boolean; durationMs: number };
 
 /** `runCall` dispatched a sub-agent: the call stays open until the child run finishes. */
@@ -420,7 +446,7 @@ export class ToolPipeline {
   constructor(
     @Inject(KernelDb) kdb: KernelDb,
     @Inject(EventLog) eventLog: EventLog,
-    /** The `agent` tool's sub-agent dispatch; absent (tests): `agent` calls are refused. */
+    /** The `Agent` tool's sub-agent dispatch; absent (tests): `Agent` calls are refused. */
     @Inject(SubagentsService) subagents: Pick<SubagentsService, "dispatch"> | undefined,
     @Inject(ToolRegistry) registry: Pick<ToolRegistry, "forAgent" | "findConnector" | "handler">,
     @Inject(Credentials) credentials: Pick<Credentials, "injection" | "onUnauthorized">,
@@ -492,7 +518,7 @@ export class ToolPipeline {
       // 每步实时解析（连接器 / 插件状态可能在模型调用之后变化）
       if (!resolved) {
         // the request builder's rule: a skills catalog snapshot (even an empty one) or a person's
-        // skill invocation in the log → skill_load is offered (see skillLoadOffered)
+        // skill invocation in the log → Skill is offered (see skillLoadOffered)
         const skillLoad = await skillLoadOfferedIn(
           this.deps.db,
           this.deps.eventLog,
@@ -506,12 +532,12 @@ export class ToolPipeline {
       }
       return resolved;
     };
-    // `agent` calls whose sub-agent still runs (spec §7.1): a dispatch never blocks later calls;
+    // `Agent` calls whose sub-agent still runs (spec §7.1): a dispatch never blocks later calls;
     // once every call was handled, the step waits for them
     let open = 0;
     for (const call of calls) {
       if (await eventLog.findByIdem(ctx.conversationId, idem.result(ctx.runId, call.id))) continue;
-      if (call.name === AGENT_TOOL) {
+      if (isAgentCallKey(call.name)) {
         const row = await dispatchOfCall(this.deps.db, ctx.runId, call.id);
         if (row) {
           if (!(await this.finishAgentCall(ctx, row, call, resolve))) open++;
@@ -543,7 +569,7 @@ export class ToolPipeline {
   }
 
   /**
-   * An `agent` call that was dispatched (spec §7.1 "already dispatched"): when its child run is
+   * An `Agent` call that was dispatched (spec §7.1 "already dispatched"): when its child run is
    * terminal, writes the parent's `subagent_finished` (if the child's finisher did not) and the
    * call's `tool_result` from the child's log, and returns true; else false (still open).
    *
@@ -564,15 +590,16 @@ export class ToolPipeline {
       (call.input as { model?: unknown }).model !== undefined;
     const r = await childResult(this.deps.eventLog, row, { modelGiven });
     if (!r) return false;
-    // No spec-hash check as in processCall: an `agent` call writes no tool_call_started holding
+    // No spec-hash check as in processCall: an `Agent` call writes no tool_call_started holding
     // the executed definition's hash, and its description changes with the roster and limits
     // while the child runs. The call's approval (forCall: its latest) is by construction the one
     // that let this dispatch start, since a dispatch happens only after an approved decision.
     const approval = await this.deps.approvals.forCall(ctx.runId, call.id);
+    // the result keeps the logged key (`agent` for a call dispatched before the rename, spec §9)
     await this.writeResult(
       ctx,
       row.parentCallId,
-      AGENT_TOOL,
+      call.name,
       { content: r.content, isError: r.isError },
       [finishedEvent(row, r.finished)],
       {
@@ -617,14 +644,14 @@ export class ToolPipeline {
   }
 
   /**
-   * Writes, in the caller's transaction (`mandatory`), the `tool_result` of every open `agent` call
+   * Writes, in the caller's transaction (`mandatory`), the `tool_result` of every open `Agent` call
    * of a run that is being stopped
    * (sub-agents spec §12: a person stopped it while it waited on sub-agents, or its deadline or a
    * stop hit its tools node after a dispatch). A call whose child already ended gets the child's
    * result (and the missing `subagent_finished`); one whose child is still active gets
    * {@link AGENT_STOPPED_WITH_RUN_TEXT}. The caller stops those children after its commit.
    *
-   * Like every `agent` result (see {@link finishAgentCall}), each is audited `tool.called` in it
+   * Like every `Agent` result (see {@link finishAgentCall}), each is audited `tool.called` in it
    * (duration: the child's, or the time since the dispatch) and fires `tool.postExecute`, through
    * `fire()`, which the caller runs after its commit. Returns the steps and calls written (the
    * caller must not write a "not executed" result for them) and the highest seq written.
@@ -676,6 +703,8 @@ export class ToolPipeline {
     if (!run) return none;
     const conversationId = run.conversation_id;
     const inputs = new Map<string, unknown>();
+    // the logged key of each call (`agent` for a call dispatched before the rename, spec §9)
+    const names = new Map<string, string>();
     const events: AppendEvent[] = [];
     const calls: { step: number; callId: string; input: unknown; r: StoppedAgentResult }[] = [];
     for (const d of dispatches) {
@@ -695,8 +724,16 @@ export class ToolPipeline {
           .where("idem_key", "=", assistantIdemKey(runId, d.step))
           .executeTakeFirst();
         const content = (msg?.payload as { content?: unknown[] } | undefined)?.content ?? [];
-        for (const b of content as { type: string; id?: string; input?: unknown }[]) {
-          if (b.type === "tool_call" && b.id !== undefined) inputs.set(b.id, b.input);
+        for (const b of content as {
+          type: string;
+          id?: string;
+          name?: string;
+          input?: unknown;
+        }[]) {
+          if (b.type === "tool_call" && b.id !== undefined) {
+            inputs.set(b.id, b.input);
+            if (b.name !== undefined) names.set(b.id, b.name);
+          }
         }
       }
       const input = inputs.get(d.parent_call_id);
@@ -737,7 +774,7 @@ export class ToolPipeline {
         payload: {
           step: d.step,
           callId: d.parent_call_id,
-          toolKey: AGENT_TOOL,
+          toolKey: names.get(d.parent_call_id) ?? AGENT_TOOL,
           content: r.content,
           isError: r.isError,
         },
@@ -917,35 +954,51 @@ export class ToolPipeline {
       return undefined;
     };
 
-    const tool = resolved.tools.find((t) => t.key === call.name);
+    let tool = resolved.tools.find((t) => t.key === call.name);
+    // A call logged before the tool keys were renamed (spec 8.1): the request that issued it offered
+    // the old key. It runs as the current tool with translated input; the result keeps the logged key.
+    let legacy = false;
+    if (!tool) {
+      const next = legacyToolKey(call.name, legacyScopeOf(resolved.tools));
+      const current = next === null ? undefined : resolved.tools.find((t) => t.key === next);
+      if (current && (await this.requestToolKeys(ctx))?.has(call.name) === true) {
+        tool = current;
+        legacy = true;
+      }
+    }
     if (!tool) {
       const why =
         resolved.unavailable.find((u) => u.ref === call.name) ??
         resolved.hidden?.find((u) => u.ref === call.name);
       if (why) return fail(unavailableText(call.name, why.reason));
       let keys = resolved.tools.map((t) => t.key);
-      // tool_search 模式：目录可能很大，只列内置工具与发出本次调用的请求里带了定义的工具
+      // ToolSearch 模式：目录可能很大，只列内置工具与发出本次调用的请求里带了定义的工具
       if (resolved.toolSearch === true) {
         const sent = await this.sentTools(ctx);
         if (sent !== null) keys = keys.filter((k) => isAlwaysLoaded(k) || sent.has(k));
       }
       keys.sort();
-      return fail(unknownToolText(call.name, keys, keys.includes("tool_search")));
+      return fail(
+        unknownToolText(call.name, keys, keys.includes(TOOL_SEARCH), legacyHint(call.name)),
+      );
     }
-    // tool_search 模式下，模型只能调用请求里带了完整定义的工具：目录里有、但发出本次调用的请求没加载 →
-    // 明确错误，不自动加载（spec 5.5 / 6.3）。同一步里先 tool_search 再调用刚加载的工具同样报错。
-    if (resolved.toolSearch === true && !isAlwaysLoaded(tool.key)) {
+    const outKey = legacy ? call.name : tool.key;
+    // ToolSearch 模式下，模型只能调用请求里带了完整定义的工具：目录里有、但发出本次调用的请求没加载 →
+    // 明确错误，不自动加载（spec 5.5 / 6.3）。同一步里先 ToolSearch 再调用刚加载的工具同样报错。
+    if (!legacy && resolved.toolSearch === true && !isAlwaysLoaded(tool.key)) {
       const sent = await this.sentTools(ctx);
-      if (sent !== null && !sent.has(tool.key)) return fail(notLoadedText(tool.key), tool.key);
+      if (sent !== null && !sent.has(tool.key)) return fail(notLoadedText(tool.key), outKey);
     }
 
     let input: unknown;
     try {
-      input = await resolveOutputRefs(call.input, (id) =>
-        this.deps.outputs.load({ orgId: ctx.orgId, conversationId: ctx.conversationId }, id),
+      input = await resolveOutputRefs(
+        legacy ? legacyToolInput(call.name, call.input) : call.input,
+        (id) =>
+          this.deps.outputs.load({ orgId: ctx.orgId, conversationId: ctx.conversationId }, id),
       );
     } catch (e) {
-      if (e instanceof ToolError) return fail(e.message, tool.key);
+      if (e instanceof ToolError) return fail(e.message, outKey);
       throw e;
     }
     // 连接器工具的 schema 来自连接器（不受信任）：去掉有风险的关键字并限制大小 / 层数
@@ -953,7 +1006,7 @@ export class ToolPipeline {
       untrusted: tool.source.kind === "connector",
       log: this.deps.log,
     });
-    if (invalid !== null) return fail(invalid, tool.key);
+    if (invalid !== null) return fail(invalid, outKey);
 
     const decision = await this.decide(tool, ctx.agent, {
       orgId: ctx.orgId,
@@ -966,15 +1019,20 @@ export class ToolPipeline {
         ...(ctx.parent.otherAgent !== undefined && { parentAgentDiffers: ctx.parent.otherAgent }),
       }),
     });
-    if (decision === "deny") return fail(deniedText(tool.key), tool.key);
+    if (decision === "deny") return fail(deniedText(tool.key), outKey);
     if (typeof decision === "object" && "unavailable" in decision) {
-      return fail(unavailableText(tool.key, decision.unavailable), tool.key);
+      return fail(unavailableText(tool.key, decision.unavailable), outKey);
     }
     // 该调用已有审批（续跑）→ 按审批结果；没有且策略为 ask → 建审批并等待
     // （不写 tool_call_started：此时尚未开始执行）。
     let approval = await this.deps.approvals.forCall(ctx.runId, call.id);
     // 批准的是旧定义（等待期间工具定义变了）：原批准不适用于当前定义，策略仍需审批时按新定义重新审批。
-    const stale = approval?.status === "approved" && approval.specHash !== tool.specHash;
+    // An in-flight rc call (spec §9) is the exception: its approval was asked under the rc definition
+    // of the same call, and the rename changed every builtin's definition; the person approved this
+    // very call, so the approval stands.
+    const approvedHere =
+      approval?.status === "approved" && (legacy || approval.specHash === tool.specHash);
+    const stale = approval?.status === "approved" && !approvedHere;
     if ((!approval || stale) && typeof decision === "object" && "ask" in decision) {
       approval = await this.deps.approvals.request({
         attempt: (approval?.attempt ?? 0) + 1,
@@ -994,11 +1052,11 @@ export class ToolPipeline {
     }
     if (approval && approval.status !== "approved") {
       const refused = this.refusalText(approval);
-      return refused === null ? approvalWait(approval) : fail(refused, tool.key);
+      return refused === null ? approvalWait(approval) : fail(refused, outKey);
     }
     // 走到这里即放行：在（与当前定义一致的）审批下执行，否则是授权或策略放行
     const authorization: Authorization =
-      approval?.status === "approved" && approval.specHash === tool.specHash
+      approval?.status === "approved" && approvedHere
         ? approvalAuthorization(approval)
         : typeof decision === "object" && "grant" in decision
           ? { grant: decision.grant }
@@ -1017,7 +1075,7 @@ export class ToolPipeline {
         idem.hookDenied(ctx.runId, call.id),
       );
       if (prior?.type === "hook_denied") {
-        return fail(hookDeniedText(prior.payload.plugin, prior.payload.reason), tool.key);
+        return fail(hookDeniedText(prior.payload.plugin, prior.payload.reason), outKey);
       }
     }
     // payload only built when a tool hook is registered (zero overhead otherwise)
@@ -1038,7 +1096,7 @@ export class ToolPipeline {
         verdict = await hooks.run("tool.preExecute", hookBase, ctx.signal);
       } catch (e) {
         // run() rejects only when the run's signal aborted: an abort, never a deny
-        if (ctx.signal.aborted) return fail(RUN_STOPPED_TEXT, tool.key);
+        if (ctx.signal.aborted) return fail(RUN_STOPPED_TEXT, outKey);
         throw e;
       }
       if (!verdict.allowed) {
@@ -1059,7 +1117,7 @@ export class ToolPipeline {
         await this.writeResult(
           ctx,
           call.id,
-          tool.key,
+          outKey,
           { content: hookDeniedText(verdict.plugin, verdict.reason), isError: true },
           [event],
           undefined,
@@ -1069,7 +1127,7 @@ export class ToolPipeline {
       }
     }
 
-    // `agent` (sub-agents spec §7.1): no tool_call_started; the dispatch is made durable in one
+    // `Agent` (sub-agents spec §7.1): no tool_call_started; the dispatch is made durable in one
     // transaction (its marker is the subagent_dispatches row) and the call stays open
     const dispatcher = this.deps.subagents;
     if (tool.source.kind === "builtin" && tool.key === AGENT_TOOL && dispatcher) {
@@ -1077,11 +1135,11 @@ export class ToolPipeline {
       if (!parsed.success) {
         return fail(
           "Invalid agent call: pass description and prompt, and optionally subagent_type, model or resume.",
-          tool.key,
+          outKey,
         );
       }
       const r = await dispatcher.dispatch({ ctx, callId: call.id, input: parsed.data });
-      return r.kind === "refused" ? fail(r.content, tool.key) : OPEN;
+      return r.kind === "refused" ? fail(r.content, outKey) : OPEN;
     }
 
     await this.deps.eventLog.append(ctx.conversationId, [
@@ -1107,7 +1165,7 @@ export class ToolPipeline {
       outcome.kind === "result"
         ? renderResult(outcome.result)
         : { text: outcome.message, contentTypes: [], isError: true };
-    // 内置工具（tool_search）报告的已加载工具：只认本步可用、非内置的 key，写进 tool_result（日志即事实源）
+    // 内置工具（ToolSearch）报告的已加载工具：只认本步可用、非内置的 key，写进 tool_result（日志即事实源）
     const loadedTools =
       outcome.kind === "result" && tool.source.kind === "builtin"
         ? loadedFrom(outcome.result, resolved.tools)
@@ -1164,7 +1222,7 @@ export class ToolPipeline {
     await this.writeResult(
       ctx,
       call.id,
-      tool.key,
+      outKey,
       {
         content: spilled.content,
         isError: rendered.isError,
@@ -1219,8 +1277,26 @@ export class ToolPipeline {
   }
 
   /**
+   * Every tool key the request that issued this step's calls offered (`request.tools` plus the
+   * `catalog` keys), in any mode; null when its model_call is not found. Used to tell a call to an
+   * old key that was offered (in flight across the rename) from one that never was.
+   */
+  private async requestToolKeys(ctx: ToolStepContext): Promise<Set<string> | null> {
+    for (let attempt = MAX_MODEL_ATTEMPTS; attempt >= 1; attempt--) {
+      const e = await this.deps.eventLog.findByIdem(
+        ctx.conversationId,
+        modelCallIdemKey(ctx.runId, ctx.step, attempt),
+      );
+      if (e?.type !== "model_call") continue;
+      const { tools, catalog } = e.payload.request;
+      return new Set([...(tools ?? []), ...(catalog ?? [])].map((t) => t.key));
+    }
+    return null;
+  }
+
+  /**
    * 发出本步调用的请求里带了完整定义的工具 key：本步最后一次尝试的 `model_call.request.tools`
-   * （`assistant_message` 来自最后一次尝试）。该请求不在 tool_search 模式（没有 `catalog`，工具全部发送）
+   * （`assistant_message` 来自最后一次尝试）。该请求不在 ToolSearch 模式（没有 `catalog`，工具全部发送）
    * 或找不到 model_call 时返回 null（不做加载检查）。已加载集合由此从日志得出，不放进程内存。
    */
   private async sentTools(ctx: ToolStepContext): Promise<Set<string> | null> {
@@ -1307,7 +1383,7 @@ export class ToolPipeline {
     }
     const handler = this.deps.registry.handler(tool.source);
     if (!handler) return { kind: "error", message: `Tool ${tool.key} is no longer available.` };
-    // 插件处理函数只拿到 SDK 的 ToolCallContext；内置工具另外拿到本步解析出的工具（tool_search 用）
+    // 插件处理函数只拿到 SDK 的 ToolCallContext；内置工具另外拿到本步解析出的工具（ToolSearch 用）
     const base: Omit<BuiltinCallContext, "signal"> = {
       orgId: ctx.orgId,
       accountId: ctx.accountId,

@@ -8,7 +8,7 @@ export interface SandboxEgressSetting {
 
 /**
  * 组织设置（`packages/kernel/src/orgs/settings.controller.ts`）：成员可读，管理员可改。
- * - `toolSearch`：工具很多时改用目录 + `tool_search` 按需加载（默认 on）；
+ * - `toolSearch`：工具很多时改用目录 + `ToolSearch` 按需加载（默认 on）；
  * - `locale`：组织默认语言（默认 en），机器人在 IM 里说的固定话术按它选择；
  * - `sandboxToolPolicy`：沙箱工具的默认策略（默认 allow；ask 时除只读工具外都要审批）；
  * - `sandboxEgress`：沙箱出站，缺省跟随部署默认（`deployment.sandboxEgress`）。

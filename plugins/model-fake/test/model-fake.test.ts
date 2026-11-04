@@ -173,6 +173,30 @@ describe("model-fake", () => {
     });
   });
 
+  it("tools:[…] emits several tool_calls in one message, in order, with distinct ids", async () => {
+    const calls = [
+      { name: "get_weather", input: { city: "Paris" } },
+      { name: "get_weather", input: { city: "Paris" } },
+      { name: "get_time", input: {} },
+    ];
+    const c = complete(await run(mk(), req(`tools:${JSON.stringify(calls)}`)));
+    expect(c.stopReason).toBe("tool_use");
+    const blocks = c.content.filter((b) => b.type === "tool_call");
+    expect(blocks.map((b) => [b.name, b.input])).toEqual(calls.map((x) => [x.name, x.input]));
+    expect(new Set(blocks.map((b) => b.id)).size).toBe(3);
+    // the first call's id is what a single tool: directive gives (existing scripts do not drift)
+    const single = complete(await run(mk(), req('tool:get_weather:{"city":"Paris"}')));
+    const one = single.content[0];
+    expect(one?.type === "tool_call" && blocks[0]?.id === one.id).toBe(true);
+  });
+
+  it("tools:[…] with invalid JSON or an empty list fails with invalid_request", async () => {
+    for (const text of ["tools:[not json]", "tools:[]"]) {
+      const err = await run(mk(), req(text)).catch((e: unknown) => e);
+      expect(isModelError(err) && err.kind).toBe("invalid_request");
+    }
+  });
+
   it("toolChoice none: never emits a tool call (tool directive and default tool call become text)", async () => {
     const tools = [{ name: "get_weather", description: "d", inputSchema: { type: "object" } }];
     const directive = complete(

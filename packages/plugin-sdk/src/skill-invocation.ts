@@ -187,7 +187,7 @@ export function renderSkillBody(
 export interface RenderSkillInvocationInput {
   /**
    * The name the person typed after `/` (`fix-issue`, or `<plugin>:<name>`): used in the lead, the
-   * `name="…"` attribute and the `skill_load` argument (where the qualified form resolves).
+   * `name="…"` attribute and the `Skill` argument (where the qualified form resolves).
    */
   name: string;
   /**
@@ -203,9 +203,9 @@ export interface RenderSkillInvocationInput {
   args: string;
   /** Decided by the caller from the agent's tools and the version's manifest. */
   lines: {
-    /** The version has files besides SKILL.md: `load` when the agent has `skill_load`. */
+    /** The version has files besides SKILL.md: `load` when the agent has `Skill`. */
     files?: "load" | "unavailable";
-    /** The body has shell injections and the agent has `sandbox_bash`. */
+    /** The body has shell injections and the agent has `Bash`. */
     shellHint?: boolean;
   };
   /** false: leave out the lead sentence (a forked skill's task for the sub-agent). Default true. */
@@ -255,14 +255,14 @@ export function renderSkillInvocation(i: RenderSkillInvocationInput): string {
   );
   if (i.lines.files === "load") {
     parts.push(
-      `Its files are not in the sandbox yet: call skill_load with "${i.name}" to copy them to ${SKILLS_SANDBOX_ROOT}/${i.skillName}/ before running its scripts.`,
+      `Its files are not in the sandbox yet: call Skill with "${i.name}" to copy them to ${SKILLS_SANDBOX_ROOT}/${i.skillName}/ before running its scripts.`,
     );
   } else if (i.lines.files === "unavailable") {
     parts.push("Its other files are not available in this conversation.");
   }
   if (i.lines.shellHint) {
     parts.push(
-      "Lines written as !`command` were meant to run before you read this; run those commands with sandbox_bash if you need their output.",
+      "Lines written as !`command` were meant to run before you read this; run those commands with Bash if you need their output.",
     );
   }
   return parts.join("\n\n");

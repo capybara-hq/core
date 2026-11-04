@@ -117,11 +117,22 @@ const seqNo = z.number().int().nonnegative();
 const count = z.number().int().nonnegative();
 
 /**
+ * The state of a file a `Read` / `Write` / `Edit` saw or left (display only, but the kernel reads it
+ * back from the log to decide read-before-write): the full normalized path, the file's full size and
+ * the sha256 of the bytes handled (the first bytes only for a file over `Read`'s byte limit).
+ */
+const FileStateViewSchema = z.object({
+  path: z.string().max(4096),
+  size: count,
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
+/**
  * Structured view of a builtin tool's result (UI refresh B, spec §5.5 / §5.9): display only, like
- * `display`. `command`: `sandbox_bash` (the model's `description`, the exit code, null when the
+ * `display`. `command`: `Bash` (the model's `description`, the exit code, null when the
  * command was stopped, and whether it timed out; the web shows "Failed" for a non-zero exit even
- * though `isError` stays false); `edit`: `sandbox_edit` / `sandbox_write` (a capped line diff);
- * `read`: `sandbox_read` (the line range shown).
+ * though `isError` stays false); `edit`: `Edit` / `Write` (a capped line diff);
+ * `read`: `Read` (the line range shown).
  */
 export const ToolViewSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -137,6 +148,7 @@ export const ToolViewSchema = z.discriminatedUnion("kind", [
     added: count,
     removed: count,
     truncated: z.boolean(),
+    file: FileStateViewSchema.optional(),
     hunks: z
       .array(
         z.object({
@@ -159,6 +171,7 @@ export const ToolViewSchema = z.discriminatedUnion("kind", [
     path: z.string().max(TOOL_VIEW_PATH_MAX_CHARS),
     fromLine: count.optional(),
     toLine: count.optional(),
+    file: FileStateViewSchema.optional(),
   }),
 ]);
 export type ToolView = z.infer<typeof ToolViewSchema>;
@@ -331,13 +344,13 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
          */
         absorbedUpToSeq: seqNo.optional(),
         /**
-         * 本次请求带给模型的工具（按发送顺序：未启用 tool_search 时按 key 排序；启用时为内置工具按 key 排序，
+         * 本次请求带给模型的工具（按发送顺序：未启用 ToolSearch 时按 key 排序；启用时为内置工具按 key 排序，
          * 其后是已加载工具按首次加载顺序）及其定义指纹（`ResolvedTool.specHash`）。
          * 模型不支持工具时为空数组。较早的事件可能没有。
          */
         tools: z.array(z.object({ key: z.string(), specHash: z.string() })).optional(),
         /**
-         * 启用 tool_search 时 system 第二块目录里的工具（按 key 排序）及定义指纹；定义同样存在
+         * 启用 ToolSearch 时 system 第二块目录里的工具（按 key 排序）及定义指纹；定义同样存在
          * `capybara.tool_specs`，目录文本可由它们还原。未启用时不写。
          */
         catalog: z.array(z.object({ key: z.string(), specHash: z.string() })).optional(),
@@ -424,7 +437,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       outputId: z.string().optional(),
       contentTypes: z.array(z.string()).optional(),
       /**
-       * `tool_search` 本次加载的工具 key（没有匹配时不写）。已加载集合 = 会话中全部 tool_result 的
+       * `ToolSearch` 本次加载的工具 key（没有匹配时不写）。已加载集合 = 会话中全部 tool_result 的
        * `loadedTools` 并集（含已被摘要覆盖的部分），构建请求时由日志还原，不放进程内存。
        */
       loadedTools: z.array(z.string()).optional(),
@@ -490,7 +503,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     }),
   ),
   /**
-   * 工具调用需要用户输入（`ask_user`、插件工具的 `input_required`、MCP elicitation）：输入请求已建，
+   * 工具调用需要用户输入（`AskUserQuestion`、插件工具的 `input_required`、MCP elicitation）：输入请求已建，
    * run 暂停等待回答。界面据此显示表单卡片（不进模型请求）。
    */
   ev(
@@ -527,7 +540,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     }),
   ),
   /**
-   * agent 经 `sandbox_deliver` 把沙箱里的文件交付给用户（M5 T8，C3）：字节在对象存储
+   * agent 经 `Deliver` 把沙箱里的文件交付给用户（M5 T8，C3）：字节在对象存储
    * `kernel/<orgId>/<objectKey>`（`objectKey` = `artifacts/<conversationId>/<artifactId>`，相对内核前缀），
    * 这里只有元数据。网页从日志重建产物列表；不进模型请求（模型看到的是同一调用的 tool_result 确认）。
    */
@@ -546,7 +559,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
   /**
    * 本对话此刻生效的技能（M5 T14，Ruling M17）：运行开始时内核解析生效的技能集合（agent 版本选中的组织技能 +
    * agent 自己的技能，未删除，取 current_version），与日志里上一份快照不同才写。模型看到的技能目录只来自这里：
-   * 第一份（在任何 `model_call` 之前）进 system 缓存段，之后的在所在位置渲染为英文变更提醒；`skill_load` 按最新一份
+   * 第一份（在任何 `model_call` 之前）进 system 缓存段，之后的在所在位置渲染为英文变更提醒；`Skill` 按最新一份
    * 把名字解析为 id 与版本。按 name 排序。
    */
   ev(
@@ -561,12 +574,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
             version: z.number().int().positive(),
             /**
              * 内容来源（对象前缀，T15）：已生成的版本为 `skill_versions.object_prefix`，试用中的草稿为申请的
-             * `object_prefix`。同号的草稿与正式版本靠它区分；`skill_load` 只按它解析。
+             * `object_prefix`。同号的草稿与正式版本靠它区分；`Skill` 只按它解析。
              */
             source: z.string().min(1).max(512),
             /**
              * The catalog item (plugin) name the skill came from (phase B); absent for the org's
-             * own and the agent's skills, and in snapshots written before phase B. `skill_load`
+             * own and the agent's skills, and in snapshots written before phase B. `Skill`
              * resolves `<plugin>:<name>` with it; it is not model-visible otherwise.
              */
             plugin: z.string().min(1).max(64).optional(),
@@ -576,7 +589,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       /**
        * Pinned skills (phase B, spec §9.1) in the agent's order: each a skill of `skills` (same
        * id, version and source) with its SKILL.md body as read at run start or written by
-       * skill_write. Absent means none (every snapshot before phase B).
+       * SkillWrite. Absent means none (every snapshot before phase B).
        */
       pinned: z
         .array(
@@ -654,7 +667,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     }),
   ),
   /**
-   * Parent log (phase C, spec §14.1): the `agent` call `callId` started (or resumed) the sub-agent
+   * Parent log (phase C, spec §14.1): the `Agent` call `callId` started (or resumed) the sub-agent
    * `subagentId` (its child conversation id) with run `childRunId`. Not model-visible: the model
    * sees the call's tool_call / tool_result pair.
    */
@@ -672,7 +685,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       tierFallback: z.boolean().optional(),
       /**
        * Phase D: the seq of the person's fork invocation this dispatch runs (`callId` is
-       * `skill-<seq>`, step 0, no tool call); absent for an `agent` call.
+       * `skill-<seq>`, step 0, no tool call); absent for an `Agent` call.
        */
       invokedSeq: seqNo.optional(),
     }),

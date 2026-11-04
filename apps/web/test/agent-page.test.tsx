@@ -83,7 +83,7 @@ const agent = (
     fallback: null,
     modelParams: {},
     fallbackParams: {},
-    tools: [{ kind: "builtin", name: "ask_user" }],
+    tools: [{ kind: "builtin", name: "AskUserQuestion" }],
     toolPolicies: {},
     futureField: { keep: true },
   },
@@ -430,7 +430,7 @@ describe("the agent page by section (agent profile design §3)", () => {
     expect(row()).toBeNull();
     await view.navigate("/agents/ag1?s=tools");
     expect(row()).toBeNull();
-    await user.click(screen.getByRole("checkbox", { name: en.agents.form.builtin.skill_write }));
+    await user.click(screen.getByRole("checkbox", { name: en.agents.form.builtin.SkillWrite }));
     expect(row()).not.toBeNull();
     await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
     expect(await screen.findByText(en.agents.warnings.fallback_same_provider)).toBeTruthy();

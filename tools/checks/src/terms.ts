@@ -145,6 +145,68 @@ export const OLD_REFERENCES: { re: RegExp; what: string; allowedIn?: RuleExempti
     re: /\bwriting-apps\b|\bwriting-plugin-ui\b/,
     what: "an old skill folder (now writing-plugins / writing-extension-ui)",
   },
+  {
+    // The builtin tool keys were aligned with Claude Code (tool-naming spec §3.2): the old keys live
+    // only in the frozen map, the legacy-text rewriter, applied migrations, recordings and the tests
+    // of that compatibility. `agent` is an ordinary word and is never matched alone.
+    re: /\b(?:sandbox_(?:bash|read|write|edit|glob|grep|deliver)|skill_load|skill_write|ask_user|read_tool_output|tool_search)\b/,
+    what: "an old builtin tool key (now Bash / Read / Write / Edit / Glob / Grep / Deliver / Skill / SkillWrite / AskUserQuestion / ReadToolOutput / ToolSearch)",
+    allowedIn: [
+      {
+        path: /^packages\/kernel\/src\/tools\/legacy-keys\.ts$/,
+        reason: "the frozen map of the release-candidate builtin names",
+      },
+      {
+        path: /^packages\/kernel\/src\/runtime\/context\/legacy-text\.ts$/,
+        reason: "rebuilds the old model-visible texts of recordings made before the rename",
+      },
+      {
+        path: /^packages\/kernel\/src\/migrations\/0063_tool_keys_claude_code\.sql$/,
+        reason: "migration 0063 maps the stored old keys to the new ones",
+      },
+      {
+        path: /^packages\/kernel\/src\/evals\/run-replay\.ts$/,
+        reason: "a comment naming the old key a recorded call may carry (read as the new one)",
+      },
+      {
+        path: /^packages\/kernel\/test\/evals\/fixtures\//,
+        reason: "recordings made before the rename, kept verbatim for the zero-drift tests",
+      },
+      {
+        path: /^docs\/superpowers\/(?:specs|plans)\//,
+        reason: "design docs and plans are a historical record, and the rename's own spec and plan",
+      },
+      {
+        path: /^\.changeset\/(?:pre\/)?(?:builtin-tool-names|legacy-tool-keys-in-flight|legacy-tool-keys-stored)\.md$/,
+        reason:
+          "release notes of the rename say what the old keys were; `changeset version` archives them under .changeset/pre/",
+      },
+      {
+        path: /(?:^|\/)CHANGELOG\.md$/,
+        reason: "changelogs are release history, generated from the reviewed changesets",
+      },
+      {
+        path: /^packages\/kernel\/test\/tools\/(?:legacy-keys|legacy-data|builtin-names|rename-compat|pipeline|policy|info)\.test\.ts$/,
+        reason: "tests of the old-key compatibility (stored data, in-flight calls, the frozen map)",
+      },
+      {
+        path: /^packages\/kernel\/test\/evals\/(?:reconstruct|run-replay)\.test\.ts$/,
+        reason: "replay tests read recordings made with the old keys with zero drift",
+      },
+      {
+        path: /^packages\/kernel\/test\/runtime\/claude-tools\.test\.ts$/,
+        reason: "asserts the Claude Code tool map names no old key",
+      },
+      {
+        path: /^(?:apps\/web|packages\/plugin-sdk)\/test\/tool-key\.test\.ts$/,
+        reason: "pins that an old key is not a valid or displayable extension tool key",
+      },
+      {
+        path: /^apps\/web\/test\/timeline-rc\.test\.ts$/,
+        reason: "renders a log written with the old keys (the kernel supplies their aliases)",
+      },
+    ],
+  },
   { re: /\borg\.plugins\.manage\b/, what: "an old RBAC action (now org.extensions.manage)" },
   {
     re: /\b(?:assertPluginSecretsReachable|pluginDeploymentSecretValues)\b/,
@@ -230,6 +292,11 @@ export const REFERENCE_EXEMPT_LINES: { path: string; line: RegExp; reason: strin
     path: "packages/kernel/test/config/load.test.ts",
     line: /CAPYBARA_PLUGIN_CONFIG__|"pluginConfig" in config/,
     reason: "the test pins that the old env var is ignored",
+  },
+  {
+    path: "AGENTS.md",
+    line: /^\s*- `terms-tool-key`/,
+    reason: "the bullet describing the rule lists the old keys it guards",
   },
   {
     path: "docs/deploy/upgrade.md",

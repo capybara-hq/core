@@ -30,7 +30,7 @@ const CHAN_MINI = fileURLToPath(new URL("../fixtures/plugins/chan-mini/index.ts"
 const MEM_CONNECTOR = fileURLToPath(
   new URL("../fixtures/plugins/mem-connector/index.ts", import.meta.url),
 );
-const ECHO = 'tool:mem-connector__echo:{"text":"hi"}';
+const ECHO = 'tool:plugin__mem-connector__echo:{"text":"hi"}';
 const LONG =
   "Crash-safe delivery keeps streaming into the same IM draft after a replica dies. ".repeat(2);
 
@@ -122,7 +122,7 @@ async function bootstrap(platform: FakeChannelServer, appId: string) {
       instructions: "Be helpful.",
       model: { provider: "model-fake", model: "fake-1" },
       tools: [{ kind: "plugin", plugin: "mem-connector", name: "echo" }],
-      toolPolicies: { "mem-connector__echo": "ask" },
+      toolPolicies: { "plugin__mem-connector__echo": "ask" },
     },
     visibility: "org",
   });

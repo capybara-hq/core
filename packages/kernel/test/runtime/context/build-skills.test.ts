@@ -40,7 +40,7 @@ describe("skills catalog in the request", () => {
     ]);
   });
 
-  it("first snapshot renders in the cached system segment, sorted by name, telling to call skill_load", () => {
+  it("first snapshot renders in the cached system segment, sorted by name, telling to call Skill", () => {
     const log = new Log();
     log.user("hi");
     log.runStarted();
@@ -51,7 +51,7 @@ describe("skills catalog in the request", () => {
     const text = request.system[0]?.text as string;
     expect(request.system[0]?.cache).toBe(true);
     expect(text.startsWith(`${BEHAVIOR_RULES}\n\n${AGENT.instructions}\n\n`)).toBe(true);
-    expect(text).toContain("skill_load");
+    expect(text).toContain("Skill");
     expect(text.indexOf("- alpha: Use for alpha tasks.")).toBeGreaterThan(0);
     expect(text.indexOf("- alpha:")).toBeLessThan(text.indexOf("- zeta:"));
     // 不进消息
@@ -93,7 +93,7 @@ describe("skills catalog in the request", () => {
     expect(n).toContain("- gamma: Use for gamma tasks.");
     expect(n).toMatch(/Removed[^\n]*\n?[^\n]*beta/);
     expect(n).toContain("- alpha: New alpha.");
-    expect(n).toContain("skill_load");
+    expect(n).toContain("Skill");
     // 提醒在第二条用户消息之后
     const msgs = after.request.messages;
     expect(msgs.at(-1)?.role).toBe("system");
@@ -127,7 +127,7 @@ describe("skills catalog in the request", () => {
     const notices = systemNotices(log.events);
     expect(notices).toHaveLength(1);
     expect(notices[0]).toContain("- alpha: Use for alpha tasks.");
-    expect(notices[0]).toContain("skill_load");
+    expect(notices[0]).toContain("Skill");
   });
 
   it("after a compaction summary the current catalog follows the summary when it differs from system", () => {

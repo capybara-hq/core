@@ -311,7 +311,7 @@ export interface RunsTable {
   wait_expires_at: TsNullable;
 }
 
-/** 0053: one row per sub-agent dispatch (an `agent` call of a parent run). */
+/** 0053: one row per sub-agent dispatch (an `Agent` call of a parent run). */
 export interface SubagentDispatchesTable {
   parent_run_id: string;
   parent_call_id: string;
@@ -454,7 +454,7 @@ export interface ApprovalsTable {
   deny_reason: Generated<string | null>;
 }
 
-/** 0010_tools.sql：ask_user 提问。 */
+/** 0010_tools.sql：AskUserQuestion 提问。 */
 export interface QuestionsTable {
   id: string;
   org_id: string;

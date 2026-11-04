@@ -1013,7 +1013,7 @@ describe("runModelStep", () => {
     const withTools = () =>
       agentWith({
         model: { provider: "stub", model: "tooly" },
-        tools: [{ kind: "builtin", name: "read_tool_output" }],
+        tools: [{ kind: "builtin", name: "ReadToolOutput" }],
       });
     const wrapUp = (agent: AgentDefinition) =>
       runFinalWrapUp(deps, {
@@ -1034,11 +1034,11 @@ describe("runModelStep", () => {
       await say("hi");
       await wrapUp(withTools());
       const req = s.calls[0] as ModelRequest;
-      expect(req.tools.map((t) => t.name)).toEqual(["read_tool_output"]);
+      expect(req.tools.map((t) => t.name)).toEqual(["ReadToolOutput"]);
       expect(req.toolChoice).toBe("none");
       const [call] = await ofType("model_call");
       expect(call?.payload.request.toolChoice).toBe("none");
-      expect(call?.payload.request.tools?.map((t) => t.key)).toEqual(["read_tool_output"]);
+      expect(call?.payload.request.tools?.map((t) => t.key)).toEqual(["ReadToolOutput"]);
       expect(req.messages.at(-1)).toEqual({ role: "system", content: WRAP_UP_REMINDER });
     });
 
@@ -1048,7 +1048,7 @@ describe("runModelStep", () => {
       await say("hi");
       await step({ agent: withTools() });
       const req = s.calls[0] as ModelRequest;
-      expect(req.tools.map((t) => t.name)).toEqual(["read_tool_output"]);
+      expect(req.tools.map((t) => t.name)).toEqual(["ReadToolOutput"]);
       expect(req.toolChoice).toBeUndefined();
       const [call] = await ofType("model_call");
       expect(call?.payload.request).not.toHaveProperty("toolChoice");
@@ -1085,10 +1085,10 @@ describe("runModelStep", () => {
         .where("spec_hash", "=", hash)
         .execute();
       expect(rows).toHaveLength(1);
-      expect(rows[0]?.spec).toMatchObject({ name: "read_tool_output" });
+      expect(rows[0]?.spec).toMatchObject({ name: "ReadToolOutput" });
     });
 
-    it("tool_search 生效：请求只带内置工具，目录进 system 第二块；model_call 记录 catalog，目录里的定义也存进 tool_specs", async () => {
+    it("ToolSearch 生效：请求只带内置工具，目录进 system 第二块；model_call 记录 catalog，目录里的定义也存进 tool_specs", async () => {
       const s = stub([toolsModel()], () => "ok");
       stubImpl = s;
       const search = toolSearchTool();
@@ -1107,13 +1107,13 @@ describe("runModelStep", () => {
         };
       };
       const searchTool: ResolvedTool = {
-        key: "tool_search",
-        source: { kind: "builtin", name: "tool_search" },
+        key: "ToolSearch",
+        source: { kind: "builtin", name: "ToolSearch" },
         spec: search.spec,
         specHash: specHash(search.spec),
         defaultPolicy: "allow",
       };
-      const tools = [mk("p__zeta"), mk("p__alpha"), searchTool];
+      const tools = [mk("mcp__p__zeta"), mk("mcp__p__alpha"), searchTool];
       const searchDeps: ModelStepDeps = {
         ...deps,
         tools: { forAgent: async () => ({ tools, unavailable: [], toolSearch: true }) },
@@ -1131,12 +1131,17 @@ describe("runModelStep", () => {
         sink: () => {},
       });
       const req = s.calls[0] as ModelRequest;
-      expect(req.tools.map((t) => t.name)).toEqual(["tool_search"]);
+      expect(req.tools.map((t) => t.name)).toEqual(["ToolSearch"]);
       expect(req.system).toHaveLength(2);
-      expect(req.system[1]?.text).toContain("- p__alpha: Do p__alpha.\n- p__zeta: Do p__zeta.");
+      expect(req.system[1]?.text).toContain(
+        "- mcp__p__alpha: Do mcp__p__alpha.\n- mcp__p__zeta: Do mcp__p__zeta.",
+      );
       const [call] = await ofType("model_call");
-      expect(call?.payload.request.tools?.map((t) => t.key)).toEqual(["tool_search"]);
-      expect(call?.payload.request.catalog?.map((t) => t.key)).toEqual(["p__alpha", "p__zeta"]);
+      expect(call?.payload.request.tools?.map((t) => t.key)).toEqual(["ToolSearch"]);
+      expect(call?.payload.request.catalog?.map((t) => t.key)).toEqual([
+        "mcp__p__alpha",
+        "mcp__p__zeta",
+      ]);
       const stored = await db
         .selectFrom("tool_specs")
         .select("spec_hash")

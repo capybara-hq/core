@@ -31,7 +31,7 @@ export interface FinishRunArgs {
   floorToTrigger?: boolean;
   /**
    * Runs in the transaction once the run is known not to be terminal, before the terminal event:
-   * a parent's open `agent` calls get their results here (sub-agents spec §12, review m1).
+   * a parent's open `Agent` calls get their results here (sub-agents spec §12, review m1).
    */
   beforeTerminal?: () => Promise<void>;
 }

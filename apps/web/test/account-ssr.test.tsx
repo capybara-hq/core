@@ -339,22 +339,22 @@ describe("mutations invalidate the cache", () => {
 
   it("revoking a grant invalidates toolGrants: the grants are read again", async () => {
     let grants = [
-      { agentId: "ag1", agentName: "Echo", toolKey: "t__x", specHash: "h", createdAt: T },
+      { agentId: "ag1", agentName: "Echo", toolKey: "mcp__t__x", specHash: "h", createdAt: T },
     ];
     const routes: Routes = {
       ...ROUTES,
       [`GET ${O}/me/tool-grants`]: () => json(200, { grants }),
-      [`DELETE ${O}/me/tool-grants/ag1/t__x`]: () => {
+      [`DELETE ${O}/me/tool-grants/ag1/mcp__t__x`]: () => {
         grants = [];
         return noContent();
       },
     };
     const calls = stubApi(routes);
     await renderRouteWithCache("/account/grants", routes);
-    await userEvent.setup().click(screen.getByRole("button", { name: /t__x/ }));
+    await userEvent.setup().click(screen.getByRole("button", { name: /t \[x\]/ }));
     expect(await screen.findByText(en.connections.grants.empty)).toBeTruthy();
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
-      `DELETE ${O}/me/tool-grants/ag1/t__x`,
+      `DELETE ${O}/me/tool-grants/ag1/mcp__t__x`,
       `GET ${O}/me/tool-grants`,
     ]);
     expect(router.refresh).not.toHaveBeenCalled();

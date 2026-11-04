@@ -10,12 +10,6 @@ export function verbGroup(kind: ToolKind): ToolVerbGroup {
   return kind === "command" || kind === "read" || kind === "edit" ? kind : "tool";
 }
 
-/** The row verb of a kind ("已运行", "Used" …). */
-export function rowVerb(kind: ToolKind, locale: Locale): string {
-  const k = kind === "connector" ? "tool" : kind;
-  return messages[locale][`tool.verb.${k}` as DesignKey];
-}
-
 export type SummaryRow = {
   kind: ToolKind;
   status: "pending" | "running" | "done" | "failed" | "cancelled";
