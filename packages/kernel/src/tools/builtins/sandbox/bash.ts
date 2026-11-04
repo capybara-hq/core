@@ -338,6 +338,13 @@ async function runInBackground(
       `The background command started but could not be recorded (${launch.why}); an attempt to stop it failed, so it ends at its timeout. Check the sandbox before you retry, or call Bash without run_in_background.`,
     );
   }
+  // the conversation's background panel lists the new task live (a sub-agent's task shows in its
+  // parent's panel too); a failed publish only logs
+  if (deps.eventLog.publishChanged) {
+    for (const c of new Set([ctx.conversationId, root])) {
+      await deps.eventLog.publishChanged(c, "background");
+    }
+  }
   const lowered =
     requested !== undefined && requested > maxMs
       ? `\n[timeout ${requested} ms is over the background task maximum; it was lowered to ${maxMs} ms.]`

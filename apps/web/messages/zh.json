@@ -181,6 +181,10 @@
       "queue_item_not_found": "这条排队消息已发出或已删除。",
       "read_only": "这是子 agent 的会话，不能在这里发消息。"
     },
+    "background_task": {
+      "not_found": "这个后台任务不存在或已被清理。",
+      "output_unavailable": "现在读不到输出：沙箱没有在运行。沙箱恢复后可再查看。"
+    },
     "run": {
       "not_active": "当前没有进行中的回复。",
       "model_unavailable": "模型不可用。",

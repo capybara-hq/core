@@ -1,9 +1,11 @@
 import { Module } from "@nestjs/common";
+import { ConversationAccessModule } from "../conversations/access.js";
 import { EventLogModule } from "../conversations/event-log.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { BackgroundTaskFinisher } from "./finish.js";
 import { BackgroundTaskStopper } from "./stop.js";
 import { BackgroundStoreModule } from "./store.module.js";
+import { BackgroundTasks } from "./tasks.service.js";
 
 /**
  * Background Bash (spec 2026-11-05-background-bash-design): the task store (from
@@ -14,8 +16,8 @@ import { BackgroundStoreModule } from "./store.module.js";
  * (`BackgroundTaskPollJob`) are the worker role's (`WorkerModule`).
  */
 @Module({
-  imports: [BackgroundStoreModule, SandboxModule, EventLogModule],
-  providers: [BackgroundTaskFinisher, BackgroundTaskStopper],
-  exports: [BackgroundStoreModule, BackgroundTaskFinisher, BackgroundTaskStopper],
+  imports: [BackgroundStoreModule, SandboxModule, EventLogModule, ConversationAccessModule],
+  providers: [BackgroundTaskFinisher, BackgroundTaskStopper, BackgroundTasks],
+  exports: [BackgroundStoreModule, BackgroundTaskFinisher, BackgroundTaskStopper, BackgroundTasks],
 })
 export class BackgroundModule {}

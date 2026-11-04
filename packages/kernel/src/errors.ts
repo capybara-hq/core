@@ -134,6 +134,10 @@ export const ERROR_CODES = {
   /** A sub-agent's conversation takes no messages from people (sub-agents spec §6.1). */
   "conversation.read_only": 409,
   "run.not_active": 409,
+  /** A background task that is not in this conversation (or its sub-agents), or does not exist. */
+  "background_task.not_found": 404,
+  /** The task's output cannot be read now (its sandbox is not running and no finish recorded it). */
+  "background_task.output_unavailable": 409,
   "connector.not_found": 404,
   "connector.slug_taken": 409,
   "connector.connect_failed": 502,

@@ -181,6 +181,10 @@
       "queue_item_not_found": "The queued message has already been sent or removed.",
       "read_only": "This is a sub-agent's conversation; it doesn't take messages."
     },
+    "background_task": {
+      "not_found": "The background task does not exist or has been cleaned up.",
+      "output_unavailable": "The output can't be read now: the sandbox is not running. It is available again once the sandbox resumes."
+    },
     "run": {
       "not_active": "There is no reply in progress.",
       "model_unavailable": "The model is unavailable.",

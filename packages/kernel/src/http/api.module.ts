@@ -9,6 +9,8 @@ import { AgentsModule } from "../agents/agents.module.js";
 import { ModelsController } from "../agents/models.controller.js";
 import { ReadinessController } from "../agents/readiness.controller.js";
 import { AgentTemplatesController } from "../agents/templates.controller.js";
+import { BackgroundController } from "../background/background.controller.js";
+import { BackgroundModule } from "../background/background.module.js";
 import { AdminCatalogController } from "../catalog/admin-catalog.controller.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
 import { MarketplacesController } from "../catalog/marketplaces.controller.js";
@@ -87,6 +89,7 @@ const CONTROLLERS: Type[] = [
   ModelsController,
   ReadinessController,
   ConversationsController,
+  BackgroundController,
   AttachmentsController,
   SkillsController,
   SkillChangesController,
@@ -135,6 +138,7 @@ const CONTROLLERS: Type[] = [
     ToolsModule,
     AgentsModule,
     ConversationsModule,
+    BackgroundModule,
     RuntimeModule,
     ChannelsModule,
     EvalsModule,
