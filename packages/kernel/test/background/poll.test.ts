@@ -77,6 +77,32 @@ const RULES: ScriptRule[] = [
     },
   },
   { when: { lastToolResultIncludes: "launched" }, reply: { text: "parent done" } },
+  // a child that starts a task, then waits for the approval of a Write
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "bg-wait", assistantTurns: 0 },
+    reply: {
+      toolCalls: [
+        {
+          name: "Bash",
+          input: { command: "sleep 313", description: "Sleep", run_in_background: true },
+        },
+      ],
+    },
+  },
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "bg-wait", assistantTurns: 1 },
+    reply: {
+      toolCalls: [{ name: "Write", input: { file_path: "/workspace/w.txt", content: "w" } }],
+    },
+  },
+  {
+    when: { lastUserIncludes: "SCENARIO wait", assistantTurns: 0 },
+    reply: {
+      toolCalls: [
+        { name: "Agent", input: { description: "Start and wait", prompt: "bg-wait: go" } },
+      ],
+    },
+  },
 ];
 
 let pgc: TestContainer;
@@ -169,6 +195,8 @@ async function launch(
   seconds = 300,
 ): Promise<BackgroundTaskRow> {
   const id = newTaskId();
+  // before the launch exec, as the Bash launch does: the sandbox's own timeout starts after it
+  const startedAt = new Date();
   const r = await inSandbox(c, launchScript(id, command, seconds));
   expect(r.exitCode).toBe(0);
   const sid = r.stdout.trim();
@@ -182,7 +210,6 @@ async function launch(
   const record = join(root, "instances", (handle as { id: string }).id, "sessions", sid);
   await waitFor(async () => existsSync(record), 10_000, "session record");
   const instance = await sandbox.currentInstance(c.conversationId);
-  const startedAt = new Date();
   await store.insert({
     id,
     orgId: c.orgId,
@@ -463,6 +490,81 @@ describe("stopping", () => {
     expect(await finishedEvents(c.conversationId, t.id)).toHaveLength(1);
   }, 60_000);
 
+  it("a poll while a stop is between SIGTERM and its finish leaves the task to the stop", async () => {
+    const c = await conversation();
+    const t = await launch(c, "sleep 314");
+    const finisher = k.app.get(BackgroundTaskFinisher);
+    const original = finisher.finish.bind(finisher);
+    let polled: number | undefined;
+    vi.spyOn(finisher, "finish").mockImplementation(async (...args) => {
+      // the stop's finish: the session is gone now; poll before it is written
+      if (polled === undefined) polled = await job.pollOnce();
+      return original(...args);
+    });
+    const row = await stopper.stop(t, "tool");
+    expect(polled).toBe(0);
+    expect(row).toMatchObject({ status: "stopped", stoppingAt: null });
+    const events = await finishedEvents(c.conversationId, t.id);
+    expect(events.map((e) => [e.payload.status, e.payload.reported])).toEqual([["stopped", true]]);
+  }, 60_000);
+
+  it("a poll that read a task before a stop claimed it does not finish it", async () => {
+    const c = await conversation();
+    const t = await launch(c, "sleep 316");
+    expect(await store.claimStop(t.id)).toBe(true);
+    // a second stop finds it claimed
+    expect(await store.claimStop(t.id)).toBe(false);
+    const finisher = k.app.get(BackgroundTaskFinisher);
+    expect(
+      await finisher.finish(t, { status: "lost", lostReason: "process_gone" }, "", false, {
+        unclaimed: true,
+      }),
+    ).toBe(false);
+    expect(await job.pollOnce()).toBe(0);
+    expect((await store.get(t.id))?.status).toBe("running");
+    await store.releaseStop(t.id);
+  }, 60_000);
+
+  it("a stop that fails while the sandbox runs keeps the task running and gives up its claim", async () => {
+    const c = await conversation();
+    const t = await launch(c, "sleep 317");
+    vi.spyOn(sandbox, "ifRunning").mockRejectedValueOnce(new Error("sandbox busy"));
+    await expect(stopper.stop(t, "tool")).rejects.toThrow("sandbox busy");
+    expect(await store.get(t.id)).toMatchObject({ status: "running", stoppingAt: null });
+    expect(await finishedEvents(c.conversationId, t.id)).toHaveLength(0);
+    expect(await alive(c, t)).toBe(true);
+  }, 60_000);
+
+  it("a stop of a reservation only claims it (its launch kills what it starts)", async () => {
+    const c = await conversation();
+    const id = newTaskId();
+    await store.reserve(
+      {
+        id,
+        orgId: c.orgId,
+        conversationId: c.conversationId,
+        sandboxConversationId: c.conversationId,
+        runId: "run-x",
+        callId: "call-x",
+        triggerAccountId: c.accountId,
+        description: "d",
+        command: "true",
+        outputPath: taskOutputPath(id),
+        startedAt: new Date(),
+        deadlineAt: new Date(Date.now() + 60_000),
+      },
+      4,
+    );
+    const row = await stopper.stop((await store.get(id)) as BackgroundTaskRow, "person");
+    expect(row.status).toBe("running");
+    expect(row.stoppingAt).toBeInstanceOf(Date);
+    expect(await store.markStarted(id, { sid: "12345", sandboxCreatedAt: new Date() })).toBe(
+      "stopping",
+    );
+    await store.finishStoppedLaunch(id);
+    expect(await store.get(id)).toMatchObject({ status: "stopped", stoppingAt: null });
+  }, 60_000);
+
   it("a stop of a task that already exited finishes it as its exit says", async () => {
     const c = await conversation();
     const t = await launch(c, "echo done");
@@ -506,7 +608,8 @@ describe("stopping", () => {
             name: "Lead",
             instructions: "Lead the work.",
             model: { provider: "model-script", model: "script-1" },
-            tools: ["Agent", "Bash"].map((name) => ({ kind: "builtin", name })),
+            tools: ["Agent", "Bash", "Write"].map((name) => ({ kind: "builtin", name })),
+            toolPolicies: { Write: "ask" },
           },
           visibility: "org",
         },
@@ -537,6 +640,51 @@ describe("stopping", () => {
       );
       expect(row).toMatchObject({ status: "stopped" });
       expect(await finishedEvents(child.id, row.id)).toHaveLength(1);
+      expect(await alive({ orgId, conversationId: conv }, row)).toBe(false);
+    }, 60_000);
+
+    it("a parent stop that aborts a child waiting for approval stops the child's task", async () => {
+      const conv = await createConv(owner, orgId, agentId);
+      used.push(conv);
+      await postMessage(owner, orgId, conv, "SCENARIO wait");
+      const child = await waitFor(
+        async () =>
+          db
+            .selectFrom("conversations")
+            .select("id")
+            .where("parent_conversation_id", "=", conv)
+            .executeTakeFirst(),
+        20_000,
+        "child conversation",
+      );
+      await waitFor(
+        async () =>
+          (
+            await db
+              .selectFrom("runs")
+              .select("status")
+              .where("conversation_id", "=", child.id)
+              .executeTakeFirst()
+          )?.status === "waiting",
+        20_000,
+        "child waiting for approval",
+      );
+      const [task] = await store.listFor([child.id]);
+      expect(task?.status).toBe("running");
+      const res = await owner({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/conversations/${conv}/abort`,
+      });
+      expect(res.statusCode, res.body).toBe(202);
+      const row = await waitFor(
+        async () => {
+          const r = await store.get(task?.id as string);
+          return r?.status !== "running" && r;
+        },
+        15_000,
+        "waiting child's task stopped",
+      );
+      expect(row).toMatchObject({ status: "stopped" });
       expect(await alive({ orgId, conversationId: conv }, row)).toBe(false);
     }, 60_000);
 

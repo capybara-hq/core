@@ -178,7 +178,8 @@ export class BackgroundTaskPollJob {
       } else {
         to = RECREATED;
       }
-      if (to && (await this.finisher.finish(t, to, lastLines, false))) n++;
+      // a stop that claimed the task after the read above finishes it itself
+      if (to && (await this.finisher.finish(t, to, lastLines, false, { unclaimed: true }))) n++;
     }
     return n;
   }

@@ -730,6 +730,8 @@ export interface BackgroundTasksTable {
   sandbox_created_at: Date | string | null;
   kill_pending: ColumnType<boolean, boolean | undefined, boolean>;
   read_offset: ColumnType<string, number | string | undefined, number | string>;
+  /** Set while a stop is under way (0072); the poller skips such a task. */
+  stopping_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
 }
 
 /** 0023_sandboxes.sql：按对话的沙箱（见 sandbox/sandbox.service.ts）。 */

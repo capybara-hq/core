@@ -86,6 +86,7 @@ describe("BackgroundTaskStore", () => {
       finishedAt: null,
       killPending: false,
       readOffset: 0,
+      stoppingAt: null,
     });
     expect(await store.get("bt_missing")).toBeUndefined();
   });

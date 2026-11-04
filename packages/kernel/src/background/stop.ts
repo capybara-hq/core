@@ -2,7 +2,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
-import { SandboxService } from "../sandbox/sandbox.service.js";
+import { type IfRunningResult, SandboxService } from "../sandbox/sandbox.service.js";
 import { type BackgroundFinish, BackgroundTaskFinisher } from "./finish.js";
 import { TASKS_DIR } from "./launch.js";
 import { assertTaskRef, decodeTail, killSession, tailCommand } from "./session.js";
@@ -72,7 +72,10 @@ export const RECREATED: BackgroundFinish = {
 export class BackgroundTaskStopper {
   constructor(
     @Inject(BackgroundTaskStore)
-    private readonly store: Pick<BackgroundTaskStore, "get" | "runningOwnedBy" | "runningIn">,
+    private readonly store: Pick<
+      BackgroundTaskStore,
+      "get" | "runningOwnedBy" | "runningIn" | "claimStop" | "releaseStop"
+    >,
     @Inject(BackgroundTaskFinisher) private readonly finisher: BackgroundTaskFinisher,
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "ifRunning">,
     @Inject(KernelDb) private readonly db: KernelDb,
@@ -80,54 +83,73 @@ export class BackgroundTaskStopper {
   ) {}
 
   /**
-   * Stops `task` and returns its row afterwards. A task that is no longer running, or whose launch
-   * has not started it yet (no `sid`), is returned as it is now. Throws when the sandbox could not
-   * be used (busy, a provider error) or the session could not be confirmed empty; the task then
-   * stays `running`.
+   * Stops `task` and returns its row afterwards. A task that is no longer running, or that another
+   * live stop already claimed, is returned as it is now.
+   *
+   * The stop first claims the task (`stopping_at`), so the poller leaves it alone while the
+   * signals take effect and the stop's finish is its only one. A reservation whose launch has not
+   * started the command yet (no `sid`) is only claimed: the launch then kills what it starts and
+   * finishes the row `stopped`. When the stop fails while the sandbox runs (busy, a provider
+   * error, a session that could not be confirmed empty), the claim is given up, the task stays
+   * `running` and the error is thrown.
    */
   async stop(
     task: BackgroundTaskRow,
     why: StopReason,
     signal?: AbortSignal,
   ): Promise<BackgroundTaskRow> {
+    if (!(await this.store.claimStop(task.id))) return (await this.store.get(task.id)) ?? task;
+    // read after the claim: a launch recording its session before the claim is seen here, one
+    // recording it after sees the claim (both are single-row updates of the same row)
     const cur = (await this.store.get(task.id)) ?? task;
     if (cur.status !== "running" || cur.sid === null || cur.sandboxCreatedAt === null) return cur;
     const sid = cur.sid;
     assertTaskRef(cur.id, sid);
     const reported = why === "tool";
-    const r = await this.sandbox.ifRunning(
-      cur.sandboxConversationId,
-      { createdAt: cur.sandboxCreatedAt },
-      async (p, h, sig) => {
-        const term = await p.exec(h, {
-          command: termScript(cur.id, sid),
-          cwd: "/workspace",
-          timeoutMs: TERM_EXEC_TIMEOUT_MS,
-          maxOutputBytes: 4096,
-          signal: sig,
-        });
-        const exited = /^exited (-?[0-9]+)$/.exec(term.stdout.trim());
-        if (term.exitCode !== 0 || (!exited && term.stdout.trim() !== "term")) {
-          throw new Error(`the stop of background task ${cur.id} failed (${term.exitCode})`);
-        }
-        if (!exited && !(await killSession(p, h, sid))) {
-          throw new Error(`background task ${cur.id} could not be confirmed stopped`);
-        }
-        const tail = await p.exec(h, {
-          command: tailCommand(cur.id),
-          cwd: "/workspace",
-          timeoutMs: TAIL_EXEC_TIMEOUT_MS,
-          maxOutputBytes: 64 * 1024,
-          signal: sig,
-        });
-        const lastLines = tail.exitCode === 0 ? decodeTail(tail.stdout) : "";
-        const to: BackgroundFinish = exited
-          ? exitedAs(cur, Number(exited[1]), new Date())
-          : { status: "stopped" };
-        return { to, lastLines };
-      },
-      signal,
-    );
+    let r: IfRunningResult<{ to: BackgroundFinish; lastLines: string }>;
+    try {
+      r = await this.sandbox.ifRunning(
+        cur.sandboxConversationId,
+        { createdAt: cur.sandboxCreatedAt },
+        async (p, h, sig) => {
+          const term = await p.exec(h, {
+            command: termScript(cur.id, sid),
+            cwd: "/workspace",
+            timeoutMs: TERM_EXEC_TIMEOUT_MS,
+            maxOutputBytes: 4096,
+            signal: sig,
+          });
+          const exited = /^exited (-?[0-9]+)$/.exec(term.stdout.trim());
+          if (term.exitCode !== 0 || (!exited && term.stdout.trim() !== "term")) {
+            throw new Error(`the stop of background task ${cur.id} failed (${term.exitCode})`);
+          }
+          if (!exited && !(await killSession(p, h, sid))) {
+            throw new Error(`background task ${cur.id} could not be confirmed stopped`);
+          }
+          const tail = await p.exec(h, {
+            command: tailCommand(cur.id),
+            cwd: "/workspace",
+            timeoutMs: TAIL_EXEC_TIMEOUT_MS,
+            maxOutputBytes: 64 * 1024,
+            signal: sig,
+          });
+          const lastLines = tail.exitCode === 0 ? decodeTail(tail.stdout) : "";
+          // a task that had exited before the signal ends as its exit says
+          const to: BackgroundFinish = exited
+            ? exitedAs(cur, Number(exited[1]), new Date())
+            : { status: "stopped" };
+          return { to, lastLines };
+        },
+        signal,
+      );
+    } catch (err) {
+      await this.store
+        .releaseStop(cur.id)
+        .catch((e: unknown) =>
+          this.log.warn("cannot release a background task stop", { taskId: cur.id, err: e }),
+        );
+      throw err;
+    }
     if (r.kind === "ran") {
       await this.finisher.finish(cur, r.value.to, r.value.lastLines, reported);
     } else if (r.kind === "not_running") {
@@ -176,9 +198,8 @@ export class BackgroundTaskStopper {
   }
 
   /**
-   * Stops `tasks` side by side. A stop that cannot reach the sandbox (busy, a provider error, an
-   * unconfirmed kill) finishes the task as `lost` with `kill_pending`, so it is killed right after
-   * the sandbox's next resume; a sandbox that is running then ends it at its own deadline.
+   * Stops `tasks` side by side. A stop that fails while the sandbox runs leaves its task running
+   * (logged): the poller still checks it and it ends at its own deadline at the latest.
    */
   private async stopAll(tasks: BackgroundTaskRow[], why: StopReason): Promise<void> {
     await Promise.all(
@@ -186,12 +207,7 @@ export class BackgroundTaskStopper {
         try {
           await this.stop(t, why);
         } catch (err) {
-          this.log.warn("cannot stop a background task; marking it lost", { taskId: t.id, err });
-          await this.finisher
-            .finish(t, { status: "lost", lostReason: "stop_failed", killPending: true }, "", false)
-            .catch((e: unknown) =>
-              this.log.warn("cannot finish a background task", { taskId: t.id, err: e }),
-            );
+          this.log.warn("cannot stop a background task; it keeps running", { taskId: t.id, err });
         }
       }),
     );

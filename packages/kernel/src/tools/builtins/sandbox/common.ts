@@ -25,7 +25,10 @@ export interface SandboxToolDeps {
   sandbox: Pick<SandboxService, "available" | "withSandbox"> &
     Partial<Pick<SandboxService, "pathLease" | "currentInstance">>;
   /** Background `Bash` tasks; absent in test stubs, where `run_in_background` is refused. */
-  background?: Pick<BackgroundTaskStore, "reserve" | "markStarted" | "failLaunch">;
+  background?: Pick<
+    BackgroundTaskStore,
+    "reserve" | "markStarted" | "failLaunch" | "finishStoppedLaunch" | "releaseStop"
+  >;
   attachments: Pick<AttachmentsService, "listForConversation" | "openForConversation">;
   storage: Pick<StorageService, "kernel" | "available">;
   /** `publishChanged`: `Deliver` announces `changed: files` (UI refresh B). */

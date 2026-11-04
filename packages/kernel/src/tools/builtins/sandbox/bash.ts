@@ -142,6 +142,8 @@ const LARGE_COMMAND_BASE64_BYTES = 96 * 1024;
 /** How a launch ended, decided under the call's lease. */
 type Launch =
   | { kind: "started" }
+  /** A stop claimed the reservation while it launched: the command was killed at once. */
+  | { kind: "stopped" }
   /** The launch failed (any session it started and whose id could be read was killed). */
   | { kind: "not_started"; why: string }
   /**
@@ -169,7 +171,9 @@ function launchFailure(r: ExecResult): string {
  * 2. runs one short launch exec under the call's shared lease, and in the same lease records the
  *    session id and the instance (`markStarted`); a command that started but could not be
  *    recorded is killed there (`pkill -KILL -s <sid>`), so no process runs untracked;
- * 3. any failure finishes the row as `failed` with the reason (`failLaunch`).
+ * 3. any failure finishes the row as `failed` with the reason (`failLaunch`);
+ * 4. a stop that claimed the reservation meanwhile (`markStarted` answers `stopping`) has the
+ *    command killed at once and the row finished `stopped` (`finishStoppedLaunch`).
  * The command runs in a session of its own under its own `timeout` (default and maximum
  * {@link backgroundMaxSeconds}).
  */
@@ -273,10 +277,21 @@ async function runInBackground(
         // under the shared lease: no rebuild can come between the launch and this read
         const instance = await currentInstance(root);
         if (instance === null) throw new Error("the sandbox instance could not be read");
-        if (!(await background.markStarted(id, { sid, sandboxCreatedAt: instance.createdAt }))) {
-          throw new Error("its task record was finished meanwhile");
-        }
+        const marked = await background.markStarted(id, {
+          sid,
+          sandboxCreatedAt: instance.createdAt,
+        });
+        if (!marked) throw new Error("its task record was finished meanwhile");
         started = true;
+        if (marked === "stopping") {
+          // a stop claimed the reservation before the command started: kill it at once
+          if (await kill(sid)) {
+            await background.finishStoppedLaunch(id);
+            return { kind: "stopped" } satisfies Launch;
+          }
+          // not confirmed: the task runs on and is tracked like any other (the poller checks it)
+          await background.releaseStop(id);
+        }
         return { kind: "started" } satisfies Launch;
       } catch (e) {
         const stopped = await kill(sid);
@@ -305,6 +320,11 @@ async function runInBackground(
     await background.failLaunch(id, launch.why);
     throw new ToolError(
       `The background task was not started: ${launch.why}. Check the sandbox, or call Bash without run_in_background.${large}`,
+    );
+  }
+  if (launch.kind === "stopped") {
+    throw new ToolError(
+      `Background task ${id} ("${description}") was stopped while it was starting, so nothing runs. Call Bash again if it is still needed.`,
     );
   }
   if (launch.kind === "unrecorded") {

@@ -52,6 +52,8 @@ let launchThrows: "before" | "after" | undefined;
 let killFails: boolean;
 /** `withSandbox` throws after its callback returned (a lease release failing), when set. */
 let leaveThrows: boolean;
+/** A stop claims the reservation while the launch exec runs (`claimStop`), when set. */
+let claimOnLaunch: boolean;
 
 const signal = () => AbortSignal.timeout(30_000);
 
@@ -94,6 +96,11 @@ beforeEach(async () => {
     const isLaunch = args.command.includes("setsid nohup");
     if (isLaunch && launchResult !== undefined) return launchResult;
     if (isLaunch && launchThrows === "before") throw new Error("argument list too long");
+    if (isLaunch && claimOnLaunch) {
+      for (const t of await store.runningIn(seed.conversationId)) {
+        if (t.sid === null) expect(await store.claimStop(t.id)).toBe(true);
+      }
+    }
     if (killFails && args.command.includes("pkill -KILL -s")) {
       return { exitCode: 2, stdout: "", stderr: "", truncated: false, timedOut: false };
     }
@@ -106,6 +113,7 @@ beforeEach(async () => {
   launchThrows = undefined;
   killFails = false;
   leaveThrows = false;
+  claimOnLaunch = false;
   provider = fake;
   config = configWith({});
   seed = await seedConversation(raw);
@@ -347,6 +355,19 @@ describe("Bash run_in_background", { timeout: 30_000 }, () => {
     const sids = await readdir(join(root, "instances", h.id, "sessions"));
     expect(sids.length).toBe(1);
     for (const sid of sids) await until(async () => !(await alive(sid)));
+  });
+
+  it("a stop that claimed the reservation during the launch: the command is killed, the row ends stopped", async () => {
+    claimOnLaunch = true;
+    await expect(
+      bash().run({ command: "sleep 30", description: "Stopped", run_in_background: true }, ctx()),
+    ).rejects.toThrow(
+      /^Background task bt_[a-z2-7]{6} \("Stopped"\) was stopped while it was starting, so nothing runs\./,
+    );
+    const [row] = await store.listFor([seed.conversationId]);
+    expect(row).toMatchObject({ status: "stopped", stoppingAt: null });
+    expect(row?.sid).toMatch(/^[1-9][0-9]*$/);
+    await until(async () => !(await alive(row?.sid as string)));
   });
 
   it("an error after the row has its sid (releasing the lease) does not undo the launch", async () => {

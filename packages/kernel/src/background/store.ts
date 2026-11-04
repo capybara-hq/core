@@ -47,11 +47,13 @@ export interface BackgroundTaskRow {
   killPending: boolean;
   /** The bytes `TaskOutput` has already returned. */
   readOffset: number;
+  /** When a stop claimed the task ({@link BackgroundTaskStore.claimStop}); null otherwise. */
+  stoppingAt: Date | null;
 }
 
 export type BackgroundTaskInsert = Omit<
   BackgroundTaskRow,
-  "status" | "finishedAt" | "exitCode" | "lostReason" | "killPending" | "readOffset"
+  "status" | "finishedAt" | "exitCode" | "lostReason" | "killPending" | "readOffset" | "stoppingAt"
 >;
 
 /** A launch's reservation: the row before the command started (no `sid`, no instance yet). */
@@ -78,7 +80,18 @@ const toRow = (r: Selectable<BackgroundTasksTable>): BackgroundTaskRow => ({
   sandboxCreatedAt: r.sandbox_created_at === null ? null : new Date(r.sandbox_created_at),
   killPending: r.kill_pending,
   readOffset: Number(r.read_offset),
+  stoppingAt: r.stopping_at === null ? null : new Date(r.stopping_at),
 });
+
+/**
+ * How long a stop's claim holds: a claim older than this is abandoned (its stopper died), so the
+ * poller checks the task again and another stop may claim it. Longer than any stop takes (the
+ * lease wait, the SIGTERM grace, the kill and the tail).
+ */
+export const STOP_CLAIM_TTL_MS = 5 * 60_000;
+
+/** A condition: the row is not claimed by a live stop. */
+const unclaimed = sql<boolean>`(stopping_at IS NULL OR stopping_at < now() - ${STOP_CLAIM_TTL_MS}::integer * interval '1 millisecond')`;
 
 /**
  * Background Bash tasks (spec §4.1): one `capybara.background_tasks` row per command started with
@@ -112,16 +125,63 @@ export class BackgroundTaskStore {
     return true;
   }
 
-  /** Records the started command of a reserved row; false when the row is no longer running. */
-  async markStarted(id: string, to: { sid: string; sandboxCreatedAt: Date }): Promise<boolean> {
+  /**
+   * Records the started command of a reserved row: `started`, or `stopping` when a stop claimed the
+   * reservation meanwhile (the launch then kills the command and finishes the row with
+   * {@link finishStoppedLaunch}); false when the row is no longer running.
+   */
+  async markStarted(
+    id: string,
+    to: { sid: string; sandboxCreatedAt: Date },
+  ): Promise<"started" | "stopping" | false> {
     const r = await this.db
       .updateTable("background_tasks")
       .set({ sid: to.sid, sandbox_created_at: to.sandboxCreatedAt })
       .where("id", "=", id)
       .where("status", "=", "running")
       .where("sid", "is", null)
+      .returning("stopping_at")
+      .executeTakeFirst();
+    if (!r) return false;
+    return r.stopping_at === null ? "started" : "stopping";
+  }
+
+  /**
+   * Finishes a launch whose reservation a stop claimed, once the launch killed what it started:
+   * `stopped`. No `background_task_finished` event: the launching call reports it itself.
+   */
+  async finishStoppedLaunch(id: string): Promise<void> {
+    await this.db
+      .updateTable("background_tasks")
+      .set({ status: "stopped", finished_at: sql<Date>`now()`, stopping_at: null })
+      .where("id", "=", id)
+      .where("status", "=", "running")
+      .execute();
+  }
+
+  /**
+   * Claims a running task for a stop (`stopping_at`): false when it is no longer running or another
+   * live stop claimed it ({@link STOP_CLAIM_TTL_MS}). While claimed the poller leaves it alone.
+   */
+  async claimStop(id: string): Promise<boolean> {
+    const r = await this.db
+      .updateTable("background_tasks")
+      .set({ stopping_at: sql<Date>`now()` })
+      .where("id", "=", id)
+      .where("status", "=", "running")
+      .where(unclaimed)
       .executeTakeFirst();
     return Number(r.numUpdatedRows) > 0;
+  }
+
+  /** Gives up a stop's claim (the stop failed while the sandbox runs: the task keeps running). */
+  async releaseStop(id: string): Promise<void> {
+    await this.db
+      .updateTable("background_tasks")
+      .set({ stopping_at: null })
+      .where("id", "=", id)
+      .where("status", "=", "running")
+      .execute();
   }
 
   /**
@@ -185,8 +245,9 @@ export class BackgroundTaskStore {
   }
 
   /**
-   * Every running task that has started (its `sid` is set), across sandboxes, oldest first: what
-   * the poller checks. A reservation still launching (`sid` null) is left to its launch.
+   * Every running task that has started (its `sid` is set) and no live stop claimed, across
+   * sandboxes, oldest first: what the poller checks. A reservation still launching (`sid` null) is
+   * left to its launch, a claimed task to its stop.
    */
   async runningStarted(): Promise<BackgroundTaskRow[]> {
     const rows = await this.db
@@ -194,6 +255,7 @@ export class BackgroundTaskStore {
       .selectAll()
       .where("status", "=", "running")
       .where("sid", "is not", null)
+      .where(unclaimed)
       .orderBy("started_at", "asc")
       .orderBy("id", "asc")
       .execute();
@@ -238,7 +300,8 @@ export class BackgroundTaskStore {
 
   /**
    * Conditional `running` to a final status; false when the row was no longer running (another
-   * path finished it first). The caller's transaction also appends the finished event.
+   * path finished it first), or, with `opts.unclaimed` (the poller), when a live stop claimed it.
+   * The caller's transaction also appends the finished event.
    */
   @Transactional({ propagation: "mandatory" })
   async finish(
@@ -249,19 +312,22 @@ export class BackgroundTaskStore {
       lostReason?: string;
       killPending?: boolean;
     },
+    opts: { unclaimed?: boolean } = {},
   ): Promise<boolean> {
-    const r = await this.db
+    let q = this.db
       .updateTable("background_tasks")
       .set({
         status: to.status,
         finished_at: sql<Date>`now()`,
         exit_code: to.exitCode ?? null,
         lost_reason: to.lostReason ?? null,
+        stopping_at: null,
         ...(to.killPending !== undefined && { kill_pending: to.killPending }),
       })
       .where("id", "=", id)
-      .where("status", "=", "running")
-      .executeTakeFirst();
+      .where("status", "=", "running");
+    if (opts.unclaimed) q = q.where(unclaimed);
+    const r = await q.executeTakeFirst();
     return Number(r.numUpdatedRows) > 0;
   }
 
