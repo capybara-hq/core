@@ -1,4 +1,6 @@
+import type { AvatarValue, PresetId } from "@capybara-hq/design";
 import { apiFetch } from "./api";
+import { type CreatedAttachment, uploadToStorage } from "./attachments";
 import type { LocalizedName } from "./catalog";
 import type { ModelRef } from "./conversations";
 
@@ -116,6 +118,32 @@ export const SUBAGENTS_INVALID_REASONS = [
 ] as const;
 export type SubagentsInvalidReason = (typeof SUBAGENTS_INVALID_REASONS)[number];
 
+/** The kernel's avatar of an agent (`null` only for agents created before profiles existed). */
+export type AgentAvatar =
+  | { kind: "preset"; id: PresetId }
+  | { kind: "upload"; uploadId: string }
+  | { kind: "external"; url: string }
+  | null;
+
+export interface QuickAction {
+  title: string;
+  body: string;
+}
+
+export interface AgentProfile {
+  avatar: AgentAvatar;
+  description: string;
+  quickActions: QuickAction[];
+  updatedAt: string;
+}
+
+/** What a client may write: `external` avatars are migrated data only. */
+export interface ProfileInput {
+  avatar?: { kind: "preset"; id: PresetId } | { kind: "upload"; uploadId: string } | null;
+  description?: string;
+  quickActions?: QuickAction[];
+}
+
 export interface Agent {
   id: string;
   orgId: string;
@@ -124,6 +152,8 @@ export interface Agent {
   /** The member list when visibility is `members` (else null; older kernels leave it out). */
   memberIds?: string[] | null;
   currentVersion: number;
+  /** Avatar, description and quick actions: not part of the definition, never model-visible. */
+  profile: AgentProfile;
   /** The owner left the org and the agent went to an owner of the org until an admin reassigns it. */
   needsReassignment?: boolean;
   /** 定义里可能还有界面不认识的字段：修改时原样带回。 */
@@ -274,3 +304,67 @@ export const reassignAgentOwner = (orgId: string, agentId: string, accountId: st
 
 export const listModels = (orgId: string) =>
   apiFetch<{ providers: ProviderModels[] }>(`${base(orgId)}/models`);
+
+/**
+ * The avatar the design `Avatar` renders. Uploads and migrated external avatars go through the
+ * kernel's redirect route; `v` busts the browser cache when the profile changes.
+ */
+export function avatarValue(agent: Pick<Agent, "id" | "profile">, orgId: string): AvatarValue {
+  const a = agent.profile.avatar;
+  if (a === null) return null;
+  if (a.kind === "preset") return { kind: "preset", id: a.id };
+  return {
+    kind: "image",
+    src: `${base(orgId)}/agents/${encodeURIComponent(agent.id)}/avatar?v=${encodeURIComponent(agent.profile.updatedAt)}`,
+  };
+}
+
+/**
+ * Save the profile (`PATCH …/profile`). `expectedUpdatedAt` is the `profile.updatedAt` the caller
+ * read: another save in between answers 409 `agent.profile_conflict`, never a silent overwrite.
+ */
+export const updateAgentProfile = (
+  orgId: string,
+  agentId: string,
+  input: ProfileInput & { expectedUpdatedAt: string },
+) =>
+  apiFetch<{ profile: AgentProfile }>(
+    `${base(orgId)}/agents/${encodeURIComponent(agentId)}/profile`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    },
+  );
+
+/** Register an avatar upload: the kernel checks type and size and returns a presigned upload. */
+export const createAvatarUpload = (
+  orgId: string,
+  agentId: string,
+  input: { name: string; contentType: string; size: number },
+) =>
+  apiFetch<CreatedAttachment>(
+    `${base(orgId)}/agents/${encodeURIComponent(agentId)}/avatar/uploads`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+
+/**
+ * Upload a cropped avatar: register, then send to object storage with the presigned upload. The
+ * returned id goes into the profile as `{ kind: "upload", uploadId }`.
+ */
+export async function uploadAvatar(
+  orgId: string,
+  agentId: string,
+  file: Blob,
+): Promise<{ uploadId: string }> {
+  const name = file instanceof File ? file.name : "avatar";
+  const created = await createAvatarUpload(orgId, agentId, {
+    name,
+    contentType: file.type,
+    size: file.size,
+  });
+  await uploadToStorage(
+    created.upload,
+    file instanceof File ? file : new File([file], name, { type: file.type }),
+  );
+  return { uploadId: created.id };
+}

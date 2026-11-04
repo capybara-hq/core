@@ -166,7 +166,9 @@
       "subagents_invalid": "子 agent 设置无法保存：请检查所列的模板、名称、工具、技能与 agent，且 agent 类型最多 20 个。",
       "not_found": "agent 不存在或你无权访问。",
       "model_unavailable": "所选模型不可用。",
-      "version_conflict": "你编辑期间有人保存了这个 agent。请刷新页面后重新修改。"
+      "version_conflict": "你编辑期间有人保存了这个 agent。请刷新页面后重新修改。",
+      "profile_conflict": "你编辑期间有人修改了这个 agent 的资料。请刷新查看最新内容后重新修改。",
+      "instructions_mismatch": "指令与提示词文件不一致。请编辑提示词文件，或刷新后重试。"
     },
     "conversation": {
       "not_found": "会话不存在或你无权访问。",

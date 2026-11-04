@@ -458,9 +458,13 @@ export function useAgentForm(
     if (main === null) return;
     const fb = decode(fallback);
     // the form edits `instructions` only: prompt files are left out (the kernel refuses files that
-    // disagree with an edited `instructions`); the prompt files editor replaces this
-    const { instructionFiles: _files, ...kept }: Record<string, unknown> =
-      existing?.definition ?? {};
+    // disagree with an edited `instructions`); the prompt files editor replaces this.
+    // `avatarUrl` is the retired avatar field: the profile owns avatars now, so it is never sent
+    const {
+      instructionFiles: _files,
+      avatarUrl: _avatarUrl,
+      ...kept
+    }: Record<string, unknown> = existing?.definition ?? {};
     const definition: AgentDefinitionInput = {
       // 修改：先铺上原定义，表单不认识的字段原样带回
       ...kept,
