@@ -101,7 +101,8 @@ export type AgentDefinitionInput = Omit<AgentDefinition, "instructions"> & {
 /**
  * Derives the stored definition of a save. With `instructionFiles`, `instructions` is their join
  * (a differing `instructions` given with them → 400 `agent.instructions_mismatch`). With only
- * `instructions` (old clients) the definition is stored as given, without files. Given neither,
+ * `instructions` (old clients) the current files are kept while it equals their join, else the
+ * definition is stored as given, without files. Given neither,
  * an update keeps the `current` version's prompt, and a new agent (`current` null) gets the
  * `AGENTS.md` starter.
  */
@@ -120,7 +121,14 @@ export function deriveInstructions(
     }
     return { ...rest, instructions: joined, instructionFiles };
   }
-  if (instructions !== undefined) return { ...rest, instructions };
+  if (instructions !== undefined) {
+    // an old client re-sending the same joined text (an unrelated edit) keeps the files
+    const files = current?.instructionFiles;
+    if (files !== undefined && instructions === joinInstructionFiles(files)) {
+      return { ...rest, instructions, instructionFiles: files };
+    }
+    return { ...rest, instructions };
+  }
   if (current !== null) {
     return {
       ...rest,

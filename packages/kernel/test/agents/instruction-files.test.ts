@@ -221,6 +221,17 @@ describe("prompt files over HTTP", () => {
       instructionFiles: [{ name: "\u0646\u200C\u0645.md", content: "x" }],
     });
     expect(ok.statusCode).toBe(201);
+    // CJK names are ordinary names
+    const cjk = await create(req, orgId, {
+      instructionFiles: [
+        { name: "AGENTS.md", content: "a" },
+        { name: "工作流程.md", content: "b" },
+      ],
+    });
+    expect(cjk.statusCode).toBe(201);
+    expect((cjk.json() as { agent: AgentJson }).agent.definition.instructionFiles?.[1]?.name).toBe(
+      "工作流程.md",
+    );
   });
 
   it("file names are unique ignoring case", async () => {
@@ -249,6 +260,47 @@ describe("prompt files over HTTP", () => {
     const oldDef = (old.json() as { agent: AgentJson }).agent.definition;
     expect(oldDef.instructions).toBe("Be helpful.");
     expect(oldDef).not.toHaveProperty("instructionFiles");
+  });
+
+  it("an unrelated save sending the joined text keeps the files; a changed text drops them", async () => {
+    const { req, orgId } = await setup();
+    const res = await create(req, orgId, { instructionFiles: twoFiles });
+    const agent = (res.json() as { agent: AgentJson }).agent;
+    const url = `/api/v1/orgs/${orgId}/agents/${agent.id}`;
+    const { instructionFiles: _f, ...withoutFiles } = agent.definition as Record<string, unknown>;
+
+    // the form's save: instructions (the join) only, another field edited the same way it was
+    const same = await req({
+      method: "PATCH",
+      url,
+      payload: { definition: withoutFiles, expectedVersion: 1 },
+    });
+    expect(same.statusCode).toBe(200);
+    const kept = (same.json() as { agent: AgentJson }).agent;
+    expect(kept.currentVersion).toBe(1);
+    expect(kept.definition.instructionFiles).toEqual(twoFiles);
+
+    const tools = await req({
+      method: "PATCH",
+      url,
+      payload: { definition: { ...withoutFiles, tools: [] }, expectedVersion: 1 },
+    });
+    expect(tools.statusCode).toBe(200);
+    const v2 = (tools.json() as { agent: AgentJson }).agent;
+    expect(v2.currentVersion).toBe(2);
+    expect(v2.definition.instructionFiles).toEqual(twoFiles);
+    expect(v2.definition.instructions).toBe(joinInstructionFiles(twoFiles));
+
+    const changed = await req({
+      method: "PATCH",
+      url,
+      payload: { definition: { ...withoutFiles, tools: [], instructions: "New text." } },
+    });
+    expect(changed.statusCode).toBe(200);
+    const v3 = (changed.json() as { agent: AgentJson }).agent;
+    expect(v3.currentVersion).toBe(3);
+    expect(v3.definition.instructions).toBe("New text.");
+    expect(v3.definition).not.toHaveProperty("instructionFiles");
   });
 
   it("an update given neither field keeps the current prompt; one AGENTS.md keeps an old agent's text", async () => {
