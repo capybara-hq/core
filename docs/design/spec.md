@@ -24,7 +24,7 @@ Wording: **must** / **must not** are mandatory; **should** is the default practi
 
 ## 2. Tokens
 
-`docs/design/tokens.json` is the **source of truth** for colors, shadows, the size scales, layout widths, motion, fonts, layering and the contrast pairs. `pnpm gen:tokens` writes `packages/design/src/styles/tokens.css` (the CSS variables `--cb-<token>`, dark under `:root` / `:root[data-theme="dark"]`, light under `:root[data-theme="light"]`) and `packages/design/src/tokens.ts` (`TOKEN_NAMES`, `SIZES`) from it; both files are generated and never edited by hand. `pnpm check:tokens` (part of `pnpm check`) fails when either file is stale, when `tokens.json` is malformed, or when a pair in `contrast` misses its ratio.
+`docs/design/tokens.json` is the **source of truth** for colors, shadows, the size scales, layout widths, motion, fonts, layering and the contrast pairs. `pnpm gen:tokens` writes `packages/design/src/styles/tokens.css` (the CSS variables `--cb-<token>`, dark under `:root` / `:root[data-theme="dark"]`, light under `:root[data-theme="light"]`) and `packages/design/src/tokens.ts` (`TOKEN_NAMES`, `SIZES`) from it; both files are generated and never edited by hand. `pnpm check:tokens` (part of `pnpm check`) fails when either file is stale, when `tokens.json` is malformed, when a pair in `contrast` misses its ratio, or when a ground in `separation` stands too close to a surface (§2.1).
 
 All colors, sizes and shadows may only be used through tokens. Color literals are allowed only in the generated `tokens.css`. Tailwind is not used.
 
@@ -32,18 +32,18 @@ All colors, sizes and shadows may only be used through tokens. Color literals ar
 
 | Token | Dark | Light | Purpose |
 |---|---|---|---|
-| `bg` | `#0A0A0A` | `#F7F6F2` | Page background |
+| `bg` | `#0A0A0A` | `#FAF9F6` | Page background |
 | `panel` | `#111110` | `#FFFFFF` | Cards, table container, stat cards, form field cards, overlays |
-| `panel-2` | `#0E0E0D` | `#FBFAF7` | Action row, right-panel ground |
-| `sidebar` | `#111110` | `#EFEEE9` | Sidebar ground |
-| `sidebar-active` | `#1A1A18` | `#E2E1DB` | Current nav item or conversation in the sidebar |
+| `panel-2` | `#0E0E0D` | `#FCFBF9` | Action row, right-panel ground |
+| `sidebar` | `#111110` | `#F3F2EE` | Sidebar ground |
+| `sidebar-active` | `#1A1A18` | `rgba(26,26,24,0.09)` | Current nav item or conversation in the sidebar |
 | `raised` | `#141413` | `#FFFFFF` | Floating inline cards, the composer |
-| `selected` | `#1F1F1D` | `#ECEBE6` | Selection ground: selected segment, filter chip, option card, the palette's current row, the waterfall's selected row; avatar, skeleton bars |
-| `hover` | `#171716` | `#F4F3EF` | Hover ground, disabled input ground |
-| `line-soft` | `#1C1C1A` | `#E6E5E0` | Column dividers, table row dividers, the status bar's and action row's top line, disabled borders |
-| `line` | `#2A2A28` | `#D6D5CF` | Input and button border |
+| `selected` | `#1F1F1D` | `rgba(26,26,24,0.07)` | Selection ground: selected segment, filter chip, option card, the palette's current row, the waterfall's selected row; avatar, skeleton bars |
+| `hover` | `#171716` | `rgba(26,26,24,0.04)` | Hover ground, disabled input ground |
+| `line-soft` | `#1C1C1A` | `#E8E7E2` | Column dividers, table row dividers, the status bar's and action row's top line, disabled borders |
+| `line` | `#2A2A28` | `#D9D8D2` | Input and button border |
 | `line-strong` | `#3A3A37` | `#B5B5AE` | Overlay border, the border of a selected option card or palette row |
-| `line-card` | `rgba(255,255,255,0.08)` | `rgba(26,26,24,0.06)` | The 1px hairline of cards and sections |
+| `line-card` | `rgba(255,255,255,0.08)` | `rgba(26,26,24,0.07)` | The 1px hairline of cards and sections |
 | `scroll-thumb` | `rgba(255,255,255,0.15)` | `rgba(26,26,24,0.20)` | Scrollbar thumb (on a transparent track) |
 | `ink` | `#E6E6E3` | `#1A1A18` | Text |
 | `muted` | `#8E8E89` | `#5E5E5A` | Secondary text, table headers, sidebar group labels |
@@ -64,7 +64,9 @@ All colors, sizes and shadows may only be used through tokens. Color literals ar
 
 The `avatar-*` tokens (dark and light, in `tokens.json`) are the animal palettes of the agent avatars (§3, §6.30) and are used by `Avatar` only. Each preset's main color against its ground is a `contrast` pair with a floor of 3:1 (WCAG 1.4.11 for graphics), in both themes; the panda's and the penguin's white against their grounds are pairs too.
 
-The light accent is `#CC4609`: white text on it has a contrast of 4.72:1 (WCAG AA). The original `#FF6A13` with white text is only 2.87:1 and must not be used in the light theme. The text pairs that must meet AA are listed in `tokens.json` `contrast` and checked by `check:tokens`; a translucent token (`diff-add`, `diff-del`) is composited over `bg` before its pair is checked. `muted` must reach 4.5:1 on every ground secondary text sits on (`bg`, `panel`, `panel-2`, `sidebar`, `raised`, `selected`, `hover`; dark: 6.02:1 on `bg`, 5.02:1 on `selected`) and `disabled` 3:1 on the grounds a control sits on (dark: 3.86:1 on `bg`, 3.22:1 on `selected`; light: 3.57:1 on `bg`, 3.24:1 on `selected`).
+The light accent is `#CC4609`: white text on it has a contrast of 4.72:1 (WCAG AA). The original `#FF6A13` with white text is only 2.87:1 and must not be used in the light theme. The text pairs that must meet AA are listed in `tokens.json` `contrast` and checked by `check:tokens`; a translucent token (`diff-add`, `diff-del`, the light `hover` / `selected` / `sidebar-active`) is composited over `bg` before its pair is checked, or over the surface a pair names as its fourth element (`["muted", "selected", 4.5, "sidebar"]`: the darkest light surface these grounds sit on). `muted` must reach 4.5:1 on every ground secondary text sits on (`bg`, `panel`, `panel-2`, `sidebar`, `raised`, `selected`, `hover`; dark: 6.02:1 on `bg`, 5.02:1 on `selected`) and `disabled` 3:1 on the grounds a control sits on (dark: 3.86:1 on `bg`, 3.22:1 on `selected`; light: 3.67:1 on `bg`, 3.18:1 on `selected`).
+
+**Hover, selected and current grounds.** In light, `hover`, `selected` and `sidebar-active` are translucent ink overlays (`ink` at 4%, 7% and 9%), not fixed colors, so each reads as a darker step on every surface it sits on (`bg`, `panel`, `panel-2`, `raised`, `sidebar`); in dark they stay solid. `tokens.json` `separation` lists `[ground, surface, floor]`: the ground composited over the surface must differ from it by at least the floor in OKLab lightness ×100 (2.5 for `hover` and `selected` on `bg`, `panel` and `sidebar`, and `sidebar-active` on `sidebar`), in both themes (`tokens-separation`), and `selected` must stand further from a surface than `hover` on the same surface (`tokens-separation-order`). Because they are translucent, an element that must hide what is under it (a sticky table header, a badge over an icon) lays the ground over its opaque surface (`linear-gradient(var(--cb-hover), var(--cb-hover)), var(--cb-table-ground)`) instead of using it alone; two stacked overlays (a hovered row's menu button) simply read darker.
 
 ### 2.2 Fonts and type
 
@@ -157,7 +159,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 
 **Lines**: 1px. Column dividers, table row dividers and the status bar / action row top lines use `line-soft`. Borders (`line`) only on things that float over content or take input: inputs, buttons, chips, inline cards, overlays (`line-strong`). Cards, sections, stat cards, form field cards and object lists use the `panel` ground with a 1px `line-card` hairline (`rgba(255,255,255,.08)` in dark, where the ground alone barely separates them; drawn as an inset shadow where a border would change the box); the table container has no border.
 
-- **Input borders are a signed-off contrast exception.** An input's 1px `line` border on the page ground is about 1.38:1 (dark, `#2A2A28` on `#0A0A0A`) / 1.36:1 (light, `#D6D5CF` on `#F7F6F2`), below the 3:1 WCAG asks of UI component boundaries. The maintainer signed this off with the reference set (2026-10-26): the soft line is the refined E look, and an input is never identified by its border alone. It always carries a visible label (Field, `body` `ink`) or a placeholder/prefix inside it, it shows a `line-strong` border on hover, and focus draws an `accent` border plus the 3px `focus-ring` halo. `tokens.json` keeps no contrast pair for `line` for this reason; a new component that relies on a `line` border as its only boundary needs its own sign-off.
+- **Input borders are a signed-off contrast exception.** An input's 1px `line` border on the page ground is about 1.38:1 (dark, `#2A2A28` on `#0A0A0A`) / 1.36:1 (light, `#D9D8D2` on `#FAF9F6`), below the 3:1 WCAG asks of UI component boundaries. The maintainer signed this off with the reference set (2026-10-26): the soft line is the refined E look, and an input is never identified by its border alone. It always carries a visible label (Field, `body` `ink`) or a placeholder/prefix inside it, it shows a `line-strong` border on hover, and focus draws an `accent` border plus the 3px `focus-ring` halo. `tokens.json` keeps no contrast pair for `line` for this reason; a new component that relies on a `line` border as its only boundary needs its own sign-off.
 
 **Radius**: `sm` for inputs, buttons, chips, nav items and conversation rows; `md` for inline cards, property sections, stat cards, form field cards and overlays; `bubble` for message bubbles and the switch track; **0** for tables and page structure (sidebar, header, status bar, action row).
 

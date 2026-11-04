@@ -31,7 +31,10 @@ export type DesignTokens = {
   motion: Record<string, string>;
   font: { mono: string; prose: string };
   z: Record<string, number>;
-  contrast: [string, string, number][];
+  /** [foreground, background, floor] or, with a fourth element, the surface rgba values sit on. */
+  contrast: ([string, string, number] | [string, string, number, string])[];
+  /** [ground, surface, minimum OKLab lightness difference x100]; optional. */
+  separation?: [string, string, number][];
 };
 
 const THEMES = ["dark", "light"] as const;
@@ -48,7 +51,17 @@ const SIZE_GROUPS: Record<keyof DesignTokens["size"], [string, string] | undefin
   layout: undefined,
 };
 
-const TOP_KEYS = ["version", "color", "shadow", "size", "motion", "font", "z", "contrast"];
+const TOP_KEYS = [
+  "version",
+  "color",
+  "shadow",
+  "size",
+  "motion",
+  "font",
+  "z",
+  "contrast",
+  "separation",
+];
 const NAME_RE = /^[a-z][a-z0-9-]*$/;
 const STEP_RE = /^[a-z0-9][a-z0-9-]*$/;
 const HEX_RE = /^#[0-9A-F]{6}$/;
@@ -211,19 +224,42 @@ export function parseTokens(
     json.contrast.forEach((p: unknown, i: number) => {
       const ok =
         Array.isArray(p) &&
-        p.length === 3 &&
+        (p.length === 3 || (p.length === 4 && typeof p[3] === "string")) &&
         typeof p[0] === "string" &&
         typeof p[1] === "string" &&
         typeof p[2] === "number" &&
         p[2] >= 1;
       if (!ok) {
-        bad("contrast", `entry ${i} must be [foreground, background, floor >= 1]`);
+        bad("contrast", `entry ${i} must be [foreground, background, floor >= 1, surface?]`);
         return;
       }
-      for (const name of [p[0], p[1]] as string[]) {
+      for (const name of [p[0], p[1], ...p.slice(3)] as string[]) {
         if (!(name in colors)) bad("contrast", `entry ${i} names an unknown color token "${name}"`);
       }
     });
+  }
+  if (json.separation !== undefined) {
+    if (!Array.isArray(json.separation)) {
+      bad("separation", "must be an array of [ground, surface, minDeltaL]");
+    } else {
+      json.separation.forEach((p: unknown, i: number) => {
+        const ok =
+          Array.isArray(p) &&
+          p.length === 3 &&
+          typeof p[0] === "string" &&
+          typeof p[1] === "string" &&
+          typeof p[2] === "number" &&
+          p[2] > 0;
+        if (!ok) {
+          bad("separation", `entry ${i} must be [ground, surface, minDeltaL > 0]`);
+          return;
+        }
+        for (const name of [p[0], p[1]] as string[]) {
+          if (!(name in colors))
+            bad("separation", `entry ${i} names an unknown color token "${name}"`);
+        }
+      });
+    }
   }
 
   if (findings.length > 0) return { findings };
@@ -321,6 +357,18 @@ export function contrastRatio(fg: string, bg: string): number {
   return ((hi as number) + 0.05) / ((lo as number) + 0.05);
 }
 
+/** OKLab lightness (x100) of a #RRGGBB color. */
+export function oklabL(hex: string): number {
+  const [r, g, b] = [1, 3, 5].map((i) => {
+    const c = Number.parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  }) as [number, number, number];
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  return (0.2104542553 * l + 0.793617785 * m - 0.0040720958 * s) * 100;
+}
+
 const RGBA_PARTS_RE = /^rgba\((\d{1,3}),(\d{1,3}),(\d{1,3}),(0|1|0?\.\d+)\)$/;
 
 /**
@@ -348,7 +396,10 @@ export function compositeOver(color: string, ground: string): string | undefined
  * check:tokens: tokens.json is well-formed (`tokens-invalid`), the generated tokens.css / tokens.ts
  * equal what gen:tokens renders (`tokens-stale`), and every contrast pair meets its floor in both
  * themes (`tokens-contrast`). An rgba(...) value is composited over the theme's `bg` first (diff
- * tints are drawn on the page ground); pairs with a color-mix value are skipped.
+ * tints are drawn on the page ground), or over the pair's fourth element, a surface token; pairs
+ * with a color-mix value are skipped. Every `separation` entry's ground, composited over its
+ * surface, differs from it by at least the floor in OKLab lightness x100 (`tokens-separation`), and
+ * `selected` is further from a surface than `hover` on the same surface (`tokens-separation-order`).
  */
 export function checkTokens(root: string): Finding[] {
   const jsonFile = join(root, TOKENS_JSON);
@@ -382,9 +433,17 @@ export function checkTokens(root: string): Finding[] {
     });
   }
 
-  tokens.contrast.forEach(([fg, bg, floor]) => {
+  /** The opaque value of a surface token: an rgba surface is composited over `bg`. */
+  const surfaceOf = (name: string, theme: Theme): string | undefined => {
+    const bg = tokens.color.bg?.[theme] ?? "";
+    const raw = tokens.color[name]?.[theme];
+    return raw === undefined ? undefined : compositeOver(raw, bg);
+  };
+
+  tokens.contrast.forEach(([fg, bg, floor, surface]) => {
     for (const theme of THEMES) {
-      const ground = tokens.color.bg?.[theme] ?? "";
+      const ground = surfaceOf(surface ?? "bg", theme);
+      if (ground === undefined) continue;
       const rawA = tokens.color[fg]?.[theme] as string;
       const rawB = tokens.color[bg]?.[theme] as string;
       const a = compositeOver(rawA, ground);
@@ -392,15 +451,51 @@ export function checkTokens(root: string): Finding[] {
       if (a === undefined || b === undefined) continue;
       const ratio = contrastRatio(a, b);
       if (ratio + 1e-9 < floor) {
-        const composited = a !== rawA || b !== rawB ? " (rgba composited over bg)" : "";
+        const over = surface ?? "bg";
+        const composited = a !== rawA || b !== rawB ? ` (rgba composited over ${over})` : "";
+        const on = surface === undefined ? "" : ` over ${surface}`;
         out.push({
           file: jsonFile,
           line: lineOf(text, "contrast"),
           rule: "tokens-contrast",
-          message: `${fg} on ${bg} (${theme}): ${a} on ${b}${composited} is ${ratio.toFixed(2)}:1, below the floor ${floor}:1`,
+          message: `${fg} on ${bg}${on} (${theme}): ${a} on ${b}${composited} is ${ratio.toFixed(2)}:1, below the floor ${floor}:1`,
         });
       }
     }
   });
+
+  const separation = tokens.separation ?? [];
+  for (const theme of THEMES) {
+    const delta = new Map<string, number>();
+    for (const [ground, surface, floor] of separation) {
+      const s = surfaceOf(surface, theme);
+      const raw = tokens.color[ground]?.[theme];
+      const g = s === undefined || raw === undefined ? undefined : compositeOver(raw, s);
+      if (s === undefined || g === undefined) continue;
+      const d = Math.abs(oklabL(g) - oklabL(s));
+      delta.set(`${ground}@${surface}`, d);
+      if (d + 1e-9 < floor) {
+        out.push({
+          file: jsonFile,
+          line: lineOf(text, "separation"),
+          rule: "tokens-separation",
+          message: `${ground} on ${surface} (${theme}): ${g} on ${s} differs by ${d.toFixed(2)} in OKLab L x100, below the floor ${floor}`,
+        });
+      }
+    }
+    for (const [k, hover] of delta) {
+      if (!k.startsWith("hover@")) continue;
+      const surface = k.slice("hover@".length);
+      const selected = delta.get(`selected@${surface}`);
+      if (selected !== undefined && selected <= hover) {
+        out.push({
+          file: jsonFile,
+          line: lineOf(text, "separation"),
+          rule: "tokens-separation-order",
+          message: `selected on ${surface} (${theme}) differs by ${selected.toFixed(2)}, not more than hover (${hover.toFixed(2)}): selected must stand further from its surface than hover`,
+        });
+      }
+    }
+  }
   return out;
 }

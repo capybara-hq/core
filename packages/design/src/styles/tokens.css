@@ -138,18 +138,18 @@
 }
 
 :root[data-theme="light"] {
-  --cb-bg: #F7F6F2;
+  --cb-bg: #FAF9F6;
   --cb-panel: #FFFFFF;
-  --cb-panel-2: #FBFAF7;
-  --cb-sidebar: #EFEEE9;
-  --cb-sidebar-active: #E2E1DB;
+  --cb-panel-2: #FCFBF9;
+  --cb-sidebar: #F3F2EE;
+  --cb-sidebar-active: rgba(26,26,24,0.09);
   --cb-raised: #FFFFFF;
-  --cb-selected: #ECEBE6;
-  --cb-hover: #F4F3EF;
-  --cb-line-soft: #E6E5E0;
-  --cb-line: #D6D5CF;
+  --cb-selected: rgba(26,26,24,0.07);
+  --cb-hover: rgba(26,26,24,0.04);
+  --cb-line-soft: #E8E7E2;
+  --cb-line: #D9D8D2;
   --cb-line-strong: #B5B5AE;
-  --cb-line-card: rgba(26,26,24,0.06);
+  --cb-line-card: rgba(26,26,24,0.07);
   --cb-scroll-thumb: rgba(26,26,24,0.20);
   --cb-ink: #1A1A18;
   --cb-muted: #5E5E5A;

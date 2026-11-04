@@ -69,7 +69,12 @@ function AgentPageLoading({ agentId, section }: { agentId: string; section: stri
   const nav = useSectionNav(agentId, editable);
   return (
     <SettingsPage
-      header={{ path: [...scope, { label: "agents", href: "/agents" }], title: "" }}
+      header={{
+        path: [...scope, { label: "agents", href: "/agents" }],
+        title: "",
+        // the loaded head carries the agent's avatar: keep its 40 px slot
+        loading: { title: true, avatar: true },
+      }}
       nav={nav}
       activeNav={open}
       loading={{

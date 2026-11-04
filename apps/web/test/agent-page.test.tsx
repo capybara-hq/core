@@ -778,6 +778,10 @@ describe("the agent page by section (agent profile design §3)", () => {
     // the open section's static frame, as a placeholder, with the nav
     expect(page.querySelectorAll('[data-part="form-section"]').length).toBe(1);
     expect(current()).toBe(P_.sections["quick-actions"]);
+    // the head keeps the loaded row's height: a 40 px block where the avatar will be
+    const slot = page.querySelector('[data-part="page-header-avatar"] [data-part="skeleton-box"]');
+    expect((slot as HTMLElement | null)?.style.width).toBe("40px");
+    expect((slot as HTMLElement | null)?.style.height).toBe("40px");
     await act(async () => release());
     expect(await screen.findByDisplayValue("Summarize")).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
