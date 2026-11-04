@@ -72,7 +72,7 @@ class SequentialLoop implements AgentLoop {
     for (;;) {
       if (ctx.shutdown.aborted) return { kind: "interrupted" };
       if (timedOut()) return { kind: "max_duration", consumedUpToSeq: consumed };
-      for (const m of await ctx.pendingUserMessages(consumed)) consumed = Math.max(consumed, m.seq);
+      for (const m of await ctx.pendingAbsorbable(consumed)) consumed = Math.max(consumed, m.seq);
       if (step > ctx.limits.maxSteps) {
         const r = await runFinalWrapUp(this.deps, input());
         if (r.aborted && !timedOut()) return { kind: "aborted" };
@@ -606,8 +606,8 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
               inner.run({
                 ...ctx,
                 // 第一次吸收返回之后、runModelStep 读日志之前，插入一条新消息（确定性地复现竞态窗口）
-                pendingUserMessages: async (afterSeq) => {
-                  const r = await ctx.pendingUserMessages(afterSeq);
+                pendingAbsorbable: async (afterSeq) => {
+                  const r = await ctx.pendingAbsorbable(afterSeq);
                   if (!injected) {
                     injected = true;
                     late = await postMessage(req, orgId, convId, "echo:late");

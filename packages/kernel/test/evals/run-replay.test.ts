@@ -254,7 +254,8 @@ async function seedRun(
   runId: string,
   text: string,
   recorded: { name: string; input: unknown; content: string }[],
-  interjection?: string,
+  /** A message, or a finished background task (background Bash §4.4), landing during step 1. */
+  interjection?: string | { finished: EventPayload<"background_task_finished"> },
   catalog?: EventPayload<"skills_catalog">,
 ): Promise<{ userSeq: number; interjectionSeq: number | null }> {
   const [msg] = await eventLog.append(convId, [
@@ -330,10 +331,12 @@ async function seedRun(
   let interjectionSeq: number | null = null;
   if (interjection !== undefined) {
     const [m] = await eventLog.append(convId, [
-      {
-        type: "user_message",
-        payload: { content: [{ type: "text", text: interjection }], authorAccountId: adminId },
-      },
+      typeof interjection === "string"
+        ? {
+            type: "user_message",
+            payload: { content: [{ type: "text", text: interjection }], authorAccountId: adminId },
+          }
+        : { type: "background_task_finished", payload: interjection.finished },
     ]);
     interjectionSeq = m?.seq ?? null;
   }
@@ -389,6 +392,96 @@ async function seedRun(
     },
   ]);
   return { userSeq, interjectionSeq };
+}
+
+/** A finished background task's payload (as the finisher writes it). */
+const finishedTask = (taskId: string): EventPayload<"background_task_finished"> => ({
+  taskId,
+  description: `Task ${taskId}`,
+  status: "completed",
+  exitCode: 0,
+  elapsedMs: 4_000,
+  lastLines: "ok\n",
+  outputPath: `/workspace/.capybara/tasks/${taskId}.out`,
+  reported: false,
+});
+
+/**
+ * A wake run written to the log (background Bash §3): the conversation's finished task after the
+ * last consumed message is the run's boundary (`trigger_seq`); step 1 absorbs it and answers.
+ */
+async function seedWakeRun(convId: string, runId: string, taskId: string): Promise<number> {
+  const [f] = await eventLog.append(convId, [
+    { type: "background_task_finished", payload: finishedTask(taskId) },
+  ]);
+  const seq = f?.seq ?? 0;
+  await db
+    .insertInto("runs")
+    .values({
+      id: runId,
+      conversation_id: convId,
+      status: "completed",
+      agent_version: 1,
+      trigger_account_id: adminId,
+      trigger_seq: seq,
+      started_at: new Date(),
+      finished_at: new Date(),
+    })
+    .execute();
+  await eventLog.append(convId, [
+    {
+      type: "run_started",
+      runId,
+      payload: {
+        agentVersion: 1,
+        model: { provider: "model-fake", model: "fake-1" },
+        triggerAccountId: adminId,
+        trigger: "background_task",
+      },
+    },
+    {
+      type: "model_call",
+      runId,
+      payload: {
+        step: 1,
+        attempt: 1,
+        provider: "model-fake",
+        model: "fake-1",
+        fallback: false,
+        request: {
+          fromSeq: 1,
+          toSeq: 1_000_000,
+          summarySeq: null,
+          systemHash: "h",
+          reminderSeqs: [],
+          tools: [],
+          params: {},
+          absorbedUpToSeq: seq,
+          maxOutputTokens: 1000,
+        },
+      },
+    },
+    {
+      type: "assistant_message",
+      runId,
+      payload: { step: 1, content: [{ type: "text", text: "noted" }], stopReason: "end_turn" },
+    },
+    {
+      type: "usage",
+      runId,
+      payload: {
+        step: 1,
+        provider: "model-fake",
+        model: "fake-1",
+        inputTokens: 10,
+        outputTokens: 1,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
+    },
+    { type: "run_finished", runId, payload: { reason: "completed", consumedUpToSeq: seq } },
+  ]);
+  return seq;
 }
 
 async function trajectory(conversationId: string): Promise<TrajectoryDetail> {
@@ -962,6 +1055,82 @@ describe("整轮回放", { timeout: 60_000 }, () => {
     expect(step2?.payload.request.absorbedUpToSeq).toBe(inter.seq);
     const text = cand.finalContent.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
     expect(text).toBe("interjected");
+  });
+
+  it("a finished background task absorbed mid-run is fed at the step that absorbed it; no task starts (background Bash §4.4)", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    const taskId = "bt_replay";
+    await seedRun(
+      conv,
+      "bg-mid",
+      'tool:plugin__tools-count__count:{"n":4}',
+      [{ name: "plugin__tools-count__count", input: { n: 4 }, content: "counted 4" }],
+      { finished: finishedTask(taskId) },
+    );
+    await addCase(setId, conv, "bg-mid");
+    const before = toolsCountState().count;
+    const run = await startRun(setId, {});
+    expect((await finished(run.id)).status).toBe("completed");
+    const [r] = await results(run.id);
+    expect(r?.status, JSON.stringify(r?.error)).toBe("done");
+    expect((r as EvalResultView).candidate as RunReplayResult).toMatchObject({ unmatched: 0 });
+    const evs = await evalEvents(r as EvalResultView);
+    const fed = evs.filter((e) => e.type === "background_task_finished");
+    expect(fed.map((e) => e.payload)).toEqual([finishedTask(taskId)]);
+    const calls = evs.filter(
+      (e): e is Extract<ConversationEvent, { type: "model_call" }> => e.type === "model_call",
+    );
+    const step1 = calls.find((c) => c.payload.step === 1);
+    const step2 = calls.find((c) => c.payload.step === 2);
+    const result1 = evs.find((e) => e.type === "tool_result");
+    const f = fed[0] as ConversationEvent;
+    // fed after step 1's tool results, absorbed by step 2 as in the original
+    expect(f.seq).toBeGreaterThan(result1?.seq ?? Number.POSITIVE_INFINITY);
+    expect(f.seq).toBeLessThan(step2?.seq ?? 0);
+    expect(step1?.payload.request.absorbedUpToSeq).toBeLessThan(f.seq);
+    expect(step2?.payload.request.absorbedUpToSeq).toBe(f.seq);
+    // a replay starts, polls and stops no task, and executes no tool
+    const tasks = await db
+      .selectFrom("background_tasks")
+      .select("id")
+      .where("conversation_id", "=", r?.evalConversationId as string)
+      .execute();
+    expect(tasks).toEqual([]);
+    expect(toolsCountState().count).toBe(before);
+  });
+
+  it("a wake run is seeded from its finished background task, not the last message (background Bash §3)", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    await seedRun(conv, "bg-before", "echo:first", []);
+    const wakeSeq = await seedWakeRun(conv, "bg-wake", "bt_wakeup");
+    await addCase(setId, conv, "bg-wake");
+    const run = await startRun(setId, {});
+    expect((await finished(run.id)).status).toBe("completed");
+    const [r] = await results(run.id);
+    expect(r?.status, JSON.stringify(r?.error)).toBe("done");
+    const evalConv = r?.evalConversationId as string;
+    const row = await db
+      .selectFrom("runs")
+      .select("trigger_seq")
+      .where("conversation_id", "=", evalConv)
+      .executeTakeFirstOrThrow();
+    expect(Number(row.trigger_seq)).toBe(wakeSeq);
+    const evs = await eventsOf(db, evalConv);
+    const step1 = evs.find(
+      (e): e is Extract<ConversationEvent, { type: "model_call" }> =>
+        e.type === "model_call" && e.payload.step === 1 && e.seq > wakeSeq,
+    );
+    // the seeded finish (its original seq) is what the replayed run's first step absorbed
+    expect(step1?.payload.request.absorbedUpToSeq).toBe(wakeSeq);
+    expect(
+      evs.find((e) => e.seq === wakeSeq && e.type === "background_task_finished"),
+    ).toBeDefined();
+    const fin = evs.find((e) => e.type === "run_finished" && e.seq > (step1?.seq ?? 0));
+    expect(
+      ((fin as ConversationEvent).payload as EventPayload<"run_finished">).consumedUpToSeq,
+    ).toBe(wakeSeq);
   });
 
   it("达到 token 上限：loop 在下一次请求前停下，结果 skipped，运行 capped", async () => {

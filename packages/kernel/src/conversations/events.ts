@@ -308,6 +308,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       agentVersion: z.number().int().positive(),
       model: ModelRef,
       triggerAccountId: z.string(),
+      /**
+       * What started the run (display only): absent or `message` = a person's message (or a
+       * sub-agent's task), `background_task` = a finished background task woke the conversation
+       * (spec 2026-11-05-background-bash-design §3).
+       */
+      trigger: z.enum(["message", "background_task"]).optional(),
     }),
   ),
   ev(
@@ -743,10 +749,10 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     }),
   ),
   /**
-   * A background Bash task ended (spec 2026-11-05-background-bash-design §2). Not rendered for the
-   * model yet (request building skips it until the task that renders it). `reported`: a TaskOutput
-   * or TaskStop in the same run already told the model, so the event counts as consumed and never
-   * wakes a run. `lastLines` is the tail of the task's output.
+   * A background Bash task ended (spec 2026-11-05-background-bash-design §2). Model-visible: it is
+   * absorbed like an interjection and rendered as a system message (`renderBackgroundFinished`).
+   * `reported`: a TaskOutput or TaskStop in the same run already told the model, so it renders as
+   * one short line and never wakes a run. `lastLines` is the tail of the task's output.
    */
   ev(
     "background_task_finished",
@@ -801,6 +807,20 @@ export type ConversationEvent = ConversationEventBody & {
   runId: string | null;
   createdAt: Date;
 };
+
+/** An event a run absorbs at a step boundary: a person's message or a finished background task. */
+export type AbsorbableEvent = Extract<
+  ConversationEvent,
+  { type: "user_message" | "background_task_finished" }
+>;
+
+/**
+ * Whether `e` is absorbed like an interjection (spec 2026-11-05-background-bash-design §2.4): the
+ * loop takes it at its next step boundary, `consumed_seq` moves past it, and request building
+ * places it where the model call that absorbed it was built.
+ */
+export const isAbsorbable = (e: ConversationEvent): e is AbsorbableEvent =>
+  e.type === "user_message" || e.type === "background_task_finished";
 
 /**
  * What the person typed for a skill invocation (phase D): `/<plugin>:<name> <arguments>` (no

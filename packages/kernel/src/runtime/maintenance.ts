@@ -1,6 +1,7 @@
 import { getQueueToken, OnWorkerEvent, WorkerHost } from "@nestjs/bullmq";
 import { Inject, Injectable, Module } from "@nestjs/common";
 import type { Job, Queue, Worker } from "bullmq";
+import { BG_WAKE_JOB, type BgWakeJobData } from "../background/wake-rules.js";
 import { configuredProcessor } from "../infra/queue/configured-processor.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { removeRetiredSchedulers } from "../infra/queue/retired-schedulers.js";
@@ -19,6 +20,7 @@ import { DRIFT_CONNECTOR_JOB } from "../tools/job-ids.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { RETIRED_SCHEDULER_IDS } from "./retired-schedulers.js";
+import { RunQueue } from "./run-queue.js";
 import { RuntimeModule } from "./runtime.module.js";
 import { WAIT_TIMEOUT_JOB, Waits, type WaitTimeoutData } from "./waits.js";
 
@@ -31,7 +33,7 @@ export const MAINTENANCE_CONCURRENCY = 5;
  * The one consumer of `cap-kernel-maintenance` (decision R11 of the Nest kernel spec): dispatches
  * each one-off job by name to its domain (`wait-timeout` → {@link Waits}, `sandbox-destroy-for` →
  * {@link SandboxService}, `drift-connector` → {@link ToolDrift}, `directory-sync` →
- * {@link DirectorySync}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
+ * {@link DirectorySync}, `bg-wake` → {@link RunQueue.ensureRun}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
  * such as `sandbox-suspend-idle`) runs that job's body once ({@link ScheduledRuns.runNow}), as the
  * maintenance handlers did when those jobs were schedulers on this queue: an operator's or a
  * test's one-off run, not a second schedule (decision R23 of the Nest kernel spec). Any other
@@ -44,6 +46,7 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "destroyFor">,
     @Inject(ToolDrift) private readonly drift: Pick<ToolDrift, "check">,
     @Inject(DirectorySync) private readonly directory: Pick<DirectorySync, "runSyncJob">,
+    @Inject(RunQueue) private readonly runs: Pick<RunQueue, "ensureRun">,
     @Inject(ScheduledRuns) private readonly scheduled: Pick<ScheduledRuns, "runNow">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "error" | "warn">,
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME))
@@ -85,6 +88,10 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
       }
       case DIRECTORY_SYNC_JOB:
         await this.directory.runSyncJob(job.data as SyncJobData);
+        return;
+      // the end of a conversation's wake window (background Bash spec §3)
+      case BG_WAKE_JOB:
+        await this.runs.ensureRun((job.data as BgWakeJobData).conversationId);
         return;
       default:
         if (await this.scheduled.runNow(job.name)) return;

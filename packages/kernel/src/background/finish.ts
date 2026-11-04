@@ -3,9 +3,9 @@ import { EventLog } from "../conversations/event-log.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KernelEvents } from "../infra/events/kernel-events.js";
 import { LAST_LINES_MAX_CHARS } from "./session.js";
 import { type BackgroundTaskRow, BackgroundTaskStore } from "./store.js";
-import { BackgroundWake } from "./wake.js";
 
 /** Where a task ends (as {@link BackgroundTaskStore.finish} takes it). */
 export type BackgroundFinish = Parameters<BackgroundTaskStore["finish"]>[1];
@@ -19,7 +19,8 @@ export const finishedEventKey = (taskId: string): string => `background_task_fin
  * conversation, so a crash between them cannot lose the event, and of two paths finishing the same
  * task (two pollers, a poll and a stop) exactly one writes it. After the commit: the log's notify,
  * the `changed: "background"` frame (to the owner and, for a sub-agent's task, the conversation
- * that owns the sandbox, whose panel lists it too) and {@link BackgroundWake.onFinished}.
+ * that owns the sandbox, whose panel lists it too) and the `background_task.finished` domain event
+ * (`BackgroundWake` wakes an idle conversation; it lives in the runtime, above this module).
  *
  * Holds no lock and runs no sandbox command: the caller reads `lastLines` before.
  */
@@ -28,7 +29,7 @@ export class BackgroundTaskFinisher {
   constructor(
     @Inject(BackgroundTaskStore) private readonly store: Pick<BackgroundTaskStore, "finish">,
     @Inject(EventLog) private readonly eventLog: EventLog,
-    @Inject(BackgroundWake) private readonly wake: BackgroundWake,
+    @Inject(KernelEvents) private readonly events: KernelEvents,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
@@ -71,7 +72,7 @@ export class BackgroundTaskFinisher {
     afterCommit(async () => {
       if (event) await this.eventLog.notify(task.conversationId, event.seq);
       for (const c of conversations) await this.eventLog.publishChanged(c, "background");
-      await this.wake.onFinished(task.conversationId);
+      await this.events.emit("background_task.finished", { conversationId: task.conversationId });
     });
     return true;
   }

@@ -60,6 +60,12 @@ export interface KernelEventMap {
    * sub-agents at once. A lost event is repaired by the wait sweep (children of finished runs).
    */
   "run.orphaned": { runId: string };
+  /**
+   * A background task of the conversation finished (after the commit of its
+   * `background_task_finished` event). `BackgroundWake` asks the run queue for a wake run; a lost
+   * event is re-derived by the next `ensureRun` (a message, the end of a run, a page opening).
+   */
+  "background_task.finished": { conversationId: string };
 }
 
 /** The payload's id for the failure log (`approvalId` / `questionId`, as the old hooks logged). */

@@ -7,6 +7,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import type { BackgroundFinish } from "../../../background/finish.js";
 import { TASK_ID_RE, TASKS_DIR } from "../../../background/launch.js";
+import { formatElapsed, lostReasonText } from "../../../background/render.js";
 import { SID_RE } from "../../../background/session.js";
 import {
   parsePollOutput,
@@ -146,23 +147,6 @@ export async function onTaskInstance<T>(
   }
 }
 
-/** `42s`, `2m05s`, `1h02m05s`. */
-export function formatElapsed(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  const pad = (n: number) => String(n).padStart(2, "0");
-  if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.floor(s / 60)}m${pad(s % 60)}s`;
-  return `${Math.floor(s / 3600)}h${pad(Math.floor((s % 3600) / 60))}m${pad(s % 60)}s`;
-}
-
-const LOST_REASONS: Readonly<Record<string, string>> = {
-  sandbox_suspended: "the sandbox was suspended",
-  sandbox_gone: "the sandbox is gone",
-  sandbox_recreated: "the sandbox was recreated",
-  process_gone: "its processes ended without an exit code",
-  launch_abandoned: "its launch was interrupted",
-};
-
 /**
  * The task's status line: `Status: running (2m05s)`, `Status: failed, exit code 3, after 4m12s`,
  * `Status: stopped after 1m00s`, `Status: lost (the sandbox was suspended) after 3s`.
@@ -172,7 +156,7 @@ export function statusLine(task: BackgroundTaskRow, now = new Date()): string {
   const elapsed = formatElapsed(end.getTime() - task.startedAt.getTime());
   if (task.status === "running") return `Status: running (${elapsed})`;
   let s = `Status: ${task.status === "timed_out" ? "timed out" : task.status}`;
-  if (task.lostReason !== null) s += ` (${LOST_REASONS[task.lostReason] ?? task.lostReason})`;
+  if (task.lostReason !== null) s += ` (${lostReasonText(task.lostReason)})`;
   if (task.exitCode !== null) return `${s}, exit code ${task.exitCode}, after ${elapsed}`;
   return `${s} after ${elapsed}`;
 }
