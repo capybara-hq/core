@@ -8,5 +8,6 @@ conversation grants, pending approvals and pending questions (`sandbox_bash` -> 
 a key it cannot map (both a connector slug and an extension name, or neither) stays, and the
 kernel logs one `tools.legacy_key_unmapped` WARN with their count at start. Agent versions, agent
 templates and eval snapshots are read with the new keys. Saving a definition with an old key is
-refused with a message naming the new key. The migration also adds an index for the read-before-
-write lookup of `Write` / `Edit`.
+refused with a message naming the new key. Remembered grants of builtin tools are asked again
+once (their tool definitions changed); connector and extension grants carry over. The migration
+also adds an index for the read-before-write lookup of `Write` / `Edit`.
