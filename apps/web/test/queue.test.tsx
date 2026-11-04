@@ -1,7 +1,7 @@
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type Call, json, noContent, stubApi } from "./support/api";
+import { bodyOf, type Call, json, noContent, stubApi } from "./support/api";
 import {
   AGENTS,
   CONV,
@@ -31,7 +31,7 @@ const item = (id: string, text: string, position: number) => ({
 
 let queue: { items: ReturnType<typeof item>[]; paused: boolean };
 
-function api(extra: Record<string, (c: Call) => Response> = {}) {
+function api(extra: Record<string, (c: Call) => Response | Promise<Response>> = {}) {
   return stubApi({
     [`GET ${BASE}`]: () => json(200, CONV()),
     "GET /api/v1/orgs/o1/agents": () => json(200, AGENTS),
@@ -133,5 +133,45 @@ describe("queued messages", () => {
     act(() => FakeEventSource.instances[0]?.emit("changed", { what: "queue" }));
     await vi.waitFor(() => expect(screen.queryByText("first queued")).toBeNull());
     expect(screen.getByText("second queued")).toBeTruthy();
+  });
+
+  it("↵ while running shows the queued message at once, before the POST answers, and once after", async () => {
+    let answer: (r: Response) => void = () => {};
+    let posted: { text: string; clientMessageId: string } | undefined;
+    api({
+      [`POST ${BASE}/queue`]: (c) => {
+        posted = bodyOf(c) as { text: string; clientMessageId: string };
+        return new Promise<Response>((r) => {
+          answer = r;
+        });
+      },
+    });
+    await renderChatRoute();
+    await screen.findByText("first queued");
+    const input = screen.getByRole("textbox", { name: "Message", hidden: true });
+    const user = userEvent.setup();
+    await user.type(input, "third{Enter}");
+    // the composer is empty and the message is in the queue list before the kernel answers
+    expect((input as HTMLTextAreaElement).value).toBe("");
+    const list = screen.getByRole("group", { name: "Queued messages" });
+    expect(within(list).getByText("third")).toBeTruthy();
+    const queued = { ...item("q3", "third", 3), clientMessageId: posted?.clientMessageId ?? "" };
+    queue = { ...queue, items: [...queue.items, queued] };
+    await act(async () => answer(json(201, { item: queued })));
+    await vi.waitFor(() => expect(list.querySelector('[data-queue-item="q3"]')).not.toBeNull());
+    expect(within(list).getAllByText("third")).toHaveLength(1);
+  });
+
+  it("a queued message the kernel refused leaves the list and goes back to the composer", async () => {
+    api({
+      [`POST ${BASE}/queue`]: () => json(500, { error: { code: "internal", message: "boom" } }),
+    });
+    await renderChatRoute();
+    await screen.findByText("first queued");
+    const input = screen.getByRole("textbox", { name: "Message", hidden: true });
+    const user = userEvent.setup();
+    await user.type(input, "third{Enter}");
+    await vi.waitFor(() => expect((input as HTMLTextAreaElement).value).toBe("third"));
+    expect(screen.queryByText("third", { selector: '[data-part="bubble"]' })).toBeNull();
   });
 });

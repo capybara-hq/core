@@ -22,12 +22,17 @@ import { useErrorMessage } from "../../lib/use-error-message";
 import type { ComposerMessage } from "./ComposerBar";
 import type { SendResult } from "./useConversation";
 
+/** A message being queued: shown at once, until the queue's read has it (or the POST failed). */
+export type PendingQueued = { clientMessageId: string; text: string; skill?: string };
+
 export type QueueView = {
   items: QueueItem[];
+  /** Messages on their way to the queue (this view's own, optimistic; spec §2.3). */
+  pending: PendingQueued[];
   paused: boolean;
   /** Why it paused, when the kernel recorded it (phase D). */
   pauseReason?: QueuePauseReason;
-  /** ⌘↵ while running: queue a message (an idle conversation sends it at once). */
+  /** ↵ while running: queue a message (an idle conversation sends it at once). */
   add(m: ComposerMessage & Pick<MessageInput, "model" | "effort">): Promise<SendResult>;
 };
 
@@ -53,6 +58,10 @@ export function useQueue(
   const qc = useQueryClient();
   const query = queueQuery(orgId, conversationId);
   const state = useQuery({ ...query, retryOnMount: retryOnMountOf(query.queryKey) }).data ?? EMPTY;
+  const [adding, setAdding] = useState<PendingQueued[]>([]);
+  // A pending message the queue's read already holds shows once, as the read's item.
+  const queuedIds = new Set(state.items.map((it) => it.clientMessageId));
+  const pending = adding.filter((p) => !queuedIds.has(p.clientMessageId));
   const reload = useCallback(
     () => void qc.invalidateQueries({ queryKey: query.queryKey }),
     [qc, query.queryKey],
@@ -98,14 +107,27 @@ export function useQueue(
 
   return {
     ...state,
+    pending,
     reload,
     add: async (m) => {
+      const id = m.clientMessageId;
+      setAdding((list) => [
+        ...list.filter((p) => p.clientMessageId !== id),
+        {
+          clientMessageId: id,
+          text: m.text,
+          ...(m.display?.skill !== undefined ? { skill: m.display.skill } : {}),
+        },
+      ]);
       try {
+        // Resolves once the queue was read again (the mutation awaits its invalidation).
         await enqueue.mutateAsync(m);
         return { ok: true };
       } catch (e) {
         toast.error(errorMessage(e));
         return { ok: false, error: e };
+      } finally {
+        setAdding((list) => list.filter((p) => p.clientMessageId !== id));
       }
     },
     edit: async (id, text) => {
@@ -137,7 +159,7 @@ export function QueueList({ queue }: { queue: ReturnType<typeof useQueue> }) {
   const toast = useToast();
   const [editing, setEditing] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  if (queue.items.length === 0) return null;
+  if (queue.items.length === 0 && queue.pending.length === 0) return null;
   const run = async (f: () => Promise<unknown>) => {
     setBusy(true);
     try {
@@ -173,6 +195,24 @@ export function QueueList({ queue }: { queue: ReturnType<typeof useQueue> }) {
               }
               onDelete={() => void run(() => queue.remove(it.id))}
               onSendNow={() => void run(() => queue.sendNow(it.id))}
+            />
+          </div>
+        ))}
+        {queue.pending.map((p) => (
+          <div key={`pending:${p.clientMessageId}`} data-queue-pending={p.clientMessageId}>
+            <QueuedMessage
+              text={p.text}
+              {...(p.skill !== undefined ? { skill: p.skill } : {})}
+              busy
+              onCopy={() =>
+                navigator.clipboard?.writeText(p.text).then(
+                  () => toast.success(t("copied")),
+                  () => {},
+                )
+              }
+              onEdit={() => {}}
+              onDelete={() => {}}
+              onSendNow={() => {}}
             />
           </div>
         ))}

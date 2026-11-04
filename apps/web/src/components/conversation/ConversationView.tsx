@@ -182,7 +182,7 @@ export function useConversationPage(
     return r;
   };
 
-  // ⌘↵: the queued message carries the pick, applied when it is sent (final review I1).
+  // ↵ while running: the queued message carries the pick, applied when it is sent (final review I1).
   const enqueue = async (m: ComposerMessage): Promise<SendResult> => {
     const pick = selection.pending;
     const r = await queue.add({ ...m, ...pick });

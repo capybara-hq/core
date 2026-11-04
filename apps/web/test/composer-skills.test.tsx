@@ -353,7 +353,7 @@ describe("a typed /name from a stale list", () => {
 });
 
 describe("a pending send", () => {
-  it("text typed while a send is pending is kept when it returns; only what was sent is cleared", async () => {
+  it("the composer clears at once; text typed while the send is pending is kept when it returns", async () => {
     let release: (() => void) | undefined;
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
@@ -368,12 +368,14 @@ describe("a pending send", () => {
     await user.click(input());
     await user.paste("first");
     await user.keyboard("{Enter}");
+    // cleared before the kernel answers (conversation send spec §2.1)
+    expect((input() as HTMLTextAreaElement).value).toBe("");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
     // typed after the send left, before it returns
-    await user.paste(" and then");
-    expect((input() as HTMLTextAreaElement).value).toBe("first and then");
+    await user.paste("and then");
     release?.();
-    await vi.waitFor(() => expect((input() as HTMLTextAreaElement).value).toBe("and then"));
+    await new Promise((r) => setTimeout(r, 20));
+    expect((input() as HTMLTextAreaElement).value).toBe("and then");
     // a draft replaced while pending stays whole
     await user.clear(input());
     await user.paste("second");
@@ -394,7 +396,7 @@ describe("a pending send", () => {
 });
 
 describe("queueing an invocation", () => {
-  it("⌘↵ while running queues with the skill; the queued bubble shows the chip", async () => {
+  it("↵ while running queues with the skill; the queued bubble shows the chip", async () => {
     let items: unknown[] = [];
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
@@ -421,7 +423,7 @@ describe("queueing an invocation", () => {
     const user = userEvent.setup();
     await user.type(input(), "/");
     await user.click(await screen.findByRole("option", { name: /^\/fix-issue/ }));
-    await user.type(input(), "9{Meta>}{Enter}{/Meta}");
+    await user.type(input(), "9{Enter}");
     expect(sentMessage(posts(calls, `${BASE}/queue`)[0] as Call)).toEqual({
       text: "9",
       skill: { name: "fix-issue" },
@@ -434,7 +436,7 @@ describe("queueing an invocation", () => {
     );
   });
 
-  it("a typed /name args with ⌘↵ while running queues the invocation", async () => {
+  it("a typed /name args with ↵ while running queues the invocation", async () => {
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
       [`POST ${BASE}/queue`]: () => json(201, { item: null }),
@@ -444,7 +446,7 @@ describe("queueing an invocation", () => {
     const user = userEvent.setup();
     await user.click(input());
     await user.paste("/fix-issue 9");
-    await user.keyboard("{Meta>}{Enter}{/Meta}");
+    await user.keyboard("{Enter}");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/queue`)).toHaveLength(1));
     expect(sentMessage(posts(calls, `${BASE}/queue`)[0] as Call)).toEqual({
       text: "9",

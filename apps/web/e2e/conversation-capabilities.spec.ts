@@ -68,7 +68,7 @@ test("a new conversation is created on the first send only; the title is generat
   await expect(sidebar.locator(`a[href$="/chat/${id}"]`)).toContainText("Quarterly numbers");
 });
 
-test("interject while running, queue with ⌘↵ / Ctrl+↵ (sent in order after the turn), stop", async ({
+test("queue with ↵ while running (sent in order after the turn), interject with ⌘↵ / Ctrl+↵, stop", async ({
   page,
 }) => {
   await signIn(page);
@@ -77,18 +77,18 @@ test("interject while running, queue with ⌘↵ / Ctrl+↵ (sent in order after
   await newChat(page, agentId);
   await send(page, `slow:500:${LONG}`);
   await expect(page.locator('[data-entry="prose"][data-streaming="true"]')).toBeVisible();
-  // ↵ while running interjects; the hint says so.
+  // ⌘↵ / Ctrl+↵ while running sends now (interjects); the hint says ↵ queues.
   await expect(composer(page)).toHaveAttribute("placeholder", /↵/);
   await composer(page).fill("echo:now");
-  await composer(page).press("Enter");
-  await expect(users(page).filter({ hasText: "echo:now" })).toHaveCount(1);
-  // ⌘↵ / Ctrl+↵ queues: dashed bubbles under the thread, not in the log yet.
-  await composer(page).fill("echo:queued one");
   await composer(page).press("ControlOrMeta+Enter");
+  await expect(users(page).filter({ hasText: "echo:now" })).toHaveCount(1);
+  // ↵ queues: dashed bubbles under the thread, not in the log yet.
+  await composer(page).fill("echo:queued one");
+  await composer(page).press("Enter");
   const queue = page.locator('[data-entry="queue"]');
   await expect(queue.locator("[data-queue-item]")).toHaveCount(1);
   await composer(page).fill("echo:queued two");
-  await composer(page).press("ControlOrMeta+Enter");
+  await composer(page).press("Enter");
   await expect(queue.locator("[data-queue-item]")).toHaveCount(2);
   // After the turn the queued messages go out one at a time, in order.
   await expect(replies(page).filter({ hasText: /^queued two$/ })).toHaveCount(1, {

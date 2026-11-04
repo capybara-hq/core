@@ -269,7 +269,7 @@ describe("the conversation page (ConversationPage)", () => {
     expect(screen.getByText("hello world")).toBeTruthy();
   });
 
-  it("↵ while running interjects (POST messages); ⌘↵ and Ctrl+↵ queue (POST queue)", async () => {
+  it("↵ while running queues (POST queue); ⌘↵ and Ctrl+↵ send now (POST messages)", async () => {
     let n = 2;
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
@@ -290,27 +290,26 @@ describe("the conversation page (ConversationPage)", () => {
     });
     await renderChat();
     await screen.findByRole("button", { name: en.chat.stop });
-    expect(input().getAttribute("placeholder")).toMatch(/↵ to send now/);
+    expect(input().getAttribute("placeholder")).toBe("↵ to queue, Ctrl+↵ to send now");
     const user = userEvent.setup();
-    await user.type(input(), "now{Enter}");
-    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
-    expect(bodyOf(posts(calls, `${BASE}/messages`)[0])).toMatchObject({ text: "now" });
+    await user.type(input(), "later{Enter}");
+    await vi.waitFor(() => expect(posts(calls, `${BASE}/queue`)).toHaveLength(1));
+    expect(bodyOf(posts(calls, `${BASE}/queue`)[0])).toMatchObject({ text: "later" });
     expect(
-      typeof (bodyOf(posts(calls, `${BASE}/messages`)[0]) as { clientMessageId: unknown })
+      typeof (bodyOf(posts(calls, `${BASE}/queue`)[0]) as { clientMessageId: unknown })
         .clientMessageId,
     ).toBe("string");
-    await user.type(input(), "later{Meta>}{Enter}{/Meta}");
-    await vi.waitFor(() => expect(posts(calls, `${BASE}/queue`)).toHaveLength(1));
-    await user.type(input(), "later2{Control>}{Enter}{/Control}");
-    await vi.waitFor(() => expect(posts(calls, `${BASE}/queue`)).toHaveLength(2));
-    expect(posts(calls, `${BASE}/queue`).map((c) => (bodyOf(c) as { text: string }).text)).toEqual([
-      "later",
-      "later2",
-    ]);
-    expect(posts(calls, `${BASE}/messages`)).toHaveLength(1);
+    await user.type(input(), "now{Meta>}{Enter}{/Meta}");
+    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
+    await user.type(input(), "now2{Control>}{Enter}{/Control}");
+    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(2));
+    expect(
+      posts(calls, `${BASE}/messages`).map((c) => (bodyOf(c) as { text: string }).text),
+    ).toEqual(["now", "now2"]);
+    expect(posts(calls, `${BASE}/queue`)).toHaveLength(1);
   });
 
-  it("⌘↵ queues with the pending model / effort pick and clears it (final review I1)", async () => {
+  it("↵ while running queues with the pending model / effort pick and clears it (final review I1)", async () => {
     let n = 2;
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
@@ -338,7 +337,7 @@ describe("the conversation page (ConversationPage)", () => {
     await user.click(await screen.findByRole("menuitemradio", { name: /Fake 2/ }));
     await user.click(await screen.findByRole("button", { name: `${en.chat.pickEffort}: Low` }));
     await user.click(await screen.findByRole("menuitemradio", { name: /High/ }));
-    await user.type(input(), "later{Meta>}{Enter}{/Meta}");
+    await user.type(input(), "later{Enter}");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/queue`)).toHaveLength(1));
     expect(bodyOf(posts(calls, `${BASE}/queue`)[0])).toMatchObject({
       text: "later",
@@ -346,11 +345,36 @@ describe("the conversation page (ConversationPage)", () => {
       effort: "high",
     });
     // the pick went with the queued message: the next send carries none
-    await user.type(input(), "now{Enter}");
+    await user.type(input(), "now{Meta>}{Enter}{/Meta}");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
     const body = bodyOf(posts(calls, `${BASE}/messages`)[0]) as Record<string, unknown>;
     expect(body).not.toHaveProperty("model");
     expect(body).not.toHaveProperty("effort");
+  });
+
+  it("with no run going ↵ sends and ⌘↵ sends too; nothing is queued", async () => {
+    let n = 1;
+    const calls = api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`POST ${BASE}/messages`]: (c) =>
+        json(202, { event: userMsg(++n, String((bodyOf(c) as { text: string }).text)) }),
+    });
+    await renderChat();
+    await screen.findByText("hi");
+    expect(input().getAttribute("placeholder")).toBe(en.chat.placeholder);
+    const user = userEvent.setup();
+    await user.type(input(), "one{Enter}");
+    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
+    await user.type(input(), "two{Meta>}{Enter}{/Meta}");
+    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(2));
+    expect(posts(calls, `${BASE}/queue`)).toHaveLength(0);
+  });
+
+  it("the running placeholder says ↵ queues and ⌘↵ sends now, in both languages", () => {
+    expect(zh.chat.queueHintMac).toBe("按 ↵ 加入队列，按 ⌘↵ 立即发送");
+    expect(zh.chat.queueHint).toBe("按 ↵ 加入队列，按 Ctrl+↵ 立即发送");
+    expect(en.chat.queueHintMac).toBe("↵ to queue, ⌘↵ to send now");
+    expect(en.chat.queueHint).toBe("↵ to queue, Ctrl+↵ to send now");
   });
 
   it("Shift+↵ is a newline and ↵ during IME composition sends nothing", async () => {

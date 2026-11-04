@@ -199,6 +199,26 @@ export function useDraftFiles(orgId: string) {
     update((list) => list.filter((f) => !sent.has(f.key)));
   };
 
+  /**
+   * A send clears the composer at once: the sent files leave the draft (returned, so a failed
+   * send can put them back with {@link restore}). Their uploads are done, so nothing is aborted.
+   */
+  const take = (keys: readonly string[]): DraftFile[] => {
+    const sent = new Set(keys);
+    const taken = filesRef.current.filter((f) => sent.has(f.key));
+    update((list) => list.filter((f) => !sent.has(f.key)));
+    return taken;
+  };
+
+  /** A failed send: its files come back first, before any added since (none twice). */
+  const restore = (back: readonly DraftFile[]) => {
+    if (back.length === 0) return;
+    update((list) => {
+      const have = new Set(list.map((f) => f.key));
+      return [...back.filter((f) => !have.has(f.key)), ...list];
+    });
+  };
+
   /** 发送失败：内核指出了哪个附件不存在 / 未就绪时，把对应条目标为出错（可重试）。 */
   const markFailed = (e: unknown) => {
     const ids = failedIds(e);
@@ -235,6 +255,8 @@ export function useDraftFiles(orgId: string) {
     retry,
     canRetry,
     removeSent,
+    take,
+    restore,
     markFailed,
     errorText,
   };

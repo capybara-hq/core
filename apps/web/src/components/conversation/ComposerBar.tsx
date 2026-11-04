@@ -84,7 +84,13 @@ type Palette = "prompts" | "resources" | null;
 export type ComposerMessage = Pick<
   MessageInput,
   "text" | "clientMessageId" | "attachments" | "files" | "skill"
->;
+> & {
+  /**
+   * What a pending bubble shows until the log has the message (never sent): the skill's chip
+   * label and the files' names.
+   */
+  display?: { skill?: string; files: { name: string; kind: "image" | "file" }[] };
+};
 
 /** The name a picked skill is invoked by: `<plugin>:<name>` for a plugin's skill. */
 const invokeName = (s: InvocableSkill) => (s.plugin ? `${s.plugin}:${s.name}` : s.name);
@@ -130,8 +136,9 @@ function useObjectUrls(files: DraftFile[]): ReadonlyMap<string, string> {
 /**
  * The composer (spec §5.2, §6.16.2): text, the attachment strip, the pickers and send / stop.
  *
- * Keys: ↵ sends (interjects while a run is going); ⌘↵ / Ctrl+↵ queues while a run is going and
- * sends when idle; Shift+↵ is a newline; nothing happens while an IME is composing.
+ * Keys: ↵ sends when idle and queues while a run is going (conversation send spec §2.3); ⌘↵ /
+ * Ctrl+↵ sends, interjecting while a run is going; Shift+↵ is a newline; nothing happens while an
+ * IME is composing.
  *
  * Carried over from the old composer: each draft keeps one `clientMessageId` until it is sent or
  * changed (the kernel dedupes retries); `/` in an empty composer lists the agent's skills, then
@@ -163,11 +170,11 @@ export function ComposerBar({
   agentId?: string | undefined;
   /** The conversation, once it exists and is the caller's (its trial drafts apply). */
   conversationId?: string | undefined;
-  /** A run is going (or waiting for a person): ↵ interjects, ⌘↵ queues, send becomes stop. */
+  /** A run is going (or waiting for a person): ↵ queues, ⌘↵ interjects, send becomes stop. */
   running: boolean;
   stop?: { onStop(): void; stopping: boolean };
   onSend(m: ComposerMessage): Promise<SendResult>;
-  /** Queue the message (⌘↵ while running); absent before the conversation exists. */
+  /** Queue the message (↵ while running); absent before the conversation exists. */
   onQueue?(m: ComposerMessage): Promise<SendResult>;
   pickers: { agent: PickerProps; model: PickerProps; effort?: PickerProps };
   placeholder: string;
@@ -202,7 +209,6 @@ export function ComposerBar({
   const previews = useObjectUrls(files);
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const [pending, setPending] = useState(false);
   const [palette, setPalette] = useState<Palette>(null);
   const [argsFor, setArgsFor] = useState<ConnectorPrompt | null>(null);
   const [args, setArgs] = useState<Record<string, string>>({});
@@ -243,12 +249,35 @@ export function ComposerBar({
     const sentSkill = skill;
     const sentAttachments = attachments;
     const value = text.trim();
-    if (pending || drafts.blocking || sendDisabled) return;
+    if (drafts.blocking || sendDisabled) return;
     const sent = files.flatMap((f) => (f.id !== undefined ? [{ key: f.key, id: f.id }] : []));
     // Files alone can be sent; `@` resources need text (their bodies follow content[0]).
     if (empty(value)) return;
     const fileIds = sent.map((f) => f.id);
-    setPending(true);
+    const shownFiles = files
+      .filter((f) => f.id !== undefined)
+      .map((f) => ({
+        name: f.name,
+        kind:
+          f.file && fileContentType(f.file).startsWith("image/")
+            ? ("image" as const)
+            : ("file" as const),
+      }));
+    // The composer clears at once (conversation send spec §2.1): the message shows as pending
+    // where it was sent, and comes back here if the kernel refuses it.
+    setText("");
+    setSkill(null);
+    setAttachments([]);
+    const taken = drafts.take(sent.map((f) => f.key));
+    const restore = () => {
+      setText((cur) => (cur.trim() === "" ? sentText : `${sentText}\n${cur}`));
+      setSkill((cur) => cur ?? sentSkill);
+      setAttachments((cur) => [
+        ...sentAttachments,
+        ...cur.filter((a) => !sentAttachments.includes(a)),
+      ]);
+      drafts.restore(taken);
+    };
     // the chip, else a typed `/name args` naming a listed skill (spec §3.2)
     let invoke = skill !== null ? invokeName(skill) : undefined;
     let args = value;
@@ -273,6 +302,11 @@ export function ComposerBar({
         attachments: attachments.map((a) => ({ connectorId: a.connectorId, uri: a.uri })),
         files: fileIds,
         ...(name !== undefined ? { skill: { name } } : {}),
+        // the chip shows the bare name, as the thread's bubble does
+        display: {
+          files: shownFiles,
+          ...(name !== undefined ? { skill: `/${name.slice(name.indexOf(":") + 1)}` } : {}),
+        },
       };
     };
     const post = (m: ComposerMessage) => (how === "queue" && onQueue ? onQueue(m) : onSend(m));
@@ -291,30 +325,22 @@ export function ComposerBar({
       }
       if (r.ok) {
         draft.current = undefined;
-        // Clear only what was sent: the person may have typed on while the send was pending.
-        setText((cur) =>
-          cur === sentText
-            ? ""
-            : cur.startsWith(sentText)
-              ? cur.slice(sentText.length).trimStart()
-              : cur,
-        );
-        setSkill((cur) => (cur === sentSkill ? null : cur));
-        setAttachments((cur) => cur.filter((a) => !sentAttachments.includes(a)));
-        drafts.removeSent(sent.map((f) => f.key));
       } else {
+        restore();
         drafts.markFailed(r.error);
       }
-    } finally {
-      setPending(false);
+    } catch (e) {
+      restore();
+      throw e;
     }
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key !== "Enter" || e.nativeEvent.isComposing || e.shiftKey) return;
     e.preventDefault();
+    // While a run is going ↵ queues for after the turn and ⌘↵ / Ctrl+↵ sends now (interjects).
     const modified = e.metaKey || e.ctrlKey;
-    void submit(modified && running && onQueue ? "queue" : "send");
+    void submit(!modified && running && onQueue ? "queue" : "send");
   }
 
   function openPalette(which: Exclude<Palette, null>, pos: number) {
@@ -546,8 +572,8 @@ export function ComposerBar({
             running && stop
               ? { mode: "stop", busy: stop.stopping, onClick: stop.onStop }
               : {
+                  // Never busy: the message is pending in the thread, not in the composer.
                   mode: "send",
-                  busy: pending,
                   disabled: sendDisabled === true || drafts.blocking || empty(text.trim()),
                   onClick: () => void submit("send"),
                 }

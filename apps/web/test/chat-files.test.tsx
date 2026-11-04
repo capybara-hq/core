@@ -497,10 +497,12 @@ describe("输入框：上传文件（修正轮 1）", () => {
     await vi.waitFor(() => expect(within(group).queryByRole("progressbar")).toBeNull());
     await user.type(screen.getByLabelText(en.chat.inputLabel), "go");
     await user.click(screen.getByRole("button", { name: en.chat.send }));
-    const alert = await within(group).findByRole("alert");
+    // the files left with the send at once and came back with its failure (a new strip)
+    const back = await screen.findByRole("group", { name: en.chat.files });
+    const alert = await within(back).findByRole("alert");
     expect(alert.textContent).toBe(en.errors.attachment.not_found);
-    expect(within(group).getByRole("button", { name: "Retry two.png" })).toBeTruthy();
-    expect(within(group).queryByRole("button", { name: "Retry one.png" })).toBeNull();
+    expect(within(back).getByRole("button", { name: "Retry two.png" })).toBeTruthy();
+    expect(within(back).queryByRole("button", { name: "Retry one.png" })).toBeNull();
   });
 
   it("发送成功只移除发出去的文件：发送期间新加的保留", async () => {
