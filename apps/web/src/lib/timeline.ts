@@ -388,13 +388,14 @@ const OUTPUT = new Set<ConversationEvent["type"]>([
 export const AWAIT_RUN_MS = 60_000;
 
 /**
- * The newest user message this tab sent (`sentHere`: its `clientMessageId`s) that no run took up
+ * The newest user message this tab sent (`sentHere`: its `clientMessageId`s and this tab's send
+ * times) that no run took up
  * yet: no run started after it, no run failed or stopped after it, and no finished run consumed
  * it. Null when there is none: the conversation is idle (or the kernel could not deliver it).
  */
 export function awaitedMessage(
   events: readonly ConversationEvent[],
-  sentHere: ReadonlySet<string>,
+  sentHere: ReadonlyMap<string, number>,
 ): ConversationEvent | null {
   let u: ConversationEvent | null = null;
   for (const e of events) {
@@ -412,16 +413,19 @@ export function awaitedMessage(
 /**
  * A message this tab sent waits for its run ({@link awaitedMessage}), unless no run is coming:
  * the queue is paused (the kernel holds the conversation's sends), or {@link AWAIT_RUN_MS} passed
- * since the message without a `run_started` (a backstop: the page then follows the log alone).
+ * since this tab sent it without a `run_started` (a backstop: the page then follows the log
+ * alone). Both times are this tab's clock (`now` and the send time in `sentHere`).
  */
 export function awaitingRun(
   events: readonly ConversationEvent[],
-  sentHere: ReadonlySet<string>,
+  sentHere: ReadonlyMap<string, number>,
   s: { paused: boolean; now: number },
 ): boolean {
   if (s.paused) return false;
   const u = awaitedMessage(events, sentHere);
-  return u !== null && s.now - Date.parse(u.createdAt) <= AWAIT_RUN_MS;
+  if (u?.type !== "user_message" || u.payload.clientMessageId === undefined) return false;
+  const sentAt = sentHere.get(u.payload.clientMessageId);
+  return sentAt !== undefined && s.now - sentAt <= AWAIT_RUN_MS;
 }
 
 /** The run in progress per the log (started, not ended), or null. */
@@ -448,7 +452,7 @@ export function workingLineVisible(
   s: {
     waiting: boolean;
     pending: number;
-    sentHere: ReadonlySet<string>;
+    sentHere: ReadonlyMap<string, number>;
     paused: boolean;
     now: number;
   },

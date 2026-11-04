@@ -42,12 +42,6 @@ vi.mock("next/navigation", () => ({
 
 const BASE = "/api/v1/orgs/o1/conversations/c1";
 
-/** `e` as the kernel answers a write: stamped now (the fixtures' times are in the past). */
-const now = <T extends { createdAt: string }>(e: T): T => ({
-  ...e,
-  createdAt: new Date().toISOString(),
-});
-
 /** The page's background reads, plus `extra`. */
 function api(extra: Record<string, (c: Call) => Response | Promise<Response>>, id = "c1") {
   const base = `/api/v1/orgs/o1/conversations/${id}`;
@@ -525,9 +519,7 @@ describe("the conversation page (ConversationPage)", () => {
         [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
         [`POST ${BASE}/messages`]: (c) => {
           const b = bodyOf(c) as { text: string; clientMessageId: string };
-          return json(202, {
-            event: now(userMsg(++n, b.text, { clientMessageId: b.clientMessageId })),
-          });
+          return json(202, { event: userMsg(++n, b.text, { clientMessageId: b.clientMessageId }) });
         },
         [`POST ${BASE}/queue`]: () => json(201, { item: null }),
       });
@@ -558,7 +550,7 @@ describe("the conversation page (ConversationPage)", () => {
       expect(container.querySelector('[data-part="working-line"]')).not.toBeNull();
       // the log has the message, its run has not started: still running, all three agree
       await vi.waitFor(() => expect(posts(d.calls, `${BASE}/messages`)).toHaveLength(1));
-      const event = now(userMsg(2, "next", { clientMessageId: d.cmid() }));
+      const event = userMsg(2, "next", { clientMessageId: d.cmid() });
       await act(async () => d.answer(json(202, { event })));
       expect(screen.getByRole("button", { name: en.chat.stop })).toBeTruthy();
       expect(status()).toContain(en.chat.status.running);
@@ -572,7 +564,7 @@ describe("the conversation page (ConversationPage)", () => {
         [`POST ${BASE}/messages`]: (c) => {
           const b = bodyOf(c) as { text: string; clientMessageId: string };
           return json(202, {
-            event: now(userMsg(2, b.text, { clientMessageId: b.clientMessageId })),
+            event: userMsg(2, b.text, { clientMessageId: b.clientMessageId }),
           });
         },
       });
@@ -584,13 +576,40 @@ describe("the conversation page (ConversationPage)", () => {
       expect(screen.queryByRole("button", { name: en.chat.stop })).toBeNull();
     });
 
-    it("a run that never starts: the line goes 60 s after the message (the backstop)", async () => {
+    it("a run that never starts: the line goes 60 s after this tab's send (the backstop)", async () => {
       api({
         [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
         [`POST ${BASE}/messages`]: (c) => {
           const b = bodyOf(c) as { text: string; clientMessageId: string };
-          // written 150 ms short of the backstop
-          const at = new Date(Date.now() - 60_000 + 150).toISOString();
+          return json(202, { event: userMsg(2, b.text, { clientMessageId: b.clientMessageId }) });
+        },
+      });
+      const { container } = await renderChat();
+      await screen.findByText("hi");
+      // this tab's clock from here on: the send's time and the backstop's timer
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      try {
+        fireEvent.change(input(), { target: { value: "next" } });
+        fireEvent.keyDown(input(), { key: "Enter" });
+        await vi.waitFor(() => expect(container.querySelector("[data-pending]")).toBeNull());
+        expect(container.querySelector('[data-part="working-line"]')).not.toBeNull();
+        act(() => vi.advanceTimersByTime(59_000));
+        expect(container.querySelector('[data-part="working-line"]')).not.toBeNull();
+        // no run_started 60 s after the send: the timer re-renders and the line goes
+        act(() => vi.advanceTimersByTime(1_100));
+        expect(container.querySelector('[data-part="working-line"]')).toBeNull();
+        expect(screen.queryByRole("button", { name: en.chat.stop })).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("a server createdAt 10 minutes in the past still shows the line for a fresh send here", async () => {
+      api({
+        [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+        [`POST ${BASE}/messages`]: (c) => {
+          const b = bodyOf(c) as { text: string; clientMessageId: string };
+          const at = new Date(Date.now() - 600_000).toISOString();
           return json(202, {
             event: { ...userMsg(2, b.text, { clientMessageId: b.clientMessageId }), createdAt: at },
           });
@@ -601,11 +620,7 @@ describe("the conversation page (ConversationPage)", () => {
       await userEvent.setup().type(input(), "next{Enter}");
       await vi.waitFor(() => expect(container.querySelector("[data-pending]")).toBeNull());
       expect(container.querySelector('[data-part="working-line"]')).not.toBeNull();
-      await vi.waitFor(
-        () => expect(container.querySelector('[data-part="working-line"]')).toBeNull(),
-        { timeout: 1000 },
-      );
-      expect(screen.queryByRole("button", { name: en.chat.stop })).toBeNull();
+      expect(screen.getByRole("button", { name: en.chat.stop })).toBeTruthy();
     });
 
     it("a message the kernel wrote but could not deliver shows no line after the error", async () => {
@@ -1285,7 +1300,7 @@ describe("the first message from /chat (conversation send spec §2.1)", () => {
     const d = await startNew();
     await userEvent.setup().type(input(), "start{Enter}");
     await vi.waitFor(() => expect(d.calls.some((c) => c.method === "POST")).toBe(true));
-    const event = now(userMsg(1, "start", { clientMessageId: d.cmid() }));
+    const event = userMsg(1, "start", { clientMessageId: d.cmid() });
     const conversation = CONV("c9").conversation;
     await act(async () => d.answer(json(201, { conversation, event })));
     // the groups' read never answers: the navigation does not wait for it
@@ -1327,7 +1342,7 @@ describe("the first message from /chat (conversation send spec §2.1)", () => {
     expect(zh.chat.sendAfterCreate).toBe("会话创建后即可继续发送");
     expect(en.chat.sendAfterCreate).toBe("You can send again once the conversation is created");
     expect(d.calls.filter((c) => c.method === "POST")).toHaveLength(1);
-    const event = now(userMsg(1, "start", { clientMessageId: d.cmid() }));
+    const event = userMsg(1, "start", { clientMessageId: d.cmid() });
     await act(async () => d.answer(json(201, { conversation: CONV("c9").conversation, event })));
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     expect(screen.queryByText(en.chat.sendAfterCreate)).toBeNull();

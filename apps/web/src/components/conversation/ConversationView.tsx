@@ -13,7 +13,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
-import type { ConversationEvent, ModelRef } from "../../lib/conversations";
+import type { ModelRef } from "../../lib/conversations";
 import { agentsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
 import { modelsQuery, renameWithRow, sentHereOf } from "../../lib/query/conversation";
@@ -94,9 +94,9 @@ function RunStatsText({
  * The time `awaitingRun` reads, re-rendering once when the awaited message's run is overdue
  * ({@link AWAIT_RUN_MS} after it): the working line and the running mode then follow the log.
  */
-function useAwaitBackstop(awaited: ConversationEvent | null): number {
+function useAwaitBackstop(sentAt: number | undefined): number {
   const [, setTick] = useState(0);
-  const due = awaited === null ? null : Date.parse(awaited.createdAt) + AWAIT_RUN_MS + 1;
+  const due = sentAt === undefined ? null : sentAt + AWAIT_RUN_MS + 1;
   useEffect(() => {
     if (due === null) return;
     const wait = due - Date.now();
@@ -201,7 +201,12 @@ export function useConversationPage(
   // a pending send of this view, a message this tab sent that waits for its run, or a run per the
   // log. While any holds, ↵ queues.
   // (not memoized: the set changes with this view's sends, each of which re-renders it)
-  const awaitAt = useAwaitBackstop(awaitedMessage(conv.events, sentHere));
+  const awaited = awaitedMessage(conv.events, sentHere);
+  const awaitAt = useAwaitBackstop(
+    awaited?.type === "user_message" && awaited.payload.clientMessageId !== undefined
+      ? sentHere.get(awaited.payload.clientMessageId)
+      : undefined,
+  );
   const awaiting = awaitingRun(conv.events, sentHere, { paused: queue.paused, now: awaitAt });
   const busy = conv.running || pending.shown.length > 0 || awaiting;
   const active = busy || conv.waiting;
@@ -210,7 +215,7 @@ export function useConversationPage(
   // The message shows at once as a pending bubble, until the log has it (spec §2.1).
   const send = async (m: ComposerMessage): Promise<SendResult> => {
     const pick = selection.pending;
-    sentHere.add(m.clientMessageId);
+    sentHere.set(m.clientMessageId, Date.now());
     pending.add(m);
     const r = await conv.send({ ...m, ...pick });
     // on success the log already holds it; on failure the text goes back to the composer (and a
@@ -225,7 +230,7 @@ export function useConversationPage(
   const enqueue = async (m: ComposerMessage): Promise<SendResult> => {
     const pick = selection.pending;
     // sent after the turn: its run is this tab's to wait for too
-    sentHere.add(m.clientMessageId);
+    sentHere.set(m.clientMessageId, Date.now());
     const r = await queue.add({ ...m, ...pick });
     if (r.ok) selection.sent(pick);
     else sentHere.delete(m.clientMessageId);
@@ -236,7 +241,7 @@ export function useConversationPage(
     if (d.retry === null) return;
     const pick = selection.pending;
     const clientMessageId = newClientMessageId();
-    sentHere.add(clientMessageId);
+    sentHere.set(clientMessageId, Date.now());
     void conv
       .send({
         text: d.retry.text,

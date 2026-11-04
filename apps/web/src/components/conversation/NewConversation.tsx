@@ -66,9 +66,9 @@ export function useNewConversationPage(
   // The answer seeds the new conversation's cache; the sidebar's groups are read again without
   // the navigation waiting for them (they show the new conversation when they land).
   const create = useAppMutation({
-    fn: async (v: { agentId: string; message: MessageInput }) => {
+    fn: async (v: { agentId: string; message: MessageInput; sentAt: number }) => {
       const r = await createConversationWithMessage(orgId, v.agentId, v.message);
-      seedNewConversation(qc, orgId, r.conversation, r.event);
+      seedNewConversation(qc, orgId, r.conversation, r.event, v.sentAt);
       return r;
     },
     invalidates: () => [],
@@ -88,6 +88,8 @@ export function useNewConversationPage(
       const { conversation } = await create.mutateAsync({
         agentId: agent.id,
         message: { ...m, ...selection.pending },
+        // this tab's clock at the send: the working line's backstop counts from it
+        sentAt: Date.now(),
       });
       setBlocked(false);
       router.replace(`/chat/${encodeURIComponent(conversation.id)}`);

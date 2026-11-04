@@ -563,10 +563,10 @@ describe("workingLineVisible (conversation send spec §2.2)", () => {
     workingLineVisible(events, drafts, {
       waiting: s.waiting ?? false,
       pending: s.pending ?? 0,
-      sentHere: new Set(s.sent ?? []),
+      // sent here just now (the 60 s backstop has its own tests)
+      sentHere: new Map((s.sent ?? []).map((id) => [id, 0])),
       paused: false,
-      // just after the last event (the 60 s backstop has its own tests)
-      now: Date.parse(events.at(-1)?.createdAt ?? new Date(0).toISOString()) + 1000,
+      now: 1000,
     });
 
   it("shows for a pending send, before the log has anything of it", () => {
@@ -679,34 +679,38 @@ describe("workingLineVisible (conversation send spec §2.2)", () => {
 });
 
 describe("awaitingRun gives up (review round 2, item 3)", () => {
-  const mine = (seq: number, at: string) => ({
+  // the server's time is ten minutes behind: only this tab's own send time counts
+  const mine = (seq: number) => ({
     ...user(seq, "hi", { clientMessageId: "m1" }),
-    createdAt: at,
+    createdAt: "2026-11-04T09:50:00.000Z",
   });
-  const sent = new Set(["m1"]);
-  const at0 = Date.parse("2026-11-04T10:00:00.000Z");
+  const sentAt = 1_000_000;
+  const sent = new Map([["m1", sentAt]]);
 
-  it("waits for the run of a message this tab sent, within 60 s of it", () => {
-    const events = [mine(1, "2026-11-04T10:00:00.000Z")];
-    expect(awaitingRun(events, sent, { paused: false, now: at0 + 59_000 })).toBe(true);
+  it("waits for the run of a message this tab sent, within 60 s of its send here", () => {
+    expect(awaitingRun([mine(1)], sent, { paused: false, now: sentAt + 59_000 })).toBe(true);
   });
 
-  it("a run that never starts stops waiting 60 s after the message (the backstop)", () => {
-    const events = [mine(1, "2026-11-04T10:00:00.000Z")];
-    expect(awaitingRun(events, sent, { paused: false, now: at0 + 60_001 })).toBe(false);
+  it("a server createdAt 10 minutes in the past does not end the wait of a fresh local send", () => {
+    const fresh = new Map([["m1", Date.now()]]);
+    const events = [{ ...mine(1), createdAt: new Date(Date.now() - 600_000).toISOString() }];
+    expect(awaitingRun(events, fresh, { paused: false, now: Date.now() })).toBe(true);
+  });
+
+  it("a run that never starts stops waiting 60 s after the send here (the backstop)", () => {
+    expect(awaitingRun([mine(1)], sent, { paused: false, now: sentAt + 60_001 })).toBe(false);
     expect(
-      workingLineVisible(events, [], {
+      workingLineVisible([mine(1)], [], {
         waiting: false,
         pending: 0,
         sentHere: sent,
         paused: false,
-        now: at0 + 60_001,
+        now: sentAt + 60_001,
       }),
     ).toBe(false);
   });
 
   it("a paused queue means no run is coming", () => {
-    const events = [mine(1, "2026-11-04T10:00:00.000Z")];
-    expect(awaitingRun(events, sent, { paused: true, now: at0 })).toBe(false);
+    expect(awaitingRun([mine(1)], sent, { paused: true, now: sentAt })).toBe(false);
   });
 });

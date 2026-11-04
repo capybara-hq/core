@@ -367,25 +367,27 @@ export function appendEvents(
 }
 
 /**
- * The `clientMessageId`s of the messages this tab sent to a conversation (per query client, in
- * the browser): the working line and the composer's running mode wait for their runs
- * (conversation send spec §2.2). It survives the `/chat` → `/chat/<id>` handoff (the seed adds the
- * first message); a send the kernel refused is removed again. Never sent to the server.
+ * The messages this tab sent to a conversation, by `clientMessageId`, with this tab's clock at the
+ * send (`Date.now()`; per query client, in the browser): the working line and the composer's
+ * running mode wait for their runs, at most 60 s from that time (conversation send spec §2.2;
+ * never against the server's `createdAt`, which another clock wrote). It survives the `/chat` →
+ * `/chat/<id>` handoff (the seed adds the first message); a send the kernel refused is removed
+ * again. Never sent to the server.
  */
-const sentBy = new WeakMap<QueryClient, Map<string, Set<string>>>();
-export function sentHereOf(qc: QueryClient, orgId: string, id: string): Set<string> {
+const sentBy = new WeakMap<QueryClient, Map<string, Map<string, number>>>();
+export function sentHereOf(qc: QueryClient, orgId: string, id: string): Map<string, number> {
   let byConv = sentBy.get(qc);
   if (byConv === undefined) {
     byConv = new Map();
     sentBy.set(qc, byConv);
   }
   const scope = `${orgId}/${id}`;
-  let set = byConv.get(scope);
-  if (set === undefined) {
-    set = new Set();
-    byConv.set(scope, set);
+  let sent = byConv.get(scope);
+  if (sent === undefined) {
+    sent = new Map();
+    byConv.set(scope, sent);
   }
-  return set;
+  return sent;
 }
 
 /**
@@ -401,10 +403,12 @@ export function seedNewConversation(
   orgId: string,
   conversation: Conversation,
   event: ConversationEvent,
+  /** This tab's clock when the message was sent (default: now). */
+  sentAt: number = Date.now(),
 ): void {
   const c = keys.org(orgId).conversation(conversation.id);
   if (event.type === "user_message" && event.payload.clientMessageId !== undefined)
-    sentHereOf(qc, orgId, conversation.id).add(event.payload.clientMessageId);
+    sentHereOf(qc, orgId, conversation.id).set(event.payload.clientMessageId, sentAt);
   qc.setQueryData<Conversation>(c.row(), conversation);
   if (event.seq === 1) {
     qc.setQueryData<ConversationEvent[]>(c.events(), (cur) => cur ?? []);
