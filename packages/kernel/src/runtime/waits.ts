@@ -1085,7 +1085,8 @@ export class Waits implements OnApplicationShutdown {
    * the conditional resume lets exactly one succeed, the last to see all its siblings terminal. A
    * run that is not a dispatched child, or not terminal yet, is left alone. A crash in between is
    * repaired by the wait sweep and by the parent's tools node, which writes a missing
-   * `subagent_finished` itself. A terminal child's running background tasks are then stopped.
+   * `subagent_finished` itself. The running background tasks the terminal child run started are
+   * then stopped (not those of a later follow-up run of the same child).
    */
   async childFinished(childRunId: string): Promise<void> {
     const row = await dispatchOfChildRun(this.db, childRunId);
@@ -1106,9 +1107,9 @@ export class Waits implements OnApplicationShutdown {
       await this.resume(row.parentRunId, childRunId);
     } finally {
       // whichever way the child run ended (its worker, a stop while waiting, an orphan repair):
-      // nobody can read or stop its background tasks through its model any more (background
-      // Bash spec §4.3). Never throws.
-      await this.background.stopSubagentTasks(row.childConversationId);
+      // nobody can read or stop the background tasks it started through its model any more
+      // (background Bash spec §4.3). Never throws.
+      await this.background.stopSubagentTasks(row.childConversationId, childRunId);
     }
   }
 

@@ -172,11 +172,13 @@ export class BackgroundTaskStopper {
   }
 
   /**
-   * After a sub-agent's run ended (spec §4.3): stops the running tasks of `conversationId` when it
-   * is a sub-agent's conversation (nobody can read or stop them through the child's model after
-   * that); any other conversation is left alone. Never throws (see {@link stopAll}).
+   * After the sub-agent run `runId` ended (spec §4.3): stops the running tasks that run started in
+   * `conversationId` when it is a sub-agent's conversation (nobody can read or stop them through
+   * that run's model after that); any other conversation is left alone. Only that run's tasks: a
+   * follow-up run of the same child keeps its own when an older run's end is handled late. Never
+   * throws (see {@link stopAll}).
    */
-  async stopSubagentTasks(conversationId: string): Promise<void> {
+  async stopSubagentTasks(conversationId: string, runId: string): Promise<void> {
     try {
       const conv = await this.db
         .selectFrom("conversations")
@@ -184,10 +186,14 @@ export class BackgroundTaskStopper {
         .where("id", "=", conversationId)
         .executeTakeFirst();
       if (conv?.kind !== "subagent") return;
-      await this.stopAll(await this.store.runningOwnedBy(conversationId), "subagent_end");
+      const tasks = (await this.store.runningOwnedBy(conversationId)).filter(
+        (t) => t.runId === runId,
+      );
+      await this.stopAll(tasks, "subagent_end");
     } catch (err) {
       this.log.warn("cannot stop the background tasks of a finished sub-agent run", {
         conversationId,
+        runId,
         err,
       });
     }

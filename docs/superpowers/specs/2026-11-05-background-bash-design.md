@@ -408,7 +408,8 @@ one bullet each.
 - A stop claims its task in PG before signalling (`stopping_at`); the poll skips claimed rows, and the
   stop's finish is the only one for its task. PG rather than Redis, so the claim lives with the row.
 - A sub-agent's tasks are stopped in `Waits.childFinished`, which every way a child ends goes through,
-  not in the run worker.
+  not in the run worker. Only the tasks the ending child run started (`run_id`): a follow-up run of
+  the same child keeps its own when an older run's end is handled late.
 - A stop that can't confirm the session is empty while the sandbox runs leaves the row `running`
   (claim cleared) and reports the failure, so the poll and the cap still see the task.
 - Stopping a reservation (`sid` null) sets the claim; the launch then kills the session as soon as it

@@ -201,6 +201,7 @@ async function launch(
   c: { orgId: string; conversationId: string; accountId: string },
   command: string,
   seconds = 300,
+  runId = "run-x",
 ): Promise<BackgroundTaskRow> {
   const id = newTaskId();
   // before the launch exec, as the Bash launch does: the sandbox's own timeout starts after it
@@ -223,7 +224,7 @@ async function launch(
     orgId: c.orgId,
     conversationId: c.conversationId,
     sandboxConversationId: c.conversationId,
-    runId: "run-x",
+    runId,
     callId: "call-x",
     triggerAccountId: c.accountId,
     description: `Run ${command}`,
@@ -687,6 +688,22 @@ describe("stopping", () => {
     expect(await alive(c, t)).toBe(true);
     expect(await stopper.stop(t, "tool")).toMatchObject({ status: "completed", exitCode: 0 });
     expect(await alive(c, t)).toBe(false);
+  }, 60_000);
+
+  it("a sub-agent run's end stops only the tasks that run started (M5)", async () => {
+    const c = await conversation();
+    await sql`UPDATE capybara.conversations SET kind = 'subagent'
+      WHERE id = ${c.conversationId}`.execute(raw);
+    const older = await launch(c, "sleep 319", 300, "run-old");
+    const followUp = await launch(c, "sleep 320", 300, "run-new");
+    // the older run's end, handled after the follow-up run started its own task
+    await stopper.stopSubagentTasks(c.conversationId, "run-old");
+    expect(await store.get(older.id)).toMatchObject({ status: "stopped" });
+    expect(await alive(c, older)).toBe(false);
+    expect(await store.get(followUp.id)).toMatchObject({ status: "running" });
+    expect(await alive(c, followUp)).toBe(true);
+    await stopper.stopSubagentTasks(c.conversationId, "run-new");
+    expect(await store.get(followUp.id)).toMatchObject({ status: "stopped" });
   }, 60_000);
 
   it("a stop while the sandbox is suspended ends the task lost with kill_pending", async () => {
