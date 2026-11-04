@@ -32,6 +32,7 @@ import {
   SUBAGENT_NAME_RE,
   SUBAGENT_ROSTER_MAX,
 } from "./definition.js";
+import { type AgentDefinitionInput, deriveInstructions } from "./instruction-files.js";
 import { type ProfileInput, randomPreset } from "./profile.js";
 
 export {
@@ -281,7 +282,7 @@ export class AgentsService {
    * `toolPolicies` 的键必须是这些引用产生的工具 key（取值只能收紧，已由 schema 保证）。
    * 不合法 → `validation_failed`，path 为 `tools.<i>` / `toolPolicies.<key>`。
    */
-  private async checkTools(orgId: string, def: AgentDefinition): Promise<Set<string>> {
+  private async checkTools(orgId: string, def: AgentDefinitionInput): Promise<Set<string>> {
     const { keys, issues } = await this.tools.checkRefs(orgId, def.tools);
     const details = [...issues];
     for (const key of Object.keys(def.toolPolicies)) {
@@ -302,7 +303,7 @@ export class AgentsService {
    * 校验主模型与兜底都可解析，并用各自模型的参数声明严格校验 `modelParams` / `fallbackParams`
    * （没有兜底时 `fallbackParams` 必须为空）；不合法 → `validation_failed`，details 逐键点名。返回提示。
    */
-  private async checkModels(def: AgentDefinition): Promise<AgentWarning[]> {
+  private async checkModels(def: AgentDefinitionInput): Promise<AgentWarning[]> {
     const registry = this.providers;
     const main = await registry.resolve(def.model);
     const fallback = def.fallback === null ? null : await registry.resolve(def.fallback);
@@ -350,14 +351,15 @@ export class AgentsService {
   async create(
     orgId: string,
     actorAccountId: string,
-    input: {
-      definition: AgentDefinition;
+    request: {
+      definition: AgentDefinitionInput;
       visibility: AgentVisibility;
       memberIds?: string[];
       profile?: ProfileInput;
     },
     actorTokenId?: string,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
+    const input = { ...request, definition: deriveInstructions(request.definition, null) };
     // 先解析模型（可能访问供应商），不在持有组织行锁时做
     const warnings = await this.checkModels(input.definition);
     const toolKeys = await this.checkTools(orgId, input.definition);
@@ -476,8 +478,8 @@ export class AgentsService {
     orgId: string,
     agentId: string,
     actorAccountId: string,
-    patch: {
-      definition?: AgentDefinition | undefined;
+    request: {
+      definition?: AgentDefinitionInput | undefined;
       visibility?: AgentVisibility | undefined;
       memberIds?: string[] | undefined;
       /**
@@ -488,6 +490,7 @@ export class AgentsService {
     },
     actorTokenId?: string,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
+    const patch = request;
     const warnings = patch.definition ? await this.checkModels(patch.definition) : [];
     const toolKeys = patch.definition ? await this.checkTools(orgId, patch.definition) : null;
     const agent = await this.updateIn(
@@ -507,7 +510,7 @@ export class AgentsService {
     agentId: string,
     actorAccountId: string,
     patch: {
-      definition?: AgentDefinition | undefined;
+      definition?: AgentDefinitionInput | undefined;
       visibility?: AgentVisibility | undefined;
       memberIds?: string[] | undefined;
       expectedVersion?: number | undefined;
@@ -536,32 +539,37 @@ export class AgentsService {
         .where("agent_id", "=", agentId)
         .where("version", "=", before.current_version)
         .executeTakeFirstOrThrow();
+      // the prompt: instructionFiles give instructions; a save given neither keeps the current one
+      const definition = deriveInstructions(
+        patch.definition,
+        normalizeStoredDefinition(current.definition),
+      );
       // 当前版本已有的技能引用保存时合法，不再核对（被删的技能不挡住其他改动）；新加的照常核对
       const kept = new Set((current.definition as AgentDefinition).skills?.orgSkills ?? []);
-      await assertOrgSkills(t, orgId, patch.definition.skills?.orgSkills ?? [], kept);
+      await assertOrgSkills(t, orgId, definition.skills?.orgSkills ?? [], kept);
       await assertPinnedSkills(
         t,
         orgId,
         agentId,
-        patch.definition.skills,
+        definition.skills,
         (current.definition as AgentDefinition).skills?.pinned ?? [],
       );
       await assertSubagents(t, {
         orgId,
         agentId,
         actorAccountId,
-        definition: patch.definition,
+        definition,
         toolKeys: toolKeys ?? new Set(),
         kept: (current.definition as AgentDefinition).subagents,
       });
-      if (canonical(current.definition) !== canonical(patch.definition)) {
+      if (canonical(current.definition) !== canonical(definition)) {
         toVersion = before.current_version + 1;
         await t
           .insertInto("agent_versions")
           .values({
             agent_id: agentId,
             version: toVersion,
-            definition: JSON.stringify(patch.definition),
+            definition: JSON.stringify(definition),
             created_by: actorAccountId,
           })
           .execute();

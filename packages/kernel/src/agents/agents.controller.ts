@@ -34,9 +34,16 @@ const MemberIds = z.array(z.string().min(1).max(100)).max(1000);
 const OwnerBody = z.object({ accountId: z.string().min(1).max(100) }).strict();
 
 /** 创建时未给 `tools` → 默认工具（Ruling P7）；修改请求不注入默认值，版本里总是存显式的 tools。 */
+/**
+ * `instructions` has no default in a request: with `instructionFiles` the kernel derives it, and a
+ * new agent given neither gets the `AGENTS.md` starter (`deriveInstructions`).
+ */
+const RequestInstructions = z.string().max(100_000).optional();
 const CreateDefinition = AgentDefinitionSchema.extend({
+  instructions: RequestInstructions,
   tools: z.array(AgentToolRef).default(() => structuredClone(DEFAULT_AGENT_TOOLS)),
 });
+const UpdateDefinition = AgentDefinitionSchema.extend({ instructions: RequestInstructions });
 
 const CreateBody = z
   .object({
@@ -64,7 +71,7 @@ const AvatarUploadBody = z
   .strict();
 const UpdateBody = z
   .object({
-    definition: AgentDefinitionSchema.optional(),
+    definition: UpdateDefinition.optional(),
     visibility: z.enum(AGENT_VISIBILITIES).optional(),
     memberIds: MemberIds.optional(),
     /**

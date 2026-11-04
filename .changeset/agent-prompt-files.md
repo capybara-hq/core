@@ -1,0 +1,8 @@
+---
+"@capybara-hq/kernel": patch
+---
+
+Agent definitions take the system prompt as named `.md` files (`instructionFiles`, 1–20 unique
+names, at most 100 000 characters joined). The kernel joins them into `instructions`, which stays
+the model-visible field (400 `agent.instructions_mismatch` when both are given and differ); a
+definition without files reads as one `AGENTS.md`, and a new agent with no prompt gets a starter.

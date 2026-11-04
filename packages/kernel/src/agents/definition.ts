@@ -1,5 +1,6 @@
 import { type ModelParameter, validateParams } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
+import { InstructionFilesSchema } from "./instruction-files.js";
 
 /** 模型引用：供应商插件名 + 模型 id。 */
 export const ModelRef = z.object({ provider: z.string(), model: z.string() });
@@ -117,7 +118,16 @@ export type Subagents = z.infer<typeof SubagentsSchema>;
 export const AgentDefinitionSchema = z.object({
   name: z.string().min(1).max(80),
   avatarUrl: z.url().nullable().default(null),
+  /**
+   * The model-visible system prompt. Derived on save from `instructionFiles` when they are given
+   * (`deriveInstructions`); every reader (build.ts, the sub-agent copy, evals, replay) reads this.
+   */
   instructions: z.string().max(100_000).default(""),
+  /**
+   * The prompt files, the authoring form of `instructions` (spec 2026-11-04 §3.3). No default:
+   * definitions without it (every older version) read as one `AGENTS.md` and gain no version.
+   */
+  instructionFiles: InstructionFilesSchema.optional(),
   model: ModelRef,
   fallback: ModelRef.nullable().default(null),
   /** 主模型的参数（按主模型的声明校验）。 */
