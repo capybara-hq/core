@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { designZh } from "./support/chat";
+import { hydrated } from "./support/nav";
 import { LOGIN, ORG_NAME, PASSWORD } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -33,7 +34,10 @@ test("初始化向导：未初始化的部署打开首页 → 初始化页（可
   await expect(setup).toBeVisible();
   await expect(page.locator('[data-part="sidebar"][data-context="work"]')).toHaveCount(0);
   await expect(page.getByRole("heading", { level: 1, name: zh.chat.setup.title })).toBeVisible();
-  // the e2e stack loads model-fake: the model step is done, creating an agent is next
+  // the e2e stack loads model-fake: the model step is done, creating an agent is next. The step's
+  // action is a button: a click lands only once the page is hydrated (a cold `next dev` compile can
+  // keep the first document's script from running for a while)
+  await hydrated(page);
   const agentStep = page.getByRole("listitem").filter({ hasText: zh.setupLayout.steps.agent });
   await agentStep.getByRole("button", { name: zh.chat.setup.agent.action }).click();
   await expect(page).toHaveURL(/\/agents\/new$/);

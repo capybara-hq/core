@@ -113,6 +113,18 @@ export async function send(page: Page, text: string, keys = "Enter"): Promise<vo
 export const interject = (page: Page, text: string): Promise<void> =>
   send(page, text, "ControlOrMeta+Enter");
 
+/**
+ * Waits until the CSS animations on `target` and inside it have finished (an expand opens with a
+ * height animation under `overflow: hidden`). A control inside an expanding block keeps its box
+ * while it is clipped, so Playwright finds it stable and scrolls the clipping box to reach it;
+ * when the animation ends the scroll resets and the click lands on whatever moved there.
+ */
+export async function animationsDone(target: Locator): Promise<void> {
+  await target.evaluate((el) =>
+    Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)),
+  );
+}
+
 /** 内核要求非安全方法带的 CSRF 头。 */
 export const CSRF = { "X-Capybara-Csrf": "1" };
 
