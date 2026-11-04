@@ -694,7 +694,9 @@
 .cb-sidebar[data-mode="rail"] .cb-sidebar-item[aria-current="page"]:hover {
   background: var(--cb-hover);
 }
-/* The signed rail reference: the badge sits 2px inside the icon box's corner, 14 wide at least. */
+/* The signed rail reference: the badge sits 2px inside the icon box's corner, 14 wide at least.
+   It overlaps the icon, so the selected ground (translucent in light) is drawn over an opaque
+   sidebar layer; the background color stays `selected` (spec §6.13 measures it) under both. */
 .cb-sidebar-badge {
   position: absolute;
   top: 2px;
@@ -702,7 +704,10 @@
   min-width: 14px;
   padding: 0 3px;
   border-radius: var(--cb-radius-sm);
-  background: var(--cb-selected);
+  background-color: var(--cb-selected);
+  background-image:
+    linear-gradient(var(--cb-selected), var(--cb-selected)),
+    linear-gradient(var(--cb-sidebar), var(--cb-sidebar));
   color: var(--cb-ink);
   font-size: var(--cb-type-micro-size);
   line-height: var(--cb-type-micro-line);

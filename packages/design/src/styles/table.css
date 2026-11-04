@@ -113,8 +113,10 @@
 .cb-table-el th[data-sorted="true"] .cb-table-arrow {
   visibility: visible;
 }
+/* The header is sticky: the hover ground (translucent in light) is laid over the table ground so
+   scrolled rows never show through it. */
 .cb-table-el th:hover:has(.cb-table-sort) {
-  background: var(--cb-hover);
+  background: linear-gradient(var(--cb-hover), var(--cb-hover)), var(--cb-table-ground);
 }
 
 /* Row grounds: the row paints its state; cells stay transparent except the sticky first column,
