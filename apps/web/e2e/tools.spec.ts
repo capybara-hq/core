@@ -1,5 +1,15 @@
 import { expect, type Page, test } from "@playwright/test";
-import { composer, designZh, replies, startChat, toolGroup, zh } from "./support/chat";
+import {
+  composer,
+  designZh,
+  newAgent,
+  openAgentSection,
+  replies,
+  saveSection,
+  startChat,
+  toolGroup,
+  zh,
+} from "./support/chat";
 import { mainNavLink } from "./support/nav";
 import { signIn } from "./support/sign-in";
 
@@ -32,19 +42,15 @@ async function installMcp(page: Page, name: string, slug: string, url: string) {
 
 /** 新建引用某连接器全部工具的 agent（model-fake），从列表开始对话，返回输入框。 */
 async function chatWithAgent(page: Page, agentName: string, connectorName: string) {
-  await page.goto("/agents/new");
-  await page.getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true }).fill(agentName);
-  await page
-    .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
-    .selectOption("model-fake/fake-1");
+  await newAgent(page, agentName);
+  await openAgentSection(page, "tools");
   await page
     .getByRole("checkbox", {
       name: zh.agents.form.connectorTools.replace("{name}", connectorName),
       exact: true,
     })
     .check();
-  await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/agents$/);
+  await saveSection(page);
   await startChat(page, agentName);
   return composer(page);
 }
@@ -67,22 +73,16 @@ test("MCP 连接器 → agent 引用 → destructive 工具触发审批 → 批�
   });
   await expect(policy).toHaveValue("ask");
 
-  // 2. 新建 agent，引用该连接器的全部工具
-  await page.goto("/agents/new");
-  await page
-    .getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true })
-    .fill("Tool agent");
-  await page
-    .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
-    .selectOption("model-fake/fake-1");
+  // 2. 新建 agent，在 agent 页面的「工具」分组里引用该连接器的全部工具
+  await newAgent(page, "Tool agent");
+  await openAgentSection(page, "tools");
   await page
     .getByRole("checkbox", {
       name: zh.agents.form.connectorTools.replace("{name}", "Fixture"),
       exact: true,
     })
     .check();
-  await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/agents$/);
+  await saveSection(page);
 
   // 3. 开始对话：model-fake 按指令调用 destructive 工具 → 出现审批卡片，运行等人处理
   await startChat(page, "Tool agent");

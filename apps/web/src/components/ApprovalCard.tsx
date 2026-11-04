@@ -8,6 +8,7 @@ import {
   StatusMark,
   Text,
   Textarea,
+  useTimeZone,
   useToast,
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -177,6 +178,7 @@ export function ApprovalCard({
 }) {
   const t = useTranslations("approval");
   const locale = useLocale();
+  const timeZone = useTimeZone();
   const { me } = useSession();
   const [local, setLocal] = useState<(Outcome & { at: string }) | null>(null);
   const { decide, pending } = useDecide(orgId);
@@ -225,7 +227,7 @@ export function ApprovalCard({
       kind: "decided",
       decision: outcome.decision,
       who: who(outcome.byAccountId),
-      when: outcome.at ? shortTime(outcome.at, locale) : "",
+      when: outcome.at ? shortTime(outcome.at, locale, timeZone) : "",
       ...(outcome.scope !== undefined ? { scope: outcome.scope } : {}),
       ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
     };

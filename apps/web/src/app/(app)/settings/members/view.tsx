@@ -16,6 +16,7 @@ import {
   Stack,
   StatusMark,
   Text,
+  useTimeZone,
   useToast,
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -323,6 +324,7 @@ function Invitations({
   inviting: boolean;
   setInviting(v: boolean): void;
 }) {
+  const timeZone = useTimeZone();
   const t = useTranslations("members");
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -382,7 +384,9 @@ function Invitations({
         columns={columns}
         rows={rows}
         rowKey={(i) => i.id}
-        rowLabel={(i) => `${t(`roles.${i.role}`)} · ${formatDateTime(i.createdAt)}`}
+        rowLabel={(i) =>
+          `${t(`roles.${i.role}`)} · ${formatDateTime(i.createdAt, "full", timeZone)}`
+        }
         state={read.data !== undefined ? "ready" : read.error ? "error" : "loading"}
         error={{ code: read.error?.code ?? "unknown", onRetry: () => void read.refetch() }}
         empty={{ title: t("invitations.empty") }}

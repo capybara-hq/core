@@ -9,13 +9,12 @@ import {
   type SubagentStatus,
   subagentDuration,
   TaskOutputPanel,
+  useNow,
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { useEffect, useState } from "react";
 import type { BackgroundTaskView, SubagentView } from "../../lib/conversations";
 import { taskOutputPollMs, taskOutputQuery } from "../../lib/query/conversation";
-import { isActiveStatus } from "../../lib/subagents";
 import { useErrorMessage } from "../../lib/use-error-message";
 
 const statusOf = (s: string): SubagentStatus =>
@@ -112,21 +111,11 @@ export function BackgroundSection({
   onOpen(item: { kind: "task" | "subagent"; id: string }): void;
 }) {
   const t = useTranslations("subagents");
-  const running =
-    views.filter((v) => isActiveStatus(v.status)).length +
-    tasks.filter((x) => x.status === "running").length;
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (running === 0) return;
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [running]);
   const kindOf = (id: string) => (tasks.some((x) => x.id === id) ? "task" : "subagent");
   return (
     <PropertySection title={t("background")}>
       <BackgroundTasks
         items={backgroundItems(views, tasks, stopping)}
-        now={now}
         onStop={(id) => onStop({ kind: kindOf(id), id })}
         onOpen={(id) => onOpen({ kind: kindOf(id), id })}
       />
@@ -176,12 +165,7 @@ export function BackgroundTaskPanel({
     enabled: task !== undefined,
     refetchInterval: taskOutputPollMs(status),
   });
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (status !== "running") return;
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [status]);
+  const now = useNow(status === "running" ? 1000 : 0);
   if (task === undefined || status === undefined) {
     return (
       <RightPanel

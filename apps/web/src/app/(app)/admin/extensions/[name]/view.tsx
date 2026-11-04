@@ -15,6 +15,7 @@ import {
   LinkButton,
   Stack,
   Text,
+  useTimeZone,
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
@@ -529,6 +530,7 @@ function Permissions({
   onChanged(next: AdminExtension): void;
   onRefresh(): void;
 }) {
+  const timeZone = useTimeZone();
   const t = useTranslations("admin.extensions.approve");
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -568,7 +570,7 @@ function Permissions({
         <Text tone="muted">
           {t("approved", {
             version: versionLabel(plugin.snapshot.version),
-            at: formatDateTime(plugin.snapshot.approvedAt),
+            at: formatDateTime(plugin.snapshot.approvedAt, "full", timeZone),
             source: t(`via.${plugin.snapshot.source}`),
           })}
         </Text>

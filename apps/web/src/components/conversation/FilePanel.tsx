@@ -11,6 +11,7 @@ import {
   NoPreview,
   TextPreview,
   typeBadge,
+  useNow,
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
@@ -57,6 +58,7 @@ export function FilePanel({
 }) {
   const t = useTranslations("chat");
   const locale = uiLocale(useLocale());
+  const now = useNow();
   const errorMessage = useErrorMessage();
   const openDownload = useOpenDownload();
   const [picked, setPicked] = useState<string | null>(null);
@@ -121,7 +123,7 @@ export function FilePanel({
   const header = {
     badge: typeBadge(file.name, file.contentType),
     name: file.name,
-    version: `v${file.version} · ${formatRelative(file.versions[0]?.createdAt ?? file.createdAt, locale)}`,
+    version: `v${file.version} · ${formatRelative(file.versions[0]?.createdAt ?? file.createdAt, locale, now)}`,
     files: files.map((f) => ({ id: f.id, name: f.name })),
     current: file.id,
     onSwitch,

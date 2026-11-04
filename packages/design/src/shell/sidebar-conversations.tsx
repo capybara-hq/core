@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useTimeZone } from "../clock";
 import { Button, IconButton, Input } from "../controls/index";
 import { Avatar, type AvatarValue } from "../display/avatar";
 import { formatDateTime } from "../display/date-time";
@@ -81,10 +82,14 @@ export type SidebarConversations = {
   filterOpen?: boolean;
 };
 
-/** `未命名会话 · MM-DD HH:mm` / `Untitled conversation · MM-DD HH:mm`, in local time. */
-export function untitledLabel(startedAt: Date, locale: Locale): string {
+/**
+ * `未命名会话 · MM-DD HH:mm` / `Untitled conversation · MM-DD HH:mm`, in local time: in a component
+ * pass `useTimeZone()` as `timeZone` (see `formatDateTime`).
+ */
+export function untitledLabel(startedAt: Date, locale: Locale, timeZone?: string): string {
   // The compact date form of dense lists (spec §2.2).
-  return `${messages[locale]["sidebar.untitled"]} · ${formatDateTime(startedAt, "compact")}`;
+  const at = formatDateTime(startedAt, "compact", timeZone);
+  return `${messages[locale]["sidebar.untitled"]} · ${at}`;
 }
 
 /**
@@ -220,7 +225,9 @@ export function Conversations({
   };
   const f = c.filter;
   const filtering = f.q.trim() !== "" || f.state !== "all";
-  const textOf = (x: SidebarConversation) => x.title ?? untitledLabel(x.startedAt, locale);
+  const timeZone = useTimeZone();
+  const textOf = (x: SidebarConversation) =>
+    x.title ?? untitledLabel(x.startedAt, locale, timeZone);
   const q = f.q.trim().toLocaleLowerCase();
   const matches = (x: SidebarConversation) =>
     (q === "" || textOf(x).toLocaleLowerCase().includes(q)) &&
@@ -577,7 +584,8 @@ function Row({
   const t = useDesignT();
   const locale = useDesignLocale();
   const Link = useDesignLink();
-  const text = x.title ?? untitledLabel(x.startedAt, locale);
+  const timeZone = useTimeZone();
+  const text = x.title ?? untitledLabel(x.startedAt, locale, timeZone);
   const key = `c:${x.id}`;
   const rowRef = useRef<HTMLDivElement>(null);
   // A rename chosen from the menu keeps focus in the input (the menu would return it to ⋯).

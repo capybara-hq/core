@@ -1,5 +1,14 @@
 import { expect, type Page, test } from "@playwright/test";
-import { designZh, replies, send, startChat, zh } from "./support/chat";
+import {
+  designZh,
+  interject,
+  openAgentSection,
+  replies,
+  saveSection,
+  send,
+  startChat,
+  zh,
+} from "./support/chat";
 import { signIn } from "./support/sign-in";
 
 const LONG_TEXT = "Capybaras are the largest living rodents and very calm swimmers. "
@@ -33,8 +42,9 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
     .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
     .selectOption("model-fake/fake-1");
   await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/agents$/);
-  await expect(page.getByText("Echo agent")).toBeVisible();
+  // a new agent lands on its page's prompt section (agent profile design §2.4)
+  await expect(page).toHaveURL(/\/agents\/[^/?#]+\?s=prompt$/);
+  await expect(page.getByRole("heading", { name: "Echo agent" })).toBeVisible();
   await startChat(page, "Echo agent");
   // 2. echo → 页面出现回复（第一条消息才创建会话）
   await send(page, "echo:hello capybara");
@@ -68,11 +78,11 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
   expect(LONG_TEXT.startsWith(partial)).toBe(true);
   await expect(stopButton(page)).toHaveCount(0);
 
-  // 4. slow 回复进行中插话：两条都得到回复，插话的回复在第一条之后
+  // 4. slow 回复进行中插话（⌘↵ / Ctrl+↵；↵ 会加入队列）：两条都得到回复，插话的回复在第一条之后
   await send(page, `slow:200:${SECOND_TEXT}`);
   await expect(draft).toHaveText(/.+/);
   await expect(page.getByRole("textbox", { name: zh.chat.inputLabel })).toBeEnabled();
-  await send(page, "echo:interject");
+  await interject(page, "echo:interject");
   await expect(assistants(page).filter({ hasText: SECOND_TEXT })).toHaveCount(1);
   await expect(assistants(page).filter({ hasText: /^.*interject$/ })).toHaveCount(1);
   await expect(stopButton(page)).toHaveCount(0);
@@ -112,7 +122,7 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
     "assistant:interject",
   ]);
 
-  // 6. 新建 agent 时按模型声明设置参数：model-fake.style = shout → 回复为大写
+  // 6. 按模型声明设置参数（agent 页面的「模型」分组）：model-fake.style = shout → 回复为大写
   await page.goto("/agents");
   await page.getByRole("link", { name: zh.agents.new }).click();
   await page
@@ -121,11 +131,13 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
   await page
     .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
     .selectOption("model-fake/fake-1");
+  await page.getByRole("button", { name: zh.agents.form.submit }).click();
+  await expect(page).toHaveURL(/\/agents\/[^/?#]+\?s=prompt$/);
+  await openAgentSection(page, "model");
   const params = page.getByRole("region", { name: zh.agents.form.modelParamsTitle, exact: true });
   // 文案来自插件声明（zh）
   await params.getByRole("combobox", { name: "回复风格" }).selectOption("shout");
-  await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/agents$/);
+  await saveSection(page);
   await startChat(page, "Shout agent");
   await send(page, "echo:quiet please");
   await expect(assistants(page).last()).toHaveText("QUIET PLEASE");

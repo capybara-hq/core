@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { RECORD_ROW_MENU } from "./support/chat";
+import { hydrated } from "./support/nav";
 import { signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -32,6 +33,8 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
   // 1. 管理 → 模型：model-fake 的表里有 fake-1，行内编辑价格
   await page.goto("/admin/models");
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
+  // controls used before hydration have no React handlers yet: what they do would be lost
+  await hydrated(page);
   const table = page.getByRole("table", { name: MODEL_FAKE });
   const row = table.getByRole("row").filter({ hasText: "fake-1" });
   await row.getByRole("button", { name: RECORD_ROW_MENU }).click();
@@ -65,6 +68,7 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
 
   // 3. 组织设置 → 模型用途（评测向导的「去设置」链到这里）：显示部署默认，覆盖后恢复默认
   await page.goto("/settings/models");
+  await hydrated(page);
   const orgCard = page.locator('[data-purpose="eval"]');
   const defText = fill(P.deploymentDefault, { target: `${MODEL_FAKE} / fake-1` });
   await expect(orgCard.getByText(defText)).toBeVisible();
@@ -80,6 +84,7 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
 
   // 4. 清理：清除 eval 部署默认与 fake-1 的价格
   await page.goto("/admin/models");
+  await hydrated(page);
   await page
     .locator('[data-purpose="eval"]')
     .getByRole("combobox", { name: P.model })

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page } from "@playwright/test";
+import { hydrated } from "./nav";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
 const zh = JSON.parse(
@@ -41,7 +42,8 @@ export async function ensureAgent(page: Page, orgId: string): Promise<void> {
  * page. A new session starts in the org last chosen (or the only one); when the org chooser covers
  * the app instead, open Acme there. With `org` (the default) it then waits until `/me` names the
  * current org and, with `agent` (the default), makes sure an agent exists ({@link ensureAgent})
- * and that the shell (not the setup layout) is on screen. Normally the `setup` project
+ * and that the shell (not the setup layout) is on screen. It returns once the page is hydrated
+ * ({@link hydrated}). Normally the `setup` project
  * (`setup.spec.ts`) has already set up; a spec run alone sets up itself.
  */
 export async function signIn(
@@ -80,7 +82,7 @@ export async function signIn(
       .click();
     await expect(landed).toBeVisible();
   }
-  if (!org) return;
+  if (!org) return hydrated(page);
   let orgId: string | null = null;
   await expect
     .poll(async () => {
@@ -89,11 +91,13 @@ export async function signIn(
       return orgId;
     })
     .not.toBeNull();
-  if (!agent) return;
+  if (!agent) return hydrated(page);
   await ensureAgent(page, orgId as unknown as string);
   if (await setup.isVisible()) {
     // a fresh page load reads readiness again: the org can run now
     await page.goto("/");
     await expect(overview).toBeVisible();
   }
+  // until hydration the sidebar draws two panels and nothing on the page answers a click yet
+  await hydrated(page);
 }

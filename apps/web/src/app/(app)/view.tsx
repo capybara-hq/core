@@ -13,6 +13,8 @@ import {
   Stack,
   TextLink,
   untitledLabel,
+  useNow,
+  useTimeZone,
   useToast,
 } from "@capybara-hq/design";
 import { type UseQueryResult, useQuery } from "@tanstack/react-query";
@@ -267,6 +269,9 @@ function DailyOverview({
   const home = usePagePath("home");
   const t = useTranslations("home");
   const locale = useLocale();
+  // the server's clock and zone while hydrating, so the ages and dates match its render
+  const now = useNow();
+  const timeZone = useTimeZone();
   const router = useRouter();
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -300,7 +305,7 @@ function DailyOverview({
     inbox.flatMap((i) => (i.type === "tool_approval" ? [i.approval.conversationId] : [])),
   );
   const inboxRows: ItemListRow[] = inbox.slice(0, 5).map((item): ItemListRow => {
-    const when = formatRelative(item.createdAt, locale);
+    const when = formatRelative(item.createdAt, locale, now);
     if (item.type === "tool_approval") {
       const a = item.approval;
       return {
@@ -353,8 +358,8 @@ function DailyOverview({
 
   const recentRows: ItemListRow[] = (data.recent ?? []).map((c) => ({
     id: c.id,
-    title: c.title ?? untitledLabel(new Date(c.createdAt), locale === "zh" ? "zh" : "en"),
-    meta: `${c.agentName} · ${formatRelative(c.updatedAt, locale)}`,
+    title: c.title ?? untitledLabel(new Date(c.createdAt), locale === "zh" ? "zh" : "en", timeZone),
+    meta: `${c.agentName} · ${formatRelative(c.updatedAt, locale, now)}`,
     href: `/chat/${encodeURIComponent(c.id)}`,
     ...(waiting.has(c.id)
       ? { status: { label: t("recent.waiting"), tone: "accent" as const } }

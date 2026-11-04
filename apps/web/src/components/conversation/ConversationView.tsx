@@ -8,6 +8,8 @@ import {
   Stack,
   type TitleBarMenuItem,
   untitledLabel,
+  useNow,
+  useTimeZone,
   useToast,
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -80,14 +82,9 @@ function RunStatsText({
 }) {
   const t = useTranslations("chat");
   const locale = useLocale() === "zh" ? "zh" : "en";
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!ticking) return;
-    setNow(Date.now());
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [ticking]);
-  const ms = startedAt === null ? null : (endedAt ?? (ticking ? now : Date.now())) - startedAt;
+  // the server's time while hydrating (a running run's elapsed time then matches its render)
+  const now = useNow(ticking ? 1000 : 0);
+  const ms = startedAt === null ? null : (endedAt ?? now) - startedAt;
   return <>{t("stats", { n: turns, elapsed: ms === null ? "—" : elapsed(ms, locale) })}</>;
 }
 
@@ -353,12 +350,14 @@ export function useConversationPage(
     onPick: () => {},
   };
 
-  const createdAt = conv.conversation ? new Date(conv.conversation.createdAt) : new Date();
+  const now = useNow(0);
+  const timeZone = useTimeZone();
+  const createdAt = conv.conversation ? new Date(conv.conversation.createdAt) : new Date(now);
   const page: ConversationPageProps = {
     titleBar: {
       path: titlePath,
       title: conv.conversation?.title ?? null,
-      untitled: untitledLabel(createdAt, locale),
+      untitled: untitledLabel(createdAt, locale, timeZone),
       menu,
       properties: slot?.properties ?? { pressed: false, onToggle: () => {} },
       panels: slot?.titleBarPanels ?? [],

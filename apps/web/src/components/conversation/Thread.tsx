@@ -18,6 +18,7 @@ import {
   type ToolRowData,
   typeBadge,
   UserBubble,
+  useTimeZone,
   useToast,
 } from "@capybara-hq/design";
 import { useQueries, useQuery } from "@tanstack/react-query";
@@ -384,6 +385,7 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   const tb = useTranslations("background");
   const te = useTranslations("errors");
   const locale = useLocale();
+  const timeZone = useTimeZone();
   const { me } = useSession();
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -511,7 +513,10 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
         <RunRow
           status="stopped"
           parts={parts}
-          statusText={t("run.stopped", { who: who(e.byAccountId), time: shortTime(e.at, locale) })}
+          statusText={t("run.stopped", {
+            who: who(e.byAccountId),
+            time: shortTime(e.at, locale, timeZone),
+          })}
           facts={facts}
           links={links}
         />

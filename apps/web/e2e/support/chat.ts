@@ -56,13 +56,73 @@ export async function startChat(page: Page, agentName: string): Promise<void> {
   await expect(composer(page)).toBeEnabled();
 }
 
-/** Sends with ↵ and waits for the bubble (the first send also creates the conversation). */
-export async function send(page: Page, text: string): Promise<void> {
+/**
+ * Creates an agent through the short create form (agent profile design §2.4: a preselected
+ * avatar, the name, the model fake-1, visibility private) and waits for the landing on its
+ * page's prompt section (`/agents/<id>?s=prompt`); returns the agent id. Tools, skills and model
+ * parameters are set afterwards in their sections ({@link openAgentSection}).
+ */
+export async function newAgent(page: Page, name: string): Promise<string> {
+  await page.goto("/agents/new");
+  await expect(page.locator('[data-template="FormPage"]')).toBeVisible();
+  await page.getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true }).fill(name);
+  await page
+    .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
+    .selectOption("model-fake/fake-1");
+  await page.getByRole("button", { name: zh.agents.form.submit }).click();
+  await expect(page).toHaveURL(/\/agents\/[^/?#]+\?s=prompt$/);
+  await expect(page.locator('[data-template="SettingsPage"]')).toBeVisible();
+  return decodeURIComponent(new URL(page.url()).pathname.split("/").at(-1) ?? "");
+}
+
+/** Opens a section of the agent page (`?s=<section>`) through its section nav. */
+export async function openAgentSection(
+  page: Page,
+  section: keyof typeof zh.agents.page.sections,
+): Promise<void> {
+  await page
+    .locator('[data-part="settings-nav"]')
+    .getByRole("link", { name: zh.agents.page.sections[section], exact: true })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`[?&]s=${section}$`));
+}
+
+/**
+ * Saves the open section of the agent page (its ActionRow's 保存) and waits until the save went
+ * through: the row goes once nothing is unsaved, failed or pending.
+ */
+export async function saveSection(page: Page): Promise<void> {
+  const row = page.locator('[data-part="action-row"]');
+  await row.getByRole("button", { name: zh.agents.form.submit, exact: true }).click();
+  await expect(row).toHaveCount(0);
+}
+
+/**
+ * Sends with ↵ and waits for the bubble (the first send also creates the conversation). While a
+ * run is going ↵ queues instead (conversation send design D1): use {@link interject} there.
+ */
+export async function send(page: Page, text: string, keys = "Enter"): Promise<void> {
   const input = composer(page);
   await input.fill(text);
-  await input.press("Enter");
+  await input.press(keys);
   await expect(users(page).filter({ hasText: text }).first()).toBeVisible();
   await expect(page).toHaveURL(/\/chat\/[^/?#]+(#.*)?$/);
+}
+
+/** Sends now while a run is going (an interjection: ⌘↵ / Ctrl+↵) and waits for the bubble. */
+export const interject = (page: Page, text: string): Promise<void> =>
+  send(page, text, "ControlOrMeta+Enter");
+
+/**
+ * Waits until the CSS animations on `target` and inside it have finished (an expand opens with a
+ * height animation under `overflow: hidden`). A control inside an expanding block keeps its box
+ * while it is clipped, so Playwright finds it stable and scrolls the clipping box to reach it;
+ * when the animation ends the scroll resets and the click lands on whatever moved there.
+ */
+export async function animationsDone(target: Locator): Promise<void> {
+  await target.evaluate((el) =>
+    Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)),
+  );
 }
 
 /** 内核要求非安全方法带的 CSRF 头。 */

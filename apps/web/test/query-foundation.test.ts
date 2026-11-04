@@ -17,6 +17,7 @@ import {
   isHydratedError,
   makeQueryClient,
   noteClientPath,
+  retryOnMountOf,
   reviveDehydrated,
 } from "../src/lib/query/client";
 import { defineQuery } from "../src/lib/query/define";
@@ -151,6 +152,32 @@ describe("query foundation", () => {
       const fn = vi.fn(failing);
       await mount(client, fn);
       expect(fn).toHaveBeenCalledTimes(1);
+      noteClientPath(path);
+    });
+
+    /** What a render draws for the key before mounting (as `useQuery` reads it while rendering). */
+    const renderStatus = (client: QueryClient) =>
+      new QueryObserver(client, { queryKey: key, queryFn: failing }).getOptimisticResult({
+        ...client.defaultQueryOptions({ queryKey: key, retryOnMount: retryOnMountOf(key) }),
+        _optimisticResults: "optimistic",
+      }).status;
+
+    it("a server render draws a failed query as failed, as the browser's hydration does", async () => {
+      const path = openDocument();
+      // the server render: the request's client holds the prefetch's failure
+      vi.stubGlobal("window", undefined);
+      let onServer: string;
+      try {
+        const server = makeQueryClient();
+        await server.fetchQuery({ queryKey: key, queryFn: failing, retry: false }).catch(() => {});
+        onServer = renderStatus(server);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+      // the browser's first render, from the dehydrated failure
+      const inBrowser = renderStatus(await hydratedClient());
+      expect(onServer).toBe("error");
+      expect(inBrowser).toBe(onServer);
       noteClientPath(path);
     });
 
