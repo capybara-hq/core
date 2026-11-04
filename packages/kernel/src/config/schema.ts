@@ -1269,9 +1269,8 @@ export const KernelConfigSchema = z.object({
             .default(10)
             .meta(
               meta({
-                hot: true,
                 description:
-                  "How often the worker checks the running background Bash tasks of every sandbox for a finish, in seconds",
+                  "How often the worker checks the running background Bash tasks of every sandbox for a finish, in seconds; read when the worker starts",
               }),
             ),
         })
