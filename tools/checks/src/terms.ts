@@ -177,8 +177,13 @@ export const OLD_REFERENCES: { re: RegExp; what: string; allowedIn?: RuleExempti
         reason: "design docs and plans are a historical record, and the rename's own spec and plan",
       },
       {
-        path: /^\.changeset\/(?:builtin-tool-names|legacy-tool-keys-in-flight|legacy-tool-keys-stored)\.md$/,
-        reason: "release notes of the rename say what the old keys were",
+        path: /^\.changeset\/(?:pre\/)?(?:builtin-tool-names|legacy-tool-keys-in-flight|legacy-tool-keys-stored)\.md$/,
+        reason:
+          "release notes of the rename say what the old keys were; `changeset version` archives them under .changeset/pre/",
+      },
+      {
+        path: /(?:^|\/)CHANGELOG\.md$/,
+        reason: "changelogs are release history, generated from the reviewed changesets",
       },
       {
         path: /^packages\/kernel\/test\/tools\/(?:legacy-keys|legacy-data|builtin-names|rename-compat|pipeline|policy|info)\.test\.ts$/,
