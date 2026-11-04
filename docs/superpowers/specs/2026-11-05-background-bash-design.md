@@ -212,7 +212,8 @@ next person message would pick it up.
      in a process group of its own, so the command does not run in the `setsid` process group.
      The session holds every process: stopping uses `pkill -s <sid>` and liveness uses
      `pgrep -s <sid>`, the same approach as sandbox-docker's `KILL_TREE`.
-- This works on every provider that runs `sh` and `bash` with `setsid`, `timeout`, `pkill` and `pgrep`:
+- This works on every provider that runs `sh` and `bash` with `setsid`, `nohup`, `timeout`, `pkill`,
+  `pgrep` and `base64`:
   sandbox-docker and sandbox-e2b. A provider without them fails the launch with a readable error.
 - **sandbox-fake** (the test fixture, which runs on the host) changes:
   - it puts small node shims for `setsid`, `timeout`, `pkill -s` and `pgrep -s` first on its PATH,
