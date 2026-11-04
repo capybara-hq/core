@@ -32,12 +32,23 @@ const needsLogin = (e: unknown) => e instanceof ApiClientError && e.status === 4
 /** The link itself is unusable (unknown, expired or used). */
 const invalidLink = (e: unknown) => e instanceof ApiClientError && e.code === "bind.invalid";
 
-/** The confirm card while it loads: the display name, the identity's rows, the warning; Confirm. */
+/** The confirm card's identity while it loads: the display name and the identity's rows. */
 const LOADING_FIELDS: FieldShape[] = [
   { control: "text" },
   { control: "key-value", rows: 3, keyWidth: "10ch" },
-  { control: "text" },
 ];
+
+/** What confirming does (static: the loading card shows it too). */
+function BindWarning() {
+  const t = useTranslations("bind");
+  return (
+    <Card tone="danger">
+      <div role="note">
+        <Text tone="warn">{t("warning")}</Text>
+      </div>
+    </Card>
+  );
+}
 
 /**
  * `/bind/[token]`: confirm an IM identity binding (AuthPage). The bot's link in an IM direct
@@ -118,7 +129,8 @@ export default function BindView({ token }: { token: string }) {
         title={t("title")}
         subtitle={t("subtitle")}
         preferences={preferences}
-        loading={{ fields: LOADING_FIELDS }}
+        // the warning is static: it renders for real; then Confirm and Cancel
+        loading={{ fields: LOADING_FIELDS, note: <BindWarning />, buttons: 2 }}
       />
     );
   }
@@ -155,11 +167,7 @@ export default function BindView({ token }: { token: string }) {
     <AuthPage title={t("title")} subtitle={t("subtitle")} preferences={preferences}>
       <Stack gap={16}>
         {identity}
-        <Card tone="danger">
-          <div role="note">
-            <Text tone="warn">{t("warning")}</Text>
-          </div>
-        </Card>
+        <BindWarning />
         {confirmError !== undefined && <FormError message={confirmError} />}
         <Stack gap={8}>
           <Button

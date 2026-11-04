@@ -3,7 +3,7 @@
 // the pending binding) with no browser read; a client navigation with nothing cached draws
 // AuthPage's loading shape. /setup keeps its layout's status. A sign-in tells the other tabs
 // (§3.2), drops the cache, then navigates the whole document (ruling R4).
-import { act, cleanup, screen } from "@testing-library/react";
+import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -249,8 +249,19 @@ describe("/invite/[token]", () => {
       "POST /api/v1/auth/refresh": unauthenticated,
     });
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
-    expect(screen.queryByText(en.invite.signInHint)).toBeNull();
+    const subtitle = en.invite.subtitle.replace("{org}", "Initech");
+    expect(screen.queryByText(subtitle)).toBeNull();
+    // signed out (the session is known): the loaded card's shape, with the org's subtitle a slot,
+    // the role and expiry rows, the static sign-in hint and the two buttons' boxes
+    const card = document.querySelector(".cb-auth-card") as HTMLElement;
+    expect(card.querySelector('.cb-auth-head [data-part="skeleton-text"]')).not.toBeNull();
+    expect(card.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(2);
+    // once the session read answered (signed out)
+    expect(await within(card).findByText(en.invite.signInHint)).toBeTruthy();
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(card.querySelectorAll('[data-box="prominent"]')).toHaveLength(2);
     await release();
+    expect(await screen.findByText(subtitle)).toBeTruthy();
     expect(await screen.findByText(en.invite.signInHint)).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
@@ -350,6 +361,12 @@ describe("/bind/[token]", () => {
     const { release } = await renderHeld(PAGE, "GET /api/v1/bind/cap_bind_tok");
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
     expect(screen.queryByText("Alice Wong")).toBeNull();
+    // the loaded card's shape: the identity's rows, the static warning for real, then the
+    // Confirm and Cancel buttons' boxes
+    const card = document.querySelector(".cb-auth-card") as HTMLElement;
+    expect(card.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(3);
+    expect(within(card).getByRole("note").textContent).toBe(en.bind.warning);
+    expect(card.querySelectorAll('[data-box="prominent"]')).toHaveLength(2);
     await release();
     expect(await screen.findByText("Alice Wong")).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());

@@ -134,8 +134,19 @@ export default function InviteView({ token }: { token: string }) {
     );
   }
   if (preview.data === undefined || me.data === undefined) {
+    // The subtitle names the org (it comes with the preview). Signed out (when the session is
+    // known), the card ends with the sign-in hint and its two buttons; else with Accept.
+    const signedOut = me.data === null;
     return (
-      <AuthPage title={t("title")} preferences={preferences} loading={{ fields: LOADING_FIELDS }} />
+      <AuthPage
+        title={t("title")}
+        preferences={preferences}
+        loading={{
+          fields: LOADING_FIELDS,
+          subtitle: true,
+          ...(signedOut ? { hint: t("signInHint"), buttons: 2 } : {}),
+        }}
+      />
     );
   }
   const invite = preview.data;
