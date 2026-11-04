@@ -14,7 +14,6 @@ import { SandboxPathBusyError } from "../../../sandbox/leases.js";
 import { SandboxLockLostError, type SandboxService } from "../../../sandbox/sandbox.service.js";
 import type { StorageService } from "../../../storage/storage.service.js";
 import type { BuiltinCallContext } from "../../registry.js";
-import { type FileState, lastFileState, MODIFIED_TEXT, NOT_READ_TEXT } from "./file-state.js";
 
 /** 沙箱工具的依赖（都按调用时取，多副本下无进程内状态）。 */
 export interface SandboxToolDeps {
@@ -141,9 +140,9 @@ export function checkPath(path: string, field = "path"): string {
   return path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
 }
 
-/** 写入类工具的路径：`/skills` 是技能文件的只读副本。 */
+/** A writing tool's `file_path`: `/skills` is the read-only copy of the skill files. */
 export function checkWritable(path: string): string {
-  const p = checkPath(path);
+  const p = checkPath(path, "file_path");
   if (p === "/skills" || p.startsWith("/skills/")) {
     throw new ToolError(
       `Path ${clip(p, 200)} is read-only (/skills holds skill files); pass a path under /workspace or /tmp instead.`,

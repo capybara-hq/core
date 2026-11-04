@@ -553,3 +553,72 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
     expect(out.split("\n")).toEqual(["/workspace/b.txt", "/workspace/we\\nird.txt"]);
   });
 });
+
+describe("read before write over Read's byte limit", () => {
+  it("overwriting a file over 10 MB that the conversation itself just wrote succeeds", async () => {
+    const files = new Map<string, Uint8Array>();
+    const p = {
+      readFile: async (_h: unknown, path: string, o: { maxBytes: number }) => {
+        const d = files.get(path);
+        if (d === undefined) return null;
+        return { data: d.subarray(0, o.maxBytes), truncated: d.byteLength > o.maxBytes };
+      },
+      writeFile: async (_h: unknown, path: string, data: Uint8Array) => {
+        files.set(path, data);
+      },
+      stat: async (_h: unknown, path: string) => {
+        const d = files.get(path);
+        return d === undefined ? null : { size: d.byteLength, isDir: false };
+      },
+    };
+    // the log: the latest view.file of each path, as the conversation's tool_results record it
+    const recorded = new Map<string, { size: number; sha256: string }>();
+    const sandbox = {
+      available: true,
+      withSandbox: async (
+        _ctx: unknown,
+        fn: (h: unknown, p: unknown, info: unknown, s: AbortSignal) => Promise<unknown>,
+      ) => fn({ id: "x" }, p, { fresh: false, recreated: false }, new AbortController().signal),
+    } as unknown as SandboxToolDeps["sandbox"];
+    const tools = sandboxTools({
+      sandbox,
+      // biome-ignore lint/suspicious/noExplicitAny: test stub
+      attachments: { listForConversation: async () => [] } as any,
+      // biome-ignore lint/suspicious/noExplicitAny: never called
+      storage: {} as any,
+      eventLog: {
+        append: async () => [],
+        latestFileState: async (_c: string, path: string) => recorded.get(path) ?? null,
+      },
+      config: {
+        get: () =>
+          KernelConfigSchema.parse({
+            db: { url: "postgres://x/y" },
+            redis: { url: "redis://x" },
+            masterKey: Buffer.alloc(32, 7).toString("base64"),
+          }),
+      },
+    });
+    const write = tools.find((t) => t.spec.name === "Write") as BuiltinTool;
+    const ctx = {
+      orgId: "o",
+      accountId: "a",
+      agentId: "g",
+      conversationId: "c",
+      callId: "call",
+      signal: new AbortController().signal,
+    };
+    const run = async (content: string) => {
+      const r = (await write.run({ file_path: "/workspace/big.txt", content }, ctx)) as {
+        view: { file: { path: string; size: number; sha256: string } };
+      };
+      const { path, ...state } = r.view.file;
+      recorded.set(path, state);
+      return r;
+    };
+    const first = await run("a".repeat(11_000_000));
+    expect(first.view.file.size).toBe(11_000_000);
+    const second = await run("small\n");
+    expect(second.view.file.size).toBe(6);
+  });
+});

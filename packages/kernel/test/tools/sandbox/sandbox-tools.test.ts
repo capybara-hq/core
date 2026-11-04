@@ -393,6 +393,23 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     expect(bad.content).toContain("file_path");
   });
 
+  it("an invalid path is reported under the parameter's name: file_path for Read / Write / Edit / Deliver, path for Glob", async () => {
+    const conv = await sandboxConversation();
+    let step = 1;
+    for (const [tool, input] of [
+      ["Read", { file_path: "relative.txt" }],
+      ["Write", { file_path: "relative.txt", content: "x" }],
+      ["Edit", { file_path: "relative.txt", old_string: "a", new_string: "b" }],
+      ["Deliver", { file_path: "relative.txt" }],
+    ] as const) {
+      const r = await call(conv, tool, input, step++);
+      expect(r.isError, tool).toBe(true);
+      expect(r.content, tool).toMatch(/^Invalid file_path "relative\.txt"/);
+    }
+    const g = await call(conv, "Glob", { pattern: "*", path: "relative" }, step);
+    expect(g.content).toMatch(/^Invalid path "relative"/);
+  });
+
   it("grep: count and files_with_matches on a single-file path", async () => {
     const conv = await sandboxConversation();
     await call(

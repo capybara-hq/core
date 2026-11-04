@@ -1,4 +1,4 @@
-import { type ExecResult, ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
+import type { ExecResult, ToolSpec } from "@capybara-hq/plugin-sdk";
 import type { BuiltinTool } from "../../registry.js";
 import {
   clip,

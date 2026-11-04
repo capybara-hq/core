@@ -1,4 +1,4 @@
-import { isSandboxGoneError, ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
+import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import type { BuiltinTool } from "../../registry.js";
 import { lineDiff, TOOL_VIEW_DIFF_MAX_BYTES, viewPath } from "../../view.js";
 import {
@@ -116,7 +116,12 @@ export function sandboxWriteTool(deps: SandboxToolDeps): BuiltinTool {
           ...(previous !== null
             ? lineDiff(previous, (input as WriteInput).content)
             : { added: 0, removed: 0, truncated: true, hunks: [] }),
-          file: recordedFile(normalizeSandboxPath(path), data, data.byteLength),
+          // over the bytes the next Write / Edit reads back (Read's limit), as Read records it
+          file: recordedFile(
+            normalizeSandboxPath(path),
+            data.subarray(0, READ_MAX_BYTES),
+            data.byteLength,
+          ),
         },
       };
     },

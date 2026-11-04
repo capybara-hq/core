@@ -19,6 +19,7 @@ import {
   normalizeSandboxPath,
   recordedFile,
 } from "./file-state.js";
+import { READ_MAX_BYTES } from "./read.js";
 
 /** 可编辑的最大文件（字节）：更大的用 Bash 处理。 */
 const EDIT_MAX_BYTES = 10 * 1024 * 1024;
@@ -118,7 +119,12 @@ export function sandboxEditTool(deps: SandboxToolDeps): BuiltinTool {
             n: replace_all ? count : 1,
             before: text,
             after: next,
-            file: recordedFile(normalizeSandboxPath(path), nextBytes, nextBytes.byteLength),
+            // over the bytes the next Write / Edit reads back (Read's limit), as Read records it
+            file: recordedFile(
+              normalizeSandboxPath(path),
+              nextBytes.subarray(0, READ_MAX_BYTES),
+              nextBytes.byteLength,
+            ),
           };
         }),
       );

@@ -133,7 +133,7 @@ export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
     async run(input, ctx) {
       // 存储在调用前就核对：不为一个交付不了的文件去 stat / 读沙箱
       if (!deps.storage.available) throw new ToolError(NO_STORAGE);
-      const path = checkPath((input as DeliverInput).file_path);
+      const path = checkPath((input as DeliverInput).file_path, "file_path");
       const given = (input as DeliverInput).name?.trim();
       // 与 artifact_created 的 schema 同一规则，在上传前检查（不合法的名字不会在写事件时才失败）
       if (given !== undefined && (!isValidArtifactName(given) || /[/\\]/.test(given))) {

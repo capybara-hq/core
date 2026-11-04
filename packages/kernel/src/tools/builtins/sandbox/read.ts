@@ -106,7 +106,7 @@ export function sandboxReadTool(deps: SandboxToolDeps): BuiltinTool {
     timeoutMs: () => sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx) {
       const { offset = 1, limit = DEFAULT_LIMIT } = input as ReadInput;
-      const path = checkPath((input as ReadInput).file_path);
+      const path = checkPath((input as ReadInput).file_path, "file_path");
       const { value, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
         const st = await p.stat(h, path, signal);
         if (st === null) throw new ToolError(notFound(path));
