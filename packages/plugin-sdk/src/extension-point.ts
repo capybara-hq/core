@@ -11,16 +11,23 @@ export interface ExtensionPointInfo {
   brokered: boolean;
   /** Enabled per org (consumers may pass `orgId` to check that the org enabled the provider). */
   orgScoped: boolean;
+  /**
+   * How the kernel picks one provider among several: `org-default` means each org chooses its
+   * default provider (absent: no selection, every enabled provider is used).
+   */
+  selection?: "org-default";
 }
 
 const info = (
   cardinality: Cardinality,
   brokered = false,
   orgScoped = false,
+  selection?: "org-default",
 ): ExtensionPointInfo => ({
   cardinality,
   brokered,
   orgScoped,
+  ...(selection ? { selection } : {}),
 });
 
 /** The registered extension points. */
@@ -36,6 +43,8 @@ export const EXTENSION_POINTS: Record<string, ExtensionPointInfo> = {
   counter: info("multi"),
   connector: info("multi", true),
   "file-preview": info("multi", false, true),
+  "web-search": info("multi", true, true, "org-default"),
+  "web-fetch": info("multi", true, true, "org-default"),
 };
 
 /** Cardinality of the registered extension points (derived from EXTENSION_POINTS). */

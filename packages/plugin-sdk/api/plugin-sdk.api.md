@@ -778,6 +778,7 @@ export interface ExtensionPointInfo {
     brokered: boolean;
     cardinality: Cardinality;
     orgScoped: boolean;
+    selection?: "org-default";
 }
 
 // @public
@@ -1074,6 +1075,9 @@ export function isChannelSendError(e: unknown): e is ChannelSendError;
 export function isModelError(e: unknown): e is ModelError;
 
 // @public
+export function isPublicHostname(host: string): boolean;
+
+// @public
 export function isRetryableKind(kind: ModelErrorKind): boolean;
 
 // @public
@@ -1218,7 +1222,7 @@ export const MODEL_PROVIDER_EXTENSION_POINT = "model-provider@1";
 export const MODEL_PROVIDER_EXTENSION_POINT_V2 = "model-provider@2";
 
 // @public
-export type ModelCallPurpose = "step" | "compaction" | "title";
+export type ModelCallPurpose = "step" | "compaction" | "title" | "web_fetch";
 
 // @public
 export class ModelError extends Error {
@@ -2192,6 +2196,64 @@ export function validateUiContributions(ui: unknown, permissions: unknown): stri
 
 // @public
 export function validateUiView(v: unknown): string[];
+
+// @public
+export const WEB_FETCH_EXTENSION_POINT = "web-fetch@1";
+
+// @public
+export const WEB_SEARCH_EXTENSION_POINT = "web-search@1";
+
+// @public
+export interface WebFetchPage {
+    contentType?: string;
+    finalUrl: string;
+    markdown: string;
+    title?: string;
+}
+
+// @public
+export interface WebFetchProvider {
+    configured?(orgConfig: unknown): boolean;
+    fetch(args: {
+        url: string;
+        orgConfig: unknown;
+        signal: AbortSignal;
+    }): Promise<WebFetchPage>;
+}
+
+// @public
+export class WebProviderError extends Error {
+    constructor(message: string, opts: {
+        kind: WebProviderErrorKind;
+    });
+    readonly kind: WebProviderErrorKind;
+}
+
+// @public
+export type WebProviderErrorKind = "not_found" | "blocked" | "auth" | "rate_limited" | "unavailable" | "invalid";
+
+// @public
+export interface WebSearchProvider {
+    configured?(orgConfig: unknown): boolean;
+    search(args: {
+        query: string;
+        allowedDomains?: string[];
+        blockedDomains?: string[];
+        maxResults: number;
+        orgConfig: unknown;
+        signal: AbortSignal;
+    }): Promise<{
+        results: WebSearchResult[];
+    }>;
+}
+
+// @public
+export interface WebSearchResult {
+    publishedAt?: string;
+    snippet?: string;
+    title: string;
+    url: string;
+}
 
 // (No @packageDocumentation comment for this package)
 

@@ -46,9 +46,10 @@ export interface HookScope {
  * What a model call is for: `step` is a run step's call (the agent's turn), `compaction` is the call
  * that summarizes earlier history before a step when the context grows too large, `title` is the call
  * that writes a conversation's title after its first completed run (no run: `runId` is "", `step` 0,
- * `attempt` 1).
+ * `attempt` 1), `web_fetch` is the call that extracts an answer from a fetched web page for the
+ * `WebFetch` tool.
  */
-export type ModelCallPurpose = "step" | "compaction" | "title";
+export type ModelCallPurpose = "step" | "compaction" | "title" | "web_fetch";
 
 /** What a reported model call was for (the same values as {@link ModelCallPurpose}). */
 export type UsagePurpose = ModelCallPurpose;
