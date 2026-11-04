@@ -20,8 +20,11 @@ describe("WorkingLine (spec §6.16.24)", () => {
     const line = container.querySelector('[data-part="working-line"]') as HTMLElement;
     expect(line.classList.contains("cb-tool-line")).toBe(true);
     const svg = container.querySelector('[data-part="working-mark"] svg') as SVGElement;
-    expect(svg.getAttribute("width")).toBe("14");
-    expect(svg.getAttribute("height")).toBe("10");
+    // the 14×10 bitmap at pixel unit 2, as the sidebar's logo
+    expect(svg.getAttribute("width")).toBe("28");
+    expect(svg.getAttribute("height")).toBe("20");
+    expect(svg.getAttribute("viewBox")).toBe("0 0 28 20");
+    expect(svg.querySelector('[data-frame="1"]')?.getAttribute("d")).toMatch(/^M4 16h2v2h-2z/);
     expect(svg.getAttribute("shape-rendering")).toBe("crispEdges");
     // the body and the two leg frames, frame 1 first
     const frames = [...svg.querySelectorAll("[data-frame]")].map((p) =>

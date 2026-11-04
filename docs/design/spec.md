@@ -1266,7 +1266,7 @@ States: `markdown`, `streaming`, `file-chip`
 
 - Collapsed: a tool line "思考了 N 秒" / "Thought for N seconds" (seconds rounded) with a chevron; the whole line is the toggle.
 - Expanded: the thinking text below it in the prose font, `prose` size, `muted`, line breaks kept, `space.3` from a 2px `line` rule on its left.
-- Live: a `spinner`, "正在思考" / "Thinking" and the elapsed seconds in `faint`; the body streams with the cursor and cannot be collapsed until it ends.
+- Live: a `spinner` (16, larger than the tool rows' 12), "正在思考" / "Thinking" and the elapsed seconds in `faint`; the body streams with the cursor and cannot be collapsed until it ends.
 - Replaces §6.9's ThinkingRow.
 
 <!-- states: thinking-row -->
@@ -1285,6 +1285,7 @@ States: `collapsed`, `expanded`, `live`
 | thinking-body | expanded | border-left-width | 2 |
 | thinking-body | expanded | border-left-color | color.line |
 | spinner | live | color | color.accent |
+| spinner | live | width | space.4 |
 | cursor | live | width | space.2 |
 
 #### 6.16.6 User bubble
@@ -1811,8 +1812,8 @@ States: `ok`, `ok-open`, `failed`, `stopped`
   after a tool result while the model has not answered. Exactly one per conversation.
 - **Line**: a tool line (`row.dense`, mono `small` `muted`, gap `space.2`), no timer (the thinking
   row keeps its seconds).
-- **Mark**: the pixel capybara of §3 at pixel unit 1 (14 × 10), `accent`, `crispEdges`, centred in
-  a `space.4` (16) box. It walks: two frames swap the legs (rows 9–10 of the bitmap; frame 2 moves
+- **Mark**: the pixel capybara of §3 at pixel unit 2 (28 × 20, the sidebar logo's size), `accent`,
+  `crispEdges`, in a `control.default` × `space.5` (28 × 20) box; the line stays `row.dense` high. It walks: two frames swap the legs (rows 9–10 of the bitmap; frame 2 moves
   each pair one pixel inward) every 400ms.
 - **Caption**, rotating every 2.4s in place (no slide, no fade): 规划中… / 执行中… / 斟酌中… /
   整理中… (en: Planning… / Working… / Pondering… / Composing…), starting at the first. The
@@ -1834,11 +1835,11 @@ States: `default`, `reduced-motion`
 | working-line | default | font-size | type.small |
 | working-line | default | color | color.muted |
 | working-line | default | column-gap | space.2 |
-| working-mark | default | width | space.4 |
-| working-mark | default | height | space.4 |
+| working-mark | default | width | control.default |
+| working-mark | default | height | space.5 |
 | working-mark | default | color | color.accent |
 | working-line | reduced-motion | height | row.dense |
-| working-mark | reduced-motion | width | space.4 |
+| working-mark | reduced-motion | width | control.default |
 | working-mark | reduced-motion | color | color.accent |
 
 ---

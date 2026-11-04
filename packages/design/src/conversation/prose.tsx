@@ -8,8 +8,11 @@ export function Cursor(): JSX.Element {
   return <span className="cb-cursor" data-part="cursor" aria-hidden="true" />;
 }
 
-/** The running spinner of the stream (12, `accent`, one turn per `motion.spin`). */
-export function Spinner({ label }: { label?: string }): JSX.Element {
+/**
+ * The running spinner of the stream (12, `accent`, one turn per `motion.spin`); the thinking
+ * row's live spinner is 16 (§6.16.5).
+ */
+export function Spinner({ label, size = 12 }: { label?: string; size?: 12 | 16 }): JSX.Element {
   const t = useDesignT();
   return (
     <span
@@ -18,7 +21,7 @@ export function Spinner({ label }: { label?: string }): JSX.Element {
       role="img"
       aria-label={label ?? t("conv.running")}
     >
-      <Icon name="spinner" size={12} />
+      <Icon name="spinner" size={size} />
     </span>
   );
 }

@@ -24,7 +24,7 @@ export function ThinkingRow({ seconds, text, live, defaultOpen }: ThinkingRowPro
     return (
       <div className="cb-thinking-row">
         <div className="cb-tool-line" data-part="tool-line">
-          <Spinner />
+          <Spinner size={16} />
           <span className="cb-tool-label">
             {t("conv.thinking")}
             {n === null ? null : (

@@ -15,10 +15,12 @@ const CAPTIONS: readonly DesignKey[] = [
 const LEGS_2: readonly string[] = ["...XX.X.XX....", "...XX.X.XX...."];
 
 const BODY_ROWS = 8;
+/** The pixel unit: 2, the 14×10 bitmap at 28×20 (the sidebar logo's size). */
+const UNIT = 2;
 
-const BODY = bitmapCells(CAPYBARA_BITMAP.slice(0, BODY_ROWS), 1);
-const FRAME_1 = bitmapCells(CAPYBARA_BITMAP.slice(BODY_ROWS), 1, BODY_ROWS);
-const FRAME_2 = bitmapCells(LEGS_2, 1, BODY_ROWS);
+const BODY = bitmapCells(CAPYBARA_BITMAP.slice(0, BODY_ROWS), UNIT);
+const FRAME_1 = bitmapCells(CAPYBARA_BITMAP.slice(BODY_ROWS), UNIT, BODY_ROWS);
+const FRAME_2 = bitmapCells(LEGS_2, UNIT, BODY_ROWS);
 
 export type WorkingLineProps = {
   /** Draws the reduced-motion form whatever the system says (the reference set's state). */
@@ -63,9 +65,9 @@ function WorkingLineBody({ still }: { still: boolean }): JSX.Element {
     >
       <span className="cb-working-mark" data-part="working-mark" aria-hidden="true">
         <svg
-          width={14}
-          height={10}
-          viewBox="0 0 14 10"
+          width={14 * UNIT}
+          height={10 * UNIT}
+          viewBox={`0 0 ${14 * UNIT} ${10 * UNIT}`}
           shapeRendering="crispEdges"
           aria-hidden="true"
           focusable="false"

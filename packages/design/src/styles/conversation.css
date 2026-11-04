@@ -442,7 +442,7 @@ button.cb-tool-line:focus-visible {
 
 /* ── Working line (§6.16.24) ── */
 
-/* The mark: the §3 bitmap at pixel unit 1 (14 × 10) in a 16 px box; frame 1's legs show, frame
+/* The mark: the §3 bitmap at pixel unit 2 (28 × 20, the sidebar logo's size), in the row.dense line; frame 1's legs show, frame
    2's are hidden. The captions share one grid cell (the line keeps the widest one's width); only
    the first shows. Reduced motion and the still form keep exactly that. */
 .cb-working-mark {
@@ -450,8 +450,8 @@ button.cb-tool-line:focus-visible {
   flex: none;
   align-items: center;
   justify-content: center;
-  width: var(--cb-space-4);
-  height: var(--cb-space-4);
+  width: var(--cb-control-default);
+  height: var(--cb-space-5);
   color: var(--cb-accent);
   fill: currentColor;
 }

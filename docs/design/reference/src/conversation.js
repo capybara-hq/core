@@ -222,7 +222,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   function thinking(o) {
     const PR = F.PROSE_FIXTURE;
     if (o.state === "live")
-      return `<div class="r-tline">${spin()}<span class="r-tlabel">正在思考<span class="r-faint"> · 4 秒</span></span></div><div class="r-think">${esc(PR.thinking.slice(0, 22))}<span class="r-cursor" aria-hidden="true"></span></div>`;
+      return `<div class="r-tline">${spin(16)}<span class="r-tlabel">正在思考<span class="r-faint"> · 4 秒</span></span></div><div class="r-think">${esc(PR.thinking.slice(0, 22))}<span class="r-cursor" aria-hidden="true"></span></div>`;
     const open = o.state === "expanded";
     const head = `<div class="r-tline" role="button" aria-expanded="${open}"><span class="r-tlabel">思考了 ${PR.thinkingSeconds} 秒</span>${chev(open)}</div>`;
     return open ? `${head}<div class="r-think">${esc(PR.thinking)}</div>` : head;

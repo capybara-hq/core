@@ -1480,14 +1480,14 @@ textarea {
   clip-path: inset(50%);
   white-space: nowrap;
 }
-/* The working line's mark (§6.16.24): the §3 bitmap at unit 1 in a 16 box, accent. */
+/* The working line's mark (§6.16.24): the §3 bitmap at unit 2 in a 28 × 20 box, accent. */
 .r-working-mark {
   display: inline-flex;
   flex: none;
   align-items: center;
   justify-content: center;
-  width: var(--cb-space-4);
-  height: var(--cb-space-4);
+  width: var(--cb-control-default);
+  height: var(--cb-space-5);
   color: var(--cb-accent);
   fill: currentColor;
 }
