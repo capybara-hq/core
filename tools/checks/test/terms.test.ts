@@ -79,9 +79,10 @@ describe("checkTerms", () => {
     ]);
     expect(hits[0]?.message).toContain('"sandbox_bash"');
     expect(hits[0]?.message).toContain("Bash");
-    // the frozen map, the legacy text rewriter, recordings, historical specs and synced skills
+    // the frozen map, the legacy text rewriter, recordings, historical specs, synced skills,
+    // and release history (changelogs, changesets archived by `changeset version`)
     const exempt = checkTerms(root).filter((x) =>
-      /legacy-keys|legacy-text|fixtures\/pre-tool-rename|superpowers|skills\/onboarding/.test(
+      /legacy-keys|legacy-text|fixtures\/pre-tool-rename|superpowers|skills\/onboarding|CHANGELOG\.md|\.changeset\/pre\//.test(
         x.file,
       ),
     );
