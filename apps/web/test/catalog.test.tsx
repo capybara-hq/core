@@ -130,7 +130,11 @@ describe("/dev/ui/reference (the reference-set blocks, spec §9.2)", () => {
     expect(container.textContent?.length ?? 0).toBeGreaterThan(0);
   });
 
-  it("renders a block for every listed state of every accepted component", () => {
+  // The two whole-catalog tests render every reference block in turn (seconds alone, more under a
+  // loaded run), so they get a budget sized to that work instead of the 5 s default.
+  it("renders a block for every listed state of every accepted component", {
+    timeout: 30_000,
+  }, () => {
     const lists = parseStateLists(spec);
     for (const c of ACCEPTED) {
       const { container } = renderRoute(`reference/${c}`);
@@ -147,7 +151,9 @@ describe("/dev/ui/reference (the reference-set blocks, spec §9.2)", () => {
   // pseudo-state is marked `data-ref-forced` by Playwright (reference-page.ts), so here the part
   // itself is looked up; image parts render only once their image has loaded, which jsdom never
   // does, so they are left to Playwright.
-  it("renders the block and part of every size-table row of every accepted component", () => {
+  it("renders the block and part of every size-table row of every accepted component", {
+    timeout: 30_000,
+  }, () => {
     const tables = parseSizeTables(spec);
     const afterImageLoad = new Set(["image-frame", "preview-image", "icon-button"]);
     const missing: string[] = [];

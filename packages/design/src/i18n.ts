@@ -457,7 +457,7 @@ const en: Record<DesignKey, string> = {
   "sidebar.filterState": "Conversation state",
   "sidebar.stateAll": "All",
   "sidebar.stateRunning": "Running",
-  "sidebar.stateWaiting": "Waiting for me",
+  "sidebar.stateWaiting": "Needs me",
   "sidebar.noMatch": "No matching conversations",
   "sidebar.archived": "Archived · {n}",
   "sidebar.archivedBack": "Back to conversations: Archived · {n}",

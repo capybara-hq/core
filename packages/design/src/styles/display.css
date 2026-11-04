@@ -99,6 +99,11 @@
   height: var(--cb-control-prominent);
 }
 .cb-seg {
+  /* One line: a label that does not fit is cut with an ellipsis, never wrapped (fill mode). */
+  overflow: hidden;
+  min-width: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   padding: 0 var(--cb-space-2);
   border: 0;
   border-radius: var(--cb-radius-sm);
