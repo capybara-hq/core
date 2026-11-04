@@ -193,6 +193,10 @@ span.cb-title-btn {
 .cb-cmenu[data-size="wide"] {
   min-width: 260px;
 }
+/* A menu of free-text labels (the quick actions' 更多): long labels end in an ellipsis. */
+.cb-cmenu[data-bounded="true"] {
+  max-width: min(320px, calc(100vw - 16px));
+}
 .cb-cmenu-item {
   display: flex;
   align-items: center;

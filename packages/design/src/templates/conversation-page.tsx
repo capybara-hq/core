@@ -269,7 +269,11 @@ export function ConversationPage({
         <div
           className="cb-conv-new"
           data-part="new-conversation-body"
-          data-start={newConversation.greeting ? "true" : undefined}
+          data-start={
+            newConversation.greeting || newConversation.agents || newConversation.quickActions
+              ? "true"
+              : undefined
+          }
         >
           {newConversation.greeting ?? (
             <>

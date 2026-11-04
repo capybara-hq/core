@@ -430,7 +430,7 @@ States: `page`, `loading`
   - The **middle column** holds, top to bottom: the title bar (§6.16.1), the thread (centered, at most `layout.chat` wide, gutters `layout.gutter`, padding `space.4` on top, items `space.3` apart, following the bottom while the reader is at the bottom; it reserves a classic scrollbar's gutter on both sides, `scrollbar-gutter: stable both-edges`, so it keeps the composer's center line whether or not it scrolls), the composer (§6.16.2, at most `layout.chat` plus the gutters wide, centered, `space.3` from the status bar) and the status bar (§4.4). It is never narrower than `layout.chat-min`, except **below 640**, where it fills the window and the title bar, the thread and the composer use `space.4` (16) gutters, so the composer, its send button and the user bubbles never run past the right edge.
   - The **right area** holds one thing at a time: either the **properties panel** (§6.16.17), which sits *inside* the middle column under its title bar so the title bar spans thread and properties, or **one right panel** (§6.16.18), full height beside the middle column, whose title bar then narrows with it. Opening one closes the other; "none" is the default.
 - **Narrow windows**: below 1280 (where the sidebar becomes the rail, §4.3) the right area is a right-side Sheet over the page (`layout.panel` wide, `shadow-sheet`, a `scrim` behind it), closed by Esc, its close button or a click on the scrim; the server render and hydration cannot know the window, so below 1280 a CSS media query hides the inline right area until the first client render makes it the Sheet (the page never scrolls sideways, no flash). At 1280 and above it sits beside the thread; with the full sidebar at exactly 1280 the panel narrows to 544 so the thread keeps `layout.chat-min` (maintainer ruling 2026-10-27).
-- **New conversation**: nothing is created until the first send. The title bar shows "新会话" / "New conversation"; the thread is replaced by a centered column (`layout.chat` wide) holding, top to bottom and `space.4` apart (agent profile design §4, U1): the greeting (§6.16.25), the agents row (§6.16.26; hidden with one usable agent), the selected agent's quick actions (§6.16.27; hidden when it has none) and the composer, whose control row then has no agent picker (the row chooses the agent; the model and effort pickers stay). `ConversationPage.newConversation` takes them as `greeting`, `agents` and `quickActions`; without a `greeting` the column falls back to the agent's name (`h2`) and description (`prose-small` `muted`), `space.2` apart, over the composer. The status bar shows only the context and the version.
+- **New conversation**: nothing is created until the first send. The title bar shows "新会话" / "New conversation"; the thread is replaced by a centered column (`layout.chat` wide) holding, top to bottom and `space.4` apart (agent profile design §4, U1): the greeting (§6.16.25), the agents row (§6.16.26; hidden with one usable agent), the selected agent's quick actions (§6.16.27; hidden when it has none) and the composer, whose control row then has no agent picker (the row chooses the agent; the model and effort pickers stay). `ConversationPage.newConversation` takes them as `greeting`, `agents` and `quickActions`; without a `greeting` the agent's name (`h2`) and description (`prose-small` `muted`) stand in its place. With any of the three the column's parts are `space.4` apart; with none it is the name and description over the composer, `space.2` apart. The status bar shows only the context and the version.
 - **Status bar** (read-only, §4.4): left `user@org:/chat/<id>` and "第 N 轮 · 已用 <elapsed>" / "Turn N · <elapsed>"; right the run status ("空闲" / "Idle", "运行中" / "Running", "等待批准" / "Waiting for approval"), "上下文 N%" / "Context N%" and the version.
 - **Runs** (design note, unslop fixes 2026-11-03): every run that ended closes with a **run row** (§6.16.23), a quiet mono line `运行 · <model> · <duration> · <tokens>` with its status mark, built from the log alone (`run_started`, `model_call`, `usage`, `run_finished` / `run_failed` / `run_aborted`). A finished run's row is collapsed and uncoloured except its `ok` check; a failed run's row is open at first and red only in its mark, its status word and the failure sentence; its detail holding the failure (ErrorDetail: the sentence in the reader's language, the raw kernel text behind 原始错误), 重试 (the last failure only, while nothing runs), 查看轨迹 (`/trajectories/<conversationId>`, only for those the kernel lets read it: org admins and owners, or the agent's owner) and, for an enterprise admin when the model service is misconfigured (`model.auth`, `model.unconfigured`, `run.model_unavailable`), 去配置模型服务 (`/admin/extensions`). A stopped run's row names who stopped it. The run row replaces the stopped, failed and hook-denied dividers (no run is drawn twice); a running run shows nothing new (the live indicators stay). The properties panel's Context section adds the last run's line (model, duration, tokens; cost only when the log carries one, which it does not today).
 - Extension slots, files and sub-agents: §6.16.16–§6.16.18, §6.16.15.
@@ -1909,17 +1909,26 @@ page's order (most recent use, then name).
   `line-strong` border, radius `md`, `shadow-1`) anchored under the row, as wide as the row (at most
   `layout.chat`), padding `space.2`. Top to bottom: a search field (`Input`, placeholder
   "搜索名称或描述" / "Search name or description"), then the groups "最近用过" / "Recently used" (the
-  `recent` ids in order; none when empty) and "全部 N 个" / "All N" (every agent), each under a
-  label (`micro` `muted`). A row is `space.8` high, padding 0 `space.2`, radius `sm`: an `Avatar`
-  28, the name (600, `ink`, at most 40% of the row) and the description on the same line (`small`
-  `muted`, one line with an ellipsis). The selected agent's row has the `selected` ground; the
-  active row (keyboard or pointer) the `hover` ground. The list scrolls past 320.
+  `recent` ids in order; none when empty) and "全部 N 个" / "All N" (every agent), `space.2` apart.
+  Each group is a **two-column grid** (equal columns, gaps `space.1` between rows and `space.2`
+  between columns) under its label (`micro` `muted`, spanning both columns), filled row by row.
+  An option is `space.8` high, padding 0 `space.2`, radius `sm`: an `Avatar` 28, the name (600,
+  `ink`, at most 40% of the option) and the description on the same line (`small` `muted`, one
+  line with an ellipsis). The selected agent's option has the `selected` ground; the active one
+  (keyboard or pointer) the `hover` ground. The list scrolls past 320, or past the height left
+  below the row (Radix's available height minus the search, the gap and the panel's padding).
 - **Search** matches name and description, case-insensitively; N counts the matching agents. No
   match: no list, one quiet line "没有匹配的 agent" / "No matching agents" (`small` `muted`).
 - **Keyboard**: focus goes to the search when the panel opens and stays there (a combobox with
-  `aria-activedescendant` over a listbox of grouped options); ↑ / ↓ move the active row (wrapping),
-  Enter selects it, Escape closes and gives focus back to "更多 +N". Selecting (Enter or a click)
-  closes the panel.
+  `aria-activedescendant` over a listbox of grouped options; the first option is active). The
+  arrows move in two dimensions (`gridStep`): ← / → within the row, stopping at its ends; ↑ / ↓ one
+  row (two options), keeping the column, and on a row with no option below that column ↓ goes to
+  the group's last option. From a group's last row ↓ goes to the next group's first row, from its
+  first row ↑ to the previous group's last row, in the same column or the nearest one that exists
+  there; at the panel's first and last rows the active option stays. While nothing is listed ← / →
+  move the text caret. Enter selects the active option, Escape closes and gives focus back to
+  "更多 +N"; selecting (Enter or a click) closes the panel. While an IME composes (pinyin),
+  Enter and the arrows belong to it: the panel ignores them.
 
 <!-- states: agent-row -->
 States: `default`, `panel`, `no-match`
@@ -1941,6 +1950,9 @@ States: `default`, `panel`, `no-match`
 | agent-panel-pop | panel | border-top-color | color.line-strong |
 | agent-panel-pop | panel | border-radius | radius.md |
 | agent-panel-pop | panel | padding-top | space.2 |
+| agent-list | panel | row-gap | space.2 |
+| agent-group | panel | column-gap | space.2 |
+| agent-group | panel | row-gap | space.1 |
 | agent-group-label | panel | font-size | type.micro |
 | agent-group-label | panel | color | color.muted |
 | agent-option | panel | height | space.8 |
@@ -1961,7 +1973,8 @@ States: `default`, `panel`, `no-match`
   a title is one line with an ellipsis (the whole title is its tooltip), and titles shrink before
   the line overflows.
 - **Count**: the first `max` show, then a quiet "更多" / "More" link of the same look opens the rest
-  in a small menu (§6.16.3's menu, 160 at least, one item per title). No items: nothing.
+  in a small menu (§6.16.3's menu, 160 at least and at most `min(320px, 100vw − 16px)`, one item
+  per title, a long title cut with an ellipsis). No items: nothing.
 - **Pick**: `onPick(id)`; the page puts the body into the composer and focuses it.
 
 <!-- states: quick-actions -->

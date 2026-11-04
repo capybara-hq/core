@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AgentPanel,
@@ -10,6 +11,7 @@ import {
   ConversationPage,
   DesignProvider,
   Greeting,
+  gridStep,
   QuickActions,
 } from "../src/index";
 
@@ -102,6 +104,57 @@ describe("Greeting (spec §6.16.25)", () => {
     window.matchMedia = originalMatchMedia;
     const still = wrap(<Greeting text={text} still />);
     expect(still.container.querySelector('[data-part="greeting-typed"]')?.textContent).toBe(text);
+  });
+
+  it("types once under StrictMode, one character per 40 ms", () => {
+    vi.useFakeTimers();
+    const { container } = render(
+      <StrictMode>
+        <DesignProvider locale="zh">
+          <Greeting text="晚上好" />
+        </DesignProvider>
+      </StrictMode>,
+    );
+    const typed = () => container.querySelector('[data-part="greeting-typed"]')?.textContent;
+    expect(typed()).toBe("");
+    act(() => {
+      vi.advanceTimersByTime(40);
+    });
+    // one timer only: the effect run twice by StrictMode left no second interval behind
+    expect(typed()).toBe("晚");
+    act(() => {
+      vi.advanceTimersByTime(80);
+    });
+    expect(typed()).toBe("晚上好");
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    expect(typed()).toBe("晚上好");
+  });
+
+  it("a new line mid-typing starts again from 0 with no stale timer", () => {
+    vi.useFakeTimers();
+    const { container, rerender } = wrap(<Greeting text="早上好，Grant" />);
+    const typed = () => container.querySelector('[data-part="greeting-typed"]')?.textContent;
+    act(() => {
+      vi.advanceTimersByTime(80);
+    });
+    expect(typed()).toBe("早上");
+    rerender(
+      <DesignProvider locale="zh">
+        <Greeting text="下午好" />
+      </DesignProvider>,
+    );
+    expect(typed()).toBe("");
+    act(() => {
+      vi.advanceTimersByTime(40);
+    });
+    expect(typed()).toBe("下");
+    act(() => {
+      vi.advanceTimersByTime(40 * 10);
+    });
+    expect(typed()).toBe("下午好");
+    expect(container.querySelector('[data-part="greeting-caret"]')).toBeNull();
   });
 
   it("without a line yet draws a same-height placeholder with no text, and the default sub line", () => {
@@ -227,18 +280,44 @@ describe("AgentRow and AgentPanel (spec §6.16.26)", () => {
       document
         .getElementById(search.getAttribute("aria-activedescendant") ?? "")
         ?.querySelector('[data-part="agent-option-name"]')?.textContent;
+    // 最近用过: [客服]; 全部 8 个, two columns: 研究助手 数据分析 / Writer 客服 / 法务 Ops / 翻译 Recruiter
     expect(active()).toBe("客服");
+    // ↓ from the recent group's last row: the all group's first row, same column
     await user.keyboard("{ArrowDown}");
     expect(active()).toBe("研究助手");
-    await user.keyboard("{ArrowDown}{ArrowDown}");
+    // → and ← move within the row and stop at its ends
+    await user.keyboard("{ArrowRight}");
+    expect(active()).toBe("数据分析");
+    await user.keyboard("{ArrowRight}");
+    expect(active()).toBe("数据分析");
+    // ↓ moves one row (two options), keeping the column
+    await user.keyboard("{ArrowDown}");
+    expect(active()).toBe("客服");
+    await user.keyboard("{ArrowLeft}{ArrowLeft}");
     expect(active()).toBe("Writer");
     await user.keyboard("{ArrowUp}");
-    expect(active()).toBe("数据分析");
+    expect(active()).toBe("研究助手");
+    // ↑ from the first row of 全部 in column 2: the recent group's last row, nearest column
+    await user.keyboard("{ArrowRight}{ArrowUp}");
+    expect(active()).toBe("客服");
+    expect(
+      document
+        .getElementById(search.getAttribute("aria-activedescendant") ?? "")
+        ?.closest('[role="group"]')
+        ?.querySelector('[data-part="agent-group-label"]')?.textContent,
+    ).toBe("最近用过");
+    // ↑ at the top stays; ↓ to the last row, where ↓ stays
+    await user.keyboard("{ArrowUp}");
+    expect(active()).toBe("客服");
+    await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowRight}");
+    expect(active()).toBe("Recruiter");
+    await user.keyboard("{ArrowDown}");
+    expect(active()).toBe("Recruiter");
     // the active row is the listbox's selected option
     const option = document.getElementById(search.getAttribute("aria-activedescendant") ?? "");
     expect(option?.getAttribute("aria-selected")).toBe("true");
     await user.keyboard("{Enter}");
-    expect(onSelect).toHaveBeenLastCalledWith("a2");
+    expect(onSelect).toHaveBeenLastCalledWith("a8");
     expect(screen.queryByRole("combobox")).toBeNull();
 
     // Escape closes and gives focus back to 更多
@@ -248,6 +327,49 @@ describe("AgentRow and AgentPanel (spec §6.16.26)", () => {
     expect(screen.queryByRole("combobox")).toBeNull();
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "更多 +3" }));
     expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it("panel grid: ↓ with no option below the column goes to the group's last option", () => {
+    // a group of three: [0 1] / [2]; from 1 ↓ is 2, from 2 ↓ is the next group's column 1
+    expect(gridStep([3, 8], [0, 1], "ArrowDown")).toEqual([0, 2]);
+    expect(gridStep([3, 8], [0, 2], "ArrowDown")).toEqual([1, 0]);
+    // ↑ into a group whose last row is short: the nearest column that exists
+    expect(gridStep([3, 8], [1, 1], "ArrowUp")).toEqual([0, 2]);
+    expect(gridStep([4, 8], [1, 1], "ArrowUp")).toEqual([0, 3]);
+    // → on the short last row has nowhere to go
+    expect(gridStep([3], [0, 2], "ArrowRight")).toEqual([0, 2]);
+    // the groups are two-column grids, their labels across both columns
+    const at = css.indexOf(".cb-agent-group {");
+    expect(css.slice(at, css.indexOf("}", at))).toContain("repeat(2, minmax(0, 1fr))");
+    const label = css.indexOf(".cb-agent-group-label {");
+    expect(css.slice(label, css.indexOf("}", label))).toContain("grid-column: 1 / -1");
+  });
+
+  it("the search leaves Enter and the arrows to an IME while it composes", () => {
+    const onSelect = vi.fn();
+    wrap(<AgentPanel agents={AGENTS} recent={[]} onSelect={onSelect} onClose={() => {}} />);
+    const search = screen.getByRole("combobox");
+    const activeId = () => search.getAttribute("aria-activedescendant");
+    const first = activeId();
+    fireEvent.keyDown(search, { key: "ArrowDown", isComposing: true });
+    expect(activeId()).toBe(first);
+    fireEvent.keyDown(search, { key: "Enter", isComposing: true });
+    expect(onSelect).not.toHaveBeenCalled();
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(onSelect).toHaveBeenCalledWith("a1");
+  });
+
+  it("the list fits the room below the row and the overflow menu has a bounded width", () => {
+    const at = css.indexOf(".cb-agent-list {");
+    expect(css.slice(at, css.indexOf("overflow-y", at))).toContain(
+      "--radix-popover-content-available-height",
+    );
+    const page = readFileSync(
+      resolve(import.meta.dirname, "../src/styles/conversation-page.css"),
+      "utf8",
+    );
+    const m = page.indexOf('.cb-cmenu[data-bounded="true"] {');
+    expect(page.slice(m, page.indexOf("}", m))).toContain("min(320px, calc(100vw - 16px))");
   });
 
   it("the panel alone calls onClose on Escape and speaks English", async () => {
@@ -384,6 +506,24 @@ describe("ConversationPage new-conversation slots", () => {
     // the greeting replaces the agent's name and description
     expect(body.querySelector(".cb-conv-new-name")).toBeNull();
     expect(within(body).queryByRole("heading")).toBeNull();
+  });
+
+  it("lays out the start column whenever a greeting, the agents row or quick actions are given", () => {
+    const { container } = wrap(
+      <ConversationPage
+        {...base}
+        newConversation={{ agentName: "研究助手", agents: <div data-testid="agents">a</div> }}
+      />,
+    );
+    const body = container.querySelector('[data-part="new-conversation-body"]') as HTMLElement;
+    expect(body.getAttribute("data-start")).toBe("true");
+    cleanup();
+    const plain = wrap(<ConversationPage {...base} newConversation={{ agentName: "研究助手" }} />);
+    expect(
+      plain.container
+        .querySelector('[data-part="new-conversation-body"]')
+        ?.getAttribute("data-start"),
+    ).toBeNull();
   });
 
   it("keeps the name and description form without a greeting", () => {

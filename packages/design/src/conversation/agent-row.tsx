@@ -174,11 +174,48 @@ const matches = (a: AgentRowItem, q: string) =>
   a.name.toLocaleLowerCase().includes(q) ||
   (a.description ?? "").toLocaleLowerCase().includes(q);
 
+/** Columns of each group's grid in the agent panel. */
+export const AGENT_PANEL_COLUMNS = 2;
+
+/**
+ * The next active option of the agent panel's grids (§6.16.26) after an arrow key. `sizes` are the
+ * groups' option counts in order; `at` is `[group, index]`. ← / → move within the row (no wrap);
+ * ↑ / ↓ move one row (two options). From a group's last row ↓ goes to the next group's first row,
+ * from its first row ↑ to the previous group's last row, in the same column or the nearest one
+ * that exists there; on a row with no option below the current column ↓ goes to the group's last
+ * option. At the edges the active option stays.
+ */
+export function gridStep(
+  sizes: readonly number[],
+  at: readonly [number, number],
+  key: "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown",
+): [number, number] {
+  const C = AGENT_PANEL_COLUMNS;
+  const [g, i] = at;
+  const len = sizes[g] ?? 0;
+  const col = i % C;
+  const row = Math.floor(i / C);
+  const lastRow = Math.floor((len - 1) / C);
+  if (key === "ArrowLeft") return col > 0 ? [g, i - 1] : [g, i];
+  if (key === "ArrowRight") return col < C - 1 && i + 1 < len ? [g, i + 1] : [g, i];
+  if (key === "ArrowDown") {
+    if (row < lastRow) return [g, Math.min(i + C, len - 1)];
+    const next = sizes[g + 1];
+    return next ? [g + 1, Math.min(col, next - 1)] : [g, i];
+  }
+  if (row > 0) return [g, i - C];
+  const prev = sizes[g - 1];
+  if (!prev) return [g, i];
+  const start = Math.floor((prev - 1) / C) * C;
+  return [g - 1, Math.min(start + col, prev - 1)];
+}
+
 /**
  * The agent panel (§6.16.26): a search over name and description (case-insensitive), then the
  * 「最近用过」 and 「全部 N 个」 groups of rows (an `Avatar` 28, the name and the description on
- * one line). A combobox over a listbox: focus stays in the search, ↑ / ↓ move the active row,
- * Enter selects it, Escape closes. No match: a quiet line.
+ * one line), each group a two-column grid. A combobox over a listbox: focus stays in the search,
+ * the arrows move the active row in two dimensions ({@link gridStep}), Enter selects it, Escape
+ * closes. No match: a quiet line.
  */
 export function AgentPanel({
   agents,
@@ -215,11 +252,28 @@ export function AgentPanel({
   }, [activeId]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      e.preventDefault();
+    // An IME is composing (pinyin): its Enter and arrows belong to the IME, not the list.
+    if (e.nativeEvent.isComposing) return;
+    if (
+      e.key === "ArrowDown" ||
+      e.key === "ArrowUp" ||
+      e.key === "ArrowLeft" ||
+      e.key === "ArrowRight"
+    ) {
+      // ← / → keep moving the text caret while nothing is listed
       if (flat.length === 0) return;
-      const step = e.key === "ArrowDown" ? 1 : -1;
-      setActive((current + step + flat.length) % flat.length);
+      e.preventDefault();
+      const sizes = groups.map((g) => g.items.length);
+      let g = 0;
+      let i = Math.max(0, current);
+      while (g < sizes.length - 1 && i >= (sizes[g] ?? 0)) {
+        i -= sizes[g] ?? 0;
+        g += 1;
+      }
+      const [ng, ni] = gridStep(sizes, [g, i], e.key);
+      let next = ni;
+      for (let k = 0; k < ng; k++) next += sizes[k] ?? 0;
+      setActive(next);
     } else if (e.key === "Enter") {
       e.preventDefault();
       const hit = flat[current];
@@ -261,7 +315,13 @@ export function AgentPanel({
             const labelId = `${base}-${g.key}-label`;
             return (
               // biome-ignore lint/a11y/useSemanticElements: a listbox's option group (no fieldset there)
-              <div key={g.key} role="group" aria-labelledby={labelId} className="cb-agent-group">
+              <div
+                key={g.key}
+                role="group"
+                aria-labelledby={labelId}
+                className="cb-agent-group"
+                data-part="agent-group"
+              >
                 <div id={labelId} className="cb-agent-group-label" data-part="agent-group-label">
                   {g.label}
                 </div>

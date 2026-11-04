@@ -1627,14 +1627,32 @@ button.cb-file-card:focus-visible {
   flex-direction: column;
   gap: var(--cb-space-2);
 }
+/* The list scrolls past 320, or past the room Radix leaves below the row (the available height
+   minus the search, the gap and the panel's padding and border). */
 .cb-agent-list {
   display: flex;
   flex-direction: column;
   gap: var(--cb-space-2);
-  max-height: 320px;
+  max-height: min(
+    320px,
+    calc(
+      var(--radix-popover-content-available-height, 100vh) -
+      var(--cb-control-default) -
+      3 *
+      var(--cb-space-2) -
+      2px
+    )
+  );
   overflow-y: auto;
 }
+/* Each group is a two-column grid (§6.16.26); its label spans both columns. */
+.cb-agent-group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--cb-space-1) var(--cb-space-2);
+}
 .cb-agent-group-label {
+  grid-column: 1 / -1;
   padding: var(--cb-space-1) var(--cb-space-2) 0;
   color: var(--cb-muted);
   font-size: var(--cb-type-micro-size);
@@ -1644,6 +1662,7 @@ button.cb-file-card:focus-visible {
   display: flex;
   align-items: center;
   gap: var(--cb-space-2);
+  min-width: 0;
   height: var(--cb-space-8);
   padding: 0 var(--cb-space-2);
   border-radius: var(--cb-radius-sm);

@@ -62,6 +62,7 @@ export function QuickActions({
           inline={referenceOpen === true}
           label={label ?? t("quick.label")}
           size="narrow"
+          bounded
           trigger={
             <button type="button" className="cb-quick-action" data-part="quick-more">
               {moreLabel ?? t("quick.more")}

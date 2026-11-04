@@ -1587,7 +1587,14 @@ textarea {
   flex-direction: column;
   gap: var(--cb-space-2);
 }
+/* Each group: a two-column grid under its label (§6.16.26). */
+.r-agent-group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--cb-space-1) var(--cb-space-2);
+}
 .r-agent-group-label {
+  grid-column: 1 / -1;
   padding: var(--cb-space-1) var(--cb-space-2) 0;
   color: var(--cb-muted);
   font-size: var(--cb-type-micro-size);
@@ -1597,6 +1604,7 @@ textarea {
   display: flex;
   align-items: center;
   gap: var(--cb-space-2);
+  min-width: 0;
   height: var(--cb-space-8);
   padding: 0 var(--cb-space-2);
   border-radius: var(--cb-radius-sm);
@@ -1667,6 +1675,7 @@ textarea {
   top: calc(100% + var(--cb-space-1));
   left: 0;
   min-width: 160px;
+  max-width: min(320px, calc(100vw - 16px));
 }
 /* Avatar (§6.30): a preset on its ground or the initial square; the picker's 48 px tiles. */
 .r-avatar-row {

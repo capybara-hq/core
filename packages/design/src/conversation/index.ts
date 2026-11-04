@@ -1,9 +1,11 @@
 export {
+  AGENT_PANEL_COLUMNS,
   AgentPanel,
   type AgentPanelProps,
   AgentRow,
   type AgentRowItem,
   type AgentRowProps,
+  gridStep,
 } from "./agent-row";
 export {
   type BubbleAttachment,
