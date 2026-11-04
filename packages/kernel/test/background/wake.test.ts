@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ModelRequest } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
@@ -9,8 +12,10 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { BackgroundTaskFinisher } from "../../src/background/finish.js";
 import { newTaskId, taskOutputPath } from "../../src/background/launch.js";
 import { renderBackgroundFinished } from "../../src/background/render.js";
+import { BackgroundTaskStopper } from "../../src/background/stop.js";
 import { BackgroundTaskStore } from "../../src/background/store.js";
 import { bgWakeJobId, WAKE_WINDOW_MS } from "../../src/background/wake-rules.js";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -54,6 +59,9 @@ const MODEL_SCRIPT = fileURLToPath(
 );
 const TOOLS_COUNT = fileURLToPath(
   new URL("../fixtures/plugins/tools-count/index.ts", import.meta.url),
+);
+const SANDBOX_FAKE = fileURLToPath(
+  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
 );
 const COUNT = "plugin__tools-count__count";
 const ASK = "plugin__tools-count__ask";
@@ -107,19 +115,21 @@ let agentId: string;
 let store: BackgroundTaskStore;
 let finisher: BackgroundTaskFinisher;
 let runs: RunQueue;
+let root: string;
 
 beforeAll(async () => {
   capture.install();
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   raw = createDb(pgc.url, 3);
   db = legacyDbFor(raw);
+  root = await mkdtemp(join(tmpdir(), "cap-bg-wake-"));
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        extensions: [MODEL_FAKE, MODEL_SCRIPT, TOOLS_COUNT],
-        extensionConfig: { "model-script": { rules: RULES } },
+        extensions: [MODEL_FAKE, MODEL_SCRIPT, TOOLS_COUNT, SANDBOX_FAKE],
+        extensionConfig: { "model-script": { rules: RULES }, "sandbox-fake": { root } },
         sandbox: { background: { pollSeconds: 3600 } },
       },
     ),
@@ -165,6 +175,7 @@ afterAll(async () => {
   await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
+  if (root) await rm(root, { recursive: true, force: true });
 });
 
 afterEach(() => {
@@ -172,6 +183,36 @@ afterEach(() => {
 });
 
 type Finished = Extract<ConversationEvent, { type: "background_task_finished" }>;
+
+/** A running task row of `conversationId` (no process: the poll runs hourly here). */
+async function runningTask(conversationId: string, account = ownerId) {
+  const id = newTaskId();
+  const startedAt = new Date(Date.now() - 5_000);
+  await store.insert({
+    id,
+    orgId,
+    conversationId,
+    sandboxConversationId: conversationId,
+    runId: "run-x",
+    callId: "call-x",
+    triggerAccountId: account,
+    description: `Task ${id}`,
+    command: "true",
+    sid: "4242",
+    outputPath: taskOutputPath(id),
+    startedAt,
+    deadlineAt: new Date(startedAt.getTime() + 3_600_000),
+    sandboxCreatedAt: new Date(),
+  });
+  const task = await store.get(id);
+  if (!task) throw new Error("task row missing");
+  return task;
+}
+
+const finishedEvent = async (conversationId: string, taskId: string) =>
+  (await eventsOf(db, conversationId)).find(
+    (e): e is Finished => e.type === "background_task_finished" && e.payload.taskId === taskId,
+  ) as Finished;
 
 /** Finishes a new task of `conversationId` as the poller (or, `reported`, a tool call) does. */
 async function finishTask(
@@ -521,5 +562,130 @@ describe("no wake", { timeout: 60_000 }, () => {
       `Background task ${f.payload.taskId} ("Task ${f.payload.taskId}") completed; already reported.`,
     );
     expect(systemTexts(requestsWith("SCENARIO reported").at(-1))).toEqual([short]);
+  });
+});
+
+describe("fix round 1", { timeout: 60_000 }, () => {
+  it("a person's stop on an idle conversation wakes nothing; the next message's run absorbs it", async () => {
+    const conv = await idleConversation("SCENARIO person stop");
+    const task = await runningTask(conv);
+    await k.app.get(BackgroundTaskStopper).stop(task, "person");
+    const f = await finishedEvent(conv, task.id);
+    expect(f.payload).toMatchObject({ reported: false, stoppedBy: "person" });
+    await expectNoWake(conv, 1);
+    expect(await consumedSeq(db, conv)).toBeLessThan(f.seq);
+    await postMessage(owner, orgId, conv, "next");
+    await waitForTerminal(db, conv, 2, 30_000);
+    expect(systemTexts(requestsWith("SCENARIO person stop").at(-1))).toEqual([
+      renderBackgroundFinished(f.payload),
+    ]);
+    expect(await consumedSeq(db, conv)).toBeGreaterThan(f.seq);
+  });
+
+  it("a bg-wake job that fires before the window ends reschedules itself and wakes at the end", async () => {
+    const conv = await idleConversation("SCENARIO early");
+    await finishTask(conv);
+    await waitForTerminal(db, conv, 2, 30_000);
+    const wake = (await runRows(conv))[1] as RunRow;
+    const late = await finishTask(conv);
+    const windowEndOf = async () =>
+      Number(
+        (
+          await db
+            .selectFrom("runs")
+            .select(sql<string>`floor(extract(epoch from created_at) * 1000)::bigint`.as("t"))
+            .where("id", "=", wake.id)
+            .executeTakeFirstOrThrow()
+        ).t,
+      ) + WAKE_WINDOW_MS;
+    const queue = k.app.get<Queue>(getQueueToken(MAINTENANCE_QUEUE_NAME));
+    const job = await queue.getJob(bgWakeJobId(conv, await windowEndOf()));
+    expect(await job?.getState()).toBe("delayed");
+    // the window now ends in about 3 s on the database's clock; the job fires before that
+    await sql`UPDATE capybara.runs SET created_at = created_at - interval '57 seconds'
+      WHERE id = ${wake.id}`.execute(raw);
+    const end = await windowEndOf();
+    await job?.promote();
+    const retry = await waitFor(
+      async () => queue.getJob(bgWakeJobId(conv, end, 1)),
+      10_000,
+      "rescheduled wake job",
+    );
+    expect(retry.data).toEqual({ conversationId: conv, retry: 1 });
+    expect(await runRows(conv)).toHaveLength(2);
+    await waitForTerminal(db, conv, 3, 20_000);
+    const third = (await runRows(conv))[2] as RunRow;
+    expect(Number(third.trigger_seq)).toBe(late.seq);
+    expect((await runStarted(conv, third.id)).payload).toMatchObject({
+      trigger: "background_task",
+      triggerSeq: late.seq,
+    });
+  });
+
+  it("an orphaned wake run is repaired by ensureRun; later finishes and messages go on", async () => {
+    const conv = await idleConversation("SCENARIO orphan");
+    // a finish whose wake run was queued, and whose job was lost (no job ever existed)
+    const task = await runningTask(conv);
+    const [ev] = await k.app.get(EventLog).append(conv, [
+      {
+        type: "background_task_finished",
+        payload: {
+          taskId: task.id,
+          description: task.description,
+          status: "completed",
+          exitCode: 0,
+          elapsedMs: 1_000,
+          lastLines: "",
+          outputPath: `/workspace/${task.outputPath}`,
+          reported: false,
+        },
+      },
+    ]);
+    const orphan = randomUUID();
+    await db
+      .insertInto("runs")
+      .values({
+        id: orphan,
+        conversation_id: conv,
+        status: "queued",
+        agent_version: 1,
+        trigger_account_id: ownerId,
+        trigger_seq: ev?.seq ?? 0,
+      })
+      .execute();
+    // past the queued grace period and outside the wake window
+    await sql`UPDATE capybara.runs SET created_at = now() - interval '2 minutes',
+      queued_at = now() - interval '2 minutes' WHERE id = ${orphan}`.execute(raw);
+    expect(await runs.ensureRun(conv)).toBeNull();
+    const repaired = (await runRows(conv)).find((r) => r.id === orphan);
+    expect(repaired?.status).toBe("failed");
+    expect(await consumedSeq(db, conv)).toBeGreaterThanOrEqual(ev?.seq ?? 0);
+    const failed = (await eventsOf(db, conv)).find(
+      (e) => e.type === "run_failed" && e.runId === orphan,
+    );
+    expect(failed?.payload).toMatchObject({ error: { code: "run.orphaned" } });
+    // a later finish wakes the conversation again
+    const next = await finishTask(conv);
+    await waitFor(
+      async () => (await runRows(conv)).some((r) => Number(r.trigger_seq) === next.seq),
+      15_000,
+      "wake run after the repair",
+    );
+    await waitFor(
+      async () =>
+        (await runRows(conv)).every((r) => r.status !== "queued" && r.status !== "running"),
+      30_000,
+      "wake run finished",
+    );
+    // and a message runs as usual
+    const seq = await postMessage(owner, orgId, conv, "after");
+    await waitFor(
+      async () =>
+        (await runRows(conv)).some(
+          (r) => Number(r.trigger_seq) === seq && r.status === "completed",
+        ),
+      30_000,
+      "message run",
+    );
   });
 });

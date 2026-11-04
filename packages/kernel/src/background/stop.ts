@@ -106,6 +106,8 @@ export class BackgroundTaskStopper {
     const sid = cur.sid;
     assertTaskRef(cur.id, sid);
     const reported = why === "tool";
+    // a person's stop never wakes the conversation (background Bash §3, fix round 1)
+    const opts = why === "person" ? { stoppedBy: "person" as const } : {};
     let r: IfRunningResult<{ to: BackgroundFinish; lastLines: string }>;
     try {
       r = await this.sandbox.ifRunning(
@@ -151,11 +153,11 @@ export class BackgroundTaskStopper {
       throw err;
     }
     if (r.kind === "ran") {
-      await this.finisher.finish(cur, r.value.to, r.value.lastLines, reported);
+      await this.finisher.finish(cur, r.value.to, r.value.lastLines, reported, opts);
     } else if (r.kind === "not_running") {
-      await this.finisher.finish(cur, notRunningAs(r.status, true), "", reported);
+      await this.finisher.finish(cur, notRunningAs(r.status, true), "", reported, opts);
     } else {
-      await this.finisher.finish(cur, RECREATED, "", reported);
+      await this.finisher.finish(cur, RECREATED, "", reported, opts);
     }
     return (await this.store.get(cur.id)) ?? cur;
   }

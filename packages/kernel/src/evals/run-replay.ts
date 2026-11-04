@@ -387,6 +387,27 @@ function absorbedByStep(s: CaseSnapshot): Map<number, number> {
   return out;
 }
 
+/**
+ * The replayed run's boundary (`trigger_seq`): a wake run's recorded one (`run_started.triggerSeq`,
+ * background Bash spec §3); otherwise the newest message after `consumed`, else the newest finish
+ * after it that could have woken the run (not reported, not a person's stop), else the last
+ * message (old logs, as before).
+ */
+function replayTrigger(started: unknown, seeds: SnapshotEvent[], consumed: number): number {
+  const recorded = started as { trigger?: string; triggerSeq?: number };
+  if (recorded.trigger === "background_task" && recorded.triggerSeq !== undefined) {
+    return recorded.triggerSeq;
+  }
+  const lastMessage = seeds.findLast((e) => e.type === "user_message")?.seq;
+  if (lastMessage !== undefined && lastMessage > consumed) return lastMessage;
+  const wake = seeds.findLast((e) => {
+    if (e.type !== "background_task_finished" || e.seq <= consumed) return false;
+    const p = e.payload as { reported: boolean; stoppedBy?: string };
+    return !p.reported && p.stoppedBy !== "person";
+  })?.seq;
+  return wake ?? lastMessage ?? 0;
+}
+
 const readAll = async (
   eventLog: EventLog,
   conversationId: string,
@@ -430,17 +451,7 @@ export async function replayRun(
       consumed = Math.max(consumed, (e.payload as { consumedUpToSeq: number }).consumedUpToSeq);
     }
   }
-  // the boundary: the newest message the original run started for, else the finished background
-  // task that woke it (background Bash spec §3; old logs have none, so the last message as before)
-  const lastMessage = seeds.findLast((e) => e.type === "user_message")?.seq;
-  const wake = seeds.findLast(
-    (e) =>
-      e.type === "background_task_finished" &&
-      e.seq > consumed &&
-      (e.payload as { reported: boolean }).reported === false,
-  )?.seq;
-  const trigger =
-    lastMessage !== undefined && lastMessage > consumed ? lastMessage : (wake ?? lastMessage ?? 0);
+  const trigger = replayTrigger(start.payload, seeds, consumed);
   const catalog = s.events.find(
     (e) => e.runId === s.runId && e.type === "skills_catalog" && e.seq > R,
   );

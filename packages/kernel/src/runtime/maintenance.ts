@@ -90,9 +90,12 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
         await this.directory.runSyncJob(job.data as SyncJobData);
         return;
       // the end of a conversation's wake window (background Bash spec §3)
-      case BG_WAKE_JOB:
-        await this.runs.ensureRun((job.data as BgWakeJobData).conversationId);
+      case BG_WAKE_JOB: {
+        // fired before the window ended (clock skew): it reschedules under its next retry id
+        const { conversationId, retry } = job.data as BgWakeJobData;
+        await this.runs.ensureRun(conversationId, { wakeRetry: (retry ?? 0) + 1 });
         return;
+      }
       default:
         if (await this.scheduled.runNow(job.name)) return;
         this.log.warn("unknown maintenance job", { name: job.name, jobId: job.id });

@@ -933,6 +933,7 @@ export class RunWorker {
           triggerAccountId: run.trigger_account_id,
           ...(boundary?.type === "background_task_finished" && {
             trigger: "background_task" as const,
+            triggerSeq: Number(run.trigger_seq),
           }),
         },
       },

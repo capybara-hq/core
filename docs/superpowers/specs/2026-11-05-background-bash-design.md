@@ -116,7 +116,9 @@ Amends:
   one short line.
 - **Consumed** means that a model request absorbed the event: `consumed_seq` and
   `run_finished.consumedUpToSeq` move past it the same way as past a `user_message`. An event marked
-  `reported: true` counts as consumed when it is appended, and it never wakes a run.
+  `reported: true` is absorbed like any other (the next model call of its run, or the next run,
+  takes it), renders as the short line, and never wakes a run. A finish a person caused by stopping
+  the task (`stoppedBy: "person"`) is absorbed and rendered as usual but never wakes a run either.
 - **Effect on a run:**
   - **A run is going:** the next model call sees the event, like an interjection. If the event
     lands during the run's last model call (the run then ends without another request), it stays
@@ -134,6 +136,8 @@ tokens and attributing approvals without a person sending anything.
 **Decision:**
 - A finish on an idle chat conversation starts a run, but only when all of these hold:
   - the task was started by this conversation's agent: the parent's own tasks, not a sub-agent's;
+  - the finish is neither `reported` nor a person's stop (`stoppedBy: "person"`): that person is
+    looking at the conversation, and the next run sees the event;
   - the conversation's queue is not paused;
   - the person who started the launching run (the task's `triggerAccountId`) can still send to it;
   - no other wake started for this conversation in the last 60 s. Finishes that land together are

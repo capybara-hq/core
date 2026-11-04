@@ -37,7 +37,8 @@ export class BackgroundTaskFinisher {
    * Finishes `task` as `to` with its last output lines (cut to their last 4 000 characters);
    * `reported` when a tool call already told the model in its run. False (nothing written) when the
    * task was no longer running, or, with `opts.unclaimed` (the poller), when a live stop claimed it:
-   * the stop's finish is then the only one.
+   * the stop's finish is then the only one. `opts.stoppedBy: "person"` marks a person's stop: such
+   * a finish never wakes the conversation.
    */
   @Transactional()
   async finish(
@@ -45,7 +46,7 @@ export class BackgroundTaskFinisher {
     to: BackgroundFinish,
     lastLines: string,
     reported: boolean,
-    opts: { unclaimed?: boolean } = {},
+    opts: { unclaimed?: boolean; stoppedBy?: "person" } = {},
   ): Promise<boolean> {
     if (!(await this.store.finish(task.id, to, opts))) return false;
     const [event] = await this.eventLog.appendIn(task.conversationId, [
@@ -65,6 +66,7 @@ export class BackgroundTaskFinisher {
           outputPath: `/workspace/${task.outputPath}`,
           reported,
           ...(to.lostReason !== undefined && { lostReason: to.lostReason }),
+          ...(opts.stoppedBy !== undefined && { stoppedBy: opts.stoppedBy }),
         },
       },
     ]);

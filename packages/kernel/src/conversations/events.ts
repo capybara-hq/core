@@ -314,6 +314,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        * (spec 2026-11-05-background-bash-design §3).
        */
       trigger: z.enum(["message", "background_task"]).optional(),
+      /** A wake run's boundary: the seq of the finish that woke it (full-run replay seeds from it). */
+      triggerSeq: seqNo.optional(),
     }),
   ),
   ev(
@@ -751,8 +753,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
   /**
    * A background Bash task ended (spec 2026-11-05-background-bash-design §2). Model-visible: it is
    * absorbed like an interjection and rendered as a system message (`renderBackgroundFinished`).
-   * `reported`: a TaskOutput or TaskStop in the same run already told the model, so it renders as
-   * one short line and never wakes a run. `lastLines` is the tail of the task's output.
+   * `reported`: a TaskOutput or TaskStop in the same run already told the model; it is absorbed
+   * like any other, renders as one short line and never wakes a run. `lastLines` is the tail of
+   * the task's output.
    */
   ev(
     "background_task_finished",
@@ -766,6 +769,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       outputPath: z.string(),
       reported: z.boolean(),
       lostReason: z.string().optional(),
+      /**
+       * A person stopped the task (the conversation's background section): the finish never
+       * wakes a run, but the next run absorbs it like any other (background Bash §3).
+       */
+      stoppedBy: z.literal("person").optional(),
     }),
   ),
   ev("compaction_summary", z.object({ coversUpToSeq: seqNo, text: z.string() })),

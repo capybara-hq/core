@@ -410,11 +410,26 @@ const finishedTask = (taskId: string): EventPayload<"background_task_finished"> 
  * A wake run written to the log (background Bash §3): the conversation's finished task after the
  * last consumed message is the run's boundary (`trigger_seq`); step 1 absorbs it and answers.
  */
-async function seedWakeRun(convId: string, runId: string, taskId: string): Promise<number> {
+async function seedWakeRun(
+  convId: string,
+  runId: string,
+  taskId: string,
+  opts: {
+    /** Recorded as `run_started.triggerSeq` (recordings before fix round 1 have none). */
+    recordTrigger?: boolean;
+    /** Finishes logged after the boundary, before the run started. */
+    after?: EventPayload<"background_task_finished">[];
+  } = {},
+): Promise<number> {
   const [f] = await eventLog.append(convId, [
     { type: "background_task_finished", payload: finishedTask(taskId) },
   ]);
   const seq = f?.seq ?? 0;
+  const later = await eventLog.append(
+    convId,
+    (opts.after ?? []).map((payload) => ({ type: "background_task_finished" as const, payload })),
+  );
+  const absorbed = later.at(-1)?.seq ?? seq;
   await db
     .insertInto("runs")
     .values({
@@ -437,6 +452,7 @@ async function seedWakeRun(convId: string, runId: string, taskId: string): Promi
         model: { provider: "model-fake", model: "fake-1" },
         triggerAccountId: adminId,
         trigger: "background_task",
+        ...(opts.recordTrigger !== false && { triggerSeq: seq }),
       },
     },
     {
@@ -456,7 +472,7 @@ async function seedWakeRun(convId: string, runId: string, taskId: string): Promi
           reminderSeqs: [],
           tools: [],
           params: {},
-          absorbedUpToSeq: seq,
+          absorbedUpToSeq: absorbed,
           maxOutputTokens: 1000,
         },
       },
@@ -479,7 +495,7 @@ async function seedWakeRun(convId: string, runId: string, taskId: string): Promi
         cacheWriteTokens: 0,
       },
     },
-    { type: "run_finished", runId, payload: { reason: "completed", consumedUpToSeq: seq } },
+    { type: "run_finished", runId, payload: { reason: "completed", consumedUpToSeq: absorbed } },
   ]);
   return seq;
 }
@@ -1131,6 +1147,35 @@ describe("整轮回放", { timeout: 60_000 }, () => {
     expect(
       ((fin as ConversationEvent).payload as EventPayload<"run_finished">).consumedUpToSeq,
     ).toBe(wakeSeq);
+  });
+
+  it("a wake run's recorded boundary wins; without one the newest finish that could wake, never a person's stop", async () => {
+    const evalTrigger = async (runId: string, opts: Parameters<typeof seedWakeRun>[3]) => {
+      const setId = await createSet();
+      const conv = await createConv(admin, orgId, agentId);
+      await seedRun(conv, `${runId}-before`, "echo:first", []);
+      const seq = await seedWakeRun(conv, runId, `bt_${runId}`, opts);
+      await addCase(setId, conv, runId);
+      const run = await startRun(setId, {});
+      expect((await finished(run.id)).status).toBe("completed");
+      const [r] = await results(run.id);
+      expect(r?.status, JSON.stringify(r?.error)).toBe("done");
+      const row = await db
+        .selectFrom("runs")
+        .select("trigger_seq")
+        .where("conversation_id", "=", r?.evalConversationId as string)
+        .executeTakeFirstOrThrow();
+      return { seq, trigger: Number(row.trigger_seq) };
+    };
+    // recorded: the boundary, though a newer finish came before the run started
+    const a = await evalTrigger("bg-rec", { after: [finishedTask("bt_newer")] });
+    expect(a.trigger).toBe(a.seq);
+    // not recorded: the newest finish that could wake, skipping a person's stop after it
+    const b = await evalTrigger("bg-heur", {
+      recordTrigger: false,
+      after: [{ ...finishedTask("bt_stopped"), status: "stopped", stoppedBy: "person" }],
+    });
+    expect(b.trigger).toBe(b.seq);
   });
 
   it("达到 token 上限：loop 在下一次请求前停下，结果 skipped，运行 capped", async () => {

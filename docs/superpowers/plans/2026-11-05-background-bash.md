@@ -280,7 +280,8 @@ Untested by the task-level tests, most likely to bite first:
   - **Idle conversation.** A finish wakes a run attributed to the task's trigger account.
   - **Two finishes in the window.** Two finishes 5 s apart give one wake run that sees both. A third finish 10 s after that wake started schedules `bg-wake-…` and runs at the window's end.
   - **No wake for:** a sub-agent's task; a paused queue; `runtime.wakeOnBackgroundTask: false`; the org override set to false; a trigger account removed from the org *(Review Focus 5)*. In each case the event is logged and nothing runs.
-  - **`reported: true`** never wakes and renders as the short line.
+  - **`reported: true`** is absorbed like any other event, never wakes and renders as the short line.
+  - **A person's stop** (`stoppedBy: "person"` on the event, fix round 1) never wakes; the next run absorbs it.
   - **Step replay** of a call after a finish rebuilds the same request with zero drift.
   - **Full-run replay** of a run that absorbed a finish feeds it at the same step and starts no task.
 - [ ] **Step 3: Run** the new tests. Expected: FAIL.

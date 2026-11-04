@@ -65,8 +65,8 @@ interface EnsureState {
 
 /**
  * Margin added to the delayed wake job: its window is read on the database's clock, the delay runs
- * on this process's and Redis's, so the job does not fire just before the window ends (it would
- * find the window still open, and its own id taken).
+ * on this process's and Redis's, so the job does not usually fire just before the window ends (one
+ * that does reschedules itself under its next retry id, `bgWakeJobId`).
  */
 const WAKE_JOB_MARGIN_MS = 1000;
 
@@ -75,6 +75,7 @@ interface ActiveRunRow {
   id: string;
   status: string;
   trigger_seq: string;
+  trigger_account_id: string;
   /** 续跑任务的 jobId；为空表示按触发消息生成的 jobId。 */
   job_id: string | null;
   past_grace: boolean;
@@ -145,7 +146,11 @@ export class RunQueue {
    *
    * agent 已软删除的会话不起新运行（孤儿清理照常进行）。
    */
-  async ensureRun(conversationId: string): Promise<string | null> {
+  async ensureRun(
+    conversationId: string,
+    /** From the `bg-wake` job: it fired `wakeRetry - 1` times before its window ended. */
+    opts: { wakeRetry?: number } = {},
+  ): Promise<string | null> {
     if ((await this.lock.holder(conversationId)) !== null) return null;
     const st: EnsureState = {
       orphanSeq: null,
@@ -158,7 +163,9 @@ export class RunQueue {
       wakeLater: null,
     };
     const created = await this.ensureRunIn(conversationId, st);
-    if (st.wakeLater !== null) await this.scheduleWake(conversationId, st.wakeLater);
+    if (st.wakeLater !== null) {
+      await this.scheduleWake(conversationId, st.wakeLater, opts.wakeRetry ?? 0);
+    }
     const { orphanSeq, orphanRunId, dispatchedSeq, dispatchedSwitch, pausedNow, orphanStop } = st;
     const { dispatchedUnarchived } = st;
     if (orphanSeq !== null) {
@@ -243,11 +250,20 @@ export class RunQueue {
       seq: newest.seq,
       accountId: (newest.payload as { authorAccountId: string }).authorAccountId,
     };
-    if (!last || Number(last.seq) <= Number(conv.consumed_seq)) {
+    const idleActive =
+      !last || Number(last.seq) <= Number(conv.consumed_seq)
+        ? await this.activeRun(t, conversationId)
+        : undefined;
+    if (idleActive && Number(idleActive.trigger_seq) > Number(conv.consumed_seq)) {
+      // No unconsumed message, but a run whose boundary is not consumed yet (a wake run, whose
+      // boundary is a finished background task): it goes through the orphan check below with
+      // that boundary, as a message's run does
+      last = { seq: idleActive.trigger_seq, accountId: idleActive.trigger_account_id };
+    } else if (!last || Number(last.seq) <= Number(conv.consumed_seq)) {
       // Nothing unconsumed: the queue's head goes out when the conversation is idle (no active
       // run, which includes runs waiting for approval or an answer) and the queue is not paused.
       // Interjections are always unconsumed messages, so the queue never jumps ahead of them.
-      if (conv.queue_paused || (await this.activeRun(t, conversationId))) return null;
+      if (conv.queue_paused || idleActive) return null;
       const owner = await t
         .selectFrom("agents")
         .select("deleted_at")
@@ -391,11 +407,13 @@ export class RunQueue {
   private async scheduleWake(
     conversationId: string,
     w: { windowEnd: number; delayMs: number },
+    retry: number,
   ): Promise<void> {
-    const data: BgWakeJobData = { conversationId };
+    const data: BgWakeJobData = { conversationId, ...(retry > 0 && { retry }) };
     try {
       await this.maintenance.add(BG_WAKE_JOB, data, {
-        jobId: bgWakeJobId(conversationId, w.windowEnd),
+        // a job that fired early reschedules under a new id (its own is still taken)
+        jobId: bgWakeJobId(conversationId, w.windowEnd, retry),
         delay: w.delayMs + WAKE_JOB_MARGIN_MS,
         removeOnComplete: true,
         removeOnFail: true,
@@ -539,6 +557,7 @@ export class RunQueue {
         "id",
         "status",
         "trigger_seq",
+        "trigger_account_id",
         "job_id",
         sql<boolean>`COALESCE(queued_at, created_at) < now() - make_interval(secs => ${ORPHAN_QUEUED_GRACE_SECONDS})`.as(
           "past_grace",
