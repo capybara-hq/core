@@ -324,10 +324,12 @@ export function AgentFormLoading() {
         id="basic"
         title={t("form.basicSection")}
         description={t("form.basicSectionHint")}
+        // the avatar tiles (ten presets and the upload tile), the name with its counter line,
+        // the model and the visibility
         loading={{
           fields: [
-            { control: "input" },
-            { control: "input" },
+            { control: "radios", options: 11 },
+            { control: "input", help: true },
             { control: "select" },
             { control: "select" },
           ],

@@ -92,8 +92,28 @@ export default function RunWizardView({ setId }: { setId: string }) {
   return <RunWizardData orgId={ws.orgId} setId={setId} />;
 }
 
-/** The first step's fields while the wizard's data loads: the version and the model. */
-const LOADING_FIELDS = [{ control: "select" as const }, { control: "select" as const }];
+/**
+ * The first step while the wizard's data loads: its two sections with their real titles; the mode's
+ * two radio cards, then the candidate's version and model selects and the instruction switch.
+ */
+function FirstStepLoading() {
+  const t = useTranslations("evals");
+  return (
+    <Stack gap={24}>
+      <FormSection
+        id="mode"
+        title={t("wizard.mode")}
+        loading={{ fields: [{ control: "radio-cards", options: 2 }] }}
+      />
+      <FormSection
+        id="candidate"
+        title={t("wizard.candidate")}
+        description={t("wizard.candidateHint")}
+        loading={{ fields: [{ control: "select" }, { control: "select" }, { control: "switch" }] }}
+      />
+    </Stack>
+  );
+}
 
 function RunWizardData({ orgId, setId }: { orgId: string; setId: string }) {
   const scope = usePagePath("org");
@@ -133,8 +153,10 @@ function RunWizardData({ orgId, setId }: { orgId: string; setId: string }) {
           },
           primary: { label: t("wizard.next"), onSelect: () => {} },
         }}
-        loading={{ fields: LOADING_FIELDS }}
-      />
+        loading={{ keep: true }}
+      >
+        <FirstStepLoading />
+      </WizardPage>
     );
   }
   return (

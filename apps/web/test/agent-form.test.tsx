@@ -241,6 +241,14 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
       return el as HTMLElement;
     });
     expect(page.querySelector("[aria-busy='true']")).not.toBeNull();
+    // the loaded section's fields: the eleven avatar tiles, the name with its counter line, the
+    // model and visibility selects
+    expect(
+      page.querySelectorAll('[data-part="loading-plain-radios"] [data-part="loading-radio"]'),
+    ).toHaveLength(11);
+    const fields = page.querySelectorAll('[data-part="loading-field"]');
+    expect(fields).toHaveLength(3);
+    expect(fields[0]?.querySelector('[data-size="small"]')).not.toBeNull();
     await act(async () => release());
     expect(await screen.findByRole("textbox", { name: en.agents.form.nameLabel })).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());

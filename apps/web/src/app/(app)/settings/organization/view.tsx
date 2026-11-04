@@ -92,23 +92,25 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
         header={header}
         nav={nav}
         activeNav="organization"
-        // Tool search (two radio cards, and the read-only note for a member) and the IM locale
-        // (a select).
-        loading={{
-          sections: [
-            {
-              fields: [{ control: "radio-cards", options: 2, help: !manage }],
-              title: t("toolSearch.title"),
-              description: t("toolSearch.description"),
-            },
-            {
-              fields: [{ control: "select" }],
-              title: t("locale.title"),
-              description: t("locale.description"),
-            },
-          ],
-        }}
-      />
+        // The sections say for themselves that they load: tool search (two radio cards, and the
+        // read-only note for a member) and the IM locale (a select). The owner's danger zone needs
+        // only the session: it renders for real.
+        loading={{}}
+      >
+        <FormSection
+          id="tool-search"
+          title={t("toolSearch.title")}
+          description={t("toolSearch.description")}
+          loading={{ fields: [{ control: "radio-cards", options: 2, help: !manage }] }}
+        />
+        <FormSection
+          id="im-locale"
+          title={t("locale.title")}
+          description={t("locale.description")}
+          loading={{ fields: [{ control: "select" }] }}
+        />
+        {myRole(me) === "owner" ? <DeleteOrg orgId={orgId} /> : null}
+      </SettingsPage>
     );
   }
 

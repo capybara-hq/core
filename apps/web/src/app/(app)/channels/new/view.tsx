@@ -92,7 +92,8 @@ function NewChannel({ orgId, preset }: { orgId: string; preset: ChannelPreset })
           id="config"
           title={t("form.configSection")}
           description={t("form.configHint")}
-          loading={{ fields: 1 }}
+          // no channel extension is picked yet: the loaded section is its one-line hint
+          loading={{ fields: [{ control: "text" }] }}
         />
         <FormSection
           id="agent"
@@ -104,7 +105,8 @@ function NewChannel({ orgId, preset }: { orgId: string; preset: ChannelPreset })
           id="policy"
           title={t("form.policySection")}
           description={t("form.policySectionHint")}
-          loading={{ fields: 1 }}
+          // PolicyRadio: the two card radios
+          loading={{ fields: [{ control: "radio-cards", options: 2 }] }}
         />
       </FormPage>
     );

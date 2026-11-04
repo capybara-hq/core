@@ -278,6 +278,30 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await r2();
   });
 
+  it("/settings/organization: the loading page keeps its two sections and an owner's danger zone (the role is the session's)", async () => {
+    const loading = async (me: ReturnType<typeof as>) => {
+      await renderRouteEmptyCache(
+        "/settings/organization",
+        { ...ROUTES, [`GET ${O}/settings`]: () => new Promise<Response>(() => {}) },
+        { me },
+      );
+      await vi.waitFor(() => {
+        if (document.querySelector('[data-part="loading-radios"]') === null) throw new Error("no");
+      });
+    };
+    await loading(as("owner"));
+    expect(document.querySelectorAll('[data-part="form-section"]')).toHaveLength(2);
+    expect(screen.getByRole("heading", { name: en.orgSettings.toolSearch.title })).toBeTruthy();
+    expect(document.querySelectorAll('[data-part="danger-zone"]')).toHaveLength(1);
+    expect(screen.getByRole("button", { name: en.orgLifecycle.delete.action })).toBeTruthy();
+    // one busy announcement for the page (the sections do not announce)
+    const page = template("SettingsPage") as HTMLElement;
+    expect(page.querySelectorAll('[role="status"]')).toHaveLength(1);
+    cleanup();
+    await loading(as("admin"));
+    expect(document.querySelectorAll('[data-part="danger-zone"]')).toHaveLength(0);
+  });
+
   it("/settings/organization: a failed read is the error state; retry reads it again", async () => {
     let fail = true;
     const answer = ROUTES[`GET ${O}/settings`] as NonNullable<Routes[string]>;

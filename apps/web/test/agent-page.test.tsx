@@ -782,6 +782,14 @@ describe("the agent page by section (agent profile design §3)", () => {
     const slot = page.querySelector('[data-part="page-header-avatar"] [data-part="skeleton-box"]');
     expect((slot as HTMLElement | null)?.style.width).toBe("40px");
     expect((slot as HTMLElement | null)?.style.height).toBe("40px");
+    // the head's actions the session decides render for real (an owner: run history, reassign
+    // and start chat, a static link)
+    const actions = page.querySelector('[data-part="page-header-actions"]') as HTMLElement;
+    expect(
+      within(actions).getByRole("link", { name: en.agents.page.startChat }).getAttribute("href"),
+    ).toBe("/chat?agent=ag1");
+    expect(within(actions).getByRole("link", { name: en.agents.runHistory })).toBeTruthy();
+    expect(within(actions).getByRole("button", { name: en.agents.page.reassign })).toBeTruthy();
     await act(async () => release());
     expect(await screen.findByDisplayValue("Summarize")).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
