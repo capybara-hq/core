@@ -1638,7 +1638,8 @@ States: `view`, `embed`, `loading`, `failed`
 
 - The properties panel is `layout.properties` wide and sits **inside** the middle column, under its title bar, right of the thread (padding `space.2` `space.4` `space.4` 0); its sections stack `space.2` apart and it scrolls on its own.
 - A section: `panel` ground, no border, radius `md`, padding `space.3`, gap `space.1`; a head with the title in `muted` and a value at the right, `space.1` above the body.
-- Built-in sections, in order: **Context** (the usage ratio as the value; a meter `space.1` high, `line` track, `ink` fill, radius `sm`; "<model> · <sandbox status>" and "连接器：…" / "Connectors: …" in `small` `muted`; the last run's line "上次运行 · <model> · <duration> · <tokens>" / "Last run · …" in `small` `muted` (`context-last-run`, once a run ended; cost joins it only when the log carries one); once the conversation has sub-agents, a last `small` `muted` line with its tokens including theirs, worded by the page); extension sections (`place: "section"`, in contribution order, rendered `dense`); **Files** (the count as the value, the conversation's own files and its sub-agents' deliveries; rows `row.dense`: type badge, name with an ellipsis, for a sub-agent's file "来自 <sub-agent>" / "from <sub-agent>" in `faint` (at most 40% of the row, with an ellipsis), size in `muted`; then "全部 N 个文件" / "All N files" with `chevron-right` 12 in `muted`); **Background tasks** (rows `row.dense`: `spinner`, name, duration `muted`, a dense stop icon button `square` 12 named "停止 <name>" / "Stop <name>"; then "已完成 N 项" / "N completed" with a chevron).
+- Built-in sections, in order: **Context** (the usage ratio as the value; a meter `space.1` high, `line` track, `ink` fill, radius `sm`; "<model> · <sandbox status>" and "连接器：…" / "Connectors: …" in `small` `muted`; the last run's line "上次运行 · <model> · <duration> · <tokens>" / "Last run · …" in `small` `muted` (`context-last-run`, once a run ended; cost joins it only when the log carries one); once the conversation has sub-agents, a last `small` `muted` line with its tokens including theirs, worded by the page); extension sections (`place: "section"`, in contribution order, rendered `dense`); **Files** (the count as the value, the conversation's own files and its sub-agents' deliveries; rows `row.dense`: type badge, name with an ellipsis, for a sub-agent's file "来自 <sub-agent>" / "from <sub-agent>" in `faint` (at most 40% of the row, with an ellipsis), size in `muted`; then "全部 N 个文件" / "All N files" with `chevron-right` 12 in `muted`); **Background tasks** (sub-agents and background Bash tasks, running ones only; rows `row.dense`: `spinner`, name, duration `muted`, a dense stop icon button `square` 12 named "停止「<name>」" / "Stop <name>"; a task whose stop is under way keeps its `spinner` and shows "正在停止…" / "Stopping…" in `muted` instead of the button; a sub-agent's own tasks are nested under it, indented `space.4`; then "已完成 N 项" / "N completed" with a chevron, counting finished tasks and sub-agents together and opening the newest). A finished task's row (`BackgroundTaskRow`) has no spinner and ends with its status word: "已完成" / "Done", "已停止" / "Stopped" and "已丢失" / "Lost" in `muted` (success is not colored), "失败" / "Failed" and "已超时" / "Timed out" in `fail`.
+- **Task output** (`TaskOutputPanel`, the body of the right panel for a task, §6.16.18): a head line with the status word (`muted`, `fail` when failed or timed out), the elapsed time in `faint` and, while running, a dense stop icon button at the right; the command in the design's monospace in `ink`; when only the finish event's tail is left (the sandbox is suspended) the note "输出不可读（沙箱已暂停）" / "Output unavailable (sandbox suspended)" in `faint` above the last lines; the last lines in a `CodeBlock` (§6.8). The elements sit `space.2` apart.
 - A failing extension section shows the load-failure line in that section only.
 
 <!-- states: property-section -->
@@ -1656,11 +1657,27 @@ States: `context`, `files`, `background`, `extension`, `failed`
 | meter | context | background-color | color.line |
 | property-row | files | height | row.dense |
 | type-badge | files | font-size | type.micro |
-| property-row | background | height | row.dense |
+| task-row | background | height | row.dense |
 | spinner | background | color | color.accent |
 | icon-button | background | width | control.dense |
 | property-section | extension | background-color | color.panel |
 | load-failed-title | failed | color | color.fail |
+
+<!-- states: background-task -->
+States: `running`, `done`, `failed`, `stopped`, `lost`, `nested`
+
+<!-- size-table: background-task -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| task-row | running | height | row.dense |
+| spinner | running | color | color.accent |
+| icon-button | running | width | control.dense |
+| task-row | done | height | row.dense |
+| task-status | done | color | color.muted |
+| fail-word | failed | color | color.fail |
+| task-status | stopped | color | color.muted |
+| task-status | lost | color | color.muted |
+| task-row[data-nested=true] | nested | padding-left | space.4 |
 
 #### 6.16.18 Right panel
 

@@ -84,6 +84,7 @@ export const REFERENCE_COMPONENTS = [
   "command-palette",
   "inline-card",
   "property-section",
+  "background-task",
   "right-panel",
   "template-conversation",
   // the role pass

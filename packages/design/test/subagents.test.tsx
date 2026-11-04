@@ -220,25 +220,39 @@ describe("SubagentTask", () => {
 });
 
 describe("BackgroundTasks", () => {
-  it("stop buttons are named after the task; completed opens the list", async () => {
+  it("stop buttons are named after the task; completed opens the newest", async () => {
     const onStop = vi.fn();
-    const onCompleted = vi.fn();
     const onOpen = vi.fn();
     wrap(
       <BackgroundTasks
-        running={[{ id: "sa_tree", name: "列出示例文档目录树", elapsed: "2:28" }]}
-        completed={6}
+        items={[
+          {
+            kind: "subagent",
+            id: "sa_tree",
+            name: "列出示例文档目录树",
+            status: "running",
+            startedAt: T0,
+          },
+          {
+            kind: "subagent",
+            id: "sa_done",
+            name: "核对映射表",
+            status: "completed",
+            startedAt: T0,
+            finishedAt: T0 + 1000,
+          },
+        ]}
+        now={NOW}
         onStop={onStop}
         onOpen={onOpen}
-        onCompleted={onCompleted}
       />,
     );
-    await userEvent.click(screen.getByRole("button", { name: "停止 列出示例文档目录树" }));
+    await userEvent.click(screen.getByRole("button", { name: "停止「列出示例文档目录树」" }));
     expect(onStop).toHaveBeenCalledWith("sa_tree");
     await userEvent.click(screen.getByRole("button", { name: "列出示例文档目录树" }));
     expect(onOpen).toHaveBeenCalledWith("sa_tree");
-    await userEvent.click(screen.getByRole("button", { name: /已完成 6 项/ }));
-    expect(onCompleted).toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: /已完成 1 项/ }));
+    expect(onOpen).toHaveBeenCalledWith("sa_done");
   });
 });
 

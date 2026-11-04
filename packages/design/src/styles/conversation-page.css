@@ -857,3 +857,32 @@ button.cb-property-row {
   padding: var(--cb-pad-default-y) var(--cb-pad-default-x);
   border: 1px solid transparent;
 }
+
+/* ── Background tasks: nested rows and the output panel (§6.16.17, §6.16.18) ── */
+
+.cb-task-row[data-nested="true"] {
+  padding-left: var(--cb-space-4);
+}
+.cb-task-output {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-task-output-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+}
+.cb-task-output-head > button {
+  margin-left: auto;
+}
+.cb-task-command {
+  color: var(--cb-ink);
+  font-family: var(--cb-font);
+  overflow-wrap: anywhere;
+}
+.cb-task-output-note {
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}

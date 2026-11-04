@@ -1,10 +1,15 @@
 "use client";
 
-import { BackgroundTasks, PropertySection, subagentDuration } from "@capybara-hq/design";
-import { useLocale, useTranslations } from "next-intl";
+import { BackgroundTasks, PropertySection, type SubagentStatus } from "@capybara-hq/design";
+import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 import type { SubagentView } from "../../lib/conversations";
 import { isActiveStatus } from "../../lib/subagents";
+
+const statusOf = (s: string): SubagentStatus =>
+  s === "queued" || s === "running" || s === "waiting" || s === "failed" || s === "aborted"
+    ? s
+    : "completed";
 
 /**
  * The "Background tasks" properties section (spec §5.3, §5.6): the running sub-agents with their
@@ -22,9 +27,7 @@ export function BackgroundSection({
   onOpen(id: string): void;
 }) {
   const t = useTranslations("subagents");
-  const locale = useLocale() === "zh" ? "zh" : "en";
   const running = views.filter((v) => isActiveStatus(v.status));
-  const done = views.filter((v) => !isActiveStatus(v.status));
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (running.length === 0) return;
@@ -34,18 +37,17 @@ export function BackgroundSection({
   return (
     <PropertySection title={t("background")}>
       <BackgroundTasks
-        running={running.map((v) => ({
+        items={views.map((v) => ({
+          kind: "subagent",
           id: v.id,
           name: v.description || v.agentType,
-          elapsed: subagentDuration(now - Date.parse(v.startedAt), locale),
+          status: statusOf(v.status),
+          startedAt: Date.parse(v.startedAt),
+          ...(v.finishedAt ? { finishedAt: Date.parse(v.finishedAt) } : {}),
         }))}
-        completed={done.length}
+        now={now}
         onStop={onStop}
         onOpen={onOpen}
-        onCompleted={() => {
-          const newest = done[0];
-          if (newest) onOpen(newest.id);
-        }}
       />
     </PropertySection>
   );

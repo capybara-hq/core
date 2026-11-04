@@ -92,6 +92,12 @@ export { QueuedMessage, type QueuedMessageProps, QueuePaused } from "./queued";
 export { type QuickActionItem, QuickActions, type QuickActionsProps } from "./quick-actions";
 export { RunRow, type RunRowProps, type RunRowStatus, runDuration } from "./run-row";
 export {
+  type BackgroundItem,
+  type BackgroundSubagentItem,
+  type BackgroundTaskItem,
+  BackgroundTaskRow,
+  type BackgroundTaskRowProps,
+  type BackgroundTaskStatus,
   BackgroundTasks,
   type BackgroundTasksProps,
   type SubagentFinishStatus,
@@ -110,6 +116,7 @@ export {
   subagentRowsFromViews,
   subagentStatusOfFinish,
 } from "./subagents";
+export { TaskOutputPanel, type TaskOutputPanelProps } from "./task-output-panel";
 export { ThinkingRow, type ThinkingRowProps } from "./thinking";
 export {
   NewTitleBar,
