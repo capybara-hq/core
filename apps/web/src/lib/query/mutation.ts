@@ -22,6 +22,8 @@ export function useAppMutation<V, R>(o: {
   invalidates: (v: V, r: R) => (readonly unknown[])[];
   forgetsOnLeave?: (v: V, r: R) => (readonly unknown[])[];
   onSuccess?: (r: R, v: V) => void;
+  /** Mutations sharing a scope id run one after another (TanStack `scope`). */
+  scope?: string;
 }) {
   const qc = useQueryClient();
   const forgotten = useRef<(readonly unknown[])[]>([]);
@@ -34,6 +36,7 @@ export function useAppMutation<V, R>(o: {
   );
   return useMutation<R, ApiClientError, V>({
     mutationFn: o.fn,
+    ...(o.scope !== undefined && { scope: { id: o.scope } }),
     onSuccess: async (r, v) => {
       await Promise.all(o.invalidates(v, r).map((queryKey) => qc.invalidateQueries({ queryKey })));
       if (o.forgetsOnLeave) forgotten.current.push(...o.forgetsOnLeave(v, r));
@@ -60,6 +63,9 @@ export function useUpdateProfile(orgId: string, agentId: string) {
       if (expected === undefined) return Promise.reject(clientError("agent.profile_unloaded"));
       return updateAgentProfile(orgId, agentId, { ...input, expectedUpdatedAt: expected });
     },
+    // saves of one agent run one after another: each reads the cached `updatedAt` in `fn`, after
+    // the previous save's `onSuccess` set the new one
+    scope: `agent-profile-${orgId}-${agentId}`,
     // the answer is the new truth: set it, do not refetch
     invalidates: () => [],
     onSuccess: ({ profile }) => {
