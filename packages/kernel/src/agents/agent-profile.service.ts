@@ -58,10 +58,14 @@ export class AgentProfileService {
     const fields = (["avatar", "description", "quickActions"] as const).filter(
       (f) => patch[f] !== undefined,
     );
+    // nothing to write: no timestamp bump, no audit row
+    if (fields.length === 0) return (await this.lookup.view(agentId)).profile;
     await t
       .updateTable("agents")
       .set({
-        ...(patch.avatar !== undefined && { profile_avatar: JSON.stringify(patch.avatar) }),
+        ...(patch.avatar !== undefined && {
+          profile_avatar: patch.avatar === null ? sql<null>`null` : JSON.stringify(patch.avatar),
+        }),
         ...(patch.description !== undefined && { profile_description: patch.description }),
         ...(patch.quickActions !== undefined && {
           profile_quick_actions: JSON.stringify(patch.quickActions),

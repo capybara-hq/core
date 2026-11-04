@@ -250,4 +250,67 @@ describe("agent profile", () => {
     const got = (await req({ method: "GET", url })).json() as { agent: AgentJson };
     expect(got.agent.profile).toMatchObject({ avatar: null, description: "", quickActions: [] });
   });
+
+  it("an empty or non-string avatarUrl leaves profile_avatar NULL", async () => {
+    const { agent } = await setup();
+    const content = readFileSync(join(KERNEL_MIGRATIONS_DIR, "0066_agent_profiles.sql"), "utf8");
+    for (const v of ["", 5, null]) {
+      await sql`update capybara.agent_versions
+        set definition = definition || ${JSON.stringify({ avatarUrl: v })}::jsonb
+        where agent_id = ${agent.id}`.execute(raw);
+      await sql`update capybara.agents set profile_avatar = null where id = ${agent.id}`.execute(
+        raw,
+      );
+      await raw.transaction().execute(async (t) => {
+        await sql`set local search_path to capybara, public`.execute(t);
+        await sql.raw(content).execute(t);
+      });
+      const row = await db
+        .selectFrom("agents")
+        .select(sql<boolean>`profile_avatar is null`.as("isNull"))
+        .where("id", "=", agent.id)
+        .executeTakeFirstOrThrow();
+      expect(row.isNull, JSON.stringify(v)).toBe(true);
+    }
+  });
+
+  it("avatar: null stores SQL NULL", async () => {
+    const { req, url, agent } = await setup();
+    const res = await req({
+      method: "PATCH",
+      url: `${url}/profile`,
+      payload: { avatar: null, expectedUpdatedAt: agent.profile.updatedAt },
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { profile: Profile }).profile.avatar).toBeNull();
+    const row = await db
+      .selectFrom("agents")
+      .select(sql<boolean>`profile_avatar is null`.as("isNull"))
+      .where("id", "=", agent.id)
+      .executeTakeFirstOrThrow();
+    expect(row.isNull).toBe(true);
+  });
+
+  it("a PATCH with no field writes nothing but still checks expectedUpdatedAt", async () => {
+    const { req, url, agent } = await setup();
+    const res = await req({
+      method: "PATCH",
+      url: `${url}/profile`,
+      payload: { expectedUpdatedAt: agent.profile.updatedAt },
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { profile: Profile }).profile).toEqual(agent.profile);
+    const n = await db
+      .selectFrom("audit_events")
+      .select("id")
+      .where("action", "=", "agent.profile_updated")
+      .execute();
+    expect(n).toHaveLength(0);
+    const stale = await req({
+      method: "PATCH",
+      url: `${url}/profile`,
+      payload: { expectedUpdatedAt: "2000-01-01T00:00:00.000Z" },
+    });
+    expect(stale.statusCode).toBe(409);
+  });
 });
