@@ -37,7 +37,7 @@ function providerErrorText(kind: WebProviderErrorKind, tool: WebToolKind): strin
     case "not_found":
       return "No results or page found; check the query or URL and retry.";
     case "blocked":
-      return "The site refused the provider; try another source.";
+      return "The site refused the provider; use another source.";
     case "unavailable":
       return "The web provider is unavailable right now; retry later or continue without it.";
     case "invalid":

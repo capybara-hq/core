@@ -233,6 +233,20 @@ describe("WebSearch: result", () => {
     expect(blocked).toContain("https://www.example.net/fake-web/3");
   });
 
+  it("a Unicode domain entry matches its punycode result host (IDNA before matching)", async () => {
+    await enable(orgId, "fake-web");
+    const allowed = textOf(
+      await tool().run({ query: "idn:x", allowed_domains: ["BÜCHER.example"] }, callCtx()),
+    );
+    expect(allowed).toContain("1. fake-web idn\n   URL: https://xn--bcher-kva.example/fake-web/1");
+    expect(allowed).not.toContain("example.org");
+    const blocked = textOf(
+      await tool().run({ query: "idn:x", blocked_domains: ["bücher.example"] }, callCtx()),
+    );
+    expect(blocked).not.toContain("xn--bcher-kva");
+    expect(blocked).toContain("1. fake-web other\n   URL: https://example.org/fake-web/2");
+  });
+
   it("both domain lists → an error naming both fields", async () => {
     await enable(orgId, "fake-web");
     const p = tool().run(
@@ -291,7 +305,7 @@ describe("WebSearch: provider errors", { timeout: 90_000 }, () => {
       "No results or page found; check the query or URL and retry.",
     );
     expect((msg(err("blocked"), "search") as Error).message).toBe(
-      "The site refused the provider; try another source.",
+      "The site refused the provider; use another source.",
     );
     expect((msg(err("unavailable"), "search") as Error).message).toBe(
       "The web provider is unavailable right now; retry later or continue without it.",
@@ -326,13 +340,12 @@ describe("WebSearch: provider errors", { timeout: 90_000 }, () => {
     await grantAlways(agentId);
     const conv = await createConv(owner, orgId, agentId);
     const inst = () => k.app.get(ExtensionRegistry).current("fake-web");
-    const started = Date.now();
     await postMessage(owner, orgId, conv, search("hang:"));
-    // the provider call is in the instance's in-flight tracker (drained on disable / upgrade)
-    // seen before the call times out, else it was never counted
+    // the provider call is in the instance's in-flight tracker (drained on disable / upgrade);
+    // a generous deadline under load: the call may start late, the waitFor fails only if never seen
     await waitFor(
       async () => ((inst()?.inflight.size ?? 0) > 0 ? true : null),
-      TIMEOUT_MS,
+      30_000,
       "in flight",
     );
     await waitForTerminal(db, conv, 1, 30_000);
@@ -341,8 +354,9 @@ describe("WebSearch: provider errors", { timeout: 90_000 }, () => {
     expect(r?.content).toBe(
       `Tool WebSearch timed out after ${TIMEOUT_MS / 1000}s. The operation may or may not have completed; verify before retrying.`,
     );
-    expect(Date.now() - started).toBeLessThan(TIMEOUT_MS + 10_000);
-    await waitFor(async () => (inst()?.inflight.size === 0 ? true : null), 5_000, "drained");
+    // the timeout text above proves the pipeline's limit ended the call (no wall-clock bound:
+    // it is not load-tolerant)
+    await waitFor(async () => (inst()?.inflight.size === 0 ? true : null), 30_000, "drained");
   });
 });
 

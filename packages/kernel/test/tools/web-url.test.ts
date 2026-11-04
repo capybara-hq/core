@@ -52,4 +52,16 @@ describe("normalizeFetchUrl", () => {
     expect(normalizeFetchUrl(at(2000)).ok).toBe(true);
     expect(normalizeFetchUrl(at(2001)).ok).toBe(false);
   });
+
+  it("the limit applies to the normalized URL: http of 2000 characters is 2001 after the upgrade", () => {
+    const base = "http://example.com/";
+    const raw = `${base}${"a".repeat(2000 - base.length)}`;
+    expect(raw).toHaveLength(2000);
+    expect(normalizeFetchUrl(raw)).toEqual({
+      ok: false,
+      error: "Pass a URL of at most 2000 characters.",
+    });
+    // one shorter fits after the upgrade
+    expect(normalizeFetchUrl(raw.slice(0, -1)).ok).toBe(true);
+  });
 });

@@ -21,7 +21,7 @@ import {
   webFetchTool,
 } from "../../src/tools/builtins/web/fetch.js";
 import { WebPages } from "../../src/tools/builtins/web/page-cache.js";
-import { specHash } from "../../src/tools/registry.js";
+import { specHash, ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -225,6 +225,86 @@ describe("WebFetch: fetching", () => {
       "The URL redirected to https://10.0.0.1/admin, which WebFetch cannot fetch; use another URL.",
     );
     expect(got).toHaveLength(0);
+  });
+
+  it("redirect to a final URL that does not parse → the generic text, not the URL", async () => {
+    await enable(orgId, "fake-web");
+    const got: Extracted[] = [];
+    const p = tool(got).run(
+      { url: "https://example.com/redirect:not a url", prompt: "p" },
+      callCtx(),
+    );
+    await expect(p).rejects.toBeInstanceOf(ToolError);
+    await expect(p).rejects.toThrow(
+      /^The URL redirected to an address WebFetch cannot fetch; use another URL\.$/,
+    );
+    expect(got).toHaveLength(0);
+  });
+
+  it("redirect to a final URL over 2000 characters → the generic text, not the URL", async () => {
+    await enable(orgId, "fake-web");
+    const got: Extracted[] = [];
+    const p = tool(got).run({ url: unique("redirect-long:3000"), prompt: "p" }, callCtx());
+    await expect(p).rejects.toBeInstanceOf(ToolError);
+    await expect(p).rejects.toThrow(
+      /^The URL redirected to an address WebFetch cannot fetch; use another URL\.$/,
+    );
+    expect(got).toHaveLength(0);
+  });
+
+  it("apex ↔ www redirect counts as the same host: extracted, with a Final URL line", async () => {
+    await enable(orgId, "fake-web");
+    const got: Extracted[] = [];
+    const toWww = "https://example.com/redirect:https://www.example.com/moved";
+    const r = await tool(got).run({ url: toWww, prompt: "p" }, callCtx());
+    expect(textOf(r)).toBe(
+      `URL: ${toWww}\nFinal URL: https://www.example.com/moved\n\nanswer to p`,
+    );
+    const toApex = "https://www.example.com/redirect:https://example.com/moved";
+    const r2 = await tool(got).run({ url: toApex, prompt: "p" }, callCtx());
+    expect(textOf(r2)).toBe(`URL: ${toApex}\nFinal URL: https://example.com/moved\n\nanswer to p`);
+    expect(got).toHaveLength(2);
+  });
+
+  it("www is the only prefix ignored: another subdomain or host is still a redirect", async () => {
+    await enable(orgId, "fake-web");
+    const got: Extracted[] = [];
+    for (const target of ["https://docs.example.com/x", "https://www.other.com/x"]) {
+      const r = await tool(got).run(
+        { url: `https://example.com/redirect:${target}`, prompt: "p" },
+        callCtx(),
+      );
+      expect(textOf(r)).toBe(
+        `The URL redirected to ${target}. Call WebFetch again with that URL if you want its content.`,
+      );
+    }
+    expect(got).toHaveLength(0);
+  });
+
+  it("timeoutMs comes from web.fetch.timeoutMs (read per call), also on the resolved tool", async () => {
+    const real = k.app.get(KernelConfigService);
+    expect(real.get().web.fetch.timeoutMs).toBe(180_000);
+    await enable(orgId, "fake-web");
+    const { tools } = await k.app
+      .get(ToolRegistry)
+      .forAgent(orgId, { tools: [{ kind: "builtin", name: "WebFetch" }] });
+    const resolved = tools.find((t) => t.key === "WebFetch");
+    expect(resolved?.timeoutMs?.({ url: "https://example.com/", prompt: "p" })).toBe(180_000);
+    let ms = 1234;
+    const t = webFetchTool({
+      points: k.app.get(ExtensionPointDefaults),
+      cache: k.app.get(WebPages),
+      extract: async () => "a",
+      config: {
+        get: () => {
+          const c = real.get();
+          return { ...c, web: { ...c.web, fetch: { ...c.web.fetch, timeoutMs: ms } } };
+        },
+      },
+    });
+    expect(t.timeoutMs?.({})).toBe(1234);
+    ms = 5678;
+    expect(t.timeoutMs?.({})).toBe(5678);
   });
 
   it("empty: → the empty-page error", async () => {

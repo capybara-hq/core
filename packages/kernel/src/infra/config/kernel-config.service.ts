@@ -32,6 +32,7 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "web.fetch.maxPageChars": () => {},
   "web.fetch.maxAnswerTokens": () => {},
   "web.fetch.cacheSeconds": () => {},
+  "web.fetch.timeoutMs": () => {},
 };
 
 const HOT_PATHS = configFields(KernelConfigSchema)

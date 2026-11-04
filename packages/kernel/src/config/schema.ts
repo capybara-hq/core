@@ -1227,6 +1227,18 @@ export const KernelConfigSchema = z.object({
                   "Seconds a fetched page is cached per organization and URL; 0 turns the cache off",
               }),
             ),
+          timeoutMs: z
+            .number()
+            .int()
+            .positive()
+            .default(180_000)
+            .meta(
+              meta({
+                hot: true,
+                description:
+                  "Time limit of one WebFetch call in milliseconds, the provider's fetch and the answering model call together; replaces tools.timeoutMs for WebFetch",
+              }),
+            ),
         })
         .prefault({} as never),
     })

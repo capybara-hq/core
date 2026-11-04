@@ -30,6 +30,7 @@ describe("configFields", () => {
       "web.fetch.maxPageChars",
       "web.fetch.maxAnswerTokens",
       "web.fetch.cacheSeconds",
+      "web.fetch.timeoutMs",
       "sandbox.maxConcurrentCommands",
       "evals.orgConcurrency",
       "hooks.timeoutMs",

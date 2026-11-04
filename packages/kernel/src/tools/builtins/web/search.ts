@@ -1,3 +1,4 @@
+import { domainToASCII } from "node:url";
 import {
   ToolError,
   type ToolSpec,
@@ -77,15 +78,18 @@ interface SearchInput {
 }
 
 /**
- * A domain entry as a bare lowercase hostname: tolerates a scheme, a path, a port, a leading
- * `*.` / `.` and a trailing dot. Empty when nothing is left.
+ * A domain entry as a bare lowercase ASCII hostname: tolerates a scheme, a path, a port, a leading
+ * `*.` / `.` and a trailing dot; a Unicode (IDN) name becomes its punycode form, as result hosts
+ * are (WHATWG URL parsing). Empty when nothing is left.
  */
 function normalizeDomain(entry: string): string {
   let d = entry.trim().toLowerCase();
   d = d.replace(/^[a-z][a-z0-9+.-]*:\/\//, "");
   d = d.replace(/[/?#].*$/, "").replace(/:\d+$/, "");
   d = d.replace(/^\*\./, "").replace(/^\.+/, "").replace(/\.+$/, "");
-  return d;
+  if (d === "") return d;
+  // domainToASCII is "" for a name IDNA rejects: keep the entry as given (it matches no host)
+  return domainToASCII(d) || d;
 }
 
 /**

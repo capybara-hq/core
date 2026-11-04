@@ -10,12 +10,15 @@ import { BUILTIN } from "../../builtin-names.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../registry.js";
 import { webToolError } from "./errors.js";
 import type { WebPages } from "./page-cache.js";
-import { normalizeFetchUrl } from "./url.js";
+import { MAX_FETCH_URL_CHARS, normalizeFetchUrl } from "./url.js";
 
 /** The extension point name (without the major) the provider is resolved from. */
 const POINT = "web-fetch";
 
-/** Appended to a page cut at `web.fetch.maxPageChars` (seen by the extraction model only). */
+/**
+ * Appended to a page cut at `web.fetch.maxPageChars` or to fit the extraction model's context
+ * (seen by the extraction model only).
+ */
 export const TRUNCATED_MARKER = "\n[truncated]";
 
 /**
@@ -75,6 +78,32 @@ function cleanPage(p: unknown, url: string): WebFetchPage {
   };
 }
 
+/**
+ * The error for a final URL WebFetch may not fetch. The provider's URL is echoed only when it is
+ * a URL of a reasonable length, never arbitrary provider text.
+ */
+function refusedRedirectText(finalUrl: string): string {
+  let parses = true;
+  try {
+    new URL(finalUrl);
+  } catch {
+    parses = false;
+  }
+  if (parses && finalUrl.length <= MAX_FETCH_URL_CHARS) {
+    return `The URL redirected to ${finalUrl}, which WebFetch cannot fetch; use another URL.`;
+  }
+  return "The URL redirected to an address WebFetch cannot fetch; use another URL.";
+}
+
+/** A hostname without one leading `www.`. */
+const withoutWww = (host: string): string => (host.startsWith("www.") ? host.slice(4) : host);
+
+/**
+ * Whether a redirect from host `b` to host `a` stays on the same site: equal hosts after one
+ * leading `www.` is stripped on both sides (apex ↔ www, as Claude Code allows).
+ */
+const sameSite = (a: string, b: string): boolean => withoutWww(a) === withoutWww(b);
+
 /** What {@link fetchPage} needs. */
 export interface WebFetchPageDeps {
   points: Pick<ExtensionPointDefaults, "resolve">;
@@ -90,9 +119,9 @@ export type FetchedPage =
 /**
  * Fetches `url` (already checked by {@link normalizeFetchUrl}) with the org's `web-fetch@1`
  * provider (resolved per call, never cached in process), through the page cache. The provider's
- * `finalUrl` is checked like any URL before the model can see it: a final URL on another host is
- * returned as a `redirect` (no extraction; web tools spec §3.2), one WebFetch may not fetch is an
- * error. An empty page is an error; a long one is cut to `web.fetch.maxPageChars`.
+ * `finalUrl` is checked like any URL before the model can see it: a final URL on another host
+ * (apex ↔ www is the same host) is returned as a `redirect` (no extraction; web tools spec §3.2),
+ * one WebFetch may not fetch is an error. An empty page is an error; a long one is cut to `web.fetch.maxPageChars`.
  */
 export async function fetchPage(
   deps: WebFetchPageDeps,
@@ -119,12 +148,8 @@ export async function fetchPage(
     await deps.cache.set(ctx.orgId, resolved.extension, url, page);
   }
   const final = normalizeFetchUrl(page.finalUrl);
-  if (!final.ok) {
-    throw new ToolError(
-      `The URL redirected to ${page.finalUrl}, which WebFetch cannot fetch; use another URL.`,
-    );
-  }
-  if (new URL(final.url).hostname !== new URL(url).hostname) {
+  if (!final.ok) throw new ToolError(refusedRedirectText(page.finalUrl));
+  if (!sameSite(new URL(final.url).hostname, new URL(url).hostname)) {
     return { kind: "redirect", finalUrl: final.url };
   }
   if (page.markdown.trim() === "") {
@@ -158,13 +183,16 @@ interface FetchInput {
  * The builtin `WebFetch` (web tools spec §3.2): checks and upgrades the URL, fetches the page with
  * the org's `web-fetch@1` provider ({@link fetchPage}) and answers `prompt` from it with one
  * extraction call; the result is the answer headed by the URL, never the raw page. A redirect to
- * another host returns the new URL instead. Default `ask`; unavailable when the org has no
- * provider or several without a default.
+ * another host returns the new URL instead. Default `ask`; time limit `web.fetch.timeoutMs`;
+ * unavailable when the org has no provider or several without a default.
  */
 export function webFetchTool(deps: WebFetchDeps): BuiltinTool {
   return {
     spec: WEB_FETCH_SPEC,
     defaultPolicy: "ask",
+    // the provider's fetch and a large extraction call need more than `tools.timeoutMs`; read per
+    // call (hot config)
+    timeoutMs: () => deps.config.get().web.fetch.timeoutMs,
     async unavailable({ orgId }) {
       const r = await deps.points.resolve(orgId, POINT);
       return r.ok ? null : unavailableText(r.reason);
