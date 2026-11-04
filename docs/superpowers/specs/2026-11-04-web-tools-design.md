@@ -2,7 +2,7 @@
 
 - Date: 2026-11-04, written against `main` at `ce888944` (tool naming aligned with Claude Code, #56,
   merged).
-- Status: draft for maintainer review.
+- Status: implemented (see "As built" at the end).
 - Markers: **(decided)** is the maintainer's answer during brainstorming (2026-11-04);
   **(designer's call)** is decided here on the maintainer's behalf and may be overturned in review.
   Items without a marker restate current code or AGENTS.md rules.
@@ -382,3 +382,16 @@ consumer decides). Nothing lets an org say "use this one".
 - Exact wording of descriptions, errors, the extraction system prompt and the web strings.
 - Config key names under `web.*` and their defaults (via `adding-config`).
 - Whether `WebProviderError` kinds need a finer split once Jina's real responses are seen.
+
+## As built
+
+Deviations from this design, accepted during implementation:
+
+- No builtin list API; the agent form reads `GET …/extension-points/available`.
+- `url` has no `format: "uri"` in the input schema (§3.2); the kernel validates it.
+- The page cache is `WebPages` on `CacheService` (`kc-cache`), key prefix `cache:`.
+- The org / actor columns of `org_extension_point_defaults` are `text` (ids are text).
+- An empty page is the error "... use another URL".
+- Giving both domain lists is a `ToolError` after approval, not a schema error.
+- `StepLog` moved to its own `StepLogModule`.
+- The web points are in `TRACKED_EXTENSION_POINTS`, so in-flight provider calls are drained.
