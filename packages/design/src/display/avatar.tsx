@@ -120,6 +120,8 @@ export type AvatarPickerProps = {
   uploadOffReason?: string;
   /** The group's name; default 「头像」 / "Avatar". */
   label?: string;
+  /** Every tile is disabled (the owner form is saving); the value stays shown. */
+  disabled?: boolean;
 };
 
 /**
@@ -133,6 +135,7 @@ export function AvatarPicker({
   onUpload,
   uploadOffReason,
   label,
+  disabled = false,
 }: AvatarPickerProps) {
   const t = useDesignT();
   const name = useId();
@@ -170,6 +173,7 @@ export function AvatarPicker({
                   name={name}
                   value={id}
                   checked={checked}
+                  disabled={disabled}
                   aria-label={presetName}
                   onChange={() => onChange({ kind: "preset", id })}
                 />
@@ -185,7 +189,7 @@ export function AvatarPicker({
           data-state={image ? "checked" : "unchecked"}
           aria-label={t("avatar.upload")}
           aria-describedby={onUpload ? undefined : reasonId}
-          disabled={!onUpload}
+          disabled={!onUpload || disabled}
           onClick={() => input.current?.click()}
         >
           {image && failedSrc !== value.src ? (

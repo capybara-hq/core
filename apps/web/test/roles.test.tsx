@@ -433,7 +433,7 @@ describe("agents: edit, read-only and 更换负责人", () => {
       // the read-only sections: the model shows without the providers list
       await agentPage(role, "someone", {}, edits ? "" : "?s=model");
       if (edits) {
-        expect(await screen.findByRole("button", { name: zh.agents.form.submit })).toBeTruthy();
+        expect(await screen.findByRole("textbox", { name: zh.agents.form.nameLabel })).toBeTruthy();
         expect(screen.getByRole("button", { name: zh.agents.page.reassign })).toBeTruthy();
       } else {
         expect(await screen.findByText("p / m")).toBeTruthy();
@@ -445,7 +445,7 @@ describe("agents: edit, read-only and 更换负责人", () => {
 
   it("a member who owns the agent edits it, without 更换负责人", async () => {
     await agentPage("member", "a1");
-    expect(await screen.findByRole("button", { name: zh.agents.form.submit })).toBeTruthy();
+    expect(await screen.findByRole("textbox", { name: zh.agents.form.nameLabel })).toBeTruthy();
     expect(screen.queryByRole("button", { name: zh.agents.page.reassign })).toBeNull();
   });
 

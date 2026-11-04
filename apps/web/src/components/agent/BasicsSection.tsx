@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AVATAR_UPLOAD_ACCEPT,
   AvatarPicker,
   type AvatarValue,
   Callout,
@@ -162,7 +163,14 @@ function BasicsEdit() {
       memberIds?: string[];
       expectedVersion: number;
     }) => updateAgent(orgId, agent.id, input),
-    invalidates: () => [keys.org(orgId).agents(), keys.org(orgId).agent(agent.id)],
+    // a visibility or members change can change what the org's readiness counts
+    invalidates: (v) => [
+      keys.org(orgId).agents(),
+      keys.org(orgId).agent(agent.id),
+      ...(v.visibility !== undefined || v.memberIds !== undefined
+        ? [keys.org(orgId).readiness()]
+        : []),
+    ],
   });
 
   const editProfile = (next: Partial<ProfilePart>) => {
@@ -177,6 +185,11 @@ function BasicsEdit() {
   const uploadOff = storageOff || limits.data?.available === false;
   async function onUpload(file: File) {
     setUploadError(null);
+    // the picker's `accept` is a hint only: a dropped or forced file is checked here
+    if (!AVATAR_UPLOAD_ACCEPT.split(",").includes(file.type)) {
+      setUploadError(t("page.uploadType"));
+      return;
+    }
     setUploading(true);
     try {
       const square = await cropAvatar(file);
@@ -235,13 +248,17 @@ function BasicsEdit() {
     setProfileError(null);
     setAgentError(null);
     setWarnings([]);
-    const [p, a] = await Promise.allSettled([
+    // The profile first, then the agent: the agent PATCH's refetch then reads the new profile, so
+    // a slow refetch can never write the old profile over the one the profile save cached.
+    const [p] = await Promise.allSettled([
       sendProfile
         ? updateProfile.mutateAsync({
             ...profileInput,
             expectedUpdatedAt: profileBase ?? agent.profile.updatedAt,
           })
         : Promise.resolve(null),
+    ]);
+    const [a] = await Promise.allSettled([
       sendAgent
         ? saveAgent.mutateAsync({
             ...(changed.name ? { definition: definitionWithName(agent, name) } : {}),
@@ -285,20 +302,26 @@ function BasicsEdit() {
 
   const orgMembers = (members.data?.members ?? []).filter((m) => !m.anonymous);
   const errors = (nameError ? 1 : 0) + (profileError ? 1 : 0) + (agentError ? 1 : 0);
+  // the template's rule: the action row only with changes (or while saving, or after a failure)
+  const showRow = dirty || pending || errors > 0;
   return (
     <AgentSectionFrame
       dirty={dirty}
-      actionRow={{
-        unsaved,
-        errors,
-        ...(dirty ? { cancel: { label: t("page.discard"), onSelect: discard } } : {}),
-        primary: {
-          label: t("form.submit"),
-          onSelect: () => void save(),
-          loading: pending,
-          disabled: pending || uploading || !dirty || b.name.trim() === "",
-        },
-      }}
+      actionRow={
+        showRow
+          ? {
+              unsaved,
+              errors,
+              ...(dirty ? { cancel: { label: t("page.discard"), onSelect: discard } } : {}),
+              primary: {
+                label: t("form.submit"),
+                onSelect: () => void save(),
+                loading: pending,
+                disabled: pending || uploading || !dirty || b.name.trim() === "",
+              },
+            }
+          : undefined
+      }
     >
       <Stack gap={16}>
         {warnings.length > 0 && (
@@ -319,6 +342,7 @@ function BasicsEdit() {
             <AvatarPicker
               value={pickerValue}
               label={t("page.avatarLabel")}
+              disabled={pending || uploading}
               onChange={(v) => {
                 if (v?.kind === "preset") editProfile({ avatar: v });
               }}
@@ -336,6 +360,7 @@ function BasicsEdit() {
           >
             <Input
               name="name"
+              disabled={pending}
               maxLength={NAME_MAX}
               value={b.name}
               onChange={(e) => {
@@ -352,6 +377,7 @@ function BasicsEdit() {
           >
             <Textarea
               name="description"
+              disabled={pending}
               rows={3}
               maxLength={DESCRIPTION_MAX}
               value={d.description}
@@ -361,6 +387,7 @@ function BasicsEdit() {
           <Field label={t("form.visibilityLabel")}>
             <Select
               name="visibility"
+              disabled={pending}
               value={b.visibility}
               onChange={(e) => editBasic({ visibility: e.target.value as AgentVisibility })}
               options={VISIBILITIES.map((v) => ({ value: v, label: t(`form.visibility.${v}`) }))}
@@ -383,6 +410,7 @@ function BasicsEdit() {
                       key={m.account.id}
                       label={m.account.displayName}
                       checked={b.memberIds.includes(m.account.id)}
+                      disabled={pending}
                       onChange={(on) =>
                         editBasic({
                           memberIds: on

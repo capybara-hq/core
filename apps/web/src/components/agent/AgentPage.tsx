@@ -15,16 +15,29 @@ import { AgentPageContext, type AgentPageValue, useAgentPage, useSectionNav } fr
 import { LegacyFormSection } from "./LegacyFormSection";
 import { ModelReadOnly } from "./ModelReadOnly";
 import { QuickActionsSection } from "./QuickActionsSection";
-import { type AgentSection, sectionHref, sectionOf } from "./sections";
+import { type AgentSection, sectionOf } from "./sections";
 
 export { type AgentPageValue, AgentSectionFrame, useAgentPage } from "./frame";
 
-/** The section a nav link opens, from its `?s=`. */
-function linkSection(a: Element): AgentSection | null {
-  const href = a.getAttribute("href");
-  if (href === null) return null;
-  const s = new URL(href, "http://x").searchParams.get("s");
-  return s === null ? null : sectionOf(s, true);
+/**
+ * Where a click on `a` would take the page inside the app, or null when the browser should handle
+ * it as it is: a modified or non-primary click (a new tab or window), `target` other than `_self`,
+ * a download, another origin, or a link to the URL already open.
+ */
+export function guardedHref(e: MouseEvent, a: Element): string | null {
+  if (e.defaultPrevented || e.button !== 0) return null;
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return null;
+  const target = a.getAttribute("target");
+  if ((target !== null && target !== "" && target !== "_self") || a.hasAttribute("download")) {
+    return null;
+  }
+  const raw = a.getAttribute("href");
+  if (raw === null) return null;
+  const here = new URL(window.location.href);
+  const url = new URL(raw, here);
+  if (url.origin !== here.origin) return null;
+  const to = `${url.pathname}${url.search}${url.hash}`;
+  return to === `${here.pathname}${here.search}${here.hash}` ? null : to;
 }
 
 /**
@@ -50,26 +63,37 @@ export function AgentPage({
   const open = sectionOf(section, editable);
   const nav = useSectionNav(agent.id, editable);
   const [dirty, setDirty] = useState(false);
-  const [leaving, setLeaving] = useState<AgentSection | null>(null);
+  const [leaving, setLeaving] = useState<string | null>(null);
   const [reassigning, setReassigning] = useState(false);
   const describedBy = useId();
 
-  // A nav click while the section holds unsaved edits: held back (before next/link sees it) and
-  // asked about; the template's nav links are plain links.
+  // While the section holds unsaved edits, any in-app link (section nav, sidebar, path, the head's
+  // links) is held back before next/link sees it and asked about; a modified click (new tab) is
+  // left to the browser. Closing or reloading the tab gets the browser's own prompt. Back and
+  // forward are not covered (ruling).
   useEffect(() => {
     if (!dirty) return;
     const onClick = (e: MouseEvent) => {
       const target = e.target instanceof Element ? e.target : null;
-      const a = target?.closest('[data-part="settings-nav"] a[href]');
-      if (!a || a.getAttribute("aria-current") === "page") return;
-      const to = linkSection(a);
+      const a = target?.closest("a[href]");
+      if (!a || a.closest('[role="dialog"]')) return;
+      const to = guardedHref(e, a);
       if (to === null) return;
       e.preventDefault();
       e.stopPropagation();
       setLeaving(to);
     };
+    const onUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // older browsers show the prompt only when returnValue is set
+      e.returnValue = "";
+    };
     document.addEventListener("click", onClick, true);
-    return () => document.removeEventListener("click", onClick, true);
+    window.addEventListener("beforeunload", onUnload);
+    return () => {
+      document.removeEventListener("click", onClick, true);
+      window.removeEventListener("beforeunload", onUnload);
+    };
   }, [dirty]);
 
   const admin = canUpdateOrg(me);
@@ -142,7 +166,7 @@ export function AgentPage({
                   const to = leaving;
                   setLeaving(null);
                   setDirty(false);
-                  router.push(sectionHref(agent.id, to));
+                  router.push(to);
                 }}
               >
                 {t("agents.page.leave.discard")}

@@ -226,6 +226,8 @@ export type AgentFormView = {
   submit(): void;
   pending: boolean;
   canSubmit: boolean;
+  /** The last save failed (its error shows above the sections). */
+  failed: boolean;
 };
 
 /**
@@ -851,6 +853,7 @@ export function useAgentForm(
     submit: () => void save(),
     pending,
     canSubmit,
+    failed: error !== undefined,
   };
 }
 

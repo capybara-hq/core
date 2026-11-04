@@ -638,7 +638,7 @@
       "reassign": "Reassign owner",
       "leave": {
         "title": "Discard unsaved changes?",
-        "body": "This section has changes that are not saved. Keep editing, or discard them and open the other section.",
+        "body": "This section has changes that are not saved. Keep editing, or discard them and leave.",
         "keep": "Keep editing",
         "discard": "Discard changes"
       },
@@ -662,7 +662,8 @@
         "bodyLabel": "Text",
         "bodyHelp": "What goes into the composer.",
         "bodyRequired": "Enter the text."
-      }
+      },
+      "uploadType": "Pick a png, jpg or webp image."
     }
   },
   "skills": {

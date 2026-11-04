@@ -269,7 +269,7 @@ describe("编辑 agent（FormPage）", () => {
     },
   );
 
-  it("不改动直接保存：工具引用保持原顺序、skills 合并（保留不认识的键）、带 expectedVersion", async () => {
+  it("a skills save keeps the tool order, merges skills (unknown keys kept) and sends expectedVersion", async () => {
     const tools = [
       { kind: "plugin", plugin: "todo", name: "write" },
       { kind: "builtin", name: "read_tool_output" },
@@ -282,15 +282,17 @@ describe("编辑 agent（FormPage）", () => {
     });
     await renderEditAgent({ section: "skills" });
     const group = await screen.findByRole("group", { name: en.agents.form.orgSkillsLabel });
-    await within(group).findByRole("checkbox", { name: /pdf-tools/ });
-    await userEvent.setup().click(screen.getByRole("button", { name: en.agents.form.submit }));
+    const user = userEvent.setup();
+    // the save row appears with a change: drop the one org skill
+    await user.click(await within(group).findByRole("checkbox", { name: /pdf-tools/ }));
+    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
     const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {
       definition: Record<string, unknown>;
       expectedVersion?: number;
     };
     expect(body.definition.tools).toEqual(tools);
-    expect(body.definition.skills).toEqual({ orgSkills: ["s1"], future: 1 });
+    expect(body.definition.skills).toEqual({ orgSkills: [], future: 1 });
     expect(body.expectedVersion).toBe(3);
   });
 
@@ -305,8 +307,9 @@ describe("编辑 agent（FormPage）", () => {
       await renderEditAgent({ locale, section: "skills" });
       const m = msgs[locale];
       const group = await screen.findByRole("group", { name: m.agents.form.orgSkillsLabel });
-      await within(group).findByRole("checkbox", { name: /pdf-tools/ });
-      await userEvent.setup().click(screen.getByRole("button", { name: m.agents.form.submit }));
+      const user = userEvent.setup();
+      await user.click(await within(group).findByRole("checkbox", { name: /pdf-tools/ }));
+      await user.click(screen.getByRole("button", { name: m.agents.form.submit }));
       expect(await screen.findByText(new RegExp(m.errors.agent.version_conflict))).toBeTruthy();
       expect(router.push).not.toHaveBeenCalled();
     },
@@ -487,12 +490,14 @@ describe("pinned skills (skills.pinned)", () => {
         name: fill(f.pinSkill, { name: "using-superpowers" }),
       }),
     ).toBeNull();
+    // a skill that is not suggested for pinning: the save has a change but still no pins
+    await user.click(within(org).getByRole("checkbox", { name: /brainstorming/ }));
     await user.click(screen.getByRole("button", { name: f.submit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
     const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {
       definition: Record<string, unknown>;
     };
-    expect(body.definition.skills).toEqual({ orgSkills: ["s3"] });
+    expect(body.definition.skills).toEqual({ orgSkills: ["s3", "s2"] });
   });
 
   it("a fourth pin is disabled with the tooMany hint; the token estimate sums the pinned skills", async () => {
@@ -617,8 +622,12 @@ describe("pinned skills (skills.pinned)", () => {
         }),
     });
     await renderEditAgent({ section: "skills" });
-    await screen.findByRole("group", { name: f.pinnedLabel });
-    await userEvent.setup().click(screen.getByRole("button", { name: f.submit }));
+    const pinned = await screen.findByRole("group", { name: f.pinnedLabel });
+    const user = userEvent.setup();
+    await user.click(
+      within(pinned).getByRole("checkbox", { name: fill(f.pinSkill, { name: "pdf-tools" }) }),
+    );
+    await user.click(screen.getByRole("button", { name: f.submit }));
     expect(
       await screen.findByText(fill(f.pinnedError.manual_only, { name: "pdf-tools" })),
     ).toBeTruthy();

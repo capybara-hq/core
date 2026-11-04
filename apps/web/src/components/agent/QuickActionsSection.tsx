@@ -141,17 +141,21 @@ function QuickActionsEdit() {
   return (
     <AgentSectionFrame
       dirty={unsaved > 0}
-      actionRow={{
-        unsaved,
-        errors,
-        ...(unsaved > 0 ? { cancel: { label: t("discard"), onSelect: discard } } : {}),
-        primary: {
-          label: tf("submit"),
-          onSelect: () => void save(),
-          loading: pending,
-          disabled: pending || unsaved === 0,
-        },
-      }}
+      actionRow={
+        unsaved > 0 || pending || errors > 0
+          ? {
+              unsaved,
+              errors,
+              ...(unsaved > 0 ? { cancel: { label: t("discard"), onSelect: discard } } : {}),
+              primary: {
+                label: tf("submit"),
+                onSelect: () => void save(),
+                loading: pending,
+                disabled: pending || unsaved === 0,
+              },
+            }
+          : undefined
+      }
     >
       <Stack gap={16}>
         {error ? (
@@ -172,6 +176,7 @@ function QuickActionsEdit() {
             label={t("quickActions.list")}
             addLabel={t("quickActions.add")}
             max={QUICK_ACTIONS_MAX}
+            disabled={pending}
             empty={t("quickActions.none")}
             items={items.map((e) => {
               const bad = checked ? invalid(e) : { title: false, body: false };
@@ -188,6 +193,7 @@ function QuickActionsEdit() {
                       {...(bad.title ? { error: t("quickActions.titleRequired") } : {})}
                     >
                       <Input
+                        disabled={pending}
                         maxLength={TITLE_MAX}
                         value={e.title}
                         onChange={(ev) => {
@@ -205,6 +211,7 @@ function QuickActionsEdit() {
                       {...(bad.body ? { error: t("quickActions.bodyRequired") } : {})}
                     >
                       <Textarea
+                        disabled={pending}
                         rows={4}
                         maxLength={BODY_MAX}
                         value={e.body}

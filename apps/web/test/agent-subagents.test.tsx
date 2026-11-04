@@ -176,9 +176,13 @@ describe("the agent page's Sub-agents section", () => {
       ...routes(),
       [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: LEAD, warnings: [] }),
     });
-    await renderEditAgent({ section: "subagents" });
-    await section();
-    await userEvent.setup().click(screen.getByRole("button", { name: en.agents.form.submit }));
+    // a save of another section (a tool switched on) carries no subagents block either
+    await renderEditAgent({ section: "tools" });
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("checkbox", { name: en.agents.form.builtin.skill_write }),
+    );
+    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
     const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {
       definition: Record<string, unknown>;
@@ -215,11 +219,12 @@ describe("the agent page's Sub-agents section", () => {
       });
       await renderEditAgent({ locale, section: "subagents" });
       const s = await section(m.section);
-      await userEvent
-        .setup()
-        .click(
-          screen.getByRole("button", { name: (locale === "zh" ? zh : en).agents.form.submit }),
-        );
+      const user = userEvent.setup();
+      // an edit opens the save row
+      await user.type(within(s).getByRole("textbox", { name: m.inlineDescription }), "!");
+      await user.click(
+        screen.getByRole("button", { name: (locale === "zh" ? zh : en).agents.form.submit }),
+      );
       const nameField = within(s).getByRole("textbox", { name: m.inlineName });
       await vi.waitFor(() => expect(nameField.getAttribute("aria-invalid")).toBe("true"));
       expect(s.textContent).toContain(m.reasons.invalid_name.replace("{value}", "Bad Name"));
@@ -247,7 +252,10 @@ describe("the agent page's Sub-agents section", () => {
     });
     await renderEditAgent({ section: "subagents" });
     const s = await section();
-    await userEvent.setup().click(screen.getByRole("button", { name: en.agents.form.submit }));
+    const user = userEvent.setup();
+    // an edit opens the save row (the instructions stay valid)
+    await user.type(within(s).getByRole("textbox", { name: S.inlineInstructions }), "!");
+    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
     const description = within(s).getByRole("textbox", { name: S.inlineDescription });
     await vi.waitFor(() => expect(description.getAttribute("aria-invalid")).toBe("true"));
     expect(s.textContent).toContain(S.reasons.required);

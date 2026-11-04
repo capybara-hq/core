@@ -84,17 +84,22 @@ function SectionForm({
       actionRow={
         form.saved
           ? { primary: { label: t("agents.form.continue"), onSelect: onReset } }
-          : {
-              unsaved: form.unsaved,
-              errors: form.errors,
-              ...(dirty ? { cancel: { label: t("agents.page.discard"), onSelect: onReset } } : {}),
-              primary: {
-                label: t("agents.form.submit"),
-                onSelect: form.submit,
-                loading: form.pending,
-                disabled: !form.canSubmit,
-              },
-            }
+          : // the template's rule: the row only with changes (or while saving, or after a failure)
+            !dirty && !form.pending && form.errors === 0 && !form.failed
+            ? undefined
+            : {
+                unsaved: form.unsaved,
+                errors: form.errors,
+                ...(dirty
+                  ? { cancel: { label: t("agents.page.discard"), onSelect: onReset } }
+                  : {}),
+                primary: {
+                  label: t("agents.form.submit"),
+                  onSelect: form.submit,
+                  loading: form.pending,
+                  disabled: !form.canSubmit,
+                },
+              }
       }
     >
       {form.sections}

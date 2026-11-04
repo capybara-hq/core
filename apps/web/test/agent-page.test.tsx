@@ -1,4 +1,4 @@
-import { act, cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -98,7 +98,7 @@ const limits = (available: boolean) => ({
   requestMediaBytes: 1,
   available,
 });
-function routes(a = agent(), over: Record<string, () => Response> = {}) {
+function routes(a = agent(), over: Record<string, () => Response | Promise<Response>> = {}) {
   return {
     ...sessionRoutes(),
     ...agentFormDefaults(),
@@ -283,6 +283,250 @@ describe("the agent page by section (agent profile design §3)", () => {
     dialog = await screen.findByRole("dialog", { name: P_.leave.title });
     await user.click(within(dialog).getByRole("button", { name: P_.leave.discard }));
     expect(router.push).toHaveBeenCalledWith("/agents/ag1?s=model");
+  });
+
+  it("a dirty section asks before any in-app link: discard goes to its href, keep stays", async () => {
+    stubApi(routes());
+    await renderEditAgent();
+    // a link outside the page (the sidebar's) is guarded as well
+    const outside = document.createElement("a");
+    outside.href = "/skills";
+    outside.textContent = "Skills elsewhere";
+    document.body.append(outside);
+    try {
+      const user = userEvent.setup();
+      await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), " 2");
+      await user.click(outside);
+      let dialog = await screen.findByRole("dialog", { name: P_.leave.title });
+      await user.click(within(dialog).getByRole("button", { name: P_.leave.keep }));
+      await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(router.push).not.toHaveBeenCalled();
+      // the head's links and the path too
+      await user.click(screen.getByRole("link", { name: P_.startChat }));
+      dialog = await screen.findByRole("dialog", { name: P_.leave.title });
+      await user.click(within(dialog).getByRole("button", { name: P_.leave.keep }));
+      await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await user.click(outside);
+      dialog = await screen.findByRole("dialog", { name: P_.leave.title });
+      await user.click(within(dialog).getByRole("button", { name: P_.leave.discard }));
+      expect(router.push).toHaveBeenCalledWith("/skills");
+    } finally {
+      outside.remove();
+    }
+  });
+
+  it("a modified click (new tab) is not intercepted", async () => {
+    stubApi(routes());
+    await renderEditAgent();
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), " 2");
+    const link = within(nav()).getByRole("link", { name: P_.sections.model });
+    for (const mod of [{ metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { button: 1 }]) {
+      const ev = new MouseEvent("click", { bubbles: true, cancelable: true, ...mod });
+      // the browser would open a tab: the page must not hold it back
+      act(() => {
+        link.dispatchEvent(ev);
+      });
+      expect(ev.defaultPrevented).toBe(false);
+      expect(screen.queryByRole("dialog")).toBeNull();
+    }
+    // a plain click is held back
+    const plain = new MouseEvent("click", { bubbles: true, cancelable: true });
+    act(() => {
+      link.dispatchEvent(plain);
+    });
+    expect(plain.defaultPrevented).toBe(true);
+    expect(await screen.findByRole("dialog", { name: P_.leave.title })).toBeTruthy();
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it("beforeunload asks only while the section is dirty", async () => {
+    stubApi(routes());
+    await renderEditAgent();
+    const unload = () => {
+      const ev = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    };
+    expect(unload()).toBe(false);
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), " 2");
+    expect(unload()).toBe(true);
+    await user.click(screen.getByRole("button", { name: P_.discard }));
+    expect(unload()).toBe(false);
+  });
+
+  it("the save row shows only with changes; a form section keeps Continue after warnings", async () => {
+    stubApi(
+      routes(agent(), {
+        [`PATCH ${ORG}/agents/ag1`]: ok({
+          agent: agent({ version: 2 }),
+          warnings: ["fallback_same_provider"],
+        }),
+      }),
+    );
+    const view = await renderEditAgent();
+    const row = () => document.querySelector('[data-part="action-row"]');
+    expect(row()).toBeNull();
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), " 2");
+    expect(row()).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: P_.discard }));
+    expect(row()).toBeNull();
+    await view.navigate("/agents/ag1?s=tools");
+    expect(row()).toBeNull();
+    await user.click(screen.getByRole("checkbox", { name: en.agents.form.builtin.skill_write }));
+    expect(row()).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
+    expect(await screen.findByText(en.agents.warnings.fallback_same_provider)).toBeTruthy();
+    expect(screen.getByRole("button", { name: en.agents.form.continue })).toBeTruthy();
+  });
+
+  it("a combined save shows the new profile in the head even when the agent refetch is slow", async () => {
+    let profileSaved = false;
+    let patched = false;
+    stubApi(
+      routes(agent(), {
+        [`GET ${ORG}/agents/ag1`]: () => {
+          // the server's state when the read starts; it answers late
+          const snapshot = agent({
+            name: patched ? "Helper 2" : "Helper",
+            ...(profileSaved ? { description: "New words.", updatedAt: P2 } : {}),
+          });
+          return new Promise<Response>((r) =>
+            setTimeout(() => r(json(200, { agent: snapshot })), 60),
+          );
+        },
+        [`PATCH ${ORG}/agents/ag1/profile`]: () =>
+          new Promise<Response>((r) =>
+            setTimeout(() => {
+              profileSaved = true;
+              r(
+                json(200, {
+                  profile: { ...agent().profile, description: "New words.", updatedAt: P2 },
+                }),
+              );
+            }, 20),
+          ) as unknown as Response,
+        [`PATCH ${ORG}/agents/ag1`]: () => {
+          patched = true;
+          return json(200, { agent: agent({ name: "Helper 2" }), warnings: [] });
+        },
+      }),
+    );
+    await renderEditAgent();
+    const user = userEvent.setup();
+    const description = screen.getByRole("textbox", { name: new RegExp(P_.descriptionLabel) });
+    await user.clear(description);
+    await user.type(description, "New words.");
+    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), " 2");
+    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
+    await vi.waitFor(
+      () => expect(screen.getByRole("heading", { level: 1, name: "Helper 2" })).toBeTruthy(),
+      { timeout: 2000 },
+    );
+    await settle();
+    expect(document.querySelector('[data-part="settings-description"]')?.textContent).toBe(
+      "New words.",
+    );
+  });
+
+  it("a visibility change also invalidates the org's readiness", async () => {
+    const calls = stubApi(
+      routes(agent(), {
+        [`PATCH ${ORG}/agents/ag1`]: ok({
+          agent: { ...agent(), visibility: "private" },
+          warnings: [],
+        }),
+      }),
+    );
+    await renderEditAgent();
+    const user = userEvent.setup();
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: en.agents.form.visibilityLabel }),
+      "private",
+    );
+    calls.length = 0;
+    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
+    await vi.waitFor(() =>
+      expect(calls.filter((c) => c.method === "GET").map((c) => c.url)).toContain(
+        `${ORG}/readiness`,
+      ),
+    );
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
+      visibility: "private",
+      expectedVersion: 1,
+    });
+  });
+
+  it("an upload of another type (gif) says so and uploads nothing", async () => {
+    const calls = stubApi(routes());
+    const { container } = await renderEditAgent();
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    // the accept attribute is a hint: a forced file still reaches the page
+    fireEvent.change(input, {
+      target: { files: [new File(["x"], "a.gif", { type: "image/gif" })] },
+    });
+    expect(await screen.findByText(P_.uploadType)).toBeTruthy();
+    await settle();
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+  });
+
+  it("while basics saves its fields are disabled", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const saved = agent();
+    stubApi(
+      routes(saved, {
+        [`PATCH ${ORG}/agents/ag1/profile`]: async () => {
+          await held;
+          return json(200, { profile: { ...saved.profile, description: "x", updatedAt: P2 } });
+        },
+      }),
+    );
+    await renderEditAgent();
+    const user = userEvent.setup();
+    const description = screen.getByRole("textbox", { name: new RegExp(P_.descriptionLabel) });
+    await user.type(description, " more");
+    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
+    await vi.waitFor(() => expect(description).toHaveProperty("disabled", true));
+    expect(screen.getByRole("textbox", { name: en.agents.form.nameLabel })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    expect(screen.getByRole("radio", { name: "Fox" })).toHaveProperty("disabled", true);
+    await act(async () => release());
+    await vi.waitFor(() => expect(description).toHaveProperty("disabled", false));
+  });
+
+  it("while quick actions save their fields are disabled", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const saved = agent({ quickActions: [{ title: "T1", body: "B1" }] });
+    stubApi(
+      routes(saved, {
+        [`PATCH ${ORG}/agents/ag1/profile`]: async () => {
+          await held;
+          return json(200, { profile: { ...saved.profile, updatedAt: P2 } });
+        },
+      }),
+    );
+    await renderEditAgent({ section: "quick-actions" });
+    const user = userEvent.setup();
+    const title = screen.getByRole("textbox", { name: new RegExp(P_.quickActions.titleLabel) });
+    await user.type(title, "!");
+    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
+    await vi.waitFor(() => expect(title).toHaveProperty("disabled", true));
+    expect(screen.getByRole("button", { name: P_.quickActions.add })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    await act(async () => release());
+    await vi.waitFor(() => expect(title).toHaveProperty("disabled", false));
   });
 
   it("a 409 profile conflict shows the reload action", async () => {

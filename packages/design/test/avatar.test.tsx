@@ -145,6 +145,21 @@ describe("Avatar (spec §6.30)", () => {
 });
 
 describe("AvatarPicker (spec §6.30)", () => {
+  it("disabled: every tile is disabled and the value stays shown", () => {
+    wrap(
+      <AvatarPicker
+        value={{ kind: "preset", id: "fox" }}
+        onChange={() => {}}
+        onUpload={() => {}}
+        disabled
+      />,
+      "en",
+    );
+    for (const r of screen.getAllByRole("radio")) expect(r).toHaveProperty("disabled", true);
+    expect(screen.getByRole("radio", { name: "Fox" })).toHaveProperty("checked", true);
+    expect(screen.getByRole("button", { name: "Upload image" })).toHaveProperty("disabled", true);
+  });
+
   it("the picker selects a preset and calls onChange", () => {
     const onChange = vi.fn();
     wrap(
