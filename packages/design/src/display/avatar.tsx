@@ -96,6 +96,7 @@ export function Avatar({
           className="cb-avatar-art cb-avatar-image"
           src={src}
           alt=""
+          referrerPolicy="no-referrer"
           onError={() => {
             setFailed(src);
             onImageError?.();

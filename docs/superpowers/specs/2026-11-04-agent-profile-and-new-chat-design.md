@@ -114,8 +114,9 @@ The profile has three fields: `avatar`, `description` and `quickActions`.
 - **The old `definition.avatarUrl`** (my call, builder check B5): it is versioned, unused by the
   web, and copied by the general-purpose sub-agent. The web stops writing it. An existing
   non-null value is migrated once into the profile as an upload-like external image. Builder's
-  choice: copy it into the object store, or keep it as an https reference that the avatar route
-  proxies. The field stays in the schema, ignored, so old versions still parse.
+  choice: copy it into the object store, or keep it as an https reference. Decision: the avatar route
+  answers 302 to an https URL (presigned or external) and never proxies; the `<img>` carries
+  `referrerPolicy="no-referrer"`, so images load with no referrer. The field stays in the schema, ignored, so old versions still parse.
 
 ## 3. Part 2: the agent page
 

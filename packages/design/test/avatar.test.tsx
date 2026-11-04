@@ -78,6 +78,7 @@ describe("Avatar (spec §6.30)", () => {
     const img = container.querySelector("img") as HTMLImageElement;
     expect(img.getAttribute("src")).toBe("/api/avatar/a1");
     expect(img.getAttribute("alt")).toBe("");
+    expect(img.getAttribute("referrerpolicy")).toBe("no-referrer");
     expect(root(container).getAttribute("data-kind")).toBe("image");
     fireEvent.error(img);
     expect(container.querySelector("img")).toBeNull();
