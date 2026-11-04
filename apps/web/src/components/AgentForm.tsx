@@ -97,6 +97,7 @@ export function useAgentForm(
   const noModels = options.length === 0;
 
   const [name, setName] = useState("");
+  // No org default chat model exists today: the form preselects the first available model.
   const [model, setModel] = useState(options[0]?.value ?? "");
   const [visibility, setVisibility] = useState<AgentVisibility>("private");
   // The preselected preset: kept while an upload is picked, so a failed upload leaves a real
@@ -110,6 +111,14 @@ export function useAgentForm(
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
   const [nameError, setNameError] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  // FormPage's create mode focuses the first field (the avatar); the name is the one required
+  // field, so it takes the focus once FormPage's own effect has run.
+  useEffect(() => {
+    queueMicrotask(() =>
+      formRef.current?.querySelector<HTMLInputElement>('input[name="name"]')?.focus(),
+    );
+  }, []);
   const pickedSrc = useRef<string | undefined>(undefined);
   useEffect(() => () => revoke(pickedSrc.current), []);
 
@@ -231,7 +240,7 @@ export function useAgentForm(
   ).length;
 
   const sections = (
-    <form onSubmit={onSubmit} onKeyDown={onKeyDown} noValidate>
+    <form ref={formRef} onSubmit={onSubmit} onKeyDown={onKeyDown} noValidate>
       <Stack gap={16}>
         {error !== undefined && <FormError message={error} />}
         <FormSection

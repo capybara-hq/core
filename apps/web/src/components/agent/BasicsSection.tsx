@@ -19,6 +19,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
+import { useRouter } from "../../i18n/navigation";
 import {
   type Agent,
   type AgentAvatar,
@@ -123,6 +124,8 @@ function BasicsEdit() {
   const qc = useQueryClient();
   const errorMessage = useErrorMessage();
   const { orgId, agent } = useAgentPage();
+  const router = useRouter();
+  const agentId = agent.id;
   const profile = useSectionDraft(profilePartOf(agent));
   const basic = useSectionDraft(agentPartOf(agent));
   // What each part's edits were made on: a save over a newer one is a 409 with a reload.
@@ -140,9 +143,11 @@ function BasicsEdit() {
   useEffect(() => () => (preview ? URL.revokeObjectURL(preview.src) : undefined), [preview]);
   // Landing here from `/agents/new` after its picked image could not be uploaded.
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("avatar") === "failed")
-      setUploadError(t("page.createUploadFailed"));
-  }, [t]);
+    if (new URLSearchParams(window.location.search).get("avatar") !== "failed") return;
+    setUploadError(t("page.createUploadFailed"));
+    // the notice is shown once: a reload does not bring it back
+    router.replace(`/agents/${encodeURIComponent(agentId)}?s=basics`);
+  }, [t, router, agentId]);
 
   const limitsQ = attachmentLimitsQuery(orgId);
   const limits = useQuery({ ...limitsQ, retryOnMount: retryOnMountOf(limitsQ.queryKey) });

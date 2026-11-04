@@ -8,7 +8,10 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { ModelParams } from "../src/components/ModelParams";
 import type { ModelParameter, ParamValue } from "../src/lib/agents";
+import { agentFormDefaults, renderEditAgent } from "./support/agents";
+import { bodyOf, type Call, json, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
+import { sessionRoutes } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -19,9 +22,6 @@ vi.mock("next/navigation", () => ({
     throw new Error("NOT_FOUND");
   },
 }));
-
-const _json = (status: number, body: unknown): Response =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 const EFFORT: ModelParameter = {
   key: "effort",
@@ -309,4 +309,210 @@ describe("ModelParams", () => {
     const { container } = render(<Harness parameters={[]} locale="en" onChange={vi.fn()} />);
     expect(container.textContent).toBe("");
   });
+});
+
+// ---------------------------------------------------------------------------
+// The Model section of the agent page (`/agents/<id>?s=model`): params by the chosen model
+// ---------------------------------------------------------------------------
+
+const caps = (reasoning: boolean) => ({
+  tools: true,
+  vision: false,
+  reasoning,
+  caching: false,
+  midConversationSystem: false,
+});
+const MODELS = {
+  providers: [
+    {
+      provider: "model-fake",
+      models: [
+        {
+          id: "fake-1",
+          displayName: "Fake 1",
+          capabilities: caps(true),
+          parameters: [EFFORT, STYLE],
+        },
+      ],
+    },
+    {
+      provider: "other",
+      models: [
+        {
+          id: "o-1",
+          displayName: "O 1",
+          capabilities: caps(false),
+          parameters: [{ ...EFFORT, schema: { type: "string", enum: ["low", "high"] } }],
+        },
+        { id: "o-2", displayName: "O 2", capabilities: caps(false), parameters: [] },
+      ],
+    },
+  ],
+};
+
+const ORG = "/api/v1/orgs/o1";
+const T = "2026-10-20T08:00:00.000Z";
+const SAVED = {
+  id: "ag1",
+  orgId: "o1",
+  ownerAccountId: "a1",
+  visibility: "org",
+  currentVersion: 1,
+  memberIds: null,
+  needsReassignment: false,
+  createdAt: T,
+  updatedAt: T,
+  profile: { avatar: null, description: "", quickActions: [], updatedAt: T },
+  definition: {
+    name: "Helper",
+    instructions: "Be helpful.",
+    model: { provider: "model-fake", model: "fake-1" },
+    fallback: null,
+    modelParams: {},
+    fallbackParams: {},
+    tools: [{ kind: "builtin", name: "ask_user" }],
+    toolPolicies: {},
+  },
+};
+
+type Handler = (c: Call) => Response | Promise<Response>;
+/** The page's reads plus the agent PATCH (`patch` answers it). */
+function stubModel(patch: Handler = () => json(200, { agent: SAVED, warnings: [] })) {
+  return stubApi({
+    ...sessionRoutes(),
+    ...agentFormDefaults(),
+    [`GET ${ORG}/agents/ag1`]: () => json(200, { agent: SAVED }),
+    [`GET ${ORG}/models`]: () => json(200, MODELS),
+    [`PATCH ${ORG}/agents/ag1`]: patch,
+  });
+}
+const patches = (calls: Call[]) =>
+  calls
+    .filter((c) => c.method === "PATCH" && c.url === `${ORG}/agents/ag1`)
+    .map((c) => bodyOf(c) as { definition: Record<string, unknown>; expectedVersion: number });
+
+const modelBox = (locale: "zh" | "en") =>
+  screen.getByRole("combobox", { name: (locale === "zh" ? zh : en).agents.form.modelLabel });
+/** 兜底模型下拉框的名称带「可选」后缀。 */
+const fallbackBox = (locale: "zh" | "en") => {
+  const label = (locale === "zh" ? zh : en).agents.form.fallbackLabel;
+  return screen.getByRole("combobox", { name: (n) => n.startsWith(label) });
+};
+const saveButton = (locale: "zh" | "en") =>
+  screen.getByRole("button", { name: (locale === "zh" ? zh : en).agents.form.submit });
+
+describe("the Model section's parameters (/agents/<id>?s=model)", () => {
+  it("switching the main model re-renders the params and drops keys the new model does not declare or allow; the save sends modelParams", async () => {
+    const calls = stubModel();
+    await renderEditAgent({ locale: "en", section: "model" });
+    const user = userEvent.setup();
+    const main = await screen.findByRole("region", { name: en.agents.form.modelParamsTitle });
+    await user.click(within(main).getByRole("radio", { name: en.agents.params.effort.high }));
+    await user.selectOptions(within(main).getByRole("combobox", { name: "Reply style" }), "shout");
+
+    // o-1 declares only effort (low | high): style is dropped, effort=high stays
+    await user.selectOptions(modelBox("en"), "other/o-1");
+    expect(within(main).queryByRole("combobox", { name: "Reply style" })).toBeNull();
+    await user.click(saveButton("en"));
+    await vi.waitFor(() => expect(patches(calls)).toHaveLength(1));
+    expect(patches(calls)[0]).toMatchObject({
+      definition: { model: { provider: "other", model: "o-1" } },
+      expectedVersion: 1,
+    });
+    expect(patches(calls)[0]?.definition.modelParams).toEqual({ effort: "high" });
+  });
+
+  it("switching to a model that no longer declares the tier drops the old value; a model without params has no params section", async () => {
+    const calls = stubModel();
+    await renderEditAgent({ locale: "en", section: "model" });
+    const user = userEvent.setup();
+    const main = await screen.findByRole("region", { name: en.agents.form.modelParamsTitle });
+    await user.click(within(main).getByRole("radio", { name: en.agents.params.effort.medium }));
+    // o-1 allows only low | high: medium is no longer legal
+    await user.selectOptions(modelBox("en"), "other/o-1");
+    await user.selectOptions(modelBox("en"), "other/o-2");
+    expect(screen.queryByRole("region", { name: en.agents.form.modelParamsTitle })).toBeNull();
+    await user.click(saveButton("en"));
+    await vi.waitFor(() => expect(patches(calls)).toHaveLength(1));
+    expect(patches(calls)[0]?.definition).toMatchObject({
+      model: { provider: "other", model: "o-2" },
+    });
+    expect(patches(calls)[0]?.definition.modelParams).toEqual({});
+    expect(patches(calls)[0]?.definition.fallbackParams).toEqual({});
+  });
+
+  it("the fallback model has its own params; removing the fallback clears fallbackParams", async () => {
+    const calls = stubModel();
+    await renderEditAgent({ locale: "en", section: "model" });
+    const user = userEvent.setup();
+    await screen.findByRole("region", { name: en.agents.form.modelParamsTitle });
+    expect(screen.queryByRole("region", { name: en.agents.form.fallbackParamsTitle })).toBeNull();
+    await user.selectOptions(fallbackBox("en"), "other/o-1");
+    const fb = screen.getByRole("region", { name: en.agents.form.fallbackParamsTitle });
+    await user.click(within(fb).getByRole("radio", { name: en.agents.params.effort.low }));
+    await user.selectOptions(fallbackBox("en"), "");
+    expect(screen.queryByRole("region", { name: en.agents.form.fallbackParamsTitle })).toBeNull();
+
+    // pick the fallback again: the earlier value was cleared
+    await user.selectOptions(fallbackBox("en"), "other/o-1");
+    await user.click(saveButton("en"));
+    await vi.waitFor(() => expect(patches(calls)).toHaveLength(1));
+    expect(patches(calls)[0]?.definition.fallback).toEqual({ provider: "other", model: "o-1" });
+    expect(patches(calls)[0]?.definition.fallbackParams).toEqual({});
+  });
+
+  it("the fallback params the person sets are saved with the fallback", async () => {
+    const calls = stubModel();
+    await renderEditAgent({ locale: "en", section: "model" });
+    const user = userEvent.setup();
+    await screen.findByRole("region", { name: en.agents.form.modelParamsTitle });
+    await user.selectOptions(fallbackBox("en"), "other/o-1");
+    const fb = screen.getByRole("region", { name: en.agents.form.fallbackParamsTitle });
+    await user.click(within(fb).getByRole("radio", { name: en.agents.params.effort.low }));
+    await user.click(saveButton("en"));
+    await vi.waitFor(() => expect(patches(calls)).toHaveLength(1));
+    expect(patches(calls)[0]?.definition.fallbackParams).toEqual({ effort: "low" });
+  });
+
+  it.each(["zh", "en"] as const)(
+    "validation_failed details show beside their fields (%s)",
+    async (locale) => {
+      const m = locale === "zh" ? zh : en;
+      stubModel(() =>
+        json(400, {
+          error: {
+            code: "validation_failed",
+            message: "Invalid model parameters",
+            details: [
+              { path: "modelParams.model-fake.style", message: 'parameter "x" must be one of' },
+              { path: "fallbackParams.effort", message: 'parameter "effort" must be one of' },
+              { path: "fallbackParams.gone", message: 'unknown parameter "gone"' },
+            ],
+          },
+        }),
+      );
+      await renderEditAgent({ locale, section: "model" });
+      const user = userEvent.setup();
+      const main = await screen.findByRole("region", { name: m.agents.form.modelParamsTitle });
+      await user.selectOptions(fallbackBox(locale), "other/o-1");
+      await user.click(saveButton(locale));
+
+      const style = within(main).getByRole("combobox", { name: STYLE.label[locale] });
+      expect(await within(paramBox(style)).findByText(`${m.agents.params.invalid}`)).toBeTruthy();
+      expect(style.getAttribute("aria-invalid")).toBe("true");
+      // the main model's effort has no error
+      const mainEffort = within(main).getByRole("radiogroup", { name: EFFORT.label[locale] });
+      expect(within(paramBox(mainEffort)).queryByText(`${m.agents.params.invalid}`)).toBeNull();
+
+      const fb = screen.getByRole("region", { name: m.agents.form.fallbackParamsTitle });
+      const fbEffort = within(fb).getByRole("radiogroup", { name: EFFORT.label[locale] });
+      expect(within(paramBox(fbEffort)).getByText(`${m.agents.params.invalid}`)).toBeTruthy();
+      // a key no field shows is listed with the total error
+      const alert = screen.getByRole("alert");
+      expect(within(alert).getByText(`${m.errors.validation_failed}`)).toBeTruthy();
+      expect(
+        within(alert).getByText(`${m.agents.params.invalidKey.replace("{key}", "gone")}`),
+      ).toBeTruthy();
+    },
+  );
 });

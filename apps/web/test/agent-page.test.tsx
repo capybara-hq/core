@@ -189,6 +189,26 @@ describe("the agent page by section (agent profile design §3)", () => {
     expect(browser).toEqual([]);
   });
 
+  it("landing from a create with a failed avatar upload shows the notice once and clears the query", async () => {
+    stubApi(routes());
+    window.history.pushState({}, "", "/agents/ag1?s=basics&avatar=failed");
+    try {
+      await renderEditAgent({ section: "basics" });
+      expect(await screen.findByText(P_.createUploadFailed)).toBeTruthy();
+      expect(router.replace).toHaveBeenCalledWith("/agents/ag1?s=basics");
+    } finally {
+      window.history.pushState({}, "", "/");
+    }
+  });
+
+  it("without the avatar query Basics shows no upload notice and does not navigate", async () => {
+    stubApi(routes());
+    await renderEditAgent({ section: "basics" });
+    await settle();
+    expect(screen.queryByText(P_.createUploadFailed)).toBeNull();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
   it("saving basics sends the profile and the name, and sends no other section's draft", async () => {
     const saved = agent();
     const calls = stubApi(

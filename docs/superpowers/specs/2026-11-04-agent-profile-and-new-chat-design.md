@@ -104,6 +104,7 @@ The profile has three fields: `avatar`, `description` and `quickActions`.
   - the name, which is required;
   - the model, which defaults to the org default model.
   - Nothing else.
+  - No org default chat model exists today; the create form preselects the first available model.
 - On create, the prompt is one file `AGENTS.md` holding a short editable starter template
   (copy: builder's draft, reviewed in the PR). The person then lands on the agent page.
 - `POST …/agents` accepts the profile with the definition. Agents created through the API

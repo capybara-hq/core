@@ -1,5 +1,3 @@
-import zh from "../../messages/zh.json";
-
 /** The time-of-day sets of greeting lines (`chat.greeting.<bucket>` in the messages). */
 export type GreetingBucket = "morning" | "noon" | "afternoon" | "evening" | "night";
 
@@ -12,16 +10,19 @@ export function greetingBucket(hour: number): GreetingBucket {
   return "night";
 }
 
+/** The locale's `chat.greeting` messages by bucket (`t.raw("greeting")` in a page; `sub` is ignored). */
+export type GreetingLines = Readonly<Record<GreetingBucket, readonly string[]>>;
+
 /**
- * One line of the bucket, with `{name}` filled. `lines` are the locale's `chat.greeting.<bucket>`
- * messages (a page passes `t.raw(...)`); without them the zh set is used. `random` returns [0, 1).
+ * One line of the bucket's `lines` with `{name}` filled. `random` returns [0, 1).
  */
 export function pickGreeting(
   bucket: GreetingBucket,
   name: string,
+  lines: GreetingLines,
   random: () => number = Math.random,
-  lines: readonly string[] = zh.chat.greeting[bucket],
 ): string {
-  const line = lines[Math.min(lines.length - 1, Math.floor(random() * lines.length))] ?? "";
+  const set = lines[bucket];
+  const line = set[Math.min(set.length - 1, Math.floor(random() * set.length))] ?? "";
   return line.replaceAll("{name}", name);
 }

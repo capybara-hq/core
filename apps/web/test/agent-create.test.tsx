@@ -123,15 +123,15 @@ describe("the create form of /agents/new", () => {
     expect(router.push).not.toHaveBeenCalled();
   });
 
-  it("the form is a FormPage with one section and no more, in zh too", async () => {
+  it("the form is a FormPage with one section and no more, name focused, in zh too", async () => {
     stub();
     const { container } = await renderNewAgent({ locale: "zh" });
     expect(container.querySelector('[data-template="FormPage"]')).not.toBeNull();
     expect(screen.getByRole("region", { name: zh.agents.form.basicSection })).toBeTruthy();
     expect(screen.queryByRole("region", { name: zh.agents.form.toolsSection })).toBeNull();
-    // a create form focuses its first field: the avatar group
-    expect(document.activeElement?.getAttribute("type")).toBe("radio");
-    expect(screen.getByRole("textbox", { name: zh.agents.form.nameLabel })).toBeTruthy();
+    // the name is the one required field: it has the focus
+    const name = screen.getByRole("textbox", { name: zh.agents.form.nameLabel });
+    await vi.waitFor(() => expect(document.activeElement).toBe(name));
     const row = screen.getByRole("region", { name: "待提交改动" });
     expect(
       within(row).getByRole("button", { name: zh.agents.form.submit }).getAttribute("data-variant"),

@@ -42,20 +42,18 @@ describe("greeting", () => {
       const lines = zh.chat.greeting[bucket];
       for (let i = 0; i < lines.length; i++) {
         const random = () => (i + 0.5) / lines.length;
-        expect(pickGreeting(bucket, "Grant", random)).toBe(
+        expect(pickGreeting(bucket, "Grant", zh.chat.greeting, random)).toBe(
           (lines[i] as string).replace("{name}", "Grant"),
         );
       }
       // the largest random value still picks the last line
-      expect(lines).toContain(
-        pickGreeting(bucket, "{name}", () => 0.999999).replace("{name}", "{name}"),
+      expect(pickGreeting(bucket, "Ada", zh.chat.greeting, () => 0.999999)).toBe(
+        (lines[lines.length - 1] as string).replace("{name}", "Ada"),
       );
     }
-    expect(pickGreeting("evening", "Ada", () => 0)).toBe("晚上好，Ada");
-    // lines of the other locale can be passed in
-    expect(pickGreeting("night", "Ada", () => 0, en.chat.greeting.night)).toBe(
-      en.chat.greeting.night[0],
-    );
+    expect(pickGreeting("evening", "Ada", zh.chat.greeting, () => 0)).toBe("晚上好，Ada");
+    // the lines of another locale are passed in the same way
+    expect(pickGreeting("night", "Ada", en.chat.greeting, () => 0)).toBe(en.chat.greeting.night[0]);
   });
 
   it("the greeting copy has the same shape in zh and en", () => {
