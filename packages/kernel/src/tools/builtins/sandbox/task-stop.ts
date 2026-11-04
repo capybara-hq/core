@@ -81,11 +81,13 @@ async function ended(
 ): Promise<BuiltinResult> {
   const lines = await lastLinesOf(env, task, signal);
   const tail =
-    lines === null
-      ? "[Last lines unavailable: the sandbox that ran this task is not running.]"
-      : lines === ""
-        ? "[No output.]"
-        : `Last lines:\n${lines.replace(/\n$/, "")}`;
+    task.sandboxCreatedAt === null
+      ? "[No output: the command never started.]"
+      : lines === null
+        ? "[Last lines unavailable: the sandbox that ran this task is not running.]"
+        : lines === ""
+          ? "[No output.]"
+          : `Last lines:\n${lines.replace(/\n$/, "")}`;
   return text(
     task,
     `Background task ${task.id} ("${task.description}") ${what}.\n${statusLine(task)}\n${tail}`,

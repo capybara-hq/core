@@ -3,10 +3,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ToolError } from "@capybara-hq/plugin-sdk";
+import { SandboxGoneError, ToolError } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { BackgroundTaskPollJob } from "../../src/background/poll.job.js";
 import { type BackgroundTaskRow, BackgroundTaskStore } from "../../src/background/store.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
@@ -16,9 +17,20 @@ import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
 import { taskReadScript } from "../../src/tools/builtins/sandbox/task-output.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
+import { ToolRegistry } from "../../src/tools/registry.js";
 import { legacyDbFor } from "../helpers/conversations.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { eventsOf, runConfig, startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
+import {
+  createOrg,
+  eventsOf,
+  PW,
+  runConfig,
+  session,
+  startKernel,
+  type TestKernel,
+  waitFor,
+} from "../helpers/runs.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
 /**
@@ -31,6 +43,7 @@ const SANDBOX_FAKE = fileURLToPath(
   new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
 );
 const SPILL = 50_000;
+const signal = () => AbortSignal.timeout(30_000);
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -56,7 +69,8 @@ beforeAll(async () => {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, SANDBOX_FAKE],
         extensionConfig: { "sandbox-fake": { root } },
-        sandbox: { background: { pollSeconds: 3600 } },
+        // one command at a time: a blocking TaskOutput must not hold the slot while it waits
+        sandbox: { background: { pollSeconds: 3600 }, maxConcurrentCommands: 1 },
         tools: { outputSpillChars: SPILL },
       },
     ),
@@ -74,6 +88,7 @@ afterAll(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const c of used) await sandbox.destroyFor(c).catch(() => {});
   used = [];
   await sql`UPDATE capybara.background_tasks SET status = 'lost', finished_at = now()
@@ -145,6 +160,71 @@ const finishedEvents = async (conversationId: string, taskId: string): Promise<F
   (await eventsOf(db, conversationId)).filter(
     (e): e is Finished => e.type === "background_task_finished" && e.payload.taskId === taskId,
   );
+
+/** A reservation whose launch has not started the command (no sid), as `Bash` makes first. */
+async function reservation(c: Conv, id: string): Promise<void> {
+  const now = new Date();
+  expect(
+    await store.reserve(
+      {
+        id,
+        orgId: c.orgId,
+        conversationId: c.conversationId,
+        sandboxConversationId: c.conversationId,
+        runId: "run-1",
+        callId: "call-1",
+        triggerAccountId: c.accountId,
+        description: "Launching",
+        command: "sleep 1",
+        outputPath: `.capybara/tasks/${id}.out`,
+        startedAt: now,
+        deadlineAt: new Date(now.getTime() + 60_000),
+      },
+      4,
+    ),
+  ).toBe(true);
+}
+
+describe("offered with Bash", () => {
+  it("a definition naming only Bash gets TaskOutput and TaskStop; their policies validate", async () => {
+    const c = await conversation();
+    const registry = k.app.get(ToolRegistry);
+    const got = await registry.forAgent(c.orgId, { tools: [{ kind: "builtin", name: "Bash" }] });
+    expect(got.tools.map((t) => t.key)).toEqual(["Bash", "TaskOutput", "TaskStop"]);
+    // an explicit ref changes nothing
+    const both = await registry.forAgent(c.orgId, {
+      tools: [
+        { kind: "builtin", name: "TaskStop" },
+        { kind: "builtin", name: "Bash" },
+      ],
+    });
+    expect(both.tools.map((t) => t.key).sort()).toEqual(["Bash", "TaskOutput", "TaskStop"]);
+    expect(both.unavailable).toEqual([]);
+    // without Bash they are not offered
+    const none = await registry.forAgent(c.orgId, { tools: [{ kind: "builtin", name: "Read" }] });
+    expect(none.tools.map((t) => t.key)).toEqual(["Read"]);
+
+    // through the agents API: a policy for TaskStop with only Bash referenced is accepted
+    await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+    const owner = await session(k, "owner");
+    const orgId = await createOrg(owner);
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/agents`,
+      payload: {
+        definition: {
+          name: "Runner",
+          instructions: "Run things.",
+          model: { provider: "model-fake", model: "fake-1" },
+          tools: [{ kind: "builtin", name: "Bash" }],
+          toolPolicies: { TaskStop: "ask" },
+        },
+        visibility: "org",
+      },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+  }, 60_000);
+});
 
 describe("TaskOutput", () => {
   it("two reads return the new output only: first a, then b", async () => {
@@ -306,6 +386,82 @@ describe("TaskOutput", () => {
   }, 60_000);
 });
 
+describe("TaskOutput: leases, reservations, reporting", () => {
+  it("a blocking TaskOutput holds no lease while it waits: a Bash call runs meanwhile", async () => {
+    const c = await conversation();
+    const t = await start(ctxOf(c), "sleep 30");
+    const waiting = output(c, { task_id: t.id, timeout: 8000 });
+    await new Promise((r) => setTimeout(r, 300));
+    const t0 = Date.now();
+    const r = await tool("Bash").run({ command: "echo hi", description: "Say hi" }, ctxOf(c));
+    expect(textOf(r)).toContain("hi");
+    // well before the blocking call's 8 s wait ends (with one command slot)
+    expect(Date.now() - t0).toBeLessThan(5000);
+    let done = false;
+    void waiting.then(() => {
+      done = true;
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(done).toBe(false);
+    expect(textOf(await waiting)).toMatch(/^Status: running/);
+  }, 60_000);
+
+  it("a reservation (no sid yet) is still starting, with and without block", async () => {
+    const c = await conversation();
+    const id = "bt_yyyyyy";
+    await reservation(c, id);
+    for (const input of [{ block: false }, { timeout: 2500 }]) {
+      const t0 = Date.now();
+      const r = await output(c, { task_id: id, ...input });
+      expect(textOf(r)).toMatch(
+        /^Status: running \(\d+s\)\n\[The task is still starting; no output yet\.\]$/,
+      );
+      if ("timeout" in input) expect(Date.now() - t0).toBeGreaterThanOrEqual(2400);
+    }
+    // a launch that never started
+    await store.failLaunch(id, "launch failed: boom");
+    const r = await output(c, { task_id: id });
+    expect(textOf(r)).toContain("[No output: the command never started.]");
+    const s = await stop(c, { task_id: id });
+    expect(textOf(s)).toContain("had already finished");
+    expect(textOf(s)).toContain("[No output: the command never started.]");
+  }, 30_000);
+
+  it("a call that fails after the task finished leaves the finish to the poller, unreported", async () => {
+    const c = await conversation();
+    const t = await start(ctxOf(c), "echo bye");
+    await waitFor(
+      async () => (await shell(c, `test -s .capybara/tasks/${t.id}.exit && echo y`)).includes("y"),
+      10_000,
+      "exit file",
+    );
+    vi.spyOn(store, "advanceOffset").mockRejectedValueOnce(new Error("database down"));
+    await expect(output(c, { task_id: t.id })).rejects.toThrow("database down");
+    expect((await store.get(t.id))?.status).toBe("running");
+    expect(await finishedEvents(c.conversationId, t.id)).toHaveLength(0);
+    expect(await k.app.get(BackgroundTaskPollJob).pollOnce()).toBe(1);
+    const events = await finishedEvents(c.conversationId, t.id);
+    expect(events.map((e) => e.payload)).toMatchObject([{ status: "completed", reported: false }]);
+  }, 60_000);
+
+  it("a sandbox gone under the read gives the status line and output unavailable", async () => {
+    const c = await conversation();
+    const t = await start(ctxOf(c), "sleep 30");
+    // the exec on the instance throws SandboxGoneError (the provider found it gone)
+    vi.spyOn(sandbox, "ifRunning").mockImplementationOnce(async (_conv, _inst, fn) => {
+      const p = {
+        exec: async () => {
+          throw new SandboxGoneError("instance gone");
+        },
+      } as unknown as Parameters<typeof fn>[0];
+      return { kind: "ran", value: await fn(p, {} as Parameters<typeof fn>[1], signal()) };
+    });
+    const r = await output(c, { task_id: t.id, block: false });
+    expect(isError(r)).toBe(false);
+    expect(textOf(r)).toMatch(/^Status: running \(\d+s\)\n\[Output unavailable: /);
+  }, 60_000);
+});
+
 describe("TaskStop", () => {
   it("stops a running task, with its final status and last lines", async () => {
     const c = await conversation();
@@ -339,29 +495,20 @@ describe("TaskStop", () => {
     expect(textOf(r)).toContain("Last lines:\nfin");
   }, 60_000);
 
+  it("a task another stop already claimed is stopping, not a failure", async () => {
+    const c = await conversation();
+    const t = await start(ctxOf(c), "sleep 30");
+    expect(await store.claimStop(t.id)).toBe(true);
+    const r = await stop(c, { task_id: t.id });
+    expect(isError(r)).toBe(false);
+    expect(textOf(r)).toContain(`Background task ${t.id} ("Run it") is stopping`);
+    expect((await store.get(t.id))?.status).toBe("running");
+  }, 60_000);
+
   it("a task still being launched is stopping, not a failure", async () => {
     const c = await conversation();
     const id = "bt_zzzzzz";
-    const now = new Date();
-    expect(
-      await store.reserve(
-        {
-          id,
-          orgId: c.orgId,
-          conversationId: c.conversationId,
-          sandboxConversationId: c.conversationId,
-          runId: "run-1",
-          callId: "call-1",
-          triggerAccountId: c.accountId,
-          description: "Launching",
-          command: "sleep 1",
-          outputPath: `.capybara/tasks/${id}.out`,
-          startedAt: now,
-          deadlineAt: new Date(now.getTime() + 60_000),
-        },
-        4,
-      ),
-    ).toBe(true);
+    await reservation(c, id);
     const r = await stop(c, { task_id: id });
     expect(isError(r)).toBe(false);
     expect(textOf(r)).toContain(`Background task ${id} ("Launching") is stopping`);

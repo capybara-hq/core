@@ -1,5 +1,10 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { type SandboxHandle, ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
+import {
+  isSandboxGoneError,
+  type SandboxHandle,
+  ToolError,
+  type ToolSpec,
+} from "@capybara-hq/plugin-sdk";
 import type { BackgroundFinish } from "../../../background/finish.js";
 import { TASK_ID_RE, TASKS_DIR } from "../../../background/launch.js";
 import { SID_RE } from "../../../background/session.js";
@@ -46,9 +51,10 @@ const SPEC: ToolSpec = {
     "The result has the status (running, completed, failed, stopped, timed out or lost), the " +
     "exit code and the elapsed time, then the output the task wrote since the last TaskOutput " +
     "call for it. With block (the default) it waits until the task finishes or timeout " +
-    "milliseconds pass, checking every 2 seconds; prefer this over sleeping in Bash. Large " +
-    "output is saved and can be paged with ReadToolOutput; the whole output file can also be " +
-    "read with Read. You are told when a task finishes, so there is no need to poll for that.",
+    "milliseconds pass, checking every 2 seconds; prefer this over sleeping in Bash. Each call " +
+    "returns a bounded slice of new output; the task's whole output file (its path is in the Bash " +
+    "result) can also be read with Read. You are told when a task finishes, so there is no need " +
+    "to poll for that.",
   inputSchema: {
     type: "object",
     properties: {
@@ -288,31 +294,55 @@ async function look(
   );
 }
 
+/** How a running task ended, as the poller would finish it. */
+interface End {
+  to: BackgroundFinish;
+  lastLines: string;
+}
+
 /**
- * When `seen` shows a running task ended (an exit file, no process left, its sandbox instance not
- * running), finishes it as the poller would, marked reported (this call tells the model); returns
- * the task's row afterwards. A task a stop claimed is left to the stop.
+ * How `seen` shows the running `task` ended (an exit file, no process left, its sandbox instance
+ * not running), or null while it runs (or when the row is no longer running).
+ */
+function endOf(task: BackgroundTaskRow, seen: IfRunningResult<Seen>): End | null {
+  if (task.status !== "running") return null;
+  if (seen.kind === "not_running") {
+    return { to: notRunningAs(seen.status, seen.status === "suspended"), lastLines: "" };
+  }
+  if (seen.kind === "other_instance") return { to: RECREATED, lastLines: "" };
+  const r = seen.value.report;
+  const to = r ? polledAs(task, r, new Date()) : null;
+  return to === null ? null : { to, lastLines: r?.lastLines ?? "" };
+}
+
+/**
+ * Finishes the task as `end` says, marked reported: called only once nothing can fail before the
+ * result reaches the model, so a reported finish is one the model saw. A task a stop claimed is
+ * left to the stop. Returns the task's row afterwards.
  */
 async function settle(
   env: TaskEnv,
   task: BackgroundTaskRow,
-  seen: IfRunningResult<Seen>,
+  end: End | null,
 ): Promise<BackgroundTaskRow> {
-  if (task.status !== "running") return task;
-  let to: BackgroundFinish | null = null;
-  let lastLines = "";
-  if (seen.kind === "ran") {
-    const r = seen.value.report;
-    to = r ? polledAs(task, r, new Date()) : null;
-    lastLines = r?.lastLines ?? "";
-  } else if (seen.kind === "not_running") {
-    to = notRunningAs(seen.status, seen.status === "suspended");
-  } else {
-    to = RECREATED;
-  }
-  if (to === null) return task;
-  await env.tasks.finisher.finish(task, to, lastLines, true, { unclaimed: true });
+  if (end === null) return task;
+  await env.tasks.finisher.finish(task, end.to, end.lastLines, true, { unclaimed: true });
   return (await env.store.get(task.id)) ?? task;
+}
+
+/** {@link look}, with a `SandboxGoneError` from the exec as null (the instance is gone). */
+async function lookOrGone(
+  env: TaskEnv,
+  task: BackgroundTaskRow,
+  read: { offset: number; cap: number } | null,
+  signal: AbortSignal,
+): Promise<IfRunningResult<Seen> | null> {
+  try {
+    return await look(env, task, read, signal);
+  } catch (e) {
+    if (isSandboxGoneError(e)) return null;
+    throw e;
+  }
 }
 
 /**
@@ -321,8 +351,9 @@ async function settle(
  * `SandboxService.ifRunning` on the task's own sandbox instance: it never creates or resumes a
  * sandbox, so a suspended or rebuilt one means the task is lost (its output unavailable). With
  * `block`, checks every {@link TASK_CHECK_INTERVAL_MS}, each under a lease of its own, until the
- * task ends or the wait (at most `timeout` and the run's time left) is over. The output read is
- * capped at `tools.outputSpillChars` bytes; the pipeline spills the result beyond that.
+ * task ends or the wait (at most `timeout` and the run's time left) is over; the checks only
+ * detect the end, and the one read that makes the result finishes the task (reported). The output
+ * read is capped at `tools.outputSpillChars` bytes; the pipeline spills the result beyond that.
  */
 export function taskOutputTool(deps: SandboxToolDeps): BuiltinTool {
   return {
@@ -351,36 +382,46 @@ export function taskOutputTool(deps: SandboxToolDeps): BuiltinTool {
           ),
         );
         const until = Date.now() + wait;
-        for (;;) {
+        // no check right before the final read: the loop ends when the wait does
+        while (task.status === "running" && Date.now() < until) {
           if (task.sandboxCreatedAt !== null) {
-            task = await settle(env, task, await look(env, task, null, ctx.signal));
-            if (task.status !== "running") break;
+            const seen = await lookOrGone(env, task, null, ctx.signal);
+            if (seen === null || endOf(task, seen) !== null) break;
           }
           const left = until - Date.now();
           if (left <= 0) break;
           await sleep(Math.min(TASK_CHECK_INTERVAL_MS, left), undefined, { signal: ctx.signal });
           task = (await env.store.get(task.id)) ?? task;
-          if (task.status !== "running") break;
         }
       }
 
-      const parts: string[] = [];
       if (task.sandboxCreatedAt === null) {
         // a reservation still launching, or a launch that failed: nothing ran
-        if (task.status === "running") parts.push("[The task is still starting; no output yet.]");
-        else parts.push("[No output: the command never started.]");
-        return result(task, [statusLine(task), ...parts]);
+        return result(task, [
+          statusLine(task),
+          task.status === "running"
+            ? "[The task is still starting; no output yet.]"
+            : "[No output: the command never started.]",
+        ]);
       }
       const offset = task.readOffset;
       const cap = deps.config.get().tools.outputSpillChars;
-      const seen = await look(env, task, { offset, cap }, ctx.signal);
-      task = await settle(env, task, seen);
-      if (seen.kind !== "ran") return result(task, [statusLine(task), unavailableText(task, seen)]);
+      const seen = await lookOrGone(env, task, { offset, cap }, ctx.signal);
+      if (seen === null) {
+        return result(task, [statusLine(task), unavailableText(task, { kind: "other_instance" })]);
+      }
+      const end = endOf(task, seen);
+      if (seen.kind !== "ran") {
+        task = await settle(env, task, end);
+        return result(task, [statusLine(task), unavailableText(task, seen)]);
+      }
       const { data, size } = seen.value;
       // an ended task's output is complete: only a read cut by the cap can end inside a character
-      const used =
-        task.status !== "running" && data.length < cap ? data.length : wholeUtf8Length(data);
+      const ended = task.status !== "running" || end !== null;
+      const used = ended && data.length < cap ? data.length : wholeUtf8Length(data);
       if (used > 0) await env.store.advanceOffset(task.id, offset + used);
+      task = await settle(env, task, end);
+      const parts: string[] = [];
       const more = size - (offset + used);
       if (more > 0) {
         parts.push(
