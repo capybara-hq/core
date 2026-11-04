@@ -863,19 +863,13 @@
         "Morning. What are we moving forward today?",
         "A new day. Where do we start?"
       ],
-      "noon": [
-        "Midday, {name}",
-        "Had lunch yet? What can I take off your plate?"
-      ],
+      "noon": ["Midday, {name}", "Had lunch yet? What can I take off your plate?"],
       "afternoon": [
         "Good afternoon, {name}",
         "What are we pushing on this afternoon?",
         "Back at it?"
       ],
-      "evening": [
-        "Good evening, {name}",
-        "What is left to wrap up today?"
-      ],
+      "evening": ["Good evening, {name}", "What is left to wrap up today?"],
       "night": [
         "Night owl, what are we up to?",
         "Still up? I'll keep you company",
