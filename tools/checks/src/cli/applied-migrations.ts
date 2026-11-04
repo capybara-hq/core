@@ -1,9 +1,11 @@
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { diffAppliedMigrations } from "../applied-migrations.js";
+import { diffAppliedMigrations, diffNewMigrationNumbers } from "../applied-migrations.js";
 import { report, root } from "./report.js";
 
-// PR-only check: `pnpm check:applied-migrations --base <base sha>` compares <base>...HEAD.
+// PR-only check: `pnpm check:applied-migrations --base <base sha>` compares <base>...HEAD: no
+// applied migration edited, deleted or renamed (applied-migration-edited), and every added one
+// numbered above its directory's highest at <base> (migration-number-behind-base).
 const { values } = parseArgs({ options: { base: { type: "string" } } });
 const base = values.base;
 if (!base) {
@@ -15,5 +17,8 @@ if (!base) {
 
 report(
   "Applied migrations",
-  diffAppliedMigrations(root, base).map((f) => ({ ...f, file: join(root, f.file) })),
+  [...diffAppliedMigrations(root, base), ...diffNewMigrationNumbers(root, base)].map((f) => ({
+    ...f,
+    file: join(root, f.file),
+  })),
 );

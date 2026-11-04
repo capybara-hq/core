@@ -1,6 +1,9 @@
 export {
+  type BaseMigrationNames,
   checkAppliedMigrations,
+  checkMigrationNumbers,
   diffAppliedMigrations,
+  diffMigrationNumbers,
   type MigrationFilePredicate,
   migrationFileMatcher,
 } from "./applied-migrations.js";
