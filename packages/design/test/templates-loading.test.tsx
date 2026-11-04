@@ -703,6 +703,12 @@ describe("SettingsPage loading", () => {
     for (const f of fields) expect(f.lastElementChild?.getAttribute("data-size")).toBe("small");
   });
 
+  it("every FormSection inside a SettingsPage is stacked (the sub-nav holds the title column)", () => {
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
+    const rule = css.match(/([^{}]*)\{[^{}]*grid-template-columns: minmax\(0, 1fr\);[^{}]*\}/g) ?? [];
+    expect(rule.some((r) => r.includes(".cb-settings-content .cb-form-section"))).toBe(true);
+  });
+
   it("FormSection layout: columns by default, stacked puts the head above a full-width card, loading too", () => {
     zh(
       <>
@@ -747,7 +753,7 @@ describe("SettingsPage loading", () => {
     expect(loading[0]?.querySelector('[data-part="loading-list-editor"]')).not.toBeNull();
     expect(loading[1]?.hasAttribute("data-layout")).toBe(false);
     const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
-    const at = css.indexOf('.cb-form-section[data-layout="stacked"] {');
+    const at = css.indexOf('.cb-form-section[data-layout="stacked"],');
     expect(css.slice(at, css.indexOf("}", at))).toContain("grid-template-columns: minmax(0, 1fr)");
     // the default two-column rule is untouched
     const base = css.indexOf(".cb-form-section {");
