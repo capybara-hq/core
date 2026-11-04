@@ -14,7 +14,7 @@ export {
 } from "./avatar-presets";
 
 /** The five avatar sizes (spec §6.30). */
-export const AVATAR_SIZES = [16, 22, 28, 40, 64] as const;
+export const AVATAR_SIZES = [16, 24, 28, 40, 64] as const;
 export type AvatarSize = (typeof AVATAR_SIZES)[number];
 
 /** An agent's avatar: a preset animal, an uploaded image, or none (the initial). */
@@ -25,7 +25,7 @@ export const AVATAR_UPLOAD_ACCEPT = "image/png,image/jpeg,image/webp";
 
 /**
  * A preset's paths at `size`: one path per palette token, the bitmap at the nearest whole pixel
- * unit to `size / 12`, centred by the viewBox (at 22 the 24 px drawing is clipped 1 px a side).
+ * unit to `size / 12`, centred by the viewBox; every size holds the whole drawing (no clipping).
  */
 function presetDrawing(id: PresetId, size: AvatarSize) {
   const preset = AVATAR_PRESETS[id];
@@ -47,10 +47,13 @@ export function Avatar({
   value,
   name,
   size,
+  onImageError,
 }: {
   value: AvatarValue;
   name: string;
   size: AvatarSize;
+  /** Called once when an image avatar fails to load (it then draws the initial). */
+  onImageError?: () => void;
 }) {
   const [failed, setFailed] = useState<string | null>(null);
   const common = {
@@ -93,7 +96,10 @@ export function Avatar({
           className="cb-avatar-art cb-avatar-image"
           src={src}
           alt=""
-          onError={() => setFailed(src)}
+          onError={() => {
+            setFailed(src);
+            onImageError?.();
+          }}
         />
       </span>
     );
@@ -132,6 +138,8 @@ export function AvatarPicker({
   const name = useId();
   const reasonId = useId();
   const input = useRef<HTMLInputElement>(null);
+  // an uploaded image that fails to load shows the upload icon, never an empty initial
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const onFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -180,7 +188,11 @@ export function AvatarPicker({
           disabled={!onUpload}
           onClick={() => input.current?.click()}
         >
-          {image ? <Avatar value={value} name="" size={40} /> : <Icon name="upload" size={16} />}
+          {image && failedSrc !== value.src ? (
+            <Avatar value={value} name="" size={40} onImageError={() => setFailedSrc(value.src)} />
+          ) : (
+            <Icon name="upload" size={16} />
+          )}
         </button>
       </div>
       {onUpload ? (

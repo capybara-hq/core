@@ -1521,10 +1521,10 @@ textarea {
   height: 16px;
   font-size: var(--cb-type-micro-size);
 }
-.r-avatar[data-size="22"] {
-  width: 22px;
-  height: 22px;
-  font-size: var(--cb-type-micro-size);
+.r-avatar[data-size="24"] {
+  width: 24px;
+  height: 24px;
+  font-size: var(--cb-type-small-size);
 }
 .r-avatar[data-size="28"] {
   width: 28px;
@@ -1553,7 +1553,9 @@ textarea {
   gap: var(--cb-space-2);
 }
 .r-avatar-picker-group {
-  display: contents;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cb-space-2);
 }
 .r-avatar-tile {
   position: relative;

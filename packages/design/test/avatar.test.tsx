@@ -85,10 +85,10 @@ describe("Avatar (spec §6.30)", () => {
     expect(root(container).textContent).toBe("W");
   });
 
-  it("sizes 16/22/28/40/64 set the box", () => {
-    expect([...AVATAR_SIZES]).toEqual([16, 22, 28, 40, 64]);
-    // the 12×12 bitmap at the nearest whole pixel unit, centred (22 draws 24 and clips 1 a side)
-    const unit = { 16: 1, 22: 2, 28: 2, 40: 3, 64: 5 } as const;
+  it("sizes 16/24/28/40/64 set the box", () => {
+    expect([...AVATAR_SIZES]).toEqual([16, 24, 28, 40, 64]);
+    // the 12×12 bitmap at the nearest whole pixel unit, centred
+    const unit = { 16: 1, 24: 2, 28: 2, 40: 3, 64: 5 } as const;
     for (const size of AVATAR_SIZES) {
       const { container } = wrap(
         <Avatar value={{ kind: "preset", id: "fox" }} name="Fox" size={size} />,
@@ -111,9 +111,34 @@ describe("Avatar (spec §6.30)", () => {
     }
   });
 
+  it("no art cell of any preset falls outside the box at any size", () => {
+    const outside: string[] = [];
+    let cells = 0;
+    for (const id of AVATAR_PRESET_IDS) {
+      for (const size of AVATAR_SIZES) {
+        const { container } = wrap(<Avatar value={{ kind: "preset", id }} name="A" size={size} />);
+        const svg = root(container).querySelector("svg") as SVGElement;
+        const [vx = 0, vy = 0, vw = 0, vh = 0] = (svg.getAttribute("viewBox") ?? "")
+          .split(" ")
+          .map(Number);
+        for (const p of svg.querySelectorAll("path")) {
+          for (const m of (p.getAttribute("d") ?? "").matchAll(/M(-?\d+) (-?\d+)h(\d+)/g)) {
+            const [x, y, s] = [Number(m[1]), Number(m[2]), Number(m[3])];
+            cells++;
+            if (x < vx || y < vy || x + s > vx + vw || y + s > vy + vh)
+              outside.push(`${id}@${size}: ${x},${y}`);
+          }
+        }
+        cleanup();
+      }
+    }
+    expect(cells).toBeGreaterThan(1000);
+    expect(outside).toEqual([]);
+  });
+
   it("is decorative: the name beside it is what is read", () => {
     const { container } = wrap(
-      <Avatar value={{ kind: "preset", id: "owl" }} name="Owl" size={22} />,
+      <Avatar value={{ kind: "preset", id: "owl" }} name="Owl" size={24} />,
     );
     expect(root(container).getAttribute("aria-hidden")).toBe("true");
   });
@@ -191,6 +216,20 @@ describe("AvatarPicker (spec §6.30)", () => {
     const file = new File(["x"], "me.png", { type: "image/png" });
     fireEvent.change(input, { target: { files: [file] } });
     expect(onUpload).toHaveBeenCalledWith(file);
+  });
+
+  it("an uploaded image that fails to load shows the upload icon on its tile", () => {
+    const { container } = wrap(
+      <AvatarPicker
+        value={{ kind: "image", src: "/api/avatar/gone" }}
+        onChange={() => {}}
+        onUpload={() => {}}
+      />,
+    );
+    const tile = container.querySelector('[data-part="avatar-upload"]') as HTMLElement;
+    fireEvent.error(tile.querySelector("img") as HTMLImageElement);
+    expect(tile.querySelector('[data-part="avatar"]')).toBeNull();
+    expect(tile.querySelector('[data-icon="upload"]')).not.toBeNull();
   });
 
   it("an uploaded image shows on the upload tile and no preset is checked", () => {

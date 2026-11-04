@@ -1098,10 +1098,10 @@ a.cb-attachment:hover {
   height: 16px;
   font-size: var(--cb-type-micro-size);
 }
-.cb-avatar[data-size="22"] {
-  width: 22px;
-  height: 22px;
-  font-size: var(--cb-type-micro-size);
+.cb-avatar[data-size="24"] {
+  width: 24px;
+  height: 24px;
+  font-size: var(--cb-type-small-size);
 }
 .cb-avatar[data-size="28"] {
   width: 28px;
@@ -1140,7 +1140,9 @@ a.cb-attachment:hover {
   gap: var(--cb-space-2);
 }
 .cb-avatar-picker-group {
-  display: contents;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cb-space-2);
 }
 .cb-avatar-tile {
   position: relative;
