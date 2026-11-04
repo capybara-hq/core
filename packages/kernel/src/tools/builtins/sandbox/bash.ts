@@ -6,6 +6,7 @@ import {
   newTaskId,
   startedText,
   taskOutputPath,
+  taskSidPath,
 } from "../../../background/launch.js";
 import type { BuiltinCallContext, BuiltinResult, BuiltinTool } from "../../registry.js";
 import {
@@ -143,10 +144,13 @@ const SID_RE = /^[1-9][0-9]*$/;
 /** How a launch ended, decided under the call's lease. */
 type Launch =
   | { kind: "started" }
-  /** Nothing runs (any process the launch printed was killed). */
+  /** The launch failed (any session it started and whose id could be read was killed). */
   | { kind: "not_started"; why: string }
-  /** The command started, but its row could not be completed: it was killed. */
-  | { kind: "unrecorded"; why: string };
+  /**
+   * The command started, but its row could not be completed; `stopped` when the kill confirmed
+   * its session empty.
+   */
+  | { kind: "unrecorded"; why: string; stopped: boolean };
 
 /** Why a launch exec did not start the command, for the model and the row's reason. */
 function launchFailure(r: ExecResult): string {
@@ -222,36 +226,65 @@ async function runInBackground(
     );
   }
 
+  const large =
+    Math.ceil(Buffer.byteLength(input.command, "utf8") / 3) * 4 > LARGE_COMMAND_BASE64_BYTES
+      ? " A very large command (over about 96 KB after base64) cannot be started in the background; write it to a script under /workspace and run that instead."
+      : "";
+  // set once the row has its sid: from then on the task runs and is tracked, whatever follows
+  let started = false;
   let launch: Launch;
   let notices: string[];
   try {
     ({ value: launch, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
       // A fresh signal: a command must be killed even when the call was just aborted. Repeated
-      // until the session is empty: right after the launch, a process may fork between pkill's
-      // listing and its signals, and the child would live on.
-      const kill = (sid: string) =>
-        p
+      // until the session is empty (pkill exits 1: no process left): right after the launch, a
+      // process may fork between pkill's listing and its signals, and the child would live on.
+      // Any other pkill status is a failure. True when the session was confirmed empty.
+      const kill = async (sid: string): Promise<boolean> => {
+        const r = await p
           .exec(h, {
-            command: `for i in 1 2 3 4 5 6 7 8 9 10; do pkill -KILL -s ${sid} || exit 0; sleep 0.2; done; exit 1`,
+            command: `for i in 1 2 3 4 5 6 7 8 9 10; do pkill -KILL -s ${sid}; c=$?; [ "$c" -eq 1 ] && exit 0; [ "$c" -eq 0 ] || exit "$c"; sleep 0.2; done; exit 3`,
             cwd: "/workspace",
             timeoutMs: LAUNCH_KILL_TIMEOUT_MS,
             maxOutputBytes: 4096,
             signal: AbortSignal.timeout(LAUNCH_KILL_TIMEOUT_MS),
           })
           .catch(() => undefined);
-      const r = await p.exec(h, {
-        command: launchScript(id, input.command, seconds),
-        cwd: "/workspace",
-        timeoutMs: LAUNCH_EXEC_TIMEOUT_MS,
-        maxOutputBytes: LAUNCH_MAX_OUTPUT_BYTES,
-        signal,
-      });
+        return r?.exitCode === 0;
+      };
+      // the session id the launch wrote before printing it: the launch may have ended (aborted,
+      // timed out, thrown) after starting the command but before its output came back
+      const sidFile = async (): Promise<string | null> => {
+        const f = await p
+          .readFile(h, `/workspace/${taskSidPath(id)}`, {
+            maxBytes: 64,
+            signal: AbortSignal.timeout(LAUNCH_KILL_TIMEOUT_MS),
+          })
+          .catch(() => null);
+        const v = f ? new TextDecoder().decode(f.data).trim() : "";
+        return SID_RE.test(v) ? v : null;
+      };
+      let r: ExecResult;
+      try {
+        r = await p.exec(h, {
+          command: launchScript(id, input.command, seconds),
+          cwd: "/workspace",
+          timeoutMs: LAUNCH_EXEC_TIMEOUT_MS,
+          maxOutputBytes: LAUNCH_MAX_OUTPUT_BYTES,
+          signal,
+        });
+      } catch (e) {
+        const sid = await sidFile();
+        if (sid !== null) await kill(sid);
+        throw e;
+      }
       const out = r.stdout.trim();
-      const sid = SID_RE.test(out) ? out : null;
-      if (sid === null || r.exitCode !== 0) {
+      if (r.exitCode !== 0 || !SID_RE.test(out)) {
+        const sid = SID_RE.test(out) ? out : await sidFile();
         if (sid !== null) await kill(sid);
         return { kind: "not_started", why: launchFailure(r) } satisfies Launch;
       }
+      const sid = out;
       try {
         // under the shared lease: no rebuild can come between the launch and this read
         const instance = await currentInstance(root);
@@ -259,33 +292,46 @@ async function runInBackground(
         if (!(await background.markStarted(id, { sid, sandboxCreatedAt: instance.createdAt }))) {
           throw new Error("its task record was finished meanwhile");
         }
+        started = true;
         return { kind: "started" } satisfies Launch;
       } catch (e) {
-        await kill(sid);
-        return { kind: "unrecorded", why: e instanceof Error ? e.message : String(e) } as Launch;
+        const stopped = await kill(sid);
+        const why = e instanceof Error ? e.message : String(e);
+        return { kind: "unrecorded", why, stopped } satisfies Launch;
       }
     }));
   } catch (e) {
-    // no sandbox, a busy or lost lease, an abort: nothing was recorded as started
-    await background
-      .failLaunch(id, `launch failed: ${e instanceof Error ? e.message : String(e)}`)
-      .catch(() => undefined);
-    throw e;
+    if (started) {
+      // the task runs and its row has its sid: an error after that (releasing the lease, say)
+      // does not undo the launch
+      launch = { kind: "started" };
+      notices = [];
+    } else {
+      // no sandbox, a busy or lost lease, an abort, a provider error: nothing started (or what
+      // did was killed above, when its session id could be read)
+      const why = e instanceof Error ? e.message : String(e);
+      await background.failLaunch(id, `launch failed: ${why}`).catch(() => undefined);
+      if (large === "" || e instanceof ToolError) throw e;
+      throw new ToolError(
+        `The background task was not started: ${clip(why, 500).replace(/\.$/, "")}. Check the sandbox, or call Bash without run_in_background.${large}`,
+      );
+    }
   }
   if (launch.kind === "not_started") {
     await background.failLaunch(id, launch.why);
-    const large =
-      Math.ceil(Buffer.byteLength(input.command, "utf8") / 3) * 4 > LARGE_COMMAND_BASE64_BYTES
-        ? " A very large command (over about 96 KB after base64) cannot be started in the background; write it to a script under /workspace and run that instead."
-        : "";
     throw new ToolError(
       `The background task was not started: ${launch.why}. Check the sandbox, or call Bash without run_in_background.${large}`,
     );
   }
   if (launch.kind === "unrecorded") {
     await background.failLaunch(id, `started but not recorded: ${launch.why}`);
+    if (launch.stopped) {
+      throw new ToolError(
+        `The background command started but could not be recorded (${launch.why}), so it was stopped. Retry, or call Bash without run_in_background.`,
+      );
+    }
     throw new ToolError(
-      `The background command started but could not be recorded (${launch.why}), so it was stopped. Retry, or call Bash without run_in_background.`,
+      `The background command started but could not be recorded (${launch.why}); an attempt to stop it failed, so it ends at its timeout. Check the sandbox before you retry, or call Bash without run_in_background.`,
     );
   }
   const lowered =

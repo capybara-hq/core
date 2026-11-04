@@ -49,7 +49,7 @@ describe("launchScript", { timeout: 30_000 }, () => {
   it("starts the command detached under timeout -s KILL, output and exit status in task files", () => {
     const s = launchScript("bt_abcdef", "echo hi", 60);
     expect(s).toContain(
-      "setsid nohup sh -c 'timeout -s KILL 60 bash .capybara/tasks/bt_abcdef.sh; echo $? > .capybara/tasks/bt_abcdef.exit' > .capybara/tasks/bt_abcdef.out 2>&1 < /dev/null &\necho $!",
+      "setsid nohup sh -c 'timeout -s KILL 60 bash .capybara/tasks/bt_abcdef.sh; echo $? > .capybara/tasks/bt_abcdef.exit' > .capybara/tasks/bt_abcdef.out 2>&1 < /dev/null &\necho $! > .capybara/tasks/bt_abcdef.sid\ncat .capybara/tasks/bt_abcdef.sid",
     );
     // the command travels base64, never quoted by hand
     expect(s).toContain(Buffer.from("echo hi").toString("base64"));

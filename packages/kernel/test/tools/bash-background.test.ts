@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,6 +46,12 @@ let handles: SandboxHandle[];
 let launchResult: ExecResult | undefined;
 /** `currentInstance` answers null, when set (the instance cannot be read after the launch). */
 let noInstance: boolean;
+/** The launch exec throws: before running the script, or after it ran (its output lost). */
+let launchThrows: "before" | "after" | undefined;
+/** Kill execs (`pkill -KILL -s` loops) answer exit status 2, when set. */
+let killFails: boolean;
+/** `withSandbox` throws after its callback returned (a lease release failing), when set. */
+let leaveThrows: boolean;
 
 const signal = () => AbortSignal.timeout(30_000);
 
@@ -84,12 +90,22 @@ beforeEach(async () => {
     handles.push(h);
     return h;
   };
-  fake.exec = (h, args) =>
-    launchResult !== undefined && args.command.includes("setsid nohup")
-      ? Promise.resolve(launchResult)
-      : impl.exec(h, args);
+  fake.exec = async (h, args) => {
+    const isLaunch = args.command.includes("setsid nohup");
+    if (isLaunch && launchResult !== undefined) return launchResult;
+    if (isLaunch && launchThrows === "before") throw new Error("argument list too long");
+    if (killFails && args.command.includes("pkill -KILL -s")) {
+      return { exitCode: 2, stdout: "", stderr: "", truncated: false, timedOut: false };
+    }
+    const r = await impl.exec(h, args);
+    if (isLaunch && launchThrows === "after") throw new Error("connection reset");
+    return r;
+  };
   launchResult = undefined;
   noInstance = false;
+  launchThrows = undefined;
+  killFails = false;
+  leaveThrows = false;
   provider = fake;
   config = configWith({});
   seed = await seedConversation(raw);
@@ -129,6 +145,11 @@ function bash(): BuiltinTool {
   const wrapped = Object.create(sandbox) as typeof sandbox;
   wrapped.currentInstance = (conv) =>
     noInstance ? Promise.resolve(null) : sandbox.currentInstance(conv);
+  wrapped.withSandbox = (async (...args: Parameters<typeof sandbox.withSandbox>) => {
+    const v = await sandbox.withSandbox(...args);
+    if (leaveThrows) throw new Error("cannot release the sandbox lease: redis down");
+    return v;
+  }) as typeof sandbox.withSandbox;
   const deps: SandboxToolDeps = {
     sandbox: wrapped,
     background: store,
@@ -326,6 +347,68 @@ describe("Bash run_in_background", { timeout: 30_000 }, () => {
     const sids = await readdir(join(root, "instances", h.id, "sessions"));
     expect(sids.length).toBe(1);
     for (const sid of sids) await until(async () => !(await alive(sid)));
+  });
+
+  it("an error after the row has its sid (releasing the lease) does not undo the launch", async () => {
+    leaveThrows = true;
+    const r = await bash().run(
+      { command: "sleep 30", description: "Started anyway", run_in_background: true },
+      ctx(),
+    );
+    const [row] = await store.listFor([seed.conversationId]);
+    expect(row).toMatchObject({ status: "running", description: "Started anyway" });
+    expect(row?.sid).toMatch(/^[1-9][0-9]*$/);
+    expect(textOf(r)).toBe(startedText(row?.id as string, "Started anyway"));
+    expect(await alive(row?.sid as string)).toBe(true);
+  });
+
+  it("a launch exec that throws after starting the command: the session from the .sid file is killed", async () => {
+    launchThrows = "after";
+    await expect(
+      bash().run(
+        { command: "sleep 30", description: "Lost output", run_in_background: true },
+        ctx(),
+      ),
+    ).rejects.toThrow("connection reset");
+    const [row] = await store.listFor([seed.conversationId]);
+    expect(row).toMatchObject({ status: "failed", sid: null });
+    expect(row?.lostReason).toBe("launch failed: connection reset");
+    const h = handles[0] as SandboxHandle;
+    const sid = (
+      await readFile(
+        join(root, "instances", h.id, "fs", "workspace", ".capybara", "tasks", `${row?.id}.sid`),
+        "utf8",
+      )
+    ).trim();
+    expect(sid).toMatch(/^[1-9][0-9]*$/);
+    await until(async () => !(await alive(sid)));
+  });
+
+  it("a provider error on a very large command names the size limit", async () => {
+    launchThrows = "before";
+    const command = `: ${"a".repeat(80_000)}`;
+    await expect(
+      bash().run({ command, description: "Huge", run_in_background: true }, ctx()),
+    ).rejects.toThrow(
+      "The background task was not started: argument list too long. Check the sandbox, or call Bash without run_in_background. A very large command (over about 96 KB after base64) cannot be started in the background",
+    );
+    const [row] = await store.listFor([seed.conversationId]);
+    expect(row).toMatchObject({ status: "failed", sid: null });
+  });
+
+  it("an unrecorded command whose kill fails is not called stopped", async () => {
+    noInstance = true;
+    killFails = true;
+    await expect(
+      bash().run(
+        { command: "sleep 30", description: "Unkillable", run_in_background: true },
+        ctx(),
+      ),
+    ).rejects.toThrow(
+      "The background command started but could not be recorded (the sandbox instance could not be read); an attempt to stop it failed, so it ends at its timeout.",
+    );
+    const [row] = await store.listFor([seed.conversationId]);
+    expect(row).toMatchObject({ status: "failed", sid: null });
   });
 
   it("refuses without a run id and records nothing", async () => {

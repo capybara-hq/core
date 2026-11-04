@@ -24,6 +24,9 @@ export const TASKS_DIR = ".capybara/tasks";
 /** A task's output file, relative to `/workspace` (`output_path`). */
 export const taskOutputPath = (id: string): string => `${TASKS_DIR}/${id}.out`;
 
+/** The file the launch writes the session id to, relative to `/workspace`. */
+export const taskSidPath = (id: string): string => `${TASKS_DIR}/${id}.sid`;
+
 const BASE32 = "abcdefghijklmnopqrstuvwxyz234567";
 
 /** A new task id: `bt_` plus 6 lowercase base32 characters. */
@@ -44,8 +47,8 @@ export const TASK_ID_RE = /^bt_[a-z2-7]{6}$/;
  * The shell of the launch exec: writes `command` (base64 in the script, so nothing is quoted by
  * hand) to `.capybara/tasks/<id>.sh` and starts it with bash (the shell a foreground `Bash` call
  * runs its command in) in a session of its own under `timeout -s KILL <seconds>`, with its exit
- * status written to `<id>.exit` and its output to `<id>.out`; prints the session id (`$!`, the pid
- * `setsid` started). A sandbox without one of the needed programs fails with a readable error on
+ * status written to `<id>.exit` and its output to `<id>.out`; writes the session id (`$!`, the pid
+ * `setsid` started) to `<id>.sid` and prints it. A sandbox without one of the needed programs fails with a readable error on
  * stderr and exit code 127, before anything starts. `id` must be a task id and `seconds` a
  * positive integer (both go into the script unquoted).
  */
@@ -62,7 +65,10 @@ export function launchScript(id: string, command: string, seconds: number): stri
     `mkdir -p ${TASKS_DIR}`,
     `printf '%s' '${b64}' | base64 -d > ${t}.sh`,
     `setsid nohup sh -c 'timeout -s KILL ${seconds} bash ${t}.sh; echo $? > ${t}.exit' > ${t}.out 2>&1 < /dev/null &`,
-    "echo $!",
+    // the session id goes to a file first: a launch that ends before its output comes back
+    // (aborted, timed out) still leaves the id of what it started
+    `echo $! > ${t}.sid`,
+    `cat ${t}.sid`,
   ].join("\n");
 }
 

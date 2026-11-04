@@ -125,7 +125,8 @@ export class BackgroundTaskStore {
   }
 
   /**
-   * Finishes a reserved row whose launch failed as `failed`, with `reason` in `lost_reason`. No
+   * Finishes a reserved row whose launch failed as `failed`, with `reason` in `lost_reason`; a row
+   * that already has its sid (the command started and is tracked) is left as it is. No
    * `background_task_finished` event: the launching call reports the failure itself.
    */
   async failLaunch(id: string, reason: string): Promise<void> {
@@ -134,6 +135,8 @@ export class BackgroundTaskStore {
       .set({ status: "failed", finished_at: sql<Date>`now()`, lost_reason: reason })
       .where("id", "=", id)
       .where("status", "=", "running")
+      // only a reservation that never started: a row with its sid is tracked by the poller
+      .where("sid", "is", null)
       .execute();
   }
 

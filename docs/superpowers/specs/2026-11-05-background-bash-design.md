@@ -196,7 +196,9 @@ next person message would pick it up.
      nothing is quoted by hand;
   3. runs `setsid nohup sh -c 'timeout -s KILL <s> bash <id>.sh; echo $? > <id>.exit' > <id>.out 2>&1 < /dev/null & echo $!`.
      The command runs in `bash`, the shell a foreground `Bash` call uses (sandbox-docker and
-     sandbox-e2b run `/bin/bash -c`), so bash syntax works the same in the background;
+     sandbox-e2b run `/bin/bash -c`), so bash syntax works the same in the background. `$!` is
+     written to `<id>.sid` before it is printed, so a launch that ends before its output comes back
+     (aborted, timed out) still leaves the id of what it started, which the launch then kills;
   4. reads the pid. It is the session id (`sid`). GNU `timeout` without `--foreground` puts itself
      in a process group of its own, so the command does not run in the `setsid` process group.
      The session holds every process: stopping uses `pkill -s <sid>` and liveness uses
