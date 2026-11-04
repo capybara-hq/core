@@ -109,6 +109,19 @@ export class AgentProfileService {
       })
       .where("id", "=", agentId)
       .execute();
+    if (patch.avatar !== undefined) {
+      // the avatar changed: every other upload bound to this agent is garbage; the cleanup job
+      // deletes it (and its object) once expired. Re-saving the same upload keeps it.
+      await t
+        .updateTable("attachments")
+        .set({ expires_at: sql<Date>`now()` })
+        .where("agent_id", "=", agentId)
+        .where("purpose", "=", "agent-avatar")
+        .$if(patch.avatar?.kind === "upload", (q) =>
+          q.where("id", "<>", (patch.avatar as { uploadId: string }).uploadId),
+        )
+        .execute();
+    }
     await audit(t, {
       actorAccountId,
       ...(actorTokenId !== undefined && { actorTokenId }),

@@ -8,6 +8,7 @@ import {
 } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { AttachmentsService } from "../../src/conversations/attachments.service.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { truncateTables } from "../helpers/db.js";
@@ -299,6 +300,8 @@ describe("agent avatar uploads", { timeout: 60_000 }, () => {
     expect(ext.headers.location).toBe("https://cdn.example.com/a.png");
     await set({ kind: "external", url: "http://cdn.example.com/a.png" });
     expect((await member({ method: "GET", url: avatarUrl(shared.id) })).statusCode).toBe(404);
+    await set({ kind: "external", url: "https://" });
+    expect((await member({ method: "GET", url: avatarUrl(shared.id) })).statusCode).toBe(404);
     await set({ kind: "preset", id: "fox" });
     expect((await member({ method: "GET", url: avatarUrl(shared.id) })).statusCode).toBe(404);
     await sql`update capybara.agents set profile_avatar = null where id = ${shared.id}`.execute(db);
@@ -332,5 +335,82 @@ describe("agent avatar uploads", { timeout: 60_000 }, () => {
       },
     });
     expect(preset.statusCode, preset.body).toBe(200);
+  });
+
+  it("create with an upload avatar is 400", async () => {
+    const res = await admin({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/agents`,
+      payload: {
+        definition: {
+          name: "H",
+          instructions: "x",
+          model: { provider: "model-fake", model: "fake-1" },
+          tools: [],
+        },
+        visibility: "org",
+        profile: { avatar: { kind: "upload", uploadId: "u" } },
+      },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  describe("a replaced avatar's upload expires", () => {
+    const expired = async (id: string) => {
+      const r = await db
+        .selectFrom("attachments")
+        .select(sql<boolean>`expires_at is not null and expires_at <= now()`.as("e"))
+        .where("id", "=", id)
+        .executeTakeFirstOrThrow();
+      return r.e;
+    };
+    const patchProfile = (a: AgentJson, avatar: unknown) =>
+      admin({
+        method: "PATCH",
+        url: `/api/v1/orgs/${orgId}/agents/${a.id}/profile`,
+        payload: { avatar, expectedUpdatedAt: a.profile.updatedAt },
+      });
+    const withUpload = async () => {
+      const a = await newAgent(admin);
+      const id = await uploadPng(admin, a.id);
+      const saved = await saveAvatar(admin, a, id);
+      const profile = (saved.json() as { profile: AgentJson["profile"] }).profile;
+      return { a: { ...a, profile }, id };
+    };
+
+    it("replacing it with a preset, another upload or null expires the old row", async () => {
+      for (const next of [{ kind: "preset", id: "fox" }, null, "upload"] as const) {
+        const { a, id } = await withUpload();
+        expect(await expired(id)).toBe(false);
+        let avatar: unknown = next;
+        let newId: string | undefined;
+        if (next === "upload") {
+          newId = await uploadPng(admin, a.id);
+          avatar = { kind: "upload", uploadId: newId };
+        }
+        const res = await patchProfile(a, avatar);
+        expect(res.statusCode, res.body).toBe(200);
+        expect(await expired(id)).toBe(true);
+        if (newId) expect(await expired(newId)).toBe(false);
+      }
+    });
+
+    it("re-saving the same upload keeps it", async () => {
+      const { a, id } = await withUpload();
+      const res = await saveAvatar(admin, a, id);
+      expect(res.statusCode, res.body).toBe(200);
+      expect(await expired(id)).toBe(false);
+    });
+
+    it("deleting the agent expires it and the cleanup job deletes the object", async () => {
+      const { a, id } = await withUpload();
+      const del = await admin({ method: "DELETE", url: `/api/v1/orgs/${orgId}/agents/${a.id}` });
+      expect(del.statusCode).toBe(204);
+      expect(await expired(id)).toBe(true);
+      const attachments = k.app.get(AttachmentsService);
+      expect(await attachments.deleteExpired()).toBeGreaterThanOrEqual(1);
+      const left = await db.selectFrom("attachments").select("id").where("id", "=", id).execute();
+      expect(left).toHaveLength(0);
+    });
   });
 });

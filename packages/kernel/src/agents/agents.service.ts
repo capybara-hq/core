@@ -622,6 +622,13 @@ export class AgentsService {
       .set({ deleted_at: sql`now()`, updated_at: sql`now()` })
       .where("id", "=", agentId)
       .execute();
+    // the avatar upload is garbage now: the cleanup job deletes it (and its object) once expired
+    await t
+      .updateTable("attachments")
+      .set({ expires_at: sql<Date>`now()` })
+      .where("agent_id", "=", agentId)
+      .where("purpose", "=", "agent-avatar")
+      .execute();
     await audit(t, {
       actorAccountId,
       ...(actorTokenId !== undefined && { actorTokenId }),

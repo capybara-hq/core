@@ -208,8 +208,12 @@ export class AgentsController {
     let location: string | null = null;
     if (avatar?.kind === "upload") {
       location = await this.attachments.agentAvatarUrl(org.orgId, agentId, avatar.uploadId);
-    } else if (avatar?.kind === "external" && new URL(avatar.url).protocol === "https:") {
-      location = avatar.url;
+    } else if (avatar?.kind === "external") {
+      try {
+        if (new URL(avatar.url).protocol === "https:") location = avatar.url;
+      } catch {
+        // a malformed migrated URL: no image
+      }
     }
     if (location === null) throw new ApiError("agent.not_found", "The agent has no avatar image");
     await reply
