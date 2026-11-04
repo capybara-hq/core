@@ -1,6 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { AttachmentsService } from "../../conversations/attachments.service.js";
 import { EventLog } from "../../conversations/event-log.js";
+import { ExtensionPointDefaults } from "../../extensions/point-defaults.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { SandboxService } from "../../sandbox/sandbox.service.js";
@@ -16,6 +17,7 @@ import { sandboxTools } from "./sandbox/index.js";
 import { skillLoadTool } from "./skill-load.js";
 import { skillWriteTool } from "./skill-write.js";
 import { toolSearchTool } from "./tool-search.js";
+import { webTools } from "./web/index.js";
 
 /**
  * The kernel's builtin tools, built once from the injected services (their specs: names,
@@ -36,6 +38,7 @@ export class BuiltinTools {
     @Inject(AttachmentsService) attachments: AttachmentsService,
     @Inject(EventLog) eventLog: EventLog,
     @Inject(SandboxService) sandbox: SandboxService,
+    @Inject(ExtensionPointDefaults) points: ExtensionPointDefaults,
   ) {
     const sandboxDeps: SandboxToolDeps = {
       sandbox,
@@ -64,6 +67,8 @@ export class BuiltinTools {
       }),
       // 自写技能：agent 定义显式引用才可用
       skillWriteTool({ changes: skillChanges }),
+      // web search / fetch through the org's default provider (web tools spec §3)
+      ...webTools({ points, config }),
     ];
   }
 

@@ -17,7 +17,7 @@ export interface ExtensionPointEntry {
   version: string;
   /** 部署配置摘要，见 `deploymentConfigHash`。 */
   configHash: string;
-  /** 提供方实例的在途计数（connector / sandbox / model-provider 的 `impl` 已经包成计入它的代理）。 */
+  /** The provider instance's in-flight tracker (a tracked point's `impl`: connector, sandbox, model-provider, web-search, web-fetch, is already a proxy counted in it). */
   inflight: InflightTracker;
 }
 
@@ -26,6 +26,8 @@ const TRACKED_EXTENSION_POINTS: Record<string, TrackOptions> = {
   connector: { sessions: ["open"] },
   sandbox: {},
   "model-provider": {},
+  "web-search": {},
+  "web-fetch": {},
 };
 
 /**
