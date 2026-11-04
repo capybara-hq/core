@@ -45,6 +45,12 @@ export const SANDBOX_TOOL_NAMES: readonly BuiltinName[] = [
 ];
 
 /**
+ * The tools offered with `Bash` whenever it is offered (background Bash: a model that can start a
+ * background task can read and stop it). `ToolRegistry` adds them; an explicit ref is harmless.
+ */
+export const BASH_COMPANION_TOOLS: readonly BuiltinName[] = [BUILTIN.TaskOutput, BUILTIN.TaskStop];
+
+/**
  * Sandbox tools that need approval when the org setting `sandboxToolPolicy` is `ask` (not the
  * read-only ones). Not `TaskOutput` or `TaskStop`: they only read or stop a task whose launch
  * already went through `Bash`'s policy (background Bash spec §4.5).

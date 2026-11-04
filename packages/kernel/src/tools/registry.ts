@@ -20,7 +20,14 @@ import { readOrgSettings } from "../orgs/settings.service.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import { SUBAGENT_LIMIT_DEFAULTS, subagentLimits } from "../runtime/subagents/limits.js";
 import { resolveRoster } from "../runtime/subagents/roster.js";
-import { AGENT_TOOL, BUILTIN_TOOL_NAMES, SKILL_LOAD, TOOL_SEARCH } from "./builtin-names.js";
+import {
+  AGENT_TOOL,
+  BASH_COMPANION_TOOLS,
+  BUILTIN,
+  BUILTIN_TOOL_NAMES,
+  SKILL_LOAD,
+  TOOL_SEARCH,
+} from "./builtin-names.js";
 import { agentToolSpec } from "./builtins/agent.js";
 import { BuiltinTools } from "./builtins/builtin-tools.js";
 import { canonicalJson } from "./canonical-json.js";
@@ -202,6 +209,17 @@ const sourceId = (s: ResolvedTool["source"]): string =>
       ? `plugin:${s.plugin}:${s.name}`
       : `connector:${s.connectorId}:${s.name}`;
 
+/** A builtin as a resolved tool (with `spec`, which `Agent` builds per definition). */
+const builtinTool = (b: BuiltinTool, spec: ToolSpec): ResolvedTool => ({
+  key: b.spec.name,
+  source: { kind: "builtin", name: b.spec.name },
+  spec,
+  specHash: specHash(spec),
+  defaultPolicy: b.defaultPolicy,
+  ...(b.timeoutMs !== undefined && { timeoutMs: b.timeoutMs }),
+  ...(b.spillChars !== undefined && { spillChars: b.spillChars }),
+});
+
 /**
  * Tool registry: resolves the references in an agent definition into the tools available for this
  * run. Not cached (reads PG and the host live every time), so changes take effect right away across
@@ -334,6 +352,10 @@ export class ToolRegistry {
           return;
         }
         claim(path, ref.name, `builtin:${ref.name}`);
+        // offered with Bash (see resolve), so their policies validate too
+        if (ref.name === BUILTIN.Bash) {
+          for (const c of BASH_COMPANION_TOOLS) claim(path, c, `builtin:${c}`);
+        }
       } else if (ref.kind === "plugin") {
         const key = extensionToolKey(ref.plugin, ref.name);
         if (!pluginTools.some((x) => x.plugin === ref.plugin && x.spec.name === ref.name)) {
@@ -473,15 +495,14 @@ export class ToolRegistry {
           if (roster.length === 0) continue;
           spec = agentToolSpec(roster, await this.maxConcurrentSubagents(orgId));
         }
-        add({
-          key: b.spec.name,
-          source: { kind: "builtin", name: b.spec.name },
-          spec,
-          specHash: specHash(spec),
-          defaultPolicy: b.defaultPolicy,
-          ...(b.timeoutMs !== undefined && { timeoutMs: b.timeoutMs }),
-          ...(b.spillChars !== undefined && { spillChars: b.spillChars }),
-        });
+        add(builtinTool(b, spec));
+        // `TaskOutput` and `TaskStop` come with an available `Bash` (background Bash spec §2)
+        if (b.spec.name === BUILTIN.Bash) {
+          for (const name of BASH_COMPANION_TOOLS) {
+            const c = this.builtins.find((x) => x.spec.name === name);
+            if (c && (c.unavailable?.() ?? null) === null) add(builtinTool(c, c.spec));
+          }
+        }
       } else if (ref.kind === "plugin") {
         const key = extensionToolKey(ref.plugin, ref.name);
         const t = pluginTools.find((x) => x.plugin === ref.plugin && x.spec.name === ref.name);
