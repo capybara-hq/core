@@ -57,12 +57,14 @@ export type AgentVersionSummary = Omit<AgentVersion, "definition">;
 /** 创建 / 修改的提示（不拒绝）：`fallback_same_provider` = 兜底与主模型同一供应商（spec 4.5）。 */
 export type AgentWarning = "fallback_same_provider";
 
-/** Until uploads are wired (the object store), a client can only choose a preset. */
+/** A new agent has no id to bind an upload to yet: a client can only choose a preset on create. */
 export function assertProfileWritable(profile: ProfileInput | undefined): void {
   if (profile?.avatar?.kind === "upload") {
-    throw new ApiError("validation_failed", "Avatar uploads are not available yet", [
-      { path: "avatar.kind", message: "upload is not supported" },
-    ]);
+    throw new ApiError(
+      "validation_failed",
+      "Choose a preset avatar when creating an agent; upload one afterwards",
+      [{ path: "avatar.kind", message: "upload is not supported on create" }],
+    );
   }
 }
 

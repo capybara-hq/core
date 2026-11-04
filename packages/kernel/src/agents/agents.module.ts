@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { AttachmentsModule } from "../conversations/attachments.module.js";
 import { EvalBudgetModule } from "../evals/budget.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { ProvidersModule } from "../runtime/providers.js";
@@ -18,6 +19,8 @@ import { AgentTemplatesService } from "./templates.js";
 @Module({
   imports: [
     AgentLookupModule,
+    // avatar uploads
+    AttachmentsModule,
     OrgLockModule,
     ProvidersModule,
     SkillsModule,

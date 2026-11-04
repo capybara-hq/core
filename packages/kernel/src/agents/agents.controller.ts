@@ -1,5 +1,15 @@
-import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post } from "@nestjs/common";
+import { hasControlChars, MEDIA_NAME_MAX_CHARS } from "@capybara-hq/plugin-sdk";
+import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post, Res } from "@nestjs/common";
+import type { FastifyReply } from "fastify";
 import { z } from "zod";
+import {
+  AGENT_AVATAR_CONTENT_TYPES,
+  AGENT_AVATAR_DOWNLOAD_TTL_SECONDS,
+  AGENT_AVATAR_MAX_BYTES,
+  AttachmentsService,
+  type CreatedAttachment,
+} from "../conversations/attachments.service.js";
+import { ApiError } from "../errors.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -41,6 +51,17 @@ const ProfileBody = ProfileInputSchema.extend({
   /** The `profile.updatedAt` the client read; a different one → 409 `agent.profile_conflict`. */
   expectedUpdatedAt: z.string().min(1).max(40),
 }).strict();
+const AvatarUploadBody = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(MEDIA_NAME_MAX_CHARS)
+      .refine((s) => !hasControlChars(s), "name must not contain control characters"),
+    contentType: z.enum(AGENT_AVATAR_CONTENT_TYPES),
+    size: z.number().int().min(1).max(AGENT_AVATAR_MAX_BYTES),
+  })
+  .strict();
 const UpdateBody = z
   .object({
     definition: AgentDefinitionSchema.optional(),
@@ -60,6 +81,7 @@ const viewerOf = (p: Principal): string | null => (p.kind === "user" ? p.account
 class AgentCreateBodyDto extends createZodDto(CreateBody, "AgentCreateBody") {}
 class AgentUpdateBodyDto extends createZodDto(UpdateBody, "AgentUpdateBody") {}
 class AgentProfileBodyDto extends createZodDto(ProfileBody, "AgentProfileBody") {}
+class AgentAvatarUploadBodyDto extends createZodDto(AvatarUploadBody, "AgentAvatarUploadBody") {}
 class AgentOwnerBodyDto extends createZodDto(OwnerBody, "AgentOwnerBody") {}
 
 /**
@@ -71,6 +93,7 @@ export class AgentsController {
   constructor(
     @Inject(AgentsService) private readonly agents: AgentsService,
     @Inject(AgentProfileService) private readonly profiles: AgentProfileService,
+    @Inject(AttachmentsService) private readonly attachments: AttachmentsService,
   ) {}
 
   @Post()
@@ -146,6 +169,55 @@ export class AgentsController {
         patTokenId(p),
       ),
     };
+  }
+
+  /**
+   * Registers an avatar image upload (presigned, like chat attachments and skill packages): the
+   * browser uploads straight to the object store, then saves `{ kind: "upload", uploadId }` with
+   * the profile PATCH, which finalizes it. 503 `storage.unavailable` without an object store.
+   */
+  @Post(":agentId/avatar/uploads")
+  @OrgAction("agents.create")
+  async createAvatarUpload(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("agentId") agentId: string,
+    @ZBody(AgentAvatarUploadBodyDto) body: z.infer<typeof AvatarUploadBody>,
+  ): Promise<CreatedAttachment> {
+    const p = requireUser(principal);
+    // the agent must exist and be visible to the caller (writing is checked when it is saved)
+    await this.agents.get(org.orgId, agentId, viewerOf(p));
+    return this.attachments.create(org.orgId, p.account.id, body, "agent-avatar");
+  }
+
+  /**
+   * The avatar image: 302 to a short-lived presigned URL for an upload avatar, or to the stored
+   * URL of an external avatar when it is https; 404 for presets, no avatar, or an agent the
+   * reader cannot see.
+   */
+  @Get(":agentId/avatar")
+  @OrgAction("agents.use")
+  async avatar(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("agentId") agentId: string,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    const view = await this.agents.get(org.orgId, agentId, viewerOf(principal));
+    const avatar = view.profile.avatar;
+    let location: string | null = null;
+    if (avatar?.kind === "upload") {
+      location = await this.attachments.agentAvatarUrl(org.orgId, agentId, avatar.uploadId);
+    } else if (avatar?.kind === "external" && new URL(avatar.url).protocol === "https:") {
+      location = avatar.url;
+    }
+    if (location === null) throw new ApiError("agent.not_found", "The agent has no avatar image");
+    await reply
+      .header(
+        "cache-control",
+        `private, max-age=${Math.floor(AGENT_AVATAR_DOWNLOAD_TTL_SECONDS / 5)}`,
+      )
+      .redirect(location, 302);
   }
 
   @Delete(":agentId")

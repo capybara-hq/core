@@ -42,6 +42,17 @@ export const MAX_PENDING_SKILL_PACKAGES = 5;
  * `POST /skills` 开始处理时再顺延这么久，处理期间不会被清理。
  */
 export const SKILL_PACKAGE_TTL_HOURS = 1;
+/** The image types an agent avatar upload may have (cropped square in the browser). */
+export const AGENT_AVATAR_CONTENT_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
+/** The size limit of an agent avatar upload (bytes). */
+export const AGENT_AVATAR_MAX_BYTES = 2 * 1024 * 1024;
+/** Unfinished avatar uploads one account may have in an org (counted apart from other uploads). */
+export const MAX_PENDING_AGENT_AVATARS = 10;
+/** An avatar upload not saved into a profile expires (and is cleaned up) after this many hours. */
+export const AGENT_AVATAR_TTL_HOURS = 24;
+/** Download redirect lifetime of an avatar (seconds); also its `Cache-Control` max-age. */
+export const AGENT_AVATAR_DOWNLOAD_TTL_SECONDS = 300;
+
 /**
  * 技能包解出的文件在 `kernel/<orgId>/` 下的前缀：按上传 id，同一上传重试写到同一批键（幂等），
  * 并发处理同一上传也不会互相覆盖出不同内容。版本行记下这个前缀（`skill_versions.object_prefix`）。
@@ -106,7 +117,11 @@ const isImage = (ct: string): ct is ImageMediaType =>
 
 /** 对象键：只用附件 id，用户的文件名不进键。技能包另放 `skill-packages/<id>`。 */
 const objectKey = (id: string, purpose: AttachmentPurpose = "chat") =>
-  purpose === "chat" ? `attachments/${id}` : `skill-packages/${id}`;
+  purpose === "chat"
+    ? `attachments/${id}`
+    : purpose === "agent-avatar"
+      ? `agent-avatars/${id}`
+      : `skill-packages/${id}`;
 
 const startsWith = (b: Uint8Array, sig: readonly number[], at = 0) =>
   sig.every((x, i) => b[at + i] === x);
@@ -203,17 +218,24 @@ export class AttachmentsService {
     const cfg = this.config.get().attachments;
     const contentType = normalizeContentType(input.contentType);
     const skill = purpose === "skill-package";
+    const avatar = purpose === "agent-avatar";
     if (
       skill
         ? contentType !== SKILL_PACKAGE_CONTENT_TYPE
-        : !(cfg.allowedTypes as readonly string[]).includes(contentType)
+        : avatar
+          ? !(AGENT_AVATAR_CONTENT_TYPES as readonly string[]).includes(contentType)
+          : !(cfg.allowedTypes as readonly string[]).includes(contentType)
     ) {
       throw new ApiError(
         "attachment.type_not_allowed",
         `Attachment type ${JSON.stringify(contentType)} is not allowed`,
       );
     }
-    const limit = skill ? SKILL_PACKAGE_UPLOAD_MAX_BYTES : this.limitFor(contentType);
+    const limit = skill
+      ? SKILL_PACKAGE_UPLOAD_MAX_BYTES
+      : avatar
+        ? AGENT_AVATAR_MAX_BYTES
+        : this.limitFor(contentType);
     if (input.size > limit) {
       throw new ApiError(
         "attachment.too_large",
@@ -228,7 +250,11 @@ export class AttachmentsService {
       .where("status", "=", "pending")
       .where("purpose", "=", purpose)
       .executeTakeFirst();
-    const maxPending = skill ? MAX_PENDING_SKILL_PACKAGES : MAX_PENDING_ATTACHMENTS;
+    const maxPending = skill
+      ? MAX_PENDING_SKILL_PACKAGES
+      : avatar
+        ? MAX_PENDING_AGENT_AVATARS
+        : MAX_PENDING_ATTACHMENTS;
     if (Number(pending?.n ?? 0) >= maxPending) {
       throw new ApiError(
         "attachment.too_many_pending",
@@ -237,7 +263,11 @@ export class AttachmentsService {
     }
     const id = randomUUID();
     const key = objectKey(id, purpose);
-    const ttlHours = skill ? SKILL_PACKAGE_TTL_HOURS : cfg.unboundTtlHours;
+    const ttlHours = skill
+      ? SKILL_PACKAGE_TTL_HOURS
+      : avatar
+        ? AGENT_AVATAR_TTL_HOURS
+        : cfg.unboundTtlHours;
     const upload = await this.storage.kernel(orgId).presignPut(key, {
       contentType,
       maxSize: input.size,
@@ -670,6 +700,112 @@ export class AttachmentsService {
       .set({ status: "deleting", expires_at: sql<Date>`now()` })
       .where("id", "=", id)
       .execute();
+  }
+
+  /**
+   * Makes an agent avatar upload ready to be saved into a profile (outside any transaction: it may
+   * read the object store): only the uploader, only the `agent-avatar` purpose, an image type, not
+   * expired and not yet used by another agent, else `attachment.not_found`. An upload still
+   * `pending` is finalized first (size, type and the image signature are checked). The expiry is
+   * extended so the cleanup job cannot delete it before {@link consumeAgentAvatar} runs.
+   */
+  async prepareAgentAvatar(
+    orgId: string,
+    accountId: string,
+    id: string,
+    agentId: string,
+  ): Promise<void> {
+    this.storage.assertAvailable();
+    const row = await this.db
+      .selectFrom("attachments")
+      .select([
+        "status",
+        "purpose",
+        "content_type",
+        "agent_id",
+        sql<boolean>`expires_at is not null and expires_at <= now()`.as("expired"),
+      ])
+      .where("id", "=", id)
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .executeTakeFirst();
+    if (
+      row?.purpose !== "agent-avatar" ||
+      row.status === "deleting" ||
+      row.expired ||
+      (row.agent_id !== null && row.agent_id !== agentId) ||
+      !(AGENT_AVATAR_CONTENT_TYPES as readonly string[]).includes(row.content_type)
+    ) {
+      throw notFound();
+    }
+    if (row.status === "pending") await this.finalize(orgId, accountId, id);
+    await this.db
+      .updateTable("attachments")
+      .set({ expires_at: sql<Date>`now() + make_interval(hours => ${AGENT_AVATAR_TTL_HOURS})` })
+      .where("id", "=", id)
+      .where("status", "=", "ready")
+      .where("agent_id", "is", null)
+      .where("expires_at", "is not", null)
+      .execute();
+  }
+
+  /**
+   * In the caller's transaction, binds a ready avatar upload to `agentId` (row lock; the expiry is
+   * cleared, so the cleanup job keeps it while the profile uses it). An upload another agent
+   * already uses, or one that is not the account's ready avatar → `attachment.not_found`; saving
+   * the same upload to the same agent again is fine.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async consumeAgentAvatar(
+    orgId: string,
+    accountId: string,
+    id: string,
+    agentId: string,
+  ): Promise<void> {
+    const trx = this.db.db;
+    const row = await trx
+      .selectFrom("attachments")
+      .select(["status", "agent_id"])
+      .where("id", "=", id)
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .where("purpose", "=", "agent-avatar")
+      .forUpdate()
+      .executeTakeFirst();
+    if (row?.status !== "ready" || (row.agent_id !== null && row.agent_id !== agentId)) {
+      throw notFound();
+    }
+    await trx
+      .updateTable("attachments")
+      .set({ agent_id: agentId, expires_at: null })
+      .where("id", "=", id)
+      .execute();
+  }
+
+  /**
+   * A short-lived presigned GET (inline, with the checked image type) of the avatar upload bound
+   * to `agentId`; `null` when there is none or its object is gone or no longer the finalized one.
+   */
+  async agentAvatarUrl(orgId: string, agentId: string, id: string): Promise<string | null> {
+    this.storage.assertAvailable();
+    const row = await this.db
+      .selectFrom("attachments")
+      .select(["content_type", "object_key", "etag"])
+      .where("id", "=", id)
+      .where("org_id", "=", orgId)
+      .where("agent_id", "=", agentId)
+      .where("purpose", "=", "agent-avatar")
+      .where("status", "=", "ready")
+      .executeTakeFirst();
+    if (!row) return null;
+    const store = this.storage.kernel(orgId);
+    const head = await store.head(row.object_key);
+    if (!head || !this.sameContent(row.etag, head.etag, { orgId, attachmentId: id })) return null;
+    return store.presignGet(row.object_key, {
+      ttlSeconds: AGENT_AVATAR_DOWNLOAD_TTL_SECONDS,
+      disposition: "inline",
+      responseContentType: row.content_type,
+    });
   }
 
   /**

@@ -155,7 +155,6 @@ describe("agent profile", () => {
       { quickActions: [{ title: "x".repeat(41), body: "b" }] },
       { quickActions: [{ title: "t", body: "x".repeat(20_001) }] },
       { avatar: { kind: "preset", id: "dragon" } },
-      { avatar: { kind: "upload", uploadId: "u1" } },
       { avatar: { kind: "external", url: "https://example.com/a.png" } },
     ];
     for (const patch of bad) {

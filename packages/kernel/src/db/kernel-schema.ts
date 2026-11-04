@@ -613,10 +613,12 @@ export interface AttachmentsTable {
   expires_at: TsNullable;
   /** 0024：上传用途（技能包不能绑定到消息）。 */
   purpose: ColumnType<AttachmentPurpose, AttachmentPurpose | undefined, AttachmentPurpose>;
+  /** 0067: the agent whose profile uses this avatar upload (set once, when it is saved). */
+  agent_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
-/** 预签名上传的用途：对话附件 / 技能包 zip。 */
-export type AttachmentPurpose = "chat" | "skill-package";
+/** 预签名上传的用途：对话附件 / 技能包 zip / agent avatar image. */
+export type AttachmentPurpose = "chat" | "skill-package" | "agent-avatar";
 
 /** 技能版本的清单（`skill_versions.manifest`）。 */
 export interface SkillManifest {
