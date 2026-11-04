@@ -18,10 +18,10 @@ import { pluginTgz } from "../helpers/plugin-packages.js";
 import { createOrg, PW, type Req, session, startKernel, type TestKernel } from "../helpers/runs.js";
 
 const FAKE_MODEL = { zh: "模拟模型", en: "Fake model" };
-const MIGRATION = "0065_extension_display_name.sql";
+const MIGRATION = "0066_extension_display_name.sql";
 
-/** 0065: `extension_packages.display_name` is added to a database that already has packages. */
-describe("migration 0065_extension_display_name", { timeout: 120_000 }, () => {
+/** 0066: `extension_packages.display_name` is added to a database that already has packages. */
+describe("migration 0066_extension_display_name", { timeout: 120_000 }, () => {
   let pg: TestContainer;
   let raw: ReturnType<typeof createDb>;
   let before: string;

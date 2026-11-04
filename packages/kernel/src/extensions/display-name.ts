@@ -8,7 +8,7 @@ import { ExtensionHost } from "./host.js";
  * Extension display names (extension config forms spec §2.2), the one resolver every extension and
  * model API uses: a config-declared extension's plugin.json (read by this replica's host at load,
  * the same on every replica), else the installed package's `display_name`, else the live catalog
- * item of the same name, else null. No backfill: a package stored before 0065 gets a name with its
+ * item of the same name, else null. No backfill: a package stored before 0066 gets a name with its
  * next version. Stateless; one query per call.
  */
 @Injectable()

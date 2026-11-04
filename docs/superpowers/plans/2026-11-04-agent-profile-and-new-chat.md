@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-04-agent-profile-and-new-chat-design.md` (parts 1–3; part 4 waits for the tool-rename work and is not in this plan).
 
+> **Note (2026-11-04):** the migrations were renumbered after main's `0063_tool_keys_claude_code`; `0066_agent_profiles` below is now `0067_agent_profiles`.
+
 ## Global Constraints
 
 - Work on `fix/rc2-acceptance`, in `.claude/worktrees/fix-rc2-acceptance`. Another machine also pushes to it, so run `git pull --rebase origin fix/rc2-acceptance` before every commit.

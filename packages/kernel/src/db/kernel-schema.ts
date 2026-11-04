@@ -16,7 +16,7 @@ export interface AccountsTable {
   is_enterprise_admin: Generated<boolean>;
   created_at: Ts;
   updated_at: Ts;
-  /** 0063: the org the account last chose as current; a new session starts in it. */
+  /** 0064: the org the account last chose as current; a new session starts in it. */
   last_org_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
@@ -167,7 +167,7 @@ export interface AgentsTable {
   org_role: Generated<"admin" | "member" | "guest">;
   current_version: number;
   needs_reassignment: Generated<boolean>;
-  /** 0066: the profile (display data, outside the versions). */
+  /** 0067: the profile (display data, outside the versions). */
   profile_avatar: ColumnType<
     Record<string, unknown> | null,
     string | null | undefined,
@@ -230,9 +230,9 @@ export interface ConversationsTable {
   queue_paused: ColumnType<boolean, boolean | undefined, boolean>;
   /** 0062: why the queue paused (`QueuePauseReason`); null when not paused or not recorded. */
   queue_pause_reason: ColumnType<string | null, string | null | undefined, string | null>;
-  /** 0064: when the owner archived it (hidden from the default lists); null = not archived. */
+  /** 0065: when the owner archived it (hidden from the default lists); null = not archived. */
   archived_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
-  /** 0064: when the owner deleted it (soft delete: hidden everywhere for the owner); null = live. */
+  /** 0065: when the owner deleted it (soft delete: hidden everywhere for the owner); null = live. */
   deleted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
 }
 
@@ -613,7 +613,7 @@ export interface AttachmentsTable {
   expires_at: TsNullable;
   /** 0024：上传用途（技能包不能绑定到消息）。 */
   purpose: ColumnType<AttachmentPurpose, AttachmentPurpose | undefined, AttachmentPurpose>;
-  /** 0067: the agent whose profile uses this avatar upload (set once, when it is saved). */
+  /** 0068: the agent whose profile uses this avatar upload (set once, when it is saved). */
   agent_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
@@ -876,7 +876,7 @@ export interface ExtensionPackagesTable {
   source_ref: string;
   uploaded_by: string | null;
   created_at: Ts;
-  /** 0065: the plugin.json `displayName`; null without one and for packages stored before 0065. */
+  /** 0066: the plugin.json `displayName`; null without one and for packages stored before 0066. */
   display_name: ColumnType<
     { zh: string; en: string } | null,
     string | null | undefined,

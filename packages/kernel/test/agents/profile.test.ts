@@ -232,7 +232,7 @@ describe("agent profile", () => {
       set definition = definition || ${JSON.stringify({ avatarUrl })}::jsonb
       where agent_id = ${agent.id}`.execute(raw);
     await sql`update capybara.agents set profile_avatar = null where id = ${agent.id}`.execute(raw);
-    const content = readFileSync(join(KERNEL_MIGRATIONS_DIR, "0066_agent_profiles.sql"), "utf8");
+    const content = readFileSync(join(KERNEL_MIGRATIONS_DIR, "0067_agent_profiles.sql"), "utf8");
     await raw.transaction().execute(async (t) => {
       await sql`set local search_path to capybara, public`.execute(t);
       await sql.raw(content).execute(t);
@@ -252,7 +252,7 @@ describe("agent profile", () => {
 
   it("an empty or non-string avatarUrl leaves profile_avatar NULL", async () => {
     const { agent } = await setup();
-    const content = readFileSync(join(KERNEL_MIGRATIONS_DIR, "0066_agent_profiles.sql"), "utf8");
+    const content = readFileSync(join(KERNEL_MIGRATIONS_DIR, "0067_agent_profiles.sql"), "utf8");
     for (const v of ["", 5, null]) {
       await sql`update capybara.agent_versions
         set definition = definition || ${JSON.stringify({ avatarUrl: v })}::jsonb
