@@ -1,5 +1,71 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.3
+
+### Minor Changes
+
+- a1bfe76: `Write` on an existing file and `Edit` now fail unless the conversation has read the file (or wrote it itself) and it has not changed since. The decision comes from the file state each `Read`, `Write` and `Edit` result records in its display-only `view.file`, so every replica decides the same.
+- 0f4b28a: The `Skill` tool takes an optional `args` string and renders the skill with it, as a person's `/name args` does.
+- 8881b9a: Tool rows follow the Claude Code display: a builtin by its name (`Bash`, `Read`), a connector or
+  extension tool as `<display name> [<tool>]` with the declared title as the tooltip, the key
+  argument cut with `…`, and the expanded detail in `IN` / `OUT` blocks. `GET …/conversations/:id/tools`
+  returns the parsed local tool name (`tool`) and an extension's plugin display name
+  (`source.displayName`); approval views carry the extension and its display name; IM approval cards
+  name the tool `<display name> [<tool>]` (no separate `appName`). Approval, inbox, grants, trajectory,
+  agent policy and right-panel labels use the same rule; a `Write` that could not be diffed no longer
+  shows `+0 −0`.
+
+### Patch Changes
+
+- 8bf0b04: The builtin tools take Claude Code's names: `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`,
+  `Deliver`, `Skill`, `SkillWrite`, `AskUserQuestion`, `ReadToolOutput`, `ToolSearch` and `Agent`
+  (formerly `sandbox_bash` … `sandbox_deliver`, `skill_load`, `skill_write`, `ask_user`,
+  `read_tool_output`, `tool_search` and `agent`). Every description, error and system text that names
+  a builtin uses the new names; a request recorded before the rename is rebuilt with the old texts,
+  so it replays with no drift. Several parameters are renamed as well (see the builtin tool
+  parameters changeset).
+- e1127f5: The builtin tools take Claude Code's parameters: `file_path` (`Read`, `Write`, `Edit`, `Deliver`),
+  `old_string` / `new_string` / `replace_all` (`Edit`), `timeout` in milliseconds (`Bash`, a value
+  above the deployment maximum is lowered to it), `skill` (`Skill`), `max_results` (`ToolSearch`)
+  and, for `Grep`, `-i`, `output_mode` (`files_with_matches` by default, `content`, `count`), `-n`,
+  `-A` / `-B` / `-C`, `head_limit` and `offset`. Calls recorded under the old names still replay.
+- 307c611: The Claude Code tool-name map written into new skills snapshots is shorter: the tools that share a
+  name with Claude Code are listed as unchanged. Importing a Claude Code agent maps `tools:` entries to
+  the new builtin names (`Task` to `Agent`, `MultiEdit` to `Edit`, `TodoWrite` to
+  `plugin__todo__write`); `mcp__*` entries are still dropped and reported in the translation report.
+- 1beea7e: Full-run replay of recordings made under the release-candidate tool names: the recorded side is
+  read in the current names (builtin keys and parameters, `<x>__<tool>` keys of connectors and
+  extensions) before matching, so an old run replays with its recorded results and no tool-call
+  difference; the result carries `legacyKeyMatch: true`.
+- 56e83dd: A tool call logged under a release-candidate builtin key (`sandbox_bash`, `skill_load`, ...) that was
+  still open when the tool names changed runs as the renamed tool with its parameters translated, and
+  its result keeps the logged key. An approval of such a call given after the upgrade lets it run
+  without asking again, and an `agent` call whose sub-agent was dispatched before the upgrade gets its
+  result when the sub-agent finishes. A call to an old key that the request never offered gets the
+  unknown-tool error plus a hint naming the new tool and its parameters.
+  `GET …/conversations/:id/tools` answers an old builtin key as its current tool with `aliasOf`, so
+  the conversation page shows old `agent` calls as sub-agent rows and old builtin calls with their
+  current label.
+- 48d3983: Stored release-candidate tool keys keep working. Migration 0063 rewrites the keys of tool grants,
+  conversation grants, pending approvals and pending questions (`sandbox_bash` -> `Bash`,
+  `<slug>__<tool>` -> `mcp__<slug>__<tool>`, `<extension>__<tool>` -> `plugin__<extension>__<tool>`);
+  a key it cannot map (both a connector slug and an extension name, or neither) stays, and the
+  kernel logs one `tools.legacy_key_unmapped` WARN with their count at start. Agent versions, agent
+  templates and eval snapshots are read with the new keys. Saving a definition with an old key is
+  refused with a message naming the new key. Remembered grants of builtin tools are asked again
+  once (their tool definitions changed); connector and extension grants carry over. The migration
+  also adds an index for the read-before-write lookup of `Write` / `Edit`.
+- 32580d3: Model-visible tool keys of connectors are `mcp__<slug>__<tool>` and those of extensions
+  `plugin__<plugin>__<tool>` (aligned with Claude Code). The SDK exports `parseToolKey`,
+  `connectorToolKey`, `extensionToolKey`, `ParsedToolKey` and `BUILTIN_TOOL_NAME_RE`; hook payloads'
+  `toolKey` carry the new keys, so an extension that matches keys should use `parseToolKey`.
+- 75b1aaf: `Write` over an existing file now reads up to 10 MB of the old content to record its digest in
+  `view.file`, and fails (instead of writing) when the old content cannot be read for a reason other
+  than the file being gone.
+- Updated dependencies [8bf0b04]
+- Updated dependencies [32580d3]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.1
+
 ## 0.1.0-rc.2
 
 ### Patch Changes
