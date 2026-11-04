@@ -40,7 +40,23 @@ import { AGENT, Log, MODEL } from "../runtime/context/fixtures.js";
 
 const dummy = {} as never;
 const builtins = () =>
-  new BuiltinTools(dummy, dummy, dummy, dummy, dummy, dummy, dummy, dummy, dummy, dummy).list();
+  new BuiltinTools(
+    dummy,
+    dummy,
+    dummy,
+    dummy,
+    dummy,
+    dummy,
+    dummy,
+    dummy,
+    dummy,
+    dummy,
+    dummy,
+    dummy,
+    dummy,
+    dummy,
+    dummy,
+  ).list();
 
 const repoFile = (path: string) =>
   readFileSync(fileURLToPath(new URL(`../../../../${path}`, import.meta.url)), "utf8");

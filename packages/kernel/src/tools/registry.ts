@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type {
   Connector,
+  HookParentScope,
   InputRequired,
   ToolAnnotations,
   ToolCallContext,
@@ -18,6 +19,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
+import type { ConversationKindForHooks } from "../runtime/hook-calls.js";
 import { SUBAGENT_LIMIT_DEFAULTS, subagentLimits } from "../runtime/subagents/limits.js";
 import { resolveRoster } from "../runtime/subagents/roster.js";
 import { AGENT_TOOL, BUILTIN_TOOL_NAMES, SKILL_LOAD, TOOL_SEARCH } from "./builtin-names.js";
@@ -56,6 +58,16 @@ export interface BuiltinCallContext extends ToolCallContext {
   sandboxConversationId?: string;
   /** The parent run of a sub-agent's run (absent for a top-level run). */
   parentRunId?: string;
+  /**
+   * The rest of the run's hook scope, for a builtin that makes a model call of its own (the
+   * `WebFetch` extraction fires `model.request` / `model.response`): the step of the call, the
+   * agent version of the run, the conversation kind (hooks fire for `chat` and `subagent` only)
+   * and, for a sub-agent, where it was dispatched from.
+   */
+  step?: number;
+  agentVersion?: number;
+  conversationKind?: ConversationKindForHooks;
+  parent?: HookParentScope;
 }
 
 /**

@@ -133,20 +133,16 @@ export async function fetchPage(
   return { kind: "page", page: capMarkdown({ ...page, finalUrl: final.url }, max) };
 }
 
-/** The extraction call (web tools spec §5): the page and the prompt in, a short answer out. */
+/**
+ * The extraction call (web tools spec §5): the page and the prompt in, a short answer out
+ * (`extractAnswer` in `extract.ts` in production). It throws a `ToolError` instead of ever
+ * returning the page.
+ */
 export type WebFetchExtract = (
   ctx: BuiltinCallContext,
   page: WebFetchPage,
   prompt: string,
 ) => Promise<string>;
-
-/**
- * The extraction until the `web_fetch` model call lands: always fails with the extraction error,
- * so no raw page ever reaches the model (an anti-goal of the web tools spec).
- */
-export const extractNotAvailable: WebFetchExtract = async () => {
-  throw new ToolError("Could not extract an answer from the page; retry, or try another URL.");
-};
 
 /** What {@link webFetchTool} needs. */
 export interface WebFetchDeps extends WebFetchPageDeps {

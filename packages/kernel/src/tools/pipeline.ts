@@ -1400,6 +1400,19 @@ export class ToolPipeline {
         ctx.parent !== undefined && { sandboxConversationId: ctx.parent.conversationId }),
       ...(tool.source.kind === "builtin" &&
         ctx.parent !== undefined && { parentRunId: ctx.parent.runId }),
+      // the hook scope of a builtin's own model call (the WebFetch extraction)
+      ...(tool.source.kind === "builtin" && {
+        step: ctx.step,
+        agentVersion: ctx.agentVersion,
+        ...(ctx.conversationKind !== undefined && { conversationKind: ctx.conversationKind }),
+        ...(ctx.parent !== undefined && {
+          parent: {
+            conversationId: ctx.parent.conversationId,
+            runId: ctx.parent.runId,
+            callId: ctx.parent.callId,
+          },
+        }),
+      }),
     };
     // 内置工具可按输入给自己的时限（沙箱 bash 按命令超时加余量）；缺省 tools.timeoutMs
     const timeoutMs = tool.timeoutMs?.(input) ?? this.config.get().tools.timeoutMs;

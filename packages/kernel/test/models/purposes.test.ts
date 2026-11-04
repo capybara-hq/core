@@ -121,13 +121,21 @@ async function put(req: Req, url: string, target: unknown): Promise<PurposeView>
 
 const find = (views: PurposeView[], purpose: string) => views.find((v) => v.purpose === purpose);
 
-const KERNEL = ["eval", "title", "subagent_fast", "subagent_standard", "subagent_capable"];
+const KERNEL = [
+  "eval",
+  "title",
+  "web_fetch",
+  "subagent_fast",
+  "subagent_standard",
+  "subagent_capable",
+];
 
 describe("purpose list", () => {
-  it("the kernel purposes (eval, title, sub-agent tiers) and plugin purposes; null when unmapped", async () => {
+  it("the kernel purposes (eval, title, web_fetch, sub-agent tiers) and plugin purposes; null when unmapped", async () => {
     expect(KERNEL_PURPOSES).toEqual([
       { purpose: "eval", kind: "chat", label: { zh: "评测评委", en: "Eval judge" } },
       { purpose: "title", kind: "chat", label: { zh: "会话标题", en: "Conversation titles" } },
+      { purpose: "web_fetch", kind: "chat", label: { zh: "网页提取", en: "Web page extraction" } },
       {
         purpose: "subagent_fast",
         kind: "chat",

@@ -14,6 +14,8 @@ interface ProbeConfig {
   denyTools?: string[];
   /** The model.request policy hook denies with reason "nope". */
   denyModel?: boolean;
+  /** The model.request policy hook denies the calls of these purposes only (e.g. `web_fetch`). */
+  denyModelPurposes?: string[];
   /** Mount points whose hook throws. */
   throwIn?: AvailableHook[];
   /** Hooks of the mount points in `sleepIn` wait this long (they stop early when aborted). */
@@ -102,7 +104,9 @@ export default defineExtension({
       "model.request",
       async (p, signal) => {
         const cfg = await prelude("model.request", p.orgId, p, signal);
-        return cfg.denyModel ? { deny: "nope" } : undefined;
+        return cfg.denyModel || cfg.denyModelPurposes?.includes(p.purpose)
+          ? { deny: "nope" }
+          : undefined;
       },
       { mode: "policy" },
     );

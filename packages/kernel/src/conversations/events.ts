@@ -404,7 +404,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
    * Usage of one model call. Absent `purpose` = the step's call (written with its
    * `assistant_message`); `compaction` = the compaction call before the step (I-1: billed and
    * reported, but no step consumer may pair it with the step's `model_call`); `title` = the
-   * conversation title call (UI refresh B: no run, `step` 0, not model-visible, billed and reported).
+   * conversation title call (UI refresh B: no run, `step` 0, not model-visible, billed and reported);
+   * `web_fetch` = a `WebFetch` extraction call (web tools spec §5: the tool call's run and step,
+   * `callId` = the call; not model-visible, billed and reported, counted on a sub-agent's parent).
    */
   ev(
     "usage",
@@ -413,7 +415,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       provider: z.string(),
       model: z.string(),
       ...ModelUsageShape,
-      purpose: z.enum(["compaction", "title"]).optional(),
+      purpose: z.enum(["compaction", "title", "web_fetch"]).optional(),
+      /** The tool call a `web_fetch` usage belongs to. */
+      callId: z.string().optional(),
     }),
   ),
   ev("reminder", z.object({ step: count, text: z.string() })),

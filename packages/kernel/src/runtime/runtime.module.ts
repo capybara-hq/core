@@ -23,7 +23,7 @@ import { RunJobsModule } from "./run-jobs.js";
 import { RunQueue } from "./run-queue.js";
 import { AgentLoops, RunSteps } from "./run-steps.js";
 import { RunWorker } from "./run-worker.js";
-import { StepLog } from "./step-log.js";
+import { StepLogModule } from "./step-log.js";
 import { ConversationStreams } from "./stream.js";
 import { SubagentsModule } from "./subagents/subagents.service.js";
 import { UsageReportModule } from "./usage-report.js";
@@ -51,6 +51,7 @@ import { DecisionResumer, Waits } from "./waits.js";
     SubagentsModule,
     UsageReportModule,
     TitlesModule,
+    StepLogModule,
     // the producer side of `wait-timeout` jobs (`MaintenanceProcessor` consumes them)
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
@@ -60,7 +61,6 @@ import { DecisionResumer, Waits } from "./waits.js";
     RunAbort,
     KyselyCheckpointSaver,
     RunFinish,
-    StepLog,
     RunQueue,
     Waits,
     DecisionResumer,
@@ -88,7 +88,7 @@ import { DecisionResumer, Waits } from "./waits.js";
     RunAbort,
     KyselyCheckpointSaver,
     RunFinish,
-    StepLog,
+    StepLogModule,
     RunQueue,
     Waits,
     RunControl,

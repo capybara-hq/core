@@ -41,6 +41,11 @@ export const KERNEL_PURPOSES = [
   { purpose: "eval", kind: "chat", label: { zh: "评测评委", en: "Eval judge" } },
   /** Conversation titles (UI refresh B); unmapped → the conversation's current chat model. */
   { purpose: "title", kind: "chat", label: { zh: "会话标题", en: "Conversation titles" } },
+  /**
+   * The `WebFetch` extraction call (web tools spec §5); unmapped → the calling conversation's
+   * current chat model (a sub-agent's call: the sub-agent's).
+   */
+  { purpose: "web_fetch", kind: "chat", label: { zh: "网页提取", en: "Web page extraction" } },
   {
     purpose: "subagent_fast",
     kind: "chat",

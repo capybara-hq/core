@@ -4,7 +4,13 @@ import { type WebSearchDeps, webSearchTool } from "./search.js";
 
 export { webToolError } from "./errors.js";
 export {
-  extractNotAvailable,
+  extractAnswer,
+  WEB_FETCH_DENIED_TEXT,
+  WEB_FETCH_EXTRACT_FAILED_TEXT,
+  WEB_FETCH_SYSTEM_PROMPT,
+  type WebFetchExtractDeps,
+} from "./extract.js";
+export {
   fetchPage,
   WEB_FETCH_SPEC,
   type WebFetchDeps,

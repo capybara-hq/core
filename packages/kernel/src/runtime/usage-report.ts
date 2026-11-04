@@ -206,7 +206,8 @@ export function narrowPending(stored: readonly string[] | undefined, failed: rea
  *   using up an attempt.
  * Handlers must be idempotent by `eventId` (`<conversationId>/<seq>`). Nothing is written to the event
  * log (never model-visible). Compaction calls log usage too (`purpose: "compaction"`) and are reported,
- * as are conversation title calls (`purpose: "title"`, no run: `runId` is "").
+ * as are conversation title calls (`purpose: "title"`, no run: `runId` is "") and `WebFetch`
+ * extraction calls (`purpose: "web_fetch"`).
  * Single-step eval replays and judge requests log no usage: not reported (M7).
  */
 @Injectable()
@@ -454,7 +455,7 @@ export class UsageReporter {
       .executeTakeFirst();
     if (row?.type !== "usage") return null;
     const p = row.payload as {
-      purpose?: "compaction" | "title";
+      purpose?: "compaction" | "title" | "web_fetch";
       provider: string;
       model: string;
       inputTokens: number;

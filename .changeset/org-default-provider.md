@@ -28,5 +28,16 @@ Kernel: the builtin `WebFetch` tool (default `ask`, read-only, open-world): chec
 also for the provider's final URL), fetches the page with the org's default `web-fetch@1`
 provider through a Redis page cache (`cache:web_page:<orgId>:<provider>:<sha256(url)>`, TTL
 `web.fetch.cacheSeconds`), returns the new URL for a redirect to another host, and cuts pages to
-`web.fetch.maxPageChars` with a `[truncated]` marker. The extraction call is not built yet: until
-it is, a fetched page ends in the extraction error and is never returned to the model.
+`web.fetch.maxPageChars` with a `[truncated]` marker.
+
+Kernel: `WebFetch` answers the prompt from the page with one call on the new kernel model purpose
+`web_fetch` (label "Web page extraction"; unmapped, the calling conversation's model, a
+sub-agent's for a sub-agent's call): a fixed system prompt (`WEB_FETCH_SYSTEM_PROMPT`), no tools,
+output capped at `web.fetch.maxAnswerTokens`. The result is the answer headed by the URL, never the
+page; a failure is a tool error and a `model.request` policy denial is the tool error "An org
+policy blocked reading this page; continue without it or ask the user." with its `hook.denied`
+audit row and `hook_denied` event. The call fires `model.request` / `model.response` with
+`purpose: "web_fetch"` and logs a `usage` event with `purpose: "web_fetch"` and the call's
+`callId` (reported through `usage.report`, counted on a sub-agent's parent run). `StepLog` has a
+module of its own (`StepLogModule`) and builtin tools get the run's hook scope in their call
+context.
