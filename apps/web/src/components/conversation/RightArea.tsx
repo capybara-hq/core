@@ -168,7 +168,9 @@ function useBackgroundTasks(
   const query = backgroundTasksQuery(orgId, conversationId);
   const r = useQuery({ ...query, enabled, retryOnMount: retryOnMountOf(query.queryKey) });
   const listKey = query.queryKey;
-  const { mutate, isPending, variables } = useAppMutation({
+  /** The tasks whose stop this page sent and the kernel has not answered yet (each its own). */
+  const [inFlight, setInFlight] = useState<ReadonlySet<string>>(NONE_STOPPING);
+  const { mutateAsync } = useAppMutation({
     fn: (taskId: string) => stopBackgroundTask(orgId, conversationId, taskId),
     // the answer is the task now; the kernel's `changed: background` reads the list when it ends
     invalidates: () => [],
@@ -178,17 +180,25 @@ function useBackgroundTasks(
       ),
   });
   const stop = useCallback(
-    (taskId: string) => mutate(taskId, { onError: (e) => toast.error(errorMessage(e)) }),
-    [mutate, toast, errorMessage],
-  );
-  const stopping = useMemo(
-    () => (isPending && variables !== undefined ? new Set([variables]) : NONE_STOPPING),
-    [isPending, variables],
+    (taskId: string) => {
+      setInFlight((s) => new Set(s).add(taskId));
+      // `mutateAsync` settles each call (mutate's own callbacks follow only the latest one)
+      mutateAsync(taskId)
+        .catch((e: unknown) => toast.error(errorMessage(e)))
+        .finally(() =>
+          setInFlight((s) => {
+            const next = new Set(s);
+            next.delete(taskId);
+            return next;
+          }),
+        );
+    },
+    [mutateAsync, toast, errorMessage],
   );
   return {
     tasks: enabled ? r.data : undefined,
     pending: enabled && r.data === undefined && r.error === null,
-    stopping,
+    stopping: inFlight,
     stop,
   };
 }
@@ -398,6 +408,7 @@ export function useRightAreaSlot(p: {
         task={background.tasks?.find((x) => x.id === target.taskId)}
         loading={background.pending}
         lastLines={lastLines.get(target.taskId)}
+        stopping={background.stopping.has(target.taskId)}
         onStop={() => background.stop(target.taskId)}
         onClose={close}
         onFullscreen={fullscreen}

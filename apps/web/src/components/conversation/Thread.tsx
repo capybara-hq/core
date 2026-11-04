@@ -3,7 +3,6 @@
 import {
   type BubbleAttachment,
   BubbleAttachments,
-  Button,
   Disclosure,
   FileOutputs,
   ImageOutput,
@@ -428,10 +427,22 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
         : (c.names.get(id) ?? t("anotherMember"));
 
   const rowWithSize = (r: TimelineTool): ToolRowData => {
+    const taskId = r.background?.taskId;
     const row = r.lines
       ? { ...r.row, extra: t("toolLines", r.lines) }
       : r.background
-        ? { ...r.row, extra: tb("inBackground") }
+        ? {
+            ...r.row,
+            extra: tb("inBackground"),
+            ...(taskId && onOpenTask
+              ? {
+                  link: {
+                    label: tb("openTask", { name: r.row.description ?? taskId }),
+                    onOpen: () => onOpenTask(taskId),
+                  },
+                }
+              : {}),
+          }
         : r.row;
     const total = r.outputId ? sizes.get(r.outputId) : undefined;
     const out = row.detail?.output;
@@ -653,15 +664,8 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
       case "thinking":
         if (e.model !== null && reasoningOf(e.model) === false) return null;
         return <ThinkingRow seconds={e.seconds} text={e.text} live={e.live} />;
-      case "tools": {
-        const tasks = onOpenTask
-          ? e.rows.flatMap((r) =>
-              r.background?.taskId
-                ? [{ id: r.background.taskId, name: r.row.description ?? r.background.taskId }]
-                : [],
-            )
-          : [];
-        const group = (
+      case "tools":
+        return (
           <ToolGroup
             rows={e.rows.map(rowWithSize)}
             onViewAll={(rowId) => {
@@ -679,26 +683,6 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
             }}
           />
         );
-        if (tasks.length === 0 || !onOpenTask) return group;
-        // A background call's link to its task's output (background Bash spec §5).
-        return (
-          <Stack gap={4}>
-            {group}
-            <Stack direction="row" gap={4} wrap>
-              {tasks.map((task) => (
-                <Button
-                  key={task.id}
-                  variant="ghost"
-                  density="dense"
-                  onClick={() => onOpenTask(task.id)}
-                >
-                  {tb("openTask", { name: task.name })}
-                </Button>
-              ))}
-            </Stack>
-          </Stack>
-        );
-      }
       case "subagents":
         return (
           <SubagentGroup
@@ -742,7 +726,7 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
       case "background":
         return (
           <RunDivider
-            kind="fallback"
+            kind="notice"
             text={
               e.exitCode === null
                 ? tb("noticeNoCode", {

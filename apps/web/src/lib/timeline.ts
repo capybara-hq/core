@@ -107,7 +107,9 @@ export interface TimelineTool {
   lines?: { from: number; to: number };
   /**
    * A background `Bash` call (`run_in_background: true`): the thread labels it "In background"
-   * through i18n and links its task (`#bg-<taskId>`) once the result named it.
+   * through i18n, as the row's `extra` (it replaces any other extra, e.g. an extension's display
+   * summary; a line range still wins), and links its task (`#bg-<taskId>`, the row's `link`) once
+   * the result named it.
    */
   background?: { taskId: string | null };
 }

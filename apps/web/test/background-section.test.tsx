@@ -149,7 +149,7 @@ const subagent = {
 /** The routes; `state.tasks` is what the list answers now (a test changes it). */
 function api(
   state: { tasks: unknown[]; events?: ConversationEvent[] },
-  extra: Record<string, (c: Call) => Response> = {},
+  extra: Record<string, (c: Call) => Response | Promise<Response>> = {},
 ) {
   return stubApi({
     [`GET ${PARENT}`]: () => json(200, CONV("c1")),
@@ -267,7 +267,69 @@ describe("the background section", () => {
   });
 });
 
+/** A response held until `release` (a stop in flight). */
+function held(body: unknown) {
+  let release = () => {};
+  const response = new Promise<Response>((resolve) => {
+    release = () => resolve(json(200, body));
+  });
+  return { response, release: () => release() };
+}
+
+const stopPosts = (calls: Call[], id: string) =>
+  calls.filter((c) => c.method === "POST" && c.url === `${TASKS}/${id}/stop`).length;
+
+describe("stops in flight", () => {
+  it("two concurrent stops keep both rows stopping", async () => {
+    const second = task({ id: "bt_second", description: "Watch the build" });
+    const a = held({ task: task({ stopping: true }) });
+    const b = held({ task: { ...second, stopping: true } });
+    const calls = api(
+      { tasks: [task(), second] },
+      {
+        [`POST ${TASKS}/${TASK}/stop`]: () => a.response,
+        [`POST ${TASKS}/bt_second/stop`]: () => b.response,
+      },
+    );
+    window.history.replaceState(null, "", "/chat/c1#properties");
+    await renderChatRoute();
+    const section = await backgroundSection();
+    const user = userEvent.setup();
+    await user.click(
+      await within(section).findByRole("button", { name: "Stop Start the dev server" }),
+    );
+    await user.click(within(section).getByRole("button", { name: "Stop Watch the build" }));
+    await vi.waitFor(() => expect(within(section).getAllByRole("status")).toHaveLength(2));
+    expect(within(section).queryByRole("button", { name: /^Stop / })).toBeNull();
+    expect(stopPosts(calls, TASK)).toBe(1);
+    expect(stopPosts(calls, "bt_second")).toBe(1);
+    // the answers say `stopping` too: still both stopping once the requests settle
+    a.release();
+    b.release();
+    await vi.waitFor(() => expect(within(section).getAllByRole("status")).toHaveLength(2));
+  });
+});
+
 describe("the task output panel", () => {
+  it("one click on the panel's stop removes the button and sends exactly one POST", async () => {
+    const stop = held({ task: task({ stopping: true }) });
+    const calls = api({ tasks: [task()] }, { [`POST ${TASKS}/${TASK}/stop`]: () => stop.response });
+    window.history.replaceState(null, "", `/chat/c1#bg-${TASK}`);
+    await renderChatRoute();
+    const panel = await screen.findByRole("complementary", { name: "Start the dev server" });
+    const button = await within(panel).findByRole("button", { name: "Stop Start the dev server" });
+    await userEvent.setup().click(button);
+    await vi.waitFor(() =>
+      expect(within(panel).queryByRole("button", { name: "Stop Start the dev server" })).toBeNull(),
+    );
+    expect(within(panel).getByRole("status").textContent).toBe("Stopping…");
+    expect(stopPosts(calls, TASK)).toBe(1);
+    stop.release();
+    // the kernel's answer (`stopping: true`) keeps it stopping
+    await vi.waitFor(() => expect(stopPosts(calls, TASK)).toBe(1));
+    expect(within(panel).queryByRole("button", { name: "Stop Start the dev server" })).toBeNull();
+  });
+
   it("a task row opens #bg-<id>: description, command and output", async () => {
     api({ tasks: [task()] });
     window.history.replaceState(null, "", "/chat/c1#properties");

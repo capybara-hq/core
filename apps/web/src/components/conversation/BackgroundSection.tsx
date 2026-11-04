@@ -147,6 +147,7 @@ export function BackgroundTaskPanel({
   task,
   loading,
   lastLines,
+  stopping,
   onStop,
   onClose,
   onFullscreen,
@@ -160,6 +161,8 @@ export function BackgroundTaskPanel({
   loading: boolean;
   /** The finish event's last lines, when the log has them. */
   lastLines: string | undefined;
+  /** This page's stop of the task is on its way (the task view's `stopping` counts too). */
+  stopping: boolean;
   onStop(): void;
   onClose(): void;
   onFullscreen(): void;
@@ -211,6 +214,7 @@ export function BackgroundTaskPanel({
           elapsed={subagentDuration(Math.max(0, end - started), locale)}
           text={out === null ? (lastLines ?? "") : out.text}
           source={out === null || out.source === "event" ? "event" : "sandbox"}
+          stopping={task.stopping || stopping}
           onStop={onStop}
         />
       ) : null}
