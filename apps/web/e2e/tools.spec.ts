@@ -212,12 +212,14 @@ test("带工具的对话结束后，管理员打开运行记录：瀑布里有�
   await expect(tree.locator('[data-kind="model"]').first()).toContainText("model-fake/fake-1");
   const tool = tree.locator('[data-kind="tool"]');
   await expect(tool).toHaveCount(1);
-  await expect(tool).toContainText("mcp__trace__delete_item");
+  // The waterfall shows the tool label; the raw key stays in the detail
+  await expect(tool).toContainText("trace [delete_item]");
   await expect(tree.locator('[data-kind="wait"]')).toHaveCount(1);
   await expect(page.getByText(zh.trajectories.detail.audited)).toBeVisible();
   await expect(page.getByRole("button", { name: zh.trajectories.addToSet.action })).toBeVisible();
   await tool.click();
   const detail = page.getByRole("region", { name: zh.trajectories.detail.region });
   await expect(detail.getByText("deleted t1", { exact: true })).toBeVisible();
+  await expect(detail).toContainText("mcp__trace__delete_item");
   await expect(detail.getByText(zh.trajectories.detail.tool.decisions.approved)).toBeVisible();
 });
