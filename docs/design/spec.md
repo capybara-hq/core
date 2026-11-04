@@ -1393,12 +1393,12 @@ States: `single`, `running`, `collapsed`, `collapsed-failed`, `one-object`, `exp
 #### 6.16.9 Tool row
 
 - `row.dense` minimum height, padding `pad.default`, gap `space.2`, `small` `muted`; `hover` ground on hover (over `motion.hover`), a 1px `accent` outline at -1px on focus. A row with detail is a `button` with `aria-expanded` and a chevron at its end.
-- **Label** (one line, ellipsis), as the Claude Code VS Code extension draws it: the **name** in bold (700), then the key-argument preview (`muted`), then extra information after " · " (`faint`).
+- **Label** (one line, ellipsis), as the Claude Code VS Code extension draws it: the **name** in bold (600, the bold face; §2.2), then the key-argument preview (`muted`), then extra information after " · " (`faint`).
   - **Name**: a builtin's tool name as is (`Bash`, `Read`, `Edit`, `Grep` …), untranslated, as a proper noun; a connector tool's connector display name, or an extension tool's plugin display name, followed by its local tool name in brackets (`Acme 工单 [search_tickets]`). The brackets show the local name, never the declared `title`: the title is the row's tooltip (`title` attribute).
   - **Preview**: a shell row (`Bash`) shows the `description` the model wrote; every other row its key argument: the tool's declared `keyArgs` (else the first string argument; Read / Write / Edit the path, Glob / Grep the pattern, Skill the skill). The preview is its first line, cut at 80 characters with "…".
   - Edits add "+a −b" as the extra, unless the edit could not be diffed (a `Write` over a binary or very large file: `truncated` without hunks), which shows no line counts and no diff.
 - **Status**: running — a `spinner` before the label, the label `ink`, the elapsed time in `faint` at the end ("12 秒" / "12s", "1 分 03 秒" / "1m 03s"); done — no mark; failed — "失败" in `fail` and " · <the error's first line>" in `muted` (a shell command with a non-zero exit or a timeout is a failure); blocked by a policy hook — failed, "被扩展「<extension>」拒绝" / `Denied by extension "<extension>"`.
-- **Expanded detail**: padding 0 `space.3` `space.3`, gap `space.2`, two labelled blocks, each a label column (`micro` 700 `faint`, "IN" / "OUT" in English, "输入" / "输出" in Chinese, `4ch` wide, gap `space.2`) beside its body:
+- **Expanded detail**: padding 0 `space.3` `space.3`, gap `space.2`, two labelled blocks, each a label column (`micro` 600 `faint`, "IN" / "OUT" in English, "输入" / "输出" in Chinese, `4ch` wide, gap `space.2`) beside its body:
   - **IN**: the command for a shell row as `$ <command>` (the `$` `faint`, the command `ink`); else the inputs as a key / value grid (columns `max-content` and the rest, gap `space.1` × `space.3`, keys `faint`, values `ink`, breaking anywhere). Omitted when there is no input;
   - **OUT**: the output: `bg` ground, radius `sm`, padding `pad.default`, `small` `ink`, wrapped, folded at `layout.tool-output` high and scrolling; for a failure the full error text; then a footer (`micro` `faint`, gap `space.3`): the duration ("2.1 秒" / "2.1s") and "复制输出" / "Copy output"; for a large output instead "输出 82 KB，已显示前 4 KB" / "Output 82 KB, showing first 4 KB" and "查看全文" / "View full text", which reads the archive (`GET …/outputs/:outputId`). Omitted while there is no output yet.
   - An edit's expanded form stays its diff (§6.16.10), without labels.
@@ -1415,7 +1415,7 @@ States: `default`, `hover`, `focus`, `running`, `failed`, `expanded-command`, `e
 | tool-row | default | column-gap | space.2 |
 | tool-row | default | font-size | type.small |
 | tool-row | default | color | color.muted |
-| tool-name | default | font-weight | 700 |
+| tool-name | default | font-weight | 600 |
 | tool-name | default | color | color.ink |
 | tool-row[data-ref-forced=true] | hover | background-color | color.hover |
 | tool-row[data-ref-forced=true] | focus | outline-color | color.accent |
@@ -1437,7 +1437,7 @@ States: `default`, `hover`, `focus`, `running`, `failed`, `expanded-command`, `e
 | kv-value | expanded-connector | color | color.ink |
 | tool-io-label | expanded-connector | color | color.faint |
 | tool-io-label | expanded-connector | font-size | type.micro |
-| tool-io-label | expanded-connector | font-weight | 700 |
+| tool-io-label | expanded-connector | font-weight | 600 |
 | fail-word | expanded-failed | color | color.fail |
 | tool-output | expanded-failed | background-color | color.bg |
 | tool-footer | large-output | color | color.faint |

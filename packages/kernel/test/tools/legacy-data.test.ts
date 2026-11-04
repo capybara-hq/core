@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { copyFileSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   type FakeMcpServer,
   fakeExtensionEntry,
@@ -119,10 +122,33 @@ describe("release-candidate tool keys in stored data", () => {
     return (res.json() as { connector: { id: string } }).connector.id;
   }
 
-  /** Runs migration 0063 again, as on a database that has the rc rows and not the migration. */
+  /**
+   * Runs migration 0063 again, as on a database that has the rc rows and not the migration. The
+   * migrator refuses a migration numbered below an applied one, so the later migrations' records
+   * are set aside while it runs (from a directory that ends at 0063) and put back afterwards.
+   */
   async function rerunMigration(): Promise<string[]> {
     await sql`delete from capybara._migrations where name = ${MIGRATION}`.execute(raw);
-    return (await migrate(pgc.url, { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR })).applied;
+    const later = await sql<{ name: string; checksum: string; applied_at: Date }>`
+      select name, checksum, applied_at from capybara._migrations where name > ${MIGRATION}`.execute(
+      raw,
+    );
+    await sql`delete from capybara._migrations where name > ${MIGRATION}`.execute(raw);
+    const upTo = mkdtempSync(join(tmpdir(), "cap-mig-0063-"));
+    try {
+      for (const f of readdirSync(KERNEL_MIGRATIONS_DIR)) {
+        if (f.endsWith(".sql") && f <= MIGRATION) {
+          copyFileSync(join(KERNEL_MIGRATIONS_DIR, f), join(upTo, f));
+        }
+      }
+      return (await migrate(pgc.url, { schema: KERNEL_SCHEMA, dir: upTo })).applied;
+    } finally {
+      for (const r of later.rows) {
+        await sql`insert into capybara._migrations (name, checksum, applied_at)
+          values (${r.name}, ${r.checksum}, ${r.applied_at})`.execute(raw);
+      }
+      rmSync(upTo, { recursive: true, force: true });
+    }
   }
 
   it("migration 0063 rewrites grants, pending approvals and questions; ambiguous keys stay and are reported", async () => {

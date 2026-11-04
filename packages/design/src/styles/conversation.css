@@ -611,7 +611,7 @@ button.cb-tool-row {
 }
 .cb-tool-name {
   color: var(--cb-ink);
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-tool-row[data-status="running"] .cb-tool-label,
 .cb-tool-row[data-status="pending"] .cb-tool-label {
@@ -643,7 +643,7 @@ button.cb-tool-row {
   color: var(--cb-faint);
   font-size: var(--cb-type-micro-size);
   line-height: var(--cb-type-small-line);
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-tool-io-body {
   display: flex;
