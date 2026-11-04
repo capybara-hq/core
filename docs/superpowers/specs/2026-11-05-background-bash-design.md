@@ -1,7 +1,7 @@
 # Background Bash and the conversation's background section
 
-Status: draft (2026-11-05). The user chose "design it the way Claude Code does". The calls marked
-*my call* are open to review.
+Status: implemented (2026-11-05). The user chose "design it the way Claude Code does". The calls
+marked *my call* are open to review. Decisions made during the implementation are in the appendix.
 Amends:
 - `2026-10-29-tool-naming-claude-code-design.md`: §4.2 and the non-goal on `run_in_background`;
 - `2026-11-04-agent-profile-and-new-chat-design.md`: §5, part 4, which this document replaces;
@@ -49,7 +49,7 @@ Amends:
 - **Refusals**, each an ordinary tool error with actionable text:
   - more than `sandbox.background.maxTasks` (default 4) tasks running in this conversation's
     sandbox: "4 background tasks are already running; stop one with TaskStop or wait for one to
-    finish";
+    finish, then retry" (the tool design check requires the closing next step);
   - no sandbox;
   - a replay (§6).
 - **Description.** The `Bash` description gains one paragraph on `run_in_background`, worded the
@@ -149,12 +149,13 @@ tokens and attributing approvals without a person sending anything.
   - `trigger_account_id` is the task's trigger account;
   - approvals go to that person;
   - usage counts against them;
-  - its `run_started` records `trigger: "background_task"`.
+  - its `run_started` records `trigger: "background_task"` and `triggerSeq`, the boundary event's
+    seq.
 - `ensureRun` gains this second kind of boundary. `consumed_seq` moves past the event as it does
   past a message. The run's job id keeps today's form, `runJobId(conversation, boundary seq)`, where
   the boundary seq is the event's seq.
-- A full-run replay seeds a wake run from its boundary event (§4.4), not from the last
-  `user_message`.
+- A full-run replay seeds a wake run from its boundary event, `run_started.triggerSeq` (§4.4), not
+  from the last `user_message`.
 - **Config:** `runtime.wakeOnBackgroundTask` (default `true`), plus an org override.
 
 The user chose this over never waking, where the event would only be logged and shown, and the
@@ -266,7 +267,10 @@ next person message would pick it up.
   - a **full-run replay** feeds it into the loop at the step where the original run absorbed it,
     through the same path it uses for interjections (`pendingUserMessages`, generalized to these
     events);
-  - a wake run is seeded from its boundary event, not from `findLast(user_message)`.
+  - a wake run is seeded from its boundary event (`run_started.triggerSeq`), not from
+    `findLast(user_message)`. A recording without `triggerSeq` falls back to the newest message
+    after the consumed position, else the newest finish after it that could have woken the run
+    (neither `reported` nor a person's stop), else the last message.
   - It is new input and no old log has one, so it needs no DriftReason.
 - The zero-drift suites (`reconstruct.test.ts`, `rename-compat.test.ts`) run before and after the
   build change.
@@ -358,3 +362,98 @@ next person message would pick it up.
   - the tool row label;
   - the thread notice.
 - **Design:** the state coverage, the size table and fidelity.
+
+## Appendix: decisions made during implementation
+
+Taken from the rulings of the implementation (`.superpowers/sdd/2026-11-05-background-bash/progress.md`),
+one bullet each.
+
+- The wake provider (`BackgroundWake`, `background/wake.ts`) was created first as a no-op and filled
+  in later, so the finish code could depend on it from the start.
+- The design package has its own `BackgroundTaskStatus` union (the same six values); the web maps the
+  kernel's views onto it, because design depends on no `@capybara-hq/*` package.
+- The migration takes the next free number at commit time.
+- The org setting `wakeOnBackgroundTask` can be cleared: `null` removes the override, as for
+  `sandboxEgress`.
+- sandbox-fake's shims are strings in its `index.ts`, written to `<root>/bin` at start, because the
+  packed fixture ships only its entry file.
+- `BackgroundTaskStore` lives in its own `BackgroundStoreModule` (imported by `SandboxModule`,
+  re-exported by `BackgroundModule`) to avoid a module cycle.
+- `ifRunning`'s `not_running` result carries the row's status (`suspended` or `gone`), so the poll can
+  name the lost reason.
+- `ifRunning` takes an optional abort signal, so the poll stops at shutdown.
+- The cap refusal ends with ", then retry": the spec's first text failed the tool design check
+  (`tool-error-actionable`), and the check is the authority (§2.1 now has the code's text).
+- The cap holds under parallel tool calls: the launch reserves its row first (`running`, `sid` null,
+  counted under a per-sandbox `XactLock`), then launches, then sets `sid`; a failed launch finishes
+  the row `failed`. No process ever runs without a row.
+- The task file runs with the same shell as a foreground `Bash`.
+- That shell is `bash` (the providers run `/bin/bash -c`), not `sh`: dash would silently break bash
+  syntax. `bash` joins the programs a sandbox needs (§4.2).
+- The launch refuses a call without a run, validates the task id and seconds, has a launch-failure
+  test, and a command too large for one exec gets a launch error that names the size limit.
+- Org limits need no background code: `sandboxLimitOverrides` covers only CPU and memory, and
+  `maxCommandSeconds` is deployment-wide, so a background task is limited like a foreground command.
+- The launch writes the session id to `<id>.sid` before printing it, so an abort between `setsid` and
+  the echo can still kill the session; the kill and size wording and the `pkill` exit codes are exact.
+- Stops run inline in the run worker or in the delete request (up to about 5 s): a stop is rare and
+  bounded.
+- The event's `outputPath` is absolute (`/workspace/...`), as §2.4 shows it.
+- A stop claims its task in PG before signalling (`stopping_at`); the poll skips claimed rows, and the
+  stop's finish is the only one for its task. PG rather than Redis, so the claim lives with the row.
+- A sub-agent's tasks are stopped in `Waits.childFinished`, which every way a child ends goes through,
+  not in the run worker.
+- A stop that can't confirm the session is empty while the sandbox runs leaves the row `running`
+  (claim cleared) and reports the failure, so the poll and the cap still see the task.
+- Stopping a reservation (`sid` null) sets the claim; the launch then kills the session as soon as it
+  starts and finishes the row `stopped`.
+- A stop claim older than 5 minutes counts as abandoned (`STOP_CLAIM_TTL_MS`), so a crashed stopper
+  can't hide a task from the poll.
+- A task whose exit file existed before the SIGTERM finishes by its exit code, not as `stopped` (it
+  "had already finished", §2.3).
+- A reservation stopped during its launch ends `stopped` without an event, and the launching call gets
+  a tool error: the model never saw a started task.
+- The poll fails a reservation still without a session after 2 minutes (`launch_abandoned`): its
+  launcher died, and it would otherwise hold a cap slot forever.
+- `TaskOutput` and `TaskStop` are offered whenever the agent has `Bash` (the registry adds them); a
+  definition need not name them, or an agent could start tasks it can neither read nor stop. Old
+  recordings of a `Bash` agent show the expected `tools_changed`.
+- Tool error texts keep the spec's wording and add one actionable sentence (the tool design check).
+- `TaskOutput` reports a finish only together with its result, so a `reported: true` finish is one
+  the model really saw.
+- The wake rules live in `RunQueue.ensureRun`, one rule set for a run's end, the delayed job and a
+  page open; `BackgroundWake` listens for the domain event `background_task.finished` and calls
+  `ensureRun`.
+- Boundary order: an unconsumed message first, then a queued message, then a background wake; a
+  queued message's run absorbs the finish anyway.
+- A person's stop from the panel never wakes an idle conversation: the event records
+  `stoppedBy: "person"`, stays unconsumed, and the next run sees it.
+- A delayed `bg-wake` job that fires before the window ends on the database's clock re-schedules
+  itself for the rest (`-r<n>` job ids) instead of being dropped.
+- A `reported: true` event is absorbed like any other and never wakes; it is not marked consumed when
+  appended, because that could skip an unabsorbed interjection below it (§2.4).
+- A full-run replay seeds a wake run from the recorded `triggerSeq`, else from the fallback in §4.4.
+- The background routes answer a non-owner 404 `conversation.not_found`, like the abort route.
+- The stop route answers 200 with `stopping: true` for a task another stop already claimed.
+- The "background" SSE frame for a start is published after the launch returns.
+- The background section shows running items only; finished tasks and sub-agents are counted in
+  "N completed". `BackgroundTaskRow` keeps its finished states for lists that show them.
+- `TaskOutputPanel` has a state list (running, finished, unavailable), a size table and /dev/ui
+  blocks, like every design component.
+- `BackgroundTaskRow`'s finished states keep their reference blocks although no page shows finished
+  rows yet.
+- A sub-agent's tasks nest under their parent sub-agent; the stopping word is announced
+  (`aria-live`); the unused `subagent.stop` key is gone; fixture durations are numbers.
+- The task output panel's monospace command is stated in the design spec's prose, not its size table
+  (the size checker has no font-family token).
+- The web reads the background tasks also once a sub-agent was dispatched, because a child's tasks
+  live only in the child's log.
+- The finished notice is its own documented divider kind (`RunDivider` `kind="notice"`), not the
+  fallback divider.
+- The background `Bash` row's task link is a documented `ToolRow` / `ToolGroup` slot in the design
+  package.
+- `TaskOutputPanel` has a stopping state: no stop button, "正在停止…".
+- The panel's source `sandbox` / `event` maps from the kernel's `live` / `event`; a 409 shows the
+  unavailable note.
+- The web tracks stops per task (several can be on their way), and a background label wins over the
+  tool row's other extra text.
