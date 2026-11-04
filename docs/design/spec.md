@@ -1959,7 +1959,7 @@ States: `default`, `panel`, `no-match`
 |---|---|---|---|
 | agent-row | default | column-gap | space.2 |
 | agent-chip | default | height | control.prominent |
-| agent-chip | default | border-top-color | color.line |
+| agent-chip[aria-pressed=false] | default | border-top-color | color.line |
 | agent-chip | default | border-radius | radius.md |
 | agent-chip avatar | default | width | 24 |
 | agent-chip[aria-pressed=true] | default | background-color | color.selected |
