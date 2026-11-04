@@ -1111,7 +1111,7 @@ The components of the conversation page (T7, §5.4; UI refresh spec §5), signed
 - **Density**: the stream is `dense` (§2.5): tool lines, tool rows and sub-agent rows are `row.dense` high in `small` type; cards and the composer hold `default` controls.
 - **Tool line**: the one-line form used by a single tool call, group headers, thinking, decided cards and captions: `row.dense` minimum height, `small` `muted`, gap `space.2`, the label on one line with an ellipsis; an expandable one is a `button` with `aria-expanded` and a `chevron-right` / `chevron-down` 12 at its end.
 - **Floating cards** (inline cards, the question and connect cards, the composer, text and file outputs): `raised` ground, 1px `line` border, radius `md`, padding `space.3`. Only the **pending approval** has an `accent` border.
-- **Status**: success has no mark; failure is the word "失败" / "Failed" in `fail` followed by the reason in `muted`; something running is the `spinner` (12, `accent`, one turn per `motion.spin`). Characters are never icons.
+- **Status**: success has no mark; failure is the word "失败" / "Failed" in `fail` followed by the reason in `muted`; something running is the `spinner` (`accent`, one turn per `motion.spin`): 16 on the live rows of the thread (thinking, tool lines and rows, group headers, sub-agent rows), 12 in panel headers and the properties panel's background tasks; a call that waits for a person has no spinner (§6.16.9). Characters are never icons.
 - **Load failure** of an extension block (inline card, properties section, right panel, previewer): `circle-alert` 14 + "<name> 加载失败" / "<name> failed to load" in `fail`, the reason in `muted`, and a "重试" / "Retry" link button with `refresh` 12, inside that block only; the stream and the composer keep working.
 - **Link buttons** ("View full text", "Copy output", "Retry", "Open"): no ground or border, `muted` (or `fail` inside a failure), underlined in `line-strong` with a 2px offset.
 - Names in the reference set are placeholders (示例组织, 研究助手, Acme …); copy comes from §7.
@@ -1281,7 +1281,7 @@ States: `markdown`, `streaming`, `file-chip`
 
 - Collapsed: a tool line "思考了 N 秒" / "Thought for N seconds" (seconds rounded) with a chevron; the whole line is the toggle.
 - Expanded: the thinking text below it in the prose font, `prose` size, `muted`, line breaks kept, `space.3` from a 2px `line` rule on its left.
-- Live: a `spinner` (16, larger than the tool rows' 12), "正在思考" / "Thinking" and the elapsed seconds in `faint`; the body streams with the cursor and cannot be collapsed until it ends.
+- Live: a `spinner` (16, like the tool rows'), "正在思考" / "Thinking" and the elapsed seconds in `faint`; the body streams with the cursor and cannot be collapsed until it ends.
 - Replaces §6.9's ThinkingRow.
 
 <!-- states: thinking-row -->
@@ -1367,7 +1367,7 @@ States: `stopped`, `failed`, `compacted`, `compacted-open`, `fallback`, `hook-de
 
 - **One call** is a tool line: the row label (§6.16.9) and a chevron when it has detail; opening it shows the detail (or the diff) in a tool box below.
 - **Two or more consecutive calls** form a group: a header tool line (the summary) and, when open, the **tool box**: `panel` ground, radius `md`, `small` type, overflow hidden, one row per call, rows divided by `line-soft`. A finished group is collapsed by default; a running group is open and its header has no chevron.
-- **Summary** (copy in §7): counts by kind with each kind's verb, joined by "，" / ", " in a fixed order (commands, tools, reads, edits, as reference set B draws it); failures add "（N 个失败）" / " (N failed)" in `fail`; edits add " · +a −b" in `faint`; a group whose rows all read, or all edit, one path names it in `ink` ("已读取 示例表.xlsx"). Running: a `spinner`, the running verb of the running row's kind and " · 已完成 N 个" / " · N done" in `faint`.
+- **Summary** (copy in §7): counts by kind with each kind's verb, joined by "，" / ", " in a fixed order (commands, tools, reads, edits, as reference set B draws it); failures add "（N 个失败）" / " (N failed)" in `fail`; edits add " · +a −b" in `faint`; a group whose rows all read, or all edit, one path names it in `ink` ("已读取 示例表.xlsx"). Running: a `spinner` (16), the running verb of the running row's kind and " · 已完成 N 个" / " · N done" in `faint`; when every live call waits for a person (§6.16.9), no spinner and the waiting word in `accent` instead of the verb ("等待你回答 · 已完成 N 个").
 - Groups sit between prose and end at prose, a user message, a human-in-the-loop card, a sub-agent group or a divider. Pages never group calls themselves: `apps/web/src/lib/timeline.ts` turns events into groups.
 
 <!-- states: tool-group -->
@@ -1381,6 +1381,7 @@ States: `single`, `running`, `collapsed`, `collapsed-failed`, `one-object`, `exp
 | tool-line | single | color | color.muted |
 | tool-line | single | column-gap | space.2 |
 | spinner | running | color | color.accent |
+| spinner | running | width | space.4 |
 | tool-box | running | background-color | color.panel |
 | tool-box | running | border-radius | radius.md |
 | tool-row | running | height | row.dense |
@@ -1399,14 +1400,15 @@ States: `single`, `running`, `collapsed`, `collapsed-failed`, `one-object`, `exp
   - **Name**: a builtin's tool name as is (`Bash`, `Read`, `Edit`, `Grep` …), untranslated, as a proper noun; a connector tool's connector display name, or an extension tool's plugin display name, followed by its local tool name in brackets (`Acme 工单 [search_tickets]`). The brackets show the local name, never the declared `title`: the title is the row's tooltip (`title` attribute).
   - **Preview**: a shell row (`Bash`) shows the `description` the model wrote; every other row its key argument: the tool's declared `keyArgs` (else the first string argument; Read / Write / Edit the path, Glob / Grep the pattern, Skill the skill). The preview is its first line, cut at 80 characters with "…".
   - Edits add "+a −b" as the extra, unless the edit could not be diffed (a `Write` over a binary or very large file: `truncated` without hunks), which shows no line counts and no diff.
-- **Status**: running — a `spinner` before the label, the label `ink`, the elapsed time in `faint` at the end ("12 秒" / "12s", "1 分 03 秒" / "1m 03s"); done — no mark; failed — "失败" in `fail` and " · <the error's first line>" in `muted` (a shell command with a non-zero exit or a timeout is a failure); blocked by a policy hook — failed, "被扩展「<extension>」拒绝" / `Denied by extension "<extension>"`.
+  - **The question tool** (`AskUserQuestion`, kind `question`, which the web derives from the builtin's name; the kernel's kind stays `meta`): the name slot reads the verb "已提问" / "Asked" (600), the preview the first question's `header`, else its question, else the tool's title. Its question card (§6.16.12) stays below.
+- **Status**: running — a `spinner` (16) before the label, the label `ink`, the elapsed time in `faint` at the end ("12 秒" / "12s", "1 分 03 秒" / "1m 03s"); waiting for a person — a live call with a pending approval, question or connection (the web reads it from the log: `approval_requested` without its decision, `question_asked` without its answer, `connection_required` before the result) has no spinner and no timer: the label `ink` and at the end the waiting word in `accent`, "等待你回答" / "Waiting for your answer", "等待你批准" / "Waiting for your approval", "等待你连接" / "Waiting for you to connect"; once answered the row runs as before; done — no mark; failed — "失败" in `fail` and " · <the error's first line>" in `muted` (a shell command with a non-zero exit or a timeout is a failure); blocked by a policy hook — failed, "被扩展「<extension>」拒绝" / `Denied by extension "<extension>"`.
 - **Expanded detail**: padding 0 `space.3` `space.3`, gap `space.2`, two labelled blocks, each a label column (`micro` 600 `faint`, "IN" / "OUT" in English, "输入" / "输出" in Chinese, `4ch` wide, gap `space.2`) beside its body:
   - **IN**: the command for a shell row as `$ <command>` (the `$` `faint`, the command `ink`); else the inputs as a key / value grid (columns `max-content` and the rest, gap `space.1` × `space.3`, keys `faint`, values `ink`, breaking anywhere). Omitted when there is no input;
   - **OUT**: the output: `bg` ground, radius `sm`, padding `pad.default`, `small` `ink`, wrapped, folded at `layout.tool-output` high and scrolling; for a failure the full error text; then a footer (`micro` `faint`, gap `space.3`): the duration ("2.1 秒" / "2.1s") and "复制输出" / "Copy output"; for a large output instead "输出 82 KB，已显示前 4 KB" / "Output 82 KB, showing first 4 KB" and "查看全文" / "View full text", which reads the archive (`GET …/outputs/:outputId`). Omitted while there is no output yet.
   - An edit's expanded form stays its diff (§6.16.10), without labels.
 
 <!-- states: tool-row -->
-States: `default`, `hover`, `focus`, `running`, `failed`, `expanded-command`, `expanded-connector`, `expanded-failed`, `large-output`, `hook-denied`
+States: `default`, `hover`, `focus`, `running`, `failed`, `expanded-command`, `expanded-connector`, `expanded-failed`, `large-output`, `hook-denied`, `waiting`
 
 <!-- size-table: tool-row -->
 | Part | State | Property | Value |
@@ -1423,6 +1425,7 @@ States: `default`, `hover`, `focus`, `running`, `failed`, `expanded-command`, `e
 | tool-row[data-ref-forced=true] | focus | outline-color | color.accent |
 | tool-row[data-ref-forced=true] | focus | outline-width | 1 |
 | spinner | running | color | color.accent |
+| spinner | running | width | space.4 |
 | tool-label | running | color | color.ink |
 | fail-word | failed | color | color.fail |
 | tool-output | expanded-command | background-color | color.bg |
@@ -1444,6 +1447,9 @@ States: `default`, `hover`, `focus`, `running`, `failed`, `expanded-command`, `e
 | tool-output | expanded-failed | background-color | color.bg |
 | tool-footer | large-output | color | color.faint |
 | fail-word | hook-denied | color | color.fail |
+| tool-row | waiting | height | row.dense |
+| tool-label | waiting | color | color.ink |
+| waiting-word | waiting | color | color.accent |
 
 #### 6.16.10 Diff block
 
@@ -1575,8 +1581,8 @@ States: `default`, `hover`, `editing`, `paused`
 
 #### 6.16.15 Sub-agent group
 
-- Sub-agents group like tools (phase C runtime; B builds them on fixtures; rows in child-creation order, durations "41 秒", "1分12秒" / "41s", "1m 12s"; a waiting sub-agent says what it waits for in `accent`, a stopped one "已停止" / "Stopped" in `muted`). **Running**: a header tool line with a `spinner` and "正在运行 N 个子 agent" / "N subagents running", and the rows in a tool box. **Done**: a collapsed header "N 个子 agent 已完成（M 个失败）· 共 X 次调用 · <duration>" / "N subagents done (M failed) · X calls · <duration>" with the failure count in `fail` and the totals in `faint`.
-- **Row** (a tool row): a `spinner` while running; the agent type as a tag (`micro` `muted` on the `selected` ground, radius `sm`, padding 0 `space.1`); the task description in `ink` with an ellipsis; at the end in `faint` ("失败" in `fail` and " · " when failed) "N 次调用 · <duration>" and `chevron-right` 12, a button named "在右侧打开 <description>" / "Open <description> on the right". Success has no mark.
+- Sub-agents group like tools (phase C runtime; B builds them on fixtures; rows in child-creation order, durations "41 秒", "1分12秒" / "41s", "1m 12s"; a waiting sub-agent says what it waits for in `accent`, a stopped one "已停止" / "Stopped" in `muted`). **Running**: a header tool line with a `spinner` (16) and "正在运行 N 个子 agent" / "N subagents running", and the rows in a tool box. **Done**: a collapsed header "N 个子 agent 已完成（M 个失败）· 共 X 次调用 · <duration>" / "N subagents done (M failed) · X calls · <duration>" with the failure count in `fail` and the totals in `faint`.
+- **Row** (a tool row): a `spinner` (16) while running; the agent type as a tag (`micro` `muted` on the `selected` ground, radius `sm`, padding 0 `space.1`); the task description in `ink` with an ellipsis; at the end in `faint` ("失败" in `fail` and " · " when failed) "N 次调用 · <duration>" and `chevron-right` 12, a button named "在右侧打开 <description>" / "Open <description> on the right". Success has no mark.
 - The row open in the right panel has `aria-current="true"`, the `accent-tint` ground and a 2px `accent` bar on its left (§2.3).
 - A row can expand in place (`aria-expanded`): the steps (`small`, gap `space.1`, indented `space.5`, padding 0 `space.3`, a 1px `line` rule on the left), the result (`prose-small` `muted`) and "在右侧打开完整记录" / "Open the full record on the right" (link button with `maximize-2` 12); no `line-soft` rule separates the steps from the next row.
 
@@ -1588,6 +1594,7 @@ States: `running`, `done`, `failed`, `expanded`, `row-open`
 |---|---|---|---|
 | tool-line | running | height | row.dense |
 | spinner | running | color | color.accent |
+| spinner | running | width | space.4 |
 | tool-box | running | background-color | color.panel |
 | tool-box | running | border-radius | radius.md |
 | subagent-row | running | height | row.dense |
@@ -2307,7 +2314,7 @@ States: `presets`, `sizes`, `initial`, `title-bar`, `sidebar-row`, `list-row`, `
 - Error messages state the cause and give an actionable next step; include the error code and request ID for troubleshooting.
 - **Files, not artifacts**: what an agent delivers from its sandbox is "文件" / "files" in UI copy, never "产出物" / "artifacts" (reserved for project C's Artifacts). The kernel identifiers (`artifact_created`, `/artifacts/:id/download`) stay as they are.
 - **Untitled conversations** read "未命名会话 · MM-DD HH:mm" / "Untitled conversation · MM-DD HH:mm" (the start time) until a title exists.
-- **Tool group wording** (§6.16.8; rows carry no verb: they name the tool, §6.16.9), as the signed reference set B draws them. Counts are Arabic numerals; failures append "（N 个失败）" / " (N failed)" in `fail`; mixed kinds join with "，" / ", " in the fixed order command, tools (connector, tool, search, meta), read, edit:
+- **Tool group wording** (§6.16.8; rows carry no verb: they name the tool, §6.16.9), as the signed reference set B draws them. Counts are Arabic numerals; failures append "（N 个失败）" / " (N failed)" in `fail`; mixed kinds join with "，" / ", " in the fixed order command, tools (connector, tool, search, meta, question), read, edit:
 
   | Kind | Group count zh / en | Running header zh / en |
   |---|---|---|
@@ -2317,6 +2324,7 @@ States: `presets`, `sizes`, `initial`, `title-bar`, `sidebar-row`, `list-row`, `
   | search | counted with tools | 正在使用工具 / Using tool |
   | connector, tool | 已使用 N 个工具 / Used N tools | 正在使用工具 / Using tool |
   | meta | counted with tools | 正在使用工具 / Using tool |
+  | question | counted with tools (its row: 已提问 <header> / Asked <header>, §6.16.9) | 等待你回答 / Waiting for your answer while it waits |
 
 ### 7.1 Copy
 

@@ -143,7 +143,9 @@ describe("@capybara-hq/design/fixtures", () => {
         expect(rows.length, state).toBeGreaterThan(0);
         for (const r of rows) {
           if (r.status === "failed") expect(r.error, `${state}/${r.id}`).toBeTruthy();
-          if (r.status === "running") expect(r.elapsed, `${state}/${r.id}`).toBeTruthy();
+          // a call waiting for a person shows no timer (§6.16.9)
+          if (r.status === "running" && r.waiting === undefined)
+            expect(r.elapsed, `${state}/${r.id}`).toBeTruthy();
         }
       }
       const ids = Object.values(fixtures.TOOL_FIXTURES).flatMap((rows) => rows.map((r) => r.id));

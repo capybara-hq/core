@@ -387,6 +387,7 @@ export function toRow(
     kind: t.kind,
     name: t.name,
     status: t.status,
+    ...(t.waiting ? { waiting: t.waiting } : {}),
     ...(t.tool ? { tool: t.tool } : {}),
     ...(t.tooltip ? { tooltip: t.tooltip } : {}),
     ...(t.description ? { description: t.description } : {}),
@@ -493,6 +494,7 @@ function toolRowBlocks(): ReactNode {
         row={toRow(pick(T.hookDenied, 0), { blockedBy: "合规审查" })}
         open
       />
+      <RowBlock id="tool-row-waiting" row={toRow(pick(T.waiting, 0))} />
     </>
   );
 }

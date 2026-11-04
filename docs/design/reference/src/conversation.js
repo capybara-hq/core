@@ -103,7 +103,8 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
 
   /** "**name [tool]** preview · extra" (design spec §6.16.9: the Claude Code look). */
   function toolLabel(t) {
-    const name = `<b class="r-em">${esc(t.tool ? `${t.name} [${t.tool}]` : t.name)}</b>`;
+    const shown = t.kind === "question" ? "已提问" : t.tool ? `${t.name} [${t.tool}]` : t.name;
+    const name = `<b class="r-em">${esc(shown)}</b>`;
     const preview = t.kind === "command" && t.description ? t.description : t.keyArg;
     const key = preview ? ` ${esc(preview)}` : "";
     const extra =
@@ -145,11 +146,16 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     return `<div class="r-tdetail"${o.flush ? " data-flush" : ""}>${parts.join("")}</div>`;
   }
 
+  const WAITING = { input: "等待你回答", approval: "等待你批准", connect: "等待你连接" };
+
   function toolRow(t, o = {}) {
     const expandable = Boolean(t.input || t.output || t.command || t.diff);
-    const lead = t.status === "running" ? spin() : "";
-    const end =
-      t.status === "running"
+    // A call waiting for a person: no spinner, no timer, the waiting word in accent (§6.16.9).
+    const waiting = t.status === "running" && t.waiting;
+    const lead = t.status === "running" && !waiting ? spin(16) : "";
+    const end = waiting
+      ? `<span class="r-tend r-accent">${esc(WAITING[t.waiting])}</span>`
+      : t.status === "running"
         ? `<span class="r-tend r-faint">${esc(t.elapsed)}</span>`
         : expandable
           ? `<span class="r-tend">${chev(o.open)}</span>`
@@ -159,7 +165,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     return o.open ? row + toolDetail(t) : row;
   }
 
-  const KIND_GROUP = { command: "command", connector: "tool", tool: "tool", search: "tool", meta: "tool", read: "read", edit: "edit" };
+  const KIND_GROUP = { command: "command", connector: "tool", tool: "tool", search: "tool", meta: "tool", question: "tool", read: "read", edit: "edit" };
 
   /** The group header: counts by kind with their verbs; one object is named. */
   function groupSummary(rows) {
@@ -167,7 +173,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     if (running) {
       const what = { command: "正在运行命令", tool: "正在使用工具", read: "正在读取文件", edit: "正在修改文件" }[KIND_GROUP[running.kind]];
       const done = rows.filter((r) => r.status !== "running").length;
-      return `${spin()}<span class="r-tlabel">${what}<span class="r-faint"> · 已完成 ${done} 个</span></span>`;
+      return `${spin(16)}<span class="r-tlabel">${what}<span class="r-faint"> · 已完成 ${done} 个</span></span>`;
     }
     const by = { command: [], tool: [], read: [], edit: [] };
     for (const r of rows) by[KIND_GROUP[r.kind]].push(r);
@@ -512,7 +518,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   // ── Sub-agents ─────────────────────────────────────────────────────────
 
   function subRow(s, o = {}) {
-    const lead = s.status === "running" ? spin() : "";
+    const lead = s.status === "running" ? spin(16) : "";
     const status = s.status === "failed" ? `${failWord}<span class="r-faint"> · </span>` : "";
     const meta = `<span class="r-tend r-faint">${status}${s.toolCalls} 次调用 · ${esc(s.duration)}</span>`;
     const open = o.open ? ' aria-current="true"' : "";
@@ -533,7 +539,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       const rows = S.done.map((s, i) => subRow(s, { expanded: o.state === "expanded" && i === 0 ? true : o.state === "expanded" ? false : undefined })).join("");
       return `${head}<div class="r-tbox">${rows}</div>`;
     }
-    const head = `<div class="r-tline">${spin()}<span class="r-tlabel">正在运行 ${S.running.length} 个子 agent</span></div>`;
+    const head = `<div class="r-tline">${spin(16)}<span class="r-tlabel">正在运行 ${S.running.length} 个子 agent</span></div>`;
     const rows = S.running.map((s) => subRow(s, { open: o.state === "row-open" && s.id === S.open })).join("");
     return `${head}<div class="r-tbox">${rows}</div>`;
   }
@@ -634,7 +640,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
 
   function subPanelBody() {
     const SP = S.panel;
-    return `<div class="r-panel-body r-subpanel"><div class="r-task"><div class="r-task-label">任务 · 主 agent 派出</div>${esc(SP.task)}</div><div class="r-tline"><span class="r-tlabel">${esc(SP.meta)}</span></div>${toolGroup(T.expanded.slice(0, 3), { forceGroup: true })}${prose(`<p>${esc(SP.prose)}</p>`)}<div class="r-tline">${spin()}<span class="r-tlabel">已使用 Acme 文档: 搜索文件 <span class="r-em">${esc(SP.current)}</span></span></div></div><footer class="r-status r-panel-status"><div class="r-status-left"><span class="r-ellipsis">${esc(SP.footer)}</span></div><div class="r-status-right"><span>上下文 ${esc(SP.context)}</span></div></footer>`;
+    return `<div class="r-panel-body r-subpanel"><div class="r-task"><div class="r-task-label">任务 · 主 agent 派出</div>${esc(SP.task)}</div><div class="r-tline"><span class="r-tlabel">${esc(SP.meta)}</span></div>${toolGroup(T.expanded.slice(0, 3), { forceGroup: true })}${prose(`<p>${esc(SP.prose)}</p>`)}<div class="r-tline">${spin(16)}<span class="r-tlabel">已使用 Acme 文档: 搜索文件 <span class="r-em">${esc(SP.current)}</span></span></div></div><footer class="r-status r-panel-status"><div class="r-status-left"><span class="r-ellipsis">${esc(SP.footer)}</span></div><div class="r-status-right"><span>上下文 ${esc(SP.context)}</span></div></footer>`;
   }
 
   function filePanelBody(kind) {
@@ -779,7 +785,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       return `<div class="r-ucol"><div class="r-bubble">有需要规整的吗？</div></div>${prose("<p>文件较多，我先让子 agent 列出完整目录树，同时对照流程实际读写的文件。</p>")}<div class="r-chatcol">${subGroup({ state: "row-open" })}</div>${prose("<p>目录树还在生成，我先整理当前版本流程引用的文件和文件夹 ID……</p>")}`;
     if (kind === "file")
       return `<div class="r-ucol"><div class="r-bubble">把差异整理成表格</div></div>${toolGroup(T.done.slice(0, 3))}${prose("<p>整理好了，一共 14 行差异，按收款人汇总在第二个工作表：</p>")}${fileCard(FI.outputs[0])}`;
-    return `<div class="r-ucol"><div class="r-bubble">${esc(C.user.text)}</div></div>${toolGroup(T.doneFailed.slice(0, 3))}${prose(`<p>${esc(F.PROSE_FIXTURE.streaming)}。明细整理成了表格：</p>`)}${fileCard(FI.outputs[0])}<div class="r-tline">${spin()}<span class="r-tlabel">正在核对总账<span class="r-faint"> · ${esc(C.stats.elapsed)}</span></span></div>`;
+    return `<div class="r-ucol"><div class="r-bubble">${esc(C.user.text)}</div></div>${toolGroup(T.doneFailed.slice(0, 3))}${prose(`<p>${esc(F.PROSE_FIXTURE.streaming)}。明细整理成了表格：</p>`)}${fileCard(FI.outputs[0])}<div class="r-tline">${spin(16)}<span class="r-tlabel">正在核对总账<span class="r-faint"> · ${esc(C.stats.elapsed)}</span></span></div>`;
   }
 
   function template(o) {
@@ -852,6 +858,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
         "expanded-failed": [T.expanded[3], { open: true }],
         "large-output": [T.largeOutput[0], { open: true }],
         "hook-denied": [T.hookDenied[0], { open: true }],
+        waiting: [T.waiting[0], {}],
       }[o.state];
       return col(`<div class="r-tbox">${toolRow(pick[0], pick[1])}</div>`);
     },

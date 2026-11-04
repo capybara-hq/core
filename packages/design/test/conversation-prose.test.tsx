@@ -205,7 +205,7 @@ describe("RunDivider (§6.16.7)", () => {
 });
 
 describe("the thinking row's live spinner (§6.16.5)", () => {
-  it("is 16, while a tool row's stays 12", () => {
+  it("is 16, the Spinner's default stays 12 (panel headers, background tasks)", () => {
     const { container } = wrap(<ThinkingRow seconds={2} text="…" live />);
     const icon = container.querySelector('[data-part="spinner"] svg') as SVGElement;
     expect(icon.getAttribute("width")).toBe("16");

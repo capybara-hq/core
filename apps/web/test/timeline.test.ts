@@ -744,3 +744,101 @@ describe("awaitingRun gives up (review round 2, item 3)", () => {
     expect(awaitingRun([mine(1)], sent, { paused: true, now: sentAt })).toBe(false);
   });
 });
+
+describe("calls that wait for a person (design §6.16.9)", () => {
+  const ASK = {
+    key: "AskUserQuestion",
+    title: "Ask the user",
+    kind: "meta",
+    sandbox: false,
+    keyArgs: [],
+    tool: null,
+    source: { kind: "builtin" },
+  } as const satisfies ToolInfo;
+  const info = new Map<string, ToolInfo>([...INFO, ["AskUserQuestion", ASK]]);
+  const ask = (seq: number, questions: unknown[]) =>
+    calls(seq, [{ id: "q", name: "AskUserQuestion", input: { questions } }]);
+  const asked = (seq: number) =>
+    ev(seq, "question_asked", {
+      step: 0,
+      callId: "q",
+      questionId: "qs1",
+      form: { fields: [] },
+      expiresAt: "x",
+    });
+  const row = (events: ConversationEvent[], map = info) =>
+    tools(buildTimeline(events, [], map, "zh"))[0]?.rows[0]?.row;
+  const QUESTIONS = [{ header: "数据库", question: "用哪个数据库？", multiSelect: false }];
+
+  it("a pending question marks its call waiting; the answer ends the wait", () => {
+    const pending = [ask(1, QUESTIONS), started(2, "q", "AskUserQuestion"), asked(3)];
+    expect(row(pending)).toMatchObject({ status: "running", waiting: "input" });
+    const answered = [
+      ...pending,
+      ev(4, "question_answered", {
+        questionId: "qs1",
+        callId: "q",
+        answer: null,
+        byAccountId: "a1",
+        outcome: "answered",
+      }),
+    ];
+    const r = row(answered);
+    expect(r?.status).toBe("running");
+    expect(r?.waiting).toBeUndefined();
+    expect(row([...answered, result(5, "q", "AskUserQuestion")])?.status).toBe("done");
+  });
+
+  it("a pending approval marks its call waiting until the decision", () => {
+    const pending = [
+      calls(1, [{ id: "b", name: "Bash", input: { command: "rm x" } }]),
+      ev(2, "approval_requested", {
+        step: 0,
+        callId: "b",
+        approvalId: "ap1",
+        toolKey: "Bash",
+        expiresAt: "x",
+      }),
+    ];
+    expect(row(pending)).toMatchObject({ status: "pending", waiting: "approval" });
+    const decided = [
+      ...pending,
+      ev(3, "approval_decided", {
+        approvalId: "ap1",
+        callId: "b",
+        decision: "approved",
+        byAccountId: "a1",
+      }),
+    ];
+    expect(row(decided)?.waiting).toBeUndefined();
+  });
+
+  it("a connection wait lasts until the call's result", () => {
+    const events = [
+      calls(1, [{ id: "s", name: "plugin__slack__search", input: { query: "x" } }]),
+      started(2, "s", "plugin__slack__search"),
+      ev(3, "connection_required", { step: 0, callId: "s", appId: "k1", appName: "Slack" }),
+    ];
+    expect(row(events)?.waiting).toBe("connect");
+    const done = row([...events, result(4, "s", "plugin__slack__search")]);
+    expect(done?.status).toBe("done");
+    expect(done?.waiting).toBeUndefined();
+  });
+
+  it("the question tool is kind question and previews the header, else the question, else the title", () => {
+    expect(row([ask(1, QUESTIONS)])).toMatchObject({ kind: "question", keyArg: "数据库" });
+    expect(row([ask(1, [{ question: "用哪个数据库？" }])])?.keyArg).toBe("用哪个数据库？");
+    expect(row([ask(1, [])])?.keyArg).toBe("Ask the user");
+    // before the display metadata arrives, from the key alone
+    expect(row([ask(1, QUESTIONS)], new Map())).toMatchObject({
+      kind: "question",
+      keyArg: "数据库",
+    });
+    // an older key of the question tool (history logged before the rename)
+    const legacy = new Map<string, ToolInfo>([
+      ["legacy_ask", { ...ASK, key: "legacy_ask", aliasOf: "AskUserQuestion" }],
+    ]);
+    const old = calls(1, [{ id: "q", name: "legacy_ask", input: { questions: QUESTIONS } }]);
+    expect(row([old], legacy)?.kind).toBe("question");
+  });
+});

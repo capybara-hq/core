@@ -390,6 +390,117 @@ describe("ToolGroup (§6.16.8)", () => {
   });
 });
 
+describe("the running spinner of tool lines and rows (§6.16, §6.16.9)", () => {
+  const spinnerWidth = (c: HTMLElement) =>
+    c.querySelector('[data-part="spinner"] svg')?.getAttribute("width");
+
+  it("is 16 on a running row, a single running line and a running group header", () => {
+    const live = row({ status: "running", startedAt: 0 });
+    expect(spinnerWidth(wrap(<ToolRow row={live} now={1_000} />).container)).toBe("16");
+    cleanup();
+    expect(spinnerWidth(wrap(<ToolGroup rows={[live]} now={1_000} />).container)).toBe("16");
+    cleanup();
+    const group = wrap(<ToolGroup rows={[row(), live]} now={1_000} />).container;
+    const widths = Array.from(group.querySelectorAll('[data-part="spinner"] svg')).map((s) =>
+      s.getAttribute("width"),
+    );
+    expect(widths).toEqual(["16", "16"]);
+  });
+});
+
+describe("a call waiting for a person (§6.16.9)", () => {
+  const waiting = (w: NonNullable<ToolRowData["waiting"]>, over: Partial<ToolRowData> = {}) =>
+    row({ status: "running", startedAt: 0, waiting: w, ...over });
+
+  it("shows no spinner and no timer, but the waiting word in accent", () => {
+    const { container } = wrap(<ToolRow row={waiting("input")} now={18_000} />);
+    expect(container.querySelector('[data-part="spinner"]')).toBeNull();
+    expect(container.textContent).not.toContain("18 秒");
+    const word = container.querySelector('[data-part="waiting-word"]');
+    expect(word?.textContent).toBe("等待你回答");
+    expect(word?.className).toContain("cb-accent-word");
+    expect(container.querySelector('[data-part="tool-row"]')?.getAttribute("data-waiting")).toBe(
+      "input",
+    );
+  });
+
+  it("words an approval and a connection, in both locales", () => {
+    expect(wrap(<ToolRow row={waiting("approval")} />).container.textContent).toContain(
+      "等待你批准",
+    );
+    cleanup();
+    expect(wrap(<ToolRow row={waiting("approval")} />, "en").container.textContent).toContain(
+      "Waiting for your approval",
+    );
+    cleanup();
+    expect(wrap(<ToolRow row={waiting("input")} />, "en").container.textContent).toContain(
+      "Waiting for your answer",
+    );
+    cleanup();
+    expect(wrap(<ToolRow row={waiting("connect")} />).container.textContent).toContain(
+      "等待你连接",
+    );
+  });
+
+  it("a pending call waiting for its approval shows no spinner either", () => {
+    const { container } = wrap(<ToolRow row={row({ status: "pending", waiting: "approval" })} />);
+    expect(container.querySelector('[data-part="spinner"]')).toBeNull();
+    expect(container.textContent).toContain("等待你批准");
+  });
+
+  it("once the wait ends the row runs as before; a finished row ignores a stale wait", () => {
+    const { container } = wrap(
+      <ToolRow row={row({ status: "running", startedAt: 0 })} now={18_000} />,
+    );
+    expect(container.querySelector('[data-part="spinner"]')).not.toBeNull();
+    expect(container.textContent).toContain("18 秒");
+    cleanup();
+    const done = wrap(<ToolRow row={row({ status: "done", waiting: "input" })} />).container;
+    expect(done.querySelector('[data-part="waiting-word"]')).toBeNull();
+  });
+
+  it("a single waiting line has no spinner or timer and says what it waits for", () => {
+    const { container } = wrap(<ToolGroup rows={[waiting("input")]} now={18_000} />);
+    expect(container.querySelector('[data-part="spinner"]')).toBeNull();
+    expect(container.textContent).not.toContain("18 秒");
+    expect(container.querySelector('[data-part="waiting-word"]')?.textContent).toBe(
+      " · 等待你回答",
+    );
+  });
+
+  it("a group whose live calls all wait: no spinner, the waiting word instead of the verb", () => {
+    const rows = [row({ kind: "command" }), waiting("approval", { kind: "command" })];
+    expect(summarizeTools(rows, "zh")).toBe("等待你批准 · 已完成 1 个");
+    const { container } = wrap(<ToolGroup rows={rows} now={18_000} />);
+    const head = container.querySelector('[data-part="tool-line"]');
+    expect(head?.querySelector('[data-part="spinner"]')).toBeNull();
+    expect(head?.querySelector('[data-part="waiting-word"]')?.className).toContain(
+      "cb-accent-word",
+    );
+    expect(container.querySelector('[data-part="tool-box"]')).not.toBeNull();
+    // another call still running: the running verb and its spinner
+    const mixed = [...rows, row({ kind: "read", status: "running", startedAt: 0 })];
+    expect(summarizeTools(mixed, "zh")).toBe("正在读取文件 · 已完成 1 个");
+  });
+});
+
+describe("the question tool's row (§6.16.9)", () => {
+  it("reads 已提问 / Asked and the preview, with no tool name", () => {
+    const q = builtin("AskUserQuestion", { kind: "question", keyArg: "数据库" });
+    const zh = wrap(<ToolRow row={q} />).container;
+    expect(zh.querySelector('[data-part="tool-name"]')?.textContent).toBe("已提问");
+    expect(zh.querySelector('[data-part="key-arg"]')?.textContent).toBe("数据库");
+    expect(zh.textContent).not.toContain("AskUserQuestion");
+    cleanup();
+    const en = wrap(<ToolRow row={q} />, "en").container;
+    expect(en.querySelector('[data-part="tool-name"]')?.textContent).toBe("Asked");
+  });
+
+  it("counts with tools in a group", () => {
+    expect(summarizeTools([row({ kind: "question" }), row()], "zh")).toBe("已使用 2 个工具");
+  });
+});
+
 describe("DiffBlock (§6.16.10)", () => {
   const diff = {
     hunks: [

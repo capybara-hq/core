@@ -93,6 +93,9 @@ body {
 .r-muted {
   color: var(--cb-muted);
 }
+.r-accent {
+  color: var(--cb-accent);
+}
 .r-faint {
   color: var(--cb-faint);
 }

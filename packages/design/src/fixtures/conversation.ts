@@ -110,7 +110,7 @@ export type FixtureDiffLine = {
 
 export type FixtureTool = {
   id: string;
-  kind: "command" | "read" | "edit" | "search" | "connector" | "meta" | "tool";
+  kind: "command" | "read" | "edit" | "search" | "connector" | "meta" | "question" | "tool";
   /**
    * The bold name: a builtin's tool name ("Bash", "Read"), or the connector's / plugin's display
    * name of a connector or extension tool.
@@ -127,6 +127,8 @@ export type FixtureTool = {
   /** Extra info after the key arguments (faint). */
   extra?: string;
   status: "running" | "done" | "failed";
+  /** A running call that waits for a person (§6.16.9): no spinner, no timer. */
+  waiting?: "approval" | "input" | "connect";
   elapsed?: string;
   durationMs?: number;
   input?: [string, string][];
@@ -161,7 +163,8 @@ export const TOOL_FIXTURES: Record<
   | "expanded"
   | "diff"
   | "largeOutput"
-  | "hookDenied",
+  | "hookDenied"
+  | "waiting",
   FixtureTool[]
 > = {
   // Two separate single calls (each one line, no box).
@@ -384,6 +387,17 @@ export const TOOL_FIXTURES: Record<
         ["text", "15 条流程已逐条核对完，可以交给你试运行……"],
       ],
       output: "合规审查: 外部频道的消息需要先经过审核（policy hook tool.preExecute）",
+    },
+  ],
+  // An AskUserQuestion call waiting for the person's answer: "已提问 <header>", no timer.
+  waiting: [
+    {
+      id: "t_wait_question",
+      kind: "question",
+      name: "AskUserQuestion",
+      keyArg: "对账口径",
+      status: "running",
+      waiting: "input",
     },
   ],
 };

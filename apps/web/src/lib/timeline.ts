@@ -251,6 +251,19 @@ export interface TimelineDraft {
 const TERMINAL = new Set<ConversationEvent["type"]>(["run_finished", "run_failed", "run_aborted"]);
 /** The builtin tool that dispatches sub-agents. */
 export const AGENT_TOOL = "Agent";
+/** The builtin question tool: its row reads "已提问 <header>" (design kind `question`, §6.16.9). */
+export const QUESTION_TOOL = "AskUserQuestion";
+
+/** The question row's preview: the first question's header, else its text, else the title. */
+function questionPreview(input: unknown, info: ToolInfo | undefined): string | undefined {
+  const questions = asRecord(input).questions;
+  const first = Array.isArray(questions) ? asRecord(questions[0]) : {};
+  for (const k of ["header", "question"]) {
+    const v = first[k];
+    if (typeof v === "string" && v.trim() !== "") return v;
+  }
+  return info?.title ?? undefined;
+}
 const stepKey = (runId: string, step: number) => `${runId}:${step}`;
 const callKey = (runId: string | null, callId: string) => `${runId ?? ""}\u0000${callId}`;
 /** A row id that is a call key (an `agent` call never dispatched), not a sub-agent id. */
@@ -497,6 +510,24 @@ export function buildEventTimeline(
   const calls = new Map<string, CallState>();
   const approvals = new Map<string, number>();
   const questions = new Map<string, number>();
+  /** Approval / question id → the call it holds (its row waits for a person until decided). */
+  const waitCalls = new Map<string, CallState>();
+  const waitOn = (
+    runId: string | null,
+    callId: string,
+    what: NonNullable<ToolRowData["waiting"]>,
+    id?: string,
+  ) => {
+    const c = calls.get(callKey(runId, callId));
+    if (!c || c.done) return;
+    c.tool.row.waiting = what;
+    if (id !== undefined) waitCalls.set(id, c);
+  };
+  const waitEnded = (id: string, what: NonNullable<ToolRowData["waiting"]>) => {
+    const c = waitCalls.get(id);
+    if (c && c.tool.row.waiting === what) delete c.tool.row.waiting;
+    waitCalls.delete(id);
+  };
   const modelDenials = new Map<string, { plugin: string; reason: string }>();
   /** Group key → files delivered by its calls / cards of its calls. */
   const groupFiles = new Map<string, FileRef[]>();
@@ -705,8 +736,9 @@ export function buildEventTimeline(
           const input = b.input;
           const rec = asRecord(input);
           const group = openGroup();
-          const keyArg = keyArgOf(input, ti);
-          const kind = ti?.kind ?? "tool";
+          const question = (ti?.aliasOf ?? b.name) === QUESTION_TOOL;
+          const keyArg = question ? questionPreview(input, ti) : keyArgOf(input, ti);
+          const kind: ToolRowData["kind"] = question ? "question" : (ti?.kind ?? "tool");
           const command = kind === "command" && typeof rec.command === "string";
           // Claude Code's look: "Bash", "CRM [search]"; before the info arrives, from the key
           const label = ti ? toolLabel(ti, locale) : toolLabelOfKey(b.name);
@@ -776,6 +808,7 @@ export function buildEventTimeline(
           (view?.kind === "command" && (view.timedOut || (exit ?? 0) !== 0)) ||
           row.blockedBy !== undefined;
         row.status = failed ? "failed" : "done";
+        delete row.waiting;
         c.done = true;
         const end = Date.parse(e.createdAt);
         if (c.started !== null && !Number.isNaN(end)) row.durationMs = Math.max(0, end - c.started);
@@ -935,6 +968,7 @@ export function buildEventTimeline(
         break;
       }
       case "approval_requested":
+        waitOn(e.runId, e.payload.callId, "approval", e.payload.approvalId);
         approvals.set(e.payload.approvalId, out.length);
         out.push({
           kind: "approval",
@@ -952,6 +986,7 @@ export function buildEventTimeline(
         });
         break;
       case "approval_decided": {
+        waitEnded(e.payload.approvalId, "approval");
         const i = approvals.get(e.payload.approvalId);
         const prev = i === undefined ? undefined : out[i];
         if (i !== undefined && prev?.kind === "approval")
@@ -959,6 +994,7 @@ export function buildEventTimeline(
         break;
       }
       case "question_asked":
+        waitOn(e.runId, e.payload.callId, "input", e.payload.questionId);
         questions.set(e.payload.questionId, out.length);
         out.push({
           kind: "question",
@@ -973,6 +1009,7 @@ export function buildEventTimeline(
         });
         break;
       case "question_answered": {
+        waitEnded(e.payload.questionId, "input");
         const i = questions.get(e.payload.questionId);
         const prev = i === undefined ? undefined : out[i];
         if (i !== undefined && prev?.kind === "question")
@@ -980,6 +1017,8 @@ export function buildEventTimeline(
         break;
       }
       case "connection_required":
+        // until the call's result: the run resumes the call once the person connects
+        waitOn(e.runId, e.payload.callId, "connect");
         out.push({
           kind: "connect",
           key,

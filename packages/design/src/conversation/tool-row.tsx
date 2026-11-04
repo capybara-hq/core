@@ -5,7 +5,7 @@ import { useDesignLocale, useDesignT } from "../provider";
 import { useClock } from "./clock";
 import { DiffBlock, type DiffData } from "./diff-block";
 import { Spinner } from "./prose";
-import { elapsed, fillCopy, type ToolKind } from "./tool-copy";
+import { elapsed, fillCopy, type ToolKind, type ToolWaiting } from "./tool-copy";
 
 export type ToolRowData = {
   id: string;
@@ -26,6 +26,11 @@ export type ToolRowData = {
   /** A shell row's `description` from the model, shown instead of the key argument. */
   description?: string;
   status: "pending" | "running" | "done" | "failed" | "cancelled";
+  /**
+   * The live call waits for a person (a pending approval, question or connection): the row shows
+   * the waiting word instead of the spinner and the timer (§6.16.9). Ignored once it ends.
+   */
+  waiting?: ToolWaiting;
   startedAt?: number;
   durationMs?: number;
   /** Lines added / removed by an edit ("+a −b"). */
@@ -87,7 +92,11 @@ export function ToolLabel({ row }: { row: ToolRowData }): JSX.Element {
       {...(row.tooltip ? { title: row.tooltip } : {})}
     >
       <span className="cb-tool-name" data-part="tool-name">
-        {row.tool ? `${row.name} [${row.tool}]` : row.name}
+        {row.kind === "question"
+          ? t("tool.verb.question")
+          : row.tool
+            ? `${row.name} [${row.tool}]`
+            : row.name}
       </span>
       {preview ? (
         <>
@@ -108,6 +117,30 @@ export function ToolLabel({ row }: { row: ToolRowData }): JSX.Element {
       {row.status === "cancelled" ? (
         <span className="cb-muted">{` · ${t("tool.cancelled")}`}</span>
       ) : null}
+    </span>
+  );
+}
+
+/** The call is live: pending or running (a waiting call is live too). */
+export const isLive = (row: ToolRowData): boolean =>
+  row.status === "running" || row.status === "pending";
+
+/** The live call waits for a person (§6.16.9): no spinner, no timer, the waiting word. */
+export const isWaiting = (row: ToolRowData): boolean => isLive(row) && row.waiting !== undefined;
+
+/** The waiting word of a live call that waits for a person, in `accent` (§6.16.9). */
+export function WaitingWord({
+  row,
+  lead,
+}: {
+  row: ToolRowData;
+  lead?: string;
+}): JSX.Element | null {
+  const t = useDesignT();
+  if (!isWaiting(row) || row.waiting === undefined) return null;
+  return (
+    <span className="cb-accent-word" data-part="waiting-word">
+      {`${lead ?? ""}${t(`tool.waiting.${row.waiting}`)}`}
     </span>
   );
 }
@@ -282,9 +315,14 @@ export function ToolRow({
   const id = useId();
   const isOpen = open ?? own;
   const expandable = hasDetail(row);
-  const running = row.status === "running" || row.status === "pending";
+  const waiting = isWaiting(row);
+  const running = isLive(row) && !waiting;
   const clock = useClock(running && row.startedAt !== undefined, now);
-  const end = running ? (
+  const end = waiting ? (
+    <span className="cb-tool-end">
+      <WaitingWord row={row} />
+    </span>
+  ) : running ? (
     row.startedAt !== undefined ? (
       // a ticking timer: hidden from screen readers so the live thread does not chatter (I2)
       <span className="cb-tool-end cb-faint" aria-hidden="true">
@@ -298,7 +336,7 @@ export function ToolRow({
   ) : null;
   const inner = (
     <>
-      {running ? <Spinner /> : null}
+      {running ? <Spinner size={16} /> : null}
       <ToolLabel row={row} />
       {end}
     </>
@@ -311,6 +349,7 @@ export function ToolRow({
           className="cb-tool-row"
           data-part="tool-row"
           data-status={row.status}
+          data-waiting={waiting ? row.waiting : undefined}
           aria-expanded={isOpen}
           aria-controls={isOpen ? id : undefined}
           onClick={() => {
@@ -322,7 +361,12 @@ export function ToolRow({
           {inner}
         </button>
       ) : (
-        <div className="cb-tool-row" data-part="tool-row" data-status={row.status}>
+        <div
+          className="cb-tool-row"
+          data-part="tool-row"
+          data-status={row.status}
+          data-waiting={waiting ? row.waiting : undefined}
+        >
           {inner}
         </div>
       )}

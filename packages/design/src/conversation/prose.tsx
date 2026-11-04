@@ -9,8 +9,9 @@ export function Cursor(): JSX.Element {
 }
 
 /**
- * The running spinner of the stream (12, `accent`, one turn per `motion.spin`); the thinking
- * row's live spinner is 16 (§6.16.5).
+ * The running spinner of the stream (`accent`, one turn per `motion.spin`): 12 by default (panel
+ * headers, background tasks); the live rows of the thread (thinking, tool rows and group headers,
+ * sub-agent rows) pass 16 (§6.16).
  */
 export function Spinner({ label, size = 12 }: { label?: string; size?: 12 | 16 }): JSX.Element {
   const t = useDesignT();

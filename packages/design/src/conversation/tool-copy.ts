@@ -1,9 +1,23 @@
 import { type DesignKey, type Locale, messages } from "../i18n";
 
-/** Tool kinds for display (kernel `ToolInfo.kind`). */
-export type ToolKind = "command" | "read" | "edit" | "search" | "connector" | "meta" | "tool";
+/**
+ * Tool kinds for display: the kernel's `ToolInfo.kind`, plus `question`, which the web derives
+ * for the builtin `AskUserQuestion` (its row reads "已提问 <header>", §6.16.9).
+ */
+export type ToolKind =
+  | "command"
+  | "read"
+  | "edit"
+  | "search"
+  | "connector"
+  | "meta"
+  | "question"
+  | "tool";
 
-/** The verb categories of the §7 table: search, meta and connector rows count with tools. */
+/** What a call waits for from a person (§6.16.9): an approval, an answer or a connection. */
+export type ToolWaiting = "approval" | "input" | "connect";
+
+/** The verb categories of the §7 table: search, meta, question and connector rows count with tools. */
 export type ToolVerbGroup = "command" | "read" | "edit" | "tool";
 
 export function verbGroup(kind: ToolKind): ToolVerbGroup {
@@ -13,6 +27,8 @@ export function verbGroup(kind: ToolKind): ToolVerbGroup {
 export type SummaryRow = {
   kind: ToolKind;
   status: "pending" | "running" | "done" | "failed" | "cancelled";
+  /** The call waits for a person (only read while it runs). */
+  waiting?: ToolWaiting;
   keyArg?: string;
   added?: number;
   removed?: number;
@@ -21,8 +37,8 @@ export type SummaryRow = {
 /** One run of the group header text; `part` names the size-table part it carries. */
 export type SummaryPart = {
   text: string;
-  tone?: "ink" | "fail" | "faint";
-  part?: "key-arg" | "fail-word";
+  tone?: "ink" | "fail" | "faint" | "accent";
+  part?: "key-arg" | "fail-word" | "waiting-word";
 };
 
 const fmt = (tpl: string, vars: Record<string, string | number>) =>
@@ -36,9 +52,21 @@ const SUMMARY_ORDER: readonly ToolVerbGroup[] = ["command", "tool", "read", "edi
 /** The group header (§6.16.8, §7) as styled runs. */
 export function summaryParts(rows: readonly SummaryRow[], locale: Locale): SummaryPart[] {
   const m = messages[locale];
-  const running = rows.find((r) => r.status === "running" || r.status === "pending");
+  const active = rows.filter((r) => r.status === "running" || r.status === "pending");
+  const running = active.find((r) => r.waiting === undefined) ?? active[0];
   if (running) {
-    const done = rows.filter((r) => r.status !== "running" && r.status !== "pending").length;
+    const done = rows.length - active.length;
+    // Every live call waits for a person: say so instead of a running verb (§6.16.8).
+    if (running.waiting !== undefined) {
+      return [
+        {
+          text: m[`tool.waiting.${running.waiting}` as DesignKey],
+          tone: "accent",
+          part: "waiting-word",
+        },
+        { text: fmt(m["tool.doneCount"], { n: done }), tone: "faint" },
+      ];
+    }
     return [
       { text: m[`tool.running.${verbGroup(running.kind)}` as DesignKey] },
       { text: fmt(m["tool.doneCount"], { n: done }), tone: "faint" },

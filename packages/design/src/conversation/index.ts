@@ -128,6 +128,7 @@ export {
   summaryParts,
   type ToolKind,
   type ToolVerbGroup,
+  type ToolWaiting,
   verbGroup,
 } from "./tool-copy";
 export { ToolGroup, type ToolGroupProps } from "./tool-group";
