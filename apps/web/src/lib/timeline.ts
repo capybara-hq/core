@@ -373,35 +373,81 @@ export function withDrafts(base: EventTimeline, drafts: readonly TimelineDraft[]
   return added ? out : base.entries;
 }
 
+/** Events of a run that are its output (what replaces the working line, spec §2.2). */
+const OUTPUT = new Set<ConversationEvent["type"]>([
+  "assistant_message",
+  "tool_call_started",
+  "approval_requested",
+  "question_asked",
+  "connection_required",
+  "subagent_dispatched",
+  "subagent_started",
+]);
+
 /**
- * Whether the working line shows (conversation send spec §2.2): from a send (a pending bubble) or
- * a run start until the run's first output, and again after a tool result while the model has
- * not answered. It never shows while the run waits for a person (the card is the output) or after
- * the run ended (its run row). A user message no run has answered yet (sent, its run not started)
- * counts as a send. `entries` are the thread's, drafts included.
+ * The newest user message this tab sent (`sentHere`: its `clientMessageId`s) that no run took up
+ * yet: no run started after it, no run failed or stopped after it, and no finished run consumed
+ * it. False when there is none: the conversation is idle (or the kernel could not deliver it).
+ */
+export function awaitingRun(
+  events: readonly ConversationEvent[],
+  sentHere: ReadonlySet<string>,
+): boolean {
+  let u: number | null = null;
+  for (const e of events) {
+    if (e.type === "user_message") {
+      const id = e.payload.clientMessageId;
+      u = id !== undefined && sentHere.has(id) ? e.seq : null;
+    } else if (u !== null) {
+      if (e.type === "run_started" || e.type === "run_failed" || e.type === "run_aborted") u = null;
+      else if (e.type === "run_finished" && e.payload.consumedUpToSeq >= u) u = null;
+    }
+  }
+  return u !== null;
+}
+
+/** The run in progress per the log (started, not ended), or null. */
+function activeRun(events: readonly ConversationEvent[]): { runId: string; seq: number } | null {
+  let run: { runId: string; seq: number } | null = null;
+  for (const e of events) {
+    if (e.type === "run_started" && e.runId !== null) run = { runId: e.runId, seq: e.seq };
+    else if (run !== null && TERMINAL.has(e.type) && e.runId === run.runId) run = null;
+  }
+  return run;
+}
+
+/**
+ * Whether the working line shows (conversation send spec §2.2, review fix 1): never while the run
+ * waits for a person (the card is the output); else when this view has a pending send, when the
+ * run in progress has no output since it started or since its last settled tool result (and no
+ * tool is running), or when a message this tab sent waits for its run ({@link awaitingRun}). An
+ * idle conversation, one whose message the kernel could not deliver, and a child conversation
+ * that is not running show none.
  */
 export function workingLineVisible(
-  entries: readonly TimelineEntry[],
-  s: { running: boolean; waiting: boolean; pending: number },
+  events: readonly ConversationEvent[],
+  drafts: readonly TimelineDraft[],
+  s: { waiting: boolean; pending: number; sentHere: ReadonlySet<string> },
 ): boolean {
   if (s.waiting) return false;
   if (s.pending > 0) return true;
-  const last = entries.at(-1);
-  if (last === undefined) return false;
-  if (last.kind === "user" || last.kind === "task") return true;
-  if (!s.running) return false;
-  switch (last.kind) {
-    // the model has not answered what these brought in yet
-    case "tools":
-      return last.rows.every((r) => r.row.status !== "running" && r.row.status !== "pending");
-    case "files":
-    case "card":
-    case "divider":
-    case "skill-report":
-      return true;
-    default:
-      return false;
+  const run = activeRun(events);
+  if (run === null) return awaitingRun(events, s.sentHere);
+  if (drafts.some((d) => d.runId === run.runId && (d.text !== "" || d.thinking !== "")))
+    return false;
+  const open = new Set<string>();
+  let output = false;
+  for (const e of events) {
+    if (e.seq <= run.seq || e.runId !== run.runId) continue;
+    if (e.type === "tool_result") {
+      open.delete(e.payload.callId);
+      output = false;
+    } else if (OUTPUT.has(e.type)) {
+      output = true;
+      if (e.type === "tool_call_started") open.add(e.payload.callId);
+    }
   }
+  return open.size === 0 && !output;
 }
 
 /** The timeline of the log (no drafts); see {@link buildTimeline}. */

@@ -16,12 +16,13 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import type { ModelRef } from "../../lib/conversations";
 import { agentsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
-import { modelsQuery, renameWithRow } from "../../lib/query/conversation";
+import { modelsQuery, renameWithRow, sentHereOf } from "../../lib/query/conversation";
 import { keys as queryKeys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
 import { runParts } from "../../lib/run-row";
 import { usageTotal, useSubagents, useUsageWithSubagents } from "../../lib/subagents";
 import {
+  awaitingRun,
   buildEventTimeline,
   type FailedRun,
   latestModel,
@@ -175,15 +176,26 @@ export function useConversationPage(
   const pending = usePendingSends(conv.events);
   const [renaming, setRenaming] = useState(false);
   const [renameBusy, setRenameBusy] = useState(false);
-  const active = conv.running || conv.waiting;
+  const qc = useQueryClient();
+  const sentHere = sentHereOf(qc, orgId, conversationId);
+  // One source for the composer's mode, the status bar and the working line (review fix L1, L2):
+  // a pending send of this view, a message this tab sent that waits for its run, or a run per the
+  // log. While any holds, ↵ queues.
+  // (not memoized: the set changes with this view's sends, each of which re-renders it)
+  const awaiting = awaitingRun(conv.events, sentHere);
+  const busy = conv.running || pending.shown.length > 0 || awaiting;
+  const active = busy || conv.waiting;
   const stats = useMemo(() => runStats(conv.events), [conv.events]);
 
   // The message shows at once as a pending bubble, until the log has it (spec §2.1).
   const send = async (m: ComposerMessage): Promise<SendResult> => {
     const pick = selection.pending;
+    sentHere.add(m.clientMessageId);
     pending.add(m);
     const r = await conv.send({ ...m, ...pick });
-    // on success the log already holds it; on failure the text goes back to the composer
+    // on success the log already holds it; on failure the text goes back to the composer (and a
+    // message the kernel wrote but could not deliver waits for no run here)
+    if (!r.ok) sentHere.delete(m.clientMessageId);
     pending.drop(m.clientMessageId);
     if (r.ok) selection.sent(pick);
     return r;
@@ -192,18 +204,23 @@ export function useConversationPage(
   // ↵ while running: the queued message carries the pick, applied when it is sent (final review I1).
   const enqueue = async (m: ComposerMessage): Promise<SendResult> => {
     const pick = selection.pending;
+    // sent after the turn: its run is this tab's to wait for too
+    sentHere.add(m.clientMessageId);
     const r = await queue.add({ ...m, ...pick });
     if (r.ok) selection.sent(pick);
+    else sentHere.delete(m.clientMessageId);
     return r;
   };
 
   const retry = (d: FailedRun) => {
     if (d.retry === null) return;
     const pick = selection.pending;
+    const clientMessageId = newClientMessageId();
+    sentHere.add(clientMessageId);
     void conv
       .send({
         text: d.retry.text,
-        clientMessageId: newClientMessageId(),
+        clientMessageId,
         files: d.retry.files.map((f) => f.attachmentId),
         retryOf: d.retry.seq,
         ...(d.retry.skill !== undefined ? { skill: { name: d.retry.skill } } : {}),
@@ -211,13 +228,13 @@ export function useConversationPage(
       })
       .then((r) => {
         if (r.ok) selection.sent(pick);
+        else sentHere.delete(clientMessageId);
       });
   };
 
   // The answer is the new row; the sidebar shows the title too. The row takes the title before
   // the kernel answers, so the stream's `changed: title` for this rename finds it unchanged and
   // reads the sidebar's groups no second time (the invalidation below is the one read).
-  const qc = useQueryClient();
   const renameMutation = useAppMutation({
     fn: (title: string) => renameWithRow(qc, orgId, conversationId, title),
     invalidates: () => [queryKeys.org(orgId).conversationGroupsAll()],
@@ -262,12 +279,14 @@ export function useConversationPage(
     ? t("status.running")
     : conv.waiting
       ? t("status.waiting")
-      : stats.last === "aborted"
-        ? t("status.stopped")
-        : stats.last === "failed"
-          ? t("status.failed")
-          : t("status.idle");
-  const statusFailed = !conv.running && !conv.waiting && stats.last === "failed";
+      : busy
+        ? t("status.running")
+        : stats.last === "aborted"
+          ? t("status.stopped")
+          : stats.last === "failed"
+            ? t("status.failed")
+            : t("status.idle");
+  const statusFailed = !active && stats.last === "failed";
   // The properties panel's last-run line (spec §6.16.17): the newest run row's parts.
   const lastRun = useMemo(() => {
     const r = base.entries.findLast((e) => e.kind === "run");
@@ -332,10 +351,10 @@ export function useConversationPage(
     ),
     queue: <QueueList queue={queue} />,
     // decided from the log and this view's pending bubbles (spec §2.2)
-    working: workingLineVisible(entries, {
-      running: conv.running,
+    working: workingLineVisible(conv.events, conv.state.drafts, {
       waiting: conv.waiting,
       pending: pending.shown.length,
+      sentHere,
     }),
     composer: ({ sendDisabled }) => (
       <Stack gap={8}>

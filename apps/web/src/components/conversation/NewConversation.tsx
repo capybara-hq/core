@@ -122,7 +122,8 @@ export function useNewConversationPage(
           agentId={agent?.id}
           initialDraft={sent ? undefined : restore.draft}
           running={false}
-          sendDisabled={!agent}
+          // one message at a time until the conversation exists (it has no queue yet)
+          sendDisabled={!agent || sent}
           onSend={send}
           pickers={{
             agent: {

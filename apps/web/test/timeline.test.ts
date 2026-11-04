@@ -547,45 +547,73 @@ describe("final review fixes", () => {
 });
 
 describe("workingLineVisible (conversation send spec §2.2)", () => {
-  const runStart = (seq: number) =>
-    ev(seq, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } });
+  const runStart = (seq: number, runId = "r1") =>
+    ev(seq, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }, runId);
+  const finished = (seq: number, consumedUpToSeq: number, runId = "r1") =>
+    ev(seq, "run_finished", { reason: "end_turn", consumedUpToSeq }, runId);
+  const mine = (seq: number, text: string, cmid: string, extra: Record<string, unknown> = {}) =>
+    user(seq, text, { clientMessageId: cmid, ...extra });
+  type Draft = { runId: string; step: number; text: string; thinking: string };
   const at = (
     events: ConversationEvent[],
-    s: { running: boolean; waiting?: boolean; pending?: number },
-    drafts: { runId: string; step: number; text: string; thinking: string }[] = [],
+    s: { waiting?: boolean; pending?: number; sent?: string[] } = {},
+    drafts: Draft[] = [],
   ) =>
-    workingLineVisible(buildTimeline(events, drafts, new Map(), "en"), {
-      running: s.running,
+    workingLineVisible(events, drafts, {
       waiting: s.waiting ?? false,
       pending: s.pending ?? 0,
+      sentHere: new Set(s.sent ?? []),
     });
 
-  it("shows after a send: the pending bubble, before the log has anything of it", () => {
-    expect(at([], { running: false, pending: 1 })).toBe(true);
-    // a follow-up after a finished run
-    const done = [user(1, "hi"), runStart(2), ev(3, "run_finished", { reason: "end_turn" })];
-    expect(at(done, { running: false, pending: 1 })).toBe(true);
+  it("shows for a pending send, before the log has anything of it", () => {
+    expect(at([], { pending: 1 })).toBe(true);
+    expect(at([user(1, "hi"), runStart(2), finished(3, 1)], { pending: 1 })).toBe(true);
   });
 
-  it("shows for a message no run has answered yet, and after run_started", () => {
-    expect(at([user(1, "hi")], { running: false })).toBe(true);
-    expect(at([user(1, "hi"), runStart(2)], { running: true })).toBe(true);
+  it("shows for a message this tab sent until its run starts, then until the first output", () => {
+    expect(at([mine(1, "hi", "m1")], { sent: ["m1"] })).toBe(true);
+    expect(at([mine(1, "hi", "m1"), runStart(2)], { sent: ["m1"] })).toBe(true);
+    // a run in progress shows it whoever sent the message
+    expect(at([user(1, "hi"), runStart(2)])).toBe(true);
+  });
+
+  it("an idle old conversation ending in a user message shows no line", () => {
+    expect(at([user(1, "hi")])).toBe(false);
+    expect(at([mine(1, "hi", "m1")], { sent: [] })).toBe(false);
+  });
+
+  it("a message whose delivery failed (dropped from this tab's sends) shows no line", () => {
+    // the kernel wrote it, the POST failed: the view forgets it was sent here
+    expect(at([mine(1, "hi", "m1")], { sent: [] })).toBe(false);
+  });
+
+  it("a child conversation that is not running shows no line", () => {
+    expect(
+      at([
+        ev(
+          1,
+          "user_message",
+          {
+            content: [{ type: "text", text: "task" }],
+            authorAccountId: "a1",
+            dispatch: { parentConversationId: "p", parentRunId: "r0", callId: "c" },
+          },
+          null,
+        ),
+      ]),
+    ).toBe(false);
   });
 
   it("is gone at the first output: thinking, prose, a running tool", () => {
     const base = [user(1, "hi"), runStart(2)];
-    expect(at(base, { running: true }, [{ runId: "r1", step: 0, text: "", thinking: "hmm" }])).toBe(
-      false,
-    );
-    expect(at(base, { running: true }, [{ runId: "r1", step: 0, text: "He", thinking: "" }])).toBe(
-      false,
-    );
+    expect(at(base, {}, [{ runId: "r1", step: 0, text: "", thinking: "hmm" }])).toBe(false);
+    expect(at(base, {}, [{ runId: "r1", step: 0, text: "He", thinking: "" }])).toBe(false);
     const tool = [
       ...base,
       calls(3, [{ id: "c1", name: "sandbox_bash", input: { command: "ls" } }]),
       started(4, "c1", "sandbox_bash"),
     ];
-    expect(at(tool, { running: true })).toBe(false);
+    expect(at(tool)).toBe(false);
   });
 
   it("shows again after a tool result while the model has not answered", () => {
@@ -596,21 +624,52 @@ describe("workingLineVisible (conversation send spec §2.2)", () => {
       started(4, "c1", "sandbox_bash"),
       result(5, "c1", "sandbox_bash"),
     ];
-    expect(at(events, { running: true })).toBe(true);
-    // the answer streams: gone again
+    expect(at(events)).toBe(true);
+    expect(at(events, {}, [{ runId: "r1", step: 1, text: "Done", thinking: "" }])).toBe(false);
+  });
+
+  it("a retried run shows the line until its first output", () => {
+    const failed = [
+      mine(1, "hi", "m1"),
+      runStart(2),
+      ev(3, "run_failed", { error: { code: "x", message: "m" } }),
+    ];
+    expect(at(failed, { sent: ["m1"] })).toBe(false);
+    const retry = [...failed, mine(4, "hi", "m2", { retryOf: 1 })];
+    expect(at(retry, { sent: ["m1", "m2"] })).toBe(true);
+    const running = [...retry, runStart(5, "r2")];
+    expect(at(running, { sent: ["m1", "m2"] })).toBe(true);
     expect(
-      at(events, { running: true }, [{ runId: "r1", step: 1, text: "Done", thinking: "" }]),
+      at(running, { sent: ["m1", "m2"] }, [{ runId: "r2", step: 0, text: "Hi", thinking: "" }]),
     ).toBe(false);
+  });
+
+  it("an interjection after the last model call shows the line for the next run", () => {
+    const events = [
+      user(1, "hi"),
+      runStart(2),
+      ev(3, "assistant_message", {
+        step: 0,
+        content: [{ type: "text", text: "Hello" }],
+        stopReason: "end_turn",
+      }),
+      mine(4, "more", "m2"),
+      finished(5, 1),
+    ];
+    expect(at(events, { sent: ["m2"] })).toBe(true);
+    expect(at([...events, runStart(6, "r2")], { sent: ["m2"] })).toBe(true);
+    // a run that consumed it answered it
+    expect(at([...events.slice(0, 4), finished(5, 4)], { sent: ["m2"] })).toBe(false);
   });
 
   it("is gone at the run's end, also without output, and while waiting for a person", () => {
     const ended = [
-      user(1, "hi"),
+      mine(1, "hi", "m1"),
       runStart(2),
       ev(3, "run_failed", { error: { code: "x", message: "m" } }),
     ];
-    expect(at(ended, { running: false })).toBe(false);
-    expect(at([user(1, "hi"), runStart(2)], { running: true, waiting: true })).toBe(false);
-    expect(at([], { running: false })).toBe(false);
+    expect(at(ended, { sent: ["m1"] })).toBe(false);
+    expect(at([user(1, "hi"), runStart(2)], { waiting: true })).toBe(false);
+    expect(at([])).toBe(false);
   });
 });

@@ -367,6 +367,28 @@ export function appendEvents(
 }
 
 /**
+ * The `clientMessageId`s of the messages this tab sent to a conversation (per query client, in
+ * the browser): the working line and the composer's running mode wait for their runs
+ * (conversation send spec §2.2). It survives the `/chat` → `/chat/<id>` handoff (the seed adds the
+ * first message); a send the kernel refused is removed again. Never sent to the server.
+ */
+const sentBy = new WeakMap<QueryClient, Map<string, Set<string>>>();
+export function sentHereOf(qc: QueryClient, orgId: string, id: string): Set<string> {
+  let byConv = sentBy.get(qc);
+  if (byConv === undefined) {
+    byConv = new Map();
+    sentBy.set(qc, byConv);
+  }
+  const scope = `${orgId}/${id}`;
+  let set = byConv.get(scope);
+  if (set === undefined) {
+    set = new Set();
+    byConv.set(scope, set);
+  }
+  return set;
+}
+
+/**
  * A conversation just created with its first message (conversation send spec §2.1): the create's
  * answer is the row and the log's first event, and a new conversation has an empty queue, no
  * files and no sandbox, so those are known answers too and `/chat/<id>` reads none of them; its
@@ -381,6 +403,8 @@ export function seedNewConversation(
   event: ConversationEvent,
 ): void {
   const c = keys.org(orgId).conversation(conversation.id);
+  if (event.type === "user_message" && event.payload.clientMessageId !== undefined)
+    sentHereOf(qc, orgId, conversation.id).add(event.payload.clientMessageId);
   qc.setQueryData<Conversation>(c.row(), conversation);
   if (event.seq === 1) {
     qc.setQueryData<ConversationEvent[]>(c.events(), (cur) => cur ?? []);

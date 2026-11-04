@@ -447,7 +447,8 @@ describe("the conversation page (ConversationPage)", () => {
       const { container } = await renderChat();
       await screen.findByText("hi");
       const line = () => container.querySelector('[data-part="working-line"]');
-      // the log's last message has no run yet: the line already shows (the run is on its way)
+      // an old message without a run, not sent from this tab: no line
+      expect(line()).toBeNull();
       act(() => FakeEventSource.instances[0]?.emit("event", runStarted(2)));
       act(() =>
         FakeEventSource.instances[0]?.emit(
@@ -510,6 +511,71 @@ describe("the conversation page (ConversationPage)", () => {
         es.emit("event", ev(9, "run_finished", { reason: "end_turn", consumedUpToSeq: 4 }, "r2")),
       );
       expect(line()).toBeNull();
+    });
+
+    it("a second ↵ while the first send waits for its run queues instead of sending (L1)", async () => {
+      let n = 1;
+      const calls = api({
+        [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+        [`POST ${BASE}/messages`]: (c) => {
+          const b = bodyOf(c) as { text: string; clientMessageId: string };
+          return json(202, { event: userMsg(++n, b.text, { clientMessageId: b.clientMessageId }) });
+        },
+        [`POST ${BASE}/queue`]: () => json(201, { item: null }),
+      });
+      await renderChat();
+      await screen.findByText("hi");
+      const user = userEvent.setup();
+      await user.type(input(), "one{Enter}");
+      await user.type(input(), "two{Enter}");
+      await vi.waitFor(() => expect(posts(calls, `${BASE}/queue`)).toHaveLength(1));
+      expect(
+        posts(calls, `${BASE}/messages`).map((c) => (bodyOf(c) as { text: string }).text),
+      ).toEqual(["one"]);
+      expect(bodyOf(posts(calls, `${BASE}/queue`)[0])).toMatchObject({ text: "two" });
+    });
+
+    it("right after a send the composer is in running mode and the status says running (L2)", async () => {
+      const d = deferredSend();
+      const { container } = await renderChat();
+      await screen.findByText("hi");
+      const status = () =>
+        (container.querySelector('[data-part="status-bar"]') as HTMLElement).textContent ?? "";
+      expect(status()).toContain(en.chat.status.idle);
+      fireEvent.change(input(), { target: { value: "next" } });
+      fireEvent.keyDown(input(), { key: "Enter" });
+      expect(screen.getByRole("button", { name: en.chat.stop })).toBeTruthy();
+      expect(input().getAttribute("placeholder")).toBe("↵ to queue, Ctrl+↵ to send now");
+      expect(status()).toContain(en.chat.status.running);
+      expect(container.querySelector('[data-part="working-line"]')).not.toBeNull();
+      // the log has the message, its run has not started: still running, all three agree
+      await vi.waitFor(() => expect(posts(d.calls, `${BASE}/messages`)).toHaveLength(1));
+      const event = userMsg(2, "next", { clientMessageId: d.cmid() });
+      await act(async () => d.answer(json(202, { event })));
+      expect(screen.getByRole("button", { name: en.chat.stop })).toBeTruthy();
+      expect(status()).toContain(en.chat.status.running);
+      expect(container.querySelector('[data-part="working-line"]')).not.toBeNull();
+    });
+
+    it("a message the kernel wrote but could not deliver shows no line after the error", async () => {
+      let cmid = "";
+      api({
+        [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+        [`POST ${BASE}/messages`]: (c) => {
+          cmid = (bodyOf(c) as { clientMessageId: string }).clientMessageId;
+          return json(503, { error: { code: "upstream_unavailable", message: "queue down" } });
+        },
+      });
+      const { container } = await renderChat();
+      await screen.findByText("hi");
+      await userEvent.setup().type(input(), "next{Enter}");
+      // the stream delivers the written message, the POST fails
+      act(() =>
+        FakeEventSource.instances[0]?.emit("event", userMsg(2, "next", { clientMessageId: cmid })),
+      );
+      await vi.waitFor(() => expect(input()).toHaveProperty("value", "next"));
+      expect(container.querySelector('[data-part="working-line"]')).toBeNull();
+      expect(screen.queryByRole("button", { name: en.chat.stop })).toBeNull();
     });
 
     it("a failed POST drops the pending bubble and puts the text back", async () => {
@@ -1191,6 +1257,8 @@ describe("the first message from /chat (conversation send spec §2.1)", () => {
     });
     expect(screen.getByText("start", { selector: '[data-part="bubble"]' })).toBeTruthy();
     expect(FakeEventSource.instances.map((e) => e.url)).toEqual([`${C9}/stream?after=1`]);
+    // the first message was sent from this tab: the working line carries over the navigation
+    expect(document.querySelector('[data-part="working-line"]')).not.toBeNull();
     await new Promise((r) => setTimeout(r, 20));
     const reads = calls.filter((x) => x.method === "GET").map((x) => x.url.split("?")[0]);
     for (const path of [C9, `${C9}/events`, `${C9}/queue`, `${C9}/files`, `${C9}/sandbox`])
