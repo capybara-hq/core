@@ -1,4 +1,4 @@
-import type { AvatarValue, PresetId } from "@capybara-hq/design";
+import { AVATAR_PRESET_IDS, type AvatarValue, type PresetId } from "@capybara-hq/design";
 import { apiFetch } from "./api";
 import { type CreatedAttachment, uploadToStorage } from "./attachments";
 import type { LocalizedName } from "./catalog";
@@ -23,10 +23,8 @@ export type TightenedPolicy = "ask" | "deny";
 
 /**
  * 网页可选的内置工具（内核没有列出内置工具的接口；`tool_search` 与 `skill_load` 由内核自动加入）。
- * 新建时默认勾选 {@link DEFAULT_BUILTIN_TOOLS}（与内核的默认工具一致）。
  */
 export const BUILTIN_TOOLS = ["ask_user", "read_tool_output", "skill_write"] as const;
-export const DEFAULT_BUILTIN_TOOLS: readonly string[] = ["ask_user", "read_tool_output"];
 
 export interface AgentDefinitionInput {
   name: string;
@@ -272,9 +270,23 @@ export const getReadiness = (orgId: string) => apiFetch<OrgReadiness>(`${base(or
 
 export const listAgents = (orgId: string) => apiFetch<{ agents: Agent[] }>(`${base(orgId)}/agents`);
 
+/**
+ * What the create form sends: no `instructions` and no `instructionFiles` (the kernel then starts
+ * the prompt from its default `AGENTS.md` template), no tools (the kernel's defaults apply).
+ */
+export type AgentCreateDefinition = Pick<AgentDefinitionInput, "name" | "model">;
+
+/** A random preset for a new agent's avatar (mirrors the kernel's `randomPreset`). */
+export const randomPreset = (random: () => number = Math.random): PresetId =>
+  AVATAR_PRESET_IDS[Math.floor(random() * AVATAR_PRESET_IDS.length)] as PresetId;
+
 export const createAgent = (
   orgId: string,
-  input: { definition: AgentDefinitionInput; visibility: AgentVisibility },
+  input: {
+    definition: AgentCreateDefinition;
+    visibility: AgentVisibility;
+    profile?: Pick<ProfileInput, "avatar">;
+  },
 ) =>
   apiFetch<{ agent: Agent; warnings: AgentWarning[] }>(`${base(orgId)}/agents`, {
     method: "POST",

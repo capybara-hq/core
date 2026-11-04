@@ -420,7 +420,6 @@
     "form": {
       "title": "New agent",
       "nameLabel": "Name",
-      "instructionsLabel": "Instructions (system prompt)",
       "modelLabel": "Model",
       "fallbackLabel": "Fallback model",
       "fallbackNone": "No fallback model",
@@ -437,12 +436,11 @@
       "modelParamsTitle": "Model parameters",
       "fallbackParamsTitle": "Fallback model parameters",
       "basicSection": "Basics",
-      "basicSectionHint": "Name and visibility; the instructions are shown to the model.",
+      "basicSectionHint": "Pick the picture, name and model. The prompt, tools and skills are set on the agent page.",
       "modelSection": "Model",
       "modelSectionHint": "The fallback model is used when the main model is unavailable.",
       "paramsSectionHint": "Parameters you leave untouched use the model defaults.",
       "nameRequired": "Enter a name.",
-      "instructionsHelp": "Shown to the model; write it in English.",
       "toolsSection": "Tools",
       "toolsSectionHint": "Tools the agent may call. A policy can only be tightened: ask for approval, or deny.",
       "builtinLabel": "Built-in tools",
@@ -676,7 +674,8 @@
         "contentHelp": "Markdown. Shown to the model as written.",
         "count": "{chars, number} / {maxChars, number} characters · {files} / {maxFiles} files",
         "tooLong": "Together the files are longer than {max, number} characters. Shorten them to save."
-      }
+      },
+      "createUploadFailed": "The agent was created, but its picture could not be uploaded. Pick it again here."
     }
   },
   "skills": {
@@ -856,6 +855,32 @@
       "tokenSplit": "Input {input} · Output {output} · Cache read {cacheRead} · Cache write {cacheWrite}",
       "trajectory": "View trajectory",
       "configureModels": "Configure model services"
+    },
+    "greeting": {
+      "sub": "Pick an agent, or start from a common task",
+      "morning": [
+        "Good morning, {name}",
+        "Morning. What are we moving forward today?",
+        "A new day. Where do we start?"
+      ],
+      "noon": [
+        "Midday, {name}",
+        "Had lunch yet? What can I take off your plate?"
+      ],
+      "afternoon": [
+        "Good afternoon, {name}",
+        "What are we pushing on this afternoon?",
+        "Back at it?"
+      ],
+      "evening": [
+        "Good evening, {name}",
+        "What is left to wrap up today?"
+      ],
+      "night": [
+        "Night owl, what are we up to?",
+        "Still up? I'll keep you company",
+        "It's late. Pick one small thing"
+      ]
     }
   },
   "ui": {

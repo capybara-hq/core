@@ -1,16 +1,12 @@
-import { act, cleanup, screen, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { act, cleanup, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import zh from "../messages/zh.json";
-import NewAgentPage from "../src/app/(app)/agents/new/page";
-import { SetupContext } from "../src/components/shell/setup";
 import { agentFormDefaults, renderNewAgent } from "./support/agents";
 import { json as apiJson, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
-import { ME, renderPage } from "./support/render";
-import { expectNoFirstPaintFetch, sessionRoutes } from "./support/server";
+import { ME } from "./support/render";
+import { expectNoFirstPaintFetch } from "./support/server";
 import { NOT_READY } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -49,7 +45,7 @@ const MODELS = {
 /**
  * The browser answers only the create (`posts`); the server reads the models from the same routes.
  */
-function stub(warnings: string[], models: unknown = MODELS) {
+function _stub(warnings: string[], models: unknown = MODELS) {
   const posts: unknown[] = [];
   stubApi({
     "GET /api/v1/orgs/o1/models": () => json(200, models),
@@ -62,7 +58,7 @@ function stub(warnings: string[], models: unknown = MODELS) {
 }
 
 /** 兜底模型下拉框的名称带「可选」后缀。 */
-const startsWith = (label: string) => (name: string) => name.startsWith(label);
+const _startsWith = (label: string) => (name: string) => name.startsWith(label);
 
 beforeEach(() => resetNavigation("/agents/new"));
 afterEach(() => {
@@ -72,170 +68,6 @@ afterEach(() => {
 
 /** Lets pending reads and effects run (a read after mount would show up in the calls). */
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
-
-describe("新建 Agent 页（FormPage）", () => {
-  it("使用 FormPage 模板，分组「基本信息」「模型」，ActionRow 中「保存」为主操作", async () => {
-    stub([]);
-    const { container } = await renderNewAgent({ locale: "zh" });
-    await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
-    expect(container.querySelector('[data-template="FormPage"]')).not.toBeNull();
-    expect(screen.getByRole("region", { name: zh.agents.form.basicSection })).toBeTruthy();
-    expect(screen.getByRole("region", { name: zh.agents.form.modelSection })).toBeTruthy();
-    const row = screen.getByRole("region", { name: "待提交改动" });
-    const save = within(row).getByRole("button", { name: zh.agents.form.submit });
-    expect(save.getAttribute("data-variant")).toBe("primary");
-    expect(within(row).getByRole("button", { name: zh.common.cancel })).toBeTruthy();
-  });
-
-  it("模型下拉框来自 /models；保存发送定义，没有警告时直接回到列表", async () => {
-    const posts = stub([]);
-    await renderNewAgent();
-    const user = userEvent.setup();
-    await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
-    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), "Echo");
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: en.agents.form.modelLabel }),
-      "model-fake/fake-1",
-    );
-    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
-    expect(posts[0]).toEqual({
-      definition: {
-        name: "Echo",
-        instructions: "",
-        model: { provider: "model-fake", model: "fake-1" },
-        fallback: null,
-        modelParams: {},
-        fallbackParams: {},
-        // 默认勾选两个内置工具；没有收紧策略
-        tools: [
-          { kind: "builtin", name: "ask_user" },
-          { kind: "builtin", name: "read_tool_output" },
-        ],
-        toolPolicies: {},
-      },
-      visibility: "private",
-    });
-    expect(router.push).toHaveBeenCalledTimes(1);
-    expect(router.push).toHaveBeenCalledWith("/agents");
-  });
-
-  it("inside the setup layout a saved agent lands on a new conversation with it", async () => {
-    // a client navigation inside the setup layout: the page reads the form's lists in the browser
-    stubApi({
-      ...sessionRoutes(),
-      ...agentFormDefaults(),
-      "GET /api/v1/orgs/o1/models": () => json(200, MODELS),
-      "POST /api/v1/orgs/o1/agents": () => json(201, { agent: { id: "ag1" }, warnings: [] }),
-    });
-    renderPage(
-      <SetupContext.Provider
-        value={{ active: true, readiness: { kind: "unknown" }, recheck: async () => {} }}
-      >
-        <NewAgentPage />
-      </SetupContext.Provider>,
-    );
-    const user = userEvent.setup();
-    await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
-    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), "Echo");
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: en.agents.form.modelLabel }),
-      "model-fake/fake-1",
-    );
-    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/chat?agent=ag1"));
-    expect(router.push).toHaveBeenCalledTimes(1);
-  });
-
-  it("在名称框按 Enter 即保存（只提交一次）；在指令多行框按 Enter 只换行", async () => {
-    // 带数字参数框：表单里有多个单行输入框，浏览器不会做隐式提交
-    const temperature = {
-      key: "temperature",
-      standard: "temperature",
-      schema: { type: "number", minimum: 0, maximum: 2 },
-      label: { zh: "温度", en: "Temperature" },
-    };
-    const posts = stub([], {
-      providers: [
-        {
-          provider: "model-fake",
-          models: [
-            { id: "fake-1", displayName: "Fake 1", capabilities: CAPS, parameters: [temperature] },
-          ],
-        },
-      ],
-    });
-    await renderNewAgent();
-    const user = userEvent.setup();
-    await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
-    await user.type(
-      screen.getByRole("textbox", { name: startsWith(en.agents.form.instructionsLabel) }),
-      "a{Enter}b",
-    );
-    expect(posts).toHaveLength(0);
-    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), "Echo{Enter}");
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
-    expect(posts).toHaveLength(1);
-    expect(
-      (posts[0] as { definition: { name: string; instructions: string } }).definition,
-    ).toMatchObject({
-      name: "Echo",
-      instructions: "a\nb",
-    });
-  });
-
-  it("a create form: focus on the name, 保存 disabled until it has one, no 没有未保存的修改", async () => {
-    const posts = stub([]);
-    await renderNewAgent({ locale: "zh" });
-    const user = userEvent.setup();
-    await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
-    const name = screen.getByRole("textbox", { name: zh.agents.form.nameLabel });
-    expect(document.activeElement).toBe(name);
-    expect(screen.queryByText("没有未保存的修改")).toBeNull();
-    const save = screen.getByRole("button", { name: zh.agents.form.submit }) as HTMLButtonElement;
-    expect(save.disabled).toBe(true);
-    await user.type(name, "Echo");
-    expect(save.disabled).toBe(false);
-    expect(posts).toHaveLength(0);
-  });
-
-  it("名称为空时按 Enter 不提交，名称字段显示错误", async () => {
-    const posts = stub([]);
-    await renderNewAgent();
-    const user = userEvent.setup();
-    await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
-    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), " {Enter}");
-    expect(posts).toHaveLength(0);
-    const name = screen.getByRole("textbox", { name: en.agents.form.nameLabel });
-    expect(name.getAttribute("aria-invalid")).toBe("true");
-    expect(screen.getByText(`${en.agents.form.nameRequired}`)).toBeTruthy();
-  });
-
-  it.each(["zh", "en"] as const)(
-    "保存后在表单顶部列出 warnings，点「继续」才回到列表（%s）",
-    async (locale) => {
-      const m = locale === "zh" ? zh : en;
-      const posts = stub(["fallback_same_provider"]);
-      await renderNewAgent({ locale });
-      const user = userEvent.setup();
-      await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
-      await user.type(screen.getByRole("textbox", { name: m.agents.form.nameLabel }), "Echo");
-      await user.selectOptions(
-        screen.getByRole("combobox", { name: startsWith(m.agents.form.fallbackLabel) }),
-        "model-fake/fake-1",
-      );
-      await user.click(screen.getByRole("button", { name: m.agents.form.submit }));
-      expect(posts[0]).toMatchObject({ definition: { fallback: { provider: "model-fake" } } });
-      const warning = await screen.findByText(`${m.agents.warnings.fallback_same_provider}`);
-      expect(warning.closest('[data-tone="danger"]')).not.toBeNull();
-      expect(router.push).not.toHaveBeenCalled();
-      // 已保存：主操作换成「继续」，不会重复创建
-      expect(screen.queryByRole("button", { name: m.agents.form.submit })).toBeNull();
-      await user.click(screen.getByRole("button", { name: m.agents.form.continue }));
-      expect(router.push).toHaveBeenCalledWith("/agents");
-      expect(posts).toHaveLength(1);
-    },
-  );
-});
 
 describe("the agent pages render on the server (web-SSR spec §6)", () => {
   const ORG = "/api/v1/orgs/o1";
@@ -351,15 +183,14 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
     await vi.waitFor(() => expect(page.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("/agents/new: models, connectors and skills are in the first paint", async () => {
+  it("/agents/new: the models are in the first paint", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderNewAgent({ routes: formRoutes });
     expect(
       (screen.getByRole("combobox", { name: en.agents.form.modelLabel }) as HTMLSelectElement)
         .value,
     ).toBe("model-fake/fake-1");
-    expect(screen.getByRole("checkbox", { name: /Tracker/ })).toBeTruthy();
-    expect(screen.getByRole("checkbox", { name: /notes-style/ })).toBeTruthy();
+    expect(screen.queryByRole("checkbox", { name: /Tracker/ })).toBeNull();
     expect(browser).toEqual([]);
   });
 

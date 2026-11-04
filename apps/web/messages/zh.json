@@ -420,7 +420,6 @@
     "form": {
       "title": "新建 agent",
       "nameLabel": "名称",
-      "instructionsLabel": "指令（系统提示词）",
       "modelLabel": "模型",
       "fallbackLabel": "兜底模型",
       "fallbackNone": "不使用兜底模型",
@@ -437,12 +436,11 @@
       "modelParamsTitle": "模型参数",
       "fallbackParamsTitle": "兜底模型参数",
       "basicSection": "基本信息",
-      "basicSectionHint": "名称与可见范围；指令对模型可见。",
+      "basicSectionHint": "选头像、名称和模型。提示词、工具和技能创建后在 agent 页面里设置。",
       "modelSection": "模型",
       "modelSectionHint": "主模型不可用时改用兜底模型。",
       "paramsSectionHint": "未改动的参数使用模型默认值。",
       "nameRequired": "请填写名称。",
-      "instructionsHelp": "对模型可见，请用英文书写。",
       "toolsSection": "工具",
       "toolsSectionHint": "agent 可以调用的工具。策略只能收紧：改为需审批，或禁止。",
       "builtinLabel": "内置工具",
@@ -676,7 +674,8 @@
         "contentHelp": "Markdown，原样交给模型。",
         "count": "{chars, number} / {maxChars, number} 字符 · {files} / {maxFiles} 个文件",
         "tooLong": "文件合计超过 {max, number} 个字符，缩短后才能保存。"
-      }
+      },
+      "createUploadFailed": "agent 已创建，但头像没有上传成功。请在这里重新选择。"
     }
   },
   "skills": {
@@ -856,6 +855,32 @@
       "tokenSplit": "输入 {input} · 输出 {output} · 缓存读 {cacheRead} · 缓存写 {cacheWrite}",
       "trajectory": "查看轨迹",
       "configureModels": "去配置模型服务"
+    },
+    "greeting": {
+      "sub": "选一个 agent，或从常用任务开始",
+      "morning": [
+        "早上好，{name}",
+        "早，今天推进点什么？",
+        "新的一天，从哪件事开始？"
+      ],
+      "noon": [
+        "中午好，{name}",
+        "吃过了吗？有什么要交给我"
+      ],
+      "afternoon": [
+        "下午好，{name}",
+        "下午我们推进什么？",
+        "接着干？"
+      ],
+      "evening": [
+        "晚上好，{name}",
+        "今天收尾还差什么？"
+      ],
+      "night": [
+        "夜猫子，干点啥？",
+        "还没睡？我陪你",
+        "夜深了，挑件小事做"
+      ]
     }
   },
   "ui": {

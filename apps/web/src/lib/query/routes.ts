@@ -275,7 +275,9 @@ export const ROUTES: readonly RouteEntry[] = [
     pattern: "/agents/new",
     // Members up (a guest gets no access and nothing is read).
     queries: ({ orgId, me }) =>
-      orgId === null || !atLeast(me, "member") ? [] : agentFormQueries(orgId),
+      orgId === null || !atLeast(me, "member")
+        ? []
+        : [...agentFormQueries(orgId), q(attachmentLimitsQuery(orgId))],
   },
   {
     pattern: "/bind/[token]",

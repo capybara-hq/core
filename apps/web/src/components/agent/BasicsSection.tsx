@@ -138,6 +138,11 @@ function BasicsEdit() {
   const [warnings, setWarnings] = useState<AgentWarning[]>([]);
   const [nameError, setNameError] = useState(false);
   useEffect(() => () => (preview ? URL.revokeObjectURL(preview.src) : undefined), [preview]);
+  // Landing here from `/agents/new` after its picked image could not be uploaded.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("avatar") === "failed")
+      setUploadError(t("page.createUploadFailed"));
+  }, [t]);
 
   const limitsQ = attachmentLimitsQuery(orgId);
   const limits = useQuery({ ...limitsQ, retryOnMount: retryOnMountOf(limitsQ.queryKey) });

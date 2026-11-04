@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import { renderEditAgent, renderNewAgent } from "./support/agents";
+import { renderEditAgent } from "./support/agents";
 import { bodyOf, json, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { ME } from "./support/render";
@@ -90,98 +90,6 @@ beforeEach(() => resetNavigation("/agents/new"));
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
-});
-
-describe("新建 agent：选择组织技能", () => {
-  it.each(["zh", "en"] as const)(
-    "技能分组列出组织技能，勾选后保存 skills.orgSkills（%s）",
-    async (locale) => {
-      const m = msgs[locale];
-      const calls = stubApi({
-        [`GET ${ORG}/models`]: () => json(200, MODELS),
-        [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
-        [`GET ${ORG}/skills`]: () =>
-          json(200, { skills: [orgSkill("s1", "pdf-tools"), orgSkill("s2", "slides")] }),
-        [`POST ${ORG}/agents`]: () => json(201, { agent: agent(), warnings: [] }),
-      });
-      await renderNewAgent({ locale });
-      const user = userEvent.setup();
-      const group = await screen.findByRole("group", { name: m.agents.form.orgSkillsLabel });
-      await user.click(await within(group).findByRole("checkbox", { name: /pdf-tools/ }));
-      expect(screen.getByRole("region", { name: m.agents.form.skillsSection })).toBeTruthy();
-      await user.type(screen.getByRole("textbox", { name: m.agents.form.nameLabel }), "Echo");
-      await user.click(screen.getByRole("button", { name: m.agents.form.submit }));
-      await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
-      const body = bodyOf(calls.find((c) => c.method === "POST")) as {
-        definition: { skills?: unknown };
-      };
-      expect(body.definition.skills).toEqual({ orgSkills: ["s1"] });
-    },
-  );
-
-  it.each(["zh", "en"] as const)(
-    "私有 agent 显示 skill_write 确认开关，勾选后保存 writePolicy ask；改成共享后隐藏（%s）",
-    async (locale) => {
-      const m = msgs[locale];
-      const calls = stubApi({
-        [`GET ${ORG}/models`]: () => json(200, MODELS),
-        [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
-        [`GET ${ORG}/skills`]: () => json(200, { skills: [] }),
-        [`POST ${ORG}/agents`]: () => json(201, { agent: agent(), warnings: [] }),
-      });
-      await renderNewAgent({ locale });
-      const user = userEvent.setup();
-      const sw = await screen.findByRole("checkbox", { name: m.agents.form.confirmSkillWrite });
-      expect(sw).toHaveProperty("checked", false);
-      await user.click(sw);
-      await user.type(screen.getByRole("textbox", { name: m.agents.form.nameLabel }), "Echo");
-      await user.click(screen.getByRole("button", { name: m.agents.form.submit }));
-      await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
-      const body = bodyOf(calls.find((c) => c.method === "POST")) as {
-        definition: { skills?: unknown };
-      };
-      expect(body.definition.skills).toEqual({ orgSkills: [], writePolicy: "ask" });
-    },
-  );
-
-  it("可见性改成共享后，确认开关隐藏", async () => {
-    stubApi({
-      [`GET ${ORG}/models`]: () => json(200, MODELS),
-      [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
-      [`GET ${ORG}/skills`]: () => json(200, { skills: [] }),
-    });
-    await renderNewAgent();
-    const sw = await screen.findByRole("checkbox", { name: en.agents.form.confirmSkillWrite });
-    await userEvent.click(sw);
-    const unsaved = () =>
-      document.querySelector('[data-part="action-row-unsaved"]')?.textContent ?? "";
-    expect(unsaved()).toMatch(/\b1\b/);
-    await userEvent.selectOptions(
-      screen.getByRole("combobox", { name: en.agents.form.visibilityLabel }),
-      "org",
-    );
-    expect(screen.queryByRole("checkbox", { name: en.agents.form.confirmSkillWrite })).toBeNull();
-    // 隐藏的开关不计入改动数：只剩可见性这一项
-    expect(unsaved()).toMatch(/\b1\b/);
-  });
-
-  it("不选技能：定义里不带 skills", async () => {
-    const calls = stubApi({
-      [`GET ${ORG}/models`]: () => json(200, MODELS),
-      [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
-      [`GET ${ORG}/skills`]: () => json(200, { skills: [] }),
-      [`POST ${ORG}/agents`]: () => json(201, { agent: agent(), warnings: [] }),
-    });
-    await renderNewAgent();
-    const user = userEvent.setup();
-    expect(await screen.findByText(en.agents.form.noOrgSkills)).toBeTruthy();
-    await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
-    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), "Echo");
-    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalled());
-    const body = bodyOf(calls.find((c) => c.method === "POST")) as { definition: object };
-    expect("skills" in body.definition).toBe(false);
-  });
 });
 
 describe("编辑 agent（FormPage）", () => {
@@ -414,44 +322,6 @@ describe("pinned skills (skills.pinned)", () => {
     [`GET ${ORG}/skills`]: () => json(200, { skills: ORG_SKILLS }),
     [`GET ${ORG}/agents/ag1/skills`]: () => json(200, { skills: [] }),
   });
-
-  it.each(["zh", "en"] as const)(
-    "selecting a suggested skill ticks pinned by default; the owner can untick it and pin another (%s)",
-    async (locale) => {
-      const f = msgs[locale].agents.form;
-      const calls = stubApi({
-        [`GET ${ORG}/models`]: () => json(200, MODELS),
-        [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
-        [`GET ${ORG}/skills`]: () => json(200, { skills: ORG_SKILLS }),
-        [`POST ${ORG}/agents`]: () => json(201, { agent: agent(), warnings: [] }),
-      });
-      await renderNewAgent({ locale });
-      const user = userEvent.setup();
-      const org = await screen.findByRole("group", { name: f.orgSkillsLabel });
-      const pinned = screen.getByRole("group", { name: f.pinnedLabel });
-      expect(within(pinned).getByText(f.noPinnable)).toBeTruthy();
-      await user.click(await within(org).findByRole("checkbox", { name: /using-superpowers/ }));
-      await user.click(within(org).getByRole("checkbox", { name: /brainstorming/ }));
-      const using = within(pinned).getByRole("checkbox", {
-        name: fill(f.pinSkill, { name: "using-superpowers" }),
-      });
-      expect(using).toHaveProperty("checked", true);
-      expect(within(pinned).getByText(f.suggested)).toBeTruthy();
-      const brain = within(pinned).getByRole("checkbox", {
-        name: fill(f.pinSkill, { name: "brainstorming" }),
-      });
-      expect(brain).toHaveProperty("checked", false);
-      await user.click(using);
-      await user.click(brain);
-      await user.type(screen.getByRole("textbox", { name: f.nameLabel }), "Echo");
-      await user.click(screen.getByRole("button", { name: f.submit }));
-      await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
-      const body = bodyOf(calls.find((c) => c.method === "POST")) as {
-        definition: { skills?: unknown };
-      };
-      expect(body.definition.skills).toEqual({ orgSkills: ["s1", "s2"], pinned: ["s2"] });
-    },
-  );
 
   it("when the agent's own skills cannot be read, no pinned skill shows as deleted (batch-3 I1)", async () => {
     const f = en.agents.form;

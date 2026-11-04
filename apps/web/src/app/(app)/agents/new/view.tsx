@@ -2,21 +2,23 @@
 
 import { FormPage, type PageHeaderProps } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { AgentFormLoading, useAgentForm } from "../../../../components/AgentForm";
+import {
+  type AgentCreated,
+  AgentFormLoading,
+  useAgentForm,
+} from "../../../../components/AgentForm";
 import { type AgentFormData, useAgentFormData } from "../../../../components/agent/form-data";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
-import { useSetup } from "../../../../components/shell/setup";
 import { useRouter } from "../../../../i18n/navigation";
-import type { Agent } from "../../../../lib/agents";
 import { useWorkspace } from "../../../../lib/query/workspace";
 
 /**
- * `/agents/new`: create an agent (FormPage), then back to the list. Inside the setup layout
- * (web-order spec §3.8) the new agent may make the org ready, so the page lands on a new
- * conversation with that agent (the save invalidates readiness). The form's lists come from the
- * query cache (the layout prefetched them on a first load).
+ * `/agents/new`: create an agent (FormPage: avatar, name, model, visibility), then land on its page
+ * at the prompt (`/agents/<id>?s=prompt`), where the starter `AGENTS.md` waits to be edited. When
+ * the picked avatar upload failed after the create, it lands on Basics with that error. The
+ * form's reads come from the query cache (the layout prefetched them on a first load).
  */
 export default function NewAgentView() {
   const ws = useWorkspace({ min: "member", setup: "step" });
@@ -29,15 +31,16 @@ function NewAgent({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations();
   const router = useRouter();
-  const setup = useSetup();
   const state = useAgentFormData(orgId);
-  // In the setup layout the new agent may make the org ready: go to a new conversation with it.
-  const done = (agent?: Agent) =>
-    router.push(
-      setup.active && agent !== undefined
-        ? `/chat?agent=${encodeURIComponent(agent.id)}`
-        : "/agents",
-    );
+  const done = (created?: AgentCreated) => {
+    if (created === undefined) router.push("/agents");
+    else {
+      const id = encodeURIComponent(created.agent.id);
+      router.push(
+        created.uploadFailed ? `/agents/${id}?s=basics&avatar=failed` : `/agents/${id}?s=prompt`,
+      );
+    }
+  };
   const header = {
     path: [...scope, { label: "agents", href: "/agents" }, { label: "new" }],
     title: t("agents.form.title"),
@@ -70,7 +73,7 @@ function NewAgentForm({
   orgId: string;
   data: AgentFormData;
   header: PageHeaderProps;
-  done(agent?: Agent): void;
+  done(created?: AgentCreated): void;
 }) {
   const t = useTranslations();
   const form = useAgentForm(orgId, done, data);
@@ -81,15 +84,13 @@ function NewAgentForm({
       actionRow={{
         unsaved: form.unsaved,
         errors: form.errors,
-        ...(form.saved ? {} : { cancel: { label: t("common.cancel"), onSelect: () => done() } }),
-        primary: form.saved
-          ? { label: t("agents.form.continue"), onSelect: () => done(form.savedAgent) }
-          : {
-              label: t("agents.form.submit"),
-              onSelect: form.submit,
-              loading: form.pending,
-              disabled: !form.canSubmit,
-            },
+        cancel: { label: t("common.cancel"), onSelect: () => done() },
+        primary: {
+          label: t("agents.form.submit"),
+          onSelect: form.submit,
+          loading: form.pending,
+          disabled: !form.canSubmit,
+        },
       }}
     >
       {form.sections}

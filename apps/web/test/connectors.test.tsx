@@ -6,7 +6,6 @@ import zh from "../messages/zh.json";
 import ConnectorDetailPage from "../src/app/(app)/connectors/[connectorId]/page";
 import { navigateBrowser } from "../src/lib/browser";
 import type { Me } from "../src/lib/session";
-import { renderNewAgent } from "./support/agents";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
@@ -611,62 +610,6 @@ describe("个人连接（SettingsPage）", () => {
       );
     },
   );
-});
-
-describe("新建 agent：工具选择与策略收紧", () => {
-  it.each(LOCALES)("勾选连接器（全部工具）并把其中一个工具收紧为禁止（%s）", async (locale) => {
-    const m = msgs[locale];
-    const posts: unknown[] = [];
-    stubApi({
-      "GET /api/v1/orgs/o1/models": () =>
-        json(200, {
-          providers: [
-            {
-              provider: "model-fake",
-              models: [
-                {
-                  id: "fake-1",
-                  displayName: "Fake 1",
-                  capabilities: { reasoning: false },
-                  parameters: [],
-                },
-              ],
-            },
-          ],
-        }),
-      "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [summary()] }),
-      "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }),
-      "POST /api/v1/orgs/o1/agents": (c) => {
-        posts.push(bodyOf(c));
-        return json(201, { agent: { id: "ag1" }, warnings: [] });
-      },
-    });
-    await renderNewAgent({ locale });
-    const user = userEvent.setup();
-    expect(await screen.findByRole("region", { name: m.agents.form.toolsSection })).toBeTruthy();
-    await user.type(screen.getByRole("textbox", { name: m.agents.form.nameLabel }), "Tooly");
-    // 内置工具默认勾选；取消 read_tool_output
-    await user.click(
-      screen.getByRole("checkbox", { name: m.agents.form.builtin.read_tool_output }),
-    );
-    await user.click(
-      await screen.findByRole("checkbox", {
-        name: m.agents.form.connectorTools.replace("{name}", "Fixture"),
-      }),
-    );
-    const policy = await screen.findByRole("combobox", { name: "fixture__delete_item" });
-    await user.selectOptions(policy, "deny");
-    await user.click(screen.getByRole("button", { name: m.agents.form.submit }));
-    expect(posts[0]).toMatchObject({
-      definition: {
-        tools: [
-          { kind: "builtin", name: "ask_user" },
-          { kind: "connector", connectorId: "app1", tools: "all" },
-        ],
-        toolPolicies: { fixture__delete_item: "deny" },
-      },
-    });
-  });
 });
 
 describe("连接器详情的工具栏刷新", () => {

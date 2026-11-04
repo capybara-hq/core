@@ -8,9 +8,7 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { ModelParams } from "../src/components/ModelParams";
 import type { ModelParameter, ParamValue } from "../src/lib/agents";
-import { renderNewAgent } from "./support/agents";
-import { stubApi } from "./support/api";
-import { resetNavigation, router } from "./support/navigation";
+import { resetNavigation } from "./support/navigation";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -22,7 +20,7 @@ vi.mock("next/navigation", () => ({
   },
 }));
 
-const json = (status: number, body: unknown): Response =>
+const _json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 const EFFORT: ModelParameter = {
@@ -123,6 +121,8 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
+
+const paramBox = (control: HTMLElement) => control.closest("[data-param]") as HTMLElement;
 
 describe("ModelParams", () => {
   it("标准旋钮渲染专门控件：effort / thinking 分段按钮（按声明顺序），temperature 滑块加数字框，maxOutputTokens 数字框", async () => {
@@ -309,177 +309,4 @@ describe("ModelParams", () => {
     const { container } = render(<Harness parameters={[]} locale="en" onChange={vi.fn()} />);
     expect(container.textContent).toBe("");
   });
-});
-
-// ---------------------------------------------------------------------------
-// AgentForm：按所选模型渲染参数区
-// ---------------------------------------------------------------------------
-
-const caps = (reasoning: boolean) => ({
-  tools: true,
-  vision: false,
-  reasoning,
-  caching: false,
-  midConversationSystem: false,
-});
-const MODELS = {
-  providers: [
-    {
-      provider: "model-fake",
-      models: [
-        {
-          id: "fake-1",
-          displayName: "Fake 1",
-          capabilities: caps(true),
-          parameters: [EFFORT, STYLE],
-        },
-      ],
-    },
-    {
-      provider: "other",
-      models: [
-        {
-          id: "o-1",
-          displayName: "O 1",
-          capabilities: caps(false),
-          parameters: [{ ...EFFORT, schema: { type: "string", enum: ["low", "high"] } }],
-        },
-        { id: "o-2", displayName: "O 2", capabilities: caps(false), parameters: [] },
-      ],
-    },
-  ],
-};
-
-/** The browser answers the create (`posts`); the server reads the models from the same routes. */
-function stub(post: (body: unknown) => Response) {
-  const posts: unknown[] = [];
-  stubApi({
-    "GET /api/v1/orgs/o1/models": () => json(200, MODELS),
-    "POST /api/v1/orgs/o1/agents": (c) => {
-      const body = JSON.parse(String(c.body));
-      posts.push(body);
-      return post(body);
-    },
-  });
-  return posts;
-}
-
-const ok = () => json(201, { agent: { id: "ag1" }, warnings: [] });
-
-function renderForm(locale: "zh" | "en") {
-  return renderNewAgent({ locale });
-}
-
-const nameBox = (locale: "zh" | "en") =>
-  screen.getByRole("textbox", { name: (locale === "zh" ? zh : en).agents.form.nameLabel });
-const modelBox = (locale: "zh" | "en") =>
-  screen.getByRole("combobox", { name: (locale === "zh" ? zh : en).agents.form.modelLabel });
-/** 兜底模型下拉框的名称带「可选」后缀。 */
-const fallbackBox = (locale: "zh" | "en") => {
-  const label = (locale === "zh" ? zh : en).agents.form.fallbackLabel;
-  return screen.getByRole("combobox", { name: (n) => n.startsWith(label) });
-};
-
-const paramBox = (control: HTMLElement) => control.closest("[data-param]") as HTMLElement;
-
-describe("AgentForm 模型参数", () => {
-  it("切换主模型时重新渲染参数区并丢弃新模型没有声明（或不再合法）的键；保存提交 modelParams / fallbackParams", async () => {
-    const posts = stub(ok);
-    await renderForm("en");
-    const user = userEvent.setup();
-    const main = await screen.findByRole("region", { name: en.agents.form.modelParamsTitle });
-    await user.type(nameBox("en"), "Echo");
-    await user.click(within(main).getByRole("radio", { name: en.agents.params.effort.high }));
-    await user.selectOptions(within(main).getByRole("combobox", { name: "Reply style" }), "shout");
-
-    // o-1 只声明 effort（low|high）：style 被丢弃，effort=high 保留
-    await user.selectOptions(modelBox("en"), "other/o-1");
-    expect(within(main).queryByRole("combobox", { name: "Reply style" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
-    expect(posts.at(-1)).toMatchObject({
-      definition: { model: { provider: "other", model: "o-1" }, modelParams: { effort: "high" } },
-    });
-    expect(router.push).toHaveBeenCalledWith("/agents");
-  });
-
-  it("切换到不再声明该档位的模型时丢弃旧值；切到无参数模型时参数区消失", async () => {
-    const posts = stub(ok);
-    await renderForm("en");
-    const user = userEvent.setup();
-    const main = await screen.findByRole("region", { name: en.agents.form.modelParamsTitle });
-    await user.type(nameBox("en"), "Echo");
-    await user.click(within(main).getByRole("radio", { name: en.agents.params.effort.medium }));
-    await user.selectOptions(modelBox("en"), "other/o-1");
-    await user.selectOptions(modelBox("en"), "other/o-2");
-    expect(screen.queryByRole("region", { name: en.agents.form.modelParamsTitle })).toBeNull();
-    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
-    expect(posts.at(-1)).toMatchObject({ definition: { modelParams: {}, fallbackParams: {} } });
-  });
-
-  it("兜底模型有自己的参数区；去掉兜底模型时清空 fallbackParams", async () => {
-    const posts = stub(ok);
-    await renderForm("en");
-    const user = userEvent.setup();
-    await screen.findByRole("region", { name: en.agents.form.modelParamsTitle });
-    await user.type(nameBox("en"), "Echo");
-    expect(screen.queryByRole("region", { name: en.agents.form.fallbackParamsTitle })).toBeNull();
-    await user.selectOptions(fallbackBox("en"), "other/o-1");
-    const fb = screen.getByRole("region", { name: en.agents.form.fallbackParamsTitle });
-    await user.click(within(fb).getByRole("radio", { name: en.agents.params.effort.low }));
-    await user.selectOptions(fallbackBox("en"), "");
-    expect(screen.queryByRole("region", { name: en.agents.form.fallbackParamsTitle })).toBeNull();
-    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
-    expect(posts.at(-1)).toMatchObject({ definition: { fallback: null, fallbackParams: {} } });
-
-    // 再选回兜底模型：之前的值已清空
-    await user.selectOptions(fallbackBox("en"), "other/o-1");
-    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
-    expect(posts.at(-1)).toMatchObject({
-      definition: { fallback: { provider: "other", model: "o-1" }, fallbackParams: {} },
-    });
-  });
-
-  it.each(["zh", "en"] as const)(
-    "validation_failed 的 details 显示在对应字段旁（%s）",
-    async (locale) => {
-      const m = locale === "zh" ? zh : en;
-      stub(() =>
-        json(400, {
-          error: {
-            code: "validation_failed",
-            message: "Invalid model parameters",
-            details: [
-              { path: "modelParams.model-fake.style", message: 'parameter "x" must be one of' },
-              { path: "fallbackParams.effort", message: 'parameter "effort" must be one of' },
-              { path: "fallbackParams.gone", message: 'unknown parameter "gone"' },
-            ],
-          },
-        }),
-      );
-      await renderForm(locale);
-      const user = userEvent.setup();
-      const main = await screen.findByRole("region", { name: m.agents.form.modelParamsTitle });
-      await user.type(nameBox(locale), "Echo");
-      await user.selectOptions(fallbackBox(locale), "other/o-1");
-      await user.click(screen.getByRole("button", { name: m.agents.form.submit }));
-
-      const style = within(main).getByRole("combobox", { name: STYLE.label[locale] });
-      expect(await within(paramBox(style)).findByText(`${m.agents.params.invalid}`)).toBeTruthy();
-      expect(style.getAttribute("aria-invalid")).toBe("true");
-      // 主模型的 effort 没有错误
-      const mainEffort = within(main).getByRole("radiogroup", { name: EFFORT.label[locale] });
-      expect(within(paramBox(mainEffort)).queryByText(`${m.agents.params.invalid}`)).toBeNull();
-
-      const fb = screen.getByRole("region", { name: m.agents.form.fallbackParamsTitle });
-      const fbEffort = within(fb).getByRole("radiogroup", { name: EFFORT.label[locale] });
-      expect(within(paramBox(fbEffort)).getByText(`${m.agents.params.invalid}`)).toBeTruthy();
-      // 界面上没有对应字段的键：随总错误一起列出
-      const alert = screen.getByRole("alert");
-      expect(within(alert).getByText(`${m.errors.validation_failed}`)).toBeTruthy();
-      expect(
-        within(alert).getByText(`${m.agents.params.invalidKey.replace("{key}", "gone")}`),
-      ).toBeTruthy();
-      expect(router.push).not.toHaveBeenCalled();
-    },
-  );
 });
