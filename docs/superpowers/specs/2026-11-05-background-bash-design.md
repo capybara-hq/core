@@ -142,8 +142,9 @@ tokens and attributing approvals without a person sending anything.
   - the person who started the launching run (the task's `triggerAccountId`) can still send to it;
   - no other wake started for this conversation in the last 60 s. Finishes that land together are
     seen together. A finish that falls inside the window schedules one delayed BullMQ job,
-    `bg-wake-<conversationId>-<windowEnd>` on `cap-kernel-maintenance`, at the window's end. That
-    job calls `ensureRun` if unconsumed background events remain.
+    `bg-wake-<conversationId>-<windowEnd>[-r<n>]` on `cap-kernel-maintenance`, at the window's end
+    (`-r<n>`: the job fired early and scheduled itself again). That job calls `ensureRun` if
+    unconsumed background events remain.
 - **The wake run** is a run whose boundary is the `background_task_finished` event, not a
   `user_message`:
   - `trigger_account_id` is the task's trigger account;

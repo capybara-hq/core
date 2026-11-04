@@ -11,6 +11,7 @@ import {
   users,
   zh,
 } from "./support/chat";
+import { hydrated } from "./support/nav";
 import { signIn } from "./support/sign-in";
 
 /**
@@ -23,12 +24,15 @@ import { signIn } from "./support/sign-in";
 
 const DESCRIPTION = "Wait then print";
 const BASH = `tool:Bash:${JSON.stringify({
-  command: "sleep 3; echo ready",
+  command: "sleep 20; echo ready",
   description: DESCRIPTION,
   run_in_background: true,
 })}`;
-/** The poll (`sandbox.background.pollSeconds`, 10 s) notices the finish: allow for a few polls. */
-const FINISH_TIMEOUT = 60_000;
+/**
+ * The task runs 20 s, past the time the page needs to show it running under load; the poll
+ * (`sandbox.background.pollSeconds`, 10 s) notices the finish up to 10 s later. Allow for both.
+ */
+const FINISH_TIMEOUT = 90_000;
 
 test("background Bash: the running task, its output, the finished notice and the wake run", async ({
   page,
@@ -40,6 +44,7 @@ test("background Bash: the running task, its output, the finished notice and the
   ]);
   const convId = await openConversation(page, orgId, agentId);
 
+  await hydrated(page);
   // the properties panel is open before the send, so the running task shows as soon as it starts
   await page.getByRole("button", { name: designZh("titlebar.properties") }).click();
   const props = page.getByRole("complementary", { name: designZh("props.label") });
@@ -63,7 +68,7 @@ test("background Bash: the running task, its output, the finished notice and the
   await row.getByRole("button", { name: DESCRIPTION, exact: true }).click();
   await expect(page).toHaveURL(/#bg-bt_/);
   const panel = page.getByRole("complementary", { name: DESCRIPTION });
-  await expect(panel.locator('[data-part="task-command"]')).toContainText("sleep 3; echo ready");
+  await expect(panel.locator('[data-part="task-command"]')).toContainText("sleep 20; echo ready");
   await expect(panel.locator('[data-part="task-output-status"]')).toContainText(
     zh.background.status.completed,
     { timeout: FINISH_TIMEOUT },

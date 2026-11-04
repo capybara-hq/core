@@ -214,13 +214,13 @@ the same transaction as the business rows.
 - `Bash` `run_in_background: true` reserves a `capybara.background_tasks` row first (counted against `sandbox.background.maxTasks` under a
   per-sandbox `XactLock`, `sid` null), then launches with one short exec under the call's shared lease (`setsid` + `timeout -s KILL` + `bash`,
   output in `/workspace/.capybara/tasks/<id>.out`), then records the session id. The call returns at once; `timeout` is the task's own limit
-  (default and cap `sandbox.background.maxSeconds`). A failed launch finishes the row `failed`; a full sandbox is refused with
+  (default and cap `sandbox.background.maxSeconds`, itself at most `sandbox.limits.maxCommandSeconds`). A failed launch finishes the row `failed`; a full sandbox is refused with
   "N background tasks are already running; stop one with TaskStop or wait for one to finish, then retry".
 - `TaskOutput {task_id, block?, timeout?}` (block default true, timeout 30 s, at most 600 s and the run's time left, checked every 2 s) returns
   the status and the output since this conversation's last read (`read_offset` in PG, spilled like any large result); `TaskStop {task_id}`
   claims the task (`stopping_at`), sends SIGTERM to the session, SIGKILL after 5 s. Both are `defaultPolicy: "allow"`, offered whenever
-  `Bash` is (the registry adds them, `BASH_COMPANION_TOOLS`), given to sub-agents, and go through `SandboxService.ifRunning`: they never
-  create or resume a sandbox. A conversation reads and stops only its own tasks.
+  `Bash` is (the registry adds them, `BASH_COMPANION_TOOLS`), given to sub-agents, and go through `SandboxService.ifRunning` (see
+  `.agents/skills/writing-sandbox-providers`). A conversation reads and stops only its own tasks.
 - A finish (poll, `TaskOutput`, `TaskStop`, or a person's stop from the panel) is one conditional update from `running` plus the
   model-visible `background_task_finished` event (idempotency key `background_task_finished:<taskId>`) in the same transaction. A finish a
   tool result already showed the model is `reported: true` (one short line, never wakes); a person's stop is `stoppedBy: "person"` (never
