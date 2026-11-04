@@ -89,6 +89,7 @@ export const ACCEPTED: string[] = [
   // reference PNGs and the side-by-side review wait for the reference-update and visual-update
   // workflows
   "background-task",
+  "task-output-panel",
 ];
 
 /**

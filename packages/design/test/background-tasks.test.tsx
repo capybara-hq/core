@@ -115,6 +115,39 @@ describe("BackgroundTasks task rows", () => {
     expect(within(rows[1] as HTMLElement).getByText("pnpm dev")).toBeTruthy();
   });
 
+  it("a task under a finished sub-agent is still nested; the finished parent is no row", () => {
+    const { container } = wrap(
+      <BackgroundTasks
+        items={[
+          {
+            ...agent({ status: "completed", finishedAt: T0 + 1_000 }),
+            tasks: [task({ id: "bgt_n" })],
+          } as BackgroundItem,
+        ]}
+        now={NOW}
+        onStop={vi.fn()}
+        onOpen={vi.fn()}
+      />,
+    );
+    const rows = [...container.querySelectorAll('[data-part="task-row"]')];
+    expect(rows.map((r) => r.getAttribute("data-nested"))).toEqual(["true"]);
+  });
+
+  it("the stopping text is announced politely", () => {
+    wrap(
+      <BackgroundTasks
+        items={[task({ stopping: true })]}
+        now={NOW}
+        onStop={vi.fn()}
+        onOpen={vi.fn()}
+      />,
+      "en",
+    );
+    const el = screen.getByText("Stopping…");
+    expect(el.getAttribute("role")).toBe("status");
+    expect(el.getAttribute("aria-live")).toBe("polite");
+  });
+
   it("N completed counts finished tasks and sub-agents together and opens the newest", async () => {
     const onOpen = vi.fn();
     wrap(

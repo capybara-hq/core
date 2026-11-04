@@ -568,7 +568,11 @@ export function BackgroundTaskRow({
         </span>
       ) : null}
       <span className="cb-muted">{subagentDuration(end - item.startedAt, locale)}</span>
-      {stopping ? <span className="cb-muted">{t("background.stopping")}</span> : null}
+      {stopping ? (
+        <span className="cb-muted" role="status" aria-live="polite">
+          {t("background.stopping")}
+        </span>
+      ) : null}
       {running && !stopping ? (
         <IconButton
           density="dense"
@@ -620,7 +624,7 @@ export function BackgroundTasks({
     undefined,
   );
   // The rows are the section's own children, `space.1` apart (the reference's section gap).
-  const rows = (list: BackgroundItem[], underRunning: boolean): ReactNode[] =>
+  const rows = (list: BackgroundItem[], hasParent: boolean): ReactNode[] =>
     list.flatMap((i) => {
       const run = itemActive(i);
       return [
@@ -630,13 +634,13 @@ export function BackgroundTasks({
                 key={i.id}
                 item={i}
                 now={clock}
-                nested={underRunning}
+                nested={hasParent}
                 onStop={onStop}
                 onOpen={onOpen}
               />,
             ]
           : []),
-        ...(i.kind === "subagent" ? rows(i.tasks ?? [], run) : []),
+        ...(i.kind === "subagent" ? rows(i.tasks ?? [], true) : []),
       ];
     });
   return (

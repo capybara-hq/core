@@ -37,6 +37,7 @@ import {
   type SubagentRowData,
   SubagentTask,
   TaskList,
+  TaskOutputPanel,
   TitleBar,
   type TitleBarPanel,
   type TitleBarProps,
@@ -446,13 +447,12 @@ function filesSection() {
   return <FilesSection files={fileRows} onOpen={noop} onAll={noop} />;
 }
 
-const BG_START = NOW - 148_000;
+/** The fixture's running duration, "2:28". */
+const RUNNING_MS = 148_000;
+const ID = { running: "running", sandbox: "finished", event: "unavailable" } as const;
+const BG_START = NOW - RUNNING_MS;
 
 function backgroundSection() {
-  const clock = (d: string) => {
-    const [m = "0", sec = "0"] = d.split(":");
-    return (Number(m) * 60 + Number(sec)) * 1000;
-  };
   return (
     <PropertySection title="后台任务">
       <BackgroundTasks
@@ -463,7 +463,7 @@ function backgroundSection() {
               id: `bg${i}`,
               name: r.name,
               status: "running",
-              startedAt: NOW - clock(r.duration),
+              startedAt: NOW - RUNNING_MS,
             }),
           ),
           ...Array.from(
@@ -548,6 +548,37 @@ function backgroundTaskBlocks(): ReactNode {
           />
         </PropertySection>
       </PropBlock>
+    </>
+  );
+}
+
+function taskOutputBlocks(): ReactNode {
+  const body = (
+    status: BackgroundTaskItem["status"],
+    source: "sandbox" | "event",
+    elapsed: string,
+  ) => (
+    <RefBlock
+      id={`task-output-panel-${ID[status === "running" ? "running" : source]}`}
+      width={420}
+      pad
+    >
+      <TaskOutputPanel
+        description="pnpm dev --port 3000"
+        command="pnpm dev --port 3000"
+        status={status}
+        elapsed={elapsed}
+        text={"ready in 412 ms\nlistening on http://localhost:3000"}
+        source={source}
+        onStop={noop}
+      />
+    </RefBlock>
+  );
+  return (
+    <>
+      {body("running", "sandbox", "2分28秒")}
+      {body("completed", "sandbox", "1分12秒")}
+      {body("completed", "event", "1分12秒")}
     </>
   );
 }
@@ -946,6 +977,7 @@ export const CONVERSATION_PAGE_BLOCKS = {
   "inline-card": inlineCardBlocks,
   "property-section": propertySectionBlocks,
   "background-task": backgroundTaskBlocks,
+  "task-output-panel": taskOutputBlocks,
   "right-panel": rightPanelBlocks,
   "template-conversation": templateConversationBlocks,
 } as const;

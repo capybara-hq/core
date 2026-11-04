@@ -68,7 +68,7 @@ export function TaskOutputPanel({
         {command}
       </div>
       {source === "event" ? (
-        <div className="cb-faint cb-task-output-note" data-part="task-output-note">
+        <div className="cb-muted cb-task-output-note" data-part="task-output-note">
           {t("background.unavailable")}
         </div>
       ) : null}
