@@ -9,6 +9,7 @@ import {
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
+import { AgentProfileService } from "./agent-profile.service.js";
 import {
   AGENT_VISIBILITIES,
   AgentsService,
@@ -17,6 +18,7 @@ import {
   type AgentWarning,
 } from "./agents.service.js";
 import { AgentDefinitionSchema, AgentToolRef, DEFAULT_AGENT_TOOLS } from "./definition.js";
+import { type AgentProfile, ProfileInputSchema } from "./profile.js";
 
 const MemberIds = z.array(z.string().min(1).max(100)).max(1000);
 const OwnerBody = z.object({ accountId: z.string().min(1).max(100) }).strict();
@@ -31,8 +33,14 @@ const CreateBody = z
     definition: CreateDefinition,
     visibility: z.enum(AGENT_VISIBILITIES),
     memberIds: MemberIds.optional(),
+    /** Without an avatar the agent gets a random preset. */
+    profile: ProfileInputSchema.optional(),
   })
   .strict();
+const ProfileBody = ProfileInputSchema.extend({
+  /** The `profile.updatedAt` the client read; a different one → 409 `agent.profile_conflict`. */
+  expectedUpdatedAt: z.string().min(1).max(40),
+}).strict();
 const UpdateBody = z
   .object({
     definition: AgentDefinitionSchema.optional(),
@@ -51,6 +59,7 @@ const viewerOf = (p: Principal): string | null => (p.kind === "user" ? p.account
 
 class AgentCreateBodyDto extends createZodDto(CreateBody, "AgentCreateBody") {}
 class AgentUpdateBodyDto extends createZodDto(UpdateBody, "AgentUpdateBody") {}
+class AgentProfileBodyDto extends createZodDto(ProfileBody, "AgentProfileBody") {}
 class AgentOwnerBodyDto extends createZodDto(OwnerBody, "AgentOwnerBody") {}
 
 /**
@@ -59,7 +68,10 @@ class AgentOwnerBodyDto extends createZodDto(OwnerBody, "AgentOwnerBody") {}
  */
 @Controller("api/v1/orgs/:orgId/agents")
 export class AgentsController {
-  constructor(@Inject(AgentsService) private readonly agents: AgentsService) {}
+  constructor(
+    @Inject(AgentsService) private readonly agents: AgentsService,
+    @Inject(AgentProfileService) private readonly profiles: AgentProfileService,
+  ) {}
 
   @Post()
   @OrgAction("agents.create")
@@ -76,6 +88,7 @@ export class AgentsController {
         definition: body.definition,
         visibility: body.visibility,
         ...(body.memberIds !== undefined && { memberIds: body.memberIds }),
+        ...(body.profile !== undefined && { profile: body.profile }),
       },
       patTokenId(p),
     );
@@ -110,6 +123,29 @@ export class AgentsController {
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
     const p = requireUser(principal);
     return this.agents.update(org.orgId, agentId, p.account.id, body, patTokenId(p));
+  }
+
+  /** Display data only: no agent version. Same permission as `PATCH :agentId`. */
+  @Patch(":agentId/profile")
+  @OrgAction("agents.create")
+  async updateProfile(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("agentId") agentId: string,
+    @ZBody(AgentProfileBodyDto) body: z.infer<typeof ProfileBody>,
+  ): Promise<{ profile: AgentProfile }> {
+    const p = requireUser(principal);
+    const { expectedUpdatedAt, ...patch } = body;
+    return {
+      profile: await this.profiles.update(
+        org.orgId,
+        agentId,
+        p.account.id,
+        patch,
+        expectedUpdatedAt,
+        patTokenId(p),
+      ),
+    };
   }
 
   @Delete(":agentId")

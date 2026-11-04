@@ -167,6 +167,15 @@ export interface AgentsTable {
   org_role: Generated<"admin" | "member" | "guest">;
   current_version: number;
   needs_reassignment: Generated<boolean>;
+  /** 0066: the profile (display data, outside the versions). */
+  profile_avatar: ColumnType<
+    Record<string, unknown> | null,
+    string | null | undefined,
+    string | null
+  >;
+  profile_description: Generated<string>;
+  profile_quick_actions: ColumnType<unknown[], string | undefined, string>;
+  profile_updated_at: Ts;
   created_at: Ts;
   updated_at: Ts;
   deleted_at: TsNullable;

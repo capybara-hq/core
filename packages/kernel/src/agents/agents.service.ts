@@ -32,6 +32,7 @@ import {
   SUBAGENT_NAME_RE,
   SUBAGENT_ROSTER_MAX,
 } from "./definition.js";
+import { type ProfileInput, randomPreset } from "./profile.js";
 
 export {
   AGENT_VISIBILITIES,
@@ -55,6 +56,15 @@ export type AgentVersionSummary = Omit<AgentVersion, "definition">;
 
 /** 创建 / 修改的提示（不拒绝）：`fallback_same_provider` = 兜底与主模型同一供应商（spec 4.5）。 */
 export type AgentWarning = "fallback_same_provider";
+
+/** Until uploads are wired (the object store), a client can only choose a preset. */
+export function assertProfileWritable(profile: ProfileInput | undefined): void {
+  if (profile?.avatar?.kind === "upload") {
+    throw new ApiError("validation_failed", "Avatar uploads are not available yet", [
+      { path: "avatar.kind", message: "upload is not supported" },
+    ]);
+  }
+}
 
 const notFound = () => new ApiError("agent.not_found", "Agent not found");
 
@@ -338,7 +348,12 @@ export class AgentsService {
   async create(
     orgId: string,
     actorAccountId: string,
-    input: { definition: AgentDefinition; visibility: AgentVisibility; memberIds?: string[] },
+    input: {
+      definition: AgentDefinition;
+      visibility: AgentVisibility;
+      memberIds?: string[];
+      profile?: ProfileInput;
+    },
     actorTokenId?: string,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
     // 先解析模型（可能访问供应商），不在持有组织行锁时做
@@ -347,6 +362,7 @@ export class AgentsService {
     if (input.visibility !== "members" && (input.memberIds?.length ?? 0) > 0) {
       throw new ApiError("validation_failed", "memberIds requires visibility 'members'");
     }
+    assertProfileWritable(input.profile);
     const agent = await this.createIn(orgId, actorAccountId, input, toolKeys, actorTokenId);
     return { agent, warnings };
   }
@@ -355,7 +371,12 @@ export class AgentsService {
   private async createIn(
     orgId: string,
     actorAccountId: string,
-    input: { definition: AgentDefinition; visibility: AgentVisibility; memberIds?: string[] },
+    input: {
+      definition: AgentDefinition;
+      visibility: AgentVisibility;
+      memberIds?: string[];
+      profile?: ProfileInput;
+    },
     toolKeys: Set<string>,
     actorTokenId: string | undefined,
   ): Promise<AgentView> {
@@ -383,6 +404,11 @@ export class AgentsService {
         owner_account_id: actorAccountId,
         visibility: input.visibility,
         current_version: 1,
+        profile_avatar: JSON.stringify(
+          input.profile?.avatar ?? { kind: "preset", id: randomPreset() },
+        ),
+        profile_description: input.profile?.description ?? "",
+        profile_quick_actions: JSON.stringify(input.profile?.quickActions ?? []),
       })
       .execute();
     await t
@@ -411,7 +437,7 @@ export class AgentsService {
    * 对发起人不可见的 agent（非管理员）→ `agent.not_found`，可见但无权 → `forbidden`。
    */
   @Transactional({ propagation: "mandatory" })
-  private async lockForWrite(
+  async lockForWrite(
     orgId: string,
     agentId: string,
     actorAccountId: string,
