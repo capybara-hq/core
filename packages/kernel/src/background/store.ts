@@ -186,14 +186,20 @@ export class BackgroundTaskStore {
   }
 
   /**
-   * Finishes a reserved row whose launch failed as `failed`, with `reason` in `lost_reason`; a row
-   * that already has its sid (the command started and is tracked) is left as it is. No
-   * `background_task_finished` event: the launching call reports the failure itself.
+   * Finishes a reserved row whose launch failed as `failed`, with `reason` in `lost_reason` (and a
+   * stop's claim cleared); a row that already has its sid (the command started and is tracked) is
+   * left as it is. No `background_task_finished` event: the launching call reports the failure
+   * itself.
    */
   async failLaunch(id: string, reason: string): Promise<void> {
     await this.db
       .updateTable("background_tasks")
-      .set({ status: "failed", finished_at: sql<Date>`now()`, lost_reason: reason })
+      .set({
+        status: "failed",
+        finished_at: sql<Date>`now()`,
+        lost_reason: reason,
+        stopping_at: null,
+      })
       .where("id", "=", id)
       .where("status", "=", "running")
       // only a reservation that never started: a row with its sid is tracked by the poller
@@ -203,18 +209,26 @@ export class BackgroundTaskStore {
 
   /**
    * Finishes as `failed` (`lost_reason` `launch_abandoned`) every reservation that started before
-   * `before` and never got its sid nor a stop's claim: the launch that reserved it died (a crashed
-   * replica). Conditional on `sid` still null, so a launch completing at that moment wins. No
+   * `before`, never got its sid and is not claimed by a live stop: the launch that reserved it died
+   * (a crashed replica). A stop's claim older than {@link STOP_CLAIM_TTL_MS} does not hold it: a
+   * stop only claims a reservation and leaves the rest to the launch, so a dead launch would keep
+   * it (and its slot of `maxTasks`) forever. Conditional on `sid` still null, so a launch
+   * completing at that moment wins. No
    * `background_task_finished` event: the command never started and the model never saw its id.
    * Returns how many rows it finished.
    */
   async failAbandonedLaunches(before: Date): Promise<number> {
     const r = await this.db
       .updateTable("background_tasks")
-      .set({ status: "failed", finished_at: sql<Date>`now()`, lost_reason: "launch_abandoned" })
+      .set({
+        status: "failed",
+        finished_at: sql<Date>`now()`,
+        lost_reason: "launch_abandoned",
+        stopping_at: null,
+      })
       .where("status", "=", "running")
       .where("sid", "is", null)
-      .where("stopping_at", "is", null)
+      .where(unclaimed)
       .where("started_at", "<", before)
       .executeTakeFirst();
     return Number(r.numUpdatedRows);

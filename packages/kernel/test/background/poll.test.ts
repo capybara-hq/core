@@ -14,7 +14,11 @@ import {
   LAUNCH_ABANDONED_AFTER_MS,
 } from "../../src/background/poll.job.js";
 import { BackgroundTaskStopper } from "../../src/background/stop.js";
-import { type BackgroundTaskRow, BackgroundTaskStore } from "../../src/background/store.js";
+import {
+  type BackgroundTaskRow,
+  BackgroundTaskStore,
+  STOP_CLAIM_TTL_MS,
+} from "../../src/background/store.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
@@ -448,7 +452,7 @@ describe("polling", () => {
     await store.failLaunch(id, "test");
   }, 60_000);
 
-  it("fails a reservation abandoned by its launch after 2 minutes, never a younger or claimed one", async () => {
+  it("fails a reservation abandoned by its launch after 2 minutes, never a younger or live-claimed one", async () => {
     const c = await conversation();
     const reserve = async (startedAt: Date) => {
       const id = newTaskId();
@@ -476,6 +480,12 @@ describe("polling", () => {
     const young = await reserve(new Date(Date.now() - LAUNCH_ABANDONED_AFTER_MS + 30_000));
     const claimed = await reserve(old);
     expect(await store.claimStop(claimed)).toBe(true);
+    // a stop claimed it, then its launch died: the claim expires and no longer holds the slot
+    const staleClaim = await reserve(old);
+    expect(await store.claimStop(staleClaim)).toBe(true);
+    await sql`UPDATE capybara.background_tasks
+      SET stopping_at = now() - ${STOP_CLAIM_TTL_MS + 1000}::integer * interval '1 millisecond'
+      WHERE id = ${staleClaim}`.execute(raw);
     // a launch that completed at that moment (its sid set) is no longer a reservation
     const completing = await reserve(old);
     expect(
@@ -491,12 +501,20 @@ describe("polling", () => {
     expect((await store.get(abandoned))?.finishedAt).not.toBeNull();
     // no event: the command never started and the model never saw the task's id
     expect(await finishedEvents(c.conversationId, abandoned)).toEqual([]);
+    expect(await store.get(staleClaim)).toMatchObject({
+      status: "failed",
+      lostReason: "launch_abandoned",
+      stoppingAt: null,
+    });
+    expect(await finishedEvents(c.conversationId, staleClaim)).toEqual([]);
     expect((await store.get(young))?.status).toBe("running");
     expect((await store.get(claimed))?.status).toBe("running");
     // the completed launch keeps its sid (the poll then checks it like any started task)
     expect((await store.get(completing))?.sid).toBe("424242");
     expect((await store.get(completing))?.lostReason).not.toBe("launch_abandoned");
+    // a failed launch clears a stop's claim with its status
     for (const id of [young, claimed]) await store.failLaunch(id, "test");
+    expect(await store.get(claimed)).toMatchObject({ status: "failed", stoppingAt: null });
   }, 60_000);
 });
 
