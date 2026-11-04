@@ -15,15 +15,22 @@ export function TemplateHead({
   header,
   statsInHead,
   loose,
+  loadingStats = 0,
   children,
 }: {
   header: PageHeaderProps;
   statsInHead?: boolean;
   loose?: boolean;
+  /**
+   * With `statsInHead`: stat card placeholders for metrics the page does not know yet (DetailPage
+   * `loading.stats`); the header's own `metrics` render for real instead.
+   */
+  loadingStats?: number;
   /** Drawn under the header inside the same frame (DetailPage's tabs). */
   children?: ReactNode;
 }) {
   const metrics = statsInHead ? (header.metrics ?? []) : [];
+  const slots = statsInHead && metrics.length === 0 ? loadingStats : 0;
   return (
     <div className="cb-template-head" data-gap={loose ? "loose" : undefined}>
       <div
@@ -32,7 +39,7 @@ export function TemplateHead({
         data-stats={statsInHead ? "head" : undefined}
       >
         <PageHeader {...header} />
-        {metrics.length > 0 ? <StatCards metrics={metrics} /> : null}
+        {metrics.length > 0 ? <StatCards metrics={metrics} /> : <LoadingStats count={slots} />}
         {children}
       </div>
     </div>
@@ -196,13 +203,16 @@ export type FieldShape = {
  * A titled card while it loads (spec §5.8): the `Card` frame with a title slot and `actions`
  * button slots in its head; the body holds `lines` text lines (`lineSize`, default `body`), and
  * with a `field` the lines (gap 4) and that field's placeholder below them (gap 12), as a card that
- * describes a setting and then edits it does. `list` adds a labelled list after the lines: a
- * `small` label line and `list` `small` lines in a gap-4 stack (an install's components).
+ * describes a setting and then edits it does. `buttons` is a row (gap 8) of that many 88 px
+ * control-height button slots below the lines instead (gap 12), as a card that explains an action
+ * and offers it (a danger card). `list` adds a labelled list after the lines: a `small` label line
+ * and `list` `small` lines in a gap-4 stack (an install's components).
  */
 export type CardShape = {
   lines?: number;
   lineSize?: "body" | "small";
   field?: FieldShape;
+  buttons?: number;
   actions?: number;
   list?: number;
 };
@@ -412,6 +422,18 @@ function LoadingField({ shape }: { shape: FieldShape }) {
   );
 }
 
+/** A row (gap 8) of `count` 88 px control-height button slots. */
+function LoadingButtonRow({ count }: { count: number }) {
+  return (
+    <div className="cb-loading-buttons" data-part="loading-buttons">
+      {Array.from({ length: Math.max(0, count) }, (_, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
+        <SkeletonBox key={i} part="default" width={88} />
+      ))}
+    </div>
+  );
+}
+
 /** Cards a loading page draws when it is not told how many (spec §5.8). */
 export const LOADING_CARDS = 3;
 
@@ -449,6 +471,11 @@ export function LoadingShapedCards({ cards }: { cards: CardShape[] }) {
                 <Stack gap={12}>
                   <Stack gap={4}>{lines}</Stack>
                   <LoadingField shape={c.field} />
+                </Stack>
+              ) : (c.buttons ?? 0) > 0 ? (
+                <Stack gap={12}>
+                  <Stack gap={4}>{lines}</Stack>
+                  <LoadingButtonRow count={c.buttons ?? 0} />
                 </Stack>
               ) : (
                 <Stack gap={8}>
@@ -530,7 +557,8 @@ export function LoadingSwitchRows({ count }: { count: number }) {
  * - `buttons`: a row (gap 8) of `count` control-height button slots (default 1, 88 px), with a
  *   `small` line under it (gap 8) when `help` is set;
  * - `table`: a `small` muted `title` (real text: the page knows it) over the DataTable's own
- *   loading state with the caller's `label` and header `columns`, gap 8;
+ *   loading state with the caller's `label` and header `columns`, gap 8; `toolbar` is the table's
+ *   static toolbar (a refresh button), rendered for real in the DataTable's toolbar row;
  * - `card`: a titled card (`CardShape`, §5.8).
  */
 export type BlockShape =
@@ -538,7 +566,13 @@ export type BlockShape =
   | { kind: "list"; items?: number }
   | { kind: "key-value"; rows?: number; columns?: 1 | 2; keyWidth?: string }
   | { kind: "buttons"; count?: number; help?: boolean }
-  | { kind: "table"; title?: string; label: string; columns: Column<never>[] }
+  | {
+      kind: "table";
+      title?: string;
+      label: string;
+      columns: Column<never>[];
+      toolbar?: ReactNode;
+    }
   | { kind: "card"; card: CardShape };
 
 function LoadingBlock({ block }: { block: BlockShape }) {
@@ -577,12 +611,7 @@ function LoadingBlock({ block }: { block: BlockShape }) {
     case "buttons":
       return (
         <Stack gap={8}>
-          <div className="cb-loading-buttons" data-part="loading-buttons">
-            {Array.from({ length: Math.max(0, block.count ?? 1) }, (_, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
-              <SkeletonBox key={i} part="default" width={88} />
-            ))}
-          </div>
+          <LoadingButtonRow count={block.count ?? 1} />
           {block.help ? <SkeletonText width="55%" size="small" /> : null}
         </Stack>
       );
@@ -600,6 +629,7 @@ function LoadingBlock({ block }: { block: BlockShape }) {
             columns={block.columns}
             rows={[]}
             rowKey={() => ""}
+            {...(block.toolbar !== undefined ? { toolbar: block.toolbar } : {})}
           />
         </Stack>
       );

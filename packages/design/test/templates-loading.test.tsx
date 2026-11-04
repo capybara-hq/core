@@ -87,6 +87,21 @@ describe("DetailPage loading", () => {
     zh(<DetailPage header={header} tabs={tabs} inspector={<p>REAL INSPECTOR</p>} loading={{}} />);
     expect(screen.getByText("REAL INSPECTOR")).toBeTruthy();
   });
+
+  it("stats draws stat card placeholders under the header; known metrics render for real", () => {
+    zh(<DetailPage header={header} tabs={tabs} loading={{ stats: 5 }} />);
+    const head = document.querySelector(".cb-template-head-frame");
+    expect(head?.querySelectorAll('[data-part="stat-card"]')).toHaveLength(5);
+    expect(head?.querySelector('[data-size="metric"]')).not.toBeNull();
+    cleanup();
+    zh(<DetailPage header={{ ...header, metrics }} tabs={tabs} loading={{ stats: 5 }} />);
+    expect(parts("stat-card")).toHaveLength(2);
+    expect(screen.getByText("失败")).toBeTruthy();
+    expect(count('[data-size="metric"]')).toBe(0);
+    cleanup();
+    zh(<DetailPage header={header} tabs={tabs} loading={{}} />);
+    expect(parts("stat-card")).toHaveLength(0);
+  });
 });
 
 describe("DetailPage / WizardPage content blocks", () => {
@@ -125,6 +140,32 @@ describe("DetailPage / WizardPage content blocks", () => {
     // one busy announcement for the page, the table's own silenced
     expect(screen.getAllByRole("status")).toHaveLength(1);
     expect(screen.getAllByText("正在加载")).toHaveLength(1);
+  });
+
+  it("a table block draws its static toolbar for real; a card block takes button slots", () => {
+    zh(
+      <DetailPage
+        header={header}
+        tabs={tabs}
+        loading={{
+          content: [
+            {
+              kind: "table",
+              label: "副本",
+              columns: cols,
+              toolbar: <button type="button">刷新</button>,
+            },
+            { kind: "card", card: { lines: 1, buttons: 1 } },
+          ],
+        }}
+      />,
+    );
+    const toolbar = document.querySelector('[data-part="table-toolbar"]');
+    expect(toolbar?.textContent).toBe("刷新");
+    const card = document.querySelector('[data-part="loading-shaped-card"]');
+    const row = card?.querySelector('[data-part="loading-buttons"]');
+    expect(row?.querySelectorAll('[data-box="default"]')).toHaveLength(1);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
   });
 
   it("the inspector takes its row count and key width", () => {
@@ -288,6 +329,33 @@ describe("InboxPage loading", () => {
     // The page's group announces once; the table adds none (spec §6.29).
     expect(screen.getAllByRole("status")).toHaveLength(1);
     expect(screen.getAllByText("正在加载")).toHaveLength(1);
+  });
+
+  it("inspector draws KeyValue placeholders in the inspector column; the action row stays disabled", () => {
+    zh(
+      <InboxPage
+        header={header}
+        inspectorTitle="详情"
+        actionRow={{
+          secondary: { label: "拒绝", onSelect: () => {} },
+          primary: { label: "批准", onSelect: () => {} },
+        }}
+        loading={{ rows: 2, inspector: { rows: 3, keyWidth: "10ch" } }}
+      />,
+    );
+    expect(count(".cb-body-inspector")).toBe(1);
+    expect(parts("loading-inspector-row")).toHaveLength(3);
+    const key = document.querySelector('[data-part="loading-inspector-row"] dt') as HTMLElement;
+    expect(key.style.width).toBe("10ch");
+    expect(parts("action-row")).toHaveLength(1);
+    expect((screen.getByRole("button", { name: "批准" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "拒绝" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("without inspector the loading inbox has no inspector column", () => {
+    zh(<InboxPage header={header} loading={{}} />);
+    expect(count(".cb-body-inspector")).toBe(0);
   });
 
   it("takes a page's own typed columns without a cast", () => {
@@ -888,6 +956,33 @@ describe("WizardPage loading", () => {
     expect(screen.getAllByRole("status")).toHaveLength(1);
     expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it("keep renders the step's own sections inside the one busy region (they do not announce)", () => {
+    zh(
+      <WizardPage
+        header={header}
+        steps={steps}
+        current={0}
+        actionRow={actionRow}
+        loading={{ keep: true }}
+      >
+        <FormSection id="mode" title="模式" loading={{ fields: [{ control: "radio-cards" }] }} />
+        <FormSection
+          id="c"
+          title="候选"
+          loading={{ fields: [{ control: "select" }, { control: "switch" }] }}
+        />
+      </WizardPage>,
+    );
+    expect(screen.getByRole("heading", { name: "模式" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "候选" })).toBeTruthy();
+    expect(count('[data-part="card"]')).toBe(0);
+    expect(parts("loading-radio")).toHaveLength(2);
+    expect(parts("loading-field")).toHaveLength(1);
+    expect(parts("loading-switch")).toHaveLength(1);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(true);
+  });
 });
 
 describe("AuthPage loading", () => {
@@ -907,6 +1002,31 @@ describe("AuthPage loading", () => {
     // The submit button is part of the loaded card: a prominent box.
     expect(count('.cb-auth-card [data-box="prominent"]')).toBe(1);
     expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("subtitle, note, hint and buttons keep the loaded card's other parts", () => {
+    zh(
+      <AuthPage
+        title="接受邀请"
+        loading={{
+          fields: 1,
+          subtitle: true,
+          note: <p>REAL NOTE</p>,
+          hint: "登录后接受",
+          buttons: 2,
+        }}
+      />,
+    );
+    expect(document.querySelector('.cb-auth-head [data-size="body"]')).not.toBeNull();
+    expect(screen.getByText("REAL NOTE")).toBeTruthy();
+    expect(screen.getByText("登录后接受")).toBeTruthy();
+    expect(count('.cb-auth-card [data-box="prominent"]')).toBe(2);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    cleanup();
+    // A known subtitle stays real; no subtitle slot without the flag.
+    zh(<AuthPage title="登录" loading={{ fields: 1 }} />);
+    expect(document.querySelector('.cb-auth-head [data-size="body"]')).toBeNull();
+    expect(count('.cb-auth-card [data-box="prominent"]')).toBe(1);
   });
 
   it("an unknown title is a bar", () => {

@@ -9,7 +9,13 @@ import {
 import { useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
 import { type Column, DataTable } from "../table/index";
-import { LoadingCards, loadingHeader, TemplateHead } from "./frame";
+import {
+  LoadingCards,
+  LoadingInspector,
+  loadingActionRow,
+  loadingHeader,
+  TemplateHead,
+} from "./frame";
 
 /** 64 px rows a loading inbox draws when it is not told how many (spec §5.7). */
 const LOADING_ROWS = 4;
@@ -27,8 +33,12 @@ function LoadingRow() {
   );
 }
 
-/** What `InboxPage.loading` takes: object rows (default), or the table shape of a records list. */
-export type InboxLoading =
+/**
+ * What `InboxPage.loading` takes: object rows (default), or the table shape of a records list;
+ * `inspector` draws the selected item's inspector as KeyValue placeholders (`rows`, `keyWidth`),
+ * for a page whose loaded state opens its first item (the rail-inspector layout).
+ */
+export type InboxLoading = (
   | { list?: "objects"; rows?: number }
   | {
       list: "records";
@@ -39,7 +49,8 @@ export type InboxLoading =
         rowHeight?: "dense" | "default" | "roomy";
         framed?: boolean;
       };
-    };
+    }
+) & { inspector?: boolean | { rows?: number; keyWidth?: string } };
 
 type InboxPageProps = {
   header: PageHeaderProps;
@@ -86,8 +97,10 @@ function LoadingList({ loading }: { loading: InboxLoading }) {
  * `filters` sit at the top of the rail, above `list`. `loading` draws the frame while the data is
  * on the way (spec §5.7): the filters stay real (they are static), the list is `rows` 64 px rows
  * (default 4) in the object list's own container in place of `list` (`loading.list: "records"`
- * draws the DataTable's loading state in the caller's table shape instead), the content is a card-shaped block in place of `children`, and a
- * real `inspector` stays.
+ * draws the DataTable's loading state in the caller's table shape instead), the content is a
+ * card-shaped block in place of `children`, and a real `inspector` stays. A page whose loaded state
+ * opens its first item passes `loading.inspector` (KeyValue placeholders in the inspector column)
+ * and its decision `actionRow` (the labels are static), which stays with its buttons disabled.
  */
 export function InboxPage({
   header,
@@ -102,6 +115,12 @@ export function InboxPage({
   children,
 }: InboxPageProps) {
   const t = useDesignT();
+  const shape = loading?.inspector;
+  const inspectorNode = shape ? (
+    <LoadingInspector {...(typeof shape === "object" ? shape : {})} />
+  ) : (
+    inspector
+  );
   const rail = loading ? (
     <>
       {filters}
@@ -129,18 +148,18 @@ export function InboxPage({
     <>
       <TemplateHead header={loading ? loadingHeader(header) : header} statsInHead />
       <Body
-        layout={inspector != null ? "rail-inspector" : "rail"}
+        layout={inspectorNode != null ? "rail-inspector" : "rail"}
         rail={rail}
         railFlush
         contentPadded
         width="content"
-        inspector={inspector}
+        inspector={inspectorNode}
         {...(inspectorTitle !== undefined ? { inspectorTitle } : {})}
         {...(onInspectorClose ? { onInspectorClose } : {})}
       >
         {loading ? <LoadingCards count={1} /> : children}
       </Body>
-      {actionRow ? <ActionRow {...actionRow} /> : null}
+      {actionRow ? <ActionRow {...(loading ? loadingActionRow(actionRow) : actionRow)} /> : null}
     </>
   );
   return (

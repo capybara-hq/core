@@ -20,7 +20,9 @@ import {
  * static), the ActionRow stays with its buttons disabled, and the step's body is one card (a
  * title slot, `fields` field placeholders) in place of `children`; a step whose body is no card
  * (a review stack) passes `content` (`BlockShape[]`) instead, drawn in a gap-16 stack as the loaded
- * step stacks its parts. One busy announcement.
+ * step stacks its parts. A step that is its own sections (each `FormSection` saying for itself
+ * whether it is loading, so static titles and ready parts render for real) passes `keep`: its
+ * `children` render as they are inside the page's one busy region. One busy announcement.
  */
 export function WizardPage({
   header,
@@ -34,7 +36,7 @@ export function WizardPage({
   steps: string[];
   current: number;
   actionRow: ActionRowProps;
-  loading?: { fields: number | FieldShape[] } | { content: BlockShape[] };
+  loading?: { fields: number | FieldShape[] } | { content: BlockShape[] } | { keep: true };
   children?: ReactNode;
 }) {
   const t = useDesignT();
@@ -62,9 +64,11 @@ export function WizardPage({
             );
           })}
         </ol>
-        {loading && "content" in loading ? (
+        {!loading || "keep" in loading ? (
+          children
+        ) : "content" in loading ? (
           <LoadingBlocks blocks={loading.content} />
-        ) : loading ? (
+        ) : (
           // The Card frame, its title slot taking the head's width (a bare slot in the Card's
           // title would be an auto-width flex item, its percentage bar 0 px wide).
           <section className="cb-card" data-part="card">
@@ -79,8 +83,6 @@ export function WizardPage({
               </Stack>
             </div>
           </section>
-        ) : (
-          children
         )}
       </Body>
       <ActionRow {...(loading ? loadingActionRow(actionRow) : actionRow)} />

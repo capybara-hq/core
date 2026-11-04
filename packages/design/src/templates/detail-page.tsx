@@ -21,7 +21,9 @@ const LOADING_BLOCKS = 2;
  * and the inspector is a skeleton only when `inspector` is set (a real `inspector` stays; an object
  * gives its `rows` and `keyWidth`). A page whose tab has a known static structure passes `content`
  * (`BlockShape[]`) instead of `blocks`: those blocks are drawn in a gap-16 stack, as the loaded tab
- * stacks its parts, so nothing moves when the data lands.
+ * stacks its parts, so nothing moves when the data lands. `stats` draws that many stat card
+ * placeholders under the header for the metrics the page does not know yet (the header's own
+ * `metrics` render for real instead).
  */
 export function DetailPage({
   header,
@@ -41,6 +43,8 @@ export function DetailPage({
     inspector?: boolean | { rows?: number; keyWidth?: string };
     blocks?: number;
     content?: BlockShape[];
+    /** Stat card placeholders for the header's metrics, which come with the data. */
+    stats?: number;
   };
   children?: ReactNode;
 }) {
@@ -57,7 +61,11 @@ export function DetailPage({
       contentPadded
       width="content"
       head={
-        <TemplateHead header={loading ? loadingHeader(header) : header} statsInHead>
+        <TemplateHead
+          header={loading ? loadingHeader(header) : header}
+          statsInHead
+          loadingStats={loading?.stats ?? 0}
+        >
           <PageTabs {...tabs} />
         </TemplateHead>
       }

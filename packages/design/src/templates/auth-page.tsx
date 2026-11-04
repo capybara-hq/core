@@ -13,7 +13,11 @@ import { type FieldShape, LoadingFields } from "./frame";
  * columns, the logo and the card, with what the page knows (the title, the subtitle) real, and
  * draws `fields` field placeholders and the prominent submit button's box in the card in place of
  * `children` (one busy announcement).
- * A title the page does not know yet (an empty string) is a bar.
+ * A title the page does not know yet (an empty string) is a bar. The loaded card's other parts:
+ * `subtitle: true` is a subtitle slot (a muted `body` line, 70%) for a subtitle that comes with the
+ * data; `note` is static content the page shows for real after the fields (a warning card);
+ * `buttons` is how many prominent button boxes the card ends with (default 1), in a gap-8 stack
+ * that opens with `hint` (a static muted prose line the page shows above them) when given.
  */
 export function AuthPage({
   title,
@@ -27,7 +31,17 @@ export function AuthPage({
   subtitle?: string;
   footer?: ReactNode;
   preferences?: PreferenceBarProps;
-  loading?: { fields: number | FieldShape[] };
+  loading?: {
+    fields: number | FieldShape[];
+    /** The subtitle comes with the data: a slot where it will be. */
+    subtitle?: boolean;
+    /** Static content the page shows for real after the fields. */
+    note?: ReactNode;
+    /** Prominent button boxes the card ends with (default 1). */
+    buttons?: number;
+    /** A static muted prose line above the buttons, in their stack. */
+    hint?: string;
+  };
   children?: ReactNode;
 }) {
   const t = useDesignT();
@@ -50,12 +64,27 @@ export function AuthPage({
                   {title}
                 </Text>
               )}
-              {subtitle ? <Text tone="muted">{subtitle}</Text> : null}
+              {subtitle ? (
+                <Text tone="muted">{subtitle}</Text>
+              ) : loading?.subtitle ? (
+                <SkeletonText width="70%" />
+              ) : null}
             </div>
             {loading ? (
               <Stack gap={16}>
                 <LoadingFields fields={loading.fields} />
-                <SkeletonBox part="prominent" />
+                {loading.note ?? null}
+                <Stack gap={8}>
+                  {loading.hint !== undefined ? (
+                    <Text variant="prose" tone="muted">
+                      {loading.hint}
+                    </Text>
+                  ) : null}
+                  {Array.from({ length: Math.max(0, loading.buttons ?? 1) }, (_, i) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
+                    <SkeletonBox key={i} part="prominent" />
+                  ))}
+                </Stack>
               </Stack>
             ) : (
               children
