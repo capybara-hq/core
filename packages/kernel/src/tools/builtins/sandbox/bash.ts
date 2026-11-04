@@ -58,7 +58,8 @@ const SPEC: ToolSpec = {
     "under /workspace/.capybara/tasks. Read the output with TaskOutput (or Read) and stop the " +
     "task with TaskStop; you will be told when it finishes. You do not need to use '&' at the end " +
     "of the command when using this parameter. In the background, timeout defaults to the " +
-    "deployment's background maximum (7200000 by default). A background task is lost if the " +
+    "deployment's background maximum (7200000 by default). A background task ends when its " +
+    "command exits, and processes it left running are stopped. A background task is lost if the " +
     "sandbox is suspended (it is suspended after it has been running for a while, " +
     "sandbox.limits.maxRunningMinutes), so keep its results in files under /workspace.",
   inputSchema: {

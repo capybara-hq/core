@@ -320,6 +320,22 @@ describe("polling", () => {
     expect(last.endsWith("x\n")).toBe(true);
   }, 60_000);
 
+  it("a task whose command exited but left processes running ends completed, its session empty (M2)", async () => {
+    const c = await conversation();
+    const t = await launch(c, "sh -c 'sleep 300 & echo started'");
+    await waitFor(
+      async () => (await inSandbox(c, `test -s .capybara/tasks/${t.id}.exit`)).exitCode === 0,
+      10_000,
+      "exit file",
+    );
+    // the command exited, its `sleep 300` lives on in the task's session
+    expect(await alive(c, t)).toBe(true);
+    const row = await pollUntilFinished(t);
+    expect(row).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(await alive(c, t)).toBe(false);
+    expect((await finishedEvents(c.conversationId, t.id))[0]?.payload.lastLines).toBe("started\n");
+  }, 60_000);
+
   it("a task killed at its timeout ends timed_out", async () => {
     const c = await conversation();
     const t = await launch(c, "sleep 60", 1);
@@ -651,6 +667,19 @@ describe("stopping", () => {
       reported: true,
       lastLines: "done\n",
     });
+  }, 60_000);
+
+  it("a stop of a task that exited but left processes running kills them (M2)", async () => {
+    const c = await conversation();
+    const t = await launch(c, "sh -c 'sleep 300 & echo started'");
+    await waitFor(
+      async () => (await inSandbox(c, `test -s .capybara/tasks/${t.id}.exit`)).exitCode === 0,
+      10_000,
+      "exit file",
+    );
+    expect(await alive(c, t)).toBe(true);
+    expect(await stopper.stop(t, "tool")).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(await alive(c, t)).toBe(false);
   }, 60_000);
 
   it("a stop while the sandbox is suspended ends the task lost with kill_pending", async () => {

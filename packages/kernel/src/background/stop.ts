@@ -70,7 +70,8 @@ export const RECREATED: BackgroundFinish = {
  * `SandboxService.ifRunning` (it never creates or resumes a sandbox); the task then finishes as
  * `stopped` with its last 20 lines. A task that had already exited finishes as its exit says. When
  * the sandbox is not running the task finishes as `lost` with `kill_pending` (killed right after a
- * resume); in a rebuilt sandbox as `lost` (`sandbox_recreated`).
+ * resume); in a rebuilt sandbox as `lost` (`sandbox_recreated`). Processes a task that had
+ * already exited left running are killed as well.
  */
 @Injectable()
 export class BackgroundTaskStopper {
@@ -132,7 +133,8 @@ export class BackgroundTaskStopper {
           if (term.exitCode !== 0 || (!exited && term.stdout.trim() !== "term")) {
             throw new Error(`the stop of background task ${cur.id} failed (${term.exitCode})`);
           }
-          if (!exited && !(await killSession(p, h, sid))) {
+          // also after an exit: processes the command left running are stopped with the task
+          if (!(await killSession(p, h, sid))) {
             throw new Error(`background task ${cur.id} could not be confirmed stopped`);
           }
           const tail = await p.exec(h, {

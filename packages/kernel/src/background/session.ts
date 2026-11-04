@@ -21,11 +21,22 @@ export function assertTaskRef(id: string, sid: string): void {
 }
 
 /**
- * Kills every process of the session `sid` with SIGKILL, repeated until the session is empty
- * (pkill exits 1: no process left): a process may fork between pkill's listing and its signals,
- * and the child would live on. Any other pkill status is a failure. Runs with a fresh signal of its
- * own (a command must be killed even when the caller was just aborted). True when the session was
- * confirmed empty; false when it could not be (an error is never thrown).
+ * A shell fragment that kills every process of the session `sid` with SIGKILL, repeated until the
+ * session is empty (pkill exits 1: no process left): a process may fork between pkill's listing
+ * and its signals, and the child would live on. Sets `ks` to 0 when the session was confirmed
+ * empty, else to pkill's failing status (3 when it was still not empty after 10 tries). Uses only
+ * the variables `ks`, `kc` and `ki`. `sid` must be a session id.
+ */
+export function killSessionScript(sid: string): string {
+  if (!SID_RE.test(sid)) throw new Error(`invalid background task session: ${JSON.stringify(sid)}`);
+  return `ks=3; for ki in 1 2 3 4 5 6 7 8 9 10; do pkill -KILL -s ${sid}; kc=$?; if [ "$kc" -eq 1 ]; then ks=0; break; fi; if [ "$kc" -ne 0 ]; then ks=$kc; break; fi; sleep 0.2; done`;
+}
+
+/**
+ * Kills every process of the session `sid` ({@link killSessionScript}) in an exec of its own. Any
+ * pkill status other than 0 and 1 is a failure. Runs with a fresh signal of its own (a command
+ * must be killed even when the caller was just aborted). True when the session was confirmed
+ * empty; false when it could not be (an error is never thrown).
  */
 export async function killSession(
   p: SandboxProvider,
@@ -35,7 +46,7 @@ export async function killSession(
   if (!SID_RE.test(sid)) return false;
   const r = await p
     .exec(h, {
-      command: `for i in 1 2 3 4 5 6 7 8 9 10; do pkill -KILL -s ${sid}; c=$?; [ "$c" -eq 1 ] && exit 0; [ "$c" -eq 0 ] || exit "$c"; sleep 0.2; done; exit 3`,
+      command: `${killSessionScript(sid)}; exit "$ks"`,
       cwd: "/workspace",
       timeoutMs: KILL_SESSION_TIMEOUT_MS,
       maxOutputBytes: 4096,

@@ -237,11 +237,13 @@ next person message would pick it up.
   `pgrep -s <sid>` finds a process.
 - **Outcomes:**
   - an exit file means `completed` (exit 0) or `failed`; exit 137 past the deadline means
-    `timed_out`;
+    `timed_out`. A task ends when its command exits: processes it left running in its session
+    (`server &`) are killed in the same exec (the looping session kill) before it finishes, and a
+    task whose session could not be confirmed empty is checked again next poll;
   - no exit file and no process means `lost` (`process_gone`);
   - another instance (a rebuild) means `lost` (`sandbox_recreated`);
   - a sandbox that is suspended or gone means `lost` (`sandbox_suspended` / `sandbox_gone`).
-  - a reservation (`sid` null, no stop claim) older than 2 minutes means `failed`
+  - a reservation (`sid` null, no live stop claim) older than 2 minutes means `failed`
     (`launch_abandoned`): the launching process died before it started the command.
 - **A lost task whose process may live on** gets `kill_pending = true`. This is the case for E2B,
   whose pause keeps processes, and for a suspended sandbox. Right after any resume of that sandbox,
@@ -414,7 +416,7 @@ one bullet each.
 - A stop claim older than 5 minutes counts as abandoned (`STOP_CLAIM_TTL_MS`), so a crashed stopper
   can't hide a task from the poll.
 - A task whose exit file existed before the SIGTERM finishes by its exit code, not as `stopped` (it
-  "had already finished", §2.3).
+  "had already finished", §2.3); processes it left running are killed all the same.
 - A reservation stopped during its launch ends `stopped` without an event, and the launching call gets
   a tool error: the model never saw a started task.
 - The poll fails a reservation still without a session after 2 minutes (`launch_abandoned`): its
