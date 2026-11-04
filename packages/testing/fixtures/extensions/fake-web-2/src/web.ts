@@ -89,8 +89,12 @@ async function scriptedFailure(name: string, script: string, signal: AbortSignal
  * - `throw:<text>`: throws a plain `Error` whose message names the provider and carries `<text>`;
  * - `hang:`: waits until the signal aborts, then rejects with its reason;
  * - `redirect:<url>` (fetch): the page's `finalUrl` is `<url>`;
+ * - `redirect-long:<n>` (fetch): the page's `finalUrl` is `https://example.com/` followed by `n`
+ *   characters;
  * - `junk:` (search): unusable results (relative URL, `javascript:`, `ftp:`, empty title) plus one
  *   usable result and a second result with its URL; `junk:all`: only the four unusable ones;
+ * - `idn:` (search): one result on the IDN host `bücher.example` (its URL parses to the punycode
+ *   host `xn--bcher-kva.example`) and one on example.org;
  * - `empty:`: no results (search) / an empty `markdown` (fetch);
  * - `big:<n>`: `n` results, ignoring `maxResults` (search) / `n` characters of markdown (fetch).
  * Anything else: three results on docs.example.com, example.org and www.example.net (search) or
@@ -103,6 +107,14 @@ export function makeFakeWeb(name: string): { search: WebSearchProvider; fetch: W
       fakeWebProbe().calls.push({ provider: name, op: "search", input: query });
       await scriptedFailure(name, query, signal);
       if (query.startsWith("empty:")) return { results: [] };
+      if (query.startsWith("idn:")) {
+        return {
+          results: [
+            { title: `${name} idn`, url: `https://bücher.example/${name}/1` },
+            { title: `${name} other`, url: `https://example.org/${name}/2` },
+          ],
+        };
+      }
       if (query.startsWith("junk:")) {
         const bad: WebSearchResult[] = [
           { title: `${name} relative`, url: "/relative/path" },
@@ -145,6 +157,11 @@ export function makeFakeWeb(name: string): { search: WebSearchProvider; fetch: W
       fakeWebProbe().calls.push({ provider: name, op: "fetch", input: url });
       const script = fetchScript(url);
       await scriptedFailure(name, script, signal);
+      if (script.startsWith("redirect-long:")) {
+        const n = Number.parseInt(script.slice("redirect-long:".length), 10) || 0;
+        const finalUrl = `https://example.com/${"a".repeat(n)}`;
+        return { finalUrl, title: `${name} redirect`, markdown: "Moved." };
+      }
       if (script.startsWith("redirect:")) {
         const finalUrl = script.slice("redirect:".length);
         return { finalUrl, title: `${name} redirect`, markdown: `Moved to ${finalUrl}.` };
