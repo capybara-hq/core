@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { BackgroundStoreModule } from "../background/store.module.js";
 import { ExtensionRegistryModule } from "../extensions/registry.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
@@ -14,7 +15,11 @@ import { SandboxService } from "./sandbox.service.js";
  * (`SandboxSweepJobs`) are the worker role's (`WorkerModule`).
  */
 @Module({
-  imports: [ExtensionRegistryModule, QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME)],
+  imports: [
+    ExtensionRegistryModule,
+    BackgroundStoreModule,
+    QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
+  ],
   providers: [SandboxProviders, SandboxLeases, SandboxService, SandboxJobs],
   exports: [SandboxService, SandboxJobs],
 })
