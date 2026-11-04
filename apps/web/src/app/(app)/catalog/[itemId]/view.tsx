@@ -57,7 +57,21 @@ function CatalogItem({ orgId, itemId, me }: { orgId: string; itemId: string; me:
           value: "overview",
           onChange: () => {},
         }}
-        loading={{ inspector: true }}
+        // The overview: the description, the install action and the five component sections
+        // (extension, skills, agent templates, connector templates, dependencies); the
+        // inspector's facts (publisher, version, status)
+        loading={{
+          inspector: { rows: 3, keyWidth: "10ch" },
+          content: [
+            { kind: "lines", lines: 2 },
+            { kind: "buttons" },
+            { kind: "list" },
+            { kind: "list" },
+            { kind: "list" },
+            { kind: "list" },
+            { kind: "list" },
+          ],
+        }}
       />
     );
   }

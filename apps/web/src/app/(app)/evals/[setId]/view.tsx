@@ -70,6 +70,7 @@ export default function EvalSetView({ setId }: { setId: string }) {
 function EvalSet({ orgId, setId }: { orgId: string; setId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("evals");
+  const tSet = useTranslations("evals.set");
   const router = useRouter();
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -99,7 +100,12 @@ function EvalSet({ orgId, setId }: { orgId: string; setId: string }) {
   if (set === undefined) {
     return (
       <DetailPage
-        header={{ path: [...scope, { label: "evals", href: "/evals" }], title: "" }}
+        header={{
+          path: [...scope, { label: "evals", href: "/evals" }],
+          title: "",
+          // the loaded head's three actions: sample, run, more
+          loading: { title: true, actions: 3 },
+        }}
         tabs={{
           label: t("set.tabsLabel"),
           items: TABS.map((x) => ({ id: x, label: t(`set.tabs.${x}`) })),
@@ -107,7 +113,17 @@ function EvalSet({ orgId, setId }: { orgId: string; setId: string }) {
           onChange: (x) => setTab(x as Tab),
         }}
         inspectorTitle={t("set.inspectorTitle")}
-        loading={{ inspector: true }}
+        // The cases tab (its table) and the inspector's facts (agent, created, the rubric)
+        loading={{
+          inspector: { rows: 4, keyWidth: "10ch" },
+          content: [
+            {
+              kind: "table",
+              label: t("set.casesLabel"),
+              columns: caseColumns(tSet) as Column<never>[],
+            },
+          ],
+        }}
       />
     );
   }
@@ -220,6 +236,36 @@ const caseChangeKeys = (orgId: string, setId: string) => [
   keys.org(orgId).evalSets(),
 ];
 
+/** The cases table's columns (the loading table draws the same header). */
+const caseColumns = (t: ReturnType<typeof useTranslations<"evals.set">>): Column<EvalCase>[] => [
+  {
+    key: "title",
+    header: t("caseColumns.title"),
+    cell: (c) => <Text truncate>{c.title}</Text>,
+  },
+  {
+    key: "version",
+    header: t("caseColumns.version"),
+    width: 110,
+    tone: "muted",
+    cell: (c) => `v${c.agentVersion}`,
+  },
+  {
+    key: "steps",
+    header: t("caseColumns.steps"),
+    width: 120,
+    align: "right",
+    cell: (c) => String(c.replayableSteps),
+  },
+  {
+    key: "created",
+    header: t("caseColumns.created"),
+    width: 170,
+    tone: "muted",
+    cell: (c) => <DateTime value={c.createdAt} />,
+  },
+];
+
 function CasesTab({ orgId, set }: { orgId: string; set: EvalSetDetail }) {
   const t = useTranslations("evals.set");
   const router = useRouter();
@@ -239,34 +285,7 @@ function CasesTab({ orgId, set }: { orgId: string; set: EvalSetDetail }) {
       toast.error(errorMessage(e));
     }
   };
-  const columns: Column<EvalCase>[] = [
-    {
-      key: "title",
-      header: t("caseColumns.title"),
-      cell: (c) => <Text truncate>{c.title}</Text>,
-    },
-    {
-      key: "version",
-      header: t("caseColumns.version"),
-      width: 110,
-      tone: "muted",
-      cell: (c) => `v${c.agentVersion}`,
-    },
-    {
-      key: "steps",
-      header: t("caseColumns.steps"),
-      width: 120,
-      align: "right",
-      cell: (c) => String(c.replayableSteps),
-    },
-    {
-      key: "created",
-      header: t("caseColumns.created"),
-      width: 170,
-      tone: "muted",
-      cell: (c) => <DateTime value={c.createdAt} />,
-    },
-  ];
+  const columns = caseColumns(t);
   return (
     <DataTable<EvalCase>
       label={t("casesLabel")}

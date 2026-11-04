@@ -115,7 +115,8 @@ function Channel({ orgId, channelId }: { orgId: string; channelId: string }) {
         header={{ path: [...scope, { label: "channels", href: "/channels" }], title: "" }}
         tabs={tabs}
         inspectorTitle={t("detail.inspectorTitle")}
-        loading={{ inspector: true }}
+        // the inspector's six facts (extension, tenant, bot, agent, policy, created)
+        loading={{ inspector: { rows: 6, keyWidth: "10ch" } }}
       />
     );
   }

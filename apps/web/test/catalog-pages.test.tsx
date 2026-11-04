@@ -3173,6 +3173,15 @@ describe("/catalog and /catalog/[itemId] render on the server (web-SSR spec §6)
     });
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
     expect(screen.queryByRole("heading", { level: 1, name: "crm" })).toBeNull();
+    // the overview's static parts: the install action's button and the five component sections;
+    // the inspector's three facts; no generic cards
+    const page = template("DetailPage") as HTMLElement;
+    expect(page.querySelectorAll('[data-part="loading-card"]')).toHaveLength(0);
+    expect(page.querySelectorAll('[data-part="loading-buttons"]')).toHaveLength(1);
+    const stack = page.querySelector('[data-part="loading-buttons"]')?.closest(".cb-stack")
+      ?.parentElement as HTMLElement;
+    expect(stack.children).toHaveLength(7);
+    expect(page.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(3);
     await release();
     expect(await screen.findByRole("heading", { level: 1, name: "crm" })).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());

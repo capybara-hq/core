@@ -136,7 +136,27 @@ function Connector({
           onChange: (id) => setTab(id as Tab),
         }}
         inspectorTitle={t("detail.inspectorTitle")}
-        loading={{ inspector: true }}
+        // The tools tab (its table, the refresh button for those who manage connectors) and the
+        // inspector's facts (slug, connector, endpoint, auth, credential; ownership comes with data)
+        loading={{
+          inspector: { rows: 5, keyWidth: "10ch" },
+          content: [
+            {
+              kind: "table",
+              label: t("detail.tabs.tools"),
+              columns: toolColumns(t),
+              ...(manage
+                ? {
+                    toolbar: (
+                      <Button density="dense" disabled>
+                        {t("detail.refresh")}
+                      </Button>
+                    ),
+                  }
+                : {}),
+            },
+          ],
+        }}
       />
     );
   }
@@ -211,6 +231,17 @@ function ConnectorInspector({ app }: { app: ConnectorDetail }) {
   );
 }
 
+/** The tools table's column heads, shared by the loaded table and its loading header. */
+const toolHeads = (t: ReturnType<typeof useTranslations<"connectors">>) => ({
+  name: { key: "name", header: t("tools.columns.name") },
+  policy: { key: "policy", header: t("tools.columns.policy"), width: 160 },
+  status: { key: "status", header: t("tools.columns.status"), width: 120 },
+});
+
+/** The tools table's header while the connector loads (the cells need the connector). */
+const toolColumns = (t: ReturnType<typeof useTranslations<"connectors">>): Column<never>[] =>
+  Object.values(toolHeads(t)).map((h) => ({ ...h, cell: () => null }));
+
 /** 工具页签；「刷新工具」放在表格工具栏（PageHeader 的按钮没有加载态），刷新期间为加载中且不可再点。 */
 function ToolsTab({
   app,
@@ -242,10 +273,10 @@ function ToolsTab({
     }
   }
 
+  const heads = toolHeads(t);
   const columns: Column<ConnectorTool>[] = [
     {
-      key: "name",
-      header: t("tools.columns.name"),
+      ...heads.name,
       cell: (x) => (
         <Stack gap={0}>
           <Text>{x.key}</Text>
@@ -266,9 +297,7 @@ function ToolsTab({
       ),
     },
     {
-      key: "policy",
-      header: t("tools.columns.policy"),
-      width: 160,
+      ...heads.policy,
       cell: (x) =>
         manage ? (
           <Select
@@ -283,9 +312,7 @@ function ToolsTab({
         ),
     },
     {
-      key: "status",
-      header: t("tools.columns.status"),
-      width: 120,
+      ...heads.status,
       cell: (x) =>
         x.status === "pending_review" ? (
           <StatusMark status="waiting" label={t("tools.pendingReview")} />

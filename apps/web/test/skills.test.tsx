@@ -484,6 +484,22 @@ describe("the skills pages render on the server (web-SSR spec §6)", () => {
     },
   );
 
+  it("/skills/<id>: the loading content is the body's lines and, for an admin, the delete card", async () => {
+    await renderRouteEmptyCache("/skills/s1", {
+      [`GET ${BASE}/s1`]: () => new Promise<Response>(() => {}),
+    });
+    const page = await vi.waitFor(() => {
+      const el = template("DetailPage");
+      if (el === null) throw new Error("no page yet");
+      return el as HTMLElement;
+    });
+    expect(page.querySelectorAll('[data-part="loading-card"]')).toHaveLength(0);
+    const card = page.querySelectorAll('[data-part="loading-shaped-card"]');
+    expect(card).toHaveLength(1);
+    expect(card[0]?.querySelectorAll('[data-part="loading-buttons"] [data-box]')).toHaveLength(1);
+    expect(page.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(4);
+  });
+
   it.each(["/skills", "/skills/s1"])(
     "%s: a guest gets no access and nothing is read; no org renders nothing; setup goes home",
     async (path) => {

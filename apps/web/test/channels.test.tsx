@@ -585,6 +585,47 @@ describe("the channel pages read from the query cache (web query cache spec §3)
   );
 
   it.each([
+    [
+      "/channels/new",
+      "FormPage",
+      (page: HTMLElement) => {
+        // the policy section's two card radios and the config section's one-line hint
+        expect(page.querySelectorAll('[data-part="loading-radio"]')).toHaveLength(2);
+        const config = page.querySelectorAll('[data-part="form-section"]')[1] as HTMLElement;
+        expect(
+          within(config).getByRole("heading", { name: en.channels.form.configSection }),
+        ).toBeTruthy();
+        expect(config.querySelectorAll('[data-part="loading-field"]')).toHaveLength(0);
+        expect(config.querySelectorAll('[data-part="skeleton-text"]')).toHaveLength(1);
+      },
+    ],
+    [
+      "/channels/ch1",
+      "DetailPage",
+      (page: HTMLElement) => {
+        // the inspector's six facts
+        expect(page.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(6);
+      },
+    ],
+  ] as const)("%s: the loading state has the loaded page's shape", async (path, name, check) => {
+    const never = () => new Promise<Response>(() => {});
+    await renderRouteEmptyCache(path, {
+      [`GET ${BASE}/channels`]: never,
+      [`GET ${BASE}/channels/ch1`]: never,
+      [`GET ${BASE}/channels/schema/fake-im`]: never,
+      [`GET ${BASE}/agents`]: never,
+      [`GET ${BASE}/extensions`]: never,
+    });
+    const page = await vi.waitFor(() => {
+      const el = template(name);
+      if (el === null) throw new Error("no page yet");
+      return el as HTMLElement;
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    check(page);
+  });
+
+  it.each([
     ["/channels", false],
     ["/channels/new", true],
     ["/channels/ch1", false],

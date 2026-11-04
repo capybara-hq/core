@@ -55,6 +55,7 @@ export default function SkillView({ skillId }: { skillId: string }) {
 function Skill({ orgId, skillId }: { orgId: string; skillId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("skills");
+  const { me } = useSession();
   const [tab, setTab] = useState<Tab>("content");
   const read = usePageQuery(skillQuery(orgId, skillId));
   const tabs = {
@@ -71,7 +72,17 @@ function Skill({ orgId, skillId }: { orgId: string; skillId: string }) {
         header={{ path: [...scope, { label: "skills", href: "/skills" }], title: "" }}
         tabs={tabs}
         inspectorTitle={t("detail.inspectorTitle")}
-        loading={{ inspector: true }}
+        // The content tab: the SKILL.md body, then the delete card for admins (its hint and
+        // button); the inspector's four facts
+        loading={{
+          inspector: { rows: 4, keyWidth: "10ch" },
+          content: [
+            { kind: "lines", lines: 12 },
+            ...(canUpdateOrg(me)
+              ? [{ kind: "card" as const, card: { lines: 1, buttons: 1 } }]
+              : []),
+          ],
+        }}
       />
     );
   }

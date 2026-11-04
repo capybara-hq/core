@@ -84,6 +84,74 @@ export type EvalRunData = EvalRunState & {
   setName: string | null;
 };
 
+type EvalsT = ReturnType<typeof useTranslations<"evals">>;
+
+/** The results table's columns (the loading table draws the same header). */
+function resultColumns(
+  t: EvalsT,
+  title: (r: { caseId: string }) => string,
+): Column<EvalResultRow>[] {
+  const judgeCell = (r: EvalResultRow): ReactNode => {
+    if (r.verdict !== null) {
+      return (
+        <Text tone={r.verdict === "pass" ? "ok" : "fail"}>{t(`run.verdict.${r.verdict}`)}</Text>
+      );
+    }
+    if (r.judgeStatus === "done") return "—";
+    return <Text tone="muted">{t(`run.judgeStatus.${r.judgeStatus}`)}</Text>;
+  };
+  return [
+    { key: "case", header: t("run.columns.case"), cell: (r) => <Text truncate>{title(r)}</Text> },
+    {
+      key: "step",
+      header: t("run.columns.step"),
+      width: 90,
+      tone: "muted",
+      cell: (r) => (r.step === null ? t("run.wholeRun") : t("run.stepValue", { n: r.step })),
+    },
+    {
+      key: "status",
+      header: t("run.columns.status"),
+      width: 110,
+      cell: (r) => (
+        <StatusMark status={evalResultMark(r.status)} label={t(`run.resultStatus.${r.status}`)} />
+      ),
+    },
+    {
+      key: "tools",
+      header: t("run.columns.tools"),
+      width: 100,
+      cell: (r) =>
+        r.toolCallsMatch === null ? (
+          "—"
+        ) : (
+          <Text tone={r.toolCallsMatch ? "ok" : "fail"}>
+            {r.toolCallsMatch ? t("run.match") : t("run.mismatch")}
+          </Text>
+        ),
+    },
+    {
+      key: "similarity",
+      header: t("run.columns.similarity"),
+      width: 110,
+      align: "right",
+      cell: (r) => formatRate(r.textSimilarity),
+    },
+    { key: "judge", header: t("run.columns.judge"), width: 100, cell: judgeCell },
+    {
+      key: "label",
+      header: t("run.columns.label"),
+      width: 100,
+      cell: (r) =>
+        r.label === null ? (
+          "—"
+        ) : (
+          <Text tone={r.label === "pass" ? "ok" : "fail"}>{t(`run.verdict.${r.label}`)}</Text>
+        ),
+    },
+  ];
+}
+
 export default function EvalRunPageView({ runId }: { runId: string }) {
   const ws = useWorkspace({ min: "admin" });
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
@@ -147,7 +215,19 @@ function EvalRunInOrg({ orgId, runId }: { orgId: string; runId: string }) {
         header={{ path: [...scope, { label: "evals", href: "/evals" }], title: "" }}
         tabs={tabs}
         inspectorTitle={t("run.inspector.title")}
-        loading={{}}
+        // Nothing is selected yet: the loaded inspector is this hint
+        inspector={<InspectorHint />}
+        // The five header metrics, then the results tab: its table
+        loading={{
+          stats: 5,
+          content: [
+            {
+              kind: "table",
+              label: t("run.resultsLabel"),
+              columns: resultColumns(t, () => "") as Column<never>[],
+            },
+          ],
+        }}
       />
     );
   }
@@ -267,66 +347,7 @@ function EvalRunView({
       <Text tone="muted">{t("run.polling")}</Text>
     ) : null;
 
-  const judgeCell = (r: EvalResultRow): ReactNode => {
-    if (r.verdict !== null) {
-      return (
-        <Text tone={r.verdict === "pass" ? "ok" : "fail"}>{t(`run.verdict.${r.verdict}`)}</Text>
-      );
-    }
-    if (r.judgeStatus === "done") return "—";
-    return <Text tone="muted">{t(`run.judgeStatus.${r.judgeStatus}`)}</Text>;
-  };
-
-  const columns: Column<EvalResultRow>[] = [
-    { key: "case", header: t("run.columns.case"), cell: (r) => <Text truncate>{title(r)}</Text> },
-    {
-      key: "step",
-      header: t("run.columns.step"),
-      width: 90,
-      tone: "muted",
-      cell: (r) => (r.step === null ? t("run.wholeRun") : t("run.stepValue", { n: r.step })),
-    },
-    {
-      key: "status",
-      header: t("run.columns.status"),
-      width: 110,
-      cell: (r) => (
-        <StatusMark status={evalResultMark(r.status)} label={t(`run.resultStatus.${r.status}`)} />
-      ),
-    },
-    {
-      key: "tools",
-      header: t("run.columns.tools"),
-      width: 100,
-      cell: (r) =>
-        r.toolCallsMatch === null ? (
-          "—"
-        ) : (
-          <Text tone={r.toolCallsMatch ? "ok" : "fail"}>
-            {r.toolCallsMatch ? t("run.match") : t("run.mismatch")}
-          </Text>
-        ),
-    },
-    {
-      key: "similarity",
-      header: t("run.columns.similarity"),
-      width: 110,
-      align: "right",
-      cell: (r) => formatRate(r.textSimilarity),
-    },
-    { key: "judge", header: t("run.columns.judge"), width: 100, cell: judgeCell },
-    {
-      key: "label",
-      header: t("run.columns.label"),
-      width: 100,
-      cell: (r) =>
-        r.label === null ? (
-          "—"
-        ) : (
-          <Text tone={r.label === "pass" ? "ok" : "fail"}>{t(`run.verdict.${r.label}`)}</Text>
-        ),
-    },
-  ];
+  const columns = resultColumns(t, title);
 
   return (
     <DetailPage
@@ -358,12 +379,10 @@ function EvalRunView({
       }}
       inspectorTitle={t("run.inspector.title")}
       inspector={
-        <section aria-label={t("run.inspector.title")}>
-          {current === undefined ? (
-            <Text variant="prose" tone="muted">
-              {t("run.inspector.selectHint")}
-            </Text>
-          ) : (
+        current === undefined ? (
+          <InspectorHint />
+        ) : (
+          <section aria-label={t("run.inspector.title")}>
             <ResultPanel
               key={current.id}
               orgId={orgId}
@@ -373,8 +392,8 @@ function EvalRunView({
               title={title(current)}
               onLabeled={labeled}
             />
-          )}
-        </section>
+          </section>
+        )
       }
     >
       <Stack gap={12}>
@@ -520,6 +539,18 @@ function toolLine(e: ToolCallDiffEntry, kind: string): string {
  * 选中结果的查看器：按需读这一条的完整行（结果表只有轻量行）；轮询带回这一行的 `updatedAt` 变化时重读
  * （重读期间保留上一次的内容）。
  */
+/** The inspector while no result is open (the loading page draws it too: nothing is open yet). */
+function InspectorHint() {
+  const t = useTranslations("evals");
+  return (
+    <section aria-label={t("run.inspector.title")}>
+      <Text variant="prose" tone="muted">
+        {t("run.inspector.selectHint")}
+      </Text>
+    </section>
+  );
+}
+
 function ResultPanel({
   orgId,
   runId,

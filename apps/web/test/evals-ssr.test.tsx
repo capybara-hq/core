@@ -302,6 +302,16 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     });
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
     expect(screen.queryByText("Delete the stale item")).toBeNull();
+    // the loaded shape: the head's three action slots, the cases table's header, the inspector
+    const page = template("DetailPage") as HTMLElement;
+    expect(page.querySelectorAll('[data-part="page-header-action-slots"] [data-box]')).toHaveLength(
+      3,
+    );
+    expect(page.querySelector('[data-empty="loading"]')).not.toBeNull();
+    for (const h of Object.values(E.set.caseColumns))
+      expect(within(page).getByText(h)).toBeTruthy();
+    expect(page.querySelectorAll('[data-part="loading-card"]')).toHaveLength(0);
+    expect(page.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(4);
     await release();
     expect(await screen.findByText("Delete the stale item")).toBeTruthy();
     // the agent is read once the set named it
@@ -373,6 +383,17 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       if (template("WizardPage") === null) throw new Error("no page");
     });
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    // step 0's two sections with their real titles: the mode's two radio cards, then the
+    // candidate's two selects and the instruction switch; one busy announcement
+    const page = template("WizardPage") as HTMLElement;
+    expect(page.querySelectorAll('[data-part="form-section"]')).toHaveLength(2);
+    expect(within(page).getByRole("heading", { name: E.wizard.mode })).toBeTruthy();
+    expect(within(page).getByRole("heading", { name: E.wizard.candidate })).toBeTruthy();
+    expect(within(page).getByText(E.wizard.candidateHint)).toBeTruthy();
+    expect(page.querySelectorAll('[data-part="loading-radio"]')).toHaveLength(2);
+    expect(page.querySelectorAll('[data-part="loading-field"]')).toHaveLength(2);
+    expect(page.querySelectorAll('[data-part="loading-switch"]')).toHaveLength(1);
+    expect(page.querySelectorAll('[role="status"]')).toHaveLength(1);
     expect(screen.queryByRole("combobox", { name: E.wizard.model })).toBeNull();
     await release();
     expect(await screen.findByRole("combobox", { name: E.wizard.model })).toBeTruthy();
@@ -484,6 +505,15 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       if (template("DetailPage") === null) throw new Error("no page");
     });
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    // the loaded shape: five stat slots under the head, the results table's header, and the
+    // inspector's hint (nothing is open yet)
+    const page = template("DetailPage") as HTMLElement;
+    expect(page.querySelectorAll('[data-part="stat-card"]')).toHaveLength(5);
+    expect(page.querySelector('[data-empty="loading"]')).not.toBeNull();
+    for (const h of Object.values(E.run.columns)) expect(within(page).getByText(h)).toBeTruthy();
+    expect(page.querySelectorAll('[data-part="loading-card"]')).toHaveLength(0);
+    expect(page.querySelector(".cb-body-inspector")).not.toBeNull();
+    expect(within(page).getByText(E.run.inspector.selectHint)).toBeTruthy();
     expect(screen.queryByRole("table", { name: E.run.resultsLabel })).toBeNull();
     await release();
     const table = await screen.findByRole("table", { name: E.run.resultsLabel });

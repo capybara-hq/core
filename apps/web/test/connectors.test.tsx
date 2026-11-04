@@ -758,6 +758,17 @@ describe("the connectors pages render on the server (web-SSR spec §6)", () => {
     });
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
     expect(screen.queryByRole("heading", { level: 1, name: "Fixture" })).toBeNull();
+    // the tools tab's table: its header and, for a manager, the refresh button (disabled), and
+    // the inspector's five facts; no generic cards
+    const page = document.querySelector('[data-template="DetailPage"]') as HTMLElement;
+    expect(page.querySelector('[data-empty="loading"]')).not.toBeNull();
+    expect(within(page).getByText(en.connectors.tools.columns.policy)).toBeTruthy();
+    const refresh = within(page).getByRole("button", {
+      name: en.connectors.detail.refresh,
+    }) as HTMLButtonElement;
+    expect(refresh.disabled).toBe(true);
+    expect(page.querySelectorAll('[data-part="loading-card"]')).toHaveLength(0);
+    expect(page.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(5);
     await act(async () => release());
     expect(await screen.findByRole("heading", { level: 1, name: "Fixture" })).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
