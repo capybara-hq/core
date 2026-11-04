@@ -36,6 +36,8 @@ const TOOL_MAP: Readonly<Record<string, string>> = {
   Agent: "Agent",
   Task: "Agent",
   TodoWrite: "plugin__todo__write",
+  WebFetch: "WebFetch",
+  WebSearch: "WebSearch",
 };
 /** Claude ignores these for plugin agents: `not_applicable`. */
 const NOT_APPLICABLE = new Set(["permissionMode", "hooks", "mcpServers"]);

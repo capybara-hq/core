@@ -12,3 +12,7 @@ extensions `fake-web` and `fake-web-2` (scripted `web-search@1` / `web-fetch@1` 
 Kernel: the `web.*` config section (`web.search.maxResults`, `web.fetch.maxPageChars`,
 `web.fetch.maxAnswerTokens`, `web.fetch.cacheSeconds`, all hot), `BuiltinTool.unavailable` may be
 async and receives `{ orgId }`, and builtin tools get `parentRunId` in their call context.
+
+Kernel: `WebSearch` and `WebFetch` are builtin tool names (`BUILTIN`, `WEB_TOOL_NAMES`) with the
+display kinds `search` / `read`; the Claude Code tool-name map lists both as same-name tools
+(new snapshots only) and Claude agent import maps `WebFetch` / `WebSearch` to them.

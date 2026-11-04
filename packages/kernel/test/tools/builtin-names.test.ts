@@ -6,6 +6,7 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
 import { type CaseSnapshot, toEvents } from "../../src/evals/snapshot.js";
 import { buildModelRequest, type RequestTool } from "../../src/runtime/context/build.js";
+import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import {
   LEGACY_CATALOG_HEADER,
   LEGACY_SKILL_TEXTS,
@@ -22,10 +23,12 @@ import {
 import {
   AGENT_TOOL,
   BUILTIN,
+  BUILTIN_TOOL_KINDS,
   BUILTIN_TOOL_NAMES,
   DEFAULT_AGENT_TOOLS,
   SANDBOX_ASK_TOOL_NAMES,
   SANDBOX_TOOL_NAMES,
+  WEB_TOOL_NAMES,
 } from "../../src/tools/builtin-names.js";
 import { agentToolSpec } from "../../src/tools/builtins/agent.js";
 import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
@@ -97,8 +100,10 @@ describe("builtin names", () => {
   it("the tools BuiltinTools builds are exactly BUILTIN_TOOL_NAMES", () => {
     const names = builtins().map((t) => t.spec.name);
     for (const n of names) expect(BUILTIN_TOOL_NAMES as readonly string[]).toContain(n);
-    expect(new Set(names)).toEqual(new Set(BUILTIN_TOOL_NAMES));
-    expect(names).toHaveLength(BUILTIN_TOOL_NAMES.length);
+    // The web tools are named here and built by the web tool tasks; they are not built yet.
+    const built = BUILTIN_TOOL_NAMES.filter((n) => !WEB_TOOL_NAMES.includes(n));
+    expect(new Set(names)).toEqual(new Set(built));
+    expect(names).toHaveLength(built.length);
   });
 
   it("no builtin description or schema names an old builtin", () => {
@@ -133,10 +138,21 @@ describe("builtin names", () => {
     }
   });
 
+  it("WebSearch and WebFetch are builtin names with display kinds and a Claude Code map entry", () => {
+    expect(BUILTIN.WebSearch).toBe("WebSearch");
+    expect(BUILTIN.WebFetch).toBe("WebFetch");
+    expect(WEB_TOOL_NAMES).toEqual(["WebSearch", "WebFetch"]);
+    for (const n of WEB_TOOL_NAMES) expect(BUILTIN_TOOL_NAMES).toContain(n);
+    expect(BUILTIN_TOOL_KINDS.WebSearch).toBe("search");
+    expect(BUILTIN_TOOL_KINDS.WebFetch).toBe("read");
+    expect(CLAUDE_CODE_TOOL_MAP).toContain("Agent, WebFetch and WebSearch have the same names");
+    expect(CLAUDE_CODE_TOOL_MAP).not.toMatch(/for example WebFetch/);
+  });
+
   it("the legacy map covers the 13 old names, one per new name", () => {
     expect(Object.keys(LEGACY_BUILTINS)).toHaveLength(13);
     expect(new Set(Object.values(LEGACY_BUILTINS).map((l) => l.name))).toEqual(
-      new Set(BUILTIN_TOOL_NAMES),
+      new Set(BUILTIN_TOOL_NAMES.filter((n) => !WEB_TOOL_NAMES.includes(n))),
     );
     expect(LEGACY_BUILTINS.sandbox_bash).toEqual({
       name: "Bash",

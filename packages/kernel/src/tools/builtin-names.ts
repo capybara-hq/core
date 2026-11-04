@@ -22,6 +22,8 @@ export const BUILTIN = {
   ReadToolOutput: "ReadToolOutput",
   ToolSearch: "ToolSearch",
   Agent: "Agent",
+  WebSearch: "WebSearch",
+  WebFetch: "WebFetch",
 } as const;
 
 export type BuiltinName = (typeof BUILTIN)[keyof typeof BUILTIN];
@@ -36,6 +38,9 @@ export const SANDBOX_TOOL_NAMES: readonly BuiltinName[] = [
   BUILTIN.Grep,
   BUILTIN.Deliver,
 ];
+
+/** The builtin tools that reach the web through the org's web-search / web-fetch providers. */
+export const WEB_TOOL_NAMES: readonly BuiltinName[] = [BUILTIN.WebSearch, BUILTIN.WebFetch];
 
 /** Sandbox tools that need approval when the org setting `sandboxToolPolicy` is `ask` (not the read-only ones). */
 export const SANDBOX_ASK_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
@@ -59,6 +64,7 @@ export const BUILTIN_TOOL_NAMES: readonly BuiltinName[] = [
   BUILTIN.SkillWrite,
   ...SANDBOX_TOOL_NAMES,
   BUILTIN.Agent,
+  ...WEB_TOOL_NAMES,
 ];
 
 /** The builtin that loads a skill (added by the registry when the log has a skills catalog). */
@@ -118,6 +124,8 @@ export const BUILTIN_TOOL_KINDS: Readonly<Record<string, ToolKind>> = {
   [BUILTIN.SkillWrite]: "meta",
   [BUILTIN.ReadToolOutput]: "meta",
   [BUILTIN.AskUserQuestion]: "meta",
+  [BUILTIN.WebSearch]: "search",
+  [BUILTIN.WebFetch]: "read",
 };
 
 /**
