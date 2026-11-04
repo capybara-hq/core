@@ -48,8 +48,9 @@ const CANDIDATES = 20;
  * The wake decision for a chat conversation that is idle, whose queue is not paused and has no
  * unconsumed message (the caller checked these under the conversation's row lock). A finish
  * wakes it when:
- * - it is after `consumed`, not `reported` (a tool call already told the model) and not a
- *   person's stop (`stoppedBy: "person"`: that person is looking at the conversation);
+ * - it is after `consumed`, not `reported` (a tool call already told the model) and has no
+ *   `stoppedBy` (`"person"`: that person is looking at the conversation; `"deletion"`: the
+ *   conversation is being deleted);
  * - it belongs to a task of this conversation (the join on `conversation_id` reads the task's
  *   trigger account). A sub-agent's task is excluded by the conversation's kind, not here: its
  *   finish is in the child's log, and `ensureRun` never wakes a non-chat conversation;
@@ -77,7 +78,7 @@ export async function wakeDecisionIn(
     .where("e.type", "=", "background_task_finished")
     .where("e.seq", ">", String(consumed))
     .where(sql<boolean>`(e.payload ->> 'reported')::boolean = false`)
-    .where(sql<boolean>`e.payload ->> 'stoppedBy' IS DISTINCT FROM 'person'`)
+    .where(sql<boolean>`e.payload ->> 'stoppedBy' IS NULL`)
     .orderBy("e.seq", "desc")
     .limit(CANDIDATES)
     .execute();

@@ -770,10 +770,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       reported: z.boolean(),
       lostReason: z.string().optional(),
       /**
-       * A person stopped the task (the conversation's background section): the finish never
-       * wakes a run, but the next run absorbs it like any other (background Bash §3).
+       * The finish never wakes a run, but the next run absorbs it like any other (background
+       * Bash §3): `person`, a person stopped the task (the conversation's background section);
+       * `deletion`, the conversation was being deleted.
        */
-      stoppedBy: z.literal("person").optional(),
+      stoppedBy: z.enum(["person", "deletion"]).optional(),
     }),
   ),
   ev("compaction_summary", z.object({ coversUpToSeq: seqNo, text: z.string() })),

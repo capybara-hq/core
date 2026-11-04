@@ -390,7 +390,7 @@ function absorbedByStep(s: CaseSnapshot): Map<number, number> {
 /**
  * The replayed run's boundary (`trigger_seq`): a wake run's recorded one (`run_started.triggerSeq`,
  * background Bash spec §3); otherwise the newest message after `consumed`, else the newest finish
- * after it that could have woken the run (not reported, not a person's stop), else the last
+ * after it that could have woken the run (not reported, no `stoppedBy`), else the last
  * message (old logs, as before).
  */
 function replayTrigger(started: unknown, seeds: SnapshotEvent[], consumed: number): number {
@@ -403,7 +403,7 @@ function replayTrigger(started: unknown, seeds: SnapshotEvent[], consumed: numbe
   const wake = seeds.findLast((e) => {
     if (e.type !== "background_task_finished" || e.seq <= consumed) return false;
     const p = e.payload as { reported: boolean; stoppedBy?: string };
-    return !p.reported && p.stoppedBy !== "person";
+    return !p.reported && p.stoppedBy === undefined;
   })?.seq;
   return wake ?? lastMessage ?? 0;
 }

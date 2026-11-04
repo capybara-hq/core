@@ -468,10 +468,13 @@ export class ConversationsService {
 
   /**
    * Soft-deletes a conversation (owner only; a sub-agent's conversation is `conversation.read_only`):
-   * stops an active run and every running background task in its sandbox (its sub-agents' too;
+   * stops an active run, hides the conversation everywhere for its owner and drops its channel
+   * bindings, then stops every running background task in its sandbox (its sub-agents' too;
    * outside the delete's transaction, a task whose sandbox cannot be reached ends `lost` with
-   * `kill_pending`), hides the conversation everywhere for its owner and drops its channel
-   * bindings. The event log, runs and trajectory stay (enterprise admins still see them).
+   * `kill_pending`). The tasks are stopped after the conversation is marked deleted, so no finish
+   * (the stops' own, or one the poller writes meanwhile) can wake a run on it: `ensureRun` refuses a
+   * deleted conversation (the stops' finishes carry `stoppedBy: "deletion"` as well). The event
+   * log, runs and trajectory stay (enterprise admins still see them).
    */
   async remove(orgId: string, conversationId: string, accountId: string): Promise<void> {
     await this.writable(orgId, conversationId, accountId);
@@ -480,8 +483,8 @@ export class ConversationsService {
     } catch (e) {
       if (!(e instanceof ApiError && e.code === "run.not_active")) throw e;
     }
-    await this.background.stopForDeletedConversation(conversationId);
     await this.markDeleted(conversationId);
+    await this.background.stopForDeletedConversation(conversationId);
     await this.eventLog.publishChanged(conversationId, "deleted");
   }
 

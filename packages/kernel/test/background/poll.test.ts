@@ -763,6 +763,39 @@ describe("stopping", () => {
       expect(await store.get(t.id)).toMatchObject({ status: "stopped" });
       expect(await alive({ orgId, conversationId: conv }, t)).toBe(false);
     }, 60_000);
+
+    it("deleting an idle conversation with a running task wakes no run (I1)", async () => {
+      const conv = await createConv(owner, orgId, agentId);
+      used.push(conv);
+      const owned = await db
+        .selectFrom("conversations")
+        .select("account_id")
+        .where("id", "=", conv)
+        .executeTakeFirstOrThrow();
+      const t = await launch(
+        { orgId, conversationId: conv, accountId: owned.account_id },
+        "sleep 318",
+      );
+      const res = await owner({
+        method: "DELETE",
+        url: `/api/v1/orgs/${orgId}/conversations/${conv}`,
+      });
+      expect(res.statusCode, res.body).toBe(204);
+      expect(await store.get(t.id)).toMatchObject({ status: "stopped" });
+      expect(await alive({ orgId, conversationId: conv }, t)).toBe(false);
+      // the wake runs after the stop's commit; give a late one time to show up
+      await new Promise((r) => setTimeout(r, 1000));
+      const runs = await db
+        .selectFrom("runs")
+        .select("id")
+        .where("conversation_id", "=", conv)
+        .execute();
+      expect(runs).toEqual([]);
+      // the stop's finish is marked as the deletion's, so nothing that reads it later wakes a run
+      expect((await finishedEvents(conv, t.id)).map((e) => e.payload)).toMatchObject([
+        { status: "stopped", reported: false, stoppedBy: "deletion" },
+      ]);
+    }, 60_000);
   });
 });
 

@@ -224,7 +224,7 @@ the same transaction as the business rows.
 - A finish (poll, `TaskOutput`, `TaskStop`, or a person's stop from the panel) is one conditional update from `running` plus the
   model-visible `background_task_finished` event (idempotency key `background_task_finished:<taskId>`) in the same transaction. A finish a
   tool result already showed the model is `reported: true` (one short line, never wakes); a person's stop is `stoppedBy: "person"` (never
-  wakes). The wake rules live in `RunQueue.ensureRun` (`background/wake-rules.ts`). A sub-agent's running tasks are stopped when the child
+  wakes), the stop of a conversation being deleted `stoppedBy: "deletion"` (never wakes; the delete marks the conversation deleted first). The wake rules live in `RunQueue.ensureRun` (`background/wake-rules.ts`). A sub-agent's running tasks are stopped when the child
   ends (`Waits.childFinished`); stopping a run leaves its tasks running.
 
 **Skill tools**:

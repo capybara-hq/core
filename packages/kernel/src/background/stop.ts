@@ -3,7 +3,11 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { type IfRunningResult, SandboxService } from "../sandbox/sandbox.service.js";
-import { type BackgroundFinish, BackgroundTaskFinisher } from "./finish.js";
+import {
+  type BackgroundFinish,
+  type BackgroundStoppedBy,
+  BackgroundTaskFinisher,
+} from "./finish.js";
 import { TASKS_DIR } from "./launch.js";
 import { assertTaskRef, decodeTail, killSession, tailCommand } from "./session.js";
 import { type BackgroundTaskRow, BackgroundTaskStore } from "./store.js";
@@ -106,8 +110,11 @@ export class BackgroundTaskStopper {
     const sid = cur.sid;
     assertTaskRef(cur.id, sid);
     const reported = why === "tool";
-    // a person's stop never wakes the conversation (background Bash §3, fix round 1)
-    const opts = why === "person" ? { stoppedBy: "person" as const } : {};
+    // a person's stop never wakes the conversation (background Bash §3, fix round 1), nor does
+    // the stop of a conversation being deleted
+    const stoppedBy: BackgroundStoppedBy | undefined =
+      why === "person" ? "person" : why === "conversation_deleted" ? "deletion" : undefined;
+    const opts = stoppedBy === undefined ? {} : { stoppedBy };
     let r: IfRunningResult<{ to: BackgroundFinish; lastLines: string }>;
     try {
       r = await this.sandbox.ifRunning(

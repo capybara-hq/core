@@ -247,7 +247,7 @@ type EventBody =
         outputPath: string;
         reported: boolean;
         lostReason?: string;
-        stoppedBy?: "person";
+        stoppedBy?: "person" | "deletion";
       };
     }
   | { type: "compaction_summary"; payload: { coversUpToSeq: number; text: string } }

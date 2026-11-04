@@ -10,6 +10,12 @@ import { type BackgroundTaskRow, BackgroundTaskStore } from "./store.js";
 /** Where a task ends (as {@link BackgroundTaskStore.finish} takes it). */
 export type BackgroundFinish = Parameters<BackgroundTaskStore["finish"]>[1];
 
+/**
+ * Who stopped a task, when its finish must never wake the conversation: a person (who is looking at
+ * it) or the deletion of the conversation.
+ */
+export type BackgroundStoppedBy = "person" | "deletion";
+
 /** The idempotency key of a task's `background_task_finished` event. */
 export const finishedEventKey = (taskId: string): string => `background_task_finished:${taskId}`;
 
@@ -37,8 +43,9 @@ export class BackgroundTaskFinisher {
    * Finishes `task` as `to` with its last output lines (cut to their last 4 000 characters);
    * `reported` when a tool call already told the model in its run. False (nothing written) when the
    * task was no longer running, or, with `opts.unclaimed` (the poller), when a live stop claimed it:
-   * the stop's finish is then the only one. `opts.stoppedBy: "person"` marks a person's stop: such
-   * a finish never wakes the conversation.
+   * the stop's finish is then the only one. `opts.stoppedBy` marks a stop that must never wake the
+   * conversation: `"person"` (a person stopped it) or `"deletion"` (its conversation is being
+   * deleted).
    */
   @Transactional()
   async finish(
@@ -46,7 +53,7 @@ export class BackgroundTaskFinisher {
     to: BackgroundFinish,
     lastLines: string,
     reported: boolean,
-    opts: { unclaimed?: boolean; stoppedBy?: "person" } = {},
+    opts: { unclaimed?: boolean; stoppedBy?: BackgroundStoppedBy } = {},
   ): Promise<boolean> {
     if (!(await this.store.finish(task.id, to, opts))) return false;
     const [event] = await this.eventLog.appendIn(task.conversationId, [
