@@ -1,4 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
+import { BackgroundTaskStore } from "../../background/store.js";
 import { AttachmentsService } from "../../conversations/attachments.service.js";
 import { EventLog } from "../../conversations/event-log.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
@@ -36,9 +37,11 @@ export class BuiltinTools {
     @Inject(AttachmentsService) attachments: AttachmentsService,
     @Inject(EventLog) eventLog: EventLog,
     @Inject(SandboxService) sandbox: SandboxService,
+    @Inject(BackgroundTaskStore) background: BackgroundTaskStore,
   ) {
     const sandboxDeps: SandboxToolDeps = {
       sandbox,
+      background,
       attachments,
       storage,
       eventLog,

@@ -5,6 +5,7 @@ import {
   ToolError,
   validateSandboxPath,
 } from "@capybara-hq/plugin-sdk";
+import type { BackgroundTaskStore } from "../../../background/store.js";
 import type { KernelConfig } from "../../../config/schema.js";
 import type { AttachmentsService } from "../../../conversations/attachments.service.js";
 import type { EventLog } from "../../../conversations/event-log.js";
@@ -17,9 +18,14 @@ import type { BuiltinCallContext } from "../../registry.js";
 
 /** 沙箱工具的依赖（都按调用时取，多副本下无进程内状态）。 */
 export interface SandboxToolDeps {
-  /** `pathLease` may be absent (test stubs): the kernel's own file writes then take no path lease. */
+  /**
+   * `pathLease` may be absent (test stubs): the kernel's own file writes then take no path lease.
+   * `currentInstance` too: a background `Bash` launch records the instance it started in.
+   */
   sandbox: Pick<SandboxService, "available" | "withSandbox"> &
-    Partial<Pick<SandboxService, "pathLease">>;
+    Partial<Pick<SandboxService, "pathLease" | "currentInstance">>;
+  /** Background `Bash` tasks; absent in test stubs, where `run_in_background` is refused. */
+  background?: Pick<BackgroundTaskStore, "insert" | "countRunning">;
   attachments: Pick<AttachmentsService, "listForConversation" | "openForConversation">;
   storage: Pick<StorageService, "kernel" | "available">;
   /** `publishChanged`: `Deliver` announces `changed: files` (UI refresh B). */

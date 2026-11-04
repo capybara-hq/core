@@ -1,5 +1,13 @@
-import type { ExecResult, ToolSpec } from "@capybara-hq/plugin-sdk";
-import type { BuiltinTool } from "../../registry.js";
+import { type ExecResult, ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
+import {
+  backgroundMaxSeconds,
+  LAUNCH_EXEC_TIMEOUT_MS,
+  launchScript,
+  newTaskId,
+  startedText,
+  taskOutputPath,
+} from "../../../background/launch.js";
+import type { BuiltinCallContext, BuiltinResult, BuiltinTool } from "../../registry.js";
 import {
   clip,
   display,
@@ -8,6 +16,7 @@ import {
   runTimeLeftMs,
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
+  sandboxConversationOf,
   unavailableWhenNoSandbox,
   withNotices,
 } from "./common.js";
@@ -39,7 +48,16 @@ const SPEC: ToolSpec = {
     "Grep for reading, writing and searching files. To give a file to the user, use " +
     "Deliver. Other sub-agents of this conversation may run commands in this sandbox at " +
     "the same time. Always pass description: a few words saying what the command is for; the " +
-    "user sees it instead of the command.",
+    "user sees it instead of the command.\n\n" +
+    "You can use the run_in_background parameter to run the command in the background, which " +
+    "allows you to continue working while the command runs, e.g. a dev server, a long build or a " +
+    "test suite. The call returns at once with a task id and the command's output goes to a file " +
+    "under /workspace/.capybara/tasks. Read the output with TaskOutput (or Read) and stop the " +
+    "task with TaskStop; you will be told when it finishes. You do not need to use '&' at the end " +
+    "of the command when using this parameter. In the background, timeout defaults to the " +
+    "deployment's background maximum (7200000 by default). A background task is lost if the " +
+    "sandbox is suspended (it is suspended after it has been running for a while, " +
+    "sandbox.limits.maxRunningMinutes), so keep its results in files under /workspace.",
   inputSchema: {
     type: "object",
     properties: {
@@ -58,7 +76,12 @@ const SPEC: ToolSpec = {
       timeout: {
         type: "integer",
         minimum: 1,
-        description: `Milliseconds before the command is stopped. Default ${BASH_DEFAULT_TIMEOUT_SECONDS * 1000}; the deployment sets a maximum (7200000 by default); a larger value is lowered to it.`,
+        description: `Milliseconds before the command is stopped. Default ${BASH_DEFAULT_TIMEOUT_SECONDS * 1000} (in the background: the background maximum); the deployment sets a maximum (7200000 by default); a larger value is lowered to it.`,
+      },
+      run_in_background: {
+        type: "boolean",
+        description:
+          "Set to true to run this command in the background. Use TaskOutput to read the output later.",
       },
     },
     required: ["command", "description"],
@@ -72,6 +95,7 @@ interface BashInput {
   description?: string;
   /** Milliseconds. */
   timeout?: number;
+  run_in_background?: boolean;
 }
 
 /** This command's timeout in milliseconds: the given value or the default, at most the maximum. */
@@ -107,6 +131,92 @@ export function formatExec(r: ExecResult, seconds: number, budgetClamped = false
   return parts.join("\n");
 }
 
+/** The most output the launch exec keeps (it prints only the session id, or an error). */
+const LAUNCH_MAX_OUTPUT_BYTES = 64 * 1024;
+
+/**
+ * `Bash` with `run_in_background` (spec 2026-11-05-background-bash-design §2.1, §4.2): refused
+ * past `sandbox.background.maxTasks` running tasks in the sandbox, else one short launch exec
+ * under the call's shared lease, then a `running` task row. The command keeps running in a
+ * session of its own under its own `timeout` (default and maximum {@link backgroundMaxSeconds}).
+ */
+async function runInBackground(
+  deps: SandboxToolDeps,
+  ctx: BuiltinCallContext,
+  input: BashInput,
+): Promise<BuiltinResult> {
+  const { background, sandbox } = deps;
+  if (!background || !sandbox.currentInstance) {
+    throw new ToolError(
+      "Background tasks are not available here; call Bash without run_in_background.",
+    );
+  }
+  const currentInstance = sandbox.currentInstance.bind(sandbox);
+  const cfg = deps.config.get();
+  const maxMs = backgroundMaxSeconds(cfg) * 1000;
+  const requested = input.timeout;
+  const seconds = Math.max(1, Math.ceil(Math.min(requested ?? maxMs, maxMs) / 1000));
+  const root = sandboxConversationOf(ctx);
+  const maxTasks = cfg.sandbox.background.maxTasks;
+  if (sandbox.available && (await background.countRunning(root)) >= maxTasks) {
+    throw new ToolError(
+      `${maxTasks} background tasks are already running; stop one with TaskStop or wait for one to finish, then retry`,
+    );
+  }
+  const id = newTaskId();
+  const description = input.description ?? clip(input.command, 120);
+  const { value, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
+    const r = await p.exec(h, {
+      command: launchScript(id, input.command, seconds),
+      cwd: "/workspace",
+      timeoutMs: LAUNCH_EXEC_TIMEOUT_MS,
+      maxOutputBytes: LAUNCH_MAX_OUTPUT_BYTES,
+      signal,
+    });
+    // under the shared lease: no rebuild can come between the launch and this read
+    return { r, instance: await currentInstance(root) };
+  });
+  const { r, instance } = value;
+  const sid = r.stdout.trim();
+  if (r.exitCode !== 0 || !/^[1-9][0-9]*$/.test(sid) || instance === null) {
+    const why = r.timedOut
+      ? `the launch did not finish within ${LAUNCH_EXEC_TIMEOUT_MS / 1000}s`
+      : clip(r.stderr || r.stdout || `exit code ${r.exitCode}`, 500);
+    throw new ToolError(
+      `The background task could not be started: ${why}. Check the sandbox or run the command without run_in_background.`,
+    );
+  }
+  const startedAt = new Date();
+  await background.insert({
+    id,
+    orgId: ctx.orgId,
+    conversationId: ctx.conversationId,
+    sandboxConversationId: root,
+    runId: ctx.runId ?? "",
+    callId: ctx.callId,
+    // the run's trigger account (the pipeline passes `runs.trigger_account_id` as `accountId`)
+    triggerAccountId: ctx.accountId,
+    description,
+    command: input.command,
+    sid,
+    outputPath: taskOutputPath(id),
+    startedAt,
+    deadlineAt: new Date(startedAt.getTime() + seconds * 1000),
+    sandboxCreatedAt: instance.createdAt,
+  });
+  const lowered =
+    requested !== undefined && requested > maxMs
+      ? `\n[timeout ${requested} ms is over the background task maximum; it was lowered to ${maxMs} ms.]`
+      : "";
+  const shown = clip(input.command, 120);
+  return {
+    content: [{ type: "text", text: withNotices(notices, startedText(id, description) + lowered) }],
+    isError: false,
+    view: { kind: "command", description, exitCode: null, timedOut: false },
+    display: display(`后台运行命令：${shown}`, `Started in the background: ${shown}`),
+  };
+}
+
 /** 内置工具 `Bash`：在本对话的沙箱里执行命令。 */
 export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
   return {
@@ -117,10 +227,17 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
     // 命令自己的超时先到（提供方停掉命令、返回 timedOut），管线的时限再留出等锁与创建 / 恢复的余量
     timeoutMs: (input) => {
       const cfg = deps.config.get();
+      // a background call is only the short launch; the task's own timeout runs in the sandbox
+      if ((input as BashInput).run_in_background === true) {
+        return LAUNCH_EXEC_TIMEOUT_MS + sandboxBaseTimeoutMs(cfg);
+      }
       const max = cfg.sandbox.limits.maxCommandSeconds;
       return msFor(input as BashInput, max) + sandboxBaseTimeoutMs(cfg);
     },
     async run(input, ctx) {
+      if ((input as BashInput).run_in_background === true) {
+        return runInBackground(deps, ctx, input as BashInput);
+      }
       const { command, description } = input as BashInput;
       const max = deps.config.get().sandbox.limits.maxCommandSeconds;
       const requested = (input as BashInput).timeout;

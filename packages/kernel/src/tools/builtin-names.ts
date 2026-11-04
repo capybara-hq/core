@@ -127,5 +127,7 @@ export const BUILTIN_TOOL_KINDS: Readonly<Record<string, ToolKind>> = {
  * with one (or a different wording) still match.
  */
 export const MATCH_IGNORED_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  // `run_in_background` is matched on purpose: it changes what the call did (a launch that
+  // returns at once instead of the command's output; background Bash spec §4.4)
   [BUILTIN.Bash]: ["description"],
 };
