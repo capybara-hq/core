@@ -728,68 +728,98 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 
-  it("an old snapshot keeps its old map text; a new snapshot gets the new one; both reconstruct with zero drift", async () => {
-    // The map text written before the tool-naming change, frozen: old snapshots keep it
-    const OLD_MAP = [
-      "Some skills in this conversation were written for Claude Code and name its tools. Use these tools instead:",
-      "- Bash -> sandbox_bash",
-      "- Read -> sandbox_read; Write -> sandbox_write; Edit and MultiEdit -> sandbox_edit; Glob -> sandbox_glob; Grep -> sandbox_grep",
-      '- Skill -> skill_load (a name such as "superpowers:brainstorming" also works)',
-      "- TodoWrite -> plugin__todo__write when it is in your tools; otherwise keep the task list in your replies",
-      "- AskUserQuestion -> ask_user",
-      "- ToolSearch -> tool_search when it is in your tools",
-      "- Task and Agent (sub-agents) -> agent when it is in your tools (subagent_type names one of the types its description lists; model names haiku / sonnet / opus -> fast / standard / capable; SendMessage to a sub-agent -> agent with resume); otherwise not available: do the steps yourself, in order",
-      "- TaskOutput, TaskStop -> not available",
-      "- Any other tool a skill names (for example WebFetch, WebSearch, NotebookEdit, EnterWorktree) -> not available unless one of your tools does the same job",
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal Claude Code variable the model reads
-      "The sandbox tools exist only when this agent has a sandbox; without them a skill's scripts cannot run. A path such as ${CLAUDE_PLUGIN_ROOT}/skills/<name>/... means /skills/<name>/... after skill_load has copied that skill into the sandbox.",
-    ].join("\n");
-    expect(OLD_MAP).not.toBe(CLAUDE_CODE_TOOL_MAP);
-    reset();
-    const brain = await seedSkill("planning-map", "Plan first.", undefined, {
-      format: "claude-code",
-      plugin: "superpowers",
-    });
-    const agentId = await createAgent(
-      { provider: "model-fake", model: "fake-small" },
-      { skills: { orgSkills: [brain] } },
-    );
-    // a conversation whose skills snapshot was written before phase C: the same skills, the old map
-    const probe = await createConv(owner, orgId, agentId);
-    await postMessage(owner, orgId, probe, "echo:probe");
-    await waitForTerminal(db, probe, 1, 30_000);
-    const written = (await eventsOf(db, probe)).find(
-      (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>
-        e.type === "skills_catalog",
-    );
-    expect(written?.payload.toolMap).toBe(CLAUDE_CODE_TOOL_MAP);
-    const conv = await createConv(owner, orgId, agentId);
-    await k.app
-      .get(EventLog)
-      .append(conv, [
-        { type: "skills_catalog", payload: { ...written?.payload, toolMap: OLD_MAP } },
-      ]);
-    reset();
-    await postMessage(owner, orgId, conv, "echo:hello");
-    await waitForTerminal(db, conv, 1, 30_000);
-    const snaps = (await eventsOf(db, conv)).filter(
-      (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>
-        e.type === "skills_catalog",
-    );
-    expect(snaps.map((e) => e.payload.toolMap)).toEqual([OLD_MAP, CLAUDE_CODE_TOOL_MAP]);
-    const first = sent[0] as ModelRequest;
-    expect(first.system[0]?.text).toContain(OLD_MAP);
-    expect(
-      first.messages.some(
-        (m) =>
-          m.role === "system" &&
-          (m.content as string).includes(
-            `The following tool-name map now applies:\n${CLAUDE_CODE_TOOL_MAP}`,
-          ),
-      ),
-    ).toBe(true);
-    await expectZeroDrift(conv, await snapshotOf(conv));
-  });
+  // The map texts written before the tool-naming change and before background Bash, frozen: old
+  // snapshots keep them
+  const OLD_MAPS: [string, string][] = [
+    [
+      "the tool-naming change",
+      [
+        "Some skills in this conversation were written for Claude Code and name its tools. Use these tools instead:",
+        "- Bash -> sandbox_bash",
+        "- Read -> sandbox_read; Write -> sandbox_write; Edit and MultiEdit -> sandbox_edit; Glob -> sandbox_glob; Grep -> sandbox_grep",
+        '- Skill -> skill_load (a name such as "superpowers:brainstorming" also works)',
+        "- TodoWrite -> plugin__todo__write when it is in your tools; otherwise keep the task list in your replies",
+        "- AskUserQuestion -> ask_user",
+        "- ToolSearch -> tool_search when it is in your tools",
+        "- Task and Agent (sub-agents) -> agent when it is in your tools (subagent_type names one of the types its description lists; model names haiku / sonnet / opus -> fast / standard / capable; SendMessage to a sub-agent -> agent with resume); otherwise not available: do the steps yourself, in order",
+        "- TaskOutput, TaskStop -> not available",
+        "- Any other tool a skill names (for example WebFetch, WebSearch, NotebookEdit, EnterWorktree) -> not available unless one of your tools does the same job",
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal Claude Code variable the model reads
+        "The sandbox tools exist only when this agent has a sandbox; without them a skill's scripts cannot run. A path such as ${CLAUDE_PLUGIN_ROOT}/skills/<name>/... means /skills/<name>/... after skill_load has copied that skill into the sandbox.",
+      ].join("\n"),
+    ],
+    [
+      "background Bash",
+      [
+        "Some skills in this conversation were written for Claude Code. Its tools Bash, Read, Write, Edit,",
+        "Glob, Grep, Skill, AskUserQuestion, ToolSearch and Agent have the same names here, when they are",
+        "in your tools. For the others:",
+        "- MultiEdit -> several Edit calls",
+        "- TodoWrite -> plugin__todo__write when it is in your tools; otherwise keep the task list in your replies",
+        "- Task -> Agent; SendMessage to a sub-agent -> Agent with resume; model names haiku / sonnet / opus -> fast / standard / capable",
+        "- TaskOutput, TaskStop -> not available",
+        "- Any other tool a skill names (for example WebFetch, WebSearch, NotebookEdit, EnterWorktree) -> not available unless one of your tools does the same job",
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal Claude Code variable the model reads
+        "The sandbox tools exist only when this agent has a sandbox; without them a skill's scripts cannot run. A path such as ${CLAUDE_PLUGIN_ROOT}/skills/<name>/... means /skills/<name>/... after Skill has copied that skill into the sandbox.",
+      ].join("\n"),
+    ],
+  ];
+
+  it.each(OLD_MAPS)(
+    "an old snapshot keeps its old map text (before %s); a new snapshot gets the new one; both reconstruct with zero drift",
+    async (_before, OLD_MAP) => {
+      expect(OLD_MAP).not.toBe(CLAUDE_CODE_TOOL_MAP);
+      reset();
+      const brain = await seedSkill(
+        `planning-map-${OLD_MAPS.findIndex((m) => m[1] === OLD_MAP)}`,
+        "Plan first.",
+        undefined,
+        {
+          format: "claude-code",
+          plugin: "superpowers",
+        },
+      );
+      const agentId = await createAgent(
+        { provider: "model-fake", model: "fake-small" },
+        { skills: { orgSkills: [brain] } },
+      );
+      // a conversation whose skills snapshot was written before phase C: the same skills, the old map
+      const probe = await createConv(owner, orgId, agentId);
+      await postMessage(owner, orgId, probe, "echo:probe");
+      await waitForTerminal(db, probe, 1, 30_000);
+      const written = (await eventsOf(db, probe)).find(
+        (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>
+          e.type === "skills_catalog",
+      );
+      expect(written?.payload.toolMap).toBe(CLAUDE_CODE_TOOL_MAP);
+      const conv = await createConv(owner, orgId, agentId);
+      await k.app
+        .get(EventLog)
+        .append(conv, [
+          { type: "skills_catalog", payload: { ...written?.payload, toolMap: OLD_MAP } },
+        ]);
+      reset();
+      await postMessage(owner, orgId, conv, "echo:hello");
+      await waitForTerminal(db, conv, 1, 30_000);
+      const snaps = (await eventsOf(db, conv)).filter(
+        (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>
+          e.type === "skills_catalog",
+      );
+      expect(snaps.map((e) => e.payload.toolMap)).toEqual([OLD_MAP, CLAUDE_CODE_TOOL_MAP]);
+      const first = sent[0] as ModelRequest;
+      expect(first.system[0]?.text).toContain(OLD_MAP);
+      expect(
+        first.messages.some(
+          (m) =>
+            m.role === "system" &&
+            (m.content as string).includes(
+              `The following tool-name map now applies:\n${CLAUDE_CODE_TOOL_MAP}`,
+            ),
+        ),
+      ).toBe(true);
+      await expectZeroDrift(conv, await snapshotOf(conv));
+    },
+  );
 
   it("phase D: two inline invocations, a Skill of the manual one and a compaction over them: the line after the summary, zero drift", async () => {
     reset();

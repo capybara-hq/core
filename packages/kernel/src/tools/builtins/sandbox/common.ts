@@ -5,6 +5,8 @@ import {
   ToolError,
   validateSandboxPath,
 } from "@capybara-hq/plugin-sdk";
+import type { BackgroundTaskFinisher } from "../../../background/finish.js";
+import type { BackgroundTaskStopper } from "../../../background/stop.js";
 import type { BackgroundTaskStore } from "../../../background/store.js";
 import type { KernelConfig } from "../../../config/schema.js";
 import type { AttachmentsService } from "../../../conversations/attachments.service.js";
@@ -20,15 +22,30 @@ import type { BuiltinCallContext } from "../../registry.js";
 export interface SandboxToolDeps {
   /**
    * `pathLease` may be absent (test stubs): the kernel's own file writes then take no path lease.
-   * `currentInstance` too: a background `Bash` launch records the instance it started in.
+   * `currentInstance` too: a background `Bash` launch records the instance it started in; and
+   * `ifRunning`, which `TaskOutput` reads a task through.
    */
   sandbox: Pick<SandboxService, "available" | "withSandbox"> &
-    Partial<Pick<SandboxService, "pathLease" | "currentInstance">>;
+    Partial<Pick<SandboxService, "pathLease" | "currentInstance" | "ifRunning">>;
   /** Background `Bash` tasks; absent in test stubs, where `run_in_background` is refused. */
   background?: Pick<
     BackgroundTaskStore,
-    "reserve" | "markStarted" | "failLaunch" | "finishStoppedLaunch" | "releaseStop"
+    | "reserve"
+    | "markStarted"
+    | "failLaunch"
+    | "finishStoppedLaunch"
+    | "releaseStop"
+    | "get"
+    | "advanceOffset"
   >;
+  /**
+   * What `TaskOutput` and `TaskStop` finish and stop tasks with; absent in test stubs, where both
+   * answer that background tasks are not available.
+   */
+  tasks?: {
+    finisher: Pick<BackgroundTaskFinisher, "finish">;
+    stopper: Pick<BackgroundTaskStopper, "stop">;
+  };
   attachments: Pick<AttachmentsService, "listForConversation" | "openForConversation">;
   storage: Pick<StorageService, "kernel" | "available">;
   /** `publishChanged`: `Deliver` announces `changed: files` (UI refresh B). */
@@ -334,7 +351,7 @@ async function copyAttachments(
 }
 
 /** 沙箱服务的错误 → 给模型的可执行说明；其余原样抛出（管线按「工具失败」处理）。 */
-function mapError(e: unknown): unknown {
+export function mapSandboxError(e: unknown): unknown {
   if (e instanceof ApiError) {
     if (e.code === "sandbox.busy") return new ToolError(BUSY_TEXT);
     if (e.code === "sandbox.unavailable") return new ToolError(NO_SANDBOX_TEXT);
@@ -377,7 +394,7 @@ export async function inSandbox<T>(
       ctx.signal,
     );
   } catch (e) {
-    throw mapError(e);
+    throw mapSandboxError(e);
   }
 }
 

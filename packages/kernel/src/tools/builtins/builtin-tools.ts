@@ -1,4 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
+import { BackgroundTaskFinisher } from "../../background/finish.js";
+import { BackgroundTaskStopper } from "../../background/stop.js";
 import { BackgroundTaskStore } from "../../background/store.js";
 import { AttachmentsService } from "../../conversations/attachments.service.js";
 import { EventLog } from "../../conversations/event-log.js";
@@ -38,10 +40,13 @@ export class BuiltinTools {
     @Inject(EventLog) eventLog: EventLog,
     @Inject(SandboxService) sandbox: SandboxService,
     @Inject(BackgroundTaskStore) background: BackgroundTaskStore,
+    @Inject(BackgroundTaskFinisher) finisher: BackgroundTaskFinisher,
+    @Inject(BackgroundTaskStopper) stopper: BackgroundTaskStopper,
   ) {
     const sandboxDeps: SandboxToolDeps = {
       sandbox,
       background,
+      tasks: { finisher, stopper },
       attachments,
       storage,
       eventLog,
