@@ -391,7 +391,7 @@ describe("the agent page by section (agent profile design §3)", () => {
     expect(unload()).toBe(false);
   });
 
-  it("the save row shows only with changes; a form section keeps Continue after warnings", async () => {
+  it("the save row shows only with changes; a definition section shows warnings and drops the row", async () => {
     stubApi(
       routes(agent(), {
         [`PATCH ${ORG}/agents/ag1`]: ok({
@@ -414,7 +414,9 @@ describe("the agent page by section (agent profile design §3)", () => {
     expect(row()).not.toBeNull();
     await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
     expect(await screen.findByText(en.agents.warnings.fallback_same_provider)).toBeTruthy();
-    expect(screen.getByRole("button", { name: en.agents.form.continue })).toBeTruthy();
+    // saved: the section follows the saved agent, so nothing is left to save
+    await vi.waitFor(() => expect(row()).toBeNull());
+    expect(screen.queryByRole("button", { name: en.agents.form.continue })).toBeNull();
   });
 
   it("a combined save shows the new profile in the head even when the agent refetch is slow", async () => {

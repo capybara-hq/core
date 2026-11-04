@@ -11,11 +11,15 @@ import { navLevelOf } from "../shell/nav";
 import { usePagePath } from "../shell/path";
 import { useSession } from "../shell/session";
 import { BasicsSection } from "./BasicsSection";
-import { AgentPageContext, type AgentPageValue, useAgentPage, useSectionNav } from "./frame";
-import { LegacyFormSection } from "./LegacyFormSection";
-import { ModelReadOnly } from "./ModelReadOnly";
+import { ChannelsSection } from "./ChannelsSection";
+import { AgentPageContext, type AgentPageValue, useSectionNav } from "./frame";
+import { ModelSection } from "./ModelSection";
+import { PromptSection } from "./PromptSection";
 import { QuickActionsSection } from "./QuickActionsSection";
+import { SkillsSection } from "./SkillsSection";
+import { SubagentsSection } from "./SubagentsSection";
 import { type AgentSection, sectionOf } from "./sections";
+import { ToolsSection } from "./ToolsSection";
 
 export { type AgentPageValue, AgentSectionFrame, useAgentPage } from "./frame";
 
@@ -193,11 +197,28 @@ export function AgentPage({
   );
 }
 
-/** The open section's body: the section components of agent profile design §3.2. */
+/**
+ * The open section's body: the section components of agent profile design §3.2. Someone who may
+ * not change the agent only reaches basics, quick actions and the model (`sectionOf`), each of
+ * which draws its read-only form for them.
+ */
 function OpenSection({ section }: { section: AgentSection }) {
-  const { editable } = useAgentPage();
-  if (section === "basics") return <BasicsSection />;
-  if (section === "quick-actions") return <QuickActionsSection />;
-  if (!editable) return <ModelReadOnly />;
-  return <LegacyFormSection section={section} />;
+  switch (section) {
+    case "basics":
+      return <BasicsSection />;
+    case "quick-actions":
+      return <QuickActionsSection />;
+    case "prompt":
+      return <PromptSection />;
+    case "model":
+      return <ModelSection />;
+    case "tools":
+      return <ToolsSection />;
+    case "skills":
+      return <SkillsSection />;
+    case "subagents":
+      return <SubagentsSection />;
+    case "channels":
+      return <ChannelsSection />;
+  }
 }

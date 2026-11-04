@@ -663,7 +663,20 @@
         "bodyHelp": "填进输入框的文字。",
         "bodyRequired": "请输入内容。"
       },
-      "uploadType": "请选择 png、jpg 或 webp 图片。"
+      "uploadType": "请选择 png、jpg 或 webp 图片。",
+      "prompt": {
+        "hint": "提示词是给模型看的：按这里的顺序拼接各个文件，有多个文件时每个文件前面加一行 # 文件名。请用英文写。",
+        "filesLabel": "提示词文件",
+        "add": "添加文件",
+        "nameLabel": "文件名",
+        "nameHelp": "以 .md 结尾，例如 WORKFLOW.md。",
+        "nameInvalid": "文件名为 1–64 个字符（不含 / 和 \\），再加上 .md。",
+        "nameDuplicate": "已经有同名的文件了。",
+        "contentLabel": "内容",
+        "contentHelp": "Markdown，原样交给模型。",
+        "count": "{chars, number} / {maxChars, number} 字符 · {files} / {maxFiles} 个文件",
+        "tooLong": "文件合计超过 {max, number} 个字符，缩短后才能保存。"
+      }
     }
   },
   "skills": {

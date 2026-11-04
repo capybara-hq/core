@@ -663,7 +663,20 @@
         "bodyHelp": "What goes into the composer.",
         "bodyRequired": "Enter the text."
       },
-      "uploadType": "Pick a png, jpg or webp image."
+      "uploadType": "Pick a png, jpg or webp image.",
+      "prompt": {
+        "hint": "The prompt is shown to the model: the files in this order, each under a # name line when there are several. Write it in English.",
+        "filesLabel": "Prompt files",
+        "add": "Add a file",
+        "nameLabel": "File name",
+        "nameHelp": "Ends in .md, for example WORKFLOW.md.",
+        "nameInvalid": "Use 1–64 characters without / or \\, then .md.",
+        "nameDuplicate": "Another file already has this name.",
+        "contentLabel": "Content",
+        "contentHelp": "Markdown. Shown to the model as written.",
+        "count": "{chars, number} / {maxChars, number} characters · {files} / {maxFiles} files",
+        "tooLong": "Together the files are longer than {max, number} characters. Shorten them to save."
+      }
     }
   },
   "skills": {

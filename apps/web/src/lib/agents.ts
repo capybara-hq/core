@@ -3,6 +3,7 @@ import { apiFetch } from "./api";
 import { type CreatedAttachment, uploadToStorage } from "./attachments";
 import type { LocalizedName } from "./catalog";
 import type { ModelRef } from "./conversations";
+import type { InstructionFile } from "./instruction-files";
 
 /** 内核 agent API 的类型（只声明界面用到的字段）。 */
 
@@ -29,7 +30,13 @@ export const DEFAULT_BUILTIN_TOOLS: readonly string[] = ["ask_user", "read_tool_
 
 export interface AgentDefinitionInput {
   name: string;
+  /** The model-visible prompt: the kernel derives it from `instructionFiles` when they are saved. */
   instructions: string;
+  /**
+   * The prompt files (the authoring form of `instructions`); absent on old versions, which read
+   * as one `AGENTS.md`. A save sends these or `instructions`, never a differing pair.
+   */
+  instructionFiles?: InstructionFile[];
   model: ModelRef;
   fallback?: ModelRef | null;
   /** 主模型的参数：只含用户改动过的键，其余由内核按声明补默认值。 */
@@ -278,6 +285,18 @@ export const getAgent = (orgId: string, agentId: string) =>
   apiFetch<{ agent: Agent }>(`${base(orgId)}/agents/${encodeURIComponent(agentId)}`);
 
 /**
+ * A definition as a save sends it: with `instructions` (the prompt files left out: the kernel keeps
+ * them while it equals their join), or with `instructionFiles` and no `instructions` (the kernel
+ * derives it; a differing one is 400 `agent.instructions_mismatch`).
+ */
+export type AgentDefinitionSave =
+  | (Omit<AgentDefinitionInput, "instructionFiles"> & { instructionFiles?: never })
+  | (Omit<AgentDefinitionInput, "instructions" | "instructionFiles"> & {
+      instructions?: never;
+      instructionFiles: InstructionFile[];
+    });
+
+/**
  * 修改 agent：定义有变化时内核写新版本；`visibility` 只在改动时给。`expectedVersion` 是编辑页打开时的
  * `currentVersion`：别人已保存过新版本时内核返回 409 `agent.version_conflict`，不覆盖别人的改动。
  */
@@ -285,8 +304,9 @@ export const updateAgent = (
   orgId: string,
   agentId: string,
   input: {
-    definition?: AgentDefinitionInput;
+    definition?: AgentDefinitionSave;
     visibility?: AgentVisibility;
+    memberIds?: string[];
     expectedVersion?: number;
   },
 ) =>

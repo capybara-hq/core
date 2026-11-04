@@ -22,7 +22,7 @@ import { useEffect, useState } from "react";
 import {
   type Agent,
   type AgentAvatar,
-  type AgentDefinitionInput,
+  type AgentDefinitionSave,
   type AgentVisibility,
   type AgentWarning,
   avatarValue,
@@ -39,6 +39,7 @@ import { membersQuery } from "../../lib/query/members";
 import { useAppMutation, useUpdateProfile } from "../../lib/query/mutation";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { FormError } from "../form-error";
+import { savedDefinition } from "./definition-parts";
 import { AgentSectionFrame, useAgentPage } from "./frame";
 import { useSectionDraft } from "./useSectionDraft";
 
@@ -64,19 +65,11 @@ const agentPartOf = (a: Agent): AgentPart => ({
 });
 const sameJson = (x: unknown, y: unknown) => JSON.stringify(x) === JSON.stringify(y);
 
-/**
- * The saved definition with only the name changed. The prompt files and the retired `avatarUrl`
- * are left out, as the form does: the kernel keeps the prompt files when `instructions` is their
- * joined text, and the profile owns avatars.
- */
-function definitionWithName(agent: Agent, name: string): AgentDefinitionInput {
-  const {
-    instructionFiles: _files,
-    avatarUrl: _avatarUrl,
-    ...kept
-  }: Record<string, unknown> = agent.definition;
-  return { ...(kept as unknown as AgentDefinitionInput), name };
-}
+/** The saved definition with only the name changed (see {@link savedDefinition}). */
+const definitionWithName = (agent: Agent, name: string): AgentDefinitionSave => ({
+  ...savedDefinition(agent),
+  name,
+});
 
 /** A failure of one of Basics' two saves: a conflict offers the reload. */
 function SaveError({ error, onReload }: { error: unknown; onReload(): void }) {
@@ -158,7 +151,7 @@ function BasicsEdit() {
   });
   const saveAgent = useAppMutation({
     fn: (input: {
-      definition?: AgentDefinitionInput;
+      definition?: AgentDefinitionSave;
       visibility?: AgentVisibility;
       memberIds?: string[];
       expectedVersion: number;

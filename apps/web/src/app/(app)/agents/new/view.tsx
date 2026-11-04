@@ -2,12 +2,8 @@
 
 import { FormPage, type PageHeaderProps } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import {
-  type AgentFormData,
-  AgentFormLoading,
-  useAgentForm,
-  useAgentFormData,
-} from "../../../../components/AgentForm";
+import { AgentFormLoading, useAgentForm } from "../../../../components/AgentForm";
+import { type AgentFormData, useAgentFormData } from "../../../../components/agent/form-data";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
