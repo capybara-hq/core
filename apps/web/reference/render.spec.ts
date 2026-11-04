@@ -51,6 +51,8 @@ const PAGES = [
   "file-picker",
   // the run row: a run's model, duration, tokens and outcome
   "run-row",
+  // the working line: the walking capybara between a send and the first output
+  "working-line",
   // config forms: arrays of objects, compact rows, records
   "repeater",
   "field-row",

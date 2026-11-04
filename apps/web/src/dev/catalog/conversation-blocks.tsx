@@ -33,6 +33,7 @@ import {
   ToolRow,
   type ToolRowData,
   UserBubble,
+  WorkingLine,
 } from "@capybara-hq/design";
 import {
   CONV_FIXTURE,
@@ -199,6 +200,21 @@ function runRowBlocks(): ReactNode {
           facts={RUN_FACTS}
           links={[RUN_TRAJECTORY]}
         />
+      </Block>
+    </>
+  );
+}
+
+// ── Working line ────────────────────────────────────────────────────────────
+
+function workingLineBlocks(): ReactNode {
+  return (
+    <>
+      <Block id="working-line-default">
+        <WorkingLine />
+      </Block>
+      <Block id="working-line-reduced-motion">
+        <WorkingLine still />
       </Block>
     </>
   );
@@ -866,6 +882,7 @@ export const CONVERSATION_BLOCKS = {
   "user-bubble": userBubbleBlocks,
   "run-divider": runDividerBlocks,
   "run-row": runRowBlocks,
+  "working-line": workingLineBlocks,
   "tool-group": toolGroupBlocks,
   "tool-row": toolRowBlocks,
   "diff-block": diffBlockBlocks,

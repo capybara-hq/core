@@ -11,6 +11,7 @@ import {
 } from "react";
 import { PropertiesPanel, PropertySection, RightPanel } from "../conversation/panels";
 import { NewTitleBar, TitleBar, type TitleBarProps } from "../conversation/title-bar";
+import { WorkingLine } from "../conversation/working-line";
 import { SkeletonGroup, SkeletonText } from "../display/skeleton";
 import { useFocusReturn } from "../overlays/focus-return";
 import { useDesignT } from "../provider";
@@ -79,6 +80,13 @@ export type ConversationPageProps = {
   newConversation?: { agentName: string; description?: string };
   /** The thread; it follows the bottom while the reader is at the bottom. */
   thread?: ReactNode;
+  /**
+   * The working line (§6.16.24) after the thread, where the run's first output will appear. The
+   * page decides when (from the log and its pending messages); at most one per conversation.
+   */
+  working?: boolean;
+  /** The queued messages (§6.16.14), after the thread and the working line. */
+  queue?: ReactNode;
   /**
    * The composer. A function receives `{ sendDisabled }`, true while the thread loads: the
    * composer stays mounted and editable, and only sending is blocked (pass it to the composer's
@@ -170,6 +178,8 @@ export function ConversationPage({
   titleBar,
   newConversation,
   thread,
+  working,
+  queue,
   composer,
   status,
   properties,
@@ -256,7 +266,15 @@ export function ConversationPage({
     <div className="cb-conv-center">
       <div ref={scroll} className="cb-conv-scroll">
         <div className="cb-conv-thread" data-part="thread">
-          {loading?.thread ? <LoadingThread /> : thread}
+          {loading?.thread ? (
+            <LoadingThread />
+          ) : (
+            <>
+              {thread}
+              {working ? <WorkingLine /> : null}
+              {queue}
+            </>
+          )}
         </div>
       </div>
       <div className="cb-conv-composer">{composerNode}</div>

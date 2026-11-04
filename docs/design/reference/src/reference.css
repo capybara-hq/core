@@ -1471,6 +1471,17 @@ textarea {
 .r-tline > .r-tlabel {
   flex: 0 1 auto;
 }
+/* The working line's mark (§6.16.24): the §3 bitmap at unit 1 in a 16 box, accent. */
+.r-working-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--cb-space-4);
+  height: var(--cb-space-4);
+  color: var(--cb-accent);
+  fill: currentColor;
+}
 .r-tbox {
   overflow: hidden;
   border-radius: var(--cb-radius-md);

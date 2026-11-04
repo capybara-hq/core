@@ -1799,6 +1799,47 @@ States: `ok`, `ok-open`, `failed`, `stopped`
 | run-status | stopped | color | color.muted |
 | run-mark | stopped | color | color.muted |
 
+#### 6.16.24 Working line
+
+`WorkingLine({ still? })` fills the silence from a person's send until the run's first output
+(conversation send spec `docs/superpowers/specs/2026-11-04-conversation-send-design.md` §2.2).
+
+- **When** (the page decides, from the log and its pending messages; `ConversationPage`'s
+  `working` draws it after the thread and before the queue): from a send (the pending bubble) or
+  a run start until the run's first output (a thinking row, prose, a tool, a sub-agent, an
+  approval, a question, a connect block, or the run row when the run ends without output); again
+  after a tool result while the model has not answered. Exactly one per conversation.
+- **Line**: a tool line (`row.dense`, mono `small` `muted`, gap `space.2`), no timer (the thinking
+  row keeps its seconds).
+- **Mark**: the pixel capybara of §3 at pixel unit 1 (14 × 10), `accent`, `crispEdges`, centred in
+  a `space.4` (16) box. It walks: two frames swap the legs (rows 9–10 of the bitmap; frame 2 moves
+  each pair one pixel inward) every 400ms.
+- **Caption**, rotating every 2.4s in place (no slide, no fade): 规划中… / 执行中… / 斟酌中… /
+  整理中… (en: Planning… / Working… / Pondering… / Composing…), starting at the first. The
+  captions share one box, so the line keeps the widest one's width.
+- **Reduced motion** (and `still`, the reference set's form): the mark stands still on frame 1 and
+  the caption stays on its first entry.
+- **A11y**: `role="status"` whose only readable text is a hidden copy of the first caption: it is
+  announced once, never on a rotation (the rotating captions are `aria-hidden`).
+- Existing tokens only, no new colours.
+
+<!-- states: working-line -->
+States: `default`, `reduced-motion`
+
+<!-- size-table: working-line -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| working-line | default | height | row.dense |
+| working-line | default | font-size | type.small |
+| working-line | default | color | color.muted |
+| working-line | default | column-gap | space.2 |
+| working-mark | default | width | space.4 |
+| working-mark | default | height | space.4 |
+| working-mark | default | color | color.accent |
+| working-line | reduced-motion | height | row.dense |
+| working-mark | reduced-motion | width | space.4 |
+| working-mark | reduced-motion | color | color.accent |
+
 ---
 
 ### 6.17 ObjectList and ObjectRow

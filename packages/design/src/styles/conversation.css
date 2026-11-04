@@ -440,6 +440,75 @@ button.cb-tool-line:focus-visible {
   white-space: pre-wrap;
 }
 
+/* ── Working line (§6.16.24) ── */
+
+/* The mark: the §3 bitmap at pixel unit 1 (14 × 10) in a 16 px box; frame 1's legs show, frame
+   2's are hidden. The captions share one grid cell (the line keeps the widest one's width); only
+   the first shows. Reduced motion and the still form keep exactly that. */
+.cb-working-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--cb-space-4);
+  height: var(--cb-space-4);
+  color: var(--cb-accent);
+  fill: currentColor;
+}
+.cb-working-mark [data-frame="2"] {
+  visibility: hidden;
+}
+.cb-working-caption {
+  display: inline-grid;
+}
+.cb-working-caption > span {
+  grid-area: 1 / 1;
+  visibility: hidden;
+}
+.cb-working-caption > span:first-child {
+  visibility: visible;
+}
+@media (prefers-reduced-motion: no-preference) {
+  /* Two leg frames 400ms apart (an 800ms cycle); four captions 2.4s each (a 9.6s cycle). The
+     text changes in place: visibility steps, no slide or fade. */
+  .cb-working-line:not([data-still="true"]) .cb-working-mark [data-frame] {
+    animation: cb-working-legs 800ms step-end infinite;
+  }
+  .cb-working-line:not([data-still="true"]) .cb-working-mark [data-frame="2"] {
+    animation-delay: 400ms;
+  }
+  .cb-working-line:not([data-still="true"]) .cb-working-caption > span {
+    animation: cb-working-caption 9.6s step-end infinite;
+  }
+  .cb-working-line:not([data-still="true"]) .cb-working-caption > span:nth-child(2) {
+    animation-delay: 2.4s;
+  }
+  .cb-working-line:not([data-still="true"]) .cb-working-caption > span:nth-child(3) {
+    animation-delay: 4.8s;
+  }
+  .cb-working-line:not([data-still="true"]) .cb-working-caption > span:nth-child(4) {
+    animation-delay: 7.2s;
+  }
+}
+@keyframes cb-working-legs {
+  0% {
+    visibility: visible;
+  }
+  50%,
+  100% {
+    visibility: hidden;
+  }
+}
+@keyframes cb-working-caption {
+  0% {
+    visibility: visible;
+  }
+  25%,
+  100% {
+    visibility: hidden;
+  }
+}
+
 /* ── Run row (§6.16.23) ── */
 
 .cb-run-row {

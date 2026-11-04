@@ -94,6 +94,7 @@ export const REFERENCE_COMPONENTS = [
   "error-detail",
   "file-picker",
   "run-row",
+  "working-line",
   // config forms
   "repeater",
   "field-row",
