@@ -19,6 +19,7 @@ import type { OrgAction } from "../orgs/roles.js";
 import { packagePath } from "../packages/tgz.js";
 import { SkillsService, skillConflictError } from "../skills/skills.service.js";
 import { StorageService } from "../storage/storage.service.js";
+import { canonicalJson } from "../tools/canonical-json.js";
 import type {
   CreateConnectorInput,
   PreparedTemplateUpdate,
@@ -26,7 +27,6 @@ import type {
 } from "../tools/connectors.service.js";
 import { ConnectorsService } from "../tools/connectors.service.js";
 import type { ConnectorAuth } from "../tools/credentials.js";
-import { canonicalJson } from "../tools/registry.js";
 import {
   type CatalogVersionFiles,
   getPath,
