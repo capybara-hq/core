@@ -1,4 +1,6 @@
-import { AVATAR_PRESET_IDS, type AvatarValue, type PresetId } from "@capybara-hq/design";
+// Types only: the server layout imports this module, and the design root pulls in client-only
+// modules (createContext).
+import type { AvatarValue, PresetId } from "@capybara-hq/design";
 import { apiFetch } from "./api";
 import { type CreatedAttachment, uploadToStorage } from "./attachments";
 import type { LocalizedName } from "./catalog";
@@ -275,10 +277,6 @@ export const listAgents = (orgId: string) => apiFetch<{ agents: Agent[] }>(`${ba
  * the prompt from its default `AGENTS.md` template), no tools (the kernel's defaults apply).
  */
 export type AgentCreateDefinition = Pick<AgentDefinitionInput, "name" | "model">;
-
-/** A random preset for a new agent's avatar (mirrors the kernel's `randomPreset`). */
-export const randomPreset = (random: () => number = Math.random): PresetId =>
-  AVATAR_PRESET_IDS[Math.floor(random() * AVATAR_PRESET_IDS.length)] as PresetId;
 
 export const createAgent = (
   orgId: string,

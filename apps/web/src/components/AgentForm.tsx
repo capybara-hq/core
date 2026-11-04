@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AVATAR_PRESET_IDS,
   AVATAR_UPLOAD_ACCEPT,
   AvatarPicker,
   type AvatarValue,
@@ -26,7 +27,6 @@ import {
   type AgentVisibility,
   createAgent,
   type ProviderModels,
-  randomPreset,
   updateAgentProfile,
   uploadAvatar,
 } from "../lib/agents";
@@ -44,6 +44,10 @@ import { FormError } from "./form-error";
 
 const VISIBILITIES = ["private", "org"] as const satisfies readonly AgentVisibility[];
 const NAME_MAX = 80;
+
+/** A random preset for a new agent's avatar (mirrors the kernel's `randomPreset`). */
+const randomPreset = (random: () => number = Math.random): PresetId =>
+  AVATAR_PRESET_IDS[Math.floor(random() * AVATAR_PRESET_IDS.length)] as PresetId;
 /** Enter in these single-line inputs saves (the form has no native submit button). */
 const ENTER_SUBMITS = new Set(["text", "search", "email", "url", "tel", "password", "number"]);
 
