@@ -22,7 +22,7 @@ export { type AgentPageValue, AgentSectionFrame, useAgentPage } from "./frame";
 /**
  * Where a click on `a` would take the page inside the app, or null when the browser should handle
  * it as it is: a modified or non-primary click (a new tab or window), `target` other than `_self`,
- * a download, another origin, or a link to the URL already open.
+ * a download, another origin, or a link to the page already open (whatever its hash).
  */
 export function guardedHref(e: MouseEvent, a: Element): string | null {
   if (e.defaultPrevented || e.button !== 0) return null;
@@ -36,8 +36,9 @@ export function guardedHref(e: MouseEvent, a: Element): string | null {
   const here = new URL(window.location.href);
   const url = new URL(raw, here);
   if (url.origin !== here.origin) return null;
-  const to = `${url.pathname}${url.search}${url.hash}`;
-  return to === `${here.pathname}${here.search}${here.hash}` ? null : to;
+  // the same page with another hash (the shell's skip link, an anchor): it leaves nothing
+  if (url.pathname === here.pathname && url.search === here.search) return null;
+  return `${url.pathname}${url.search}${url.hash}`;
 }
 
 /**

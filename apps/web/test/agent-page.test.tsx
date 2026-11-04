@@ -340,6 +340,41 @@ describe("the agent page by section (agent profile design §3)", () => {
     expect(router.push).not.toHaveBeenCalled();
   });
 
+  it("a hash-only link, a target=_blank link and a download link are not intercepted", async () => {
+    stubApi(routes());
+    await renderEditAgent();
+    const user = userEvent.setup();
+    const name = screen.getByRole("textbox", { name: en.agents.form.nameLabel });
+    await user.type(name, " 2");
+    const here = `${window.location.pathname}${window.location.search}`;
+    const links = [
+      { href: "#main" },
+      { href: `${here}#section` },
+      { href: "/skills", target: "_blank" },
+      { href: "/files/report.pdf", download: "" },
+    ].map((attrs) => {
+      const a = document.createElement("a");
+      for (const [k, v] of Object.entries(attrs)) a.setAttribute(k, v);
+      a.textContent = attrs.href;
+      document.body.append(a);
+      return a;
+    });
+    try {
+      for (const a of links) {
+        const ev = new MouseEvent("click", { bubbles: true, cancelable: true });
+        act(() => {
+          a.dispatchEvent(ev);
+        });
+        expect(ev.defaultPrevented, a.outerHTML).toBe(false);
+        expect(screen.queryByRole("dialog")).toBeNull();
+      }
+      expect(router.push).not.toHaveBeenCalled();
+      expect(name).toHaveProperty("value", "Helper 2");
+    } finally {
+      for (const a of links) a.remove();
+    }
+  });
+
   it("beforeunload asks only while the section is dirty", async () => {
     stubApi(routes());
     await renderEditAgent();
