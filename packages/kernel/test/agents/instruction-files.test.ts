@@ -209,6 +209,32 @@ describe("prompt files over HTTP", () => {
     expect((await create(req, orgId, { instructionFiles: twenty })).statusCode).toBe(201);
   });
 
+  it("file names refuse control, bidi and format characters", async () => {
+    const { req, orgId } = await setup();
+    for (const name of ["A\u0007.md", "A\n.md", "evil\u202Egnp.md", "A\u200B.md", "A\uFEFF.md"]) {
+      const res = await create(req, orgId, { instructionFiles: [{ name, content: "x" }] });
+      expect(res.statusCode, JSON.stringify(name)).toBe(400);
+      expect(errCode(res)).toBe("validation_failed");
+    }
+    // ZWJ / ZWNJ stay allowed, as in titles
+    const ok = await create(req, orgId, {
+      instructionFiles: [{ name: "\u0646\u200C\u0645.md", content: "x" }],
+    });
+    expect(ok.statusCode).toBe(201);
+  });
+
+  it("file names are unique ignoring case", async () => {
+    const { req, orgId } = await setup();
+    const res = await create(req, orgId, {
+      instructionFiles: [
+        { name: "AGENTS.md", content: "a" },
+        { name: "agents.md", content: "b" },
+      ],
+    });
+    expect(res.statusCode).toBe(400);
+    expect(errCode(res)).toBe("validation_failed");
+  });
+
   it("a new agent with no prompt gets the AGENTS.md starter; a request with only instructions keeps working", async () => {
     const { req, orgId } = await setup();
     const res = await create(req, orgId, {});

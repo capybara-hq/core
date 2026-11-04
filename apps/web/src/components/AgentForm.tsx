@@ -457,9 +457,13 @@ export function useAgentForm(
     const main = decode(model);
     if (main === null) return;
     const fb = decode(fallback);
+    // the form edits `instructions` only: prompt files are left out (the kernel refuses files that
+    // disagree with an edited `instructions`); the prompt files editor replaces this
+    const { instructionFiles: _files, ...kept }: Record<string, unknown> =
+      existing?.definition ?? {};
     const definition: AgentDefinitionInput = {
       // 修改：先铺上原定义，表单不认识的字段原样带回
-      ...(existing?.definition ?? {}),
+      ...kept,
       name: trimmed,
       instructions,
       model: main,

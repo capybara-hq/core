@@ -153,10 +153,9 @@ export function resolveCandidate(
         ? { ...(from.modelParams ?? {}) }
         : {});
   const definition: AgentDefinition = {
-    ...from,
+    ...withInstructions(from, c.instructions),
     model,
     modelParams: params,
-    ...(c.instructions !== undefined && { instructions: c.instructions }),
   };
   const changed =
     agentVersion !== base.agentVersion ||
@@ -174,12 +173,19 @@ export function resolveCandidate(
     changed,
     overridesSwitch,
     ...(otherVersion && {
-      subagentVersion: {
-        ...versionDef,
-        ...(c.instructions !== undefined && { instructions: c.instructions }),
-      },
+      subagentVersion: withInstructions(versionDef, c.instructions),
     }),
   };
+}
+
+/**
+ * A candidate's `instructions` override: the prompt files it was joined from no longer describe
+ * it, so they are dropped (never model-visible either way).
+ */
+function withInstructions(def: AgentDefinition, instructions: string | undefined): AgentDefinition {
+  if (instructions === undefined) return def;
+  const { instructionFiles: _files, ...rest } = def;
+  return { ...rest, instructions };
 }
 
 /**

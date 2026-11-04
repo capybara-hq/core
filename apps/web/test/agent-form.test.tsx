@@ -6,7 +6,7 @@ import zh from "../messages/zh.json";
 import NewAgentPage from "../src/app/(app)/agents/new/page";
 import { SetupContext } from "../src/components/shell/setup";
 import { agentFormDefaults, renderEditAgent, renderNewAgent } from "./support/agents";
-import { json as apiJson, stubApi } from "./support/api";
+import { json as apiJson, bodyOf, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME, renderPage } from "./support/render";
@@ -614,6 +614,43 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
     expect(new Set(reads)).toEqual(
       new Set([`${ORG}/agents`, `${ORG}/agents/ag1`, `${ORG}/readiness`]),
     );
+  });
+
+  it("editing the prompt of an agent saved with prompt files sends instructions only", async () => {
+    const files = [
+      { name: "AGENTS.md", content: "a" },
+      { name: "B.md", content: "b" },
+    ];
+    const base = agent("ag1", "Echo");
+    const withFiles = {
+      ...base,
+      definition: {
+        ...base.definition,
+        instructions: "# AGENTS.md\n\na\n\n# B.md\n\nb",
+        instructionFiles: files,
+      },
+    };
+    const browser = stubApi({
+      ...sessionRoutes(),
+      ...agentFormDefaults(),
+      ...formRoutes,
+      [`GET ${ORG}/agents/ag1`]: ok({ agent: withFiles }),
+      [`PATCH ${ORG}/agents/ag1`]: ok({ agent: withFiles, warnings: [] }),
+    });
+    await renderEditAgent({
+      routes: { ...formRoutes, [`GET ${ORG}/agents/ag1`]: ok({ agent: withFiles }) },
+    });
+    const user = userEvent.setup();
+    await user.type(
+      screen.getByRole("textbox", { name: startsWith(en.agents.form.instructionsLabel) }),
+      " more",
+    );
+    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
+    const patch = browser.find((c) => c.method === "PATCH");
+    const body = bodyOf(patch) as { definition: Record<string, unknown> };
+    expect(body.definition.instructions).toBe("# AGENTS.md\n\na\n\n# B.md\n\nb more");
+    expect(body.definition).not.toHaveProperty("instructionFiles");
   });
 
   it("/agents/<id>: channels the kernel fails show the section's own error to an admin", async () => {

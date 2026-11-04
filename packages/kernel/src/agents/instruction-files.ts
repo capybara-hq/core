@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ApiError } from "../errors.js";
+import { CONTROL_OR_HIDDEN_RE } from "../text.js";
 import type { AgentDefinition } from "./definition.js";
 
 /**
@@ -57,12 +58,19 @@ export const InstructionFileSchema = z
   .object({
     name: z
       .string()
-      .regex(INSTRUCTION_FILE_NAME_RE, "a file name is 1–64 characters without / or \\, then .md"),
+      .regex(INSTRUCTION_FILE_NAME_RE, "a file name is 1–64 characters without / or \\, then .md")
+      .refine(
+        (n) => !CONTROL_OR_HIDDEN_RE.test(n),
+        "a file name must not contain control or format characters",
+      ),
     content: z.string().max(INSTRUCTION_FILE_LIMITS.joinedChars),
   })
   .strict();
 
-/** 1–20 files, unique names, a joined total of at most 100 000 characters. */
+/**
+ * 1–20 files, names unique ignoring case (`AGENTS.md` and `agents.md` would collide on a
+ * case-insensitive file system), a joined total of at most 100 000 characters.
+ */
 export const InstructionFilesSchema = z
   .array(InstructionFileSchema)
   .min(1)
@@ -70,10 +78,11 @@ export const InstructionFilesSchema = z
   .superRefine((files, ctx) => {
     const seen = new Set<string>();
     files.forEach((f, i) => {
-      if (seen.has(f.name)) {
+      const key = f.name.toLowerCase();
+      if (seen.has(key)) {
         ctx.addIssue({ code: "custom", path: [i, "name"], message: `duplicate file ${f.name}` });
       }
-      seen.add(f.name);
+      seen.add(key);
     });
     const joined = joinInstructionFiles(files).length;
     if (joined > INSTRUCTION_FILE_LIMITS.joinedChars) {
