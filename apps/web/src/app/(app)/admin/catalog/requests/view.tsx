@@ -97,6 +97,13 @@ function RequestsRead() {
             rowHeight: "dense",
             framed: false,
           },
+          inspector: { rows: 4, keyWidth: "12ch" },
+        }}
+        // The loaded page opens its first request: the inspector (its facts) and the decision row
+        inspectorTitle={t("inspectorTitle")}
+        actionRow={{
+          secondary: { label: t("reject"), onSelect: () => {} },
+          primary: { label: t("approve"), onSelect: () => {} },
         }}
       />
     );

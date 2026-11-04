@@ -732,6 +732,22 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await release();
   });
 
+  it("/admin/catalog/requests: the loading inbox keeps the first request's inspector and the disabled decision row", async () => {
+    const { release } = await renderHeld(
+      "/admin/catalog/requests",
+      "GET /api/v1/admin/catalog/requests",
+    );
+    await expectLoading("InboxPage", "Acme · crm");
+    expect(document.querySelector(".cb-body-inspector")).not.toBeNull();
+    expect(document.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(4);
+    expect(document.querySelectorAll('[data-part="action-row"]')).toHaveLength(1);
+    const approve = screen.getByRole("button", {
+      name: en.catalog.admin.requests.approve,
+    }) as HTMLButtonElement;
+    expect(approve.disabled).toBe(true);
+    await release();
+  });
+
   it("/admin/catalog/import?staging=: the loading review is a stack (no wizard card)", async () => {
     const { release } = await renderHeld(
       "/admin/catalog/import?staging=st1",

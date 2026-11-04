@@ -311,13 +311,22 @@ describe("(app) 页面模板", () => {
       return el as HTMLElement;
     });
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
-    // the placeholders stand in the loaded page's main-side grid: two cards in each column
+    // the loaded page's main-side grid with its real cards (two in each column), their static
+    // titles and links real and three placeholder rows for each body
     const grid = page.querySelector('[data-columns="main-side"]');
-    expect(
-      [...(grid?.children ?? [])].map(
-        (c) => c.querySelectorAll('[data-part="loading-card"]').length,
-      ),
-    ).toEqual([2, 2]);
+    const columns = [...(grid?.children ?? [])];
+    expect(columns.map((c) => c.querySelectorAll('[data-part="card"]').length)).toEqual([2, 2]);
+    expect(page.querySelectorAll('[data-part="loading-card"]')).toHaveLength(0);
+    for (const card of page.querySelectorAll('[data-part="card"]')) {
+      expect(card.querySelectorAll('.cb-skeleton [data-part="skeleton-text"]')).toHaveLength(3);
+    }
+    expect(within(page).getByText(en.home.inbox.title)).toBeTruthy();
+    expect(within(page).getByText(en.home.recent.title)).toBeTruthy();
+    expect(within(page).getByText(en.home.agentsCard.title)).toBeTruthy();
+    expect(within(page).getByRole("link", { name: en.home.inbox.open })).toBeTruthy();
+    expect(within(page).getByRole("link", { name: en.home.agentsCard.all })).toBeTruthy();
+    // no stat slots: the overview has no metrics
+    expect(page.querySelectorAll('[data-part="stat-card"]')).toHaveLength(0);
     expect(screen.queryByText("研究助手")).toBeNull();
     await act(async () => release());
     expect((await screen.findAllByText("研究助手")).length).toBeGreaterThan(0);

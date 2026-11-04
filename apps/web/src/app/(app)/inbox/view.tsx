@@ -215,9 +215,16 @@ function Inbox({
     return (
       <InboxPage
         header={{ path: [...here, { label: "inbox" }], title: t("title") }}
+        // The loaded inbox opens its first item: the inspector (its facts) and the decision row
+        inspectorTitle={t("inspectorTitle")}
+        actionRow={{
+          secondary: { label: ta("deny"), onSelect: () => {} },
+          primary: { label: ta("approve"), onSelect: () => {} },
+        }}
         loading={{
           list: "records",
           table: { label: t("listLabel"), columns, rowHeight: "dense", framed: false },
+          inspector: { rows: 4, keyWidth: "10ch" },
         }}
       />
     );

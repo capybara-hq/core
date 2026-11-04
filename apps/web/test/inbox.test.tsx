@@ -421,6 +421,13 @@ describe("the inbox from the cache", () => {
     });
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
     expect(screen.queryByText("Fixture [tool_a]")).toBeNull();
+    // the loaded inbox opens its first item: the inspector's four facts and the decision row,
+    // its buttons disabled until the item is here
+    expect(document.querySelector(".cb-body-inspector")).not.toBeNull();
+    expect(document.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(4);
+    expect(document.querySelectorAll('[data-part="action-row"]')).toHaveLength(1);
+    const approve = screen.getByRole("button", { name: en.approval.approve }) as HTMLButtonElement;
+    expect(approve.disabled).toBe(true);
     // the status bar draws nothing while the inbox loads (not "0 pending")
     expect(statusBar.mock.calls.length).toBeGreaterThan(0);
     expect(statusBar.mock.calls.every(([v]) => v === null)).toBe(true);

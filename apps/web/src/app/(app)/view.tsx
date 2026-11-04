@@ -136,10 +136,11 @@ function Overview({ orgId }: { orgId: string }) {
             navLevelOf(me) !== "guest",
           ),
         }}
-        // The loaded content's static shape: inbox and recent in the main column, the org and my
-        // agents in the side column.
-        loading={{ stats: 0, mainSide: { main: 2, side: 2 } }}
-      />
+        // The loaded cards with their real titles and links, their bodies placeholders
+        loading={{ stats: 0, keep: true }}
+      >
+        <OverviewCardsLoading orgName={orgName} member={navLevelOf(me) !== "guest"} />
+      </OverviewPage>
     );
   }
   // The conversations to pick up: the newest rows of the sidebar's groups.
@@ -196,6 +197,46 @@ function Overview({ orgId }: { orgId: string }) {
 
   return (
     <DailyOverview orgId={orgId} data={data} orgName={orgName} role={role} orgCard={orgCard} />
+  );
+}
+
+/**
+ * The overview's cards while the reads are on the way: the same grid and cards as DailyOverview,
+ * with their static titles and links real (the org's name comes with the session) and placeholder
+ * rows for the bodies (the org card's facts are two columns of three rows).
+ */
+function OverviewCardsLoading({ orgName, member }: { orgName: string; member: boolean }) {
+  const t = useTranslations("home");
+  return (
+    <Grid columns="main-side">
+      <Stack gap={16}>
+        <Card
+          title={t("inbox.title")}
+          actions={<TextLink href="/inbox">{t("inbox.open")}</TextLink>}
+        >
+          <Skeleton rows={3} />
+        </Card>
+        <Card title={t("recent.title")}>
+          <Skeleton rows={3} />
+        </Card>
+      </Stack>
+      <Stack gap={16}>
+        <Card
+          title={orgName}
+          {...(member
+            ? { actions: <TextLink href="/settings/organization">{t("orgSettings")}</TextLink> }
+            : {})}
+        >
+          <Skeleton rows={3} />
+        </Card>
+        <Card
+          title={t("agentsCard.title")}
+          actions={<TextLink href="/agents">{t("agentsCard.all")}</TextLink>}
+        >
+          <Skeleton rows={3} />
+        </Card>
+      </Stack>
+    </Grid>
   );
 }
 
