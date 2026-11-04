@@ -9,6 +9,7 @@ export {
   WEB_FETCH_EXTRACT_FAILED_TEXT,
   WEB_FETCH_SYSTEM_PROMPT,
   type WebFetchExtractDeps,
+  webFetchSystemPrompt,
 } from "./extract.js";
 export {
   fetchPage,

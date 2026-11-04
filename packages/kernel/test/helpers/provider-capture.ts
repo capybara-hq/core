@@ -56,7 +56,7 @@ export function captureProviderRequests(): ProviderCapture {
             const copy = structuredClone(req);
             if (req.system.some((s) => s.text.includes(COMPACTION_MARKER))) compactions.push(copy);
             else if (req.system.some((s) => s.text === TITLE_PROMPT)) titles.push(copy);
-            else if (req.system.some((s) => s.text === WEB_FETCH_SYSTEM_PROMPT)) {
+            else if (req.system.some((s) => s.text.startsWith(WEB_FETCH_SYSTEM_PROMPT))) {
               webFetches.push(copy);
             } else sent.push(copy);
             return inner.stream(req, opts);

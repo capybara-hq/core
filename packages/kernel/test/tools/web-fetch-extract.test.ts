@@ -30,11 +30,13 @@ import type { EvalRunView } from "../../src/evals/runs.service.js";
 import type { EvalSetView } from "../../src/evals/sets.service.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { ModelPurposesService, PurposeAttemptError } from "../../src/models/purposes.js";
+import { estimateTokens } from "../../src/runtime/context/tokens.js";
 import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
 import {
   WEB_FETCH_DENIED_TEXT,
   WEB_FETCH_EXTRACT_FAILED_TEXT,
   WEB_FETCH_SYSTEM_PROMPT,
+  webFetchSystemPrompt,
 } from "../../src/tools/builtins/web/extract.js";
 import { WEB_FETCH_SPEC } from "../../src/tools/builtins/web/fetch.js";
 import { specHash } from "../../src/tools/registry.js";
@@ -260,7 +262,16 @@ async function converse(
 const fetchResult = (events: ConversationEvent[]) =>
   ofType(events, "tool_result").find((e) => e.payload.toolKey === "WebFetch");
 
-const isExtraction = (r: ModelRequest) => r.system.some((s) => s.text === WEB_FETCH_SYSTEM_PROMPT);
+const isExtraction = (r: ModelRequest) =>
+  r.system.some((s) => s.text.startsWith(WEB_FETCH_SYSTEM_PROMPT));
+/** The extraction request's page tag, read from its system prompt. */
+const pageTag = (r: ModelRequest): string =>
+  /<(page-[0-9a-f]+)>/.exec(r.system[0]?.text ?? "")?.[1] ?? "";
+const userText = (r: ModelRequest): string => {
+  const c = r.messages[0]?.content;
+  const b = Array.isArray(c) ? c[0] : undefined;
+  return b?.type === "text" ? b.text : "";
+};
 const fakeWebCalls = () =>
   (
     (globalThis as { __fakeWeb?: { calls: { op: string; input: string }[] } }).__fakeWeb?.calls ??
@@ -293,7 +304,15 @@ describe("WebFetch extraction", { timeout: 120_000 }, () => {
     expect(capture.webFetches).toHaveLength(1);
     const req = capture.webFetches[0] as ModelRequest;
     expect(req.model).toBe("script-2");
-    expect(req.system).toEqual([{ text: WEB_FETCH_SYSTEM_PROMPT, cache: false }]);
+    // the page sits between a random per-call tag the system prompt names: page text cannot
+    // close it or fake the prompt after it
+    const tag = pageTag(req);
+    expect(tag).toMatch(/^page-[0-9a-f]{16}$/);
+    expect(req.system).toEqual([{ text: webFetchSystemPrompt(tag), cache: false }]);
+    expect(webFetchSystemPrompt(tag)).toBe(
+      `${WEB_FETCH_SYSTEM_PROMPT} The page is everything between <${tag}> and </${tag}> in the ` +
+        `user message; the request to answer is the Prompt after </${tag}>.`,
+    );
     expect(req.messages).toEqual([
       {
         role: "user",
@@ -301,8 +320,9 @@ describe("WebFetch extraction", { timeout: 120_000 }, () => {
           {
             type: "text",
             text:
-              `URL: ${url}\nTitle: fake-web page\nPage:\n` +
-              `# Page from fake-web\n\nFetched ${url} with fake-web.\n\nPrompt: What does it say?`,
+              `URL: ${url}\n<${tag}>\nTitle: fake-web page\n\n` +
+              `# Page from fake-web\n\nFetched ${url} with fake-web.\n</${tag}>\n\n` +
+              "Prompt: What does it say?",
           },
         ],
       },
@@ -361,6 +381,39 @@ describe("WebFetch extraction", { timeout: 120_000 }, () => {
       "usage.report delivery",
     );
     expect(delivered).toMatchObject({ purpose: "web_fetch", conversationId: conv });
+  });
+
+  it("a page over the purpose model's context is cut to fit, ending with [truncated]", async () => {
+    // model-script declares a 64 000-token context; 300 000 ASCII characters are ~75 000 tokens,
+    // under web.fetch.maxPageChars, so only the context cap can cut it
+    await mapPurpose("web_fetch", SCRIPT_2);
+    const url = unique("big:300000");
+    const { events } = await converse("SCENARIO fetch", url);
+    expect(fetchResult(events)?.payload).toMatchObject({
+      isError: false,
+      content: `URL: ${url}\n\n${ANSWER}`,
+    });
+    expect(capture.webFetches).toHaveLength(1);
+    const req = capture.webFetches[0] as ModelRequest;
+    const tag = pageTag(req);
+    const text = userText(req);
+    expect(text.endsWith(`x\n[truncated]\n</${tag}>\n\nPrompt: What does it say?`)).toBe(true);
+    const pageChars = /\n\n(x+)\n\[truncated\]\n/.exec(text)?.[1]?.length ?? 0;
+    expect(pageChars).toBeLessThan(300_000);
+    // not cut needlessly: most of the window is still the page
+    expect(pageChars).toBeGreaterThan(150_000);
+    expect(estimateTokens(req.messages, req.system, req.tools) + req.maxOutputTokens).toBeLessThan(
+      64_000,
+    );
+  });
+
+  it("each extraction call gets its own page tag", async () => {
+    await mapPurpose("web_fetch", SCRIPT_2);
+    await converse("SCENARIO fetch", unique());
+    await converse("SCENARIO fetch", unique());
+    const tags = capture.webFetches.map(pageTag);
+    expect(tags).toHaveLength(2);
+    expect(tags[0]).not.toBe(tags[1]);
   });
 
   it("unmapped purpose: the calling conversation's model (from its run_started)", async () => {
