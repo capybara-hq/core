@@ -159,6 +159,10 @@ wait_web() {
 }
 wait_web "$WEB"
 echo "    GET /login 200"
+# The image's health check: server.mjs answers /healthz itself, without Next or the kernel.
+out="$(request GET /healthz)"
+[ "$out" = "200 ok" ] || fail "GET /healthz on $WEB: $out"
+echo "    GET /healthz 200"
 # next.config.mjs is loaded at runtime (it sets poweredByHeader: false).
 POWERED="$(docker exec -e "U=http://$WEB:3000/login" "$CLIENT" node -e \
   'fetch(process.env.U).then((r) => console.log(r.headers.get("x-powered-by") ?? "none"))')"

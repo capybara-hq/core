@@ -11,14 +11,17 @@ import { type AgentFormData, useAgentFormData } from "../../../../components/age
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
+import { useSetup } from "../../../../components/shell/setup";
 import { useRouter } from "../../../../i18n/navigation";
 import { useWorkspace } from "../../../../lib/query/workspace";
 
 /**
  * `/agents/new`: create an agent (FormPage: avatar, name, model, visibility), then land on its page
  * at the prompt (`/agents/<id>?s=prompt`), where the starter `AGENTS.md` waits to be edited. When
- * the picked avatar upload failed after the create, it lands on Basics with that error. The
- * form's reads come from the query cache (the layout prefetched them on a first load).
+ * the picked avatar upload failed after the create, it lands on Basics with that error. Inside the
+ * setup layout (web-order spec §3.8) the new agent may make the org ready, so the page lands on a
+ * new conversation with it instead. The form's reads come from the query cache (the layout
+ * prefetched them on a first load).
  */
 export default function NewAgentView() {
   const ws = useWorkspace({ min: "member", setup: "step" });
@@ -31,9 +34,12 @@ function NewAgent({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations();
   const router = useRouter();
+  const setup = useSetup();
   const state = useAgentFormData(orgId);
   const done = (created?: AgentCreated) => {
     if (created === undefined) router.push("/agents");
+    // In the setup layout the new agent may make the org ready: go to a new conversation with it.
+    else if (setup.active) router.push(`/chat?agent=${encodeURIComponent(created.agent.id)}`);
     else {
       const id = encodeURIComponent(created.agent.id);
       router.push(
