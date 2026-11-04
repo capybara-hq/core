@@ -491,6 +491,29 @@ describe("persistent sidebar sections (web query cache spec §6)", () => {
     expect(groupsGets(calls)).toHaveLength(1);
   });
 
+  it("a path change reuses a stale read already in flight (the poll's) instead of sending another", async () => {
+    let release: (r: Response) => void = () => {};
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/conversations/groups": () =>
+        new Promise<Response>((r) => {
+          release = r;
+        }),
+    });
+    const view = renderFrame(shellOf(ME));
+    const groups = conversationGroupsQuery("o1").queryKey;
+    view.client.setQueryData(groups, view.client.getQueryData(groups), {
+      updatedAt: Date.now() - 31_000,
+    });
+    // the poll's read is in flight when the person navigates
+    void view.client.refetchQueries({ queryKey: groups, exact: true });
+    await vi.waitFor(() => expect(groupsGets(calls)).toHaveLength(1));
+    pathname.current = "/agents";
+    view.rerender(frameElement(shellOf(ME), <p>page body</p>, {}, view.client));
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(groupsGets(calls)).toHaveLength(1);
+    release(json(200, { groups: [], next: null, archivedCount: 0 }));
+  });
+
   it("a path change with the same pathname reads nothing", async () => {
     const calls = stubApi({});
     const view = renderFrame(shellOf(ME));

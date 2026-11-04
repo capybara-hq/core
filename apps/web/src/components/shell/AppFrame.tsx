@@ -162,13 +162,14 @@ function OrgFrame({
   const pending = usePendingApprovals(orgId);
   const extensions = useExtensions(orgId, locale);
   // Persistent sections never remount, so `refetchOnMount` never fires for them: each path change
-  // refetches their stale queries (fresh ones stay as they are).
+  // refetches their stale queries (fresh ones stay as they are). A read already in flight (the
+  // poll's) is reused, not cancelled and sent again.
   const lastPath = useRef(pathname);
   useEffect(() => {
     if (lastPath.current === pathname) return;
     lastPath.current = pathname;
     for (const queryKey of [keys.org(orgId).conversationGroupsAll(), keys.org(orgId).inboxCount()])
-      void qc.refetchQueries({ queryKey, stale: true, type: "active" });
+      void qc.refetchQueries({ queryKey, stale: true, type: "active" }, { cancelRefetch: false });
   }, [pathname, qc, orgId]);
   return (
     <ShellFrame
