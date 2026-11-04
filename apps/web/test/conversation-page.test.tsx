@@ -377,6 +377,84 @@ describe("the conversation page (ConversationPage)", () => {
     expect(en.chat.queueHint).toBe("↵ to queue, Ctrl+↵ to send now");
   });
 
+  describe("instant send (conversation send spec §2.1)", () => {
+    /** The user bubbles of `text`, pending or from the log. */
+    const bubbles = (text: string) =>
+      screen.queryAllByText(text, { selector: '[data-part="bubble"]' });
+
+    function deferredSend() {
+      let answer: (r: Response) => void = () => {};
+      let cmid = "";
+      const calls = api({
+        [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+        [`POST ${BASE}/messages`]: (c) => {
+          cmid = (bodyOf(c) as { clientMessageId: string }).clientMessageId;
+          return new Promise<Response>((r) => {
+            answer = r;
+          });
+        },
+      });
+      return { calls, answer: (r: Response) => answer(r), cmid: () => cmid };
+    }
+
+    it("clears the composer and shows a pending bubble in the same tick as ↵", async () => {
+      const d = deferredSend();
+      await renderChat();
+      await screen.findByText("hi");
+      fireEvent.change(input(), { target: { value: "next" } });
+      fireEvent.keyDown(input(), { key: "Enter" });
+      // no await: the same tick
+      expect(input()).toHaveProperty("value", "");
+      const pending = bubbles("next");
+      expect(pending).toHaveLength(1);
+      expect(pending[0]?.closest("[data-pending]")).not.toBeNull();
+      await vi.waitFor(() => expect(posts(d.calls, `${BASE}/messages`)).toHaveLength(1));
+    });
+
+    it("the stream's user_message replaces the pending bubble: the text shows once", async () => {
+      const d = deferredSend();
+      await renderChat();
+      await screen.findByText("hi");
+      const user = userEvent.setup();
+      await user.type(input(), "next{Enter}");
+      await vi.waitFor(() => expect(posts(d.calls, `${BASE}/messages`)).toHaveLength(1));
+      const event = userMsg(2, "next", { clientMessageId: d.cmid() });
+      act(() => FakeEventSource.instances[0]?.emit("event", event));
+      expect(bubbles("next")).toHaveLength(1);
+      expect(bubbles("next")[0]?.closest("[data-pending]")).toBeNull();
+      expect(bubbles("next")[0]?.closest("[data-entry]")?.getAttribute("data-entry")).toBe("user");
+      await act(async () => d.answer(json(202, { event })));
+      expect(bubbles("next")).toHaveLength(1);
+    });
+
+    it("the POST's answer replaces the pending bubble when it comes first", async () => {
+      const d = deferredSend();
+      await renderChat();
+      await screen.findByText("hi");
+      const user = userEvent.setup();
+      await user.type(input(), "next{Enter}");
+      await vi.waitFor(() => expect(posts(d.calls, `${BASE}/messages`)).toHaveLength(1));
+      const event = userMsg(2, "next", { clientMessageId: d.cmid() });
+      await act(async () => d.answer(json(202, { event })));
+      await vi.waitFor(() => expect(bubbles("next")[0]?.closest("[data-pending]")).toBeNull());
+      expect(bubbles("next")).toHaveLength(1);
+      act(() => FakeEventSource.instances[0]?.emit("event", event));
+      expect(bubbles("next")).toHaveLength(1);
+    });
+
+    it("a failed POST drops the pending bubble and puts the text back", async () => {
+      const d = deferredSend();
+      await renderChat();
+      await screen.findByText("hi");
+      const user = userEvent.setup();
+      await user.type(input(), "next{Enter}");
+      expect(bubbles("next")).toHaveLength(1);
+      await act(async () => d.answer(json(500, { error: { code: "internal", message: "boom" } })));
+      await vi.waitFor(() => expect(input()).toHaveProperty("value", "next"));
+      expect(bubbles("next")).toHaveLength(0);
+    });
+  });
+
   it("Shift+↵ is a newline and ↵ during IME composition sends nothing", async () => {
     const calls = api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }) });
     await renderChat();

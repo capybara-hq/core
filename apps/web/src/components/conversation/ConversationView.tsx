@@ -38,6 +38,7 @@ import { statusPrompt } from "../shell/nav";
 import { usePagePath } from "../shell/path";
 import { useSession } from "../shell/session";
 import { ComposerBar, type ComposerMessage, newClientMessageId } from "./ComposerBar";
+import { PendingBubbles, usePendingSends } from "./PendingBubbles";
 import { useRightAreaSlot } from "./RightArea";
 import { Thread, type ThreadProps } from "./Thread";
 import { type SendResult, useConversation } from "./useConversation";
@@ -170,14 +171,19 @@ export function useConversationPage(
   );
   const entries = useMemo(() => withDrafts(base, conv.state.drafts), [base, conv.state.drafts]);
   const queue = useQueue(orgId, conversationId, conv.merge);
+  const pending = usePendingSends(conv.events);
   const [renaming, setRenaming] = useState(false);
   const [renameBusy, setRenameBusy] = useState(false);
   const active = conv.running || conv.waiting;
   const stats = useMemo(() => runStats(conv.events), [conv.events]);
 
+  // The message shows at once as a pending bubble, until the log has it (spec §2.1).
   const send = async (m: ComposerMessage): Promise<SendResult> => {
     const pick = selection.pending;
+    pending.add(m);
     const r = await conv.send({ ...m, ...pick });
+    // on success the log already holds it; on failure the text goes back to the composer
+    pending.drop(m.clientMessageId);
     if (r.ok) selection.sent(pick);
     return r;
   };
@@ -320,9 +326,10 @@ export function useConversationPage(
           {...(active ? {} : { onRetry: retry })}
           {...(slot?.thread ?? {})}
         />
-        <QueueList queue={queue} />
+        <PendingBubbles items={pending.shown} />
       </>
     ),
+    queue: <QueueList queue={queue} />,
     composer: ({ sendDisabled }) => (
       <Stack gap={8}>
         {conv.error !== undefined && <FormError message={conv.error} />}
