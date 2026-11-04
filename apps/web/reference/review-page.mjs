@@ -62,6 +62,10 @@ const GROUPS = [
     ],
   },
   {
+    title: "Agents: avatar presets and picker",
+    components: ["avatar"],
+  },
+  {
     title: "Role pass: no access, danger zone, secret reveal",
     components: ["no-access", "danger-zone", "secret-reveal"],
   },

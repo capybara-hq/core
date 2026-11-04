@@ -13,6 +13,20 @@ export {
   formatBytes,
   isSafeAttachmentHref,
 } from "./attachments";
+export {
+  AVATAR_GRID,
+  AVATAR_PRESET_IDS,
+  AVATAR_PRESETS,
+  AVATAR_SIZES,
+  AVATAR_UPLOAD_ACCEPT,
+  Avatar,
+  AvatarPicker,
+  type AvatarPickerProps,
+  type AvatarPreset,
+  type AvatarSize,
+  type AvatarValue,
+  type PresetId,
+} from "./avatar";
 export { Badge, Kbd, Metric, type MetricProps, StatusMark } from "./basic";
 export { Callout, type CalloutProps } from "./callout";
 export {

@@ -95,6 +95,8 @@ export const REFERENCE_COMPONENTS = [
   "file-picker",
   "run-row",
   "working-line",
+  // agent avatars (agent profile design §2.3)
+  "avatar",
   // config forms
   "repeater",
   "field-row",

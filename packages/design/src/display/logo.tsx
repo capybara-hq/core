@@ -16,15 +16,16 @@ const COLS = 14;
 const ROWS = 10;
 
 /**
- * The `X` cells of bitmap `rows` as one SVG path of `scale`-sized squares, the first row drawn
- * at row `top` (the logo, the working line's mark and its leg frames).
+ * The `cell` cells (default `X`) of bitmap `rows` as one SVG path of `scale`-sized squares, the
+ * first row drawn at row `top` (the logo, the working line's mark and its leg frames, and one path
+ * per palette colour of an avatar preset).
  */
-export function bitmapCells(rows: readonly string[], scale: number, top = 0): string {
+export function bitmapCells(rows: readonly string[], scale: number, top = 0, cell = "X"): string {
   const out: string[] = [];
   rows.forEach((row, i) => {
     const y = top + i;
     for (let x = 0; x < row.length; x++)
-      if (row[x] === "X") out.push(`M${x * scale} ${y * scale}h${scale}v${scale}h${-scale}z`);
+      if (row[x] === cell) out.push(`M${x * scale} ${y * scale}h${scale}v${scale}h${-scale}z`);
   });
   return out.join("");
 }

@@ -3,6 +3,10 @@
 import {
   ActionRow,
   AppShell,
+  AVATAR_PRESET_IDS,
+  AVATAR_SIZES,
+  Avatar,
+  AvatarPicker,
   Button,
   CellTitle,
   type Column,
@@ -1125,6 +1129,46 @@ function filePickerBlocks(): ReactNode {
   );
 }
 
+// ── Avatar (spec §6.30) ─────────────────────────────────────────────────────
+
+function avatarBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="avatar-presets" width={640} pad>
+        <Stack direction="row" gap={8} wrap>
+          {AVATAR_PRESET_IDS.map((id) => (
+            <Avatar key={id} value={{ kind: "preset", id }} name={id} size={40} />
+          ))}
+        </Stack>
+      </RefBlock>
+      <RefBlock id="avatar-sizes" width={640} pad>
+        <Stack direction="row" gap={12} align="end">
+          {AVATAR_SIZES.map((size) => (
+            <Avatar key={size} value={{ kind: "preset", id: "capybara" }} name="水豚" size={size} />
+          ))}
+        </Stack>
+      </RefBlock>
+      <RefBlock id="avatar-initial" width={640} pad>
+        <Stack direction="row" gap={12} align="end">
+          {AVATAR_SIZES.map((size) => (
+            <Avatar key={size} value={null} name="研究助手" size={size} />
+          ))}
+        </Stack>
+      </RefBlock>
+      <RefBlock id="avatar-picker" width={640} pad>
+        <AvatarPicker value={{ kind: "preset", id: "capybara" }} onChange={noop} onUpload={noop} />
+      </RefBlock>
+      <RefBlock id="avatar-picker-upload-off" width={640} pad>
+        <AvatarPicker
+          value={{ kind: "preset", id: "fox" }}
+          onChange={noop}
+          uploadOffReason="未配置对象存储，无法上传图片；预设头像仍可使用。"
+        />
+      </RefBlock>
+    </>
+  );
+}
+
 export const REFERENCE_BLOCKS = {
   button: buttonBlocks,
   input: inputBlocks,
@@ -1149,5 +1193,6 @@ export const REFERENCE_BLOCKS = {
   "secret-reveal": secretRevealBlocks,
   "error-detail": errorDetailBlocks,
   "file-picker": filePickerBlocks,
+  avatar: avatarBlocks,
   ...CONFIG_FORM_BLOCKS,
 } as const;

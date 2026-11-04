@@ -1491,6 +1491,109 @@ textarea {
   color: var(--cb-accent);
   fill: currentColor;
 }
+/* Avatar (§6.30): a preset on its ground or the initial square; the picker's 48 px tiles. */
+.r-avatar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--cb-space-3);
+}
+.r-avatar-row[data-gap="8"] {
+  gap: var(--cb-space-2);
+}
+.r-avatar {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+  font-weight: 600;
+  line-height: 1;
+}
+.r-avatar svg {
+  display: block;
+}
+.r-avatar[data-size="16"] {
+  width: 16px;
+  height: 16px;
+  font-size: var(--cb-type-micro-size);
+}
+.r-avatar[data-size="22"] {
+  width: 22px;
+  height: 22px;
+  font-size: var(--cb-type-micro-size);
+}
+.r-avatar[data-size="28"] {
+  width: 28px;
+  height: 28px;
+  font-size: var(--cb-type-small-size);
+}
+.r-avatar[data-size="40"] {
+  width: 40px;
+  height: 40px;
+  font-size: var(--cb-type-h2-size);
+}
+.r-avatar[data-size="64"] {
+  width: 64px;
+  height: 64px;
+  border-radius: var(--cb-radius-md);
+  font-size: var(--cb-type-h1-size);
+}
+.r-avatar-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+}
+.r-avatar-picker-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cb-space-2);
+}
+.r-avatar-picker-group {
+  display: contents;
+}
+.r-avatar-tile {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 48px;
+  height: 48px;
+  padding: 3px;
+  border: 1px solid transparent;
+  border-radius: var(--cb-radius-md);
+  background: transparent;
+  color: var(--cb-muted);
+}
+.r-avatar-tile[data-state="checked"] {
+  border-color: var(--cb-line-strong);
+  background: var(--cb-selected);
+}
+.r-avatar-radio {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+}
+.r-avatar-tile[data-part="avatar-upload"] {
+  border: 1px dashed var(--cb-line);
+}
+.r-avatar-tile[data-part="avatar-upload"]:disabled {
+  border-color: var(--cb-line-soft);
+  color: var(--cb-disabled);
+}
+.r-avatar-picker-reason {
+  margin: 0;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
 .r-tbox {
   overflow: hidden;
   border-radius: var(--cb-radius-md);

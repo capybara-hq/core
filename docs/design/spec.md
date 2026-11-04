@@ -62,6 +62,8 @@ All colors, sizes and shadows may only be used through tokens. Color literals ar
 | `diff-add` | `rgba(63,212,131,.08)` | `rgba(22,128,63,.10)` | Added lines in a diff (ground only; the text stays `ink`) |
 | `diff-del` | `rgba(255,92,82,.08)` | `rgba(207,34,46,.08)` | Removed lines in a diff (ground only) |
 
+The `avatar-*` tokens (dark and light, in `tokens.json`) are the animal palettes of the agent avatars (§3, §6.30) and are used by `Avatar` only. Each preset's main color against its ground is a `contrast` pair with a floor of 3:1 (WCAG 1.4.11 for graphics), in both themes; the panda's and the penguin's white against their grounds are pairs too.
+
 The light accent is `#CC4609`: white text on it has a contrast of 4.72:1 (WCAG AA). The original `#FF6A13` with white text is only 2.87:1 and must not be used in the light theme. The text pairs that must meet AA are listed in `tokens.json` `contrast` and checked by `check:tokens`; a translucent token (`diff-add`, `diff-del`) is composited over `bg` before its pair is checked. `muted` must reach 4.5:1 on every ground secondary text sits on (`bg`, `panel`, `panel-2`, `sidebar`, `raised`, `selected`, `hover`; dark: 6.02:1 on `bg`, 5.02:1 on `selected`) and `disabled` 3:1 on the grounds a control sits on (dark: 3.86:1 on `bg`, 3.22:1 on `selected`; light: 3.57:1 on `bg`, 3.24:1 on `selected`).
 
 ### 2.2 Fonts and type
@@ -199,7 +201,8 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 
 - Wordmark: `CAPYBARA`, 600, 8 away from the Logo.
 - **Dither dot matrix**: used only for the backgrounds on both sides of auth pages and (optionally) the PageHeader corner of the overview page; 4px squares in `line`, density decreasing from one side to the other, greyscale only (no accent squares). No other page may use it.
-- No illustrations, gradients, frosted glass or emoji.
+- **Agent avatars** (§6.30) are the one place with pictures and their own colors: the ten pixel animals, drawn like the Logo (a 12×12 bitmap of solid squares, `crispEdges`), each in its animal's palette on a soft ground (the `avatar-*` color tokens, and `accent` for the capybara). Nothing else in the UI may use the animal palettes.
+- Apart from agent avatars: no illustrations, gradients, frosted glass or emoji.
 
 ---
 
@@ -2075,6 +2078,59 @@ States: `text`, `box`, `group`
 | skeleton-box[data-box=default] | box | background-color | color.selected |
 | skeleton-text[data-size=body] | group | height | type.body.line |
 | skeleton-box[data-box=default] | group | height | control.default |
+
+### 6.30 Avatar and AvatarPicker
+
+An agent's picture, everywhere an agent appears (the new conversation page, the agent picker, the agent list rows, the agent page head, the conversation title bar, the sidebar group titles; agent profile design §2.3).
+
+- `Avatar({ value, name, size })`, `size` 16, 22, 28, 40 or 64, a square of that size. `value` is one of:
+  - `{ kind: "preset", id }`: one of the ten pixel animals (`AVATAR_PRESETS`): 水豚 / Capybara, 黑熊 / Black bear, 熊猫 / Panda, 大象 / Elephant, 狐狸 / Fox, 猫头鹰 / Owl, 企鹅 / Penguin, 兔子 / Rabbit, 乌龟 / Turtle, 鲸 / Whale (ids `capybara`, `black-bear`, `panda`, `elephant`, `fox`, `owl`, `penguin`, `rabbit`, `turtle`, `whale`). Each is a 12×12 bitmap drawn like the Logo (§3: solid squares, `shape-rendering: crispEdges`, no outline, no anti-aliasing), one SVG path per palette color, on its ground color. The palette values and the ground are token names (`avatar-*`, and `accent` for the capybara, §2.1), so no color literal is involved. The pixel unit is the whole number nearest to `size / 12` (16: 1, 22: 2, 28: 2, 40: 3, 64: 5), the drawing centred in the square; at 22 the 24 px drawing is clipped 1 px on each side (the bitmaps keep their outer ring mostly ground).
+  - `{ kind: "image", src }`: the uploaded image, covering the square; when it fails to load, the initial.
+  - `null`: the initial square, the avatar tile rule of §6.17: the first grapheme of `name` (`initialOf`), 600, `ink` on `selected`; `micro` at 16 and 22, `small` at 28, the h2 size at 40, the h1 size at 64.
+  - Radius `sm`, `md` at 64. The avatar is decorative (`aria-hidden`): the name is always written next to it.
+- `AvatarPicker({ value, onChange, onUpload?, uploadOffReason?, label? })`: the ten presets as one radio group (named `label`, default "头像" / "Avatar"; each radio named by its preset's name), 48 px tiles (a 40 avatar, 3 px padding, a 1 px border, radius `md`) `space.2` apart and wrapping, then an upload tile (`upload` icon, "上传图片" / "Upload image"; `line` dashed border) that opens a file dialog for png, jpg or webp and passes the file to `onUpload` (cropping and the 2 MB limit are the caller's). A checked tile is neutral (§2.3): `selected` ground and a `line-strong` border; hover is the `hover` ground; keyboard focus the accent ring. When `value` is an image, the upload tile shows it and is the checked one. Without `onUpload` the upload tile is disabled (`disabled` icon color) and `uploadOffReason` (default "这里不能上传图片。" / "Uploading is not available here.") is written under the tiles in `small` `muted`, and describes the tile; presets still work.
+
+<!-- states: avatar -->
+States: `presets`, `sizes`, `initial`, `picker`, `picker-upload-off`
+
+<!-- size-table: avatar -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| avatar | presets | width | 40 |
+| avatar | presets | height | 40 |
+| avatar | presets | border-top-left-radius | radius.sm |
+| avatar[data-preset=capybara] | presets | background-color | color.avatar-capybara-ground |
+| avatar[data-preset=black-bear] | presets | background-color | color.avatar-black-bear-ground |
+| avatar[data-preset=panda] | presets | background-color | color.avatar-panda-ground |
+| avatar[data-preset=elephant] | presets | background-color | color.avatar-elephant-ground |
+| avatar[data-preset=fox] | presets | background-color | color.avatar-fox-ground |
+| avatar[data-preset=owl] | presets | background-color | color.avatar-owl-ground |
+| avatar[data-preset=penguin] | presets | background-color | color.avatar-penguin-ground |
+| avatar[data-preset=rabbit] | presets | background-color | color.avatar-rabbit-ground |
+| avatar[data-preset=turtle] | presets | background-color | color.avatar-turtle-ground |
+| avatar[data-preset=whale] | presets | background-color | color.avatar-whale-ground |
+| avatar[data-size=16] | sizes | width | 16 |
+| avatar[data-size=16] | sizes | height | 16 |
+| avatar[data-size=22] | sizes | width | 22 |
+| avatar[data-size=28] | sizes | width | 28 |
+| avatar[data-size=40] | sizes | width | 40 |
+| avatar[data-size=64] | sizes | width | 64 |
+| avatar[data-size=64] | sizes | height | 64 |
+| avatar[data-size=64] | sizes | border-top-left-radius | radius.md |
+| avatar | initial | background-color | color.selected |
+| avatar | initial | color | color.ink |
+| avatar[data-size=28] | initial | font-size | type.small |
+| avatar[data-size=40] | initial | font-size | type.h2 |
+| avatar-tile | picker | width | 48 |
+| avatar-tile | picker | height | 48 |
+| avatar-tile[data-state=checked] | picker | background-color | color.selected |
+| avatar-tile[data-state=checked] | picker | border-top-color | color.line-strong |
+| avatar-tile[data-state=checked] avatar | picker | width | 40 |
+| avatar-upload | picker | width | 48 |
+| avatar-upload | picker | border-top-color | color.line |
+| avatar-upload | picker-upload-off | color | color.disabled |
+| avatar-upload-reason | picker-upload-off | color | color.muted |
+| avatar-upload-reason | picker-upload-off | font-size | type.small |
 
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.

@@ -1078,3 +1078,119 @@ a.cb-attachment:hover {
 .cb-waterfall-row[data-loading="true"]:hover {
   background: transparent;
 }
+
+/* Avatar (spec §6.30): a preset animal on its ground, an uploaded image, or the initial square. */
+.cb-avatar {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+  font-family: var(--cb-font);
+  font-weight: 600;
+  line-height: 1;
+}
+.cb-avatar[data-size="16"] {
+  width: 16px;
+  height: 16px;
+  font-size: var(--cb-type-micro-size);
+}
+.cb-avatar[data-size="22"] {
+  width: 22px;
+  height: 22px;
+  font-size: var(--cb-type-micro-size);
+}
+.cb-avatar[data-size="28"] {
+  width: 28px;
+  height: 28px;
+  font-size: var(--cb-type-small-size);
+}
+.cb-avatar[data-size="40"] {
+  width: 40px;
+  height: 40px;
+  font-size: var(--cb-type-h2-size);
+}
+.cb-avatar[data-size="64"] {
+  width: 64px;
+  height: 64px;
+  border-radius: var(--cb-radius-md);
+  font-size: var(--cb-type-h1-size);
+}
+.cb-avatar-art {
+  display: block;
+}
+.cb-avatar-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* AvatarPicker (spec §6.30): 48 px tiles (40 avatar, 3 padding, 1 border), space.2 apart. */
+.cb-avatar-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+}
+.cb-avatar-picker-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cb-space-2);
+}
+.cb-avatar-picker-group {
+  display: contents;
+}
+.cb-avatar-tile {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 48px;
+  height: 48px;
+  padding: 3px;
+  border: 1px solid transparent;
+  border-radius: var(--cb-radius-md);
+  background: transparent;
+  color: var(--cb-muted);
+  cursor: pointer;
+  transition: background-color var(--cb-motion-hover);
+}
+.cb-avatar-tile:hover {
+  background: var(--cb-hover);
+}
+.cb-avatar-tile[data-state="checked"] {
+  border-color: var(--cb-line-strong);
+  background: var(--cb-selected);
+}
+.cb-avatar-tile:focus-visible,
+.cb-avatar-tile:has(.cb-avatar-radio:focus-visible) {
+  outline: 2px solid var(--cb-accent);
+  outline-offset: 2px;
+}
+.cb-avatar-radio {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+.cb-avatar-tile[data-part="avatar-upload"][data-state="unchecked"] {
+  border: 1px dashed var(--cb-line);
+}
+.cb-avatar-tile[data-part="avatar-upload"]:disabled {
+  border-color: var(--cb-line-soft);
+  background: transparent;
+  color: var(--cb-disabled);
+  cursor: not-allowed;
+}
+.cb-avatar-picker-reason {
+  margin: 0;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}

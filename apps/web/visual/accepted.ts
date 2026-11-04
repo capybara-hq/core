@@ -68,6 +68,9 @@ export const ACCEPTED: string[] = [
   // the working line (conversation send spec §2.2): blocks and size table in place; the reference
   // PNGs and the side-by-side review wait for the reference-update and visual-update workflows
   "working-line",
+  // agent avatars (agent profile design §2.3): blocks and size table in place; the reference PNGs
+  // and the side-by-side review wait for the reference-update and visual-update workflows
+  "avatar",
   // config forms (Task 6): blocks and size tables in place; the reference PNGs and the
   // side-by-side review wait for the reference-update and visual-update workflows
   "repeater",
